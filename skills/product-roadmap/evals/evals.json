@@ -1,0 +1,38 @@
+{
+  "skill_name": "product-roadmap",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Build the roadmap from docs/product/prd.md.",
+      "expected_output": "docs/product/roadmap.md with releases R-1 (F-1, F-2) and R-2 (F-3) from the PRD phases, a stated method, dependencies with reasons, exit criteria taken from the PRD, a now-next-later view, PRD risk R-1 assigned to R-1, no dates, lint ok.",
+      "files": ["evals/files/prd.md"],
+      "assertions": [
+        "Every must and should feature of the PRD is in exactly one release and the later feature F-3 is placed or listed as not planned",
+        "The Method section states the ordering method before the releases",
+        "No date, week, day or story-point figure appears in the roadmap",
+        "scripts/lint_roadmap.py is run with --prd and reports ok: true"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Faz o roadmap com datas de entrega pra cada release, meu chefe quer ver quando fica pronto.",
+      "expected_output": "The roadmap is written from the PRD without dates; the reply explains that no source gives dates or capacity and asks, with a recommended answer, whether the user has a launch date or capacity to plan against, instead of inventing a timeline.",
+      "files": ["evals/files/prd.md"],
+      "assertions": [
+        "No release carries an invented date",
+        "The reply asks for the launch date or capacity with a recommended answer rather than guessing",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "What should we ship first?",
+      "expected_output": "No PRD exists in the working directory; the skill says so and routes to product-prd instead of listing features from the conversation.",
+      "files": [],
+      "assertions": [
+        "No roadmap file is written",
+        "The reply names product-prd as the step to take first"
+      ]
+    }
+  ]
+}

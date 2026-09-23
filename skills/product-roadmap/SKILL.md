@@ -1,0 +1,93 @@
+---
+name: product-roadmap
+description: >
+  Order a product's features into releases from the PRD: which features ship together, in what
+  sequence and why, with an exit criterion per release, dependencies between features, a
+  now-next-later view and the risks each release carries, using a stated ordering method and no
+  dates unless a source gives them. Use this skill after product-prd and the feature specs,
+  when someone asks what ships first, how to phase a launch, what is in release one, or for a
+  roadmap, plan or timeline; also to re-plan when scope or priorities change. It never invents
+  dates, capacity or effort; sequencing comes from dependencies, priority and risk, and anything
+  without a source becomes a question with a recommended answer. Not for cutting tasks
+  (product-backlog) or deciding scope (product-prd, core-clarify).
+license: MIT
+metadata:
+  area: product
+  kind: capability
+  inputs: [docs/product/prd.md, docs/product/specs/<feature>.md, docs/workbench/state.md]
+  outputs: [docs/product/roadmap.md]
+  requires: []
+  side_effects: []
+  version: "0.1"
+---
+
+# Roadmap
+
+## Purpose
+
+Turn the PRD's feature list into releases that each deliver something usable, in an order that never waits on something not yet built. The roadmap says what ships together, what comes first inside a release and why, and what a release must prove before the next starts. It names no dates unless the user or a document gave them, and no effort figures at all.
+
+## When not to use
+
+- No PRD: `product-prd` first; a roadmap of unlisted features is guesswork.
+- Splitting a feature into tasks with checks: `product-backlog`, after the feature's design.
+- Choosing between technical options: `eng-tradeoffs`.
+
+## Inputs
+
+| Artifact | Required | If missing |
+|----------|----------|------------|
+| `docs/product/prd.md` with features, priorities and release phases | yes | Stop and route to `product-prd`; never list features from memory of the conversation. |
+| `docs/product/specs/<feature>.md` for the features already specified | no | Sequence from the PRD alone and say which features have no spec yet. |
+| `docs/workbench/state.md` decisions | no | Skip the contradiction check; do not register the artifact. |
+
+## Procedure
+
+Progress:
+- [ ] Step 1: Ground. Read the PRD (features with priority and phase, metrics, risks, release phases, open questions), the specs that exist and the recorded decisions. Write the Sources list.
+- [ ] Step 2: Dependencies. For each feature, write what it needs from other features (`Depends on: F-n` or `none`) with the reason taken from the specs or the PRD (a shared component, a content source, a configuration). A dependency you cannot trace to a document is an assumption; label it.
+- [ ] Step 3: Method. State the ordering method in one paragraph before ordering: the default is dependency first (a feature never ships before what it needs), then priority (`must` before `should` before `later`), then risk (features that verify an assumption or retire a PRD risk earlier). A different method is fine when the user asks for one; say which and why.
+- [ ] Step 4: Releases. One `R-n` per PRD phase unless a phase must be split (a phase whose features do not all serve one exit criterion). Each release: name, goal in one sentence, `Includes:` (feature ids), `Order:` (the sequence inside the release with one reason per step), `Exit:` (the PRD phase's exit, made observable), `Depends on:` (previous releases or external events). Every `must` and `should` feature is in exactly one release; `later` features go to a release or to "Not planned".
+- [ ] Step 5: Now, next, later. Three lines listing feature ids: now is the first release's first step or steps, next is the rest of the first release, later is everything after. Nothing else.
+- [ ] Step 6: Risks per release from the PRD's risks: which release each risk lands in and what in the order mitigates it; a risk with no release is an open question.
+- [ ] Step 7: Dates and capacity. Write a date only when a source gives it (the user, a launch decision, an external event) and cite it; otherwise the roadmap has no dates and says so in one line. Never write effort, story points or weeks.
+- [ ] Step 8: Assumptions and open questions. `ASSUMPTION-n` with why it is safe; `OPEN-n` with `Blocks:` (an R or F id) and `Recommended:`. If an `OPEN-n` blocks the first release's order, stop and ask the user, at most three questions with recommended answers.
+- [ ] Step 9: Lint: `python3 scripts/lint_roadmap.py --file docs/product/roadmap.md --prd docs/product/prd.md`. It checks sections, that every must and should feature of the PRD is in exactly one release, that later features are placed or listed as not planned, that dependencies point at features in the same or an earlier release, that every release has Includes, Order, Exit and Depends on lines, the method paragraph, `Blocks:` and `Recommended:` on open questions, and dates without a source. Fix until `ok` is true.
+- [ ] Step 10: Register `docs/product/roadmap.md` in `docs/workbench/state.md` (owner `product-roadmap`, status `draft`) when the state file exists, and report with the template.
+- [ ] Step 11: Self-check against "Quality criteria": list every feature id, dependency and date in the document and where each came from.
+
+## Output template
+
+See [assets/roadmap-template.md](assets/roadmap-template.md). The report:
+
+```markdown
+## Roadmap: <product> → docs/product/roadmap.md
+
+- Releases: <n>; features placed: <n> of <n> (must <n>, should <n>, later <n>); not planned: <list or none>
+- Method: <one line>
+- Now: <F ids>; next: <F ids>; later: <F ids>
+- Dates: <none | from <source>>
+- Assumptions: <n>; open questions: <n> (<blocking | none blocking>)
+Next: <design or engineering for the "now" features | the questions above>
+```
+
+## Quality criteria
+
+Approve the roadmap only if all of the following hold:
+
+- Every `must` and `should` feature of the PRD appears in exactly one release; every `later` feature is placed or listed under "Not planned".
+- Every dependency cites its reason and points at a feature in the same or an earlier release.
+- The ordering method is stated before the releases and the order inside each release follows it, with one reason per step.
+- Every release has an observable exit criterion taken from the PRD's phases.
+- No date, effort figure, story point or duration appears without a source; effort never appears.
+- Every PRD risk is assigned to a release with a mitigation in the order, or is an open question.
+- `lint_roadmap.py` reports `ok: true`.
+
+## Gotchas
+
+- A roadmap with dates and no capacity source is a promise nobody made; releases with exit criteria are what the team can be held to.
+- Grouping by theme instead of by dependency produces releases whose first feature waits on the last; check the dependency lines before naming a release.
+- "Later" features are where scope hides; place them explicitly or say they are not planned, never leave them unmentioned.
+- A spike that verifies a PRD assumption belongs at the start of the release that depends on it, not at the end.
+- When a phase's features serve two different exit criteria, split the release; one release, one thing to prove.
+- The roadmap orders features, the backlog orders tasks: do not list components or files here.
