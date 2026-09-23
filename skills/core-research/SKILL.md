@@ -16,7 +16,7 @@ metadata:
   outputs: [docs/workbench/research/<topic>.md]
   requires: [search:web]
   side_effects: []
-  version: "0.1"
+  version: "0.2"
 ---
 
 # Research
@@ -42,9 +42,10 @@ Replace "I believe" with "source [3] says, as of this date". The brief is writte
 ## Procedure
 
 Progress:
-- [ ] Step 1: Frame. Restate the question in one sentence and name the decision it informs. Fix the scope: geography, time period, language of the sources, and the stop criterion (default: two independent sources per key claim). If the question, the decision or the scope is unclear, ask at most three questions with recommended answers and wait. Numbers the user included in the question are claims to verify, not facts.
+- [ ] Step 1: Frame. Restate the question in one sentence and name the decision it informs. Fix the scope: geography, time period, language of the sources, and the stop criterion (default: two independent sources per key claim). If the question, the decision or the scope is unclear, ask at most three questions with recommended answers and wait; if the user has explicitly delegated the framing ("go with your recommendation"), use your recommended answers and mark the Scope line `assumed` in the brief. Numbers the user included in the question are claims to verify, not facts.
 - [ ] Step 2: Decompose into sub-questions, each answerable with evidence. For each, write two or three queries with different phrasings, in the language of the target market when it is not English.
 - [ ] Step 3: Search and read. For each result you keep, capture at once: URL, title, publisher, publication date (not the copyright year, not "updated"), access date, tier from [references/sources.md](references/sources.md), and the exact quote or figure with its unit. Follow a number to its origin: who measured it, how. Keep looking deliberately for a source that disagrees.
+- [ ] Step 3b: Measure what is measurable instead of quoting it: download counts from the package registry's API, versions and licenses from the registry, file sizes by fetching the published file from its CDN and compressing it locally, prices from the vendor's page. A measurement is a tier 1 source; write the exact command under "Method". When a secondary figure disagrees with a measurement, the measurement wins and the disagreement goes under "Contradictions".
 - [ ] Step 4: Verify. A key claim needs two independent sources; ten outlets repeating one press release are one source. Classify every claim as `fact` (measured, primary), `estimate` (modelled or projected, method stated or not) or `opinion`. Flag anything older than the recency threshold (default 12 months for technology, market and pricing data; 3 years for regulation and standards unless amended).
 - [ ] Step 5: Where sources disagree, record both values and the likely reason (different method, period, definition). Do not average them or pick one silently.
 - [ ] Step 6: Synthesize per sub-question with a confidence level: `high` (two or more tier 1–2 sources, recent, agreeing), `medium` (one strong source, or agreeing weaker ones), `low` (single or tier 3 source, old, or disputed). List what remains unknown and what the findings imply for the decision. Implications are one line each and stay inside the question; the skill that asked decides.
@@ -116,3 +117,7 @@ Approve the brief only if all of the following hold:
 - Questions about a non-English market need sources in that language; English-only results skew toward the US.
 - Stop at the stop criterion, not at the first confirming source, and not after the tenth tangent. If two sub-questions remain unresolved after reasonable effort, list them as unknowns rather than lowering the bar.
 - Never write a URL you did not open. A plausible-looking citation that does not exist is the worst outcome this skill can produce.
+- A search tool's synthesized summary is not a source, even when it quotes numbers. Cite the page you opened, or open one.
+- Pricing pages and survey results are often rendered client-side or sit behind a login. Try the obvious variants (`/pricing`, `/pro`, the section index), then record the value as unknown; do not fill it with a blog's number presented as fact.
+- Secondary "bundle size" and "downloads" figures drift: in this skill's first real run, three of four size claims in a 2026 article were 2× to 6× below the measured file, and a download figure was a third of the live one. Measure (step 3b).
+- The same survey quoted by many blogs is one source, and blogs often change the denominator; cite the survey's own page and compute shares yourself, stating the denominator.

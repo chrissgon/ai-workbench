@@ -4,7 +4,7 @@
 
 | Tier | What | Use |
 |------|------|-----|
-| 1 | Primary: official documentation, standards bodies, regulators, company filings and pricing pages, public datasets, peer-reviewed research, the original survey or benchmark | Supports a claim on its own; two tier-1 sources make a `fact` high-confidence |
+| 1 | Primary: official documentation, standards bodies, regulators, company filings and pricing pages, public datasets, peer-reviewed research, the original survey or benchmark, and your own reproducible measurement (registry API, CDN file compressed locally) with the command recorded | Supports a claim on its own; two tier-1 sources make a `fact` high-confidence |
 | 2 | Reputable secondary: established press with editorial standards, analyst reports that state their method, maintainers' or vendors' engineering blogs, conference talks with data | Supports a claim; pair with another independent source for key claims |
 | 3 | Weak: forums, unsourced blogs, content farms, social posts, machine-generated summaries, marketing copy about competitors | Leads only. Never the sole support for a claim. Cite only to show that a belief circulates, labelled `opinion` |
 
