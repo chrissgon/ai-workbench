@@ -83,7 +83,7 @@ def main(argv):
     if not re.search(r"Reading width:\s*\S", typ):
         errors.append("Type section has no 'Reading width:' line")
     for r in rows(typ):
-        if len(r) < 5 or not re.search(r"\d", r[1]) or not re.search(r"\d", r[2]) or not r[3]:
+        if len(r) < 5 or not re.search(r"\d", r[1]) or not re.search(r"\d|\b(normal|auto)\b", r[2]) or not r[3]:
             errors.append(f"type role row {r[0] if r else '?'} needs size, line height and weight")
     comps = rows(section(text, "Components"))
     for r in comps:
