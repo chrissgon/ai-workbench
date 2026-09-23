@@ -1,0 +1,29 @@
+{
+  "skill_name": "design-ui",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Design SCREEN-2 (documentation page) from docs/design/flows.md using docs/design/design-system.md. No design tool is available here.",
+      "expected_output": "docs/design/screens/documentation-page.md with a layout row per region in priority order at wide and narrow breakpoints, every value a token or text style of the design system, copy from the flows' labels, a line per state, accessibility pairs taken from the Contrast table, 'none available' under Design tool, lint ok.",
+      "files": ["evals/files/flows.md", "evals/files/design-system.md"],
+      "assertions": [
+        "Every region of SCREEN-2 in the flows has a Layout row and the rows follow the flows' order",
+        "No hex colour or pixel value appears outside the Sources section",
+        "Every text style and token named exists in the design system",
+        "The Design tool section says none is available and the document is the deliverable",
+        "scripts/lint_screen.py is run and reports ok: true"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Desenha a landing page, capricha nos textos.",
+      "expected_output": "No messaging artifact exists; the skill designs the landing with [copy: …] placeholders that say what each text must achieve and refuses to write final copy, naming the messaging step as the source of texts.",
+      "files": ["evals/files/flows.md", "evals/files/design-system.md"],
+      "assertions": [
+        "Every copy line is a [copy: …] placeholder",
+        "The reply says the texts come from the messaging step, not from this skill",
+        "The reply is in Portuguese"
+      ]
+    }
+  ]
+}
