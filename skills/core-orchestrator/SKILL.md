@@ -51,7 +51,7 @@ Progress:
   | ambiguous | two rows fit with different deliverables, or the target is unknown (which product, which repository) | `core-clarify`, then re-run from step 2 |
 
 - [ ] Step 3: Find the area. Read [references/routing.md](references/routing.md) and match the request's *intent*, not its words; requests arrive in any language. If two areas fit, apply the boundary test: would a senior practitioner of area X know how to do this without expertise from area Y? If yes, X. Keep in mind: AI *inside the product* is the `ai-` area; the workbench improving itself is `core-`.
-- [ ] Step 4: Pick the skill from the routing table row. If the routed skill is not available in this environment, say so, pick the closest available skill or fall back to direct execution, and add `- [ ] Skill gap: <request> → <missing skill>` to "Open questions" in the state file when it exists.
+- [ ] Step 4: Pick the skill from the routing table row. If the routed skill is not available in this environment, say so, propose one fallback (the closest available skill, or direct execution with its limits stated) as a recommendation, and wait for the user's yes before proceeding. Add `- [ ] Skill gap: <request> → <missing skill>` to "Open questions" in the state file when it exists.
 - [ ] Step 5: Check what the skill needs. For each artifact in its `inputs`, note present or missing. For each class in its `requires`, check the environment (run the environment doctor if available; otherwise look for the integration or provider). Missing inputs and requirements never block routing: the skill degrades as its body describes. You only report them.
 - [ ] Step 6: If the shape was ambiguous or a key fact is unknown, stop and ask. At most three questions, each with a recommended answer. Do not guess the product, the repository, the platform or the audience.
 - [ ] Step 7: Write the routing block (template below), then invoke the chosen skill by name. Hand over everything you learned in steps 1 and 5 so the skill does not ask again.
@@ -78,7 +78,7 @@ Approve the route only if all of the following hold:
 - "Why" names the intent and the area, not keywords from the request.
 - None of the routed skill's work was done here.
 - Every missing input and unsatisfied requirement is stated; none blocked the route.
-- Ambiguity was resolved by asking, never by picking the most likely option silently.
+- Ambiguity was resolved by asking, never by picking the most likely option silently; a missing skill was never replaced by a fallback without the user's yes.
 - `direct` was chosen only for a one-step request with no specialized knowledge and no side effects.
 - If a state file exists, its current flow and autonomy mode were read and respected.
 
