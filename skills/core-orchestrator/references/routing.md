@@ -68,7 +68,7 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Build a feature end to end | flow-build-feature |
 | Improve existing code end to end | flow-improve-code |
 | Start a codebase from nothing | flow-new-project |
-| Take a ticket and implement it | flow-implement-ticket |
+| Take a ticket and implement it ("check ticket N and implement it", any ticket id or issue link) | flow-implement-ticket |
 
 ## Delivery and operations (`ops-`)
 
@@ -87,13 +87,13 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | What we say and to whom; messaging framework | mkt-messaging |
 | Plan a launch | mkt-launch-plan |
 | Content calendar | mkt-content-plan |
-| Write a social post | mkt-social-copy |
-| Publish or schedule a post | mkt-publish |
+| Write a social post (text only, nothing published) | mkt-social-copy |
+| Publish or schedule a post that is already written and illustrated | mkt-publish |
 | Landing page structure and copy | mkt-landing-page (planned) |
 | SEO plan | mkt-seo (planned) |
 | Email campaign or sequence | mkt-email (planned) |
 | Measurement plan; experiments | mkt-analytics (planned) |
-| Write, illustrate, schedule one post end to end | flow-social-post |
+| Any request that ends in a post being published or scheduled and the post still has to be written or illustrated ("schedule a post about X", "post about our launch tomorrow") | flow-social-post |
 | Launch end to end | flow-launch |
 
 ## AI inside the product (`ai-`)

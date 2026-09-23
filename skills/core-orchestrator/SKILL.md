@@ -15,7 +15,7 @@ metadata:
   outputs: []
   requires: []
   side_effects: []
-  version: "0.5"
+  version: "0.6"
 ---
 
 # Orchestrator
@@ -52,7 +52,7 @@ Progress:
 
 - [ ] Step 3: Find the area. Read [references/routing.md](references/routing.md) and match the request's *intent*, not its words; requests arrive in any language. If two areas fit, apply the boundary test: would a senior practitioner of area X know how to do this without expertise from area Y? If yes, X. Keep in mind: AI *inside the product* is the `ai-` area; the workbench improving itself is `core-`.
 - [ ] Step 4: Pick the skill from the routing table row and copy its name exactly as written there; never compose, extend or abbreviate a name (there is no `-validator`, `-checker` or `-helper` variant of any skill). Then check that it is installed: look at the list of skills available in this session, or at the skills directories in the project and the user's home. If it is not there, the route status is `pending`, Context says `inputs unknown (skill not installed)`, Next proposes one fallback (the closest installed skill, or direct execution with its limits stated) as a recommendation, and you wait for the user's yes. Add `- [ ] Skill gap: <request> → <missing skill>` to "Open questions" in the state file when it exists. Never mark a skill `ready` that you have not seen installed.
-- [ ] Step 5: Check what the skill needs. Open the installed skill's frontmatter and, for each artifact in its `inputs` (what it reads, not what it writes), note present or missing. For each class in its `requires`, check the environment (run the environment doctor if available; otherwise look for the integration or provider). Missing inputs and requirements never block routing: the skill degrades as its body describes. You only report them.
+- [ ] Step 5: Check what the skill needs. Open the installed skill's frontmatter and, for each artifact in its `inputs` (what it reads, not what it writes), note present or missing. For each class in its `requires`, check the environment (run the environment doctor if available; otherwise look for the integration or provider) and write the class name exactly as listed in [references/requirement-classes.md](references/requirement-classes.md). When the skill is not installed, infer the classes from the request using that list (a LinkedIn post needs `publisher:linkedin`; a ticket needs `integration:issue-tracker`) and say `inputs unknown (skill not installed)`. Missing inputs and requirements never block routing: the skill degrades as its body describes. You only report them.
 - [ ] Step 6: If the shape was ambiguous or a key fact is unknown, stop and ask. At most three questions, each with a recommended answer. Do not guess the product, the repository, the platform or the audience. Ask *inside* the routing block: Route names the most likely skill with its shape word (`capability` or `flow`) and the status `pending`; fill Why, Context and Requirements with what you know; put the questions under Next. Never replace the shape word with `ambiguous`; ambiguity is expressed by `pending`. The block is the structure the reader relies on; it is never skipped, even when the answer is a question.
 - [ ] Step 7: Write the routing block (template below), then invoke the chosen skill by name. Hand over everything you learned in steps 1 and 5 so the skill does not ask again.
 - [ ] Step 8: Self-check against "Quality criteria" before invoking.
@@ -62,10 +62,10 @@ Progress:
 ```markdown
 Route: <skill-name> (<capability | flow>, <ready | pending>)
 Why: <intent> → <area> → <skill>, in one line
-Context: found <artifacts present, or "none">; missing <artifacts absent, or "none">
+Context: found <artifacts present, or "none">; missing <artifacts absent, or "none">; state file <present | missing (the flow will create it through core-project-init)>
 Requirements: <class → satisfied by ... | missing → the skill will ...>; or "none"
 Autonomy: <Autonomy.Checkpoints value, or "not set">
-Next: <the first thing the routed skill will do, or the questions you are asking>
+Next: <the first thing the routed skill will do>; or the questions, each on its own line as `Q<n>: <question> Recommended: <answer>, because <reason>`
 ```
 
 For `direct`, skip the block and answer.
@@ -80,6 +80,7 @@ Approve the route only if all of the following hold:
 - None of the routed skill's work was done here.
 - Every missing input and unsatisfied requirement is stated; none blocked the route.
 - Ambiguity was resolved by asking, never by picking the most likely option silently; a missing skill was never replaced by a fallback without the user's yes.
+- Every question in Next carries `Recommended:` with a reason; every requirement class is spelled exactly as in `references/requirement-classes.md`.
 - `direct` was chosen only for a one-step request with no specialized knowledge and no side effects.
 - If a state file exists, its current flow and autonomy mode were read and respected.
 
@@ -90,5 +91,6 @@ Approve the route only if all of the following hold:
 - A request that names a product with no `docs/` artifacts and no state file: ask where the project lives before assuming it is the current directory.
 - Skill names are identifiers, not descriptions. If the table says `biz-business-model`, the route says `biz-business-model`, not a longer name that sounds more precise.
 - Never start two flows for one request. A cross-area outcome goes to one cross-area flow, which invokes the others one level deep.
+- A request that ends in something being published and where the thing still has to be produced is a flow (`flow-social-post`), not the publishing capability; `mkt-publish` only takes a finished post.
 - Requests with side effects ("post", "send", "deploy", "delete") are never `direct`, even when they look like one step. Route to the skill that owns the confirmation gate; if none exists, execute only after showing the exact payload and getting an explicit yes.
 - The user writing in Portuguese does not change the route. Match intent; reply in the user's language; keep artifacts in English unless the project says otherwise.
