@@ -53,11 +53,14 @@
     {
       "id": 5,
       "prompt": "rename the variable usrCnt to userCount in src/stats.ts",
-      "expected_output": "No routing block; the change is made directly.",
-      "files": [],
+      "expected_output": "No routing block; the variable is renamed directly in src/stats.ts (declaration and both uses) and nothing else changes.",
+      "files": [
+        "evals/files/rename-case"
+      ],
       "assertions": [
-        "No skill is named",
-        "No routing block is printed",
+        "No skill is named and no routing block is printed",
+        "src/stats.ts no longer contains usrCnt and contains userCount in the declaration and in the returned object",
+        "No other file is created or modified",
         "The output does not invoke or describe the orchestrator procedure"
       ]
     },
