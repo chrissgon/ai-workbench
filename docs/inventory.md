@@ -232,7 +232,7 @@ Wave 1:
 - [ ] eng-code-review
 - [ ] eng-docs
 - [x] product-feature-spec
-- [ ] product-backlog
+- [x] product-backlog
 - [ ] ops-pull-request
 - [ ] ops-branch-sync
 - [ ] flow-fix-bug, flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
