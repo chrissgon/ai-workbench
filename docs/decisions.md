@@ -53,3 +53,7 @@ OpenClaw follows the Agent Skills spec and reads `~/.agents/skills`, so the `age
 ## 2026-09-23: Build order approved; Telar is the first real project
 
 Engineering before business for refinement (most mature content, daily use); merges (eng-root-cause, eng-implement, eng-code-review, core-critique) and drops (btw, coaching skills, duplicate documentation agent, organization-specific deploy and rewrite planner, stack-bound engineer agents) approved. Telar, an AI product for linguistic content, is the vehicle for waves 2 to 5, which pulls the AI engineering skills forward to Telar's engineering wave and puts Telar's business and product phases right after core. Skills without prior expertise are written only alongside the Telar phase that needs them.
+
+## 2026-09-23: Skills never assume; they ask
+
+Stated by the user as a design rule after the first real initialization: agents and skills must not presume anything the user has not decided; they ask, with a recommendation. Added as a principle in `AGENTS.md`, reinforced in the writing standard and the capability template. It coexists with the one-approval rule: asking for a decision once is not repeated approval-seeking. Motivated by perfectui-doc, where a "migration" request in fact hides a radical redesign that only the user can scope.

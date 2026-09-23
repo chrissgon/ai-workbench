@@ -11,6 +11,8 @@ Usage:
 --apply    creates docs/workbench/state.md and the workbench section in AGENTS.md. Refuses if state exists.
 Update     (no --apply) changes the autonomy mode and/or adds registrations to an existing state.
 --register <path>=<slot>  registers an existing document as the artifact <slot> (docs/<area>/...), in place.
+--decision <text>         records a decision the user stated during initialization (repeatable).
+--open-question <text>    records an open question to resolve before work starts (repeatable).
 --autonomy / --set-autonomy  one of: every-phase, milestones, end.
 --dry-run  prints the plan, writes nothing.
 
@@ -49,9 +51,9 @@ STATE_TEMPLATE = """# Workbench state
 ## Decisions
 
 - {date}: Project initialized for the workbench; autonomy {autonomy}. (core-project-init, confirmed by user)
-
+{decisions}
 ## Open questions
-
+{questions}
 ## Approvals
 
 | Scope | What | Approved | Expires | Status |
@@ -184,13 +186,15 @@ def write(path, content, dry):
         f.write(content)
 
 
-def apply(root, name, autonomy, regs, dry):
+def apply(root, name, autonomy, regs, dry, decisions=(), questions=()):
     date = dt.date.today().isoformat()
     state_path = os.path.join(root, "docs", "workbench", "state.md")
     if os.path.isfile(state_path):
         return refuse("docs/workbench/state.md already exists; use --set-autonomy or --register to update.")
     rows = "".join(row(s, p, date) + "\n" for p, s in regs)
-    write(state_path, STATE_TEMPLATE.format(name=name, date=date, autonomy=autonomy, rows=rows), dry)
+    dec = "".join(f"- {date}: {d} (user)\n" for d in decisions)
+    que = "".join(f"- [ ] {q}\n" for q in questions)
+    write(state_path, STATE_TEMPLATE.format(name=name, date=date, autonomy=autonomy, rows=rows, decisions=dec, questions=que), dry)
     agents = os.path.join(root, "AGENTS.md")
     section = section_text(autonomy)
     if os.path.isfile(agents):
@@ -203,11 +207,12 @@ def apply(root, name, autonomy, regs, dry):
         "dry_run": dry, "action": "apply", "name": name, "autonomy": autonomy,
         "state": "created", "agents_md": action,
         "registered": [{"slot": s, "at": p} for p, s in regs],
+        "decisions": len(decisions), "open_questions": len(questions),
     }))
     return 0
 
 
-def update(root, set_autonomy, regs, dry):
+def update(root, set_autonomy, regs, dry, decisions=(), questions=()):
     date = dt.date.today().isoformat()
     state_path = os.path.join(root, "docs", "workbench", "state.md")
     if not os.path.isfile(state_path):
@@ -232,6 +237,16 @@ def update(root, set_autonomy, regs, dry):
         marker = "## Decisions"
         state = state.replace(marker, row(s, p, date) + "\n" + marker, 1) if marker in state else state + row(s, p, date) + "\n"
         added.append({"slot": s, "at": p})
+    for d in decisions:
+        line = f"- {date}: {d} (user)"
+        if line not in state:
+            state = state.replace("\n## Open questions", f"{line}\n\n## Open questions", 1) if "\n## Open questions" in state else state + line + "\n"
+            changes.append("decision added")
+    for q in questions:
+        line = f"- [ ] {q}"
+        if line not in state:
+            state = state.replace("\n## Approvals", f"{line}\n\n## Approvals", 1) if "\n## Approvals" in state else state + line + "\n"
+            changes.append("open question added")
     if changes or added:
         state = re.sub(r"^- Updated: .*$", f"- Updated: {date}", state, count=1, flags=re.M)
         write(state_path, state, dry)
@@ -245,10 +260,11 @@ def main(argv):
         print(__doc__)
         return 0 if argv else 2
     root, mode, name, autonomy, set_autonomy, regs, dry = ".", None, None, None, None, [], False
+    decisions, questions = [], []
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a in ("--root", "--name", "--autonomy", "--set-autonomy", "--register"):
+        if a in ("--root", "--name", "--autonomy", "--set-autonomy", "--register", "--decision", "--open-question"):
             if i + 1 >= len(argv):
                 return usage_error(f"{a} needs a value.")
             v = argv[i + 1]
@@ -260,6 +276,10 @@ def main(argv):
                 autonomy = v
             elif a == "--set-autonomy":
                 set_autonomy = v
+            elif a == "--decision":
+                decisions.append(v)
+            elif a == "--open-question":
+                questions.append(v)
             else:
                 regs.append(v)
             i += 2
@@ -288,12 +308,12 @@ def main(argv):
             return usage_error("--apply requires --name and --autonomy.")
         if autonomy not in MODES:
             return usage_error(f"--autonomy must be one of {MODES}.")
-        return apply(root, name, autonomy, parsed, dry)
+        return apply(root, name, autonomy, parsed, dry, decisions, questions)
     if set_autonomy and set_autonomy not in MODES:
         return usage_error(f"--set-autonomy must be one of {MODES}.")
-    if not set_autonomy and not parsed:
-        return usage_error("nothing to do: pass --detect, --apply, --set-autonomy or --register.")
-    return update(root, set_autonomy, parsed, dry)
+    if not set_autonomy and not parsed and not decisions and not questions:
+        return usage_error("nothing to do: pass --detect, --apply, --set-autonomy, --register, --decision or --open-question.")
+    return update(root, set_autonomy, parsed, dry, decisions, questions)
 
 
 if __name__ == "__main__":

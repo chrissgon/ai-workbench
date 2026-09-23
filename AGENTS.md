@@ -8,7 +8,8 @@ You are maintaining a repository of agents, skills and workflows that let an AI 
 2. **Open-closed adapters.** Anything specific to one AI tool lives only inside `adapters/<harness>/`. Adapters read the core; the core never reads adapters. Adding a harness never edits the core.
 3. **Write for the weakest model you will run.** See "Writing standard" below.
 4. **Artifacts over invocation.** Capabilities never invoke other skills. They read and write artifacts in the target project (see `contracts/`). Only flows invoke skills, and they do it by name.
-5. **English only.** Every file in this repository is written in English.
+5. **Never assume; ask.** When a decision belongs to the user and is not recorded in the project state or an artifact, a skill stops and asks, with a recommended answer. It never proceeds on a guess about scope, product, audience, platform or intent. An assumption that cannot be avoided is labelled `assumed` and reported. Asking for a decision once is not re-asking for approval: see the consent rules.
+6. **English only.** Every file in this repository is written in English.
 
 ## Layout
 
@@ -95,7 +96,7 @@ Cheap models drop steps in long lists, invent structure when there is no templat
 - Criteria for every judgment: "approve if all of the following hold: ...".
 - Checklists with tracked progress for anything with more than three steps.
 - Scripts for anything deterministic (parsing, validation, formatting, API calls). Scripts accept input via flags, env or stdin, never prompts; implement `--help`; print data to stdout and diagnostics to stderr.
-- Explicit stop-and-ask gates: "Stop here and ask the user if X is unclear."
+- Explicit stop-and-ask gates: "Stop here and ask the user if X is unclear." Every decision that is the user's has such a gate; a skill that would otherwise pick "the most likely option" asks instead, with that option as the recommendation.
 - Load references per step ("When you reach step 4, read references/pricing-models.md"), never all up front.
 
 **Grounding, the priority for weak models.** Hallucination is the failure to prevent first:

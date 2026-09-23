@@ -35,7 +35,7 @@ One paragraph: what this skill produces and why it matters to the phase it belon
 Progress:
 - [ ] Step 1: <verb> <object>. Open <file>, look for <thing>, write <result> to <place>.
 - [ ] Step 2: ...
-- [ ] Step 3: Stop and ask the user if <condition>. Do not guess.
+- [ ] Step 3: Stop and ask the user if <condition>, with a recommended answer. Do not guess; do not pick the most likely option; do not proceed until answered.
 - [ ] Step 4: Produce the output from the template below.
 - [ ] Step 5: Self-check against "Quality criteria". Fix, then re-check.
 
