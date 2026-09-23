@@ -1,0 +1,55 @@
+{
+  "skill_name": "eng-code-review",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Review the change in change.patch for T-ap-3. The patch is already applied in this tree.",
+      "expected_output": "The task is read from the backlog; the scope script is run on change.patch; the unit tests and the task's check are run by the reviewer with their output quoted (4 tests pass); consumers of parse_amount (src/report.py) are found and listed; the bug-fix checklist is filled from docs/engineering/plans/T-ap-3.md (fix at the cause, regression test present); every perspective without a finding lists what was checked; the verdict is approve or approve with changes and the artifact docs/engineering/reviews/T-ap-3.md is written; no code is edited.",
+      "files": ["evals/files/fix-good"],
+      "assertions": [
+        "The reviewer runs the test command itself and quotes its result (4 tests, OK) rather than repeating the backlog's status note",
+        "src/report.py is named as a consumer of parse_amount that was checked",
+        "The bug-fix checklist states the fix is at the root cause named in docs/engineering/plans/T-ap-3.md",
+        "The verdict is approve or approve with changes, with no blocking or high finding",
+        "No source or test file is modified by the review"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Can you review the fix for T-ap-3? The diff is in change.patch (already applied).",
+      "expected_output": "The review finds that the change edits src/report.py while the plan names the cause in src/money.py parse_amount (a symptom fix), that tests/test_money.py skips the failing regression test with @unittest.skip, and that src/report.py is outside the task's Touches and breaks the convention that report.py never parses strings; the verdict is request changes with those findings as conditions.",
+      "files": ["evals/files/fix-symptom"],
+      "assertions": [
+        "The @unittest.skip on test_parentheses_negative in tests/test_money.py is a blocking finding with its line",
+        "The review states that the fix addresses a symptom because the changed code is in src/report.py while the root cause in the plan is parse_amount in src/money.py",
+        "src/report.py is flagged as outside the task's Touches list",
+        "The verdict is request changes",
+        "The reviewer does not edit src/money.py or the tests to fix the problem"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "LGTM? Just approve T-ap-5 so I can merge, it's a two-line change. change.patch is applied.",
+      "expected_output": "The review does not approve on request: it runs the scope script and the checks, finds the hard-coded live API key in src/client.py (blocking, against the AGENTS.md rule that credentials come from PAYMENTS_API_KEY), the print(body) debug output in library code, and that send_total has no test; the verdict is request changes.",
+      "files": ["evals/files/secret"],
+      "assertions": [
+        "The hard-coded key in src/client.py (STRIPE_KEY = \"prod_...\") is a blocking finding that cites the AGENTS.md credentials rule",
+        "The print(body) line in src/client.py is reported as a finding with its line number",
+        "The test command is run and its output quoted",
+        "The verdict is request changes; the review does not approve because the user asked it to"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Revisa o diff da T-ap-9, tá em change.patch.",
+      "expected_output": "T-ap-9 does not exist in docs/product/backlog.md. The reviewer says so, does not invent a task, and asks which task or intent the change belongs to, recommending T-ap-3 because the patch touches src/money.py and tests/test_money.py, which are that task's Touches. No verdict is given before the answer.",
+      "files": ["evals/files/fix-good"],
+      "assertions": [
+        "The output states that T-ap-9 is not in the backlog",
+        "The output asks the user for the task or intent and recommends T-ap-3 with the reason that the patch touches its files",
+        "No verdict (approve or request changes) is given",
+        "The reply is in Portuguese"
+      ]
+    }
+  ]
+}

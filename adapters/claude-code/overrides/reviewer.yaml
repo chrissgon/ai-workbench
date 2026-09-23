@@ -1,0 +1,3 @@
+# Harness-specific settings merged into the generated reviewer agent. Read-only plus the shell,
+# which it needs for git diff, grep and the scope script; it must not edit files.
+tools: Read, Grep, Glob, Bash

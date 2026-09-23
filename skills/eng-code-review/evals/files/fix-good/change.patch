@@ -1,0 +1,45 @@
+diff --git a/docs/product/backlog.md b/docs/product/backlog.md
+index a176a72..36a6524 100644
+--- a/docs/product/backlog.md
++++ b/docs/product/backlog.md
+@@ -14,3 +14,4 @@
+   Check: python3 -m unittest tests.test_money -q
+   Size: S, because one function
+   Milestone: M1
++  Status: done (2026-09-23) unittest 4 passed
+diff --git a/src/money.py b/src/money.py
+index b71e814..d18d311 100644
+--- a/src/money.py
++++ b/src/money.py
+@@ -3,7 +3,8 @@
+ 
+ def parse_amount(text: str) -> float:
+     """Parse an accounting amount; "(12.50)" means -12.50."""
+-    raw = text.strip().strip("()").replace(",", "")
+-    negative = raw.startswith("(")
++    raw = text.strip()
++    negative = raw.startswith("(") and raw.endswith(")")
++    raw = raw.strip("()").replace(",", "")
+     value = float(raw)
+     return -value if negative else value
+diff --git a/tests/test_money.py b/tests/test_money.py
+index e142caf..65def14 100644
+--- a/tests/test_money.py
++++ b/tests/test_money.py
+@@ -1,6 +1,7 @@
+ import unittest
+ 
+ from money import parse_amount
++from report import total
+ 
+ 
+ class ParseAmountTests(unittest.TestCase):
+@@ -12,3 +13,8 @@ class ParseAmountTests(unittest.TestCase):
+ 
+     def test_parentheses_negative(self):
+         self.assertEqual(parse_amount("(12.50)"), -12.5)
++
++
++class TotalTests(unittest.TestCase):
++    def test_total_mixes_signs(self):
++        self.assertEqual(total(["10.00", "(2.50)"]), 7.5)

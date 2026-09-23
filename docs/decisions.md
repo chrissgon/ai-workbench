@@ -57,3 +57,7 @@ Engineering before business for refinement (most mature content, daily use); mer
 ## 2026-09-23: Skills never assume; they ask
 
 Stated by the user as a design rule after the first real initialization: agents and skills must not presume anything the user has not decided; they ask, with a recommendation. Added as a principle in `AGENTS.md`, reinforced in the writing standard and the capability template. It coexists with the one-approval rule: asking for a decision once is not repeated approval-seeking. Motivated by perfectui-doc, where a "migration" request in fact hides a radical redesign that only the user can scope.
+
+## 2026-09-23: Code reviews are temporary artifacts under docs/engineering/reviews/
+
+`eng-code-review` writes `docs/engineering/reviews/<change>.md` (task id, else branch, else pull request number) so a flow can resume at the review step in a new session and `ops-pull-request` can carry the verdict and its conditions into the pull request description. Like plans, reviews are day-to-day artifacts: removed or archived when the change ships. The review never edits code; findings go back to `eng-implement` or the backlog. The `reviewer` agent is one perspective per instance, for harnesses that run work in isolation; the skill runs the perspectives sequentially everywhere else.

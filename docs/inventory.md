@@ -229,7 +229,7 @@ Wave 1:
 - [x] eng-implement
 - [ ] eng-integration-tests
 - [ ] eng-refactor
-- [ ] eng-code-review
+- [x] eng-code-review
 - [ ] eng-docs
 - [x] product-feature-spec
 - [x] product-backlog
