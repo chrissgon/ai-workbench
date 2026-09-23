@@ -1,0 +1,29 @@
+{
+  "skill_name": "design-system",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Define the design system for the docs site. The flows are in docs/design/flows.md and the component library ships its tokens in library/DESIGN-SYSTEM.md.",
+      "expected_output": "docs/design/design-system.md that mirrors every library token verbatim with light and dark values, asks the user for the typeface with a recommended answer before defining type roles, records contrast ratios for the text-on-background pairs the screens use, lists components with owner, variants, states and screens, and passes the lint with --library.",
+      "files": ["evals/files/library-design-system.md", "evals/files/flows.md"],
+      "assertions": [
+        "Every --pui- custom property of the library file appears in the document with the same light and dark values",
+        "The typeface is asked with a recommended answer, not chosen silently",
+        "Every contrast row has two ratios and a pass or fail",
+        "Every component row names at least one screen from the flows",
+        "scripts/lint_design_system.py is run with --library and reports ok: true"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Escolhe uma paleta bonita pro app e cria as variáveis.",
+      "expected_output": "No flows, brand or library exist; the skill says a palette cannot be invented, names design-ux-flows and brand-identity (or asks for the brand colour and typeface with recommendations) and writes nothing.",
+      "files": [],
+      "assertions": [
+        "No design-system file is written",
+        "No colour value is proposed without a source or a user answer",
+        "The reply is in Portuguese"
+      ]
+    }
+  ]
+}
