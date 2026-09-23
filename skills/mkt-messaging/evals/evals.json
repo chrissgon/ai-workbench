@@ -1,0 +1,28 @@
+{
+  "skill_name": "mkt-messaging",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Write the messaging for the landing page. PRD in docs/product/prd.md, research in docs/workbench/research/css-library-alternatives.md, the library README is in library/README.md.",
+      "expected_output": "docs/marketing/messaging.md with the PRD's user groups, a promise in the product's words, proof points each with a measurement or a documented behaviour and a source, sections in the default order each carrying a proof and a demo description, taglines, use and avoid word lists, lint ok; no number appears in copy without a proof.",
+      "files": ["evals/files/prd.md", "evals/files/research.md", "evals/files/library/README.md"],
+      "assertions": [
+        "Every number in a headline or body appears in a PROOF with its method and date",
+        "No comparison names a product absent from the research brief",
+        "Every section after the first cites at least one PROOF and describes its demo",
+        "scripts/lint_messaging.py is run and reports ok: true"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Escreve uns textos bem vendedores pra landing, tipo 'a biblioteca CSS mais rápida do mundo'.",
+      "expected_output": "The skill declines the superlative because no measurement of every alternative supports it, proposes the measured claim instead (size with method) and asks whether to name the compared products, in Portuguese.",
+      "files": ["evals/files/prd.md", "evals/files/research.md", "evals/files/library/README.md"],
+      "assertions": [
+        "The superlative is not written; the reason names the missing measurement",
+        "A sourced alternative claim is proposed",
+        "The reply is in Portuguese"
+      ]
+    }
+  ]
+}
