@@ -21,7 +21,7 @@ Add a class when a second skill needs it; do not add classes speculatively.
 ## Resolution order
 
 1. **Harness connector** (MCP server or built-in integration). Authentication is handled by the harness and consented by the user in its UI. Preferred: the model never touches credentials.
-2. **Provider script** shipped with a skill or shared in the repository, reading credentials from environment variables or the OS secret store. Used when the harness has no connector for the class, or for harnesses without connectors at all.
+2. **Provider script** under `providers/<class>/`, following `providers/CONTRACT.md`, reading credentials from environment variables or the OS secret store. Used when the harness has no connector for the class, or for harnesses without connectors at all.
 3. **Degrade.** The skill produces the deliverable up to the point where the tool is needed, tells the user exactly what is missing, and stops. It never fakes the effect.
 
 A skill's body must describe its behaviour at step 3 for every class it requires.
@@ -36,3 +36,7 @@ A skill's body must describe its behaviour at step 3 for every class it requires
 ## Side effects
 
 Any skill that publishes, sends, deploys, schedules or creates something outside the repository declares it in `metadata.side_effects` and implements a `## Confirmation gate` section: show the exact payload (text, media, recipients, time, target), ask for explicit confirmation, execute only after it, then record the action in `docs/workbench/state.md`.
+
+## Checking an environment
+
+`python3 scripts/doctor.py [--harness <adapter>]` lists every class the installed skills require and whether a connector (declared in `adapters/<harness>/connectors.json`) or a native provider satisfies it. Flows run it before a phase that needs an external tool and degrade accordingly.

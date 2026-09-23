@@ -4,7 +4,7 @@ You are maintaining a repository of agents, skills and workflows that let an AI 
 
 ## Principles
 
-1. **Harness-agnostic core.** Files under `skills/`, `agents/`, `shared/`, `contracts/` and `templates/` must not mention any AI tool by name, its directories (`.claude/`, `.cursor/`, `.codex/`, `.agents/`) or its tool names. Say "create the file", "run the command", "use the available issue-tracker integration; if there is none, ask the user to paste the ticket".
+1. **Harness-agnostic core.** Files under `skills/`, `agents/`, `shared/`, `contracts/`, `templates/` and `providers/` must not mention any AI tool by name, its directories (`.claude/`, `.cursor/`, `.codex/`, `.agents/`) or its tool names. Say "create the file", "run the command", "use the available issue-tracker integration; if there is none, ask the user to paste the ticket".
 2. **Open-closed adapters.** Anything specific to one AI tool lives only inside `adapters/<harness>/`. Adapters read the core; the core never reads adapters. Adding a harness never edits the core.
 3. **Write for the weakest model you will run.** See "Writing standard" below.
 4. **Artifacts over invocation.** Capabilities never invoke other skills. They read and write artifacts in the target project (see `contracts/`). Only flows invoke skills, and they do it by name.
@@ -17,9 +17,10 @@ skills/<name>/SKILL.md      one folder per skill, flat; prefix encodes the area
 agents/<name>.md            agent bodies for delegation; frontmatter has only name, description, metadata
 shared/references/*.md      cross-cutting references (security, accessibility, performance, privacy, prompting)
 contracts/                  project-layout.md, state.md, environment.md, templates/ for artifacts
+providers/<class>/<impl>.py native providers for requirement classes; interface in providers/CONTRACT.md
 templates/                  capability.SKILL.md, flow.SKILL.md, agent.md
 adapters/<harness>/         adapter.json, install.sh, optional build.*, overrides/, README.md
-scripts/                    validate.py, new-skill.sh
+scripts/                    validate.py, new-skill.sh, doctor.py (which requirement classes are satisfied)
 docs/                       area-map.md, decisions.md, skill-authoring-guide.md
 ```
 

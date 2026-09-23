@@ -33,7 +33,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SKILLS = os.path.join(ROOT, "skills")
 AGENTS = os.path.join(ROOT, "agents")
-CORE_DIRS = ["skills", "agents", "shared", "contracts", "templates"]
+CORE_DIRS = ["skills", "agents", "shared", "contracts", "templates", "providers"]
 
 PREFIX_TO_AREA = {
     "biz": "business",

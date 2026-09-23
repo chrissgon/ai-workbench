@@ -17,9 +17,10 @@ skills/        the core: one folder per skill, flat, prefix = area (see AGENTS.m
 agents/        harness-neutral agent bodies used for delegation (review, explore, implement)
 shared/        references consumed by many skills (security, accessibility, prompting...)
 contracts/     what skills read and write in a target project, and the state file schema
+providers/     native implementations of requirement classes (publisher, mailer, image...) for harnesses without connectors
 templates/     SKILL.md and agent templates used by scripts/new-skill.sh
 adapters/      one self-contained folder per AI tool (claude-code, agents-dir, ...)
-scripts/       repo tooling: validate.py, new-skill.sh
+scripts/       repo tooling: validate.py, new-skill.sh, doctor.py
 docs/          area map, decisions log, skill authoring guide
 ```
 
