@@ -1,4 +1,4 @@
-> Copied from the previous repository as the authoring reference. It will move into the references of the skill that creates skills (`core-skill-creator`) once that skill exists. Repository-wide rules live in `AGENTS.md`; where the two disagree, `AGENTS.md` wins.
+> Authoring reference carried over from the previous repository, now owned by `core-skill-creator`. Load the section you need when the procedure in `SKILL.md` points at it. Repository-wide rules live in the workbench `AGENTS.md`; where the two disagree, `AGENTS.md` wins.
 
 # Agent Skills Guide
 

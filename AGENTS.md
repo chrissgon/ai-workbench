@@ -23,7 +23,7 @@ templates/                  capability.SKILL.md, flow.SKILL.md, agent.md
 packs/<name>.txt            installation subsets; default.txt excludes optional areas (see packs/README.md)
 adapters/<harness>/         adapter.json, install.sh, optional build.*, overrides/, README.md
 scripts/                    validate.py, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
-docs/                       area-map.md, decisions.md, skill-authoring-guide.md
+docs/                       area-map.md, decisions.md, inventory.md
 ```
 
 ## Areas and prefixes
@@ -120,7 +120,7 @@ Every skill is evaluated with a strong model and with a floor model (a large hos
 4. Add `references/`, `assets/`, `scripts/` only when the body needs them.
 5. Add `evals/evals.json` with at least two realistic cases.
 6. `python3 scripts/validate.py` until it reports zero errors.
-7. Ground the content in real expertise: past corrections, real artifacts, real failures. Do not generate from generic knowledge. See `docs/skill-authoring-guide.md`.
+7. Ground the content in real expertise: past corrections, real artifacts, real failures. Do not generate from generic knowledge. Follow `core-skill-creator`; its `references/authoring-guide.md` is the long-form reference.
 
 ## Adding an agent
 
@@ -128,7 +128,7 @@ Create `agents/<name>.md` from `templates/agent.md`. Frontmatter allows only `na
 
 ## Adding an adapter
 
-Create `adapters/<harness>/` with `adapter.json`, `install.sh`, `README.md`, and optionally `build.*` and `overrides/`. Build outputs stay inside the adapter folder. The adapter may symlink or copy core folders; it may not modify them. `scripts/validate.py` fails if a core file references a harness.
+Create `adapters/<harness>/` with `adapter.json`, `install.sh`, `README.md`, and optionally `build.*`, `overrides/`, `connectors.json` and `run-prompt.sh`. `run-prompt.sh` is the eval contract: `run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]` runs one prompt through the harness with the skill made discoverable in `<cwd>`, and writes `<out>/response.md` and `<out>/timing.json` (`total_tokens`, `duration_ms`, `cost_usd`, null when unknown). Build outputs stay inside the adapter folder. The adapter may symlink or copy core folders; it may not modify them. `scripts/validate.py` fails if a core file references a harness.
 
 ## Validation
 

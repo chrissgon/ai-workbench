@@ -12,3 +12,7 @@ bash adapters/agents-dir/install.sh --project .    # project-level: ./.agents/sk
 
 - Agents (`agents/`) are not installed by this adapter: agent formats differ per tool. Add a dedicated adapter when a tool's subagent format is needed.
 - References to `../../shared/` resolve only when the whole repository is present next to the symlinked skills. With `--copy`, shared references are not copied yet; use symlinks where possible.
+
+## Evals
+
+`run-prompt.sh` implements the eval contract with OpenCode (`opencode run`) by default, or any CLI through `RUN_PROMPT_CMD` (`{prompt_file}`, `{model}`, `{cwd}` placeholders). Token counts are not reported. Verify the runner's flags on first use.

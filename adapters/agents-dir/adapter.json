@@ -1,8 +1,20 @@
 {
   "harness": "agents-dir",
-  "covers": ["Codex", "Cursor", "Cline", "OpenCode", "OpenClaw", "any tool that reads .agents/skills or ~/.agents/skills"],
-  "consumes": ["skills"],
-  "strategy": { "skills": "symlink each selected skills/<name> into ~/.agents/skills/<name> (or ./.agents/skills with --project); selection by --pack" },
+  "covers": [
+    "Codex",
+    "Cursor",
+    "Cline",
+    "OpenCode",
+    "OpenClaw",
+    "any tool that reads .agents/skills or ~/.agents/skills"
+  ],
+  "consumes": [
+    "skills"
+  ],
+  "strategy": {
+    "skills": "symlink each selected skills/<name> into ~/.agents/skills/<name> (or ./.agents/skills with --project); selection by --pack"
+  },
   "install": "install.sh [--pack <name>]",
-  "generated": []
+  "generated": [],
+  "eval_runner": "run-prompt.sh"
 }

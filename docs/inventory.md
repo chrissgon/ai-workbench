@@ -1,6 +1,6 @@
 # Inventory: capabilities, flows and agents
 
-What the workbench should contain, per area, cross-referenced with the previous repository (`ai-prompts`). This is a plan, not a promise: a skill exists only after it has been written from the template, validated, and refined against at least one real task (see `docs/skill-authoring-guide.md`).
+What the workbench should contain, per area, cross-referenced with the previous repository (`ai-prompts`). This is a plan, not a promise: a skill exists only after it has been written from the template, validated, and refined against at least one real task (see `skills/core-skill-creator/references/authoring-guide.md`).
 
 **State legend.** `reuse`: content carried over, adapted to the template. `rewrite`: same purpose, new content (the old one was organization-specific, stack-bound or duplicated). `merge`: folded into another skill. `create`: no prior content; must be written alongside a real task, never from generic knowledge. `planned`: not built until a real project demands it.
 
@@ -215,6 +215,6 @@ Wave 0:
 - [x] core-research
 - [x] core-critique
 - [x] core-agents-md
-- [ ] core-skill-creator
+- [x] core-skill-creator
 - [x] researcher agent
-- [ ] eval runner
+- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real run pending)

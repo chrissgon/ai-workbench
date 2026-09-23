@@ -1,0 +1,4 @@
+{ "skill": "core-research", "run_summary": {
+  "with_skill": { "pass_rate": { "mean": 0.92 } }, "without_skill": { "pass_rate": { "mean": 0.55 } },
+  "with_skill.floor": { "pass_rate": { "mean": 0.6 } }, "without_skill.floor": { "pass_rate": { "mean": 0.4 } } },
+  "conditions": { "strong_delta": 0.37, "strong_delta_ok": true, "floor_pass_rate": 0.6, "floor_ok": false } }

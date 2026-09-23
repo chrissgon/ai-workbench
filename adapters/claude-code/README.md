@@ -23,3 +23,7 @@ Skills are invoked as `/ai-workbench:<skill-name>` and trigger automatically fro
 
 - Symlinks are created at build time, so the filesystem running the build must support them (macOS, Linux; Windows needs developer mode). Nothing symlinked is committed.
 - Whether a symlinked folder under `~/.claude/skills/` is picked up as a plugin must be confirmed on the first real install; the fallback is `claude --plugin-dir`.
+
+## Evals
+
+`run-prompt.sh` implements the eval contract used by `core-skill-creator`: it runs one prompt with `claude -p`, makes the skill discoverable at project scope and limits settings to the project so user-level skills do not leak into a without-skill run. Set `CLAUDE_EVAL_ARGS` for extra flags and `ANTHROPIC_BASE_URL` plus `ANTHROPIC_AUTH_TOKEN` to route a floor model through a proxy. Confirm isolation on the first run by searching the without-skill transcript for the skill's name.

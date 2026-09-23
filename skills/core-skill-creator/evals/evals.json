@@ -1,0 +1,44 @@
+{
+  "skill_name": "core-skill-creator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Cria uma skill de SEO pra gente, mkt-seo, com as melhores práticas.",
+      "expected_output": "The skill is not written. The response explains that without a real task, artifact or trace the result would be generic knowledge, and asks for one (a real page to optimize, a past audit, a correction the user made), with a recommendation for which to bring first.",
+      "files": [],
+      "assertions": [
+        "No skills/mkt-seo/ folder or SKILL.md is created",
+        "The response states that the skill would be generic knowledge without real material",
+        "The response asks for a real task or material, with a recommended option",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Here is the transcript where you kept guessing the ticket type before reading it (attached). Turn what we learned into the flow-implement-ticket skill.",
+      "expected_output": "Grounding note listing the observed failures (guessed ticket type, did not ask for the ticket when the tracker was unavailable); placement confirmed against the inventory (flow, engineering); scaffold via new-skill.sh; SKILL.md with a read-before-classify step, a degraded path asking for the ticket text, and gates; validator clean; evals with at least two cases including the no-tracker case; the run step is prepared with --dry-run and the user is asked which harness and models to use.",
+      "files": ["evals/files/transcript-guessing.md"],
+      "assertions": [
+        "A grounding note lists the failures observed in the transcript before any file is written",
+        "scripts/new-skill.sh is used to scaffold flow-implement-ticket with kind flow",
+        "SKILL.md contains an explicit step to read the ticket before classifying it and a degraded path when the tracker integration is missing",
+        "python3 scripts/validate.py is run and reports zero errors",
+        "evals.json has at least two cases, one of which covers the missing-tracker situation",
+        "The eval run is planned with --dry-run and the user is asked for harness and model ids rather than assumed"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "core-research got 0.6 on the floor model in iteration-2, transcripts attached. Improve it.",
+      "expected_output": "Each failing transcript is classified (vague instruction, too many options, reinvented logic, guessed instead of asking, invented fact); SKILL.md is changed only where a classification points; assertions that passed in every configuration are flagged for removal; a new iteration is run or planned; the report shows before and after pass rates and the conditions.",
+      "files": ["evals/files/iteration-2"],
+      "assertions": [
+        "Every failing case in the transcripts is classified into one of the failure categories with the evidence",
+        "Changes to SKILL.md map one to one to classifications",
+        "Assertions that passed in all configurations are listed for removal",
+        "The report includes pass rates before and after, or the planned rerun if models are not available",
+        "The skill is not marked done unless the floor condition and the strong-delta condition both hold"
+      ]
+    }
+  ]
+}
