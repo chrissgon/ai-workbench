@@ -69,6 +69,23 @@ def refuse(msg):
     return 1
 
 
+INSTRUCTION_HEADINGS = ("always", "never", "rules", "hard rules", "communication", "do", "don't", "workflow")
+
+
+def looks_like_instructions(path):
+    """Heuristic: a root document addressed to an AI tool rather than describing the project."""
+    try:
+        with open(path, encoding="utf-8", errors="ignore") as f:
+            head = f.read(6000)
+    except OSError:
+        return False
+    first_heading = next((l for l in head.splitlines() if l.startswith("#")), "")
+    if re.search(r"\binstructions?\b", first_heading, re.I):
+        return True
+    headings = [l.strip("# ").strip().lower() for l in head.splitlines() if l.startswith("## ")]
+    return sum(1 for h in headings if h in INSTRUCTION_HEADINGS) >= 2
+
+
 def name_guess(root):
     pj = os.path.join(root, "package.json")
     if os.path.isfile(pj):
@@ -96,9 +113,12 @@ def detect(root):
             continue
         stem = fn[:-3]
         if stem.upper() in EXCLUDED_STEMS or stem.upper().startswith("README"):
-            excluded.append(fn)
+            excluded.append({"file": fn, "reason": "never registered"})
         elif stem == stem.upper():
-            root_docs.append(fn)
+            if looks_like_instructions(os.path.join(root, fn)):
+                excluded.append({"file": fn, "reason": "instructions for an AI tool; leave untouched"})
+            else:
+                root_docs.append(fn)
     docs_dir = os.path.join(root, "docs")
     docs_files = []
     if os.path.isdir(docs_dir):
