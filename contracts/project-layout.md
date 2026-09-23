@@ -7,7 +7,8 @@ Skills never keep state inside this repository. Everything they produce for a pr
 ├── AGENTS.md                     # project conventions; created and maintained by core-agents-md
 └── docs/
     ├── workbench/
-    │   └── state.md              # phase, artifact status, decisions, open questions (schema: state.md)
+    │   ├── state.md              # phase, artifact status, decisions, open questions (schema: state.md)
+    │   └── briefs/<topic>.md     # shared-understanding briefs written by core-clarify
     ├── business/                 # idea-validation.md, market.md, icp.md, positioning.md, business-model.md, pricing.md, gtm.md, business-plan.md
     ├── product/                  # discovery.md, prd.md, roadmap.md, backlog.md, metrics.md
     ├── brand/                    # strategy.md, identity.md, voice.md, guidelines.md

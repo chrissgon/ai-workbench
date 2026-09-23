@@ -211,7 +211,7 @@ Skills in waves 2 to 5 are written alongside the corresponding Telar phase and r
 Wave 0:
 - [x] core-orchestrator
 - [x] core-project-init
-- [ ] core-clarify
+- [x] core-clarify
 - [ ] core-research
 - [ ] core-critique
 - [ ] core-agents-md

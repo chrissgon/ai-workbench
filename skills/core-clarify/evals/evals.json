@@ -1,0 +1,43 @@
+{
+  "skill_name": "core-clarify",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Grill me on this plan: I want to add dark mode to our docs site. Users toggle it in the header, we remember the choice, and it should respect the OS setting by default.",
+      "expected_output": "A first round of at most three questions with recommended answers, ordered by dependency (goal/scope before approach), none of which asks something the codebase could answer, followed after answers by a brief with decisions and an explicit Out list.",
+      "files": [],
+      "assertions": [
+        "The first round contains at most three questions",
+        "Every question has a recommended answer with a one-line reason",
+        "No question bundles two decisions",
+        "The brief contains an explicit 'Out' list under Scope",
+        "Each decision in the brief names who decided it"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Let's clarify the redesign. We'll keep the current Nuxt setup and add server-side rendering for SEO.",
+      "expected_output": "Before asking anything, the skill reads the project's configuration; if the project already renders on the server (or already generates static pages), it surfaces the contradiction between the request and the codebase in the first round instead of accepting the premise.",
+      "files": [],
+      "assertions": [
+        "The skill inspects the project's configuration or build setup before the first question",
+        "If the premise conflicts with the codebase, the conflict is stated in the first round and the user is asked which wins",
+        "The premise is not silently accepted or silently corrected",
+        "The fact established from the codebase appears under 'Facts established without asking' with its source"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Interview me about migrating our component library docs to v1.",
+      "expected_output": "Decisions already recorded in docs/workbench/state.md are cited, not re-asked; questions cover only the branches that are neither known nor answerable by reading MIGRATION.md; the brief lands in docs/workbench/briefs/ and decisions are appended to the state file.",
+      "files": [],
+      "assertions": [
+        "Decisions present in docs/workbench/state.md are cited rather than asked again",
+        "Nothing asked is answered by the registered migration document",
+        "The brief is written to docs/workbench/briefs/<topic>.md",
+        "New decisions are appended to the Decisions section of the state file without rewriting existing lines",
+        "Open questions that remain are added as checkboxes to the state file"
+      ]
+    }
+  ]
+}
