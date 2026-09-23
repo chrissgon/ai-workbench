@@ -213,7 +213,7 @@ Wave 0:
 - [x] core-project-init
 - [x] core-clarify
 - [ ] core-research
-- [ ] core-critique
+- [x] core-critique
 - [ ] core-agents-md
 - [ ] core-skill-creator
 - [ ] researcher agent

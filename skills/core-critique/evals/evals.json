@@ -1,0 +1,54 @@
+{
+  "skill_name": "core-critique",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Critique this fix: the dashboard is slow because it queries the database on every request, so we'll cache the result in memory for 10 minutes.",
+      "expected_output": "The goal is read from the proposal (dashboard slowness), assumptions are listed (data may be stale for 10 minutes, single process, memory bounded), and at least two findings with triggers appear: stale data after a write, unbounded memory or multi-instance cache divergence, and the absence of a measurement of the slow query.",
+      "files": [],
+      "assertions": [
+        "At least two findings are listed, each with a trigger, an impact, a severity, a likelihood and a test or mitigation",
+        "Stale data after an update is identified as a finding with a concrete trigger",
+        "The proposal is checked against the goal and the missing measurement of the slowness is called out",
+        "The proposal text is not rewritten or fixed in the output",
+        "The verdict is one of approved, approved with changes, needs revision, and its conditions map to findings"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Stress-test our business model doc at docs/business/business-model.md. It says the market is worth 2 billion, there are no direct competitors, and we'll charge 49 per month.",
+      "expected_output": "Findings on top-down sizing without a bottom-up check, on 'no competitors' as an unperformed search including substitutes and doing nothing, and on pricing without willingness-to-pay evidence; each with severity and what evidence would resolve it.",
+      "files": [],
+      "assertions": [
+        "'No competitors' is treated as a finding about missing research, not accepted as a fact",
+        "Top-down market sizing is flagged and a bottom-up check is proposed as the test",
+        "The price is flagged as an unstated assumption unless evidence of willingness to pay is cited",
+        "The business lens categories are used, not the engineering ones",
+        "The document is not edited"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Can you critique this? We'll move all API calls to a new service layer.",
+      "expected_output": "The skill stops and asks what the change must achieve, offering its best reading as the recommendation, before producing any finding.",
+      "files": [],
+      "assertions": [
+        "No findings are produced before the goal is known",
+        "The user is asked what the proposal must achieve, with a recommended answer",
+        "The output does not guess the goal and proceed"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Critique the plan in docs/product/specs/export-csv.md. It has acceptance criteria, an explicit out-of-scope list, error states and a metric.",
+      "expected_output": "If no finding with a real trigger exists, two what-if scenarios are written with the reason the plan holds under each, and the verdict is approved without invented problems.",
+      "files": [],
+      "assertions": [
+        "No finding is invented without a concrete trigger",
+        "If fewer than two findings exist, two what-if scenarios are written with reasons the plan holds",
+        "The verdict is approved or approved with changes, consistent with the findings",
+        "Assumptions are still listed even when the verdict is approved"
+      ]
+    }
+  ]
+}
