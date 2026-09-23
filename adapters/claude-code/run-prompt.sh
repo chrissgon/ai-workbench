@@ -31,7 +31,7 @@ if [[ -n "$SKILL_DIR" ]]; then
 fi
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
 set +e
-( cd "$CWD" && claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json --setting-sources project,local ${CLAUDE_EVAL_ARGS:---permission-mode acceptEdits} ) > "$OUT/raw.json" 2> "$OUT/stderr.log"
+( cd "$CWD" && claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json --setting-sources project,local ${CLAUDE_EVAL_ARGS:---permission-mode acceptEdits} ) < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log"
 RC=$?
 set -e
 END=$(python3 -c 'import time; print(int(time.time()*1000))')

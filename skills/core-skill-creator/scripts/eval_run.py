@@ -90,7 +90,7 @@ def run_prompt(runner, prompt_path, cwd, model, out, skill_dir):
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
     if skill_dir:
         cmd += ["--skill-dir", skill_dir]
-    r = subprocess.run(cmd, capture_output=True, text=True)
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if r.returncode != 0:
         with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
             f.write(r.stdout + "\n" + r.stderr)

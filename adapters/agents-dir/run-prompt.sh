@@ -35,7 +35,8 @@ else
   echo "Error: no runner. Install opencode or set RUN_PROMPT_CMD (see --help)." >&2; exit 1
 fi
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
-set +e; ( cd "$CWD" && bash -c "$CMD" ) > "$OUT/response.md" 2> "$OUT/stderr.log"; RC=$?; set -e
+# stdin closed: the runner otherwise waits on an inherited pipe that never ends
+set +e; ( cd "$CWD" && bash -c "$CMD" ) < /dev/null > "$OUT/response.md" 2> "$OUT/stderr.log"; RC=$?; set -e
 END=$(python3 -c 'import time; print(int(time.time()*1000))')
 printf '{"total_tokens": null, "duration_ms": %d, "cost_usd": null, "exit_code": %d}\n' "$((END-START))" "$RC" > "$OUT/timing.json"
 exit $RC
