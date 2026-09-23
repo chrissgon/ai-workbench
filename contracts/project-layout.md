@@ -26,3 +26,7 @@ Skills never keep state inside this repository. Everything they produce for a pr
 - Every artifact starts with a short header: purpose, owning skill, date, status (`draft` | `approved`). Status is mirrored in `docs/workbench/state.md`.
 - Day-to-day engineering tasks (implementing a ticket, fixing a bug) do not create artifacts under `docs/` except a temporary plan in `docs/engineering/plans/`, removed or archived when the task ships.
 - Artifact templates live in `contracts/templates/<name>.md` and are copied by the skill that owns the artifact.
+
+## Existing projects
+
+A project that already keeps specifications elsewhere (`ARCHITECTURE.md` at the root, a `specs/` folder) does not move them. `core-project-init` registers each one in `docs/workbench/state.md` as the slot it fills, with its real path and owner `existing`. A skill whose `inputs` list that slot reads the registered path. Only new artifacts follow the layout above. End-user documentation under `docs/` (a documentation site) is product content, never a workbench artifact.

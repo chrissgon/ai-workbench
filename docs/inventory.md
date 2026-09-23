@@ -205,3 +205,16 @@ Telar (AI-generated linguistic content; a sample exists, v1 is about to start) i
 - **Business and product come before engineering for Telar.** v1 should be built on a validated PRD, so `flow-business-plan` and the product skills are needed as soon as core exists, while engineering skills are refined on the sample's real code tasks.
 
 Skills in waves 2 to 5 are written alongside the corresponding Telar phase and refined against it before they count as done.
+
+## Progress
+
+Wave 0:
+- [x] core-orchestrator
+- [x] core-project-init
+- [ ] core-clarify
+- [ ] core-research
+- [ ] core-critique
+- [ ] core-agents-md
+- [ ] core-skill-creator
+- [ ] researcher agent
+- [ ] eval runner

@@ -1,0 +1,44 @@
+{
+  "skill_name": "core-project-init",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Set this project up for the workbench.",
+      "expected_output": "Detection run; questions for name (recommending the package name) and autonomy mode (recommending every-phase); then docs/workbench/state.md created and AGENTS.md created with the workbench section.",
+      "files": [],
+      "assertions": [
+        "The detect command is run before any question",
+        "At most three questions are asked, each with a recommended answer",
+        "docs/workbench/state.md is created with the chosen autonomy mode",
+        "AGENTS.md contains exactly one section between the workbench markers",
+        "No docs/<area>/ folder is created"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Onboard this repo to the workbench. Keep our docs where they are.",
+      "expected_output": "ARCHITECTURE.md and DESIGN-SYSTEM.md proposed as docs/engineering/architecture.md and docs/design/design-system.md; docs/button.md and CHANGELOG.md not proposed; the existing AGENTS.md content preserved with the section appended.",
+      "files": ["evals/files/existing-project"],
+      "assertions": [
+        "ARCHITECTURE.md is registered as docs/engineering/architecture.md with owner existing",
+        "DESIGN-SYSTEM.md is registered as docs/design/design-system.md with owner existing",
+        "docs/button.md is not registered and the report says why",
+        "CHANGELOG.md is neither registered nor edited",
+        "The original AGENTS.md lines are byte-identical and the workbench section appears once",
+        "No file was moved or renamed"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Switch this project to milestones mode.",
+      "expected_output": "Detection shows state exists; the update path is used with --set-autonomy milestones; nothing else changes.",
+      "files": ["evals/files/existing-project"],
+      "assertions": [
+        "--apply is not used",
+        "The Checkpoints line in docs/workbench/state.md reads milestones",
+        "The AGENTS.md section states milestones and still appears exactly once",
+        "No new questions about name or registrations are asked"
+      ]
+    }
+  ]
+}

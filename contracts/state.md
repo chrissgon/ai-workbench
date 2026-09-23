@@ -24,6 +24,7 @@ Keep it small. It is a table of contents with status, not a journal.
 |----------|-------------|--------|---------|
 | docs/business/idea-validation.md | biz-validate-idea | approved | 2026-09-22 |
 | docs/business/business-model.md | biz-business-model | draft | 2026-09-22 |
+| docs/engineering/architecture.md (at ARCHITECTURE.md) | existing | approved | 2026-09-22 |
 
 ## Decisions
 
@@ -45,6 +46,7 @@ Keep it small. It is a table of contents with status, not a journal.
 ## Rules
 
 - `Status` is `draft`, `approved` or `skipped`. Only the user approves. A skill sets `draft`; a checkpoint sets `approved` or `skipped`.
+- A pre-existing document is registered as `<slot> (at <real path>)` with owner `existing`. Skills that list the slot as an input read the real path. It is never moved or edited by registration.
 - A flow resumes from the first phase whose artifacts are not `approved` or `skipped`.
 - Decisions record what was decided, by whom, and where the reasoning lives. One line each.
 - Open questions are checkboxes; a flow surfaces unchecked ones at every checkpoint.
