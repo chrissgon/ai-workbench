@@ -59,7 +59,7 @@ description: >                       # Required: 1-1024 chars, what + when to us
   Include specific keywords for agent discovery.
 license: Apache-2.0                 # Optional: license identifier
 compatibility: >                     # Optional: environment requirements (≤500 chars)
-  Designed for Claude Code. Requires git, docker, jq.
+  Designed for terminal agents. Requires git, docker, jq.
 metadata:                           # Optional: custom key-value pairs
   author: example-org
   version: "1.0"
