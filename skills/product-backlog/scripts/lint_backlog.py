@@ -116,7 +116,7 @@ def main(argv):
         path_len[n] = best[0] + 1
         longest[n] = (longest[best[1]] if best[1] else []) + [n]
     critical = max(longest.values(), key=len) if longest else []
-    must_cover = sorted(i for i in spec_ids if i.startswith(("REQ-", "NFR-", "AC-")), key=lambda x: (x.split("-")[0], int(x.split("-")[1])))
+    must_cover = sorted((i for i in spec_ids if i.startswith(("REQ-", "NFR-", "AC-"))), key=lambda x: (x.split("-")[0], int(x.split("-")[1])))
     uncovered = [i for i in must_cover if i not in delivered]
     if uncovered:
         errors.append(f"spec ids delivered by no task: {uncovered}")
