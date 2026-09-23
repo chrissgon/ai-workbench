@@ -83,9 +83,12 @@ def main(argv):
     for i, body_lines in blocks.items():
         if i.startswith(("REQ-", "NFR-", "AC-")):
             for ln in body_lines:
-                low = ln.lower()
+                # digits inside ids (F-2, REQ-10) and source citations do not count as a number
+                bare = re.sub(r"\b(?:U|F|M|R|P|REQ|NFR|EDGE|AC|ASSUMPTION|OPEN|T-[a-z]+|ADR)-\d+\b", "", ln)
+                bare = re.sub(r"Source:.*$", "", bare)
+                low = bare.lower()
                 for w in VAGUE:
-                    if re.search(r"\b" + re.escape(w) + r"\b", low) and not re.search(r"\d", ln):
+                    if re.search(r"\b" + re.escape(w) + r"\b", low) and not re.search(r"\d", bare):
                         warnings.append(f"{i}: vague word {w!r} without a number on the line: {ln.strip()[:90]}")
             if re.search(r"\b(TBD|TODO)\b|\?\?\?", "\n".join(body_lines)):
                 errors.append(f"{i} contains TBD/TODO/???")

@@ -1,0 +1,61 @@
+# PRD: {product}
+
+- Owner: product-prd
+- Status: draft
+- Date: {YYYY-MM-DD}
+- Brief: {path}
+
+## Summary
+
+{two or three sentences: what the product is, for whom, what changes with this PRD}
+
+## Problem and goal
+
+- Problem: {one sentence}. Source: {…}
+- Goal: {one sentence, observable when reached}. Source: {…}
+
+## Users
+
+- U-1: {who}. Situation: {…}. Needs: {…}. Source: {…}
+
+## Scope
+
+- In: {…}. Source: {…}
+- Out: {…}. Source: {…}
+- Later: {…}. Source: {…}
+
+## Sources
+
+- {document, decision id, research citation, file path, user answer date}
+
+## Features
+
+- F-1: {name}. Outcome: the {user} can {…}. Priority: {must | should | later}. Phase: {P-n | OPEN-n}. Source: {…}
+
+## Success metrics
+
+- M-1: {metric}. Target: {number unit} {by when, only with a source}. Baseline: {value | none}. Measured by: {instrument}. Source: {…}
+
+## Constraints
+
+- {technical | business | operational | positioning}: {constraint}. Source: {…}
+
+## Dependencies and risks
+
+- R-1: {risk}. Trigger: {…}. Impact: {…}. Mitigation: {…}
+
+## Release phases
+
+- P-1: {name}. Includes: F-1, F-2. Exit: {observable state}. Source: {…}
+
+## Assumptions
+
+- ASSUMPTION-1: {statement}. Safe because: {reason}
+
+## Open questions
+
+- OPEN-1: {question}. Blocks: {F-n | M-n | P-n | nothing}. Recommended: {answer and why}
+
+## Readiness
+
+- Ready for feature specs: {yes: which first and why | no, because OPEN-n blocks F-m}
