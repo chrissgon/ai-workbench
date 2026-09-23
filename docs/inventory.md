@@ -226,7 +226,7 @@ Wave 1:
 - [x] eng-architecture
 - [ ] eng-tradeoffs
 - [ ] eng-unit-tests
-- [ ] eng-implement
+- [x] eng-implement
 - [ ] eng-integration-tests
 - [ ] eng-refactor
 - [ ] eng-code-review

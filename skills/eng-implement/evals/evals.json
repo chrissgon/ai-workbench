@@ -1,0 +1,41 @@
+{
+  "skill_name": "eng-implement",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Implement T-cm-2 from docs/product/backlog.md.",
+      "expected_output": "The task is loaded with scripts/task.py, its dependency T-cm-1 is checked as done, the task is marked in-progress, the design's versions contract is read, the check (tests/repo/versions.spec.ts) is written and run failing, app/versions.ts is created, lint and typecheck run, the diff contains only the planned files, the task is marked done with the check result, and a commit message is proposed but no commit is made.",
+      "files": [],
+      "assertions": [
+        "scripts/task.py is run for T-cm-2 before any file is created and the task is marked in-progress",
+        "If T-cm-1 is not done, the skill stops and says so instead of implementing",
+        "The check is run and shown failing before the implementation and passing after",
+        "git diff --stat lists only app/versions.ts, the test file and nothing else",
+        "The task is marked done with the check summary and no git commit is executed"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Implementa a T-cm-4 (o spike do bloco de exemplo).",
+      "expected_output": "The design's ADR-0002 is read; the spike is implemented as option A; if the raw text cannot be recovered from the slot, the skill reports it as a finding, records the outcome in the ADR as the task says, and asks before switching to option C rather than improvising; the check (generate one page, assert preview and highlighted code) is quoted.",
+      "files": [],
+      "assertions": [
+        "ADR-0002 is read before coding and the task's Check is run at the end with its output quoted",
+        "A failed assumption is reported as a finding and recorded in the ADR, not silently worked around",
+        "No file outside the task's Touches list is modified",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "The unit test for validateDocs is failing after my change, just make it pass.",
+      "expected_output": "The skill refuses to edit the test to pass it; it runs the test, reads the failure, fixes the code if the code is wrong, or explains why the test is wrong with evidence and asks before changing the test.",
+      "files": [],
+      "assertions": [
+        "The test is not edited to make it pass without an explanation and the user's agreement",
+        "The failing output is quoted and the cause is named",
+        "The change is confined to the code under test or the test, never both silently"
+      ]
+    }
+  ]
+}
