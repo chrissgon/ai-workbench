@@ -1,0 +1,77 @@
+{
+  "skill_name": "core-orchestrator",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Me ajude a criar um produto digital do zero. É um app de receitas para quem tem restrições alimentares.",
+      "expected_output": "A routing block naming flow-new-product as a cross-area flow, noting that no state file exists and that the flow will create it, and asking which autonomy mode the user wants before starting.",
+      "files": [],
+      "assertions": [
+        "The output names exactly one skill: flow-new-product",
+        "The shape is identified as a cross-area flow",
+        "The output states that docs/workbench/state.md is missing and that the flow will create it",
+        "No business, product or design work is performed in the output",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Check ticket 34324 in Jira and implement it.",
+      "expected_output": "A routing block naming flow-implement-ticket, reporting the integration:issue-tracker requirement as satisfied or missing, and if missing saying the flow will ask for the ticket text.",
+      "files": [],
+      "assertions": [
+        "The output names exactly one skill: flow-implement-ticket",
+        "The output mentions the requirement class integration:issue-tracker and its status",
+        "If the requirement is missing, the output says the flow will ask the user to paste the ticket rather than refusing",
+        "The output does not classify the ticket as a bug or feature before reading it"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Valide comigo o modelo de negócio do Telar.",
+      "expected_output": "A routing block naming biz-business-model as a capability, listing which docs/business artifacts were found or are missing, or asking where the Telar project lives if no docs and no state file exist in the current directory.",
+      "files": [],
+      "assertions": [
+        "The output names exactly one skill: biz-business-model",
+        "The shape is identified as a capability, not a flow",
+        "The output either lists docs/business/icp.md and docs/business/positioning.md as found or missing, or asks where the project lives",
+        "The business model itself is not discussed in the output"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Schedule a LinkedIn post about our launch for tomorrow at 9am.",
+      "expected_output": "A routing block naming flow-social-post, listing the requirement classes generator:image and publisher:linkedin with their status, and noting the flow has a confirmation gate.",
+      "files": [],
+      "assertions": [
+        "The output names exactly one skill: flow-social-post",
+        "The output mentions publisher:linkedin as a requirement class and its status",
+        "The output does not write the post or attempt to publish anything",
+        "The output does not classify the request as direct"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "rename the variable usrCnt to userCount in src/stats.ts",
+      "expected_output": "No routing block; the change is made directly.",
+      "files": [],
+      "assertions": [
+        "No skill is named",
+        "No routing block is printed",
+        "The output does not invoke or describe the orchestrator procedure"
+      ]
+    },
+    {
+      "id": 6,
+      "prompt": "Improve our onboarding.",
+      "expected_output": "No route yet; at most three questions with recommended answers that distinguish product (what users do first), design (screens and flows), engineering (signup code), and marketing (activation emails).",
+      "files": [],
+      "assertions": [
+        "No skill other than core-clarify is named as the route",
+        "At most three questions are asked",
+        "Each question comes with a recommended answer",
+        "The output does not pick an area silently"
+      ]
+    }
+  ]
+}

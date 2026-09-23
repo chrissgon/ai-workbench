@@ -196,3 +196,12 @@ Sixty-two skills is the reason packs exist. It is also why each wave must ship r
 | 5 | flow-new-product, remaining marketing (4), remaining AI (5), ops-qa-handover, design-accessibility-review, assistant candidates | the capstone flow ties every area; the rest fills in behind real demand |
 
 Planned items are never scheduled; they are built when a project needs them.
+
+## First real project: Telar
+
+Telar (AI-generated linguistic content; a sample exists, v1 is about to start) is the vehicle for every wave after 0. Two consequences:
+
+- **AI moves forward.** Telar is an AI product, so `ai-feature-requirements`, `ai-llm-integration`, `ai-evals` and `ai-governance` are needed in the same wave as Telar's engineering, not in wave 5. `ai-opportunity-assessment` still runs first and must still be able to say which parts of Telar do not need AI.
+- **Business and product come before engineering for Telar.** v1 should be built on a validated PRD, so `flow-business-plan` and the product skills are needed as soon as core exists, while engineering skills are refined on the sample's real code tasks.
+
+Skills in waves 2 to 5 are written alongside the corresponding Telar phase and refined against it before they count as done.
