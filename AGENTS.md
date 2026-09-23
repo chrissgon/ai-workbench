@@ -91,7 +91,9 @@ Cheap models drop steps in long lists, invent structure when there is no templat
 - Load references per step ("When you reach step 4, read references/pricing-models.md"), never all up front.
 - `SKILL.md` stays under 500 lines and roughly 5,000 tokens. Depth goes into `references/`, one level deep.
 
-Every skill is evaluated with a strong model and with a floor model; it passes only when the floor model passes. Floor models are configured in the eval tooling, not named in skills.
+**Do not cap strong models while helping weak ones.** Constrain the *contract*, not the *content*: the output structure and the quality criteria are mandatory; the procedure is the default path to satisfy them, and a model that meets the criteria another way is not wrong. Prefer "at least N" over "exactly N". Never prescribe the answer itself, only how to reach and check it.
+
+Every skill is evaluated with a strong model and with a floor model (a large hosted open-weight model). It passes only when the floor model passes **and** the strong model scores at least as well with the skill as without it. A negative delta on the strong model means the skill is over-specified: loosen the procedure, keep the criteria. Floor models are configured in the eval tooling, not named in skills.
 
 ## Adding a skill
 
