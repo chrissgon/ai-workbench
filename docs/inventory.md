@@ -218,3 +218,22 @@ Wave 0:
 - [x] core-skill-creator
 - [x] researcher agent
 - [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real run pending)
+
+Wave 1:
+- [x] eng-codebase-map
+- [ ] eng-impact-analysis
+- [ ] eng-root-cause
+- [ ] eng-architecture
+- [ ] eng-tradeoffs
+- [ ] eng-unit-tests
+- [ ] eng-implement
+- [ ] eng-integration-tests
+- [ ] eng-refactor
+- [ ] eng-code-review
+- [ ] eng-docs
+- [ ] product-feature-spec
+- [ ] product-backlog
+- [ ] ops-pull-request
+- [ ] ops-branch-sync
+- [ ] flow-fix-bug, flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
+- [ ] agents explorer, implementer, reviewer

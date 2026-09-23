@@ -3,7 +3,7 @@
 
 Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
-                      [--floor-model <id>] [--grader <id>] [--case <id>]... [--threshold 0.8]
+                      [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
                       [--only with|without] [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
@@ -12,6 +12,9 @@ adapters/<harness>/run-prompt.sh, grades every assertion with the grader model, 
 
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
   evals-workspace/<name>/iteration-N/benchmark.json
+
+--floor-harness lets the floor model run through a different adapter (for example agents-dir for an
+open-weight model served through its own CLI) while the strong model and the grader use --harness.
 
 Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
 must write <out>/response.md and <out>/timing.json ({"total_tokens", "duration_ms", "cost_usd"}).
@@ -37,7 +40,7 @@ def die(msg, code=2):
 
 
 def parse(argv):
-    opts = {"skill": None, "harness": None, "model": None, "floor": None, "grader": None, "cases": [],
+    opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
             "threshold": 0.8, "only": None, "grade": True, "dry": False}
     i = 0
     while i < len(argv):
@@ -50,6 +53,7 @@ def parse(argv):
         elif a == "--harness": opts["harness"] = val(); i += 2
         elif a == "--model": opts["model"] = val(); i += 2
         elif a == "--floor-model": opts["floor"] = val(); i += 2
+        elif a == "--floor-harness": opts["floor_harness"] = val(); i += 2
         elif a == "--grader": opts["grader"] = val(); i += 2
         elif a == "--case": opts["cases"].append(val()); i += 2
         elif a == "--threshold": opts["threshold"] = float(val()); i += 2
@@ -163,6 +167,12 @@ def main(argv):
     runner = os.path.join(ROOT, "adapters", o["harness"], "run-prompt.sh")
     if not os.path.isfile(runner):
         die(f"adapter {o['harness']!r} has no run-prompt.sh (see AGENTS.md, Adding an adapter).")
+    floor_runner = runner
+    if o["floor_harness"]:
+        floor_runner = os.path.join(ROOT, "adapters", o["floor_harness"], "run-prompt.sh")
+        if not os.path.isfile(floor_runner):
+            die(f"adapter {o['floor_harness']!r} has no run-prompt.sh.")
+    runner_for = {"strong": runner, "floor": floor_runner}
     skill_dir = os.path.join(ROOT, "skills", o["skill"])
     cases = load_cases(o["skill"])
     if o["cases"]:
@@ -174,7 +184,7 @@ def main(argv):
     it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]))
     plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m} for c in cases for v in variants for t, m in models]
     if o["dry"]:
-        print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
+        print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT), "floor_runner": os.path.relpath(floor_runner, ROOT),
                           "grader": o["grader"], "runs": plan}, indent=2))
         return 0
 
@@ -198,7 +208,7 @@ def main(argv):
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])
                 before = file_index(cwd)
-                ok = run_prompt(runner, pp, cwd, model, out, skill_dir if v == "with_skill" else None)
+                ok = run_prompt(runner_for[tier], pp, cwd, model, out, skill_dir if v == "with_skill" else None)
                 if not ok:
                     failures += 1
                     print(f"RUN FAILED  case {c['id']} {name}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
@@ -241,7 +251,7 @@ def main(argv):
     if o["floor"] and mean("with_skill.floor") is not None:
         conditions["floor_pass_rate"] = mean("with_skill.floor")
         conditions["floor_ok"] = mean("with_skill.floor") >= o["threshold"]
-    bench = {"skill": o["skill"], "harness": o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
+    bench = {"skill": o["skill"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
              "run_summary": summary, "conditions": conditions, "failures": failures}
     with open(os.path.join(it_dir, "benchmark.json"), "w", encoding="utf-8") as f:
         json.dump(bench, f, indent=2)

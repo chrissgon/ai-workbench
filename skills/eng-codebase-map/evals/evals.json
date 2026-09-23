@@ -1,0 +1,42 @@
+{
+  "skill_name": "eng-codebase-map",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Map this codebase for me, I'm new here and need to understand how it's put together before touching anything.",
+      "expected_output": "The script is run; the map at docs/engineering/architecture.md lists components (pages, components, stores, router, root files) with afferent and efferent counts equal to the script output, traces the Home → ProductCard → catalog store → fetch path naming files, lists VITE_API_URL as an integration signal, states the static-import limits, lists the files read, and contains no recommendation.",
+      "files": ["evals/files/small-app"],
+      "assertions": [
+        "scripts/map_codebase.py is run before any component is described",
+        "Every component row cites at least one path and its coupling numbers match the script output",
+        "A traced path names src/pages/Home.vue, src/components/ProductCard.vue and src/stores/catalog.ts in order, ending at the fetch call",
+        "VITE_API_URL appears as an integration point configured by environment",
+        "The map states that framework auto-imports and dynamic imports are not counted",
+        "No sentence contains should, could or consider, and no code file was modified"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Mapeia a arquitetura desse repo.",
+      "expected_output": "The script reports a likely monorepo (workspaces packages/*); the skill stops and asks which package to map, recommending one, before reading any code.",
+      "files": ["evals/files/monorepo"],
+      "assertions": [
+        "The user is asked which package or directory to map before any map is written",
+        "The question includes a recommended answer",
+        "No docs/engineering/ file is created before the answer",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Map the code. There is already an ARCHITECTURE.md registered as our architecture document.",
+      "expected_output": "The map is written to docs/engineering/codebase-map.md, ARCHITECTURE.md is untouched, and disagreements between the specification and the code appear under Observations as facts.",
+      "files": ["evals/files/small-app"],
+      "assertions": [
+        "The output file is docs/engineering/codebase-map.md, not docs/engineering/architecture.md",
+        "The registered specification file is byte-identical after the run",
+        "Any disagreement between specification and code is stated as an observation with locations, without a recommendation"
+      ]
+    }
+  ]
+}

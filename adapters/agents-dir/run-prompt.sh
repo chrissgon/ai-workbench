@@ -6,7 +6,7 @@
 # Writes <out>/response.md and <out>/timing.json (tokens unknown: null). With --skill-dir the skill is
 # symlinked into <cwd>/.agents/skills/<name>. Override the command with RUN_PROMPT_CMD, a template with
 # {prompt_file}, {model} and {cwd}, e.g. RUN_PROMPT_CMD='mytool --model {model} < {prompt_file}'.
-# Verify the runner's flags on first use; they are not part of any standard.
+# Flags verified against opencode 1.18.32 (run --help); re-check after upgrades.
 set -euo pipefail
 PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR=""
 while [[ $# -gt 0 ]]; do
@@ -29,7 +29,8 @@ fi
 if [[ -n "${RUN_PROMPT_CMD:-}" ]]; then
   CMD="${RUN_PROMPT_CMD//\{prompt_file\}/$PROMPT}"; CMD="${CMD//\{model\}/$MODEL}"; CMD="${CMD//\{cwd\}/$CWD}"
 elif command -v opencode >/dev/null; then
-  CMD="opencode run -m \"$MODEL\" \"\$(cat \"$PROMPT\")\""
+  # --pure: no external plugins; --auto: approve tool permissions inside the sandboxed cwd (override with OPENCODE_EVAL_ARGS)
+  CMD="opencode run ${OPENCODE_EVAL_ARGS:---pure --auto} -m \"$MODEL\" \"\$(cat \"$PROMPT\")\""
 else
   echo "Error: no runner. Install opencode or set RUN_PROMPT_CMD (see --help)." >&2; exit 1
 fi
