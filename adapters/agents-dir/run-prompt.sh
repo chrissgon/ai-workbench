@@ -35,8 +35,14 @@ else
   echo "Error: no runner. Install opencode or set RUN_PROMPT_CMD (see --help)." >&2; exit 1
 fi
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
+# Isolation: the default runner loads skills and config from the user's home (its own and other tools').
+# Run with a throwaway HOME so only the project-scoped skill in <cwd> is visible; provider keys still come
+# from the environment. Set RUN_PROMPT_KEEP_HOME=1 to use the real home instead.
+ISO_HOME=""
+if [[ -z "${RUN_PROMPT_KEEP_HOME:-}" ]]; then ISO_HOME="$(mktemp -d)"; export HOME="$ISO_HOME" XDG_CONFIG_HOME="$ISO_HOME/.config" XDG_DATA_HOME="$ISO_HOME/.local/share"; fi
 # stdin closed: the runner otherwise waits on an inherited pipe that never ends
 set +e; ( cd "$CWD" && bash -c "$CMD" ) < /dev/null > "$OUT/response.md" 2> "$OUT/stderr.log"; RC=$?; set -e
+[[ -n "$ISO_HOME" ]] && rm -rf "$ISO_HOME"
 END=$(python3 -c 'import time; print(int(time.time()*1000))')
 printf '{"total_tokens": null, "duration_ms": %d, "cost_usd": null, "exit_code": %d}\n' "$((END-START))" "$RC" > "$OUT/timing.json"
 exit $RC

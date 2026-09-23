@@ -4,7 +4,7 @@
 Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
-                      [--only with|without] [--no-grade] [--dry-run]
+                      [--only with|without] [--tiers strong,floor] [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files, runs the prompt through
@@ -41,7 +41,7 @@ def die(msg, code=2):
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": 0.8, "only": None, "grade": True, "dry": False}
+            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -58,6 +58,7 @@ def parse(argv):
         elif a == "--case": opts["cases"].append(val()); i += 2
         elif a == "--threshold": opts["threshold"] = float(val()); i += 2
         elif a == "--only": opts["only"] = val(); i += 2
+        elif a == "--tiers": opts["tiers"] = {t.strip() for t in val().split(",")}; i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
@@ -181,6 +182,10 @@ def main(argv):
         die("no matching eval cases.")
     variants = ["with_skill", "without_skill"] if o["only"] is None else [f"{o['only']}_skill"]
     models = [("strong", o["model"])] + ([("floor", o["floor"])] if o["floor"] else [])
+    if o["tiers"]:
+        models = [m for m in models if m[0] in o["tiers"]]
+        if not models:
+            die("--tiers selected no model.")
     it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]))
     plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m} for c in cases for v in variants for t, m in models]
     if o["dry"]:
