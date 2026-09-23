@@ -1,0 +1,2 @@
+{ "name": "@acme/widgets", "description": "Tiny widget library", "version": "1.0.0",
+  "scripts": { "build": "vite build", "test": "vitest run", "test:e2e": "playwright test", "lint": "eslint .", "typecheck": "tsc --noEmit" } }

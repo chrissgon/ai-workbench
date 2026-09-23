@@ -214,7 +214,7 @@ Wave 0:
 - [x] core-clarify
 - [x] core-research
 - [x] core-critique
-- [ ] core-agents-md
+- [x] core-agents-md
 - [ ] core-skill-creator
 - [x] researcher agent
 - [ ] eval runner
