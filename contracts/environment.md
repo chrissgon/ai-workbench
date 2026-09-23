@@ -9,7 +9,7 @@ Skills declare what they need from the environment as *classes*, never as produc
 | `integration:issue-tracker` | Jira, Linear, GitHub Issues | engineering flows |
 | `integration:vcs` | GitHub, GitLab | delivery |
 | `integration:design-tool` | Figma | design, validation |
-| `search:web` | any web search tool | research, business, marketing |
+| `search:web` | any web search tool, including fetching the pages it returns | research, business, marketing |
 | `generator:image` | any image model behind an API | design assets, marketing |
 | `generator:video` | any video model behind an API | marketing (slot reserved, not implemented) |
 | `publisher:<platform>` | LinkedIn via a scheduler API, X, blog CMS | marketing |

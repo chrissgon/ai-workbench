@@ -212,9 +212,9 @@ Wave 0:
 - [x] core-orchestrator
 - [x] core-project-init
 - [x] core-clarify
-- [ ] core-research
+- [x] core-research
 - [x] core-critique
 - [ ] core-agents-md
 - [ ] core-skill-creator
-- [ ] researcher agent
+- [x] researcher agent
 - [ ] eval runner

@@ -1,0 +1,2 @@
+# Harness-specific settings merged into the generated researcher agent.
+tools: WebSearch, WebFetch, Read, Grep, Glob

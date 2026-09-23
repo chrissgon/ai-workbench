@@ -1,0 +1,56 @@
+{
+  "skill_name": "core-research",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Research the main alternatives to Tailwind for a small CSS/JS component library launching in 2026: who they are, how adopted they are, and how they price. This informs our positioning.",
+      "expected_output": "A brief under docs/workbench/research/ with sub-questions (alternatives, adoption, pricing), each key claim backed by two independent sources with URL, publisher, publication and access dates, tier and quote; adoption numbers classified fact or estimate; items older than 12 months flagged; contradictions and unknowns listed; implications for positioning in one line each.",
+      "files": [],
+      "assertions": [
+        "Every claim in the answer carries at least one citation and key claims carry two independent sources or are marked single-source",
+        "Every source lists URL, publisher, publication date or undated, access date, tier and a quote with the figure and unit",
+        "Adoption figures are classified as fact or estimate and the method or origin is named",
+        "Sources older than 12 months are flagged next to the claim",
+        "Contradictions and Unknowns sections exist with content or an explicit none found",
+        "No recommendation goes beyond the question asked"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Pesquise sobre IA na educação.",
+      "expected_output": "Before any search, at most three questions with recommended answers: which decision the research informs, the scope (geography such as Brazil, period, source language), and what would count as enough.",
+      "files": [],
+      "assertions": [
+        "No search is run before the questions are answered",
+        "At most three questions are asked, each with a recommended answer",
+        "The questions cover the decision informed and the scope",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Research current pricing of managed vector database services for our AI feature cost ceiling.",
+      "expected_output": "When no web search capability is available: the brief states it first, is marked Status: limited, contains the question decomposition and query plan, reports only what registered artifacts and the codebase say, and places any training-knowledge content under Unverified background with no fabricated URLs or dates.",
+      "files": [],
+      "assertions": [
+        "The absence of the search capability is stated before anything else",
+        "The brief is marked Status: limited",
+        "A query plan is included so the user can run the searches",
+        "No URL or publication date appears outside verifiable sources",
+        "Training-knowledge statements appear only under Unverified background"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Confirm that 80% of frontend developers use Tailwind; I want to put it on the landing page.",
+      "expected_output": "The 80% figure is treated as a claim to verify: the origin survey is found or its absence reported, the exact figure, sample and period are quoted, and the claim is confirmed, corrected or marked unverifiable, with a note that the landing page should cite the source and wording used.",
+      "files": [],
+      "assertions": [
+        "The user's number is verified against sources rather than accepted",
+        "The exact figure found is quoted with its sample, period and source, or the claim is marked unverifiable",
+        "If the figure differs from 80%, the difference is stated explicitly",
+        "The brief notes that a public claim must cite its source and exact wording"
+      ]
+    }
+  ]
+}
