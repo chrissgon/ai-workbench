@@ -231,7 +231,7 @@ Wave 1:
 - [ ] eng-refactor
 - [ ] eng-code-review
 - [ ] eng-docs
-- [ ] product-feature-spec
+- [x] product-feature-spec
 - [ ] product-backlog
 - [ ] ops-pull-request
 - [ ] ops-branch-sync

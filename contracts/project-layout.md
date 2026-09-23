@@ -12,7 +12,7 @@ Skills never keep state inside this repository. Everything they produce for a pr
     │   ├── critiques/<topic>.md  # adversarial reviews written by core-critique
     │   └── research/<topic>.md   # sourced research briefs written by core-research
     ├── business/                 # idea-validation.md, market.md, icp.md, positioning.md, business-model.md, pricing.md, gtm.md, business-plan.md
-    ├── product/                  # discovery.md, prd.md, roadmap.md, backlog.md, metrics.md
+    ├── product/                  # discovery.md, prd.md, specs/<feature>.md, roadmap.md, backlog.md, metrics.md
     ├── brand/                    # strategy.md, identity.md, voice.md, guidelines.md
     ├── design/                   # research.md, flows.md, wireframes/, design-system.md, handoff/
     ├── engineering/              # architecture.md (or codebase-map.md beside a registered spec), adr/NNNN-title.md, plans/<task>.md

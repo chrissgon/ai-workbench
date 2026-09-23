@@ -1,0 +1,43 @@
+{
+  "skill_name": "product-feature-spec",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Write the spec for the Markdown content model of our docs site. The brief is in docs/workbench/briefs/perfectui-doc-redesign.md and the codebase map in docs/engineering/architecture.md.",
+      "expected_output": "A spec at docs/product/specs/<feature>.md where every REQ cites a brief decision, a map fact or a user answer; NFRs carry numbers or become OPEN with a recommended value; edge cases cover the version-and-time and device categories; every REQ and NFR is covered by an AC in Given/When/Then; lint passes; the report says whether it is ready for architecture.",
+      "files": [],
+      "assertions": [
+        "Every REQ and NFR line has a Source: line naming a decision, document, file or user answer",
+        "No NFR contains a number that is not traced to a source; untraced targets appear as OPEN with a recommended value",
+        "Every REQ and NFR id appears in at least one AC Covers: line and every AC has Given, When and Then",
+        "Edge cases include the version-switch case and the browser-without-feature case with expected behaviour after the arrow",
+        "scripts/lint_spec.py is run and reports ok: true",
+        "The artifact is registered in docs/workbench/state.md with owner product-feature-spec"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Faz a spec do login social pra mim.",
+      "expected_output": "No brief exists; the skill asks at most three questions with recommended answers (problem and users, which providers, what happens to existing accounts) before writing anything.",
+      "files": [],
+      "assertions": [
+        "No spec file is written before the questions are answered",
+        "At most three questions are asked, each with a recommended answer",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Lint this spec and fix what it flags: docs/product/specs/search.md",
+      "expected_output": "The lint reports REQ-1 without Source and not covered, NFR-1 vague without a number and not covered, EDGE-1 without arrow, OPEN-1 without Blocks; each is fixed by asking or sourcing, never by inventing a number.",
+      "files": ["evals/files/bad-spec.md"],
+      "assertions": [
+        "The lint script is run before any edit and its findings are listed",
+        "REQ-1 gets a Source line or becomes OPEN; it is not left unsourced",
+        "NFR-1 gets a number only with a source or a user answer, otherwise it becomes OPEN with a recommended value",
+        "EDGE-1 gets an expected behaviour after the arrow",
+        "The lint reports ok: true after the fixes"
+      ]
+    }
+  ]
+}
