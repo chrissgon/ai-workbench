@@ -223,7 +223,7 @@ Wave 1:
 - [x] eng-codebase-map
 - [ ] eng-impact-analysis
 - [ ] eng-root-cause
-- [ ] eng-architecture
+- [x] eng-architecture
 - [ ] eng-tradeoffs
 - [ ] eng-unit-tests
 - [ ] eng-implement

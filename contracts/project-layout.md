@@ -15,7 +15,7 @@ Skills never keep state inside this repository. Everything they produce for a pr
     ├── product/                  # discovery.md, prd.md, specs/<feature>.md, roadmap.md, backlog.md, metrics.md
     ├── brand/                    # strategy.md, identity.md, voice.md, guidelines.md
     ├── design/                   # research.md, flows.md, wireframes/, design-system.md, handoff/
-    ├── engineering/              # architecture.md (or codebase-map.md beside a registered spec), adr/NNNN-title.md, plans/<task>.md
+    ├── engineering/              # architecture.md (or codebase-map.md beside a registered spec), designs/<feature>.md, adr/NNNN-title.md, plans/<task>.md
     ├── ai/                       # opportunity.md, requirements.md, evals/, governance.md
     ├── delivery/                 # runbooks/, releases/, incidents/
     └── marketing/                # messaging.md, launch-plan.md, calendar.md, content/, campaigns/
