@@ -15,7 +15,7 @@ metadata:
   outputs: []
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Orchestrator
@@ -48,19 +48,19 @@ Progress:
   | capability | one deliverable, one area ("validate the business model", "review this diff") | one `<area>-` skill |
   | flow, one area | several steps in one area, or a deliverable that needs earlier steps ("marketing strategy for the launch", "fix this bug end to end") | one `flow-` skill |
   | flow, cross-area | outcome spanning areas ("build a product from scratch", "launch X") | `flow-new-product` or the cross-area flow that matches |
-  | ambiguous | two rows fit with different deliverables, or the target is unknown (which product, which repository) | `core-clarify`, then re-run from step 2 |
+  | ambiguous | two rows fit with different deliverables, or the target is unknown (which product, which repository) | ask (step 6) inside the routing block, with Route set to the most likely skill and status `pending`; use `core-clarify` only when the request is a plan that needs a full brief |
 
 - [ ] Step 3: Find the area. Read [references/routing.md](references/routing.md) and match the request's *intent*, not its words; requests arrive in any language. If two areas fit, apply the boundary test: would a senior practitioner of area X know how to do this without expertise from area Y? If yes, X. Keep in mind: AI *inside the product* is the `ai-` area; the workbench improving itself is `core-`.
 - [ ] Step 4: Pick the skill from the routing table row. If the routed skill is not available in this environment, say so, propose one fallback (the closest available skill, or direct execution with its limits stated) as a recommendation, and wait for the user's yes before proceeding. Add `- [ ] Skill gap: <request> → <missing skill>` to "Open questions" in the state file when it exists.
 - [ ] Step 5: Check what the skill needs. For each artifact in its `inputs`, note present or missing. For each class in its `requires`, check the environment (run the environment doctor if available; otherwise look for the integration or provider). Missing inputs and requirements never block routing: the skill degrades as its body describes. You only report them.
-- [ ] Step 6: If the shape was ambiguous or a key fact is unknown, stop and ask. At most three questions, each with a recommended answer. Do not guess the product, the repository, the platform or the audience. Ask *inside* the routing block: fill Route (the most likely skill, marked `pending`), Why, Context and Requirements with what you know, and put the questions under Next. The block is the structure the reader relies on; it is never skipped, even when the answer is a question.
+- [ ] Step 6: If the shape was ambiguous or a key fact is unknown, stop and ask. At most three questions, each with a recommended answer. Do not guess the product, the repository, the platform or the audience. Ask *inside* the routing block: Route names the most likely skill with its shape word (`capability` or `flow`) and the status `pending`; fill Why, Context and Requirements with what you know; put the questions under Next. Never replace the shape word with `ambiguous`; ambiguity is expressed by `pending`. The block is the structure the reader relies on; it is never skipped, even when the answer is a question.
 - [ ] Step 7: Write the routing block (template below), then invoke the chosen skill by name. Hand over everything you learned in steps 1 and 5 so the skill does not ask again.
 - [ ] Step 8: Self-check against "Quality criteria" before invoking.
 
 ## Output template
 
 ```markdown
-Route: <skill-name> (<direct | capability | flow>)
+Route: <skill-name> (<capability | flow>, <ready | pending>)
 Why: <intent> → <area> → <skill>, in one line
 Context: found <artifacts present, or "none">; missing <artifacts absent, or "none">
 Requirements: <class → satisfied by ... | missing → the skill will ...>; or "none"
@@ -74,7 +74,7 @@ For `direct`, skip the block and answer.
 
 Approve the route only if all of the following hold:
 
-- Exactly one skill is named (marked `pending` when questions are still open), or the shape is `direct`.
+- Exactly one skill is named with its shape word, `ready` or `pending`; or the shape is `direct`.
 - The routing block is present whenever the shape is not `direct`, including when the output is a set of questions.
 - "Why" names the intent and the area, not keywords from the request.
 - None of the routed skill's work was done here.
