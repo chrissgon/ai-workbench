@@ -45,9 +45,10 @@ PREFIX_TO_AREA = {
     "mkt": "marketing",
     "ai": "ai",
     "core": "core",
+    "asst": "assistant",  # optional area, excluded from the default pack
     "flow": None,  # flows declare the area they mostly live in, or "core" for cross-area
 }
-AREAS = {"business", "product", "brand", "design", "engineering", "delivery", "marketing", "ai", "core"}
+AREAS = {"business", "product", "brand", "design", "engineering", "delivery", "marketing", "ai", "core", "assistant"}
 KINDS = {"capability", "flow"}
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_LINES = 500

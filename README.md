@@ -8,7 +8,8 @@ Harness-agnostic agents, skills and workflows that let an AI build a digital sol
 2. **Adapters are open-closed.** Supporting a new AI tool means adding a folder under `adapters/`. It never means editing the core.
 3. **Write for the weakest model you will run.** Every step explicit, every output templated, every judgment given criteria. Detailed does not mean long.
 4. **Areas talk through artifacts, not calls.** A capability reads what earlier phases wrote to `docs/` in the target project; only flows invoke skills.
-5. **Everything in this repository is written in English.**
+5. **One explicit approval, then autonomy.** Actions with side effects are shown once and approved once; after that the AI proceeds, including unattended, and re-asks only for what changed.
+6. **Everything in this repository is written in English.**
 
 ## Layout
 
@@ -19,6 +20,7 @@ shared/        references consumed by many skills (security, accessibility, prom
 contracts/     what skills read and write in a target project, and the state file schema
 providers/     native implementations of requirement classes (publisher, mailer, image...) for harnesses without connectors
 templates/     SKILL.md and agent templates used by scripts/new-skill.sh
+packs/         installation subsets; default excludes optional areas
 adapters/      one self-contained folder per AI tool (claude-code, agents-dir, ...)
 scripts/       repo tooling: validate.py, new-skill.sh, doctor.py
 docs/          area map, decisions log, skill authoring guide
@@ -28,8 +30,10 @@ docs/          area map, decisions log, skill authoring guide
 
 Each adapter documents its own install. From the factory:
 
-- **Claude Code**: `bash adapters/claude-code/install.sh` (loads the repo as a plugin)
-- **Codex, Cursor, Cline, OpenCode and any tool that reads `~/.agents/skills/`**: `bash adapters/agents-dir/install.sh`
+- **Claude Code**: `bash adapters/claude-code/install.sh [--pack <name>]` (builds and loads a plugin)
+- **Codex, Cursor, Cline, OpenCode, OpenClaw and any tool that reads `~/.agents/skills/`**: `bash adapters/agents-dir/install.sh [--pack <name>]`
+
+Without `--pack`, the `default` pack installs every area except the optional ones. See `packs/README.md`.
 
 ## Validate
 

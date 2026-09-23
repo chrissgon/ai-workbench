@@ -19,8 +19,9 @@ shared/references/*.md      cross-cutting references (security, accessibility, p
 contracts/                  project-layout.md, state.md, environment.md, templates/ for artifacts
 providers/<class>/<impl>.py native providers for requirement classes; interface in providers/CONTRACT.md
 templates/                  capability.SKILL.md, flow.SKILL.md, agent.md
+packs/<name>.txt            installation subsets; default.txt excludes optional areas (see packs/README.md)
 adapters/<harness>/         adapter.json, install.sh, optional build.*, overrides/, README.md
-scripts/                    validate.py, new-skill.sh, doctor.py (which requirement classes are satisfied)
+scripts/                    validate.py, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
 docs/                       area-map.md, decisions.md, skill-authoring-guide.md
 ```
 
@@ -37,6 +38,7 @@ docs/                       area-map.md, decisions.md, skill-authoring-guide.md
 | `mkt-` | Marketing and growth | lifecycle |
 | `ai-` | AI and machine learning inside the solution | horizontal |
 | `core-` | The workbench itself: orchestration, research method, skill creation, project memory | horizontal |
+| `asst-` | Assistant: personal and team operations (inbox, calendar, reminders, notes) | optional; not in the default pack |
 | `flow-` | Workflows that orchestrate skills, inside one area or across areas | orchestration |
 
 Lifecycle areas form a chain: Business → Product → Brand → Design → Engineering → Delivery → Marketing. Horizontal areas have no fixed position; flows insert them at defined points. Full map, sub-areas and insertion points: `docs/area-map.md`.
@@ -44,6 +46,12 @@ Lifecycle areas form a chain: Business → Product → Brand → Design → Engi
 **Boundary test** when a capability could belong to two areas: would a senior practitioner of that area know how to do this without expertise from the other area? If yes, it belongs to that area. Writing landing-page copy is Marketing even when a model writes it; designing how to show model uncertainty to a user is AI, because a designer without AI background does not know how.
 
 **Transversal concerns** (security, accessibility, performance, privacy, documentation) are references in `shared/`, not areas: they constrain work, they do not produce artifacts of their own.
+
+**Optional areas** follow every rule above but are excluded from `packs/default.txt`. They are a plus, not the core. Add a skill to an optional area only for a recurring task with a real procedure; one-step actions (send this email) are done by the harness directly under the actuator protocol carried by the project's `AGENTS.md`.
+
+## Packs
+
+Harnesses load every installed skill's name and description into every session and truncate past a budget, so installation is by pack, never "everything". `packs/<name>.txt` lists patterns (`eng-*`, `area:engineering`, `!asst-*`); adapters take `--pack <name>` and resolve it with `scripts/select_skills.py`. `default` is every area except optional ones; `all` includes them.
 
 ## Skill kinds
 
@@ -75,7 +83,7 @@ metadata:
 
 `requires` names a *class* of tool (`integration:issue-tracker`, `generator:image`, `publisher:linkedin`), never a concrete product. The environment maps classes to concrete tools. A skill must say what it does when a requirement is missing (usually: produce the deliverable up to the point where the tool is needed, then stop and tell the user).
 
-`side_effects` marks actuators: skills that change the world outside the repository. Actuators follow preview → explicit confirmation → execute → record in state. Never skip the confirmation.
+`side_effects` marks actuators: skills that change the world outside the repository. Actuators follow preview → one explicit approval → execute → record in state. One approval is enough: once the user has approved a payload, a plan or a standing bound, the skill proceeds without asking again, including unattended at a scheduled time. Re-ask only for what deviates from the approval. Scopes and rules: `contracts/environment.md`.
 
 ## Writing standard
 
@@ -89,6 +97,14 @@ Cheap models drop steps in long lists, invent structure when there is no templat
 - Scripts for anything deterministic (parsing, validation, formatting, API calls). Scripts accept input via flags, env or stdin, never prompts; implement `--help`; print data to stdout and diagnostics to stderr.
 - Explicit stop-and-ask gates: "Stop here and ask the user if X is unclear."
 - Load references per step ("When you reach step 4, read references/pricing-models.md"), never all up front.
+
+**Grounding, the priority for weak models.** Hallucination is the failure to prevent first:
+
+- Every fact in an output traces to an input artifact, the user's words, a tool result or a script output. Anything else is written as `Assumption: ...` and listed in an "Assumptions" section of the artifact.
+- "Unknown, ask the user" is always a valid value. Never fill a gap with a plausible guess.
+- Anything computable is computed: dates, counts, totals, file contents, API results come from scripts or tools, never from memory.
+- Research outputs cite a source (URL and access date) for every claim; claims without a source are labelled as such.
+- The last step of every procedure is a self-check: list every number, name and claim in the output and where it came from; remove or label what has no origin.
 - `SKILL.md` stays under 500 lines and roughly 5,000 tokens. Depth goes into `references/`, one level deep.
 
 **Do not cap strong models while helping weak ones.** Constrain the *contract*, not the *content*: the output structure and the quality criteria are mandatory; the procedure is the default path to satisfy them, and a model that meets the criteria another way is not wrong. Prefer "at least N" over "exactly N". Never prescribe the answer itself, only how to reach and check it.

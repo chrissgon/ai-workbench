@@ -2,9 +2,9 @@
   "harness": "claude-code",
   "consumes": ["skills", "agents", "shared"],
   "strategy": {
-    "skills": "symlink (skills -> ../../skills, scanned as the plugin's default skills directory)",
-    "agents": "generate (build.py merges ../../agents/*.md with overrides/*.yaml into agents/)"
+    "skills": "generate: build.py --pack <name> creates build/<pack>/skills/<name> symlinks into the core for the selected skills",
+    "agents": "generate: build.py merges ../../agents/*.md with overrides/*.yaml into build/<pack>/agents/"
   },
-  "install": "install.sh symlinks this folder into ~/.claude/skills/ai-workbench so it loads as a plugin",
-  "generated": ["agents/"]
+  "install": "install.sh [--pack <name>] builds and symlinks build/<pack>/ to ~/.claude/skills/ai-workbench",
+  "generated": ["build/"]
 }

@@ -1,0 +1,3 @@
+# Default installation: every area except the optional ones.
+*
+!asst-*

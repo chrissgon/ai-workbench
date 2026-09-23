@@ -1,0 +1,2 @@
+# Optional assistant area: personal and team operations. Not installed by default.
+asst-*

@@ -21,6 +21,12 @@ Nine areas: seven form the lifecycle chain of a digital solution, two are horizo
 | AI and machine learning | `ai-` | AI strategy (opportunity, build vs. buy, feasibility, cost, risk); AI product design (UX for uncertainty, feedback, human-in-the-loop, guardrails); AI engineering (LLM integration, prompts, RAG, agents and tool use, evals, cost and observability); ML (classical modelling, training data, MLOps); governance (privacy, prompt injection, compliance) | AI *inside the solution being built*. Not the workbench itself. |
 | Core | `core-` | orchestration and routing; research method; interview and clarification method; skill and agent creation and evaluation; project `AGENTS.md` generation; project memory and state | The workbench improving and operating itself, plus methods every area reuses. |
 
+## Optional areas
+
+| Area | Prefix | Sub-areas | Note |
+|------|--------|-----------|------|
+| Assistant | `asst-` | inbox and email handling, calendar, reminders and follow-ups, notes and summaries, recurring personal or team routines | A plus, not the core. Excluded from `packs/default.txt`; installed with `--pack all` or `--pack assistant`. Built last, only for recurring tasks with a real procedure. Natural runtime: always-on assistants such as OpenClaw, which read `~/.agents/skills` and ship their own bundled skills for common tasks; write `asst-` skills only for what those do not cover or what must follow this repository's contracts. |
+
 ## Boundary test
 
 Would a senior practitioner of area X know how to do this without expertise from area Y? If yes, the capability belongs to X. Examples:

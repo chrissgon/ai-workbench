@@ -14,6 +14,10 @@ Keep it small. It is a table of contents with status, not a journal.
 - Current phase: <phase name or none>
 - Updated: <YYYY-MM-DD>
 
+## Autonomy
+
+- Checkpoints: every-phase   # every-phase | milestones | end
+
 ## Artifacts
 
 | Artifact | Owner skill | Status | Updated |
@@ -26,6 +30,13 @@ Keep it small. It is a table of contents with status, not a journal.
 - 2026-09-22: No brand phase; internal tool. (user)
 - 2026-09-22: Pricing is usage-based; see docs/business/pricing.md. (biz-pricing, approved by user)
 
+## Approvals
+
+| Scope | What | Approved | Expires | Status |
+|-------|------|----------|---------|--------|
+| action | LinkedIn post "Launching X" with image-01.png at 2026-09-23 09:00 | 2026-09-22 | after execution | pending-execution |
+| standing | open pull requests on feature/* branches | 2026-09-22 | 2026-12-31 | active |
+
 ## Open questions
 
 - [ ] Who owns customer support after launch? (raised by flow-new-product, phase Delivery)
@@ -37,4 +48,6 @@ Keep it small. It is a table of contents with status, not a journal.
 - A flow resumes from the first phase whose artifacts are not `approved` or `skipped`.
 - Decisions record what was decided, by whom, and where the reasoning lives. One line each.
 - Open questions are checkboxes; a flow surfaces unchecked ones at every checkpoint.
+- `Autonomy.Checkpoints` is set by the user once per project: `every-phase` stops after each phase; `milestones` stops only at phases marked as milestones in the flow's phase table; `end` runs every phase and presents one consolidated summary. Confirmation gates and blocking open questions stop the flow in every mode.
+- Approvals follow the scopes and rules in `contracts/environment.md`. A skill checks this table before asking; if a matching approval exists, it proceeds. Status moves `pending-execution` → `executed` (with timestamp) or `active` → `expired`.
 - Never store secrets, tokens or personal data here.

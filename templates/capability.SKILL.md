@@ -69,4 +69,9 @@ Approve the output only if all of the following hold:
 
 ## Confirmation gate
 
-Delete this section unless `side_effects` is non-empty. Otherwise: show the exact payload, ask "Proceed? (yes/no)", execute only on an explicit yes, then record the action in `docs/workbench/state.md`.
+Delete this section unless `side_effects` is non-empty. Otherwise:
+
+1. Read the "Approvals" table in `docs/workbench/state.md`. If an approval covers this exact payload (or a plan or standing approval that includes it), skip to step 4.
+2. Show the exact payload: <list the fields: text, media, recipients, time, target>.
+3. Ask once: "Proceed? (yes/no)". Stop on anything other than an explicit yes.
+4. Execute (now, or at the scheduled time after verifying the payload still matches). Record or update the approval row with status `executed` and a timestamp.
