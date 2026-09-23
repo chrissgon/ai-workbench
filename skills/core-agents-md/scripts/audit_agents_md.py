@@ -170,7 +170,9 @@ def audit(root, agents_path, baseline):
         if re.match(r"^[A-Za-z0-9_.-]+$", first) and len(parts) > 1 and first in bins:
             checked += 1
             continue
-        if ("/" in s or s.endswith((".md", ".json", ".ts", ".js", ".yml", ".yaml", ".toml", ".css"))) and " " not in s and not s.startswith(("http", "{", "<", "pui-", "-", "@", ".")):
+        if any(ch in s for ch in "<>{}*") or " " in s:
+            continue  # placeholders and globs are not paths
+        if ("/" in s or s.endswith((".md", ".json", ".ts", ".js", ".yml", ".yaml", ".toml", ".css"))) and not s.startswith(("http", "pui-", "-", "@", ".")):
             target = s.split("#")[0].rstrip("/")
             if target and not os.path.exists(os.path.join(root, target)):
                 missing_paths.append(s)
