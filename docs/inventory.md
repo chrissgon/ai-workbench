@@ -63,7 +63,7 @@ All four come from splitting `brand-designer` (392 lines) and `brand-workflow` (
 |-------|----------|-------|----------|-------|------|
 | design-ux-flows | docs/design/flows.md: user flows, information architecture, wireframe notes | prd, research | — | create | 3 |
 | design-system | docs/design/design-system.md: tokens, components, states | brand identity | — | create | 3 |
-| design-ui | docs/design/screens/<screen>.md | flows, design-system | — | create; `integration:design-tool` optional | 3 |
+| design-ui | docs/design/screens/<screen>.md; docs/design/briefs/<screen>.md (self-contained brief for an external AI design tool) | flows, design-system, messaging | — | create; `integration:design-tool` optional | 3 |
 | design-handoff | docs/design/handoff/<screen>.md | screens, design-system | — | create | 3 |
 | design-implementation-validation | validation report, design vs. code | handoff or design tool, code | design-implementation-validator (319 lines, evals, utilities) | reuse, restructure to standard folders; requires `integration:design-tool` | 3 |
 | design-generate-asset | image files plus the brief used | brand identity | — | create; requires `generator:image` | 4 |
