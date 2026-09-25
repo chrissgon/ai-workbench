@@ -14,11 +14,11 @@ license: MIT
 metadata:
   area: engineering
   kind: capability
-  inputs: [docs/product/specs/<feature>.md, docs/engineering/architecture.md, docs/workbench/state.md]
+  inputs: [docs/product/specs/<feature>.md, docs/design/handoff/<screen>.md, docs/engineering/architecture.md, docs/workbench/state.md]
   outputs: [docs/engineering/designs/<feature>.md, docs/engineering/adr/<NNNN>-<title>.md]
   requires: []
   side_effects: []
-  version: "0.1"
+  version: "0.2"
 ---
 
 # Architecture design
@@ -39,6 +39,7 @@ Turn a specification into a buildable design: what the parts are, what each owns
 | Artifact | Required | If missing |
 |----------|----------|------------|
 | docs/product/specs/<feature>.md with `Ready for architecture: yes` | yes | Stop. Ask for the specification, or route to `product-feature-spec`. |
+| docs/design/handoff/<screen>.md for every screen the feature renders | when the feature has a user interface | Design the structure from the spec and flows only, and list the screens as `handoff pending`; components and layout get revised when the handoff lands. |
 | docs/engineering/architecture.md (codebase map or registered specification) | no | Read the code the feature touches and list it under Sources. |
 | docs/workbench/state.md | no | Skip the decision check; do not register the artifacts. |
 | Documentation of the frameworks and libraries the design relies on | for every API named | Open it and cite it; an API you cannot cite is an assumption to verify, marked as such. |
@@ -46,7 +47,7 @@ Turn a specification into a buildable design: what the parts are, what each owns
 ## Procedure
 
 Progress:
-- [ ] Step 1: Ground. Read the specification end to end, the codebase map, the recorded decisions, and the documentation pages for every framework feature the design will lean on. Write the Sources list first.
+- [ ] Step 1: Ground. Read the specification end to end, the design handoffs of the screens it renders (their components, layout per width, behaviour and deviations become components and contracts here), the codebase map, the recorded decisions, and the documentation pages for every framework feature the design will lean on. Check the registry for the current version of every dependency you name. Write the Sources list first.
 - [ ] Step 2: List the decisions the design must make (from REQs, NFRs, constraints and EDGEs) and classify each: `decided` (by the brief, the spec or a recorded decision: cite it), `engineering` (yours to make: choose, with at least one alternative considered, and write an ADR when the alternative was viable), `user` (product, cost, hosting, provider, data ownership: ask, at most three questions with a recommended answer, and wait). Never move a `user` decision into `engineering` because it is faster.
 - [ ] Step 3: Components. One row per component: responsibility (one sentence), location (folder or file), inputs, outputs, and the REQ ids it satisfies. A component that satisfies no requirement does not exist yet; a requirement that no component satisfies is a gap.
 - [ ] Step 4: Data or content model. Entities, schemas, files and folders, with the validation rules derived from the EDGE cases (what fails the build, what is rejected, what message). Show the schema in the form the framework uses (a config file, a type, a table) and cite the documentation for the API.
@@ -94,3 +95,4 @@ Approve the design only if all of the following hold:
 - Build-time generators need failure semantics: what makes the build fail, what only warns, and what the message names. The EDGE cases usually say.
 - Removals are design too: list what is deleted and what must keep working after it is gone, with the AC that checks it.
 - "Verification: manual" is acceptable only with the exact thing to look at and the expected value; "check that it works" is not a verification.
+- A decision that changes (a URL scheme, a hosting rule) can make a rejected ADR option viable; re-read the options of every ADR the change touches and revise the ADR, keeping its number and dating the revision.
