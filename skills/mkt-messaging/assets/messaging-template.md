@@ -31,7 +31,7 @@
 
 ## Sections
 
-- SECTION-1: {name}. Purpose: {…}. Proof: PROOF-1. Headline: {…}. Body: {…}. Demo: {what design-ui must show}. CTA: {label → target | none}. Source: {…}
+- SECTION-1: {name}. Purpose: {…}. Proof: PROOF-1. Headline: {…}. Body: {…}. Demo: {what the design must show}. CTA: {label → target | none}. Source: {…}
 
 ## Taglines
 
@@ -50,4 +50,4 @@
 
 ## Readiness
 
-- Ready for design-ui: {yes | no, because …}
+- Ready for design-brief: {yes | no, because …}

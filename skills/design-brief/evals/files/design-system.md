@@ -196,7 +196,7 @@ Site-only controls that need a visible boundary (input in the search dialog, cop
 - Collections: `pui` already exists in the file with modes `light` and `dark` and 66 variables: the 59 of DESIGN-SYSTEM §6 plus one `<role>/soft-fill` per role (the 15% tint flattened, DESIGN-SYSTEM §3.1 and §3.2); values verified against the document on 2026-09-23.
 - Styles: the library's `text/body`, `text/small`, `text/strong` exist; the seven `site/*` text styles (Inter and Fira Code) are added to the file for the screens; the ten legacy `PerfectUI/doc/*` paint styles (glows, glass, tags) belong to the UI kit's own documentation and are not used by the site.
 - Components: the file already holds the library's Button (28 variants, style × colour, Label), Badge (28), Card (6, Type), Accordion Item (12) and Dropdown (8); screens use them as instances. Library components the file lacks (chip, list, table, modal, input, checkbox and switch, tooltip, timeline, group, float) are drawn as frames bound to the variables when a screen needs them, because documenting the library in the design tool is out of scope (user, 2026-09-23). Site-only components (Components table, owner `site`) are built as components on the "Site" page as the screens need them.
-- Validation: per screen, structural evidence returned by the writes and one screenshot; recorded by design-ui.
+- Validation: per screen, structural evidence returned by the writes and one screenshot; recorded by design-execute.
 
 ## Assumptions
 
@@ -206,8 +206,8 @@ Site-only controls that need a visible boundary (input in the search dialog, cop
 ## Open questions
 
 - OPEN-1: Colour theme for highlighted code (the token colours inside code blocks) in light and dark modes. Blocks: the code block component's final look, not the layout. Recommended: derive from the role inks (`theme/ink` keywords, `success/ink` strings, `warn/ink` numbers, `muted/ink` comments, `page/text` plain) so code uses the same seven roles as everything else and both modes are covered without a third palette.
-- OPEN-2: The site-owned values marked "this document (OPEN-2)": type scale (base 14 × 1.25), reading width 72ch, page frame 1280, header 56, sidebar 272, headings column 208, gutters 16/32. Blocks: nothing; design-ui uses them as defaults. Recommended: approve as proposed; each derives from the library's 4 px unit and Tailwind's default breakpoints.
+- OPEN-2: The site-owned values marked "this document (OPEN-2)": type scale (base 14 × 1.25), reading width 72ch, page frame 1280, header 56, sidebar 272, headings column 208, gutters 16/32. Blocks: nothing; design-brief uses them as defaults. Recommended: approve as proposed; each derives from the library's 4 px unit and Tailwind's default breakpoints.
 
 ## Readiness
 
-- Ready for design-ui: yes for tokens and type; the component build in the design tool (phase 3) runs next, and OPEN-1 and OPEN-2 block no screen.
+- Ready for design-brief: yes for tokens and type; the component build in the design tool (phase 3) runs next, and OPEN-1 and OPEN-2 block no screen.

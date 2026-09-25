@@ -42,10 +42,10 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Plan or synthesize research with users | design-user-research |
 | User flows, information architecture, wireframes | design-ux-flows |
 | Tokens and components as a system | design-system |
-| Screen-level design specs | design-ui |
+| Brief for any visual artifact (screen, mockup, logo, presentation, animation, image) for an AI design tool | design-brief |
 | Spec for engineering: layout, tokens, states, breakpoints | design-handoff |
 | Does the implementation match the design | design-implementation-validation |
-| Produce an image or visual asset consistent with the brand | design-generate-asset |
+| Run a brief in a design tool, a generator or a code prototype; review what a tool produced | design-execute |
 | Accessibility audit | design-accessibility-review (planned) |
 | Design a product's experience end to end | flow-design |
 

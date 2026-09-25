@@ -63,10 +63,10 @@ All four come from splitting `brand-designer` (392 lines) and `brand-workflow` (
 |-------|----------|-------|----------|-------|------|
 | design-ux-flows | docs/design/flows.md: user flows, information architecture, wireframe notes | prd, research | — | create | 3 |
 | design-system | docs/design/design-system.md: tokens, components, states | brand identity | — | create | 3 |
-| design-ui | docs/design/screens/<screen>.md; docs/design/briefs/<screen>.md (self-contained brief for an external AI design tool) | flows, design-system, messaging | — | create; `integration:design-tool` optional | 3 |
+| design-brief | docs/design/briefs/<artifact>.md: brief and prompt for an AI design tool, any visual artifact (screen, mockup, logo, presentation, animation, image) | design-system, flows, messaging | design-ui (screen specs and the first brief) | create; replaces design-ui | 3 |
+| design-execute | docs/design/results/<artifact>.md: runs per direction, outputs, critique, decision | briefs | — | create; automatic with `integration:design-tool`, `generator:image` or a browser, assisted otherwise; side effect `create`; replaces design-generate-asset | 3 |
 | design-handoff | docs/design/handoff/<screen>.md | screens, design-system | — | create | 3 |
 | design-implementation-validation | validation report, design vs. code | handoff or design tool, code | design-implementation-validator (319 lines, evals, utilities) | reuse, restructure to standard folders; requires `integration:design-tool` | 3 |
-| design-generate-asset | image files plus the brief used | brand identity | — | create; requires `generator:image` | 4 |
 | design-user-research | docs/design/research.md: plan, guide, synthesis | discovery | — | create | 3 |
 | design-accessibility-review | docs/design/a11y-audit.md | screens or code | — | create | 5 |
 
@@ -192,7 +192,7 @@ Sixty-two skills is the reason packs exist. It is also why each wave must ship r
 | 1 | engineering (11), product-feature-spec, product-backlog, ops-pull-request, ops-branch-sync, 5 engineering flows, explorer, implementer, reviewer | the most mature old content, and the area used daily, so the refinement loop runs on real tasks from day one |
 | 2 | business (6), product (4 remaining), ai-opportunity-assessment, flow-business-plan | top of the lifecycle chain; content exists in startup-ceo; needed before anything downstream in flow-new-product |
 | 3 | brand (4), design (7), flow-brand, flow-design | content exists for brand; design needs a real product to be written against |
-| 4 | marketing first slice (5), design-generate-asset, ops-ci-pipeline, ops-release, flow-social-post, flow-launch, first providers (publisher, image) | actuators and the scheduled-post scenario; needs a real launch |
+| 4 | marketing first slice (5), ops-ci-pipeline, ops-release, flow-social-post, flow-launch, first providers (publisher, image) | actuators and the scheduled-post scenario; needs a real launch |
 | 5 | flow-new-product, remaining marketing (4), remaining AI (5), ops-qa-handover, design-accessibility-review, assistant candidates | the capstone flow ties every area; the rest fills in behind real demand |
 
 Planned items are never scheduled; they are built when a project needs them.
@@ -237,3 +237,10 @@ Wave 1:
 - [ ] ops-branch-sync
 - [ ] flow-fix-bug, flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
 - [ ] agents explorer, implementer, reviewer
+
+Built ahead of their wave, with the perfectui-doc rebuild as the real project:
+- [x] product-prd, product-roadmap (wave 2)
+- [x] design-ux-flows, design-system (wave 3)
+- [x] design-brief, design-execute (wave 3; replace design-ui and design-generate-asset: design skills produce the inputs, a specialized AI design tool or a code prototype produces the design)
+- [x] mkt-messaging (wave 4)
+- [ ] design-system v0.3: any input (code, images, documents, a live site) or a short interview; onboarding prompt for the design tool

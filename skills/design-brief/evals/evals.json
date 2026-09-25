@@ -1,0 +1,43 @@
+{
+  "skill_name": "design-brief",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Quero a tela de documentação no Claude Design, que já tem o nosso design system carregado. Usa a página do Button como exemplo.",
+      "expected_output": "docs/design/briefs/documentation-page.md of type screen in loaded mode: regions and states of SCREEN-2 from the flows named in Content, the Button page copy quoted from its source, three named directions, the brand colour restated as hex, at least five CRIT lines, attachments that exclude any earlier mockup, a prompt with a Direction slot; lint ok; the reply in Portuguese points to design-execute.",
+      "files": ["evals/files/flows.md", "evals/files/design-system.md"],
+      "assertions": [
+        "The header says Values: loaded and names the design system in the tool",
+        "Every region and state of SCREEN-2 is named in Content",
+        "Creative direction names three directions that differ in idea",
+        "Attachments tells not to send an existing design of the page in round 1",
+        "scripts/lint_brief.py --type screen --values loaded --flows --screen SCREEN-2 reports ok: true",
+        "The reply is in Portuguese and names design-execute as the next step"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Make a logo for my new bakery app.",
+      "expected_output": "No design system, brand identity or name source exists; the skill does not write the brief with invented values or name: it routes to design-system (which interviews when there is no input) and asks for the exact name as it must be written, with a recommendation on what to answer.",
+      "files": [],
+      "assertions": [
+        "No brief file is written",
+        "The reply routes to design-system for the missing visual foundation",
+        "The reply asks for the exact name of the app instead of inventing one"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Write the brief for the site's share images (og:image) for the landing and every docs page.",
+      "expected_output": "docs/design/briefs/og-image.md of type image in inline mode: Size, Format and Text parts in Content, the landing texts quoted from the messaging source, the variable fields of the documentation template with their longest values, colours and type written out, at least five CRIT lines including a thumbnail legibility check; lint ok.",
+      "files": ["evals/files/design-system.md"],
+      "assertions": [
+        "Content has Size, Format and Text parts",
+        "The variable fields name their longest value",
+        "Visual language writes out hex colours and pixel sizes",
+        "One criterion checks legibility at thumbnail size",
+        "scripts/lint_brief.py --type image --values inline reports ok: true"
+      ]
+    }
+  ]
+}

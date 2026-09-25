@@ -6,11 +6,11 @@ description: >
   values, type scale, spacing, radii, borders, elevation, layout grid and reading width, the
   component inventory with variants and states, and the rules for using them, every value traced
   to an existing component library, a brand artifact or a user answer. Use this skill after
-  design-ux-flows and before design-ui, when someone asks for tokens, a style guide, a design
+  design-ux-flows and before design-brief, when someone asks for tokens, a style guide, a design
   system, variables in the design tool, light and dark modes, or which components exist; also
   when a library ships its own token specification that must be mirrored. It never invents a
   palette or a font: what no source gives is a question with a recommended answer. Not for
-  screens (design-ui) or for brand strategy (brand-identity).
+  screens and other visual artifacts (design-brief) or for brand strategy (brand-identity).
 license: MIT
 metadata:
   area: design
@@ -26,11 +26,11 @@ metadata:
 
 ## Purpose
 
-Fix the values every screen will reuse, so that `design-ui` composes and never invents, and engineering maps each value to a CSS custom property. The document is the contract; the design tool holds the same values as variables, styles and components when an integration is available, and the document says which of the two is the source of truth for each group.
+Fix the values every screen will reuse, so that every brief and every design tool composes from it and never invents, and engineering maps each value to a CSS custom property. The document is the contract; the design tool holds the same values as variables, styles and components when an integration is available, and the document says which of the two is the source of truth for each group.
 
 ## When not to use
 
-- Screens and layouts: `design-ui`.
+- Screens and other visual artifacts: `design-brief`, then `design-execute`.
 - Brand strategy, logo, voice: `brand-identity`; this skill consumes a brand, it does not create one.
 - A single component's states inside one screen: the screen's handoff.
 
@@ -68,7 +68,7 @@ See [assets/design-system-template.md](assets/design-system-template.md). The re
 - Contrast: <n> pairs checked, <n> below AA (listed)
 - Design tool: <file and pages, collections and components built | none available>
 - Assumptions: <n>; open questions: <n>
-Next: design-ui for SCREEN-n | the questions above
+Next: design-brief for SCREEN-n | the questions above
 ```
 
 ## Quality criteria

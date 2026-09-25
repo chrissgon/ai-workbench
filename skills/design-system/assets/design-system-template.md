@@ -69,4 +69,4 @@
 
 ## Readiness
 
-- Ready for design-ui: {yes | no, because …}
+- Ready for design-brief: {yes | no, because …}

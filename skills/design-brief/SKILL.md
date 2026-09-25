@@ -1,0 +1,95 @@
+---
+name: design-brief
+description: >
+  Write the design brief an AI design tool needs to produce a strong visual artifact: a
+  screen or page, a mockup, a logo, a presentation, an animation or a still image such as a
+  social card. The brief carries the subject, audience and voice, the copy verbatim from its
+  source, the design system (values written out, or referenced when the tool already loaded
+  it), named creative directions, the content the artifact must hold, constraints,
+  deliverables per round, evaluation criteria and a ready-to-paste prompt. Use this skill
+  when someone asks to design, mock up, draw or generate any visual artifact, to brief a
+  design tool, or when a request to a design tool is too thin to produce good work, even if
+  the word "brief" is never said. Run design-execute afterwards to run it in a tool. Not
+  for tokens and components (design-system), flows and screen inventory (design-ux-flows)
+  or copy (mkt-messaging).
+license: MIT
+metadata:
+  area: design
+  kind: capability
+  inputs: [docs/design/design-system.md, docs/design/flows.md, docs/marketing/messaging.md, docs/product/specs/<feature>.md, docs/brand/identity.md, docs/workbench/state.md]
+  outputs: [docs/design/briefs/<artifact>.md]
+  requires: []
+  side_effects: []
+  version: "0.1"
+---
+
+# Design brief
+
+## Purpose
+
+AI design tools produce work as good as what they are told. A thin request ("make a nice landing page") gets a generic page; an attached design gets copied; a list of tokens without a direction gets a correct and forgettable result. The brief is the input that makes the tool's output faithful to the product and worth keeping: every decision already made is in it, the open part (the visual direction) is framed as named options, and the result can be judged against written criteria. The brief is tool-neutral; `design-execute` adapts it to the chosen tool and runs it.
+
+## When not to use
+
+- Tokens, type, components, or a design system from code, images or answers: `design-system`.
+- Which screens exist, their regions and states: `design-ux-flows` (a screen brief reads them).
+- Headlines, bodies, taglines: `mkt-messaging` (a brief copies them, never writes them).
+- Running the brief in a tool, collecting and critiquing the results: `design-execute`.
+
+## Inputs
+
+| Artifact | Required | If missing |
+|----------|----------|------------|
+| `docs/design/design-system.md` or the brand identity | yes | Route to `design-system`, which works from code, images, documents or a short interview. A brief without it lets the tool invent the product's look. |
+| `docs/design/flows.md` with the SCREEN | for a screen | Route to `design-ux-flows`. |
+| The source of every text on the artifact (`docs/marketing/messaging.md`, a spec, the user) | when the artifact shows text beyond the product name | Ask the user for the text or route to `mkt-messaging`; never write final copy. |
+| A previous version and the user's review of it | no | Skip the diagnosis paragraph. |
+| `docs/workbench/state.md` | no | Skip the decision check; do not register the artifact. |
+
+## Procedure
+
+Progress:
+- [ ] Step 1: Classify. Name the artifact and its type: `screen`, `mockup`, `logo`, `presentation`, `animation` or `image`. Read the profile for the type in `references/<type>.md`; it lists what the Content section must hold and the criteria that matter for the type. Name the tool if the user chose one; otherwise leave it to `design-execute`.
+- [ ] Step 2: Ground. Read the design system, the brand identity, the flows entry (screens), the copy source and the state decisions. Write the Sources list. Stop and ask when the text of the artifact has no source; recommend the source.
+- [ ] Step 3: Values mode. `loaded` when the target tool already holds the design system (a design-system project in the tool, a published library, a kit): the brief names it and restates only the rules and the few values the direction depends on. `inline` otherwise: write every colour in light and dark, every type role with size and weight, spacing, radii, borders, elevation and motion, because the tool cannot read the repository. When unsure, `inline`.
+- [ ] Step 4: Subject, audience and voice in words a stranger can act on: what the product is in two paragraphs with one concrete example, who looks at the artifact and what they fear, the voice rules, words to use and to avoid.
+- [ ] Step 5: Creative direction. When a previous version exists, say in one paragraph what it got wrong, quoting the user's review. Turn references into attitudes (scale, depth, motion, illustration style), never into layouts or copy to reproduce. Name three directions of two or three sentences each, different in idea and not only in colour, unless the user already chose one. List the identity hooks every direction keeps and what is allowed and not allowed. Read [references/prompting.md](references/prompting.md) first.
+- [ ] Step 6: Content, per the type profile: for a screen, the regions in priority order with the copy verbatim, states, breakpoints and motion; for a logo, the name, the variants and sizes; for a presentation, the slides; and so on. Real markup of components when the artifact shows the product's UI.
+- [ ] Step 7: Constraints (values only from Visual language, copy verbatim, accessibility, what the artifact must not contain, buildability or production limits), deliverables per round (round 1: directions at one size; round 2: the chosen one complete), and at least five evaluation criteria a reviewer can check by looking at the result, one per line as `- CRIT-n:`.
+- [ ] Step 8: Attachments and prompt. List what goes to the tool with the brief (reference images, the brief itself, the product's own assets) and what must not (an existing design of the same artifact in round 1, because tools reproduce what they are shown). Write the prompt: it opens by saying this is an exploration and what failure looks like, carries a `Direction:` slot, the non-negotiables, the drama the result needs, what to deliver, and asks the tool to list what the result does that a plain version would not.
+- [ ] Step 9: Lint: `python3 scripts/lint_brief.py --file docs/design/briefs/<artifact>.md --type <type> --values <inline|loaded> [--messaging docs/marketing/messaging.md] [--flows docs/design/flows.md --screen SCREEN-n]`. It checks the sections, the type profile's required content, values written out in `inline` mode, the design system named in `loaded` mode, messaging headlines verbatim, the SCREEN's regions and states, the criteria, the prompt and leftover placeholders. Fix until `ok` is true, then write `- Lint: ok (<date>)` in the header.
+- [ ] Step 10: Register `docs/design/briefs/<artifact>.md` in `docs/workbench/state.md` (owner `design-brief`, status `draft`) when the state file exists; report with the template below; self-check against "Quality criteria".
+
+## Output template
+
+See [assets/brief-template.md](assets/brief-template.md). The report:
+
+```markdown
+## Brief: <artifact> (<type>) → docs/design/briefs/<artifact>.md
+
+- Values: <inline | loaded from <design system in the tool>>
+- Directions: <A name, B name, C name | chosen: <name>>
+- Content: <regions, slides, variants… counted>; copy from <source>
+- Criteria: <n>; lint ok
+Next: design-execute in <tool> | the questions above
+```
+
+## Quality criteria
+
+Approve the brief only if all of the following hold:
+
+- A stranger with only the brief and its attachments can produce the artifact: no repository path is needed to act on it.
+- Every text on the artifact is quoted from a named source; no copy was written here.
+- Every colour, type size, radius and spacing traces to the design system, written out in `inline` mode.
+- The directions differ in idea, and each names what makes it memorable.
+- Every criterion can be checked by looking at the result, and at least one checks faithfulness to the design system and one checks the drama the direction promised.
+- `lint_brief.py` reports `ok: true`.
+
+## Gotchas
+
+- An attached design of the same artifact turns exploration into reproduction; attach it only in round 2, as the record of structure, with the instruction to keep the chosen direction.
+- "Creative" is not a direction. A direction names the idea, the element at a scale nothing else reaches, and the motion or composition that carries the product's claim.
+- One run per direction: a tool asked for three directions in one run averages them into one.
+- Placeholders that read like copy get shipped; a brief with a missing text stops and asks.
+- In `loaded` mode, still write the values the direction depends on (the brand colour, the display size): tools drift toward their own defaults when the brief only names a token.
+- A tool that "represents" components with its own CSS is not using the product; the prompt makes linking the product's real stylesheet or assets a non-negotiable.

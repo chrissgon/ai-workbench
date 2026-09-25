@@ -9,7 +9,7 @@ description: >
   navigation structure, wireframe notes, "how does the user get from A to B", or which screens
   are needed; also when a new feature changes navigation. Every node, screen and flow traces to
   a PRD feature, a spec requirement or the user's words; nothing is drawn from taste. Not for
-  visual decisions (design-system, design-ui) or for requirements (product-feature-spec).
+  visual decisions (design-system, design-brief) or for requirements (product-feature-spec).
 license: MIT
 metadata:
   area: design
@@ -25,12 +25,12 @@ metadata:
 
 ## Purpose
 
-Decide what exists and how people move through it before deciding how it looks. The output is the contract between product and visual design: a tree of pages, a list of screens with their regions in priority order and their states, and one flow per thing a user group must be able to do, each step naming the screen it happens on. `design-ui` draws only screens listed here; `design-handoff` and engineering trace every route back to a node here.
+Decide what exists and how people move through it before deciding how it looks. The output is the contract between product and visual design: a tree of pages, a list of screens with their regions in priority order and their states, and one flow per thing a user group must be able to do, each step naming the screen it happens on. `design-brief` briefs only screens listed here; `design-handoff` and engineering trace every route back to a node here.
 
 ## When not to use
 
 - No PRD or specs: `product-prd` and `product-feature-spec` first; flows for unspecified features are invented behaviour.
-- Colours, type, spacing, components: `design-system`. Screen layouts: `design-ui`.
+- Colours, type, spacing, components: `design-system`. Screen briefs: `design-brief`.
 - A single interaction detail inside one screen already designed: edit that screen's handoff.
 
 ## Inputs
@@ -65,7 +65,7 @@ See [assets/flows-template.md](assets/flows-template.md). The report:
 - Information architecture: <n> nodes; screens: <n>; flows: <n> (actors: <U ids>)
 - Coverage: <n> of <n> must and should features of the phase (lint ok)
 - Assumptions: <n>; open questions: <n> (<blocking | none blocking>)
-Next: <design-system, then design-ui for SCREEN-n first, because … | the questions above>
+Next: <design-system, then design-brief for SCREEN-n first, because … | the questions above>
 ```
 
 ## Quality criteria

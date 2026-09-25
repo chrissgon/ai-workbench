@@ -78,7 +78,7 @@ Nineteen nodes, six screens and seven flows. At the 1.0 launch an evaluator land
 ## Assumptions
 
 - ASSUMPTION-1: The site-specific sections (IA-8) are placed by the content work, inside the existing sections when they fit (a Tailwind recommendation under Getting started) and as a new section otherwise. Safe because: the user asked for them without fixing their place, and the navigation is derived from folders, so moving a page costs nothing.
-- ASSUMPTION-2: A not-found page (IA-19, SCREEN-5's not-found state) exists because the static host serves one for unknown paths. Safe because: every static host does, and the PRD's fully prerendered constraint implies a static 404; its content is decided in design-ui.
+- ASSUMPTION-2: A not-found page (IA-19, SCREEN-5's not-found state) exists because the static host serves one for unknown paths. Safe because: every static host does, and the PRD's fully prerendered constraint implies a static 404; its content is decided in design-brief.
 - ASSUMPTION-3: The version switch control (IA-11) is designed in P-1 with the shell so that P-2 does not change the header, even though F-6 ships in R-2. Safe because: the roadmap orders F-6 right after R-1 and the control's slot costs nothing while it shows one version.
 
 ## Open questions
@@ -88,4 +88,4 @@ Nineteen nodes, six screens and seven flows. At the 1.0 launch an evaluator land
 
 ## Readiness
 
-- Ready for design-system and design-ui: yes: SCREEN-3 (shell) first, because every other screen embeds it; then SCREEN-2, then SCREEN-1 after the messaging step; no open question remains.
+- Ready for design-system and design-brief: yes: SCREEN-3 (shell) first, because every other screen embeds it; then SCREEN-2, then SCREEN-1 after the messaging step; no open question remains.

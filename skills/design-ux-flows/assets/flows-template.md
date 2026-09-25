@@ -41,4 +41,4 @@
 
 ## Readiness
 
-- Ready for design-system and design-ui: {yes: SCREEN-n first, because … | no, because OPEN-n blocks SCREEN-m}
+- Ready for design-system and design-brief: {yes: SCREEN-n first, because … | no, because OPEN-n blocks SCREEN-m}

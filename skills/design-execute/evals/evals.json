@@ -1,0 +1,41 @@
+{
+  "skill_name": "design-execute",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Faz a landing do meu app no Figma Make.",
+      "expected_output": "No brief exists; the skill does not send a thin prompt to the tool: it runs design-brief first (which routes to design-system or mkt-messaging when the foundation or copy is missing) and only then plans the runs; the reply is in Portuguese.",
+      "files": [],
+      "assertions": [
+        "No run pack is written before a brief exists",
+        "The reply names design-brief as the first step",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Run docs/design/briefs/og-image.md as a code prototype.",
+      "expected_output": "docs/design/results/og-image.md with one run per direction, a prompt pack and HTML plus PNG outputs per run rendered with scripts/screenshot.mjs at 1200 × 630, a verdict with evidence for every CRIT of the brief per run, a recommendation and a pending decision; lint_result.py ok; no confirmation asked, because a local prototype writes to no external account.",
+      "files": [],
+      "assertions": [
+        "Every run has prompt.md, HTML and PNG files under docs/design/results/og-image/round-1/",
+        "Every CRIT of the brief has a pass, partial or fail verdict with evidence for every run",
+        "The decision is recorded as pending, not taken by the agent",
+        "scripts/lint_result.py reports ok: true",
+        "No confirmation gate is shown for the local prototype"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Run the documentation page brief in Claude Design.",
+      "expected_output": "Assisted mode, because the tool offers no generation interface to agents: one run pack per direction with the direction filled into the prompt and the attachments listed, a results document with every run 'waiting on user', status 'waiting on user', and instructions to the user on what to bring back; the agent stops instead of claiming results.",
+      "files": [],
+      "assertions": [
+        "The mode is assisted and the reason is stated",
+        "There is one prompt pack per direction",
+        "Every run is marked waiting on user and the document status matches",
+        "The agent does not invent or describe results it has not seen"
+      ]
+    }
+  ]
+}
