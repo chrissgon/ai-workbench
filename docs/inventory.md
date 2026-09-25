@@ -65,7 +65,7 @@ All four come from splitting `brand-designer` (392 lines) and `brand-workflow` (
 | design-system | docs/design/design-system.md: tokens, components, states | brand identity | — | create | 3 |
 | design-brief | docs/design/briefs/<artifact>.md: brief and prompt for an AI design tool, any visual artifact (screen, mockup, logo, presentation, animation, image) | design-system, flows, messaging | design-ui (screen specs and the first brief) | create; replaces design-ui | 3 |
 | design-execute | docs/design/results/<artifact>.md: runs per direction, outputs, critique, decision | briefs | — | create; automatic with `integration:design-tool`, `generator:image` or a browser, assisted otherwise; side effect `create`; replaces design-generate-asset | 3 |
-| design-handoff | docs/design/handoff/<screen>.md | screens, design-system | — | create | 3 |
+| design-handoff | docs/design/handoff/<screen>.md: implementation spec from an approved design or export | results, briefs, design-system, flows, specs | — | create | 3 |
 | design-implementation-validation | validation report, design vs. code | handoff or design tool, code | design-implementation-validator (319 lines, evals, utilities) | reuse, restructure to standard folders; requires `integration:design-tool` | 3 |
 | design-user-research | docs/design/research.md: plan, guide, synthesis | discovery | — | create | 3 |
 | design-accessibility-review | docs/design/a11y-audit.md | screens or code | — | create | 5 |
@@ -243,4 +243,5 @@ Built ahead of their wave, with the perfectui-doc rebuild as the real project:
 - [x] design-ux-flows, design-system (wave 3)
 - [x] design-brief, design-execute (wave 3; replace design-ui and design-generate-asset: design skills produce the inputs, a specialized AI design tool or a code prototype produces the design)
 - [x] mkt-messaging (wave 4)
+- [x] design-handoff (wave 3; unpacks single-file HTML exports, maps invented tokens, reads motion from scripts)
 - [ ] design-system v0.3: any input (code, images, documents, a live site) or a short interview; onboarding prompt for the design tool

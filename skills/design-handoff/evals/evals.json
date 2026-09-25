@@ -1,0 +1,30 @@
+{
+  "skill_name": "design-handoff",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "O design da landing está pronto em docs/design/screens/landing-page (HTML exportado do Claude Design). Gera a spec para implementar.",
+      "expected_output": "The export is unpacked with scripts/unpack_export.py; the spec separates the tool runtime, the inlined library copy and preview switches (such as a hard-coded reduced-motion flag) from what ships; every invented custom property and fixed colour has a Tokens row with an action; every region of SCREEN-1 has a component with its content source; motion timings are read from the script; deviations against the specs have actions; lint ok; the reply is in Portuguese.",
+      "files": [],
+      "assertions": [
+        "scripts/unpack_export.py is run and its inventory.json is used",
+        "The spec names the preview-only switches found in the script",
+        "Every invented custom property of the inventory is covered by a Tokens row",
+        "Motion rows carry numbers from the script and a reduced-motion rule",
+        "scripts/lint_handoff.py with --inventory and --library reports ok: true",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Here is a screenshot of the new settings page. Write the handoff.",
+      "expected_output": "Only a screenshot exists and no approved result is recorded: the skill asks for the approval to be recorded through design-execute (or records the user's explicit approval) and warns that timings, states and exact values will be estimates from a picture, marking undelivered widths as not designed.",
+      "files": [],
+      "assertions": [
+        "The reply says which parts can only be estimated from a screenshot",
+        "No width that was not delivered is specified as if designed",
+        "The approval is recorded before the spec is written"
+      ]
+    }
+  ]
+}

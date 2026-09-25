@@ -1,0 +1,73 @@
+# Handoff: {screen}
+
+- Owner: design-handoff
+- Status: draft
+- Date: {YYYY-MM-DD}
+- Screen: {SCREEN-n of the flows}
+- Approved design: {results document and run}
+- Export: {file}, unpacked to {folder}
+
+## Summary
+
+{two sentences: what is built and the few decisions that matter most}
+
+## Sources
+
+- {results, brief, design system, flows, specs, library version}
+
+## Reference and shipping
+
+- Reference only, never shipped: {tool runtime, inlined library copy, font CDN, preview switches}
+- Shipped: {library version and how it is loaded, fonts, icons}
+
+## Tokens
+
+| Value | Where | Maps to | Action |
+|-------|-------|---------|--------|
+| {custom property or colour} | {regions} | {library token, site token or none} | {use token, add site token, fix in code} |
+
+## Components
+
+| Region | Unit | Props and data | Content source | States |
+|--------|------|----------------|----------------|--------|
+| {region of the SCREEN, in priority order} | {library markup or site component name} | {…} | {messaging, Markdown, config, build data} | {…} |
+
+## Layout
+
+| Width | Columns and order | Sticky | Collapsed or hidden |
+|-------|-------------------|--------|---------------------|
+| {1280} | {…} | {…} | {…} |
+
+## Behaviour
+
+| Interaction | Requirement | Rule |
+|-------------|-------------|------|
+| {copy, mode, theme, tabs, search, keyboard} | {spec REQ} | {what happens, persistence, fallback without JavaScript} |
+
+## Motion
+
+| Animation | Trigger | Timing | Final state | Reduced motion |
+|-----------|---------|--------|-------------|----------------|
+| {…} | {load, scroll into view, interaction} | {duration, easing, stagger} | {…} | {…} |
+
+## Assets
+
+- {logo files, icon set and names, fonts and weights, where each goes}
+
+## Deviations
+
+- DEV-1: {what differs, from which source}. Action: {fix in code | back to design | accepted (user, date)}
+
+## Acceptance
+
+- Reference: {screenshot paths}
+- Compare at: {widths} × {modes} × {states}
+- Tolerances: {layout, colour, type}
+
+## Open questions
+
+- OPEN-1: {question}. Blocks: {…}. Recommended: {answer and why}
+
+## Readiness
+
+- Ready for eng-architecture: {yes | no, because …}
