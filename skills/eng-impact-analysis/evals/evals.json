@@ -1,0 +1,43 @@
+{
+  "skill_name": "eng-impact-analysis",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Queremos que o dueLabel do projeto invoices/ mostre a data no fuso do cliente, não no fuso do servidor. Antes de escolher como fazer, o que isso impacta?",
+      "expected_output": "An 'Impact' section in a plan under docs/engineering/plans/: the change stated as behaviour with no approach chosen; code touched (src/due.js, src/index.js as the public API, README.md); the rules quoted (zero runtime dependencies, every export documented, public API through src/index.js); the size budget measured now with npm run size; test/due.test.js named as encoding today's behaviour; the README sentence 'in the server's local time zone' quoted as changing meaning; the consumer shop-web named; no source file changed.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "A file under docs/engineering/plans/ contains an 'Impact' section",
+        "npm run size (or node scripts/size.mjs) is run and its byte count appears in the analysis",
+        "The zero-runtime-dependencies rule from AGENTS.md is quoted or cited",
+        "test/due.test.js is named as a test that asserts today's behaviour",
+        "The README sentence about the server's local time zone is quoted or referenced as changing meaning",
+        "shop-web is named as a dependant",
+        "No file under src/ or test/ is modified, and no approach is chosen as the one to implement",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "I want to add date-fns-tz to invoices/ to handle the customer's time zone in dueLabel. What's the impact?",
+      "expected_output": "The behaviour is restated (label in the customer's time zone) and date-fns-tz is treated as one option; the analysis quotes rule 1 (zero runtime dependencies) and marks adding the package as a user decision that breaks it, noting Intl as the platform alternative; nothing is installed.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "Rule 1 (zero runtime dependencies) is quoted or cited and adding date-fns-tz is flagged as breaking it or needing the user's decision",
+        "package.json gains no dependency and no install command is run",
+        "The analysis states the change as behaviour and does not settle on date-fns-tz as the chosen approach"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Qual o impacto de mexer no invoices/?",
+      "expected_output": "No change is described; the skill asks what must behave differently when the change is done, with an example, and writes no analysis.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "The reply asks which behaviour should change before analysing",
+        "No Impact section is written for an invented change",
+        "The reply is in Portuguese"
+      ]
+    }
+  ]
+}

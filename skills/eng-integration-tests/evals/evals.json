@@ -1,0 +1,31 @@
+{
+  "skill_name": "eng-integration-tests",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "A mudança do fuso no dueLabel já está implementada em invoices/ (plano em docs/engineering/plans/due-label-customer-time-zone.md). Escreve os testes de integração.",
+      "expected_output": "Tests are written with node:test and import through src/index.js (the public API); they run the label under several server time zones by starting child processes with TZ set, and pass; the same tests are run against releases/1.2.0/src (the previous release) in a scratch copy, where the server-zone cases fail in America/Sao_Paulo and the preserved cases pass; npm test passes with the change; the plan gains an 'Integration tests' section with both runs' counts; src/ is unchanged.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "New test files import dueLabel through src/index.js and use node:test",
+        "The tests run code under at least two server time zones (TZ set per process or per run)",
+        "The tests are also run against the previous release (releases/1.2.0/src) and the reply or plan reports which fail there",
+        "npm test is run with the change and its result is reported",
+        "The plan file gains an 'Integration tests' section with the counts of both runs",
+        "src/due.js and src/index.js are unchanged",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "We'll implement a `locale` option for dueLabel in invoices/ next week. Write the integration tests for it now.",
+      "expected_output": "The option does not exist; integration tests run after implementation; the skill hands off to eng-unit-tests for tests written before the change (or asks for the expected behaviour to do so) and writes no integration test that runs against missing code.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "The reply says integration tests come after the implementation, pointing to writing failing unit tests first",
+        "No integration test for a locale option is added and reported as passing",
+        "src/ is unchanged"
+      ]
+    }
+  ]
+}

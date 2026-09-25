@@ -1,0 +1,15 @@
+{
+  "name": "invoices",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test",
+    "size": "node scripts/size.mjs"
+  },
+  "exports": {
+    ".": "./src/index.js"
+  }
+}

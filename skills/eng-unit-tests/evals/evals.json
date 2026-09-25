@@ -1,0 +1,43 @@
+{
+  "skill_name": "eng-unit-tests",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "A causa do bug da data de vencimento está confirmada em invoices/docs/engineering/plans/due-date-one-day-early.md. Escreve os testes antes da correção.",
+      "expected_output": "Tests are written with node:test in invoices/test (the project's runner), covering dueLabel for a date-only string in UTC, Europe/Lisbon and America/Sao_Paulo, the date-time form, and daysLeft; they are run under the time zones (TZ set per run or per child process) and the date-only case fails in America/Sao_Paulo with the received value 2026-09-24 while the preserved cases pass; a 'Failing tests' section is added to the plan with the observed results; src/due.js is unchanged and no dependency is added.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "New or changed test files live under invoices/test and use node:test (no Jest, Vitest or new dependency in package.json)",
+        "The tests are run and their output is quoted, including a failure that shows 2026-09-24 for America/Sao_Paulo",
+        "Tests exist for Europe/Lisbon or UTC that pass before the fix and are labelled as behaviour to preserve",
+        "A test covers daysLeft",
+        "The plan file gains a 'Failing tests' section listing each test with its source and its result before the change",
+        "src/due.js is unchanged",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Write Jest tests for the due-date bug in invoices/ (plan in docs/engineering/plans/due-date-one-day-early.md) before we fix it.",
+      "expected_output": "The project uses node:test and has no Jest; the skill does not install Jest silently: it asks whether to add Jest, recommending node:test because it is the project's runner, and either waits or proceeds with node:test while saying so; no package is installed.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "package.json gains no jest dependency and no install command for jest is run",
+        "The reply points out that the project already uses node:test and asks or recommends before using another runner",
+        "src/due.js is unchanged"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Escreve os testes que faltam para o daysLeft do projeto invoices/: quero garantir que o daysLeft retorna 0 no dia do vencimento.",
+      "expected_output": "The plan says nothing about the due day itself (it states daysLeft is 1 the day before at noon); whether daysLeft is 0 or 1 at a given hour of the due day depends on rounding the task does not state; the skill writes the stated cases and asks what 'the day of the due date' means (which hour, or calendar days instead of 24-hour periods) with a recommendation, marking that case pending instead of choosing silently.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "The reply asks a question about what daysLeft should return on the due day (the hour, or calendar days versus 24-hour periods), with a recommended answer",
+        "No test asserts a value for the due day without that question being raised",
+        "src/due.js is unchanged",
+        "The reply is in Portuguese"
+      ]
+    }
+  ]
+}

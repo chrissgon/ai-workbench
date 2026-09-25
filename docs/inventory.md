@@ -217,20 +217,20 @@ Wave 0:
 - [x] core-agents-md
 - [x] core-skill-creator
 - [x] researcher agent
-- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real run pending)
+- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real runs on the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench; it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
 
 Wave 1:
 - [x] eng-codebase-map
-- [ ] eng-impact-analysis
-- [ ] eng-root-cause
+- [x] eng-impact-analysis
+- [x] eng-root-cause
 - [x] eng-architecture
-- [ ] eng-tradeoffs
-- [ ] eng-unit-tests
+- [x] eng-tradeoffs
+- [x] eng-unit-tests
 - [x] eng-implement
-- [ ] eng-integration-tests
-- [ ] eng-refactor
+- [x] eng-integration-tests
+- [x] eng-refactor
 - [x] eng-code-review
-- [ ] eng-docs
+- [x] eng-docs
 - [x] product-feature-spec
 - [x] product-backlog
 - [ ] ops-pull-request

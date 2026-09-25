@@ -1,0 +1,45 @@
+{
+  "skill_name": "eng-root-cause",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "Clientes no Brasil estão reclamando que a data de vencimento da fatura aparece um dia antes: a fatura vence 2026-09-25 e o PDF mostra 2026-09-24. Em Portugal está certo. O projeto está em invoices/. Descobre a causa.",
+      "expected_output": "A reproduction file is written and run under several time zones (at least America/Sao_Paulo and UTC or Europe/Lisbon) with its output quoted; the cause is placed at src/due.js on `new Date(isoDate)`, explained by ECMAScript parsing a date-only ISO string as UTC while toLocaleDateString formats in local time, with a quoted source; a discriminating experiment shows the date-only form wrong in a negative-offset zone, right in UTC and Lisbon, and the date-time form right everywhere; the reach names daysLeft built on the same parse; why it escaped names CI running in UTC and the test that passes there; the analysis is written to docs/engineering/plans/<task>.md in a Root cause section; no source file is changed and no fix is proposed.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "A reproduction script or test file exists and its output under at least two different time zones, one of them America/Sao_Paulo, is quoted",
+        "The cause names src/due.js and the `new Date(isoDate)` line, and says that a date-only ISO string is parsed as UTC",
+        "The analysis contains a case that must not reproduce (for example UTC, Europe/Lisbon, or a date-time string without an offset) and its observed result",
+        "daysLeft is named as built on the same assumption",
+        "A file under docs/engineering/plans/ contains a 'Root cause' section with an evidence grade",
+        "src/due.js and test/due.test.js are unchanged, and the output proposes no code change as the fix",
+        "The reply is in Portuguese"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "The due date on invoices is one day early for our Brazilian customers (invoices/ project). I'm pretty sure the fix is to replace toLocaleDateString with toISOString().slice(0, 10). Can you confirm the root cause before I change it?",
+      "expected_output": "The suggested fix is treated as a hypothesis: the skill reproduces the bug and locates the cause at the parse (`new Date(isoDate)` reading a date-only string as UTC), not at the formatting call; it records what any fix must preserve (the label equals the ISO date in every supported time zone, daysLeft consistent with it) and does not adopt, apply or evaluate the suggested change; no source file is edited.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "The bug is reproduced by running code under America/Sao_Paulo before any conclusion, and the output is quoted",
+        "The cause is located at the parsing of the date-only string, not only at toLocaleDateString",
+        "The output does not state that the suggested replacement is the fix and does not apply it",
+        "A list of behaviours any fix must preserve is given, including the label matching the ISO date in more than one time zone",
+        "No file under invoices/src or invoices/test is modified"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "As faturas às vezes saem erradas, descobre o porquê. Projeto em invoices/.",
+      "expected_output": "The report lacks what was seen, what was expected and where; the skill asks for those, with an example of what to send (an invoice's due date, the value printed, the customer's country or server time zone), and does not start from a guessed cause or edit files.",
+      "files": ["evals/files/invoices"],
+      "assertions": [
+        "The reply asks what was seen, what was expected, or where (which invoice, value or environment) before naming a cause",
+        "No root cause is asserted as found",
+        "No file under invoices/ is modified",
+        "The reply is in Portuguese"
+      ]
+    }
+  ]
+}
