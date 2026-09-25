@@ -24,6 +24,26 @@ DESIGN_SECTIONS = ["## Summary", "## Sources", "## Decisions", "## Components", 
 ADR_SECTIONS = ["## Context", "## Options", "## Decision", "## Consequences"]
 ID_RE = re.compile(r"\b((?:REQ|NFR|EDGE|AC)-\d+)\b")
 
+DEF_RE = re.compile(r"^\s*-\s*((?:REQ|NFR|EDGE|AC)-\d+)\s*(?:\([^)]*\))?:", re.M)
+
+
+def defined_ids(spec_text):
+    """Ids the specification defines (`- REQ-n:` lines); a definition line saying "withdrawn" is excluded.
+
+    Ids that only appear as citations of another document (\"content-model spec REQ-10\") are not
+    this specification's requirements and are not returned. Falls back to every id mentioned when
+    the specification defines none in this form.
+    """
+    ids = set(DEF_RE.findall(spec_text))
+    if not ids:
+        return set(ID_RE.findall(spec_text))
+    for line in spec_text.splitlines():
+        m = DEF_RE.match(line)
+        if m and "withdrawn" in line.lower():
+            ids.discard(m.group(1))
+    return ids
+
+
 
 def read(p):
     with open(p, encoding="utf-8") as f:
@@ -60,7 +80,7 @@ def main(argv):
         return 2
     s, d = read(spec), read(design)
     errors, warnings = [], []
-    spec_ids = sorted(set(ID_RE.findall(s)), key=lambda x: (x.split("-")[0], int(x.split("-")[1])))
+    spec_ids = sorted(defined_ids(s), key=lambda x: (x.split("-")[0], int(x.split("-")[1])))
     design_ids = set(ID_RE.findall(d))
     missing = [i for i in spec_ids if i not in design_ids]
     if missing:
