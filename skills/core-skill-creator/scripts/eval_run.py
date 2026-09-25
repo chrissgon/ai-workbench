@@ -116,6 +116,20 @@ def snapshot(cwd, before):
     return files
 
 
+def isolate_git(cwd):
+    """Give the case its own repository, so git commands in a run stay inside it.
+
+    Without one, `git add -A` or `git commit` from the case folder reaches the enclosing
+    repository (the workbench itself) and commits whatever is uncommitted there.
+    """
+    if os.path.isdir(os.path.join(cwd, ".git")):
+        return
+    env = dict(os.environ, GIT_AUTHOR_NAME="eval", GIT_AUTHOR_EMAIL="eval@localhost",
+               GIT_COMMITTER_NAME="eval", GIT_COMMITTER_EMAIL="eval@localhost")
+    for args in (["init", "-q"], ["add", "-A"], ["-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "fixture"]):
+        subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
+
+
 def file_index(cwd):
     idx = {}
     for dp, _, fns in os.walk(cwd):
@@ -136,10 +150,22 @@ def read_text(path, limit=4000):
         return ""
 
 
+# The grader sees each produced file up to this many characters. Plans and reports run to several
+# thousand; at 3,000 the first real run graded the end of a plan as missing.
+FILE_LIMIT = 20000
+
+
+def shown(path):
+    text = read_text(path, FILE_LIMIT + 1)
+    if len(text) > FILE_LIMIT:
+        return text[:FILE_LIMIT] + f"\n[... truncated at {FILE_LIMIT} characters: the file continues ...]"
+    return text
+
+
 def grade(runner, grader, run_dir, case, response, changed_files):
     with open(GRADING_TEMPLATE, encoding="utf-8") as f:
         tpl = f.read()
-    files_blob = "\n".join(f"### {p}\n{read_text(os.path.join(run_dir, 'cwd', p), 3000)}" for p in sorted(changed_files)) or "(none)"
+    files_blob = "\n".join(f"### {p}\n{shown(os.path.join(run_dir, 'cwd', p))}" for p in sorted(changed_files)) or "(none)"
     assertions = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(case.get("assertions") or []))
     prompt = tpl.replace("{prompt}", case["prompt"]).replace("{response}", response).replace("{files}", files_blob).replace("{assertions}", assertions)
     gdir = os.path.join(run_dir, "grading")
@@ -209,6 +235,7 @@ def main(argv):
                         shutil.copytree(src, cwd, dirs_exist_ok=True)
                     elif os.path.isfile(src):
                         shutil.copy(src, cwd)
+                isolate_git(cwd)
                 pp = os.path.join(run_dir, "prompt.md")
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])
