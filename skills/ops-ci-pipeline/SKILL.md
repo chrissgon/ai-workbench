@@ -17,7 +17,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: [integration:vcs]
   side_effects: [push]
-  version: "0.2"
+  version: "0.3"
 ---
 
 # CI pipeline
@@ -67,7 +67,7 @@ Progress:
 - [ ] Step 3: Write the pipeline: one job that installs with the lockfile frozen, runs the fast checks, builds with the host's preset, runs the tests on that build, and uploads it; one job that deploys that artifact (an alias per pull request, production on the main branch) and outputs its URL; and, for measurements the runner cannot make fairly (performance scores), a job that measures the deployed URL. Pin every tool version (runtime, package manager, deploy CLI). Cancel superseded runs of a pull request, never of production. Give build-only variables (a host preset) to the build step alone: every build the tests start inherits a job-level variable. Reference secrets by name only.
 - [ ] Step 4: Make the tests read what the pipeline ships: an environment variable for the output folder with today's value as the default; a base URL variable that skips the local server when set; the settings the machine would otherwise supply set explicitly. Make failures readable without the log: the test runner's CI annotation reporter, and failure messages that name the cause (the audits and elements that lost points, not only the score).
 - [ ] Step 5: Run the pipeline's commands locally with its environment (`CI=1`, the host preset on the build, the output folder variable) before the first push. Fix what fails here; a test that reads a value once while it animates fails under the runner's parallel load, so poll it.
-- [ ] Step 6: Write the settings checklist from the template, in the order that keeps the site deployable: secrets first; stopping the host's builds and protecting the branch after the first green run, because required checks can only be selected once they have run.
+- [ ] Step 6: Write the settings checklist from the template, in the order that keeps the site deployable: secrets first; stopping the host's builds and protecting the branch after the first green run, because required checks can only be selected once they have run; and suggest deleting merged branches automatically.
 - [ ] Step 7: Pass the confirmation gate, push the branch, and follow the run sparingly (unauthenticated public APIs allow about 60 requests an hour: poll every three minutes). For each red run: read the failure (stop rule 3), reproduce it locally with the same environment, fix the cause, push once.
 - [ ] Step 8: Write the "Pipeline" section of the plan from the template, and self-check against "Quality criteria". The user merges.
 
@@ -97,6 +97,7 @@ Now:
 After the first green run:
 4. Stop the host's builds: <menu path>.
 5. Protect `<branch>`: <menu path>; rules: <list>; required checks: `<job names>`.
+6. Suggested: delete merged branches automatically (GitHub: Settings → General → Pull Requests → "Automatically delete head branches"), since every change now arrives through a pull request.
 ```
 
 ## Quality criteria

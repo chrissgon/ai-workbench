@@ -7,7 +7,9 @@ Usage:
                       [--only with|without] [--tiers strong,floor] [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
-and each model, it prepares a working directory with the case's files, runs the prompt through
+and each model, it prepares a working directory with the case's files in its own git repository
+(one "fixture" commit, then the case's optional "setup" shell commands, such as a branch with commits),
+runs the prompt through
 adapters/<harness>/run-prompt.sh, grades every assertion with the grader model, and writes:
 
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
@@ -131,6 +133,16 @@ def isolate_git(cwd):
         subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
 
 
+def run_setup(cwd, commands):
+    """Run a case's setup commands in its folder (a branch, commits), after its repository exists."""
+    env = dict(os.environ, GIT_AUTHOR_NAME="eval", GIT_AUTHOR_EMAIL="eval@localhost",
+               GIT_COMMITTER_NAME="eval", GIT_COMMITTER_EMAIL="eval@localhost")
+    for command in commands:
+        r = subprocess.run(["bash", "-c", command], cwd=cwd, env=env, capture_output=True, text=True)
+        if r.returncode != 0:
+            die(f"setup command failed in {cwd}: {command}\n{r.stderr}")
+
+
 def file_index(cwd):
     idx = {}
     for dp, _, fns in os.walk(cwd):
@@ -237,6 +249,7 @@ def main(argv):
                     elif os.path.isfile(src):
                         shutil.copy(src, cwd)
                 isolate_git(cwd)
+                run_setup(cwd, c.get("setup") or [])
                 pp = os.path.join(run_dir, "prompt.md")
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])

@@ -217,7 +217,7 @@ Wave 0:
 - [x] core-agents-md
 - [x] core-skill-creator
 - [x] researcher agent
-- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real runs on the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench; it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
+- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real runs on the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench, and may declare `setup` commands (a branch with commits); it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
 
 Wave 1:
 - [x] eng-codebase-map
@@ -233,7 +233,7 @@ Wave 1:
 - [x] eng-docs
 - [x] product-feature-spec
 - [x] product-backlog
-- [ ] ops-pull-request
+- [x] ops-pull-request (from perfectui-doc pull requests #2 and #3 and the generic part of pr-creator; bundles `scripts/pr-context.sh`; the floor model once changed code while preparing a pull request, to watch in real use)
 - [ ] ops-branch-sync
 - [ ] flow-fix-bug, flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
 - [ ] agents explorer, implementer, reviewer
