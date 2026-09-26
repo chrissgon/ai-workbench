@@ -1,0 +1,9 @@
+# Netlify builds every push itself: main is production, other branches get branch deploys.
+[build]
+  command = "npm run generate"
+  # On Netlify, Nitro uses its netlify-static preset, which writes the site to dist/.
+  # A local `npm run generate` writes .output/public instead.
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "22"

@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+
+# A new push to a pull request cancels its older run; production deploys never cancel each other.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run generate
+        env:
+          NITRO_PRESET: netlify_static
+      - run: npx playwright install --with-deps chromium
+      - run: npm test
+        env:
+          SITE_DIR: dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: site
+          path: dist/
+
+  deploy:
+    needs: check
+    runs-on: ubuntu-24.04
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: site
+          path: dist
+      - id: deploy
+        env:
+          NETLIFY_AUTH_TOKEN: ${{ secrets.NETLIFY_AUTH_TOKEN }}
+          NETLIFY_SITE_ID: ${{ secrets.NETLIFY_SITE_ID }}
+        run: |
+          npx --yes netlify-cli@27.10.0 deploy --no-build --dir dist ${{ github.event_name == 'push' && '--prod' || format('--alias=pr-{0}', github.event.pull_request.number) }} --json > deploy.json
+          echo "url=$(jq -r .deploy_url deploy.json)" >> "$GITHUB_OUTPUT"
+
+  lighthouse:
+    needs: deploy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.19.0
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test tests/lighthouse.spec.ts
+        env:
+          SITE_URL: ${{ needs.deploy.outputs.url }}

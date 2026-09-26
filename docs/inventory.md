@@ -95,7 +95,7 @@ The most mature area in the old repository. Stack-agnostic procedures; stacks ar
 |-------|----------|-------|----------|-------|------|
 | ops-pull-request | a pull request | branch, spec or plan | pr-creator, create-github-pull-request prompt | rewrite, organization specifics removed; requires `integration:vcs`; side effect `create` | 1 |
 | ops-branch-sync | branch updated with its base, conflicts resolved | — | backmerge-master prompt, deploy-to-staging | rewrite, generic; side effect `push` | 1 |
-| ops-ci-pipeline | pipeline configuration | repository | — | create | 4 |
+| ops-ci-pipeline | pipeline configuration, settings checklist, Pipeline section of the plan | repository | — | create; requires `integration:vcs`; side effect `push` | 4 |
 | ops-release | release notes and version | changes | — | create; side effect `publish` | 4 |
 | ops-qa-handover | docs/delivery/qa/<ticket>.md | diff, spec | qa-notes-handover prompt | rewrite | 5 |
 | ops-infra | infrastructure as code | architecture | — | planned | — |
@@ -243,5 +243,6 @@ Built ahead of their wave, with the perfectui-doc rebuild as the real project:
 - [x] design-ux-flows, design-system (wave 3)
 - [x] design-brief, design-execute (wave 3; replace design-ui and design-generate-asset: design skills produce the inputs, a specialized AI design tool or a code prototype produces the design)
 - [x] mkt-messaging (wave 4)
+- [x] ops-ci-pipeline (wave 4; from the perfectui-doc pipeline: one build tested and deployed from GitHub Actions to Netlify, previews per pull request, protected main; the floor model still misses the revoke-the-pasted-token rule and exact version pins now and then)
 - [x] design-handoff (wave 3; unpacks single-file HTML exports, maps invented tokens, reads motion from scripts)
 - [ ] design-system v0.3: any input (code, images, documents, a live site) or a short interview; onboarding prompt for the design tool

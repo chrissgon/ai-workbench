@@ -102,7 +102,8 @@ def run_prompt(runner, prompt_path, cwd, model, out, skill_dir):
 def snapshot(cwd, before):
     files = {}
     for dp, _, fns in os.walk(cwd):
-        if "/.claude" in dp or "/.agents" in dp or "/node_modules" in dp or "/.git" in dp:
+        # Match whole folder names: "/.git" as a substring would also skip ".github".
+        if {".claude", ".agents", "node_modules", ".git"} & set(os.path.relpath(dp, cwd).split(os.sep)):
             continue
         for fn in fns:
             p = os.path.join(dp, fn)
