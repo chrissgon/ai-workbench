@@ -1,0 +1,63 @@
+{
+  "skill_name": "flow-fix-bug",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "No invoices/, a data de vencimento sai um dia antes para os clientes no Brasil: a fatura com vencimento 2026-09-25 mostra 2026-09-24. Corrige isso.",
+      "expected_output": "The flow records itself in the state file, runs phase 1 (eng-root-cause): a reproduction under TZ=America/Sao_Paulo, the cause at the date parsing, a plan with a Root cause section; then stops at the phase 1 checkpoint with a question, without writing tests or changing src/.",
+      "files": [
+        "evals/files/invoices"
+      ],
+      "assertions": [
+        "docs/workbench/state.md names flow-fix-bug as the current flow and phase 1 (root cause) as where it stands",
+        "A plan under docs/engineering/plans/ contains a Root cause section",
+        "The reply quotes a reproduction run under America/Sao_Paulo showing 2026-09-24",
+        "src/due.js is not modified and no test file is added or changed",
+        "The reply ends with a checkpoint question asking the user to approve the root cause before the next phase"
+      ],
+      "skills": [
+        "core-orchestrator",
+        "eng-root-cause",
+        "eng-unit-tests"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "Pode seguir com o fix do vencimento no invoices/.",
+      "expected_output": "The flow reads the state file, resumes at phase 2 (eng-unit-tests), writes tests in node:test that fail today under America/Sao_Paulo, adds a Failing tests section, updates the state file, and stops at the phase 2 checkpoint; src/ is not changed.",
+      "files": [
+        "evals/files/invoices-phase2"
+      ],
+      "assertions": [
+        "The reply says it resumes at phase 2 (failing tests) because phase 1 is approved in the state file",
+        "A test file under test/ uses node:test and asserts dueLabel('2026-09-25') is '2026-09-25'",
+        "The plan gains a Failing tests section with the result of running the tests before the change",
+        "src/due.js is not modified",
+        "The reply ends with a checkpoint question before the next phase"
+      ],
+      "skills": [
+        "core-orchestrator",
+        "eng-root-cause",
+        "eng-unit-tests"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Às vezes a fatura sai errada no invoices/. Corrige aí.",
+      "expected_output": "Phase 1 cannot start: the flow asks what was seen, what was expected and where (which invoice, value, environment), and writes no plan and changes no code.",
+      "files": [
+        "evals/files/invoices"
+      ],
+      "assertions": [
+        "The reply asks what was seen, what was expected, or where (an example invoice, value or environment)",
+        "No file under docs/engineering/plans/ is created",
+        "src/due.js is not modified"
+      ],
+      "skills": [
+        "core-orchestrator",
+        "eng-root-cause",
+        "eng-unit-tests"
+      ]
+    }
+  ]
+}

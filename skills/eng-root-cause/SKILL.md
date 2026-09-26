@@ -7,7 +7,7 @@ description: >
   happen. Never proposes the fix. Use this skill when a bug is reported, a test fails for a reason
   nobody can name, behaviour differs between browsers or environments, or before any bug fix is
   planned, even if the user only says "isso está quebrado", "why does this happen" or "debug
-  this". Also use it when a fix has already been suggested, to confirm the cause it assumes.
+  this". Also use it when a fix has already been suggested, to confirm the cause it assumes. When the user asks for the bug to be fixed end to end, flow-fix-bug runs this skill as its first phase.
 license: MIT
 metadata:
   area: engineering

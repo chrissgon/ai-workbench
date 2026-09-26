@@ -8,7 +8,8 @@ Usage:
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files in its own git repository
-(one "fixture" commit, then the case's optional "setup" shell commands, such as a branch with commits),
+(one "fixture" commit, then the case's optional "setup" shell commands, such as a branch with commits,
+and the skills listed in its optional "skills", linked for both variants: a flow's phases),
 runs the prompt through
 adapters/<harness>/run-prompt.sh, grades every assertion with the grader model, and writes:
 
@@ -143,6 +144,25 @@ def run_setup(cwd, commands):
             die(f"setup command failed in {cwd}: {command}\n{r.stderr}")
 
 
+def install_dependencies(cwd, names):
+    """Make the skills a case depends on (a flow's phases) discoverable in both variants.
+
+    Linked at project scope, like the adapter links the skill under test, so the with and
+    without runs differ only by that skill.
+    """
+    if not names:
+        return
+    target = os.path.join(cwd, ".claude", "skills")
+    os.makedirs(target, exist_ok=True)
+    for name in names:
+        src = os.path.join(ROOT, "skills", name)
+        if not os.path.isdir(src):
+            die(f"case depends on skill {name!r}, which does not exist under skills/.")
+        link = os.path.join(target, name)
+        if not os.path.exists(link):
+            os.symlink(src, link)
+
+
 def file_index(cwd):
     idx = {}
     for dp, _, fns in os.walk(cwd):
@@ -250,6 +270,7 @@ def main(argv):
                         shutil.copy(src, cwd)
                 isolate_git(cwd)
                 run_setup(cwd, c.get("setup") or [])
+                install_dependencies(cwd, c.get("skills") or [])
                 pp = os.path.join(run_dir, "prompt.md")
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])

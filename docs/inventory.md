@@ -139,7 +139,7 @@ Nothing until the actuators, the pre-approved gate and a runtime exist. Candidat
 
 | Flow | Area | Phases | Old repo | State | Wave |
 |------|------|--------|----------|-------|------|
-| flow-fix-bug | engineering | impact-analysis → root-cause → critique → unit-tests → implement → code-review → pull-request | debug-workflow (767 lines) | rewrite | 1 |
+| flow-fix-bug | engineering | root-cause → unit-tests → impact-analysis (optional) → tradeoffs (optional) → implement → integration-tests (optional) → docs (optional) → code-review → pull-request | debug-workflow (767 lines) | rewrite | 1 |
 | flow-build-feature | engineering | feature-spec → architecture → unit-tests → implement → integration-tests → code-review → docs → pull-request | feature-workflow (811 lines) | rewrite | 1 |
 | flow-improve-code | engineering | codebase-map or impact-analysis → tradeoffs → refactor → code-review → pull-request | improvement-workflow (601 lines) | rewrite | 1 |
 | flow-new-project | engineering | clarify → prd or feature-spec → backlog → architecture → implement per task → pull-request | greenfield-workflow (482 lines) | rewrite | 1 |
@@ -217,7 +217,7 @@ Wave 0:
 - [x] core-agents-md
 - [x] core-skill-creator
 - [x] researcher agent
-- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real runs on the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench, and may declare `setup` commands (a branch with commits); it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
+- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real runs on the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench, and may declare `setup` commands (a branch with commits) and `skills` it depends on (a flow's phases, linked in both variants); it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
 
 Wave 1:
 - [x] eng-codebase-map
@@ -235,7 +235,8 @@ Wave 1:
 - [x] product-backlog
 - [x] ops-pull-request (from perfectui-doc pull requests #2 and #3 and the generic part of pr-creator; bundles `scripts/pr-context.sh`; the floor model once changed code while preparing a pull request, to watch in real use)
 - [ ] ops-branch-sync
-- [ ] flow-fix-bug, flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
+- [x] flow-fix-bug (from the perfectui header-menu bug: nine phases, the fix in the library and the records in the site; floor 0.8 at the threshold, the floor model sometimes starts eng-root-cause directly instead of the flow)
+- [ ] flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
 - [ ] agents explorer, implementer, reviewer
 
 Built ahead of their wave, with the perfectui-doc rebuild as the real project:
