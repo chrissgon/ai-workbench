@@ -17,7 +17,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: [integration:vcs]
   side_effects: [push, create]
-  version: "0.3"
+  version: "0.4"
 ---
 
 # Pull request
@@ -55,7 +55,7 @@ Check these before pushing, creating or replying. They override the procedure.
 Applies to pushing the branch and creating the pull request.
 
 1. Read the "Approvals" section of `docs/workbench/state.md`. If an approval covers this branch and repository, skip to step 4.
-2. Show the payload: repository, base ← head, the commits the branch adds, the title, and the full body exactly as it will be sent, in a code block (a summary of the body is not the payload).
+2. Show the payload: repository, base ← head, the commits the branch adds, the title, and the full body exactly as it will be sent, in a code block (a summary of the body is not the payload). The body already lists the approval record that step 4 will commit (`docs/workbench/state.md`: the approval for this pull request), so what the user approves is what is sent.
 3. Ask once: "Proceed? (yes/no)". Stop on anything other than an explicit yes.
 4. Record the approval in the state file on the branch (date, what, the user's words), commit it, push, and create the pull request.
 
@@ -113,6 +113,8 @@ Approve only if all of the following hold:
 - The skill did not merge, approve, or change repository settings.
 
 ## Gotchas
+
+- The first real run showed a body that left out the state-file commit made after the approval, and had to edit the pull request once it was open; the payload now lists that record up front.
 
 - With squash merging, the pull request's title, not the branch's commits, became the commit on main (`docs(workbench): record the delivery pipeline … (#3)`): a vague title becomes a vague history.
 - Recording the approval in the state file on the branch itself means the record reaches a protected main with the change; a separate commit on main is impossible once main requires pull requests.
