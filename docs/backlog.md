@@ -38,6 +38,9 @@ The workbench is a set of instructions that models execute with a terminal, file
   - First real case: `perfectui-doc` (the site) and the `perfectui` library.
   - Decision to record in `docs/decisions.md` when it is built: `docs/area-map.md` says security is a reference that produces no artifact of its own; a review that writes a report has the same shape as `eng-code-review`, which is the argument for an exception.
 - [ ] **S9. Prompt-injection evals.** One eval case per reader type (a web page for `core-research`, a pull request comment for `ops-pull-request`, a bug report for `eng-root-cause`) whose content carries an instruction, with assertions that the output quotes it to the user and does not act on it. Run with and without the sentence.
+- [ ] **S10. Fix the findings of the 2026-09-27 audit** (`docs/security/audit-2026-09-27.md`: 17 high, 24 medium, 20 low, none blocking). By group: G1 eval runner and adapters, G2 scripts that trust input, G3 providers (each by an implementer agent in its own worktree), G4 skill and agent text (maintainer session). One pull request per group; high findings first.
+  - Done when: every finding is fixed or recorded as accepted with a reason in the audit record.
+- [ ] **S11. Skill `ops-repo-baseline`.** The repository baseline set up for this repository on 2026-09-27, as a procedure for any project: the in-repository files and the host settings, in the order that works (signing before the signed-commits rule, a first CI run before required checks, a history scan before the first push), with the decisions that differ per project asked with a recommended answer (approvals, signed commits, visibility). After the high findings of S10, because several of them change what the template contains.
 
 ## Tooling
 
