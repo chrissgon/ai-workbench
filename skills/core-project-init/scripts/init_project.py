@@ -3,16 +3,22 @@
 
 Usage:
   python3 init_project.py --root <dir> --detect
-  python3 init_project.py --root <dir> --apply --name <name> --autonomy <mode> [--register <path>=<slot>]... [--dry-run]
-  python3 init_project.py --root <dir> [--set-autonomy <mode>] [--register <path>=<slot>]... [--dry-run]
+  python3 init_project.py --root <dir> --apply --autonomy <mode> [--input <file>] [--name <name>] [--register <path>=<slot>]... [--dry-run]
+  python3 init_project.py --root <dir> [--set-autonomy <mode>] [--input <file>] [--register <path>=<slot>]... [--dry-run]
 
 --detect   prints JSON: is_project_root, name_guess, state_exists, agents_md (exists, has_section),
            root_docs (specification-like *.md at the root), excluded, docs_dir (count, names).
 --apply    creates docs/workbench/state.md and the workbench section in AGENTS.md. Refuses if state exists.
 Update     (no --apply) changes the autonomy mode and/or adds registrations to an existing state.
 --register <path>=<slot>  registers an existing document as the artifact <slot> (docs/<area>/...), in place.
---decision <text>         records a decision the user stated during initialization (repeatable).
---open-question <text>    records an open question to resolve before work starts (repeatable).
+                          The path must stay inside --root.
+--input <file>            a JSON file (or - for stdin) with the user's own words, which never go on the
+                          command line where quotes or $( ) would break out:
+                          {"name": "<name>", "decisions": ["<text>", ...], "open_questions": ["<text>", ...]}
+                          Every key is optional. Decisions and open questions are recorded as stated;
+                          a line break inside one becomes a space.
+--name <name>             the project name, when it is only letters, digits, spaces, '.', '_' or '-';
+                          any other name goes in --input.
 --autonomy / --set-autonomy  one of: every-phase, milestones, end.
 --dry-run  prints the plan, writes nothing.
 
@@ -152,6 +158,11 @@ def parse_registrations(items, root):
             raise ValueError(f"--register expects <path>=<slot>, got {item!r}")
         path, slot = item.split("=", 1)
         path, slot = path.strip(), slot.strip()
+        base = os.path.realpath(root)
+        if os.path.isabs(path) or os.path.commonpath([base, os.path.realpath(os.path.join(base, path))]) != base:
+            raise ValueError(f"registered path must stay inside the project root, got {path!r}")
+        if ".." in slot.split("/") or "|" in path + slot or "\n" in path + slot:
+            raise ValueError(f"--register {item!r} has '..', '|' or a line break")
         if not os.path.exists(os.path.join(root, path)):
             raise FileNotFoundError(f"registered path does not exist: {path}")
         if not slot.startswith("docs/"):
@@ -255,31 +266,60 @@ def update(root, set_autonomy, regs, dry, decisions=(), questions=()):
     return 0
 
 
+NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9 ._-]{0,79}")
+
+
+def one_line(text):
+    return " ".join(str(text).split())
+
+
+def read_input(src):
+    """(name, decisions, questions) from a JSON file or stdin; ValueError when it is not that shape."""
+    try:
+        raw = sys.stdin.read() if src == "-" else open(src, encoding="utf-8").read()
+        data = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as e:
+        raise ValueError(f"--input {src!r} is not a readable JSON file: {e}") from None
+    if not isinstance(data, dict) or set(data) - {"name", "decisions", "open_questions"}:
+        raise ValueError('--input must be an object with only "name", "decisions" and "open_questions"')
+    lists = [data.get(k, []) for k in ("decisions", "open_questions")]
+    if not all(isinstance(v, list) and all(isinstance(t, str) for t in v) for v in lists):
+        raise ValueError('"decisions" and "open_questions" must be lists of strings')
+    name = data.get("name")
+    if name is not None and not isinstance(name, str):
+        raise ValueError('"name" must be a string')
+    return (one_line(name) if name else None), [one_line(t) for t in lists[0] if t.strip()], \
+        [one_line(t) for t in lists[1] if t.strip()]
+
+
 def main(argv):
     if "--help" in argv or "-h" in argv or not argv:
         print(__doc__)
         return 0 if argv else 2
     root, mode, name, autonomy, set_autonomy, regs, dry = ".", None, None, None, None, [], False
-    decisions, questions = [], []
+    decisions, questions, input_src = [], [], None
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a in ("--root", "--name", "--autonomy", "--set-autonomy", "--register", "--decision", "--open-question"):
+        if a in ("--decision", "--open-question"):
+            return usage_error(f"{a} was replaced by --input <file>: free text never goes on the command line.")
+        if a in ("--root", "--name", "--autonomy", "--set-autonomy", "--register", "--input"):
             if i + 1 >= len(argv):
                 return usage_error(f"{a} needs a value.")
             v = argv[i + 1]
             if a == "--root":
                 root = v
             elif a == "--name":
+                if not NAME_RE.fullmatch(v):
+                    return usage_error(f"--name {v!r} has characters other than letters, digits, spaces, '.', '_' "
+                                       "or '-'; put it in --input.")
                 name = v
             elif a == "--autonomy":
                 autonomy = v
             elif a == "--set-autonomy":
                 set_autonomy = v
-            elif a == "--decision":
-                decisions.append(v)
-            elif a == "--open-question":
-                questions.append(v)
+            elif a == "--input":
+                input_src = v
             else:
                 regs.append(v)
             i += 2
@@ -299,20 +339,26 @@ def main(argv):
     if mode == "detect":
         print(json.dumps(detect(root), indent=2))
         return 0
+    if input_src:
+        try:
+            in_name, decisions, questions = read_input(input_src)
+        except ValueError as e:
+            return usage_error(str(e))
+        name = in_name or name
     try:
         parsed = parse_registrations(regs, root)
     except (ValueError, FileNotFoundError) as e:
         return refuse(str(e))
     if mode == "apply":
         if not name or not autonomy:
-            return usage_error("--apply requires --name and --autonomy.")
+            return usage_error("--apply requires a name (--name, or \"name\" in --input) and --autonomy.")
         if autonomy not in MODES:
             return usage_error(f"--autonomy must be one of {MODES}.")
         return apply(root, name, autonomy, parsed, dry, decisions, questions)
     if set_autonomy and set_autonomy not in MODES:
         return usage_error(f"--set-autonomy must be one of {MODES}.")
     if not set_autonomy and not parsed and not decisions and not questions:
-        return usage_error("nothing to do: pass --detect, --apply, --set-autonomy, --register, --decision or --open-question.")
+        return usage_error("nothing to do: pass --detect, --apply, --set-autonomy, --register or --input.")
     return update(root, set_autonomy, parsed, dry, decisions, questions)
 
 
