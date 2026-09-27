@@ -15,10 +15,10 @@ Reads a repository's Dependabot alerts and dismisses one, through the GitHub RES
    uv run --with keyring==25.7.0 keyring set ai-workbench github
    ```
 
-   Or export it as `GITHUB_TOKEN` for the session; the environment is read first.
+   Or export it as `VCS_GITHUB_TOKEN` for the session; the environment is read first (`VCS_GITHUB_TOKEN`, then `GITHUB_TOKEN`, which a harness or CI may set for itself with other permissions).
 3. Verify: `uv run providers/vcs/github.py --check --repo <owner>/<name>`.
 
-Dismissing needs **Dependabot alerts: Read and write**. Keep that permission in a second token, exported as `GITHUB_TOKEN` only for the dismissal, so the everyday token cannot change anything.
+Dismissing needs **Dependabot alerts: Read and write**. Keep that permission in a second token, exported as `VCS_GITHUB_TOKEN` only for the dismissal, so the everyday token cannot change anything.
 
 ### Usage
 
@@ -41,7 +41,7 @@ uv run providers/vcs/github.py resolve --idempotency-key web-42 --dismissed --co
 
 | Variable | Purpose |
 |----------|---------|
-| `GITHUB_TOKEN` | Optional; a token from the environment instead of the secret store (service `ai-workbench`, username `github`). |
+| `VCS_GITHUB_TOKEN` | Optional; a token from the environment instead of the secret store (service `ai-workbench`, username `github`). Read before `GITHUB_TOKEN`. |
 | `VCS_GITHUB_LEDGER` | Path of the idempotency ledger. Default `~/.cache/ai-workbench/vcs-github.json` (or under `$XDG_CACHE_HOME`). |
 | `VCS_GITHUB_API_BASE` | Tests only: a loopback URL that replaces `https://api.github.com`. When set, the secret store is not read. |
 | `VCS_GITHUB_HTTP_TIMEOUT` | Tests only, with `VCS_GITHUB_API_BASE`: request timeout in seconds (default 30). |

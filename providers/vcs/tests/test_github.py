@@ -564,7 +564,7 @@ def test_check_makes_one_authenticated_get(env, fake):
     proc = run(["--check"], env)
     assert proc.returncode == 0, proc.stderr
     out = json.loads(proc.stdout)
-    assert out["ready"] is True and out["token_source"] == "environment"
+    assert out["ready"] is True and out["token_source"] == "environment (GITHUB_TOKEN)"
     assert fake.paths() == [("GET", "/rate_limit")]
     assert_api_headers(fake.requests[0])
 
@@ -586,3 +586,12 @@ def test_check_not_ready(env, fake):
     proc = run(["--check"], env)
     assert proc.returncode == 1
     assert "GITHUB_TOKEN" in proc.stderr
+
+
+def test_vcs_github_token_wins_over_github_token(env, fake):
+    env["VCS_GITHUB_TOKEN"] = env["GITHUB_TOKEN"]
+    env["GITHUB_TOKEN"] = "ghs_" + "w" * 36  # a harness's own token, with other permissions
+    proc = run(["--check"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["token_source"] == "environment (VCS_GITHUB_TOKEN)"
+    assert "w" * 36 not in str(fake.requests[0])

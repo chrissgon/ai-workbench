@@ -97,14 +97,15 @@ verbs:
                  alerts). Prints no secret.
 
 credentials (never from files or flags):
-  GITHUB_TOKEN   read first. Otherwise the OS secret store, service
+  VCS_GITHUB_TOKEN  read first; then GITHUB_TOKEN (which a harness or CI may set for its own
+                 use, with other permissions). Otherwise the OS secret store, service
                  "{KEYRING_SERVICE}", username "{KEYRING_USERNAME}"; store it once with:
                      uv run --with keyring==25.7.0 keyring set {KEYRING_SERVICE} {KEYRING_USERNAME}
                  (the token is typed at a hidden prompt, never on the command line).
   Use a fine-grained personal access token limited to the repositories concerned:
   - repository permission "Dependabot alerts: Read-only" is enough for alerts and --check;
   - "Dependabot alerts: Read and write" is needed for dismiss-alert. Keep that one in a
-    separate token, exported as GITHUB_TOKEN only for the dismissal.
+    separate token, exported as VCS_GITHUB_TOKEN only for the dismissal.
   The token is never printed, not even partially.
 
 other environment variables:
@@ -178,14 +179,16 @@ def api_base() -> tuple[str, bool]:
 
 def load_token(test_mode: bool) -> tuple[str, str]:
     """Return (token, source). Raise EXIT_NOT_CONFIGURED when there is none."""
-    token = (os.environ.get("GITHUB_TOKEN") or "").strip()
-    source = "environment"
+    # VCS_GITHUB_TOKEN first: a harness or CI may export its own GITHUB_TOKEN with other permissions.
+    name = "VCS_GITHUB_TOKEN" if (os.environ.get("VCS_GITHUB_TOKEN") or "").strip() else "GITHUB_TOKEN"
+    token = (os.environ.get(name) or "").strip()
+    source = f"environment ({name})"
     if not token and not test_mode:
         try:
             import keyring  # imported lazily: only needed when the secret store is used
         except ImportError:
             raise ProviderError(
-                "no GITHUB_TOKEN and the keyring package is missing; run with: uv run providers/vcs/github.py",
+                "no VCS_GITHUB_TOKEN or GITHUB_TOKEN and the keyring package is missing; run with: uv run providers/vcs/github.py",
                 EXIT_NOT_CONFIGURED,
             )
         try:
@@ -195,7 +198,7 @@ def load_token(test_mode: bool) -> tuple[str, str]:
         source = "secret store"
     if not token:
         raise ProviderError(
-            f"no GitHub token: export GITHUB_TOKEN, or store one with "
+            f"no GitHub token: export VCS_GITHUB_TOKEN, or store one with "
             f"uv run --with keyring==25.7.0 keyring set {KEYRING_SERVICE} {KEYRING_USERNAME}",
             EXIT_NOT_CONFIGURED,
         )
