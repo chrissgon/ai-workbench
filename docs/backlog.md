@@ -51,7 +51,7 @@ The workbench is a set of instructions that models execute with a terminal, file
   - Why: a `todo.txt` reached a commit in the perfectui-doc launch. `agents/implementer.md` and `ops-branch-sync` already carry the rule.
 - [ ] **T3. Eval regression on changed skills.** When a commit changes a skill, rerun its evals and compare with the last `benchmark.json`, so a wording change that breaks the floor model is caught before it lands.
 
-- [ ] **T4. `eval_run.py` names a harness folder.** `install_dependencies` links a case's dependency skills into `<cwd>/.claude/skills`, a harness path inside a core script (principle 1); the validator misses it because the path is built from separate strings. The adapter should link dependencies, through a new `run-prompt.sh` option.
+- [x] **T4. `eval_run.py` names a harness folder.** Done 2026-09-27 (audit L18): `run-prompt.sh --extra-skill-dir` copies dependencies, and the snapshot skips installed skill copies by name. `install_dependencies` links a case's dependency skills into `<cwd>/.claude/skills`, a harness path inside a core script (principle 1); the validator misses it because the path is built from separate strings. The adapter should link dependencies, through a new `run-prompt.sh` option.
 
 ## Next skills
 
