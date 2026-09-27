@@ -34,3 +34,33 @@ def test_known_providers_exclude_helpers():
 def test_harness_name_is_validated():
     r = subprocess.run([sys.executable, str(SCRIPT), "--harness", "../providers"], capture_output=True, text=True)
     assert r.returncode == 2
+
+
+def test_integration_class_maps_to_its_service_folder(monkeypatch):
+    assert doctor.provider_folder("integration:vcs") == "vcs"
+    assert doctor.provider_folder("publisher:linkedin") == "publisher"
+    assert doctor.provider_folder("scheduler") == "scheduler"
+    assert "github" in doctor.known_providers(doctor.provider_folder("integration:vcs"))
+    for name in [n for n in list(doctor.os.environ) if n.endswith("_PROVIDER")]:
+        monkeypatch.delenv(name)
+    monkeypatch.setenv("INTEGRATION_PROVIDER", "github")
+    assert doctor.env_provider("integration:vcs") == (None, None)  # no shared fallback across services
+    monkeypatch.setenv("INTEGRATION_VCS_PROVIDER", "github")
+    assert doctor.env_provider("integration:vcs") == ("INTEGRATION_VCS_PROVIDER", "github")
+    monkeypatch.setenv("INTEGRATION_ISSUE_TRACKER_PROVIDER", "jira")
+    assert doctor.env_provider("integration:issue-tracker") == ("INTEGRATION_ISSUE_TRACKER_PROVIDER", "jira")
+    monkeypatch.setenv("PUBLISHER_PROVIDER", "linkedin")
+    assert doctor.env_provider("publisher:linkedin") == ("PUBLISHER_PROVIDER", "linkedin")
+
+
+def test_vcs_provider_runs_its_check(monkeypatch):
+    ran = []
+
+    class Done:
+        returncode, stdout, stderr = 0, "{}", ""
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda cmd, **k: ran.append(cmd) or Done())
+    status, detail = doctor.check_provider("integration:vcs", "github")
+    assert status == "provider" and detail == "providers/vcs/github.py"
+    assert ran[0][-2:] == [str(Path(doctor.PROVIDERS) / "vcs" / "github.py"), "--check"]
+    assert doctor.check_provider("integration:vcs", "gitlab")[0] == "missing"
