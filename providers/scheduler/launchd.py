@@ -15,13 +15,20 @@ Sources (Apple documentation and manual pages, accessed 2026-09-26):
   https://developer.apple.com/library/archive/documentation/MacOSX/Conceptual/BPSystemStartup/Chapters/CreatingLaunchdJobs.html
 
 What a job guarantees:
-- The files named in the command file's "snapshot" are copied into the job folder at
-  schedule time with their SHA-256; the command runs on the copies, so switching branches
-  or editing the originals cannot change what runs. At run time the copies are hashed
-  again and the command is refused if any differs.
+- Every file the command reads through its arguments is in the command file's "snapshot":
+  an argument that names an existing file, bare or as --flag=/path (absolute or relative to
+  cwd), and is not listed there makes the job refused. The files are copied into the job
+  folder with their SHA-256 and the arguments are swapped for the copies, so switching
+  branches or editing the originals cannot change what runs.
+- The scheduled program (argv[0]) and this runner script are hashed too; the runner itself is
+  copied into the job folder and launchd calls the copy.
+- The hashes are fixed at approval: the dry run prints a digest of everything that will run,
+  and the confirmed call must pass it back with --approved. At run time the copies, the
+  program and the runner are hashed again and the command is refused if any differs.
 - The command runs at most once: the job records its status before running, and removes
   its launchd agent afterwards. launchd fires a missed time on wake; a run later than the
   grace period is recorded as missed and does not run.
+- Job folders are 0700 and the files written in them 0600 (copies 0400).
 """
 from __future__ import annotations
 
@@ -41,15 +48,21 @@ LABEL_PREFIX = "dev.ai-workbench.scheduler."
 EARLY_TOLERANCE = timedelta(minutes=5)
 DEFAULT_GRACE_MINUTES = 120
 RUN_TIMEOUT_SECONDS = 600
+LAUNCHCTL_TIMEOUT_SECONDS = 30
+NOTIFY_TIMEOUT_SECONDS = 10
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
+DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RUN_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+HISTORY = ".history"
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
 
 HELP_EPILOG = """\
 verbs:
-  schedule  Run the command in --command-file once at --at. Needs --confirmed
-            (or --dry-run).
+  schedule  Run the command in --command-file once at --at. Run it first with
+            --dry-run: it prints the job and its "approved" digest. After the
+            calling skill's gate, run it again with --confirmed --approved <digest>;
+            it refuses when anything changed since the dry run.
   list      Print every job with its status (scheduled, running, done, failed,
             refused, missed, cancelled).
   cancel    Unload a scheduled job; needs --confirmed.
@@ -57,18 +70,25 @@ verbs:
 
 command file (JSON):
   {
-    "argv": ["uv", "run", "providers/publisher/linkedin.py", "publish", ...],
+    "argv": ["uv", "run", "/abs/providers/publisher/linkedin.py", "publish", ...],
     "cwd": "/absolute/working/directory",
-    "snapshot": ["/absolute/post.txt", "/absolute/image.png"],
+    "snapshot": ["/abs/providers/publisher/linkedin.py", "/abs/post.txt"],
+    "outputs": ["/abs/result.json"],
     "grace_minutes": 120
   }
-  argv[0] is resolved to an absolute path at schedule time. Every argv entry equal
-  to a snapshot path is replaced by the job's copy of that file.
+  "snapshot" is required. Every argv entry after argv[0] that names an existing
+  file, bare or as --flag=<path>, absolute or relative to cwd, must be listed in
+  it (as an absolute path) and is replaced by the job's copy of that file; a file
+  argument left out makes the job refused. "outputs" (optional) lists absolute
+  paths the command writes and does not read; they are exempt. argv[0] is resolved to an absolute
+  path at schedule time and hashed. Directories are not snapshotted: files the
+  command reads from cwd or from a directory argument are not verified.
 
 environment variables:
   SCHEDULER_HOME        job folders. Default: ~/Library/Application Support/ai-workbench/scheduler
   SCHEDULER_AGENTS_DIR  where plists go. Default: ~/Library/LaunchAgents
-  SCHEDULER_LAUNCHCTL   tests only: replaces /bin/launchctl.
+  SCHEDULER_TEST        1 enables test mode; required for SCHEDULER_LAUNCHCTL.
+  SCHEDULER_LAUNCHCTL   tests only (with SCHEDULER_TEST=1): replaces /bin/launchctl.
   SCHEDULER_NOTIFY      0 disables the macOS notification after a run.
 
 output: JSON on stdout; diagnostics on stderr.
@@ -81,6 +101,8 @@ examples:
   python3 providers/scheduler/launchd.py --check
   python3 providers/scheduler/launchd.py schedule --id launch-post \\
       --at 2026-09-29T09:00:00-03:00 --command-file job.json --dry-run
+  python3 providers/scheduler/launchd.py schedule --id launch-post \\
+      --at 2026-09-29T09:00:00-03:00 --command-file job.json --confirmed --approved <digest>
   python3 providers/scheduler/launchd.py list
   python3 providers/scheduler/launchd.py cancel --id launch-post --confirmed
 """
@@ -134,8 +156,27 @@ def agents_dir() -> Path:
     return Path(override).expanduser() if override else Path.home() / "Library" / "LaunchAgents"
 
 
+def test_mode() -> bool:
+    return os.environ.get("SCHEDULER_TEST") == "1"
+
+
 def launchctl() -> str:
-    return os.environ.get("SCHEDULER_LAUNCHCTL", "/bin/launchctl")
+    override = os.environ.get("SCHEDULER_LAUNCHCTL")
+    if override:
+        if not test_mode():
+            raise ProviderError("SCHEDULER_LAUNCHCTL is for tests only and needs SCHEDULER_TEST=1", EXIT_USAGE)
+        return override
+    return "/bin/launchctl"
+
+
+def run_launchctl(*args: str) -> subprocess.CompletedProcess | None:
+    """Run launchctl with a timeout; None when it timed out."""
+    try:
+        return subprocess.run([launchctl(), *args], capture_output=True, text=True,
+                              timeout=LAUNCHCTL_TIMEOUT_SECONDS)
+    except subprocess.TimeoutExpired:
+        log(f"launchctl {args[0]} timed out after {LAUNCHCTL_TIMEOUT_SECONDS} s")
+        return None
 
 
 def domain() -> str:
@@ -154,6 +195,22 @@ def job_dir(job_id: str) -> Path:
     return home() / job_id
 
 
+def private_dir(path: Path) -> None:
+    """Create path (and missing parents) as 0700 and make sure path itself is 0700."""
+    path.mkdir(mode=0o700, parents=True, exist_ok=True)
+    os.chmod(path, 0o700)
+
+
+def write_private(path: Path, data: bytes) -> None:
+    """Write data to path atomically, readable by the owner only."""
+    tmp = path.with_name(path.name + ".tmp")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as fh:
+        fh.write(data)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
 def read_job(job_id: str) -> dict:
     path = job_dir(job_id) / "job.json"
     if not path.is_file():
@@ -162,10 +219,8 @@ def read_job(job_id: str) -> dict:
 
 
 def write_job(job: dict) -> None:
-    folder = job_dir(job["id"])
-    tmp = folder / "job.json.tmp"
-    tmp.write_text(json.dumps(job, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-    os.replace(tmp, folder / "job.json")
+    data = (json.dumps(job, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    write_private(job_dir(job["id"]) / "job.json", data)
 
 
 def python_for_launchd() -> str:
@@ -193,28 +248,115 @@ def load_command_file(path_arg: str) -> dict:
     cwd = spec.get("cwd")
     if not cwd or not Path(cwd).is_absolute() or not Path(cwd).is_dir():
         raise ProviderError("the command file needs cwd: an existing absolute directory", EXIT_USAGE)
-    snapshot = spec.get("snapshot", [])
+    if "snapshot" not in spec:
+        raise ProviderError("the command file needs snapshot: the list of files the command reads "
+                            "([] only when no argument names a file)", EXIT_USAGE)
+    snapshot = spec["snapshot"]
+    if not isinstance(snapshot, list) or not all(isinstance(s, str) for s in snapshot):
+        raise ProviderError("snapshot must be a list of absolute file paths", EXIT_USAGE)
     for item in snapshot:
         if not Path(item).is_absolute() or not Path(item).is_file():
             raise ProviderError(f"snapshot entries must be existing absolute files: {item}", EXIT_USAGE)
+    outputs = spec.get("outputs", [])
+    if not isinstance(outputs, list) or not all(isinstance(o, str) and Path(o).is_absolute() for o in outputs):
+        raise ProviderError("outputs must be a list of absolute paths", EXIT_USAGE)
     names = [Path(item).name for item in snapshot]
     if len(set(names)) != len(names):
         raise ProviderError("snapshot files must have distinct names", EXIT_USAGE)
     grace = spec.get("grace_minutes", DEFAULT_GRACE_MINUTES)
     if not isinstance(grace, int) or grace < 0:
         raise ProviderError("grace_minutes must be a non-negative integer", EXIT_USAGE)
-    return {"argv": argv, "cwd": cwd, "snapshot": snapshot, "grace_minutes": grace}
+    return {"argv": argv, "cwd": cwd, "snapshot": snapshot, "outputs": outputs, "grace_minutes": grace}
 
 
 def resolve_program(program: str, cwd: str) -> str:
     if os.path.isabs(program):
-        return program
-    if os.sep in program:
-        return str((Path(cwd) / program).resolve())
-    found = shutil.which(program, path=os.environ.get("PATH", "") + os.pathsep + RUN_PATH)
-    if not found:
-        raise ProviderError(f"argv[0] {program!r} not found on PATH", EXIT_USAGE)
-    return found
+        found = program
+    elif os.sep in program:
+        found = str(Path(cwd) / program)
+    else:
+        found = shutil.which(program, path=os.environ.get("PATH", "") + os.pathsep + RUN_PATH)
+        if not found:
+            raise ProviderError(f"argv[0] {program!r} not found on PATH", EXIT_USAGE)
+    resolved = Path(found).resolve()
+    if not resolved.is_file():
+        raise ProviderError(f"argv[0] {program!r} is not a file", EXIT_USAGE)
+    return str(resolved)
+
+
+def split_argument(arg: str) -> tuple[str, str]:
+    """Split '--flag=value' into ('--flag=', 'value'); any other argument into ('', arg)."""
+    if arg.startswith("-") and "=" in arg:
+        flag, value = arg.split("=", 1)
+        return flag + "=", value
+    return "", arg
+
+
+def argument_file(value: str, cwd: str) -> Path | None:
+    """The resolved file an argument value names, or None when it names no existing file."""
+    if not value:
+        return None
+    path = Path(value) if os.path.isabs(value) else Path(cwd) / value
+    try:
+        return path.resolve() if path.is_file() else None
+    except OSError:
+        return None
+
+
+def snapshot_argv(argv: list[str], cwd: str, copies: dict[Path, str], outputs: set[Path]) -> list[str]:
+    """Swap every file argument for its copy; refuse a file argument that has no copy."""
+    out = []
+    for arg in argv:
+        prefix, value = split_argument(arg)
+        target = argument_file(value, cwd)
+        if target is None or (target in outputs and target not in copies):
+            out.append(arg)
+            continue
+        if target not in copies:
+            raise ProviderError(
+                f"the argument {arg!r} names the file {target}, which is not in the command file's "
+                "snapshot; add it so the job runs on a verified copy", EXIT_USAGE)
+        out.append(prefix + copies[target])
+    return out
+
+
+def approval_digest(job: dict) -> str:
+    """SHA-256 over everything that decides what runs; printed by the dry run, checked on --confirmed."""
+    fields = {key: job[key] for key in ("id", "at", "grace_minutes", "argv", "cwd", "outputs", "program")}
+    fields["files"] = {source: entry["sha256"] for source, entry in job["files"].items()}
+    fields["runner"] = job["runner"]["sha256"]
+    blob = json.dumps(fields, sort_keys=True, ensure_ascii=False).encode("utf-8")
+    return hashlib.sha256(blob).hexdigest()
+
+
+def plan_job(job_id: str, at: datetime, spec: dict) -> dict:
+    """The job as it will run, hashed from the current files; nothing is written."""
+    folder = job_dir(job_id)
+    files, copies = {}, {}
+    for source in spec["snapshot"]:
+        copy = folder / "files" / Path(source).name
+        files[source] = {"copy": str(copy), "sha256": sha256(Path(source)), "bytes": Path(source).stat().st_size}
+        copies[Path(source).resolve()] = str(copy)
+    program = resolve_program(spec["argv"][0], spec["cwd"])
+    outputs = {Path(o).resolve() for o in spec["outputs"]}
+    argv = [program] + snapshot_argv(spec["argv"][1:], spec["cwd"], copies, outputs)
+    runner = Path(__file__).resolve()
+    job = {
+        "id": job_id,
+        "label": label(job_id),
+        "at": iso(at),
+        "at_local": at.astimezone().isoformat(),
+        "grace_minutes": spec["grace_minutes"],
+        "argv": argv,
+        "cwd": spec["cwd"],
+        "files": files,
+        "outputs": spec["outputs"],
+        "program": {"path": program, "sha256": sha256(Path(program))},
+        "runner": {"source": str(runner), "copy": str(folder / "runner" / runner.name), "sha256": sha256(runner)},
+        "status": "scheduled",
+    }
+    job["approved"] = approval_digest(job)
+    return job
 
 
 def build_plist(job: dict) -> dict:
@@ -222,7 +364,7 @@ def build_plist(job: dict) -> dict:
     folder = job_dir(job["id"])
     return {
         "Label": label(job["id"]),
-        "ProgramArguments": [python_for_launchd(), str(Path(__file__).resolve()), "run", "--id", job["id"]],
+        "ProgramArguments": [python_for_launchd(), job["runner"]["copy"], "run", "--id", job["id"]],
         "StartCalendarInterval": {
             "Month": local.month, "Day": local.day, "Hour": local.hour, "Minute": local.minute,
         },
@@ -234,6 +376,26 @@ def build_plist(job: dict) -> dict:
         "StandardOutPath": str(folder / "launchd.out.log"),
         "StandardErrorPath": str(folder / "launchd.err.log"),
     }
+
+
+def archive_finished(job_id: str, existing: dict) -> str:
+    """Move a finished job's folder to <home>/.history/ so the id can be scheduled again."""
+    stamp = re.sub(r"[^0-9A-Za-z]", "", existing.get("finished_at") or existing.get("created_at") or iso(now()))
+    target = home() / HISTORY / f"{job_id}-{stamp}"
+    n = 1
+    while target.exists():
+        n += 1
+        target = home() / HISTORY / f"{job_id}-{stamp}-{n}"
+    private_dir(target.parent)
+    os.replace(job_dir(job_id), target)
+    return str(target)
+
+
+def copy_verified(source: str, copy: Path, expected: str, mode: int) -> None:
+    shutil.copyfile(source, copy)
+    os.chmod(copy, mode)
+    if sha256(copy) != expected:
+        raise ProviderError(f"{source} changed after the dry run: its copy does not match the approved hash")
 
 
 # --- verbs ---------------------------------------------------------------------
@@ -256,52 +418,59 @@ def cmd_schedule(args) -> int:
             "gate first (use --dry-run to preview)",
             EXIT_USAGE,
         )
+    if not args.dry_run and not DIGEST_PATTERN.match(args.approved or ""):
+        raise ProviderError("--confirmed needs --approved <digest>: the digest the dry run printed", EXIT_USAGE)
+    existing = None
     if (job_dir(job_id) / "job.json").exists():
         existing = read_job(job_id)
-        if existing["status"] == "scheduled":
-            raise ProviderError(f"job {job_id!r} is already scheduled; cancel it first", EXIT_USAGE)
+        if existing["status"] in ("scheduled", "running"):
+            raise ProviderError(f"job {job_id!r} is {existing['status']}; cancel it or wait for it first", EXIT_USAGE)
 
-    folder = job_dir(job_id)
-    files = {}
-    argv = [resolve_program(spec["argv"][0], spec["cwd"])] + spec["argv"][1:]
-    for source in spec["snapshot"]:
-        copy = folder / "files" / Path(source).name
-        files[source] = {"copy": str(copy), "sha256": sha256(Path(source)), "bytes": Path(source).stat().st_size}
-        argv = [str(copy) if a == source else a for a in argv]
-    job = {
-        "id": job_id,
-        "label": label(job_id),
-        "at": iso(at),
-        "at_local": at.astimezone().isoformat(),
-        "grace_minutes": spec["grace_minutes"],
-        "argv": argv,
-        "cwd": spec["cwd"],
-        "files": files,
-        "status": "scheduled",
-        "created_at": iso(now()),
-    }
+    job = plan_job(job_id, at, spec)
     plist = build_plist(job)
     if args.dry_run:
-        print(json.dumps({"dry_run": True, "job": job, "plist_path": str(plist_path(job_id)), "plist": plist},
-                         indent=2, ensure_ascii=False))
+        out = {"dry_run": True, "approved": job["approved"], "job": job,
+               "plist_path": str(plist_path(job_id)), "plist": plist}
+        if existing:
+            out["replaces_finished_job"] = {"status": existing["status"], "moved_to": str(home() / HISTORY)}
+        print(json.dumps(out, indent=2, ensure_ascii=False))
         return EXIT_OK
+    if args.approved != job["approved"]:
+        raise ProviderError(
+            "the job changed since the dry run (a file, the program, the runner or the command file): "
+            "run --dry-run again and show the new payload before confirming", EXIT_USAGE)
+    launchctl()  # refuse an untrusted launchctl override before writing anything
 
-    (folder / "files").mkdir(parents=True, exist_ok=True)
-    for source, entry in files.items():
-        shutil.copyfile(source, entry["copy"])
-        os.chmod(entry["copy"], 0o400)
-        if sha256(Path(entry["copy"])) != entry["sha256"]:
-            raise ProviderError(f"the copy of {source} does not match its hash")
+    private_dir(home())
+    if existing:
+        job["replaced"] = archive_finished(job_id, existing)
+    folder = job_dir(job_id)
+    if folder.exists() and not (folder / "job.json").exists():
+        shutil.rmtree(folder)  # left by an interrupted schedule; it never held a job record
+    private_dir(folder / "files")
+    private_dir(folder / "runner")
+    try:
+        for source, entry in job["files"].items():
+            copy_verified(source, Path(entry["copy"]), entry["sha256"], 0o400)
+        copy_verified(job["runner"]["source"], Path(job["runner"]["copy"]), job["runner"]["sha256"], 0o500)
+        if sha256(Path(job["program"]["path"])) != job["program"]["sha256"]:
+            raise ProviderError(f"{job['program']['path']} changed after the dry run")
+    except ProviderError:
+        shutil.rmtree(folder, ignore_errors=True)
+        raise
+    for name in ("launchd.out.log", "launchd.err.log"):
+        write_private(folder / name, b"")
+    job["created_at"] = iso(now())
     write_job(job)
-    agents_dir().mkdir(parents=True, exist_ok=True)
-    with plist_path(job_id).open("wb") as fh:
-        plistlib.dump(plist, fh)
-    subprocess.run([launchctl(), "bootout", f"{domain()}/{label(job_id)}"], capture_output=True)
-    loaded = subprocess.run([launchctl(), "bootstrap", domain(), str(plist_path(job_id))],
-                            capture_output=True, text=True)
-    if loaded.returncode != 0:
+    if not agents_dir().exists():
+        private_dir(agents_dir())
+    write_private(plist_path(job_id), plistlib.dumps(plist))
+    run_launchctl("bootout", f"{domain()}/{label(job_id)}")
+    loaded = run_launchctl("bootstrap", domain(), str(plist_path(job_id)))
+    if loaded is None or loaded.returncode != 0:
         job["status"] = "failed"
-        job["error"] = f"launchctl bootstrap exited {loaded.returncode}: {loaded.stderr.strip()}"
+        job["error"] = ("launchctl bootstrap timed out" if loaded is None
+                        else f"launchctl bootstrap exited {loaded.returncode}: {loaded.stderr.strip()}")
         write_job(job)
         plist_path(job_id).unlink(missing_ok=True)
         raise ProviderError(job["error"])
@@ -323,7 +492,7 @@ def cmd_list(_args) -> int:
 
 def unload(job_id: str) -> None:
     plist_path(job_id).unlink(missing_ok=True)
-    subprocess.run([launchctl(), "bootout", f"{domain()}/{label(job_id)}"], capture_output=True)
+    run_launchctl("bootout", f"{domain()}/{label(job_id)}")
 
 
 def cmd_cancel(args) -> int:
@@ -333,6 +502,7 @@ def cmd_cancel(args) -> int:
     if args.dry_run:
         print(json.dumps({"dry_run": True, "would_cancel": job}, indent=2, ensure_ascii=False))
         return EXIT_OK
+    launchctl()
     if job["status"] == "scheduled":
         job["status"] = "cancelled"
         job["finished_at"] = iso(now())
@@ -346,7 +516,10 @@ def notify(title: str, message: str) -> None:
     if os.environ.get("SCHEDULER_NOTIFY", "1") == "0":
         return
     script = f"display notification {json.dumps(message)} with title {json.dumps(title)}"
-    subprocess.run(["/usr/bin/osascript", "-e", script], capture_output=True)
+    try:
+        subprocess.run(["/usr/bin/osascript", "-e", script], capture_output=True, timeout=NOTIFY_TIMEOUT_SECONDS)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
 
 
 def finish(job: dict, status: str, **fields) -> int:
@@ -362,6 +535,20 @@ def finish(job: dict, status: str, **fields) -> int:
     return EXIT_OK if status == "done" else EXIT_SERVICE
 
 
+def changed_since_approval(job: dict) -> str | None:
+    """Name what no longer matches its approved hash, or None when everything matches."""
+    for source, entry in job["files"].items():
+        copy = Path(entry["copy"])
+        if not copy.is_file() or sha256(copy) != entry["sha256"]:
+            return f"the copy of {Path(source).name} changed after scheduling"
+    program = Path(job["program"]["path"])
+    if not program.is_file() or sha256(program) != job["program"]["sha256"]:
+        return f"the program {program} changed after scheduling"
+    if sha256(Path(__file__).resolve()) != job["runner"]["sha256"]:
+        return "the runner script changed after scheduling"
+    return None
+
+
 def cmd_run(args) -> int:
     job = read_job(validate_id(args.id))
     if job["status"] != "scheduled":
@@ -375,10 +562,11 @@ def cmd_run(args) -> int:
         return EXIT_OK
     if current > at + timedelta(minutes=job["grace_minutes"]):
         return finish(job, "missed", reason=f"fired at {iso(current)}, after the {job['grace_minutes']}-minute grace")
-    for source, entry in job["files"].items():
-        copy = Path(entry["copy"])
-        if not copy.is_file() or sha256(copy) != entry["sha256"]:
-            return finish(job, "refused", reason=f"the copy of {Path(source).name} changed after scheduling")
+    if "program" not in job or "runner" not in job:
+        return finish(job, "refused", reason="the job was scheduled without program and runner hashes; schedule it again")
+    reason = changed_since_approval(job)
+    if reason:
+        return finish(job, "refused", reason=reason)
 
     job["status"] = "running"
     job["started_at"] = iso(current)
@@ -389,8 +577,8 @@ def cmd_run(args) -> int:
                               timeout=RUN_TIMEOUT_SECONDS, env={**os.environ, "PATH": RUN_PATH})
     except (OSError, subprocess.TimeoutExpired) as exc:
         return finish(job, "failed", reason=f"{type(exc).__name__}: {exc}")
-    (folder / "run.stdout.log").write_text(done.stdout, encoding="utf-8")
-    (folder / "run.stderr.log").write_text(done.stderr, encoding="utf-8")
+    write_private(folder / "run.stdout.log", done.stdout.encode("utf-8"))
+    write_private(folder / "run.stderr.log", done.stderr.encode("utf-8"))
     fields = {"exit_code": done.returncode}
     try:
         output = json.loads(done.stdout)
@@ -402,7 +590,7 @@ def cmd_run(args) -> int:
 
 
 def cmd_check() -> int:
-    if sys.platform != "darwin" and "SCHEDULER_LAUNCHCTL" not in os.environ:
+    if sys.platform != "darwin" and not test_mode():
         raise ProviderError("launchd exists only on macOS")
     if not Path(launchctl()).exists():
         raise ProviderError(f"launchctl not found at {launchctl()}")
@@ -428,12 +616,14 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--id", help="job id: lowercase letters, digits, dots and hyphens")
     parser.add_argument("--at", help="ISO-8601 time with offset, e.g. 2026-09-29T09:00:00-03:00")
     parser.add_argument("--command-file", help="JSON file with argv, cwd, snapshot and grace_minutes")
-    parser.add_argument("--dry-run", action="store_true", help="print the job and the plist; do nothing")
+    parser.add_argument("--dry-run", action="store_true", help="print the job, its approved digest and the plist; do nothing")
     parser.add_argument("--confirmed", action="store_true", help="required to schedule or cancel")
+    parser.add_argument("--approved", help="with schedule --confirmed: the digest the dry run printed")
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
+    os.umask(0o077)  # every file and folder this provider creates is private to the user
     args = build_parser().parse_args(argv)
     try:
         if args.check:

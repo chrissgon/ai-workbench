@@ -1,35 +1,40 @@
 {
   "skill_name": "eng-refactor",
   "allow_commands": [
-    "node",
-    "git",
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
+    "git branch",
+    "git rev-parse",
+    "git ls-files",
+    "git blame",
+    "git add",
+    "git commit",
+    "git checkout",
+    "git switch",
+    "git restore",
+    "git stash",
     "mkdir",
     "npm test",
     "npm run",
-    "npm ci",
-    "npm install",
     "ls",
     "cat",
     "grep",
     "wc",
-    "find",
     "date",
-    "TZ=UTC node",
     "TZ=UTC npm test",
-    "TZ=America/Sao_Paulo node",
     "TZ=America/Sao_Paulo npm test",
-    "TZ=Asia/Tokyo node",
     "TZ=Asia/Tokyo npm test",
-    "TZ=Europe/Lisbon node",
     "TZ=Europe/Lisbon npm test",
-    "rm",
     "cp",
-    "gzip"
+    "gzip",
+    "node scripts/size.mjs"
   ],
   "evals": [
     {
       "id": 1,
-      "prompt": "Refatora o src/due.js do invoices/: tira a validação duplicada e o que estiver morto, sem mudar comportamento.",
+      "prompt": "Refactor src/due.js in invoices/: remove the duplicated validation and whatever is dead, without changing behaviour.",
       "expected_output": "The duplicated date validation becomes one helper and the unused legacyLabel is removed, with the reason it cannot change behaviour (not exported, not called); npm test and npm run size run before and after, with the same test results and the size numbers in a table; the RangeError behaviour is kept; the diff touches only src/due.js; the plan gains a Refactor section.",
       "files": [
         "evals/files/invoices"
@@ -41,7 +46,7 @@
         "dueLabel and daysLeft still throw RangeError for an invalid date",
         "Only src/due.js changes among the source and test files",
         "A plan under docs/engineering/plans/ contains a 'Refactor' section with a before and after table",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

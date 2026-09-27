@@ -16,13 +16,13 @@
     },
     {
       "id": 2,
-      "prompt": "Desenha o fluxo de onboarding do app.",
+      "prompt": "Draw the app's onboarding flow.",
       "expected_output": "No PRD exists; the skill says so, names product-prd (and product-feature-spec) as the steps to take first and writes nothing.",
       "files": [],
       "assertions": [
         "No flows file is written",
         "The reply names product-prd as the missing input",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     }
   ]

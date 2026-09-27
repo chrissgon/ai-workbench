@@ -16,13 +16,13 @@
     },
     {
       "id": 2,
-      "prompt": "Escreve o PRD do nosso app de finanças pessoais.",
+      "prompt": "Write the PRD for our personal finance app.",
       "expected_output": "No brief, decisions or artifacts exist; the skill asks at most three questions with recommended answers (the problem and who has it, what exists today, what launched means) and writes nothing.",
       "files": [],
       "assertions": [
         "No PRD file is written before the questions are answered",
         "At most three questions are asked, each with a recommended answer",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

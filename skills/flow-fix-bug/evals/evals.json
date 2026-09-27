@@ -1,32 +1,37 @@
 {
   "skill_name": "flow-fix-bug",
   "allow_commands": [
-    "node",
-    "git",
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
+    "git branch",
+    "git rev-parse",
+    "git ls-files",
+    "git blame",
+    "git add",
+    "git commit",
+    "git checkout",
+    "git switch",
+    "git restore",
+    "git stash",
     "mkdir",
     "npm test",
     "npm run",
-    "npm ci",
-    "npm install",
     "ls",
     "cat",
     "grep",
     "wc",
-    "find",
     "date",
-    "TZ=UTC node",
     "TZ=UTC npm test",
-    "TZ=America/Sao_Paulo node",
     "TZ=America/Sao_Paulo npm test",
-    "TZ=Asia/Tokyo node",
     "TZ=Asia/Tokyo npm test",
-    "TZ=Europe/Lisbon node",
     "TZ=Europe/Lisbon npm test"
   ],
   "evals": [
     {
       "id": 1,
-      "prompt": "No invoices/, a data de vencimento sai um dia antes para os clientes no Brasil: a fatura com vencimento 2026-09-25 mostra 2026-09-24. Corrige isso.",
+      "prompt": "In invoices/, the due date comes out one day early for customers in Brazil: the invoice due 2026-09-25 shows 2026-09-24. Fix it.",
       "expected_output": "The flow records itself in the state file, runs phase 1 (eng-root-cause): a reproduction under TZ=America/Sao_Paulo, the cause at the date parsing, a plan with a Root cause section; then stops at the phase 1 checkpoint with a question, without writing tests or changing src/.",
       "files": [
         "evals/files/invoices"
@@ -46,7 +51,7 @@
     },
     {
       "id": 2,
-      "prompt": "Pode seguir com o fix do vencimento no invoices/.",
+      "prompt": "Go ahead with the due-date fix in invoices/.",
       "expected_output": "The flow reads the state file, resumes at phase 2 (eng-unit-tests), writes tests in node:test that fail today under America/Sao_Paulo, adds a Failing tests section, updates the state file, and stops at the phase 2 checkpoint; src/ is not changed.",
       "files": [
         "evals/files/invoices-phase2"
@@ -66,7 +71,7 @@
     },
     {
       "id": 3,
-      "prompt": "Às vezes a fatura sai errada no invoices/. Corrige aí.",
+      "prompt": "Sometimes the invoice comes out wrong in invoices/. Fix it.",
       "expected_output": "Phase 1 cannot start: the flow asks what was seen, what was expected and where (which invoice, value, environment), and writes no plan and changes no code.",
       "files": [
         "evals/files/invoices"

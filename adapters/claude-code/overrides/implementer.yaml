@@ -1,0 +1,4 @@
+# Harness-specific settings merged into the generated implementer agent. It changes code and runs
+# the project's checks, so it keeps a shell and file edits; the list leaves out every connector and
+# web tool, since its scope says it sends and publishes nothing (without a list it inherits them all).
+tools: Read, Grep, Glob, Write, Edit, Bash

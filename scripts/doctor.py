@@ -7,7 +7,9 @@ Collects `metadata.requires` from every skill, then checks each class against:
   1. connectors declared by the chosen adapter in adapters/<harness>/connectors.json
      ({"classes": {"integration:issue-tracker": "mcp: atlassian"}})
   2. a native provider selected by <CLASS>_<SUBCLASS>_PROVIDER or <CLASS>_PROVIDER, whose
-     script exists under providers/ and passes `--check`
+     script exists under providers/<class>/ and passes `--check`. An integration:<service>
+     class uses providers/<service>/ and only INTEGRATION_<SERVICE>_PROVIDER (a hyphen
+     becomes "_"): integration:vcs is providers/vcs/, selected by INTEGRATION_VCS_PROVIDER
 
 Options:
   --harness <name>  include connectors declared by that adapter
@@ -19,6 +21,7 @@ Exit codes: 0 ok, 1 missing classes with --strict, 2 usage error.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -51,19 +54,48 @@ def collect_requires():
     return req
 
 
+def env_key(parts):
+    return "_".join(parts).upper().replace("-", "_") + "_PROVIDER"
+
+
 def env_provider(cls):
     parts = cls.split(":")
-    keys = ["_".join(parts).upper() + "_PROVIDER", parts[0].upper() + "_PROVIDER"]
-    for k in keys:
+    keys = [env_key(parts)]
+    if parts[0] != "integration":  # integration:<service> classes are unrelated services: no shared fallback
+        keys.append(env_key(parts[:1]))
+    for k in dict.fromkeys(keys):
         if os.environ.get(k):
             return k, os.environ[k]
     return None, None
 
 
+NAME_RE = re.compile(r"[a-z0-9-]+")
+NOT_PROVIDERS = {"auth"}  # helpers that live next to providers (providers/CONTRACT.md) and are not one
+
+
+def provider_folder(cls):
+    """providers/<folder>/ for a class: a:b -> a, except integration:<service> -> <service>."""
+    parts = cls.split(":")
+    return parts[1] if parts[0] == "integration" and len(parts) > 1 else parts[0]
+
+
+def known_providers(kind):
+    """Provider names shipped for a class: providers/<kind>/<name>.py, helpers excluded."""
+    folder = os.path.join(PROVIDERS, kind)
+    if not NAME_RE.fullmatch(kind) or not os.path.isdir(folder):
+        return []
+    return sorted(f[:-3] for f in os.listdir(folder)
+                  if f.endswith(".py") and NAME_RE.fullmatch(f[:-3]) and f[:-3] not in NOT_PROVIDERS)
+
+
 def check_provider(cls, impl):
-    script = os.path.join(PROVIDERS, cls.split(":")[0], f"{impl}.py")
-    if not os.path.isfile(script):
-        return "missing", f"{os.path.relpath(script, ROOT)} not found"
+    # The name comes from the environment and becomes a script path that is executed: only a
+    # provider shipped under providers/<class>/ is accepted, never a path.
+    kind = provider_folder(cls)
+    known = known_providers(kind)
+    if impl not in known:
+        return "missing", f"{impl!r} is not a provider of {kind}; known: {known}"
+    script = os.path.join(PROVIDERS, kind, f"{impl}.py")
     runner = ["uv", "run", script] if _which("uv") else ["python3", script]
     try:
         r = subprocess.run(runner + ["--check"], capture_output=True, text=True, timeout=60)
@@ -110,7 +142,7 @@ def main(argv):
             print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr)
             return 2
         i += 1
-    if harness and not os.path.isdir(os.path.join(ADAPTERS, harness)):
+    if harness and (not NAME_RE.fullmatch(harness) or not os.path.isdir(os.path.join(ADAPTERS, harness))):
         print(f"Error: adapter {harness!r} not found under adapters/.", file=sys.stderr)
         return 2
 

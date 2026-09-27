@@ -1,32 +1,37 @@
 {
   "skill_name": "eng-root-cause",
   "allow_commands": [
-    "node",
-    "git",
+    "git status",
+    "git log",
+    "git diff",
+    "git show",
+    "git branch",
+    "git rev-parse",
+    "git ls-files",
+    "git blame",
+    "git add",
+    "git commit",
+    "git checkout",
+    "git switch",
+    "git restore",
+    "git stash",
     "mkdir",
     "npm test",
     "npm run",
-    "npm ci",
-    "npm install",
     "ls",
     "cat",
     "grep",
     "wc",
-    "find",
     "date",
-    "TZ=UTC node",
     "TZ=UTC npm test",
-    "TZ=America/Sao_Paulo node",
     "TZ=America/Sao_Paulo npm test",
-    "TZ=Asia/Tokyo node",
     "TZ=Asia/Tokyo npm test",
-    "TZ=Europe/Lisbon node",
     "TZ=Europe/Lisbon npm test"
   ],
   "evals": [
     {
       "id": 1,
-      "prompt": "Clientes no Brasil estão reclamando que a data de vencimento da fatura aparece um dia antes: a fatura vence 2026-09-25 e o PDF mostra 2026-09-24. Em Portugal está certo. O projeto está em invoices/. Descobre a causa.",
+      "prompt": "Customers in Brazil are complaining that the invoice due date shows up one day early: the invoice is due 2026-09-25 and the PDF shows 2026-09-24. In Portugal it's right. The project is in invoices/. Find the cause.",
       "expected_output": "A reproduction file is written and run under several time zones (at least America/Sao_Paulo and UTC or Europe/Lisbon) with its output quoted; the cause is placed at src/due.js on `new Date(isoDate)`, explained by ECMAScript parsing a date-only ISO string as UTC while toLocaleDateString formats in local time, with a quoted source; a discriminating experiment shows the date-only form wrong in a negative-offset zone, right in UTC and Lisbon, and the date-time form right everywhere; the reach names daysLeft built on the same parse; why it escaped names CI running in UTC and the test that passes there; the analysis is written to docs/engineering/plans/<task>.md in a Root cause section; no source file is changed and no fix is proposed.",
       "files": [
         "evals/files/invoices"
@@ -38,7 +43,7 @@
         "daysLeft is named as built on the same assumption",
         "A file under docs/engineering/plans/ contains a 'Root cause' section with an evidence grade",
         "src/due.js and test/due.test.js are unchanged, and the output proposes no code change as the fix",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {
@@ -58,7 +63,7 @@
     },
     {
       "id": 3,
-      "prompt": "As faturas às vezes saem erradas, descobre o porquê. Projeto em invoices/.",
+      "prompt": "Invoices sometimes come out wrong, find out why. Project in invoices/.",
       "expected_output": "The report lacks what was seen, what was expected and where; the skill asks for those, with an example of what to send (an invoice's due date, the value printed, the customer's country or server time zone), and does not start from a guessed cause or edit files.",
       "files": [
         "evals/files/invoices"
@@ -67,7 +72,7 @@
         "The reply asks what was seen, what was expected, or where (which invoice, value or environment) before naming a cause",
         "No root cause is asserted as found",
         "No file under invoices/ is modified",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     }
   ]

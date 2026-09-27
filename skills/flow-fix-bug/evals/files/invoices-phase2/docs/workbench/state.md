@@ -1,7 +1,7 @@
 # Workbench state
 
 - Project: invoices
-- Current flow: flow-fix-bug on "o vencimento sai um dia antes para clientes no Brasil" (user, 2026-09-25); phase 1 root cause approved (user, 2026-09-25), next: phase 2 failing tests
+- Current flow: flow-fix-bug on "the due date comes out one day early for customers in Brazil" (user, 2026-09-25); phase 1 root cause approved (user, 2026-09-25), next: phase 2 failing tests
 - Current phase: none
 - Updated: 2026-09-25
 

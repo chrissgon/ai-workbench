@@ -3,13 +3,13 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Faz a landing do meu app no Figma Make.",
-      "expected_output": "No brief exists; the skill does not send a thin prompt to the tool: it runs design-brief first (which routes to design-system or mkt-messaging when the foundation or copy is missing) and only then plans the runs; the reply is in Portuguese.",
+      "prompt": "Make my app's landing page in Figma Make.",
+      "expected_output": "No brief exists; the skill does not send a thin prompt to the tool: it runs design-brief first (which routes to design-system or mkt-messaging when the foundation or copy is missing) and only then plans the runs; the reply is in English.",
       "files": [],
       "assertions": [
         "No run pack is written before a brief exists",
         "The reply names design-brief as the first step",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

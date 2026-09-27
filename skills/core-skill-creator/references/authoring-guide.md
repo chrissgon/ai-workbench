@@ -63,7 +63,7 @@ compatibility: >                     # Optional: environment requirements (≤50
 metadata:                           # Optional: custom key-value pairs
   author: example-org
   version: "1.0"
-allowed-tools: Bash(git:*) Read    # Optional: pre-approved tools (experimental)
+allowed-tools: Bash(git status:*) Bash(git diff:*) Read    # Optional: pre-approved tools (experimental); name read-only subcommands, never a whole tool
 ---
 ```
 
@@ -366,8 +366,8 @@ Use inline dependency declarations (PEP 723 for Python):
 ```python
 # /// script
 # dependencies = [
-#   "beautifulsoup4>=4.12,<5",
-#   "requests>=2.31.0"
+#   "beautifulsoup4==4.12.3",
+#   "requests==2.32.3"
 # ]
 # requires-python = ">=3.11"
 # ///

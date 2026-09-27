@@ -41,14 +41,14 @@
     },
     {
       "id": 4,
-      "prompt": "Revisa o diff da T-ap-9, tá em change.patch.",
+      "prompt": "Review the diff for T-ap-9, it's in change.patch.",
       "expected_output": "T-ap-9 does not exist in docs/product/backlog.md. The reviewer says so, does not invent a task, and asks which task or intent the change belongs to, recommending T-ap-3 because the patch touches src/money.py and tests/test_money.py, which are that task's Touches. No verdict is given before the answer.",
       "files": ["evals/files/fix-good"],
       "assertions": [
         "The output states that T-ap-9 is not in the backlog",
         "The output asks the user for the task or intent and recommends T-ap-3 with the reason that the patch touches its files",
         "No verdict (approve or request changes) is given",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     }
   ]

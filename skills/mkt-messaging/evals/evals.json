@@ -15,13 +15,13 @@
     },
     {
       "id": 2,
-      "prompt": "Escreve uns textos bem vendedores pra landing, tipo 'a biblioteca CSS mais rápida do mundo'.",
-      "expected_output": "The skill declines the superlative because no measurement of every alternative supports it, proposes the measured claim instead (size with method) and asks whether to name the compared products, in Portuguese.",
+      "prompt": "Write some really salesy copy for the landing, like 'the fastest CSS library in the world'.",
+      "expected_output": "The skill declines the superlative because no measurement of every alternative supports it, proposes the measured claim instead (size with method) and asks whether to name the compared products, in English.",
       "files": ["evals/files/prd.md", "evals/files/research.md", "evals/files/library/README.md"],
       "assertions": [
         "The superlative is not written; the reason names the missing measurement",
         "A sourced alternative claim is proposed",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     }
   ]

@@ -1,6 +1,6 @@
 # Plan: due-date-one-day-early
 
-- Task: "Clientes no Brasil veem a data de vencimento um dia antes"
+- Task: "Customers in Brazil see the due date one day early"
 - Date: 2026-09-25
 
 ## Root cause

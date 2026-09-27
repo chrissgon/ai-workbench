@@ -7,7 +7,7 @@ description: >
   the behaviours to preserve, then prove the tests catch the problem by running them against
   the code before the change. Use this skill after eng-implement, when a behaviour only exists
   when parts work together (markup inserted after load, a request through the whole stack, a
-  plugin in a host), even if the user only says "testa de ponta a ponta", "e2e" or "add
+  plugin in a host), even if the user only says "test it end to end", "e2e" or "add
   integration tests". Also use it when someone asks for integration tests of a feature that is
   not built yet, to point to failing unit tests first.
 license: MIT
@@ -18,7 +18,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Integration tests
@@ -56,7 +56,7 @@ Progress:
 - [ ] Step 2: List the cases, each with its source: the new behaviour; the states around it (inserted later, hidden then shown, replaced by a re-render, a slow network, a retry); the environment settings users have (reduced motion, a time zone, a locale); the hostile conditions the decision record accepted, asserting the promised degradation (behaves as before, an error message) rather than the success; and every preserved behaviour.
 - [ ] Step 3: Write the tests beside the project's end-to-end tests, one behaviour per test, named for the behaviour, with a comment pointing to the plan and the decision record. Use retrying assertions for values that arrive; when asserting that something does not happen, trigger the thing that could cause it, wait a bounded time, and assert once.
 - [ ] Step 4: Run them in every runtime the runner covers. All must pass.
-- [ ] Step 5: Prove they catch the problem: check out the base commit in a scratch worktree (`git worktree add /tmp/<task>-before <base>`), or, where there is no history, copy the previous release's files the project keeps into a scratch folder; link the dependencies, copy the new test files in, build, and run them there on a different port or address than the current server, so a reused server does not serve the new build. Every test of new behaviour must fail; every test of preserved or degraded behaviour must pass. A new-behaviour test that passes before the change does not test the change: rewrite it. Remove the worktree after.
+- [ ] Step 5: Prove they catch the problem: check out the base commit in a scratch worktree (`scratch=$(mktemp -d)`, `git worktree add "$scratch" <base>`), or, where there is no history, copy the previous release's files the project keeps into a scratch folder; link the dependencies, copy the new test files in, build, and run them there on a different port or address than the current server, so a reused server does not serve the new build. Every test of new behaviour must fail; every test of preserved or degraded behaviour must pass. A new-behaviour test that passes before the change does not test the change: rewrite it. Remove the worktree after.
 - [ ] Step 6: Run the project's full check (the whole suite, build checks such as server-side imports or export resolution) once with the change.
 - [ ] Step 7: Write the "Integration tests" section of the plan from the template and self-check against "Quality criteria".
 

@@ -17,14 +17,14 @@
     },
     {
       "id": 2,
-      "prompt": "Mapeia a arquitetura desse repo.",
+      "prompt": "Map this repo's architecture.",
       "expected_output": "The script reports a likely monorepo (workspaces packages/*); the skill stops and asks which package to map, recommending one, before reading any code.",
       "files": ["evals/files/monorepo"],
       "assertions": [
         "The user is asked which package or directory to map before any map is written",
         "The question includes a recommended answer",
         "No docs/engineering/ file is created before the answer",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

@@ -16,13 +16,13 @@
     },
     {
       "id": 2,
-      "prompt": "Quebra em tarefas o que está em docs/product/specs/search.md.",
+      "prompt": "Break what's in docs/product/specs/search.md into tasks.",
       "expected_output": "The spec has more than three requirements and no design exists; the skill asks whether to design first (recommended) or plan from the spec with tasks marked design pending, and writes nothing before the answer.",
       "files": [],
       "assertions": [
         "No backlog section is written before the user answers",
         "The question offers designing first as the recommended option with a reason",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

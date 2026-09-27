@@ -2,7 +2,7 @@
 name: eng-refactor
 description: >
   Change the shape of code without changing what it does. Use this skill whenever a request
-  says refactor, "refatora", "clean up", "simplify" or "remove the duplication", including a
+  says refactor, "tidy this up", "clean up", "simplify" or "remove the duplication", including a
   request that also asks for a fix on the way ("refactor due.js and fix the bug"): the skill
   keeps the fix out of the refactor. It names the smell with the evidence that removing it
   changes nothing, gets the user's agreement on a target it chose itself, records the
@@ -17,7 +17,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: []
   side_effects: []
-  version: "0.3"
+  version: "0.4"
 ---
 
 # Refactor

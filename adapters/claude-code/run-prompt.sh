@@ -2,19 +2,24 @@
 # Eval contract: run one prompt through Claude Code non-interactively.
 #
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-#                      [--allow-command <prefix>]...
+#                      [--extra-skill-dir <dir>]... [--allow-command <prefix>]...
 #
-# Writes <out>/response.md and <out>/timing.json. With --skill-dir, the skill is symlinked into
-# <cwd>/.claude/skills/<name> so it is discoverable at project scope. Settings are limited to the
-# project scope so user-level skills do not leak into a without-skill run; verify on first use by
-# searching the transcript for the skill name.
+# Writes <out>/response.md and <out>/timing.json. --skill-dir (the skill under test) and each
+# --extra-skill-dir (a case's dependencies, a flow's phases) are copied, never linked, into
+# <cwd>/.claude/skills/<name>, so they are discoverable at project scope and a run cannot edit the
+# workbench. Settings are limited to the project scope so user-level skills do not leak into a
+# without-skill run; a case folder that already holds .claude/ or .mcp.json (from a fixture or a
+# setup) is refused, since the project scope would apply its rules, hooks or servers.
+# No MCP servers or claude.ai connectors are loaded (--strict-mcp-config, ENABLE_CLAUDEAI_MCP_SERVERS=false).
 # Each --allow-command becomes a Bash(<prefix> *) rule in --allowedTools, and so does every script in
 # the skill's scripts/ folder; any other command is denied (print mode cannot ask) and reported in
-# raw.json's permission_denials. acceptEdits still lets file commands (touch, mkdir) run inside --cwd.
+# raw.json's permission_denials. A prefix containing ( ) , or * is refused (it would add rules).
+# acceptEdits still lets file commands (touch, mkdir) run inside --cwd.
 # Extra CLI flags: CLAUDE_EVAL_ARGS (default: --permission-mode acceptEdits).
-# A proxy for floor models: set ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN in the environment.
+# A proxy for floor models: pass ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN (eval_run.py --pass-env).
 set -euo pipefail
 PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOW=""
+EXTRA_SKILLS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prompt-file) PROMPT="$2"; shift 2 ;;
@@ -22,17 +27,34 @@ while [[ $# -gt 0 ]]; do
     --model) MODEL="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --skill-dir) SKILL_DIR="$2"; shift 2 ;;
-    --allow-command) ALLOW="${ALLOW:+$ALLOW,}Bash($2 *)"; shift 2 ;;
-    --help|-h) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --extra-skill-dir) EXTRA_SKILLS+=("$2"); shift 2 ;;
+    --allow-command)
+      [[ "$2" == *[\(\),\*]* ]] && { echo "Error: --allow-command '$2' contains ( ) , or *, which would add permission rules." >&2; exit 2; }
+      ALLOW="${ALLOW:+$ALLOW,}Bash($2 *)"; shift 2 ;;
+    --help|-h) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
 [[ -f "$PROMPT" && -d "$CWD" && -n "$MODEL" && -n "$OUT" ]] || { echo "Error: --prompt-file, --cwd, --model and --out are required. See --help." >&2; exit 2; }
 command -v claude >/dev/null || { echo "Error: 'claude' CLI not found on PATH." >&2; exit 1; }
+FOUND="$(find "$CWD" -path "$CWD/.git" -prune -o \( -name .claude -o -name .mcp.json \) -print -quit)"
+[[ -z "$FOUND" ]] || { echo "Error: the case folder already holds ${FOUND#"$CWD"/}; a fixture or setup must not carry harness settings." >&2; exit 2; }
 mkdir -p "$OUT"
-if [[ -n "$SKILL_DIR" ]]; then
+install_skill() {
+  local src dest
+  src="$(cd "$1" && pwd)"; dest="$CWD/.claude/skills/$(basename "$src")"
   mkdir -p "$CWD/.claude/skills"
-  ln -sfn "$(cd "$SKILL_DIR" && pwd)" "$CWD/.claude/skills/$(basename "$SKILL_DIR")"
+  rm -rf "${dest:?}"
+  cp -RL "$src" "$dest"   # -L: a link inside the skill is copied as its content, never kept pointing back
+}
+[[ -n "$SKILL_DIR" ]] && install_skill "$SKILL_DIR"
+for d in ${EXTRA_SKILLS[@]+"${EXTRA_SKILLS[@]}"}; do install_skill "$d"; done
+# Skills link the workbench's shared references as ../../shared/references/<file>: copy them beside
+# the installed skills so those links resolve inside the case folder too.
+WORKBENCH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [[ -d "$CWD/.claude/skills" && -d "$WORKBENCH/shared" ]]; then
+  rm -rf "${CWD:?}/.claude/shared"
+  cp -RL "$WORKBENCH/shared" "$CWD/.claude/shared"
 fi
 if [[ -n "$SKILL_DIR" && -d "$SKILL_DIR/scripts" ]]; then
   # The skill's own scripts, by the path the model sees (relative to the case folder).
@@ -45,7 +67,12 @@ fi
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
 set +e
 EXTRA=(); [[ -n "$ALLOW" ]] && EXTRA=(--allowedTools "$ALLOW")
-( cd "$CWD" && claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json --setting-sources project,local ${CLAUDE_EVAL_ARGS:---permission-mode acceptEdits} ${EXTRA[@]+"${EXTRA[@]}"} ) < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log"
+# Connectors: https://code.claude.com/docs/en/mcp (read 2026-09-27): claude.ai connectors load when logged in
+# with a claude.ai account unless ENABLE_CLAUDEAI_MCP_SERVERS=false, and `claude -p` loads project servers
+# without asking unless --strict-mcp-config (checked in `claude --help`, 2.1.283).
+( cd "$CWD" && ENABLE_CLAUDEAI_MCP_SERVERS=false claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json \
+    --setting-sources project,local --strict-mcp-config ${CLAUDE_EVAL_ARGS:---permission-mode acceptEdits} ${EXTRA[@]+"${EXTRA[@]}"} ) \
+  < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log"
 RC=$?
 set -e
 END=$(python3 -c 'import time; print(int(time.time()*1000))')

@@ -5,7 +5,7 @@ description: >
   deployed: a preview per pull request, production from the main branch, the project's own checks
   as required checks, and a checklist of the host and repository settings only the user can apply
   (secrets, stopping the host's own builds, branch protection). Use this skill when someone asks
-  "configura o CI", "pipeline de deploy", "proteger a main", "preview por PR", "GitHub Actions",
+  "set up CI", "deploy pipeline", "protect main", "preview per PR", "GitHub Actions",
   or when a deploy reached production without the tests running. Also use it when a CI run fails
   in a way nobody can read, passes locally and fails on the runner, or a job reports "The
   operation was canceled" and someone asks to fix the workflow.
@@ -17,7 +17,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: [integration:vcs]
   side_effects: [push]
-  version: "0.3"
+  version: "0.4"
 ---
 
 # CI pipeline
@@ -53,12 +53,12 @@ Check these before writing any file, and again before replying. They override th
 
 ## Confirmation gate
 
-Applies to pushing a branch so the pipeline runs (the run deploys a preview with the user's host token). Local runs skip it.
+Applies to pushing a branch so the pipeline runs (the run deploys a preview with the user's host token), and to any local command that deploys. Local runs of the build and the tests skip it; a local deploy command never runs in this skill.
 
 1. Read the "Approvals" section of `docs/workbench/state.md`. If an approval covers this branch and repository, skip to step 4.
 2. Show the payload: repository, branch, commits, and what the run will do (build, test, deploy a preview to which host).
 3. Ask once: "Proceed? (yes/no)". Stop on anything other than an explicit yes.
-4. Push. Record the approval with the date and the user's words.
+4. Record the approval in "Approvals" (scope, what, date, expiry, the user's words, status `pending-execution`), stage files by name after reading `git status` (never `git add -A` or `.`), commit, push, and set the status to `executed`.
 
 ## Procedure
 
@@ -67,7 +67,7 @@ Progress:
 - [ ] Step 2: Ask the decisions the user has not made, each with a recommendation grounded in the project: a preview per pull request (recommended when the host gives one per deploy) or a shared `dev` branch; one build tested and deployed by the pipeline (recommended) or the host building on its own; which checks block a merge; protection rules (with one maintainer: required checks and linear history, no required approver). Write nothing until answered; record the answers in the plan.
 - [ ] Step 3: Write the pipeline: one job that installs with the lockfile frozen, runs the fast checks, builds with the host's preset, runs the tests on that build, and uploads it; one job that deploys that artifact (an alias per pull request, production on the main branch) and outputs its URL; and, for measurements the runner cannot make fairly (performance scores), a job that measures the deployed URL. Pin every tool version (runtime, package manager, deploy CLI). Cancel superseded runs of a pull request, never of production. Give build-only variables (a host preset) to the build step alone: every build the tests start inherits a job-level variable. Reference secrets by name only.
 - [ ] Step 4: Make the tests read what the pipeline ships: an environment variable for the output folder with today's value as the default; a base URL variable that skips the local server when set; the settings the machine would otherwise supply set explicitly. Make failures readable without the log: the test runner's CI annotation reporter, and failure messages that name the cause (the audits and elements that lost points, not only the score).
-- [ ] Step 5: Run the pipeline's commands locally with its environment (`CI=1`, the host preset on the build, the output folder variable) before the first push. Fix what fails here; a test that reads a value once while it animates fails under the runner's parallel load, so poll it.
+- [ ] Step 5: Run the pipeline's build and test commands locally with its environment (never its deploy command: that runs only in the pipeline, after the gate) (`CI=1`, the host preset on the build, the output folder variable) before the first push. Fix what fails here; a test that reads a value once while it animates fails under the runner's parallel load, so poll it.
 - [ ] Step 6: Write the settings checklist from the template, in the order that keeps the site deployable: secrets first; stopping the host's builds and protecting the branch after the first green run, because required checks can only be selected once they have run; and suggest deleting merged branches automatically.
 - [ ] Step 7: Pass the confirmation gate, push the branch, and follow the run sparingly (unauthenticated public APIs allow about 60 requests an hour: poll every three minutes). For each red run: read the failure (stop rule 3), reproduce it locally with the same environment, fix the cause, push once.
 - [ ] Step 8: Write the "Pipeline" section of the plan from the template, and self-check against "Quality criteria". The user merges.
