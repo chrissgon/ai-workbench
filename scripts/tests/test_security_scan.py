@@ -173,3 +173,22 @@ def test_history_finds_a_secret_removed_later(tmp_path):
     count, found = scanner.scan_history(str(tmp_path))
     assert [(f["rule"], f["path"].split("@")[0]) for f in found] == [("secret-assignment", "config.py")]
     assert "q8Zt" not in json.dumps(found)
+
+
+def test_stripe_format_and_upper_case_key_constants(tmp_path):
+    write(tmp_path, "a.py", 'STRIPE_KEY = "' + "sk_" + "live_" + "9Kq2vXfG7Lm2PqR8vTn3wYdE" + '"\n')
+    write(tmp_path, "b.py", 'PAYMENTS_KEY = "' + "prod_9Kq2vXfG7Lm2PqR8vTn3wYdE" + '"\n')
+    write(tmp_path, "c.py", 'LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"\n'
+                           '"has_refresh_token": "refresh_token" in record,\ncache_key = "user_profile_2024_v2"\n')
+    _, active, _ = scanner.scan(str(tmp_path))
+    assert sorted((f["path"], f["rule"]) for f in active) == [("a.py", "secret-token"), ("b.py", "secret-assignment")]
+
+
+def test_allow_file_silences_a_path_with_a_reason(tmp_path):
+    write(tmp_path, "fixtures/app/client.py", 'API_KEY = "' + "prod_9Kq2vXfG7Lm2PqR8vTn3wYdE" + '"\n')
+    write(tmp_path, ".security-scan-allow", "fixtures/app/* secret-assignment -- planted for an eval\n")
+    _, active, suppressed = scanner.scan(str(tmp_path))
+    assert active == [] and [f["path"] for f in suppressed] == ["fixtures/app/client.py"]
+    write(tmp_path, ".security-scan-allow", "fixtures/app/* secret-assignment\n")
+    _, active, _ = scanner.scan(str(tmp_path))
+    assert sorted(f["rule"] for f in active) == ["allow-without-reason", "secret-assignment"]

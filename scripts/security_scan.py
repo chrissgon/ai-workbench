@@ -32,6 +32,9 @@ file when --root is not a git repository), or only PATH arguments (files or fold
 
 Silence one finding with a comment on the same line or the line above:
   security-scan: allow <rule> -- <reason>
+or, for files where a comment would change what they are (an eval fixture with a planted fake
+secret), with a line in .security-scan-allow at the repository root:
+  <path glob> <rule> -- <reason>
 Suppressed findings are listed in the JSON report with their reason, so they stay auditable.
 Secrets are never printed: excerpts are redacted.
 
@@ -49,6 +52,7 @@ Options:
 
 Exit codes: 0 ok, 1 findings that fail the run, 2 usage error.
 """
+import fnmatch
 import json
 import os
 import re
@@ -94,14 +98,19 @@ TOKEN_PATTERNS = [
     ("model API key", r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{32,}"),
     ("Google API key", r"\bAIza[0-9A-Za-z_-]{35}\b"),
     ("npm token", r"\bnpm_[A-Za-z0-9]{36}\b"),
+    ("Stripe key", r"\b[rsp]k_(?:live|test)_[0-9A-Za-z]{16,}"),
     ("private key block", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"),
     ("JWT", r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
 ]
 TOKEN_RES = [(label, re.compile(p)) for label, p in TOKEN_PATTERNS]
+# A credential-like name (one ending in api_key, secret, token, password or private/access key, or an
+# upper-case constant ending in _KEY such as STRIPE_KEY) assigned a literal of 12+ characters with a
+# digit in it (words and identifiers are not secrets) that is not a URL.
 ASSIGN_RE = re.compile(
-    r"(?i)\b(api[_-]?key|secret|client[_-]?secret|access[_-]?token|refresh[_-]?token|auth[_-]?token|token|password|passwd)"
+    r"\b((?i:[A-Za-z0-9_-]*?(?:api[_-]?key|secret|token|password|passwd|private[_-]?key|access[_-]?key))"
+    r"|[A-Z][A-Z0-9_]*_KEY)"
     r"\b[\"']?\s*[:=]\s*[\"']([^\"'\s]{12,})[\"']")
-PLACEHOLDER_RE = re.compile(r"(?i)[<>{}$]|example|sample|placeholder|changeme|your[_-]|xxx|fake|dummy|test|redacted|\*\*\*")
+PLACEHOLDER_RE = re.compile(r"(?i)^https?://|^\D*$|[<>{}$]|example|sample|placeholder|changeme|your[_-]|xxx|fake|dummy|test|redacted|\*\*\*")
 SECRET_FILE_RE = re.compile(r"(^|/)(\.env(\.[^/]*)?|id_rsa|id_dsa|id_ecdsa|id_ed25519|[^/]*\.(pem|key|p12|pfx|keystore|jks))$")
 SECRET_FILE_OK_RE = re.compile(r"\.env\.example$|\.env\.sample$")
 HIDDEN_RANGES = [(0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 0x2069), (0xFEFF, 0xFEFF),
@@ -284,6 +293,37 @@ def scan_file(root, path, cache):
     return apply_allows(findings, lines)
 
 
+ALLOW_FILE = ".security-scan-allow"
+ALLOW_FILE_RE = re.compile(r"^(\S+)\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s*$")
+
+
+def load_allow_file(root):
+    """Path-level allows: [(glob, rule, reason, line)]; entries without a reason are returned as errors."""
+    entries, errors = [], []
+    path = os.path.join(root, ALLOW_FILE)
+    if not os.path.isfile(path):
+        return entries, errors
+    with open(path, encoding="utf-8") as f:
+        for i, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            m = ALLOW_FILE_RE.match(line)
+            if not m or not m.group(3):
+                errors.append({"rule": "allow-without-reason", "severity": "error", "path": ALLOW_FILE, "line": i,
+                               "message": "entries are '<path glob> <rule> -- <reason>'", "excerpt": redact(line)})
+                continue
+            entries.append((m.group(1), m.group(2), m.group(3), i))
+    return entries, errors
+
+
+def path_allowed(entries, rel, rule):
+    for glob, r, reason, _ in entries:
+        if r == rule and fnmatch.fnmatchcase(rel, glob):
+            return reason
+    return None
+
+
 def apply_allows(findings, lines):
     allows = {}
     extra = []
@@ -314,6 +354,7 @@ def apply_allows(findings, lines):
 def scan(root, paths=None):
     root = os.path.abspath(root)
     cache, active, suppressed = {}, [], []
+    entries, active = load_allow_file(root)
     files = list_files(root, paths)
     for path in sorted(files):
         if os.path.abspath(path) == SELF:
@@ -321,6 +362,9 @@ def scan(root, paths=None):
         for f in scan_file(root, path, cache):
             if f["path"] is None:
                 f["path"] = os.path.relpath(path, root)
+            reason = path_allowed(entries, f["path"], f["rule"])
+            if reason and "suppressed" not in f:
+                f["suppressed"] = f"{ALLOW_FILE}: {reason}"
             (suppressed if "suppressed" in f else active).append(f)
     return files, active, suppressed
 
@@ -337,6 +381,7 @@ def scan_history(root):
         if rel and sha not in paths:
             paths[sha] = rel
     self_rel = os.path.relpath(SELF, root).replace(os.sep, "/")
+    entries, _ = load_allow_file(root)
     findings, seen = [], set()
     batch = subprocess.run(["git", "-C", root, "cat-file", "--batch"], input="\n".join(paths).encode() + b"\n",
                            capture_output=True)
@@ -350,6 +395,8 @@ def scan_history(root):
         where = f"{rel}@{sha[:10]}"
 
         def add(rule, line, message):
+            if path_allowed(entries, rel, rule):
+                return
             if (rel, rule, line) not in seen:
                 seen.add((rel, rule, line))
                 findings.append({"rule": rule, "severity": "error", "path": where, "line": line, "message": message,

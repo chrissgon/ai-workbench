@@ -1,0 +1,4 @@
+# Path-level allows for scripts/security_scan.py: <path glob> <rule> -- <reason>
+# Only for files where an inline allow comment would change what they are, such as an eval fixture
+# that plants a fake secret for a model to find. Every entry needs a reason.
+skills/eng-code-review/evals/files/secret/* secret-assignment -- fake key planted for eng-code-review eval case 3, which checks that a hard-coded credential is a blocking finding; its format matches no provider
