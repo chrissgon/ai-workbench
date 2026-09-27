@@ -10,12 +10,16 @@ providers/
 
 Class `a:b` maps to folder `providers/a/`; the sub-class (`linkedin` in `publisher:linkedin`) is passed as `--platform`, because one implementation often serves several sub-classes.
 
+The exception is `integration:<service>`: each integration is a different kind of service, so it maps to `providers/<service>/` (`integration:vcs` is `providers/vcs/`).
+
 ## Selection
 
 `scripts/doctor.py` and skills pick an implementation from environment variables, most specific first:
 
 1. `<CLASS>_<SUBCLASS>_PROVIDER` (for example `PUBLISHER_LINKEDIN_PROVIDER=buffer`)
 2. `<CLASS>_PROVIDER` (for example `PUBLISHER_PROVIDER=buffer`)
+
+A hyphen in a class name becomes `_`. `integration:<service>` classes use only the first form (`INTEGRATION_VCS_PROVIDER=github`), because one integration's provider never serves another.
 
 Unset means "no native provider"; the skill degrades as described in its body.
 
@@ -43,6 +47,7 @@ Unset means "no native provider"; the skill degrades as described in its body.
 | `generator:image` | `generate --prompt-file <f> --size <WxH> --out <path> [--style-file <f>]` |
 | `generator:video` | reserved; same shape as image with `--duration` |
 | `search:web` | `search --query <q> [--limit <n>] [--recency <days>]` |
+| `integration:vcs` | `alerts --repo <owner>/<name> [--state <s>] [--severity <s>] [--ecosystem <e>]` (Dependabot alerts, read-only), `dismiss-alert --repo <r> --number <n> --reason <r> --comment-file <f> --idempotency-key <k>`, `resolve --idempotency-key <k> (--dismissed \| --not-dismissed)` |
 | `integration:issue-tracker` | `get --id <key>`, `comment --id <key> --body-file <f>`, `transition --id <key> --to <state>` |
 | `scheduler` | `schedule --at <ISO-8601> --command-file <f> (--dry-run \| --confirmed --approved <digest>)`, `list`, `cancel --id <id>` |
 
