@@ -7,7 +7,7 @@ The automatic mode that is always available: the agent writes the artifact as HT
 3. Build the direction as the brief describes it, one direction per folder; do not blend ideas across folders.
 4. Render every frame at the sizes of the brief's Deliverables:
    `node scripts/screenshot.mjs --html <file.html> --out <file.png> --width <w> --height <h> [--full-page] [--scale 2] [--dark] [--reduced-motion] [--wait <ms>]`
-   The script needs the `playwright` package resolvable from the working directory or `NODE_PATH`; it launches Chromium headless. Use `--wait` for animations to reach their final state, or `--reduced-motion` to capture it directly.
+   The script needs the `playwright` package resolvable from the working directory or `NODE_PATH`; it launches Chromium headless. It never installs anything: when the package is missing it prints the pinned install commands (a package and a browser download), which you show the user and run only after they approve. `--out` must be a `.png` inside the working directory. Use `--wait` for animations to reach their final state, or `--reduced-motion` to capture it directly.
 5. Look at every PNG before judging it; fix defects of the build (overflow, a font that did not load, a clipped text) in the same run, because they are not properties of the direction.
 6. Record the outputs in the results document: the HTML path and the PNG path per frame.
 

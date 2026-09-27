@@ -1,4 +1,7 @@
 # Path-level allows for scripts/security_scan.py: <path glob> <rule> -- <reason>
 # Only for files where an inline allow comment would change what they are, such as an eval fixture
-# that plants a fake secret for a model to find. Every entry needs a reason.
-skills/eng-code-review/evals/files/secret/* secret-assignment -- fake key planted for eng-code-review eval case 3, which checks that a hard-coded credential is a blocking finding; its format matches no provider
+# that plants a fake secret for a model to find. Every entry needs a reason. Name each file; never a
+# folder glob, which would also silence whatever is added to that folder later.
+skills/eng-code-review/evals/files/secret/src/client.py secret-assignment -- fake key planted for eng-code-review eval case 3, which checks that a hard-coded credential is a blocking finding; its format matches no provider
+skills/eng-code-review/evals/files/secret/change.patch secret-assignment -- the same fake key as src/client.py, in the patch eng-code-review eval case 3 reviews
+skills/ops-ci-pipeline/evals/evals.json secret-token -- fake hosting token planted in the prompt of ops-ci-pipeline eval case 2, whose assertions check it is written nowhere and the user is told to revoke it; never a real credential

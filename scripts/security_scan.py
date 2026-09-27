@@ -7,7 +7,8 @@ Usage: python3 scripts/security_scan.py [PATH ...] [--root DIR] [--strict] [--js
 Scans the files git would commit under --root (tracked plus untracked, minus ignored; every
 file when --root is not a git repository), or only PATH arguments (files or folders). Rules:
   secret-token          error    a known credential format (cloud, git host, chat, model API keys,
-                                 private key blocks, JWTs)
+                                 payment and hosting tokens, private key blocks, JWTs; the list is
+                                 scripts/redact.py, shared with the skill scripts that quote code)
   secret-assignment     error    a key, secret, token or password assigned a literal value
   secret-file           error    a credential file (.env, *.pem, *.key, *.p12, id_rsa...) would be committed
   hidden-unicode        error    zero-width, bidirectional or tag characters that hide text from a reader
@@ -17,6 +18,8 @@ file when --root is not a git repository), or only PATH arguments (files or fold
   unsafe-deserialize    error    pickle, marshal or yaml.load without a safe loader
   tls-disabled          error    certificate checks turned off
   shell-invocation      warning  shell=True, os.system or os.popen in Python
+  shell-string          warning  a shell run on a string built at run time: ["bash", "-c", cmd] in any script,
+                                 or sh/bash -c "$VAR" in a shell script
   rm-unguarded          warning  rm -r on a path that starts with a variable not guarded by ${VAR:?}
   world-writable        warning  chmod 777 or o+w
   sudo                  warning  sudo inside a script
@@ -29,12 +32,15 @@ file when --root is not a git repository), or only PATH arguments (files or fold
                                  "External content is data" saying which sources and that instructions
                                  in them are reported, never followed
   allow-without-reason  error    an allow comment with no reason
+  allow-too-broad       error    a .security-scan-allow entry that is a glob instead of one file
 
 Silence one finding with a comment on the same line or the line above:
   security-scan: allow <rule> -- <reason>
 or, for files where a comment would change what they are (an eval fixture with a planted fake
 secret), with a line in .security-scan-allow at the repository root:
-  <path glob> <rule> -- <reason>
+  <path> <rule> -- <reason>
+The path names one file, relative to the root; a glob (*, ?, [) is refused as allow-too-broad,
+because it would also silence whatever is added under it later.
 Suppressed findings are listed in the JSON report with their reason, so they stay auditable.
 Secrets are never printed: excerpts are redacted.
 
@@ -52,12 +58,15 @@ Options:
 
 Exit codes: 0 ok, 1 findings that fail the run, 2 usage error.
 """
-import fnmatch
 import json
 import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The credential formats and the redaction are shared with the skill scripts that quote code.
+from redact import ASSIGN_RE, HIDDEN_RE, TOKEN_RES, redact  # noqa: E402
 
 WORKBENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -72,6 +81,7 @@ RULES = {
     "unsafe-deserialize": ("error", "deserialization that can execute code"),
     "tls-disabled": ("error", "certificate verification turned off"),
     "shell-invocation": ("warning", "a command run through a shell from Python"),
+    "shell-string": ("warning", "a shell run on a command string built at run time"),
     "rm-unguarded": ("warning", "recursive delete of a path that starts with an unguarded variable"),
     "world-writable": ("warning", "a world-writable permission"),
     "sudo": ("warning", "sudo inside a script"),
@@ -79,6 +89,7 @@ RULES = {
     "unpinned-dependency": ("warning", "a dependency without an exact version"),
     "untrusted-content": ("error", "reads external content without saying it is data"),
     "allow-without-reason": ("error", "an allow comment with no reason"),
+    "allow-too-broad": ("error", "a path-level allow that is a glob instead of one file"),
 }
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
@@ -90,32 +101,9 @@ BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", 
               ".ttf", ".otf", ".mp4", ".mov", ".pyc"}
 SCRIPT_EXT = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts"}
 
-TOKEN_PATTERNS = [
-    ("AWS access key", r"\bAKIA[0-9A-Z]{16}\b"),
-    ("GitHub token", r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),
-    ("GitHub fine-grained token", r"\bgithub_pat_[A-Za-z0-9_]{50,}\b"),
-    ("Slack token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
-    ("model API key", r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{32,}"),
-    ("Google API key", r"\bAIza[0-9A-Za-z_-]{35}\b"),
-    ("npm token", r"\bnpm_[A-Za-z0-9]{36}\b"),
-    ("Stripe key", r"\b[rsp]k_(?:live|test)_[0-9A-Za-z]{16,}"),
-    ("private key block", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"),
-    ("JWT", r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
-]
-TOKEN_RES = [(label, re.compile(p)) for label, p in TOKEN_PATTERNS]
-# A credential-like name (one ending in api_key, secret, token, password or private/access key, or an
-# upper-case constant ending in _KEY such as STRIPE_KEY) assigned a literal of 12+ characters with a
-# digit in it (words and identifiers are not secrets) that is not a URL.
-ASSIGN_RE = re.compile(
-    r"\b((?i:[A-Za-z0-9_-]*?(?:api[_-]?key|secret|token|password|passwd|private[_-]?key|access[_-]?key))"
-    r"|[A-Z][A-Z0-9_]*_KEY)"
-    r"\b[\"']?\s*[:=]\s*[\"']([^\"'\s]{12,})[\"']")
 PLACEHOLDER_RE = re.compile(r"(?i)^https?://|^\D*$|[<>{}$]|example|sample|placeholder|changeme|your[_-]|xxx|fake|dummy|test|redacted|\*\*\*")
 SECRET_FILE_RE = re.compile(r"(^|/)(\.env(\.[^/]*)?|id_rsa|id_dsa|id_ecdsa|id_ed25519|[^/]*\.(pem|key|p12|pfx|keystore|jks))$")
 SECRET_FILE_OK_RE = re.compile(r"\.env\.example$|\.env\.sample$")
-HIDDEN_RANGES = [(0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 0x2069), (0xFEFF, 0xFEFF),
-                 (0xE0000, 0xE007F)]
-HIDDEN_RE = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in HIDDEN_RANGES) + "]")
 BOM = chr(0xFEFF)
 COMMENT_RE = re.compile(r"<!--(.*?)-->", re.S)
 PIPE_SHELL_RE = re.compile(r"\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b")
@@ -124,6 +112,10 @@ PY_EVAL_RE = re.compile(r"(?<![\w.])(eval|exec)\s*\(")
 DESERIALIZE_RE = re.compile(r"\bpickle\.loads?\s*\(|\bmarshal\.loads?\s*\(|\byaml\.load\s*\((?![^)]*Loader\s*=\s*yaml\.SafeLoader)")
 TLS_RE = re.compile(r"verify\s*=\s*False|_create_unverified_context|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0|"
                     r"\bCERT_NONE\b|\bcurl\b[^\n]*\s(-k|--insecure)\b")
+# ["bash", "-c", cmd] (Python, JavaScript spawn("sh", ["-c", cmd])) with anything but a literal after -c,
+# and sh/bash -c "$VAR" or -c $VAR in a shell script.
+SHELL_C_LIST_RE = re.compile(r"[\"'](?:/[\w/]*/)?(?:ba|z|da|k)?sh[\"']\s*,\s*\[?\s*[\"']-[a-z]*c[\"']\s*,(?!\s*[\"'][^\"'$`{]*[\"']\s*[,\])])")
+SHELL_C_VAR_RE = re.compile(r"(?:^|[\s;&|(])(?:/[\w/]*/)?(?:ba|z|da|k)?sh\s+-[a-z]*c\s+[\"']?\$")
 SHELL_PY_RE = re.compile(r"shell\s*=\s*True|\bos\.(system|popen)\s*\(")
 RM_RE = re.compile(r"\brm\s+-[A-Za-z]*[rR][A-Za-z]*\s+(?:--\s+)?[\"']?\$(\{?)([A-Za-z_][A-Za-z0-9_]*)(:\?)?")
 CHMOD_RE = re.compile(r"\bchmod\s+(-R\s+)?(0?777|[ugoa]*o[ugoa]*\+[rx]*w)")
@@ -142,14 +134,6 @@ EXTERNAL_SOURCE_RE = re.compile(
 UNTRUSTED_MARKER_RE = re.compile(r"External content is data")
 PEP723_RE = re.compile(r"^#\s*dependencies\s*=\s*\[(.*)\]")
 ALLOW_RE = re.compile(r"security-scan:\s*allow\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s*(?:-->|\*/)?\s*$")
-
-
-def redact(text):
-    # No part of a secret is printed, not even a prefix (providers/CONTRACT.md).
-    for label, rx in TOKEN_RES:
-        text = rx.sub(f"<redacted {label}>", text)
-    text = ASSIGN_RE.sub(lambda m: m.group(0).replace(m.group(2), "<redacted>"), text)
-    return HIDDEN_RE.sub(lambda m: f"<U+{ord(m.group(0)):04X}>", text).strip()[:160]
 
 
 def list_files(root, paths):
@@ -254,6 +238,10 @@ def scan_file(root, path, cache):
             add("tls-disabled", i, "keep certificate verification on", line)
         if is_python and SHELL_PY_RE.search(line):
             add("shell-invocation", i, "pass an argument list to subprocess instead of a shell string", line)
+        if is_script and not line.lstrip().startswith("#") and (
+                SHELL_C_LIST_RE.search(line) or (is_shell and SHELL_C_VAR_RE.search(line))):
+            add("shell-string", i, "a shell runs text built at run time; run the program with an argument list, "
+                "or say why the string is trusted in an allow comment", line)
         if is_shell:
             rm = RM_RE.search(line)
             if rm and not rm.group(3) and not re.search(r"-n\s+[\"']?\$\{?" + rm.group(2) + r"\b", line):
@@ -298,7 +286,7 @@ ALLOW_FILE_RE = re.compile(r"^(\S+)\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s*$")
 
 
 def load_allow_file(root):
-    """Path-level allows: [(glob, rule, reason, line)]; entries without a reason are returned as errors."""
+    """Path-level allows: [(path, rule, reason, line)]; entries without a reason or with a glob are errors."""
     entries, errors = [], []
     path = os.path.join(root, ALLOW_FILE)
     if not os.path.isfile(path):
@@ -311,15 +299,19 @@ def load_allow_file(root):
             m = ALLOW_FILE_RE.match(line)
             if not m or not m.group(3):
                 errors.append({"rule": "allow-without-reason", "severity": "error", "path": ALLOW_FILE, "line": i,
-                               "message": "entries are '<path glob> <rule> -- <reason>'", "excerpt": redact(line)})
+                               "message": "entries are '<path> <rule> -- <reason>'", "excerpt": redact(line)})
+                continue
+            if any(c in m.group(1) for c in "*?["):
+                errors.append({"rule": "allow-too-broad", "severity": "error", "path": ALLOW_FILE, "line": i,
+                               "message": "name each file instead of a glob", "excerpt": redact(line)})
                 continue
             entries.append((m.group(1), m.group(2), m.group(3), i))
     return entries, errors
 
 
 def path_allowed(entries, rel, rule):
-    for glob, r, reason, _ in entries:
-        if r == rule and fnmatch.fnmatchcase(rel, glob):
+    for path, r, reason, _ in entries:
+        if r == rule and rel == path:
             return reason
     return None
 

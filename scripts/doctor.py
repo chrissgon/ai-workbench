@@ -19,6 +19,7 @@ Exit codes: 0 ok, 1 missing classes with --strict, 2 usage error.
 """
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -60,10 +61,27 @@ def env_provider(cls):
     return None, None
 
 
+NAME_RE = re.compile(r"[a-z0-9-]+")
+NOT_PROVIDERS = {"auth"}  # helpers that live next to providers (providers/CONTRACT.md) and are not one
+
+
+def known_providers(kind):
+    """Provider names shipped for a class: providers/<kind>/<name>.py, helpers excluded."""
+    folder = os.path.join(PROVIDERS, kind)
+    if not NAME_RE.fullmatch(kind) or not os.path.isdir(folder):
+        return []
+    return sorted(f[:-3] for f in os.listdir(folder)
+                  if f.endswith(".py") and NAME_RE.fullmatch(f[:-3]) and f[:-3] not in NOT_PROVIDERS)
+
+
 def check_provider(cls, impl):
-    script = os.path.join(PROVIDERS, cls.split(":")[0], f"{impl}.py")
-    if not os.path.isfile(script):
-        return "missing", f"{os.path.relpath(script, ROOT)} not found"
+    # The name comes from the environment and becomes a script path that is executed: only a
+    # provider shipped under providers/<class>/ is accepted, never a path.
+    kind = cls.split(":")[0]
+    known = known_providers(kind)
+    if impl not in known:
+        return "missing", f"{impl!r} is not a provider of {kind}; known: {known}"
+    script = os.path.join(PROVIDERS, kind, f"{impl}.py")
     runner = ["uv", "run", script] if _which("uv") else ["python3", script]
     try:
         r = subprocess.run(runner + ["--check"], capture_output=True, text=True, timeout=60)
@@ -110,7 +128,7 @@ def main(argv):
             print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr)
             return 2
         i += 1
-    if harness and not os.path.isdir(os.path.join(ADAPTERS, harness)):
+    if harness and (not NAME_RE.fullmatch(harness) or not os.path.isdir(os.path.join(ADAPTERS, harness))):
         print(f"Error: adapter {harness!r} not found under adapters/.", file=sys.stderr)
         return 2
 

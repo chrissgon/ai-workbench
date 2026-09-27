@@ -23,8 +23,12 @@ while [[ $# -gt 0 ]]; do
 done
 if [[ $UNINSTALL -eq 1 ]]; then
   [[ $DRY -eq 1 ]] && { echo "{\"would_remove\": \"$TARGET\"}"; exit 0; }
-  [[ -L "$TARGET" ]] && rm "$TARGET"
-  echo "{\"removed\": \"$TARGET\"}"; exit 0
+  # Only a link into this adapter's build folder is ours to remove.
+  if [[ -L "$TARGET" && "$(readlink -- "$TARGET")" == "$HERE/build/"* ]]; then
+    rm -f -- "$TARGET"; echo "{\"removed\": \"$TARGET\"}"; exit 0
+  fi
+  [[ -e "$TARGET" || -L "$TARGET" ]] && { echo "Error: $TARGET was not created by this installer; left in place." >&2; exit 1; }
+  echo "{\"removed\": null}"; exit 0
 fi
 BUILD="$HERE/build/$PACK"
 if [[ $DRY -eq 1 ]]; then
@@ -33,8 +37,8 @@ if [[ $DRY -eq 1 ]]; then
 fi
 python3 "$HERE/build.py" --pack "$PACK" >/dev/null
 mkdir -p "$(dirname "$TARGET")"
-if [[ -e "$TARGET" && ! -L "$TARGET" ]]; then
-  echo "Error: $TARGET exists and is not a symlink. Remove it manually or set CLAUDE_SKILLS_DIR." >&2; exit 1
+if [[ -e "$TARGET" || -L "$TARGET" ]] && [[ ! -L "$TARGET" || "$(readlink -- "$TARGET")" != "$HERE/build/"* ]]; then
+  echo "Error: $TARGET exists and was not created by this installer. Move it away or set CLAUDE_SKILLS_DIR." >&2; exit 1
 fi
 ln -sfn "$BUILD" "$TARGET"
 echo "{\"linked\": \"$TARGET\", \"to\": \"$BUILD\", \"pack\": \"$PACK\", \"next\": \"restart the session; the plugin loads as ai-workbench@skills-dir\"}"
