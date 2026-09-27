@@ -31,6 +31,7 @@ TOKEN_PATTERNS = [
     ("Google API key", r"\bAIza[0-9A-Za-z_-]{35}\b"),
     ("npm token", r"\bnpm_[A-Za-z0-9]{36}\b"),
     ("Stripe key", r"\b[rsp]k_(?:live|test)_[0-9A-Za-z]{16,}"),
+    ("Netlify personal access token", r"\bnfp_[A-Za-z0-9]{32,}\b"),
     ("private key block", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"),
     ("JWT", r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
 ]

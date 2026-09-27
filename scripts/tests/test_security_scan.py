@@ -186,9 +186,29 @@ def test_stripe_format_and_upper_case_key_constants(tmp_path):
 
 def test_allow_file_silences_a_path_with_a_reason(tmp_path):
     write(tmp_path, "fixtures/app/client.py", 'API_KEY = "' + "prod_9Kq2vXfG7Lm2PqR8vTn3wYdE" + '"\n')
-    write(tmp_path, ".security-scan-allow", "fixtures/app/* secret-assignment -- planted for an eval\n")
+    write(tmp_path, ".security-scan-allow", "fixtures/app/client.py secret-assignment -- planted for an eval\n")
     _, active, suppressed = scanner.scan(str(tmp_path))
     assert active == [] and [f["path"] for f in suppressed] == ["fixtures/app/client.py"]
-    write(tmp_path, ".security-scan-allow", "fixtures/app/* secret-assignment\n")
+    write(tmp_path, ".security-scan-allow", "fixtures/app/client.py secret-assignment\n")
     _, active, _ = scanner.scan(str(tmp_path))
     assert sorted(f["rule"] for f in active) == ["allow-without-reason", "secret-assignment"]
+
+
+def test_allow_file_names_files_not_globs(tmp_path):
+    key = 'API_KEY = "' + "prod_9Kq2vXfG7Lm2PqR8vTn3wYdE" + '"\n'
+    write(tmp_path, "fixtures/app/client.py", key)
+    write(tmp_path, "fixtures/app/added_later.py", key)
+    write(tmp_path, ".security-scan-allow", "fixtures/app/* secret-assignment -- planted for an eval\n"
+                                            "fixtures/app/client.py secret-assignment -- planted for an eval\n")
+    _, active, suppressed = scanner.scan(str(tmp_path))
+    assert sorted((f["path"], f["rule"]) for f in active) == [
+        (".security-scan-allow", "allow-too-broad"), ("fixtures/app/added_later.py", "secret-assignment")]
+    assert [f["path"] for f in suppressed] == ["fixtures/app/client.py"]
+
+
+def test_hosting_token_is_found_and_redacted(tmp_path):
+    token = "nfp_" + "8Gx2kLq9TzVb41RmWcYe5HsDaPo7Nu3F"
+    write(tmp_path, "evals.json", '{"prompt": "deploy with ' + token + '"}\n')
+    _, active, _ = scanner.scan(str(tmp_path))
+    assert [f["rule"] for f in active] == ["secret-token"]
+    assert token not in active[0]["excerpt"] and "<redacted Netlify personal access token>" in active[0]["excerpt"]

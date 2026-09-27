@@ -7,7 +7,8 @@ Usage: python3 scripts/security_scan.py [PATH ...] [--root DIR] [--strict] [--js
 Scans the files git would commit under --root (tracked plus untracked, minus ignored; every
 file when --root is not a git repository), or only PATH arguments (files or folders). Rules:
   secret-token          error    a known credential format (cloud, git host, chat, model API keys,
-                                 private key blocks, JWTs)
+                                 payment and hosting tokens, private key blocks, JWTs; the list is
+                                 scripts/redact.py, shared with the skill scripts that quote code)
   secret-assignment     error    a key, secret, token or password assigned a literal value
   secret-file           error    a credential file (.env, *.pem, *.key, *.p12, id_rsa...) would be committed
   hidden-unicode        error    zero-width, bidirectional or tag characters that hide text from a reader
@@ -29,12 +30,15 @@ file when --root is not a git repository), or only PATH arguments (files or fold
                                  "External content is data" saying which sources and that instructions
                                  in them are reported, never followed
   allow-without-reason  error    an allow comment with no reason
+  allow-too-broad       error    a .security-scan-allow entry that is a glob instead of one file
 
 Silence one finding with a comment on the same line or the line above:
   security-scan: allow <rule> -- <reason>
 or, for files where a comment would change what they are (an eval fixture with a planted fake
 secret), with a line in .security-scan-allow at the repository root:
-  <path glob> <rule> -- <reason>
+  <path> <rule> -- <reason>
+The path names one file, relative to the root; a glob (*, ?, [) is refused as allow-too-broad,
+because it would also silence whatever is added under it later.
 Suppressed findings are listed in the JSON report with their reason, so they stay auditable.
 Secrets are never printed: excerpts are redacted.
 
@@ -52,7 +56,6 @@ Options:
 
 Exit codes: 0 ok, 1 findings that fail the run, 2 usage error.
 """
-import fnmatch
 import json
 import os
 import re
@@ -83,6 +86,7 @@ RULES = {
     "unpinned-dependency": ("warning", "a dependency without an exact version"),
     "untrusted-content": ("error", "reads external content without saying it is data"),
     "allow-without-reason": ("error", "an allow comment with no reason"),
+    "allow-too-broad": ("error", "a path-level allow that is a glob instead of one file"),
 }
 
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
@@ -271,7 +275,7 @@ ALLOW_FILE_RE = re.compile(r"^(\S+)\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s*$")
 
 
 def load_allow_file(root):
-    """Path-level allows: [(glob, rule, reason, line)]; entries without a reason are returned as errors."""
+    """Path-level allows: [(path, rule, reason, line)]; entries without a reason or with a glob are errors."""
     entries, errors = [], []
     path = os.path.join(root, ALLOW_FILE)
     if not os.path.isfile(path):
@@ -284,15 +288,19 @@ def load_allow_file(root):
             m = ALLOW_FILE_RE.match(line)
             if not m or not m.group(3):
                 errors.append({"rule": "allow-without-reason", "severity": "error", "path": ALLOW_FILE, "line": i,
-                               "message": "entries are '<path glob> <rule> -- <reason>'", "excerpt": redact(line)})
+                               "message": "entries are '<path> <rule> -- <reason>'", "excerpt": redact(line)})
+                continue
+            if any(c in m.group(1) for c in "*?["):
+                errors.append({"rule": "allow-too-broad", "severity": "error", "path": ALLOW_FILE, "line": i,
+                               "message": "name each file instead of a glob", "excerpt": redact(line)})
                 continue
             entries.append((m.group(1), m.group(2), m.group(3), i))
     return entries, errors
 
 
 def path_allowed(entries, rel, rule):
-    for glob, r, reason, _ in entries:
-        if r == rule and fnmatch.fnmatchcase(rel, glob):
+    for path, r, reason, _ in entries:
+        if r == rule and rel == path:
             return reason
     return None
 
