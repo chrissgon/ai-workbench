@@ -29,7 +29,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Qual a melhor forma de fazer o dueLabel imprimir a data no fuso do cliente? O plano está em invoices/docs/engineering/plans/due-label-customer-time-zone.md.",
+      "prompt": "What's the best way to make dueLabel print the date in the customer's time zone? The plan is in invoices/docs/engineering/plans/due-label-customer-time-zone.md.",
       "expected_output": "Criteria are taken from the plan; at least two options are prototyped outside the repository and run under several TZ values and customer zones, including one within rule 1 (Intl.DateTimeFormat with a timeZone option, or parsing the date parts without Date); sizes are measured with npm run size or the same gzip method; an ADR is written in invoices/docs/engineering/adr/0001-*.md with per-option results, a failure condition per option and a recommendation; the plan gains an 'Options and decision' section; no dependency is installed and no prototype is left in src/.",
       "files": [
         "evals/files/invoices"
@@ -41,7 +41,7 @@
         "The ADR gives a size figure measured with npm run size or gzip",
         "The plan file gains an 'Options and decision' section pointing to the ADR",
         "package.json gains no dependency and src/ contains no prototype files",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

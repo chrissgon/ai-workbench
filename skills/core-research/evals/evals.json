@@ -17,14 +17,14 @@
     },
     {
       "id": 2,
-      "prompt": "Pesquise sobre IA na educação.",
+      "prompt": "Research AI in education.",
       "expected_output": "Before any search, at most three questions with recommended answers: which decision the research informs, the scope (geography such as Brazil, period, source language), and what would count as enough.",
       "files": [],
       "assertions": [
         "No search is run before the questions are answered",
         "At most three questions are asked, each with a recommended answer",
         "The questions cover the decision informed and the scope",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

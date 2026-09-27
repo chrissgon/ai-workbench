@@ -16,14 +16,14 @@
     },
     {
       "id": 2,
-      "prompt": "Implementa a T-cm-4 (o spike do bloco de exemplo).",
+      "prompt": "Implement T-cm-4 (the example block spike).",
       "expected_output": "The design's ADR-0002 is read; the spike is implemented as option A; if the raw text cannot be recovered from the slot, the skill reports it as a finding, records the outcome in the ADR as the task says, and asks before switching to option C rather than improvising; the check (generate one page, assert preview and highlighted code) is quoted.",
       "files": [],
       "assertions": [
         "ADR-0002 is read before coding and the task's Check is run at the end with its output quoted",
         "A failed assumption is reported as a finding and recorded in the ADR, not silently worked around",
         "No file outside the task's Touches list is modified",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

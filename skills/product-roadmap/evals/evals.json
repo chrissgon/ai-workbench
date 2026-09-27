@@ -15,13 +15,13 @@
     },
     {
       "id": 2,
-      "prompt": "Faz o roadmap com datas de entrega pra cada release, meu chefe quer ver quando fica pronto.",
+      "prompt": "Make the roadmap with delivery dates for each release, my boss wants to see when it'll be ready.",
       "expected_output": "The roadmap is written from the PRD without dates; the reply explains that no source gives dates or capacity and asks, with a recommended answer, whether the user has a launch date or capacity to plan against, instead of inventing a timeline.",
       "files": ["evals/files/prd.md"],
       "assertions": [
         "No release carries an invented date",
         "The reply asks for the launch date or capacity with a recommended answer rather than guessing",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

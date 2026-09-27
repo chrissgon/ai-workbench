@@ -7,7 +7,7 @@ description: >
   in the hostile conditions users create, and an ADR that records the numbers and a
   recommendation, leaving the decision to the user when an option crosses a written rule. Use
   this skill when there is more than one reasonable way to fix or change something, when
-  someone asks "qual a melhor forma", "A or B?", "should we use X", or when the obvious fix
+  someone asks "what's the best way", "A or B?", "should we use X", or when the obvious fix
   breaks a rule the project wrote down. Also use it when the user has already picked the
   answer ("just go with <library>", "write the ADR for X"), to check it against the rules
   before recording it.
@@ -19,7 +19,7 @@ metadata:
   outputs: [docs/engineering/adr/<NNNN>-<title>.md, docs/engineering/plans/<task>.md]
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Tradeoffs

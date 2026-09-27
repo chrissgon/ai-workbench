@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Quero a tela de documentação no Claude Design, que já tem o nosso design system carregado. Usa a página do Button como exemplo.",
-      "expected_output": "docs/design/briefs/documentation-page.md of type screen in loaded mode: regions and states of SCREEN-2 from the flows named in Content, the Button page copy quoted from its source, three named directions, the brand colour restated as hex, at least five CRIT lines, attachments that exclude any earlier mockup, a prompt with a Direction slot; lint ok; the reply in Portuguese points to design-execute.",
+      "prompt": "I want the documentation screen in Claude Design, which already has our design system loaded. Use the Button page as the example.",
+      "expected_output": "docs/design/briefs/documentation-page.md of type screen in loaded mode: regions and states of SCREEN-2 from the flows named in Content, the Button page copy quoted from its source, three named directions, the brand colour restated as hex, at least five CRIT lines, attachments that exclude any earlier mockup, a prompt with a Direction slot; lint ok; the reply in English points to design-execute.",
       "files": ["evals/files/flows.md", "evals/files/design-system.md"],
       "assertions": [
         "The header says Values: loaded and names the design system in the tool",
@@ -12,7 +12,7 @@
         "Creative direction names three directions that differ in idea",
         "Attachments tells not to send an existing design of the page in round 1",
         "scripts/lint_brief.py --type screen --values loaded --flows --screen SCREEN-2 reports ok: true",
-        "The reply is in Portuguese and names design-execute as the next step"
+        "The reply is in English, the language of the prompt, and names design-execute as the next step"
       ]
     },
     {

@@ -5,7 +5,7 @@ description: >
   change makes false, incomplete or newly true, verify each claim you write by running it,
   edit the documents in the project's conventions, leave generated documents to their
   generators, and list what other repositories must change. Use this skill after a change is
-  implemented and before it is reviewed or released, or when someone asks "atualiza a doc",
+  implemented and before it is reviewed or released, or when someone asks "refresh the docs",
   "update the docs for this" or "does the documentation still hold", even if they only mention
   the code. Also use it when a guide makes a promise the code does not keep. Also use it when
   someone asks to document a feature that is not built yet, to say the documentation follows
@@ -18,7 +18,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Documentation

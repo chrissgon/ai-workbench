@@ -5,7 +5,7 @@ description: >
   deployed: a preview per pull request, production from the main branch, the project's own checks
   as required checks, and a checklist of the host and repository settings only the user can apply
   (secrets, stopping the host's own builds, branch protection). Use this skill when someone asks
-  "configura o CI", "pipeline de deploy", "proteger a main", "preview por PR", "GitHub Actions",
+  "set up CI", "deploy pipeline", "protect main", "preview per PR", "GitHub Actions",
   or when a deploy reached production without the tests running. Also use it when a CI run fails
   in a way nobody can read, passes locally and fails on the runner, or a job reports "The
   operation was canceled" and someone asks to fix the workflow.
@@ -17,7 +17,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: [integration:vcs]
   side_effects: [push]
-  version: "0.3"
+  version: "0.4"
 ---
 
 # CI pipeline

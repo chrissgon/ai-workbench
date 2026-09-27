@@ -16,13 +16,13 @@
     },
     {
       "id": 2,
-      "prompt": "Escolhe uma paleta bonita pro app e cria as variáveis.",
+      "prompt": "Pick a nice palette for the app and create the variables.",
       "expected_output": "No flows, brand or library exist; the skill says a palette cannot be invented, names design-ux-flows and brand-identity (or asks for the brand colour and typeface with recommendations) and writes nothing.",
       "files": [],
       "assertions": [
         "No design-system file is written",
         "No colour value is proposed without a source or a user answer",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     }
   ]

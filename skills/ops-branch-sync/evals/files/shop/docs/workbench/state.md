@@ -9,7 +9,7 @@
 
 ## Approvals
 
-- 2026-09-20: `git push -u origin feat/cart` and a pull request `feat/cart` → `main`; the user merges (user: "Pode")
+- 2026-09-20: `git push -u origin feat/cart` and a pull request `feat/cart` → `main`; the user merges (user: "Go ahead")
 
 ## Decisions
 

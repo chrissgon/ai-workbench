@@ -3,8 +3,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "O design da landing está pronto em docs/design/screens/landing-page (HTML exportado do Claude Design). Gera a spec para implementar.",
-      "expected_output": "The export is unpacked with scripts/unpack_export.py; the spec separates the tool runtime, the inlined library copy and preview switches (such as a hard-coded reduced-motion flag) from what ships; every invented custom property and fixed colour has a Tokens row with an action; every region of SCREEN-1 has a component with its content source; motion timings are read from the script; deviations against the specs have actions; lint ok; the reply is in Portuguese.",
+      "prompt": "The landing design is ready in docs/design/screens/landing-page (HTML exported from Claude Design). Generate the spec to implement it.",
+      "expected_output": "The export is unpacked with scripts/unpack_export.py; the spec separates the tool runtime, the inlined library copy and preview switches (such as a hard-coded reduced-motion flag) from what ships; every invented custom property and fixed colour has a Tokens row with an action; every region of SCREEN-1 has a component with its content source; motion timings are read from the script; deviations against the specs have actions; lint ok; the reply is in English.",
       "files": [],
       "assertions": [
         "scripts/unpack_export.py is run and its inventory.json is used",
@@ -12,7 +12,7 @@
         "Every invented custom property of the inventory is covered by a Tokens row",
         "Motion rows carry numbers from the script and a reduced-motion rule",
         "scripts/lint_handoff.py with --inventory and --library reports ok: true",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

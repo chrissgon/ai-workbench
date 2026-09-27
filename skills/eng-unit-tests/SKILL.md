@@ -5,7 +5,7 @@ description: >
   plan or the specification, in the project's own runner and conventions, run once to prove
   that the new behaviour fails for the right reason and the behaviour to preserve passes. Use
   this skill after a root cause is confirmed or a task's acceptance criteria are known, before
-  eng-implement, even if the user only says "escreve os testes primeiro", "TDD" or "add a
+  eng-implement, even if the user only says "write the tests first", "TDD" or "add a
   regression test". Also use it when a bug fix has no test that fails without it. Also use it
   when the request names a test framework ("write Jest tests"), to check it against the
   project's runner first.
@@ -17,7 +17,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: []
   side_effects: []
-  version: "0.6"
+  version: "0.7"
 ---
 
 # Unit tests
