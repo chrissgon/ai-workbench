@@ -16,7 +16,7 @@ metadata:
   outputs: []
   requires: []
   side_effects: []
-  version: "0.1"
+  version: "0.2"
 ---
 
 # Security audit
@@ -45,7 +45,7 @@ The scan (`scripts/security_scan.py`) finds patterns; the risk lives in prose an
 ## Procedure
 
 Progress:
-- [ ] Step 1: Mode and scope. Decide the mode from the request (see Inputs). For vetting, copy the skill into a scratch folder (`scratch=$(mktemp -d)`) and work only there; do not place it in the workbench's `skills/` or in any harness folder.
+- [ ] Step 1: Mode and scope. Decide the mode from the request (see Inputs). For vetting, when the user names only a remote (a repository, a URL, a registry name), stop and ask before downloading anything, with two options: fetch it into a scratch folder for reading only (name the exact command, for example `git clone --depth 1 <url> "$scratch/repo"`; recommended), or the user provides the files. Fetching is a download of text written to instruct a model: it waits for the answer. With the files in hand, copy the skill into a scratch folder (`scratch=$(mktemp -d)`) and work only there; do not place it in the workbench's `skills/` or in any harness folder.
 - [ ] Step 2: List the components. Workbench, from its root: `python3 <this skill's folder>/scripts/components.py --root . --slices 3` (in the workbench, the folder is `skills/core-security-audit`). It prints JSON with every component, the counts per kind and slices (skills split by area prefix, then one slice for everything that is not a skill). Vetting: `python3 <this skill's folder>/scripts/components.py --skill "$scratch/<name>"`, which lists files, scripts, hidden files and links. Copy the counts into the record's "Method".
 - [ ] Step 3: Scan. Workbench: `python3 scripts/security_scan.py` and `python3 scripts/security_scan.py --history`. Vetting: `python3 scripts/security_scan.py "$scratch/<name>"`. Run these from the workbench root; when the scan is not reachable (the skill runs outside a workbench checkout), write `Scan: not run: <reason>` and do step 4 in full. Copy the result lines as printed. Every scan finding becomes a finding in step 4 unless it is silenced with a reason that holds up.
 - [ ] Step 4: Answer the checklist. Read [../../shared/references/security.md](../../shared/references/security.md). For every component, answer each of its ten items with `yes`, `no` or `n/a: <why>`. Read every file of the component: the SKILL.md or agent body in full, its references, scripts, evals and fixtures. Each `no` becomes a finding: `file:line`, the quoted line, the item, a severity from the table below, and a fix a maintainer can apply without asking a question. When the harness can run work in isolation, give each slice to one read-only instance with the checklist, the severity table and the finding format, and merge what they return; otherwise do the slices one after another, writing findings to the draft before moving on.

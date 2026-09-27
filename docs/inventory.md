@@ -17,7 +17,7 @@ What the workbench should contain, per area, cross-referenced with the previous 
 | core-project-init | `docs/` layout, `docs/workbench/state.md`, autonomy mode, project `AGENTS.md` | — | agents-md-generator | rewrite | 0 |
 | core-agents-md | create or update a project's `AGENTS.md` from its codebase and conventions | codebase | agents-md-generator | reuse | 0 |
 | core-skill-creator | a new skill scaffolded, evaluated with strong and floor models, refined | authoring guide | — | create | 0 |
-| core-security-audit | audit of the whole workbench against the security checklist; vetting of third-party skills before install | skills, agents, providers, adapters | — | draft 0.1, grounded in the audit of 2026-09-27; evals written, not run | — |
+| core-security-audit | audit of the whole workbench against the security checklist; vetting of third-party skills before install | skills, agents, providers, adapters | — | draft 0.2, grounded in the audit of 2026-09-27; strong model passes (delta +0.125), floor not run | — |
 
 `core-research` requires `search:web`. Tooling that is not a skill but belongs to wave 0: `scripts/eval-run` (runs an eval case with and without a skill, on a strong and a floor model, and grades assertions).
 
