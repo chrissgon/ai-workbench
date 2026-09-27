@@ -64,5 +64,5 @@ def test_allow_without_reason_is_an_error(tmp_path):
 
 def test_path_allow_file_exempts_the_file(tmp_path):
     write(tmp_path, "fixtures/pt/page.html", f"<p>{NAO}</p>\n")
-    write(tmp_path, ".security-scan-allow", "fixtures/pt/* english-only -- a fixture that must stay Portuguese\n")
+    write(tmp_path, ".security-scan-allow", "fixtures/pt/page.html english-only -- a fixture that must stay Portuguese\n")
     assert errors(tmp_path) == []
