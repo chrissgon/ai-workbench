@@ -4,12 +4,17 @@
 // Usage: node screenshot.mjs --html <file.html> --out <file.png> --width <w> --height <h>
 //                            [--full-page] [--scale <n>] [--dark] [--reduced-motion] [--wait <ms>]
 //
-// Needs the `playwright` package resolvable from the working directory or NODE_PATH.
+// Needs the `playwright` package resolvable from the working directory or NODE_PATH, pinned to
+// PLAYWRIGHT_VERSION below (latest on https://registry.npmjs.org/playwright/latest, read 2026-09-27).
+// This script never installs anything: when the package is missing it prints the pinned install
+// commands for the user to approve and run. --out must be a .png inside the working directory.
 // Prints JSON {ok, out, width, height, bytes}. Exit codes: 0 ok, 1 render error, 2 usage error.
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { resolve } from "node:path";
-import { statSync } from "node:fs";
+import { dirname, extname, relative, resolve, isAbsolute } from "node:path";
+import { lstatSync, realpathSync, statSync } from "node:fs";
+
+const PLAYWRIGHT_VERSION = "1.63.0";
 
 const argv = process.argv.slice(2);
 if (argv.includes("--help") || argv.length === 0) {
@@ -31,17 +36,50 @@ if (!html || !out || !width || !height) {
   console.error("Error: --html, --out, --width and --height are required. See --help.");
   process.exit(2);
 }
+// --out stays inside the working directory: a relative or absolute path whose real parent folder
+// is under it, a .png name, and not an existing symlink.
+const outError = (() => {
+  const cwd = realpathSync(process.cwd());
+  const target = resolve(cwd, out);
+  if (extname(target).toLowerCase() !== ".png") return "must end in .png";
+  let parent;
+  try {
+    parent = realpathSync(dirname(target));
+  } catch {
+    return "must be in an existing folder";
+  }
+  const rel = relative(cwd, parent);
+  if (rel.startsWith("..") || isAbsolute(rel)) return "must be inside the working directory";
+  try {
+    if (lstatSync(target).isSymbolicLink()) return "must not be a symlink";
+  } catch {
+    // does not exist yet: fine
+  }
+  return null;
+})();
+if (outError) {
+  console.error(`Error: --out ${JSON.stringify(out)} ${outError}. See --help.`);
+  process.exit(2);
+}
 let chromium;
+let version;
+const require = createRequire(resolve(process.cwd(), "package.json"));
 try {
-  const require = createRequire(resolve(process.cwd(), "package.json"));
   ({ chromium } = require("playwright"));
+  version = require("playwright/package.json").version;
 } catch {
   try {
     ({ chromium } = await import("playwright"));
   } catch {
-    console.error("Error: the playwright package is not resolvable; install it or set NODE_PATH.");
+    console.error(
+      "Error: the playwright package is not resolvable. Ask the user before installing; the pinned commands are: " +
+        `npm install --no-save playwright@${PLAYWRIGHT_VERSION} && npx playwright@${PLAYWRIGHT_VERSION} install chromium`,
+    );
     process.exit(2);
   }
+}
+if (version && version !== PLAYWRIGHT_VERSION) {
+  console.error(`Warning: playwright ${version} found; this script is pinned to ${PLAYWRIGHT_VERSION}.`);
 }
 try {
   const browser = await chromium.launch();
