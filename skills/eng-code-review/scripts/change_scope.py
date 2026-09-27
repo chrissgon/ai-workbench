@@ -27,9 +27,15 @@ Prints one JSON object to stdout with:
   large             true when the read group exceeds --max-files or --max-lines
   dependencies      package.json sections diffed exactly when both sides are readable;
                     manifest_lines for every other manifest (added/removed lines)
-  markers[]         path, line, kind (debug|skip-test|lint-suppress|todo|secret-suspect), text
+  markers[]         path, line, kind (debug|skip-test|lint-suppress|todo|secret-suspect), text;
+                    secret-suspect markers also carry rule (the credential format, or
+                    "credential assignment")
   tests_touched[]   changed files classified as tests
   outside_touches[] changed files matching no --touches token (empty when --touches is absent)
+Secrets are never printed: every quoted line goes through redact.py (the same formats as the
+workbench's security scan), and a secret-suspect marker's text is masked entirely, keeping only
+the shape of the line (api_key = "<redacted>"). Quote that masked text; never the raw line.
+A --range whose sides start with "-" or are not commits is refused before git sees it.
 Diagnostics go to stderr.
 Exit codes: 0 ok, 1 git or file error, 2 usage error, 3 the change is empty.
 """
@@ -38,6 +44,9 @@ import os
 import re
 import subprocess
 import sys
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from redact import ASSIGN_RE, mask_secret_line, redact, token_label  # noqa: E402
 
 LOCKFILES = {"package-lock.json", "bun.lock", "bun.lockb", "yarn.lock", "pnpm-lock.yaml", "poetry.lock",
              "uv.lock", "Cargo.lock", "Gemfile.lock", "composer.lock", "go.sum", "Pipfile.lock"}
@@ -184,18 +193,38 @@ def parse_unified(text, line_sink):
     return files
 
 
+def split_range(rng):
+    """(base, head, separator) of a range; an empty side means HEAD, head None means the worktree."""
+    for sep in ("...", ".."):
+        if sep in rng:
+            a, b = rng.split(sep, 1)
+            return a or "HEAD", b or "HEAD", sep
+    return rng, None, ""
+
+
+def check_range(repo, rng):
+    """Refuse a range git could read as an option (--output=, --upload-pack=) or that names no commit."""
+    a, b, _ = split_range(rng)
+    for side in (a, b):
+        if side is None:
+            continue
+        if not side or side.startswith("-") or any(c.isspace() or c == "\0" for c in side):
+            raise ValueError(f"--range side {side!r} is not a revision")
+        p = subprocess.run(["git", "-C", repo, "rev-parse", "--verify", "--quiet", "--end-of-options",
+                            side + "^{commit}"], capture_output=True, text=True)
+        if p.returncode != 0:
+            raise ValueError(f"--range side {side!r} is not a commit in {repo}")
+
+
 def sides_for(mode, rng, repo):
     if mode == "worktree":
         return "HEAD", None
     if mode == "staged":
         return "HEAD", ":"
-    if "..." in rng:
-        a, b = rng.split("...", 1)
-        return git(repo, "merge-base", a, b or "HEAD").strip(), (b or "HEAD")
-    if ".." in rng:
-        a, b = rng.split("..", 1)
-        return a, (b or "HEAD")
-    return rng, None
+    a, b, sep = split_range(rng)
+    if sep == "...":
+        return git(repo, "merge-base", "--end-of-options", a, b).strip(), b
+    return a, b
 
 
 def read_side(repo, ref, path):
@@ -204,13 +233,19 @@ def read_side(repo, ref, path):
         if ref is None:
             with open(os.path.join(repo, path), encoding="utf-8", errors="replace") as f:
                 return f.read()
-        return git(repo, "show", f"{ref}:{path}")
+        return git(repo, "show", "--end-of-options", f"{ref}:{path}")
     except (OSError, RuntimeError):
         return None
 
 
+def diff_args(mode, rng):
+    """Revision arguments for git diff: options end before the range, paths start after it."""
+    return {"worktree": ["--end-of-options", "HEAD", "--"], "staged": ["--cached", "--"],
+            "range": ["--end-of-options", rng, "--"]}[mode]
+
+
 def collect_git(repo, mode, rng):
-    args = {"worktree": ["HEAD"], "staged": ["--cached"], "range": [rng]}[mode]
+    args = diff_args(mode, rng)
     ns = parse_name_status(git(repo, "diff", "-M", "--name-status", "-z", *args))
     num = parse_numstat(git(repo, "diff", "-M", "--numstat", "-z", *args))
     files = {}
@@ -254,13 +289,16 @@ def scan_line(markers, path, lineno, text):
     kind = classify(path)
     if kind in ("lockfile", "generated", "asset"):
         return
+    label = token_label(text)
     for name, rx in MARKERS:
-        if rx.search(text):
-            if name == "secret-suspect" and SECRET_SAFE_RE.search(text):
-                continue
-            markers.append({"path": path, "line": lineno, "kind": name, "text": text.strip()[:160]})
+        if name == "secret-suspect":
+            if label or ((rx.search(text) or ASSIGN_RE.search(text)) and not SECRET_SAFE_RE.search(text)):
+                markers.append({"path": path, "line": lineno, "kind": name, "rule": label or "credential assignment",
+                                "text": mask_secret_line(text)})
+        elif rx.search(text):
+            markers.append({"path": path, "line": lineno, "kind": name, "text": redact(text)})
     if path.endswith(".py") and kind == "source" and not SCRIPT_DIR_RE.search(path) and PY_PRINT_RE.search(text):
-        markers.append({"path": path, "line": lineno, "kind": "debug", "text": text.strip()[:160]})
+        markers.append({"path": path, "line": lineno, "kind": "debug", "text": redact(text)})
 
 
 def package_json_diff(base_text, head_text):
@@ -270,16 +308,18 @@ def package_json_diff(base_text, head_text):
     except json.JSONDecodeError as e:
         return {"error": f"package.json is not valid JSON on one side: {e}"}
     out = {"added": {}, "removed": {}, "changed": {}}
+    # A version can be a URL with a token in it (git+https://user:token@host/...).
+    clean = lambda v: redact(v, limit=400) if isinstance(v, str) else v
     for section in ("dependencies", "devDependencies", "peerDependencies", "optionalDependencies"):
         b, h = base.get(section, {}) or {}, head.get(section, {}) or {}
         for k in sorted(set(b) | set(h)):
             key = f"{section}:{k}"
             if k not in b:
-                out["added"][key] = h[k]
+                out["added"][key] = clean(h[k])
             elif k not in h:
-                out["removed"][key] = b[k]
+                out["removed"][key] = clean(b[k])
             elif b[k] != h[k]:
-                out["changed"][key] = [b[k], h[k]]
+                out["changed"][key] = [clean(b[k]), clean(h[k])]
     return out
 
 
@@ -306,7 +346,7 @@ def added_removed_lines(path, patch_text):
             continue
         if not inside or raw.startswith("+++") or raw.startswith("---"):
             continue
-        t = raw[1:].strip()
+        t = redact(raw[1:], limit=400)
         if raw.startswith("+") and t and t not in "{}[],":
             added.append(t)
         elif raw.startswith("-") and t and t not in "{}[],":
@@ -343,9 +383,12 @@ def main(argv):
             with open(patch, encoding="utf-8", errors="replace") as f:
                 patch_text = f.read()
         else:
+            if mode == "range":
+                check_range(repo, rng)
             files, markers, read, source = collect_git(repo, mode, rng)
-            args = {"worktree": ["HEAD"], "staged": ["--cached"], "range": [rng]}[mode]
-            patch_text = git(repo, "diff", "-M", *args)
+            patch_text = git(repo, "diff", "-M", *diff_args(mode, rng))
+    except ValueError as e:
+        err(f"Error: refused: {e}"); return 2
     except RuntimeError as e:
         err(f"Error: {e}"); return 1
     if not files:

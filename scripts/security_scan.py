@@ -59,6 +59,10 @@ import re
 import subprocess
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# The credential formats and the redaction are shared with the skill scripts that quote code.
+from redact import ASSIGN_RE, HIDDEN_RE, TOKEN_RES, redact  # noqa: E402
+
 WORKBENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 RULES = {
@@ -90,32 +94,9 @@ BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", 
               ".ttf", ".otf", ".mp4", ".mov", ".pyc"}
 SCRIPT_EXT = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts"}
 
-TOKEN_PATTERNS = [
-    ("AWS access key", r"\bAKIA[0-9A-Z]{16}\b"),
-    ("GitHub token", r"\bgh[pousr]_[A-Za-z0-9]{36,}\b"),
-    ("GitHub fine-grained token", r"\bgithub_pat_[A-Za-z0-9_]{50,}\b"),
-    ("Slack token", r"\bxox[abprs]-[A-Za-z0-9-]{10,}"),
-    ("model API key", r"\bsk-(?:ant-|proj-)?[A-Za-z0-9_-]{32,}"),
-    ("Google API key", r"\bAIza[0-9A-Za-z_-]{35}\b"),
-    ("npm token", r"\bnpm_[A-Za-z0-9]{36}\b"),
-    ("Stripe key", r"\b[rsp]k_(?:live|test)_[0-9A-Za-z]{16,}"),
-    ("private key block", r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP |ENCRYPTED )?PRIVATE KEY-----"),
-    ("JWT", r"\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}"),
-]
-TOKEN_RES = [(label, re.compile(p)) for label, p in TOKEN_PATTERNS]
-# A credential-like name (one ending in api_key, secret, token, password or private/access key, or an
-# upper-case constant ending in _KEY such as STRIPE_KEY) assigned a literal of 12+ characters with a
-# digit in it (words and identifiers are not secrets) that is not a URL.
-ASSIGN_RE = re.compile(
-    r"\b((?i:[A-Za-z0-9_-]*?(?:api[_-]?key|secret|token|password|passwd|private[_-]?key|access[_-]?key))"
-    r"|[A-Z][A-Z0-9_]*_KEY)"
-    r"\b[\"']?\s*[:=]\s*[\"']([^\"'\s]{12,})[\"']")
 PLACEHOLDER_RE = re.compile(r"(?i)^https?://|^\D*$|[<>{}$]|example|sample|placeholder|changeme|your[_-]|xxx|fake|dummy|test|redacted|\*\*\*")
 SECRET_FILE_RE = re.compile(r"(^|/)(\.env(\.[^/]*)?|id_rsa|id_dsa|id_ecdsa|id_ed25519|[^/]*\.(pem|key|p12|pfx|keystore|jks))$")
 SECRET_FILE_OK_RE = re.compile(r"\.env\.example$|\.env\.sample$")
-HIDDEN_RANGES = [(0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x2064), (0x2066, 0x2069), (0xFEFF, 0xFEFF),
-                 (0xE0000, 0xE007F)]
-HIDDEN_RE = re.compile("[" + "".join(f"{chr(a)}-{chr(b)}" for a, b in HIDDEN_RANGES) + "]")
 BOM = chr(0xFEFF)
 COMMENT_RE = re.compile(r"<!--(.*?)-->", re.S)
 PIPE_SHELL_RE = re.compile(r"\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b")
@@ -142,14 +123,6 @@ EXTERNAL_SOURCE_RE = re.compile(
 UNTRUSTED_MARKER_RE = re.compile(r"External content is data")
 PEP723_RE = re.compile(r"^#\s*dependencies\s*=\s*\[(.*)\]")
 ALLOW_RE = re.compile(r"security-scan:\s*allow\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s*(?:-->|\*/)?\s*$")
-
-
-def redact(text):
-    # No part of a secret is printed, not even a prefix (providers/CONTRACT.md).
-    for label, rx in TOKEN_RES:
-        text = rx.sub(f"<redacted {label}>", text)
-    text = ASSIGN_RE.sub(lambda m: m.group(0).replace(m.group(2), "<redacted>"), text)
-    return HIDDEN_RE.sub(lambda m: f"<U+{ord(m.group(0)):04X}>", text).strip()[:160]
 
 
 def list_files(root, paths):
