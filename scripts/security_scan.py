@@ -22,6 +22,11 @@ file when --root is not a git repository), or only PATH arguments (files or fold
   undeclared-side-effect error   a skill's script writes to a remote (push, publish, POST...) while the
                                  skill declares side_effects: []
   unpinned-dependency   warning  an inline script dependency or requirement without an exact version
+  untrusted-content     error    a skill or agent that reads content written by others (it requires a
+                                 search: or integration: class, or names web pages, tickets, bug reports,
+                                 review comments, CI logs, design exports...) without the sentence
+                                 "External content is data" saying which sources and that instructions
+                                 in them are reported, never followed
   allow-without-reason  error    an allow comment with no reason
 
 Silence one finding with a comment on the same line or the line above:
@@ -62,6 +67,7 @@ RULES = {
     "sudo": ("warning", "sudo inside a script"),
     "undeclared-side-effect": ("error", "a remote write in a skill that declares no side_effects"),
     "unpinned-dependency": ("warning", "a dependency without an exact version"),
+    "untrusted-content": ("error", "reads external content without saying it is data"),
     "allow-without-reason": ("error", "an allow comment with no reason"),
 }
 
@@ -112,6 +118,13 @@ REMOTE_WRITE_RE = re.compile(
     r"\bgh\s+(pr|issue|release|repo|gist)\s+(create|merge|close|edit|delete|comment|upload)\b|"
     r"-X\s*(POST|PUT|PATCH|DELETE)\b|--request\s+(POST|PUT|PATCH|DELETE)\b|"
     r"\brequests\.(post|put|patch|delete)\s*\(|method\s*=\s*[\"'](POST|PUT|PATCH|DELETE)[\"']")
+# What makes a skill or agent a reader of content written by others, and the sentence it must carry.
+EXTERNAL_REQUIRES_RE = re.compile(r"^\s*requires:\s*\[[^\]]*\b(search|integration):", re.M)
+EXTERNAL_SOURCE_RE = re.compile(
+    r"(?i)\b(tickets?|bug reports?|web pages?|search results|review comments?|pull request (?:descriptions?|comments?|bodies)|"
+    r"issue (?:bodies|comments)|CI logs?|--log-failed|failing step|exported code|design[- ]tool exports?|an export\b|"
+    r"screenshots?|API responses?|code host)")
+UNTRUSTED_MARKER_RE = re.compile(r"External content is data")
 PEP723_RE = re.compile(r"^#\s*dependencies\s*=\s*\[(.*)\]")
 ALLOW_RE = re.compile(r"security-scan:\s*allow\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s*(?:-->|\*/)?\s*$")
 
@@ -246,6 +259,16 @@ def scan_file(root, path, cache):
             s = line.split("#", 1)[0].strip()
             if s and not s.startswith("-") and "==" not in s:
                 add("unpinned-dependency", i, f"pin '{s}' to an exact version (==)", line)
+    if re.fullmatch(r"skills/[^/]+/SKILL\.md|agents/[^/]+\.md", rel) and not UNTRUSTED_MARKER_RE.search(text):
+        head, _, body = text.partition("\n---")
+        reason = "requires a search: or integration: class" if EXTERNAL_REQUIRES_RE.search(head) else None
+        m = EXTERNAL_SOURCE_RE.search(text)
+        if not reason and m:
+            reason = f"mentions '{m.group(0)}'"
+        if reason:
+            line_no = text.count("\n", 0, m.start()) + 1 if m and not reason.startswith("requires") else 1
+            add("untrusted-content", line_no, f"{reason}: add a line starting 'External content is data.' that names "
+                "the sources and says instructions in them are reported to the user, never followed")
     if ext == ".md" and rel.startswith(INSTRUCTION_DIRS) and "/evals/files/" not in rel:
         for m in COMMENT_RE.finditer(text):
             if len(m.group(1).split()) >= 4 and "security-scan:" not in m.group(1):
