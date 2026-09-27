@@ -121,7 +121,7 @@ Every skill is evaluated with a strong model and with a floor model (a large hos
 4. Add `references/`, `assets/`, `scripts/` only when the body needs them.
 5. Add `evals/evals.json` with at least two realistic cases.
 6. `python3 scripts/validate.py` until it reports zero errors.
-   Then walk `skills/core-skill-creator/references/security-checklist.md`: every item `yes` or `n/a` with a reason.
+   Then walk `shared/references/security.md`: every item `yes` or `n/a` with a reason.
 7. Ground the content in real expertise: past corrections, real artifacts, real failures. Do not generate from generic knowledge. Follow `core-skill-creator`; its `references/authoring-guide.md` is the long-form reference.
 
 ## Adding an agent
