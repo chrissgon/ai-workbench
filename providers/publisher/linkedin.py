@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["keyring>=25"]
+# dependencies = ["keyring==25.7.0"]
 # ///
 """Publisher provider for LinkedIn: publish a post as the authenticated member.
 

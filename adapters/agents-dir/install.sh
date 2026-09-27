@@ -35,9 +35,9 @@ mkdir -p "$TARGET"
 for n in "${names[@]}"; do
   dest="$TARGET/$n"
   if [[ $UNINSTALL -eq 1 ]]; then
-    [[ -L "$dest" || -d "$dest" ]] && rm -rf "$dest"
+    [[ -L "$dest" || -d "$dest" ]] && rm -rf "${dest:?}"
     continue
   fi
-  if [[ $COPY -eq 1 ]]; then rm -rf "$dest"; cp -R "$SKILLS/$n" "$dest"; else ln -sfn "$SKILLS/$n" "$dest"; fi
+  if [[ $COPY -eq 1 ]]; then rm -rf "${dest:?}"; cp -R "$SKILLS/$n" "$dest"; else ln -sfn "$SKILLS/$n" "$dest"; fi
 done
 printf '{"target": "%s", "pack": "%s", "installed": %s, "uninstall": %s}\n' "$TARGET" "$PACK" "${#names[@]}" "$UNINSTALL"

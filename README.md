@@ -22,8 +22,8 @@ providers/     native implementations of requirement classes (publisher, mailer,
 templates/     SKILL.md and agent templates used by scripts/new-skill.sh
 packs/         installation subsets; default excludes optional areas
 adapters/      one self-contained folder per AI tool (claude-code, agents-dir, ...)
-scripts/       repo tooling: validate.py, new-skill.sh, doctor.py
-docs/          area map, decisions log, inventory
+scripts/       repo tooling: validate.py, security_scan.py, new-skill.sh, doctor.py
+docs/          area map, decisions log, inventory, backlog
 ```
 
 ## Install

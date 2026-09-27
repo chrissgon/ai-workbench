@@ -14,6 +14,8 @@ Checks every skill under skills/ and every agent under agents/:
   - every metadata.inputs path is some skill's metadata.outputs (warning unless --strict)
   - relative links in SKILL.md resolve
   - agent frontmatter keys are only name, description, metadata
+  - scripts/security_scan.py finds no secret, hidden text or unsafe script pattern (its errors
+    and warnings are reported here as they are there)
 
 Options:
   --strict   treat warnings as errors
@@ -23,6 +25,7 @@ Options:
 
 Exit codes: 0 ok, 1 errors found, 2 usage error.
 """
+import importlib.util
 import json
 import os
 import re
@@ -286,6 +289,16 @@ def check_harness_names(report):
                             report.error(f"{rel}:{ln}", f"core file references a harness: {m.group(0)!r}")
 
 
+def check_security(report):
+    spec = importlib.util.spec_from_file_location("security_scan", os.path.join(ROOT, "scripts", "security_scan.py"))
+    scanner = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(scanner)
+    _, active, _ = scanner.scan(ROOT)
+    for f in active:
+        add = report.error if f["severity"] == "error" else report.warn
+        add(f"{f['path']}:{f['line']}", f"[{f['rule']}] {f['message']} (see scripts/security_scan.py)")
+
+
 def run_spec_validator(report):
     tool = shutil.which("skills-ref")
     if not tool:
@@ -322,6 +335,7 @@ def main(argv):
             if fn.endswith(".md"):
                 check_agent(fn, report)
     check_harness_names(report)
+    check_security(report)
     if spec:
         run_spec_validator(report)
 
