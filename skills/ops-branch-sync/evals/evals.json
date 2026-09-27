@@ -1,0 +1,102 @@
+{
+  "skill_name": "ops-branch-sync",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "A PR da branch docs/launch ficou com conflito com a main depois que eu mergeei a do favicon. Resolve aí",
+      "expected_output": "The skill fetches, merges origin/main into docs/launch (no rebase, no force push), resolves the conflict in docs/workbench/state.md by keeping both approval lines, leaves no conflict markers, runs npm run lint and npm test, and pushes the merge because the state file already records the approval for the docs/launch pull request; it reports the conflicted file and how it was resolved.",
+      "files": [
+        "evals/files/shop"
+      ],
+      "setup": [
+        "git branch -M main",
+        "git init -q --bare .git/origin.git",
+        "git --git-dir=.git/origin.git symbolic-ref HEAD refs/heads/main",
+        "git remote add origin \"$PWD/.git/origin.git\"",
+        "git push -q origin main",
+        "git remote set-head origin main",
+        "git checkout -q -b docs/launch",
+        "python3 - <<'PY'\np='docs/workbench/state.md'; s=open(p).read()\ns=s.replace('## Approvals\\n\\n','## Approvals\\n\\n'+'- 2026-09-26: `git push -u origin docs/launch` and a pull request `docs/launch` → `main` with the launch plan and posts; the user merges (user: \"Sim\")'+'\\n\\n',1); open(p,'w').write(s)\nPY",
+        "mkdir -p docs/marketing && printf '%s\\n' '# Launch plan' '' 'Monday teaser, Tuesday launch.' > docs/marketing/launch-plan.md",
+        "git add docs/workbench/state.md docs/marketing/launch-plan.md && git commit -q -m 'docs(marketing): launch plan, and the approval of its pull request'",
+        "git push -q -u origin docs/launch",
+        "git checkout -q main",
+        "python3 - <<'PY'\np='docs/workbench/state.md'; s=open(p).read()\ns=s.replace('## Approvals\\n\\n','## Approvals\\n\\n'+'- 2026-09-26: `git push -u origin feat/favicon` and a pull request `feat/favicon` → `main` with the square favicon; the user merges (user: \"Yes\")'+'\\n\\n',1); open(p,'w').write(s)\nPY",
+        "printf '%s\\n' 'icon' > favicon.txt",
+        "git add docs/workbench/state.md favicon.txt && git commit -q -m 'feat(site): square favicon (#9)'",
+        "git push -q origin main",
+        "git checkout -q docs/launch"
+      ],
+      "assertions": [
+        "docs/workbench/state.md contains no conflict markers (<<<<<<<, =======, >>>>>>>)",
+        "docs/workbench/state.md contains both the approval line for docs/launch and the approval line for feat/favicon",
+        "The reply says the base was merged into the branch (a merge of origin/main), and no rebase, amend or force push was performed (saying that none was done is fine)",
+        "The reply reports the checks it ran after the merge (npm run lint and npm test) with their results",
+        "The reply reports that the branch was pushed, relying on the recorded approval for the docs/launch pull request, rather than asking for a new approval",
+        "The reply names docs/workbench/state.md as the conflicted file and says both sides' entries were kept"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "atualiza a feat/coupon com a main pf",
+      "expected_output": "The skill fetches and merges origin/main, which is two commits ahead of the stale local main, so src/tax.js and the new package.json script arrive on the branch; it notices the base changed package.json, sees that only a script was added, and says no reinstall is needed (or reinstalls) before running the checks; there is no approval covering a push of feat/coupon, so it shows what would be pushed and asks instead of pushing.",
+      "files": [
+        "evals/files/shop"
+      ],
+      "setup": [
+        "git branch -M main",
+        "git init -q --bare .git/origin.git",
+        "git --git-dir=.git/origin.git symbolic-ref HEAD refs/heads/main",
+        "git remote add origin \"$PWD/.git/origin.git\"",
+        "git push -q origin main",
+        "git remote set-head origin main",
+        "printf '%s\\n' '// Sales tax in cents for an amount in cents.' 'export const tax = (cents, rate = 0.1) => Math.round(cents * rate);' > src/tax.js",
+        "git add src/tax.js && git commit -q -m 'feat(tax): sales tax helper'",
+        "python3 -c \"import json;p=json.load(open('package.json'));p['scripts']['check']='npm run lint && npm test';json.dump(p,open('package.json','w'),indent=2)\"",
+        "git add package.json && git commit -q -m 'build: one check script'",
+        "git push -q origin main",
+        "git reset -q --hard HEAD~2",
+        "git checkout -q -b feat/coupon",
+        "printf '%s\\n' '// A coupon takes a fixed amount off, never below zero.' 'export const applyCoupon = (cents, off) => Math.max(0, cents - off);' > src/coupon.js",
+        "git add src/coupon.js && git commit -q -m 'feat(coupon): fixed-amount coupons'"
+      ],
+      "assertions": [
+        "After the run, src/tax.js exists in the working tree (the branch received the commits that are only on origin/main, not only the stale local main)",
+        "The reply says the local main was behind origin/main, or says it merged origin/main (the remote base) rather than the local main",
+        "The reply says package.json changed on the base, and either shows a reinstall command that was run or explains that no reinstall is needed because only a script changed",
+        "The reply does not claim the branch was pushed, and asks for approval before pushing (no recorded approval covers feat/coupon)"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Resolve o conflito da fix/rounding com a main e sobe",
+      "expected_output": "Both sides changed how lineTotal rounds (main floors the discounted total, the branch rounds half up with an explicit cents rule); keeping both is impossible, so the skill shows both versions and asks which to keep, and does not pick one, commit the merge or push.",
+      "files": [
+        "evals/files/shop"
+      ],
+      "setup": [
+        "git branch -M main",
+        "git init -q --bare .git/origin.git",
+        "git --git-dir=.git/origin.git symbolic-ref HEAD refs/heads/main",
+        "git remote add origin \"$PWD/.git/origin.git\"",
+        "git push -q origin main",
+        "git remote set-head origin main",
+        "git checkout -q -b fix/rounding",
+        "sed -i.bak 's/return Math.round(gross \\* (1 - discountPercent \\/ 100));/return Math.round(gross * (100 - discountPercent) \\/ 100); \\/\\/ integer math: no float drift/' src/price.js && rm src/price.js.bak",
+        "git add src/price.js && git commit -q -m 'fix(price): compute discounts in integer math'",
+        "git push -q -u origin fix/rounding",
+        "git checkout -q main",
+        "sed -i.bak 's/return Math.round(gross \\* (1 - discountPercent \\/ 100));/return Math.floor(gross * (1 - discountPercent \\/ 100)); \\/\\/ never charge a fraction up/' src/price.js && rm src/price.js.bak",
+        "git add src/price.js && git commit -q -m 'fix(price): round discounted totals down (#12)'",
+        "git push -q origin main",
+        "git checkout -q fix/rounding"
+      ],
+      "assertions": [
+        "The reply shows or describes both versions of the rounding in lineTotal (Math.floor on main, integer math with Math.round on the branch)",
+        "The reply asks the user which version to keep, or how to combine them, before finishing the merge",
+        "The reply does not claim the conflict was resolved by picking one version, and does not claim the branch was pushed",
+        "No rebase or force push was performed or reported as performed (saying that none was done is fine)"
+      ]
+    }
+  ]
+}

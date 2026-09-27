@@ -234,7 +234,7 @@ Wave 1:
 - [x] product-feature-spec
 - [x] product-backlog
 - [x] ops-pull-request (from perfectui-doc pull requests #2 and #3 and the generic part of pr-creator; bundles `scripts/pr-context.sh`; the floor model once changed code while preparing a pull request, to watch in real use)
-- [ ] ops-branch-sync
+- [x] ops-branch-sync
 - [x] flow-fix-bug (from the perfectui header-menu bug: nine phases, the fix in the library and the records in the site; floor 0.8 at the threshold, the floor model sometimes starts eng-root-cause directly instead of the flow)
 - [ ] flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
 - [ ] agents explorer, implementer, reviewer
