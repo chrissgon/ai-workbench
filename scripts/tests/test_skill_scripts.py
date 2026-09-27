@@ -158,3 +158,39 @@ def test_range_that_looks_like_an_option_is_refused(tmp_path):
         ok = run(SCOPE, "--repo", str(repo), "--range", rng)
         assert ok.returncode == 0, ok.stderr
         assert json.loads(ok.stdout)["totals"]["files"] == 1
+
+
+# ---------- ops-pull-request/pr-context.sh (M22) ----------
+
+PR_CONTEXT = ROOT / "skills/ops-pull-request/scripts/pr-context.sh"
+BASH = __import__("shutil").which("bash")
+
+
+def only_tools(tmp_path: Path, *names: str) -> dict:
+    """An environment whose PATH holds only the named tools, so no host CLI or network tool is reachable."""
+    import os
+    import shutil
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir(exist_ok=True)
+    for n in names:
+        (bin_dir / n).symlink_to(shutil.which(n))
+    return {**os.environ, "PATH": str(bin_dir)}
+
+
+def test_pr_context_refuses_option_like_base(tmp_path):
+    repo = repo_with_change(tmp_path, "y = 2\n")
+    env = only_tools(tmp_path, "git", "python3", "sed", "dirname")
+    for base in ("--upload-pack=touch pwned", "-x", "main..evil", "a b"):
+        r = subprocess.run([BASH, str(PR_CONTEXT), "--base", base], cwd=repo, env=env,
+                           capture_output=True, text=True, timeout=60)
+        assert r.returncode == 2, (base, r.stderr)
+        assert "is not a branch name" in r.stderr
+    assert not (repo / "pwned").exists()
+    git(repo, "branch", "-q", "-M", "main")
+    git(repo, "switch", "-q", "-c", "feature")
+    git(repo, "commit", "-q", "-am", "feature work")
+    r = subprocess.run([BASH, str(PR_CONTEXT), "--base", "main"], cwd=repo, env=env,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["compared_with"] == "main" and len(out["commits"]) == 1
