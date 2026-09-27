@@ -18,6 +18,7 @@ Exit codes: 0 ok, 2 usage error (unknown pack, bad option).
 import fnmatch
 import json
 import os
+import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -47,11 +48,17 @@ def all_skills():
     return out
 
 
+def available_packs():
+    return sorted(f[:-4] for f in os.listdir(PACKS) if f.endswith(".txt")) if os.path.isdir(PACKS) else []
+
+
 def read_pack(name):
-    p = os.path.join(PACKS, f"{name}.txt")
-    if not os.path.isfile(p):
-        available = sorted(f[:-4] for f in os.listdir(PACKS) if f.endswith(".txt")) if os.path.isdir(PACKS) else []
+    # A pack name also names build folders (adapters/<harness>/build/<pack>), so only a known name
+    # made of [a-z0-9-] is accepted: never a path.
+    available = available_packs()
+    if not re.fullmatch(r"[a-z0-9-]+", name or "") or name not in available:
         raise FileNotFoundError(f"pack {name!r} not found. Available: {available}")
+    p = os.path.join(PACKS, f"{name}.txt")
     inc, exc = [], []
     with open(p, encoding="utf-8") as f:
         for line in f:

@@ -71,7 +71,13 @@ def main(argv):
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
+    # resolve() accepts only a known pack name made of [a-z0-9-]; this check keeps the rmtree below
+    # inside build/ even if that rule changes.
+    build_root = os.path.realpath(os.path.join(HERE, "build"))
     out = os.path.join(HERE, "build", pack)
+    if os.path.dirname(os.path.realpath(out)) != build_root or os.path.islink(out):
+        print(f"Error: pack {pack!r} would build outside {build_root}.", file=sys.stderr)
+        return 2
     if not dry:
         shutil.rmtree(out, ignore_errors=True)
         os.makedirs(os.path.join(out, ".claude-plugin"))
