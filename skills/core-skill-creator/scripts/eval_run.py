@@ -4,41 +4,53 @@
 Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
-                      [--only with|without] [--tiers strong,floor] [--no-grade] [--dry-run]
+                      [--only with|without] [--tiers strong,floor] [--pass-env <VAR>]... [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
-and each model, it prepares a working directory with the case's files in its own git repository
-(one "fixture" commit, then the case's optional "setup" shell commands, such as a branch with commits,
-and the skills listed in its optional "skills", linked for both variants: a flow's phases),
-runs the prompt through
-adapters/<harness>/run-prompt.sh, grades every assertion with the grader model, and writes:
+and each model, it prepares a working directory with the case's files (paths inside the skill folder
+only) in its own git repository (one "fixture" commit, then the case's optional "setup" shell commands,
+such as a branch with commits), runs the prompt through adapters/<harness>/run-prompt.sh with the skills
+listed in the case's optional "skills" (a flow's phases) for both variants, grades every assertion with
+the grader model, and writes:
 
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
   evals-workspace/<name>/iteration-N/benchmark.json
 
 --floor-harness lets the floor model run through a different adapter (for example agents-dir for an
 open-weight model served through its own CLI) while the strong model and the grader use --harness.
+--dry-run prints the runs, the allowed commands and every case's setup commands, and runs nothing.
 
 Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-[--allow-command <prefix>]... must write <out>/response.md and <out>/timing.json
-({"total_tokens", "duration_ms", "cost_usd"}).
+[--extra-skill-dir <dir>]... [--allow-command <prefix>]... copies each skill folder into <cwd> where the
+harness discovers it (never a link into the workbench) and must write <out>/response.md and
+<out>/timing.json ({"total_tokens", "duration_ms", "cost_usd"}).
 
 Commands. evals.json may list "allow_commands" at the top level (every case) and per case: command
-prefixes the model may run without asking ("npm test", "git", "TZ=UTC node"). They are passed to the
-adapter as --allow-command; the adapter also allows the skill's own scripts. Prefixes that run any
-other command (env, xargs, sudo, a shell without a script path...) and wildcards are refused, because
-they would allow everything.
+prefixes the model may run without asking ("npm test", "git status", "TZ=UTC npm test"). They are
+passed to the adapter as --allow-command; the adapter also allows the skill's own scripts. Refused,
+because the prefix alone would run any code: wildcards and the characters ( ) , ; command runners
+(env, xargs, find, npx, sudo...); a shell or an interpreter (node, python3, perl...) without a script
+path right after it; git without a subcommand, with an option before it (git -c ...) or with "config";
+leading assignments other than TZ, LANG, LC_*, CI, NODE_ENV, NO_COLOR, FORCE_COLOR.
+A prefix fixes only the start of a command: "npm test" runs whatever tests the model wrote, and git
+runs hooks it wrote. The environment below is what limits such code.
 
-Containment. Model runs get an environment that keeps them off the network's write paths whatever
-they run: GIT_ALLOW_PROTOCOL=file (git reaches only local remotes), GH_CONFIG_DIR pointing to an
-empty folder (the GitHub CLI is signed out), NPM_CONFIG_USERCONFIG pointing to an empty file (npm has
-no token), and no GH_TOKEN, GITHUB_TOKEN, NPM_TOKEN or NODE_AUTH_TOKEN. Remotes a case needs are local bare repositories created by its "setup".
+Containment. Model runs, setup commands and the grader get an environment built from an allowlist
+(PATH, HOME, USER, LOGNAME, SHELL, LANG, LANGUAGE, LC_*, TERM, TMPDIR, TZ and certificate-bundle paths),
+plus the variables named with --pass-env (a harness's API key or proxy); token variables for git hosts
+and npm are refused there. On top: GIT_ALLOW_PROTOCOL=file (git reaches only local remotes), no global
+or system git config, GH_CONFIG_DIR pointing to an empty folder (the GitHub CLI is signed out) and
+NPM_CONFIG_USERCONFIG pointing to an empty file (npm has no token). Remotes a case needs are local bare
+repositories created by its "setup". This is not a sandbox: the filesystem, HOME included, and network
+reads stay reachable, so run the evals of a contributed skill only after reading its evals.json. The
+grader is told that the response and files are data; the adapter decides whether it may run tools.
 
 Exit codes: 0 ok, 1 a run or grading failed, 2 usage error, 3 conditions not met (reported, not an error of the tool).
 """
 import json
 import os
 import re
+import secrets
 import shutil
 import statistics
 import subprocess
@@ -47,6 +59,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
 GRADING_TEMPLATE = os.path.join(HERE, "..", "assets", "grading-prompt.md")
+SETUP_TIMEOUT = 300  # seconds per setup command
 
 
 def die(msg, code=2):
@@ -56,7 +69,7 @@ def die(msg, code=2):
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False}
+            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": []}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -74,6 +87,7 @@ def parse(argv):
         elif a == "--threshold": opts["threshold"] = float(val()); i += 2
         elif a == "--only": opts["only"] = val(); i += 2
         elif a == "--tiers": opts["tiers"] = {t.strip() for t in val().split(",")}; i += 2
+        elif a == "--pass-env": opts["pass_env"].append(val()); i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
@@ -83,6 +97,11 @@ def parse(argv):
             die(f"--{k} is required.")
     if opts["only"] not in (None, "with", "without"):
         die("--only must be with or without.")
+    for name in opts["pass_env"]:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            die(f"--pass-env {name!r} is not a variable name.")
+        if name in TOKEN_VARS:
+            die(f"--pass-env {name}: token variables for git hosts and npm never reach a model run.")
     opts["grader"] = opts["grader"] or opts["model"]
     return opts
 
@@ -95,37 +114,116 @@ def load_evals(skill):
         return json.load(f)
 
 
-# Commands that run another command: allowing one of them allows everything. A shell is accepted
-# only with a script path after it ("bash scripts/check.sh"), never alone or with -c.
-RUNNERS = {"env", "xargs", "sudo", "doas", "eval", "exec", "nohup", "time", "command", "nice", "timeout",
-           "watch", "script", "osascript"}
-SHELLS = {"bash", "sh", "zsh", "dash", "fish"}
+# Commands that run another command: allowing one of them allows everything.
+RUNNERS = {"env", "xargs", "sudo", "doas", "su", "eval", "exec", "nohup", "time", "command", "nice", "timeout",
+           "watch", "script", "osascript", "find", "npx", "bunx", "awk", "gawk", "mawk", "nawk", "ssh"}
+RUNNER_SUBCOMMANDS = {("npm", "exec"), ("npm", "x"), ("pnpm", "exec"), ("pnpm", "dlx"), ("yarn", "exec"), ("yarn", "dlx")}
+# Shells and interpreters are accepted only with a script path after them ("bash scripts/check.sh").
+SHELLS = {"bash", "sh", "zsh", "dash", "fish", "ksh"}
+INTERPRETERS = {"node", "nodejs", "deno", "bun", "python", "python2", "python3", "pypy", "pypy3", "ruby", "perl",
+                "php", "lua", "Rscript", "pwsh", "powershell", "tclsh"}
+# git runs code through options before the subcommand (-c alias.x=!cmd) and through its config.
+GIT_REFUSED_SUBCOMMANDS = {"config"}
+# Leading assignments that cannot turn a command into a runner (NODE_OPTIONS, LD_PRELOAD, GIT_* could).
+SAFE_ASSIGNMENTS = {"TZ", "LANG", "LANGUAGE", "CI", "NODE_ENV", "NO_COLOR", "FORCE_COLOR"}
+# Characters that break out of an adapter's rule syntax or chain commands.
+REFUSED_CHARS = set("*(),;|&`$<>\\")
 # Credentials in the environment would sign gh, npm or git hosts back in.
-TOKEN_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "NPM_TOKEN", "NODE_AUTH_TOKEN"}
+TOKEN_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "NPM_TOKEN", "NODE_AUTH_TOKEN"}
+# The only variables a model run, a setup or the grader receives from the caller, besides --pass-env.
+ENV_ALLOW = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR", "TZ",
+             "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE"}
+
+
+def check_prefix(p):
+    """Return why an allow_commands prefix would allow any command, or None when it is acceptable."""
+    if not isinstance(p, str) or not p.strip():
+        return "it is empty"
+    bad = sorted({ch for ch in p if ch in REFUSED_CHARS or ord(ch) < 32})
+    if bad:
+        return f"it contains {' '.join(repr(ch) for ch in bad)}"
+    words = p.split()
+    while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S*$", words[0]):
+        var = words[0].split("=", 1)[0]
+        if var not in SAFE_ASSIGNMENTS and not var.startswith("LC_"):
+            return f"the assignment {var}= can change what the command runs"
+        words = words[1:]  # leading VAR=value assignments (TZ=UTC npm test)
+    if not words:
+        return "it names no command"
+    cmd = words[0]
+    if cmd in RUNNERS or tuple(words[:2]) in RUNNER_SUBCOMMANDS:
+        return f"{' '.join(words[:2]) if tuple(words[:2]) in RUNNER_SUBCOMMANDS else cmd} runs other commands"
+    if cmd in SHELLS or cmd in INTERPRETERS:
+        script = words[1] if len(words) > 1 else ""
+        if not script or script.startswith("-") or os.path.isabs(script) or ".." in script.split("/"):
+            return f"{cmd} without a script path inside the case folder runs any code"
+    if cmd == "git":
+        if len(words) < 2 or words[1].startswith("-"):
+            return "git needs a subcommand first (git status), since options such as -c run any command"
+        if words[1] in GIT_REFUSED_SUBCOMMANDS:
+            return f"git {words[1]} can make later git commands run any command"
+    return None
 
 
 def allowed_commands(data, case):
     """The case's command prefixes (top-level list plus the case's own), refusing ones that allow everything."""
     prefixes = list(dict.fromkeys((data.get("allow_commands") or []) + (case.get("allow_commands") or [])))
     for p in prefixes:
-        words = p.split()
-        while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S*$", words[0]):
-            words = words[1:]  # leading VAR=value assignments (TZ=UTC node)
-        shell_ok = words and words[0] in SHELLS and len(words) > 1 and not words[1].startswith("-")
-        if "*" in p or not words or words[0] in RUNNERS or (words[0] in SHELLS and not shell_ok):
-            die(f"case {case.get('id')}: allow_commands entry {p!r} would allow any command; name the command itself "
-                "(\"node\", \"TZ=UTC npm test\").")
+        why = check_prefix(p)
+        if why:
+            die(f"case {case.get('id')}: allow_commands entry {p!r} is refused: {why}. Name the command and its "
+                "subcommand (\"npm test\", \"git status\", \"node scripts/size.mjs\").")
     return prefixes
 
 
-def contained_env(run_dir):
-    """Environment for a model run: git reaches only local remotes, gh and npm are signed out."""
-    gh_dir = os.path.join(run_dir, ".contain", "gh")
+def case_files(skill_dir, case):
+    """The case's "files" entries as source paths, refusing any that reach outside the skill folder."""
+    base = os.path.realpath(skill_dir)
+    inside = lambda path: os.path.commonpath([base, os.path.realpath(path)]) == base
+    out = []
+    for rel in case.get("files") or []:
+        parts = re.split(r"[\\/]", rel) if isinstance(rel, str) else [".."]
+        if not isinstance(rel, str) or not rel or os.path.isabs(rel) or rel.startswith("~") or ".." in parts:
+            die(f"case {case.get('id')}: files entry {rel!r} must be a relative path inside the skill folder, without '..'.")
+        src = os.path.join(skill_dir, rel)
+        if not inside(src):
+            die(f"case {case.get('id')}: files entry {rel!r} resolves outside the skill folder.")
+        for dp, dns, fns in os.walk(src) if os.path.isdir(src) else []:
+            for n in dns + fns:
+                p = os.path.join(dp, n)
+                if os.path.islink(p) and not inside(p):
+                    die(f"case {case.get('id')}: {os.path.relpath(p, skill_dir)} links outside the skill folder.")
+        out.append(src)
+    return out
+
+
+def dependency_dirs(case):
+    """Folders of the skills a case depends on (a flow's phases), installed by the adapter in both variants."""
+    dirs = []
+    for name in case.get("skills") or []:
+        if not isinstance(name, str) or not re.match(r"^[a-z0-9-]+$", name):
+            die(f"case {case.get('id')}: skills entry {name!r} is not a skill name.")
+        src = os.path.join(ROOT, "skills", name)
+        if not os.path.isdir(src):
+            die(f"case {case.get('id')} depends on skill {name!r}, which does not exist under skills/.")
+        dirs.append(src)
+    return dirs
+
+
+def contained_env(run_dir, pass_env=()):
+    """Environment for a model run, a setup or the grader: an allowlist, git local only, gh and npm signed out."""
+    contain = os.path.join(run_dir, ".contain")
+    gh_dir = os.path.join(contain, "gh")
     os.makedirs(gh_dir, exist_ok=True)
-    npmrc = os.path.join(run_dir, ".contain", "npmrc")
-    open(npmrc, "w").close()
-    env = {k: v for k, v in os.environ.items() if k not in TOKEN_VARS}
-    env.update(GIT_ALLOW_PROTOCOL="file", GIT_TERMINAL_PROMPT="0", GH_CONFIG_DIR=gh_dir, NPM_CONFIG_USERCONFIG=npmrc)
+    npmrc, gitconfig = os.path.join(contain, "npmrc"), os.path.join(contain, "gitconfig")
+    for path in (npmrc, gitconfig):
+        open(path, "w").close()
+    env = {k: v for k, v in os.environ.items()
+           if (k in ENV_ALLOW or k.startswith("LC_") or k in pass_env) and k not in TOKEN_VARS}
+    env.update(GIT_ALLOW_PROTOCOL="file", GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=gitconfig,
+               GIT_AUTHOR_NAME="eval", GIT_AUTHOR_EMAIL="eval@localhost",
+               GIT_COMMITTER_NAME="eval", GIT_COMMITTER_EMAIL="eval@localhost",
+               GH_CONFIG_DIR=gh_dir, NPM_CONFIG_USERCONFIG=npmrc)
     return env
 
 
@@ -135,10 +233,12 @@ def next_iteration(ws):
     return os.path.join(ws, f"iteration-{max(nums, default=0) + 1}")
 
 
-def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None):
+def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=()):
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
     if skill_dir:
         cmd += ["--skill-dir", skill_dir]
+    for d in extra_skills:
+        cmd += ["--extra-skill-dir", d]
     for p in allow:
         cmd += ["--allow-command", p]
     r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
@@ -149,15 +249,24 @@ def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=No
     return True
 
 
-def snapshot(cwd, before):
+def installed_skill_file(rel, names):
+    """True for a file inside a copy of an installed skill (".../skills/<name>/..."), wherever the adapter put it."""
+    parts = rel.split(os.sep)
+    return any(parts[i] == "skills" and parts[i + 1] in names for i in range(len(parts) - 2))
+
+
+def snapshot(cwd, before, installed=()):
     files = {}
+    names = set(installed)
     for dp, _, fns in os.walk(cwd):
         # Match whole folder names: "/.git" as a substring would also skip ".github".
-        if {".claude", ".agents", "node_modules", ".git"} & set(os.path.relpath(dp, cwd).split(os.sep)):
+        if {"node_modules", ".git"} & set(os.path.relpath(dp, cwd).split(os.sep)):
             continue
         for fn in fns:
             p = os.path.join(dp, fn)
             rel = os.path.relpath(p, cwd)
+            if installed_skill_file(rel, names):
+                continue
             try:
                 mtime = os.path.getmtime(p)
             except OSError:
@@ -167,47 +276,29 @@ def snapshot(cwd, before):
     return files
 
 
-def isolate_git(cwd):
+def isolate_git(cwd, env):
     """Give the case its own repository, so git commands in a run stay inside it.
 
     Without one, `git add -A` or `git commit` from the case folder reaches the enclosing
-    repository (the workbench itself) and commits whatever is uncommitted there.
+    repository (the workbench itself) and commits whatever is uncommitted there. The contained
+    environment also drops GIT_DIR and GIT_INDEX_FILE, which would point git at the workbench.
     """
     if os.path.isdir(os.path.join(cwd, ".git")):
         return
-    env = dict(os.environ, GIT_AUTHOR_NAME="eval", GIT_AUTHOR_EMAIL="eval@localhost",
-               GIT_COMMITTER_NAME="eval", GIT_COMMITTER_EMAIL="eval@localhost")
     for args in (["init", "-q"], ["add", "-A"], ["-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "fixture"]):
-        subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True)
+        subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, timeout=SETUP_TIMEOUT)
 
 
-def run_setup(cwd, commands):
-    """Run a case's setup commands in its folder (a branch, commits), after its repository exists."""
-    env = dict(os.environ, GIT_AUTHOR_NAME="eval", GIT_AUTHOR_EMAIL="eval@localhost",
-               GIT_COMMITTER_NAME="eval", GIT_COMMITTER_EMAIL="eval@localhost")
+def run_setup(cwd, commands, env):
+    """Run a case's setup commands in its folder (a branch, commits), after its repository exists, contained."""
     for command in commands:
-        r = subprocess.run(["bash", "-c", command], cwd=cwd, env=env, capture_output=True, text=True)
+        try:
+            r = subprocess.run(["bash", "-c", command], cwd=cwd, env=env, capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL, timeout=SETUP_TIMEOUT)
+        except subprocess.TimeoutExpired:
+            die(f"setup command timed out after {SETUP_TIMEOUT}s in {cwd}: {command}")
         if r.returncode != 0:
             die(f"setup command failed in {cwd}: {command}\n{r.stderr}")
-
-
-def install_dependencies(cwd, names):
-    """Make the skills a case depends on (a flow's phases) discoverable in both variants.
-
-    Linked at project scope, like the adapter links the skill under test, so the with and
-    without runs differ only by that skill.
-    """
-    if not names:
-        return
-    target = os.path.join(cwd, ".claude", "skills")
-    os.makedirs(target, exist_ok=True)
-    for name in names:
-        src = os.path.join(ROOT, "skills", name)
-        if not os.path.isdir(src):
-            die(f"case depends on skill {name!r}, which does not exist under skills/.")
-        link = os.path.join(target, name)
-        if not os.path.exists(link):
-            os.symlink(src, link)
 
 
 def file_index(cwd):
@@ -242,19 +333,32 @@ def shown(path):
     return text
 
 
-def grade(runner, grader, run_dir, case, response, changed_files):
+def grading_prompt(tpl, case, response, files_blob):
+    """Fill the grading template in one pass, fencing the model's output with a marker it cannot predict.
+
+    One pass: a response that contains "{files}" or "{assertions}" stays text instead of being replaced.
+    """
+    marker = secrets.token_hex(8)
+    while marker in response or marker in files_blob:
+        marker = secrets.token_hex(8)
+    values = {"prompt": case["prompt"], "response": response, "files": files_blob, "marker": marker,
+              "assertions": "\n".join(f"{i + 1}. {a}" for i, a in enumerate(case.get("assertions") or []))}
+    return re.sub(r"\{(prompt|response|files|assertions|marker)\}", lambda m: values[m.group(1)], tpl)
+
+
+def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
     with open(GRADING_TEMPLATE, encoding="utf-8") as f:
         tpl = f.read()
     files_blob = "\n".join(f"### {p}\n{shown(os.path.join(run_dir, 'cwd', p))}" for p in sorted(changed_files)) or "(none)"
-    assertions = "\n".join(f"{i + 1}. {a}" for i, a in enumerate(case.get("assertions") or []))
-    prompt = tpl.replace("{prompt}", case["prompt"]).replace("{response}", response).replace("{files}", files_blob).replace("{assertions}", assertions)
+    prompt = grading_prompt(tpl, case, response, files_blob)
     gdir = os.path.join(run_dir, "grading")
     os.makedirs(os.path.join(gdir, "cwd"), exist_ok=True)
     os.makedirs(os.path.join(gdir, "out"), exist_ok=True)
     gp = os.path.join(gdir, "prompt.md")
     with open(gp, "w", encoding="utf-8") as f:
         f.write(prompt)
-    if not run_prompt(runner, gp, os.path.join(gdir, "cwd"), grader, os.path.join(gdir, "out"), None):
+    if not run_prompt(runner, gp, os.path.join(gdir, "cwd"), grader, os.path.join(gdir, "out"), None,
+                      env=contained_env(gdir, pass_env)):
         return None
     raw = read_text(os.path.join(gdir, "out", "response.md"), 200000)
     m = re.search(r"\[\s*\{.*\}\s*\]", raw, re.S)
@@ -295,11 +399,16 @@ def main(argv):
             die("--tiers selected no model.")
     it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]))
     allow = {c["id"]: allowed_commands(evals, c) for c in cases}
+    sources = {c["id"]: case_files(skill_dir, c) for c in cases}
+    deps = {c["id"]: dependency_dirs(c) for c in cases}
     plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "allow_commands": allow[c["id"]]}
             for c in cases for v in variants for t, m in models]
     if o["dry"]:
-        print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT), "floor_runner": os.path.relpath(floor_runner, ROOT),
-                          "grader": o["grader"], "runs": plan}, indent=2))
+        print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
+                          "floor_runner": os.path.relpath(floor_runner, ROOT), "grader": o["grader"], "pass_env": o["pass_env"],
+                          "cases": [{"case": c["id"], "files": c.get("files") or [], "skills": c.get("skills") or [],
+                                     "setup": c.get("setup") or []} for c in cases],
+                          "runs": plan}, indent=2))
         return 0
 
     failures = 0
@@ -312,26 +421,26 @@ def main(argv):
                 cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
                 os.makedirs(cwd, exist_ok=True)
                 os.makedirs(out, exist_ok=True)
-                for rel in c.get("files") or []:
-                    src = os.path.join(skill_dir, rel)
+                for src in sources[c["id"]]:
                     if os.path.isdir(src):
                         shutil.copytree(src, cwd, dirs_exist_ok=True)
                     elif os.path.isfile(src):
                         shutil.copy(src, cwd)
-                isolate_git(cwd)
-                run_setup(cwd, c.get("setup") or [])
-                install_dependencies(cwd, c.get("skills") or [])
+                env = contained_env(run_dir, o["pass_env"])
+                isolate_git(cwd, contained_env(run_dir))
+                run_setup(cwd, c.get("setup") or [], contained_env(run_dir))
                 pp = os.path.join(run_dir, "prompt.md")
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])
                 before = file_index(cwd)
                 ok = run_prompt(runner_for[tier], pp, cwd, model, out, skill_dir if v == "with_skill" else None,
-                                allow[c["id"]], contained_env(run_dir))
+                                allow[c["id"]], env, deps[c["id"]])
                 if not ok:
                     failures += 1
                     print(f"RUN FAILED  case {c['id']} {name}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
                     continue
-                changed = snapshot(cwd, before)
+                installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if v == "with_skill" else [])
+                changed = snapshot(cwd, before, installed)
                 response = read_text(os.path.join(out, "response.md"), 200000)
                 timing = {}
                 try:
@@ -343,7 +452,7 @@ def main(argv):
                     json.dump(timing, f)
                 g = None
                 if o["grade"]:
-                    g = grade(runner, o["grader"], run_dir, c, response, changed)
+                    g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"])
                     if g is None:
                         failures += 1
                         print(f"GRADE FAILED case {c['id']} {name}", file=sys.stderr)
