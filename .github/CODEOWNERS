@@ -1,0 +1,8 @@
+# Files that define the repository's rules and its checks: changes need the owner's review.
+/AGENTS.md                 @chrissgon
+/contracts/                @chrissgon
+/scripts/validate.py       @chrissgon
+/scripts/security_scan.py  @chrissgon
+/.githooks/                @chrissgon
+/.github/                  @chrissgon
+/providers/CONTRACT.md     @chrissgon

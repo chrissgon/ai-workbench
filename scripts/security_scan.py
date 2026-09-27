@@ -2,6 +2,7 @@
 """Scan the workbench for security problems that need no judgment to find.
 
 Usage: python3 scripts/security_scan.py [PATH ...] [--root DIR] [--strict] [--json] [--rules]
+       python3 scripts/security_scan.py --history [--root DIR] [--json]
 
 Scans the files git would commit under --root (tracked plus untracked, minus ignored; every
 file when --root is not a git repository), or only PATH arguments (files or folders). Rules:
@@ -34,8 +35,13 @@ Silence one finding with a comment on the same line or the line above:
 Suppressed findings are listed in the JSON report with their reason, so they stay auditable.
 Secrets are never printed: excerpts are redacted.
 
+--history scans every file version reachable from any ref (what a push publishes) for the secret
+rules only (secret-token, secret-assignment, secret-file). A finding there stays in history after
+the file is fixed: revoke the credential, then rewrite history or keep the repository private.
+
 Options:
   --root DIR  repository to scan (default: the workbench root)
+  --history   scan git history for secrets instead of the working tree
   --strict    warnings fail the run too
   --json      print the full report as JSON to stdout (human-readable lines go to stderr either way)
   --rules     print the rule table as JSON and exit
@@ -319,6 +325,52 @@ def scan(root, paths=None):
     return files, active, suppressed
 
 
+def scan_history(root):
+    """Secret rules over every blob reachable from any ref; one finding per blob and rule."""
+    root = os.path.abspath(root)
+    listed = subprocess.run(["git", "-C", root, "rev-list", "--all", "--objects"], capture_output=True, text=True)
+    if listed.returncode != 0:
+        raise FileNotFoundError(f"{root} is not a git repository")
+    paths = {}
+    for line in listed.stdout.splitlines():
+        sha, _, rel = line.partition(" ")
+        if rel and sha not in paths:
+            paths[sha] = rel
+    self_rel = os.path.relpath(SELF, root).replace(os.sep, "/")
+    findings, seen = [], set()
+    batch = subprocess.run(["git", "-C", root, "cat-file", "--batch"], input="\n".join(paths).encode() + b"\n",
+                           capture_output=True)
+    data, pos = batch.stdout, 0
+    while pos < len(data):
+        end = data.index(b"\n", pos)
+        sha, kind, size = data[pos:end].decode().split(" ")
+        size = int(size)
+        body, pos = data[end + 1:end + 1 + size], end + 1 + size + 1
+        rel = paths[sha]
+        where = f"{rel}@{sha[:10]}"
+
+        def add(rule, line, message):
+            if (rel, rule, line) not in seen:
+                seen.add((rel, rule, line))
+                findings.append({"rule": rule, "severity": "error", "path": where, "line": line, "message": message,
+                                 "excerpt": ""})
+        if SECRET_FILE_RE.search(rel) and not SECRET_FILE_OK_RE.search(rel):
+            add("secret-file", 0, "credential file in history")
+        if kind != "blob" or rel == self_rel or b"\0" in body[:8192] or size > 2_000_000:
+            continue
+        lines = body.decode("utf-8", errors="replace").split("\n")
+        for i, line in enumerate(lines, 1):
+            if "security-scan: allow" in line or (i > 1 and "security-scan: allow" in lines[i - 2]):
+                continue
+            for label, rx in TOKEN_RES:
+                if rx.search(line):
+                    add("secret-token", i, f"looks like a {label}")
+            m = ASSIGN_RE.search(line)
+            if m and not PLACEHOLDER_RE.search(m.group(2)) and not any(rx.search(line) for _, rx in TOKEN_RES):
+                add("secret-assignment", i, f"'{m.group(1)}' holds a literal value")
+    return len(paths), findings
+
+
 def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__)
@@ -338,11 +390,25 @@ def main(argv):
             strict = True
         elif a == "--json":
             as_json = True
+        elif a == "--history":
+            pass
         elif a.startswith("-"):
             print(f"Error: unknown option '{a}'. See --help.", file=sys.stderr)
             return 2
         else:
             paths.append(a)
+    if "--history" in argv:
+        try:
+            count, found = scan_history(root)
+        except FileNotFoundError as e:
+            print(f"Error: {e}. See --help.", file=sys.stderr)
+            return 2
+        for f in found:
+            print(f"ERROR   {f['path']}:{f['line']} [{f['rule']}] {f['message']} (git log --all --find-object=<blob>)",
+                  file=sys.stderr)
+        summary = {"objects": count, "errors": len(found), "ok": not found}
+        print(json.dumps({"summary": summary, "findings": found}, indent=2) if as_json else json.dumps(summary))
+        return 1 if found else 0
     try:
         files, active, suppressed = scan(root, paths)
     except FileNotFoundError as e:
