@@ -2,14 +2,17 @@
 
 Run: uv run --with pytest pytest providers/scheduler/tests
 
-Nothing is loaded into launchd: SCHEDULER_LAUNCHCTL points at a fake launchctl that
-records its arguments, and the job and agent folders live in a temporary directory.
+Nothing is loaded into launchd: SCHEDULER_LAUNCHCTL (honoured only with SCHEDULER_TEST=1)
+points at a fake launchctl that records its arguments, and the job and agent folders live
+in a temporary directory.
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import plistlib
+import stat
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -36,6 +39,7 @@ def env(tmp_path):
         "SCHEDULER_AGENTS_DIR": str(tmp_path / "agents"),
         "SCHEDULER_LAUNCHCTL": str(fake),
         "SCHEDULER_NOTIFY": "0",
+        "SCHEDULER_TEST": "1",
     }
     values["_calls"] = str(calls)
     return values
@@ -56,6 +60,7 @@ def command_file(tmp_path, argv_extra=(), grace=120, content="hello"):
                  str(post), str(marker), *argv_extra],
         "cwd": str(tmp_path),
         "snapshot": [str(post)],
+        "outputs": [str(marker)],
         "grace_minutes": grace,
     }
     path = tmp_path / "job.json"
@@ -63,10 +68,22 @@ def command_file(tmp_path, argv_extra=(), grace=120, content="hello"):
     return path, post, marker
 
 
+def dry_run(env, path, at, job_id="post-1"):
+    return run(env, "schedule", "--id", job_id, "--at", iso(at), "--command-file", str(path), "--dry-run")
+
+
+def confirm(env, path, at, job_id="post-1"):
+    """Schedule as a calling skill does: dry run, then --confirmed with the digest it printed."""
+    preview = dry_run(env, path, at, job_id)
+    assert preview.returncode == 0, preview.stderr
+    digest = json.loads(preview.stdout)["approved"]
+    return run(env, "schedule", "--id", job_id, "--at", iso(at), "--command-file", str(path),
+               "--confirmed", "--approved", digest)
+
+
 def schedule(env, tmp_path, at, job_id="post-1", **kw):
     path, post, marker = command_file(tmp_path, **kw)
-    result = run(env, "schedule", "--id", job_id, "--at", iso(at), "--command-file", str(path), "--confirmed")
-    return result, post, marker
+    return confirm(env, path, at, job_id), post, marker
 
 
 def job(env, job_id="post-1"):
@@ -97,7 +114,8 @@ def test_dry_run_prints_plist_and_writes_nothing(env, tmp_path):
 
 
 def test_past_time_refused(env, tmp_path):
-    result, _, _ = schedule(env, tmp_path, datetime.now(timezone.utc) - timedelta(minutes=1))
+    path, _, _ = command_file(tmp_path)
+    result = dry_run(env, path, datetime.now(timezone.utc) - timedelta(minutes=1))
     assert result.returncode == 2
     assert "past" in result.stderr
 
@@ -169,7 +187,7 @@ def test_failed_command_is_recorded(env, tmp_path):
     spec["argv"] = [sys.executable, "-c", "import sys; sys.exit(4)"]
     path.write_text(json.dumps(spec))
     at = datetime.now(timezone.utc) + timedelta(minutes=1)
-    assert run(env, "schedule", "--id", "post-1", "--at", iso(at), "--command-file", str(path), "--confirmed").returncode == 0
+    assert confirm(env, path, at).returncode == 0
     assert run(env, "run", "--id", "post-1").returncode == 1
     data = job(env)
     assert data["status"] == "failed" and data["exit_code"] == 4
@@ -188,3 +206,196 @@ def test_bootstrap_failure_is_reported(env, tmp_path):
     result, _, _ = schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(days=1))
     assert result.returncode == 1
     assert job(env)["status"] == "failed"
+
+
+# --- audit 2026-09-27, group G3 ----------------------------------------------------
+
+
+def spec_file(tmp_path, argv, snapshot, name="cmd.json", outputs=()):
+    path = tmp_path / name
+    path.write_text(json.dumps({"argv": argv, "cwd": str(tmp_path), "snapshot": snapshot, "outputs": list(outputs)}))
+    return path
+
+
+COPY_VALUE = ("import sys, json; v = sys.argv[1].split('=', 1)[-1]; "
+              "open(sys.argv[2], 'w').write(open(v).read()); print(json.dumps({}))")
+
+
+def test_file_argument_missing_from_snapshot_is_refused(env, tmp_path):
+    # H07: a post file passed as --text-file=/x and left out of the snapshot ran unverified.
+    post = tmp_path / "post.txt"
+    post.write_text("hello")
+    at = datetime.now(timezone.utc) + timedelta(days=1)
+    for arg in (f"--text-file={post}", str(post), "post.txt"):
+        path = spec_file(tmp_path, [sys.executable, "-c", COPY_VALUE, arg, str(tmp_path / "out")], [])
+        result = dry_run(env, path, at)
+        assert result.returncode == 2, arg
+        assert "not in the command file's snapshot" in result.stderr
+    assert not Path(env["SCHEDULER_HOME"]).exists()
+
+
+def test_snapshot_is_required(env, tmp_path):
+    path = tmp_path / "cmd.json"
+    path.write_text(json.dumps({"argv": ["/bin/true"], "cwd": str(tmp_path)}))
+    result = dry_run(env, path, datetime.now(timezone.utc) + timedelta(days=1))
+    assert result.returncode == 2
+    assert "snapshot" in result.stderr
+
+
+def test_flag_equals_and_relative_forms_run_on_the_copy(env, tmp_path):
+    post = tmp_path / "post.txt"
+    marker = tmp_path / "ran.txt"
+    for form in (f"--text-file={post}", "--text-file=post.txt", "post.txt"):
+        post.write_text("approved")
+        path = spec_file(tmp_path, [sys.executable, "-c", COPY_VALUE, form, str(marker)], [str(post)],
+                         outputs=[str(marker)])
+        result = confirm(env, path, datetime.now(timezone.utc) + timedelta(minutes=1))
+        assert result.returncode == 0, result.stderr
+        copy = job(env)["files"][str(post)]["copy"]
+        assert job(env)["argv"][3] in (f"--text-file={copy}", copy), form
+        post.write_text("edited later")
+        assert run(env, "run", "--id", "post-1").returncode == 0
+        assert marker.read_text() == "approved", form
+
+
+def test_confirm_needs_the_dry_run_digest(env, tmp_path):
+    path, post, _ = command_file(tmp_path)
+    at = datetime.now(timezone.utc) + timedelta(days=1)
+    base = ["schedule", "--id", "post-1", "--at", iso(at), "--command-file", str(path), "--confirmed"]
+    missing = run(env, *base)
+    assert missing.returncode == 2 and "--approved" in missing.stderr
+    digest = json.loads(dry_run(env, path, at).stdout)["approved"]
+    post.write_text("changed after the dry run")
+    changed = run(env, *base, "--approved", digest)
+    assert changed.returncode == 2 and "changed since the dry run" in changed.stderr
+    assert not (Path(env["SCHEDULER_HOME"]) / "post-1").exists()
+    assert not Path(env["_calls"]).exists()
+
+
+def test_program_changed_after_scheduling_is_refused(env, tmp_path):
+    # M05: the scheduled program was not hashed.
+    program = tmp_path / "prog.sh"
+    marker = tmp_path / "ran.txt"
+    program.write_text(f"#!/bin/sh\necho ran > {marker}\n")
+    program.chmod(0o755)
+    path = spec_file(tmp_path, [str(program)], [])
+    assert confirm(env, path, datetime.now(timezone.utc) + timedelta(minutes=1)).returncode == 0
+    program.write_text(f"#!/bin/sh\necho other > {marker}\n")
+    assert run(env, "run", "--id", "post-1").returncode == 1
+    data = job(env)
+    assert data["status"] == "refused" and "program" in data["reason"]
+    assert not marker.exists()
+
+
+def test_launchd_calls_the_runner_copy_and_a_changed_runner_is_refused(env, tmp_path):
+    # M05: the runner script was not hashed; launchd called it in the repository.
+    _, _, marker = schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(minutes=1))
+    data = job(env)
+    plist = plistlib.loads((Path(env["SCHEDULER_AGENTS_DIR"]) / "dev.ai-workbench.scheduler.post-1.plist").read_bytes())
+    runner_copy = Path(plist["ProgramArguments"][1])
+    assert runner_copy == Path(data["runner"]["copy"])
+    assert runner_copy.parent.parent == Path(env["SCHEDULER_HOME"]) / "post-1"
+    assert runner_copy.read_bytes() == SCRIPT.read_bytes()
+    changed = tmp_path / "launchd.py"
+    changed.write_text(SCRIPT.read_text() + "\n# changed on another branch\n")
+    result = subprocess.run([sys.executable, str(changed), "run", "--id", "post-1"], env=env,
+                            capture_output=True, text=True)
+    assert result.returncode == 1
+    assert job(env)["status"] == "refused" and "runner" in job(env)["reason"]
+    assert not marker.exists()
+
+
+def test_files_and_folders_are_private(env, tmp_path):
+    # L01: job.json, logs and folders were 0644/0755.
+    schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(minutes=1))
+    assert run(env, "run", "--id", "post-1").returncode == 0
+    jobs = Path(env["SCHEDULER_HOME"])
+    folder = jobs / "post-1"
+
+    def mode(p):
+        return stat.S_IMODE(p.stat().st_mode)
+
+    for d in (jobs, folder, folder / "files", folder / "runner"):
+        assert mode(d) == 0o700, d
+    for f in ("job.json", "run.stdout.log", "run.stderr.log", "launchd.out.log", "launchd.err.log"):
+        assert mode(folder / f) == 0o600, f
+    assert mode(next((folder / "files").iterdir())) == 0o400
+    assert not any(p.stat().st_mode & 0o077 for p in folder.rglob("*"))
+    plist = Path(env["SCHEDULER_AGENTS_DIR"]) / "dev.ai-workbench.scheduler.post-1.plist"
+    assert not plist.exists()  # removed after the run; its mode is checked below
+
+
+def test_plist_is_private(env, tmp_path):
+    schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(days=1))
+    plist = Path(env["SCHEDULER_AGENTS_DIR"]) / "dev.ai-workbench.scheduler.post-1.plist"
+    assert stat.S_IMODE(plist.stat().st_mode) == 0o600
+
+
+def test_reschedule_a_finished_id(env, tmp_path):
+    # L02: the old read-only copy made a second schedule of the same id fail.
+    _, post, _ = schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(minutes=1))
+    assert run(env, "run", "--id", "post-1").returncode == 0
+    old_copy = Path(job(env)["files"][str(post)]["copy"])
+    assert stat.S_IMODE(old_copy.stat().st_mode) == 0o400
+    result, _, _ = schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(minutes=1), content="second post")
+    assert result.returncode == 0, result.stderr
+    data = job(env)
+    assert data["status"] == "scheduled"
+    assert Path(data["files"][str(post)]["copy"]).read_text() == "second post"
+    history = list((Path(env["SCHEDULER_HOME"]) / ".history").iterdir())
+    assert len(history) == 1 and json.loads((history[0] / "job.json").read_text())["status"] == "done"
+    assert [j["id"] for j in json.loads(run(env, "list").stdout)["jobs"]] == ["post-1"]
+
+
+def test_scheduled_id_is_not_replaced(env, tmp_path):
+    _, post, _ = schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(days=1))
+    path, _, _ = command_file(tmp_path)
+    result = dry_run(env, path, datetime.now(timezone.utc) + timedelta(days=1))
+    assert result.returncode == 2 and "cancel it" in result.stderr
+    assert Path(job(env)["files"][str(post)]["copy"]).read_text() == "hello"
+
+
+def test_an_existing_output_is_not_mistaken_for_an_input(env, tmp_path):
+    path, _, marker = command_file(tmp_path)
+    marker.write_text("from an earlier run")
+    spec = json.loads(path.read_text())
+    assert json.loads(dry_run(env, path, datetime.now(timezone.utc) + timedelta(days=1)).stdout)["job"]["argv"][4] == str(marker)
+    spec["outputs"] = []
+    path.write_text(json.dumps(spec))
+    refused = dry_run(env, path, datetime.now(timezone.utc) + timedelta(days=1))
+    assert refused.returncode == 2 and "ran.txt" in refused.stderr
+
+
+def test_launchctl_override_needs_the_test_flag(env, tmp_path):
+    # L03: SCHEDULER_LAUNCHCTL was honoured in any environment.
+    path, _, _ = command_file(tmp_path)
+    at = datetime.now(timezone.utc) + timedelta(days=1)
+    digest = json.loads(dry_run(env, path, at).stdout)["approved"]
+    del env["SCHEDULER_TEST"]
+    result = run(env, "schedule", "--id", "post-1", "--at", iso(at), "--command-file", str(path),
+                 "--confirmed", "--approved", digest)
+    assert result.returncode == 2 and "SCHEDULER_TEST" in result.stderr
+    assert not Path(env["_calls"]).exists()
+    assert not (Path(env["SCHEDULER_HOME"]) / "post-1").exists()
+
+
+def test_launchctl_timeout_marks_the_job_failed(env, tmp_path, monkeypatch, capsys):
+    # L03: launchctl had no timeout.
+    slow = tmp_path / "slow-launchctl"
+    slow.write_text("#!/bin/sh\nsleep 5\n")
+    slow.chmod(0o755)
+    for key in ("SCHEDULER_HOME", "SCHEDULER_AGENTS_DIR", "SCHEDULER_NOTIFY", "SCHEDULER_TEST"):
+        monkeypatch.setenv(key, env[key])
+    monkeypatch.setenv("SCHEDULER_LAUNCHCTL", str(slow))
+    spec = importlib.util.spec_from_file_location("launchd_provider", SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    module.LAUNCHCTL_TIMEOUT_SECONDS = 0.3
+    path, _, _ = command_file(tmp_path)
+    at = iso(datetime.now(timezone.utc) + timedelta(days=1))
+    base = ["schedule", "--id", "post-1", "--at", at, "--command-file", str(path)]
+    assert module.main([*base, "--dry-run"]) == 0
+    digest = json.loads(capsys.readouterr().out)["approved"]
+    assert module.main([*base, "--confirmed", "--approved", digest]) == 1
+    data = job(env)
+    assert data["status"] == "failed" and "timed out" in data["error"]
