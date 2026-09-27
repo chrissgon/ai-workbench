@@ -293,6 +293,7 @@ def run_setup(cwd, commands, env):
     """Run a case's setup commands in its folder (a branch, commits), after its repository exists, contained."""
     for command in commands:
         try:
+            # security-scan: allow shell-string -- setup lines come from the skill's evals.json, are listed by --dry-run and run in the contained environment
             r = subprocess.run(["bash", "-c", command], cwd=cwd, env=env, capture_output=True, text=True,
                                stdin=subprocess.DEVNULL, timeout=SETUP_TIMEOUT)
         except subprocess.TimeoutExpired:

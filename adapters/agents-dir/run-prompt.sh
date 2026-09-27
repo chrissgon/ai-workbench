@@ -49,7 +49,7 @@ if [[ -n "${RUN_PROMPT_CMD:-}" ]]; then
   CMD="${RUN_PROMPT_CMD//\{prompt_file\}/$(printf '%q' "$PROMPT")}"
   CMD="${CMD//\{model\}/$(printf '%q' "$MODEL")}"
   CMD="${CMD//\{cwd\}/$(printf '%q' "$CWD")}"
-  RUN=(bash -c "$CMD")
+  RUN=(bash -c "$CMD")  # security-scan: allow shell-string -- the template is the operator's own RUN_PROMPT_CMD; every value put in it is shell-quoted above
 elif command -v opencode >/dev/null; then
   # --pure: no external plugins; --auto: approve tool permissions inside the sandboxed cwd (override with OPENCODE_EVAL_ARGS)
   read -r -a ARGS <<< "${OPENCODE_EVAL_ARGS:---pure --auto}"
