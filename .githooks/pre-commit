@@ -3,7 +3,8 @@
 #
 # 1. scripts/validate.py: conventions and the security scan. It reads the working tree, not only
 #    what is staged, so a file with a finding blocks the commit even if it is not part of it.
-# 2. The tests of providers/<class>/ and scripts/ when the commit touches them.
+# 2. The tests of providers/<class>/ and scripts/ when the commit touches them; a provider class
+#    left without tests is refused.
 #
 # Skipping the hook (git commit --no-verify) is the user's decision, never a skill's.
 set -euo pipefail
@@ -16,16 +17,27 @@ if ! out="$(python3 scripts/validate.py 2>&1 >/dev/null)"; then
   echo "$out" >&2
   fail "scripts/validate.py found errors (listed above). Fix them; an intended security finding is silenced on its line with 'security-scan: allow <rule> -- <reason>'."
 fi
+# The commit goes through, but security warnings are shown; the standing convention warnings are not.
+printf '%s\n' "$out" | grep -F '(see scripts/security_scan.py)' >&2 || true
 
+# NUL-separated so names with spaces or non-ASCII characters are not quoted; no rename detection,
+# so a file moved out of providers/ or scripts/ still counts for the folder it left.
 dirs=()
-while IFS= read -r f; do
+while IFS= read -r -d '' f; do
   case "$f" in
     providers/*/*) d="providers/$(echo "$f" | cut -d/ -f2)/tests" ;;
     scripts/*) d="scripts/tests" ;;
     *) continue ;;
   esac
-  [[ -d "$d" && " ${dirs[*]-} " != *" $d "* ]] && dirs+=("$d")
-done < <(git diff --cached --name-only --diff-filter=ACMRD)
+  if [[ ! -d "$d" ]]; then
+    # A provider acts on the outside world, so it cannot lose its tests (providers/CONTRACT.md).
+    # A class removed entirely has no folder left and is not checked.
+    [[ "$d" == providers/* && -d "$(dirname "$d")" ]] \
+      && fail "$(dirname "$d") has no tests; add offline tests in $d (providers/CONTRACT.md)."
+    continue
+  fi
+  [[ " ${dirs[*]-} " != *" $d "* ]] && dirs+=("$d")
+done < <(git diff --cached --name-only -z --no-renames --diff-filter=ACMRD)
 
 if [[ ${#dirs[@]} -gt 0 ]]; then
   command -v uv >/dev/null || fail "uv is needed to run the tests in ${dirs[*]}: https://docs.astral.sh/uv/"

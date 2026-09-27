@@ -28,7 +28,8 @@ Unset means "no native provider"; the skill degrades as described in its body.
 - Credentials only from environment variables or the OS secret store, never from files inside a project or from flags.
 - Idempotent where the service allows it (an idempotency key or a lookup before create).
 - Exit codes: 0 success, 1 provider or service error, 2 usage error, 3 not configured.
-- PEP 723 inline dependencies; run with `uv run providers/<class>/<impl>.py ...`.
+- PEP 723 inline dependencies pinned to exact versions (`==`); run with `uv run providers/<class>/<impl>.py ...`.
+- Offline tests in `providers/<class>/tests/` (no network, no real credentials: a fake service on 127.0.0.1 and fake tokens from the environment). The pre-commit hook runs them whenever the class changes, and refuses a commit that leaves an existing class without tests.
 
 ## Verbs per class
 

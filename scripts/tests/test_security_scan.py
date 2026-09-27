@@ -45,7 +45,15 @@ def test_known_token_is_found_and_redacted(tmp_path):
     write(tmp_path, "notes.md", f"use {token} to push\n")
     _, active, _ = scanner.scan(str(tmp_path))
     assert [f["rule"] for f in active] == ["secret-token"]
-    assert token not in json.dumps(active)
+    assert token[:4] not in json.dumps(active) and token[-4:] not in json.dumps(active)
+    assert "<redacted GitHub token>" in active[0]["excerpt"]
+
+
+def test_assigned_secret_is_fully_redacted(tmp_path):
+    value = "hunter2" + "hunter2"
+    write(tmp_path, "a.py", f'password = "{value}"\n')
+    _, active, _ = scanner.scan(str(tmp_path))
+    assert value[:4] not in active[0]["excerpt"] and "<redacted>" in active[0]["excerpt"]
 
 
 def test_literal_secret_assignment_but_not_placeholders(tmp_path):

@@ -117,11 +117,10 @@ ALLOW_RE = re.compile(r"security-scan:\s*allow\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s
 
 
 def redact(text):
-    def mask(s):
-        return s[:4] + "…" + s[-2:] if len(s) > 8 else "…"
-    for _, rx in TOKEN_RES:
-        text = rx.sub(lambda m: mask(m.group(0)), text)
-    text = ASSIGN_RE.sub(lambda m: m.group(0).replace(m.group(2), mask(m.group(2))), text)
+    # No part of a secret is printed, not even a prefix (providers/CONTRACT.md).
+    for label, rx in TOKEN_RES:
+        text = rx.sub(f"<redacted {label}>", text)
+    text = ASSIGN_RE.sub(lambda m: m.group(0).replace(m.group(2), "<redacted>"), text)
     return HIDDEN_RE.sub(lambda m: f"<U+{ord(m.group(0)):04X}>", text).strip()[:160]
 
 

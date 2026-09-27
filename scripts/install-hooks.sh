@@ -47,7 +47,9 @@ case "$MODE" in
     report
     ;;
   uninstall)
-    [[ "$(current)" == .githooks ]] && git -C "$ROOT" config --local --unset core.hooksPath
+    p="$(current)"
+    if [[ "$p" == .githooks ]]; then git -C "$ROOT" config --local --unset core.hooksPath
+    elif [[ -n "$p" ]]; then echo "core.hooksPath is '$p', not .githooks; left in place." >&2; fi
     report
     ;;
 esac
