@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Pre-commit checks for the workbench. Enable them once per clone: bash scripts/install-hooks.sh
+#
+# 1. scripts/validate.py: conventions and the security scan. It reads the working tree, not only
+#    what is staged, so a file with a finding blocks the commit even if it is not part of it.
+# 2. The tests of providers/<class>/ and scripts/ when the commit touches them.
+#
+# Skipping the hook (git commit --no-verify) is the user's decision, never a skill's.
+set -euo pipefail
+ROOT="$(git rev-parse --show-toplevel)"
+cd "$ROOT"
+
+fail() { echo "pre-commit: $1" >&2; exit 1; }
+
+if ! out="$(python3 scripts/validate.py 2>&1 >/dev/null)"; then
+  echo "$out" >&2
+  fail "scripts/validate.py found errors (listed above). Fix them; an intended security finding is silenced on its line with 'security-scan: allow <rule> -- <reason>'."
+fi
+
+dirs=()
+while IFS= read -r f; do
+  case "$f" in
+    providers/*/*) d="providers/$(echo "$f" | cut -d/ -f2)/tests" ;;
+    scripts/*) d="scripts/tests" ;;
+    *) continue ;;
+  esac
+  [[ -d "$d" && " ${dirs[*]-} " != *" $d "* ]] && dirs+=("$d")
+done < <(git diff --cached --name-only --diff-filter=ACMRD)
+
+if [[ ${#dirs[@]} -gt 0 ]]; then
+  command -v uv >/dev/null || fail "uv is needed to run the tests in ${dirs[*]}: https://docs.astral.sh/uv/"
+  uv run --quiet --with pytest pytest -q "${dirs[@]}" || fail "tests failed in ${dirs[*]}."
+fi

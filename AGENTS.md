@@ -22,7 +22,7 @@ providers/<class>/<impl>.py native providers for requirement classes; interface 
 templates/                  capability.SKILL.md, flow.SKILL.md, agent.md
 packs/<name>.txt            installation subsets; default.txt excludes optional areas (see packs/README.md)
 adapters/<harness>/         adapter.json, install.sh, optional build.*, overrides/, README.md
-scripts/                    validate.py, security_scan.py, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
+scripts/                    validate.py, security_scan.py, install-hooks.sh, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
 docs/                       area-map.md, decisions.md, inventory.md, backlog.md (workbench tasks that are not skills)
 ```
 
@@ -132,7 +132,7 @@ Create `adapters/<harness>/` with `adapter.json`, `install.sh`, `README.md`, and
 
 ## Validation
 
-`python3 scripts/validate.py` checks: folder name equals `name`; prefix and area are valid and consistent; `kind` matches the prefix; description length; line limit; no harness names or paths in the core; `side_effects` implies a `## Confirmation gate` section; every `inputs` path is some skill's `outputs`; relative links resolve; agent frontmatter keys; and, through `scripts/security_scan.py`, no secrets, hidden text (invisible Unicode, HTML comments with prose in instruction files) or unsafe script patterns, and no remote writes from a skill that declares `side_effects: []`. Run it before every commit. A security finding that is intended is silenced on its line with `security-scan: allow <rule> -- <reason>`; never without a reason. `--strict` turns warnings into errors.
+`python3 scripts/validate.py` checks: folder name equals `name`; prefix and area are valid and consistent; `kind` matches the prefix; description length; line limit; no harness names or paths in the core; `side_effects` implies a `## Confirmation gate` section; every `inputs` path is some skill's `outputs`; relative links resolve; agent frontmatter keys; and, through `scripts/security_scan.py`, no secrets, hidden text (invisible Unicode, HTML comments with prose in instruction files) or unsafe script patterns, and no remote writes from a skill that declares `side_effects: []`. Run it before every commit. A security finding that is intended is silenced on its line with `security-scan: allow <rule> -- <reason>`; never without a reason. `--strict` turns warnings into errors. `bash scripts/install-hooks.sh` makes git run it, and the tests of whatever `providers/` or `scripts/` the commit touches, before every commit; never bypass the hook on your own.
 
 ## Never
 

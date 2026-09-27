@@ -41,7 +41,15 @@ Without `--pack`, the `default` pack installs every area except the optional one
 python3 scripts/validate.py
 ```
 
-Runs on every commit-worthy change. It enforces naming, frontmatter, the 500-line limit, the no-harness-names rule, the artifact chain and confirmation gates for skills with side effects.
+Runs on every commit-worthy change. It enforces naming, frontmatter, the 500-line limit, the no-harness-names rule, the artifact chain and confirmation gates for skills with side effects, and runs the security scan (`scripts/security_scan.py`).
+
+Enable the pre-commit hook once per clone, so every commit runs the validator and, when `providers/` or `scripts/` change, their tests (they need [uv](https://docs.astral.sh/uv/)):
+
+```bash
+bash scripts/install-hooks.sh
+```
+
+`--check` reports whether it is enabled; `--uninstall` turns it off.
 
 ## Status
 
