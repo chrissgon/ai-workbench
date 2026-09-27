@@ -2,13 +2,16 @@
 # Eval contract for tools that read .agents/skills. Default runner: OpenCode (`opencode run`).
 #
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
+#                      [--allow-command <prefix>]...
 #
 # Writes <out>/response.md and <out>/timing.json (tokens unknown: null). With --skill-dir the skill is
 # symlinked into <cwd>/.agents/skills/<name>. Override the command with RUN_PROMPT_CMD, a template with
 # {prompt_file}, {model} and {cwd}, e.g. RUN_PROMPT_CMD='mytool --model {model} < {prompt_file}'.
 # Flags verified against opencode 1.18.32 (run --help); re-check after upgrades.
+# --allow-command is accepted but not enforced: the default runner approves every tool (--auto), so
+# the only containment is the environment eval_run.py sets (git local only, gh and npm signed out).
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR=""
+PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOWED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prompt-file) PROMPT="$2"; shift 2 ;;
@@ -16,12 +19,14 @@ while [[ $# -gt 0 ]]; do
     --model) MODEL="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --skill-dir) SKILL_DIR="$2"; shift 2 ;;
-    --help|-h) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --allow-command) ALLOWED=1; shift 2 ;;
+    --help|-h) sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
 [[ -f "$PROMPT" && -d "$CWD" && -n "$MODEL" && -n "$OUT" ]] || { echo "Error: --prompt-file, --cwd, --model and --out are required. See --help." >&2; exit 2; }
 mkdir -p "$OUT"
+[[ $ALLOWED -eq 1 ]] && echo "note: --allow-command is not enforced by this runner; it approves every tool (see --help)." >&2
 if [[ -n "$SKILL_DIR" ]]; then
   mkdir -p "$CWD/.agents/skills"
   ln -sfn "$(cd "$SKILL_DIR" && pwd)" "$CWD/.agents/skills/$(basename "$SKILL_DIR")"

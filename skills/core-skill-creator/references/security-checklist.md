@@ -29,7 +29,7 @@ Each item names where the rule came from.
    From: the eval run whose `git commit` reached the workbench repository, fixed by giving each case its own repository in `eval_run.py`.
 7. **Scripts do what they say and no more.** No download piped into a shell, no `eval`, no shell string built from input, no `sudo`, dependencies pinned to exact versions, standard library first. The scanner finds most of these; this item covers what it cannot see, such as a script that reads more than its `--help` says.
    From: `scripts/security_scan.py` rules; the `keyring` pin in `providers/publisher`.
-8. **Evals are safe to run.** Fixtures contain no real personal data or credentials. Each case runs in its own repository, with only the commands it needs allowed, and remotes and side effects stay inside the case's folder.
+8. **Evals are safe to run.** Fixtures contain no real personal data or credentials. Each case runs in its own repository, with only the commands it needs in `allow_commands`, and remotes and side effects stay inside the case's folder (`eval_run.py` keeps git on local remotes and signs the GitHub CLI and npm out).
    From: `core-skill-creator` gotchas on eval isolation and allowed commands.
 9. **Nothing is hidden from the reviewer.** No instruction lives in an HTML comment, invisible characters or an encoded string; what the model reads is what a person reading the rendered file sees.
    From: scanner rules `hidden-comment` and `hidden-unicode`.

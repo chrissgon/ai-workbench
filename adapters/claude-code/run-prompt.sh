@@ -2,15 +2,19 @@
 # Eval contract: run one prompt through Claude Code non-interactively.
 #
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
+#                      [--allow-command <prefix>]...
 #
 # Writes <out>/response.md and <out>/timing.json. With --skill-dir, the skill is symlinked into
 # <cwd>/.claude/skills/<name> so it is discoverable at project scope. Settings are limited to the
 # project scope so user-level skills do not leak into a without-skill run; verify on first use by
 # searching the transcript for the skill name.
+# Each --allow-command becomes a Bash(<prefix> *) rule in --allowedTools, and so does every script in
+# the skill's scripts/ folder; any other command is denied (print mode cannot ask) and reported in
+# raw.json's permission_denials. acceptEdits still lets file commands (touch, mkdir) run inside --cwd.
 # Extra CLI flags: CLAUDE_EVAL_ARGS (default: --permission-mode acceptEdits).
 # A proxy for floor models: set ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN in the environment.
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR=""
+PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOW=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prompt-file) PROMPT="$2"; shift 2 ;;
@@ -18,7 +22,8 @@ while [[ $# -gt 0 ]]; do
     --model) MODEL="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --skill-dir) SKILL_DIR="$2"; shift 2 ;;
-    --help|-h) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --allow-command) ALLOW="${ALLOW:+$ALLOW,}Bash($2 *)"; shift 2 ;;
+    --help|-h) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -29,9 +34,18 @@ if [[ -n "$SKILL_DIR" ]]; then
   mkdir -p "$CWD/.claude/skills"
   ln -sfn "$(cd "$SKILL_DIR" && pwd)" "$CWD/.claude/skills/$(basename "$SKILL_DIR")"
 fi
+if [[ -n "$SKILL_DIR" && -d "$SKILL_DIR/scripts" ]]; then
+  # The skill's own scripts, by the path the model sees (relative to the case folder).
+  REL=".claude/skills/$(basename "$SKILL_DIR")/scripts"
+  for f in "$SKILL_DIR"/scripts/*; do
+    [[ -f "$f" ]] || continue
+    for runner in bash python3; do ALLOW="${ALLOW:+$ALLOW,}Bash($runner $REL/$(basename "$f")),Bash($runner $REL/$(basename "$f") *)"; done
+  done
+fi
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
 set +e
-( cd "$CWD" && claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json --setting-sources project,local ${CLAUDE_EVAL_ARGS:---permission-mode acceptEdits} ) < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log"
+EXTRA=(); [[ -n "$ALLOW" ]] && EXTRA=(--allowedTools "$ALLOW")
+( cd "$CWD" && claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json --setting-sources project,local ${CLAUDE_EVAL_ARGS:---permission-mode acceptEdits} ${EXTRA[@]+"${EXTRA[@]}"} ) < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log"
 RC=$?
 set -e
 END=$(python3 -c 'import time; print(int(time.time()*1000))')

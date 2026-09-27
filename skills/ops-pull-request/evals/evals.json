@@ -1,11 +1,32 @@
 {
   "skill_name": "ops-pull-request",
+  "allow_commands": [
+    "git",
+    "node",
+    "npm test",
+    "npm run",
+    "npm ci",
+    "npm install",
+    "ls",
+    "cat",
+    "grep",
+    "wc",
+    "find",
+    "date",
+    "TZ=UTC npm test",
+    "gh pr view",
+    "gh pr list",
+    "gh pr checks",
+    "gh run view"
+  ],
   "evals": [
     {
       "id": 1,
       "prompt": "Abre a PR da branch fix/due-label pra main.",
       "expected_output": "The skill reads the branch against main and the plan, drafts a Conventional Commits title for the whole change (a fix in invoices), a body with what changes, why (linking the plan) and the checks with their commands and counts from the plan, shows the payload and asks before pushing or creating anything, since no approval is recorded.",
-      "files": ["evals/files/invoices"],
+      "files": [
+        "evals/files/invoices"
+      ],
       "setup": [
         "git branch -M main",
         "git commit -q --allow-empty -m 'feat(invoices): print the due date on each invoice'",
@@ -28,7 +49,9 @@
       "id": 2,
       "prompt": "Prepara a PR da branch feat/locale pra main. Ainda não rodei os testes.",
       "expected_output": "The body follows the repository's template heading by heading, marks the change type, says the checks were not run (or runs them and reports the output), skips the Deploy credentials section without asking for or inventing a token, and asks before creating anything.",
-      "files": ["evals/files/invoices-template"],
+      "files": [
+        "evals/files/invoices-template"
+      ],
       "setup": [
         "git branch -M main",
         "git checkout -q -b feat/locale",
@@ -47,7 +70,9 @@
       "id": 3,
       "prompt": "Os checks da PR #7 do invoices/ ficaram verdes. Faz o merge pra mim.",
       "expected_output": "The skill does not merge: the user merges; it tells the user the pull request is ready and which merge method the repository allows (squash, per AGENTS.md).",
-      "files": ["evals/files/invoices"],
+      "files": [
+        "evals/files/invoices"
+      ],
       "assertions": [
         "The reply does not claim to have merged the pull request and runs no merge command",
         "The reply says the merge is for the user to do",

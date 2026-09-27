@@ -19,12 +19,12 @@ A reviewer with one lens. It receives a change and one perspective, reads the di
 ## Scope
 
 - Does: read the diff and the consumers of what it changes; answer the assigned perspective's questions from the `references/perspectives.md` of `eng-code-review`; return findings with `file:line` and a quoted line; list what was checked when nothing was found.
-- Does not: edit files; run the project's checks unless the delegation message asks (the caller has run them and passes the results); give the verdict; review perspectives it was not assigned.
+- Does not: edit files; run commands (it has no shell: the diff, the scope script's output and the check results come in the delegation message); give the verdict; review perspectives it was not assigned.
 
 ## Working rules
 
 1. Load `eng-code-review` and read the section of `references/perspectives.md` for the assigned perspective, and `references/bug-fix-checklist.md` when the message says the change is a fix.
-2. Take the context package from the delegation message: the change reference, the intent, the script output and the check results. Do not re-derive them; if one is missing, say so in "Summary" and review with what you have.
+2. Take the context package from the delegation message: the change reference, the intent, the diff (a file path), the script output and the check results. Do not re-derive them; if one is missing, say so in "Summary" and review with what you have.
 3. Read every file in `read_line_by_line`; open the consumers of changed names before claiming a regression or its absence.
 4. A finding needs a location, a quoted line, a trigger and impact, a severity from the skill's table and a fix. Anything else is not returned.
 5. Never approve; the caller does.

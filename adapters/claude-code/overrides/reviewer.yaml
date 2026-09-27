@@ -1,3 +1,4 @@
-# Harness-specific settings merged into the generated reviewer agent. Read-only plus the shell,
-# which it needs for git diff, grep and the scope script; it must not edit files.
-tools: Read, Grep, Glob, Bash
+# Harness-specific settings merged into the generated reviewer agent. Read-only: a plugin agent's
+# tools field takes bare tool names (no Bash(git diff *) rules), so a shell would mean any command.
+# The caller passes the diff as a file, the scope script's output and the check results.
+tools: Read, Grep, Glob

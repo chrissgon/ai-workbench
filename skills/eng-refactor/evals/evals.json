@@ -1,11 +1,39 @@
 {
   "skill_name": "eng-refactor",
+  "allow_commands": [
+    "node",
+    "git",
+    "mkdir",
+    "npm test",
+    "npm run",
+    "npm ci",
+    "npm install",
+    "ls",
+    "cat",
+    "grep",
+    "wc",
+    "find",
+    "date",
+    "TZ=UTC node",
+    "TZ=UTC npm test",
+    "TZ=America/Sao_Paulo node",
+    "TZ=America/Sao_Paulo npm test",
+    "TZ=Asia/Tokyo node",
+    "TZ=Asia/Tokyo npm test",
+    "TZ=Europe/Lisbon node",
+    "TZ=Europe/Lisbon npm test",
+    "rm",
+    "cp",
+    "gzip"
+  ],
   "evals": [
     {
       "id": 1,
       "prompt": "Refatora o src/due.js do invoices/: tira a validação duplicada e o que estiver morto, sem mudar comportamento.",
       "expected_output": "The duplicated date validation becomes one helper and the unused legacyLabel is removed, with the reason it cannot change behaviour (not exported, not called); npm test and npm run size run before and after, with the same test results and the size numbers in a table; the RangeError behaviour is kept; the diff touches only src/due.js; the plan gains a Refactor section.",
-      "files": ["evals/files/invoices"],
+      "files": [
+        "evals/files/invoices"
+      ],
       "assertions": [
         "npm test is run before and after the change and both runs pass",
         "npm run size (or scripts/size.mjs) is run before and after and both numbers are reported",
@@ -20,7 +48,9 @@
       "id": 2,
       "prompt": "What's worth refactoring in invoices/?",
       "expected_output": "The skill reads the code, proposes one or two targets with the smell quoted, the reason each keeps behaviour and the expected gain, and asks which to do; no source file changes.",
-      "files": ["evals/files/invoices"],
+      "files": [
+        "evals/files/invoices"
+      ],
       "assertions": [
         "At least one target is proposed with the code it concerns quoted or named (for example legacyLabel or the duplicated validation)",
         "The reply asks the user to choose or confirm before changing code",
@@ -31,7 +61,9 @@
       "id": 3,
       "prompt": "Refactor due.js in invoices/ and while you're at it fix the time-zone bug in dueLabel.",
       "expected_output": "The skill separates the two: the time-zone fix changes behaviour and belongs to eng-root-cause and eng-implement, not to the refactor; it does the refactor alone (or asks which first) and does not change the label's behaviour inside the refactor.",
-      "files": ["evals/files/invoices"],
+      "files": [
+        "evals/files/invoices"
+      ],
       "assertions": [
         "The reply says the time-zone fix is a behaviour change handled separately from the refactor",
         "dueLabel's output for 2026-09-25 under TZ=America/Sao_Paulo is unchanged by any edit made (the refactor does not include the fix)"

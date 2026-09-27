@@ -1,5 +1,19 @@
 {
   "skill_name": "ops-branch-sync",
+  "allow_commands": [
+    "git",
+    "node",
+    "npm test",
+    "npm run",
+    "npm ci",
+    "npm install",
+    "ls",
+    "cat",
+    "grep",
+    "wc",
+    "find",
+    "date"
+  ],
   "evals": [
     {
       "id": 1,

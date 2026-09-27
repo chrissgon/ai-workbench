@@ -20,7 +20,19 @@ adapters/<harness>/run-prompt.sh, grades every assertion with the grader model, 
 open-weight model served through its own CLI) while the strong model and the grader use --harness.
 
 Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-must write <out>/response.md and <out>/timing.json ({"total_tokens", "duration_ms", "cost_usd"}).
+[--allow-command <prefix>]... must write <out>/response.md and <out>/timing.json
+({"total_tokens", "duration_ms", "cost_usd"}).
+
+Commands. evals.json may list "allow_commands" at the top level (every case) and per case: command
+prefixes the model may run without asking ("npm test", "git", "TZ=UTC node"). They are passed to the
+adapter as --allow-command; the adapter also allows the skill's own scripts. Prefixes that run any
+other command (env, xargs, sudo, a shell without a script path...) and wildcards are refused, because
+they would allow everything.
+
+Containment. Model runs get an environment that keeps them off the network's write paths whatever
+they run: GIT_ALLOW_PROTOCOL=file (git reaches only local remotes), GH_CONFIG_DIR pointing to an
+empty folder (the GitHub CLI is signed out), NPM_CONFIG_USERCONFIG pointing to an empty file (npm has
+no token), and no GH_TOKEN, GITHUB_TOKEN, NPM_TOKEN or NODE_AUTH_TOKEN. Remotes a case needs are local bare repositories created by its "setup".
 
 Exit codes: 0 ok, 1 a run or grading failed, 2 usage error, 3 conditions not met (reported, not an error of the tool).
 """
@@ -75,13 +87,46 @@ def parse(argv):
     return opts
 
 
-def load_cases(skill):
+def load_evals(skill):
     p = os.path.join(ROOT, "skills", skill, "evals", "evals.json")
     if not os.path.isfile(p):
         die(f"no evals at {os.path.relpath(p, ROOT)}", 2)
     with open(p, encoding="utf-8") as f:
-        data = json.load(f)
-    return data.get("evals") or []
+        return json.load(f)
+
+
+# Commands that run another command: allowing one of them allows everything. A shell is accepted
+# only with a script path after it ("bash scripts/check.sh"), never alone or with -c.
+RUNNERS = {"env", "xargs", "sudo", "doas", "eval", "exec", "nohup", "time", "command", "nice", "timeout",
+           "watch", "script", "osascript"}
+SHELLS = {"bash", "sh", "zsh", "dash", "fish"}
+# Credentials in the environment would sign gh, npm or git hosts back in.
+TOKEN_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "NPM_TOKEN", "NODE_AUTH_TOKEN"}
+
+
+def allowed_commands(data, case):
+    """The case's command prefixes (top-level list plus the case's own), refusing ones that allow everything."""
+    prefixes = list(dict.fromkeys((data.get("allow_commands") or []) + (case.get("allow_commands") or [])))
+    for p in prefixes:
+        words = p.split()
+        while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S*$", words[0]):
+            words = words[1:]  # leading VAR=value assignments (TZ=UTC node)
+        shell_ok = words and words[0] in SHELLS and len(words) > 1 and not words[1].startswith("-")
+        if "*" in p or not words or words[0] in RUNNERS or (words[0] in SHELLS and not shell_ok):
+            die(f"case {case.get('id')}: allow_commands entry {p!r} would allow any command; name the command itself "
+                "(\"node\", \"TZ=UTC npm test\").")
+    return prefixes
+
+
+def contained_env(run_dir):
+    """Environment for a model run: git reaches only local remotes, gh and npm are signed out."""
+    gh_dir = os.path.join(run_dir, ".contain", "gh")
+    os.makedirs(gh_dir, exist_ok=True)
+    npmrc = os.path.join(run_dir, ".contain", "npmrc")
+    open(npmrc, "w").close()
+    env = {k: v for k, v in os.environ.items() if k not in TOKEN_VARS}
+    env.update(GIT_ALLOW_PROTOCOL="file", GIT_TERMINAL_PROMPT="0", GH_CONFIG_DIR=gh_dir, NPM_CONFIG_USERCONFIG=npmrc)
+    return env
 
 
 def next_iteration(ws):
@@ -90,11 +135,13 @@ def next_iteration(ws):
     return os.path.join(ws, f"iteration-{max(nums, default=0) + 1}")
 
 
-def run_prompt(runner, prompt_path, cwd, model, out, skill_dir):
+def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None):
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
     if skill_dir:
         cmd += ["--skill-dir", skill_dir]
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    for p in allow:
+        cmd += ["--allow-command", p]
+    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
     if r.returncode != 0:
         with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
             f.write(r.stdout + "\n" + r.stderr)
@@ -234,7 +281,8 @@ def main(argv):
             die(f"adapter {o['floor_harness']!r} has no run-prompt.sh.")
     runner_for = {"strong": runner, "floor": floor_runner}
     skill_dir = os.path.join(ROOT, "skills", o["skill"])
-    cases = load_cases(o["skill"])
+    evals = load_evals(o["skill"])
+    cases = evals.get("evals") or []
     if o["cases"]:
         cases = [c for c in cases if str(c.get("id")) in o["cases"]]
     if not cases:
@@ -246,7 +294,9 @@ def main(argv):
         if not models:
             die("--tiers selected no model.")
     it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]))
-    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m} for c in cases for v in variants for t, m in models]
+    allow = {c["id"]: allowed_commands(evals, c) for c in cases}
+    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "allow_commands": allow[c["id"]]}
+            for c in cases for v in variants for t, m in models]
     if o["dry"]:
         print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT), "floor_runner": os.path.relpath(floor_runner, ROOT),
                           "grader": o["grader"], "runs": plan}, indent=2))
@@ -275,7 +325,8 @@ def main(argv):
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])
                 before = file_index(cwd)
-                ok = run_prompt(runner_for[tier], pp, cwd, model, out, skill_dir if v == "with_skill" else None)
+                ok = run_prompt(runner_for[tier], pp, cwd, model, out, skill_dir if v == "with_skill" else None,
+                                allow[c["id"]], contained_env(run_dir))
                 if not ok:
                     failures += 1
                     print(f"RUN FAILED  case {c['id']} {name}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
