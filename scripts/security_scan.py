@@ -18,6 +18,8 @@ file when --root is not a git repository), or only PATH arguments (files or fold
   unsafe-deserialize    error    pickle, marshal or yaml.load without a safe loader
   tls-disabled          error    certificate checks turned off
   shell-invocation      warning  shell=True, os.system or os.popen in Python
+  shell-string          warning  a shell run on a string built at run time: ["bash", "-c", cmd] in any script,
+                                 or sh/bash -c "$VAR" in a shell script
   rm-unguarded          warning  rm -r on a path that starts with a variable not guarded by ${VAR:?}
   world-writable        warning  chmod 777 or o+w
   sudo                  warning  sudo inside a script
@@ -79,6 +81,7 @@ RULES = {
     "unsafe-deserialize": ("error", "deserialization that can execute code"),
     "tls-disabled": ("error", "certificate verification turned off"),
     "shell-invocation": ("warning", "a command run through a shell from Python"),
+    "shell-string": ("warning", "a shell run on a command string built at run time"),
     "rm-unguarded": ("warning", "recursive delete of a path that starts with an unguarded variable"),
     "world-writable": ("warning", "a world-writable permission"),
     "sudo": ("warning", "sudo inside a script"),
@@ -109,6 +112,10 @@ PY_EVAL_RE = re.compile(r"(?<![\w.])(eval|exec)\s*\(")
 DESERIALIZE_RE = re.compile(r"\bpickle\.loads?\s*\(|\bmarshal\.loads?\s*\(|\byaml\.load\s*\((?![^)]*Loader\s*=\s*yaml\.SafeLoader)")
 TLS_RE = re.compile(r"verify\s*=\s*False|_create_unverified_context|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0|"
                     r"\bCERT_NONE\b|\bcurl\b[^\n]*\s(-k|--insecure)\b")
+# ["bash", "-c", cmd] (Python, JavaScript spawn("sh", ["-c", cmd])) with anything but a literal after -c,
+# and sh/bash -c "$VAR" or -c $VAR in a shell script.
+SHELL_C_LIST_RE = re.compile(r"[\"'](?:/[\w/]*/)?(?:ba|z|da|k)?sh[\"']\s*,\s*\[?\s*[\"']-[a-z]*c[\"']\s*,(?!\s*[\"'][^\"'$`{]*[\"']\s*[,\])])")
+SHELL_C_VAR_RE = re.compile(r"(?:^|[\s;&|(])(?:/[\w/]*/)?(?:ba|z|da|k)?sh\s+-[a-z]*c\s+[\"']?\$")
 SHELL_PY_RE = re.compile(r"shell\s*=\s*True|\bos\.(system|popen)\s*\(")
 RM_RE = re.compile(r"\brm\s+-[A-Za-z]*[rR][A-Za-z]*\s+(?:--\s+)?[\"']?\$(\{?)([A-Za-z_][A-Za-z0-9_]*)(:\?)?")
 CHMOD_RE = re.compile(r"\bchmod\s+(-R\s+)?(0?777|[ugoa]*o[ugoa]*\+[rx]*w)")
@@ -231,6 +238,10 @@ def scan_file(root, path, cache):
             add("tls-disabled", i, "keep certificate verification on", line)
         if is_python and SHELL_PY_RE.search(line):
             add("shell-invocation", i, "pass an argument list to subprocess instead of a shell string", line)
+        if is_script and not line.lstrip().startswith("#") and (
+                SHELL_C_LIST_RE.search(line) or (is_shell and SHELL_C_VAR_RE.search(line))):
+            add("shell-string", i, "a shell runs text built at run time; run the program with an argument list, "
+                "or say why the string is trusted in an allow comment", line)
         if is_shell:
             rm = RM_RE.search(line)
             if rm and not rm.group(3) and not re.search(r"-n\s+[\"']?\$\{?" + rm.group(2) + r"\b", line):

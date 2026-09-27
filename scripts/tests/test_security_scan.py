@@ -206,6 +206,19 @@ def test_allow_file_names_files_not_globs(tmp_path):
     assert [f["path"] for f in suppressed] == ["fixtures/app/client.py"]
 
 
+def test_shell_run_on_a_built_string_is_flagged(tmp_path):
+    dash_c = '"-' + 'c"'
+    write(tmp_path, "a.py", "import subprocess\nsubprocess.run([\"bash\", " + dash_c + ", command])\n")
+    write(tmp_path, "b.mjs", "spawn(\"sh\", [" + dash_c + ", cmd]);\n")
+    write(tmp_path, "c.sh", "#!/usr/bin/env bash\n( cd \"$D\" && bash -" + "c \"$CMD\" )\n")
+    write(tmp_path, "d.py", "subprocess.run([\"/bin/bash\", \"-l" + "c\", f\"run {x}\"])\n")
+    write(tmp_path, "ok.py", "subprocess.run([\"bash\", " + dash_c + ", \"set -e; make test\"], check=True)\n")
+    write(tmp_path, "ok.sh", "#!/usr/bin/env bash\nbash -" + "c 'echo fixed'\n# bash -" + "c \"$CMD\" in a comment\n")
+    _, active, _ = scanner.scan(str(tmp_path))
+    assert sorted((f["path"], f["rule"]) for f in active) == [
+        ("a.py", "shell-string"), ("b.mjs", "shell-string"), ("c.sh", "shell-string"), ("d.py", "shell-string")]
+
+
 def test_hosting_token_is_found_and_redacted(tmp_path):
     token = "nfp_" + "8Gx2kLq9TzVb41RmWcYe5HsDaPo7Nu3F"
     write(tmp_path, "evals.json", '{"prompt": "deploy with ' + token + '"}\n')
