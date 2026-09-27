@@ -44,6 +44,13 @@ install_skill() {
 }
 [[ -n "$SKILL_DIR" ]] && install_skill "$SKILL_DIR"
 for d in ${EXTRA_SKILLS[@]+"${EXTRA_SKILLS[@]}"}; do install_skill "$d"; done
+# Skills link the workbench's shared references as ../../shared/references/<file>: copy them beside
+# the installed skills so those links resolve inside the case folder too.
+WORKBENCH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [[ -d "$CWD/.agents/skills" && -d "$WORKBENCH/shared" ]]; then
+  rm -rf "${CWD:?}/.agents/shared"
+  cp -RL "$WORKBENCH/shared" "$CWD/.agents/shared"
+fi
 if [[ -n "${RUN_PROMPT_CMD:-}" ]]; then
   # Values are shell-quoted so a model id or path cannot add commands to the template.
   CMD="${RUN_PROMPT_CMD//\{prompt_file\}/$(printf '%q' "$PROMPT")}"

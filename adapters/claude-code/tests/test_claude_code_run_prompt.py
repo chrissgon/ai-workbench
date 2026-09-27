@@ -76,3 +76,11 @@ def test_a_case_folder_with_harness_settings_is_refused(env, planted):
     r = run(env, "--skill-dir", str(env["skill"]))
     assert r.returncode == 2 and "harness settings" in r.stderr
     assert not env["log"].exists()
+
+
+def test_shared_references_resolve_from_the_copied_skill(env):
+    r = run(env, "--skill-dir", str(env["skill"]))
+    assert r.returncode == 0, r.stderr
+    skill = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
+    assert (skill / ".." / ".." / "shared" / "references" / "security.md").is_file()
+    assert not (env["tmp"] / "cwd" / ".claude" / "shared").is_symlink()

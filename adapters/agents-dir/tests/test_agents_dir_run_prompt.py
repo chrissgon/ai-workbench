@@ -50,3 +50,11 @@ def test_a_case_folder_with_harness_settings_is_refused(case, planted):
     p.write_text("{}")
     r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"))
     assert r.returncode == 2 and "harness settings" in r.stderr
+
+
+def test_shared_references_resolve_from_the_copied_skill(case):
+    r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"))
+    assert r.returncode == 0, r.stderr
+    skill = case / "cwd" / ".agents" / "skills" / "demo"
+    assert (skill / ".." / ".." / "shared" / "references" / "security.md").is_file()
+    assert not (case / "cwd" / ".agents" / "shared").is_symlink()

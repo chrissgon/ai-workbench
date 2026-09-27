@@ -49,6 +49,13 @@ install_skill() {
 }
 [[ -n "$SKILL_DIR" ]] && install_skill "$SKILL_DIR"
 for d in ${EXTRA_SKILLS[@]+"${EXTRA_SKILLS[@]}"}; do install_skill "$d"; done
+# Skills link the workbench's shared references as ../../shared/references/<file>: copy them beside
+# the installed skills so those links resolve inside the case folder too.
+WORKBENCH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+if [[ -d "$CWD/.claude/skills" && -d "$WORKBENCH/shared" ]]; then
+  rm -rf "${CWD:?}/.claude/shared"
+  cp -RL "$WORKBENCH/shared" "$CWD/.claude/shared"
+fi
 if [[ -n "$SKILL_DIR" && -d "$SKILL_DIR/scripts" ]]; then
   # The skill's own scripts, by the path the model sees (relative to the case folder).
   REL=".claude/skills/$(basename "$SKILL_DIR")/scripts"
