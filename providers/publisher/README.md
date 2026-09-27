@@ -27,10 +27,18 @@ Access tokens last 60 days and self-serve apps get no refresh token. `--check` w
 
 ```sh
 uv run providers/publisher/linkedin.py publish --platform linkedin \
-    --text-file post.txt [--media cover.png] [--idempotency-key <k>] --dry-run
+    --text-file post.txt [--media cover.png] --idempotency-key <k> --dry-run
 uv run providers/publisher/linkedin.py publish --platform linkedin \
-    --text-file post.txt [--media cover.png] [--idempotency-key <k>] --confirmed
+    --text-file post.txt [--media cover.png] --idempotency-key <k> --confirmed
+uv run providers/publisher/linkedin.py resolve --idempotency-key <k> \
+    (--post-urn <urn> | --not-published) --confirmed
 ```
+
+The dry run reads no token and sends nothing, so the author URN is shown as a placeholder (`/v2/userinfo` is only called when publishing).
+
+### At most once per key
+
+`--idempotency-key` is required: one key per post, reused on every retry of that post. The key is recorded as `pending` in the ledger, under a file lock, before any request, and as `published` with the post URN after the 201; a second run with a published key returns the existing post. When the outcome is unknown (a timeout, a dropped connection or a crash after the Posts API request was sent), the key stays `pending` and every new attempt is refused until the user checks the profile and runs `resolve`: `--post-urn <urn>` if the post is there, `--not-published` if it is not. A 4xx answer, or a failure before the post request, releases the key. Redirects are refused, so the token never leaves for a URL that was not checked. The ledger and its folder are 0600/0700.
 
 The post text is escaped for LinkedIn's little text format, so every reserved character (`\ | { } @ [ ] ( ) < > # * _ ~`) appears literally. As a consequence, `#word` and `@name` are shown as plain text, not as links.
 
@@ -44,11 +52,12 @@ The post text is escaped for LinkedIn's little text format, so every reserved ch
 | `LINKEDIN_TOKEN_EXPIRES_AT` | `linkedin.py` | Optional; ISO-8601 expiry of `LINKEDIN_ACCESS_TOKEN`. |
 | `PUBLISHER_LINKEDIN_LEDGER` | `linkedin.py` | Path of the idempotency ledger. Default `~/.cache/ai-workbench/publisher-linkedin.json` (or under `$XDG_CACHE_HOME`). |
 | `LINKEDIN_API_BASE` | `linkedin.py` | Tests only: a loopback URL that replaces `https://api.linkedin.com`. When set, the secret store is not read. |
+| `LINKEDIN_HTTP_TIMEOUT` | `linkedin.py` | Tests only, honoured with `LINKEDIN_API_BASE`: request timeout in seconds (default 60). |
 
 ### Tests
 
 ```sh
-uv run --with pytest pytest providers/publisher/tests
+uv run --with pytest==9.1.1 pytest providers/publisher/tests
 ```
 
 The tests use a local fake server and a fake token; they need no network and no credentials.
