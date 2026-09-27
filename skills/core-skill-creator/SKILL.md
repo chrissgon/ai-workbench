@@ -98,4 +98,5 @@ Approve only if all of the following hold:
 - Assertions that always pass in both configurations measure nothing and inflate the score. Remove them.
 - Over-specification shows up as a negative strong-model delta. Loosen the procedure, keep the criteria.
 - Eval prompts in polished English test a user who does not exist. Write them the way the real user writes, in their language, with their typos.
+- A skill whose job is running commands (git, a package manager) scores zero on every variant when the harness runs non-interactively and blocks them: the first `ops-branch-sync` round only described its plan. Read `permission_denials` in the run's raw output before blaming the skill, and allow the commands the cases need for that run (for the reference adapter, `CLAUDE_EVAL_ARGS` with an allow list); keep remotes and side effects inside each case's folder.
 - Do not tick a skill in the inventory because it validates. Validation checks conventions; evals check behaviour.
