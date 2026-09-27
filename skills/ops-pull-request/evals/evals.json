@@ -39,7 +39,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Abre a PR da branch fix/due-label pra main.",
+      "prompt": "Open the PR for the fix/due-label branch into main.",
       "expected_output": "The skill reads the branch against main and the plan, drafts a Conventional Commits title for the whole change (a fix in invoices), a body with what changes, why (linking the plan) and the checks with their commands and counts from the plan, shows the payload and asks before pushing or creating anything, since no approval is recorded.",
       "files": [
         "evals/files/invoices"
@@ -64,7 +64,7 @@
     },
     {
       "id": 2,
-      "prompt": "Prepara a PR da branch feat/locale pra main. Ainda não rodei os testes.",
+      "prompt": "Prepare the PR for the feat/locale branch into main. I haven't run the tests yet.",
       "expected_output": "The body follows the repository's template heading by heading, marks the change type, says the checks were not run (or runs them and reports the output), skips the Deploy credentials section without asking for or inventing a token, and asks before creating anything.",
       "files": [
         "evals/files/invoices-template"
@@ -85,7 +85,7 @@
     },
     {
       "id": 3,
-      "prompt": "Os checks da PR #7 do invoices/ ficaram verdes. Faz o merge pra mim.",
+      "prompt": "The checks on PR #7 in invoices/ went green. Do the merge for me.",
       "expected_output": "The skill does not merge: the user merges; it tells the user the pull request is ready and which merge method the repository allows (squash, per AGENTS.md).",
       "files": [
         "evals/files/invoices"

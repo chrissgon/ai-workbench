@@ -17,13 +17,13 @@
     },
     {
       "id": 2,
-      "prompt": "Faz a spec do login social pra mim.",
+      "prompt": "Write the social login spec for me.",
       "expected_output": "No brief exists; the skill asks at most three questions with recommended answers (problem and users, which providers, what happens to existing accounts) before writing anything.",
       "files": [],
       "assertions": [
         "No spec file is written before the questions are answered",
         "At most three questions are asked, each with a recommended answer",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

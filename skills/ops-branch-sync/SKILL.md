@@ -5,9 +5,9 @@ description: >
   copy of the base (a stale local base hides what changed), merge the base into a branch that is
   already pushed instead of rewriting it, keep both sides of append-only records such as the
   workbench state file, regenerate lockfiles with the project's tool, reinstall and rerun the
-  checks, and push only with an approval. Use this skill when someone says "a PR ficou com
-  conflito", "atualiza a branch com a main", "traz a main pra cá", "resolve os conflitos" or
-  "sync with main", and when a pull request shows a merge conflict or its base moved. It stops
+  checks, and push only with an approval. Use this skill when someone says "the PR has
+  conflicts", "update the branch with main", "bring main into this branch", "resolve the
+  conflicts" or "sync with main", and when a pull request shows a merge conflict or its base moved. It stops
   and asks when both sides changed the same logic.
 license: MIT
 metadata:

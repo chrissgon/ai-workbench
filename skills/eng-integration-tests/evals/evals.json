@@ -34,7 +34,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "A mudança do fuso no dueLabel já está implementada em invoices/ (plano em docs/engineering/plans/due-label-customer-time-zone.md). Escreve os testes de integração.",
+      "prompt": "The time-zone change in dueLabel is already implemented in invoices/ (plan in docs/engineering/plans/due-label-customer-time-zone.md). Write the integration tests.",
       "expected_output": "Tests are written with node:test and import through src/index.js (the public API); they run the label under several server time zones by starting child processes with TZ set, and pass; the same tests are run against releases/1.2.0/src (the previous release) in a scratch copy, where the server-zone cases fail in America/Sao_Paulo and the preserved cases pass; npm test passes with the change; the plan gains an 'Integration tests' section with both runs' counts; src/ is unchanged.",
       "files": [
         "evals/files/invoices"
@@ -46,7 +46,7 @@
         "npm test is run with the change and its result is reported",
         "The plan file gains an 'Integration tests' section with the counts of both runs",
         "src/due.js and src/index.js are unchanged",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

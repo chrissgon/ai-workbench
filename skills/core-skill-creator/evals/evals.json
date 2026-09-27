@@ -3,14 +3,14 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Cria uma skill de SEO pra gente, mkt-seo, com as melhores práticas.",
+      "prompt": "Make us an SEO skill, mkt-seo, with the best practices.",
       "expected_output": "The skill is not written. The response explains that without a real task, artifact or trace the result would be generic knowledge, and asks for one (a real page to optimize, a past audit, a correction the user made), with a recommendation for which to bring first.",
       "files": [],
       "assertions": [
         "No skills/mkt-seo/ folder or SKILL.md is created",
         "The response states that the skill would be generic knowledge without real material",
         "The response asks for a real task or material, with a recommended option",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

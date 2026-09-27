@@ -5,10 +5,10 @@ description: >
   repository's commit convention (a squash merge makes it the commit on main), a body that says
   what changes, why, and which checks ran with their results, the project's template when there
   is one, the user's approval before anything is pushed or created, and the checks followed until
-  green. Use this skill when someone asks "abre a PR", "open a pull request", "manda pra review"
-  or "sobe isso pra main" on a protected branch, even without the word pull request. Also use it
+  green. Use this skill when someone asks "open the PR", "open a pull request", "send it for review"
+  or "push this to main" on a protected branch, even without the word pull request. Also use it
   when a pull request's checks are red and someone asks to get it mergeable, and when someone asks
-  to merge a pull request ("faz o merge"): the skill hands the merge back to the user.
+  to merge a pull request ("merge it"): the skill hands the merge back to the user.
 license: MIT
 metadata:
   area: delivery

@@ -16,13 +16,13 @@
     },
     {
       "id": 2,
-      "prompt": "Desenha a arquitetura da busca. A spec está em docs/product/specs/search.md mas ainda tem uma pergunta aberta sobre o provedor.",
+      "prompt": "Design the search architecture. The spec is in docs/product/specs/search.md but it still has an open question about the provider.",
       "expected_output": "The skill reads the spec, finds the OPEN that blocks the provider component, and stops with at most three questions with recommended answers instead of designing around a guessed provider; nothing is written to docs/engineering/designs/.",
       "files": [],
       "assertions": [
         "No design file is written while the blocking OPEN is unresolved",
         "The user is asked at most three questions, each with a recommended answer",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {

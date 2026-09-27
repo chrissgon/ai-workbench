@@ -7,7 +7,7 @@ description: >
   the behaviours to preserve, then prove the tests catch the problem by running them against
   the code before the change. Use this skill after eng-implement, when a behaviour only exists
   when parts work together (markup inserted after load, a request through the whole stack, a
-  plugin in a host), even if the user only says "testa de ponta a ponta", "e2e" or "add
+  plugin in a host), even if the user only says "test it end to end", "e2e" or "add
   integration tests". Also use it when someone asks for integration tests of a feature that is
   not built yet, to point to failing unit tests first.
 license: MIT
@@ -18,7 +18,7 @@ metadata:
   outputs: [docs/engineering/plans/<task>.md]
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Integration tests

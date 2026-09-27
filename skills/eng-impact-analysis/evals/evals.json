@@ -32,7 +32,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Queremos que o dueLabel do projeto invoices/ mostre a data no fuso do cliente, não no fuso do servidor. Antes de escolher como fazer, o que isso impacta?",
+      "prompt": "We want dueLabel in the invoices/ project to show the date in the customer's time zone, not the server's. Before choosing how to do it, what does this affect?",
       "expected_output": "An 'Impact' section in a plan under docs/engineering/plans/: the change stated as behaviour with no approach chosen; code touched (src/due.js, src/index.js as the public API, README.md); the rules quoted (zero runtime dependencies, every export documented, public API through src/index.js); the size budget measured now with npm run size; test/due.test.js named as encoding today's behaviour; the README sentence 'in the server's local time zone' quoted as changing meaning; the consumer shop-web named; no source file changed.",
       "files": [
         "evals/files/invoices"
@@ -45,7 +45,7 @@
         "The README sentence about the server's local time zone is quoted or referenced as changing meaning",
         "shop-web is named as a dependant",
         "No file under src/ or test/ is modified, and no approach is chosen as the one to implement",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {
@@ -63,7 +63,7 @@
     },
     {
       "id": 3,
-      "prompt": "Qual o impacto de mexer no invoices/?",
+      "prompt": "What's the impact of touching invoices/?",
       "expected_output": "No change is described; the skill asks what must behave differently when the change is done, with an example, and writes no analysis.",
       "files": [
         "evals/files/invoices"
@@ -71,7 +71,7 @@
       "assertions": [
         "The reply asks which behaviour should change before analysing",
         "No Impact section is written for an invented change",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     }
   ]

@@ -33,7 +33,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "A causa do bug da data de vencimento está confirmada em invoices/docs/engineering/plans/due-date-one-day-early.md. Escreve os testes antes da correção.",
+      "prompt": "The cause of the due-date bug is confirmed in invoices/docs/engineering/plans/due-date-one-day-early.md. Write the tests before the fix.",
       "expected_output": "Tests are written with node:test in invoices/test (the project's runner), covering dueLabel for a date-only string in UTC, Europe/Lisbon and America/Sao_Paulo, the date-time form, and daysLeft; they are run under the time zones (TZ set per run or per child process) and the date-only case fails in America/Sao_Paulo with the received value 2026-09-24 while the preserved cases pass; a 'Failing tests' section is added to the plan with the observed results; src/due.js is unchanged and no dependency is added.",
       "files": [
         "evals/files/invoices"
@@ -45,7 +45,7 @@
         "A test covers daysLeft",
         "The plan file gains a 'Failing tests' section listing each test with its source and its result before the change",
         "src/due.js is unchanged",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {
@@ -63,7 +63,7 @@
     },
     {
       "id": 3,
-      "prompt": "Escreve os testes que faltam para o daysLeft do projeto invoices/: quero garantir que o daysLeft retorna 0 no dia do vencimento.",
+      "prompt": "Write the missing tests for daysLeft in the invoices/ project: I want to make sure daysLeft returns 0 on the due date.",
       "expected_output": "The plan says nothing about the due day itself (it states daysLeft is 1 the day before at noon); whether daysLeft is 0 or 1 at a given hour of the due day depends on rounding the task does not state; the skill writes the stated cases and asks what 'the day of the due date' means (which hour, or calendar days instead of 24-hour periods) with a recommendation, marking that case pending instead of choosing silently.",
       "files": [
         "evals/files/invoices"
@@ -72,7 +72,7 @@
         "The reply asks a question about what daysLeft should return on the due day (the hour, or calendar days versus 24-hour periods), with a recommended answer",
         "No test asserts a value for the due day without that question being raised",
         "src/due.js is unchanged",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     }
   ]

@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Me ajude a criar um produto digital do zero. É um app de receitas para quem tem restrições alimentares.",
+      "prompt": "Help me build a digital product from scratch. It's a recipe app for people with dietary restrictions.",
       "expected_output": "A routing block naming flow-new-product as a cross-area flow, noting that no state file exists and that the flow will create it, and asking which autonomy mode the user wants before starting.",
       "files": [],
       "assertions": [
@@ -11,7 +11,7 @@
         "The shape is identified as a cross-area flow",
         "The output states that docs/workbench/state.md is missing and that the flow will create it",
         "No business, product or design work is performed in the output",
-        "The reply is in Portuguese"
+        "The reply is in English, the language of the prompt"
       ]
     },
     {
@@ -28,7 +28,7 @@
     },
     {
       "id": 3,
-      "prompt": "Valide comigo o modelo de negócio do Telar.",
+      "prompt": "Validate Telar's business model with me.",
       "expected_output": "A routing block naming biz-business-model as a capability, listing which docs/business artifacts were found or are missing, or asking where the Telar project lives if no docs and no state file exist in the current directory.",
       "files": [],
       "assertions": [

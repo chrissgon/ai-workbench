@@ -36,7 +36,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "A PR da branch docs/launch ficou com conflito com a main depois que eu mergeei a do favicon. Resolve aí",
+      "prompt": "The PR for the docs/launch branch ended up with a conflict with main after I merged the favicon one. Sort it out",
       "expected_output": "The skill fetches, merges origin/main into docs/launch (no rebase, no force push), resolves the conflict in docs/workbench/state.md by keeping both approval lines, leaves no conflict markers, runs npm run lint and npm test, and pushes the merge because the state file already records the approval for the docs/launch pull request; it reports the conflicted file and how it was resolved.",
       "files": [
         "evals/files/shop"
@@ -49,7 +49,7 @@
         "git push -q origin main",
         "git remote set-head origin main",
         "git checkout -q -b docs/launch",
-        "python3 - <<'PY'\np='docs/workbench/state.md'; s=open(p).read()\ns=s.replace('## Approvals\\n\\n','## Approvals\\n\\n'+'- 2026-09-26: `git push -u origin docs/launch` and a pull request `docs/launch` → `main` with the launch plan and posts; the user merges (user: \"Sim\")'+'\\n\\n',1); open(p,'w').write(s)\nPY",
+        "python3 - <<'PY'\np='docs/workbench/state.md'; s=open(p).read()\ns=s.replace('## Approvals\\n\\n','## Approvals\\n\\n'+'- 2026-09-26: `git push -u origin docs/launch` and a pull request `docs/launch` → `main` with the launch plan and posts; the user merges (user: \"Yes\")'+'\\n\\n',1); open(p,'w').write(s)\nPY",
         "mkdir -p docs/marketing && printf '%s\\n' '# Launch plan' '' 'Monday teaser, Tuesday launch.' > docs/marketing/launch-plan.md",
         "git add docs/workbench/state.md docs/marketing/launch-plan.md && git commit -q -m 'docs(marketing): launch plan, and the approval of its pull request'",
         "git push -q -u origin docs/launch",
@@ -71,7 +71,7 @@
     },
     {
       "id": 2,
-      "prompt": "atualiza a feat/coupon com a main pf",
+      "prompt": "update feat/coupon with main pls",
       "expected_output": "The skill fetches and merges origin/main, which is two commits ahead of the stale local main, so src/tax.js and the new package.json script arrive on the branch; it notices the base changed package.json, sees that only a script was added, and says no reinstall is needed (or reinstalls) before running the checks; there is no approval covering a push of feat/coupon, so it shows what would be pushed and asks instead of pushing.",
       "files": [
         "evals/files/shop"
@@ -102,7 +102,7 @@
     },
     {
       "id": 3,
-      "prompt": "Resolve o conflito da fix/rounding com a main e sobe",
+      "prompt": "Resolve the conflict between fix/rounding and main and push it",
       "expected_output": "Both sides changed how lineTotal rounds (main floors the discounted total, the branch rounds half up with an explicit cents rule); keeping both is impossible, so the skill shows both versions and asks which to keep, and does not pick one, commit the merge or push.",
       "files": [
         "evals/files/shop"
