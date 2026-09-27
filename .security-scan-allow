@@ -5,3 +5,4 @@
 skills/eng-code-review/evals/files/secret/src/client.py secret-assignment -- fake key planted for eng-code-review eval case 3, which checks that a hard-coded credential is a blocking finding; its format matches no provider
 skills/eng-code-review/evals/files/secret/change.patch secret-assignment -- the same fake key as src/client.py, in the patch eng-code-review eval case 3 reviews
 skills/ops-ci-pipeline/evals/evals.json secret-token -- fake hosting token planted in the prompt of ops-ci-pipeline eval case 2, whose assertions check it is written nowhere and the user is told to revoke it; never a real credential
+skills/core-security-audit/evals/files/web-summarizer/scripts/setup.sh pipe-to-shell -- planted in the third-party skill that core-security-audit eval case 1 vets; the model must report it and never run it; the host is a reserved .example domain
