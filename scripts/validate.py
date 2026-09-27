@@ -14,6 +14,9 @@ Checks every skill under skills/ and every agent under agents/:
   - every metadata.inputs path is some skill's metadata.outputs (warning unless --strict)
   - relative links in SKILL.md resolve
   - agent frontmatter keys are only name, description, metadata
+  - english-only: no tracked text file contains Portuguese-specific diacritics or words, except
+    on a line carrying `validate: allow english-only -- <reason>` or a path listed in
+    .security-scan-allow with the rule english-only
   - scripts/security_scan.py finds no secret, hidden text or unsafe script pattern (its errors
     and warnings are reported here as they are there)
 
@@ -65,6 +68,14 @@ HARNESS_PATTERNS = [
     r"\bCursor\b", r"\bCodex\b", r"\bGemini CLI\b", r"\bOpenCode\b", r"\bCline\b",
 ]
 HARNESS_RE = re.compile("|".join(HARNESS_PATTERNS))
+
+# english-only: diacritics that do not occur in English (a with tilde, o with tilde, c with
+# cedilla) and a few unambiguous Portuguese words, written as escapes so this file passes.
+PORTUGUESE_WORDS = ["n\u00e3o", "voc\u00ea", "is" + "so", "p" + "ra", "est\u00e1", "tamb\u00e9m"]
+PORTUGUESE_RE = re.compile(
+    r"[\u00e3\u00f5\u00e7\u00c3\u00d5\u00c7]|(?<!\w)(?:" + "|".join(PORTUGUESE_WORDS) + r")(?!\w)",
+    re.IGNORECASE)
+ENGLISH_ALLOW_RE = re.compile(r"validate:\s*allow\s+english-only(?:\s+--\s*(\S.*?))?\s*(?:-->|\*/)?\s*$")
 
 
 # --- minimal YAML subset parser (stdlib only) --------------------------------------
@@ -289,10 +300,45 @@ def check_harness_names(report):
                             report.error(f"{rel}:{ln}", f"core file references a harness: {m.group(0)!r}")
 
 
-def check_security(report):
+def load_scanner():
     spec = importlib.util.spec_from_file_location("security_scan", os.path.join(ROOT, "scripts", "security_scan.py"))
     scanner = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(scanner)
+    return scanner
+
+
+def check_english(report, root=ROOT):
+    """english-only: tracked text files carry no Portuguese-specific diacritics or words.
+
+    A line is exempt when it carries `validate: allow english-only -- <reason>`; a whole file
+    when .security-scan-allow has `<path glob> english-only -- <reason>`.
+    """
+    scanner = load_scanner()
+    entries, _ = scanner.load_allow_file(root)
+    for path in sorted(scanner.list_files(root, None)):
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if rel.startswith(".git/") or scanner.path_allowed(entries, rel, "english-only"):
+            continue
+        text = scanner.read_text(path)
+        if text is None:
+            continue
+        for ln, line in enumerate(text.splitlines(), 1):
+            m = PORTUGUESE_RE.search(line)
+            if not m:
+                continue
+            allow = ENGLISH_ALLOW_RE.search(line)
+            if allow and allow.group(1):
+                continue
+            if allow:
+                report.error(f"{rel}:{ln}", "[english-only] the allow needs a reason: "
+                             "validate: allow english-only -- <reason>")
+                continue
+            report.error(f"{rel}:{ln}", f"[english-only] Portuguese text {m.group(0)!r}; "
+                         "every file is written in English (AGENTS.md principle 6)")
+
+
+def check_security(report):
+    scanner = load_scanner()
     _, active, _ = scanner.scan(ROOT)
     for f in active:
         add = report.error if f["severity"] == "error" else report.warn
@@ -335,6 +381,7 @@ def main(argv):
             if fn.endswith(".md"):
                 check_agent(fn, report)
     check_harness_names(report)
+    check_english(report)
     check_security(report)
     if spec:
         run_spec_validator(report)
