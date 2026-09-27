@@ -17,6 +17,7 @@ What the workbench should contain, per area, cross-referenced with the previous 
 | core-project-init | `docs/` layout, `docs/workbench/state.md`, autonomy mode, project `AGENTS.md` | — | agents-md-generator | rewrite | 0 |
 | core-agents-md | create or update a project's `AGENTS.md` from its codebase and conventions | codebase | agents-md-generator | reuse | 0 |
 | core-skill-creator | a new skill scaffolded, evaluated with strong and floor models, refined | authoring guide | — | create | 0 |
+| core-security-audit | audit of the whole workbench against the security checklist; vetting of third-party skills before install | skills, agents, providers, adapters | — | planned | — |
 
 `core-research` requires `search:web`. Tooling that is not a skill but belongs to wave 0: `scripts/eval-run` (runs an eval case with and without a skill, on a strong and a floor model, and grades assertions).
 
@@ -87,6 +88,7 @@ The most mature area in the old repository. Stack-agnostic procedures; stacks ar
 | eng-refactor | improved code with tests green | implementation | refactor-optimizer | reuse | 1 |
 | eng-code-review | review report; perspectives (quality, edge cases, regression, performance, security) and a bug-fix checklist | diff | code-reviewer, multi-agent-analyzer, post-fix-reviewer | merge | 1 |
 | eng-docs | documentation updates for the change | changes | documentation-writer skill | reuse | 1 |
+| eng-security-review | security review of a project: dependencies and advisories, secrets, authentication and authorization, input handling, configuration | codebase | — | planned | — |
 | eng-data-model | schema and migration plan | architecture | — | planned | — |
 
 ## Delivery and operations (`ops-`)
@@ -178,7 +180,7 @@ Flows may invoke flows one level deep (`flow-new-product` invokes `flow-business
 
 | Kind | Build | Planned | Total |
 |------|-------|---------|-------|
-| Capabilities | 62 | 6 | 68 |
+| Capabilities | 62 | 8 | 70 |
 | Flows | 11 | 0 | 11 |
 | Agents | 4 | 0 | 4 |
 
