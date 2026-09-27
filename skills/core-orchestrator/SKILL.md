@@ -15,7 +15,7 @@ metadata:
   outputs: []
   requires: []
   side_effects: []
-  version: "0.6"
+  version: "0.7"
 ---
 
 # Orchestrator
@@ -94,5 +94,5 @@ Approve the route only if all of the following hold:
 - Skill names are identifiers, not descriptions. If the table says `biz-business-model`, the route says `biz-business-model`, not a longer name that sounds more precise.
 - Never start two flows for one request. A cross-area outcome goes to one cross-area flow, which invokes the others one level deep.
 - A request that ends in something being published and where the thing still has to be produced is a flow (`flow-social-post`), not the publishing capability; `mkt-publish` only takes a finished post.
-- Requests with side effects ("post", "send", "deploy", "delete") are never `direct`, even when they look like one step. Route to the skill that owns the confirmation gate; if none exists, execute only after showing the exact payload and getting an explicit yes.
+- Requests with side effects ("post", "send", "deploy", "delete") are never `direct`, even when they look like one step. Route to the skill that owns the confirmation gate; if none exists, execute only after showing the exact payload and getting an explicit yes, and record the approval in "Approvals" of `docs/workbench/state.md` (scope `action`, what, date, the user's words, status `executed`).
 - The user writing in Portuguese does not change the route. Match intent; reply in the user's language; keep artifacts in English unless the project says otherwise.

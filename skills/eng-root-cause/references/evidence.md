@@ -11,12 +11,12 @@ Loaded at step 3 or step 4 of `eng-root-cause` when the reproduction is unreliab
 ## No access to the runtime
 
 - Ask for the smallest thing that settles it: the exact version (`navigator.userAgent`, `node -v`), a screenshot with the developer tools showing the computed value, a log line. One question with the recommended way to collect the answer.
-- A runtime the project supports but the machine lacks (WebKit on Linux, an older Node) is often available through the test runner (`playwright install webkit`) or a container; try that before asking.
+- A runtime the project supports but the machine lacks (WebKit on Linux, an older Node) is often available through the test runner's browser install or a container. That is a download: name what will be installed and its version, and run it only after the user agrees.
 
 ## Two causes fit
 
 - Write both predictions side by side and find the input where they differ; that input is the discriminating case. If no input separates them, the two are the same cause described twice, or the evidence needed is not observable yet: grade `unconfirmed` and say what would separate them.
-- Reverting the suspected line in a scratch copy (`git worktree add /tmp/probe <commit>`) and seeing the symptom disappear is evidence for the line, not for the mechanism; pair it with the specification or a trace that explains why.
+- Reverting the suspected line in a scratch copy (`scratch=$(mktemp -d)`, `git worktree add "$scratch" <commit>`, removed afterwards) and seeing the symptom disappear is evidence for the line, not for the mechanism; pair it with the specification or a trace that explains why.
 
 ## Grades, not percentages
 

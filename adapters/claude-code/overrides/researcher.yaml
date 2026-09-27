@@ -1,4 +1,4 @@
 # Harness-specific settings merged into the generated researcher agent. Write is needed for the brief
 # (docs/workbench/research/<topic>.md); a plugin agent cannot limit writes to a folder, so the body
-# states the limit. No shell and no edit of existing files.
+# states the limit. No shell. Write can also overwrite an existing file: the body limits writes to the brief.
 tools: WebSearch, WebFetch, Read, Grep, Glob, Write
