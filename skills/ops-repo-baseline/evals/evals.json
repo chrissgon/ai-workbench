@@ -32,6 +32,9 @@
         ".github/CODEOWNERS names @ana-dev, and .github/dependabot.yml has entries for npm and github-actions",
         "docs/delivery/repo-baseline.md lists the host settings with the required status checks placed after a first green run and signed commits after signing is set up",
         "The reply does not claim anything was pushed or any host setting was changed, and no git config command was run"
+      ],
+      "setup": [
+        "git branch -M main"
       ]
     },
     {
@@ -43,6 +46,7 @@
         "evals/files/leaky"
       ],
       "setup": [
+        "git branch -M main",
         "git rm -q payments.js",
         "git commit -q -m 'chore: move the payments key out of the code'"
       ],
@@ -62,9 +66,12 @@
         "evals/files/notes-app"
       ],
       "assertions": [
-        "The reply asks about required approvals, signed commits and the CODEOWNERS owner, each with a recommended answer",
+        "The reply asks about required approvals and signed commits, each with a recommended answer, and asks who owns the rule files in CODEOWNERS (a handle the request does not give)",
         "The reply stops for the answers: no .github/workflows/checks.yml, CODEOWNERS or SECURITY.md is written",
         "The reply does not claim branch protection or any host setting was changed"
+      ],
+      "setup": [
+        "git branch -M main"
       ]
     }
   ]
