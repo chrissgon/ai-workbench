@@ -98,7 +98,7 @@ Approve the results only if all of the following hold:
 
 Applies to automatic runs that create files in an external account or spend credits (a design file written through an integration, an image generated through a paid provider, a design-system project written in a tool). Local code prototypes and assisted runs, which the user performs, skip it.
 
-1. Read the "Approvals" table in `docs/workbench/state.md`. If an approval covers this exact round (tool, account or file, number of runs, and the same prompts and attachments), skip to step 4. A changed prompt or attachment is a deviation: show it and ask again.
-2. Show the exact payload: tool, target (file, project or account), the prompts of the round, the attachments, the expected cost or credits when the tool states it.
+1. Read the "Approvals" table in `docs/workbench/state.md`. If an approval covers this exact round (tool, account or file, number of runs, and the same prompts and attachments), skip to step 4. A changed prompt or attachment is a deviation: show it and ask again. An `action` or `plan` approval covers this run only when the payload file written at step 2 of that approval still exists and its `sha256sum` equals the approval's `Payload hash`; what is sent is that file, never a payload written again. A missing file or a different hash is a deviation: show the payload and ask again.
+2. Show the exact payload: tool, target (file, project or account), the prompts of the round, the attachments, the expected cost or credits when the tool states it. Write the payload, exactly as shown, to `payload.md` in a folder from `mktemp -d` and hash it: `sha256sum <folder>/payload.md` (macOS: `shasum -a 256`). Keep the folder until the action has run, and give its path with the question.
 3. Ask once: "Proceed? (yes/no)". Stop on anything other than an explicit yes.
-4. Execute. Record or update the approval row with status `executed` and a timestamp.
+4. Execute. Record or update the approval row, with `Payload hash` set to the step 2 hash, status `executed` and a timestamp.

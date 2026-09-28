@@ -54,10 +54,10 @@ Check these before merging, resolving or pushing. They override the procedure.
 
 Applies to pushing the synced branch.
 
-1. Read "Approvals" in `docs/workbench/state.md` as it was before the merge. An approval that covers pushing this branch (its pull request, or a push the user approved for it) covers a sync push without conflicts: go to step 4. A merge in which you resolved conflicts is new content: go to step 2.
-2. Otherwise show the payload: repository, branch, the merge commit and the commits it brings from the base (count and subjects), the conflicted files and how each was resolved.
+1. Read "Approvals" in `docs/workbench/state.md` as it was before the merge. An approval that covers pushing this branch (its pull request, or a push the user approved for it) covers a sync push without conflicts: go to step 4. A merge in which you resolved conflicts is new content: go to step 2. An approval this skill recorded at step 4 covers a later push only when the payload file written at step 2 of that approval still exists and its `sha256sum` equals the approval's `Payload hash`; what is sent is that file, never a payload written again. A missing file or a different hash is a deviation: show the payload and ask again.
+2. Otherwise show the payload: repository, branch, the merge commit and the commits it brings from the base (count and subjects), the conflicted files and how each was resolved. Write the payload, exactly as shown, to `payload.md` in a folder from `mktemp -d` and hash it: `sha256sum <folder>/payload.md` (macOS: `shasum -a 256`). Keep the folder until the action has run, and give its path with the question.
 3. Ask once: "Push? (yes/no)". Stop on anything other than an explicit yes.
-4. Push with `git push origin <branch>` (never `--force`), then follow the checks.
+4. When step 3 asked, record the approval in "Approvals" (scope `action`, the branch and merge commit, `Payload hash` from step 2, the date, the user's words, status `executed`). Push with `git push origin <branch>` (never `--force`), then follow the checks.
 
 ## Procedure
 

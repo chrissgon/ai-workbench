@@ -55,10 +55,10 @@ Check these before writing any file, and again before replying. They override th
 
 Applies to pushing a branch so the pipeline runs (the run deploys a preview with the user's host token), and to any local command that deploys. Local runs of the build and the tests skip it; a local deploy command never runs in this skill.
 
-1. Read the "Approvals" section of `docs/workbench/state.md`. If an approval covers this branch and repository, skip to step 4.
-2. Show the payload: repository, branch, commits, and what the run will do (build, test, deploy a preview to which host).
+1. Read the "Approvals" section of `docs/workbench/state.md`. If an approval covers this branch and repository, skip to step 4. An `action` or `plan` approval covers this run only when the payload file written at step 2 of that approval still exists and its `sha256sum` equals the approval's `Payload hash`; what is sent is that file, never a payload written again. A missing file or a different hash is a deviation: show the payload and ask again.
+2. Show the payload: repository, branch, commits, and what the run will do (build, test, deploy a preview to which host). Write the payload, exactly as shown, to `payload.md` in a folder from `mktemp -d` and hash it: `sha256sum <folder>/payload.md` (macOS: `shasum -a 256`). Keep the folder until the action has run, and give its path with the question.
 3. Ask once: "Proceed? (yes/no)". Stop on anything other than an explicit yes.
-4. Record the approval in "Approvals" (scope, what, date, expiry, the user's words, status `pending-execution`), stage files by name after reading `git status` (never `git add -A` or `.`), commit, push, and set the status to `executed`.
+4. Record the approval in "Approvals" (scope, what, `Payload hash` from step 2, date, expiry, the user's words, status `pending-execution`), stage files by name after reading `git status` (never `git add -A` or `.`), commit, push, and set the status to `executed`.
 
 ## Procedure
 
