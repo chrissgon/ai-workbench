@@ -55,7 +55,7 @@ Progress:
   1. Geography and delivery (for example: whole country, remote delivery).
   2. Offers to compare (each product or service line) and whether to compare them against each other.
   3. Customer type (businesses, consumers, government) and size band.
-  4. Business shape: team size, hours available for delivery per week (when the answer is per day, also ask how many days a week), and the goal of this analysis (first client, scale, fundraising).
+  4. Business shape: team size, hours available for delivery per week (when the answer is per day, also ask how many days a week), which parts of delivery the people do themselves and which are automated or delegated, and the goal of this analysis (first client, scale, fundraising).
   5. Source budget: free public sources only, or paid reports allowed.
   6. The decision the analysis informs, if it is not "which offer and segment to pursue first".
 
@@ -74,7 +74,7 @@ Progress:
   ```bash
   python3 skills/biz-market-analysis/scripts/capacity.py --hours-per-week <item 4> --hours-per-job <h> --utilization <share>
   ```
-  The hours per job and the utilization are `assumed` unless the user gave them or a source does; say so next to the result. Price ranges, counts and shares come from the sources' raw figures. Write each command under "Method".
+  `--hours-per-job` counts only the hours the people themselves spend per job (meetings, sales, review when delivery is automated; everything when it is not). The hours per job and the utilization are `assumed` unless the user gave them or a source does; say so next to the result. Price ranges, counts and shares come from the sources' raw figures. Write each command under "Method".
 - [ ] Step 7: Build the comparison. Options are the offers from item 2 (or offer × segment pairs, when segments differ in pain). Score each option from 1 to 5 on these criteria, citing the source numbers for every score:
   - demand: evidence that buyers exist and look for it;
   - urgency: a dated trigger or a costly pain that makes buyers act now;
@@ -169,6 +169,7 @@ Approve the artifact only if all of the following hold:
 - Generic startup templates push a venture lens ("would this be a $100M company?") onto a one-person service firm. For that firm the numbers that matter are buyers reachable and price per job against hours available.
 - Marketplace listing counts and averages are what sellers ask, not what buyers pay. Label them as such.
 - A tax or regulatory deadline creates demand only for buyers it affects before that date; cite the official schedule, not a vendor's blog.
+- The user's hours may be reserved for what only a person can do while automation delivers the rest. Total delivery hours then overstate the load; ask before scoring fit.
 - Hours given per day are not hours per week; ask how many days before computing capacity, or label the days `assumed` and add the question to the state file.
 - The cheapest competitor is often a free feature of a platform the buyers already use (a messaging app's own AI agent), or a public programme that pays most of a consultant's fee. Search for both before scoring competition.
 - A regulatory date moves: search for the latest resolution before citing one, and record the superseded date.
