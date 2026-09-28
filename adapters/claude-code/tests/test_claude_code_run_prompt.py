@@ -103,3 +103,13 @@ def test_max_cost_becomes_a_budget_and_bad_values_are_refused(env):
     args = json.loads(env["log"].read_text())["args"]
     assert args[args.index("--max-budget-usd") + 1] == "0.50"
     assert run(env, "--max-cost-usd", "0.5; rm -rf x").returncode == 2
+
+
+def test_skill_scripts_are_allowed_by_relative_and_absolute_path(env):
+    r = run(env, "--skill-dir", str(env["skill"]))
+    assert r.returncode == 0, r.stderr
+    log = json.loads(env["log"].read_text())
+    rules = log["args"][log["args"].index("--allowedTools") + 1]
+    cwd = env["tmp"] / "cwd"
+    assert "Bash(python3 .claude/skills/demo/scripts/check.py *)" in rules
+    assert f"Bash(python3 {cwd}/.claude/skills/demo/scripts/check.py *)" in rules

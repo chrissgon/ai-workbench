@@ -66,7 +66,12 @@ if [[ -n "$SKILL_DIR" && -d "$SKILL_DIR/scripts" ]]; then
   REL=".claude/skills/$(basename "$SKILL_DIR")/scripts"
   for f in "$SKILL_DIR"/scripts/*; do
     [[ -f "$f" ]] || continue
-    for runner in bash python3; do ALLOW="${ALLOW:+$ALLOW,}Bash($runner $REL/$(basename "$f")),Bash($runner $REL/$(basename "$f") *)"; done
+    # Both the relative path and the absolute one: models write either.
+    # A folder path with ( ) , or * would break the rule syntax: then only the relative path is allowed.
+    ABS=""; [[ "$CWD" == *[\(\),\*]* ]] || ABS="$CWD/$REL/$(basename "$f")"
+    for script in "$REL/$(basename "$f")" ${ABS:+"$ABS"}; do
+      for runner in bash python3; do ALLOW="${ALLOW:+$ALLOW,}Bash($runner $script),Bash($runner $script *)"; done
+    done
   done
 fi
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
