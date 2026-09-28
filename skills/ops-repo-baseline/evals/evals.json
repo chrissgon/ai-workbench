@@ -20,7 +20,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "set up the security baseline for this project before i push it to github for the first time. i'm the only maintainer (@ana-dev), i sign my commits, squash only, main is the default branch, and everything in the repo ships",
+      "prompt": "set up the security baseline for this project before i push it to github for the first time. i'm the only maintainer (@ana-dev) so no approvals needed on PRs, i sign my commits, squash only, main is the default branch, and everything in the repo ships",
       "expected_output": "The skill diagnoses the project with baseline_status.py, copies the scanner into scripts/secret-scan/ and runs it on the tree and the history (no findings), then writes .github/workflows/checks.yml (npm run lint and npm test, read-only permissions, a secrets job), .github/dependabot.yml (npm at / and github-actions), .github/CODEOWNERS with @ana-dev, SECURITY.md, an executable .githooks/pre-commit and a .gitignore that ignores .env. It cannot reach the host to read action commits, so every uses: line keeps a <commit sha> placeholder or names an open item; no hash is invented. It runs npm run lint and npm test, writes docs/delivery/repo-baseline.md with the host checklist in order (history scan before the first push, signing before the signed-commits rule, required checks after the first green run, 0 approvals), and pushes nothing.",
       "files": [
         "evals/files/notes-app"

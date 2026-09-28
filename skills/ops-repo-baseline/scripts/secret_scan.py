@@ -16,6 +16,9 @@ Rules:
 A finding that is intended (a fake key in a test fixture) is allowed by a line in .secret-scan-allow at
 the root: `<path> <rule> -- <reason>`, one file per line, never a folder or a glob.
 
+Each finding also has "kind": "real", or "planted?" when its file sits under a test, fixture, eval or
+example folder, and "action", what to tell the user. Anywhere else a credential is treated as real.
+
 Output: one JSON object on stdout (files scanned, findings with path, line, rule and a masked excerpt);
 no finding ever carries a secret, not even partially. This file and redact.py are copied into the
 project by the workbench skill ops-repo-baseline; keep them together.
@@ -38,6 +41,7 @@ SECRET_FILE_OK_RE = re.compile(r"\.env\.example$|\.env\.sample$")
 ALLOW_FILE = ".secret-scan-allow"
 ALLOW_LINE_RE = re.compile(r"^(\S+)\s+(secret-token|secret-assignment|secret-file)\s+--\s+(\S.*)$")
 SELF = {"secret_scan.py", "redact.py"}
+PLANTED_DIRS = {"test", "tests", "__tests__", "spec", "fixtures", "__fixtures__", "testdata", "evals", "examples", "example"}
 MAX_BYTES = 2_000_000
 GIT_TIMEOUT = 300
 
@@ -83,8 +87,12 @@ def scan(root, history):
         if (rel.split("@")[0], rule) in allowed or (rel, rule, line) in seen:
             return
         seen.add((rel, rule, line))
+        planted = bool(PLANTED_DIRS & set(rel.split("@")[0].split("/")[:-1]))
         findings.append({"path": rel, "line": line, "rule": rule, "message": message,
-                         "excerpt": mask_secret_line(text) if text else ""})
+                         "excerpt": mask_secret_line(text) if text else "",
+                         "kind": "planted?" if planted else "real",
+                         "action": ("ask the user whether it is a planted test value; allow it in .secret-scan-allow only if so"
+                                    if planted else "revoke it with its provider now; it stays in history until the user decides")})
 
     def check(rel, body, where):
         if os.path.basename(rel) in SELF:

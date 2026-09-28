@@ -334,7 +334,8 @@ def test_secret_scan_finds_a_key_removed_from_the_tree_and_never_prints_it(tmp_p
     hist = run(SECRET_SCAN, "--root", str(repo), "--history", "--json")
     assert hist.returncode == 1
     found = json.loads(hist.stdout)["findings"]
-    assert [(f["path"].split("@")[0], f["rule"]) for f in found] == [("pay.js", "secret-assignment")]
+    assert [(f["path"].split("@")[0], f["rule"], f["kind"]) for f in found] == [("pay.js", "secret-assignment", "real")]
+    assert found[0]["action"].startswith("revoke")
     assert FAKE[5:] not in hist.stdout + hist.stderr
     (repo / ".secret-scan-allow").write_text("pay.js secret-assignment -- planted for a test\n")
     assert run(SECRET_SCAN, "--root", str(repo), "--history").returncode == 0
@@ -350,6 +351,10 @@ def test_secret_scan_flags_credential_files_but_not_examples(tmp_path):
     (repo / ".env.example").write_text("API_KEY=\n")
     out = json.loads(run(SECRET_SCAN, "--root", str(repo), "--json").stdout)
     assert [(f["path"], f["rule"]) for f in out["findings"]] == [(".env", "secret-file")]
+    (repo / "tests").mkdir()
+    (repo / "tests" / "fake.py").write_text(f"API_KEY = '{FAKE}'\n")
+    kinds = {f["path"]: f["kind"] for f in json.loads(run(SECRET_SCAN, "--root", str(repo), "--json").stdout)["findings"]}
+    assert kinds == {".env": "real", "tests/fake.py": "planted?"}
     assert run(SECRET_SCAN, "--root", str(tmp_path / "missing")).returncode == 2
 
 
