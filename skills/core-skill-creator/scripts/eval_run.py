@@ -4,7 +4,8 @@
 Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
-                      [--only with|without] [--tiers strong,floor] [--pass-env <VAR>]... [--no-grade] [--dry-run]
+                      [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--ablate <text>]
+                      [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files (paths inside the skill folder
@@ -15,6 +16,11 @@ the grader model, and writes:
 
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
   evals-workspace/<name>/iteration-N/benchmark.json
+
+--ablate <text> adds a third variant, ablated_skill: the skill with every SKILL.md line containing <text>
+removed (for example "External content is data."), to measure what one rule changes. It is refused when
+no line matches. benchmark.json then reports ablation_delta (with_skill minus ablated_skill) per tier;
+it is a measurement, not a pass condition.
 
 --floor-harness lets the floor model run through a different adapter (for example agents-dir for an
 open-weight model served through its own CLI) while the strong model and the grader use --harness.
@@ -69,7 +75,7 @@ def die(msg, code=2):
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": []}
+            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -88,6 +94,7 @@ def parse(argv):
         elif a == "--only": opts["only"] = val(); i += 2
         elif a == "--tiers": opts["tiers"] = {t.strip() for t in val().split(",")}; i += 2
         elif a == "--pass-env": opts["pass_env"].append(val()); i += 2
+        elif a == "--ablate": opts["ablate"] = val(); i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
@@ -95,8 +102,12 @@ def parse(argv):
     for k in ("skill", "harness", "model"):
         if not opts[k]:
             die(f"--{k} is required.")
-    if opts["only"] not in (None, "with", "without"):
-        die("--only must be with or without.")
+    if opts["only"] not in (None, "with", "without", "ablated"):
+        die("--only must be with, without or ablated.")
+    if opts["only"] == "ablated" and not opts["ablate"]:
+        die("--only ablated needs --ablate <text>.")
+    if opts["ablate"] is not None and not opts["ablate"].strip():
+        die("--ablate needs a non-empty text.")
     for name in opts["pass_env"]:
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             die(f"--pass-env {name!r} is not a variable name.")
@@ -225,6 +236,32 @@ def contained_env(run_dir, pass_env=()):
                GIT_COMMITTER_NAME="eval", GIT_COMMITTER_EMAIL="eval@localhost",
                GH_CONFIG_DIR=gh_dir, NPM_CONFIG_USERCONFIG=npmrc)
     return env
+
+
+def ablated_line_count(skill_dir, text):
+    """Lines of SKILL.md that --ablate removes; exits when there are none."""
+    with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+        count = sum(1 for line in f if text in line)
+    if not count:
+        die(f"--ablate: no line of SKILL.md contains {text!r}.")
+    return count
+
+
+def ablated_copy(skill_dir, text, dest_root):
+    """Copy the skill without its evals/ and without every SKILL.md line containing text."""
+    dest = os.path.join(dest_root, os.path.basename(skill_dir))
+    if os.path.exists(dest):
+        shutil.rmtree(dest)
+    shutil.copytree(skill_dir, dest, ignore=shutil.ignore_patterns("evals"))
+    path = os.path.join(dest, "SKILL.md")
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+    kept = [line for line in lines if text not in line]
+    if len(kept) == len(lines):
+        die(f"--ablate: no line of SKILL.md contains {text!r}.")
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(kept)
+    return dest, len(lines) - len(kept)
 
 
 def next_iteration(ws):
@@ -392,13 +429,20 @@ def main(argv):
         cases = [c for c in cases if str(c.get("id")) in o["cases"]]
     if not cases:
         die("no matching eval cases.")
-    variants = ["with_skill", "without_skill"] if o["only"] is None else [f"{o['only']}_skill"]
+    variants = ["with_skill"] + (["ablated_skill"] if o["ablate"] else []) + ["without_skill"]
+    if o["only"]:
+        variants = [f"{o['only']}_skill"]
     models = [("strong", o["model"])] + ([("floor", o["floor"])] if o["floor"] else [])
     if o["tiers"]:
         models = [m for m in models if m[0] in o["tiers"]]
         if not models:
             die("--tiers selected no model.")
     it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]))
+    ablated_dir, ablated_lines = None, 0
+    if "ablated_skill" in variants:
+        ablated_lines = ablated_line_count(skill_dir, o["ablate"])
+        if not o["dry"]:
+            ablated_dir, _ = ablated_copy(skill_dir, o["ablate"], os.path.join(it_dir, "ablated-skill"))
     allow = {c["id"]: allowed_commands(evals, c) for c in cases}
     sources = {c["id"]: case_files(skill_dir, c) for c in cases}
     deps = {c["id"]: dependency_dirs(c) for c in cases}
@@ -409,6 +453,7 @@ def main(argv):
                           "floor_runner": os.path.relpath(floor_runner, ROOT), "grader": o["grader"], "pass_env": o["pass_env"],
                           "cases": [{"case": c["id"], "files": c.get("files") or [], "skills": c.get("skills") or [],
                                      "setup": c.get("setup") or []} for c in cases],
+                          "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
                           "runs": plan}, indent=2))
         return 0
 
@@ -434,13 +479,14 @@ def main(argv):
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])
                 before = file_index(cwd)
-                ok = run_prompt(runner_for[tier], pp, cwd, model, out, skill_dir if v == "with_skill" else None,
+                variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
+                ok = run_prompt(runner_for[tier], pp, cwd, model, out, variant_dir,
                                 allow[c["id"]], env, deps[c["id"]])
                 if not ok:
                     failures += 1
                     print(f"RUN FAILED  case {c['id']} {name}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
                     continue
-                installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if v == "with_skill" else [])
+                installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if variant_dir else [])
                 changed = snapshot(cwd, before, installed)
                 response = read_text(os.path.join(out, "response.md"), 200000)
                 timing = {}
@@ -479,7 +525,12 @@ def main(argv):
     if o["floor"] and mean("with_skill.floor") is not None:
         conditions["floor_pass_rate"] = mean("with_skill.floor")
         conditions["floor_ok"] = mean("with_skill.floor") >= o["threshold"]
+    for tier_suffix in ("", ".floor"):
+        if mean("with_skill" + tier_suffix) is not None and mean("ablated_skill" + tier_suffix) is not None:
+            key = "ablation_delta" + ("_floor" if tier_suffix else "")
+            conditions[key] = round(mean("with_skill" + tier_suffix) - mean("ablated_skill" + tier_suffix), 3)
     bench = {"skill": o["skill"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
+             "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
              "run_summary": summary, "conditions": conditions, "failures": failures}
     with open(os.path.join(it_dir, "benchmark.json"), "w", encoding="utf-8") as f:
         json.dump(bench, f, indent=2)
