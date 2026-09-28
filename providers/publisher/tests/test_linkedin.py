@@ -555,3 +555,18 @@ def test_auth_without_client_env_is_not_configured(env):
     proc = run(AUTH_SCRIPT, ["--provider", "linkedin", "--no-browser"], env)
     assert proc.returncode == 3
     assert "LINKEDIN_CLIENT_ID" in proc.stderr
+
+
+def test_a_scheduled_copy_needs_the_resolver_in_its_snapshot(env, fake, tmp_path):
+    """The scheduler runs a copy of this script from <job>/files/; the resolver must be copied with it."""
+    import shutil
+    files = tmp_path / "job" / "files"
+    files.mkdir(parents=True)
+    alone = files / "linkedin.py"
+    shutil.copyfile(SCRIPT, alone)
+    proc = run(alone, ["--check"], env)
+    assert proc.returncode != 0 and "snapshot" in proc.stderr
+    shutil.copyfile(HERE.parents[1] / "secrets" / "resolver.py", files / "resolver.py")
+    proc = run(alone, ["--check"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["ready"] is True

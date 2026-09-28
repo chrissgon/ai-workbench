@@ -179,8 +179,16 @@ def api_base() -> tuple[str, bool]:
 
 
 def secret_resolver():
-    """The workbench's one secret resolver (providers/secrets/resolver.py), imported by path."""
-    path = Path(__file__).resolve().parents[1] / "secrets" / "resolver.py"
+    """The workbench's one secret resolver, imported by path: resolver.py next to this file first (a
+    scheduled job runs a copy of this script from its job folder, with resolver.py in the same
+    snapshot), then providers/secrets/resolver.py in the workbench."""
+    here = Path(__file__).resolve()
+    candidates = (here.parent / "resolver.py", here.parents[1] / "secrets" / "resolver.py")
+    path = next((c for c in candidates if c.is_file()), None)
+    if path is None:
+        raise ProviderError(
+            "providers/secrets/resolver.py is not next to this script nor in the workbench; a scheduled job "
+            "must list it in its snapshot (providers/scheduler/README.md)", EXIT_NOT_CONFIGURED)
     spec = importlib.util.spec_from_file_location("workbench_secret_resolver", path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module  # dataclasses look their module up here
