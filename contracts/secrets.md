@@ -30,7 +30,7 @@ Check what is set, without printing any value: `python3 providers/secrets/resolv
 | `LINKEDIN_ACCESS_TOKEN` (expiry from `LINKEDIN_TOKEN_EXPIRES_AT` when it comes from the environment) | publish posts on LinkedIn | OAuth scopes `openid`, `profile`, `w_member_social` | `providers/publisher/linkedin.py` | `publisher-linkedin` (a JSON record written by `providers/publisher/auth.py`) |
 | `LINKEDIN_CLIENT_ID` | the LinkedIn app that authorizes the publisher, once | an app with the "Share on LinkedIn" product | `providers/publisher/auth.py` | `linkedin-client-id` |
 | `LINKEDIN_CLIENT_SECRET` | that app's secret, used once by the authorization | the app's primary client secret | `providers/publisher/auth.py` | `linkedin-client-secret` |
-| `OPENROUTER_API_KEY` | eval model runs through OpenRouter (the floor model, and the strong one when it runs there) | a key used only for evals; a credit limit on it is recommended | `skills/core-skill-creator/scripts/eval_run.py` (`--pass-env`), `adapters/agents-dir/run-prompt.sh` | `openrouter` |
+| `OPENROUTER_API_KEY` | the floor model's eval runs through OpenRouter; Claude models use the maintainer's own login | a key used only for evals; a credit limit on it is recommended | `skills/core-skill-creator/scripts/eval_run.py` (`--floor-pass-env`), `adapters/agents-dir/run-prompt.sh` | `openrouter` |
 
 ## Why
 

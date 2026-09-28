@@ -84,7 +84,7 @@ REGISTRY: dict[str, Secret] = {s.name: s for s in (
            ("providers/publisher/auth.py",),
            store_username="linkedin-client-secret"),
     Secret("OPENROUTER_API_KEY",
-           "run eval models (the floor model, and the strong one through OpenRouter)",
+           "run the floor model's eval runs through OpenRouter",
            "a key used only for evals; a credit limit on it is recommended",
            ("skills/core-skill-creator/scripts/eval_run.py --pass-env", "adapters/agents-dir/run-prompt.sh"),
            store_username="openrouter"),
