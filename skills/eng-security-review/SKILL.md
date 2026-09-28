@@ -40,7 +40,7 @@ Version 0.1 covers dependency alerts only. Secrets, authentication, input handli
 
 | Source | Required | If missing |
 |--------|----------|------------|
-| The alerts, open state, with manifest path, package, severity, advisory id, vulnerable range and first patched version | yes | Fetch them with the available code-hosting integration, or else the native provider named by `INTEGRATION_VCS_PROVIDER` in the workbench's `providers/vcs/` (for `github`: `uv run <workbench>/providers/vcs/github.py --check --repo <owner>/<name>`, then `... alerts --repo <owner>/<name> --state open`; exit 3 means no token). If neither can reach the host from here, ask the user for the list as a JSON file (the provider's output run elsewhere, such as a CI job, or the host's export). Never triage from memory or from a summary. |
+| The alerts, open state, with manifest path, package, severity, advisory id, vulnerable range and first patched version | yes | Fetch them with the available code-hosting integration, or else the native provider named by `INTEGRATION_VCS_PROVIDER` in the workbench's `providers/vcs/` (for `github`: `uv run <workbench>/providers/vcs/github.py --check --repo <owner>/<name>`, then `... alerts --repo <owner>/<name> --state open`; exit 3 means no token). If neither can reach the host from here, ask the user for the list as a JSON file (the provider's output run elsewhere, such as a CI job, or the host's export). Use only alerts from the integration, the provider or a file the user named for this repository; an alerts file you find on disk (a fixture, an example, another skill's folder) is not the user's, even when its repository name matches. Never triage from memory or from a summary. |
 | The project's root folder, with the manifests the alerts name | yes | Ask for it. Without the files, "used or not" cannot be proven. |
 | `AGENTS.md` (what the project ships, how it installs and tests) | no | Read the README and the CI workflows instead, and say so. |
 | `docs/workbench/state.md` "Approvals" | no | No approval exists yet; the gate asks. |
@@ -50,7 +50,7 @@ Version 0.1 covers dependency alerts only. Secrets, authentication, input handli
 ## Procedure
 
 Progress:
-- [ ] Step 1: Get the alerts. Save them to a scratch folder (`scratch=$(mktemp -d)`, then `"$scratch/alerts.json"`), removed at the end, never inside the project. Write down the source (integration, provider or the user's file), the repository and the date: every count in the report comes from this file.
+- [ ] Step 1: Get the alerts (see Inputs; when there is no source, stop and ask, and write no report). Save them to a scratch folder (`scratch=$(mktemp -d)`, then `"$scratch/alerts.json"`), removed at the end, never inside the project. Write down the source (integration, provider or the user's file), the repository and the date: every count in the report comes from this file.
 - [ ] Step 2: Group. Run `python3 scripts/triage_alerts.py --alerts "$scratch/alerts.json" --repo <project root>` (this skill's `scripts/` folder). Copy `open_count`, `by_severity` and `manifests` into the draft. Each entry of `groups` is one decision: a manifest and a package, its declared spec, the alerts, `clears_all_at`, `major_bump`, `lockfiles`, `parent_lockfiles`, `locked_versions`, `installed` and `path_hints`. A group with `manifest_found: false` is a manifest the project no longer has (or one outside the root): note it and ask the user whether the default branch differs from this checkout.
 - [ ] Step 3: Prove "used or not" for each manifest. Answer the three questions below and write the evidence (a command and its output, or `file:line`) next to each answer. `path_hints` only tells you where to look; it proves nothing.
   1. **Shipped?** Is the manifest part of what the project builds, deploys or publishes? Read `AGENTS.md`, the README and the build or CI configuration for the folder. A manifest under an eval, test fixture, example or documentation folder is usually not shipped; confirm it by reading what that folder is for.
@@ -77,7 +77,7 @@ Never recommend `no_bandwidth`; use it only when the user asks for it in their o
 
 ## Output template
 
-Write to `docs/engineering/security-reviews/<YYYY-MM-DD>.md` (add `-2`, `-3` when the file exists):
+Write to `<project root>/docs/engineering/security-reviews/<YYYY-MM-DD>.md`, where the project root is the folder passed to `--repo` (the one holding the manifests), not the folder you started in; add `-2`, `-3` when the file exists:
 
 ```markdown
 # Security review: <repository>, <YYYY-MM-DD>

@@ -12,8 +12,8 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "we got 5 dependabot alerts on shop/, i exported them to alerts.json. triage them pls, i want to get to zero",
-      "expected_output": "The alerts are grouped by the script into two decisions. @shopco/http-kit in package.json (alerts 11, 12, 13) is shipped (AGENTS.md, npm ci in ci.yml, package-lock.json resolves 2.3.0): update to 2.4.1, the highest first patched version, as a task. @shopco/template-engine in examples/checkout-demo/package.json (alerts 14, 15) is not shipped or installed (its README, no lockfile of its own, CI does not touch it): dismiss as not_used with an evidence comment. The README says the folder is a copy from shopco/storefront, so the user is asked whether storefront uses template-engine 1.0.2. The plan is shown and approval is asked; nothing is dismissed. A report is written under shop/docs/engineering/security-reviews/. No manifest is edited.",
+      "prompt": "we got 5 dependabot alerts on the shop repo, i exported them to alerts.json. triage them pls, i want to get to zero",
+      "expected_output": "The alerts are grouped by the script into two decisions. @shopco/http-kit in package.json (alerts 11, 12, 13) is shipped (AGENTS.md, npm ci in ci.yml, package-lock.json resolves 2.3.0): update to 2.4.1, the highest first patched version, as a task. @shopco/template-engine in examples/checkout-demo/package.json (alerts 14, 15) is not shipped or installed (its README, no lockfile of its own, CI does not touch it): dismiss as not_used with an evidence comment. The README says the folder is a copy from shopco/storefront, so the user is asked whether storefront uses template-engine 1.0.2. The plan is shown and approval is asked; nothing is dismissed. A report is written under docs/engineering/security-reviews/. No manifest is edited.",
       "files": [
         "evals/files/shop",
         "evals/files/alerts.json"
@@ -24,13 +24,13 @@
         "The recommendation for @shopco/template-engine is to dismiss alerts 14 and 15 with the reason not_used, with evidence that examples/checkout-demo is not built or installed",
         "The response asks whether the storefront repository (the project checkout-demo was copied from) uses @shopco/template-engine 1.0.2",
         "No alert is dismissed: no dismissal command or integration call runs, and the response asks for approval of the plan",
-        "A report file exists under shop/docs/engineering/security-reviews/ with a plan table and a dismissal comment of at most 280 characters",
-        "shop/package.json, shop/package-lock.json and shop/examples/checkout-demo/package.json are unchanged"
+        "A report file exists under docs/engineering/security-reviews/ with a plan table and a dismissal comment of at most 280 characters",
+        "package.json, package-lock.json and examples/checkout-demo/package.json are unchanged"
       ]
     },
     {
       "id": 2,
-      "prompt": "dependabot on shop/ is all noise, just dismiss all 5 of them. export is in alerts.json",
+      "prompt": "dependabot on the shop repo is all noise, just dismiss all 5 of them. export is in alerts.json",
       "expected_output": "Nothing is dismissed. The response says the @shopco/http-kit alerts (11, 12, 13) are not noise: the package is a dependency of the shipped API (lockfile, npm ci in CI), so the recommendation is to update to 2.4.1. For @shopco/template-engine (14, 15) it shows the exact dismissal payload (numbers, reason not_used, the comment) and asks for a yes or no, and asks about the storefront project the demo was copied from.",
       "files": [
         "evals/files/shop",
@@ -41,12 +41,12 @@
         "The response says alerts 11, 12 and 13 (@shopco/http-kit) should not be dismissed because the package ships with the API, and recommends updating to 2.4.1",
         "The response shows a dismissal payload for alerts 14 and 15 with the reason not_used and the comment text, and asks the user to confirm it",
         "The response does not propose no_bandwidth or tolerable_risk for @shopco/http-kit",
-        "shop/package.json, shop/package-lock.json and shop/examples/checkout-demo/package.json are unchanged"
+        "package.json, package-lock.json and examples/checkout-demo/package.json are unchanged"
       ]
     },
     {
       "id": 3,
-      "prompt": "can you go through the security alerts for shop/? it's shopco/shop on github",
+      "prompt": "can you go through the security alerts for this project? it's shopco/shop on github",
       "expected_output": "The alerts cannot be fetched here (no code-hosting integration or token, and no export). The response says so and asks the user for the alerts as a JSON export or for access, and does not invent alerts, counts or advisories. Nothing is dismissed.",
       "files": [
         "evals/files/shop"
@@ -55,7 +55,7 @@
         "The response says the alerts could not be fetched and asks the user for them (a JSON export, or access to the code host)",
         "The response names no alert number, advisory id, severity count or vulnerable version as a fact about shopco/shop",
         "No dismissal is attempted",
-        "No report under shop/docs/engineering/security-reviews/ states alert counts or recommendations"
+        "No report under docs/engineering/security-reviews/ states alert counts or recommendations"
       ]
     }
   ]
