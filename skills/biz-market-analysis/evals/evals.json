@@ -1,12 +1,20 @@
 {
   "skill_name": "biz-market-analysis",
-  "allow_commands": ["python3 skills/biz-market-analysis/scripts/rank.py", "python3 skills/biz-market-analysis/scripts/capacity.py", "mktemp -d", "date +%F", "mkdir -p docs/business"],
+  "allow_commands": [
+    "python3 skills/biz-market-analysis/scripts/rank.py",
+    "python3 skills/biz-market-analysis/scripts/capacity.py",
+    "mktemp -d",
+    "date +%F",
+    "mkdir -p docs/business"
+  ],
   "evals": [
     {
       "id": 1,
       "prompt": "ok scope is all in docs/workbench/state.md, go ahead and do the market analysis so we know which of the three offers to lead with",
       "expected_output": "No scope question is re-asked. docs/business/market.md is written with a service lens (no TAM or venture-scale section), sourced buyers and alternatives for Portugal, at least three alternatives per offer including a do-it-yourself one with prices and units, capacity computed from 20 hours per week with the hours-per-job figure labelled assumed, and a comparison table produced by rank.py where every score cites a source or reads 1 (no evidence). The state file registers the artifact.",
-      "files": ["evals/files/scoped-studio"],
+      "files": [
+        "evals/files/scoped-studio"
+      ],
       "assertions": [
         "The reply does not ask again for geography, offers, customer type, capacity or source budget",
         "docs/business/market.md exists and has no TAM, SAM, SOM or venture-scale section",
@@ -16,7 +24,8 @@
         "Every source entry lists URL, publisher, publication date or undated, access date, tier and a quote",
         "The artifact does not pick an ideal customer profile, a price or channels; it states implications only",
         "docs/workbench/state.md lists docs/business/market.md in the Artifacts table"
-      ]
+      ],
+      "allow_web": true
     },
     {
       "id": 2,
@@ -35,13 +44,16 @@
       "id": 3,
       "prompt": "market analysis please, scope's in the state file. I don't care about competitors much, just tell me which offer wins, you can guess the numbers if you can't find them",
       "expected_output": "The skill still lists alternatives per offer and refuses to guess: missing numbers are Unknowns, unsupported scores read 1 (no evidence), and the reply says that guessed numbers are not used.",
-      "files": ["evals/files/scoped-studio"],
+      "files": [
+        "evals/files/scoped-studio"
+      ],
       "assertions": [
         "The reply states that numbers without a source are not guessed and appear as unknowns or '1 (no evidence)'",
         "docs/business/market.md still contains alternatives or competitors for each offer",
         "No number in docs/business/market.md lacks a citation, a Method command or an 'Assumption:' label",
         "The Unknowns section is present with content or 'none'"
-      ]
+      ],
+      "allow_web": true
     }
   ]
 }

@@ -154,3 +154,24 @@ def test_snapshot_skips_installed_skill_copies(tmp_path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "out.md").write_text("o")
     assert set(er.snapshot(str(tmp_path), {}, ["demo"])) == {os.path.join("docs", "out.md")}
+
+
+def test_allow_web_is_off_by_default_and_set_per_case_or_top_level():
+    assert er.allow_web({}, {"id": 1}) is False
+    assert er.allow_web({"allow_web": True}, {"id": 1}) is True
+    assert er.allow_web({}, {"id": 1, "allow_web": True}) is True
+
+
+def test_allow_web_must_be_a_boolean():
+    with pytest.raises(SystemExit):
+        er.allow_web({}, {"id": 1, "allow_web": "yes"})
+
+
+def test_run_prompt_passes_allow_web_only_when_set(tmp_path):
+    runner = tmp_path / "run-prompt.sh"
+    log = tmp_path / "args"
+    runner.write_text(f'printf "%s\\n" "$@" > {log}\n')
+    er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None, ["git status"], None, (), True)
+    assert "--allow-web" in log.read_text().split("\n")
+    er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None, ["git status"])
+    assert "--allow-web" not in log.read_text().split("\n")

@@ -2,7 +2,7 @@
 # Eval contract: run one prompt through Claude Code non-interactively.
 #
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-#                      [--extra-skill-dir <dir>]... [--allow-command <prefix>]...
+#                      [--extra-skill-dir <dir>]... [--allow-command <prefix>]... [--allow-web]
 #
 # Writes <out>/response.md and <out>/timing.json. --skill-dir (the skill under test) and each
 # --extra-skill-dir (a case's dependencies, a flow's phases) are copied, never linked, into
@@ -15,6 +15,8 @@
 # the skill's scripts/ folder; any other command is denied (print mode cannot ask) and reported in
 # raw.json's permission_denials. A prefix containing ( ) , or * is refused (it would add rules).
 # acceptEdits still lets file commands (touch, mkdir) run inside --cwd.
+# --allow-web adds WebSearch and WebFetch to --allowedTools, for a case that must search the web;
+# without it print mode denies both.
 # Extra CLI flags: CLAUDE_EVAL_ARGS (default: --permission-mode acceptEdits).
 # A proxy for floor models: pass ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN (eval_run.py --pass-env).
 set -euo pipefail
@@ -31,7 +33,8 @@ while [[ $# -gt 0 ]]; do
     --allow-command)
       [[ "$2" == *[\(\),\*]* ]] && { echo "Error: --allow-command '$2' contains ( ) , or *, which would add permission rules." >&2; exit 2; }
       ALLOW="${ALLOW:+$ALLOW,}Bash($2 *)"; shift 2 ;;
-    --help|-h) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --allow-web) ALLOW="${ALLOW:+$ALLOW,}WebSearch,WebFetch"; shift ;;
+    --help|-h) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done

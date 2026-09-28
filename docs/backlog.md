@@ -69,6 +69,9 @@ The workbench is a set of instructions that models execute with a terminal, file
 - [ ] **T6. Optional container runner for evals.** An adapter that runs a case through Harbor (https://github.com/harbor-framework/harbor) or Inspect with inspect_swe (https://meridianlabs-ai.github.io/inspect_swe/), both read 2026-09-27: containers, several agent CLIs, open-weight models such as the floor model.
 - [ ] **T7. Trigger tests for descriptions.** Eval cases that should and should not load a skill, so a large pack (a company's worth of skills) still routes to the right one. From Anthropic's skill-creator (https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md, read 2026-09-27).
 
+- [x] **T8. Evals can allow web search per case.** `evals.json` takes `"allow_web": true` (top level or per case); `eval_run.py` passes `--allow-web`, the Claude Code adapter adds only WebSearch and WebFetch, the agents-dir runner already approves every tool, and the grader never gets it. Done 2026-09-28.
+  - From: the GFACIL run of `biz-market-analysis`. Print mode denies any tool that needs permission and the adapter never allowed web tools (checked: a contained run asked to search reported `permission_denials: WebSearch`), so the with-skill runs of research skills measured only their degraded mode.
+
 ## Agent runtime
 
 The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, one per department, managed from a local web app. First real case: GFACIL Sistema de Tecnologia, a one-person company with no clients yet, repositioned as a technology company; marketing agents first. Each item is refined against that case before it is generalised.

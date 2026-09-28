@@ -21,7 +21,7 @@ open-weight model served through its own CLI) while the strong model and the gra
 --dry-run prints the runs, the allowed commands and every case's setup commands, and runs nothing.
 
 Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-[--extra-skill-dir <dir>]... [--allow-command <prefix>]... copies each skill folder into <cwd> where the
+[--extra-skill-dir <dir>]... [--allow-command <prefix>]... [--allow-web] copies each skill folder into <cwd> where the
 harness discovers it (never a link into the workbench) and must write <out>/response.md and
 <out>/timing.json ({"total_tokens", "duration_ms", "cost_usd"}).
 
@@ -34,6 +34,11 @@ path right after it; git without a subcommand, with an option before it (git -c 
 leading assignments other than TZ, LANG, LC_*, CI, NODE_ENV, NO_COLOR, FORCE_COLOR.
 A prefix fixes only the start of a command: "npm test" runs whatever tests the model wrote, and git
 runs hooks it wrote. The environment below is what limits such code.
+
+Web. evals.json may set "allow_web": true at the top level or per case, for a skill that must search
+and read web pages (it requires search:web). The adapter then lets the model search and fetch pages,
+and nothing else more; the grader never gets it. Without it a harness that asks before searching denies
+the search, and a with-skill run of a research skill measures only its degraded mode.
 
 Containment. Model runs, setup commands and the grader get an environment built from an allowlist
 (PATH, HOME, USER, LOGNAME, SHELL, LANG, LANGUAGE, LC_*, TERM, TMPDIR, TZ and certificate-bundle paths),
@@ -176,6 +181,14 @@ def allowed_commands(data, case):
     return prefixes
 
 
+def allow_web(data, case):
+    """Whether the case may search and fetch web pages: "allow_web" at the top level or in the case."""
+    for where, value in (("top level", data.get("allow_web")), (f"case {case.get('id')}", case.get("allow_web"))):
+        if value is not None and not isinstance(value, bool):
+            die(f"{where}: allow_web must be true or false, not {value!r}.")
+    return bool(data.get("allow_web") or case.get("allow_web"))
+
+
 def case_files(skill_dir, case):
     """The case's "files" entries as source paths, refusing any that reach outside the skill folder."""
     base = os.path.realpath(skill_dir)
@@ -233,7 +246,7 @@ def next_iteration(ws):
     return os.path.join(ws, f"iteration-{max(nums, default=0) + 1}")
 
 
-def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=()):
+def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), web=False):
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
     if skill_dir:
         cmd += ["--skill-dir", skill_dir]
@@ -241,6 +254,8 @@ def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=No
         cmd += ["--extra-skill-dir", d]
     for p in allow:
         cmd += ["--allow-command", p]
+    if web:
+        cmd += ["--allow-web"]
     r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
     if r.returncode != 0:
         with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
@@ -400,9 +415,11 @@ def main(argv):
             die("--tiers selected no model.")
     it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]))
     allow = {c["id"]: allowed_commands(evals, c) for c in cases}
+    web = {c["id"]: allow_web(evals, c) for c in cases}
     sources = {c["id"]: case_files(skill_dir, c) for c in cases}
     deps = {c["id"]: dependency_dirs(c) for c in cases}
-    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "allow_commands": allow[c["id"]]}
+    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "allow_commands": allow[c["id"]],
+             "allow_web": web[c["id"]]}
             for c in cases for v in variants for t, m in models]
     if o["dry"]:
         print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
@@ -435,7 +452,7 @@ def main(argv):
                     f.write(c["prompt"])
                 before = file_index(cwd)
                 ok = run_prompt(runner_for[tier], pp, cwd, model, out, skill_dir if v == "with_skill" else None,
-                                allow[c["id"]], env, deps[c["id"]])
+                                allow[c["id"]], env, deps[c["id"]], web[c["id"]])
                 if not ok:
                     failures += 1
                     print(f"RUN FAILED  case {c['id']} {name}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
