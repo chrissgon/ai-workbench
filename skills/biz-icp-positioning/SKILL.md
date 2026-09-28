@@ -20,7 +20,7 @@ metadata:
   outputs: [docs/business/icp.md, docs/business/positioning.md]
   requires: [search:web]
   side_effects: []
-  version: "0.1"
+  version: "0.2"
 ---
 
 # ICP and positioning
@@ -53,7 +53,7 @@ Pick the customers the business goes after first and say, truthfully, why they s
 Progress:
 - [ ] Step 1: Read `docs/workbench/state.md`, the project `AGENTS.md`, `docs/business/market.md` (ranking, Implications, Unknowns) and matching research briefs. If `docs/business/icp.md` exists, this run updates it and keeps its interview results.
 - [ ] Step 2: Scope gate. For each item not recorded in the state file, ask with a recommended answer, in one message, and wait:
-  1. The offer to position (recommend the top of the market ranking).
+  1. The offer to position (recommend the top of the market ranking), and, when the offer is a broad capability ("automation with AI", "custom software"), which job it does for the customer. Recommend leaving the job open for the interviews to find when the user has no experience in the segment; never pick one yourself.
   2. The segments to compare, at least three (recommend the ones market.md names under Implications).
   3. The size band (for example: small companies with staff, no sole proprietors).
   4. The founder's access: experience, contacts or audience in any segment. It changes reach more than any statistic.
@@ -76,8 +76,8 @@ Progress:
   ```
   Paste the table as printed and name the command under "Method".
 - [ ] Step 6: Stop and ask the user when `close_call` is true (top two within 2 points), with your recommended reading; do not break the tie yourself. Record the answer.
-- [ ] Step 7: Write `docs/business/icp.md` from its template: primary and secondary profiles, who not to sell to and why, the job the customer hires the offer for, triggers, the decider, where to find them, and the validation plan. The interview guide asks about past behaviour and current spend ("when did this last happen, what did it cost, what did you try"), never "would you buy". Pass and fail criteria are written before any interview.
-- [ ] Step 8: Positioning. From the research, list the alternatives the primary profile uses today. Then ask the user, with recommendations, which attributes the business can truly claim against each alternative (for example independence from a platform, integration with the tools they already have, a fixed price, response time). Do not invent a differentiator, a case, a number of clients or a guarantee. Write `docs/business/positioning.md` from its template; every comparison cites a source, and claims the segment's rules forbid go under "Do not claim".
+- [ ] Step 7: Write `docs/business/icp.md` from its template: primary and secondary profiles, who not to sell to and why, the job the customer hires the offer for, triggers, the decider, where to find them, and the validation plan. When the job is open, write it as a list of hypotheses with their evidence, none chosen, and make the interview guide ask about the whole routine ("which tasks took the most hours last week") instead of one product; the validation criterion is then "the same task named by most interviews". The interview guide asks about past behaviour and current spend ("when did this last happen, what did it cost, what did you try"), never "would you buy". Pass and fail criteria are written before any interview.
+- [ ] Step 8: Positioning. Skip it while the job is open: record under Open questions that positioning waits for the interviews, and write only the claims the user confirmed in the state file. Otherwise, from the research, list the alternatives the primary profile uses today. Then ask the user, with recommendations, which attributes the business can truly claim against each alternative (for example independence from a platform, integration with the tools they already have, a fixed price, response time). Do not invent a differentiator, a case, a number of clients or a guarantee. Write `docs/business/positioning.md` from its template; every comparison cites a source, and claims the segment's rules forbid go under "Do not claim".
 - [ ] Step 9: Register both artifacts in the state file (`biz-icp-positioning`, status `hypothesis`, date) and add an open question per unknown that blocks pricing or channels. Report: paths, the primary profile in one line, the tie or risk, and the next step (interviews, then `biz-business-model`).
 - [ ] Step 10: Run `python3 skills/biz-icp-positioning/scripts/check_refs.py --file <artifact>` for each artifact (add `--sources-heading` and `--method-heading` with the translated headings). Fix every reference with no source, source never cited, and source without a URL or a quote, and rerun until `"ok": true`; a source you cannot give a URL and a quote for is removed with the claims that rest on it.
 - [ ] Step 11: Self-check against "Quality criteria": list every number, name and claim in both artifacts and its source; remove or label what has none. Recompute every sum, share or difference you derived from source figures with a command and write the parts next to the result (the first real run wrote a sum from memory and got it wrong).
@@ -100,7 +100,7 @@ Progress:
 
 ## Primary profile
 - Segment and size: <...> [n]
-- Job to be done: <what they hire the offer for>
+- Job to be done: <what they hire the offer for | open: hypotheses 1..n with evidence, to test in interviews>
 - Pain and evidence: <number, who measured it> [n]
 - Today they use: <incumbent, price> [n]
 - Decider: <role> [n] or Assumption
@@ -168,9 +168,11 @@ Approve the artifacts only if all of the following hold:
 - The interview guide has no hypothetical buying question; validation criteria exist before any result.
 - Every row under "What we can truly claim" is confirmed by the user or a source; "Do not claim" lists the segment's rules that apply, or `none found`.
 - Both artifacts say `hypothesis` until the interviews meet the validation criteria.
+- The job to be done is either the user's decision or an open list of hypotheses; no product shape (a chatbot, an app, a channel) appears that the user did not choose.
 
 ## Gotchas
 
+- Combining two facts into a product ("most sell over a messaging app" + "this segment has manual rework" = "build them a messaging assistant") is an assumption, even when each fact is sourced. The first real run did exactly this; the user reopened the choice.
 - Size filters lie when the law lets businesses work through partners instead of employees: a salon's team can be registered as individual micro-entrepreneurs. Check the legal structure before trusting "with employees".
 - The strongest competitor for a small automation service is often a feature inside the software the segment already pays for (a scheduling system's reminders, an ordering platform's bot). Find its price before scoring incumbents.
 - A platform that owns the channel can also own the bot (an ordering marketplace buying a messaging-bot company). Buyers' distrust of that is a positioning angle, but only with a dated source.
