@@ -316,3 +316,9 @@ def test_rank_translates_the_no_evidence_label():
             stdin=options({"score": 5, "sources": ["1"]}, {"score": 2, "sources": ["3"]}))
     assert r.returncode == 0, r.stderr
     assert "1 (sem evidência)" in json.loads(r.stdout)["table"]
+
+
+def test_rank_copies_are_identical():
+    a = (ROOT / RANK).read_bytes()
+    assert (ROOT / "skills/biz-icp-positioning/scripts/rank.py").read_bytes() == a, \
+        "copy skills/biz-market-analysis/scripts/rank.py to skills/biz-icp-positioning/scripts/rank.py"
