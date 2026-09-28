@@ -16,14 +16,17 @@ Input JSON:
   }
 
 Every option must score every criterion with an integer from 1 to 5. A score above 1 needs at
-least one source reference; a score of 1 with no source is reported as "1 (no evidence)".
+least one source reference: a source number ("3", "2b") or a command label ("M1"), nothing else; a score of 1 with no source is reported as "1 (no evidence)".
 --no-evidence-label sets the text shown for an unsupported score (default "no evidence").
 Prints JSON to stdout: the ranked options with weighted totals, the gap between the top two,
 and a Markdown table under "table". Diagnostics go to stderr. Exit 1 on invalid input.
 """
 import argparse
 import json
+import re
 import sys
+
+REF = re.compile(r"^(\d+[a-z]?|M\d+)$")
 
 
 def fail(msg):
@@ -77,6 +80,10 @@ def validate(data):
             srcs = s.get("sources", [])
             if not isinstance(srcs, list) or not all(isinstance(x, (str, int)) for x in srcs):
                 errors.append(f"option '{oname}', '{n}': 'sources' must be a list of references")
+            elif any(not REF.match(str(x)) for x in srcs):
+                bad = [x for x in srcs if not REF.match(str(x))]
+                errors.append(f"option '{oname}', '{n}': sources {bad} are not references; "
+                              "use source numbers (\"3\", \"2b\") or command labels (\"M1\")")
             elif val > 1 and not srcs:
                 errors.append(f"option '{oname}', '{n}': score {val} has no source; "
                               "use 1 with note 'no evidence' or cite a source")

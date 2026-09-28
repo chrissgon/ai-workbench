@@ -71,6 +71,7 @@ The workbench is a set of instructions that models execute with a terminal, file
 
 - [x] **T8. Evals can allow web search per case.** `evals.json` takes `"allow_web": true` (top level or per case); `eval_run.py` passes `--allow-web`, the Claude Code adapter adds only WebSearch and WebFetch, the agents-dir runner already approves every tool, and the grader never gets it. Done 2026-09-28.
   - From: the GFACIL run of `biz-market-analysis`. Print mode denies any tool that needs permission and the adapter never allowed web tools (checked: a contained run asked to search reported `permission_denials: WebSearch`), so the with-skill runs of research skills measured only their degraded mode.
+- [ ] **T9. The grader reads whole artifacts.** `eval_run.py` truncates produced files at 20,000 characters before grading, so an assertion about every source of a long research artifact fails as unproven (seen in `biz-market-analysis` iteration 4, case 1, strong model). Grade long files by section, or raise the cap for files the assertions name.
 
 ## Agent runtime
 

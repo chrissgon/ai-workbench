@@ -351,3 +351,11 @@ def test_check_refs_passes_a_clean_translated_file(tmp_path):
 
 def test_check_refs_copies_are_identical():
     assert (ROOT / "skills/biz-icp-positioning/scripts/check_refs.py").read_bytes() == (ROOT / CHECK_REFS).read_bytes()
+
+
+def test_rank_refuses_sources_that_are_not_references():
+    r = run(RANK, stdin=options({"score": 4, "sources": ["recurring revenue model"]}, {"score": 2, "sources": ["3"]}))
+    assert r.returncode == 1
+    assert "are not references" in r.stderr
+    ok = run(RANK, stdin=options({"score": 4, "sources": ["2b", "M1"]}, {"score": 2, "sources": [3]}))
+    assert ok.returncode == 0, ok.stderr
