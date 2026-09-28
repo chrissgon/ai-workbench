@@ -175,3 +175,22 @@ def test_run_prompt_passes_allow_web_only_when_set(tmp_path):
     assert "--allow-web" in log.read_text().split("\n")
     er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None, ["git status"])
     assert "--allow-web" not in log.read_text().split("\n")
+
+
+def test_floor_pass_env_reaches_only_floor_runs(tmp_path, monkeypatch):
+    skill = make_skill(tmp_path)
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [
+        {"id": 1, "prompt": "p", "files": [], "assertions": ["a"]}]}))
+    for h in ("strong", "floor"):
+        adapter = tmp_path / "adapters" / h
+        adapter.mkdir(parents=True)
+        (adapter / "run-prompt.sh").write_text(
+            'while [ $# -gt 0 ]; do [ "$1" = --out ] && OUT="$2"; shift; done\n'
+            'mkdir -p "$OUT"; echo "key=${FLOOR_ONLY_KEY:-none}" > "$OUT/response.md"; echo "{}" > "$OUT/timing.json"\n')
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    monkeypatch.setenv("FLOOR_ONLY_KEY", "k")
+    er.main(["--skill", "demo", "--harness", "strong", "--model", "s", "--floor-harness", "floor",
+             "--floor-model", "f", "--floor-pass-env", "FLOOR_ONLY_KEY", "--no-grade"])
+    it = tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1"
+    assert (it / "with_skill" / "outputs" / "response.md").read_text().strip() == "key=none"
+    assert (it / "with_skill.floor" / "outputs" / "response.md").read_text().strip() == "key=k"

@@ -4,7 +4,8 @@
 Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
-                      [--only with|without] [--tiers strong,floor] [--pass-env <VAR>]... [--no-grade] [--dry-run]
+                      [--only with|without] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]...
+                      [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files (paths inside the skill folder
@@ -42,7 +43,8 @@ the search, and a with-skill run of a research skill measures only its degraded 
 
 Containment. Model runs, setup commands and the grader get an environment built from an allowlist
 (PATH, HOME, USER, LOGNAME, SHELL, LANG, LANGUAGE, LC_*, TERM, TMPDIR, TZ and certificate-bundle paths),
-plus the variables named with --pass-env (a harness's API key or proxy); token variables for git hosts
+plus the variables named with --pass-env (every run and the grader) or --floor-pass-env (floor-model runs
+only: a provider key the strong model and the grader must not receive); token variables for git hosts
 and npm are refused there. On top: GIT_ALLOW_PROTOCOL=file (git reaches only local remotes), no global
 or system git config, GH_CONFIG_DIR pointing to an empty folder (the GitHub CLI is signed out) and
 NPM_CONFIG_USERCONFIG pointing to an empty file (npm has no token). Remotes a case needs are local bare
@@ -74,7 +76,7 @@ def die(msg, code=2):
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": []}
+            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "floor_pass_env": []}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -93,6 +95,7 @@ def parse(argv):
         elif a == "--only": opts["only"] = val(); i += 2
         elif a == "--tiers": opts["tiers"] = {t.strip() for t in val().split(",")}; i += 2
         elif a == "--pass-env": opts["pass_env"].append(val()); i += 2
+        elif a == "--floor-pass-env": opts["floor_pass_env"].append(val()); i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
@@ -102,11 +105,12 @@ def parse(argv):
             die(f"--{k} is required.")
     if opts["only"] not in (None, "with", "without"):
         die("--only must be with or without.")
-    for name in opts["pass_env"]:
-        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
-            die(f"--pass-env {name!r} is not a variable name.")
-        if name in TOKEN_VARS:
-            die(f"--pass-env {name}: token variables for git hosts and npm never reach a model run.")
+    for flag, names in (("--pass-env", opts["pass_env"]), ("--floor-pass-env", opts["floor_pass_env"])):
+        for name in names:
+            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+                die(f"{flag} {name!r} is not a variable name.")
+            if name in TOKEN_VARS:
+                die(f"{flag} {name}: token variables for git hosts and npm never reach a model run.")
     opts["grader"] = opts["grader"] or opts["model"]
     return opts
 
@@ -424,6 +428,7 @@ def main(argv):
     if o["dry"]:
         print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
                           "floor_runner": os.path.relpath(floor_runner, ROOT), "grader": o["grader"], "pass_env": o["pass_env"],
+                          "floor_pass_env": o["floor_pass_env"],
                           "cases": [{"case": c["id"], "files": c.get("files") or [], "skills": c.get("skills") or [],
                                      "setup": c.get("setup") or []} for c in cases],
                           "runs": plan}, indent=2))
@@ -444,7 +449,7 @@ def main(argv):
                         shutil.copytree(src, cwd, dirs_exist_ok=True)
                     elif os.path.isfile(src):
                         shutil.copy(src, cwd)
-                env = contained_env(run_dir, o["pass_env"])
+                env = contained_env(run_dir, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
                 isolate_git(cwd, contained_env(run_dir))
                 run_setup(cwd, c.get("setup") or [], contained_env(run_dir))
                 pp = os.path.join(run_dir, "prompt.md")

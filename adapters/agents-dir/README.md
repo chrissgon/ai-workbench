@@ -24,7 +24,9 @@ The floor runs recorded before 2026-09-28 used `claude-haiku-4-5-20251001` (35 r
 ```bash
 export OPENROUTER_API_KEY=...   # from the OS secret store or the environment settings, never a file in the repository
 python3 skills/core-skill-creator/scripts/eval_run.py --skill <name> --harness claude-code --model <strong-id> \
-  --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v3.2 --pass-env OPENROUTER_API_KEY
+  --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v3.2 --floor-pass-env OPENROUTER_API_KEY
 ```
+
+`--floor-pass-env` gives the key to the floor runs only; the strong model and the grader run through the claude-code adapter on the user's own account and never receive it (decided 2026-09-28).
 
 Requires `opencode` on `PATH`.
