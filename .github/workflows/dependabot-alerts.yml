@@ -1,0 +1,45 @@
+# Lists this repository's open Dependabot alerts with the workbench's own provider
+# (providers/vcs/github.py), so the triage (backlog S8) reads them from an artifact instead of a
+# token on someone's machine. The token lives only in the repository secret VCS_GITHUB_TOKEN:
+# a fine-grained token with "Dependabot alerts: Read-only" on this repository.
+# The repository is public: the artifact is kept one day. Alerts name dependencies whose manifests
+# are public anyway, but nothing else of the token's reach is written.
+name: dependabot-alerts
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 9 * * 1" # Mondays 09:17 UTC
+
+permissions:
+  contents: read
+
+jobs:
+  alerts:
+    name: alerts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@c18668ad3cf93ea998bef934396af7bb5c839dc7 # v10.2.0
+        with:
+          version: "0.12.19"
+          python-version: "3.11"
+      - name: Check the token
+        env:
+          VCS_GITHUB_TOKEN: ${{ secrets.VCS_GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: uv run providers/vcs/github.py --check --repo "$REPO"
+      - name: List open alerts
+        env:
+          VCS_GITHUB_TOKEN: ${{ secrets.VCS_GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: uv run providers/vcs/github.py alerts --repo "$REPO" --state open > alerts.json
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependabot-alerts
+          path: alerts.json
+          retention-days: 1
+          if-no-files-found: error
