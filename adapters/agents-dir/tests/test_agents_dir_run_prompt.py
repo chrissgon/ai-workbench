@@ -58,3 +58,14 @@ def test_shared_references_resolve_from_the_copied_skill(case):
     skill = case / "cwd" / ".agents" / "skills" / "demo"
     assert (skill / ".." / ".." / "shared" / "references" / "security.md").is_file()
     assert not (case / "cwd" / ".agents" / "shared").is_symlink()
+
+
+def test_the_skill_evals_are_not_copied(case):
+    evals = case / "skills" / "demo" / "evals"
+    evals.mkdir()
+    (evals / "evals.json").write_text('{"assertions": ["the answer"]}\n')
+    r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"))
+    assert r.returncode == 0, r.stderr
+    dest = case / "cwd" / ".agents" / "skills" / "demo"
+    assert (dest / "SKILL.md").is_file() and not (dest / "evals").exists()
+    assert (evals / "evals.json").is_file()

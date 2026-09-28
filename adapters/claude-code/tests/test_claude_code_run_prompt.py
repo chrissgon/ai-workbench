@@ -84,3 +84,14 @@ def test_shared_references_resolve_from_the_copied_skill(env):
     skill = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
     assert (skill / ".." / ".." / "shared" / "references" / "security.md").is_file()
     assert not (env["tmp"] / "cwd" / ".claude" / "shared").is_symlink()
+
+
+def test_the_skill_evals_are_not_copied(env):
+    evals = env["skill"] / "evals"
+    evals.mkdir()
+    (evals / "evals.json").write_text('{"assertions": ["the answer"]}\n')
+    r = run(env, "--skill-dir", str(env["skill"]))
+    assert r.returncode == 0, r.stderr
+    dest = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
+    assert (dest / "SKILL.md").is_file() and not (dest / "evals").exists()
+    assert (evals / "evals.json").is_file()

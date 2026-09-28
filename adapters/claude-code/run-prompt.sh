@@ -46,6 +46,7 @@ install_skill() {
   mkdir -p "$CWD/.claude/skills"
   rm -rf "${dest:?}"
   cp -RL "$src" "$dest"   # -L: a link inside the skill is copied as its content, never kept pointing back
+  rm -rf "${dest:?}/evals"   # the cases, their fixtures and assertions: the model under test never reads them
 }
 [[ -n "$SKILL_DIR" ]] && install_skill "$SKILL_DIR"
 for d in ${EXTRA_SKILLS[@]+"${EXTRA_SKILLS[@]}"}; do install_skill "$d"; done
