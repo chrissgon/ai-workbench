@@ -1,7 +1,7 @@
 # Security review: chrissgon/ai-workbench, 2026-09-28
 
 - Owner: eng-security-review (0.1, first real run; written in the skill's report format)
-- Status: approved
+- Status: done
 - Scope: dependency alerts only (secrets, authentication, input handling and configuration not reviewed)
 - Source: provider `providers/vcs/github.py alerts --state open`, run by the `dependabot-alerts` workflow (run 36367778232, artifact `dependabot-alerts`), fetched 2026-09-28; 30 open alerts
 - By severity: critical 2, high 8, medium 14, low 6
@@ -36,7 +36,7 @@ Rejected: updating the fixtures. It changes the evals that read them and gains n
 ## Results
 | Alert | Action | Result |
 |-------|--------|--------|
-| 1 to 30 | dismiss `not_used` with the comment above | handed to the user |
+| 1 to 30 | dismiss `not_used` with the comment above | handed to the user; dismissed: the workflow run 36436706189 (2026-09-28 14:32 UTC) listed 0 open alerts |
 
 ## Proposed tasks
 - none
