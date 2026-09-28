@@ -21,6 +21,7 @@
 - 2026-09-20: Offers to compare: WordPress maintenance retainers, Shopify store setup, AI chatbots for customer service (user). (user)
 - 2026-09-20: Customers: businesses only, micro and small companies (user). (user)
 - 2026-09-20: Research with free public sources only (user). (user)
+- 2026-09-20: The partners do all delivery themselves; nothing is automated or handed off (user). (user)
 
 ## Open questions
 - [ ] Which offer to lead with? (user)

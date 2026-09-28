@@ -12,11 +12,12 @@
 # Flags verified against opencode 1.18.32 (run --help); re-check after upgrades.
 # --allow-command is accepted but not enforced: the default runner approves every tool (--auto), so
 # the only containment is the environment eval_run.py sets (an allowlist, git local only, gh and npm
-# signed out). --allow-web is accepted for the same reason: web tools are whatever the runner offers.
+# signed out). --allow-web turns on the default runner's web search (OPENCODE_ENABLE_EXA=1, verified with
+# opencode 1.18.32: without it the model can only fetch URLs it guesses); page fetch is always on.
 # Connectors and MCP servers: the throwaway HOME below hides the user's configuration and
 # project configuration is refused, so none load; RUN_PROMPT_KEEP_HOME=1 loses that guarantee.
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOWED=0
+PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOWED=0 WEB=0
 EXTRA_SKILLS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -27,8 +28,8 @@ while [[ $# -gt 0 ]]; do
     --skill-dir) SKILL_DIR="$2"; shift 2 ;;
     --extra-skill-dir) EXTRA_SKILLS+=("$2"); shift 2 ;;
     --allow-command) ALLOWED=1; shift 2 ;;
-    --allow-web) shift ;;
-    --help|-h) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --allow-web) WEB=1; shift ;;
+    --help|-h) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -63,6 +64,7 @@ elif command -v opencode >/dev/null; then
   # --pure: no external plugins; --auto: approve tool permissions inside the sandboxed cwd (override with OPENCODE_EVAL_ARGS)
   read -r -a ARGS <<< "${OPENCODE_EVAL_ARGS:---pure --auto}"
   RUN=(opencode run ${ARGS[@]+"${ARGS[@]}"} -m "$MODEL" "$(cat "$PROMPT")")
+  [[ $WEB -eq 1 ]] && export OPENCODE_ENABLE_EXA=1
 else
   echo "Error: no runner. Install opencode or set RUN_PROMPT_CMD (see --help)." >&2; exit 1
 fi
