@@ -1,0 +1,12 @@
+# Version updates for what the project ships and for the pinned actions. Security alerts cover every
+# manifest in the repository whatever this file says; list here only the folders that ship.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: <ecosystem from baseline_status.py>
+    directory: <folder that ships>
+    schedule:
+      interval: weekly
