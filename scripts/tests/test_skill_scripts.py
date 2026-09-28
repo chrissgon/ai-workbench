@@ -264,3 +264,48 @@ def test_pr_context_refuses_option_like_base(tmp_path):
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["compared_with"] == "main" and len(out["commits"]) == 1
+
+
+# ---------- biz-market-analysis/rank.py and capacity.py ----------
+
+RANK = "skills/biz-market-analysis/scripts/rank.py"
+CAPACITY = "skills/biz-market-analysis/scripts/capacity.py"
+
+
+def options(a_demand: dict, b_demand: dict) -> str:
+    return json.dumps({"criteria": [{"name": "demand"}, {"name": "fit", "weight": 2}],
+                       "options": [{"name": "A", "scores": {"demand": a_demand, "fit": {"score": 1, "sources": []}}},
+                                   {"name": "B", "scores": {"demand": b_demand, "fit": {"score": 3, "sources": ["2"]}}}]})
+
+
+def test_rank_orders_by_weighted_total_and_marks_missing_evidence():
+    r = run(RANK, stdin=options({"score": 5, "sources": ["1"]}, {"score": 2, "sources": ["3"]}))
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert [o["name"] for o in out["ranked"]] == ["B", "A"]
+    assert out["ranked"][0]["total"] == 8 and out["ranked"][1]["total"] == 7
+    assert out["close_call"] is True
+    assert "1 (no evidence)" in out["table"]
+
+
+def test_rank_refuses_a_score_without_a_source():
+    r = run(RANK, stdin=options({"score": 4, "sources": []}, {"score": 2, "sources": ["3"]}))
+    assert r.returncode == 1
+    assert "has no source" in r.stderr
+    assert r.stdout == ""
+
+
+def test_rank_refuses_out_of_range_and_unscored_criteria():
+    bad = json.loads(options({"score": 6, "sources": ["1"]}, {"score": 2, "sources": ["3"]}))
+    del bad["options"][1]["scores"]["fit"]
+    r = run(RANK, stdin=json.dumps(bad))
+    assert r.returncode == 1
+    assert "integer from 1 to 5" in r.stderr and "is not scored" in r.stderr
+
+
+def test_capacity_computes_jobs_per_month_and_refuses_bad_values():
+    r = run(CAPACITY, "--hours-per-week", "15", "--hours-per-job", "40", "--utilization", "0.7")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["jobs_per_month"] == 1.1
+    assert run(CAPACITY, "--hours-per-week", "0", "--hours-per-job", "40").returncode == 2
+    assert run(CAPACITY, "--hours-per-week", "15", "--hours-per-job", "40", "--utilization", "2").returncode == 2
