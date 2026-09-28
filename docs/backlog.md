@@ -84,6 +84,13 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
 - [ ] **R9. Scenario evals.** Multi-agent scenarios ("a week of GFACIL's marketing") graded like skill evals.
 - [ ] **R10. Integrations the first case needs.** Provider classes for what marketing agents use (for example e-mail and a CRM), chosen with the user; asked, not assumed.
 
+## Project conventions
+
+- [ ] **C1. Ask whether a project's `docs/` is versioned.** Requested by the user on 2026-09-28. Skills write everything a project produces under `docs/`: specs, ADRs and plans next to reviews, design explorations, marketing posts and their images, approvals and the workflow state. Some projects want all of it on GitHub; others want only code-related documentation there. In perfectui-doc (public) the 1.0 LinkedIn posts and the approval records were committed before the user decided they should not be.
+  - What: `core-project-init` asks, when it sets up a project, whether `docs/` is versioned or kept local (added to `.gitignore`), with a recommendation, and records the answer in `docs/workbench/state.md` and the project's `AGENTS.md` section, where every skill reads it. Skills that commit (`ops-pull-request`, `ops-branch-sync`, flows) then leave `docs/` out when it is local, and never open a pull request only to record workflow data.
+  - To decide when building: whether the choice is all of `docs/` or per kind (code-related docs versioned, work data local); where state and approvals live when `docs/` is versioned but they should not be; and how a project created before this question (perfectui-doc) moves over.
+  - Done when: a new project is set up with each answer and the commits that follow respect it.
+
 ## Next skills
 
 The order agreed on 2026-09-26, details in [inventory.md](inventory.md):
