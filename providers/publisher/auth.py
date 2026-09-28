@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import hmac
+import importlib.util
 import json
 import os
 import secrets
@@ -29,6 +30,7 @@ import urllib.request
 import webbrowser
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from pathlib import Path
 
 KEYRING_SERVICE = "ai-workbench"
 LINKEDIN_KEYRING_USERNAME = "publisher-linkedin"
@@ -49,16 +51,18 @@ LinkedIn developer app setup (once):
      and "Sign In with LinkedIn using OpenID Connect" (grants openid, profile).
   3. In the Auth tab, add the authorized redirect URL:
          {REDIRECT_URI}
-  4. Export the client ID and secret in your shell, never in a file:
-         export LINKEDIN_CLIENT_ID=...
-         export LINKEDIN_CLIENT_SECRET=...
+  4. Make the client ID and secret available, never in a file: as environment variables
+     (a cloud environment's settings, or an export in the shell), or in the OS secret store:
+         uv run --with keyring==25.7.0 keyring set {KEYRING_SERVICE} linkedin-client-id
+         uv run --with keyring==25.7.0 keyring set {KEYRING_SERVICE} linkedin-client-secret
+     They are read through providers/secrets/resolver.py, environment first.
   5. Run:
          uv run providers/publisher/auth.py --provider linkedin
      Approve in the browser. The access token and its expiry are stored in the OS
      secret store (service "{KEYRING_SERVICE}", username "{LINKEDIN_KEYRING_USERNAME}"),
      never on disk in plain text.
 
-environment variables:
+secrets (environment variable, else the OS secret store; see contracts/secrets.md):
   LINKEDIN_CLIENT_ID       required for the authorization.
   LINKEDIN_CLIENT_SECRET   required for the authorization.
 
@@ -228,13 +232,24 @@ def exchange_code(code: str, client_id: str, client_secret: str) -> dict:
     return data
 
 
+def secret_resolver():
+    """The workbench's one secret resolver (providers/secrets/resolver.py), imported by path."""
+    path = Path(__file__).resolve().parents[1] / "secrets" / "resolver.py"
+    spec = importlib.util.spec_from_file_location("workbench_secret_resolver", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look their module up here
+    spec.loader.exec_module(module)
+    return module
+
+
 def linkedin_authorize(open_browser: bool) -> int:
-    client_id = os.environ.get("LINKEDIN_CLIENT_ID")
-    client_secret = os.environ.get("LINKEDIN_CLIENT_SECRET")
+    resolver = secret_resolver()
+    client_id = (resolver.resolve("LINKEDIN_CLIENT_ID") or ("", ""))[0]
+    client_secret = (resolver.resolve("LINKEDIN_CLIENT_SECRET") or ("", ""))[0]
     missing = [n for n, v in (("LINKEDIN_CLIENT_ID", client_id), ("LINKEDIN_CLIENT_SECRET", client_secret)) if not v]
     if missing:
-        raise AuthError(f"set {' and '.join(missing)} in the shell environment first (see --help)",
-                        EXIT_NOT_CONFIGURED)
+        raise AuthError(f"set {' and '.join(missing)} first: an environment variable, or the OS secret store "
+                        "(python3 providers/secrets/resolver.py --list shows how)", EXIT_NOT_CONFIGURED)
     keyring = keyring_module()  # fail before the browser step if the store is unavailable
 
     state = secrets.token_urlsafe(32)

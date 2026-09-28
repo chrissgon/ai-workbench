@@ -46,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import importlib.util
 import fcntl
 import json
 import os
@@ -177,25 +178,22 @@ def api_base() -> tuple[str, bool]:
     return override.rstrip("/"), True
 
 
+def secret_resolver():
+    """The workbench's one secret resolver (providers/secrets/resolver.py), imported by path."""
+    path = Path(__file__).resolve().parents[1] / "secrets" / "resolver.py"
+    spec = importlib.util.spec_from_file_location("workbench_secret_resolver", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look their module up here
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_token(test_mode: bool) -> tuple[str, str]:
     """Return (token, source). Raise EXIT_NOT_CONFIGURED when there is none."""
-    # VCS_GITHUB_TOKEN first: a harness or CI may export its own GITHUB_TOKEN with other permissions.
-    name = "VCS_GITHUB_TOKEN" if (os.environ.get("VCS_GITHUB_TOKEN") or "").strip() else "GITHUB_TOKEN"
-    token = (os.environ.get(name) or "").strip()
-    source = f"environment ({name})"
-    if not token and not test_mode:
-        try:
-            import keyring  # imported lazily: only needed when the secret store is used
-        except ImportError:
-            raise ProviderError(
-                "no VCS_GITHUB_TOKEN or GITHUB_TOKEN and the keyring package is missing; run with: uv run providers/vcs/github.py",
-                EXIT_NOT_CONFIGURED,
-            )
-        try:
-            token = (keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME) or "").strip()
-        except Exception as exc:  # the backend may be locked or unavailable
-            raise ProviderError(f"cannot read the OS secret store: {type(exc).__name__}", EXIT_NOT_CONFIGURED)
-        source = "secret store"
+    # The resolver reads VCS_GITHUB_TOKEN, then GITHUB_TOKEN (a harness or CI may export its own,
+    # with other permissions), then the OS secret store; tests never read the store.
+    found = secret_resolver().resolve("VCS_GITHUB_TOKEN", allow_store=not test_mode)
+    token, source = found if found else ("", "")
     if not token:
         raise ProviderError(
             f"no GitHub token: export VCS_GITHUB_TOKEN, or store one with "

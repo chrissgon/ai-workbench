@@ -29,7 +29,7 @@ Unset means "no native provider"; the skill degrades as described in its body.
 - `--check`: verify configuration and credentials without performing any action or printing any secret. Exit 0 when ready, 1 when not, with a one-line reason on stderr.
 - `--dry-run` on every verb with side effects: print the exact payload that would be sent, do nothing: no credential is read and no network call is made. A value only the service knows is shown as a placeholder.
 - Data to stdout as JSON; diagnostics to stderr. Never print tokens, keys or full credentials, not even partially.
-- Credentials only from environment variables or the OS secret store, never from files inside a project or from flags.
+- Credentials only through the secret resolver, `providers/secrets/resolver.py` (the environment variable, then the OS secret store; `contracts/secrets.md`), never from files inside a project or from flags. A new credential is registered there first.
 - Idempotent: a verb that publishes, sends or creates a record at a remote service takes a required idempotency key (the scheduler's job id plays that role locally). The key is recorded as pending in a local ledger, under a file lock, before the request, and as done after it. A pending key whose outcome is unknown (a timeout, a crash) blocks every new attempt until a `resolve` verb records what the user found.
 - Every network call and subprocess has a timeout. A request that carries a credential never follows a redirect.
 - Files and folders a provider writes outside the repository (ledgers, job folders, logs) are 0600 and 0700.

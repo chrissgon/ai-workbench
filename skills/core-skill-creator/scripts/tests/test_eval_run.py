@@ -98,9 +98,10 @@ def test_contained_env_is_an_allowlist(tmp_path, monkeypatch):
     assert er.contained_env(str(tmp_path), ["PROVIDER_API_KEY"])["PROVIDER_API_KEY"] == "k"
 
 
-def test_pass_env_refuses_token_variables():
+@pytest.mark.parametrize("name", ["GITHUB_TOKEN", "VCS_GITHUB_TOKEN"])
+def test_pass_env_refuses_token_variables(name):
     with pytest.raises(SystemExit):
-        er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--pass-env", "GITHUB_TOKEN"])
+        er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--pass-env", name])
 
 
 def test_setup_and_fixture_commit_never_reach_an_outer_repository(tmp_path, monkeypatch):
@@ -186,3 +187,21 @@ def test_dry_run_with_ablate_plans_three_variants_and_writes_nothing(tmp_path, m
     assert [r["variant"] for r in out["runs"]] == ["with_skill", "ablated_skill", "without_skill"]
     assert out["ablate"]["lines_removed"] == 1
     assert not list(tmp_path.rglob("ablated-skill"))
+
+
+def test_pass_env_fills_a_registered_secret_from_the_resolver(tmp_path, monkeypatch):
+    resolver = tmp_path / "providers" / "secrets" / "resolver.py"
+    resolver.parent.mkdir(parents=True)
+    resolver.write_text("class S:\n    def __init__(self, readers):\n        self.readers = readers\n"
+                        "REGISTRY = {'DEMO_KEY': S(('skills/core-skill-creator/scripts/eval_run.py --pass-env',)),\n"
+                        "            'PROVIDER_KEY': S(('providers/vcs/github.py',))}\n"
+                        "def resolve(name):\n    return ('from-store', 'secret store')\n")
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    monkeypatch.delenv("DEMO_KEY", raising=False)
+    monkeypatch.delenv("OTHER_VAR", raising=False)
+    monkeypatch.delenv("PROVIDER_KEY", raising=False)
+    monkeypatch.setenv("SET_ALREADY", "kept")
+    assert er.resolve_pass_env(["DEMO_KEY", "OTHER_VAR", "PROVIDER_KEY", "SET_ALREADY"]) == ["DEMO_KEY (secret store)"]
+    assert os.environ["DEMO_KEY"] == "from-store" and "OTHER_VAR" not in os.environ
+    assert "PROVIDER_KEY" not in os.environ
+    assert os.environ["SET_ALREADY"] == "kept"

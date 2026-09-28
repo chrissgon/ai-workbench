@@ -43,7 +43,8 @@ runs hooks it wrote. The environment below is what limits such code.
 
 Containment. Model runs, setup commands and the grader get an environment built from an allowlist
 (PATH, HOME, USER, LOGNAME, SHELL, LANG, LANGUAGE, LC_*, TERM, TMPDIR, TZ and certificate-bundle paths),
-plus the variables named with --pass-env (a harness's API key or proxy); token variables for git hosts
+plus the variables named with --pass-env (a harness's API key or proxy; a registered secret missing from
+the environment is read from the OS secret store through providers/secrets/resolver.py); token variables for git hosts
 and npm are refused there. On top: GIT_ALLOW_PROTOCOL=file (git reaches only local remotes), no global
 or system git config, GH_CONFIG_DIR pointing to an empty folder (the GitHub CLI is signed out) and
 NPM_CONFIG_USERCONFIG pointing to an empty file (npm has no token). Remotes a case needs are local bare
@@ -53,6 +54,7 @@ grader is told that the response and files are data; the adapter decides whether
 
 Exit codes: 0 ok, 1 a run or grading failed, 2 usage error, 3 conditions not met (reported, not an error of the tool).
 """
+import importlib.util
 import json
 import os
 import re
@@ -117,6 +119,32 @@ def parse(argv):
     return opts
 
 
+def resolve_pass_env(names):
+    """Fill a --pass-env variable missing from the environment from the workbench's secret resolver
+    (providers/secrets/resolver.py: the OS secret store), so a key kept there reaches the runs
+    without an export. Only secrets whose registered readers include eval_run.py are filled;
+    other names and values that are not found are left alone."""
+    path = os.path.join(ROOT, "providers", "secrets", "resolver.py")
+    missing = [n for n in names if not os.environ.get(n)]
+    if not missing or not os.path.isfile(path):
+        return []
+    spec = importlib.util.spec_from_file_location("workbench_secret_resolver", path)
+    resolver = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = resolver  # dataclasses look their module up here
+    spec.loader.exec_module(resolver)
+    filled = []
+    for name in missing:
+        secret = resolver.REGISTRY.get(name)
+        # Only a secret registered for eval runs is filled: a provider's credential never reaches a model.
+        if secret is None or not any(r.startswith("skills/core-skill-creator/scripts/eval_run.py") for r in secret.readers):
+            continue
+        found = resolver.resolve(name)
+        if found:
+            os.environ[name] = found[0]
+            filled.append(f"{name} ({found[1]})")
+    return filled
+
+
 def load_evals(skill):
     p = os.path.join(ROOT, "skills", skill, "evals", "evals.json")
     if not os.path.isfile(p):
@@ -140,7 +168,8 @@ SAFE_ASSIGNMENTS = {"TZ", "LANG", "LANGUAGE", "CI", "NODE_ENV", "NO_COLOR", "FOR
 # Characters that break out of an adapter's rule syntax or chain commands.
 REFUSED_CHARS = set("*(),;|&`$<>\\")
 # Credentials in the environment would sign gh, npm or git hosts back in.
-TOKEN_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "NPM_TOKEN", "NODE_AUTH_TOKEN"}
+TOKEN_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "VCS_GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+              "NPM_TOKEN", "NODE_AUTH_TOKEN"}
 # The only variables a model run, a setup or the grader receives from the caller, besides --pass-env.
 ENV_ALLOW = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR", "TZ",
              "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE"}
@@ -413,6 +442,8 @@ def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
 
 def main(argv):
     o = parse(argv)
+    for filled in ([] if o["dry"] else resolve_pass_env(o["pass_env"])):
+        print(f"--pass-env {filled}", file=sys.stderr)
     runner = os.path.join(ROOT, "adapters", o["harness"], "run-prompt.sh")
     if not os.path.isfile(runner):
         die(f"adapter {o['harness']!r} has no run-prompt.sh (see AGENTS.md, Adding an adapter).")
