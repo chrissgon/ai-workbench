@@ -47,6 +47,9 @@ The workbench is a set of instructions that models execute with a terminal, file
   - 2026-09-27: G1 to G4 fixed (every high, medium and low finding in those groups; the fix log is in the audit record). Found on the way: tests run from the hook inherited `GIT_DIR` and turned the shared repository bare; the hook and `scripts/tests/conftest.py` now remove git's variables. Left: M20 (G5), with S3 and S7.
 - [ ] **S11. Skill `ops-repo-baseline`.** The repository baseline set up for this repository on 2026-09-27, as a procedure for any project: the in-repository files and the host settings, in the order that works (signing before the signed-commits rule, a first CI run before required checks, a history scan before the first push), with the decisions that differ per project asked with a recommended answer (approvals, signed commits, visibility). After the high findings of S10, because several of them change what the template contains.
 
+- [ ] **S12. Approvals bind the exact payload.** An approval row in `docs/workbench/state.md` (and later in the runtime store) records a hash of what was shown; a skill or agent that executes later recomputes it and asks again when it differs. Today only the scheduler provider does this (hashes fixed at approval).
+  - From: the 2026-09-27 survey of similar projects: "approve then swap" attacks are described in the literature (https://github.com/LLMSecurity/awesome-agent-skills-security, not verified), and an approved MCP tool that changes later keeps its approval (CVE-2025-54136). Needed before agents act unattended (R section).
+
 ## Tooling
 
 - [ ] **T1. `eval_run.py` reports whether the skill was invoked.** Today that is read by hand from the transcripts, and a `with_skill` run that never loaded the skill scores as the skill's failure.
@@ -56,6 +59,26 @@ The workbench is a set of instructions that models execute with a terminal, file
 - [ ] **T3. Eval regression on changed skills.** When a commit changes a skill, rerun its evals and compare with the last `benchmark.json`, so a wording change that breaks the floor model is caught before it lands.
 
 - [x] **T4. `eval_run.py` names a harness folder.** Done 2026-09-27 (audit L18): `run-prompt.sh --extra-skill-dir` copies dependencies, and the snapshot skips installed skill copies by name. `install_dependencies` links a case's dependency skills into `<cwd>/.claude/skills`, a harness path inside a core script (principle 1); the validator misses it because the path is built from separate strings. The adapter should link dependencies, through a new `run-prompt.sh` option.
+
+- [ ] **T5. Tighter eval isolation.** Each run gets a throwaway home and harness config, the agent under test cannot read the case's `evals.json` or its assertions, a cost cap per run, and three runs per case by default. The same containment becomes the sandbox for runtime agents.
+  - From: `claude plugin eval` (https://code.claude.com/docs/en/plugin-evals, read 2026-09-27), the strictest isolation found in the survey.
+- [ ] **T6. Optional container runner for evals.** An adapter that runs a case through Harbor (https://github.com/harbor-framework/harbor) or Inspect with inspect_swe (https://meridianlabs-ai.github.io/inspect_swe/), both read 2026-09-27: containers, several agent CLIs, open-weight models such as the floor model.
+- [ ] **T7. Trigger tests for descriptions.** Eval cases that should and should not load a skill, so a large pack (a company's worth of skills) still routes to the right one. From Anthropic's skill-creator (https://github.com/anthropics/skills/blob/main/skills/skill-creator/SKILL.md, read 2026-09-27).
+
+## Agent runtime
+
+The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, one per department, managed from a local web app. First real case: GFACIL Sistema de Tecnologia, a one-person company with no clients yet, repositioned as a technology company; marketing agents first. Each item is refined against that case before it is generalised.
+
+- [ ] **R1. Runtime contract.** `contracts/runtime.md`: what an agent run is (agent, task, inputs, allowed tools and skills, budget), how the runtime starts one through an adapter, and what it records. No AI tool named.
+- [ ] **R2. Storage interface.** A store contract (tasks, messages, artifacts index, decisions, approvals, agent memory, run log) with interchangeable implementations, selected like providers; SQLite first, with offline tests; the user picks the store.
+- [ ] **R3. Department agents.** Agent definitions per department (marketing first, then sales, finance, operations), each with scope, skills, tools and a budget, from `templates/agent.md`.
+- [ ] **R4. Messages between agents.** A message contract (who may ask whom for what, format, replies, deadlines) stored through R2; artifacts over invocation still holds.
+- [ ] **R5. Approval inbox.** Every outward action from any agent waits in one place for the user, with S12's payload hash, spend limits and standing approvals from `contracts/environment.md`.
+- [ ] **R6. Scheduler and triggers.** Runs start on a schedule, on a message, or on an approval; built on the `scheduler` provider class.
+- [ ] **R7. Observability.** Per run: what the agent read, did and cost, and where it failed; readable by the web app.
+- [ ] **R8. Local web app.** Org chart, task board, approval inbox, messages, costs; reads and writes only through R2.
+- [ ] **R9. Scenario evals.** Multi-agent scenarios ("a week of GFACIL's marketing") graded like skill evals.
+- [ ] **R10. Integrations the first case needs.** Provider classes for what marketing agents use (for example e-mail and a CRM), chosen with the user; asked, not assumed.
 
 ## Next skills
 
