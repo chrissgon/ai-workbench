@@ -80,7 +80,7 @@ Progress:
   - urgency: a dated trigger or a costly pain that makes buyers act now;
   - ability to pay: advertised prices and budgets against the price the business needs;
   - competition: 5 means few credible alternatives at that price, 1 means a crowded or free alternative;
-  - fit: deliverable within the capacity from step 6 and the skills the user stated;
+  - fit: the offer uses skills the user stated, scored from the jobs per month of step 6 against the goal: for a first client, 2 or more = 5, 1 to 2 = 4, 0.5 to 1 = 3, 0.25 to 0.5 = 2, less = 1 (for another goal, state the thresholds before scoring); cite the capacity command as `M1`;
   - speed to first sale: short buying cycle, small first ticket.
   A score with no source is `1 (no evidence)`, never a guess. Weights are equal unless the user set others. Write the scores as JSON (format in the script's `--help`) to `options.json` inside a folder made with `mktemp -d`, run the ranking script, and remove the folder afterwards:
   ```bash
