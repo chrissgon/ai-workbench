@@ -236,3 +236,20 @@ def test_max_cost_reaches_the_adapter(tmp_path):
     out.mkdir()
     assert er.run_prompt(str(runner), "p", str(tmp_path), "m", str(out), None, max_cost="0.50") is True
     assert "--max-cost-usd 0.50" in (tmp_path / "args").read_text()
+
+
+def test_floor_pass_env_reaches_only_the_floor_runs(tmp_path, monkeypatch, capsys):
+    skill = make_skill(tmp_path)
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
+    adapter = tmp_path / "adapters" / "h"
+    adapter.mkdir(parents=True)
+    (adapter / "run-prompt.sh").write_text('env > "$(dirname "$4")/env.txt"; echo ok > "$8/response.md"\n')
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    monkeypatch.setenv("FLOOR_ONLY_KEY", "floor-secret")
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1",
+                    "--only", "with", "--no-grade", "--floor-pass-env", "FLOOR_ONLY_KEY"]) == 0
+    strong = (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill" / "env.txt").read_text()
+    floor = (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill.floor" / "env.txt").read_text()
+    assert "FLOOR_ONLY_KEY" not in strong and "FLOOR_ONLY_KEY=floor-secret" in floor
+    with pytest.raises(SystemExit):
+        er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--floor-pass-env", "GITHUB_TOKEN"])

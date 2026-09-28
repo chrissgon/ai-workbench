@@ -20,7 +20,7 @@ The workbench is automation that runs anywhere: a laptop, a cloud session, CI, a
 | Local machine | the OS secret store (preferred), or an export in the shell | `uv run --with keyring==25.7.0 keyring set ai-workbench <username>`: the value is typed at a hidden prompt, never on the command line |
 | Agent runtime (future, backlog R section) | the runtime's store, through the same resolver | not built yet |
 
-Check what is set, without printing any value: `python3 providers/secrets/resolver.py --list`, or `python3 scripts/doctor.py`, which also names the requirement classes that read each secret. `eval_run.py --pass-env <NAME>` fills a registered secret that is missing from the environment from the OS secret store, so a key kept there reaches eval runs without an export.
+Check what is set, without printing any value: `python3 providers/secrets/resolver.py --list`, or `python3 scripts/doctor.py`, which also names the requirement classes that read each secret. `eval_run.py --pass-env <NAME>` (every run) or `--floor-pass-env <NAME>` (the floor model's runs only, the right place for a provider key) fills a registered secret that is missing from the environment from the OS secret store, so a key kept there reaches eval runs without an export. The OpenRouter key is for the floor model only; Claude models run with the maintainer's own login (decided by the user on 2026-09-28).
 
 ## Registry
 

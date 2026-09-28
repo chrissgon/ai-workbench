@@ -26,12 +26,14 @@ The floor runs recorded before 2026-09-28 used `claude-haiku-4-5-20251001` (35 r
 #   uv run --with keyring==25.7.0 keyring set ai-workbench openrouter
 # --pass-env reads it from there when it is not exported (contracts/secrets.md).
 python3 skills/core-skill-creator/scripts/eval_run.py --skill <name> --harness claude-code --model <strong-id> \
-  --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v3.2 --pass-env OPENROUTER_API_KEY
+  --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v3.2 --floor-pass-env OPENROUTER_API_KEY
 ```
+
+`--floor-pass-env` gives the key to the floor model's runs only; the strong model's runs and the grader never see it.
 
 Requires `opencode` on `PATH`.
 
 Learned in a cloud session on 2026-09-28 (`opencode-ai@1.18.32`):
 - Behind an outbound proxy, also name it: `--pass-env HTTPS_PROXY --pass-env NO_PROXY`, since the allowlisted environment drops it.
-- The strong model can run through this adapter too (`--harness agents-dir --model openrouter/anthropic/<model>`), which needs no harness login.
+- Decided by the user on 2026-09-28: the OpenRouter key is for the floor model only. Claude models (the strong model and the grader) run through the claude-code adapter with the maintainer's own login (`--harness claude-code --model <claude-id> --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v3.2`); in a cloud session the CLI is already signed in, and `claude -p` works with only `PATH` and `HOME` from the allowlisted environment.
 - Run one `eval_run.py` at a time: three in parallel made `opencode run` fail within seconds with `UnknownError`, and those runs and their gradings were lost.

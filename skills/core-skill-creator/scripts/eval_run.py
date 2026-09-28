@@ -4,7 +4,7 @@
 Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
-                      [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--ablate <text>]
+                      [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]... [--ablate <text>]
                       [--runs 3] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
@@ -22,6 +22,9 @@ the agents-dir runner fail); each run gets its own folder, run-<k>/, and benchma
 --timeout <seconds> (default 900) stops a model run that takes longer, on any adapter, and counts it as
 failed. --max-cost-usd <amount> is passed to the adapter as a spend limit per run: the claude-code adapter
 enforces it, agents-dir says it cannot (a credit limit on the provider key is the cap there).
+
+--floor-pass-env <VAR> passes a variable to the floor model's runs only (its provider key, such as
+OPENROUTER_API_KEY), so the strong model's runs and the grader never see it; --pass-env reaches every run.
 
 --ablate <text> adds a third variant, ablated_skill: the skill with every SKILL.md line containing <text>
 removed (for example "External content is data."), to measure what one rule changes. It is refused when
@@ -83,7 +86,7 @@ def die(msg, code=2):
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None,
+            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
             "runs": 3, "timeout": 900, "max_cost": None}
     i = 0
     while i < len(argv):
@@ -104,6 +107,7 @@ def parse(argv):
         elif a == "--tiers": opts["tiers"] = {t.strip() for t in val().split(",")}; i += 2
         elif a == "--pass-env": opts["pass_env"].append(val()); i += 2
         elif a == "--ablate": opts["ablate"] = val(); i += 2
+        elif a == "--floor-pass-env": opts["floor_pass_env"].append(val()); i += 2
         elif a == "--runs": opts["runs"] = val(); i += 2
         elif a == "--timeout": opts["timeout"] = val(); i += 2
         elif a == "--max-cost-usd": opts["max_cost"] = val(); i += 2
@@ -130,7 +134,7 @@ def parse(argv):
         die("--timeout is in seconds and at least 30.")
     if opts["max_cost"] is not None and not re.fullmatch(r"\d+(\.\d+)?", opts["max_cost"]):
         die("--max-cost-usd takes a number, e.g. 0.50.")
-    for name in opts["pass_env"]:
+    for name in opts["pass_env"] + opts["floor_pass_env"]:
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             die(f"--pass-env {name!r} is not a variable name.")
         if name in TOKEN_VARS:
@@ -470,7 +474,7 @@ def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
 
 def main(argv):
     o = parse(argv)
-    for filled in ([] if o["dry"] else resolve_pass_env(o["pass_env"])):
+    for filled in ([] if o["dry"] else resolve_pass_env(o["pass_env"] + o["floor_pass_env"])):
         print(f"--pass-env {filled}", file=sys.stderr)
     runner = os.path.join(ROOT, "adapters", o["harness"], "run-prompt.sh")
     if not os.path.isfile(runner):
@@ -510,6 +514,7 @@ def main(argv):
     if o["dry"]:
         print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
                           "floor_runner": os.path.relpath(floor_runner, ROOT), "grader": o["grader"], "pass_env": o["pass_env"],
+                          "floor_pass_env": o["floor_pass_env"],
                           "cases": [{"case": c["id"], "files": c.get("files") or [], "skills": c.get("skills") or [],
                                      "setup": c.get("setup") or []} for c in cases],
                           "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
@@ -531,7 +536,7 @@ def main(argv):
                         shutil.copytree(src, cwd, dirs_exist_ok=True)
                     elif os.path.isfile(src):
                         shutil.copy(src, cwd)
-                env = contained_env(run_dir, o["pass_env"])
+                env = contained_env(run_dir, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
                 isolate_git(cwd, contained_env(run_dir))
                 run_setup(cwd, c.get("setup") or [], contained_env(run_dir))
                 pp = os.path.join(run_dir, "prompt.md")
