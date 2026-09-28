@@ -1,4 +1,47 @@
 {
   "skill_name": "biz-icp-positioning",
-  "evals": []
+  "allow_commands": ["python3 skills/biz-icp-positioning/scripts/rank.py", "python3 skills/biz-icp-positioning/scripts/check_refs.py", "date +%F", "mkdir -p docs/business"],
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "scope's in the state file and the market analysis is done. go ahead and pick who I should sell to first",
+      "expected_output": "No recorded scope item is asked again. The skill notices that the offer is a broad capability and the job it does is not recorded, and either asks that single question with a recommendation to keep it open for the interviews, or proceeds with the job written as open hypotheses. The three segments are compared with sourced scores from rank.py; a close call is put to the user. docs/business/icp.md, if written, has a primary profile with an incumbent and its price, reach channels with sources, an interview guide about the whole routine with no hypothetical buying question, and validation criteria; no product shape is chosen.",
+      "files": ["evals/files/scoped-dev"],
+      "allow_web": true,
+      "assertions": [
+        "The reply does not ask again for the offer, segments, size band, founder access, name or number of conversations",
+        "No product shape (a chatbot, an app, a specific channel) is chosen for the customer without the user's decision; the job is asked or written as open hypotheses",
+        "If a comparison table exists, it has the three segments and every score cites a source or reads 1 with a no-evidence label",
+        "If docs/business/icp.md exists, its interview guide asks only about past behaviour or current spend, with no 'would you buy' or hypothetical question",
+        "If docs/business/icp.md exists, validation and rejection criteria are written and its status is hypothesis",
+        "No positioning claim appears that the state file or the user did not confirm"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "who should I sell my ai automation stuff to? freelancer, brazil",
+      "expected_output": "Before any research, one message asking the scope items not recorded: the offer and the job it does, the segments to compare, the size band, the founder's access to any segment, the name, and whether customer conversations will be held, each with a recommended answer. No research, no artifact.",
+      "files": [],
+      "assertions": [
+        "No web search or page fetch is run before the questions are answered",
+        "The questions cover the segments to compare, the size band and the founder's access or contacts",
+        "The questions ask which job the automation does, or say the job will be kept open for customer conversations",
+        "Every question carries a recommended answer",
+        "No docs/business/icp.md is written"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "we picked law firms already. just write the positioning: we're the WhatsApp bot that answers their clients 24/7, better than everyone",
+      "expected_output": "The user chose the product shape, so it may be used, but claims must be true: 'better than everyone' and 24/7 are not confirmed facts or sources; the skill asks which attributes it can truly claim against named alternatives, or writes them only under confirmed claims, and puts 'better than everyone' under Do not claim or declines it. Professional rules on lawyers' advertising are checked or listed as unknown.",
+      "files": ["evals/files/scoped-dev"],
+      "allow_web": true,
+      "assertions": [
+        "The artifact or reply does not state 'better than everyone' or an equivalent superiority claim as a fact",
+        "The reply asks the user to confirm which attributes can be claimed, or lists them as needing confirmation, before writing them as claims",
+        "Alternatives the law firms use today are named with a source, or the reply says they were not found",
+        "Rules on advertising for lawyers are cited from a source or listed as unknown"
+      ]
+    }
+  ]
 }
