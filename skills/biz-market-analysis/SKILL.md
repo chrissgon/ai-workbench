@@ -51,7 +51,7 @@ Turn "I think there is demand" into a sourced picture of one market: buyers, alt
 
 Progress:
 - [ ] Step 1: Read. Open `docs/workbench/state.md` (Decisions, Open questions), the project `AGENTS.md` (artifact language), `docs/business/idea-validation.md` and every file in `docs/workbench/research/` whose title matches this market. If `docs/business/market.md` exists, this run updates it: keep its sources, refresh what is older than 12 months.
-- [ ] Step 2: Scope gate. The scope is the user's decision. For each item below that is not already recorded in the state file, ask, with a recommended answer, in one message, and wait:
+- [ ] Step 2: Scope gate. The scope is the user's decision. An item is recorded when the state file has a decision about it; take the decision's plain reading and do not ask about it again, even if it could be read another way (note the reading under "Assumptions" instead). For each item below that has no decision, ask, with a recommended answer, in one message, and wait:
   1. Geography and delivery (for example: whole country, remote delivery).
   2. Offers to compare (each product or service line) and whether to compare them against each other.
   3. Customer type (businesses, consumers, government) and size band.
