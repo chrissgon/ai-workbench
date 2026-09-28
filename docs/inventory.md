@@ -88,7 +88,7 @@ The most mature area in the old repository. Stack-agnostic procedures; stacks ar
 | eng-refactor | improved code with tests green | implementation | refactor-optimizer | reuse | 1 |
 | eng-code-review | review report; perspectives (quality, edge cases, regression, performance, security) and a bug-fix checklist | diff | code-reviewer, multi-agent-analyzer, post-fix-reviewer | merge | 1 |
 | eng-docs | documentation updates for the change | changes | documentation-writer skill | reuse | 1 |
-| eng-security-review | security review of a project: dependencies and advisories, secrets, authentication and authorization, input handling, configuration | codebase | — | planned | — |
+| eng-security-review | security review of a project: 0.1 triages dependency alerts (grouped by manifest and package, update or dismiss with the host's reason, dismissals behind a confirmation gate); later secrets, authentication and authorization, input handling, configuration (backlog S14) | alerts from `integration:vcs`, codebase | — | draft 0.1, grounded in the 30 Dependabot alerts of ai-workbench on 2026-09-28; evals not run | — |
 | eng-data-model | schema and migration plan | architecture | — | planned | — |
 
 ## Delivery and operations (`ops-`)
