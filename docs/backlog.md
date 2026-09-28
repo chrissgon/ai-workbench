@@ -91,10 +91,10 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - What: a `comment` action on a published post, found by the post's idempotency key in the publisher's ledger; `--dry-run`, `--confirmed` and its own idempotency key like `publish`; schedulable after the post (the scheduler job waits until the post's ledger entry is `published`, or the publish job comments right after publishing). The confirmation gate shows the post and its first comment together, so one approval covers both.
   - To verify against LinkedIn's primary documentation before building: the endpoint for member comments on a share and whether the `w_member_social` scope already granted covers it.
   - **Open question: one generic capability with one implementation per platform, or something per platform?** In this repository, platforms are providers of a requirement class (`publisher:<platform>` under `providers/`), not adapters (adapters are AI tools). The options:
-    1. A "first comment" field in `mkt-publish`'s post payload, and a `comment` verb in every `publisher:<platform>` provider that supports it. The skill stays platform-agnostic; each provider does what its API allows and says when it cannot. Recommended for now: a first comment is part of publishing a post, and one gate covers both.
+    1. A "first comment" field in `mkt-publish`'s post payload, and a `comment` verb in every `publisher:<platform>` provider that supports it. The skill stays platform-agnostic; each provider does what its API allows and says when it cannot. **Recommended** (user, 2026-09-28): a first comment is part of publishing a post, and one gate covers both.
     2. A separate generic capability (`mkt-comment`) with its own requirement class (`commenter:<platform>`), for comments beyond the first one: replying to other people, engaging on their posts. Worth it only when that becomes a recurring task with a real procedure; it is another actuator to gate and audit, and it reads other people's comments (external content).
     3. A skill per platform. Rejected: skills name classes, never products (`AGENTS.md`, `requires`).
-    Decide with the user before building.
+    Recommendation recorded with the user on 2026-09-28: option 1. Revisit option 2 only if replying to other people's comments becomes a recurring task.
   - Done when: a scheduled LinkedIn post and its first comment go out from one approval in a real run, with offline provider tests for the new verb.
 
 ## Next skills
