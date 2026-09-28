@@ -1,0 +1,14 @@
+{
+  "name": "shop",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@shopco/http-kit": "2.3.0",
+    "@shopco/money": "1.4.2"
+  }
+}
