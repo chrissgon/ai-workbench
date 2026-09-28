@@ -68,11 +68,13 @@ Progress:
   - Ability to pay: what they already pay for tools, and financial health signals.
   - Decider and reach: who decides, and how someone with the founder's access from item 4 can reach them cheaply (public registries and directories, map listings, associations with local chapters, events with dates, communities). Note privacy law limits on cold outreach.
   - Regulation: rules that limit what the offer may do or how it may be advertised in that segment (sensitive data, professional councils' advertising or AI rules), from the official body.
-- [ ] Step 5: Score each segment from 1 to 5 on: pain (strength of evidence and size), base (count in the size band), ability to pay, incumbents (5 = no bundled alternative, 1 = the job is already a cheap add-on), reach (for this founder), regulation (5 = no constraint on the offer, 1 = the offer must change or may not be advertised). Every score cites sources; an unsupported score is 1. Write the scores to `options.json` in a folder from `mktemp -d` and run:
+- [ ] Step 5: Score each segment from 1 to 5 on: pain (strength of evidence and size), base (count in the size band), ability to pay, incumbents (5 = no bundled alternative, 1 = the job is already a cheap add-on), reach (for this founder), regulation (5 = no constraint on the offer, 1 = the offer must change or may not be advertised). Every score cites sources; an unsupported score is 1. Pass the scores as JSON on standard input, with no temporary file:
   ```bash
-  python3 skills/biz-icp-positioning/scripts/rank.py --input <folder>/options.json [--no-evidence-label "<translation>"]
+  python3 skills/biz-icp-positioning/scripts/rank.py [--no-evidence-label "<translation>"] <<'EOF'
+  {"criteria": [...], "options": [...]}
+  EOF
   ```
-  Paste the table as printed; remove the folder.
+  Paste the table as printed and name the command under "Method".
 - [ ] Step 6: Stop and ask the user when `close_call` is true (top two within 2 points), with your recommended reading; do not break the tie yourself. Record the answer.
 - [ ] Step 7: Write `docs/business/icp.md` from its template: primary and secondary profiles, who not to sell to and why, the job the customer hires the offer for, triggers, the decider, where to find them, and the validation plan. The interview guide asks about past behaviour and current spend ("when did this last happen, what did it cost, what did you try"), never "would you buy". Pass and fail criteria are written before any interview.
 - [ ] Step 8: Positioning. From the research, list the alternatives the primary profile uses today. Then ask the user, with recommendations, which attributes the business can truly claim against each alternative (for example independence from a platform, integration with the tools they already have, a fixed price, response time). Do not invent a differentiator, a case, a number of clients or a guarantee. Write `docs/business/positioning.md` from its template; every comparison cites a source, and claims the segment's rules forbid go under "Do not claim".

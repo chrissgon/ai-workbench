@@ -4,7 +4,6 @@
     "python3 skills/biz-market-analysis/scripts/rank.py",
     "python3 skills/biz-market-analysis/scripts/capacity.py",
     "python3 skills/biz-market-analysis/scripts/check_refs.py",
-    "mktemp -d",
     "date +%F",
     "mkdir -p docs/business"
   ],
