@@ -309,3 +309,10 @@ def test_capacity_computes_jobs_per_month_and_refuses_bad_values():
     assert json.loads(r.stdout)["jobs_per_month"] == 1.1
     assert run(CAPACITY, "--hours-per-week", "0", "--hours-per-job", "40").returncode == 2
     assert run(CAPACITY, "--hours-per-week", "15", "--hours-per-job", "40", "--utilization", "2").returncode == 2
+
+
+def test_rank_translates_the_no_evidence_label():
+    r = run(RANK, "--no-evidence-label", "sem evidência",
+            stdin=options({"score": 5, "sources": ["1"]}, {"score": 2, "sources": ["3"]}))
+    assert r.returncode == 0, r.stderr
+    assert "1 (sem evidência)" in json.loads(r.stdout)["table"]

@@ -17,6 +17,7 @@ Input JSON:
 
 Every option must score every criterion with an integer from 1 to 5. A score above 1 needs at
 least one source reference; a score of 1 with no source is reported as "1 (no evidence)".
+--no-evidence-label sets the text shown for an unsupported score (default "no evidence").
 Prints JSON to stdout: the ranked options with weighted totals, the gap between the top two,
 and a Markdown table under "table". Diagnostics go to stderr. Exit 1 on invalid input.
 """
@@ -84,20 +85,20 @@ def validate(data):
     return crits, opts
 
 
-def cell(s):
+def cell(s, label):
     if not s.get("sources"):
-        return f"{s['score']} (no evidence)"
+        return f"{s['score']} ({label})"
     refs = "".join(f"[{x}]" for x in s["sources"])
     return f"{s['score']} {refs}"
 
 
-def rank(crits, opts):
+def rank(crits, opts, label="no evidence"):
     rows = []
     for o in opts:
         total = sum(c.get("weight", 1) * o["scores"][c["name"]]["score"] for c in crits)
         unsupported = [c["name"] for c in crits if not o["scores"][c["name"]].get("sources")]
         rows.append({"name": o["name"], "total": round(total, 2), "unsupported": unsupported,
-                     "cells": [cell(o["scores"][c["name"]]) for c in crits]})
+                     "cells": [cell(o["scores"][c["name"]], label) for c in crits]})
     rows.sort(key=lambda r: (-r["total"], r["name"]))
     header = ["Rank", "Option"] + [
         c["name"] if c.get("weight", 1) == 1 else f"{c['name']} (x{c['weight']})" for c in crits
@@ -119,6 +120,8 @@ def rank(crits, opts):
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--input", help="options JSON file (default: stdin)")
+    ap.add_argument("--no-evidence-label", default="no evidence",
+                    help="text shown next to an unsupported score, in the artifact's language")
     args = ap.parse_args()
     try:
         data = load(args)
@@ -127,7 +130,7 @@ def main():
     if not isinstance(data, dict):
         fail("input must be a JSON object")
     crits, opts = validate(data)
-    json.dump(rank(crits, opts), sys.stdout, ensure_ascii=False, indent=2)
+    json.dump(rank(crits, opts, args.no_evidence_label), sys.stdout, ensure_ascii=False, indent=2)
     sys.stdout.write("\n")
 
 

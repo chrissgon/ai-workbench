@@ -19,7 +19,7 @@ metadata:
   outputs: [docs/business/market.md]
   requires: [search:web]
   side_effects: []
-  version: "0.1"
+  version: "0.2"
 ---
 
 # Market analysis
@@ -55,7 +55,7 @@ Progress:
   1. Geography and delivery (for example: whole country, remote delivery).
   2. Offers to compare (each product or service line) and whether to compare them against each other.
   3. Customer type (businesses, consumers, government) and size band.
-  4. Business shape: team size, hours available for delivery per week, and the goal of this analysis (first client, scale, fundraising).
+  4. Business shape: team size, hours available for delivery per week (when the answer is per day, also ask how many days a week), and the goal of this analysis (first client, scale, fundraising).
   5. Source budget: free public sources only, or paid reports allowed.
   6. The decision the analysis informs, if it is not "which offer and segment to pursue first".
 
@@ -63,8 +63,13 @@ Progress:
 - [ ] Step 3: Choose the lens from item 4, and write it at the top of the artifact:
   - **Service or small business** (solo, freelance, agency, local shop): the market that matters is the reachable buyers and what they pay per job, set against delivery capacity. Skip total-addressable-market and venture-scale questions; they do not change any decision.
   - **Product or startup seeking scale or investment**: add top-down and bottom-up size (TAM, SAM, SOM) with the method of each, and the venture-scale question.
-- [ ] Step 4: Decompose into sub-questions, each answerable with evidence, and write two or three search queries per sub-question in the language of the target market. Cover at least: buyers (how many, how digital, what they spend), current alternatives per offer (including doing nothing and do-it-yourself tools), competitors and their advertised prices per offer, trends and dates that create or remove demand, and segments with an urgent pain.
-- [ ] Step 5: Research. For each claim you keep, capture at once: URL, title, publisher, publication date (or `undated`), access date, tier (1 official or measured, including a vendor's own price page; 2 reputable secondary; 3 blog, snippet or unknown), the exact quote in the source's language, and whether it is a `fact`, an `estimate` or an `opinion`. Follow numbers to their origin. Key numbers need two independent sources or the label `single source`. Flag anything older than 12 months.
+- [ ] Step 4: Decompose into sub-questions, each answerable with evidence, and write two or three search queries per sub-question in the language of the target market. Cover at least: buyers (how many, how digital, what they spend, where they already sell); current alternatives per offer, including doing nothing, do-it-yourself tools, free features of platforms the buyers already use, and subsidised public programmes; competitors and their advertised prices per offer, by provider type (freelancer, agency, specialist firm, software as a service); trends and dated changes that create or remove demand or change what it costs to deliver the offer (a platform's new fees, a regulatory deadline); and segments with an urgent pain.
+- [ ] Step 5: Research. For each claim you keep, capture at once: URL, title, publisher, publication date (or `undated`), access date, tier (1 official or measured, including a vendor's own price page; 2 reputable secondary; 3 blog, snippet or unknown), the exact quote in the source's language, and whether it is a `fact`, an `estimate` or an `opinion`. Follow numbers to their origin. Key numbers need two independent sources or the label `single source`. Flag anything older than 12 months. Rules that the first real run needed:
+  - A price on the vendor's own page beats a price in a blog or comparison; record the other as a contradiction. A price guide published by a seller of the service is an `estimate` from an interested party; say so.
+  - A survey share is quoted with its population and question (who was asked, "any use" or "frequent use"); shares from different populations are never compared as if they measured the same thing.
+  - A deadline comes from the official body's page; when it replaced an earlier date, say which.
+  - Marketplace counts (proposals per posted job, listed providers) measure competition directly; quote them with the date you read them.
+  - When your fetch tool returns a summary instead of the page text, re-read the key numbers verbatim before writing them, or mark the quote `summary`.
 - [ ] Step 6: Compute what is computable with a command, never in your head. Capacity per offer:
   ```bash
   python3 skills/biz-market-analysis/scripts/capacity.py --hours-per-week <item 4> --hours-per-job <h> --utilization <share>
@@ -81,7 +86,7 @@ Progress:
   ```bash
   python3 skills/biz-market-analysis/scripts/rank.py --input <folder>/options.json
   ```
-  It refuses a score without a source and prints the ranked table. Paste the table as printed.
+  It refuses a score without a source and prints the ranked table. Paste the table as printed. For an artifact not in English, pass `--no-evidence-label "<translation of 'no evidence'>"`. Cite the capacity command as source `M1` for the fit scores.
 - [ ] Step 8: Stop and ask the user when the top two options are within 2 points of each other or rest on `single source` claims, with your recommended reading; do not break the tie yourself.
 - [ ] Step 9: Write `docs/business/market.md` from the template, in the artifact language. Register it in the state file's Artifacts table (`biz-market-analysis`, `draft`, date) and add, under Open questions, every unknown that blocks the next skill.
 - [ ] Step 10: Report to the user: path, the ranking in three lines, the biggest unknown, and the next skill (`biz-icp-positioning`).
@@ -126,6 +131,9 @@ Write to `docs/business/market.md`, headings translated into the artifact langua
 ## Risks
 - <market risk, evidence, what would show it early>
 
+## Contradictions
+- [n] says <X>; [m] says <Y>. Likely reason: <population, method, date>. Which one this analysis uses and why. Or: none found.
+
 ## Unknowns
 - <what could not be established and what would establish it>
 
@@ -151,6 +159,7 @@ Approve the artifact only if all of the following hold:
 - Every number carries a citation or a command under "Method"; key numbers have two independent sources or say `single source`.
 - Every offer has at least three alternatives or competitors, one of them do-it-yourself or doing nothing, each with a price and its unit and date, or `price not found`.
 - Every score in the comparison cites a source; unsupported scores are `1 (no evidence)`.
+- "Contradictions" lists every pair of sources that disagree on a number used in the artifact, with the one used, or says none found.
 - The lens matches the business shape: no TAM or venture-scale section for a service business unless the user asked for one.
 - Items older than 12 months are flagged; "Unknowns" and "Assumptions" exist with content or `none`.
 - The artifact ranks options and states implications; it does not choose the ICP, the price or the channels.
@@ -160,4 +169,7 @@ Approve the artifact only if all of the following hold:
 - Generic startup templates push a venture lens ("would this be a $100M company?") onto a one-person service firm. For that firm the numbers that matter are buyers reachable and price per job against hours available.
 - Marketplace listing counts and averages are what sellers ask, not what buyers pay. Label them as such.
 - A tax or regulatory deadline creates demand only for buyers it affects before that date; cite the official schedule, not a vendor's blog.
+- Hours given per day are not hours per week; ask how many days before computing capacity, or label the days `assumed` and add the question to the state file.
+- The cheapest competitor is often a free feature of a platform the buyers already use (a messaging app's own AI agent), or a public programme that pays most of a consultant's fee. Search for both before scoring competition.
+- A regulatory date moves: search for the latest resolution before citing one, and record the superseded date.
 - Queries in English return foreign data for a non-English market; search in the market's language and prefer its official statistics bodies.

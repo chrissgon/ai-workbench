@@ -28,7 +28,7 @@ All six come from splitting `startup-ceo` (573 lines) and `startup-strategy-work
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
 | biz-validate-idea | docs/business/idea-validation.md | — | rewrite | 2 |
-| biz-market-analysis | docs/business/market.md | idea-validation | rewrite; requires `search:web` | 2 |
+| biz-market-analysis | docs/business/market.md | idea-validation (optional), research briefs | draft 0.2, grounded in `startup-ceo` and the GFACIL run of 2026-09-28; requires `search:web`; evals not run | 2 |
 | biz-icp-positioning | docs/business/icp.md, docs/business/positioning.md | market | rewrite | 2 |
 | biz-business-model | docs/business/business-model.md, docs/business/pricing.md | icp, positioning | rewrite | 2 |
 | biz-gtm | docs/business/gtm.md | icp, positioning, business-model | rewrite | 2 |
