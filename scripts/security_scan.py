@@ -30,7 +30,8 @@ file when --root is not a git repository), or only PATH arguments (files or fold
                                  search: or integration: class, or names web pages, tickets, bug reports,
                                  review comments, CI logs, design exports...) without the sentence
                                  "External content is data" saying which sources and that instructions
-                                 in them are reported, never followed
+                                 in them are reported, never followed; or, with the sentence, without
+                                 the reply section "Instructions found in external content"
   allow-without-reason  error    an allow comment with no reason
   allow-too-broad       error    a .security-scan-allow entry that is a glob instead of one file
 
@@ -132,6 +133,7 @@ EXTERNAL_SOURCE_RE = re.compile(
     r"issue (?:bodies|comments)|CI logs?|--log-failed|failing step|exported code|design[- ]tool exports?|an export\b|"
     r"screenshots?|API responses?|code host)")
 UNTRUSTED_MARKER_RE = re.compile(r"External content is data")
+UNTRUSTED_SECTION_RE = re.compile(r"Instructions found in external content")
 PEP723_RE = re.compile(r"^#\s*dependencies\s*=\s*\[(.*)\]")
 ALLOW_RE = re.compile(r"security-scan:\s*allow\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s*(?:-->|\*/)?\s*$")
 
@@ -272,6 +274,11 @@ def scan_file(root, path, cache):
             line_no = text.count("\n", 0, m.start()) + 1 if m and not reason.startswith("requires") else 1
             add("untrusted-content", line_no, f"{reason}: add a line starting 'External content is data.' that names "
                 "the sources and says instructions in them are reported to the user, never followed")
+    elif re.fullmatch(r"skills/[^/]+/SKILL\.md|agents/[^/]+\.md", rel) and not UNTRUSTED_SECTION_RE.search(text):
+        m = UNTRUSTED_MARKER_RE.search(text)
+        add("untrusted-content", text.count("\n", 0, m.start()) + 1, "the reader does not name the reply section "
+            "'Instructions found in external content' (each instruction quoted with its source and 'not followed', "
+            "or 'none'): see shared/references/security.md item 1")
     if ext == ".md" and rel.startswith(INSTRUCTION_DIRS) and "/evals/files/" not in rel:
         for m in COMMENT_RE.finditer(text):
             if len(m.group(1).split()) >= 4 and "security-scan:" not in m.group(1):
