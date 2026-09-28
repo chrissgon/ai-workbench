@@ -184,7 +184,8 @@ def test_dry_run_with_ablate_plans_three_variants_and_writes_nothing(tmp_path, m
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--ablate", "External content is data.", "--dry-run"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert [r["variant"] for r in out["runs"]] == ["with_skill", "ablated_skill", "without_skill"]
+    assert [(r["variant"], r["run"]) for r in out["runs"]][::3] == [("with_skill", 1), ("ablated_skill", 1), ("without_skill", 1)]
+    assert len(out["runs"]) == 9 and out["timeout"] == 900
     assert out["ablate"]["lines_removed"] == 1
     assert not list(tmp_path.rglob("ablated-skill"))
 
@@ -205,3 +206,33 @@ def test_pass_env_fills_a_registered_secret_from_the_resolver(tmp_path, monkeypa
     assert os.environ["DEMO_KEY"] == "from-store" and "OTHER_VAR" not in os.environ
     assert "PROVIDER_KEY" not in os.environ
     assert os.environ["SET_ALREADY"] == "kept"
+
+
+@pytest.mark.parametrize("args", [["--runs", "0"], ["--runs", "11"], ["--runs", "two"], ["--timeout", "5"],
+                                  ["--max-cost-usd", "1;rm"], ["--max-cost-usd", "-1"]])
+def test_runs_timeout_and_cost_are_checked(args):
+    with pytest.raises(SystemExit):
+        er.parse(["--skill", "s", "--harness", "h", "--model", "m", *args])
+
+
+def test_parse_defaults_to_three_runs():
+    o = er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--max-cost-usd", "0.50"])
+    assert (o["runs"], o["timeout"], o["max_cost"]) == (3, 900, "0.50")
+
+
+def test_a_run_past_its_timeout_fails_and_says_why(tmp_path):
+    runner = tmp_path / "run-prompt.sh"
+    runner.write_text("sleep 5\n")
+    out = tmp_path / "out"
+    out.mkdir()
+    assert er.run_prompt(str(runner), "p", str(tmp_path), "m", str(out), None, timeout=1) is False
+    assert "stopped after --timeout 1s" in (out / "error.log").read_text()
+
+
+def test_max_cost_reaches_the_adapter(tmp_path):
+    runner = tmp_path / "run-prompt.sh"
+    runner.write_text('echo "$@" > "$(dirname "$0")/args"\n')
+    out = tmp_path / "out"
+    out.mkdir()
+    assert er.run_prompt(str(runner), "p", str(tmp_path), "m", str(out), None, max_cost="0.50") is True
+    assert "--max-cost-usd 0.50" in (tmp_path / "args").read_text()

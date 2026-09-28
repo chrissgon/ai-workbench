@@ -95,3 +95,11 @@ def test_the_skill_evals_are_not_copied(env):
     dest = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
     assert (dest / "SKILL.md").is_file() and not (dest / "evals").exists()
     assert (evals / "evals.json").is_file()
+
+
+def test_max_cost_becomes_a_budget_and_bad_values_are_refused(env):
+    r = run(env, "--max-cost-usd", "0.50")
+    assert r.returncode == 0, r.stderr
+    args = json.loads(env["log"].read_text())["args"]
+    assert args[args.index("--max-budget-usd") + 1] == "0.50"
+    assert run(env, "--max-cost-usd", "0.5; rm -rf x").returncode == 2

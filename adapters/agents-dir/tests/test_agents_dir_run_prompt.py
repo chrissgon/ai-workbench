@@ -69,3 +69,9 @@ def test_the_skill_evals_are_not_copied(case):
     dest = case / "cwd" / ".agents" / "skills" / "demo"
     assert (dest / "SKILL.md").is_file() and not (dest / "evals").exists()
     assert (evals / "evals.json").is_file()
+
+
+def test_max_cost_is_accepted_and_said_to_be_unenforced(case):
+    r = run(case, "m", "--max-cost-usd", "0.50")
+    assert r.returncode == 0, r.stderr
+    assert "--max-cost-usd is not enforced" in r.stderr

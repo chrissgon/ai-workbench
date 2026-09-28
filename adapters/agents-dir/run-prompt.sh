@@ -2,7 +2,7 @@
 # Eval contract for tools that read .agents/skills. Default runner: OpenCode (`opencode run`).
 #
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-#                      [--extra-skill-dir <dir>]... [--allow-command <prefix>]...
+#                      [--extra-skill-dir <dir>]... [--allow-command <prefix>]... [--max-cost-usd <amount>]
 #
 # Writes <out>/response.md and <out>/timing.json (tokens unknown: null). --skill-dir and each
 # --extra-skill-dir are copied, never linked, into <cwd>/.agents/skills/<name>. A case folder that
@@ -15,7 +15,7 @@
 # signed out). Connectors and MCP servers: the throwaway HOME below hides the user's configuration and
 # project configuration is refused, so none load; RUN_PROMPT_KEEP_HOME=1 loses that guarantee.
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOWED=0
+PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOWED=0 CAPPED=0
 EXTRA_SKILLS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -26,6 +26,7 @@ while [[ $# -gt 0 ]]; do
     --skill-dir) SKILL_DIR="$2"; shift 2 ;;
     --extra-skill-dir) EXTRA_SKILLS+=("$2"); shift 2 ;;
     --allow-command) ALLOWED=1; shift 2 ;;
+    --max-cost-usd) CAPPED=1; shift 2 ;;
     --help|-h) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
@@ -35,6 +36,7 @@ FOUND="$(find "$CWD" -path "$CWD/.git" -prune -o \( -name .agents -o -name .open
 [[ -z "$FOUND" ]] || { echo "Error: the case folder already holds ${FOUND#"$CWD"/}; a fixture or setup must not carry harness settings." >&2; exit 2; }
 mkdir -p "$OUT"
 [[ $ALLOWED -eq 1 ]] && echo "note: --allow-command is not enforced by this runner; it approves every tool (see --help)." >&2
+[[ $CAPPED -eq 1 ]] && echo "note: --max-cost-usd is not enforced by this runner (opencode has no spend limit); eval_run.py --timeout and a credit limit on the provider key are the caps." >&2
 install_skill() {
   local src dest
   src="$(cd "$1" && pwd)"; dest="$CWD/.agents/skills/$(basename "$src")"

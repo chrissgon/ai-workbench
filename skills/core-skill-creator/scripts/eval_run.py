@@ -5,7 +5,7 @@ Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
                       [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--ablate <text>]
-                      [--no-grade] [--dry-run]
+                      [--runs 3] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files (paths inside the skill folder
@@ -16,6 +16,12 @@ the grader model, and writes:
 
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
   evals-workspace/<name>/iteration-N/benchmark.json
+
+--runs <n> (default 3) runs every case, variant and model n times, one after another (parallel runs made
+the agents-dir runner fail); each run gets its own folder, run-<k>/, and benchmark.json averages them.
+--timeout <seconds> (default 900) stops a model run that takes longer, on any adapter, and counts it as
+failed. --max-cost-usd <amount> is passed to the adapter as a spend limit per run: the claude-code adapter
+enforces it, agents-dir says it cannot (a credit limit on the provider key is the cap there).
 
 --ablate <text> adds a third variant, ablated_skill: the skill with every SKILL.md line containing <text>
 removed (for example "External content is data."), to measure what one rule changes. It is refused when
@@ -77,7 +83,8 @@ def die(msg, code=2):
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None}
+            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None,
+            "runs": 3, "timeout": 900, "max_cost": None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -97,6 +104,9 @@ def parse(argv):
         elif a == "--tiers": opts["tiers"] = {t.strip() for t in val().split(",")}; i += 2
         elif a == "--pass-env": opts["pass_env"].append(val()); i += 2
         elif a == "--ablate": opts["ablate"] = val(); i += 2
+        elif a == "--runs": opts["runs"] = val(); i += 2
+        elif a == "--timeout": opts["timeout"] = val(); i += 2
+        elif a == "--max-cost-usd": opts["max_cost"] = val(); i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
@@ -110,6 +120,16 @@ def parse(argv):
         die("--only ablated needs --ablate <text>.")
     if opts["ablate"] is not None and not opts["ablate"].strip():
         die("--ablate needs a non-empty text.")
+    try:
+        opts["runs"], opts["timeout"] = int(opts["runs"]), int(opts["timeout"])
+    except (TypeError, ValueError):
+        die("--runs and --timeout take whole numbers.")
+    if not 1 <= opts["runs"] <= 10:
+        die("--runs must be between 1 and 10.")
+    if opts["timeout"] < 30:
+        die("--timeout is in seconds and at least 30.")
+    if opts["max_cost"] is not None and not re.fullmatch(r"\d+(\.\d+)?", opts["max_cost"]):
+        die("--max-cost-usd takes a number, e.g. 0.50.")
     for name in opts["pass_env"]:
         if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
             die(f"--pass-env {name!r} is not a variable name.")
@@ -299,15 +319,23 @@ def next_iteration(ws):
     return os.path.join(ws, f"iteration-{max(nums, default=0) + 1}")
 
 
-def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=()):
+def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), timeout=900,
+               max_cost=None):
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
+    if max_cost:
+        cmd += ["--max-cost-usd", max_cost]
     if skill_dir:
         cmd += ["--skill-dir", skill_dir]
     for d in extra_skills:
         cmd += ["--extra-skill-dir", d]
     for p in allow:
         cmd += ["--allow-command", p]
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
+            f.write(f"stopped after --timeout {timeout}s\n")
+        return False
     if r.returncode != 0:
         with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
             f.write(r.stdout + "\n" + r.stderr)
@@ -477,24 +505,24 @@ def main(argv):
     allow = {c["id"]: allowed_commands(evals, c) for c in cases}
     sources = {c["id"]: case_files(skill_dir, c) for c in cases}
     deps = {c["id"]: dependency_dirs(c) for c in cases}
-    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "allow_commands": allow[c["id"]]}
-            for c in cases for v in variants for t, m in models]
+    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "run": k, "allow_commands": allow[c["id"]]}
+            for c in cases for v in variants for t, m in models for k in range(1, o["runs"] + 1)]
     if o["dry"]:
         print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
                           "floor_runner": os.path.relpath(floor_runner, ROOT), "grader": o["grader"], "pass_env": o["pass_env"],
                           "cases": [{"case": c["id"], "files": c.get("files") or [], "skills": c.get("skills") or [],
                                      "setup": c.get("setup") or []} for c in cases],
                           "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
-                          "runs": plan}, indent=2))
+                          "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "runs": plan}, indent=2))
         return 0
 
     failures = 0
     results = {}
     for c in cases:
         for v in variants:
-            for tier, model in models:
+            for tier, model, k in [(t, m, k) for t, m in models for k in range(1, o["runs"] + 1)]:
                 name = v if tier == "strong" else f"{v}.floor"
-                run_dir = os.path.join(it_dir, f"eval-{c['id']}", name)
+                run_dir = os.path.join(it_dir, f"eval-{c['id']}", name, *([f"run-{k}"] if o["runs"] > 1 else []))
                 cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
                 os.makedirs(cwd, exist_ok=True)
                 os.makedirs(out, exist_ok=True)
@@ -512,10 +540,10 @@ def main(argv):
                 before = file_index(cwd)
                 variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
                 ok = run_prompt(runner_for[tier], pp, cwd, model, out, variant_dir,
-                                allow[c["id"]], env, deps[c["id"]])
+                                allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"])
                 if not ok:
                     failures += 1
-                    print(f"RUN FAILED  case {c['id']} {name}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
+                    print(f"RUN FAILED  case {c['id']} {name} run {k}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
                     continue
                 installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if variant_dir else [])
                 changed = snapshot(cwd, before, installed)
@@ -533,11 +561,11 @@ def main(argv):
                     g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"])
                     if g is None:
                         failures += 1
-                        print(f"GRADE FAILED case {c['id']} {name}", file=sys.stderr)
+                        print(f"GRADE FAILED case {c['id']} {name} run {k}", file=sys.stderr)
                     else:
                         with open(os.path.join(run_dir, "grading.json"), "w", encoding="utf-8") as f:
                             json.dump(g, f, indent=2)
-                results.setdefault(name, []).append({"case": c["id"], "pass_rate": g["summary"]["pass_rate"] if g else None,
+                results.setdefault(name, []).append({"case": c["id"], "run": k, "pass_rate": g["summary"]["pass_rate"] if g else None,
                                                      "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms")})
 
     def agg(rows, key):
@@ -560,7 +588,7 @@ def main(argv):
         if mean("with_skill" + tier_suffix) is not None and mean("ablated_skill" + tier_suffix) is not None:
             key = "ablation_delta" + ("_floor" if tier_suffix else "")
             conditions[key] = round(mean("with_skill" + tier_suffix) - mean("ablated_skill" + tier_suffix), 3)
-    bench = {"skill": o["skill"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
+    bench = {"skill": o["skill"], "runs": o["runs"], "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
              "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
              "run_summary": summary, "conditions": conditions, "failures": failures}
     with open(os.path.join(it_dir, "benchmark.json"), "w", encoding="utf-8") as f:

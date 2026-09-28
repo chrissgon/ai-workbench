@@ -2,7 +2,7 @@
 # Eval contract: run one prompt through Claude Code non-interactively.
 #
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-#                      [--extra-skill-dir <dir>]... [--allow-command <prefix>]...
+#                      [--extra-skill-dir <dir>]... [--allow-command <prefix>]... [--max-cost-usd <amount>]
 #
 # Writes <out>/response.md and <out>/timing.json. --skill-dir (the skill under test) and each
 # --extra-skill-dir (a case's dependencies, a flow's phases) are copied, never linked, into
@@ -15,10 +15,11 @@
 # the skill's scripts/ folder; any other command is denied (print mode cannot ask) and reported in
 # raw.json's permission_denials. A prefix containing ( ) , or * is refused (it would add rules).
 # acceptEdits still lets file commands (touch, mkdir) run inside --cwd.
+# --max-cost-usd becomes claude's --max-budget-usd: the run stops once it has spent that much.
 # Extra CLI flags: CLAUDE_EVAL_ARGS (default: --permission-mode acceptEdits).
 # A proxy for floor models: pass ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN (eval_run.py --pass-env).
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOW=""
+PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOW="" MAX_COST=""
 EXTRA_SKILLS=()
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -31,7 +32,10 @@ while [[ $# -gt 0 ]]; do
     --allow-command)
       [[ "$2" == *[\(\),\*]* ]] && { echo "Error: --allow-command '$2' contains ( ) , or *, which would add permission rules." >&2; exit 2; }
       ALLOW="${ALLOW:+$ALLOW,}Bash($2 *)"; shift 2 ;;
-    --help|-h) sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --max-cost-usd)
+      [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
+      MAX_COST="$2"; shift 2 ;;
+    --help|-h) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -68,6 +72,7 @@ fi
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
 set +e
 EXTRA=(); [[ -n "$ALLOW" ]] && EXTRA=(--allowedTools "$ALLOW")
+[[ -n "$MAX_COST" ]] && EXTRA+=(--max-budget-usd "$MAX_COST")
 # Connectors: https://code.claude.com/docs/en/mcp (read 2026-09-27): claude.ai connectors load when logged in
 # with a claude.ai account unless ENABLE_CLAUDEAI_MCP_SERVERS=false, and `claude -p` loads project servers
 # without asking unless --strict-mcp-config (checked in `claude --help`, 2.1.283).
