@@ -405,3 +405,27 @@ def test_lint_market_flags_statements_and_uncited_figures(tmp_path):
     found = [(f["check"], f["text"]) for f in json.loads(run(LINT_MARKET, "--file", str(doc)).stdout)["findings"]]
     assert found == [("uncited_figure", "- 62.9% have a website"),
                      ("implications_not_question", "- ICP: target micro firms")]
+
+
+LINT_ICP = "skills/biz-icp-positioning/scripts/lint_icp.py"
+
+
+def test_lint_icp_reports_hypotheticals_criteria_and_status(tmp_path):
+    doc = tmp_path / "icp.md"
+    doc.write_text("# ICP\n\n- Status: draft\n\n## Primary profile\n- 40% no-show\n\n"
+                   "## Validation plan\n- Would you pay for this?\n- Validated if: 3 of 5 name the same task\n\n"
+                   "## Sources\n[1] x\n", encoding="utf-8")
+    r = run(LINT_ICP, "--file", str(doc), "--kind", "icp")
+    assert r.returncode == 1
+    checks = sorted(f["check"] for f in json.loads(r.stdout)["findings"])
+    assert checks == ["hypothetical_question", "missing_criteria", "status", "uncited_figure"]
+
+
+def test_lint_icp_positioning_needs_confirmed_claims(tmp_path):
+    doc = tmp_path / "positioning.md"
+    doc.write_text("- Status: hypothesis\n\n## What we can truly claim\n| Attribute | Against | Why | Confirmed by |\n"
+                   "|---|---|---|---|\n| Independent | vendors | trust | user, 2026-09-28 |\n| Best in class | all | - | |\n",
+                   encoding="utf-8")
+    found = json.loads(run(LINT_ICP, "--file", str(doc), "--kind", "positioning").stdout)["findings"]
+    assert [f["check"] for f in found] == ["unconfirmed_claim"]
+    assert "Best in class" in found[0]["text"]

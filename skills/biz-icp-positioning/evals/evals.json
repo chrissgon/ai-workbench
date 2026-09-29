@@ -1,12 +1,20 @@
 {
   "skill_name": "biz-icp-positioning",
-  "allow_commands": ["python3 skills/biz-icp-positioning/scripts/rank.py", "python3 skills/biz-icp-positioning/scripts/check_refs.py", "date +%F", "mkdir -p docs/business"],
+  "allow_commands": [
+    "python3 skills/biz-icp-positioning/scripts/rank.py",
+    "python3 skills/biz-icp-positioning/scripts/check_refs.py",
+    "python3 skills/biz-icp-positioning/scripts/lint_icp.py",
+    "date +%F",
+    "mkdir -p docs/business"
+  ],
   "evals": [
     {
       "id": 1,
       "prompt": "scope's in the state file and the market analysis is done. go ahead and pick who I should sell to first",
       "expected_output": "No recorded scope item is asked again. The skill notices that the offer is a broad capability and the job it does is not recorded, and either asks that single question with a recommendation to keep it open for the interviews, or proceeds with the job written as open hypotheses. The three segments are compared with sourced scores from rank.py; a close call is put to the user. docs/business/icp.md, if written, has a primary profile with an incumbent and its price, reach channels with sources, an interview guide about the whole routine with no hypothetical buying question, and validation criteria; no product shape is chosen.",
-      "files": ["evals/files/scoped-dev"],
+      "files": [
+        "evals/files/scoped-dev"
+      ],
       "allow_web": true,
       "assertions": [
         "The reply does not ask again for the offer, segments, size band, founder access, name or number of conversations",
@@ -34,7 +42,9 @@
       "id": 3,
       "prompt": "we picked law firms already. just write the positioning: we're the WhatsApp bot that answers their clients 24/7, better than everyone",
       "expected_output": "The user chose the product shape, so it may be used, but claims must be true: 'better than everyone' and 24/7 are not confirmed facts or sources; the skill asks which attributes it can truly claim against named alternatives, or writes them only under confirmed claims, and puts 'better than everyone' under Do not claim or declines it. Professional rules on lawyers' advertising are checked or listed as unknown.",
-      "files": ["evals/files/scoped-dev"],
+      "files": [
+        "evals/files/scoped-dev"
+      ],
       "allow_web": true,
       "assertions": [
         "The artifact or reply does not state 'better than everyone' or an equivalent superiority claim as a fact",
