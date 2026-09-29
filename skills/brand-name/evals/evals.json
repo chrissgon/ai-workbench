@@ -1,0 +1,37 @@
+{
+  "skill_name": "brand-name",
+  "allow_commands": [
+    "python3 skills/brand-name/scripts/handle_check.py",
+    "date +%F",
+    "mkdir -p docs/brand"
+  ],
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "i want a personal brand but no handle yet. help me pick one",
+      "expected_output": "Research mode. Before checking names, one message asks what the name must do (own name, nickname, product-like), the languages it must read well in and words to avoid, each with a recommended answer. No candidates are checked and no file is written before the answers.",
+      "files": [],
+      "assertions": [
+        "The reply asks what kind of name it should be (for example the person's own name, a nickname or a product-like name), with a recommendation",
+        "The reply asks which languages the name must read well in, or where the audience is",
+        "No docs/brand/name.md is written",
+        "No domain or handle is declared available in this reply"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "my handle's in the state file. check it's the same everywhere and just buy the .dev domain for me",
+      "expected_output": "Audit mode for octocat. The script is run and its statuses are reported as they are (GitHub registered; domains with no RDAP record described as probably free and to be confirmed at a registrar). The skill does not buy anything and says the person buys the domain. Ownership of registered results is asked, networks needing a login are asked, and a web search for conflicts is cited. docs/brand/name.md is a draft.",
+      "files": ["evals/files/octo"],
+      "allow_web": true,
+      "assertions": [
+        "The reply or file says the skill will not buy the domain and that the person buys it",
+        "Domain results are described as 'no RDAP record' or 'probably free, confirm at a registrar' (or registered), never simply as 'available'",
+        "Every result comes with a check date or comes from handle_check.py output",
+        "The reply asks whether registered places (for example GitHub or YouTube) belong to the person",
+        "Networks that need a login (LinkedIn, Instagram, X) are asked about rather than reported as free or taken",
+        "If docs/brand/name.md exists, its status is draft"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,37 @@
+{
+  "skill_name": "brand-identity",
+  "allow_commands": [
+    "python3 skills/brand-identity/scripts/contrast.py",
+    "date +%F",
+    "mkdir -p docs/brand",
+    "mkdir -p docs/design"
+  ],
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "need a linkedin banner and some kind of look for my brand. go",
+      "expected_output": "The skill reads the approved strategy and the voice, and before building anything asks in one message: the concept of the first piece, where the palette comes from (asking whether a product design system exists, since tinykv is the product), and how pieces are produced, each with options and a recommendation. No identity file and no rendered piece before the answers.",
+      "files": ["evals/files/dana-open"],
+      "assertions": [
+        "The reply asks what the banner should say or show (the concept), with a recommendation tied to the label or the strategy",
+        "The reply asks where the palette should come from or whether an existing design system (for example tinykv's) should be followed, with a recommendation",
+        "The reply asks or recommends how the pieces are produced (for example HTML rendered to an image)",
+        "No docs/brand/identity.md is written before the user answers"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "decisions for the identity are in the state file. build it",
+      "expected_output": "docs/brand/identity.md with colours taken from design/tinykv-tokens.md citing the token names, one accent, a contrast result for each pair computed with contrast.py and a usage rule for the pairs that fail (the light accent #F59E0B on white fails for text: about 2.15:1), typefaces with a licence or marked as the system font, the LinkedIn cover size with a safe area on the left for the photo, a valid brand-tokens JSON block, status draft. At least three HTML variants of the cover exist with the label from the strategy.",
+      "files": ["evals/files/dana-decided"],
+      "assertions": [
+        "docs/brand/identity.md cites tinykv token names (for example --tk-accent) as the origin of its colours",
+        "The light accent #F59E0B on white is reported with a ratio near 2.15:1 and turned into a rule that forbids it for text (or for small text)",
+        "The identity contains a brand-tokens block that is valid JSON",
+        "The LinkedIn cover format gives 1584x396 (4:1) and keeps an area on the left free for the profile photo",
+        "At least three HTML variants of the cover exist and carry the label 'Staff Engineer · Creator of tinykv · Databases and small tools' or its words",
+        "The identity's status is draft, and the reply asks Dana to choose a variant"
+      ]
+    }
+  ]
+}

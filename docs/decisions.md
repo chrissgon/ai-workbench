@@ -75,3 +75,8 @@ Rejected: building on one agent framework directly (it would tie the core to one
 ## 2026-09-28: Claude models run on the user's account; OpenRouter only for the floor model
 
 Stated by the user. Strong-model runs and the grader go through the claude-code adapter, signed in with the user's own account; OpenRouter is used only to run the floor model (DeepSeek V3.2 through the agents-dir adapter). `eval_run.py --floor-pass-env` passes the OpenRouter key to floor runs only; before it, `--pass-env` handed the key to every run and to the grader. Rejected: running Claude models through OpenRouter (a second bill and a key the Claude runs do not need).
+
+## 2026-09-29: Parallel by default
+
+Stated by the user after the floor-model evals of six skills ran one after another for more than an hour: "o que puder ser rodado em paralelo deve rodar em paralelo". Added as principle 7 in `AGENTS.md`. Independent work runs at the same time; sequential execution needs a reason (a dependency, a shared resource, a rate limit) and says which. First application: `eval_run.py --jobs`, default 4, at most 8. The earlier belief that parallel agents-dir runs break the runner (backlog S9) is withdrawn: the "UnknownError" it recorded is what a missing provider key produces, and four concurrent floor-model runs with separate homes all answered (backlog T8).
+

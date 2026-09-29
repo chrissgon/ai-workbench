@@ -545,3 +545,225 @@ def test_baseline_status_reports_ecosystems_pins_and_missing_files(tmp_path):
     assert data["files"]["env_ignored"] is True and data["files"]["codeowners"] is None
     assert data["git"]["is_repo"] is True and data["git"]["commits"] == 0
     assert run(BASELINE, "--root").returncode == 2
+
+
+LINKEDIN_EXPORT = "skills/brand-profile/scripts/linkedin_export.py"
+CHECK_PROFILE = "skills/brand-profile/scripts/check_profile.py"
+
+# A fictitious export, laid out as LinkedIn's "Save to PDF" text comes out of a PDF reader.
+EXPORT_TEXT = "\n".join([
+    "Contact", "+44 20 7946 0000 (Mobile)", "dana.example@example.org", "www.linkedin.com/in/dana-example",
+    "Top Skills", "Rust", "Languages", "English (Native or Bilingual)",
+    "Dana Example", "Staff Engineer | Databases", "Leeds, England, United Kingdom",
+    "Summary", "Engineer who likes small tools. Reach me at +44 20 7946 0001.",
+    "Experience", "Acme Storage", "Staff Engineer", "March 2023\xa0-\xa0Present\xa0(3 years 7 months)", "Leeds",
+    "Built the storage engine.", "\xa0 Page 1 of 2", "Beta Labs", "Engineer",
+    "January 2019 - February 2023 (4 years 2 months)", "Remote", "Wrote the query planner.",
+    "Education", "Some University", "BSc, Computer Science · (2015 - 2018)",
+])
+
+
+def test_linkedin_export_drops_contact_data_and_computes_durations(tmp_path):
+    src = tmp_path / "profile.txt"
+    src.write_text(EXPORT_TEXT, encoding="utf-8")
+    r = run(LINKEDIN_EXPORT, "--text-file", str(src), "--today", "2026-09-29")
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert "7946" not in r.stdout and "@" not in r.stdout
+    assert out["redacted"] == {"contact_section_dropped": True, "emails": 1, "phones": 2}
+    assert out["header_lines"] == ["Dana Example", "Staff Engineer | Databases", "Leeds, England, United Kingdom"]
+    assert out["languages"] == ["English (Native or Bilingual)"]
+    first, second = out["experience"]
+    assert (first["company"], first["title"], first["start"], first["end"], first["months"]) == \
+        ("Acme Storage", "Staff Engineer", "2023-03", "present", 43)
+    assert (second["company"], second["months"], second["location"]) == ("Beta Labs", 50, "Remote")
+    assert out["totals"]["first_start"] == "2019-01" and out["totals"]["years_and_months"] == "7 years 8 months"
+    assert "(2015 - 2018)" in out["education"][1]
+
+
+def test_linkedin_export_refuses_text_without_roles(tmp_path):
+    src = tmp_path / "notes.txt"
+    src.write_text("just some notes\nnothing dated", encoding="utf-8")
+    assert run(LINKEDIN_EXPORT, "--text-file", str(src)).returncode == 1
+    assert run(LINKEDIN_EXPORT, "--text-file", str(src), "--today", "29/09/2026").returncode == 2
+
+
+PROFILE_OK = "\n".join([
+    "# Brand profile: Dana", "", "## Who they are", "- Staff engineer since 2019 [1]", "",
+    "## Never expose", "- Employer [2]", "", "## Voice", "- Samples written by them:", "  > hello network [3]", "",
+    "## Sources", "[1] Export, provided 2026-09-29.", "[2] User in chat, 2026-09-29.",
+    "[3] Post, 2022-11-04, https://www.linkedin.com/feed/update/urn:li:activity:6994304183386443776/",
+])
+
+
+def test_check_profile_passes_a_clean_profile_and_ignores_ids_in_links(tmp_path):
+    doc = tmp_path / "profile.md"
+    doc.write_text(PROFILE_OK, encoding="utf-8")
+    r = run(CHECK_PROFILE, "--file", str(doc))
+    assert r.returncode == 0, r.stdout + r.stderr
+
+
+def test_check_profile_reports_contact_data_refs_and_unmarked_samples(tmp_path):
+    doc = tmp_path / "profile.md"
+    bad = PROFILE_OK.replace("- Employer [2]", "- nothing listed").replace("- Employer", "") \
+        .replace("- Samples written by them:", "- Samples:").replace("since 2019 [1]", "since 2019 [1][4], call +44 20 7946 0000")
+    bad = bad.replace("## Never expose\n- nothing listed", "## Never expose\n")
+    bad = bad.replace("[3] Post, 2022-11-04,", "[3] Post, undated,")
+    doc.write_text(bad, encoding="utf-8")
+    r = run(CHECK_PROFILE, "--file", str(doc))
+    assert r.returncode == 1
+    out = json.loads(r.stdout)
+    assert out["contact_data"] == ["line 4"]
+    assert out["undefined"] == ["4"] and out["unused"] == ["2"]
+    assert out["never_empty"] is True and out["samples_unmarked"] is True
+    assert out["no_date"] == ["3"]  # digits inside the URL's activity id are not a date
+
+
+BASELINES = "skills/brand-strategy/scripts/baselines.py"
+
+
+def test_baselines_refuses_names_that_are_not_package_or_repo_names():
+    for args in (["--npm", "../../etc"], ["--github", "owner"], ["--github", "a/b?x=1"], ["--npm", "x", "--today", "yesterday"], []):
+        r = run(BASELINES, *args)
+        assert r.returncode == 2, (args, r.stdout, r.stderr)
+        assert r.stdout == ""
+
+
+VOICE_STATS = "skills/brand-voice/scripts/voice_stats.py"
+ROCKET, ZWJ, VS16 = chr(0x1F680), chr(0x200D), chr(0xFE0F)
+
+
+def test_voice_stats_counts_emoji_sequences_hashtags_and_the_closing_question():
+    family = chr(0x1F468) + ZWJ + chr(0x1F469) + ZWJ + chr(0x1F467)
+    text = f"{ROCKET} NEW POST!!! {ROCKET}{ROCKET}\nbody with #inline tag {family} {chr(0x26A1)}{VS16}\nwhat do you run?\n\n#rust #db"
+    r = run(VOICE_STATS, "stats", stdin=json.dumps([{"id": "S1", "text": text}]))
+    assert r.returncode == 0, r.stderr
+    s = json.loads(r.stdout)["samples"][0]
+    assert (s["emojis"], s["emoji_line_starts"], s["hashtags"], s["exclamations"]) == (5, 1, 3, 3)
+    assert s["ends_with_question"] is True
+
+
+def test_voice_stats_check_reads_the_rules_block_and_reports_violations(tmp_path):
+    guide = tmp_path / "voice.md"
+    guide.write_text('# Voice\n\n```voice-rules\n{"max_emojis": 0, "max_hashtags": 2, "end_with_question": true, '
+                     '"banned": ["excited to announce"]}\n```\n', encoding="utf-8")
+    bad = run(VOICE_STATS, "check", "--rules", str(guide),
+              stdin=json.dumps({"id": "d", "text": f"Excited to announce tinykv {ROCKET}\n#a #b #c"}))
+    assert bad.returncode == 1
+    v = json.loads(bad.stdout)["violations"]
+    assert "1 emojis, limit 0" in v and "3 hashtags, limit 2" in v and "does not end with a question" in v
+    assert "banned phrase: 'excited to announce'" in v
+    good = run(VOICE_STATS, "check", "--rules", str(guide), stdin=json.dumps({"id": "d", "text": "900 lines. what do you use?\n#rust"}))
+    assert good.returncode == 0, good.stdout
+
+
+def test_voice_stats_refuses_unknown_rules_and_bad_input(tmp_path):
+    rules = tmp_path / "rules.json"
+    rules.write_text('{"max_emojis": true}', encoding="utf-8")
+    assert run(VOICE_STATS, "check", "--rules", str(rules), stdin='{"text": "x"}').returncode == 2
+    assert run(VOICE_STATS, "stats", stdin="not json").returncode == 2
+    assert run(VOICE_STATS, "stats", stdin='{"text": "not a list"}').returncode == 2
+
+
+SENSITIVE = "skills/brand-profile/scripts/sensitive_topics.py"
+LOCK = ('# P\n\n```sensitive-topics\n{"action": "never_reply_escalate_to_user", "topics": {'
+        '"family": {"keywords": ["family", "mother"], "exclude": ["font-family"]}, '
+        '"politics": {"keywords": ["election"], "exclude": []}}}\n```\n')
+
+
+def test_sensitive_topics_locks_on_whole_words_and_skips_excluded_phrases(tmp_path):
+    prof = tmp_path / "profile.md"
+    prof.write_text(LOCK, encoding="utf-8")
+    locked = run(SENSITIVE, "--profile", str(prof), stdin="How is your Family? and the Election?")
+    assert locked.returncode == 1
+    assert json.loads(locked.stdout)["topics"] == {"family": ["family"], "politics": ["election"]}
+    for text in ("which font-family do you use?", "familiar with @layer?", "a motherboard question"):
+        r = run(SENSITIVE, "--profile", str(prof), stdin=text)
+        assert r.returncode == 0, (text, r.stdout)
+
+
+def test_sensitive_topics_refuses_a_profile_without_a_valid_block(tmp_path):
+    prof = tmp_path / "profile.md"
+    prof.write_text("# P\nno block\n", encoding="utf-8")
+    assert run(SENSITIVE, "--profile", str(prof), "--validate").returncode == 2
+    prof.write_text('```sensitive-topics\n{"topics": {"x": {"keywords": []}}}\n```\n', encoding="utf-8")
+    assert run(SENSITIVE, "--profile", str(prof), "--validate").returncode == 2
+
+
+CONTRAST = "skills/brand-identity/scripts/contrast.py"
+
+
+def test_contrast_computes_wcag_ratios_and_fails_by_use():
+    pairs = {"pairs": [{"name": "white on black", "fg": "#FFF", "bg": "#000000", "use": "text"},
+                       {"name": "blue on white", "fg": "#0092CD", "bg": "#FFFFFF", "use": "large"},
+                       {"name": "blue on white small", "fg": "#0092CD", "bg": "#FFFFFF", "use": "text"}]}
+    r = run(CONTRAST, stdin=json.dumps(pairs))
+    assert r.returncode == 1
+    out = {p["name"]: p for p in json.loads(r.stdout)["pairs"]}
+    assert out["white on black"]["ratio"] == 21.0 and out["white on black"]["pass"] is True
+    assert out["blue on white"]["ratio"] == 3.5 and out["blue on white"]["pass"] is True
+    assert out["blue on white small"]["pass"] is False
+
+
+def test_contrast_refuses_bad_colours_and_uses():
+    for pair in ({"fg": "blue", "bg": "#000"}, {"fg": "#000", "bg": "#FFF", "use": "huge"}):
+        assert run(CONTRAST, stdin=json.dumps({"pairs": [pair]})).returncode == 2
+    assert run(CONTRAST, stdin="[]").returncode == 2
+
+
+HANDLE_CHECK = "skills/brand-name/scripts/handle_check.py"
+
+
+def test_handle_check_refuses_bad_names_and_tlds_before_any_request():
+    for args in (["--name", "../etc"], ["--name", "a b"], ["--name", "ok", "--tld", "d.e.v.x"], ["--name", "ok", "--today", "x"]):
+        r = run(HANDLE_CHECK, *args)
+        assert r.returncode == 2, (args, r.stdout)
+        assert r.stdout == ""
+
+
+def test_handle_check_domain_status_needs_the_control_domain(monkeypatch):
+    hc = load(HANDLE_CHECK, "handle_check")
+    answers = {"https://rdap.org/domain/google.io": (None, b""), "https://rdap.org/domain/me.io": (404, b""),
+               "https://rdap.org/domain/google.dev": (200, b""), "https://rdap.org/domain/me.dev": (404, b"")}
+    monkeypatch.setattr(hc, "http_status", lambda url: answers[url])
+    assert hc.check_domain("me", "io")["status"] == "unknown"
+    assert hc.check_domain("me", "dev")["status"] == "not_found"
+
+
+CHECK_GUIDE = "skills/brand-guidelines/scripts/check_guide.py"
+
+
+def test_check_guide_flags_stale_quotes_uncited_files_and_foreign_colours(tmp_path):
+    brand = tmp_path / "brand"
+    brand.mkdir()
+    (brand / "voice.md").write_text('> hello network, today I share\n', encoding="utf-8")
+    (brand / "identity.md").write_text("accent #07B6F0\n", encoding="utf-8")
+    (brand / "strategy.md").write_text("label: Builder of small tools\n", encoding="utf-8")
+    guide = tmp_path / "guide.md"
+    guide.write_text('Label "Builder of small tools" [strategy.md]\nDon\'t: "a sentence nobody ever wrote"\n'
+                     'Accent #07B6F0 and #FF0000 [identity.md] [voice.md] [ghost.md]\n', encoding="utf-8")
+    r = run(CHECK_GUIDE, "--guide", str(guide), "--brand-dir", str(brand))
+    assert r.returncode == 1
+    out = json.loads(r.stdout)
+    assert out["stale_quotes"] == ["a sentence nobody ever wrote"]
+    assert out["hex_not_in_identity"] == ["#FF0000"]
+    assert out["missing_sources"] == ["ghost.md"]
+    ok = tmp_path / "ok.md"
+    ok.write_text('"Builder of small tools" [strategy.md] [identity.md] [voice.md] #07B6F0; not defined yet: brand-profile, brand-name\n', encoding="utf-8")
+    assert run(CHECK_GUIDE, "--guide", str(ok), "--brand-dir", str(brand)).returncode == 0
+
+
+def test_check_guide_requires_quoted_examples_and_names_the_skill_of_a_missing_file(tmp_path):
+    brand = tmp_path / "brand"
+    brand.mkdir()
+    for f in ("strategy.md", "voice.md", "identity.md", "profile.md"):
+        (brand / f).write_text('> "NEW BLOG POST!!!"\n', encoding="utf-8")
+    guide = tmp_path / "guide.md"
+    guide.write_text('[strategy.md] [voice.md] [identity.md] [profile.md]\n## 8. Do and don\'t\n| Do | Don\'t |\n|---|---|\n'
+                     '| "NEW BLOG POST!!!" | Too many emojis |\n', encoding="utf-8")
+    out = json.loads(run(CHECK_GUIDE, "--guide", str(guide), "--brand-dir", str(brand)).stdout)
+    assert out["unquoted_examples"] == ["Too many emojis"]
+    assert out["absent_not_named"] == ["name.md"]
+    guide.write_text('[strategy.md] [voice.md] [identity.md] [profile.md] Name: not defined yet, run brand-name.\n'
+                     '## 8. Do and don\'t\n| Do | Don\'t |\n|---|---|\n| "NEW BLOG POST!!!" | "NEW BLOG POST!!!" |\n', encoding="utf-8")
+    assert run(CHECK_GUIDE, "--guide", str(guide), "--brand-dir", str(brand)).returncode == 0

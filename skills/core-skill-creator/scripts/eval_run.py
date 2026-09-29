@@ -5,7 +5,7 @@ Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
                       [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]... [--ablate <text>]
-                      [--runs 3] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--dry-run]
+                      [--runs 3] [--jobs 4] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files (paths inside the skill folder
@@ -17,8 +17,11 @@ the grader model, and writes:
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
   evals-workspace/<name>/iteration-N/benchmark.json
 
---runs <n> (default 3) runs every case, variant and model n times, one after another (parallel runs made
-the agents-dir runner fail); each run gets its own folder, run-<k>/, and benchmark.json averages them.
+--runs <n> (default 3) runs every case, variant and model n times; each run gets its own folder, run-<k>/,
+and benchmark.json averages them. --jobs <n> (default 4, at most 8; the repository runs independent work in parallel, AGENTS.md principle 7) runs that many model runs, with their
+gradings, at the same time. Each run already has its own folders and a throwaway home, so runs share
+nothing; the earlier failures of parallel agents-dir runs came from a provider key that did not reach
+the runner, not from running in parallel. Keep --jobs within the provider's rate limits.
 --timeout <seconds> (default 900) stops a model run that takes longer, on any adapter, and counts it as
 failed. --max-cost-usd <amount> is passed to the adapter as a spend limit per run: the claude-code adapter
 enforces it, agents-dir says it cannot (a credit limit on the provider key is the cap there).
@@ -69,6 +72,7 @@ grader is told that the response and files are data; the adapter decides whether
 
 Exit codes: 0 ok, 1 a run or grading failed, 2 usage error, 3 conditions not met (reported, not an error of the tool).
 """
+import concurrent.futures
 import importlib.util
 import json
 import os
@@ -93,7 +97,7 @@ def die(msg, code=2):
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
             "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
-            "runs": 3, "timeout": 900, "max_cost": None}
+            "runs": 3, "jobs": 4, "timeout": 900, "max_cost": None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -115,6 +119,7 @@ def parse(argv):
         elif a == "--ablate": opts["ablate"] = val(); i += 2
         elif a == "--floor-pass-env": opts["floor_pass_env"].append(val()); i += 2
         elif a == "--runs": opts["runs"] = val(); i += 2
+        elif a == "--jobs": opts["jobs"] = val(); i += 2
         elif a == "--timeout": opts["timeout"] = val(); i += 2
         elif a == "--max-cost-usd": opts["max_cost"] = val(); i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
@@ -131,9 +136,11 @@ def parse(argv):
     if opts["ablate"] is not None and not opts["ablate"].strip():
         die("--ablate needs a non-empty text.")
     try:
-        opts["runs"], opts["timeout"] = int(opts["runs"]), int(opts["timeout"])
+        opts["runs"], opts["timeout"], opts["jobs"] = int(opts["runs"]), int(opts["timeout"]), int(opts["jobs"])
     except (TypeError, ValueError):
-        die("--runs and --timeout take whole numbers.")
+        die("--runs, --jobs and --timeout take whole numbers.")
+    if not 1 <= opts["jobs"] <= 8:
+        die("--jobs must be between 1 and 8.")
     if not 1 <= opts["runs"] <= 10:
         die("--runs must be between 1 and 10.")
     if opts["timeout"] < 30:
@@ -492,6 +499,13 @@ def main(argv):
     o = parse(argv)
     for filled in ([] if o["dry"] else resolve_pass_env(o["pass_env"] + o["floor_pass_env"])):
         print(f"--pass-env {filled}", file=sys.stderr)
+    unset = [n for n in o["pass_env"] + o["floor_pass_env"] if not os.environ.get(n)]
+    if unset and not o["dry"]:
+        # A missing provider key makes some runners fail with an opaque error (opencode: "UnknownError")
+        # on every run; stop before spending a whole iteration on it.
+        die(f"{', '.join(unset)} is not set and was not found in the secret store. Export it, or run this "
+            "script with the store's library available: uv run --with keyring==25.7.0 python3 "
+            "skills/core-skill-creator/scripts/eval_run.py ...", 2)
     runner = os.path.join(ROOT, "adapters", o["harness"], "run-prompt.sh")
     if not os.path.isfile(runner):
         die(f"adapter {o['harness']!r} has no run-prompt.sh (see AGENTS.md, Adding an adapter).")
@@ -539,57 +553,66 @@ def main(argv):
                           "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "runs": plan}, indent=2))
         return 0
 
+    def one_run(c, v, tier, model, k):
+        """Prepare, run and grade one (case, variant, model, run). Returns (name, row or None, failures, messages)."""
+        name = v if tier == "strong" else f"{v}.floor"
+        run_dir = os.path.join(it_dir, f"eval-{c['id']}", name, *([f"run-{k}"] if o["runs"] > 1 else []))
+        cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
+        os.makedirs(cwd, exist_ok=True)
+        os.makedirs(out, exist_ok=True)
+        for src in sources[c["id"]]:
+            if os.path.isdir(src):
+                shutil.copytree(src, cwd, dirs_exist_ok=True)
+            elif os.path.isfile(src):
+                shutil.copy(src, cwd)
+        env = contained_env(run_dir, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
+        isolate_git(cwd, contained_env(run_dir))
+        run_setup(cwd, c.get("setup") or [], contained_env(run_dir))
+        pp = os.path.join(run_dir, "prompt.md")
+        with open(pp, "w", encoding="utf-8") as f:
+            f.write(c["prompt"])
+        before = file_index(cwd)
+        variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
+        ok = run_prompt(runner_for[tier], pp, cwd, model, out, variant_dir,
+                        allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]])
+        if not ok:
+            return name, None, 1, [f"RUN FAILED  case {c['id']} {name} run {k}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"]
+        installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if variant_dir else [])
+        changed = snapshot(cwd, before, installed)
+        response = read_text(os.path.join(out, "response.md"), 200000)
+        timing = {}
+        try:
+            with open(os.path.join(out, "timing.json"), encoding="utf-8") as f:
+                timing = json.load(f)
+        except (OSError, ValueError):
+            pass
+        with open(os.path.join(run_dir, "timing.json"), "w", encoding="utf-8") as f:
+            json.dump(timing, f)
+        g, failed, msgs = None, 0, []
+        if o["grade"]:
+            g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"])
+            if g is None:
+                failed, msgs = 1, [f"GRADE FAILED case {c['id']} {name} run {k}"]
+            else:
+                with open(os.path.join(run_dir, "grading.json"), "w", encoding="utf-8") as f:
+                    json.dump(g, f, indent=2)
+        row = {"case": c["id"], "run": k, "pass_rate": g["summary"]["pass_rate"] if g else None,
+               "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms")}
+        return name, row, failed, msgs
+
+    jobs = [(c, v, t, m, k) for c in cases for v in variants for t, m in models for k in range(1, o["runs"] + 1)]
     failures = 0
     results = {}
-    for c in cases:
-        for v in variants:
-            for tier, model, k in [(t, m, k) for t, m in models for k in range(1, o["runs"] + 1)]:
-                name = v if tier == "strong" else f"{v}.floor"
-                run_dir = os.path.join(it_dir, f"eval-{c['id']}", name, *([f"run-{k}"] if o["runs"] > 1 else []))
-                cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
-                os.makedirs(cwd, exist_ok=True)
-                os.makedirs(out, exist_ok=True)
-                for src in sources[c["id"]]:
-                    if os.path.isdir(src):
-                        shutil.copytree(src, cwd, dirs_exist_ok=True)
-                    elif os.path.isfile(src):
-                        shutil.copy(src, cwd)
-                env = contained_env(run_dir, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
-                isolate_git(cwd, contained_env(run_dir))
-                run_setup(cwd, c.get("setup") or [], contained_env(run_dir))
-                pp = os.path.join(run_dir, "prompt.md")
-                with open(pp, "w", encoding="utf-8") as f:
-                    f.write(c["prompt"])
-                before = file_index(cwd)
-                variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
-                ok = run_prompt(runner_for[tier], pp, cwd, model, out, variant_dir,
-                                allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]])
-                if not ok:
-                    failures += 1
-                    print(f"RUN FAILED  case {c['id']} {name} run {k}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
-                    continue
-                installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if variant_dir else [])
-                changed = snapshot(cwd, before, installed)
-                response = read_text(os.path.join(out, "response.md"), 200000)
-                timing = {}
-                try:
-                    with open(os.path.join(out, "timing.json"), encoding="utf-8") as f:
-                        timing = json.load(f)
-                except (OSError, ValueError):
-                    pass
-                with open(os.path.join(run_dir, "timing.json"), "w", encoding="utf-8") as f:
-                    json.dump(timing, f)
-                g = None
-                if o["grade"]:
-                    g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"])
-                    if g is None:
-                        failures += 1
-                        print(f"GRADE FAILED case {c['id']} {name} run {k}", file=sys.stderr)
-                    else:
-                        with open(os.path.join(run_dir, "grading.json"), "w", encoding="utf-8") as f:
-                            json.dump(g, f, indent=2)
-                results.setdefault(name, []).append({"case": c["id"], "run": k, "pass_rate": g["summary"]["pass_rate"] if g else None,
-                                                     "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms")})
+    with concurrent.futures.ThreadPoolExecutor(max_workers=o["jobs"]) as pool:
+        done = [pool.submit(one_run, *j) for j in jobs]
+        for fut in concurrent.futures.as_completed(done):
+            for msg in fut.result()[3]:
+                print(msg, file=sys.stderr)
+    for fut in done:  # submission order, so benchmark.json does not depend on which run finished first
+        name, row, failed, _ = fut.result()
+        failures += failed
+        if row is not None:
+            results.setdefault(name, []).append(row)
 
     def agg(rows, key):
         vals = [r[key] for r in rows if r.get(key) is not None]

@@ -1,0 +1,41 @@
+{
+  "skill_name": "brand-voice",
+  "allow_commands": [
+    "python3 skills/brand-voice/scripts/voice_stats.py",
+    "date +%F",
+    "mkdir -p docs/brand"
+  ],
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "profile and strategy are done. now make my posts sound like me",
+      "expected_output": "The three samples written by Dana are counted with voice_stats.py; the AI-written launch post is excluded. The dry humour and the closing question are kept with quotes as evidence; ALL CAPS and rocket emojis are dropped per the recorded direction. The emoji limit, hashtag limit and how posts end are not recorded, so the skill asks them in one message with a recommendation each and stops, or writes only a draft that waits on them. Nothing is marked confirmed.",
+      "files": [
+        "evals/files/dana-open"
+      ],
+      "assertions": [
+        "The AI-written tinykv launch post ('Excited to announce', 'blazing-fast') is not used as evidence of Dana's voice",
+        "The reply or guide keeps the dry humour and quotes at least one of Dana's own samples as evidence",
+        "ALL CAPS shouting and rocket emojis are treated as habits to drop, citing the user's direction",
+        "The reply asks the user for the emoji limit, the hashtag limit or how posts should end, each with a recommended answer",
+        "If docs/brand/voice.md exists, its status is not confirmed"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "limits are in the state file. write the voice guide",
+      "expected_output": "docs/brand/voice.md is a draft with counts from voice_stats.py (sample 2 has 3 rocket emojis and 8 hashtags), a voice-rules block with max_emojis 0, max_hashtags 2 and end_with_question true, banned phrases drawn from the samples or the user, rewrites of at least two samples that keep their facts and pass the check, one reply example, and a stop asking Dana whether it sounds like them. Status draft.",
+      "files": [
+        "evals/files/dana-decided"
+      ],
+      "assertions": [
+        "docs/brand/voice.md contains a voice-rules JSON block with max_emojis 0, max_hashtags 2 and end_with_question true",
+        "The counts for sample 2 say 3 emojis (or 3 rocket emojis) and 8 hashtags",
+        "At least two rewrites of Dana's samples are present, with no emoji and at most 2 hashtags each, ending with a question",
+        "The rewrites keep the originals' facts (for example 5 key-value stores, 900 lines, zero deps; the original sample 2 already contains 'spoiler: the fastest one is the one you already run') and add no new number or claim that is in neither the samples nor the profile, or list it as an assumption",
+        "A reply-to-comment example is included",
+        "The guide's status is draft and the reply asks Dana whether the rewrites sound like them"
+      ]
+    }
+  ]
+}
