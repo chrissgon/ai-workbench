@@ -14,7 +14,8 @@ Checks:
     (the brand colour restated)
   - with --messaging: every SECTION-n headline of the messaging artifact appears verbatim (screen briefs
     that carry the page's copy)
-  - with --flows and --screen: every region and state of the SCREEN is named in Content
+  - with --flows and --screen: every region and state of the SCREEN is named in Content (lists split outside
+    parentheses, on semicolons when the list has one, otherwise on commas)
   - Creative direction names at least one "Direction <X>" (three unless the header says one was chosen)
   - Evaluation criteria has at least 5 `- CRIT-n:` lines; Deliverables has at least one line
   - Prompt has exactly one fenced block of at most 150 lines, and a "Direction:" slot when there are several
@@ -56,6 +57,14 @@ def fenced(sec):
 
 def norm(s):
     return " ".join(s.split())
+
+
+def split_list(s):
+    """Split a Regions: or States: list outside parentheses: on semicolons when there is one (items may then
+    hold commas), otherwise on commas, the separator the flows template writes."""
+    outside = r"\s*(?![^()]*\))"
+    sep = ";" if re.search(";" + outside, s) else ","
+    return [it.strip() for it in re.split(sep + outside, s) if it.strip()]
 
 
 def main(argv):
@@ -123,8 +132,8 @@ def main(argv):
             body = norm(m.group(1))
             rm = re.search(r"Regions:\s*(.*?)\.\s*States:", body)
             sm = re.search(r"States:\s*(.*?)\.\s*Breakpoints:", body)
-            regions = [r.strip() for r in re.split(r",\s*(?![^()]*\))", rm.group(1))] if rm else []
-            states = [s.strip() for s in re.split(r";\s*", sm.group(1))] if sm else []
+            regions = split_list(rm.group(1)) if rm else []
+            states = split_list(sm.group(1)) if sm else []
             low = content.lower()
             for kind, items in (("region", regions), ("state", states)):
                 for it in items:

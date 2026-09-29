@@ -12,6 +12,7 @@ import base64
 import gzip
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -767,3 +768,62 @@ def test_check_guide_requires_quoted_examples_and_names_the_skill_of_a_missing_f
     guide.write_text('[strategy.md] [voice.md] [identity.md] [profile.md] Name: not defined yet, run brand-name.\n'
                      '## 8. Do and don\'t\n| Do | Don\'t |\n|---|---|\n| "NEW BLOG POST!!!" | "NEW BLOG POST!!!" |\n', encoding="utf-8")
     assert run(CHECK_GUIDE, "--guide", str(guide), "--brand-dir", str(brand)).returncode == 0
+
+
+# ---------- design-brief/lint_brief.py: SCREEN lists from the flows ----------
+
+LINT_BRIEF = "skills/design-brief/scripts/lint_brief.py"
+
+FLOWS_BOTH_SEPARATORS = """# Flows
+
+## Screens
+
+- SCREEN-1: Home. Purpose: introduce the site. Regions: hero (name, role), project list, footer. States: default, no JavaScript (theme toggle inert), reduced motion. Breakpoints: one column. Source: spec REQ-1.
+- SCREEN-2: Post. Purpose: read a post. Regions: header, body. States: default; copied (feedback, 1 second); offline, cached copy shown. Breakpoints: one column. Source: spec REQ-2.
+
+## Flows
+"""
+
+
+def screen_errors(tmp_path: Path, screen: str, content: str) -> list[str]:
+    flows = tmp_path / "flows.md"
+    flows.write_text(FLOWS_BOTH_SEPARATORS, encoding="utf-8")
+    brief = tmp_path / "brief.md"
+    brief.write_text(f"# Brief\n\n## Content\n\n{content}\n", encoding="utf-8")
+    r = run(LINT_BRIEF, "--file", str(brief), "--type", "screen", "--values", "inline",
+            "--flows", str(flows), "--screen", screen)
+    return [e for e in json.loads(r.stdout)["errors"] if f"of {screen}" in e or "not found" in e]
+
+
+def test_lint_brief_splits_lists_on_commas_or_semicolons():
+    split = load(LINT_BRIEF, "lint_brief").split_list
+    assert split("default, no JavaScript (theme toggle inert), reduced motion") == [
+        "default", "no JavaScript (theme toggle inert)", "reduced motion"]
+    assert split("default; copied (feedback, 1 second); offline, cached copy shown") == [
+        "default", "copied (feedback, 1 second)", "offline, cached copy shown"]
+
+
+def test_lint_brief_accepts_comma_separated_states(tmp_path):
+    content = ("- Regions: hero, project list, footer\n- States:\n  - default\n"
+               "  - no JavaScript: the toggle is inert\n  - reduced motion: no animation")
+    assert screen_errors(tmp_path, "SCREEN-1", content) == []
+
+
+def test_lint_brief_accepts_semicolon_separated_states(tmp_path):
+    content = "- Regions: header, body\n- States:\n  - default\n  - copied: feedback\n  - offline, cached copy shown"
+    assert screen_errors(tmp_path, "SCREEN-2", content) == []
+
+
+def test_lint_brief_reports_a_state_missing_from_content(tmp_path):
+    errors = screen_errors(tmp_path, "SCREEN-1", "- Regions: hero, project list, footer\n- States: default")
+    assert errors == [
+        "state 'no JavaScript (theme toggle inert)' of SCREEN-1 is not named in Content (looked for 'no javascript')",
+        "state 'reduced motion' of SCREEN-1 is not named in Content (looked for 'reduced motion')"]
+
+
+def test_lint_brief_eval_fixture_screens_keep_their_items():
+    split = load(LINT_BRIEF, "lint_brief").split_list
+    flows = (ROOT / "skills/design-brief/evals/files/flows.md").read_text(encoding="utf-8")
+    states = re.search(r"SCREEN-3:.*?States:\s*(.*?)\.\s*Breakpoints:", flows).group(1)
+    assert split(states) == ["default", "light and dark (from `data-pui-mode`)", "theme colour applied",
+                             "search entry point absent when the build has no search"]
