@@ -268,6 +268,171 @@ def test_pr_context_refuses_option_like_base(tmp_path):
     assert out["compared_with"] == "main" and len(out["commits"]) == 1
 
 
+# ---------- biz-market-analysis/rank.py and capacity.py ----------
+
+RANK = "skills/biz-market-analysis/scripts/rank.py"
+CAPACITY = "skills/biz-market-analysis/scripts/capacity.py"
+
+
+def options(a_demand: dict, b_demand: dict) -> str:
+    return json.dumps({"criteria": [{"name": "demand"}, {"name": "fit", "weight": 2}],
+                       "options": [{"name": "A", "scores": {"demand": a_demand, "fit": {"score": 1, "sources": []}}},
+                                   {"name": "B", "scores": {"demand": b_demand, "fit": {"score": 3, "sources": ["2"]}}}]})
+
+
+def test_rank_orders_by_weighted_total_and_marks_missing_evidence():
+    r = run(RANK, stdin=options({"score": 5, "sources": ["1"]}, {"score": 2, "sources": ["3"]}))
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert [o["name"] for o in out["ranked"]] == ["B", "A"]
+    assert out["ranked"][0]["total"] == 8 and out["ranked"][1]["total"] == 7
+    assert out["close_call"] is True
+    assert "1 (no evidence)" in out["table"]
+
+
+def test_rank_refuses_a_score_without_a_source():
+    r = run(RANK, stdin=options({"score": 4, "sources": []}, {"score": 2, "sources": ["3"]}))
+    assert r.returncode == 1
+    assert "has no source" in r.stderr
+    assert r.stdout == ""
+
+
+def test_rank_refuses_out_of_range_and_unscored_criteria():
+    bad = json.loads(options({"score": 6, "sources": ["1"]}, {"score": 2, "sources": ["3"]}))
+    del bad["options"][1]["scores"]["fit"]
+    r = run(RANK, stdin=json.dumps(bad))
+    assert r.returncode == 1
+    assert "integer from 1 to 5" in r.stderr and "is not scored" in r.stderr
+
+
+def test_capacity_computes_jobs_per_month_and_refuses_bad_values():
+    r = run(CAPACITY, "--hours-per-week", "15", "--hours-per-job", "40", "--utilization", "0.7")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["jobs_per_month"] == 1.1
+    assert run(CAPACITY, "--hours-per-week", "0", "--hours-per-job", "40").returncode == 2
+    assert run(CAPACITY, "--hours-per-week", "15", "--hours-per-job", "40", "--utilization", "2").returncode == 2
+
+
+def test_rank_translates_the_no_evidence_label():
+    r = run(RANK, "--no-evidence-label", "sem evidência",
+            stdin=options({"score": 5, "sources": ["1"]}, {"score": 2, "sources": ["3"]}))
+    assert r.returncode == 0, r.stderr
+    assert "1 (sem evidência)" in json.loads(r.stdout)["table"]
+
+
+def test_rank_copies_are_identical():
+    a = (ROOT / RANK).read_bytes()
+    assert (ROOT / "skills/biz-icp-positioning/scripts/rank.py").read_bytes() == a, \
+        "copy skills/biz-market-analysis/scripts/rank.py to skills/biz-icp-positioning/scripts/rank.py"
+
+
+CHECK_REFS = "skills/biz-market-analysis/scripts/check_refs.py"
+
+
+def test_check_refs_reports_undefined_unused_and_incomplete(tmp_path):
+    doc = tmp_path / "market.md"
+    doc.write_text("# M\n\n## Buyers\n- 10 firms [1][3]; capacity M1 and M2\n\n## Sources\n"
+                   '[1] T, P. https://example.org. Quote: "10 firms"\n[2] T2, P. https://example.org/2. Quote: "x"\n'
+                   "[3] T3, P. no link and no quote\n\n## Method\n- M1: `python3 capacity.py`\n", encoding="utf-8")
+    r = run(CHECK_REFS, "--file", str(doc))
+    assert r.returncode == 1
+    out = json.loads(r.stdout)
+    assert out["undefined"] == ["M2"]
+    assert out["unused"] == ["2"]
+    assert out["incomplete"] == [{"ref": "3", "missing": ["url", "quote"]}]
+
+
+def test_check_refs_passes_a_clean_translated_file(tmp_path):
+    doc = tmp_path / "market.md"
+    doc.write_text('## Resumen\n- dato [1] (M1)\n\n## Fuentes\n[1] T. https://x.org. Cita: "dato"\n\n## Método\n- M1\n',
+                   encoding="utf-8")
+    r = run(CHECK_REFS, "--file", str(doc), "--sources-heading", "Fuentes", "--method-heading", "Método")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert run(CHECK_REFS, "--file", str(doc)).returncode == 2
+
+
+def test_check_refs_copies_are_identical():
+    assert (ROOT / "skills/biz-icp-positioning/scripts/check_refs.py").read_bytes() == (ROOT / CHECK_REFS).read_bytes()
+
+
+def test_rank_refuses_sources_that_are_not_references():
+    r = run(RANK, stdin=options({"score": 4, "sources": ["recurring revenue model"]}, {"score": 2, "sources": ["3"]}))
+    assert r.returncode == 1
+    assert "are not references" in r.stderr
+    ok = run(RANK, stdin=options({"score": 4, "sources": ["2b", "M1"]}, {"score": 2, "sources": [3]}))
+    assert ok.returncode == 0, ok.stderr
+
+
+LINT_MARKET = "skills/biz-market-analysis/scripts/lint_market.py"
+
+
+def test_lint_market_reports_the_repeated_mistakes(tmp_path):
+    doc = tmp_path / "market.md"
+    doc.write_text(
+        "## Alternatives and competitors per offer\n### Sites\n"
+        "| Alternative | Kind | Advertised price (unit, date) | Source |\n|---|---|---|---|\n"
+        "| DIY builder | DIY | EUR 10/month (2026) | [1] |\n| Do nothing | do nothing | 0 (staff time) | [2] |\n"
+        "| Agency | agency | Custom pricing | [Acme] |\n| Freelancer | freelancer | price not found | [2,3] |\n\n"
+        "## Implications for the next decisions\n- Pricing: charge €50 per month?\n- ICP: which segment? [1]\n\n"
+        "## Sources\n[1] a [x]\n", encoding="utf-8")
+    r = run(LINT_MARKET, "--file", str(doc))
+    assert r.returncode == 1
+    found = [(f["check"], f["text"]) for f in json.loads(r.stdout)["findings"]]
+    assert ("price_cell", "Custom pricing") in found
+    assert ("bad_citation", "[Acme]") in found
+    assert any(c == "bad_citation" and t.startswith("[2,3]") for c, t in found)
+    assert any(c == "implications_currency" for c, _ in found)
+    assert ("implications_not_question", "- ICP: which segment? [1]") not in found
+    assert len(found) == 5  # the priced Implications bullet is also not a question
+
+
+def test_lint_market_passes_a_clean_translated_file(tmp_path):
+    doc = tmp_path / "market.md"
+    doc.write_text(
+        "## Alternativas\n| Alternativa | Precio | Fuente |\n|---|---|---|\n| Nada | 0 | [1] |\n| Web | R$ 99/mes | [1] |\n"
+        "| Agencia | precio no encontrado | [2] |\n\n## Implicaciones\n- Precio: cuanto cobrar? [2]\n\n## Fuentes\n[1] x\n",
+        encoding="utf-8")
+    r = run(LINT_MARKET, "--file", str(doc), "--alternatives-heading", "Alternativas", "--implications-heading",
+            "Implicaciones", "--price-column", "precio", "--not-found-label", "precio no encontrado",
+            "--sources-heading", "Fuentes")
+    assert r.returncode == 0, r.stdout
+    assert json.loads(run(LINT_MARKET, "--file", str(doc)).stdout)["missing_headings"]
+
+
+def test_lint_market_flags_statements_and_uncited_figures(tmp_path):
+    doc = tmp_path / "market.md"
+    doc.write_text("## Summary\n- 62.9% have a website\n- 40% sell online [3]\n\n"
+                   "## Implications for the next decisions\n- ICP: target micro firms\n- Channels: which first? [3]\n\n"
+                   "## Assumptions\n- Assumption: 20% utilisation\n\n## Sources\n[3] x\n", encoding="utf-8")
+    found = [(f["check"], f["text"]) for f in json.loads(run(LINT_MARKET, "--file", str(doc)).stdout)["findings"]]
+    assert found == [("uncited_figure", "- 62.9% have a website"),
+                     ("implications_not_question", "- ICP: target micro firms")]
+
+
+LINT_ICP = "skills/biz-icp-positioning/scripts/lint_icp.py"
+
+
+def test_lint_icp_reports_hypotheticals_criteria_and_status(tmp_path):
+    doc = tmp_path / "icp.md"
+    doc.write_text("# ICP\n\n- Status: draft\n\n## Primary profile\n- 40% no-show\n\n"
+                   "## Validation plan\n- Would you pay for this?\n- Validated if: 3 of 5 name the same task\n\n"
+                   "## Sources\n[1] x\n", encoding="utf-8")
+    r = run(LINT_ICP, "--file", str(doc), "--kind", "icp")
+    assert r.returncode == 1
+    checks = sorted(f["check"] for f in json.loads(r.stdout)["findings"])
+    assert checks == ["hypothetical_question", "missing_criteria", "status", "uncited_figure"]
+
+
+def test_lint_icp_positioning_needs_confirmed_claims(tmp_path):
+    doc = tmp_path / "positioning.md"
+    doc.write_text("- Status: hypothesis\n\n## What we can truly claim\n| Attribute | Against | Why | Confirmed by |\n"
+                   "|---|---|---|---|\n| Independent | vendors | trust | user, 2026-09-28 |\n| Best in class | all | - | |\n",
+                   encoding="utf-8")
+    found = json.loads(run(LINT_ICP, "--file", str(doc), "--kind", "positioning").stdout)["findings"]
+    assert [f["check"] for f in found] == ["unconfirmed_claim"]
+    assert "Best in class" in found[0]["text"]
+
+
 # ---------- eng-security-review/triage_alerts.py ----------
 
 TRIAGE = "skills/eng-security-review/scripts/triage_alerts.py"

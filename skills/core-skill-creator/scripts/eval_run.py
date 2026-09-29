@@ -36,7 +36,7 @@ open-weight model served through its own CLI) while the strong model and the gra
 --dry-run prints the runs, the allowed commands and every case's setup commands, and runs nothing.
 
 Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-[--extra-skill-dir <dir>]... [--allow-command <prefix>]... copies each skill folder into <cwd> where the
+[--extra-skill-dir <dir>]... [--allow-command <prefix>]... [--allow-web] copies each skill folder into <cwd> where the
 harness discovers it (never a link into the workbench) and must write <out>/response.md and
 <out>/timing.json ({"total_tokens", "duration_ms", "cost_usd"}).
 
@@ -50,10 +50,16 @@ leading assignments other than TZ, LANG, LC_*, CI, NODE_ENV, NO_COLOR, FORCE_COL
 A prefix fixes only the start of a command: "npm test" runs whatever tests the model wrote, and git
 runs hooks it wrote. The environment below is what limits such code.
 
+Web. evals.json may set "allow_web": true at the top level or per case, for a skill that must search
+and read web pages (it requires search:web). The adapter then lets the model search and fetch pages,
+and nothing else more; the grader never gets it. Without it a harness that asks before searching denies
+the search, and a with-skill run of a research skill measures only its degraded mode.
+
 Containment. Model runs, setup commands and the grader get an environment built from an allowlist
 (PATH, HOME, USER, LOGNAME, SHELL, LANG, LANGUAGE, LC_*, TERM, TMPDIR, TZ and certificate-bundle paths),
 plus the variables named with --pass-env (a harness's API key or proxy; a registered secret missing from
-the environment is read from the OS secret store through providers/secrets/resolver.py); token variables for git hosts
+the environment is read from the OS secret store through providers/secrets/resolver.py) or --floor-pass-env
+(floor-model runs only: a provider key the strong model and the grader must not receive); token variables for git hosts
 and npm are refused there. On top: GIT_ALLOW_PROTOCOL=file (git reaches only local remotes), no global
 or system git config, GH_CONFIG_DIR pointing to an empty folder (the GitHub CLI is signed out) and
 NPM_CONFIG_USERCONFIG pointing to an empty file (npm has no token). Remotes a case needs are local bare
@@ -240,6 +246,14 @@ def allowed_commands(data, case):
     return prefixes
 
 
+def allow_web(data, case):
+    """Whether the case may search and fetch web pages: "allow_web" at the top level or in the case."""
+    for where, value in (("top level", data.get("allow_web")), (f"case {case.get('id')}", case.get("allow_web"))):
+        if value is not None and not isinstance(value, bool):
+            die(f"{where}: allow_web must be true or false, not {value!r}.")
+    return bool(data.get("allow_web") or case.get("allow_web"))
+
+
 def case_files(skill_dir, case):
     """The case's "files" entries as source paths, refusing any that reach outside the skill folder."""
     base = os.path.realpath(skill_dir)
@@ -324,7 +338,7 @@ def next_iteration(ws):
 
 
 def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), timeout=900,
-               max_cost=None):
+               max_cost=None, web=False):
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
     if max_cost:
         cmd += ["--max-cost-usd", max_cost]
@@ -334,6 +348,8 @@ def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=No
         cmd += ["--extra-skill-dir", d]
     for p in allow:
         cmd += ["--allow-command", p]
+    if web:
+        cmd += ["--allow-web"]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
     except subprocess.TimeoutExpired:
@@ -507,9 +523,11 @@ def main(argv):
         if not o["dry"]:
             ablated_dir, _ = ablated_copy(skill_dir, o["ablate"], os.path.join(it_dir, "ablated-skill"))
     allow = {c["id"]: allowed_commands(evals, c) for c in cases}
+    web = {c["id"]: allow_web(evals, c) for c in cases}
     sources = {c["id"]: case_files(skill_dir, c) for c in cases}
     deps = {c["id"]: dependency_dirs(c) for c in cases}
-    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "run": k, "allow_commands": allow[c["id"]]}
+    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "run": k, "allow_commands": allow[c["id"]],
+             "allow_web": web[c["id"]]}
             for c in cases for v in variants for t, m in models for k in range(1, o["runs"] + 1)]
     if o["dry"]:
         print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
@@ -545,7 +563,7 @@ def main(argv):
                 before = file_index(cwd)
                 variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
                 ok = run_prompt(runner_for[tier], pp, cwd, model, out, variant_dir,
-                                allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"])
+                                allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]])
                 if not ok:
                     failures += 1
                     print(f"RUN FAILED  case {c['id']} {name} run {k}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)

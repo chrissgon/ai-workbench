@@ -29,7 +29,7 @@ python3 skills/core-skill-creator/scripts/eval_run.py --skill <name> --harness c
   --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v3.2 --floor-pass-env OPENROUTER_API_KEY
 ```
 
-`--floor-pass-env` gives the key to the floor model's runs only; the strong model's runs and the grader never see it.
+`--floor-pass-env` gives the key to the floor model's runs only; the strong model's runs and the grader never see it. The strong model and the grader run through the claude-code adapter on the user's own account (decided 2026-09-28).
 
 Requires `opencode` on `PATH`.
 
