@@ -1,0 +1,49 @@
+# The project's own fast checks and a secret scan, on every push to <default-branch> and every pull request.
+# Actions are pinned to a commit (a tag can be moved); Dependabot proposes updates. Read-only permissions.
+# Fill every <...> from the project's AGENTS.md (or its manifest scripts); delete a step the project lacks.
+name: checks
+
+on:
+  push:
+    branches: [<default-branch>]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/<default-branch>' }}
+
+jobs:
+  secrets:
+    name: secrets
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@<commit sha> # <tag>
+        with:
+          fetch-depth: 0 # the history scan reads every commit
+          persist-credentials: false
+      - name: Secrets in the working tree
+        run: python3 scripts/secret-scan/secret_scan.py
+      - name: Secrets in history
+        run: python3 scripts/secret-scan/secret_scan.py --history
+
+  checks:
+    name: checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@<commit sha> # <tag>
+        with:
+          persist-credentials: false
+      # <setup step for the toolchain, pinned by commit, with the version from the project>
+      - name: Install
+        run: <install command, from the lockfile: npm ci, uv sync --frozen, ...>
+      - name: Lint
+        run: <lint command>
+      - name: Types
+        run: <typecheck command>
+      - name: Tests
+        run: <test command>

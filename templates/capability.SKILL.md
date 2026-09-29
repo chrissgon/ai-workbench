@@ -71,7 +71,7 @@ Approve the output only if all of the following hold:
 
 Delete this section unless `side_effects` is non-empty. Otherwise:
 
-1. Read the "Approvals" table in `docs/workbench/state.md`. If an approval covers this exact payload (or a plan or standing approval that includes it), skip to step 4.
-2. Show the exact payload: <list the fields: text, media, recipients, time, target>.
+1. Read the "Approvals" table in `docs/workbench/state.md`. If an approval covers this exact payload (or a plan or standing approval that includes it), skip to step 4. An `action` or `plan` approval covers this run only when the payload file written at step 2 of that approval still exists and its `sha256sum` equals the approval's `Payload hash`; what is sent is that file, never a payload written again. A missing file or a different hash is a deviation: show the payload and ask again.
+2. Show the exact payload: <list the fields: text, media, recipients, time, target>. Write the payload, exactly as shown, to `payload.md` in a folder from `mktemp -d` and hash it: `sha256sum <folder>/payload.md` (macOS: `shasum -a 256`). Keep the folder until the action has run, and give its path with the question.
 3. Ask once: "Proceed? (yes/no)". Stop on anything other than an explicit yes.
-4. Execute (now, or at the scheduled time after verifying the payload still matches). Record or update the approval row with status `executed` and a timestamp.
+4. Execute (now, or at the scheduled time after verifying the payload still matches). Record or update the approval row, with `Payload hash` set to the step 2 hash, status `executed` and a timestamp.
