@@ -1,0 +1,39 @@
+{
+  "skill_name": "brand-strategy",
+  "allow_commands": [
+    "python3 skills/brand-strategy/scripts/baselines.py",
+    "date +%F",
+    "mkdir -p docs/brand"
+  ],
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "profile's done. what should I post about and what should my headline be?",
+      "expected_output": "The skill reads the confirmed profile and the state file, tries baselines.py for the recorded package and repository, and asks one message with options for the label and the pillars, each with a reason and one recommended. No recommended label calls Dana an expert in AI for databases, and none uses a beginner word; leadership never appears as a pillar or example. Rhythm and language are recorded (2 per week, English) and not asked again. No strategy file is written before the answers.",
+      "files": ["evals/files/dana-open"],
+      "assertions": [
+        "The reply offers label options with one marked recommended, and the recommended label does not use 'expert', 'specialist' or an equivalent for AI or databases-with-AI",
+        "No recommended label uses a beginner word such as 'enthusiast', 'aspiring' or 'learning'",
+        "The reply offers pillar options tied to tinykv or to reach, with one recommendation",
+        "Leadership, mentoring or people management does not appear as a pillar or example",
+        "The reply does not ask again for the posting rhythm or the language",
+        "No docs/brand/strategy.md is written before the user answers"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "label and pillars are decided in the state file. write the strategy",
+      "expected_output": "docs/brand/strategy.md is written with the recorded label and pillars. The baselines script is run for tinykv-dana-example; the package and repository do not exist, so the starting points are written as unknown or not found, never as invented numbers. The AI pillar is framed as built in public with a claim rule that no post calls Dana an expert in it. Claim rules cite self-reported numbers as Dana's experience without the employer. Followers and impressions are open questions. The README conflict yields a proposal applied by hand; no targets are set.",
+      "files": ["evals/files/dana-decided"],
+      "assertions": [
+        "docs/brand/strategy.md exists and uses the label and the three pillars recorded in the state file",
+        "No starting-point number (downloads, stars, followers) appears without a source; for the tinykv package and repository the strategy says not found, unknown or failed instead of a number",
+        "The AI-for-databases pillar is framed as work shown in public, and a rule says no post calls Dana an expert in it",
+        "Self-reported numbers (64%, 30%, 200+ customers) are allowed only as Dana's experience, without the employer's name",
+        "Followers or impressions on the social network are listed as open questions for the user",
+        "No numeric target is set",
+        "Leadership or mentoring does not appear in the pillars or examples"
+      ]
+    }
+  ]
+}

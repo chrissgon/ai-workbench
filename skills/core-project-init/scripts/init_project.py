@@ -62,8 +62,8 @@ STATE_TEMPLATE = """# Workbench state
 {questions}
 ## Approvals
 
-| Scope | What | Approved | Expires | Status |
-|-------|------|----------|---------|--------|
+| Scope | What | Payload hash | Approved | Expires | Status |
+|-------|------|--------------|----------|---------|--------|
 """
 
 

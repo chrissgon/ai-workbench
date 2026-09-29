@@ -53,10 +53,12 @@ All four come from splitting `brand-designer` (392 lines) and `brand-workflow` (
 
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
-| brand-strategy | docs/brand/strategy.md | positioning, icp | rewrite | 3 |
-| brand-identity | docs/brand/identity.md plus brand tokens | strategy | rewrite; `generator:image` optional for moodboards | 3 |
-| brand-voice | docs/brand/voice.md | strategy | rewrite | 3 |
-| brand-guidelines | docs/brand/guidelines.md | identity, voice | rewrite | 3 |
+| brand-profile | docs/brand/profile.md: a person's trajectory, proof, goals, audiences, limits, writing samples | — | create; first case the user's personal brand (backlog PB1) | 3 |
+| brand-name | docs/brand/name.md: name or handle research (candidates, availability of handles, domains and package scopes, conflicts, pronunciation in each language), or an audit of a name already in use | profile, strategy | create; first case the user's existing handle `chrissgon`, audit mode (backlog PB12) | 3 |
+| brand-strategy | docs/brand/strategy.md, for a person or a company | profile (person) or positioning, icp (company) | rewrite | 3 |
+| brand-identity | docs/brand/identity.md plus brand tokens | strategy | rewrite; `generator:image` optional for moodboards; first case the personal brand on Perfect UI's design, grounded in the LinkedIn cover (backlog PB10) | 3 |
+| brand-voice | docs/brand/voice.md, for posts and replies | strategy, real writing samples | rewrite | 3 |
+| brand-guidelines | docs/brand/guidelines.md: the brand guide, for a person or a company; for a person, one guide an agent and a human both follow (who, positioning, name, visual, voice, claims, never-expose and the sensitive-topics lock, do and don't, examples) | profile, name, strategy, identity, voice | rewrite; first case the user's personal brand guide (backlog PB13) | 3 |
 
 ## Design (`design-`)
 
@@ -116,6 +118,7 @@ No prior content. Every skill here is `create` and must be written alongside a r
 | mkt-content-plan | docs/marketing/calendar.md | launch-plan | create | 4 |
 | mkt-social-copy | docs/marketing/content/<post>.md | messaging, voice | create | 4 |
 | mkt-publish | a scheduled or published post, recorded in calendar and state | content, asset | create; requires `publisher:<platform>`; side effect `publish` | 4 |
+| mkt-engage | replies to comments on the user's own posts inside an engagement policy | voice, strategy, notification e-mails | create; requires `publisher:<platform>` and a mailbox class; side effect `publish` (backlog PB6) | 4 |
 | mkt-landing-page | docs/marketing/landing.md: structure and copy | messaging | create | 5 |
 | mkt-seo | docs/marketing/seo.md | landing, content | create | 5 |
 | mkt-email | docs/marketing/campaigns/<name>.md | messaging | create; requires `mailer` for the send step; side effect `send` | 5 |
@@ -148,7 +151,7 @@ Nothing until the actuators, the pre-approved gate and a runtime exist. Candidat
 | flow-new-project | engineering | clarify → prd or feature-spec → backlog → architecture → implement per task → pull-request | greenfield-workflow (482 lines) | rewrite | 1 |
 | flow-implement-ticket | engineering | read ticket → clarify → route to fix-bug, build-feature or improve-code → update ticket | — | create; requires `integration:issue-tracker` | 1 |
 | flow-business-plan | business | validate-idea → ai-opportunity-assessment → market-analysis → icp-positioning → business-model → gtm → business-plan | startup-strategy-workflow | rewrite | 2 |
-| flow-brand | brand | strategy → identity → voice → guidelines | brand-workflow | rewrite | 3 |
+| flow-brand | brand | profile (person) → name → strategy → identity → voice → guidelines | brand-workflow | rewrite; phases requested by the user on 2026-09-29 | 3 |
 | flow-design | design | user-research → ux-flows → design-system → ui → handoff | — | create | 3 |
 | flow-social-post | marketing | social-copy → generate-asset → confirmation gate → publish → calendar | — | create | 4 |
 | flow-launch | marketing | messaging → launch-plan → content-plan → landing-page → analytics | — | create | 4 |
@@ -250,6 +253,15 @@ Built ahead of their wave, with the perfectui-doc rebuild as the real project:
 - [x] ops-ci-pipeline (wave 4; from the perfectui-doc pipeline: one build tested and deployed from GitHub Actions to Netlify, previews per pull request, protected main; the floor model still misses the revoke-the-pasted-token rule and exact version pins now and then)
 - [x] design-handoff (wave 3; unpacks single-file HTML exports, maps invented tokens, reads motion from scripts)
 - [ ] design-system v0.3: any input (code, images, documents, a live site) or a short interview; onboarding prompt for the design tool
+
+Built with the user's personal brand as the real case (branch `feat/personal-brand`, 2026-09-29). Evals: strong claude-code Opus 5.5 (also the grader), floor DeepSeek V3.2 through agents-dir, 3 runs per case, floor runs in parallel with `eval_run.py --jobs`:
+- [x] brand-profile 0.4 (strong 1.0 with vs 0.58 without; floor 0.917. Floor went 0.48 → 0.51 while the gate said "ask only what is missing": the floor model kept asking to confirm recorded decisions and stopped without writing. What worked was writing the profile first and turning every question into an open question inside it, with a default recommendation per item. Scripts: `linkedin_export.py` (drops contact data, computes durations), `check_profile.py`, `sensitive_topics.py`.)
+- [x] brand-strategy 0.2 (strong 1.0 vs 0.80; floor 0.897 at 0.1; 0.2 fixes the two floor misses, re-offering recorded choices and writing 0 for a product that was not found, not rerun. Script: `baselines.py`.)
+- [x] brand-voice 0.2 (strong 0.97 vs 0.58; floor 0.783 at 0.1, 0.878 at 0.2 after banning ranges as recommendations, "reconsider" labels and added words in rewrites. Script: `voice_stats.py`, counts and a `voice-rules` check.)
+- [x] brand-identity 0.1 (strong 1.0 vs 0.50; floor 0.95 over five runs plus 1.0 on the rerun of the one run that hit the 900 s timeout while fetching font licences. Script: `contrast.py`; asset: `piece-template.html`.)
+- [x] brand-name 0.3 (strong 1.0 vs 0.61 at 0.3; floor 0.72 at 0.2, 0.944 at 0.3 after default recommendations, an explicit "this skill never buys" and naming each login-only network. Script: `handle_check.py`.)
+- [x] brand-guidelines 0.2 (strong 1.0 vs 0.68 at 0.2; floor about 0.5 at 0.1, when it wrote a placeholder guide with strategy and voice missing and put paraphrased rules among the examples; 0.845 at 0.2 after the gate and two checks in `check_guide.py`: every do-and-don't cell a quote, and every missing brand file named with its skill.)
+- [ ] flow-brand (backlog PB14)
 
 Built with GFACIL as the real company (branch `gfacil-skills`, 2026-09-28/29):
 - [x] biz-market-analysis (wave 2; 8 eval iterations. What moved the floor model from 0.475 to 0.917 was scripts, not wording: `check_refs.py` for citations, `lint_market.py` for prices under Implications, price cells, citation form and uncited figures, `rank.py` refusing free-text sources. Wording alone left the same mistakes in place from iteration 2 to 6. Remaining misses: summaries labelled as quotes, uncited figures in the Comparison reading.)

@@ -10,6 +10,7 @@ You are maintaining a repository of agents, skills and workflows that let an AI 
 4. **Artifacts over invocation.** Capabilities never invoke other skills. They read and write artifacts in the target project (see `contracts/`). Only flows invoke skills, and they do it by name.
 5. **Never assume; ask.** When a decision belongs to the user and is not recorded in the project state or an artifact, a skill stops and asks, with a recommended answer. It never proceeds on a guess about scope, product, audience, platform or intent. An assumption that cannot be avoided is labelled `assumed` and reported. Asking for a decision once is not re-asking for approval: see the consent rules.
 6. **English only.** Every file in this repository is written in English.
+7. **Parallel by default.** Work that does not depend on other work runs at the same time: eval runs, independent checks and test suites, research on separate questions, agents with separate scopes. A skill or script runs things one after another only when a step needs another's result, when a shared resource cannot be used concurrently (one working tree, one approval gate), or when a rate limit forces it, and it says which. Scripts that run many independent jobs take a `--jobs` option with a default above 1.
 
 ## Layout
 

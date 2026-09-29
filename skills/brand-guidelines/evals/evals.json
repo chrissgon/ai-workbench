@@ -1,0 +1,35 @@
+{
+  "skill_name": "brand-guidelines",
+  "allow_commands": [
+    "python3 skills/brand-guidelines/scripts/check_guide.py",
+    "date +%F",
+    "mkdir -p docs/brand"
+  ],
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "put all my brand stuff into one guide an agent can follow",
+      "expected_output": "docs/brand/guidelines.md consolidates profile, strategy, identity and voice, each line pointing to its file. The label is copied exactly. The never-expose list, the claim rule against calling Dana an AI-for-databases expert and the voice limits (no emojis, at most 2 hashtags, end with a question) appear. Do and don't examples are exact quotes from Dana's samples or the AI-written launch post, not invented. Colours match identity.md (#FBBF24, #F59E0B) and the light accent is not allowed for text. A pre-publish checklist names commands. check_guide.py is run. name.md does not exist and the guide says the name section is not defined yet or points to brand-name.",
+      "files": ["evals/files/dana"],
+      "assertions": [
+        "docs/brand/guidelines.md exists and cites the brand files it draws from (profile, strategy, identity, voice)",
+        "The label 'Staff Engineer · Creator of tinykv · Databases and small tools' appears exactly",
+        "The guide forbids calling Dana an expert in AI for databases",
+        "The voice limits appear: no emojis, at most 2 hashtags, posts end with a question",
+        "Every 'don't' example is an exact quote from Dana's samples or the AI-written launch post (for example 'NEW BLOG POST!!!' or 'Excited to announce tinykv'), not an invented sentence",
+        "Colours in the guide are only those in identity.md, and the light accent #F59E0B is not allowed for text",
+        "The guide says the name is not defined yet or points to brand-name, since name.md does not exist"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "make the brand guide",
+      "expected_output": "Without a strategy and a voice file the skill stops: it names the missing files and the skills that write them (brand-strategy, brand-voice, brand-profile) and writes no guide.",
+      "files": [],
+      "assertions": [
+        "No docs/brand/guidelines.md is written",
+        "The reply names brand-strategy and brand-voice (or brand-profile) as the skills to run first"
+      ]
+    }
+  ]
+}

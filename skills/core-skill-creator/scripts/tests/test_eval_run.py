@@ -274,3 +274,42 @@ def test_floor_pass_env_reaches_only_the_floor_runs(tmp_path, monkeypatch, capsy
     assert "FLOOR_ONLY_KEY" not in strong and "FLOOR_ONLY_KEY=floor-secret" in floor
     with pytest.raises(SystemExit):
         er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--floor-pass-env", "GITHUB_TOKEN"])
+
+
+def test_a_pass_env_variable_that_stays_unset_stops_the_run(tmp_path, monkeypatch, capsys):
+    skill = make_skill(tmp_path)
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
+    adapter = tmp_path / "adapters" / "h"
+    adapter.mkdir(parents=True)
+    (adapter / "run-prompt.sh").write_text('echo ok > "$8/response.md"\n')
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    monkeypatch.delenv("FLOOR_ONLY_KEY", raising=False)
+    with pytest.raises(SystemExit) as exc:
+        er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1",
+                 "--only", "with", "--no-grade", "--floor-pass-env", "FLOOR_ONLY_KEY"])
+    assert exc.value.code == 2
+    assert "FLOOR_ONLY_KEY is not set" in capsys.readouterr().err
+    assert not (tmp_path / "evals-workspace").exists()
+
+
+def test_jobs_runs_model_runs_at_the_same_time_and_keeps_the_order(tmp_path, monkeypatch):
+    import time
+    skill = make_skill(tmp_path)
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]},
+                                                                      {"id": 2, "prompt": "q", "assertions": ["a"]}]}))
+    adapter = tmp_path / "adapters" / "h"
+    adapter.mkdir(parents=True)
+    (adapter / "run-prompt.sh").write_text('sleep 1; echo ok > "$8/response.md"\n')
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    start = time.monotonic()
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "2", "--jobs", "4",
+                    "--only", "with", "--no-grade"]) == 0
+    assert time.monotonic() - start < 3.5  # four one-second runs, not one after another
+    bench = json.loads((tmp_path / "evals-workspace" / "demo" / "iteration-1" / "benchmark.json").read_text())
+    assert [(r["case"], r["run"]) for r in bench["run_summary"]["with_skill"]["cases"]] == [(1, 1), (1, 2), (2, 1), (2, 2)]
+
+
+@pytest.mark.parametrize("jobs", ["0", "9", "x"])
+def test_jobs_is_bounded(jobs):
+    with pytest.raises(SystemExit):
+        er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--jobs", jobs])
