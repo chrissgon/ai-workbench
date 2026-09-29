@@ -145,6 +145,19 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - To decide when building: whether the choice is all of `docs/` or per kind (code-related docs versioned, work data local); where state and approvals live when `docs/` is versioned but they should not be; and how a project created before this question (perfectui-doc) moves over.
   - Done when: a new project is set up with each answer and the commits that follow respect it.
 
+## Providers and platforms
+
+- [ ] **P1. Automated comments on published posts, starting with LinkedIn.** Requested by the user on 2026-09-28, during the Perfect UI 1.0 launch.
+  - Why: studies of 2026 report less reach for LinkedIn posts with a link in the body (estimates from about 19% to 60%; LinkedIn has not confirmed a rule), and the common workaround is the link in the first comment. `providers/publisher/linkedin.py` only publishes posts, so the first comment has to be written by hand.
+  - What: a `comment` action on a published post, found by the post's idempotency key in the publisher's ledger; `--dry-run`, `--confirmed` and its own idempotency key like `publish`; schedulable after the post (the scheduler job waits until the post's ledger entry is `published`, or the publish job comments right after publishing). The confirmation gate shows the post and its first comment together, so one approval covers both.
+  - To verify against LinkedIn's primary documentation before building: the endpoint for member comments on a share and whether the `w_member_social` scope already granted covers it.
+  - **Open question: one generic capability with one implementation per platform, or something per platform?** In this repository, platforms are providers of a requirement class (`publisher:<platform>` under `providers/`), not adapters (adapters are AI tools). The options:
+    1. A "first comment" field in `mkt-publish`'s post payload, and a `comment` verb in every `publisher:<platform>` provider that supports it. The skill stays platform-agnostic; each provider does what its API allows and says when it cannot. **Recommended** (user, 2026-09-28): a first comment is part of publishing a post, and one gate covers both.
+    2. A separate generic capability (`mkt-comment`) with its own requirement class (`commenter:<platform>`), for comments beyond the first one: replying to other people, engaging on their posts. Worth it only when that becomes a recurring task with a real procedure; it is another actuator to gate and audit, and it reads other people's comments (external content).
+    3. A skill per platform. Rejected: skills name classes, never products (`AGENTS.md`, `requires`).
+    Recommendation recorded with the user on 2026-09-28: option 1. Revisit option 2 only if replying to other people's comments becomes a recurring task.
+  - Done when: a scheduled LinkedIn post and its first comment go out from one approval in a real run, with offline provider tests for the new verb.
+
 ## Next skills
 
 The order agreed on 2026-09-26, details in [inventory.md](inventory.md):
