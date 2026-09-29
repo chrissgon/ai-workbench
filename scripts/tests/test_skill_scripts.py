@@ -380,7 +380,8 @@ def test_lint_market_reports_the_repeated_mistakes(tmp_path):
     assert ("bad_citation", "[Acme]") in found
     assert any(c == "bad_citation" and t.startswith("[2,3]") for c, t in found)
     assert any(c == "implications_currency" for c, _ in found)
-    assert len(found) == 4
+    assert ("implications_not_question", "- ICP: which segment? [1]") not in found
+    assert len(found) == 5  # the priced Implications bullet is also not a question
 
 
 def test_lint_market_passes_a_clean_translated_file(tmp_path):
@@ -394,3 +395,13 @@ def test_lint_market_passes_a_clean_translated_file(tmp_path):
             "--sources-heading", "Fuentes")
     assert r.returncode == 0, r.stdout
     assert json.loads(run(LINT_MARKET, "--file", str(doc)).stdout)["missing_headings"]
+
+
+def test_lint_market_flags_statements_and_uncited_figures(tmp_path):
+    doc = tmp_path / "market.md"
+    doc.write_text("## Summary\n- 62.9% have a website\n- 40% sell online [3]\n\n"
+                   "## Implications for the next decisions\n- ICP: target micro firms\n- Channels: which first? [3]\n\n"
+                   "## Assumptions\n- Assumption: 20% utilisation\n\n## Sources\n[3] x\n", encoding="utf-8")
+    found = [(f["check"], f["text"]) for f in json.loads(run(LINT_MARKET, "--file", str(doc)).stdout)["findings"]]
+    assert found == [("uncited_figure", "- 62.9% have a website"),
+                     ("implications_not_question", "- ICP: target micro firms")]

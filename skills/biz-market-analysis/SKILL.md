@@ -91,11 +91,18 @@ Progress:
   It refuses a score without a source and prints the ranked table. Paste the table as printed and write the exact command under "Method". For an artifact not in English, pass `--no-evidence-label "<translation of 'no evidence'>"`. Cite the capacity command as source `M1` for the fit scores.
 - [ ] Step 8: Stop and ask the user when the top two options are within 2 points of each other or rest on `single source` claims, with your recommended reading; do not break the tie yourself.
 - [ ] Step 9: Write `docs/business/market.md` from the template, in the artifact language. Register it in the state file's Artifacts table (`biz-market-analysis`, `draft`, date) and add, under Open questions, every unknown that blocks the next skill.
-- [ ] Step 10: Report to the user: path, the ranking in three lines, the biggest unknown, and the next skill (`biz-icp-positioning`). When the user allowed or asked for guesses, the first line of the report says that missing numbers were not guessed and where they are listed.
+- [ ] Step 10: Report to the user with this template, in the user's language:
+  ```markdown
+  <only when the user allowed or asked for guesses:> Missing numbers were not guessed: they are under Unknowns and scored "1 (no evidence)", because the next skills would build on them.
+  - Analysis: docs/business/market.md
+  - Ranking: 1. <option> (<total>) 2. ... 3. ...
+  - Biggest unknown: <one line>
+  - Next: biz-icp-positioning
+  ```
 - [ ] Step 11: Degraded mode, when `search:web` is missing or you can fetch pages but not search: say so first, do steps 1 to 4, write the query plan into the artifact, mark it `Status: limited`, and put nothing from memory outside an "Unverified background" section. Do not score options without sources.
 - [ ] Step 12: Always write `docs/business/market.md`, even when limited; a reply without the artifact is a failed run. Every source reference used in a table (`[3]`, `M1`) is defined under "Sources" or "Method".
 - [ ] Step 13: Run `python3 skills/biz-market-analysis/scripts/check_refs.py --file docs/business/market.md` (add `--sources-heading` and `--method-heading` with the translated headings). It lists references with no source, sources never cited, and sources without a URL or a quote. Fix each and rerun until `"ok": true`; a source you cannot give a URL and a quote for is removed with the claims that rest on it.
-  Then run `python3 skills/biz-market-analysis/scripts/lint_market.py --file docs/business/market.md` (for a translated artifact add `--implications-heading`, `--alternatives-heading`, `--price-column`, `--not-found-label` and `--sources-heading` with the translated texts). It reports currency amounts under Implications, price cells with no price, and citations that are not one source number per bracket. Fix each and rerun until `"ok": true`. Do not report to the user before both scripts pass.
+  Then run `python3 skills/biz-market-analysis/scripts/lint_market.py --file docs/business/market.md` (for a translated artifact add `--implications-heading`, `--alternatives-heading`, `--price-column`, `--not-found-label` and `--sources-heading` with the translated texts). It reports currency amounts under Implications, Implications bullets that are not questions, price cells with no price, citations that are not one source number per bracket, and percentages or amounts with no citation. Fix each and rerun until `"ok": true`. Do not report to the user before both scripts pass.
 - [ ] Step 14: Self-check against "Quality criteria": list every number and name in the artifact and the source it came from; remove or label what has none.
 
 ## Output template

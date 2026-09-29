@@ -16,6 +16,10 @@ Checks, each reported with the line number:
   bad_citation: a bracketed citation outside the sources section that is not one source number
     ([3], [2b]) or one command label (M1): lists such as [2,3] or [8-13] and names such as [Acme] are
     reported; Markdown links [text](url), checkboxes and [...] in quotes are ignored.
+  implications_not_question: a bullet under Implications with no question mark. Each bullet is
+    the question the next skill must answer, not an answer.
+  uncited_figure: a bullet or table row with a percentage or a currency amount and no source number,
+    command label or assumption label, outside the sources section and the --free-headings.
 Headings are matched by their text after "## " (the alternatives heading also matches "### "
 subsections below it), case-insensitive; pass the translated text for an artifact not in English.
 The price column is the first header cell that contains --price-column, case-insensitive.
@@ -30,6 +34,8 @@ CURRENCY = re.compile(
     r"(?:[€$£]|R\$|US\$|\b(?:EUR|USD|BRL|GBP)\b)\s?\d|\d[\d.,]*\s?(?:[€£]|\b(?:EUR|USD|BRL|GBP)\b)")
 CITATION = re.compile(r"\[([^\]\n]+)\](?!\()")
 GOOD_CITATION = re.compile(r"^(\d+[a-z]?|M\d+)$")
+FIGURE = re.compile(r"\d+(?:[.,]\d+)?\s?%|" + CURRENCY.pattern)
+CITED = re.compile(r"\[(\d+[a-z]?|M\d+)\]|\bM\d+\b|assumption:|\(assumed\)|\bassumed\b", re.I)
 
 
 def main():
@@ -40,6 +46,10 @@ def main():
     ap.add_argument("--price-column", default="price")
     ap.add_argument("--not-found-label", default="price not found")
     ap.add_argument("--sources-heading", default="Sources")
+    ap.add_argument("--free-headings", default="Method,Assumptions,Unknowns,Contradictions",
+                    help="comma-separated sections exempt from uncited_figure (translate for other languages)")
+    ap.add_argument("--assumed-label", default="Assumption:",
+                    help="label that marks an assumption in the artifact's language")
     args = ap.parse_args()
     try:
         with open(args.file, encoding="utf-8") as fh:
@@ -49,6 +59,8 @@ def main():
         sys.exit(2)
     impl, alts, srcs = (h.strip().lower() for h in
                         (args.implications_heading, args.alternatives_heading, args.sources_heading))
+    free = {h.strip().lower() for h in args.free_headings.split(",") if h.strip()} | {srcs}
+    assumed = args.assumed_label.strip().lower()
     findings, section, price_col = [], "", None
     seen = {impl: False, alts: False}
     for n, line in enumerate(lines, 1):
@@ -62,6 +74,11 @@ def main():
             price_col = None
         if section == impl and CURRENCY.search(line):
             findings.append({"line": n, "check": "implications_currency", "text": line.strip()[:160]})
+        if section == impl and line.lstrip().startswith(("-", "*")) and "?" not in line:
+            findings.append({"line": n, "check": "implications_not_question", "text": line.strip()[:160]})
+        if (section not in free and section and line.lstrip().startswith(("-", "*", "|"))
+                and FIGURE.search(line) and not CITED.search(line) and assumed not in line.lower()):
+            findings.append({"line": n, "check": "uncited_figure", "text": line.strip()[:160]})
         if section == alts and line.lstrip().startswith("|"):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
             if price_col is None:
