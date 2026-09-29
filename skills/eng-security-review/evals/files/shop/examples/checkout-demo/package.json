@@ -1,0 +1,10 @@
+{
+  "name": "checkout-demo",
+  "private": true,
+  "scripts": {
+    "dev": "tpl serve pages/"
+  },
+  "dependencies": {
+    "@shopco/template-engine": "1.0.2"
+  }
+}

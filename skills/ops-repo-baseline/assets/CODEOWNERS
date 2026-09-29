@@ -1,0 +1,6 @@
+# Files that define the repository's rules and its checks: changes need the owner's review.
+/AGENTS.md                         <@owner>
+/.github/                          <@owner>
+/.githooks/                        <@owner>
+/scripts/secret-scan/              <@owner>
+/.secret-scan-allow                <@owner>

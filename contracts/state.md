@@ -33,10 +33,10 @@ Keep it small. It is a table of contents with status, not a journal.
 
 ## Approvals
 
-| Scope | What | Approved | Expires | Status |
-|-------|------|----------|---------|--------|
-| action | LinkedIn post "Launching X" with image-01.png at 2026-09-23 09:00 | 2026-09-22 | after execution | pending-execution |
-| standing | open pull requests on feature/* branches | 2026-09-22 | 2026-12-31 | active |
+| Scope | What | Payload hash | Approved | Expires | Status |
+|-------|------|--------------|----------|---------|--------|
+| action | LinkedIn post "Launching X" with image-01.png at 2026-09-23 09:00 | sha256:9f2c…(64 hex) | 2026-09-22 | after execution | pending-execution |
+| standing | open pull requests on feature/* branches | — | 2026-09-22 | 2026-12-31 | active |
 
 ## Open questions
 
@@ -51,5 +51,5 @@ Keep it small. It is a table of contents with status, not a journal.
 - Decisions record what was decided, by whom, and where the reasoning lives. One line each.
 - Open questions are checkboxes; a flow surfaces unchecked ones at every checkpoint.
 - `Autonomy.Checkpoints` is set by the user once per project: `every-phase` stops after each phase; `milestones` stops only at phases marked as milestones in the flow's phase table; `end` runs every phase and presents one consolidated summary. Confirmation gates and blocking open questions stop the flow in every mode.
-- Approvals follow the scopes and rules in `contracts/environment.md`. A skill checks this table before asking; if a matching approval exists, it proceeds. Status moves `pending-execution` → `executed` (with timestamp) or `active` → `expired`.
+- Approvals follow the scopes and rules in `contracts/environment.md`. A skill checks this table before asking; an `action` or `plan` approval matches only when the approved payload file still hashes to its `Payload hash`, and a `standing` approval (`—`) matches when the action is inside its bounds and before its expiry. The table stores the hash, never the payload. Status moves `pending-execution` → `executed` (with timestamp) or `active` → `expired`.
 - Never store secrets, tokens or personal data here.

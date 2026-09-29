@@ -36,10 +36,13 @@ Command file:
            "--text-file", "/abs/post.txt", "--media", "/abs/image.png",
            "--idempotency-key", "launch-post", "--confirmed"],
   "cwd": "/abs/ai-workbench",
-  "snapshot": ["/abs/providers/publisher/linkedin.py", "/abs/post.txt", "/abs/image.png"],
+  "snapshot": ["/abs/providers/publisher/linkedin.py", "/abs/providers/secrets/resolver.py",
+               "/abs/post.txt", "/abs/image.png"],
   "grace_minutes": 120
 }
 ```
+
+A provider reads its credential through `providers/secrets/resolver.py`; the job runs a copy of the provider from its own folder, so the resolver goes into the snapshot too, and the copy finds it next to itself. A job scheduled without it fails at run time with a message that names the snapshot. Jobs scheduled before 2026-09-28 hold a copy of the provider from before the resolver and run as they are.
 
 Jobs live in `~/Library/Application Support/ai-workbench/scheduler/<id>/`, agents in `~/Library/LaunchAgents/dev.ai-workbench.scheduler.<id>.plist`.
 
