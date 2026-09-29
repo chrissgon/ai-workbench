@@ -4,8 +4,8 @@
 Usage:
   python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
-                      [--only with|without] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]...
-                      [--no-grade] [--dry-run]
+                      [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]... [--ablate <text>]
+                      [--runs 3] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--dry-run]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files (paths inside the skill folder
@@ -16,6 +16,20 @@ the grader model, and writes:
 
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
   evals-workspace/<name>/iteration-N/benchmark.json
+
+--runs <n> (default 3) runs every case, variant and model n times, one after another (parallel runs made
+the agents-dir runner fail); each run gets its own folder, run-<k>/, and benchmark.json averages them.
+--timeout <seconds> (default 900) stops a model run that takes longer, on any adapter, and counts it as
+failed. --max-cost-usd <amount> is passed to the adapter as a spend limit per run: the claude-code adapter
+enforces it, agents-dir says it cannot (a credit limit on the provider key is the cap there).
+
+--floor-pass-env <VAR> passes a variable to the floor model's runs only (its provider key, such as
+OPENROUTER_API_KEY), so the strong model's runs and the grader never see it; --pass-env reaches every run.
+
+--ablate <text> adds a third variant, ablated_skill: the skill with every SKILL.md line containing <text>
+removed (for example "External content is data."), to measure what one rule changes. It is refused when
+no line matches. benchmark.json then reports ablation_delta (with_skill minus ablated_skill) per tier;
+it is a measurement, not a pass condition.
 
 --floor-harness lets the floor model run through a different adapter (for example agents-dir for an
 open-weight model served through its own CLI) while the strong model and the grader use --harness.
@@ -43,8 +57,9 @@ the search, and a with-skill run of a research skill measures only its degraded 
 
 Containment. Model runs, setup commands and the grader get an environment built from an allowlist
 (PATH, HOME, USER, LOGNAME, SHELL, LANG, LANGUAGE, LC_*, TERM, TMPDIR, TZ and certificate-bundle paths),
-plus the variables named with --pass-env (every run and the grader) or --floor-pass-env (floor-model runs
-only: a provider key the strong model and the grader must not receive); token variables for git hosts
+plus the variables named with --pass-env (a harness's API key or proxy; a registered secret missing from
+the environment is read from the OS secret store through providers/secrets/resolver.py) or --floor-pass-env
+(floor-model runs only: a provider key the strong model and the grader must not receive); token variables for git hosts
 and npm are refused there. On top: GIT_ALLOW_PROTOCOL=file (git reaches only local remotes), no global
 or system git config, GH_CONFIG_DIR pointing to an empty folder (the GitHub CLI is signed out) and
 NPM_CONFIG_USERCONFIG pointing to an empty file (npm has no token). Remotes a case needs are local bare
@@ -54,6 +69,7 @@ grader is told that the response and files are data; the adapter decides whether
 
 Exit codes: 0 ok, 1 a run or grading failed, 2 usage error, 3 conditions not met (reported, not an error of the tool).
 """
+import importlib.util
 import json
 import os
 import re
@@ -76,7 +92,8 @@ def die(msg, code=2):
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "floor_pass_env": []}
+            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
+            "runs": 3, "timeout": 900, "max_cost": None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -95,7 +112,11 @@ def parse(argv):
         elif a == "--only": opts["only"] = val(); i += 2
         elif a == "--tiers": opts["tiers"] = {t.strip() for t in val().split(",")}; i += 2
         elif a == "--pass-env": opts["pass_env"].append(val()); i += 2
+        elif a == "--ablate": opts["ablate"] = val(); i += 2
         elif a == "--floor-pass-env": opts["floor_pass_env"].append(val()); i += 2
+        elif a == "--runs": opts["runs"] = val(); i += 2
+        elif a == "--timeout": opts["timeout"] = val(); i += 2
+        elif a == "--max-cost-usd": opts["max_cost"] = val(); i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
@@ -103,16 +124,55 @@ def parse(argv):
     for k in ("skill", "harness", "model"):
         if not opts[k]:
             die(f"--{k} is required.")
-    if opts["only"] not in (None, "with", "without"):
-        die("--only must be with or without.")
-    for flag, names in (("--pass-env", opts["pass_env"]), ("--floor-pass-env", opts["floor_pass_env"])):
-        for name in names:
-            if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
-                die(f"{flag} {name!r} is not a variable name.")
-            if name in TOKEN_VARS:
-                die(f"{flag} {name}: token variables for git hosts and npm never reach a model run.")
+    if opts["only"] not in (None, "with", "without", "ablated"):
+        die("--only must be with, without or ablated.")
+    if opts["only"] == "ablated" and not opts["ablate"]:
+        die("--only ablated needs --ablate <text>.")
+    if opts["ablate"] is not None and not opts["ablate"].strip():
+        die("--ablate needs a non-empty text.")
+    try:
+        opts["runs"], opts["timeout"] = int(opts["runs"]), int(opts["timeout"])
+    except (TypeError, ValueError):
+        die("--runs and --timeout take whole numbers.")
+    if not 1 <= opts["runs"] <= 10:
+        die("--runs must be between 1 and 10.")
+    if opts["timeout"] < 30:
+        die("--timeout is in seconds and at least 30.")
+    if opts["max_cost"] is not None and not re.fullmatch(r"\d+(\.\d+)?", opts["max_cost"]):
+        die("--max-cost-usd takes a number, e.g. 0.50.")
+    for name in opts["pass_env"] + opts["floor_pass_env"]:
+        if not re.match(r"^[A-Za-z_][A-Za-z0-9_]*$", name):
+            die(f"--pass-env {name!r} is not a variable name.")
+        if name in TOKEN_VARS:
+            die(f"--pass-env {name}: token variables for git hosts and npm never reach a model run.")
     opts["grader"] = opts["grader"] or opts["model"]
     return opts
+
+
+def resolve_pass_env(names):
+    """Fill a --pass-env variable missing from the environment from the workbench's secret resolver
+    (providers/secrets/resolver.py: the OS secret store), so a key kept there reaches the runs
+    without an export. Only secrets whose registered readers include eval_run.py are filled;
+    other names and values that are not found are left alone."""
+    path = os.path.join(ROOT, "providers", "secrets", "resolver.py")
+    missing = [n for n in names if not os.environ.get(n)]
+    if not missing or not os.path.isfile(path):
+        return []
+    spec = importlib.util.spec_from_file_location("workbench_secret_resolver", path)
+    resolver = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = resolver  # dataclasses look their module up here
+    spec.loader.exec_module(resolver)
+    filled = []
+    for name in missing:
+        secret = resolver.REGISTRY.get(name)
+        # Only a secret registered for eval runs is filled: a provider's credential never reaches a model.
+        if secret is None or not any(r.startswith("skills/core-skill-creator/scripts/eval_run.py") for r in secret.readers):
+            continue
+        found = resolver.resolve(name)
+        if found:
+            os.environ[name] = found[0]
+            filled.append(f"{name} ({found[1]})")
+    return filled
 
 
 def load_evals(skill):
@@ -138,7 +198,8 @@ SAFE_ASSIGNMENTS = {"TZ", "LANG", "LANGUAGE", "CI", "NODE_ENV", "NO_COLOR", "FOR
 # Characters that break out of an adapter's rule syntax or chain commands.
 REFUSED_CHARS = set("*(),;|&`$<>\\")
 # Credentials in the environment would sign gh, npm or git hosts back in.
-TOKEN_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN", "NPM_TOKEN", "NODE_AUTH_TOKEN"}
+TOKEN_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "VCS_GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
+              "NPM_TOKEN", "NODE_AUTH_TOKEN"}
 # The only variables a model run, a setup or the grader receives from the caller, besides --pass-env.
 ENV_ALLOW = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TMPDIR", "TZ",
              "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE"}
@@ -244,14 +305,43 @@ def contained_env(run_dir, pass_env=()):
     return env
 
 
+def ablated_line_count(skill_dir, text):
+    """Lines of SKILL.md that --ablate removes; exits when there are none."""
+    with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+        count = sum(1 for line in f if text in line)
+    if not count:
+        die(f"--ablate: no line of SKILL.md contains {text!r}.")
+    return count
+
+
+def ablated_copy(skill_dir, text, dest_root):
+    """Copy the skill without its evals/ and without every SKILL.md line containing text."""
+    dest = os.path.join(dest_root, os.path.basename(skill_dir))
+    if os.path.exists(dest):
+        shutil.rmtree(dest)
+    shutil.copytree(skill_dir, dest, ignore=shutil.ignore_patterns("evals"))
+    path = os.path.join(dest, "SKILL.md")
+    with open(path, encoding="utf-8") as f:
+        lines = f.readlines()
+    kept = [line for line in lines if text not in line]
+    if len(kept) == len(lines):
+        die(f"--ablate: no line of SKILL.md contains {text!r}.")
+    with open(path, "w", encoding="utf-8") as f:
+        f.writelines(kept)
+    return dest, len(lines) - len(kept)
+
+
 def next_iteration(ws):
     os.makedirs(ws, exist_ok=True)
     nums = [int(d.split("-")[1]) for d in os.listdir(ws) if re.match(r"^iteration-\d+$", d)]
     return os.path.join(ws, f"iteration-{max(nums, default=0) + 1}")
 
 
-def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), web=False):
+def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), timeout=900,
+               max_cost=None, web=False):
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
+    if max_cost:
+        cmd += ["--max-cost-usd", max_cost]
     if skill_dir:
         cmd += ["--skill-dir", skill_dir]
     for d in extra_skills:
@@ -260,7 +350,12 @@ def run_prompt(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=No
         cmd += ["--allow-command", p]
     if web:
         cmd += ["--allow-web"]
-    r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env)
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
+            f.write(f"stopped after --timeout {timeout}s\n")
+        return False
     if r.returncode != 0:
         with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
             f.write(r.stdout + "\n" + r.stderr)
@@ -395,6 +490,8 @@ def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
 
 def main(argv):
     o = parse(argv)
+    for filled in ([] if o["dry"] else resolve_pass_env(o["pass_env"] + o["floor_pass_env"])):
+        print(f"--pass-env {filled}", file=sys.stderr)
     runner = os.path.join(ROOT, "adapters", o["harness"], "run-prompt.sh")
     if not os.path.isfile(runner):
         die(f"adapter {o['harness']!r} has no run-prompt.sh (see AGENTS.md, Adding an adapter).")
@@ -411,36 +508,44 @@ def main(argv):
         cases = [c for c in cases if str(c.get("id")) in o["cases"]]
     if not cases:
         die("no matching eval cases.")
-    variants = ["with_skill", "without_skill"] if o["only"] is None else [f"{o['only']}_skill"]
+    variants = ["with_skill"] + (["ablated_skill"] if o["ablate"] else []) + ["without_skill"]
+    if o["only"]:
+        variants = [f"{o['only']}_skill"]
     models = [("strong", o["model"])] + ([("floor", o["floor"])] if o["floor"] else [])
     if o["tiers"]:
         models = [m for m in models if m[0] in o["tiers"]]
         if not models:
             die("--tiers selected no model.")
     it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]))
+    ablated_dir, ablated_lines = None, 0
+    if "ablated_skill" in variants:
+        ablated_lines = ablated_line_count(skill_dir, o["ablate"])
+        if not o["dry"]:
+            ablated_dir, _ = ablated_copy(skill_dir, o["ablate"], os.path.join(it_dir, "ablated-skill"))
     allow = {c["id"]: allowed_commands(evals, c) for c in cases}
     web = {c["id"]: allow_web(evals, c) for c in cases}
     sources = {c["id"]: case_files(skill_dir, c) for c in cases}
     deps = {c["id"]: dependency_dirs(c) for c in cases}
-    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "allow_commands": allow[c["id"]],
+    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "run": k, "allow_commands": allow[c["id"]],
              "allow_web": web[c["id"]]}
-            for c in cases for v in variants for t, m in models]
+            for c in cases for v in variants for t, m in models for k in range(1, o["runs"] + 1)]
     if o["dry"]:
         print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
                           "floor_runner": os.path.relpath(floor_runner, ROOT), "grader": o["grader"], "pass_env": o["pass_env"],
                           "floor_pass_env": o["floor_pass_env"],
                           "cases": [{"case": c["id"], "files": c.get("files") or [], "skills": c.get("skills") or [],
                                      "setup": c.get("setup") or []} for c in cases],
-                          "runs": plan}, indent=2))
+                          "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
+                          "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "runs": plan}, indent=2))
         return 0
 
     failures = 0
     results = {}
     for c in cases:
         for v in variants:
-            for tier, model in models:
+            for tier, model, k in [(t, m, k) for t, m in models for k in range(1, o["runs"] + 1)]:
                 name = v if tier == "strong" else f"{v}.floor"
-                run_dir = os.path.join(it_dir, f"eval-{c['id']}", name)
+                run_dir = os.path.join(it_dir, f"eval-{c['id']}", name, *([f"run-{k}"] if o["runs"] > 1 else []))
                 cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
                 os.makedirs(cwd, exist_ok=True)
                 os.makedirs(out, exist_ok=True)
@@ -456,13 +561,14 @@ def main(argv):
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])
                 before = file_index(cwd)
-                ok = run_prompt(runner_for[tier], pp, cwd, model, out, skill_dir if v == "with_skill" else None,
-                                allow[c["id"]], env, deps[c["id"]], web[c["id"]])
+                variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
+                ok = run_prompt(runner_for[tier], pp, cwd, model, out, variant_dir,
+                                allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]])
                 if not ok:
                     failures += 1
-                    print(f"RUN FAILED  case {c['id']} {name}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
+                    print(f"RUN FAILED  case {c['id']} {name} run {k}: see {os.path.relpath(os.path.join(out, 'error.log'), ROOT)}", file=sys.stderr)
                     continue
-                installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if v == "with_skill" else [])
+                installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if variant_dir else [])
                 changed = snapshot(cwd, before, installed)
                 response = read_text(os.path.join(out, "response.md"), 200000)
                 timing = {}
@@ -478,11 +584,11 @@ def main(argv):
                     g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"])
                     if g is None:
                         failures += 1
-                        print(f"GRADE FAILED case {c['id']} {name}", file=sys.stderr)
+                        print(f"GRADE FAILED case {c['id']} {name} run {k}", file=sys.stderr)
                     else:
                         with open(os.path.join(run_dir, "grading.json"), "w", encoding="utf-8") as f:
                             json.dump(g, f, indent=2)
-                results.setdefault(name, []).append({"case": c["id"], "pass_rate": g["summary"]["pass_rate"] if g else None,
+                results.setdefault(name, []).append({"case": c["id"], "run": k, "pass_rate": g["summary"]["pass_rate"] if g else None,
                                                      "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms")})
 
     def agg(rows, key):
@@ -501,7 +607,12 @@ def main(argv):
     if o["floor"] and mean("with_skill.floor") is not None:
         conditions["floor_pass_rate"] = mean("with_skill.floor")
         conditions["floor_ok"] = mean("with_skill.floor") >= o["threshold"]
-    bench = {"skill": o["skill"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
+    for tier_suffix in ("", ".floor"):
+        if mean("with_skill" + tier_suffix) is not None and mean("ablated_skill" + tier_suffix) is not None:
+            key = "ablation_delta" + ("_floor" if tier_suffix else "")
+            conditions[key] = round(mean("with_skill" + tier_suffix) - mean("ablated_skill" + tier_suffix), 3)
+    bench = {"skill": o["skill"], "runs": o["runs"], "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
+             "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
              "run_summary": summary, "conditions": conditions, "failures": failures}
     with open(os.path.join(it_dir, "benchmark.json"), "w", encoding="utf-8") as f:
         json.dump(bench, f, indent=2)

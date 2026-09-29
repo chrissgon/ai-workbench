@@ -84,3 +84,32 @@ def test_shared_references_resolve_from_the_copied_skill(env):
     skill = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
     assert (skill / ".." / ".." / "shared" / "references" / "security.md").is_file()
     assert not (env["tmp"] / "cwd" / ".claude" / "shared").is_symlink()
+
+
+def test_the_skill_evals_are_not_copied(env):
+    evals = env["skill"] / "evals"
+    evals.mkdir()
+    (evals / "evals.json").write_text('{"assertions": ["the answer"]}\n')
+    r = run(env, "--skill-dir", str(env["skill"]))
+    assert r.returncode == 0, r.stderr
+    dest = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
+    assert (dest / "SKILL.md").is_file() and not (dest / "evals").exists()
+    assert (evals / "evals.json").is_file()
+
+
+def test_max_cost_becomes_a_budget_and_bad_values_are_refused(env):
+    r = run(env, "--max-cost-usd", "0.50")
+    assert r.returncode == 0, r.stderr
+    args = json.loads(env["log"].read_text())["args"]
+    assert args[args.index("--max-budget-usd") + 1] == "0.50"
+    assert run(env, "--max-cost-usd", "0.5; rm -rf x").returncode == 2
+
+
+def test_skill_scripts_are_allowed_by_relative_and_absolute_path(env):
+    r = run(env, "--skill-dir", str(env["skill"]))
+    assert r.returncode == 0, r.stderr
+    log = json.loads(env["log"].read_text())
+    rules = log["args"][log["args"].index("--allowedTools") + 1]
+    cwd = env["tmp"] / "cwd"
+    assert "Bash(python3 .claude/skills/demo/scripts/check.py *)" in rules
+    assert f"Bash(python3 {cwd}/.claude/skills/demo/scripts/check.py *)" in rules

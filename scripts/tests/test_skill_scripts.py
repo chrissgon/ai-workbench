@@ -115,6 +115,8 @@ def test_redact_copies_are_identical():
     shared = (ROOT / "scripts/redact.py").read_bytes()
     assert (ROOT / "skills/eng-code-review/scripts/redact.py").read_bytes() == shared, \
         "copy scripts/redact.py to skills/eng-code-review/scripts/redact.py"
+    assert (ROOT / "skills/ops-repo-baseline/scripts/redact.py").read_bytes() == shared, \
+        "copy scripts/redact.py to skills/ops-repo-baseline/scripts/redact.py"
 
 
 def test_scan_uses_the_shared_redaction():
@@ -429,3 +431,117 @@ def test_lint_icp_positioning_needs_confirmed_claims(tmp_path):
     found = json.loads(run(LINT_ICP, "--file", str(doc), "--kind", "positioning").stdout)["findings"]
     assert [f["check"] for f in found] == ["unconfirmed_claim"]
     assert "Best in class" in found[0]["text"]
+
+
+# ---------- eng-security-review/triage_alerts.py ----------
+
+TRIAGE = "skills/eng-security-review/scripts/triage_alerts.py"
+
+
+def alert(number: int, package: str, manifest: str, fix: str | None, severity: str = "high") -> dict:
+    return {"number": number, "state": "open", "severity": severity, "ecosystem": "npm",
+            "package": package, "manifest_path": manifest, "first_patched_version": fix,
+            "summary": "third-party text"}
+
+
+def test_triage_groups_and_takes_the_highest_fix(tmp_path):
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"kit": "2.3.0"}}))
+    (tmp_path / "package-lock.json").write_text(json.dumps(
+        {"packages": {"node_modules/kit": {"version": "2.3.0"}}}))
+    demo = tmp_path / "examples" / "demo"
+    demo.mkdir(parents=True)
+    (demo / "package.json").write_text(json.dumps({"dependencies": {"tpl": "1.0.2"}}))
+    alerts = [alert(1, "kit", "package.json", "2.3.4"), alert(2, "kit", "package.json", "2.10.1", "low"),
+              alert(3, "tpl", "examples/demo/package.json", "2.0.0", "critical"),
+              {**alert(4, "kit", "package.json", "9.0.0"), "state": "dismissed"}]
+    out = run(TRIAGE, "--alerts", "-", "--repo", str(tmp_path), stdin=json.dumps({"alerts": alerts}))
+    assert out.returncode == 0, out.stderr
+    data = json.loads(out.stdout)
+    assert data["open_count"] == 3
+    kit, tpl = (next(g for g in data["groups"] if g["package"] == p) for p in ("kit", "tpl"))
+    assert kit["clears_all_at"] == "2.10.1" and kit["major_bump"] is False
+    assert kit["lockfiles"] == ["package-lock.json"] and kit["locked_versions"] == {"package-lock.json": "2.3.0"}
+    assert tpl["major_bump"] is True and tpl["lockfiles"] == []
+    assert tpl["parent_lockfiles"] == ["package-lock.json"] and tpl["locked_versions"] == {}
+    assert tpl["path_hints"] == ["examples"] and data["groups"][0]["package"] == "tpl"
+
+
+def test_triage_never_reads_a_manifest_outside_the_repo(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (tmp_path / "package.json").write_text(json.dumps({"dependencies": {"kit": "1.0.0"}}))
+    alerts = [alert(1, "kit", "../package.json", "1.0.1"), alert(2, "kit", "/etc/package.json", "1.0.1")]
+    out = run(TRIAGE, "--alerts", "-", "--repo", str(repo), stdin=json.dumps(alerts))
+    assert out.returncode == 0, out.stderr
+    for group in json.loads(out.stdout)["groups"]:
+        assert group["manifest_found"] is False and group["declared"] is None
+
+
+# ---------- ops-repo-baseline/secret_scan.py and baseline_status.py ----------
+
+SECRET_SCAN = "skills/ops-repo-baseline/scripts/secret_scan.py"
+BASELINE = "skills/ops-repo-baseline/scripts/baseline_status.py"
+FAKE = "prod_" + "4f9a8b7c6d5e4f3a2b1c"
+
+
+def test_secret_scan_finds_a_key_removed_from_the_tree_and_never_prints_it(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    (repo / "pay.js").write_text(f'export const PAYMENTS_API_KEY = "{FAKE}";\n')
+    (repo / "app.js").write_text("export const x = 1;\n")
+    git(repo, "add", "pay.js", "app.js")
+    git(repo, "commit", "-q", "-m", "add")
+    git(repo, "rm", "-q", "pay.js")
+    git(repo, "commit", "-q", "-m", "remove")
+    tree = run(SECRET_SCAN, "--root", str(repo), "--json")
+    assert tree.returncode == 0 and json.loads(tree.stdout)["findings"] == []
+    hist = run(SECRET_SCAN, "--root", str(repo), "--history", "--json")
+    assert hist.returncode == 1
+    found = json.loads(hist.stdout)["findings"]
+    assert [(f["path"].split("@")[0], f["rule"], f["kind"]) for f in found] == [("pay.js", "secret-assignment", "real")]
+    assert found[0]["action"].startswith("revoke")
+    assert FAKE[5:] not in hist.stdout + hist.stderr
+    (repo / ".secret-scan-allow").write_text("pay.js secret-assignment -- planted for a test\n")
+    assert run(SECRET_SCAN, "--root", str(repo), "--history").returncode == 0
+    (repo / ".secret-scan-allow").write_text("*.js secret-assignment -- too broad\n")
+    assert run(SECRET_SCAN, "--root", str(repo), "--history").returncode == 1
+
+
+def test_secret_scan_flags_credential_files_but_not_examples(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    (repo / ".env").write_text("DEBUG=1\n")
+    (repo / ".env.example").write_text("API_KEY=\n")
+    out = json.loads(run(SECRET_SCAN, "--root", str(repo), "--json").stdout)
+    assert [(f["path"], f["rule"]) for f in out["findings"]] == [(".env", "secret-file")]
+    (repo / "tests").mkdir()
+    (repo / "tests" / "fake.py").write_text(f"API_KEY = '{FAKE}'\n")
+    kinds = {f["path"]: f["kind"] for f in json.loads(run(SECRET_SCAN, "--root", str(repo), "--json").stdout)["findings"]}
+    assert kinds == {".env": "real", "tests/fake.py": "planted?"}
+    assert run(SECRET_SCAN, "--root", str(tmp_path / "missing")).returncode == 2
+
+
+def test_baseline_status_reports_ecosystems_pins_and_missing_files(tmp_path):
+    repo = tmp_path / "repo"
+    (repo / ".github" / "workflows").mkdir(parents=True)
+    (repo / "fixtures" / "demo").mkdir(parents=True)
+    git(repo, "init", "-q")
+    (repo / "package.json").write_text("{}\n")
+    (repo / "fixtures" / "demo" / "package.json").write_text("{}\n")
+    (repo / "ignored").mkdir()
+    (repo / "ignored" / "package.json").write_text("{}\n")
+    (repo / ".gitignore").write_text("ignored/\n.env\n")
+    (repo / ".github" / "workflows" / "ci.yml").write_text(
+        "on: push\njobs:\n  t:\n    steps:\n      - uses: actions/checkout@v4\n"
+        "      - uses: actions/setup-node@" + "a" * 40 + " # v4\n      - uses: ./local-action\n")
+    out = run(BASELINE, "--root", str(repo))
+    assert out.returncode == 0, out.stderr
+    data = json.loads(out.stdout)
+    assert {e["name"]: e["folders"] for e in data["ecosystems"]} == {"github-actions": ["/"], "npm": ["/", "/fixtures/demo"]}
+    wf = data["workflows"][0]
+    assert wf["unpinned_actions"] == ["actions/checkout@v4"] and wf["declares_permissions"] is False
+    assert data["files"]["env_ignored"] is True and data["files"]["codeowners"] is None
+    assert data["git"]["is_repo"] is True and data["git"]["commits"] == 0
+    assert run(BASELINE, "--root").returncode == 2

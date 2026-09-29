@@ -17,7 +17,7 @@ What the workbench should contain, per area, cross-referenced with the previous 
 | core-project-init | `docs/` layout, `docs/workbench/state.md`, autonomy mode, project `AGENTS.md` | — | agents-md-generator | rewrite | 0 |
 | core-agents-md | create or update a project's `AGENTS.md` from its codebase and conventions | codebase | agents-md-generator | reuse | 0 |
 | core-skill-creator | a new skill scaffolded, evaluated with strong and floor models, refined | authoring guide | — | create | 0 |
-| core-security-audit | audit of the whole workbench against the security checklist; vetting of third-party skills before install | skills, agents, providers, adapters | — | draft 0.2, grounded in the audit of 2026-09-27; strong model passes (delta +0.125), floor not run | — |
+| core-security-audit | audit of the whole workbench against the security checklist; vetting of third-party skills before install | skills, agents, providers, adapters | — | 0.2, grounded in the audit of 2026-09-27; strong delta +0.125, floor 0.875 | — |
 
 `core-research` requires `search:web`. Tooling that is not a skill but belongs to wave 0: `scripts/eval-run` (runs an eval case with and without a skill, on a strong and a floor model, and grades assertions).
 
@@ -88,7 +88,7 @@ The most mature area in the old repository. Stack-agnostic procedures; stacks ar
 | eng-refactor | improved code with tests green | implementation | refactor-optimizer | reuse | 1 |
 | eng-code-review | review report; perspectives (quality, edge cases, regression, performance, security) and a bug-fix checklist | diff | code-reviewer, multi-agent-analyzer, post-fix-reviewer | merge | 1 |
 | eng-docs | documentation updates for the change | changes | documentation-writer skill | reuse | 1 |
-| eng-security-review | security review of a project: dependencies and advisories, secrets, authentication and authorization, input handling, configuration | codebase | — | planned | — |
+| eng-security-review | security review of a project: 0.1 triages dependency alerts (grouped by manifest and package, update or dismiss with the host's reason, dismissals behind a confirmation gate); later secrets, authentication and authorization, input handling, configuration (backlog S14) | alerts from `integration:vcs`, codebase | — | draft 0.1, grounded in the 30 Dependabot alerts of ai-workbench on 2026-09-28; strong delta +0.21, floor 0.95 | — |
 | eng-data-model | schema and migration plan | architecture | — | planned | — |
 
 ## Delivery and operations (`ops-`)
@@ -97,7 +97,7 @@ The most mature area in the old repository. Stack-agnostic procedures; stacks ar
 |-------|----------|-------|----------|-------|------|
 | ops-pull-request | a pull request | branch, spec or plan | pr-creator, create-github-pull-request prompt | rewrite, organization specifics removed; requires `integration:vcs`; side effect `create` | 1 |
 | ops-branch-sync | branch updated with its base, conflicts resolved | — | backmerge-master prompt, deploy-to-staging | rewrite, generic; side effect `push` | 1 |
-| ops-repo-baseline | a repository's security baseline: CI with pinned actions, CODEOWNERS, Dependabot, SECURITY.md, pre-commit hook, and the host settings (ruleset with signed commits, linear history and required checks; squash only; secret scanning with push protection; private reporting) applied after one approval or as a checklist | repository | — | create; from the ai-workbench setup of 2026-09-27; side effect `configure` | — |
+| ops-repo-baseline | a repository's security baseline: CI with pinned actions, CODEOWNERS, Dependabot, SECURITY.md, pre-commit hook, and the host settings (ruleset with signed commits, linear history and required checks; squash only; secret scanning with push protection; private reporting) applied after one approval or as a checklist | repository | — | draft 0.1, grounded in the ai-workbench setup of 2026-09-27; writes the in-repository files and the host checklist, changes no host setting (S17 for that); strong delta +0.51, floor 0.796 | — |
 | ops-ci-pipeline | pipeline configuration, settings checklist, Pipeline section of the plan | repository | — | create; requires `integration:vcs`; side effect `push` | 4 |
 | ops-release | release notes and version | changes | — | create; side effect `publish` | 4 |
 | ops-qa-handover | docs/delivery/qa/<ticket>.md | diff, spec | qa-notes-handover prompt | rewrite | 5 |

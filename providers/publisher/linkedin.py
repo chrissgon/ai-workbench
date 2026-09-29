@@ -34,6 +34,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import importlib.util
 import json
 import mimetypes
 import os
@@ -166,22 +167,33 @@ def api_base() -> tuple[str, bool]:
     return override.rstrip("/"), True
 
 
+def secret_resolver():
+    """The workbench's one secret resolver, imported by path: resolver.py next to this file first (a
+    scheduled job runs a copy of this script from its job folder, with resolver.py in the same
+    snapshot), then providers/secrets/resolver.py in the workbench."""
+    here = Path(__file__).resolve()
+    candidates = (here.parent / "resolver.py", here.parents[1] / "secrets" / "resolver.py")
+    path = next((c for c in candidates if c.is_file()), None)
+    if path is None:
+        raise ProviderError(
+            "providers/secrets/resolver.py is not next to this script nor in the workbench; a scheduled job "
+            "must list it in its snapshot (providers/scheduler/README.md)", EXIT_NOT_CONFIGURED)
+    spec = importlib.util.spec_from_file_location("workbench_secret_resolver", path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look their module up here
+    spec.loader.exec_module(module)
+    return module
+
+
 def load_token(test_mode: bool) -> dict:
     """Return {"access_token": str, "expires_at": str|None}. Raise EXIT_NOT_CONFIGURED if absent or expired."""
-    token = os.environ.get("LINKEDIN_ACCESS_TOKEN")
+    # The resolver reads LINKEDIN_ACCESS_TOKEN from the environment, then the OS secret store, where
+    # auth.py keeps a JSON record; tests never read the store.
+    found = secret_resolver().resolve("LINKEDIN_ACCESS_TOKEN", allow_store=not test_mode)
+    token, source = found if found else (None, "")
     expires_at = os.environ.get("LINKEDIN_TOKEN_EXPIRES_AT")
-    if not token and not test_mode:
-        try:
-            import keyring  # imported lazily: only needed when the secret store is used
-        except ImportError:
-            raise ProviderError(
-                "the keyring package is missing; run with: uv run providers/publisher/linkedin.py",
-                EXIT_NOT_CONFIGURED,
-            )
-        try:
-            stored = keyring.get_password(KEYRING_SERVICE, KEYRING_USERNAME)
-        except Exception as exc:  # the backend may be locked or unavailable
-            raise ProviderError(f"cannot read the OS secret store: {type(exc).__name__}", EXIT_NOT_CONFIGURED)
+    if token and source == "secret store":
+        stored, token, expires_at = token, None, None
         if stored:
             try:
                 data = json.loads(stored)

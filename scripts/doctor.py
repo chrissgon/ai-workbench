@@ -17,6 +17,10 @@ Options:
   --strict          exit 1 when any required class is missing
   --help            show this text
 
+It also lists every secret registered in providers/secrets/resolver.py: found or missing, where
+it was found (environment or OS secret store), which classes read it and how to set it. It never
+prints a value. Missing secrets do not change the exit code; see contracts/secrets.md.
+
 Exit codes: 0 ok, 1 missing classes with --strict, 2 usage error.
 """
 import json
@@ -123,6 +127,25 @@ def load_connectors(harness):
         return (json.load(f) or {}).get("classes") or {}
 
 
+def secrets_report(classes):
+    """Every registered secret (providers/secrets/resolver.py): found or not, where, and which of the
+    installed skills' classes read it. Never the value."""
+    path = os.path.join(PROVIDERS, "secrets", "resolver.py")
+    if not os.path.isfile(path):
+        return []
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("workbench_secret_resolver", path)
+    resolver = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = resolver  # dataclasses look their module up here
+    spec.loader.exec_module(resolver)
+    rows = []
+    for row in resolver.report():
+        folders = {r.split("/")[1] for r in row["readers"] if r.startswith("providers/")}
+        row["classes"] = sorted(c for c in classes if provider_folder(c) in folders)
+        rows.append({k: row[k] for k in ("name", "found", "source", "store", "classes", "readers", "set")})
+    return rows
+
+
 def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__)
@@ -162,12 +185,19 @@ def main(argv):
             missing += 1
         report[cls] = {"status": status, "detail": detail, "skills": skills}
 
+    secrets = secrets_report(report)
+    secrets_missing = [s["name"] for s in secrets if not s["found"]]
     if as_json:
-        print(json.dumps({"harness": harness, "classes": report, "missing": missing}, indent=2))
+        print(json.dumps({"harness": harness, "classes": report, "missing": missing, "secrets": secrets}, indent=2))
     else:
         for cls, r in report.items():
             print(f"{r['status']:<9} {cls:<28} {r['detail']}  <- {', '.join(r['skills'])}", file=sys.stderr)
-        print(json.dumps({"harness": harness, "classes": len(report), "missing": missing}))
+        for sec in secrets:
+            state = f"found     {sec['name']:<28} {sec['source']}" if sec["found"] else \
+                f"missing   {sec['name']:<28} set it: {sec['set']}"
+            print(f"{state}  <- {', '.join(sec['classes'] or sec['readers'])}", file=sys.stderr)
+        print(json.dumps({"harness": harness, "classes": len(report), "missing": missing,
+                          "secrets_missing": secrets_missing}))
     return 1 if (strict and missing) else 0
 
 
