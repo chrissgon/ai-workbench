@@ -28,7 +28,7 @@ All six come from splitting `startup-ceo` (573 lines) and `startup-strategy-work
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
 | biz-validate-idea | docs/business/idea-validation.md | — | rewrite | 2 |
-| biz-market-analysis | docs/business/market.md | idea-validation (optional), research briefs | draft 0.3, grounded in `startup-ceo` and the GFACIL run of 2026-09-28; requires `search:web`; 5 eval iterations (strong claude-code +0.55 to +0.68 over no skill, 0.83 to 1.0 with it; floor DeepSeek V3.2 best 0.79, threshold 0.8 not met); fixes after iteration 5 not yet run | 2 |
+| biz-market-analysis | docs/business/market.md | idea-validation (optional), research briefs | 0.4, grounded in `startup-ceo` and the GFACIL run of 2026-09-28; requires `search:web`; passes at eval iteration 8 (strong claude-code Opus 0.958 with vs 0.283 without; floor DeepSeek V3.2 0.917, threshold 0.8); scripts rank.py, capacity.py, check_refs.py, lint_market.py | 2 |
 | biz-icp-positioning | docs/business/icp.md, docs/business/positioning.md | market | draft 0.1, grounded in `startup-ceo` and the GFACIL segment research of 2026-09-28; requires `search:web`; positioning step and evals not done | 2 |
 | biz-business-model | docs/business/business-model.md, docs/business/pricing.md | icp, positioning | rewrite | 2 |
 | biz-gtm | docs/business/gtm.md | icp, positioning, business-model | rewrite | 2 |
@@ -250,3 +250,7 @@ Built ahead of their wave, with the perfectui-doc rebuild as the real project:
 - [x] ops-ci-pipeline (wave 4; from the perfectui-doc pipeline: one build tested and deployed from GitHub Actions to Netlify, previews per pull request, protected main; the floor model still misses the revoke-the-pasted-token rule and exact version pins now and then)
 - [x] design-handoff (wave 3; unpacks single-file HTML exports, maps invented tokens, reads motion from scripts)
 - [ ] design-system v0.3: any input (code, images, documents, a live site) or a short interview; onboarding prompt for the design tool
+
+Built with GFACIL as the real company (branch `gfacil-skills`, 2026-09-28/29):
+- [x] biz-market-analysis (wave 2; 8 eval iterations. What moved the floor model from 0.475 to 0.917 was scripts, not wording: `check_refs.py` for citations, `lint_market.py` for prices under Implications, price cells, citation form and uncited figures, `rank.py` refusing free-text sources. Wording alone left the same mistakes in place from iteration 2 to 6. Remaining misses: summaries labelled as quotes, uncited figures in the Comparison reading.)
+- [ ] biz-icp-positioning 0.2 (wave 2; drafted, 3 eval cases written, not run; positioning step waits for GFACIL's customer interviews)
