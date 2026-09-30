@@ -445,7 +445,7 @@ def read_text(path, limit=4000):
 
 
 # The grader sees each produced file up to this many characters. Plans and reports run to several
-# thousand; at 3,000 the first real run graded the end of a plan as missing.
+# thousand; at 3,000 an early run graded the end of a plan as missing.
 FILE_LIMIT = 20000
 
 

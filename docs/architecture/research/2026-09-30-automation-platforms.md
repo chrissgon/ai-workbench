@@ -13,7 +13,7 @@ Read from `contracts/runtime.md`, `scripts/runtime.py` (docstring), `skills/mkt-
 | Trigger | launchd job runs `runtime.py tick` every N minutes | a timer, one tick at a time (the runtime takes a lock; the scheduler refuses overlapping firings) |
 | Mailbox | `providers/mailbox/gmail.py`, Gmail API, scope `gmail.readonly`, Google project "In production" | Gmail read access with the narrowest scope |
 | Store | `providers/store/sqlite.py`: events (dedup by source+external id, atomic claim), cursors, runs, inbox, actions (idempotency key, payload hash) | a persistent SQLite file, or an equivalent with atomic claim and unique keys |
-| Agent run | `adapters/claude-code/run-agent.sh`: the harness CLI on the user's Claude account, reading tools only, returns an `engage-decision` fenced block | a place to run the harness CLI, or a replacement adapter that calls a model API with no tools |
+| Agent run | `adapters/claude-code/run-agent.sh`: the harness CLI on the operator's Claude account, reading tools only, returns an `engage-decision` fenced block | a place to run the harness CLI, or a replacement adapter that calls a model API with no tools |
 | Gate | `policy_gate.py decide`: stdlib only, reads the policy file, the state file's Approvals row (`policy:<sha256>`), today's log; calls `brand-profile/scripts/sensitive_topics.py` by subprocess | a Python 3 interpreter, the project files, subprocess |
 | Actuator | `providers/publisher/linkedin.py comment ... --idempotency-key --confirmed` (LinkedIn Comments API, `w_member_social`) | outbound HTTPS and the LinkedIn token |
 | Inbox | `runtime.py inbox/approve --confirmed --sha256 <hash>` run by the person | a way for the person to see the exact text and its hash and approve it |
@@ -34,7 +34,7 @@ Workload arithmetic (used for every platform):
 
 **Prices** (https://n8n.io/pricing/, accessed 2026-09-30). The page is localised:
 
-| Plan | EUR (page served to the fetcher) | BRL (page served to the user's browser) | Executions / month | Concurrency |
+| Plan | EUR (page served to the fetcher) | BRL (page served to a browser in Brazil) | Executions / month | Concurrency |
 |---|---|---|---|---|
 | Starter | €20/mo billed annually; monthly price not shown in EUR | R$150/mo billed monthly; R$125/mo billed annually | 2.5k "workflow executions with unlimited steps" | 5 |
 | Pro | €50/mo billed annually | R$375/mo monthly; R$313/mo annually | 10k | 20 |
@@ -56,12 +56,12 @@ Workload arithmetic (used for every platform):
 **Can it keep our architecture? No, on Cloud.**
 - Code node on Cloud: "the Python option for the Code node doesn't allow users to import any Python libraries — whether from the standard library or third-party packages"; JavaScript may use only `crypto` and `moment`; "You can't access the file system or make HTTP requests" (https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.code, accessed 2026-09-30). `policy_gate.py` imports `hashlib`, `json`, `re`, `subprocess`, `pathlib`: it cannot run. The gate would be rewritten in JavaScript (a second implementation, outside the repository's tests and `validate.py`).
 - Execute Command node: "This node isn't available on n8n Cloud" (https://docs.n8n.io/integrations/builtin/core-nodes/n8n-nodes-base.executecommand/).
-- The harness CLI cannot run on Cloud, so the agent run becomes an LLM API call (HTTP Request or an AI node) billed per token with an API key. This contradicts the 2026-09-28 decision "Claude models run on the user's account" and needs the user's decision.
+- The harness CLI cannot run on Cloud, so the agent run becomes an LLM API call (HTTP Request or an AI node) billed per token with an API key. This contradicts the 2026-09-28 decision that Claude models run on the maintainer's own account (for evals) and needs the operator's decision.
 - Store: the SQLite store cannot live on Cloud; it becomes n8n Data tables or an external database. Assumption: n8n Data tables give no atomic claim / unique-key guarantee equal to ours (not verified).
 
 ### 1b. n8n self-hosted Community Edition
 
-- License: Sustainable Use License. "You may use or modify the software only for your own internal business purposes or for non-commercial or personal use"; it forbids offering it commercially as a hosted service or reselling it; files with `.ee.` in the name need an Enterprise license (https://github.com/n8n-io/n8n/blob/master/LICENSE.md, accessed 2026-09-30). The user's personal brand and GFACIL's internal marketing both fit "own internal business purposes"; Assumption: running it later for GFACIL's *clients* as a service would not fit and needs a check.
+- License: Sustainable Use License. "You may use or modify the software only for your own internal business purposes or for non-commercial or personal use"; it forbids offering it commercially as a hosted service or reselling it; files with `.ee.` in the name need an Enterprise license (https://github.com/n8n-io/n8n/blob/master/LICENSE.md, accessed 2026-09-30). A person's own brand and a company's internal marketing both fit "own internal business purposes"; Assumption: running it for a company's *clients* as a service would not fit and needs a check.
 - Community Edition lacks SSO/SAML/LDAP, external secret stores and scaling features of paid self-hosted tiers (pricing FAQ). Price €0.
 - n8n 3.0 (changelog dated October 2026, https://docs.n8n.io/changelog/v30-breaking-changes): self-hosted "will require a Docker-based deployment"; task-runner timeout drops from 5 minutes to 1 minute; unverified community packages disabled by default.
 - n8n 2.0 defaults (https://docs.n8n.io/changelog/v20-breaking-changes): Execute Command and LocalFileTrigger disabled by default (re-enable by editing `NODES_EXCLUDE`); env-var access from Code node blocked (`N8N_BLOCK_ENV_ACCESS_IN_NODE=true`); file nodes limited to `~/.n8n-files` unless `N8N_RESTRICT_FILE_ACCESS_TO` is set; Code runs on task runners; Pyodide Python removed.
@@ -77,7 +77,7 @@ Workload arithmetic (used for every platform):
 ### 1c. n8n nodes relevant to this workload
 
 - **Gmail Trigger**: polling; Poll Times modes Every Hour / Day / Week / Month / Every X (minutes or hours) / Custom cron (https://docs.n8n.io/integrations/builtin/trigger-nodes/n8n-nodes-base.gmailtrigger/poll-mode-options); minimum interval not stated. Filters: labels, Gmail search syntax, read status (default unread only), sender. Fetches up to 10 emails per poll by default, 50 max. Dedup: node static data `lastTimeChecked` and `possibleDuplicates` (source: https://raw.githubusercontent.com/n8n-io/n8n/master/packages/nodes-base/nodes/Google/Gmail/GmailTrigger.node.ts). Gotcha: the default "unread only" filter means reading the notification in Gmail first hides it from the trigger; set it to include read mail.
-- **Gmail OAuth scopes**: the credential's default scope list is `gmail.labels`, `gmail.addons.current.action.compose`, `gmail.addons.current.message.action`, `https://mail.google.com/`, `gmail.modify`, `gmail.compose` (full mailbox access), with a "Custom Scopes" toggle to replace them (https://raw.githubusercontent.com/n8n-io/n8n/master/packages/nodes-base/credentials/GmailOAuth2Api.credentials.ts). To keep the user's `gmail.readonly` decision, use Custom Scopes. Google "Testing" status: tokens expire after seven days (https://docs.n8n.io/integrations/builtin/credentials/google/oauth-single-service/), same as the repo already found.
+- **Gmail OAuth scopes**: the credential's default scope list is `gmail.labels`, `gmail.addons.current.action.compose`, `gmail.addons.current.message.action`, `https://mail.google.com/`, `gmail.modify`, `gmail.compose` (full mailbox access), with a "Custom Scopes" toggle to replace them (https://raw.githubusercontent.com/n8n-io/n8n/master/packages/nodes-base/credentials/GmailOAuth2Api.credentials.ts). To keep the `gmail.readonly` scope the mailbox provider uses, use Custom Scopes. Google "Testing" status: tokens expire after seven days (https://docs.n8n.io/integrations/builtin/credentials/google/oauth-single-service/), same as the repo already found.
 - **LinkedIn node**: one operation, Post → Create (person or organization); no comment or reply. "For unsupported operations, you can use the HTTP Request node with the LinkedIn credential" (https://docs.n8n.io/integrations/builtin/app-nodes/n8n-nodes-base.linkedin/). Credential scopes: `w_member_social`, plus `w_organization_social` when "Organization Support" is on (default on), plus `r_liteprofile,r_emailaddress` (legacy, default) or `profile,email,openid` (https://raw.githubusercontent.com/n8n-io/n8n/master/packages/nodes-base/credentials/LinkedInOAuth2Api.credentials.ts). Turn Organization Support off for a member-only app. Replies would go through HTTP Request to the Comments API (the same endpoint `linkedin.py comment` uses).
 - **Wait node**: resume after interval, at a time, on webhook call, on form submitted; waits over 65 seconds are offloaded to the database; optional wait-time limit (Wait node docs above).
 - **Error handling**: per-workflow error workflow starting with Error Trigger; Stop and Error node (https://docs.n8n.io/build/flow-logic/handle-errors-gracefully.md). Retry-on-fail details: not found on that page.
@@ -191,7 +191,7 @@ Workload arithmetic (used for every platform):
 | Platform fee, worst month (30 comments/day) | €0 + VPS | same (1,813 ≤ 2,500 executions) | $16 / $18.82 (20k) | $129 / $193.50 (10k) | same + overage (price not found) |
 | Polling cost | none | none (empty polls free) | 4,320 credits | none | none |
 | Runs `runtime.py` + `policy_gate.py` unchanged | yes, via Execute Command in a custom image | no (no stdlib imports, no Execute Command) | no (paste, 30 s, no files) | no (paste, 30 s, strings only) | partly (real Python; files via `/tmp`) |
-| Harness CLI on the user's Claude account | possible (Assumption: CLI installed and signed in on the server; whether that is allowed unattended is a separate question) | no → model API key | no → API key | no → API key | no → API key |
+| Harness CLI on the operator's Claude account | possible (Assumption: CLI installed and signed in on the server; whether that is allowed unattended is a separate question) | no → model API key | no → API key | no → API key | no → API key |
 | SQLite store with atomic claim | yes (local file) | no | no (Data stores) | no (Storage/Tables) | only via File Stores copy, race-prone (Assumption) |
 | LinkedIn reply | HTTP Request node or our `linkedin.py` | HTTP Request node | "Make an API Call" | none built in; raw webhook | "Create Comment" with `parentComment` |
 | Gmail scope | our `gmail.readonly` (our provider) or Custom Scopes | Custom Scopes | modify/readonly/compose/send; 6-month expiry on @gmail.com | not found | own OAuth client allowed |
@@ -206,7 +206,7 @@ Workload arithmetic (used for every platform):
 2. **Hash-bound approvals.** Survive where the gate is our code and reads the real policy file (self-hosted n8n; Pipedream with care). On n8n Cloud, Make and Zapier the gate is a pasted copy reading platform storage; the SHA-256 would bind whatever was pasted into platform storage, not the repository file the person approved, unless a deploy step syncs both.
 3. **Idempotency ledger / SQLite store.** Only self-hosted keeps it unchanged. Elsewhere it becomes platform storage (n8n Data tables, Make Data stores, Zapier Storage/Tables, Pipedream data store 100 KB-1 MB) whose atomicity guarantees were not found on vendor pages.
 4. **Harness-agnostic core (AGENTS.md principle 1, 2).** These platforms are not AI harnesses, but the same open-closed rule applies: platform workflow exports (n8n JSON, Make blueprints, Zaps, Pipedream workflows) must live outside `skills/`, `agents/`, `contracts/`, `shared/`, `providers/`' core files and `templates/` — for example as a `scheduler`/host implementation folder, the way `providers/scheduler/launchd.py` is one implementation. A skill or contract that says "open n8n" breaks the rule. Rebuilding the gate as visual nodes also moves logic out of reach of `scripts/validate.py`, `security_scan.py` and the offline tests.
-5. **Model on the user's account (decision 2026-09-28).** All four SaaS options force an API key billed per token instead of the claude-code adapter on the user's account; that is a user decision, not a technical detail. A tool-free API adapter would also need its own prompt assembly (agent file + skill + artifacts), which `run-agent.sh` gets from the CLI today.
+5. **Model on the operator's account (decision 2026-09-28, for evals).** All four SaaS options force an API key billed per token instead of the claude-code adapter on the operator's own account; that is the operator's decision, not a technical detail. A tool-free API adapter would also need its own prompt assembly (agent file + skill + artifacts), which `run-agent.sh` gets from the CLI today.
 6. **External content.** Comments arrive in e-mail bodies on every platform. Any platform expression language that evaluates fields (n8n expressions, Make mapping) must receive the comment as data only; Assumption: none of them evaluate text inside a mapped value, not verified.
 
 ## 7. Assumptions (all of them)
@@ -219,8 +219,8 @@ Workload arithmetic (used for every platform):
 - n8n Data tables and SaaS stores lack our atomic-claim guarantees.
 - Pipedream `/tmp` is not a reliable persistent store; Pipedream step durations of 10-40 s per comment.
 - The native-Python task runner in self-hosted n8n blocks subprocess.
-- Running the harness CLI signed in to the user's account on a server is technically possible; whether its terms allow unattended server use was not checked.
-- Running self-hosted n8n for GFACIL's clients as a service would fall outside the Sustainable Use License.
+- Running the harness CLI signed in to the operator's account on a server is technically possible; whether its terms allow unattended server use was not checked.
+- Running self-hosted n8n for a company's clients as a service would fall outside the Sustainable Use License.
 - No platform evaluates expressions found inside mapped text values.
 
 ## 8. Not found

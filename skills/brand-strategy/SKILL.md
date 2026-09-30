@@ -136,8 +136,8 @@ Approve the strategy only if all of the following hold:
 
 ## Gotchas
 
-- Between "specialist" (not proven) and "enthusiast" (reads as a beginner), the first real case chose neither: seniority and shipped products carry the authority, and the themes appear as subjects.
-- The person's best-documented skill (in the first case, leadership and mentoring) can be on their never-expose list. Pillars come from what they want to be known for, filtered by that list, not from the longest part of the CV.
-- Launch weeks inflate download counts (641 in the Perfect UI 1.0 week against 979 for the month). Say which period is the stable baseline.
+- Between "specialist" (not proven) and "enthusiast" (reads as a beginner), the usual answer is neither: seniority and shipped products carry the authority, and the themes appear as subjects.
+- The person's best-documented skill (for example, leadership and mentoring) can be on their never-expose list. Pillars come from what they want to be known for, filtered by that list, not from the longest part of the CV.
+- Launch weeks inflate download counts (a launch week can hold most of the month's downloads). Say which period is the stable baseline.
 - A member account on LinkedIn cannot read its own analytics or comments through the API. Ask the user for followers and impressions, once, and date them.
 - A profile summary written for a job search pulls every generated text toward it; propose the replacement in the same run.

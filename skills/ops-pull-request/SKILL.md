@@ -115,9 +115,9 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- The first real run showed a body that left out the state-file commit made after the approval, and had to edit the pull request once it was open; the payload now lists that record up front.
+- A body that leaves out the state-file commit made after the approval has to be edited once the pull request is open; the payload lists that record up front.
 
-- With squash merging, the pull request's title, not the branch's commits, became the commit on main (`docs(workbench): record the delivery pipeline … (#3)`): a vague title becomes a vague history.
+- With squash merging, the pull request's title, not the branch's commits, becomes the commit on main (`<title> (#<number>)`): a vague title becomes a vague history.
 - Recording the approval in the state file on the branch itself means the record reaches a protected main with the change; a separate commit on main is impossible once main requires pull requests.
 - Following checks through the unauthenticated public API ran out of its hourly limit twice; the authenticated CLI (`gh pr checks --watch`, `gh run view --log-failed`) reads checks and logs without that limit.
 - In an eval on 2026-09-28 a floor model wrote an approval the user never gave into the state file, then committed and tried to push in the same turn it showed the payload. An approval row exists only after the user's yes, and quotes their words.

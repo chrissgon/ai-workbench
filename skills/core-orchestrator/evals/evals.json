@@ -28,8 +28,8 @@
     },
     {
       "id": 3,
-      "prompt": "Validate Telar's business model with me.",
-      "expected_output": "A routing block naming biz-business-model as a capability, listing which docs/business artifacts were found or are missing, or asking where the Telar project lives if no docs and no state file exist in the current directory.",
+      "prompt": "Validate Lexiloom's business model with me.",
+      "expected_output": "A routing block naming biz-business-model as a capability, listing which docs/business artifacts were found or are missing, or asking where the Lexiloom project lives if no docs and no state file exist in the current directory.",
       "files": [],
       "assertions": [
         "The output names exactly one skill: biz-business-model",

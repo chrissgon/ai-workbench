@@ -113,7 +113,7 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- The option that respects the rule is often not in the request. The first real run was asked about a `MutationObserver` (forbidden by the architecture's hard rules) and found `animationstart` on a zero-length animation: event delegation on `document`, which the rules allow, with a few bytes of cost.
+- The option that respects the rule is often not in the request. A request for a `MutationObserver` (forbidden by the architecture's hard rules) can be met by `animationstart` on a zero-length animation: event delegation on `document`, which the rules allow, with a few bytes of cost.
 - An option's failure mode lives in the user's CSS and environment, not in the library: the same run showed that `* { animation: none !important }` and an author animation on the element silently disable the animation route, while the common reduced-motion reset (duration 0.01 ms) does not. Test the resets people actually ship.
 - Keeping today's mechanism as the fallback turns "fails silently" into "behaves as today", which changes the recommendation.
 - Timings of a few tens of milliseconds over 10,000 operations vary run to run; compare an option against the baseline measured in the same run, and call differences inside the noise what they are.

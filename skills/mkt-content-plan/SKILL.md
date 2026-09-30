@@ -110,7 +110,7 @@ Approve the calendar only if all of the following hold:
 
 ## Gotchas
 
-- The rotation runs across calendars: the first week of a new calendar continues after the last week of the previous one (in the first real case, week A was PT, EN, PT and week B EN, PT, EN). Starting at A every time repeats a language pattern.
-- A pillar about building in public goes quiet in weeks with no progress. The first real case's strategy turns that week's post into a behind-the-scenes of work in progress, never a claim without an artifact. Use the strategy's rule; do not invent a milestone.
+- The rotation runs across calendars: the first week of a new calendar continues after the last week of the previous one (for example, with two languages, week A is L1, L2, L1 and week B L2, L1, L2). Starting at A every time repeats a language pattern.
+- A pillar about building in public goes quiet in weeks with no progress. A strategy can turn that week's post into a behind-the-scenes of work in progress, never a claim without an artifact. Use the strategy's rule; do not invent a milestone.
 - Approving topics is not approving publication. The person approves the final texts once, in `mkt-publish`; do not record a publication approval here.
-- The person has little time for approvals (15 minutes a day in the first real case). Ask everything missing in one message, each question with a recommended answer.
+- The person has little time for approvals (often minutes a day). Ask everything missing in one message, each question with a recommended answer.

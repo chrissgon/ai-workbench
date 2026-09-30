@@ -1,13 +1,13 @@
 # Always-on runtime: where the social agent runs once it leaves the Mac
 
-- Status: proposal (backlog PB8), for the user's decision
+- Status: proposal (backlog PB8), for the operator's decision
 - Date: 2026-09-30
 - Reads: `contracts/runtime.md`, `scripts/runtime.py`, `providers/store/`, `providers/scheduler/`, `providers/mailbox/`, `providers/publisher/`, `adapters/claude-code/run-agent.sh`
 - Prices: every number comes from the vendor's own page, accessed 2026-09-30, listed under Sources. Anything else is marked **Assumption**.
 
 ## 1. The question
 
-The runtime works on the user's Mac: launchd fires `scripts/runtime.py tick` every 10 minutes; the tick reads new LinkedIn comment notifications, runs the `social-manager` agent read-only through the Claude Code CLI, lets `policy_gate.py` decide, and replies through the LinkedIn provider or queues the comment in the inbox. Scheduled posts run as one-shot launchd jobs.
+The runtime works on a Mac: launchd fires `scripts/runtime.py tick` every 10 minutes; the tick reads new LinkedIn comment notifications, runs the `social-manager` agent read-only through the Claude Code CLI, lets `policy_gate.py` decide, and replies through the LinkedIn provider or queues the comment in the inbox. Scheduled posts run as one-shot launchd jobs.
 
 The Mac's main limit: launchd misses a `StartInterval` firing while the Mac sleeps (`man 5 launchd.plist`, quoted in `providers/scheduler/README.md`), and the Mac must be on and logged in. The rehearsal of 2026-09-30 proved the rest works unattended: a one-shot job and a recurring job every 5 minutes read the LinkedIn token from the login keychain through launchd and `uv` (the first read took about 95 seconds, the next ones about 10). An always-on host removes the sleep limit. This document compares where to put it, what each option costs, and what it changes in the code.
 
@@ -30,7 +30,7 @@ Workload: 4,320 to 4,464 ticks a month (every 10 minutes), 0 to 900 agent runs (
 
 ### 3.1 Two ways
 
-- **A. Keep the Claude Code CLI** (today's adapter). Claude Code needs "4 GB+ RAM" [S34], which puts the cheapest server at Hetzner CX23 (€5.99/month) and everything else at $20 to $29/month. On a server it signs in with `claude setup-token`, "a one-year OAuth token" documented for "CI pipelines, scripts" [S30]. But the Consumer Terms forbid access "through automated or non-human means, whether through a bot, script, or otherwise" except "via an Anthropic API Key or where we otherwise explicitly permit it" [S32], and the Claude Code legal page says subscription OAuth is "designed to support ordinary use" [S33]. A bot answering strangers every 10 minutes is closer to the prohibition than to ordinary use. **This is the user's decision, not settled by the sources.**
+- **A. Keep the Claude Code CLI** (today's adapter). Claude Code needs "4 GB+ RAM" [S34], which puts the cheapest server at Hetzner CX23 (€5.99/month) and everything else at $20 to $29/month. On a server it signs in with `claude setup-token`, "a one-year OAuth token" documented for "CI pipelines, scripts" [S30]. But the Consumer Terms forbid access "through automated or non-human means, whether through a bot, script, or otherwise" except "via an Anthropic API Key or where we otherwise explicitly permit it" [S32], and the Claude Code legal page says subscription OAuth is "designed to support ordinary use" [S33]. A bot answering strangers every 10 minutes is closer to the prohibition than to ordinary use. **This is the operator's decision, not settled by the sources.**
 - **B. A tool-free API adapter** (to build: `adapters/api/run-agent.*`). One Messages API or OpenRouter call with the agent, the skill and the brand files in the prompt and no tools at all. It runs anywhere (no 4 GB rule), keeps "the model has no tool that acts" true by construction, costs per token, and is covered by the API terms.
 
 ### 3.2 Cost per reply (15,000 input and 400 output tokens, one call, no cache)
@@ -47,7 +47,7 @@ Arithmetic, Sonnet: 15,000 × $2/1e6 + 400 × $10/1e6 = $0.030 + $0.004. Caching
 
 ### 4.1 Stay on the Mac (today)
 
-- Cost: $0 infrastructure; the model on the user's plan.
+- Cost: $0 infrastructure; the model on the operator's plan.
 - Limits: the Mac must be awake and logged in; missed firings during sleep; one keychain click per new binary.
 - Fit: good for the first weeks, while the e-mail trigger and the policy are proven.
 
@@ -60,7 +60,7 @@ Arithmetic, Sonnet: 15,000 × $2/1e6 + 400 × $10/1e6 = $0.030 + $0.004. Caching
 
 ### 4.3 AWS Lambda + EventBridge Scheduler (serverless)
 
-- Mapping: EventBridge Scheduler `rate(10 minutes)` and cron schedules in `America/Sao_Paulo` [S5]; one Python Lambda with reserved concurrency 1 as the lock (**Assumption**); secrets in SSM Parameter Store; state in DynamoDB (a new store provider) or the SQLite file in S3 with conditional writes (`If-Match`, 412 on a race) [S13]. Never SQLite on EFS: SQLite warns that locks "have been known to operate incorrectly for some network filesystems" [S12].
+- Mapping: EventBridge Scheduler `rate(10 minutes)` and cron schedules in the posting time zone (IANA) [S5]; one Python Lambda with reserved concurrency 1 as the lock (**Assumption**); secrets in SSM Parameter Store; state in DynamoDB (a new store provider) or the SQLite file in S3 with conditional writes (`If-Match`, 412 on a race) [S13]. Never SQLite on EFS: SQLite warns that locks "have been known to operate incorrectly for some network filesystems" [S12].
 - Cost: about 20,256 GB-s and 5,376 requests a month with adapter B at 512 MB, inside Lambda's always-free "400,000 GB-seconds per month" [S3]: **$0**; about $0.30 to $1.60 without it or with Secrets Manager. Accounts created from 2025-07-15 get credits on a Free plan that closes after 6 months, so an always-on agent belongs on the Paid plan; the always-free limits still apply [S1].
 - New code: large. A store provider (or S3 sync), a scheduler provider, packaging, adapter B, the publisher's ledger moved into the store. Lambda's 15-minute limit [S4] means per-tick work is capped by time as well as count.
 - Ops: lowest at run time. Lock-in: medium (AWS code stays in providers).
@@ -92,7 +92,7 @@ What the platforms add is a visual run history and, in n8n, a phone-friendly app
 |--------|--------------------------|-------|-------------|--------------|---------|-----|
 | Mac | $0 | CLI on the plan | none | Mac awake | none | now |
 | VPS + adapter B | $4 to $7 | API key | small | patching, SSH | lowest | **recommended next** |
-| VPS 4 GB + CLI | €5.99 to $29 | CLI on the plan (terms question) | small | patching, SSH | lowest | only if the user settles the terms question |
+| VPS 4 GB + CLI | €5.99 to $29 | CLI on the plan (terms question) | small | patching, SSH | lowest | only if the operator settles the terms question |
 | Lambda + EventBridge + adapter B | $0 to $1.60 | API key | large | lowest | medium | later, if zero ops matters |
 | Cloud Run / Fly.io | $0 to $5.70 | API key | medium to large | low | medium / low | alternatives to the VPS |
 | Cloudflare Workers | $0 or $5 | API key | rewrite | lowest | high | no |
@@ -102,12 +102,12 @@ What the platforms add is a visual run history and, in n8n, a phone-friendly app
 
 ## 6. Recommendation
 
-1. **Now: stay on the Mac** until three things are proven: the e-mail trigger (or pasted links), the first real reply, and 7 days of unattended ticks.
+1. **Now: stay on the Mac** until three things are proven: the e-mail trigger (or pasted links), a first reply sent, and 7 days of unattended ticks.
 2. **Next: a small VPS with a tool-free API adapter (B).** Same runtime, store, gate and providers; new pieces are the `systemd` scheduler provider, adapter B, and an e-mail notification. Infrastructure $4 to $7 a month; model cost per section 3.2, capped by `daily_cost_cap_usd`.
-3. **Model for adapter B:** chosen from the comparison of 2026-09-30 (`personal-brand/.workbench-local/compare-2026-09-30/`, summarised in the user's report), with the gate unchanged whatever the model.
+3. **Model for adapter B:** chosen from a comparison of models on real comments (2026-09-30; `docs/decisions.md`), with the gate unchanged whatever the model.
 4. **Not recommended:** workflow SaaS as the core (the gate and the hash-bound approval would leave the repository), Cloudflare Workers (rewrite), GitHub Actions (drops).
 
-Decisions for the user: the terms question (CLI on the plan vs an API key) and the host.
+Decisions for the operator: the terms question (CLI on the plan vs an API key) and the host.
 
 ## 7. What every option needs
 

@@ -146,7 +146,7 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- On the first real case, all three options of the open round were already in the calendar, one of them written in another language and in other words. The script only catches near-identical wording; the meaning is the model's check.
+- The options of an open round may already be in the calendar, written in another language and in other words. The script only catches near-identical wording; the meaning is the model's check.
 - The vote data spells pillars in one language and the calendar may name them in the artifact's language: pass `--pillar-alias` so the slot is found.
 - The profile's own workflow closes the round (most picks wins, a tie goes to the earlier letter, no picks means no winner) and opens the next queued one. Take `winner` from the data; never recount.
 - A post without an image is recorded with `"image": null`; only the vote post carries one, rendered by code, never by the model.

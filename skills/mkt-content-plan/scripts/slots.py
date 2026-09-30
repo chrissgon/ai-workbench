@@ -3,7 +3,7 @@
 
 Usage:
   python3 slots.py --start 2026-10-05 --weeks 1 --days mon,wed,fri --time 09:30 \
-      --tz America/Sao_Paulo --pillars "Build to serve|AI in public|Tech in conversation" \
+      --tz Europe/Lisbon --pillars "Guides|Case studies|Opinions" \
       --rotation "PT,EN,PT;EN,PT,EN" [--after-calendar docs/marketing/calendar.md | --first-week A] [--today 2026-09-29]
 
 The n-th post of a week gets the n-th pillar and the n-th language of that week's rotation.

@@ -101,7 +101,7 @@ Approve the file only if all of the following hold:
 
 ## Gotchas
 
-- npm's search filter `scope:<name>` returned nothing for a scope that has packages in the first real case; the script asks the scope's package list instead, which answers 404 "Scope not found" when the scope does not exist.
-- RDAP through rdap.org does not answer for every TLD (.io gave no reliable answer in the first case). The script checks a known control domain of the same TLD and says `unknown` instead of "free".
-- A video channel with the same handle may belong to someone else; in the first case `@chrissgon` existed on YouTube and was not the person's, while a web search for the name found no other use. Search results do not replace asking about each network.
-- People who met a taken handle often already use a fallback (the first case used `chrissgonn` on YouTube and some networks) and feel it as a loss. Make the fallback a written rule with links back to the main profile instead of proposing a rename.
+- npm's search filter `scope:<name>` can return nothing for a scope that has packages; the script asks the scope's package list instead, which answers 404 "Scope not found" when the scope does not exist.
+- RDAP through rdap.org does not answer for every TLD (.io may give no reliable answer). The script checks a known control domain of the same TLD and says `unknown` instead of "free".
+- The same handle often belongs to someone else on another network, such as a video channel, even when a web search for the name finds no other use. Search results do not replace asking about each network.
+- People who met a taken handle often already use a fallback (a doubled letter, on the networks where the handle was taken) and feel it as a loss. Make the fallback a written rule with links back to the main profile instead of proposing a rename.

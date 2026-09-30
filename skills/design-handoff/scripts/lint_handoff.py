@@ -10,7 +10,7 @@ Checks:
     with a non-empty Content source
   - with --inventory and --library: every custom property the export defines or uses that the library
     stylesheet does not define, and every fixed colour, appears in the Tokens table (custom properties
-    may be grouped with a wildcard such as `--pui-*-ink`)
+    may be grouped with a wildcard such as `--ds-*-ink`)
   - every Tokens row has an Action
   - every Motion row has a Reduced motion entry
   - every DEV-n has "Action:" with fix in code, back to design, or accepted

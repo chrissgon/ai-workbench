@@ -12,7 +12,7 @@ It implements only the runtime's entry point, `run-agent.sh`. It installs nothin
 | How the model sees files | the adapter inlines the files the task names | the model reads the project with read-only tools |
 | Terms | API terms, paid per token | the CLI's sign-in; see the architecture document, section 3.1 |
 | Cost per run | one call: input + output tokens | several tool turns, each resending context |
-| Best for | a small server (VPS), a scheduled runtime | the Mac, while files the task cannot name are needed |
+| Best for | a small server (VPS), a scheduled runtime | a local machine, while files the task cannot name are needed |
 
 Choose it in the project's `docs/workbench/runtime.json`: `"harness": "api"` and a model id with the endpoint prefix, for example `"model": "anthropic/claude-sonnet-5-5"` or `"model": "openrouter/deepseek/deepseek-v3.2"`. `scripts/runtime.py` then calls `bash adapters/api/run-agent.sh` with the same flags it gives any adapter.
 
@@ -68,4 +68,4 @@ A fake server on 127.0.0.1 stands in for both endpoints; no real API or key is u
 
 ## Not yet verified with a real key
 
-The first real run should confirm, for each endpoint: a 200 answer with the shapes above, `usage` and `usage.cost` as documented, the estimate against the real `input_tokens`, and that `stderr.log`, `raw.json` and `request.json` hold no key.
+The first run against each endpoint should confirm: a 200 answer with the shapes above, `usage` and `usage.cost` as documented, the estimate against the real `input_tokens`, and that `stderr.log`, `raw.json` and `request.json` hold no key.

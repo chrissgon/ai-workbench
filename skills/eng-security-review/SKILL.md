@@ -149,9 +149,9 @@ Approve the report only if all of the following hold:
 
 ## Gotchas
 
-- Alerts count advisories, not problems: the first real run had 30 open alerts from 2 manifests and 2 packages (`nuxt`, `vitest`), both in eval fixtures that were never installed. Decide by group.
+- Alerts count advisories, not problems: dozens of open alerts can come from 2 manifests and 2 packages, both in test fixtures that are never installed. Decide by group.
 - A manifest with a pinned version and no lockfile can still be installed by a CI job or an eval that allows `npm install`; the absence of a lockfile is a hint, not proof. Look for the install command.
-- A fixture that copies a real project's manifest makes the real project the one at risk. Ask about it; the user checked the real project in the first run.
+- A fixture that copies a real project's manifest makes the real project the one at risk. Ask the user to check the real project.
 - The version that clears every alert of a group is the highest `first_patched_version`, not the first one listed; the script computes it. A fix one major up (`vitest` 3 to 4) is a migration, not a bump.
 - A CI file only runs from the repository's root CI folder: an `npm ci` inside a fixture's own `.github/workflows/` is text, not an install. Check where the hit lives before counting it.
 - Dismissing needs a different permission from reading: a read-only token lists alerts and gets 403 on dismissal. Keep the write token separate and short-lived.

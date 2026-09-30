@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Write the PRD for the new documentation site. The brief is docs/workbench/briefs/perfectui-doc-redesign.md, decisions are in docs/workbench/state.md and there is a research brief on alternatives in docs/workbench/research/css-library-alternatives.md.",
+      "prompt": "Write the PRD for the new documentation site. The brief is docs/workbench/briefs/plinthui-doc-redesign.md, decisions are in docs/workbench/state.md and there is a research brief on alternatives in docs/workbench/research/css-library-alternatives.md.",
       "expected_output": "docs/product/prd.md with two user groups from brief decision 2, features written as user outcomes each with priority, phase (from the recorded phase order) and source, success metrics only with sourced numbers and otherwise OPEN with a recommended target, release phases with exit criteria and no dates, lint ok, artifact registered in the state file, and a report saying which feature specs come first.",
       "files": [],
       "assertions": [

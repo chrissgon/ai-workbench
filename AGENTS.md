@@ -11,6 +11,7 @@ You are maintaining a repository of agents, skills and workflows that let an AI 
 5. **Never assume; ask.** When a decision belongs to the user and is not recorded in the project state or an artifact, a skill stops and asks, with a recommended answer. It never proceeds on a guess about scope, product, audience, platform or intent. An assumption that cannot be avoided is labelled `assumed` and reported. Asking for a decision once is not re-asking for approval: see the consent rules.
 6. **English only.** Every file in this repository is written in English.
 7. **Parallel by default.** Work that does not depend on other work runs at the same time: eval runs, independent checks and test suites, research on separate questions, agents with separate scopes. A skill or script runs things one after another only when a step needs another's result, when a shared resource cannot be used concurrently (one working tree, one approval gate), or when a rate limit forces it, and it says which. Scripts that run many independent jobs take a `--jobs` option with a default above 1.
+8. **Shared core, projects outside.** This repository is used by many people, so it holds only the workbench. Nothing from a project that uses it comes in: no project, product, person, account or handle names, no decisions, dates or numbers of a real case, and no work data (posts, approvals, state, run logs, images). A project's data and history live in that project, in its `docs/` folder or a git-ignored `.workbench-local/` folder, never here. Examples, eval fixtures and tests use fictional names (people, companies, products, handles, `.example` domains) and invented numbers; a lesson learned on a real project is written as the lesson, without naming the project ("a launch week can hold most of the month's downloads", not the project and its counts).
 
 ## Layout
 
@@ -123,7 +124,7 @@ Every skill is evaluated with a strong model and with a floor model (a large hos
 5. Add `evals/evals.json` with at least two realistic cases.
 6. `python3 scripts/validate.py` until it reports zero errors.
    Then walk `shared/references/security.md`: every item `yes` or `n/a` with a reason.
-7. Ground the content in real expertise: past corrections, real artifacts, real failures. Do not generate from generic knowledge. Follow `core-skill-creator`; its `references/authoring-guide.md` is the long-form reference.
+7. Ground the content in real expertise: past corrections, real artifacts, real failures. Do not generate from generic knowledge. Then anonymise it (principle 8): the lesson stays, the real project's names, people and numbers go, and fixtures copied from a real project are rewritten with fictional names. Follow `core-skill-creator`; its `references/authoring-guide.md` is the long-form reference.
 
 ## Adding an agent
 
@@ -135,12 +136,13 @@ Create `adapters/<harness>/` with `adapter.json`, `install.sh`, `README.md`, and
 
 ## Validation
 
-`python3 scripts/validate.py` checks: folder name equals `name`; prefix and area are valid and consistent; `kind` matches the prefix; description length; line limit; no harness names or paths in the core; `side_effects` implies a `## Confirmation gate` section; every `inputs` path is some skill's `outputs`; relative links resolve; agent frontmatter keys; `english-only`, no Portuguese-specific diacritics or words outside a line carrying `validate: allow english-only -- <reason>`; and, through `scripts/security_scan.py`, no secrets, hidden text (invisible Unicode, HTML comments with prose in instruction files) or unsafe script patterns, and no remote writes from a skill that declares `side_effects: []`. Run it before every commit. A security finding that is intended is silenced on its line with `security-scan: allow <rule> -- <reason>`, or, where a comment would change the file (an eval fixture with a planted fake secret), with a line in `.security-scan-allow`; never without a reason. `--strict` turns warnings into errors. `bash scripts/install-hooks.sh` makes git run it, and the tests of whatever `providers/` or `scripts/` the commit touches, before every commit; never bypass the hook on your own.
+`python3 scripts/validate.py` checks: folder name equals `name`; prefix and area are valid and consistent; `kind` matches the prefix; description length; line limit; no harness names or paths in the core; `side_effects` implies a `## Confirmation gate` section; every `inputs` path is some skill's `outputs`; relative links resolve; agent frontmatter keys; `english-only`, no Portuguese-specific diacritics or words outside a line carrying `validate: allow english-only -- <reason>`; `private-term`, none of the terms a maintainer lists in a local, git-ignored `.private-terms` file (their own names, projects and accounts, one per line; `re:<regex>` and `!<path glob>` allowed), outside a line carrying `validate: allow private-term -- <reason>`; and, through `scripts/security_scan.py`, no secrets, hidden text (invisible Unicode, HTML comments with prose in instruction files) or unsafe script patterns, and no remote writes from a skill that declares `side_effects: []`. Run it before every commit. A security finding that is intended is silenced on its line with `security-scan: allow <rule> -- <reason>`, or, where a comment would change the file (an eval fixture with a planted fake secret), with a line in `.security-scan-allow`; never without a reason. `--strict` turns warnings into errors. `bash scripts/install-hooks.sh` makes git run it, and the tests of whatever `providers/` or `scripts/` the commit touches, before every commit; never bypass the hook on your own.
 
 ## Never
 
 - Never put a harness name, path or tool name in a core file.
 - Never store credentials in this repository. Providers read them from the environment.
+- Never commit a real project's names, people, decisions or data. Use fictional names in examples and fixtures, and keep each project's data in that project.
 - Never let a capability invoke another skill.
 - Never ship an actuator without a confirmation gate.
 - Never write a skill from generic knowledge without a real task to refine it against.

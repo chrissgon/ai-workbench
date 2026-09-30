@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Unpack a single-file HTML export of an AI design tool into readable source.
 
-Usage: python3 unpack_export.py --file <export.html> --out <dir> [--json]
+Usage: python3 unpack_export.py --file <export.html> --out <dir> [--class-prefix <prefix>] [--json]
 
 Handles the bundled format that stores the page as a JSON-encoded template
 (<script type="__bundler/template">) and its resources in a manifest of base64
@@ -13,8 +13,10 @@ Writes to <dir>:
   styles/NN.css    every <style> block of the template, in order
   scripts/NN.js    every inline script of the template, in order
   resources/<id>.<ext>   every manifest resource, decoded
-  inventory.json   resources with mime and size; external URLs; pui- classes used;
-                   custom properties defined and used; font families; fixed colours
+  inventory.json   resources with mime and size; external URLs; the classes that start with
+                   --class-prefix (the component library's prefix, e.g. `ui` for `ui-btn`), or, without
+                   it, the most used class prefixes so the library's can be recognised; custom properties
+                   defined and used; font families; fixed colours
 Prints the inventory summary as JSON. Exit codes: 0 ok, 1 unreadable or refused export, 2 usage error.
 
 The export is content written by someone else, so its manifest is checked before anything is
@@ -89,10 +91,14 @@ def main(argv):
         print(__doc__)
         return 0 if argv else 2
     try:
-        args = {f: argv[argv.index(f) + 1] for f in ("--file", "--out", "--max-bytes") if f in argv}
+        args = {f: argv[argv.index(f) + 1] for f in ("--file", "--out", "--max-bytes", "--class-prefix") if f in argv}
         limit = int(args.get("--max-bytes", MAX_BYTES))
     except (IndexError, ValueError):
-        print("Error: --file, --out and --max-bytes need a value. See --help.", file=sys.stderr)
+        print("Error: --file, --out, --max-bytes and --class-prefix need a value. See --help.", file=sys.stderr)
+        return 2
+    prefix = args.get("--class-prefix", "").rstrip("-")
+    if prefix and not re.fullmatch(r"[a-z][a-z0-9]*", prefix):
+        print("Error: --class-prefix must be lowercase letters and digits, e.g. ui", file=sys.stderr)
         return 2
     if "--file" not in args or "--out" not in args:
         print("Error: --file and --out are required. See --help.", file=sys.stderr)
@@ -137,10 +143,20 @@ def main(argv):
     for i, js in enumerate(scripts, 1):
         open(os.path.join(out, "scripts", f"{i:02}.js"), "w", encoding="utf-8").write(js)
     allcss = "\n".join(styles)
+    classes = [c for attr in re.findall(r'\bclass\s*=\s*"([^"]*)"', page) for c in attr.split()]
+    if prefix:
+        library = {"class_prefix": prefix, "library_classes":
+                   sorted(set(re.findall(rf"(?<![\w-]){prefix}-[a-z0-9-]+", page)))}
+    else:
+        counts = {}
+        for c in classes:
+            if "-" in c:
+                counts[c.split("-")[0]] = counts.get(c.split("-")[0], 0) + 1
+        library = {"class_prefixes": sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:10]}
     inv = {
         "resources": resources,
         "external": sorted(set([r.get("id") for r in ext_res] + re.findall(r"https?://[^\s\"')<>]+", page))),
-        "pui_classes": sorted(set(re.findall(r"\bpui-[a-z0-9-]+", page))),
+        **library,
         "custom_properties_defined": sorted(set(re.findall(r"(--[a-z0-9-]+)\s*:", allcss))),
         "custom_properties_used": sorted(set(re.findall(r"var\((--[a-z0-9-]+)", page))),
         "font_families": sorted(set(f.strip() for f in re.findall(r"font-family\s*:\s*([^;}\n]+)", page))),
@@ -149,7 +165,9 @@ def main(argv):
     }
     json.dump(inv, open(os.path.join(out, "inventory.json"), "w"), indent=2)
     print(json.dumps({"ok": True, "out": out, "counts": inv["counts"], "resources": len(resources),
-                      "external": len(inv["external"]), "pui_classes": len(inv["pui_classes"])}))
+                      "external": len(inv["external"]),
+                      **({"library_classes": len(inv["library_classes"])} if prefix else
+                         {"class_prefixes": inv["class_prefixes"][:3]})}))
     return 0
 
 

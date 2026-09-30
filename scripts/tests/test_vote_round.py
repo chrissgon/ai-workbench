@@ -110,17 +110,17 @@ def test_data_out_of_rotation_order_is_warned(vote):
     assert any("not the rotation's order" in w for w in out["warnings"])
 
 
-def test_the_real_data_order_build_ai_tech(tmp_path):
-    """The first real case's data: the AI round open, a Tech round queued; next comes Build to serve."""
+def test_the_rotation_continues_after_the_last_queued_pillar(tmp_path):
+    """A three-pillar rotation: the second pillar's round open, the third queued; next comes the first."""
     d = {"pick": tmp_path / "pick.json", "queue": tmp_path / "q.json", "posts": tmp_path / "p.json", "calendar": tmp_path / "c.md"}
-    d["pick"].write_text(dump({"open": True, "round": "2026-09-29", "closes": "2026-10-05", "pillar": "AI built in public",
+    d["pick"].write_text(dump({"open": True, "round": "2026-09-29", "closes": "2026-10-05", "pillar": "Case studies",
                                "options": opts("a one", "b two", "c three"), "picks": {}, "history": []}))
-    d["queue"].write_text(dump([{"pillar": "Tech in conversation", "options": opts("d four", "e five", "f six")}]))
+    d["queue"].write_text(dump([{"pillar": "Opinions", "options": opts("d four", "e five", "f six")}]))
     d["posts"].write_text("[]\n")
     d["calendar"].write_text("# Calendar\n")
-    code, out = state(d, "--pillars", "Build to serve|AI built in public|Tech in conversation")
+    code, out = state(d, "--pillars", "Guides|Case studies|Opinions")
     assert code == 0 and out["pending"] is False and out["round"] is None
-    assert out["rotation"]["next_pillar"] == "Build to serve"
+    assert out["rotation"]["next_pillar"] == "Guides"
     code, out = state(d)
     assert out["rotation"]["next_pillar"] is None and any("--pillars" in w for w in out["warnings"])
 
@@ -132,7 +132,7 @@ def test_without_pillars_the_order_is_read_from_a_full_cycle(vote):
 
 
 def test_a_queued_pillar_outside_the_list_is_an_error(vote):
-    code, err = state(vote, "--pillars", "Build to serve|AI built in public|Tech in conversation")
+    code, err = state(vote, "--pillars", "Guides|Case studies|Opinions")
     assert code == 2 and "not one of the pillars" in err
 
 

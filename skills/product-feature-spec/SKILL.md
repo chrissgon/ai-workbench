@@ -91,4 +91,4 @@ Approve the specification only if all of the following hold:
 - Requirements that restate a decision from the brief must cite the decision number; a spec that contradicts a recorded decision is wrong until the decision changes.
 - Acceptance criteria written by the same person who will implement them tend to describe the implementation; write what the reviewer sees, not how it is built.
 - Confidence percentages invite invention; this skill uses the readiness gate instead: ready when every REQ has an AC and no OPEN blocks a REQ.
-- Before asking how an external integration works (an index, an API, an account), ask whether it still exists. In the first real run, the question "how is the search index populated" had a dead premise: the account had been deactivated, and the real question was which search provider to use.
+- Before asking how an external integration works (an index, an API, an account), ask whether it still exists. A question like "how is the search index populated" can have a dead premise: the account may have been deactivated, and the real question is which search provider to use.

@@ -85,6 +85,6 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- A test runner that reuses a running server (`reuseExistingServer`) serves whichever build started first: the first real run moved the before-the-change copy to another port, or both runs would have tested the same files.
+- A test runner that reuses a running server (`reuseExistingServer`) serves whichever build started first: move the before-the-change copy to another port, or both runs test the same files.
 - The fallback module arrives after the loader, so the readiness signal was "the checkbox present at load is already mixed", not `load` or `networkidle`.
 - The accepted degradation is a behaviour too: with `animation: none !important` the checkbox is not mixed until the next click, and the test asserts exactly that, so a later change that silently breaks the fallback path fails.

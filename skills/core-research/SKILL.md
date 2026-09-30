@@ -124,5 +124,5 @@ Approve the brief only if all of the following hold:
 - Never write a URL you did not open. A plausible-looking citation that does not exist is the worst outcome this skill can produce.
 - A search tool's synthesized summary is not a source, even when it quotes numbers. Cite the page you opened, or open one.
 - Pricing pages and survey results are often rendered client-side or sit behind a login. Try the obvious variants (`/pricing`, `/pro`, the section index), then record the value as unknown; do not fill it with a blog's number presented as fact.
-- Secondary "bundle size" and "downloads" figures drift: in this skill's first real run, three of four size claims in a 2026 article were 2× to 6× below the measured file, and a download figure was a third of the live one. Measure (step 3b).
+- Secondary "bundle size" and "downloads" figures drift: size claims in an article can be several times below the measured file, and a download figure a fraction of the live one. Measure (step 3b).
 - The same survey quoted by many blogs is one source, and blogs often change the denominator; cite the survey's own page and compute shares yourself, stating the denominator.

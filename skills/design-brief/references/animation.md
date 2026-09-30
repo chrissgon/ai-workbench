@@ -3,7 +3,7 @@
 The Content section must contain:
 
 - **Duration:** total length and whether it loops.
-- **Timeline:** beats in order with their start time and length (for example 0.0–0.4 s the class `pui-btn` types; 0.4–0.8 s the button gains its shape), each saying which claim it shows.
+- **Timeline:** beats in order with their start time and length (for example 0.0–0.4 s the class `btn` types; 0.4–0.8 s the button gains its shape), each saying which claim it shows.
 - **Final state:** the frame that remains when motion stops; it must carry the whole message on its own.
 - **Reduced motion:** what is shown instead when the viewer prefers reduced motion (usually the final state).
 - **Output:** format and size (CSS and HTML, Lottie, MP4, GIF), frame rate, file-size ceiling.

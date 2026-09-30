@@ -86,7 +86,7 @@ Every verb prints normalized messages:
 | `GMAIL_API_BASE`, `GOOGLE_TOKEN_URL` | both | Tests only: loopback URLs of a fake Google, set together. |
 | `GMAIL_HTTP_TIMEOUT` | `gmail.py` | Tests only, with the overrides: seconds before a request times out. |
 
-### To verify on the first real run
+### To verify on first use
 
 - **The notification e-mail.** Save one real LinkedIn comment notification as `.eml` (Gmail: "Show original", "Download original") and run `read-eml` on it before anything else: whether it carries the comment text, the commenter, and the post and comment ids a reply needs (backlog PB5). The test fixture is synthetic and does not claim to match LinkedIn's format.
 - **Search query.** Which sender address and words find the comment notifications, to fix the `--query` a skill uses.

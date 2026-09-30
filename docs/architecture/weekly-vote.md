@@ -1,31 +1,31 @@
 # Weekly vote to published post (backlog PB15)
 
-- Status: built, 2026-09-30 (`scripts/runtime_vote.py`, `scripts/vote_job.py`, tests in `scripts/tests/test_runtime_vote.py`); not yet configured in a project; decisions by the user on 2026-09-30 (listed below)
-- First real case: the profile repository `chrissgon/chrissgon` (public, default branch `master`, no ruleset), built in the personal-brand project
+- Status: built, 2026-09-30 (`scripts/runtime_vote.py`, `scripts/vote_job.py`, tests in `scripts/tests/test_runtime_vote.py`); design decisions taken on 2026-09-30 (listed below)
+- Target: a public profile repository that runs the vote (the layout below), named in the project's `runtime.json`
 
-## What exists (read on 2026-09-30, read only)
+## What the profile repository holds
 
 - `data/pick.json`: the open round (`round`, `closes`, `pillar`, `options` A/B/C, `picks` as hashed account ids) and `history` (closed rounds, newest first: `round`, `pillar`, `options`, `counts`, `winner`, `post_url`).
 - `data/pick-queue.json`: the next rounds, each `{pillar, options}`.
 - `data/posts.json`: posts shown on the profile, each `{date, lang, title, url, image}`, images under `assets/posts/`.
-- `.github/workflows/weekly.yml`: every Monday at 12:00 UTC (09:00 in Sao Paulo) runs `scripts/readme.py weekly --apply`: closes the round that ended (winner = most picks, a tie goes to the earlier letter, no picks = no winner), opens the next queued round, rebuilds the README, and commits as github-actions.
+- `.github/workflows/weekly.yml`: once a week (Monday, at a fixed UTC time) runs `scripts/readme.py weekly --apply`: closes the round that ended (winner = most picks, a tie goes to the earlier letter, no picks = no winner), opens the next queued round, rebuilds the README, and commits as github-actions.
 - The README shows the last winner with "I wrote it" and the link when `post_url` is set, "I'm writing it now." otherwise.
 
-## Decisions (user, 2026-09-30)
+## Decisions (2026-09-30)
 
 1. A round with no winner: the agent proposes one of the three with its reasons, inside the weekly approval.
 2. No answer before the slot: the slot is skipped and the topic waits; nothing is published without the yes.
 3. The weekly approval is asked on Monday, right after the round closes.
 4. The agents commit directly to the profile repository's default branch, only the vote data files, only after the weekly yes.
 5. Only the vote post carries an image: HTML in the brand identity rendered to PNG, contrast checked.
-6. Topics already in the content calendar, in the queue or in the history are never proposed again (found on 2026-09-30: the open round's three options were all already in the calendar).
-7. The vote post takes the first free row of the round's pillar after the round closes; a row that already carries a post (drafted or later) keeps it, so the calendar is never rewritten by the vote (the round closing 2026-10-12 would otherwise have taken the Friday slot of an already scheduled post).
+6. Topics already in the content calendar, in the queue or in the history are never proposed again (found on 2026-09-30: a round's three options can all be topics the calendar already carries).
+7. The vote post takes the first free row of the round's pillar after the round closes; a row that already carries a post (drafted or later) keeps it, so the calendar is never rewritten by the vote (otherwise a round could take the slot of an already scheduled post).
 
 ## The weekly run
 
 ```text
-Mon 09:00  profile workflow closes round R (winner W, post_url empty), opens the next queued round
-Mon 09:15+ runtime tick: vote step
+Mon HH:00  profile workflow closes round R (winner W, post_url empty), opens the next queued round
+Mon HH:15+ runtime tick: vote step
            1. read pick.json, pick-queue.json, posts.json from the profile repo (vcs read-file, read only)
            2. vote_state.py: is there a closed round with post_url empty that was not handled? which slot of the
               content calendar carries its pillar in the coming week? which pillar comes next in the queue's rotation?
@@ -61,6 +61,6 @@ slot time  6. the job publishes the post and its first comment, then records it:
 - `commit-files` refuses paths outside a list the runtime passes (`data/pick-queue.json`, `data/pick.json`, `data/posts.json`, `assets/posts/<slug>.png|webp`).
 - A push that is rejected (the workflow committed meanwhile) is retried once after a fresh clone; a second rejection goes to the inbox.
 
-## The first round
+## A round whose topics are already in the calendar
 
-The round that closes on 2026-10-05 (pillar "AI built in public") offers three topics already in the calendar (09/10, 07/10, 14/10). The user decided on 2026-09-30: its winner's `post_url` is the calendar post of that topic, recorded once that post is out; the vote step is told the round is handled (cursor `vote:2026-09-29`), and new topics start with the next round.
+When a round's options are all topics the calendar already carries (a round opened before the vote step was configured), its winner's `post_url` is the calendar post of that topic, recorded once that post is out; the vote step is told the round is handled (cursor `vote:<round>`), and new topics start with the next round.

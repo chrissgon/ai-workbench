@@ -11,7 +11,7 @@ Loaded at step 2 of `mkt-messaging`.
 ## Numbers
 
 - Every number carries its unit, its method and its date somewhere on the page (a footnote is enough), and is reproduced in a PROOF.
-- Round only as much as the method allows (a measured 2,922 B is "2.9 kB", not "under 3 kB" if it is 2,922 and not "3 kB" if precision matters to the claim).
+- Round only as much as the method allows (a measured 2,948 B is "2.9 kB", not "under 3 kB" if it is 2,948 and not "3 kB" if precision matters to the claim).
 - Numbers about the product come from a measurement run on the shipped build, never from the code's own comments or an older release.
 
 ## Tone

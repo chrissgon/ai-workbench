@@ -28,8 +28,8 @@ All six come from splitting `startup-ceo` (573 lines) and `startup-strategy-work
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
 | biz-validate-idea | docs/business/idea-validation.md | — | rewrite | 2 |
-| biz-market-analysis | docs/business/market.md | idea-validation (optional), research briefs | 0.4, grounded in `startup-ceo` and the GFACIL run of 2026-09-28; requires `search:web`; passes at eval iteration 8 (strong claude-code Opus 0.958 with vs 0.283 without; floor DeepSeek V3.2 0.917, threshold 0.8); scripts rank.py, capacity.py, check_refs.py, lint_market.py | 2 |
-| biz-icp-positioning | docs/business/icp.md, docs/business/positioning.md | market | 0.3, grounded in `startup-ceo` and the GFACIL segment research of 2026-09-28; requires `search:web`; passes at eval iteration 1 (strong 0.933 vs 0.700, floor 0.85); scripts rank.py, check_refs.py, lint_icp.py | 2 |
+| biz-market-analysis | docs/business/market.md | idea-validation (optional), research briefs | 0.4, grounded in `startup-ceo` and a real company's run of 2026-09-28; requires `search:web`; passes at eval iteration 8 (strong claude-code Opus 0.958 with vs 0.283 without; floor DeepSeek V3.2 0.917, threshold 0.8); scripts rank.py, capacity.py, check_refs.py, lint_market.py | 2 |
+| biz-icp-positioning | docs/business/icp.md, docs/business/positioning.md | market | 0.3, grounded in `startup-ceo` and a real company's segment research of 2026-09-28; requires `search:web`; passes at eval iteration 1 (strong 0.933 vs 0.700, floor 0.85); scripts rank.py, check_refs.py, lint_icp.py | 2 |
 | biz-business-model | docs/business/business-model.md, docs/business/pricing.md | icp, positioning | rewrite | 2 |
 | biz-gtm | docs/business/gtm.md | icp, positioning, business-model | rewrite | 2 |
 | biz-business-plan | docs/business/business-plan.md | all of the above | rewrite | 2 |
@@ -53,12 +53,12 @@ All four come from splitting `brand-designer` (392 lines) and `brand-workflow` (
 
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
-| brand-profile | docs/brand/profile.md: a person's trajectory, proof, goals, audiences, limits, writing samples | — | create; first case the user's personal brand (backlog PB1) | 3 |
-| brand-name | docs/brand/name.md: name or handle research (candidates, availability of handles, domains and package scopes, conflicts, pronunciation in each language), or an audit of a name already in use | profile, strategy | create; first case the user's existing handle `chrissgon`, audit mode (backlog PB12) | 3 |
+| brand-profile | docs/brand/profile.md: a person's trajectory, proof, goals, audiences, limits, writing samples | — | create (backlog PB1) | 3 |
+| brand-name | docs/brand/name.md: name or handle research (candidates, availability of handles, domains and package scopes, conflicts, pronunciation in each language), or an audit of a name already in use | profile, strategy | create; first case an existing handle, audit mode (backlog PB12) | 3 |
 | brand-strategy | docs/brand/strategy.md, for a person or a company | profile (person) or positioning, icp (company) | rewrite | 3 |
-| brand-identity | docs/brand/identity.md plus brand tokens | strategy | rewrite; `generator:image` optional for moodboards; first case the personal brand on Perfect UI's design, grounded in the LinkedIn cover (backlog PB10) | 3 |
+| brand-identity | docs/brand/identity.md plus brand tokens | strategy | rewrite; `generator:image` optional for moodboards; grounded in a LinkedIn cover for a real personal brand (backlog PB10) | 3 |
 | brand-voice | docs/brand/voice.md, for posts and replies | strategy, real writing samples | rewrite | 3 |
-| brand-guidelines | docs/brand/guidelines.md: the brand guide, for a person or a company; for a person, one guide an agent and a human both follow (who, positioning, name, visual, voice, claims, never-expose and the sensitive-topics lock, do and don't, examples) | profile, name, strategy, identity, voice | rewrite; first case the user's personal brand guide (backlog PB13) | 3 |
+| brand-guidelines | docs/brand/guidelines.md: the brand guide, for a person or a company; for a person, one guide an agent and a human both follow (who, positioning, name, visual, voice, claims, never-expose and the sensitive-topics lock, do and don't, examples) | profile, name, strategy, identity, voice | rewrite; first case a real personal brand guide (backlog PB13) | 3 |
 
 ## Design (`design-`)
 
@@ -118,7 +118,7 @@ No prior content. Every skill here is `create` and must be written alongside a r
 | mkt-content-plan | docs/marketing/calendar.md | launch-plan | create | 4 |
 | mkt-social-copy | docs/marketing/content/<post>.md | messaging, voice | create | 4 |
 | mkt-publish | a scheduled or published post, recorded in calendar and state | content, asset | create; requires `publisher:<platform>`; side effect `publish` | 4 |
-| mkt-engage | replies to comments on the user's own posts inside an engagement policy | voice, strategy, notification e-mails | create; requires `publisher:<platform>` and a mailbox class; side effect `publish` (backlog PB6) | 4 |
+| mkt-engage | replies to comments on the person's own posts inside an engagement policy | voice, strategy, notification e-mails | create; requires `publisher:<platform>` and a mailbox class; side effect `publish` (backlog PB6) | 4 |
 | mkt-vote-round | the weekly vote's post and the next round's topics, for one approval | vote files, calendar, voice, strategy | create; requires `integration:vcs` (backlog PB15) | 4 |
 | mkt-landing-page | docs/marketing/landing.md: structure and copy | messaging | create | 5 |
 | mkt-seo | docs/marketing/seo.md | landing, content | create | 5 |
@@ -204,14 +204,9 @@ Sixty-two skills is the reason packs exist. It is also why each wave must ship r
 
 Planned items are never scheduled; they are built when a project needs them.
 
-## First real project: Telar
+## Real projects
 
-Telar (AI-generated linguistic content; a sample exists, v1 is about to start) is the vehicle for every wave after 0. Two consequences:
-
-- **AI moves forward.** Telar is an AI product, so `ai-feature-requirements`, `ai-llm-integration`, `ai-evals` and `ai-governance` are needed in the same wave as Telar's engineering, not in wave 5. `ai-opportunity-assessment` still runs first and must still be able to say which parts of Telar do not need AI.
-- **Business and product come before engineering for Telar.** v1 should be built on a validated PRD, so `flow-business-plan` and the product skills are needed as soon as core exists, while engineering skills are refined on the sample's real code tasks.
-
-Skills in waves 2 to 5 are written alongside the corresponding Telar phase and refined against it before they count as done.
+Skills in waves 2 to 5 are written alongside the phase of a real project that needs them and refined against it before they count as done. When that project is an AI product, the AI skills it needs (`ai-feature-requirements`, `ai-llm-integration`, `ai-evals`, `ai-governance`) move forward to the wave of its engineering, not wave 5; `ai-opportunity-assessment` still runs first and must still be able to say which parts do not need AI.
 
 ## Progress
 
@@ -224,7 +219,7 @@ Wave 0:
 - [x] core-agents-md
 - [x] core-skill-creator
 - [x] researcher agent
-- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first real runs on the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench, and may declare `setup` commands (a branch with commits) and `skills` it depends on (a flow's phases, linked in both variants); it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
+- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first runs on real tasks of the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench, and may declare `setup` commands (a branch with commits) and `skills` it depends on (a flow's phases, linked in both variants); it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
 
 Wave 1:
 - [x] eng-codebase-map
@@ -240,22 +235,22 @@ Wave 1:
 - [x] eng-docs
 - [x] product-feature-spec
 - [x] product-backlog
-- [x] ops-pull-request (from perfectui-doc pull requests #2 and #3 and the generic part of pr-creator; bundles `scripts/pr-context.sh`; the floor model once changed code while preparing a pull request, to watch in real use)
+- [x] ops-pull-request (from two real pull requests and the generic part of pr-creator; bundles `scripts/pr-context.sh`; the floor model once changed code while preparing a pull request, to watch in real use)
 - [x] ops-branch-sync
-- [x] flow-fix-bug (from the perfectui header-menu bug: nine phases, the fix in the library and the records in the site; floor 0.8 at the threshold, the floor model sometimes starts eng-root-cause directly instead of the flow)
+- [x] flow-fix-bug (from a real header-menu bug in a component library: nine phases, the fix in the library and the records in its documentation site; floor 0.8 at the threshold, the floor model sometimes starts eng-root-cause directly instead of the flow)
 - [ ] flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
 - [ ] agents explorer, implementer, reviewer
 
-Built ahead of their wave, with the perfectui-doc rebuild as the real project:
+Built ahead of their wave, with a documentation-site rebuild as the real project:
 - [x] product-prd, product-roadmap (wave 2)
 - [x] design-ux-flows, design-system (wave 3)
 - [x] design-brief, design-execute (wave 3; replace design-ui and design-generate-asset: design skills produce the inputs, a specialized AI design tool or a code prototype produces the design)
 - [x] mkt-messaging (wave 4)
-- [x] ops-ci-pipeline (wave 4; from the perfectui-doc pipeline: one build tested and deployed from GitHub Actions to Netlify, previews per pull request, protected main; the floor model still misses the revoke-the-pasted-token rule and exact version pins now and then)
+- [x] ops-ci-pipeline (wave 4; from a real documentation-site pipeline: one build tested and deployed from GitHub Actions to Netlify, previews per pull request, protected main; the floor model still misses the revoke-the-pasted-token rule and exact version pins now and then)
 - [x] design-handoff (wave 3; unpacks single-file HTML exports, maps invented tokens, reads motion from scripts)
 - [ ] design-system v0.3: any input (code, images, documents, a live site) or a short interview; onboarding prompt for the design tool
 
-Built with the user's personal brand as the real case (branch `feat/personal-brand`, 2026-09-29). Evals: strong claude-code Opus 5.5 (also the grader), floor DeepSeek V3.2 through agents-dir, 3 runs per case, floor runs in parallel with `eval_run.py --jobs`:
+Built against a real personal brand (2026-09-29). Evals: strong claude-code Opus 5.5 (also the grader), floor DeepSeek V3.2 through agents-dir, 3 runs per case, floor runs in parallel with `eval_run.py --jobs`:
 - [x] brand-profile 0.4 (strong 1.0 with vs 0.58 without; floor 0.917. Floor went 0.48 → 0.51 while the gate said "ask only what is missing": the floor model kept asking to confirm recorded decisions and stopped without writing. What worked was writing the profile first and turning every question into an open question inside it, with a default recommendation per item. Scripts: `linkedin_export.py` (drops contact data, computes durations), `check_profile.py`, `sensitive_topics.py`.)
 - [x] brand-strategy 0.2 (strong 1.0 vs 0.80; floor 0.897 at 0.1; 0.2 fixes the two floor misses, re-offering recorded choices and writing 0 for a product that was not found, not rerun. Script: `baselines.py`.)
 - [x] brand-voice 0.2 (strong 0.97 vs 0.58; floor 0.783 at 0.1, 0.878 at 0.2 after banning ranges as recommendations, "reconsider" labels and added words in rewrites. Script: `voice_stats.py`, counts and a `voice-rules` check.)
@@ -264,13 +259,13 @@ Built with the user's personal brand as the real case (branch `feat/personal-bra
 - [x] brand-guidelines 0.2 (strong 1.0 vs 0.68 at 0.2; floor about 0.5 at 0.1, when it wrote a placeholder guide with strategy and voice missing and put paraphrased rules among the examples; 0.845 at 0.2 after the gate and two checks in `check_guide.py`: every do-and-don't cell a quote, and every missing brand file named with its skill.)
 - [ ] flow-brand (backlog PB14)
 
-Built with the user's personal brand, content engine and 24-hour agent (branch `feat/content-engine`, 2026-09-29; backlog PB4 to PB7). Same eval setup as the brand skills; fixtures use the fictional persona Dana Example:
+The content engine and the 24-hour agent (2026-09-29; backlog PB4 to PB7). Same eval setup as the brand skills; fixtures use the fictional persona Dana Example:
 - [x] mkt-content-plan 0.1 (strong 1.0 vs 0.90; floor 0.844 at iteration 1, 0.944 at iteration 3 after `slots.py --after-calendar` took over continuing the language rotation, which the floor model got wrong by hand. Script: `slots.py`.)
 - [x] mkt-social-copy 0.1 (strong 1.0 vs 0.71; floor 0.889, then 0.875 at iteration 4. Still failing: asked to "say how much money it saved", the floor model writes a vague figure ("six figures", "tens of thousands") in about one run in three, despite the rule against any form of an unmeasured number. Script: `check_post.py`, which runs `voice_stats.py` and `sensitive_topics.py` on the exact post and first comment.)
 - [x] mkt-publish 0.1 (strong 1.0 vs 0.625; floor 0.889, then 0.875 at iteration 4. Still failing: when the token check stops the run before the payload exists, the floor model calls an older approval with a different hash "matching"; `payload.py approval` decides it once the payload is built. Script: `payload.py` (build, verify, approval).)
-- [x] mkt-engage 0.1 (runtime mode and the policy procedure; iteration 1: strong 0.917 without the skill; iteration 2: strong 0.967, floor 0.911; iteration 3 after "no motive the post does not state": strong 1.0 on the praise case, floor 0.87 there. Still failing on the floor model: it adds a cause or a motive to a thank-you ("that's why I built it this way") in two runs of three, and once reused a self-reported 64% latency cut as a product benchmark. A comparison on the user's real comments the same night (Sonnet 5.5 16/16, DeepSeek V3.2 10/16, one invented technical claim) made Sonnet the runtime model and added the source check to the gate. Scripts: `policy_gate.py`, `parse_notification.py` (comment links; the e-mail layout is still unverified).)
-- [x] mkt-vote-round 0.1 (branch `feat/pb15-weekly-vote`, 2026-09-30; runtime mode and the interactive procedure. Iteration 1: strong 0.83 (0.57 without), floor 0.74. Iteration 2, after "facts from the material behind this topic", "a used topic the person asks for is named and left out", "one block, no draft before it", two assertions aligned with their expected output and `grader_files` in eval_run.py: strong 0.96 (0.67 without), floor 0.89 over the two runtime cases; the interactive case timed out at 900 s on the floor model in all three runs, and with 1800 s (iteration 3) scored 0.67: asked to put an already used topic (tinykv 0.5 TTL) in the next round, the floor model rewords it and keeps it in all three runs, and once calls the draft approved. The runtime mode, the one the weekly step uses, passes; the interactive mode does not yet pass on the floor model. Still failing on the floor model: numbers from another note put into the winner's post, and a second, duplicated proposal block. Scripts: `vote_state.py`, `vote_update.py`.)
+- [x] mkt-engage 0.1 (runtime mode and the policy procedure; iteration 1: strong 0.917 without the skill; iteration 2: strong 0.967, floor 0.911; iteration 3 after "no motive the post does not state": strong 1.0 on the praise case, floor 0.87 there. Still failing on the floor model: it adds a cause or a motive to a thank-you ("that's why I built it this way") in two runs of three, and once reused a self-reported 64% latency cut as a product benchmark. A comparison on real comments the same night (Sonnet 5.5 16/16, DeepSeek V3.2 10/16, one invented technical claim) made Sonnet the runtime model and added the source check to the gate. Scripts: `policy_gate.py`, `parse_notification.py` (comment links; the e-mail layout is still unverified).)
+- [x] mkt-vote-round 0.1 (2026-09-30; runtime mode and the interactive procedure. Iteration 1: strong 0.83 (0.57 without), floor 0.74. Iteration 2, after "facts from the material behind this topic", "a used topic the person asks for is named and left out", "one block, no draft before it", two assertions aligned with their expected output and `grader_files` in eval_run.py: strong 0.96 (0.67 without), floor 0.89 over the two runtime cases; the interactive case timed out at 900 s on the floor model in all three runs, and with 1800 s (iteration 3) scored 0.67: asked to put an already used topic (tinykv 0.5 TTL) in the next round, the floor model rewords it and keeps it in all three runs, and once calls the draft approved. The runtime mode, the one the weekly step uses, passes; the interactive mode does not yet pass on the floor model. Still failing on the floor model: numbers from another note put into the winner's post, and a second, duplicated proposal block. Scripts: `vote_state.py`, `vote_update.py`.)
 
-Built with GFACIL as the real company (branch `gfacil-skills`, 2026-09-28/29):
+Built against a real one-person company (2026-09-28/29):
 - [x] biz-market-analysis (wave 2; 8 eval iterations. What moved the floor model from 0.475 to 0.917 was scripts, not wording: `check_refs.py` for citations, `lint_market.py` for prices under Implications, price cells, citation form and uncited figures, `rank.py` refusing free-text sources. Wording alone left the same mistakes in place from iteration 2 to 6. Remaining misses: summaries labelled as quotes, uncited figures in the Comparison reading.)
-- [x] biz-icp-positioning (wave 2; passes at eval iteration 1: strong claude-code Opus 0.933 with vs 0.700 without, floor DeepSeek V3.2 0.85; built with `lint_icp.py`, `check_refs.py` and `rank.py` from the start, after what biz-market-analysis taught. 0.3 adds a `Recommended:` line under every scope question and sourced alternatives, the two iteration-1 misses, not rerun. The positioning step has not met a real case yet: GFACIL's waits for the customer interviews.)
+- [x] biz-icp-positioning (wave 2; passes at eval iteration 1: strong claude-code Opus 0.933 with vs 0.700 without, floor DeepSeek V3.2 0.85; built with `lint_icp.py`, `check_refs.py` and `rank.py` from the start, after what biz-market-analysis taught. 0.3 adds a `Recommended:` line under every scope question and sourced alternatives, the two iteration-1 misses, not rerun. The positioning step has not met a real case yet: the real company's waits for customer interviews.)

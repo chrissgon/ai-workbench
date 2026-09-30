@@ -93,6 +93,6 @@ Approve the guide only if all of the following hold:
 
 ## Gotchas
 
-- Consolidating invites paraphrase. In the first real case the first draft misquoted an old post (a different emoji) and invented a "don't" example that no source had; the checker caught both. Copy, do not recall.
+- Consolidating invites paraphrase: a first draft can misquote an old post (a different emoji) and invent a "don't" example that no source has; the checker catches both. Copy, do not recall.
 - Words like **Do** or a pillar name in quotation marks look like quotes to the checker; write them in bold.
 - The guide goes stale the moment a brand file changes (a new label, a new pillar). Rerun this skill after any brand file changes; the checker's stale quotes list is the diff.

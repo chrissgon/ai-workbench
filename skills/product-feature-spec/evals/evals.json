@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Write the spec for the Markdown content model of our docs site. The brief is in docs/workbench/briefs/perfectui-doc-redesign.md and the codebase map in docs/engineering/architecture.md.",
+      "prompt": "Write the spec for the Markdown content model of our docs site. The brief is in docs/workbench/briefs/plinthui-doc-redesign.md and the codebase map in docs/engineering/architecture.md.",
       "expected_output": "A spec at docs/product/specs/<feature>.md where every REQ cites a brief decision, a map fact or a user answer; NFRs carry numbers or become OPEN with a recommended value; edge cases cover the version-and-time and device categories; every REQ and NFR is covered by an AC in Given/When/Then; lint passes; the report says whether it is ready for architecture.",
       "files": [],
       "assertions": [

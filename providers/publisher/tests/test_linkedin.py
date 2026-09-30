@@ -615,8 +615,8 @@ def test_a_scheduled_copy_needs_the_resolver_in_its_snapshot(env, fake, tmp_path
 def test_hashtags_use_the_documented_template():
     module = load_module()
     render = module.post_commentary
-    assert render("Ship it #PerfectUI #design_systems now") == \
-        "Ship it {hashtag|\\#|PerfectUI} {hashtag|\\#|design\\_systems} now"
+    assert render("Ship it #DesignTokens #design_systems now") == \
+        "Ship it {hashtag|\\#|DesignTokens} {hashtag|\\#|design\\_systems} now"
     assert render("(#tag). #end") == "\\({hashtag|\\#|tag}\\). {hashtag|\\#|end}"
     assert render("#tag\nnext") == "{hashtag|\\#|tag}\nnext"
     # Not hashtags: inside a word, digits only, non-ASCII letters, a bare sign. They stay escaped.
@@ -630,10 +630,10 @@ def test_hashtags_use_the_documented_template():
 
 def test_publish_sends_hashtag_template(env, fake, tmp_path):
     path = tmp_path / "tags.txt"
-    path.write_text("Launch #PerfectUI @team", encoding="utf-8")
+    path.write_text("Launch #DesignTokens @team", encoding="utf-8")
     proc = run(SCRIPT, publish_args(path, "--confirmed"), env)
     assert proc.returncode == 0, proc.stderr
-    assert json.loads(fake.requests[1]["body"])["commentary"] == "Launch {hashtag|\\#|PerfectUI} \\@team"
+    assert json.loads(fake.requests[1]["body"])["commentary"] == "Launch {hashtag|\\#|DesignTokens} \\@team"
 
 
 # --- comment ---------------------------------------------------------------------
