@@ -145,6 +145,11 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
 - [ ] **R8. Local web app.** Org chart, task board, approval inbox, messages, costs; reads and writes only through R2.
 - [ ] **R9. Scenario evals.** Multi-agent scenarios ("a week of GFACIL's marketing") graded like skill evals.
 - [ ] **R10. Integrations the first case needs.** Provider classes for what marketing agents use (for example e-mail and a CRM), chosen with the user; asked, not assumed.
+- [ ] **R11. A chat interface for the whole workbench.** Requested by the user on 2026-09-30: an interface like the ones Claude, ChatGPT and other assistants have, where a person runs every action of the workbench (skills, flows, agents, approvals) by talking to it, with a model reached through an API key or a model running locally.
+  - Why: today the workbench runs only inside an AI coding tool through an adapter, so using it means installing and learning one of those tools. A chat interface lets someone with only an API key, or only a local model, use it.
+  - Shape, from the repository's rules: the interface is a harness, so it lives in `adapters/<name>/` and reads the core like any adapter (principle 2), with its own `run-prompt.sh` so the evals can run through it. Models are providers of a requirement class (for example `model:<provider>`, one implementation per API and one for a local runtime), and keys come through the S13 resolver, never through the browser or the repository. Confirmation gates show up as approval cards backed by S12's payload hash, the same records R5's inbox reads; runs and artifacts go through R2. It can be the chat view of R8's web app rather than a second app.
+  - To decide when building: a local backend that owns files, commands and the approval gate (a page in the browser cannot run skills' scripts on its own); which API providers and which local runtime come first, asked to the user; which models are supported, decided by the evals, since a local model may score below the floor model; and how a run is contained (T5).
+  - Done when: someone with only an API key, and someone with only a local model, each run a capability skill end to end from the interface, including one confirmation gate shown, approved and recorded; and `eval_run.py` runs a skill's evals through the interface's adapter.
 
 ## Project conventions
 
