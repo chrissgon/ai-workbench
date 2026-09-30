@@ -24,6 +24,8 @@ real e-mail yet (backlog PB6): from an e-mail this script only trusts the commen
 "parsed": false when it cannot find the commenter or the text, so the runtime never drafts from a guess.
 Exit 0 on any parse result, 2 on bad input. Standard library only; no network.
 """
+from __future__ import annotations
+
 import json
 import re
 import sys

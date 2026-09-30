@@ -19,6 +19,7 @@
 4. The agents commit directly to the profile repository's default branch, only the vote data files, only after the weekly yes.
 5. Only the vote post carries an image: HTML in the brand identity rendered to PNG, contrast checked.
 6. Topics already in the content calendar, in the queue or in the history are never proposed again (found on 2026-09-30: the open round's three options were all already in the calendar).
+7. The vote post takes the first free row of the round's pillar after the round closes; a row that already carries a post (drafted or later) keeps it, so the calendar is never rewritten by the vote (the round closing 2026-10-12 would otherwise have taken the Friday slot of an already scheduled post).
 
 ## The weekly run
 
@@ -60,6 +61,6 @@ slot time  6. the job publishes the post and its first comment, then records it:
 - `commit-files` refuses paths outside a list the runtime passes (`data/pick-queue.json`, `data/pick.json`, `data/posts.json`, `assets/posts/<slug>.png|webp`).
 - A push that is rejected (the workflow committed meanwhile) is retried once after a fresh clone; a second rejection goes to the inbox.
 
-## Open for the user
+## The first round
 
-- The round open now (closes 2026-10-05, pillar "AI built in public") offers three topics that are all already in the calendar (09/10, 07/10, 14/10). Recommendation: when it closes, record the winner's `post_url` as the calendar post of that topic, and use the next week's AI slot for new material.
+The round that closes on 2026-10-05 (pillar "AI built in public") offers three topics already in the calendar (09/10, 07/10, 14/10). The user decided on 2026-09-30: its winner's `post_url` is the calendar post of that topic, recorded once that post is out; the vote step is told the round is handled (cursor `vote:2026-09-29`), and new topics start with the next round.
