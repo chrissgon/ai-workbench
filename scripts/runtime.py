@@ -389,13 +389,18 @@ def notify(cfg: dict, results: list) -> None:
 def cmd_tick(a, cfg: dict, project: Path) -> dict:
     store = Store(cfg)
     store("init")
-    messages = []
+    messages, mailbox = [], None
     if cfg["mailbox"] != "none":
         cursor = store("cursor-get", "--name", f"mailbox:{cfg['agent']}").get("value")
         since = cursor or (now() - timedelta(minutes=int(cfg["first_lookback_minutes"]))).isoformat()
-        found = run_json(["uv", "run", str(cfg["paths"]["mailbox"]), "search", "--query", cfg["notification_query"],
-                          "--since", since, "--limit", "50"])
-        messages = found.get("messages", [])
+        try:
+            found = run_json(["uv", "run", str(cfg["paths"]["mailbox"]), "search", "--query", cfg["notification_query"],
+                              "--since", since, "--limit", "50"])
+            messages = found.get("messages", [])
+        except Fail as e:
+            # An expired authorization or a network error must not stop pasted comments or the vote step; the
+            # cursor stays, so the next tick that reads the mailbox picks up what this one missed.
+            mailbox = {"status": "failed", "note": f"mailbox: {e}"[:1000]}
     added = 0
     for m in messages:
         with tempfile.TemporaryDirectory() as tmp:
@@ -405,13 +410,15 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
     newest = max((m.get("received_at") or "" for m in messages), default="")
     if a.dry_run:
         parsed = [json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(m))[1] or "{}") for m in messages]
-        return {"dry_run": True, "messages": len(messages), "new_events": added, "parsed": parsed}
+        return {"dry_run": True, "messages": len(messages), "new_events": added, "parsed": parsed,
+                **({"mailbox": mailbox} if mailbox else {})}
     if newest:
         store("cursor-set", "--name", f"mailbox:{cfg['agent']}", "--value", newest)
 
     results, spend = [], today_spend(store)
     if spend >= float(cfg["daily_cost_cap_usd"]):
-        return {"messages": len(messages), "new_events": added, "handled": [], "stopped": f"daily cost cap reached ({spend:.2f} USD)"}
+        return {"messages": len(messages), "new_events": added, "handled": [], "stopped": f"daily cost cap reached ({spend:.2f} USD)",
+                **({"mailbox": mailbox} if mailbox else {})}
     events = []
     for source in ("pasted", "mailbox"):
         left = int(cfg["max_events_per_tick"]) - len(events)
@@ -429,6 +436,12 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             results.append({"stopped": "daily cost cap reached"})
             break
     out = {"messages": len(messages), "new_events": added, "handled": results}
+    if mailbox:
+        out["mailbox"] = mailbox
+        day = now().date().isoformat()
+        if store("cursor-get", "--name", "mailbox:failure-notified").get("value") != day:
+            store("cursor-set", "--name", "mailbox:failure-notified", "--value", day)
+            results = results + [mailbox]  # notified once a day, not on every tick
     if cfg.get("vote"):
         if today_spend(store) >= float(cfg["daily_cost_cap_usd"]):
             out["vote"] = {"status": "skipped", "note": "daily cost cap reached"}
