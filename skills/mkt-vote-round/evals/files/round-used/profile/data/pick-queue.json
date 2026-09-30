@@ -1,0 +1,10 @@
+[
+ {
+  "pillar": "AI for databases, built in public",
+  "options": {
+   "A": "1,240 model calls for one experiment: the cost log",
+   "B": "A model read my query plans. It got 1 in 8 wrong.",
+   "C": "A local 7B model gave the same hints, 40 s each"
+  }
+ }
+]

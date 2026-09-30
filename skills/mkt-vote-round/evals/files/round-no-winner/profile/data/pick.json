@@ -1,0 +1,46 @@
+{
+ "open": true,
+ "round": "2026-10-12",
+ "closes": "2026-10-19",
+ "pillar": "Small tools",
+ "options": {
+  "A": "Why tinykv has exactly one config flag",
+  "B": "Deleting code is my favourite feature",
+  "C": "Zero dependencies, one year later"
+ },
+ "picks": {},
+ "history": [
+  {
+   "round": "2026-10-05",
+   "pillar": "AI for databases, built in public",
+   "options": {
+    "A": "An LLM suggested index hints: 3 faster, 2 slower",
+    "B": "Why every AI rewrite runs against a results diff",
+    "C": "What I do not claim about AI yet"
+   },
+   "counts": {
+    "A": 0,
+    "B": 0,
+    "C": 0
+   },
+   "winner": null,
+   "post_url": null
+  },
+  {
+   "round": "2026-09-28",
+   "pillar": "Database performance",
+   "options": {
+    "A": "The index that made deletes 200 times faster",
+    "B": "Reading EXPLAIN without guessing",
+    "C": "Why p99 matters more than the average"
+   },
+   "counts": {
+    "A": 6,
+    "B": 1,
+    "C": 2
+   },
+   "winner": "A",
+   "post_url": "https://www.linkedin.com/feed/update/urn:li:share:7000000000000000101/"
+  }
+ ]
+}

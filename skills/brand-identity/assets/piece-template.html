@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <title>Brand piece</title>
-<!-- Replace the fonts, tokens and text below with the ones in docs/brand/identity.md. -->
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<!-- Replace the fonts, tokens and text below with the ones in docs/brand/identity.md.
+     Keep it self-contained: scripts/render.py refuses remote fonts or images; embed fonts with its --font-face. -->
 <style>
   :root { --w: 1584px; --h: 396px; --safe-left: 420px; }
   * { box-sizing: border-box; margin: 0; }
   html, body { width: var(--w); height: var(--h); overflow: hidden; }
-  body { font-family: Inter, sans-serif; background: var(--bg); color: var(--ink); position: relative; }
+  body { font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; background: var(--bg); color: var(--ink); position: relative; }
   .v-dark   { --bg: #000; --ink: #fff; --muted: #9ca3af; --accent: #07b6f0; --line: #1f2937; }
   .v-light  { --bg: #fff; --ink: #000; --muted: #6b7280; --accent: #0092cd; --line: #e5e7eb; }
   .v-accent { --bg: #0092cd; --ink: #fff; --muted: #fff; --accent: #000; --line: rgba(255,255,255,.18); }
@@ -17,9 +17,9 @@
   .copy { position: absolute; left: calc(var(--safe-left) + 50px); top: 92px; width: 640px; }
   h1 { font-size: 58px; line-height: 1.06; font-weight: 800; letter-spacing: -0.03em; }
   h1 em { font-style: normal; color: var(--accent); }
-  .sub { margin-top: 22px; font-family: "JetBrains Mono", monospace; font-size: 19px; color: var(--muted); }
+  .sub { margin-top: 22px; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 19px; color: var(--muted); }
   .side { position: absolute; right: 64px; top: 70px; width: 330px; display: grid; gap: 16px; }
-  .card { border: 1.5px solid var(--line); border-radius: 12px; padding: 16px 18px; font-family: "JetBrains Mono", monospace; font-size: 15px; }
+  .card { border: 1.5px solid var(--line); border-radius: 12px; padding: 16px 18px; font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 15px; }
 </style>
 </head>
 <body>

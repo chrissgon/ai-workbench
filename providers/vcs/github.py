@@ -3,9 +3,23 @@
 # requires-python = ">=3.10"
 # dependencies = ["keyring==25.7.0"]
 # ///
-"""VCS provider for GitHub: read a repository's Dependabot alerts and dismiss one.
+"""VCS provider for GitHub: Dependabot alerts, reading one file, and committing files to a branch.
 
-Sources (GitHub's own REST documentation, all read 2026-09-27). docs.github.com was not
+Sources for read-file (read 2026-09-30):
+- Get repository content, https://docs.github.com/en/rest/repos/contents?apiVersion=2026-03-10#get-repository-content
+  and its OpenAPI source (github/rest-api-description, api.github.com.2026-03-10.json):
+  GET /repos/{owner}/{repo}/contents/{path}, query ref ("the name of the commit/branch/tag", default
+  the default branch). A file answers an object with type "file", encoding (base64), size, name, path,
+  content, sha, url, git_url, html_url, download_url; a directory answers an array; a symlink to a file
+  answers the file; a submodule answers type "submodule". Files up to 1 MB are fully supported; from 1 to
+  100 MB only the raw and object media types work, with content "" and encoding "none". Statuses 200,
+  302, 304, 403, 404.
+- Fine-grained token permission: repository "Contents", read, for that endpoint; some endpoints serve
+  public resources without it. https://docs.github.com/en/rest/authentication/permissions-required-for-fine-grained-personal-access-tokens?apiVersion=2026-03-10
+commit-files uses git itself (clone, commit, push over SSH), not the API, so the user's own git
+configuration signs the commit; it reads no token.
+
+Sources for the alerts (GitHub's own REST documentation, all read 2026-09-27). docs.github.com was not
 reachable from the environment where this was written, so the facts were read from the
 sources that generate those pages: GitHub's OpenAPI description (github/rest-api-description)
 and the docs site's source (github/docs).
@@ -36,21 +50,27 @@ and the docs site's source (github/docs).
   from https://raw.githubusercontent.com/github/docs/main/src/rest/lib/config.json and
   https://raw.githubusercontent.com/github/docs/main/data/reusables/rest-api/breaking-changes-changelog.md
 
-At most one dismissal per idempotency key: the key is recorded as pending in the local ledger,
-under a file lock, before the request, and as dismissed after the 200. A pending key whose
-outcome is unknown (a timeout, a crash) blocks every new attempt until `resolve` records what
-happened. Redirects are refused and pagination links are followed only on the API host, so the
-token is only ever sent to a URL that was checked.
+At most one dismissal, or one pushed commit, per idempotency key: the key is recorded as pending
+in the local ledger, under a file lock, before the request (the push), and as done after it. A
+pending key whose outcome is unknown (a timeout, a crash) blocks every new attempt until `resolve`
+records what happened. Redirects are refused and pagination links are followed only on the API
+host, so the token is only ever sent to a URL that was checked.
 """
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
+import fnmatch
+import hashlib
 import importlib.util
 import fcntl
 import json
 import os
 import re
+import shutil
+import signal
+import subprocess
 import sys
 import tempfile
 import time
@@ -75,6 +95,19 @@ ECOSYSTEM_RE = re.compile(r"^[a-z0-9_-]+$")
 STATES = ("open", "dismissed", "fixed", "auto_dismissed")
 SEVERITIES = ("low", "medium", "high", "critical")
 REASONS = ("fix_started", "inaccurate", "no_bandwidth", "not_used", "tolerable_risk")
+PATH_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.][A-Za-z0-9_.-]*$")
+GLOB_SEGMENT_RE = re.compile(r"^[A-Za-z0-9_.*?\[\]-]+$")
+REF_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
+COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
+PATH_MAX_CHARS = 1024
+MAX_FILE_BYTES = 5 * 1024 * 1024
+MAX_FILES = 50
+MESSAGE_MAX_BYTES = 64 * 1024
+DIFF_MAX_BYTES = 20 * 1024
+GIT_CLONE_TIMEOUT_SECONDS = 180
+GIT_PUSH_TIMEOUT_SECONDS = 180
+GIT_LOCAL_TIMEOUT_SECONDS = 60
+SSH_REMOTE = "git@github.com:{repo}.git"
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
 
@@ -89,13 +122,44 @@ verbs:
                  --comment-file <f> (UTF-8, at most {COMMENT_MAX_CHARS} characters)
                  --idempotency-key <k>, and --confirmed (or --dry-run). The dry run
                  reads no credential and calls nothing.
+  read-file      Read-only. Read one text file through the contents API:
+                 --repo <owner>/<name> --path <path> [--ref <branch|tag|sha>] (default:
+                 the default branch). Prints {{path, sha, size, content, ref}}; content is
+                 UTF-8 text; a binary file, a directory, a symlink or a submodule exits 2;
+                 a file over 1 MB is not supported (exit 1). The token is used when one
+                 resolves; without one the request is anonymous (public repositories only).
+  commit-files   Side effect. Commit files to a branch with git and push it:
+                 --repo <owner>/<name> --branch <b> --message-file <f>
+                 --file <repo-path>=<local-file> (repeat; at most {MAX_FILES} files,
+                 {MAX_FILE_BYTES // (1024 * 1024)} MB each) --allow <glob> (repeat; every repo path must
+                 match one; '*' never crosses '/') --idempotency-key <k>, and --confirmed
+                 (or --dry-run). It clones the branch shallowly over SSH
+                 ({SSH_REMOTE.format(repo="<owner>/<name>")}) into a private folder, writes the files,
+                 stages them by name, commits with the message file, and pushes to the
+                 branch. The commit is signed by your git configuration (commit.gpgsign,
+                 gpg.format, user.signingkey); an unsigned commit is never pushed (exit 3).
+                 A push rejected because the branch moved is retried once from a fresh
+                 clone; a second rejection exits 1. The dry run clones and writes but
+                 never commits or pushes; it prints the diff (stat, and the text capped at
+                 {DIFF_MAX_BYTES // 1024} kB) and every file's sha256: that is what a gate shows.
+                 Prints {{commit, branch, files: [{{path, sha256}}], pushed, replayed}};
+                 "unchanged": true (and pushed false) when the branch already holds
+                 exactly these files.
   resolve        Settle a key left pending by a timeout or a crash, after looking at
-                 the alert on GitHub: --idempotency-key <k> with --dismissed (it was
-                 dismissed) or --not-dismissed (it was not; the key may be used
-                 again), and --confirmed.
+                 GitHub: --idempotency-key <k> and --confirmed, with, for a dismissal,
+                 --dismissed (it was dismissed) or --not-dismissed (it was not; the key
+                 may be used again), and for a commit, --commit <sha> (it reached the
+                 branch as this commit) or --not-committed (it did not; the key may be
+                 used again).
   --check        One authenticated GET: /rate_limit (token present and valid), or,
                  with --repo, the first alert of that repository (token can read its
                  alerts). Prints no secret.
+
+git and SSH (commit-files):
+  git reads your own configuration: the identity (user.name, user.email), the signing
+  setup, and the SSH access to GitHub (an agent or a key the ssh client finds). The
+  provider passes no credential to git and prints none. Every git call has a timeout and
+  runs without a terminal, so a passphrase prompt fails instead of waiting.
 
 credentials (never from files or flags):
   VCS_GITHUB_TOKEN  read first; then GITHUB_TOKEN (which a harness or CI may set for its own
@@ -107,6 +171,8 @@ credentials (never from files or flags):
   - repository permission "Dependabot alerts: Read-only" is enough for alerts and --check;
   - "Dependabot alerts: Read and write" is needed for dismiss-alert. Keep that one in a
     separate token, exported as VCS_GITHUB_TOKEN only for the dismissal.
+  - "Contents: Read-only" lets read-file read a private repository; a public one needs no
+    permission. commit-files uses no token at all (git over SSH).
   The token is never printed, not even partially.
 
 other environment variables:
@@ -118,6 +184,12 @@ other environment variables:
                          the secret store is not read; the token must come from GITHUB_TOKEN.
   VCS_GITHUB_HTTP_TIMEOUT  tests only, with VCS_GITHUB_API_BASE: seconds before a request
                          times out (default {HTTP_TIMEOUT_SECONDS}).
+  VCS_TEST               1 enables test mode; required for the two overrides below.
+  VCS_GIT_REMOTE         tests only (with VCS_TEST=1): an absolute path to a local bare
+                         repository that replaces the SSH remote of commit-files.
+  VCS_GIT_TIMEOUT        tests only (with VCS_TEST=1): seconds before any git call times out.
+  commit-files clones into a private folder (0700) under
+  $XDG_CACHE_HOME/ai-workbench/vcs-github-work/ (or ~/.cache/...) and removes it afterwards.
 
 output:
   JSON on stdout; diagnostics on stderr. Alert text (summaries) is written by third
@@ -135,6 +207,11 @@ examples:
   uv run providers/vcs/github.py dismiss-alert --repo octo-org/web --number 42 \\
       --reason not_used --comment-file why.txt --idempotency-key web-42 --confirmed
   uv run providers/vcs/github.py resolve --idempotency-key web-42 --not-dismissed --confirmed
+  uv run providers/vcs/github.py read-file --repo octo/octo --path data/pick.json --ref master
+  uv run providers/vcs/github.py commit-files --repo octo/octo --branch master \\
+      --message-file msg.txt --file data/pick-queue.json=out/pick-queue.json \\
+      --allow data/pick-queue.json --allow 'assets/posts/*' --idempotency-key vote-12-queue --dry-run
+  uv run providers/vcs/github.py resolve --idempotency-key vote-12-queue --not-committed --confirmed
 """
 
 
@@ -196,12 +273,15 @@ def secret_resolver():
     return module
 
 
-def load_token(test_mode: bool) -> tuple[str, str]:
-    """Return (token, source). Raise EXIT_NOT_CONFIGURED when there is none."""
+def load_token(test_mode: bool, required: bool = True) -> tuple[str, str]:
+    """Return (token, source). Raise EXIT_NOT_CONFIGURED when there is none, or return ("", "") when
+    the token is optional."""
     # The resolver reads VCS_GITHUB_TOKEN, then GITHUB_TOKEN (a harness or CI may export its own,
     # with other permissions), then the OS secret store; tests never read the store.
     found = secret_resolver().resolve("VCS_GITHUB_TOKEN", allow_store=not test_mode)
     token, source = found if found else ("", "")
+    if not token and not required:
+        return "", ""
     if not token:
         raise ProviderError(
             f"no GitHub token: export VCS_GITHUB_TOKEN, or store one with "
@@ -290,6 +370,16 @@ def alert_web_url(repo: str, number: int) -> str:
 
 
 def pending_message(key: str, entry: dict) -> str:
+    if entry.get("kind") == "commit":
+        attempted = entry.get("attempted_commit")
+        tried = f" (the commit it tried to push was {attempted})" if attempted else ""
+        return (
+            f"idempotency key {key!r} has a pending commit from {entry.get('started_at', 'an unknown time')} whose "
+            f"outcome is unknown (a timeout or a crash){tried}; nothing was pushed this time. Look at "
+            f"https://github.com/{entry.get('repo')}/commits/{entry.get('branch')}, then run github.py resolve "
+            f"--idempotency-key {key} with --commit <sha> if it reached the branch or --not-committed if it did "
+            "not, and --confirmed"
+        )
     where = alert_web_url(entry["repo"], entry["number"]) if entry.get("repo") else "the alert on GitHub"
     return (
         f"idempotency key {key!r} has a pending dismissal from {entry.get('started_at', 'an unknown time')} "
@@ -541,6 +631,9 @@ def cmd_dismiss(args) -> int:
     target = {"repo": repo, "number": number, "reason": args.reason}
     existing = ledger_claim(key, target)
     if existing:
+        if existing.get("kind") == "commit":
+            raise ProviderError(f"idempotency key {key!r} was used for a commit; use a new key for this alert",
+                                EXIT_USAGE)
         if (existing.get("repo"), existing.get("number")) != (repo, number):
             raise ProviderError(f"idempotency key {key!r} was used for {existing.get('repo')}#{existing.get('number')}; "
                                 "use a new key for this alert", EXIT_USAGE)
@@ -584,8 +677,15 @@ def cmd_resolve(args) -> int:
     key = (args.idempotency_key or "").strip()
     if not key:
         raise ProviderError("resolve needs --idempotency-key <k>", EXIT_USAGE)
-    if args.dismissed == args.not_dismissed:
-        raise ProviderError("resolve needs exactly one of --dismissed or --not-dismissed", EXIT_USAGE)
+    outcomes = [flag for flag, given in (("--dismissed", args.dismissed), ("--not-dismissed", args.not_dismissed),
+                                         ("--commit", args.commit is not None),
+                                         ("--not-committed", args.not_committed)) if given]
+    if len(outcomes) != 1:
+        raise ProviderError("resolve needs exactly one of --dismissed or --not-dismissed (a dismissal), "
+                            "or --commit <sha> or --not-committed (a commit)", EXIT_USAGE)
+    commit_outcome = outcomes[0] in ("--commit", "--not-committed")
+    if args.commit is not None and not COMMIT_SHA_RE.fullmatch(args.commit):
+        raise ProviderError("--commit must be the full commit sha (40 or 64 lower-case hex characters)", EXIT_USAGE)
     if not args.confirmed:
         raise ProviderError("refusing to resolve without --confirmed; the user decides what happened", EXIT_USAGE)
     with ledger_locked() as data:
@@ -593,6 +693,23 @@ def cmd_resolve(args) -> int:
         if not entry or entry.get("status") != "pending":
             state = entry.get("status") if entry else "absent"
             raise ProviderError(f"idempotency key {key!r} is {state}, not pending; nothing to resolve", EXIT_USAGE)
+        is_commit = entry.get("kind") == "commit"
+        if is_commit != commit_outcome:
+            wanted = "--commit <sha> or --not-committed" if is_commit else "--dismissed or --not-dismissed"
+            raise ProviderError(f"idempotency key {key!r} holds a {'commit' if is_commit else 'dismissal'}; "
+                                f"resolve it with {wanted}", EXIT_USAGE)
+        if is_commit:
+            if args.commit:
+                data["entries"][key] = {**{k: entry.get(k) for k in COMMIT_TARGET_KEYS}, "status": "committed",
+                                        "commit": args.commit, "pushed": True, "recorded_at": now_iso(),
+                                        "resolved": True}
+            else:
+                del data["entries"][key]
+            ledger_save(data)
+            out = {"idempotency_key": key, "status": "committed" if args.commit else "released",
+                   "repo": entry.get("repo"), "branch": entry.get("branch"), "commit": args.commit}
+            print(json.dumps(out, indent=2))
+            return EXIT_OK
         if args.dismissed:
             data["entries"][key] = {"status": "dismissed", "repo": entry.get("repo"), "number": entry.get("number"),
                                     "reason": entry.get("reason"), "recorded_at": now_iso(), "resolved": True}
@@ -602,6 +719,484 @@ def cmd_resolve(args) -> int:
     out = {"idempotency_key": key, "status": "dismissed" if args.dismissed else "released",
            "repo": entry.get("repo"), "number": entry.get("number")}
     print(json.dumps(out, indent=2))
+    return EXIT_OK
+
+
+# --- repository paths ------------------------------------------------------------
+
+
+def check_path(path: str | None, flag: str = "--path") -> str:
+    """A repository path: relative, '/'-separated, safe characters, no '.', '..' or '.git' part."""
+    ok = bool(path) and len(path) <= PATH_MAX_CHARS and all(
+        seg not in (".", "..") and seg.lower() != ".git" and PATH_SEGMENT_RE.fullmatch(seg)
+        for seg in path.split("/"))
+    if not ok:
+        raise ProviderError(f"{flag} {one_line(repr(path), 120)} is not a safe repository path: relative, "
+                            "'/'-separated, letters, digits, '_', '.', '-', no '.', '..' or '.git' part", EXIT_USAGE)
+    return path
+
+
+def check_ref(ref: str | None, flag: str) -> str:
+    """A branch, tag or commit name, restricted to characters that are safe in a URL and on a command line."""
+    ok = (bool(ref) and len(ref) <= 200 and REF_RE.fullmatch(ref) and ".." not in ref and "//" not in ref
+          and "/." not in ref and not ref.endswith(("/", ".", ".lock")))
+    if not ok:
+        raise ProviderError(f"{flag} {one_line(repr(ref), 120)} is not a valid branch name (letters, digits, "
+                            "'_', '.', '-', '/'; no '..')", EXIT_USAGE)
+    return ref
+
+
+def check_glob(glob: str) -> str:
+    ok = bool(glob) and len(glob) <= PATH_MAX_CHARS and all(
+        seg not in (".", "..") and seg.lower() != ".git" and "**" not in seg and GLOB_SEGMENT_RE.fullmatch(seg)
+        for seg in glob.split("/"))
+    if not ok:
+        raise ProviderError(f"--allow {one_line(repr(glob), 120)} is not a valid pattern: a relative path whose "
+                            "parts may use '*', '?' and '[...]' ('*' never crosses '/'; no '**', '..' or '.git')",
+                            EXIT_USAGE)
+    return glob
+
+
+def path_allowed(path: str, globs: list[str]) -> bool:
+    """True when path matches one glob part by part, so '*' never crosses a '/'."""
+    parts = path.split("/")
+    for glob in globs:
+        gparts = glob.split("/")
+        if len(gparts) == len(parts) and all(fnmatch.fnmatchcase(p, g) for p, g in zip(parts, gparts)):
+            return True
+    return False
+
+
+# --- read-file -------------------------------------------------------------------
+
+
+def cmd_read_file(args) -> int:
+    repo = check_repo(args.repo)
+    path = check_path(args.path)
+    ref = check_ref(args.ref, "--ref") if args.ref is not None else None
+    base, test_mode = api_base()
+    token, _ = load_token(test_mode, required=False)
+    if not token:
+        log("no GitHub token found; reading anonymously, which works for public repositories only")
+    url = f"{base}/repos/{repo}/contents/{urllib.parse.quote(path, safe='/')}"
+    if ref:
+        url += "?" + urllib.parse.urlencode({"ref": ref})
+    try:
+        _, _, body = http("GET", url, headers(token or None))
+    except ProviderError as exc:
+        if exc.status == 404 and not token:
+            raise ProviderError(f"{exc} (no token was sent; a private repository answers 404)", exc.code, exc.status)
+        raise
+    data = parse_json(body, "contents")
+    if isinstance(data, list):
+        raise ProviderError(f"{path} is a directory, not a file", EXIT_USAGE)
+    if not isinstance(data, dict):
+        raise ProviderError("unexpected contents response: not a JSON object")
+    kind = data.get("type")
+    if kind != "file":
+        raise ProviderError(f"{path} is a {one_line(kind, 40)}, not a file", EXIT_USAGE)
+    encoding = data.get("encoding")
+    if encoding != "base64":
+        raise ProviderError(f"{path} is not returned inline (encoding {one_line(encoding, 40)}): the contents API "
+                            "returns files up to 1 MB only")
+    try:
+        raw = base64.b64decode("".join(str(data.get("content") or "").split()), validate=True)
+    except ValueError:
+        raise ProviderError("unexpected contents response: content is not base64")
+    size = data.get("size")
+    if isinstance(size, int) and size != len(raw):
+        raise ProviderError(f"unexpected contents response: size {size} but {len(raw)} bytes of content")
+    try:
+        if b"\x00" in raw:
+            raise UnicodeDecodeError("utf-8", raw, 0, 1, "NUL byte")
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ProviderError(f"{path} is binary or not UTF-8; read-file returns text files only", EXIT_USAGE)
+    out = {"repo": repo, "path": data.get("path") or path, "ref": ref, "sha": data.get("sha"),
+           "size": len(raw), "content": text}
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    return EXIT_OK
+
+
+# --- git -----------------------------------------------------------------------------
+
+
+class NotPushed(ProviderError):
+    """The change certainly did not reach the remote: the idempotency key is released."""
+
+
+class PushRejected(NotPushed):
+    """The remote refused the push because the branch moved: worth one fresh attempt."""
+
+
+def vcs_test_mode() -> bool:
+    return os.environ.get("VCS_TEST") == "1"
+
+
+def check_git_overrides() -> None:
+    for name in ("VCS_GIT_REMOTE", "VCS_GIT_TIMEOUT"):
+        if os.environ.get(name) and not vcs_test_mode():
+            raise ProviderError(f"{name} is for tests only and needs VCS_TEST=1", EXIT_USAGE)
+
+
+def git_remote(repo: str) -> str:
+    override = os.environ.get("VCS_GIT_REMOTE")
+    if not override:
+        return SSH_REMOTE.format(repo=repo)
+    path = Path(override)
+    if not path.is_absolute() or not path.is_dir():
+        raise ProviderError("VCS_GIT_REMOTE must be the absolute path of a local bare repository", EXIT_USAGE)
+    return path.resolve().as_uri()  # file:// so that --depth applies as it does over SSH
+
+
+def git_timeout(default: int) -> float:
+    override = os.environ.get("VCS_GIT_TIMEOUT")
+    return float(override) if override and vcs_test_mode() else default
+
+
+def git_env() -> dict:
+    env = dict(os.environ)
+    # No terminal prompt, messages in English (they are parsed), paths taken literally (never as patterns).
+    env.update({"GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", "LANGUAGE": "C", "GIT_LITERAL_PATHSPECS": "1"})
+    return env
+
+
+def stop_group(proc: subprocess.Popen) -> None:
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(proc.pid, signal.SIGKILL)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        proc.communicate(timeout=5)
+
+
+def run_git(args: list[str], cwd: Path, timeout: float) -> tuple[int, bytes, str]:
+    """Run git with an argument list (no shell) in its own process group, so a timeout stops every
+    process it started (ssh, hooks). Return (exit code, stdout bytes, stderr text)."""
+    exe = shutil.which("git")
+    if not exe:
+        raise ProviderError("git is not installed or not on PATH", EXIT_NOT_CONFIGURED)
+    try:
+        proc = subprocess.Popen([exe, *args], cwd=cwd, env=git_env(), stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True)
+    except OSError as exc:
+        raise ProviderError(f"cannot run git: {type(exc).__name__}", EXIT_NOT_CONFIGURED)
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        stop_group(proc)
+        raise ProviderError(f"git {args[0]} timed out after {timeout:g} s")
+    except BaseException:
+        stop_group(proc)
+        raise
+    return proc.returncode, out, err.decode("utf-8", "replace")
+
+
+def git_ok(args: list[str], cwd: Path, what: str, timeout: float | None = None) -> bytes:
+    code, out, err = run_git(args, cwd, timeout or git_timeout(GIT_LOCAL_TIMEOUT_SECONDS))
+    if code != 0:
+        raise ProviderError(f"git {what} failed: {one_line(err, 300)}")
+    return out
+
+
+SSH_FAILURES = ("Permission denied (publickey", "Host key verification failed", "Could not resolve hostname",
+                "Connection refused", "Connection timed out", "Operation timed out", "Network is unreachable")
+
+
+def ssh_failure(err: str) -> ProviderError | None:
+    """A failure to reach GitHub over SSH at all: nothing was sent."""
+    hit = next((s for s in SSH_FAILURES if s in err), None)
+    if not hit:
+        return None
+    code = EXIT_NOT_CONFIGURED if hit.startswith(("Permission", "Host key")) else EXIT_SERVICE
+    return NotPushed(f"git could not reach GitHub over SSH ({hit}); check that `ssh -T git@github.com` works for "
+                     "the user and session that run this (an SSH agent holding the key, or a key without a prompt)",
+                     code)
+
+
+def work_root() -> Path:
+    cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+    return Path(cache) / "ai-workbench" / "vcs-github-work"
+
+
+@contextlib.contextmanager
+def private_clone(repo: str, branch: str, remote: str):
+    """Yield (scratch folder, working tree) of a fresh shallow clone of branch; both are removed afterwards."""
+    root = work_root()
+    root.mkdir(mode=0o700, parents=True, exist_ok=True)
+    scratch = Path(tempfile.mkdtemp(prefix="clone-", dir=root))  # 0700
+    try:
+        work = scratch / "repo"
+        code, _, err = run_git(["clone", "--quiet", "--depth", "1", "--branch", branch, "--single-branch",
+                                "--no-tags", "--", remote, str(work)], scratch, git_timeout(GIT_CLONE_TIMEOUT_SECONDS))
+        if code != 0:
+            raise ssh_failure(err) or ProviderError(f"git clone of {repo} branch {branch} failed: {one_line(err, 300)}")
+        yield scratch, work
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def write_files(work: Path, files: list[dict]) -> None:
+    """Write each file inside the working tree, never through a symlink the repository holds."""
+    for item in files:
+        parts = item["path"].split("/")
+        target = work
+        for part in parts[:-1]:
+            target = target / part
+            if target.is_symlink() or (target.exists() and not target.is_dir()):
+                raise ProviderError(f"{item['path']}: '{part}' in the repository is a symlink or a file; "
+                                    "refusing to write through it")
+            if not target.exists():
+                target.mkdir()
+        target = target / parts[-1]
+        if target.is_symlink() or target.is_dir():
+            raise ProviderError(f"{item['path']} in the repository is a symlink or a folder; refusing to replace it")
+        fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(item["data"])
+
+
+def commit_signature(work: Path) -> str | None:
+    """The kind of signature HEAD carries (ssh, gpg, x509), or None when it is unsigned."""
+    raw = git_ok(["cat-file", "commit", "HEAD"], work, "cat-file")
+    header = raw.split(b"\n\n", 1)[0].decode("utf-8", "replace")
+    for line in header.splitlines():
+        if line.startswith(("gpgsig ", "gpgsig-sha256 ")):
+            armor = line.split(" ", 1)[1]
+            return "ssh" if "SSH SIGNATURE" in armor else "x509" if "SIGNED MESSAGE" in armor else "gpg"
+    return None
+
+
+def make_commit(work: Path, message_file: Path, paths: list[str]) -> tuple[str, str]:
+    """Commit what is staged; return (sha, signature kind). Refuse an unsigned commit or one that
+    changes a path that was not given."""
+    code, _, err = run_git(["commit", "--quiet", "--file", str(message_file)], work,
+                           git_timeout(GIT_LOCAL_TIMEOUT_SECONDS))
+    if code != 0:
+        if "sign" in err.lower():
+            raise ProviderError(f"git could not sign the commit: {one_line(err, 300)}. The signing key must be "
+                                "usable without a prompt (an SSH agent holding it)", EXIT_NOT_CONFIGURED)
+        raise ProviderError(f"git commit failed: {one_line(err, 300)}")
+    signature = commit_signature(work)
+    if not signature:
+        raise ProviderError("the commit is not signed, so it was not pushed; set commit.gpgsign true, gpg.format "
+                            "and user.signingkey in your git configuration", EXIT_NOT_CONFIGURED)
+    changed = [p for p in git_ok(["diff-tree", "--no-commit-id", "--name-only", "-r", "-z", "HEAD", "--"], work,
+                                 "diff-tree").decode("utf-8", "replace").split("\0") if p]
+    extra = sorted(set(changed) - set(paths))
+    if extra:
+        raise ProviderError(f"the commit changes paths that were not given ({one_line(', '.join(extra), 200)}); "
+                            "nothing was pushed")
+    sha = git_ok(["rev-parse", "HEAD"], work, "rev-parse").decode().strip()
+    return sha, signature
+
+
+def push(work: Path, branch: str) -> None:
+    """Push HEAD to branch. Raise PushRejected (branch moved), NotPushed (refused, or GitHub never reached),
+    or ProviderError when the outcome is unknown."""
+    ref = f"refs/heads/{branch}"
+    code, out, err = run_git(["push", "--porcelain", "origin", f"HEAD:{ref}"], work,
+                             git_timeout(GIT_PUSH_TIMEOUT_SECONDS))
+    status = None
+    for line in out.decode("utf-8", "replace").splitlines():
+        fields = line.split("\t")
+        if len(fields) >= 3 and fields[1].endswith(f":{ref}"):
+            status = (fields[0], fields[2])
+    if code == 0:
+        return
+    if status and status[0] == "!":
+        summary = one_line(status[1], 200)
+        if summary.startswith("[rejected]"):
+            raise PushRejected(f"push rejected, {branch} moved: {summary}")
+        raise NotPushed(f"GitHub refused the push to {branch}: {summary}")
+    raise ssh_failure(err) or ProviderError(f"git push to {branch} failed and its outcome is unknown: "
+                                            f"{one_line(err, 300)}")
+
+
+# --- commit-files ------------------------------------------------------------------
+
+
+COMMIT_TARGET_KEYS = ("kind", "repo", "branch", "files", "message_sha256")
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def validate_commit_args(args) -> dict:
+    """Check every flag and read every local file before anything touches git."""
+    repo = check_repo(args.repo)
+    branch = check_ref(args.branch, "--branch")
+    globs = [check_glob(g) for g in (args.allow or [])]
+    if not globs:
+        raise ProviderError("commit-files needs at least one --allow <glob>: the paths it may write", EXIT_USAGE)
+    if not args.file:
+        raise ProviderError("commit-files needs at least one --file <repo-path>=<local-file>", EXIT_USAGE)
+    if len(args.file) > MAX_FILES:
+        raise ProviderError(f"commit-files takes at most {MAX_FILES} files", EXIT_USAGE)
+    files, seen = [], set()
+    for value in args.file:
+        repo_path, sep, local = value.partition("=")
+        if not sep or not local:
+            raise ProviderError(f"--file {one_line(repr(value), 120)} must be <repo-path>=<local-file>", EXIT_USAGE)
+        repo_path = check_path(repo_path, "--file")
+        if not path_allowed(repo_path, globs):
+            raise ProviderError(f"--file {repo_path} is outside the allowed paths ({', '.join(globs)}); "
+                                "nothing was cloned", EXIT_USAGE)
+        if repo_path in seen:
+            raise ProviderError(f"--file {repo_path} is given twice", EXIT_USAGE)
+        seen.add(repo_path)
+        source = Path(local).expanduser()
+        if not source.is_file():
+            raise ProviderError(f"--file {repo_path}: local file not found: {one_line(local, 200)}", EXIT_USAGE)
+        if source.stat().st_size > MAX_FILE_BYTES:
+            raise ProviderError(f"--file {repo_path}: the local file is over {MAX_FILE_BYTES // (1024 * 1024)} MB",
+                                EXIT_USAGE)
+        data = source.read_bytes()
+        if len(data) > MAX_FILE_BYTES:
+            raise ProviderError(f"--file {repo_path}: the local file is over {MAX_FILE_BYTES // (1024 * 1024)} MB",
+                                EXIT_USAGE)
+        files.append({"path": repo_path, "data": data, "sha256": sha256_hex(data)})
+    if not args.message_file:
+        raise ProviderError("commit-files needs --message-file <f>: the commit message", EXIT_USAGE)
+    message_path = Path(args.message_file).expanduser()
+    if not message_path.is_file():
+        raise ProviderError(f"--message-file not found: {one_line(args.message_file, 200)}", EXIT_USAGE)
+    message = message_path.read_bytes()
+    if len(message) > MESSAGE_MAX_BYTES:
+        raise ProviderError(f"--message-file is over {MESSAGE_MAX_BYTES // 1024} kB", EXIT_USAGE)
+    try:
+        text = message.decode("utf-8")
+    except UnicodeDecodeError:
+        raise ProviderError("--message-file is not UTF-8", EXIT_USAGE)
+    if not text.strip():
+        raise ProviderError("--message-file is empty", EXIT_USAGE)
+    if not (args.idempotency_key or "").strip():
+        raise ProviderError("commit-files needs --idempotency-key <k>: one key per change set, reused on retries",
+                            EXIT_USAGE)
+    return {"repo": repo, "branch": branch, "files": files, "message": message, "message_text": text,
+            "message_sha256": sha256_hex(message)}
+
+
+def commit_target(spec: dict) -> dict:
+    return {"kind": "commit", "repo": spec["repo"], "branch": spec["branch"],
+            "files": [{"path": f["path"], "sha256": f["sha256"]} for f in spec["files"]],
+            "message_sha256": spec["message_sha256"]}
+
+
+def prepare(scratch: Path, work: Path, spec: dict) -> tuple[str, bool, Path]:
+    """Write and stage the files; return (base commit, whether anything changed, message file)."""
+    base = git_ok(["rev-parse", "HEAD"], work, "rev-parse").decode().strip()
+    write_files(work, spec["files"])
+    paths = [f["path"] for f in spec["files"]]
+    git_ok(["add", "--", *paths], work, "add")
+    code, _, err = run_git(["diff", "--cached", "--quiet", "--"], work, git_timeout(GIT_LOCAL_TIMEOUT_SECONDS))
+    if code not in (0, 1):
+        raise ProviderError(f"git diff failed: {one_line(err, 300)}")
+    message_file = scratch / "message.txt"  # the exact bytes that were hashed, outside the working tree
+    message_file.write_bytes(spec["message"])
+    return base, code == 1, message_file
+
+
+def dry_run_commit(spec: dict, remote: str, key: str) -> dict:
+    with private_clone(spec["repo"], spec["branch"], remote) as (scratch, work):
+        base, changed, _ = prepare(scratch, work, spec)
+        diff_args = ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv"]
+        stat = git_ok([*diff_args, "--stat", "--"], work, "diff").decode("utf-8", "replace")
+        text = git_ok([*diff_args, "--"], work, "diff")
+    existing = ledger_read()["entries"].get(key)
+    return {
+        "dry_run": True, "repo": spec["repo"], "branch": spec["branch"], "remote": remote, "base_commit": base,
+        "files": [{"path": f["path"], "sha256": f["sha256"], "bytes": len(f["data"])} for f in spec["files"]],
+        "message": spec["message_text"], "message_sha256": spec["message_sha256"], "unchanged": not changed,
+        "diff_stat": stat, "diff": text[:DIFF_MAX_BYTES].decode("utf-8", "replace"),
+        "diff_truncated": len(text) > DIFF_MAX_BYTES, "idempotency_key": key,
+        "existing_status": existing.get("status") if existing else None,
+    }
+
+
+def commit_once(spec: dict, remote: str, progress: dict) -> dict:
+    paths = [f["path"] for f in spec["files"]]
+    with private_clone(spec["repo"], spec["branch"], remote) as (scratch, work):
+        base, changed, message_file = prepare(scratch, work, spec)
+        if not changed:
+            log(f"{spec['branch']} already holds exactly these files; nothing to commit")
+            return {"commit": base, "unchanged": True, "pushed": False, "signature": None}
+        sha, signature = make_commit(work, message_file, paths)
+        progress.update(pushing=True, attempted_commit=sha)
+        push(work, spec["branch"])
+        return {"commit": sha, "unchanged": False, "pushed": True, "signature": signature}
+
+
+def commit_with_retry(spec: dict, remote: str, progress: dict) -> dict:
+    for attempt in (1, 2):
+        progress.update(attempts=attempt, pushing=False)
+        try:
+            return commit_once(spec, remote, progress)
+        except PushRejected as exc:
+            if attempt == 2:
+                raise NotPushed(f"{exc}; it was rejected again after a fresh clone, so nothing was pushed. "
+                                "Try again later with the same key")
+            log(f"{exc}; cloning again and retrying once")
+    raise AssertionError("unreachable")
+
+
+def commit_result(key: str, entry: dict, replayed: bool, attempts: int | None = None) -> dict:
+    out = {"idempotency_key": key, "repo": entry.get("repo"), "branch": entry.get("branch"),
+           "commit": entry.get("commit"), "files": entry.get("files"), "pushed": entry.get("pushed", True),
+           "unchanged": entry.get("unchanged", False), "signature": entry.get("signature"), "replayed": replayed}
+    if attempts is not None:
+        out["attempts"] = attempts
+    return out
+
+
+def cmd_commit_files(args) -> int:
+    check_git_overrides()
+    spec = validate_commit_args(args)
+    if not args.dry_run and not args.confirmed:
+        raise ProviderError(
+            "refusing to commit without --confirmed; the calling skill must pass its confirmation gate first "
+            "(use --dry-run to preview the diff)", EXIT_USAGE)
+    remote = git_remote(spec["repo"])
+    key = args.idempotency_key.strip()
+    if args.dry_run:
+        # A dry run clones (read only) to show the diff; it never commits or pushes and writes no ledger entry.
+        print(json.dumps(dry_run_commit(spec, remote, key), indent=2, ensure_ascii=False))
+        return EXIT_OK
+
+    target = commit_target(spec)
+    existing = ledger_claim(key, target)
+    if existing:
+        if existing.get("kind") != "commit":
+            raise ProviderError(f"idempotency key {key!r} was used for an alert dismissal; use a new key", EXIT_USAGE)
+        if any(existing.get(k) != target[k] for k in COMMIT_TARGET_KEYS):
+            raise ProviderError(f"idempotency key {key!r} was used for another change set (repository, branch, "
+                                "files or message); use a new key for this one", EXIT_USAGE)
+        if existing.get("status") == "committed":
+            log(f"idempotency key {key!r} already committed this change set; nothing pushed")
+            print(json.dumps(commit_result(key, existing, True), indent=2))
+            return EXIT_OK
+        raise ProviderError(pending_message(key, existing), EXIT_SERVICE)
+
+    progress = {"attempts": 0, "pushing": False, "attempted_commit": None}
+
+    def pending(error: str) -> dict:
+        return {**target, "status": "pending", "started_at": now_iso(),
+                "attempted_commit": progress["attempted_commit"], "error": error}
+
+    try:
+        result = commit_with_retry(spec, remote, progress)
+    except NotPushed:
+        ledger_update(key, None)
+        raise
+    except ProviderError as exc:
+        # Before the push nothing left the machine; during it, the outcome is unknown.
+        ledger_update(key, pending(str(exc)) if progress["pushing"] else None)
+        raise
+    except BaseException:
+        ledger_update(key, pending("interrupted") if progress["pushing"] else None)
+        raise
+    entry = {**target, "status": "committed", **result, "recorded_at": now_iso()}
+    ledger_update(key, entry)
+    print(json.dumps(commit_result(key, entry, False, progress["attempts"]), indent=2))
     return EXIT_OK
 
 
@@ -634,12 +1229,13 @@ def cmd_check(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="github.py",
-        description="VCS provider for GitHub: lists a repository's Dependabot alerts and dismisses one, "
-        "through the REST API.",
+        description="VCS provider for GitHub: lists a repository's Dependabot alerts and dismisses one (REST API), "
+        "reads one file (REST API), and commits files to a branch (git over SSH, signed by your git configuration).",
         epilog=HELP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("verb", nargs="?", choices=["alerts", "dismiss-alert", "resolve"], help="the action to run")
+    parser.add_argument("verb", nargs="?", choices=["alerts", "dismiss-alert", "read-file", "commit-files", "resolve"],
+                        help="the action to run")
     parser.add_argument("--check", action="store_true", help="one authenticated GET; no side effects, no secret printed")
     parser.add_argument("--repo", help="<owner>/<name>")
     parser.add_argument("--state", help="alerts: comma-separated states")
@@ -648,11 +1244,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--number", type=int, help="dismiss-alert: the alert number")
     parser.add_argument("--reason", help="dismiss-alert: " + ", ".join(REASONS))
     parser.add_argument("--comment-file", help=f"dismiss-alert: UTF-8 file, at most {COMMENT_MAX_CHARS} characters")
-    parser.add_argument("--idempotency-key", help="dismiss-alert and resolve: at most one dismissal per key")
+    parser.add_argument("--path", help="read-file: the file's path in the repository")
+    parser.add_argument("--ref", help="read-file: branch, tag or commit (default: the default branch)")
+    parser.add_argument("--branch", help="commit-files: the branch to commit to")
+    parser.add_argument("--message-file", help="commit-files: UTF-8 file with the commit message")
+    parser.add_argument("--file", action="append", metavar="REPO_PATH=LOCAL_FILE",
+                        help="commit-files: a file to write; repeat for several")
+    parser.add_argument("--allow", action="append", metavar="GLOB",
+                        help="commit-files: a pattern every repo path must match; repeat for several")
+    parser.add_argument("--idempotency-key",
+                        help="dismiss-alert, commit-files and resolve: at most one dismissal or pushed commit per key")
     parser.add_argument("--dismissed", action="store_true", help="resolve: the pending dismissal happened")
     parser.add_argument("--not-dismissed", action="store_true", help="resolve: the pending dismissal did not happen")
-    parser.add_argument("--dry-run", action="store_true", help="print the exact request and do nothing else")
-    parser.add_argument("--confirmed", action="store_true", help="required to dismiss or resolve; set by the calling skill's gate")
+    parser.add_argument("--commit", help="resolve: the pending commit reached the branch as this commit sha")
+    parser.add_argument("--not-committed", action="store_true", help="resolve: the pending commit did not reach the branch")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="dismiss-alert: print the exact request; commit-files: clone and print the diff; "
+                        "nothing is changed")
+    parser.add_argument("--confirmed", action="store_true",
+                        help="required to dismiss, commit or resolve; set by the calling skill's gate")
     return parser
 
 
@@ -667,9 +1277,14 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_alerts(args)
         if args.verb == "dismiss-alert":
             return cmd_dismiss(args)
+        if args.verb == "read-file":
+            return cmd_read_file(args)
+        if args.verb == "commit-files":
+            return cmd_commit_files(args)
         if args.verb == "resolve":
             return cmd_resolve(args)
-        raise ProviderError("give a verb (alerts, dismiss-alert, resolve) or --check; see --help", EXIT_USAGE)
+        raise ProviderError("give a verb (alerts, dismiss-alert, read-file, commit-files, resolve) or --check; "
+                            "see --help", EXIT_USAGE)
     except ProviderError as exc:
         log(f"error: {exc}")
         return exc.code

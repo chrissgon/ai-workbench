@@ -1,0 +1,48 @@
+{
+ "open": true,
+ "round": "2026-10-12",
+ "closes": "2026-10-19",
+ "pillar": "Database performance",
+ "options": {
+  "A": "900 or 26,000 writes a second: group commit in tinykv",
+  "B": "A smaller connection pool made my queries faster",
+  "C": "Dead tuples: the autovacuum setting I changed"
+ },
+ "picks": {
+  "77c1d2e3f4a5b6c7": "B"
+ },
+ "history": [
+  {
+   "round": "2026-10-05",
+   "pillar": "Small tools",
+   "options": {
+    "A": "Why tinykv has exactly one config flag",
+    "B": "Deleting code is my favourite feature",
+    "C": "Zero dependencies, one year later"
+   },
+   "counts": {
+    "A": 1,
+    "B": 6,
+    "C": 2
+   },
+   "winner": "B",
+   "post_url": null
+  },
+  {
+   "round": "2026-09-28",
+   "pillar": "AI for databases, built in public",
+   "options": {
+    "A": "An LLM suggested index hints: 3 faster, 2 slower",
+    "B": "What I do not claim about AI yet",
+    "C": "Why every AI rewrite runs against a results diff"
+   },
+   "counts": {
+    "A": 2,
+    "B": 4,
+    "C": 1
+   },
+   "winner": "B",
+   "post_url": "https://www.linkedin.com/feed/update/urn:li:share:7000000000000000101/"
+  }
+ ]
+}
