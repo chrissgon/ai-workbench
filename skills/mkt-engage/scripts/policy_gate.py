@@ -32,6 +32,8 @@ policy-hash  Prints the value to record in the standing approval's Payload hash:
 The comment and reply are external or drafted text: they are only matched, never executed.
 Exit 0 on a decision (auto or inbox), 2 on bad input. Standard library only; no network.
 """
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
