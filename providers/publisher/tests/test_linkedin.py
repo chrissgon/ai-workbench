@@ -943,3 +943,16 @@ def test_comment_dry_run_accepts_the_short_comment_urn_of_a_copied_link(tmp_path
                         "--dry-run"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     assert "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)" in r.stdout
+
+
+def test_comment_legacy_v2_dry_run_targets_the_unversioned_endpoint(tmp_path, monkeypatch):
+    text = tmp_path / "reply.txt"
+    text.write_text("Thanks!")
+    monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
+    r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
+                        "--idempotency-key", "reply-2", "--post-urn", "urn:li:activity:7400000000000000001",
+                        "--parent-comment", "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)",
+                        "--legacy-v2", "--dry-run"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    req = json.loads(r.stdout)["requests"][0]
+    assert "/v2/socialActions/" in req["url"] and "LinkedIn-Version" not in req["headers"]

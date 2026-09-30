@@ -19,7 +19,7 @@ The exception is `integration:<service>`: each integration is a different kind o
 1. `<CLASS>_<SUBCLASS>_PROVIDER` (for example `PUBLISHER_LINKEDIN_PROVIDER=buffer`)
 2. `<CLASS>_PROVIDER` (for example `PUBLISHER_PROVIDER=buffer`)
 
-A hyphen in a class name becomes `_`. `integration:<service>` classes use only the first form (`INTEGRATION_VCS_PROVIDER=github`), because one integration's provider never serves another.
+A class without sub-classes uses the second form: `SCHEDULER_PROVIDER=launchd` on macOS, `SCHEDULER_PROVIDER=systemd` on Linux (`providers/scheduler/README.md`). A hyphen in a class name becomes `_`. `integration:<service>` classes use only the first form (`INTEGRATION_VCS_PROVIDER=github`), because one integration's provider never serves another.
 
 Unset means "no native provider"; the skill degrades as described in its body.
 

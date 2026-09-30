@@ -43,4 +43,4 @@ jobs:
           version: "0.12.19"
           python-version: "3.11"
       - name: Scanner and provider tests
-        run: uv run --with pytest==9.1.1 pytest -q scripts/tests providers/publisher/tests providers/scheduler/tests providers/vcs/tests providers/secrets/tests providers/mailbox/tests providers/store/tests adapters/agents-dir/tests adapters/claude-code/tests skills/core-skill-creator/scripts/tests
+        run: uv run --with pytest==9.1.1 pytest -q scripts/tests providers/publisher/tests providers/scheduler/tests providers/vcs/tests providers/secrets/tests providers/mailbox/tests providers/store/tests adapters/agents-dir/tests adapters/claude-code/tests adapters/api/tests skills/core-skill-creator/scripts/tests

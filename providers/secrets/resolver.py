@@ -102,10 +102,17 @@ REGISTRY: dict[str, Secret] = {s.name: s for s in (
            ("providers/mailbox/auth.py", "providers/mailbox/gmail.py"),
            store_username="gmail-client-secret"),
     Secret("OPENROUTER_API_KEY",
-           "run the floor model's eval runs through OpenRouter",
-           "a key used only for evals; a credit limit on it is recommended",
-           ("skills/core-skill-creator/scripts/eval_run.py --pass-env", "adapters/agents-dir/run-prompt.sh"),
+           "run the floor model's eval runs through OpenRouter, and the runtime's model calls through the "
+           "API adapter when its model is openrouter/<vendor>/<model>",
+           "a key used only for evals and the runtime; a credit limit on it is recommended",
+           ("skills/core-skill-creator/scripts/eval_run.py --pass-env", "adapters/agents-dir/run-prompt.sh",
+            "adapters/api/run_agent.py"),
            store_username="openrouter"),
+    Secret("ANTHROPIC_API_KEY",
+           "the runtime's model calls through the API adapter (adapters/api/) when its model is anthropic/<model>",
+           "an API key with a spend limit",
+           ("adapters/api/run_agent.py",),
+           store_username="anthropic"),
 )}
 
 

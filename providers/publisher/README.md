@@ -63,7 +63,7 @@ The post text is written in LinkedIn's little text format. A `#word` made of ASC
 
 ### To verify on the first real run
 
-- **Permission to comment.** The Comments API page lists `w_member_social_feed` for member comments; the getting-access page says the open `w_member_social` scope, the one this app has, covers "Post, comment and like posts on behalf of an authenticated member". A 403 on a comment names both scopes in its message.
+- **Permission to comment, checked on 2026-09-30 with the user's member token (`w_member_social`).** The versioned endpoint, `POST /rest/socialActions/{target}/comments`, answered `403 Not enough permissions to access: partnerApiSocialActions.CREATE` (partner access). The unversioned `POST /v2/socialActions/{target}/comments`, sent with `--legacy-v2` and the same body without the `LinkedIn-Version` header, created the reply (it returned the new comment URN). The current documentation does not describe `/v2` for members, so `--legacy-v2` stays opt-in; making it the default for the runtime and the first comment is the user's decision.
 - **Comment text.** That comment text needs no little-text escaping (the Comments API page does not mention the little text format; the little text page names only the Posts API), and whether `#word` in a comment shows as a hashtag.
 - **Target of a first comment.** That a comment on a fresh post is accepted with the post's `urn:li:share:` URN as both the request target and `object`, and that the answer carries `commentUrn` (the provider falls back to `object` and `x-restli-id`).
 - **Hashtags.** That `{hashtag|\#|word}` in the post commentary renders as a hashtag.

@@ -709,9 +709,23 @@ def comment_body(actor: str, post_urn: str, text: str, parent: str | None) -> di
     return body
 
 
+# --legacy-v2: the unversioned /v2/socialActions endpoint. On 2026-09-30 the versioned /rest endpoint answered a
+# member token with w_member_social "403 Not enough permissions to access: partnerApiSocialActions.CREATE";
+# the current docs do not say whether /v2 accepts it, so this is a trial the user asked for, not a documented path.
+LEGACY_V2 = False
+
+
 def comment_url(base: str, target: str) -> str:
     # The target (a post URN, or the parent comment URN for a reply) is URL-encoded in the path.
-    return f"{base}/rest/socialActions/{urllib.parse.quote(target, safe='')}/comments"
+    root = "v2" if LEGACY_V2 else "rest"
+    return f"{base}/{root}/socialActions/{urllib.parse.quote(target, safe='')}/comments"
+
+
+def comment_headers(token: str | None) -> dict:
+    headers = rest_headers(token)
+    if LEGACY_V2:
+        headers.pop("LinkedIn-Version", None)
+    return headers
 
 
 def comment_result(entry: dict, token: dict, key: str, replayed: bool) -> dict:
@@ -751,7 +765,7 @@ def create_comment(base: str, token: dict, member_urn, post_urn: str, parent: st
         status, headers, raw = http(
             "POST",
             comment_url(base, parent or post_urn),
-            rest_headers(token["access_token"]),
+            comment_headers(token["access_token"]),
             json.dumps(comment_body(actor, post_urn, text, parent)).encode(),
         )
     except ProviderError as exc:
@@ -835,6 +849,8 @@ def post_urn_of_key(on_key: str, required: bool) -> str | None:
 
 
 def cmd_comment(args) -> int:
+    global LEGACY_V2
+    LEGACY_V2 = bool(getattr(args, "legacy_v2", False))
     text, post_urn, parent = validate_comment_args(args)
     if not args.dry_run and not args.confirmed:
         raise ProviderError(
@@ -920,7 +936,7 @@ def comment_request(base: str, post_urn: str | None, parent: str | None, text: s
     return {
         "method": "POST",
         "url": comment_url(base, target) if target else f"{base}/rest/socialActions/<URL-encoded post URN>/comments",
-        "headers": redacted_headers(),
+        "headers": {k: v for k, v in redacted_headers().items() if not (LEGACY_V2 and k == "LinkedIn-Version")},
         "body": comment_body(AUTHOR_PLACEHOLDER, post_urn or POST_URN_PLACEHOLDER, text, parent),
     }
 
@@ -1034,6 +1050,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "post was published as this URN")
     parser.add_argument("--on-key", help="with comment: the publish idempotency key of the post to comment on")
     parser.add_argument("--parent-comment", help="with comment: reply to this comment URN")
+    parser.add_argument("--legacy-v2", action="store_true",
+                        help="with comment: use the unversioned /v2/socialActions endpoint (a trial: the versioned "
+                             "endpoint needs partner access for member comments)")
     parser.add_argument("--comment-urn", help="with resolve: the pending comment was published as this URN")
     parser.add_argument("--not-published", action="store_true", help="with resolve: the pending attempt was not published")
     parser.add_argument("--dry-run", action="store_true", help="print the exact request bodies and do nothing else")

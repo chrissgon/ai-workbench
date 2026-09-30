@@ -1,0 +1,18 @@
+{
+  "harness": "api",
+  "covers": [
+    "Anthropic Messages API (model ids anthropic/<model>)",
+    "OpenRouter chat completions (model ids openrouter/<vendor>/<model>)"
+  ],
+  "consumes": [
+    "agents",
+    "skills"
+  ],
+  "strategy": {
+    "agents": "read at run time: the agent body (without frontmatter) becomes the system prompt",
+    "skills": "read at run time: each --skill-dir's SKILL.md is quoted whole in the system prompt; scripts, references and evals are never sent"
+  },
+  "install": "none: nothing is installed; scripts/runtime.py calls run-agent.sh from this folder when runtime.json has \"harness\": \"api\"",
+  "generated": [],
+  "runtime_runner": "run-agent.sh"
+}
