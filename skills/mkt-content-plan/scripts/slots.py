@@ -8,7 +8,8 @@ Usage:
 
 The n-th post of a week gets the n-th pillar and the n-th language of that week's rotation.
 Rotation weeks are labelled A, B, C... in order and alternate across weeks; --first-week picks
-where the rotation starts; --after-calendar reads the last "(rotation X)" label of an existing calendar
+where the rotation starts; --after-calendar reads the last rotation label of an existing calendar (a week heading ending in
+"(<word> X)", in the artifact's language (for example "(rotation B)").
 and starts at the label after it, so a new calendar continues the previous one.
 Weeks run Monday to Sunday; --start may be any day, and slots before it in that week are skipped.
 
@@ -87,7 +88,8 @@ def main(argv=None) -> int:
     if a.after_calendar:
         import re
         try:
-            found = re.findall(r"\(rotation ([A-Z])\)", open(a.after_calendar, encoding="utf-8").read())
+            # The week heading carries the label in the artifact's language: "(rotation B)", "(rotação B)".  # validate: allow english-only -- a Portuguese week heading, the case this parser supports
+            found = re.findall(r"^#+ .*\(\w+ ([A-Z])\)\s*$", open(a.after_calendar, encoding="utf-8").read(), re.M)
         except OSError as e:
             fail(f"--after-calendar: {e}")
         if found:
