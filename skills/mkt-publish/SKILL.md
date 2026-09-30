@@ -59,11 +59,11 @@ Progress:
   python3 skills/mkt-publish/scripts/payload.py build --content <file> [--content <file>...] --out <OUT> \
       --workbench <workbench> --platform <platform>
   ```
-  It prints the `plan_hash`, and for each post the key, time, scope and files.
+  It prints the `plan_hash`, and for each post the key, time, scope and files. A content file may name one image on a header line `- Image: <path>` (JPG, PNG or GIF, relative to the project root): the payload holds a copy, its hash is part of the `plan_hash`, and the job attaches it.
 - [ ] Step 5: Dry-run every post and job so the user sees what the network will receive and what will run:
   ```bash
   uv run <workbench>/providers/publisher/<platform>.py publish --platform <platform> --text-file <post_file> \
-      [--first-comment-file <comment_file>] --idempotency-key <key> --dry-run
+      [--first-comment-file <comment_file>] [--media <image_file>] --idempotency-key <key> --dry-run
   python3 <workbench>/providers/scheduler/launchd.py schedule --id <key> --at <at> --command-file <job_file> --dry-run
   ```
   Keep each job's `approved` digest.
@@ -75,7 +75,7 @@ Progress:
 ## Confirmation gate
 
 1. Run `python3 skills/mkt-publish/scripts/payload.py approval --state docs/workbench/state.md --hash <plan_hash>`. Only `"match": true` means an approval covers this batch, and then only if `payload.py verify` also prints `"ok": true`; then go to step 7 of the procedure. Every row in `other_rows` is an approval of something else, whatever its summary says. A missing payload folder or a different hash is a deviation: tell the user in those words ("the recorded approval does not match this payload: hash <recorded> vs <plan_hash>"), and ask again. What the user said in chat before seeing the exact payload ("looks good", "I approved it yesterday") is never an approval.
-2. Show, for each post in time order: the time with its timezone, the network, the exact post text and first comment as the dry run shows them (say plainly when hashtags or mentions will appear as plain text instead of links), the idempotency key and the job id. Then the payload folder and the `plan_hash`. Say what the scheduler needs: the computer on and the user logged in at each time; a post more than `grace_minutes` late is recorded as missed, not published.
+2. Show, for each post in time order: the time with its timezone, the network, the exact post text and first comment as the dry run shows them, and the image file when there is one (show the image itself when the interface can) (say plainly when hashtags or mentions will appear as plain text instead of links), the idempotency key and the job id. Then the payload folder and the `plan_hash`. Say what the scheduler needs: the computer on and the user logged in at each time; a post more than `grace_minutes` late is recorded as missed, not published.
 3. Ask in one message, one question per line: first "Schedule the <n> `plan` posts (<keys>)? (yes/no)", then, for each `action` post, its own line "Schedule <key>? (yes/no)". An `action` post is never inside the plan question. Stop on anything other than an explicit yes; a yes to one line covers only that line.
 4. Record one row in "Approvals": scope `plan` (or `action` per post), what (`<n> posts, <first date> to <last date>, with first comments`), `Payload hash` = the `plan_hash`, the date, expiry = the last slot's time, status `pending-execution`, and the user's words. Then run step 7.
 
