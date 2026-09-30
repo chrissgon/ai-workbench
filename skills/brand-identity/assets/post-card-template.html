@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="fill-max" content="title=64,subtitle=38">
+<title>Post card</title>
+<!--
+  Post image, 1080 x 1350 (4:5): twice the 540 x 675 post image the profile card shows at 280 x 350,
+  and a portrait image for a LinkedIn post. Rendered by scripts/render.py:
+    python3 skills/brand-identity/scripts/render.py --html skills/brand-identity/assets/post-card-template.html \
+      --width 1080 --height 1350 --out post.png --fill title="..." --fill subtitle="..." \
+      [--font-face "Inter:800:<path>.woff2" --font-face "Inter:400:<path>.woff2"]
+  Self-contained on purpose: no remote fonts or images. Without --font-face the system fallbacks render.
+  fill-max: at most 64 characters of title (four lines at 88 px) and 38 of subtitle (one line at 44 px,
+  measured with the widest letter); render.py refuses longer values instead of clipping them.
+  Replace the colour tokens below with the ones in docs/brand/identity.md and check them with contrast.py.
+  Checked 2026-09-30: ink on bg 21:1, muted on bg 8.27:1, accent on bg 8.96:1; the texture dots
+  (line on bg, 1.43:1) are decoration and carry no information.
+-->
+<style>
+  :root {
+    --w: 1080px; --h: 1350px; --pad: 88px;
+    --bg: #000000; --ink: #ffffff; --muted: #9ca3af; --accent: #07b6f0; --line: #1f2937;
+    --sans: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    --mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; margin: 0; }
+  html, body { width: var(--w); height: var(--h); overflow: hidden; }
+  body { background: var(--bg); color: var(--ink); font-family: var(--sans); position: relative; }
+  .texture {
+    position: absolute; inset: 0;
+    background-image: radial-gradient(var(--line) 2.4px, transparent 2.4px);
+    background-size: 32px 32px; background-position: 16px 16px;
+    -webkit-mask-image: linear-gradient(160deg, transparent 18%, #000 78%);
+    mask-image: linear-gradient(160deg, transparent 18%, #000 78%);
+  }
+  .copy { position: absolute; left: var(--pad); right: var(--pad); top: 50%; transform: translateY(-50%); }
+  .mark { width: 112px; height: 12px; border-radius: 6px; background: var(--accent); margin-bottom: 56px; }
+  h1 {
+    font-size: 88px; line-height: 1.08; font-weight: 800; letter-spacing: -0.03em;
+    overflow-wrap: anywhere; max-height: calc(88px * 1.08 * 4); overflow: hidden;
+  }
+  .sub {
+    margin-top: 40px; font-size: 44px; line-height: 1.2; font-weight: 400; color: var(--muted);
+    white-space: nowrap; overflow: hidden;
+  }
+</style>
+</head>
+<body>
+  <div class="texture"></div>
+  <div class="copy">
+    <div class="mark"></div>
+    <h1>{{title}}</h1>
+    <p class="sub">{{subtitle}}</p>
+  </div>
+</body>
+</html>

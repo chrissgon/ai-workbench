@@ -1,0 +1,536 @@
+"""Offline tests for github.py read-file and commit-files.
+
+Run: uv run --with pytest pytest providers/vcs/tests
+
+No network and no real credentials. read-file talks to a fake GitHub on 127.0.0.1
+(VCS_GITHUB_API_BASE) with a fake token. commit-files pushes to a local bare repository
+(VCS_TEST=1, VCS_GIT_REMOTE), with a throwaway git configuration (GIT_CONFIG_GLOBAL) that signs
+commits with a throwaway SSH key, so the real signing path runs without touching the user's setup.
+"""
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import threading
+import urllib.parse
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+
+import pytest
+
+HERE = Path(__file__).resolve().parent
+SCRIPT = HERE.parent / "github.py"
+FAKE_TOKEN = "FAKE-test-github-token-7d6e5f4a3b2c-never-print-me"
+REPO = "octo/octo"
+ALLOW = ["--allow", "data/pick.json", "--allow", "data/pick-queue.json", "--allow", "data/posts.json",
+         "--allow", "assets/posts/*"]
+
+
+def run(args, env, timeout=90):
+    proc = subprocess.run([sys.executable, str(SCRIPT), *args], env=env, capture_output=True, text=True,
+                          timeout=timeout)
+    for stream in (proc.stdout, proc.stderr):
+        assert FAKE_TOKEN not in stream and FAKE_TOKEN[:16] not in stream
+        assert "PRIVATE KEY" not in stream
+    return proc
+
+
+# --- read-file -------------------------------------------------------------------
+
+
+class FakeContents:
+    """GET /repos/{owner}/{repo}/contents/{path}, shaped like the 2026-03-10 REST API."""
+
+    def __init__(self):
+        self.requests: list[dict] = []
+        self.files: dict[str, object] = {}
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _send(self, status, payload=None, headers=None):
+                data = json.dumps(payload).encode() if payload is not None else b""
+                self.send_response(status)
+                for k, v in (headers or {}).items():
+                    self.send_header(k, v)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def do_GET(self):  # noqa: N802
+                parsed = urllib.parse.urlparse(self.path)
+                fake.requests.append({"path": parsed.path, "query": urllib.parse.parse_qs(parsed.query),
+                                      "headers": {k.lower(): v for k, v in self.headers.items()}})
+                prefix = f"/repos/{REPO}/contents/"
+                if not parsed.path.startswith(prefix):
+                    return self._send(404, {"message": "Not Found"})
+                path = urllib.parse.unquote(parsed.path[len(prefix):])
+                item = fake.files.get(path)
+                if item is None:
+                    return self._send(404, {"message": "Not Found"})
+                if item == "redirect":
+                    return self._send(302, None, {"Location": "http://127.0.0.1:1/elsewhere"})
+                if isinstance(item, list):
+                    return self._send(200, item)
+                if isinstance(item, dict):
+                    return self._send(200, item)
+                encoded = base64.b64encode(item).decode()
+                content = "\n".join(encoded[i:i + 60] for i in range(0, len(encoded), 60)) + "\n"
+                name = path.rsplit("/", 1)[-1]
+                return self._send(200, {
+                    "type": "file", "encoding": "base64", "size": len(item), "name": name, "path": path,
+                    "content": content, "sha": hashlib.sha1(item).hexdigest(),
+                    "url": f"https://api.github.com/repos/{REPO}/contents/{path}",
+                    "git_url": None, "html_url": None, "download_url": None, "_links": {}})
+
+            def log_message(self, *args):
+                return
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+        self.thread = threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+@pytest.fixture()
+def contents():
+    server = FakeContents()
+    yield server
+    server.close()
+
+
+@pytest.fixture()
+def api_env(tmp_path, contents):
+    env = {k: v for k, v in os.environ.items() if not k.startswith(("GITHUB_", "VCS_"))}
+    env.update({"HOME": str(tmp_path / "home"), "XDG_CACHE_HOME": str(tmp_path / "cache"),
+                "VCS_GITHUB_API_BASE": contents.base, "GITHUB_TOKEN": FAKE_TOKEN,
+                "VCS_GITHUB_LEDGER": str(tmp_path / "ledger" / "vcs-github.json")})
+    return env
+
+
+PICK = '{"round": 12, "pillar": "AI built in public", "options": {"A": "Évals", "B": "b", "C": "c"}}\n'
+
+
+def test_read_file_returns_the_text(api_env, contents):
+    contents.files["data/pick.json"] = PICK.encode()
+    proc = run(["read-file", "--repo", REPO, "--path", "data/pick.json", "--ref", "master"], api_env)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out == {"repo": REPO, "path": "data/pick.json", "ref": "master",
+                   "sha": hashlib.sha1(PICK.encode()).hexdigest(), "size": len(PICK.encode()), "content": PICK}
+    request = contents.requests[0]
+    assert request["path"] == f"/repos/{REPO}/contents/data/pick.json"
+    assert request["query"] == {"ref": ["master"]}
+    assert request["headers"]["authorization"] == f"Bearer {FAKE_TOKEN}"
+    assert request["headers"]["x-github-api-version"] == "2026-03-10"
+
+
+def test_read_file_default_branch_and_anonymous(api_env, contents):
+    del api_env["GITHUB_TOKEN"]
+    contents.files["README.md"] = b"# hi\n"
+    proc = run(["read-file", "--repo", REPO, "--path", "README.md"], api_env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["ref"] is None
+    assert "anonymously" in proc.stderr
+    assert "authorization" not in contents.requests[0]["headers"]
+    assert contents.requests[0]["query"] == {}
+
+
+def test_read_file_refuses_binary_directory_and_submodule(api_env, contents):
+    contents.files["assets/posts/a.png"] = b"\x89PNG\r\n\x1a\n\x00\x00"
+    contents.files["latin1.txt"] = "caf\xe9".encode("latin-1")
+    contents.files["data"] = [{"type": "file", "name": "pick.json", "path": "data/pick.json"}]
+    contents.files["vendor/lib"] = {"type": "submodule", "path": "vendor/lib", "sha": "a" * 40}
+    for path in ("assets/posts/a.png", "latin1.txt", "data", "vendor/lib"):
+        proc = run(["read-file", "--repo", REPO, "--path", path], api_env)
+        assert proc.returncode == 2, (path, proc.stderr)
+        assert proc.stdout == ""
+
+
+def test_read_file_large_missing_and_redirect(api_env, contents):
+    contents.files["big.json"] = {"type": "file", "encoding": "none", "size": 2_000_000, "path": "big.json",
+                                  "content": "", "sha": "b" * 40}
+    contents.files["moved.json"] = "redirect"
+    big = run(["read-file", "--repo", REPO, "--path", "big.json"], api_env)
+    assert big.returncode == 1 and "1 MB" in big.stderr
+    missing = run(["read-file", "--repo", REPO, "--path", "nope.json"], api_env)
+    assert missing.returncode == 1 and "404" in missing.stderr
+    moved = run(["read-file", "--repo", REPO, "--path", "moved.json"], api_env)
+    assert moved.returncode == 1 and "redirect" in moved.stderr
+    assert len(contents.requests) == 3
+
+
+def test_read_file_validates_path_and_ref_before_any_request(api_env, contents):
+    bad_paths = ["../etc/passwd", "/abs.json", "a//b", "data/", ".git/config", "a/.git/x", "a b.json",
+                 "data/../x", ".", "-rf", "a?b", "a%2e", "x\n"]
+    for path in bad_paths:
+        proc = run(["read-file", "--repo", REPO, "--path", path], api_env)
+        assert proc.returncode == 2, path
+    for ref in ("..", "a..b", "-x", "a b", "main.lock", "a//b", "refs/heads/.x", "x?y"):
+        proc = run(["read-file", "--repo", REPO, "--path", "README.md", "--ref", ref], api_env)
+        assert proc.returncode == 2, ref
+    proc = run(["read-file", "--repo", "../x", "--path", "README.md"], api_env)
+    assert proc.returncode == 2
+    assert contents.requests == []
+
+
+# --- commit-files: fixtures ---------------------------------------------------------
+
+needs_tools = pytest.mark.skipif(not (shutil.which("git") and shutil.which("ssh-keygen")),
+                                 reason="needs git and ssh-keygen")
+
+MOVER_HOOK = """#!/bin/sh
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_PREFIX
+[ -n "$MOVER_MODE" ] || exit 0
+if [ "$MOVER_MODE" = once ] && [ -f "$MOVER_MARKER" ]; then exit 0; fi
+touch "$MOVER_MARKER"
+echo moved >> "$MOVER_DIR/moved.txt"
+git -C "$MOVER_DIR" add -- moved.txt >/dev/null 2>&1
+git -C "$MOVER_DIR" commit -q -m "workflow moved the branch" >/dev/null 2>&1
+git -C "$MOVER_DIR" push -q origin HEAD:refs/heads/main >/dev/null 2>&1
+exit 0
+"""
+
+
+def git(env, cwd, *args):
+    return subprocess.run(["git", *args], cwd=cwd, env=env, capture_output=True, text=True, timeout=60, check=True).stdout
+
+
+class Remote:
+    """A bare repository standing in for the profile repository, and a git setup around it."""
+
+    def __init__(self, tmp: Path):
+        self.tmp = tmp
+        self.key = tmp / "signing-key"
+        subprocess.run(["ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-C", "test", "-f", str(self.key)],
+                       check=True, timeout=30)
+        template = tmp / "template"
+        (template / "hooks").mkdir(parents=True)
+        hook = template / "hooks" / "post-checkout"
+        hook.write_text(MOVER_HOOK)
+        hook.chmod(0o755)
+        self.gitconfig = tmp / "gitconfig"
+        self.write_config(sign=True)
+        self.env = {k: v for k, v in os.environ.items()
+                    if not k.startswith(("GITHUB_", "VCS_", "GIT_", "SSH_AUTH_SOCK"))}
+        self.env.update({"HOME": str(tmp / "home"), "XDG_CACHE_HOME": str(tmp / "cache"),
+                         "GIT_CONFIG_GLOBAL": str(self.gitconfig), "GIT_CONFIG_NOSYSTEM": "1"})
+        (tmp / "home").mkdir()
+        self.bare = tmp / "remote.git"
+        git(self.env, tmp, "init", "-q", "--bare", str(self.bare))
+        seed = tmp / "seed"
+        git(self.env, tmp, "clone", "-q", self.bare.as_uri(), str(seed))
+        (seed / "data").mkdir()
+        (seed / "data" / "pick.json").write_text(PICK)
+        (seed / "data" / "posts.json").write_text("[]\n")
+        (seed / "README.md").write_text("# profile\n")
+        (seed / "outside").mkdir()
+        (seed / "outside" / "keep.txt").write_text("keep\n")
+        (seed / "assets").mkdir()
+        os.symlink("../outside", seed / "assets" / "link")
+        git(self.env, seed, "add", "-A")
+        git(self.env, seed, "commit", "-q", "-m", "seed")
+        git(self.env, seed, "push", "-q", "origin", "HEAD:refs/heads/main")
+        self.mover = tmp / "mover"
+        git(self.env, tmp, "clone", "-q", self.bare.as_uri(), str(self.mover))
+
+    def write_config(self, sign: bool):
+        self.gitconfig.write_text(
+            "[user]\n\tname = Test Person\n\temail = test@example.com\n"
+            f"\tsigningkey = {self.key}\n"
+            f"[commit]\n\tgpgsign = {'true' if sign else 'false'}\n[gpg]\n\tformat = ssh\n"
+            f"[init]\n\tdefaultBranch = main\n\ttemplateDir = {self.tmp / 'template'}\n")
+
+    def head(self) -> str:
+        return git(self.env, self.bare, "rev-parse", "refs/heads/main").strip()
+
+    def count(self) -> int:
+        return int(git(self.env, self.bare, "rev-list", "--count", "refs/heads/main").strip())
+
+    def changed(self, rev="refs/heads/main") -> list[str]:
+        return sorted(git(self.env, self.bare, "diff-tree", "--no-commit-id", "--name-only", "-r", rev).split())
+
+    def provider_env(self) -> dict:
+        env = dict(self.env)
+        env.update({"VCS_TEST": "1", "VCS_GIT_REMOTE": str(self.bare), "GITHUB_TOKEN": FAKE_TOKEN,
+                    "VCS_GITHUB_LEDGER": str(self.tmp / "ledger" / "vcs-github.json"),
+                    "MOVER_DIR": str(self.mover), "MOVER_MARKER": str(self.tmp / "moved-once")})
+        return env
+
+
+@pytest.fixture()
+def remote(tmp_path):
+    if not (shutil.which("git") and shutil.which("ssh-keygen")):
+        pytest.skip("needs git and ssh-keygen")
+    return Remote(tmp_path)
+
+
+@pytest.fixture()
+def out_files(tmp_path):
+    out = tmp_path / "out"
+    out.mkdir()
+    queue = out / "pick-queue.json"
+    queue.write_text('[{"pillar": "Engineering", "options": {"A": "x", "B": "y", "C": "z"}}]\n')
+    image = out / "post.png"
+    image.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
+    message = out / "message.txt"
+    message.write_text("chore(vote): queue the round after 12\n\nApproved in the weekly gate.\n")
+    return {"queue": queue, "image": image, "message": message}
+
+
+def commit_args(out, key="vote-12-queue", *extra, files=None):
+    files = files if files is not None else [f"data/pick-queue.json={out['queue']}",
+                                             f"assets/posts/vote-12.png={out['image']}"]
+    args = ["commit-files", "--repo", REPO, "--branch", "main", "--message-file", str(out["message"]),
+            "--idempotency-key", key, *ALLOW]
+    for item in files:
+        args += ["--file", item]
+    return [*args, *extra]
+
+
+def ledger(env):
+    path = Path(env["VCS_GITHUB_LEDGER"])
+    return json.loads(path.read_text())["entries"] if path.exists() else {}
+
+
+def work_root(env) -> Path:
+    return Path(env["XDG_CACHE_HOME"]) / "ai-workbench" / "vcs-github-work"
+
+
+def sha256(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+# --- commit-files: tests -----------------------------------------------------------
+
+
+@needs_tools
+def test_dry_run_prints_the_diff_and_pushes_nothing(remote, out_files):
+    env = remote.provider_env()
+    before = remote.head()
+    proc = run(commit_args(out_files, "k1", "--dry-run"), env)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["dry_run"] is True and out["base_commit"] == before and out["unchanged"] is False
+    assert out["files"] == [
+        {"path": "data/pick-queue.json", "sha256": sha256(out_files["queue"]), "bytes": out_files["queue"].stat().st_size},
+        {"path": "assets/posts/vote-12.png", "sha256": sha256(out_files["image"]),
+         "bytes": out_files["image"].stat().st_size}]
+    assert "data/pick-queue.json" in out["diff_stat"] and "assets/posts/vote-12.png" in out["diff_stat"]
+    assert '+[{"pillar": "Engineering"' in out["diff"] and out["diff_truncated"] is False
+    assert out["message"].startswith("chore(vote): queue the round after 12")
+    assert remote.head() == before
+    assert ledger(env) == {}
+    assert list(work_root(env).iterdir()) == []  # the private clone is removed
+
+
+@needs_tools
+def test_dry_run_diff_is_capped(remote, out_files, tmp_path):
+    big = tmp_path / "big.json"
+    big.write_text("".join(f'{{"n": {i}, "pad": "{"x" * 60}"}}\n' for i in range(1000)))
+    proc = run(commit_args(out_files, "k1", "--dry-run", files=[f"data/posts.json={big}"]), remote.provider_env())
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["diff_truncated"] is True
+    assert len(out["diff"].encode()) <= 20 * 1024
+
+
+@needs_tools
+def test_confirmed_pushes_one_signed_commit_with_exactly_the_files(remote, out_files):
+    env = remote.provider_env()
+    count = remote.count()
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["pushed"] is True and out["replayed"] is False and out["unchanged"] is False
+    assert out["commit"] == remote.head() and out["branch"] == "main" and out["attempts"] == 1
+    assert out["signature"] == "ssh"
+    assert out["files"] == [{"path": "data/pick-queue.json", "sha256": sha256(out_files["queue"])},
+                            {"path": "assets/posts/vote-12.png", "sha256": sha256(out_files["image"])}]
+    assert remote.count() == count + 1
+    assert remote.changed() == ["assets/posts/vote-12.png", "data/pick-queue.json"]
+    raw = git(remote.env, remote.bare, "cat-file", "commit", "refs/heads/main")
+    assert "BEGIN SSH SIGNATURE" in raw
+    assert "chore(vote): queue the round after 12" in raw
+    assert git(remote.env, remote.bare, "show", "refs/heads/main:data/pick-queue.json") == out_files["queue"].read_text()
+    assert ledger(env)["k1"]["status"] == "committed" and ledger(env)["k1"]["commit"] == out["commit"]
+    assert list(work_root(env).iterdir()) == []
+    assert Path(env["VCS_GITHUB_LEDGER"]).stat().st_mode & 0o777 == 0o600
+
+
+@needs_tools
+def test_paths_outside_allow_are_refused_before_cloning(remote, out_files):
+    env = remote.provider_env()
+    before = remote.head()
+    for repo_path in (".github/workflows/weekly.yml", "README.md", "assets/posts/sub/x.png", "data/pick.json.bak",
+                      "assets/link/x.png", "../x"):
+        proc = run(commit_args(out_files, "k1", "--confirmed", files=[f"{repo_path}={out_files['queue']}"]), env)
+        assert proc.returncode == 2, repo_path
+    assert not work_root(env).exists()  # nothing was cloned
+    assert remote.head() == before and ledger(env) == {}
+
+
+@needs_tools
+def test_argument_errors_touch_nothing(remote, out_files, tmp_path):
+    env = remote.provider_env()
+    huge = tmp_path / "huge.png"
+    huge.write_bytes(b"\0" * (5 * 1024 * 1024 + 1))
+    empty = tmp_path / "empty.txt"
+    empty.write_text("\n")
+    q = out_files["queue"]
+    cases = [
+        commit_args(out_files, "k1"),  # neither --confirmed nor --dry-run
+        commit_args(out_files, "k1", "--confirmed", files=[f"assets/posts/x.png={huge}"]),
+        commit_args(out_files, "k1", "--confirmed", files=[f"data/posts.json={tmp_path / 'missing.json'}"]),
+        commit_args(out_files, "k1", "--confirmed", files=["data/posts.json"]),
+        commit_args(out_files, "k1", "--confirmed", files=[f"data/posts.json={q}", f"data/posts.json={q}"]),
+        commit_args(out_files, "k1", "--confirmed", files=[]),
+        [a if a != str(out_files["message"]) else str(empty) for a in commit_args(out_files, "k1", "--confirmed")],
+        commit_args(out_files, "", "--confirmed"),
+        [a for a in commit_args(out_files, "k1", "--confirmed") if a not in ALLOW],
+        commit_args(out_files, "k1", "--confirmed", "--allow", "assets/**"),
+        [a if a != "main" else "main..x" for a in commit_args(out_files, "k1", "--confirmed")],
+    ]
+    for args in cases:
+        proc = run(args, env)
+        assert proc.returncode == 2, (args, proc.stderr)
+    assert not work_root(env).exists()
+    no_test = dict(env)
+    del no_test["VCS_TEST"]
+    proc = run(commit_args(out_files, "k1", "--dry-run"), no_test)
+    assert proc.returncode == 2 and "VCS_TEST=1" in proc.stderr
+
+
+@needs_tools
+def test_a_symlink_in_the_repository_is_never_written_through(remote, out_files):
+    env = remote.provider_env()
+    args = commit_args(out_files, "k1", "--confirmed", "--allow", "assets/link/*",
+                       files=[f"assets/link/x.png={out_files['image']}"])
+    proc = run(args, env)
+    assert proc.returncode == 1 and "symlink" in proc.stderr
+    assert "k1" not in ledger(env)
+    assert git(remote.env, remote.bare, "rev-list", "--count", "refs/heads/main").strip() == "1"
+
+
+@needs_tools
+def test_a_moved_branch_is_retried_once_from_a_fresh_clone(remote, out_files):
+    env = remote.provider_env()
+    env["MOVER_MODE"] = "once"
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["attempts"] == 2 and "retrying once" in proc.stderr
+    assert remote.count() == 3  # seed, the workflow's commit, ours
+    parent = git(remote.env, remote.bare, "rev-parse", "refs/heads/main~1").strip()
+    assert remote.changed(parent) == ["moved.txt"]
+    assert remote.changed() == ["assets/posts/vote-12.png", "data/pick-queue.json"]
+
+
+@needs_tools
+def test_a_second_rejection_exits_1_and_releases_the_key(remote, out_files):
+    env = remote.provider_env()
+    env["MOVER_MODE"] = "always"
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 1
+    assert "rejected again" in proc.stderr
+    assert remote.changed() == ["moved.txt"]  # the workflow's commits only
+    assert ledger(env) == {}
+    del env["MOVER_MODE"]
+    assert run(commit_args(out_files, "k1", "--confirmed"), env).returncode == 0
+
+
+@needs_tools
+def test_replay_returns_the_same_commit_without_pushing(remote, out_files):
+    env = remote.provider_env()
+    first = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert first.returncode == 0, first.stderr
+    head, count = remote.head(), remote.count()
+    second = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert second.returncode == 0, second.stderr
+    out = json.loads(second.stdout)
+    assert out["replayed"] is True and out["commit"] == json.loads(first.stdout)["commit"] == head
+    assert remote.count() == count
+    assert not work_root(env).exists() or list(work_root(env).iterdir()) == []
+    # The same key with other content is refused.
+    out_files["queue"].write_text("[]\n")
+    other = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert other.returncode == 2 and "new key" in other.stderr
+    assert remote.count() == count
+    # A dismissal cannot reuse a commit key.
+    why = out_files["message"]
+    dismissal = run(["dismiss-alert", "--repo", REPO, "--number", "3", "--reason", "not_used", "--comment-file",
+                     str(why), "--idempotency-key", "k1", "--confirmed"], {**env, "VCS_GITHUB_API_BASE": "http://127.0.0.1:9"})
+    assert dismissal.returncode == 2 and "commit" in dismissal.stderr
+
+
+@needs_tools
+def test_the_same_files_again_is_unchanged(remote, out_files, tmp_path):
+    env = remote.provider_env()
+    same = tmp_path / "pick.json"
+    same.write_text(PICK)
+    count = remote.count()
+    proc = run(commit_args(out_files, "k1", "--confirmed", files=[f"data/pick.json={same}"]), env)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert out["unchanged"] is True and out["pushed"] is False and out["commit"] == remote.head()
+    assert remote.count() == count
+
+
+@needs_tools
+def test_an_unsigned_commit_is_never_pushed(remote, out_files):
+    remote.write_config(sign=False)
+    env = remote.provider_env()
+    before = remote.head()
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 3
+    assert "not signed" in proc.stderr and "commit.gpgsign" in proc.stderr
+    assert remote.head() == before and ledger(env) == {}
+
+
+@needs_tools
+def test_an_unknown_push_outcome_stays_pending_until_resolved(remote, out_files):
+    env = remote.provider_env()
+    hook = remote.bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\nsleep 30\n")
+    hook.chmod(0o755)
+    env["VCS_GIT_TIMEOUT"] = "3"
+    before = remote.head()
+    first = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert first.returncode == 1 and "timed out" in first.stderr
+    entry = ledger(env)["k1"]
+    assert entry["status"] == "pending" and len(entry["attempted_commit"]) == 40
+    blocked = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert blocked.returncode == 1 and "pending" in blocked.stderr and "--not-committed" in blocked.stderr
+    assert remote.head() == before
+    resolve = ["resolve", "--idempotency-key", "k1"]
+    assert run(resolve + ["--not-committed"], env).returncode == 2  # needs --confirmed
+    assert run(resolve + ["--dismissed", "--confirmed"], env).returncode == 2  # a commit key
+    assert run(resolve + ["--commit", "abc", "--confirmed"], env).returncode == 2
+    assert run(resolve + ["--commit", "a" * 40, "--not-committed", "--confirmed"], env).returncode == 2
+    released = run(resolve + ["--not-committed", "--confirmed"], env)
+    assert released.returncode == 0, released.stderr
+    assert json.loads(released.stdout)["status"] == "released" and ledger(env) == {}
+    # A second pending key, settled as committed, then replays that commit.
+    assert run(commit_args(out_files, "k2", "--confirmed"), env).returncode == 1
+    sha = "b" * 40
+    done = run(["resolve", "--idempotency-key", "k2", "--commit", sha, "--confirmed"], env)
+    assert done.returncode == 0, done.stderr
+    replay = run(commit_args(out_files, "k2", "--confirmed"), env)
+    assert replay.returncode == 0 and json.loads(replay.stdout)["commit"] == sha
+    assert json.loads(replay.stdout)["replayed"] is True
+    # The released key works once the remote answers again.
+    hook.unlink()
+    del env["VCS_GIT_TIMEOUT"]
+    again = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert again.returncode == 0, again.stderr
+    assert remote.head() == json.loads(again.stdout)["commit"]
+    assert run(resolve + ["--not-committed", "--confirmed"], env).returncode == 2  # only pending keys

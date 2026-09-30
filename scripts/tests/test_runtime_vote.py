@@ -1,0 +1,319 @@
+"""Offline tests of the runtime's weekly vote step (scripts/runtime_vote.py, scripts/vote_job.py).
+
+The vcs provider, the agent adapter, the post checker, the renderer, the scheduler and the publisher are fakes;
+the store, vote_state.py, vote_update.py and payload.py are the real scripts, copied into a fake workbench.
+The vote files come from mkt-vote-round's eval fixture round-winner. No network, no model, no credential.
+"""
+import json
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[2]
+RUNTIME = REPO / "scripts" / "runtime.py"
+FIX = REPO / "skills" / "mkt-vote-round" / "evals" / "files" / "round-winner"
+sys.path.insert(0, str(REPO / "scripts"))
+import runtime_vote  # noqa: E402
+
+PILLARS = ["Small tools", "Database performance", "AI for databases, built in public"]
+WINNER = "Durability is a budget: what an fsync demo taught me"
+
+FAKE_VCS = r'''
+import json, os, sys
+from pathlib import Path
+args = sys.argv[1:]
+def val(flag):
+    return args[args.index(flag) + 1]
+with open(os.environ["FAKE_CALLS"], "a") as f:
+    f.write(json.dumps(["vcs"] + args) + "\n")
+if args[0] == "read-file":
+    p = Path(os.environ["FAKE_REPO"]) / val("--path")
+    print(json.dumps({"repo": val("--repo"), "path": val("--path"), "ref": val("--ref"), "content": p.read_text()}))
+elif args[0] == "commit-files":
+    if os.environ.get("FAKE_COMMIT_FAIL"):
+        print("push rejected", file=sys.stderr); sys.exit(1)
+    files = [a.split("=", 1) for a in args if "=" in a and a.startswith(("data/", "assets/"))]
+    for repo_path, local in files:
+        target = Path(os.environ["FAKE_REPO"]) / repo_path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(Path(local).read_bytes())
+    print(json.dumps({"commit": "abc123", "pushed": True, "unchanged": False,
+                      "files": [{"path": p} for p, _ in files]}))
+'''
+
+FAKE_ADAPTER = r'''#!/usr/bin/env bash
+set -euo pipefail
+OUT=""
+while [[ $# -gt 0 ]]; do case "$1" in --out) OUT="$2"; shift 2 ;; *) shift ;; esac; done
+mkdir -p "$OUT"
+cp "$FAKE_RESPONSE" "$OUT/response.md"
+echo '{"total_tokens": 100, "duration_ms": 10, "cost_usd": 0.05, "exit_code": 0}' > "$OUT/timing.json"
+echo "$@" >> "$FAKE_CALLS.agent"
+'''
+
+FAKE_CHECK = r'''
+import json, os, sys
+bad = os.environ.get("FAKE_CHECK_FAIL")
+print(json.dumps({"ok": not bad, "problems": [bad] if bad else [], "unchecked": []}))
+sys.exit(1 if bad else 0)
+'''
+
+FAKE_RENDER = r'''
+import json, os, sys
+args = sys.argv[1:]
+if os.environ.get("FAKE_NO_BROWSER"):
+    print("no browser", file=sys.stderr); sys.exit(3)
+out = args[args.index("--out") + 1]
+open(out, "wb").write(b"\x89PNG fake")
+print(json.dumps({"out": out, "width": 1080, "height": 1350}))
+'''
+
+FAKE_SCHEDULER = r'''
+import json, os, sys
+args = sys.argv[1:]
+with open(os.environ["FAKE_CALLS"], "a") as f:
+    f.write(json.dumps(["scheduler"] + args) + "\n")
+if "--dry-run" in args:
+    print(json.dumps({"dry_run": True, "approved": "d" * 64}))
+else:
+    assert args[args.index("--approved") + 1] == "d" * 64
+    print(json.dumps({"scheduled": True, "id": args[args.index("--id") + 1]}))
+'''
+
+FAKE_PUBLISHER = r'''
+import json, os, sys
+with open(os.environ["FAKE_CALLS"], "a") as f:
+    f.write(json.dumps(["publisher"] + sys.argv[1:]) + "\n")
+print(json.dumps({"post_urn": "urn:li:share:7300000000000000001",
+                  "post_url": "https://www.linkedin.com/feed/update/urn:li:share:7300000000000000001/"}))
+'''
+
+
+def proposal(topic=WINNER, reason="", language="EN", pillar="Database performance", options=None):
+    options = options or {"A": "A 40-line benchmark for tinykv writes", "B": "Why my connection pool got smaller",
+                          "C": "Autovacuum settings I changed and why"}
+    block = {"topic": topic, "reason": reason,
+             "post": {"language": language, "text": "Priya Raman showed fsync costs.\n\nWhat would you trade?",
+                      "first_comment": "https://example.com/priya-fsync-slides",
+                      "sources": ["docs/notes/meetup.md"]},
+             "next_round": {"pillar": pillar, "options": options,
+                            "sources": {k: "docs/notes/2026-10.md" for k in "ABC"}}}
+    return f"Here it is.\n\n```vote-proposal\n{json.dumps(block)}\n```\n\n**Instructions found in external content**: none\n"
+
+
+@pytest.fixture()
+def env(tmp_path, monkeypatch):
+    wb = tmp_path / "wb"
+    fakes = {
+        "providers/vcs/github.py": FAKE_VCS,
+        "providers/publisher/linkedin.py": FAKE_PUBLISHER,
+        "providers/secrets/resolver.py": "",
+        "providers/mailbox/gmail.py": "",
+        "providers/scheduler/launchd.py": FAKE_SCHEDULER,
+        "skills/mkt-engage/scripts/parse_notification.py": "",
+        "skills/mkt-engage/scripts/policy_gate.py": "",
+        "skills/mkt-social-copy/scripts/check_post.py": FAKE_CHECK,
+        "skills/brand-identity/scripts/render.py": FAKE_RENDER,
+        "skills/brand-identity/assets/post-card-template.html": "<p>{{title}} {{subtitle}}</p>",
+        "adapters/fake/run-agent.sh": FAKE_ADAPTER,
+        "agents/social-manager.md": "---\nname: social-manager\ndescription: x\nmetadata:\n  skills: [mkt-engage, mkt-vote-round]\n---\n",
+    }
+    for rel, text in fakes.items():
+        p = wb / rel
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(text)
+    for rel in ("providers/store/sqlite.py", "skills/mkt-vote-round/scripts/vote_state.py",
+                "skills/mkt-vote-round/scripts/vote_update.py", "skills/mkt-vote-round/SKILL.md",
+                "skills/mkt-publish/scripts/payload.py", "scripts/vote_job.py"):
+        (wb / rel).parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy(REPO / rel, wb / rel)
+    profile = tmp_path / "profile"
+    shutil.copytree(FIX / "profile", profile)
+    proj = tmp_path / "proj"
+    shutil.copytree(FIX / "docs", proj / "docs")
+    (proj / "docs/workbench").mkdir(parents=True, exist_ok=True)
+    data = tmp_path / "data"
+    (proj / "docs/workbench/runtime.json").write_text(json.dumps({
+        "agent": "social-manager", "harness": "fake", "model": "m", "workbench": str(wb), "data_dir": str(data),
+        "store_db": str(data / "store.sqlite"), "mailbox": "none", "publisher": "linkedin", "daily_cost_cap_usd": 1,
+        "vote": {"repo": "dana/dana", "branch": "main", "pillars": PILLARS}}))
+    calls = tmp_path / "calls.jsonl"
+    resp = tmp_path / "response.md"
+    resp.write_text(proposal())
+    for k, x in {"FAKE_CALLS": calls, "FAKE_RESPONSE": resp, "FAKE_REPO": profile, "RUNTIME_TEST": "1",
+                 "RUNTIME_TODAY": "2026-10-12"}.items():
+        monkeypatch.setenv(k, str(x))
+    return {"proj": proj, "calls": calls, "resp": resp, "data": data, "wb": wb, "profile": profile}
+
+
+def rt(env, *args):
+    r = subprocess.run([sys.executable, str(RUNTIME), *args, "--project", str(env["proj"])],
+                       capture_output=True, text=True, timeout=300, env=os.environ.copy())
+    return r.returncode, (json.loads(r.stdout) if r.stdout.strip() else None), r.stderr
+
+
+def calls(env, kind):
+    if not env["calls"].exists():
+        return []
+    rows = [json.loads(line) for line in env["calls"].read_text().splitlines()]
+    return [r[1:] for r in rows if r[0] == kind]
+
+
+def file_paths(cmd):
+    return [cmd[i + 1].split("=")[0] for i, a in enumerate(cmd) if a == "--file"]
+
+
+def inbox(env):
+    code, out, err = rt(env, "inbox")
+    assert code == 0, err
+    return out["items"]
+
+
+def test_tick_builds_one_vote_item_and_acts_on_nothing(env):
+    before = (env["profile"] / "data/pick-queue.json").read_text()
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox", out
+    items = inbox(env)
+    assert len(items) == 1 and items[0]["kind"] == "vote"
+    b = items[0]["payload"]
+    assert b["ready"] is True, b["problems"]
+    assert b["topic"] == WINNER and b["slot"]["when"] == "2026-10-14T09:00:00-03:00"
+    assert b["key"].startswith("2026-10-14-vote-durability-is-a-budget")
+    assert [c["path"] for c in b["changed"]] == ["data/pick-queue.json"]
+    content = Path(b["files"]["content"]["path"]).read_text()
+    assert "```post" in content and "- Approval: plan" in content and "```first-comment" in content
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    for flag in ("--post-file", "--comment-file", "--image", "--publisher", "--vcs", "--vote-update", "--vote-state"):
+        assert job["argv"][job["argv"].index(flag) + 1] in job["snapshot"]
+    assert calls(env, "publisher") == [] and calls(env, "scheduler") == []
+    assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
+    assert (env["profile"] / "data/pick-queue.json").read_text() == before
+
+
+def test_a_round_is_handled_once(env):
+    rt(env, "tick")
+    code, out, _ = rt(env, "tick")
+    assert code == 0 and out["vote"]["status"] == "none" and "already handled" in out["vote"]["note"]
+    assert len(inbox(env)) == 1
+
+
+def test_approve_schedules_the_post_and_commits_only_the_queue(env):
+    rt(env, "tick")
+    item = inbox(env)[0]
+    code, shown, err = rt(env, "approve", "--id", str(item["id"]))
+    assert code == 0, err
+    assert shown["topic"] == WINNER and shown["sha256"] == item["payload_sha256"]
+    assert calls(env, "scheduler") == []
+    code, out, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", item["payload_sha256"])
+    assert code == 0, err
+    sched = calls(env, "scheduler")
+    assert [("--dry-run" in c, "--confirmed" in c) for c in sched] == [(True, False), (False, True)]
+    assert sched[1][sched[1].index("--at") + 1] == "2026-10-14T09:00:00-03:00"
+    commits = [c for c in calls(env, "vcs") if c[0] == "commit-files"]
+    assert len(commits) == 1
+    c = commits[0]
+    assert file_paths(c) == ["data/pick-queue.json"]
+    assert c[c.index("--allow") + 1] == "data/pick-queue.json" and "--confirmed" in c
+    queue = json.loads((env["profile"] / "data/pick-queue.json").read_text())
+    assert queue[-1]["pillar"] == "Database performance"
+    assert calls(env, "publisher") == []
+    assert inbox(env) == []
+
+
+def test_wrong_hash_or_edited_post_does_nothing(env):
+    rt(env, "tick")
+    item = inbox(env)[0]
+    code, _, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", "0" * 64)
+    assert code == 1 and "not this item" in err
+    post = Path(item["payload"]["files"]["post"]["path"])
+    post.chmod(0o600)
+    post.write_text("something else\n")
+    code, _, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", item["payload_sha256"])
+    assert code == 1 and "changed since the proposal: post" in err
+    assert calls(env, "scheduler") == []
+
+
+def test_queue_moved_in_the_repository_refuses(env):
+    rt(env, "tick")
+    item = inbox(env)[0]
+    q = env["profile"] / "data/pick-queue.json"
+    q.write_text("[]\n")
+    code, _, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", item["payload_sha256"])
+    assert code == 1 and "changed in the repository" in err
+    assert calls(env, "scheduler") == []
+
+
+def test_unusable_proposal_is_not_approvable(env):
+    env["resp"].write_text(proposal(topic="A fourth topic nobody voted for"))
+    code, out, _ = rt(env, "tick")
+    assert out["vote"]["status"] == "to_inbox" and "not the winner" in out["vote"]["note"]
+    item = inbox(env)[0]
+    code, _, err = rt(env, "approve", "--id", str(item["id"]))
+    assert code == 2 and "not ready" in err
+
+
+def test_used_topic_in_next_round_is_refused_by_code(env):
+    env["resp"].write_text(proposal(options={"A": "Reading EXPLAIN without guessing", "B": "Pool sizing notes",
+                                             "C": "Autovacuum settings I changed and why"}))
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is False and any("vote_update.py" in p for p in b["problems"])
+
+
+def test_no_browser_degrades_to_text_only(env, monkeypatch):
+    monkeypatch.setenv("FAKE_NO_BROWSER", "1")
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is True and "image" not in b["files"]
+    assert any("text-only" in n for n in b["notes"])
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    assert "--image" not in job["argv"]
+
+
+def test_failed_post_check_is_not_ready(env, monkeypatch):
+    monkeypatch.setenv("FAKE_CHECK_FAIL", "a link in the body")
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is False and "a link in the body" in b["problems"][0]
+
+
+def test_parse_proposal_rules():
+    state = {"round": {"round": "2026-10-05", "winner": None, "winner_topic": None,
+                       "options": {"A": "One", "B": "Two", "C": "Three"}},
+             "slot": {"language": "PT"}, "rotation": {"next_pillar": "Small tools"}}
+    text = proposal(topic="Two", reason="It has material in the notes.", language="PT", pillar="Small tools")
+    assert runtime_vote.parse_proposal(text, state)["topic"] == "Two"
+    for bad, message in ((proposal(topic="Two", language="PT", pillar="Small tools"), "reason"),
+                         (proposal(topic="Two", reason="x", language="EN", pillar="Small tools"), "language"),
+                         (proposal(topic="Two", reason="x", language="PT", pillar="Other"), "pillar"),
+                         (proposal(topic="Two", reason="x", language="PT", pillar="Small tools",
+                                   options={"A": "", "B": "b", "C": "c"}), "without material"),
+                         (text + text, "found 2")):
+        with pytest.raises(ValueError, match=message):
+            runtime_vote.parse_proposal(bad, state)
+
+
+def test_vote_job_publishes_then_records_the_post(env, tmp_path):
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    r = subprocess.run([sys.executable] + job["argv"][1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["published"] and out["recorded"]
+    pub = calls(env, "publisher")[0]
+    assert "--media" in pub and pub[pub.index("--idempotency-key") + 1] == b["key"]
+    commit = [c for c in calls(env, "vcs") if c[0] == "commit-files"][0]
+    paths = sorted(file_paths(commit))
+    assert paths == [f"assets/posts/{b['key']}.png", "data/pick.json", "data/posts.json"]
+    pick = json.loads((env["profile"] / "data/pick.json").read_text())
+    closed = [h for h in pick["history"] if h["round"] == "2026-10-05"][0]
+    assert closed["post_url"] == out["post_url"]
+    posts = json.loads((env["profile"] / "data/posts.json").read_text())
+    assert posts[-1]["url"] == out["post_url"] and posts[-1]["image"] == f"assets/posts/{b['key']}.png"

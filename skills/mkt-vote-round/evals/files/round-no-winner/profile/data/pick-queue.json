@@ -1,0 +1,10 @@
+[
+ {
+  "pillar": "Database performance",
+  "options": {
+   "A": "900 or 26,000 writes a second: group commit in tinykv",
+   "B": "A smaller connection pool made my queries faster",
+   "C": "Dead tuples: the autovacuum setting I changed"
+  }
+ }
+]
