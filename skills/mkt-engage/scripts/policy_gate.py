@@ -4,8 +4,8 @@
 Usage:
   python3 policy_gate.py decide --policy docs/marketing/engagement-policy.md --state docs/workbench/state.md \
       --log docs/marketing/engagement-log.jsonl --comment-file <comment.json> --category <category> \
-      --language <PT|EN|...> [--reply-file <reply.txt>] [--profile docs/brand/profile.md] [--skills-dir skills] \
-      [--now <ISO-8601>]
+      --language <PT|EN|...> [--reply-file <reply.txt>] [--sources-file <sources.json>] [--profile docs/brand/profile.md] \
+      [--skills-dir skills] [--now <ISO-8601>]
   python3 policy_gate.py record --log docs/marketing/engagement-log.jsonl --entry-file <entry.json>
   python3 policy_gate.py policy-hash --policy docs/marketing/engagement-policy.md
 
@@ -20,6 +20,12 @@ decide  Reads the ```engagement-policy JSON block of the policy, the standing ap
         lock (brand-profile's sensitive_topics.py) and never_in_replies; the reply keeps reply_rules
         (sentences, emojis, hashtags, links, banned phrases). Without --reply-file the reply checks are
         skipped and the decision can only be "inbox".
+        A question answered from sources (category question_answerable_from_sources) also needs
+        --sources-file: a JSON list naming the project files the reply's facts come from; the first file path in
+        each entry counts ("docs/brand/profile.md, section Proof" or "profile.md:30"; a bare name is looked up in
+        docs/brand/ and docs/marketing/). Each must exist inside the project, and every number
+        in the reply must appear in at least one of them; otherwise the reply goes to the inbox. The model's
+        category alone never makes a factual answer go out.
 record  Appends one JSON entry to the log (JSON Lines), adding "logged_at". The log is the day's count.
 policy-hash  Prints the value to record in the standing approval's Payload hash: policy:<sha256>.
 
@@ -137,6 +143,39 @@ def reply_checks(reply: str, rules: dict, never: list) -> list:
     return problems
 
 
+NUMBER = re.compile(r"\d+(?:[.,]\d+)?")
+SOURCE_PATH = re.compile(r"[\w./-]*?[\w-]+\.(?:md|jsonl|json|txt)\b")
+
+
+def source_checks(reply: str, sources_file) -> list:
+    """A factual answer must cite project files that hold every number it states."""
+    if not sources_file:
+        return ["a factual answer needs its sources (--sources-file)"]
+    try:
+        sources = json.loads(Path(sources_file).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as e:
+        return [f"sources unreadable: {e}"]
+    if not isinstance(sources, list) or not sources:
+        return ["a factual answer needs at least one source"]
+    root = Path.cwd().resolve()
+    texts, problems = [], []
+    for src in sources:
+        m = SOURCE_PATH.search(str(src))
+        rel = m.group(0) if m else ""
+        candidates = [rel] if "/" in rel else [f"docs/brand/{rel}", f"docs/marketing/{rel}"]
+        path = next((c for c in ((root / c).resolve() for c in candidates if rel)
+                     if root in c.parents and c.is_file()), None)
+        if path is None:
+            problems.append(f"source {str(src)[:80]!r} names no file in the project")
+            continue
+        texts.append(path.read_text(encoding="utf-8", errors="replace").replace(",", "."))
+    corpus = "\n".join(texts)
+    for n in NUMBER.findall(reply):
+        if n.replace(",", ".") not in corpus:
+            problems.append(f"number {n} is not in the cited sources")
+    return problems
+
+
 def decide(a) -> int:
     policy_path = Path(a.policy)
     policy = load_policy(policy_path)
@@ -204,6 +243,8 @@ def decide(a) -> int:
             reasons.append("sensitive-topics lock could not run on the reply")
         elif rlock[0]:
             reasons.append(f"reply touches sensitive topics {sorted(rlock[1])}")
+        if a.category == "question_answerable_from_sources":
+            reasons += source_checks(reply, a.sources_file)
     else:
         reasons.append("no reply drafted")
 
@@ -245,6 +286,7 @@ def main(argv=None) -> int:
     d.add_argument("--category", required=True)
     d.add_argument("--language", required=True)
     d.add_argument("--reply-file")
+    d.add_argument("--sources-file")
     d.add_argument("--profile", default="docs/brand/profile.md")
     d.add_argument("--skills-dir", action="append")
     d.add_argument("--now")
