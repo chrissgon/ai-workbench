@@ -12,7 +12,8 @@ and each model, it prepares a working directory with the case's files (paths ins
 only) in its own git repository (one "fixture" commit, then the case's optional "setup" shell commands,
 such as a branch with commits), runs the prompt through adapters/<harness>/run-prompt.sh with the skills
 listed in the case's optional "skills" (a flow's phases) for both variants, grades every assertion with
-the grader model, and writes:
+the grader model (which sees the files the run produced, and the case's optional "grader_files": input files,
+relative to the case folder, that assertions check facts against), and writes:
 
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
   evals-workspace/<name>/iteration-N/benchmark.json
@@ -472,6 +473,11 @@ def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
     with open(GRADING_TEMPLATE, encoding="utf-8") as f:
         tpl = f.read()
     files_blob = "\n".join(f"### {p}\n{shown(os.path.join(run_dir, 'cwd', p))}" for p in sorted(changed_files)) or "(none)"
+    inputs = [p for p in case.get("grader_files") or [] if p not in changed_files
+              and not os.path.isabs(p) and ".." not in p.split("/")]
+    if inputs:
+        files_blob += "\n\nInput files of the case, as the model found them (not produced by it):\n" + "\n".join(
+            f"### {p}\n{shown(os.path.join(run_dir, 'cwd', p))}" for p in inputs)
     prompt = grading_prompt(tpl, case, response, files_blob)
     gdir = os.path.join(run_dir, "grading")
     os.makedirs(os.path.join(gdir, "cwd"), exist_ok=True)
