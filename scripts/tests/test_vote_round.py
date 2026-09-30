@@ -143,6 +143,21 @@ def test_the_slot_is_found_through_an_alias_in_a_calendar_in_another_language(vo
     assert out["slot"]["row"] == "5" and out["slot"]["language"] == "EN" and out["slot"]["status"] == "topic-approved"
 
 
+def test_a_row_that_already_carries_a_post_is_passed_over_for_the_next_free_one(vote):
+    cal = vote["calendar"].read_text(encoding="utf-8")
+    taken = "| 5 | 2026-10-14T09:00:00-03:00 | Performance de banco | EN | Evals | devs | notes | plan | content/x.md | scheduled (job x) |"
+    free = "| 7 | 2026-10-21T09:00:00-03:00 | Performance de banco | PT | Weekly vote winner | devs | vote | plan | - | proposed |"
+    lines = [l for l in cal.splitlines() if not l.startswith("| 5 |")]
+    at = next(i for i, l in enumerate(lines) if l.startswith("| 4 |")) + 1
+    vote["calendar"].write_text("\n".join(lines[:at] + [taken, free] + lines[at:]) + "\n", encoding="utf-8")
+    code, out = state(vote, "--pillars", PILLARS, "--pillar-alias", "Database performance=Performance de banco")
+    assert out["slot"]["row"] == "7" and out["slot"]["language"] == "PT"
+    assert any("passed over" in w and "5 (2026-10-14" in w for w in out["warnings"])
+    vote["calendar"].write_text("\n".join(lines[:at] + [taken] + lines[at:]) + "\n", encoding="utf-8")
+    code, out = state(vote, "--pillars", PILLARS, "--pillar-alias", "Database performance=Performance de banco")
+    assert out["slot"] is None and any("no free calendar row" in w for w in out["warnings"])
+
+
 def test_used_topics_come_from_calendar_queue_history_open_round_and_posts(vote):
     code, out = state(vote)
     sources = {u["source"].split(" ")[0] for u in out["used_topics"]}

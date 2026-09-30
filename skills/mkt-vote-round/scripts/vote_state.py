@@ -22,8 +22,10 @@ Prints JSON on stdout:
                 spells the pillars); without it, it is read from the data only when the data already went round
                 the whole cycle once, otherwise next_pillar is null. The sequence is history oldest first, then the
                 open round, then the queue; the next pillar is the one after its last entry.
-  slot          the first calendar row dated after --today whose pillar is the round's pillar (or its
-                --pillar-alias): {row, when, pillar, language, topic, status}, or null
+  slot          the first free calendar row dated after --today whose pillar is the round's pillar (or its
+                --pillar-alias): {row, when, pillar, language, topic, status}, or null. A row whose status is
+                drafted, scheduled, published, missed or failed already carries a post: it is passed over and
+                named in warnings, so the vote post goes to the pillar's next free row.
   used_topics   every topic already used, each {topic, normalized, source}: the calendar's topic column, the
                 queue, the history, the open round and the titles in posts.json
   checks        with --check: for each topic, whether it is used, and the used topics it equals or resembles
@@ -281,7 +283,12 @@ def rotation(v: dict, queue: list, pillars: list) -> dict:
 
 # ---------- slot ----------
 
-def find_slot(rows: list, pillar: str, aliases: dict, today: date):
+TAKEN = {"drafted", "scheduled", "published", "missed", "failed"}
+
+
+def find_slot(rows: list, pillar: str, aliases: dict, today: date, skipped: list):
+    """The first free row of the pillar after today; rows that already carry a post (status drafted or later)
+    are appended to skipped and passed over."""
     names = {normalize(pillar)} | {normalize(a) for a in aliases.get(normalize(pillar), [])}
     for r in rows:
         m = re.match(r"(\d{4}-\d{2}-\d{2})", r["when"])
@@ -289,6 +296,9 @@ def find_slot(rows: list, pillar: str, aliases: dict, today: date):
             continue
         cell = normalize(r["pillar"])
         if any(cell == n or cell.startswith(n + " ") for n in names):
+            if (normalize(r["status"]).split() or [""])[0] in TAKEN:
+                skipped.append(r)
+                continue
             return r
     return None
 
@@ -335,10 +345,14 @@ def main(argv=None) -> int:
         h = open_[0]
         rnd = {**h, "winner_topic": h["options"][h["winner"]] if h.get("winner") else None}
     used = used_topics(v, queue, posts, rows)
-    slot = find_slot(rows, rnd["pillar"], aliases, today) if rnd else None
+    skipped = []
+    slot = find_slot(rows, rnd["pillar"], aliases, today, skipped) if rnd else None
+    if skipped:
+        warnings.append("rows of the pillar passed over because they already carry a post: "
+                        + ", ".join(f"{r['row']} ({r['when'][:10]}, {r['status']})" for r in skipped))
     if rnd and slot is None:
-        warnings.append(f"no calendar row after {today} carries the pillar '{rnd['pillar']}'"
-                        " (pass --pillar-alias when the calendar names it differently)")
+        warnings.append(f"no free calendar row after {today} carries the pillar '{rnd['pillar']}': add a row of that"
+                        " pillar to the calendar (pass --pillar-alias when the calendar names it differently)")
     out = {
         "today": today.isoformat(),
         "pending": rnd is not None,
