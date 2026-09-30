@@ -15,7 +15,7 @@ Contract: contracts/runtime.md. Configuration: <project>/docs/workbench/runtime.
    "store_db": "<absolute path of the store database>", "mailbox": "gmail", "publisher": "linkedin",
    "notification_query": "<mailbox search query>", "first_lookback_minutes": 1440,
    "max_events_per_tick": 5, "max_cost_usd_per_run": 0.5, "daily_cost_cap_usd": 3, "timeout_seconds": 600,
-   "path": ["<absolute folders holding uv and the harness CLI>"]}
+   "path": ["<absolute folders holding uv and the harness CLI>"], "notify": "none | macos"}
   A scheduler runs the tick with a minimal PATH: "path" lists the folders to put first, so uv and the harness
   CLI resolve. Schedule the tick with /usr/bin/python3, whose hash does not change with package upgrades.
 
@@ -106,6 +106,9 @@ def load_config(project: Path) -> dict:
     cfg.setdefault("max_cost_usd_per_run", 0.5)
     cfg.setdefault("daily_cost_cap_usd", 3)
     cfg.setdefault("timeout_seconds", 600)
+    cfg.setdefault("notify", "none")
+    if cfg["notify"] not in ("none", "macos"):
+        raise Fail("runtime.json notify must be none or macos", 2)
     extra = cfg.get("path", [])
     if not isinstance(extra, list) or not all(isinstance(d, str) and Path(d).is_absolute() for d in extra):
         raise Fail("runtime.json path must be a list of absolute folders", 2)
@@ -351,6 +354,21 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
     return {"status": "to_inbox", "note": "; ".join(reasons)[:1000]}
 
 
+def notify(cfg: dict, results: list) -> None:
+    """Tell the person what a tick did, counts only: comment text never reaches the notification script."""
+    sent = sum(1 for r in results if r.get("status") == "done" and str(r.get("note", "")).startswith("replied"))
+    waiting = sum(1 for r in results if r.get("status") == "to_inbox")
+    failed = sum(1 for r in results if r.get("status") == "failed")
+    if cfg["notify"] != "macos" or not (sent or waiting or failed):
+        return
+    message = f"{sent} replies sent, {waiting} waiting for you, {failed} failed"
+    script = f'display notification "{message}" with title "Social agent"'
+    try:
+        subprocess.run(["/usr/bin/osascript", "-e", script], capture_output=True, timeout=10)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 def cmd_tick(a, cfg: dict, project: Path) -> dict:
     store = Store(cfg)
     store("init")
@@ -393,6 +411,7 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
         if today_spend(store) >= float(cfg["daily_cost_cap_usd"]):
             results.append({"stopped": "daily cost cap reached"})
             break
+    notify(cfg, results)
     return {"messages": len(messages), "new_events": added, "handled": results}
 
 
