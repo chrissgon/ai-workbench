@@ -1,4 +1,4 @@
-# UX flows: perfectui documentation site, phase P-1
+# UX flows: plinthui documentation site, phase P-1
 
 - Owner: design-ux-flows
 - Status: draft

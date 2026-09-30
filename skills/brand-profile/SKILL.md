@@ -163,11 +163,11 @@ Approve the profile only if all of the following hold:
 
 ## Gotchas
 
-- Posts published in the person's name may have been written by an AI in an earlier session: in the first real case, both launch posts were. They read like the person and are not their voice. Ask who wrote every text.
-- A code-host profile README can be years out of date: in the first real case it named a job that had ended and a country the person does not live in. Date every source and let the newest one hold.
+- Posts published in the person's name may have been written by an AI in an earlier session, launch posts especially. They read like the person and are not their voice. Ask who wrote every text.
+- A code-host profile README can be years out of date, naming a job that has ended or a country the person no longer lives in. Date every source and let the newest one hold.
 - A profile export carries the person's phone and e-mail, and the profile is read by agents that write in public. The script drops them; never paste them back.
 - A fetch tool that summarizes pages may translate or paraphrase a post. A voice sample must come from the raw text.
-- The person may want to be known for a theme their record does not prove yet (in the first case, AI and automation, with a record in frontend). Write the gap; the strategy decides how to present it.
-- A never-expose list in prose is not enough for an agent that replies at night. In the first real case the user asked for a hard lock ("uma trava para nunca responder") with keywords; keywords catch the obvious cases and the agent still judges meaning, escalating when in doubt.
+- The person may want to be known for a theme their record does not prove yet (for example AI, with a record in frontend). Write the gap; the strategy decides how to present it.
+- A never-expose list in prose is not enough for an agent that replies at night. Users often ask for a hard lock with keywords; keywords catch the obvious cases and the agent still judges meaning, escalating when in doubt.
 - The never-expose list can exclude the person's past employers, while the strongest proof is what they achieved there. Ask whether those results may be cited without the name.
 - The person's own summary can contradict the goal they state (a job search against an audience for products). Ask; the agent will otherwise repeat the summary.

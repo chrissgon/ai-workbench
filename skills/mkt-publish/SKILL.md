@@ -114,9 +114,9 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- The member API of the first real network (LinkedIn) has no scheduling; the scheduler class runs the publisher at the slot time. A publisher asked to post "at" a future time refuses.
-- The first real network's tokens last 60 days with no refresh (the first case's expires on 2026-11-24). A batch that runs past the expiry fails at run time, silently for the person, unless step 2 catches it.
+- LinkedIn's member API has no scheduling; the scheduler class runs the publisher at the slot time. A publisher asked to post "at" a future time refuses.
+- LinkedIn's member tokens last 60 days with no refresh. A batch that runs past the expiry fails at run time, silently for the person, unless step 2 catches it.
 - The idempotency key is the content file's name and is reused on every retry: a rerun of the same job returns the existing post instead of posting again, and only retries the first comment if that failed. Renaming the file makes a new key, and a new post.
 - When the outcome of a publish is unknown (a timeout after the request left), the provider blocks the key until the user checks the profile and runs its `resolve` verb. Never work around it with a new key.
-- Rehearse once per machine before the first real job: schedule a job two minutes ahead whose command is the publisher's `--check`. It proves, from the scheduler rather than a terminal, that the tools and the stored token resolve. The rehearsal needs the same gate; record it in the state file.
+- Rehearse once per machine before the first live job: schedule a job two minutes ahead whose command is the publisher's `--check`. It proves, from the scheduler rather than a terminal, that the tools and the stored token resolve. The rehearsal needs the same gate; record it in the state file.
 - The publisher escapes the network's reserved characters; how hashtags and mentions render depends on the provider. Show the dry run, not the draft, in the gate.

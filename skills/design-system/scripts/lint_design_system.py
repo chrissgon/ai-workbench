@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lint a design-system document written from assets/design-system-template.md.
 
-Usage: python3 lint_design_system.py --file <design-system.md> [--library <token file>] [--json]
+Usage: python3 lint_design_system.py --file <design-system.md> [--library <token file> [--prefix <p>]] [--json]
 
 Checks:
   - required sections are present
@@ -10,7 +10,10 @@ Checks:
   - the Type section states a typeface and a reading width, and every type role row has size, line height and weight
   - every row of the Components table has owner, variants, states, screens and source
   - no TBD / TODO / ??? anywhere
-  - with --library: every custom property matching --pui-[a-z-]+ in the library file appears in the document
+  - with --library: every custom property of the library's prefix (--<prefix>-*) in the library file appears
+    in the document. The prefix is --prefix, or, without it, the prefix most custom properties defined in the
+    library file share (`ui` when most are `--ui-*`; in a document that lists tokens without defining them,
+    the prefix most of the listed properties share); the output names the prefix it used.
 
 Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
@@ -50,6 +53,10 @@ def main(argv):
         path = argv[argv.index("--file") + 1]
     if "--library" in argv:
         lib = argv[argv.index("--library") + 1]
+    prefix = argv[argv.index("--prefix") + 1].strip("-") if "--prefix" in argv else ""
+    if prefix and not re.fullmatch(r"[a-z][a-z0-9]*", prefix):
+        print("Error: --prefix must be lowercase letters and digits, e.g. ui", file=sys.stderr)
+        return 2
     if not path:
         print("Error: --file <design-system.md> is required. See --help.", file=sys.stderr)
         return 2
@@ -91,12 +98,18 @@ def main(argv):
             errors.append(f"component row {r[0] if r else '?'} needs owner, variants, states, screens and source")
     missing = []
     if lib_text:
-        props = sorted(set(re.findall(r"--pui-[a-z][a-z0-9-]*", lib_text)))
+        if not prefix:
+            defined = (re.findall(r"--([a-z][a-z0-9]*)-[a-z0-9-]+\s*:", lib_text)  # a stylesheet
+                       or re.findall(r"(?<![\w-])--([a-z][a-z0-9]*)-[a-z0-9-]+", lib_text))  # a token document
+            prefix = max(sorted(set(defined)), key=defined.count) if defined else ""
+        props = sorted(set(re.findall(rf"--{prefix}-[a-z][a-z0-9-]*", lib_text))) if prefix else []
+        if not props:
+            errors.append("--library: no prefixed custom properties found in the library file; pass --prefix")
         missing = [p for p in props if p not in text]
         if missing:
             errors.append(f"library custom properties absent from the document: {missing}")
     ok = not errors
-    print(json.dumps({"ok": ok, "counts": {"colour": len(colour), "contrast": len(contrast), "components": len(comps)},
+    print(json.dumps({"ok": ok, **({"library_prefix": prefix} if lib_text else {}), "counts": {"colour": len(colour), "contrast": len(contrast), "components": len(comps)},
                       "errors": errors}, indent=2 if as_json else None))
     return 0 if ok else 1
 

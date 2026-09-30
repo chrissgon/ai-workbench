@@ -109,7 +109,7 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- A fallback or plugin loaded for everyone costs everyone: the first real run found that a fallback marked `supported: () => false` downloads in every browser, so an approach that watches the whole document pays on every page, not only where the feature is missing.
-- The rule that blocks the obvious fix is often written down (the first real run: "No `MutationObserver`" in the architecture's hard rules). Quote it; breaking it is the user's call, not a detail of the fix.
+- A fallback or plugin loaded for everyone costs everyone: a fallback marked `supported: () => false` downloads in every browser, so an approach that watches the whole document pays on every page, not only where the feature is missing.
+- The rule that blocks the obvious fix is often written down (for example, "No `MutationObserver`" in the architecture's hard rules). Quote it; breaking it is the user's call, not a detail of the fix.
 - A promise in the documentation can already be false today (the migration guide promised that "components inserted at any time work"). List it under documents: the change may make it true, or the document must change.
 - Numbers from memory or a published release differ from the working branch (493 B published, 487 B on the branch); measure on the code being changed.

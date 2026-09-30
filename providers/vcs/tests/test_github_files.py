@@ -117,7 +117,7 @@ def api_env(tmp_path, contents):
     return env
 
 
-PICK = '{"round": 12, "pillar": "AI built in public", "options": {"A": "Évals", "B": "b", "C": "c"}}\n'
+PICK = '{"round": 12, "pillar": "Case studies", "options": {"A": "Évals", "B": "b", "C": "c"}}\n'
 
 
 def test_read_file_returns_the_text(api_env, contents):

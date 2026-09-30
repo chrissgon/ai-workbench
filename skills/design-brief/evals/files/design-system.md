@@ -1,4 +1,4 @@
-# Design system: perfectui documentation site
+# Design system: plinthui documentation site
 
 - Owner: design-system
 - Status: draft
@@ -11,18 +11,18 @@ The library's own token specification governs every colour, size and component t
 
 ## Sources
 
-- `DESIGN-SYSTEM.md` of the perfectui repository (generated from the shipped 1.0 stylesheet, read 2026-09-23): §1 foundations, §2 colour roles, §3 styles, §4 components 4.1 to 4.17, §5 interaction states, §6 building this in Figma, §7 trade-offs
-- `node_modules/@chrissgon/perfectui/dist/perfectui.css` 1.0.0-beta.0: `:root` custom properties `--pui-bg`, `--pui-bg-muted`, `--pui-bg-emphasis`, `--pui-text`, `--pui-text-muted`, `--pui-border`, `--pui-theme`, `--pui-success`, `--pui-warn`, `--pui-error`, `--pui-muted`, `--pui-radius` (0.375rem), `--pui-space` (0.25rem), `--pui-font-size` (0.875rem), `--pui-border-width` (1px); colour contract `--pui-color`, `--pui-on-color`, `--pui-edge`, `--pui-ink`
-- `MIGRATION.md` of the perfectui repository, "Known trade-offs" (solid theme, success and warn labels between 3.2:1 and 3.5:1 in light mode)
+- `DESIGN-SYSTEM.md` of the plinthui repository (generated from the shipped 1.0 stylesheet, read 2026-09-23): §1 foundations, §2 colour roles, §3 styles, §4 components 4.1 to 4.17, §5 interaction states, §6 building this in Figma, §7 trade-offs
+- `node_modules/@plinthkit/plinthui/dist/plinthui.css` 1.0.0-beta.0: `:root` custom properties `--pui-bg`, `--pui-bg-muted`, `--pui-bg-emphasis`, `--pui-text`, `--pui-text-muted`, `--pui-border`, `--pui-theme`, `--pui-success`, `--pui-warn`, `--pui-error`, `--pui-muted`, `--pui-radius` (0.375rem), `--pui-space` (0.25rem), `--pui-font-size` (0.875rem), `--pui-border-width` (1px); colour contract `--pui-color`, `--pui-on-color`, `--pui-edge`, `--pui-ink`
+- `MIGRATION.md` of the plinthui repository, "Known trade-offs" (solid theme, success and warn labels between 3.2:1 and 3.5:1 in light mode)
 - `docs/design/flows.md`: SCREEN-1 to SCREEN-6 and their regions and states
 - `docs/product/prd.md`: M-4 quality targets; `docs/product/specs/landing-and-site-shell.md`: REQ-7 to REQ-9
-- `docs/workbench/state.md` decisions of 2026-09-23: no brand phase, logo and default theme colour kept; typography Inter and Fira Code (user); design in the design-tool draft "PerfectUI-Doc"
+- `docs/workbench/state.md` decisions of 2026-09-23: no brand phase, logo and default theme colour kept; typography Inter and Fira Code (user); design in the design-tool draft "PlinthUI-Doc"
 - Contrast ratios computed with `scripts/contrast.py` of the design-system skill (WCAG 2.x relative luminance), 2026-09-23
 - Tailwind CSS default breakpoints (the site's utility layer): sm 640, md 768, lg 1024, xl 1280 (tailwindcss.com, known defaults of v4; the site's utility layer per brief decision 3)
 
 ## Ownership
 
-- Colour roles, styles, spacing, radii, border, component anatomy and states: the perfectui library (`DESIGN-SYSTEM.md`), mirrored verbatim; the site never edits a mirrored value. When the library changes, the mirror is regenerated, not patched.
+- Colour roles, styles, spacing, radii, border, component anatomy and states: the plinthui library (`DESIGN-SYSTEM.md`), mirrored verbatim; the site never edits a mirrored value. When the library changes, the mirror is regenerated, not patched.
 - Type roles, layout, site-only components and the rules for using library tokens on the site: this document.
 
 ## Colour
@@ -113,7 +113,7 @@ Site rules for using these tokens (this document): body prose uses `page/text` o
 | site/h3 (subsection) | 22 px | 28 px | 600 | this document (OPEN-2) |
 | site/lead (landing paragraph) | 18 px | 28 px | 400 | this document (OPEN-2) |
 | site/body (prose) | 16 px | 24 px | 400 | this document (OPEN-2) |
-| site/code (code blocks and inline code) | 14 px | 20 px | 400, Fira Code | this document; 0.23 site used Fira Code at 14 px (codebase map) |
+| site/code (code blocks and inline code) | 14 px | 20 px | 400, Fira Code | this document; 0.19 site used Fira Code at 14 px (codebase map) |
 
 ## Space, radii, borders, elevation
 
@@ -192,15 +192,15 @@ Site-only controls that need a visible boundary (input in the search dialog, cop
 
 ## Design tool
 
-- File: the perfectui project file (key szD991W25tQxPuqhfRektk), page "Site" for the website screens. An earlier build in the draft 0aZSp3JcotPUKeduf8BCzi (collection, text styles, foundations page) is superseded and not reused.
+- File: the plinthui project file (key pLt7Kq2mN4vR8tY1wZ3cXd), page "Site" for the website screens. An earlier build in the draft dR5fHj9sQ2kW6nX0pV4bMe (collection, text styles, foundations page) is superseded and not reused.
 - Collections: `pui` already exists in the file with modes `light` and `dark` and 66 variables: the 59 of DESIGN-SYSTEM §6 plus one `<role>/soft-fill` per role (the 15% tint flattened, DESIGN-SYSTEM §3.1 and §3.2); values verified against the document on 2026-09-23.
-- Styles: the library's `text/body`, `text/small`, `text/strong` exist; the seven `site/*` text styles (Inter and Fira Code) are added to the file for the screens; the ten legacy `PerfectUI/doc/*` paint styles (glows, glass, tags) belong to the UI kit's own documentation and are not used by the site.
+- Styles: the library's `text/body`, `text/small`, `text/strong` exist; the seven `site/*` text styles (Inter and Fira Code) are added to the file for the screens; the ten legacy `PlinthUI/doc/*` paint styles (glows, glass, tags) belong to the UI kit's own documentation and are not used by the site.
 - Components: the file already holds the library's Button (28 variants, style × colour, Label), Badge (28), Card (6, Type), Accordion Item (12) and Dropdown (8); screens use them as instances. Library components the file lacks (chip, list, table, modal, input, checkbox and switch, tooltip, timeline, group, float) are drawn as frames bound to the variables when a screen needs them, because documenting the library in the design tool is out of scope (user, 2026-09-23). Site-only components (Components table, owner `site`) are built as components on the "Site" page as the screens need them.
 - Validation: per screen, structural evidence returned by the writes and one screenshot; recorded by design-execute.
 
 ## Assumptions
 
-- ASSUMPTION-1: The library's `light-dark()` values are the light and dark mode values of the Figma variables; the site sets `data-pui-mode` so both modes exist. Safe because: `perfectui.css` `:root` declares every colour with `light-dark()` and `color-scheme: light dark`.
+- ASSUMPTION-1: The library's `light-dark()` values are the light and dark mode values of the Figma variables; the site sets `data-pui-mode` so both modes exist. Safe because: `plinthui.css` `:root` declares every colour with `light-dark()` and `color-scheme: light dark`.
 - ASSUMPTION-2: No elevation tokens are needed because neither the library nor the six screens use shadows; dialogs rely on a backdrop. Safe because: DESIGN-SYSTEM lists no shadow, and the flows' screens have no floating card over content besides the dropdown and the dialog.
 
 ## Open questions

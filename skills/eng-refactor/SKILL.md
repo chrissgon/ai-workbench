@@ -93,6 +93,6 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- "Unused" is a claim about semantics: the first real run removed an `installed` flag from five modules after writing down why it could never be `true` on entry (an ES module evaluates once per URL, and a second copy from another URL has its own flag), and kept the `typeof document` guard beside it, which does matter on the server.
+- "Unused" is a claim about semantics: remove an `installed` flag only after writing down why it can never be `true` on entry (an ES module evaluates once per URL, and a second copy from another URL has its own flag), and keep a `typeof document` guard beside it, which does matter on the server.
 - A small refactor can pay for a feature: the same run saved 74 B across five fallbacks, 12 of them in the one every browser downloads, which offset part of a fix made the same day.
 - The formatter may rewrap a comment near your change; name it in the files line so the reviewer does not look for a hidden edit.

@@ -94,7 +94,7 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- A guide can be true in general and wrong for one component: the first real run found a Tailwind guide saying the layer order keeps the reset below the library, which held for every property the library declares and failed for the one it left to the browser (the modal's `margin`).
+- A guide can be true in general and wrong for one component: for example, a Tailwind guide can say the layer order keeps the reset below the library, which holds for every property the library declares and fails for one it leaves to the browser (a modal's `margin`).
 - Testing the guide's own workaround found a second gap: an unlayered reset (Tailwind v3 with Preflight kept) beats every layer, so the library's fix does not reach those users, and the guide now tells them what to restore.
 - When the documentation folder is also a site's source, a sentence can be correct and still break the site (a marker lost, a heading level changed); run the site's conversion on the edited files.
 - The fix often makes a promise true again ("it centres the dialog"); list those sentences as `now true` and leave them alone.

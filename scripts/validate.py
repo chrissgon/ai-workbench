@@ -17,6 +17,11 @@ Checks every skill under skills/ and every agent under agents/:
   - english-only: no tracked text file contains Portuguese-specific diacritics or words, except
     on a line carrying `validate: allow english-only -- <reason>` or a path listed in
     .security-scan-allow with the rule english-only
+  - private-term: when a local, git-ignored terms file exists (.private-terms at the repository root, or
+    the path in WORKBENCH_PRIVATE_TERMS), no tracked text file contains any of its terms, except on a line
+    carrying `validate: allow private-term -- <reason>` or in a path the file excludes. The file lists one
+    term per line (case-insensitive; `re:<regex>` for a pattern; `!<path glob>` to exclude a path; `#`
+    comments). It keeps a maintainer's own names, projects and accounts out of this shared repository.
   - scripts/security_scan.py finds no secret, hidden text or unsafe script pattern (its errors
     and warnings are reported here as they are there)
 
@@ -28,6 +33,7 @@ Options:
 
 Exit codes: 0 ok, 1 errors found, 2 usage error.
 """
+import fnmatch
 import importlib.util
 import json
 import os
@@ -342,6 +348,56 @@ def check_english(report, root=ROOT):
                          "every file is written in English (AGENTS.md principle 6)")
 
 
+PRIVATE_ALLOW_RE = re.compile(r"validate:\s*allow\s+private-term(?:\s+--\s+(\S.*?))?\s*(?:-->|\*/)?\s*$")
+
+
+def load_private_terms(root=ROOT):
+    """Return (patterns, excluded path globs, the file's path) from the local terms file; no patterns when there
+    is none."""
+    path = os.environ.get("WORKBENCH_PRIVATE_TERMS") or os.path.join(root, ".private-terms")
+    try:
+        lines = open(path, encoding="utf-8").read().splitlines()
+    except OSError:
+        return [], [], path
+    patterns, excluded = [], []
+    for raw in lines:
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("!"):
+            excluded.append(line[1:].strip())
+        elif line.startswith("re:"):
+            patterns.append(re.compile(line[3:], re.I))
+        else:
+            patterns.append(re.compile(re.escape(line), re.I))
+    return patterns, excluded, os.path.abspath(path)
+
+
+def check_private_terms(report, root=ROOT):
+    """private-term: no tracked text file names what the local terms file lists (see the module docstring)."""
+    patterns, excluded, terms_file = load_private_terms(root)
+    if not patterns:
+        return
+    scanner = load_scanner()
+    for path in sorted(scanner.list_files(root, None)):
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if (rel.startswith(".git/") or os.path.abspath(path) == terms_file
+                or any(fnmatch.fnmatch(rel, g) for g in excluded)):
+            continue
+        text = scanner.read_text(path)
+        if text is None:
+            continue
+        for ln, line in enumerate(text.splitlines(), 1):
+            hit = next((m for p in patterns for m in [p.search(line)] if m), None)
+            if not hit:
+                continue
+            allow = PRIVATE_ALLOW_RE.search(line)
+            if allow and allow.group(1):
+                continue
+            report.error(f"{rel}:{ln}", f"[private-term] {hit.group(0)!r} is listed in the local private terms; "
+                         "write it generically, and keep the case in the project that uses it")
+
+
 def check_security(report):
     scanner = load_scanner()
     _, active, _ = scanner.scan(ROOT)
@@ -387,6 +443,7 @@ def main(argv):
                 check_agent(fn, report)
     check_harness_names(report)
     check_english(report)
+    check_private_terms(report)
     check_security(report)
     if spec:
         run_spec_validator(report)

@@ -104,7 +104,7 @@ Approve the identity only if all of the following hold:
 
 ## Gotchas
 
-- A brand accent that passes on black can fail on white: in the first real case, #07B6F0 on black was 8.96:1 while #0092CD on white was 3.5:1, fine for a headline and not for small text. Check each mode separately.
-- A profile photo covers the left of a LinkedIn cover on desktop; the first case kept the first ~420 px of 1584 empty and confirmed it on the applied profile's screenshot.
-- Values chosen for a UI (a 6 px radius, 1 px borders) read too thin in an image. The first case doubled them for graphics and wrote the rule down as `brand`, so the product's tokens stay untouched.
+- A brand accent that passes on black can fail on white: a bright blue can clear 8:1 on black while its darker variant reaches only about 3.5:1 on white, fine for a headline and not for small text. Check each mode separately.
+- A profile photo covers the left of a LinkedIn cover on desktop; keep roughly the first quarter of the width empty and confirm it on a screenshot of the applied profile.
+- Values chosen for a UI (a 6 px radius, 1 px borders) read too thin in an image. Double them for graphics and write the rule down as `brand`, so the product's tokens stay untouched.
 - Code shown as decoration must be real (component names, commands); invented code that looks real is a false claim about the product.

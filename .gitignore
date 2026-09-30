@@ -15,3 +15,6 @@ __pycache__/
 
 # OS / editors
 .DS_Store
+
+# A maintainer's own names, projects and accounts, one per line; read by scripts/validate.py (private-term)
+.private-terms

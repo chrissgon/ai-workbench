@@ -1,12 +1,12 @@
-![Perfect UI](https://i.ibb.co/FJGxtZ5/perfectui.png)
+![Plinth UI](https://plinthui.example/logo.png)
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-# Perfect UI
+# Plinth UI
 
 An exceptionally lightweight and highly customizable CSS and JavaScript library for crafting elegant user interfaces. 🎨💡
 
-Perfect UI ships the bare minimum: no runtime dependencies, no CSS reset, no font import, and no rule that is not attached to a `pui-` class. Behavior comes from the browser — `<details>`, `<dialog>`, `popover` — and JavaScript only fills in what a browser is missing.
+Plinth UI ships the bare minimum: no runtime dependencies, no CSS reset, no font import, and no rule that is not attached to a `pui-` class. Behavior comes from the browser — `<details>`, `<dialog>`, `popover` — and JavaScript only fills in what a browser is missing.
 
 ## 📦 Install
 
@@ -16,29 +16,29 @@ Perfect UI ships the bare minimum: no runtime dependencies, no CSS reset, no fon
 
 ```bash
 # npm
-npm i @chrissgon/perfectui
+npm i @plinthkit/plinthui
 
 # yarn
-yarn add @chrissgon/perfectui
+yarn add @plinthkit/plinthui
 
 # pnpm
-pnpm i @chrissgon/perfectui
+pnpm i @plinthkit/plinthui
 
 # bun
-bun i @chrissgon/perfectui
+bun i @plinthkit/plinthui
 ```
 
 - Import library on your project.
 
 ```js
-import "@chrissgon/perfectui/perfectui.css";
+import "@plinthkit/plinthui/plinthui.css";
 ```
 
 Or import only the components you use:
 
 ```js
-import "@chrissgon/perfectui/core.css";
-import "@chrissgon/perfectui/components/button.css";
+import "@plinthkit/plinthui/core.css";
+import "@plinthkit/plinthui/components/button.css";
 ```
 
 The JavaScript is optional. It is a loader that downloads a fallback only for
@@ -46,8 +46,8 @@ what your browser is missing, and you need it for the overlays and for the
 checkbox `indeterminate` attribute:
 
 ```js
-import "@chrissgon/perfectui";
-import { setMode } from "@chrissgon/perfectui/mode";
+import "@plinthkit/plinthui";
+import { setMode } from "@plinthkit/plinthui/mode";
 ```
 
 ### By CDN's.
@@ -57,15 +57,15 @@ import { setMode } from "@chrissgon/perfectui/mode";
 ```html
 <link
   rel="stylesheet"
-  href="https://cdn.jsdelivr.net/npm/@chrissgon/perfectui@latest/dist/perfectui.css"
+  href="https://cdn.jsdelivr.net/npm/@plinthkit/plinthui@latest/dist/plinthui.css"
 />
 
 <script type="module">
-  import "https://cdn.jsdelivr.net/npm/@chrissgon/perfectui@latest/dist/js/index.js";
+  import "https://cdn.jsdelivr.net/npm/@plinthkit/plinthui@latest/dist/js/index.js";
 </script>
 ```
 
-Perfect UI is ESM only and exposes nothing on `window` or `document`.
+Plinth UI is ESM only and exposes nothing on `window` or `document`.
 
 ## ✍🏻 Writing a component
 
@@ -80,9 +80,9 @@ a color.
 
 ## 📚 Documentation
 
-Read all documentation in [docs](https://github.com/chrissgon/perfectui/tree/main/docs) folder or in the [official website](https://perfectui.netlify.app/).
+Read all documentation in [docs](https://git.example/plinthkit/plinthui/tree/main/docs) folder or in the [official website](https://plinthui.example/).
 
-Coming from `0.x`? See [MIGRATION.md](https://github.com/chrissgon/perfectui/blob/main/MIGRATION.md).
+Coming from `0.x`? See [MIGRATION.md](https://git.example/plinthkit/plinthui/blob/main/MIGRATION.md).
 
 ## 💪🏻 Contribution
 
@@ -90,8 +90,8 @@ This project is open source and welcomes community contributions. Feel free to f
 
 Feel free to explore the source code, provide feedback, and report any issues you encounter.
 
-[Perfect UI Figma](https://www.figma.com/file/szD991W25tQxPuqhfRektk/PerfectUI?type=design&t=NFXUM1OyFfIo9Csc-6) is free for both commercial and personal projects.
+[Plinth UI Figma](https://figma.example/file/pLt7Kq2mN4vR8tY1wZ3cXd/PlinthUI) is free for both commercial and personal projects.
 
 ## ❤️ Authors
 
-- [@chrissgon](https://www.github.com/chrissgon)
+- [@rowan-hale](https://git.example/rowan-hale)

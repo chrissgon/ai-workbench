@@ -26,7 +26,7 @@ Recommend the first choice unless the user already works in another tool.
 
 - Mode: assisted for generation (no generation interface for agents); its design-system projects can be written by an integration where the environment has one.
 - Good at: screens and pages with a strong visual direction; reads a code repository to build a design system; accepts reference images; hands a chosen design back to the coding agent.
-- Setup once per product: a design-system project built from the product's repository with an onboarding prompt that names the files to read, what to produce and what never to invent, ending with a verification page of every token and component. Check that page before any screen. (2026-09-24, perfectui: the onboarding produced a faithful system on the first try.)
+- Setup once per product: a design-system project built from the product's repository with an onboarding prompt that names the files to read, what to produce and what never to invent, ending with a verification page of every token and component. Check that page before any screen. (2026-09-24: the onboarding produced a faithful system on the first try.)
 - Run: one project per direction; attach the brief file and the reference images; paste the prompt; do not attach an earlier design of the same artifact in round 1.
 - Collect: screenshots at each required width, the share link, and the exported code or the hand-off to the coding agent for the chosen direction.
 
@@ -34,7 +34,7 @@ Recommend the first choice unless the user already works in another tool.
 
 - Mode: assisted.
 - Good at: interactive prototypes with code in the Figma ecosystem.
-- Lessons (2026-09-23, perfectui landing): an attached frame triggered its design-to-code behaviour and the result was a copy of the frame; custom skills run only when invoked by their slash command in the prompt; importing a library's variables needs a paid plan and a published library and flattens variables into raw values; a Make kit can bundle an npm package and guidelines. The first result stayed "well below" the quality wanted.
+- Lessons (2026-09-23, a landing page): an attached frame triggered its design-to-code behaviour and the result was a copy of the frame; custom skills run only when invoked by their slash command in the prompt; importing a library's variables needs a paid plan and a published library and flattens variables into raw values; a Make kit can bundle an npm package and guidelines. The first result stayed "well below" the quality wanted.
 - Run: a new Make file per direction from the file browser; attach the brief, not the frame; start the prompt with the product skill's slash command if one was uploaded; link the product's stylesheet explicitly.
 
 ## Figma (design tool integration)

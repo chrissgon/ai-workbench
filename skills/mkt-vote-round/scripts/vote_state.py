@@ -3,8 +3,8 @@
 
 Usage:
   python3 vote_state.py --pick data/pick.json --queue data/pick-queue.json --posts data/posts.json \
-      --calendar docs/marketing/calendar.md [--pillars "Build to serve|AI built in public|Tech in conversation"] \
-      [--pillar-alias "AI built in public=<the calendar's name for it>"]... [--check "<topic>"]... [--today YYYY-MM-DD]
+      --calendar docs/marketing/calendar.md [--pillars "Guides|Case studies|Opinions"] \
+      [--pillar-alias "Case studies=<the calendar's name for it>"]... [--check "<topic>"]... [--today YYYY-MM-DD]
 
 The data files are the profile repository's vote files: pick.json (the open round and the history of closed
 rounds, newest first), pick-queue.json (the next rounds, each {pillar, options}) and posts.json (posts shown on

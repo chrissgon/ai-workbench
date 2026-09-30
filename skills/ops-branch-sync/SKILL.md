@@ -107,7 +107,7 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- The first real use compared a launch branch with a local `main` two commits behind the remote: the pull request context listed the base's own changes (a dependency bump, a favicon) as the branch's. Fetching and comparing with `origin/main` showed ten documentation files, which was the truth.
+- Comparing a branch with a local `main` a few commits behind the remote lists the base's own changes (a dependency bump, a favicon) as the branch's. Fetch and compare with `origin/main` to see what the branch really changes.
 - The same day, two pull requests each added an approval line at the top of the state file's "Approvals" list; whichever merged second conflicted, twice. Both lines were kept, newest first, and the "Current flow" line was rewritten to describe the state after both.
 - After merging a base that moved the site's library from a beta to 1.0.0, the local build failed with prerender and toolchain errors that looked unrelated; the installed dependencies still matched the old lockfile. A reinstall fixed it. `base_changed_dependencies` is there to catch this before the checks run.
 - A documentation commit in another repository swept the user's uncommitted edits of a personal to-do file into `main` because files were staged all at once. Stage by name and read `git status` before committing.

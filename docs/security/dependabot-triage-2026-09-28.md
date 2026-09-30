@@ -1,6 +1,6 @@
-# Security review: chrissgon/ai-workbench, 2026-09-28
+# Security review: ai-workbench, 2026-09-28
 
-- Owner: eng-security-review (0.1, first real run; written in the skill's report format)
+- Owner: eng-security-review (0.1, its first run on this repository; written in the skill's report format)
 - Status: done
 - Scope: dependency alerts only (secrets, authentication, input handling and configuration not reviewed)
 - Source: provider `providers/vcs/github.py alerts --state open`, run by the `dependabot-alerts` workflow (run 36367778232, artifact `dependabot-alerts`), fetched 2026-09-28; 30 open alerts
@@ -11,10 +11,10 @@ Counts come from `skills/eng-security-review/scripts/triage_alerts.py` run on th
 ## Manifests
 | Manifest | Open alerts | Packages | Shipped? | Installed or run? | Copied from | Evidence |
 |----------|-------------|----------|----------|-------------------|-------------|----------|
-| `skills/ops-ci-pipeline/evals/files/docsite/package.json` | 15 | nuxt, vitest | no: an eval fixture, copied into a scratch case folder per run | no | perfectui-doc | no lockfile in the folder or a parent (`lockfiles: []`, `parent_lockfiles: []`); `skills/ops-ci-pipeline/evals/evals.json` allows `npm test` and `npm run`, not `npm install`; `.github/workflows/*.yml` run no npm command |
-| `skills/ops-ci-pipeline/evals/files/docsite-ci/package.json` | 15 | nuxt, vitest | no: same fixture, with a CI file | no | perfectui-doc | as above; its `npm ci` lines are in `docsite-ci/.github/workflows/ci.yml`, a nested file GitHub never runs (only the root `.github/workflows/` runs) |
+| `skills/ops-ci-pipeline/evals/files/docsite/package.json` | 15 | nuxt, vitest | no: an eval fixture, copied into a scratch case folder per run | no | a real documentation site | no lockfile in the folder or a parent (`lockfiles: []`, `parent_lockfiles: []`); `skills/ops-ci-pipeline/evals/evals.json` allows `npm test` and `npm run`, not `npm install`; `.github/workflows/*.yml` run no npm command |
+| `skills/ops-ci-pipeline/evals/files/docsite-ci/package.json` | 15 | nuxt, vitest | no: same fixture, with a CI file | no | a real documentation site | as above; its `npm ci` lines are in `docsite-ci/.github/workflows/ci.yml`, a nested file GitHub never runs (only the root `.github/workflows/` runs) |
 
-perfectui-doc: the user checked on 2026-09-28 that it does not use these versions.
+The real project: the maintainer checked on 2026-09-28 that it does not use these versions.
 
 ## Plan
 | # | Manifest | Package | Declared | Alerts (numbers) | Max severity | Recommendation | Reason | Target version |
@@ -27,16 +27,16 @@ perfectui-doc: the user checked on 2026-09-28 that it does not use these version
 Rejected: updating the fixtures. It changes the evals that read them and gains no security, and any pinned version will get new advisories.
 
 ## Dismissal comments
-- Groups 1 and 3 (alerts 16 to 30): "Eval fixture of ops-ci-pipeline (skills/ops-ci-pipeline/evals/files/docsite), never installed: no lockfile, evals allow npm test/run but not npm install, repo CI never installs it. The real project it copies (perfectui-doc) does not use this version." (250 characters)
-- Groups 2 and 4 (alerts 1 to 15): "Eval fixture of ops-ci-pipeline (skills/ops-ci-pipeline/evals/files/docsite-ci), never installed: no lockfile, evals allow npm test/run but not npm install, its nested CI file never runs. The real project it copies (perfectui-doc) does not use this version." (257 characters)
+- Groups 1 and 3 (alerts 16 to 30): "Eval fixture of ops-ci-pipeline (skills/ops-ci-pipeline/evals/files/docsite), never installed: no lockfile, evals allow npm test/run but not npm install, repo CI never installs it. The real project it copies does not use this version." (project name removed from the posted text)
+- Groups 2 and 4 (alerts 1 to 15): "Eval fixture of ops-ci-pipeline (skills/ops-ci-pipeline/evals/files/docsite-ci), never installed: no lockfile, evals allow npm test/run but not npm install, its nested CI file never runs. The real project it copies does not use this version." (project name removed from the posted text)
 
 ## Approval
-- 2026-09-28: the user chose to dismiss all 30 as `not_used` ("1. A") and to dismiss them by hand on the alerts page from this list ("2. A"): the session's network replaces the token on calls to api.github.com, and the stored token is read-only.
+- 2026-09-28: the maintainer chose to dismiss all 30 as `not_used` ("1. A") and to dismiss them by hand on the alerts page from this list ("2. A"): the session's network replaces the token on calls to api.github.com, and the stored token is read-only.
 
 ## Results
 | Alert | Action | Result |
 |-------|--------|--------|
-| 1 to 30 | dismiss `not_used` with the comment above | handed to the user; dismissed: the workflow run 36436706189 (2026-09-28 14:32 UTC) listed 0 open alerts |
+| 1 to 30 | dismiss `not_used` with the comment above | handed to the maintainer; dismissed: the workflow run 36436706189 (2026-09-28 14:32 UTC) listed 0 open alerts |
 
 ## Proposed tasks
 - none

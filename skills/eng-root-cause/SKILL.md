@@ -142,9 +142,9 @@ Approve the section only if all of the following hold:
 
 ## Gotchas
 
-- A fix suggested in the report ("scope the rule to .pui-checkbox") is a hypothesis about the cause, not the cause. Confirm the cause independently; do not evaluate or adopt the fix here. In the first evaluation a smaller model told the user "your proposed fix is correct": that is the failure this rule prevents.
+- A fix suggested in the report ("scope the rule to .checkbox") is a hypothesis about the cause, not the cause. Confirm the cause independently; do not evaluate or adopt the fix here. A smaller model telling the user "your proposed fix is correct" is the failure this rule prevents.
 - Examples written by the author tend to use the state that works: a radio group documented with one option `checked` hides a bug in the group with none checked. Look for the unwritten state.
-- Reading a computed value right after changing state returns the value mid-transition. The first real run misread a filled switch as transparent for that reason.
+- Reading a computed value right after changing state returns the value mid-transition. A filled switch can read as transparent for that reason.
 - A second symptom with the same mechanism (the switch filled by the same selector as the radio) belongs to the same cause; list it under Reach, not as a new bug.
-- A reproduction kept in the repository is code the project's checks run on: the first real run's scripts failed the linter (`document` and `getComputedStyle` undefined in a `.mjs` that runs them inside the page). Run the linter on it before leaving it.
-- The live product is evidence: the first real run found the bug on the published documentation page, which tells the user who meets it today.
+- A reproduction kept in the repository is code the project's checks run on: reproduction scripts can fail the linter (`document` and `getComputedStyle` undefined in a `.mjs` that runs them inside the page). Run the linter on it before leaving it.
+- The live product is evidence: a bug found on the published page (the documentation site, for a library) tells the user who meets it today.

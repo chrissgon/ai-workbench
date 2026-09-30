@@ -55,6 +55,19 @@ def test_unpack_writes_valid_resources(tmp_path):
     assert (tmp_path / "out" / "resources" / "logo-1.svg").read_bytes() == b"<svg/>"
 
 
+def test_unpack_lists_the_library_classes_of_the_given_prefix(tmp_path):
+    src = tmp_path / "page.html"
+    src.write_text('<a class="ui-btn ui-solid grid-2"></a><style>:root{--ui-ink:#111}</style>', encoding="utf-8")
+    r = run(UNPACK, "--file", str(src), "--out", str(tmp_path / "a"), "--class-prefix", "ui")
+    assert r.returncode == 0, r.stderr
+    inv = json.loads((tmp_path / "a" / "inventory.json").read_text())
+    assert inv["class_prefix"] == "ui" and inv["library_classes"] == ["ui-btn", "ui-solid"]
+    r = run(UNPACK, "--file", str(src), "--out", str(tmp_path / "b"))
+    inv = json.loads((tmp_path / "b" / "inventory.json").read_text())
+    assert inv["class_prefixes"][0] == ["ui", 2] and "library_classes" not in inv
+    assert run(UNPACK, "--file", str(src), "--out", str(tmp_path / "c"), "--class-prefix", "../x").returncode == 2
+
+
 def test_unpack_refuses_traversal_and_absolute_ids(tmp_path):
     for rid in ("../../src/index", "/tmp/x", "Logo", "a/b", ".."):
         src = tmp_path / "export.html"
@@ -827,3 +840,25 @@ def test_lint_brief_eval_fixture_screens_keep_their_items():
     states = re.search(r"SCREEN-3:.*?States:\s*(.*?)\.\s*Breakpoints:", flows).group(1)
     assert split(states) == ["default", "light and dark (from `data-pui-mode`)", "theme colour applied",
                              "search entry point absent when the build has no search"]
+
+
+# ---------- design-system/lint_design_system.py: the library prefix ----------
+
+LINT_DS = "skills/design-system/scripts/lint_design_system.py"
+
+
+def test_lint_design_system_infers_the_library_prefix(tmp_path):
+    doc = tmp_path / "ds.md"
+    doc.write_text("# Design system\nUses --ui-ink and --ui-bg.\n", encoding="utf-8")
+    css = tmp_path / "lib.css"
+    css.write_text(":root { --ui-ink: #111; --ui-bg: #fff; --ui-line: #ddd; --x-y: 1px }\n", encoding="utf-8")
+    out = json.loads(run(LINT_DS, "--file", str(doc), "--library", str(css)).stdout)
+    assert out["library_prefix"] == "ui"
+    assert any("['--ui-line']" in e for e in out["errors"])
+    listed = tmp_path / "lib.md"
+    listed.write_text("| Token | Value |\n| `--ds-bg` | #fff |\n| `--ds-ink` | #111 |\n", encoding="utf-8")
+    out = json.loads(run(LINT_DS, "--file", str(doc), "--library", str(listed)).stdout)
+    assert out["library_prefix"] == "ds"
+    out = json.loads(run(LINT_DS, "--file", str(doc), "--library", str(css), "--prefix", "x").stdout)
+    assert out["library_prefix"] == "x" and any("['--x-y']" in e for e in out["errors"])
+    assert run(LINT_DS, "--file", str(doc), "--library", str(css), "--prefix", "../a").returncode == 2

@@ -1,6 +1,6 @@
 # Host settings, in the order that works
 
-Every item comes from setting up `chrissgon/ai-workbench` on 2026-09-27 (backlog S6), on GitHub. Each step names what breaks when it is done out of order. The user applies them in the host's settings; the skill writes the list, it does not call the host's API (version 0.1).
+Every item comes from setting up the ai-workbench repository on 2026-09-27 (backlog S6), on GitHub. Each step names what breaks when it is done out of order. The user applies them in the host's settings; the skill writes the list, it does not call the host's API (version 0.1).
 
 ## Before the first push
 

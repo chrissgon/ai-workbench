@@ -85,6 +85,6 @@ Approve only if all of the following hold:
 ## Gotchas
 
 - In a stylesheet project the fixture page must load the built file the user downloads (`dist/…css`), and the build must run before the tests, or the tests pass against a stale build.
-- A retrying assertion waits out a 150 ms colour transition; `getComputedStyle` read once does not. The first real run's reproduction had to wait explicitly for the same reason.
+- A retrying assertion waits out a 150 ms colour transition; `getComputedStyle` read once does not. A reproduction has to wait explicitly for the same reason.
 - Tests for the behaviours to preserve pass before the change on purpose: they are the regression guard, and the report says so, so nobody mistakes them for tests that miss the bug.
-- The first real run found an unstated behaviour while writing the tests (what a switch shows when a script sets `indeterminate`): the documentation defined the mixed state for the checkbox only. That is the user's call, asked with the documentation as the recommendation's ground.
+- Writing the tests can surface an unstated behaviour (what a switch shows when a script sets `indeterminate`, when the documentation defines the mixed state for the checkbox only). That is the user's call, asked with the documentation as the recommendation's ground.

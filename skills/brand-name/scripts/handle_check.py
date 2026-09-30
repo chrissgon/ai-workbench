@@ -79,7 +79,7 @@ def check_platform(name, platform):
         url = f"https://api.github.com/users/{name}"
         code, _ = http_status(url)
     elif platform == "npm":
-        # The search API's "scope:" filter missed a scope that has packages (first real case);
+        # The search API's "scope:" filter missed a scope that has packages (seen on a real scope);
         # the user/org package list answers 404 "Scope not found" when the scope does not exist.
         url = f"https://registry.npmjs.org/-/user/{name}/package"
         code, _ = http_status(url)

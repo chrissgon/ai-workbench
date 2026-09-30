@@ -87,7 +87,7 @@ Summary template:
 
 ## Gotchas
 
-- The first run could not reproduce a bug seen on a phone until the user said "scroll past the first section": the automation had scrolled 600 px and the bug began at about 900. Phase 1 stops and asks for the condition; it does not guess a cause.
+- A bug seen on a phone may not reproduce until the user names the condition ("scroll past the first section"): automation that scrolls 600 px misses a bug that begins at about 900. Phase 1 stops and asks for the condition; it does not guess a cause.
 - The same run showed that the testing tool's WebKit loaded the site only through its own request routing, not from the project's local server; a minimal page with the dependency's built files isolated the cause faster than the whole site.
 - Phase 2 found the defect from the other side (Chromium left a menu off screen at the bottom edge). A preserved behaviour that fails today is a scope question for the checkpoint, not a test to relax.
 - The fix belonged to a library the site pins: the library took the fix and a direct push to its branch; the site took only the plan and the reproduction in a pull request, and the user declined an interim workaround. Keep those two deliveries separate and say which is which.

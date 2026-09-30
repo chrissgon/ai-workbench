@@ -1,6 +1,6 @@
 # Runtime contract: agent runs started by triggers
 
-The runtime starts agents without a person at the keyboard: a scheduler fires, the runtime finds new work, runs an agent on it through an adapter, and executes the agent's proposal only when a deterministic gate allows it. It names no AI tool; adapters do. Decided on 2026-09-28 (`docs/decisions.md`, "An agent runtime as a new, tool-free layer"); first built for one agent, `social-manager` (backlog PB7), on the user's Mac.
+The runtime starts agents without a person at the keyboard: a scheduler fires, the runtime finds new work, runs an agent on it through an adapter, and executes the agent's proposal only when a deterministic gate allows it. It names no AI tool; adapters do. Decided on 2026-09-28 (`docs/decisions.md`, "An agent runtime as a new, tool-free layer"); first built for one agent, `social-manager` (backlog PB7), on a Mac with the launchd scheduler.
 
 ## Pieces
 
