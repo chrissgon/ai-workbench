@@ -36,7 +36,7 @@ THREAD_URN = "urn:li:activity:7000000000000000009"
 COMMENT_ID = "7100000000000000001"
 COMMENT_URN = f"urn:li:comment:({THREAD_URN},{COMMENT_ID})"
 PARENT_URN = f"urn:li:comment:({THREAD_URN},7100000000000000000)"
-POST_COMMENTS_PATH = "/rest/socialActions/urn%3Ali%3Ashare%3A7000000000000000001/comments"
+POST_COMMENTS_PATH = "/v2/socialActions/urn%3Ali%3Ashare%3A7000000000000000001/comments"
 COMMENT_TEXT = "Link: https://example.com/a_(b) #tag @name"
 
 
@@ -108,7 +108,7 @@ class FakeLinkedIn:
                     if fake.post_status != 201:
                         return self._send(fake.post_status, {"message": "MISSING_FIELD", "status": fake.post_status})
                     return self._send(201, None, {"x-restli-id": POST_URN})
-                if self.path.startswith("/rest/socialActions/") and self.path.endswith("/comments"):
+                if (self.path.startswith("/v2/socialActions/") or self.path.startswith("/rest/socialActions/")) and self.path.endswith("/comments"):
                     if fake.comment_delay:
                         time.sleep(fake.comment_delay)
                     if fake.comment_status != 201:
@@ -205,7 +205,7 @@ def post_count(fake):
 
 
 def comment_count(fake):
-    return len([p for m, p in fake.paths() if m == "POST" and p.startswith("/rest/socialActions/")])
+    return len([p for m, p in fake.paths() if m == "POST" and (p.startswith("/v2/socialActions/") or p.startswith("/rest/socialActions/"))])
 
 
 @pytest.fixture()
@@ -652,7 +652,8 @@ def test_comment_sends_exact_request(env, fake, comment_file):
     assert proc.returncode == 0, proc.stderr
     assert fake.paths() == [("GET", "/v2/userinfo"), ("POST", POST_COMMENTS_PATH)]
     req = fake.requests[1]
-    assert_rest_headers(req)
+    h = {k.lower(): v for k, v in req["headers"].items()}
+    assert h["authorization"] == f"Bearer {FAKE_TOKEN}" and "linkedin-version" not in h  # /v2 is unversioned
     # The comment text is sent as written: comments are not little text.
     assert json.loads(req["body"]) == {"actor": AUTHOR, "object": POST_URN, "message": {"text": COMMENT_TEXT}}
     out = json.loads(proc.stdout)
@@ -671,7 +672,7 @@ def test_reply_targets_the_encoded_parent_comment(env, fake, comment_file):
                                     "--confirmed"), env)
     assert proc.returncode == 0, proc.stderr
     req = fake.requests[1]
-    assert req["path"] == ("/rest/socialActions/urn%3Ali%3Acomment%3A%28urn%3Ali%3Aactivity%3A"
+    assert req["path"] == ("/v2/socialActions/urn%3Ali%3Acomment%3A%28urn%3Ali%3Aactivity%3A"
                            "7000000000000000009%2C7100000000000000000%29/comments")
     assert json.loads(req["body"]) == {"actor": AUTHOR, "object": POST_URN, "message": {"text": COMMENT_TEXT},
                                        "parentComment": PARENT_URN}
@@ -765,7 +766,7 @@ def test_comment_dry_run_reads_no_token(env, fake, comment_file):
     out = json.loads(proc.stdout)
     assert out["dry_run"] is True
     (req,) = out["requests"]
-    assert req["url"].endswith("/rest/socialActions/urn%3Ali%3Acomment%3A%28urn%3Ali%3Aactivity%3A"
+    assert req["url"].endswith("/v2/socialActions/urn%3Ali%3Acomment%3A%28urn%3Ali%3Aactivity%3A"
                                "7000000000000000009%2C7100000000000000000%29/comments")
     assert req["headers"]["Authorization"] == "Bearer <redacted>"
     body = dict(req["body"])
@@ -907,7 +908,7 @@ def test_publish_dry_run_shows_the_first_comment(env, fake, text_file, comment_f
     out = json.loads(proc.stdout)
     post, comment = out["requests"]
     assert post["url"].endswith("/rest/posts")
-    assert comment["method"] == "POST" and "/rest/socialActions/" in comment["url"]
+    assert comment["method"] == "POST" and "/v2/socialActions/" in comment["url"]
     assert comment["body"]["object"] == "<post URN returned by the Posts API>"
     assert comment["body"]["message"] == {"text": COMMENT_TEXT}
     assert out["first_comment_idempotency_key"] == "p1.first-comment"
@@ -956,3 +957,15 @@ def test_comment_legacy_v2_dry_run_targets_the_unversioned_endpoint(tmp_path, mo
     assert r.returncode == 0, r.stderr
     req = json.loads(r.stdout)["requests"][0]
     assert "/v2/socialActions/" in req["url"] and "LinkedIn-Version" not in req["headers"]
+
+
+def test_comments_endpoint_rest_keeps_the_versioned_path(tmp_path, monkeypatch):
+    text = tmp_path / "reply.txt"
+    text.write_text("Thanks!")
+    monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
+    r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
+                        "--idempotency-key", "reply-3", "--post-urn", "urn:li:activity:7400000000000000001",
+                        "--comments-endpoint", "rest", "--dry-run"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    req = json.loads(r.stdout)["requests"][0]
+    assert "/rest/socialActions/" in req["url"] and req["headers"]["LinkedIn-Version"]

@@ -656,6 +656,8 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
 
 
 def cmd_publish(args) -> int:
+    global LEGACY_V2
+    LEGACY_V2 = getattr(args, "comments_endpoint", "v2") != "rest"
     text, image, first_comment = validate_publish_args(args)
     if not args.dry_run and not args.confirmed:
         raise ProviderError(
@@ -709,10 +711,11 @@ def comment_body(actor: str, post_urn: str, text: str, parent: str | None) -> di
     return body
 
 
-# --legacy-v2: the unversioned /v2/socialActions endpoint. On 2026-09-30 the versioned /rest endpoint answered a
-# member token with w_member_social "403 Not enough permissions to access: partnerApiSocialActions.CREATE";
-# the current docs do not say whether /v2 accepts it, so this is a trial the user asked for, not a documented path.
-LEGACY_V2 = False
+# Comments go to the unversioned /v2/socialActions endpoint by default, decided by the user on 2026-09-30 after a
+# real test with the member token (w_member_social): the versioned /rest endpoint answered "403 Not enough
+# permissions to access: partnerApiSocialActions.CREATE" (partner access) and /v2 created the reply. The current
+# docs do not describe /v2 for members, so it may change; --comments-endpoint rest keeps the versioned path.
+LEGACY_V2 = True
 
 
 def comment_url(base: str, target: str) -> str:
@@ -850,7 +853,7 @@ def post_urn_of_key(on_key: str, required: bool) -> str | None:
 
 def cmd_comment(args) -> int:
     global LEGACY_V2
-    LEGACY_V2 = bool(getattr(args, "legacy_v2", False))
+    LEGACY_V2 = getattr(args, "comments_endpoint", "v2") != "rest" or bool(getattr(args, "legacy_v2", False))
     text, post_urn, parent = validate_comment_args(args)
     if not args.dry_run and not args.confirmed:
         raise ProviderError(
@@ -935,7 +938,8 @@ def comment_request(base: str, post_urn: str | None, parent: str | None, text: s
     target = parent or post_urn
     return {
         "method": "POST",
-        "url": comment_url(base, target) if target else f"{base}/rest/socialActions/<URL-encoded post URN>/comments",
+        "url": comment_url(base, target) if target else
+               f"{base}/{'v2' if LEGACY_V2 else 'rest'}/socialActions/<URL-encoded post URN>/comments",
         "headers": {k: v for k, v in redacted_headers().items() if not (LEGACY_V2 and k == "LinkedIn-Version")},
         "body": comment_body(AUTHOR_PLACEHOLDER, post_urn or POST_URN_PLACEHOLDER, text, parent),
     }
@@ -1050,6 +1054,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "post was published as this URN")
     parser.add_argument("--on-key", help="with comment: the publish idempotency key of the post to comment on")
     parser.add_argument("--parent-comment", help="with comment: reply to this comment URN")
+    parser.add_argument("--comments-endpoint", choices=["v2", "rest"], default="v2",
+                        help="comments: v2 (default; works with a member's w_member_social token, checked "
+                             "2026-09-30) or rest (the versioned endpoint; needs LinkedIn partner access)")
     parser.add_argument("--legacy-v2", action="store_true",
                         help="with comment: use the unversioned /v2/socialActions endpoint (a trial: the versioned "
                              "endpoint needs partner access for member comments)")
