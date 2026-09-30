@@ -19,6 +19,9 @@ RUNTIME = REPO / "scripts" / "runtime.py"
 
 FAKE_MAILBOX = r'''
 import json, os, sys
+if sys.argv[1] == "search" and os.environ.get("FAKE_MAILBOX_FAIL"):
+    print("error: invalid_grant: the authorization expired", file=sys.stderr)
+    sys.exit(1)
 msgs = json.loads(open(os.environ["FAKE_MESSAGES"]).read())
 if sys.argv[1] == "search":
     print(json.dumps({"messages": msgs}))
@@ -294,3 +297,20 @@ def test_add_comment_refuses_a_link_without_comment_ids(env, tmp_path):
     code, _, err = rt(env, "add-comment", "--link", "https://www.linkedin.com/feed/", "--commenter", "X",
                       "--text-file", str(text))
     assert code == 2 and "commentUrn" in err
+
+
+def test_a_mailbox_failure_does_not_stop_pasted_comments(env, tmp_path, monkeypatch):
+    shutil.copy(REPO / "skills/mkt-engage/scripts/parse_notification.py",
+                env["wb"] / "skills/mkt-engage/scripts/parse_notification.py")
+    monkeypatch.setenv("FAKE_MAILBOX_FAIL", "1")
+    text = tmp_path / "comment.txt"
+    text.write_text("Nice, I will try it!")
+    env["resp"].write_text(decision(reply="Thanks, Rita. Let me know how it goes.", lang="EN"))
+    code, out, err = rt(env, "add-comment", "--link", REAL_LINK, "--commenter", "Rita", "--text-file", str(text))
+    assert code == 0, err
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["mailbox"]["status"] == "failed" and "invalid_grant" in out["mailbox"]["note"]
+    assert out["handled"][0]["status"] == "done" and len(publisher_calls(env)) == 1
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["mailbox"]["status"] == "failed"

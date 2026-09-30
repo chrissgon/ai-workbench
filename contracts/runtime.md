@@ -59,6 +59,7 @@ When `runtime.json` has a `vote` section (`repo`, `branch`, `pillars`, optional 
 
 - The runtime never publishes without a gate result of `auto` under an active approval, or an inbox item the person approved with a matching hash.
 - A proposal block that is missing, malformed or has fields outside the task's shape sends the event to the inbox; the runtime never repairs a proposal.
+- A mailbox that cannot be read (an expired authorization, the network) does not stop the tick: pasted comments and the vote step still run, the mailbox cursor stays where it was, the tick's output carries `mailbox: {status: failed, note}`, and the person is notified at most once a day.
 - The daily cost cap stops new runs; pending events wait for the next day or for the person.
 - Configuration holds paths and limits only; credentials come through `providers/secrets/resolver.py`.
 - One tick at a time per project (a lock); the scheduler also refuses overlapping firings.
