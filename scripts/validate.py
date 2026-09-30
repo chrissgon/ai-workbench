@@ -75,7 +75,12 @@ PORTUGUESE_WORDS = ["n\u00e3o", "voc\u00ea", "is" + "so", "p" + "ra", "est\u00e1
 PORTUGUESE_RE = re.compile(
     r"[\u00e3\u00f5\u00e7\u00c3\u00d5\u00c7]|(?<!\w)(?:" + "|".join(PORTUGUESE_WORDS) + r")(?!\w)",
     re.IGNORECASE)
-ENGLISH_ALLOW_RE = re.compile(r"validate:\s*allow\s+english-only(?:\s+--\s*(\S.*?))?\s*(?:-->|\*/)?\s*$")
+# Group 1 is the reason: it must follow "-- " and cannot be only a comment terminator, or
+# "english-only -->" would read ">" as the reason. Any other "--" tail matches without group 1,
+# so the check reports a missing reason instead of plain Portuguese text.
+ENGLISH_ALLOW_RE = re.compile(
+    r"validate:\s*allow\s+english-only"
+    r"(?:\s+--\s+(?!(?:-->|\*/)\s*$)(\S.*?)|\s*--.*?)?\s*(?:-->|\*/)?\s*$")
 
 
 # --- minimal YAML subset parser (stdlib only) --------------------------------------

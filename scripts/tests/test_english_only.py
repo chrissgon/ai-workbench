@@ -66,3 +66,24 @@ def test_path_allow_file_exempts_the_file(tmp_path):
     write(tmp_path, "fixtures/pt/page.html", f"<p>{NAO}</p>\n")
     write(tmp_path, ".security-scan-allow", "fixtures/pt/page.html english-only -- a fixture that must stay Portuguese\n")
     assert errors(tmp_path) == []
+
+
+def test_html_comment_allow_without_reason_is_an_error(tmp_path):
+    # Before the fix, "-->" was read as "--" followed by the reason ">".
+    write(tmp_path, "docs/a.md", f"{NAO} <!-- validate: allow english-only -->\n")
+    found = errors(tmp_path)
+    assert len(found) == 1 and "needs a reason" in found[0]
+
+
+def test_comment_terminator_is_not_a_reason(tmp_path):
+    write(tmp_path, "docs/a.md", f"{NAO} <!-- validate: allow english-only -- -->\n")
+    write(tmp_path, "docs/b.css", f"/* {NAO} validate: allow english-only -- */\n")
+    write(tmp_path, "docs/c.md", f"{NAO} <!-- validate: allow english-only --reason -->\n")
+    found = errors(tmp_path)
+    assert len(found) == 3 and all("needs a reason" in f for f in found)
+
+
+def test_html_comment_allow_with_reason_exempts_the_line(tmp_path):
+    write(tmp_path, "docs/a.md", f"{NAO} <!-- validate: allow english-only -- a quoted source title -->\n")
+    write(tmp_path, "docs/b.css", f"/* {NAO} validate: allow english-only -- a fixture string */\n")
+    assert errors(tmp_path) == []
