@@ -1,0 +1,49 @@
+{
+  "skill_name": "mkt-content-plan",
+  "allow_commands": [
+    "python3 skills/mkt-content-plan/scripts/slots.py",
+    "python3 skills/brand-profile/scripts/sensitive_topics.py",
+    "date +%F",
+    "date +%Z",
+    "mkdir -p docs/marketing"
+  ],
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "plan my posts for the week of oct 12. notes are in docs/notes",
+      "expected_output": "docs/marketing/calendar.md keeps week 1 (rotation A) and adds week 2 starting 2026-10-12 with rotation B: Monday 2026-10-12 PT Small tools, Wednesday 2026-10-14 EN Database performance, Friday 2026-10-16 PT AI for databases, all at 09:00 -03:00. Topics come from Dana's notes with sources: tinykv 0.5 TTL, Priya Raman's fsync demo credited by name, and the query-hint experiment as work in progress. The 64% p99 story is not repeated and the dinner conversation with Dana's dad is not a topic (family is never exposed). Slots are proposed and the reply asks Dana to approve the topics, saying publication is approved later on the final texts.",
+      "files": [
+        "evals/files/dana-plan"
+      ],
+      "skills": [
+        "brand-profile"
+      ],
+      "assertions": [
+        "docs/marketing/calendar.md has three new slots dated 2026-10-12, 2026-10-14 and 2026-10-16, each at 09:00 with offset -03:00",
+        "The new week's languages are PT, EN, PT in that order (rotation B, continuing after week 1's rotation A)",
+        "The new slots' pillars are Small tools, Database performance and AI for databases in that order, and every new topic cites a source (a notes file, the strategy, the state file, or a URL that appears in the notes)",
+        "No new topic reuses the 64% p99 story or the tinykv 0.4 topic from week 1",
+        "The conversation with Dana's dad is not a topic in the calendar; if it is mentioned at all, it is as excluded or flagged to the user",
+        "The new slots are not marked approved (status proposed or equivalent) and the reply asks the user to approve or change the topics"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "can you put together a posting calendar for the next few weeks",
+      "expected_output": "The state file has no posting days, time or timezone, and 'next few weeks' is vague. The skill asks in one message for the days, the time, the timezone, the start date and the number of weeks, with a recommended answer for each it can ground (start next Monday, 1 week or a stated number, the machine's timezone, days spread across the week) and no invented 'best time to post'. It does not write dated slots on guessed days, or writes only a calendar that waits on those answers.",
+      "files": [
+        "evals/files/dana-undecided"
+      ],
+      "skills": [
+        "brand-profile"
+      ],
+      "assertions": [
+        "The reply asks the user which days and what time to post",
+        "The reply asks, or proposes as a recommendation to confirm, the number of weeks or the start date instead of silently deciding them",
+        "At least one question comes with a recommended answer",
+        "The reply does not state a best time or best days to post on LinkedIn as a fact without a source",
+        "No docs/marketing/calendar.md with dated slots exists, or every slot in it is marked as waiting on the user's answers"
+      ]
+    }
+  ]
+}

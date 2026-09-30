@@ -4,7 +4,7 @@ Implementations of the `publisher:<platform>` class. Interface: `providers/CONTR
 
 ## LinkedIn (`linkedin.py`)
 
-Publishes one post as the authenticated member through the versioned Posts API (`LinkedIn-Version: 202609`), with at most one image uploaded through the Images API. The member Posts API has no scheduling: a future `--at` is refused, and scheduling belongs to the `scheduler` class.
+Publishes one post as the authenticated member through the versioned Posts API (`LinkedIn-Version: 202609`), with at most one image uploaded through the Images API, and comments on posts through the Comments API: a post's first comment in the same command, or a `comment` verb for replies. The member Posts API has no scheduling: a future `--at` is refused, and scheduling belongs to the `scheduler` class.
 
 ### Setup (once)
 
@@ -29,18 +29,46 @@ Access tokens last 60 days and self-serve apps get no refresh token. `--check` w
 uv run providers/publisher/linkedin.py publish --platform linkedin \
     --text-file post.txt [--media cover.png] --idempotency-key <k> --dry-run
 uv run providers/publisher/linkedin.py publish --platform linkedin \
-    --text-file post.txt [--media cover.png] --idempotency-key <k> --confirmed
+    --text-file post.txt [--media cover.png] [--first-comment-file link.txt] \
+    --idempotency-key <k> --confirmed
+uv run providers/publisher/linkedin.py comment --platform linkedin \
+    --text-file reply.txt --idempotency-key <k> \
+    (--on-key <post key> | --post-urn <urn>) [--parent-comment <comment urn>] \
+    (--dry-run | --confirmed)
 uv run providers/publisher/linkedin.py resolve --idempotency-key <k> \
-    (--post-urn <urn> | --not-published) --confirmed
+    (--post-urn <urn> | --comment-urn <urn> | --not-published) --confirmed
 ```
 
 The dry run reads no token and sends nothing, so the author URN is shown as a placeholder (`/v2/userinfo` is only called when publishing).
 
+### The first comment
+
+`--first-comment-file <f>` posts that file as a comment on the post right after the post goes out, with the idempotency key `<post key>.first-comment`. One command publishes both, so one scheduler job and one approval cover the post and its first comment. The dry run shows both request bodies; the comment's target is a placeholder until the post exists.
+
+- When the post goes out and the comment fails, the command prints JSON with `post_urn`, `first_comment: null` and `first_comment_error`, and exits 1. Rerun the same command: the post key is `published`, so the post is replayed (not published again) and only the comment is retried.
+- On success the JSON has `first_comment` with `comment_urn`, `idempotency_key` and `replayed`.
+- When the command is scheduled, the first-comment file is an input file argument like `--text-file`: list it in the job's `snapshot` (`providers/scheduler/README.md`), or the job is refused.
+
+### The comment verb
+
+`comment` posts one comment as the member on a post, or a reply to a comment. The post is given by `--on-key` (the post's publish idempotency key; its ledger entry must be `published`, otherwise the command exits 2) or by `--post-urn` (`urn:li:share:<digits>`, `urn:li:ugcPost:<digits>` or `urn:li:activity:<digits>`). `--parent-comment urn:li:comment:(urn:li:activity:<digits>,<digits>)` makes it a reply: the request goes to the parent comment and the body carries `parentComment`. Both URNs go into the request path, so their shape is checked strictly and they are URL-encoded. It needs `--confirmed` or `--dry-run`, and prints `comment_urn`, `post_urn`, `parent_comment`, `idempotency_key`, `replayed` and the token expiry fields.
+
+A comment's text is sent as written: the Comments API carries a comment as text plus `attributes` (mentions), not in the little text format, so nothing is escaped. No comment length limit is documented on the Comments API page, so none is enforced; an empty text is refused. LinkedIn limits comment creation per member per minute (`429 Comment create throttled`); the command then exits 1 and the key is free again, so rerun it a minute later.
+
 ### At most once per key
 
-`--idempotency-key` is required: one key per post, reused on every retry of that post. The key is recorded as `pending` in the ledger, under a file lock, before any request, and as `published` with the post URN after the 201; a second run with a published key returns the existing post. When the outcome is unknown (a timeout, a dropped connection or a crash after the Posts API request was sent), the key stays `pending` and every new attempt is refused until the user checks the profile and runs `resolve`: `--post-urn <urn>` if the post is there, `--not-published` if it is not. A 4xx answer, or a failure before the post request, releases the key. Redirects are refused, so the token never leaves for a URL that was not checked. The ledger and its folder are 0600/0700.
+`--idempotency-key` is required: one key per post or comment, reused on every retry of it. The key is recorded as `pending` in the ledger, under a file lock, before any request, and as `published` with the post or comment URN after LinkedIn's answer; a second run with a published key returns the existing post or comment. When the outcome is unknown (a timeout, a dropped connection, a 5xx or a crash after the request was sent), the key stays `pending` and every new attempt is refused until the user checks the profile or the post's comments and runs `resolve`: `--post-urn <urn>` if the post is there, `--comment-urn <urn>` if the comment is there, `--not-published` if it is not. A 4xx answer, or a failure before the request, releases the key. A key names either a post or a comment, never both. Redirects are refused, so the token never leaves for a URL that was not checked. The ledger and its folder are 0600/0700.
 
-The post text is escaped for LinkedIn's little text format, so every reserved character (`\ | { } @ [ ] ( ) < > # * _ ~`) appears literally. As a consequence, `#word` and `@name` are shown as plain text, not as links.
+The post text is written in LinkedIn's little text format. A `#word` made of ASCII letters, digits and `_`, with at least one letter, not inside a word and not followed by another letter, becomes the documented hashtag template `{hashtag|\#|word}`, so it shows as a hashtag. Every other reserved character (`\ | { } @ [ ] ( ) < > # * _ ~`) is escaped and appears literally: `@name` is plain text, not a mention, and a `#` that does not start such a word (`C#`, `#1`, `#café`) is plain text too.
+
+### To verify on the first real run
+
+- **Permission to comment.** The Comments API page lists `w_member_social_feed` for member comments; the getting-access page says the open `w_member_social` scope, the one this app has, covers "Post, comment and like posts on behalf of an authenticated member". A 403 on a comment names both scopes in its message.
+- **Comment text.** That comment text needs no little-text escaping (the Comments API page does not mention the little text format; the little text page names only the Posts API), and whether `#word` in a comment shows as a hashtag.
+- **Target of a first comment.** That a comment on a fresh post is accepted with the post's `urn:li:share:` URN as both the request target and `object`, and that the answer carries `commentUrn` (the provider falls back to `object` and `x-restli-id`).
+- **Hashtags.** That `{hashtag|\#|word}` in the post commentary renders as a hashtag.
+
+Sources, accessed 2026-09-29: [Comments API](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/comments-api?view=li-lms-2026-09), [little text format](https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/little-text-format?view=li-lms-2026-09), [getting access](https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access).
 
 ### Environment variables
 

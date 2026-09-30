@@ -1,0 +1,4 @@
+# The runtime starts this agent through run-agent.sh, which already limits it to reading tools.
+# The same limit applies when a person delegates to it inside Claude Code.
+tools: Read, Glob, Grep
+permissionMode: default

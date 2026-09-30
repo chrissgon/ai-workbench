@@ -3,7 +3,7 @@
 # requires-python = ">=3.10"
 # dependencies = ["keyring==25.7.0"]
 # ///
-"""Publisher provider for LinkedIn: publish a post as the authenticated member.
+"""Publisher provider for LinkedIn: publish a post, and comment on it, as the authenticated member.
 
 Sources (official LinkedIn documentation, all accessed 2026-09-26):
 - Posts API (request body, 201 + x-restli-id response, w_member_social):
@@ -12,8 +12,17 @@ Sources (official LinkedIn documentation, all accessed 2026-09-26):
   https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/images-api?view=li-lms-2026-09
 - Image byte upload (PUT to uploadUrl with the OAuth token in Authorization), linked from the Images API page:
   https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/vector-asset-api?view=li-lms-2026-09#upload-the-image
-- little Text Format (reserved characters, backslash escaping) used by the commentary field:
+- little Text Format (reserved characters, backslash escaping, the HashtagTemplate
+  {hashtag|\\#|MyTestTag} of its Posts API example) used by the commentary field:
   https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/little-text-format?view=li-lms-2026-09
+- Comments API (accessed 2026-09-29): POST /rest/socialActions/{shareUrn|ugcPostUrn|commentUrn}/comments,
+  body actor/object/message.text, parentComment for a nested reply, x-restli-id and commentUrn in the
+  answer, comment URN urn:li:comment:(<thread urn>,<id>), 429 "Comment create throttled". The comment
+  message is text plus attributes, not little text, so it is sent unescaped:
+  https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/comments-api?view=li-lms-2026-09
+- Getting access (accessed 2026-09-29): the open w_member_social scope covers "Post, comment and like
+  posts on behalf of an authenticated member"; the Comments API page lists w_member_social_feed:
+  https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access
 - API versioning (latest version header 202609, versions supported at least one year):
   https://learn.microsoft.com/en-us/linkedin/marketing/versioning
 - Sign In with LinkedIn using OpenID Connect (GET /v2/userinfo returns sub, name):
@@ -23,9 +32,9 @@ Sources (official LinkedIn documentation, all accessed 2026-09-26):
 - Authorization code flow (60-day access tokens; programmatic refresh only for a limited set of partners):
   https://learn.microsoft.com/en-us/linkedin/shared/authentication/authorization-code-flow
 
-At most one post per idempotency key: the key is recorded as pending in the local ledger,
-under a file lock, before anything is sent, and as published with the post URN after the
-201. A pending key whose outcome is unknown (a timeout, a crash) blocks every new attempt
+At most one post, or one comment, per idempotency key: the key is recorded as pending in the
+local ledger, under a file lock, before anything is sent, and as published with the post or
+comment URN after the answer. A pending key whose outcome is unknown (a timeout, a crash) blocks every new attempt
 until `resolve` records what happened. Redirects are refused, so the bearer token is only
 ever sent to the URL that was checked.
 """
@@ -38,6 +47,7 @@ import importlib.util
 import json
 import mimetypes
 import os
+import re
 import sys
 import tempfile
 import time
@@ -57,12 +67,27 @@ EXPIRY_WARNING_DAYS = 7
 IMAGE_URN_PLACEHOLDER = "<image URN returned by initializeUpload>"
 UPLOAD_URL_PLACEHOLDER = "<uploadUrl returned by initializeUpload>"
 AUTHOR_PLACEHOLDER = "urn:li:person:<sub from /v2/userinfo, read at publish time>"
+POST_URN_PLACEHOLDER = "<post URN returned by the Posts API>"
+FIRST_COMMENT_SUFFIX = ".first-comment"
+# Both URNs go into a URL path, so their shape is checked strictly before they are used.
+POST_URN_RE = re.compile(r"urn:li:(?:share|ugcPost|activity):\d+")
+COMMENT_URN_RE = re.compile(r"urn:li:comment:\((urn:li:(?:activity|share|ugcPost):\d+),(\d+)\)")
+SHORT_COMMENT_URN_RE = re.compile(r"^urn:li:comment:\((activity|share|ugcPost):(\d+),(\d+)\)$")
+COMMENT_SCOPE_HINT = (
+    "the token may lack the permission to comment as the member: LinkedIn's getting-access page says the "
+    "w_member_social scope covers commenting, while the Comments API page lists w_member_social_feed; "
+    "check the app's products and scopes, then rerun auth.py --provider linkedin"
+)
 HTTP_TIMEOUT_SECONDS = 60
 LOCK_TIMEOUT_SECONDS = 10
 
 # Reserved characters of the little text format. Backslash comes first so that the
 # escapes added for the other characters are not escaped twice.
 LITTLE_RESERVED = "\\|{}@[]()<>#*_~"
+# A hashtag in post commentary: "#" not preceded by a word character, then ASCII letters, digits or
+# underscores with at least one letter, not followed by another word character. "#café" or
+# "#1" do not match and stay plain text.
+HASHTAG_RE = re.compile(r"(?<!\w)#(?=[A-Za-z0-9_]*[A-Za-z])([A-Za-z0-9_]+)(?!\w)")
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
 
@@ -71,14 +96,29 @@ verbs:
   publish   Publish one post as the authenticated member. Needs
             --idempotency-key and --confirmed (or --dry-run). Refuses --at in
             the future: scheduling belongs to the scheduler class, not to this
-            provider. The dry run reads no token and calls nothing.
+            provider. The dry run reads no token and calls nothing. The text
+            is escaped for the little text format, except that a #word (ASCII
+            letters, digits, _) becomes a hashtag; @name stays plain text.
+            --first-comment-file <f> also posts that file as a comment on the
+            post, with the key <post key>{FIRST_COMMENT_SUFFIX}: one command, one approval.
+            If the post goes out and the comment fails, the JSON has the
+            post_urn and first_comment_error and the exit code is 1; rerunning
+            the same command replays the post and retries only the comment.
+  comment   Comment on a post as the authenticated member: --text-file <f>,
+            --idempotency-key <k>, and the post by --on-key <the post's
+            publish key> (it must be published) or --post-urn <urn:li:share:N,
+            urn:li:ugcPost:N or urn:li:activity:N>. --parent-comment
+            <urn:li:comment:(urn:li:activity:N,N)> makes it a reply. Needs
+            --confirmed (or --dry-run). The text is sent as written: comments
+            do not use the little text format.
   resolve   Settle a key left pending by a timeout or a crash, after checking
-            the member's recent posts: --post-urn <urn> (it was published) or
+            the member's recent posts or the post's comments: --post-urn <urn>
+            (the post was published), --comment-urn <urn> (the comment was) or
             --not-published (it was not; the key may be used again). Needs
             --confirmed.
 
 idempotency:
-  Each key publishes at most once. It is recorded as pending in the ledger
+  Each key publishes one post or one comment at most once. It is recorded as pending in the ledger
   before the request and as published after it, under a file lock; a pending
   key refuses every new attempt until resolve settles it.
 
@@ -102,7 +142,12 @@ other environment variables:
                                a request times out (default {HTTP_TIMEOUT_SECONDS}).
 
 output:
-  JSON on stdout: post_urn, post_url, token_expires_at, token_expires_in_days.
+  publish: JSON on stdout with post_urn, post_url, token_expires_at,
+  token_expires_in_days, idempotency_key, replayed, and with
+  --first-comment-file, first_comment (comment_urn, idempotency_key, replayed)
+  or first_comment_error.
+  comment: comment_urn, post_urn, parent_comment, idempotency_key, replayed,
+  token_expires_at, token_expires_in_days.
   Diagnostics on stderr. Tokens are never printed.
 
 exit codes: 0 success, 1 provider or service error, 2 usage error, 3 not configured.
@@ -116,6 +161,12 @@ examples:
       --text-file post.txt --media cover.png --idempotency-key launch-2026-10 --dry-run
   uv run providers/publisher/linkedin.py publish --platform linkedin \\
       --text-file post.txt --idempotency-key launch-2026-10 --confirmed
+  uv run providers/publisher/linkedin.py publish --platform linkedin \\
+      --text-file post.txt --first-comment-file link.txt \\
+      --idempotency-key launch-2026-10 --confirmed
+  uv run providers/publisher/linkedin.py comment --platform linkedin \\
+      --text-file reply.txt --idempotency-key reply-1 --on-key launch-2026-10 \\
+      --parent-comment 'urn:li:comment:(urn:li:activity:123,456)' --dry-run
   uv run providers/publisher/linkedin.py resolve --idempotency-key launch-2026-10 \\
       --not-published --confirmed
 """
@@ -137,6 +188,18 @@ def log(message: str) -> None:
 def escape_little_text(text: str) -> str:
     """Escape every reserved character of the little text format with a backslash."""
     return "".join("\\" + ch if ch in LITTLE_RESERVED else ch for ch in text)
+
+
+def post_commentary(text: str) -> str:
+    """Post text in little text format: each #word becomes the documented HashtagTemplate
+    ({hashtag|\\#|word}); every other reserved character, @ included, is escaped."""
+    out, last = [], 0
+    for match in HASHTAG_RE.finditer(text):
+        out.append(escape_little_text(text[last:match.start()]))
+        out.append("{hashtag|\\#|" + escape_little_text(match.group(1)) + "}")
+        last = match.end()
+    out.append(escape_little_text(text[last:]))
+    return "".join(out)
 
 
 def parse_iso(value: str) -> datetime:
@@ -289,13 +352,18 @@ def entry_status(entry: dict) -> str:
     return entry.get("status") or ("published" if entry.get("post_urn") else "pending")
 
 
-def ledger_claim(key: str) -> dict | None:
-    """Record key as pending and return None, or return the entry that already holds it."""
+def entry_kind(entry: dict) -> str:
+    # Post entries carry no kind (the ledger format before comments); comment entries say "comment".
+    return entry.get("kind") or "post"
+
+
+def ledger_claim(key: str, extra: dict | None = None) -> dict | None:
+    """Record key as pending (with extra fields) and return None, or return the entry that already holds it."""
     with ledger_locked() as data:
         existing = data["entries"].get(key)
         if existing:
             return existing
-        data["entries"][key] = {"status": "pending", "started_at": now_iso()}
+        data["entries"][key] = {**(extra or {}), "status": "pending", "started_at": now_iso()}
         ledger_save(data)
     return None
 
@@ -311,10 +379,15 @@ def ledger_update(key: str, entry: dict | None) -> None:
 
 
 def pending_message(key: str, entry: dict) -> str:
+    if entry_kind(entry) == "comment":
+        where = f"the comments on {entry.get('post_urn') or 'the post'}"
+        flag = "--comment-urn <urn>"
+    else:
+        where, flag = "the member's recent posts", "--post-urn <urn>"
     return (
         f"idempotency key {key!r} has a pending attempt from {entry.get('started_at', 'an unknown time')} whose "
-        "outcome is unknown (a timeout or a crash); nothing was sent this time. Check the member's recent posts, "
-        f"then run linkedin.py resolve --idempotency-key {key} with --post-urn <urn> if it was published or "
+        f"outcome is unknown (a timeout or a crash); nothing was sent this time. Check {where}, "
+        f"then run linkedin.py resolve --idempotency-key {key} with {flag} if it was published or "
         "--not-published if it was not, and --confirmed"
     )
 
@@ -432,15 +505,25 @@ def post_url(urn: str) -> str:
     return f"https://www.linkedin.com/feed/update/{urn}/"
 
 
-def validate_publish_args(args) -> tuple[str, Path | None]:
+def check_platform(args) -> None:
     if args.platform != "linkedin":
         raise ProviderError(f"--platform {args.platform!r} is not served by this provider; use linkedin", EXIT_USAGE)
-    text_path = Path(args.text_file)
-    if not text_path.is_file():
-        raise ProviderError(f"--text-file not found: {text_path}", EXIT_USAGE)
-    text = text_path.read_text(encoding="utf-8").strip("\n")
+
+
+def read_text_file(path_arg: str, flag: str) -> str:
+    path = Path(path_arg)
+    if not path.is_file():
+        raise ProviderError(f"{flag} not found: {path}", EXIT_USAGE)
+    text = path.read_text(encoding="utf-8").strip("\n")
     if not text.strip():
-        raise ProviderError("--text-file is empty", EXIT_USAGE)
+        raise ProviderError(f"{flag} is empty", EXIT_USAGE)
+    return text
+
+
+def validate_publish_args(args) -> tuple[str, Path | None, str | None]:
+    check_platform(args)
+    text = read_text_file(args.text_file, "--text-file")
+    first_comment = read_text_file(args.first_comment_file, "--first-comment-file") if args.first_comment_file else None
     media = args.media or []
     if len(media) > 1:
         raise ProviderError("this provider publishes at most one image per post; pass one --media", EXIT_USAGE)
@@ -468,7 +551,17 @@ def validate_publish_args(args) -> tuple[str, Path | None]:
             "publish needs --idempotency-key <k>: one key per post, reused on every retry of that post",
             EXIT_USAGE,
         )
-    return text, image
+    return text, image, first_comment
+
+
+def token_fields(token: dict) -> dict:
+    return {"token_expires_at": token["expires_at"], "token_expires_in_days": days_until(token["expires_at"])}
+
+
+def warn_expiry(token: dict) -> None:
+    days = days_until(token["expires_at"])
+    if days is not None and days < EXPIRY_WARNING_DAYS:
+        log(f"warning: the LinkedIn token expires in {days} days; rerun auth.py")
 
 
 def result(urn: str, token: dict, key: str | None, replayed: bool) -> dict:
@@ -476,41 +569,41 @@ def result(urn: str, token: dict, key: str | None, replayed: bool) -> dict:
         "platform": "linkedin",
         "post_urn": urn,
         "post_url": post_url(urn),
-        "token_expires_at": token["expires_at"],
-        "token_expires_in_days": days_until(token["expires_at"]),
+        **token_fields(token),
         "idempotency_key": key,
         "replayed": replayed,
     }
 
 
-def cmd_publish(args) -> int:
-    text, image = validate_publish_args(args)
-    if not args.dry_run and not args.confirmed:
-        raise ProviderError(
-            "refusing to publish without --confirmed; the calling skill must pass its confirmation gate "
-            "first (use --dry-run to preview)",
-            EXIT_USAGE,
-        )
-    base, test_mode = api_base()
-    commentary = escape_little_text(text)
-    key = args.idempotency_key
+def member_urn_reader(base: str, token: dict):
+    """Return a function that reads the member URN from /v2/userinfo once, when first needed."""
+    cache: dict = {}
 
-    if args.dry_run:
-        return dry_run(base, commentary, image, key)
+    def member_urn() -> str:
+        if "urn" not in cache:
+            cache["urn"] = f"urn:li:person:{userinfo(base, token['access_token'])['sub']}"
+        return cache["urn"]
 
-    token = load_token(test_mode)
+    return member_urn
+
+
+def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary: str,
+                 image: Path | None, key: str) -> tuple[str, bool]:
+    """Publish the post at most once per key; return (post URN, replayed)."""
     existing = ledger_claim(key)
     if existing:
+        if entry_kind(existing) != "post":
+            raise ProviderError(f"idempotency key {key!r} belongs to a comment, not a post; use another key",
+                                EXIT_USAGE)
         if entry_status(existing) == "published":
             log(f"idempotency key {key!r} already published; returning the existing post")
-            print(json.dumps(result(existing["post_urn"], token, key, True), indent=2))
-            return EXIT_OK
+            return existing["post_urn"], True
         raise ProviderError(pending_message(key, existing), EXIT_SERVICE)
 
     sent = False  # True once the Posts API request may have reached LinkedIn
     try:
         access = token["access_token"]
-        author = f"urn:li:person:{userinfo(base, access)['sub']}"
+        author = member_urn()
 
         image_urn = None
         if image:
@@ -559,21 +652,227 @@ def cmd_publish(args) -> int:
         ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": error})
         raise ProviderError(error + "; the key stays pending until resolve settles it")
     ledger_update(key, {"status": "published", "post_urn": urn, "created_at": now_iso()})
-    out = result(urn, token, key, False)
-    if out["token_expires_in_days"] is not None and out["token_expires_in_days"] < EXPIRY_WARNING_DAYS:
-        log(f"warning: the LinkedIn token expires in {out['token_expires_in_days']} days; rerun auth.py")
+    return urn, False
+
+
+def cmd_publish(args) -> int:
+    text, image, first_comment = validate_publish_args(args)
+    if not args.dry_run and not args.confirmed:
+        raise ProviderError(
+            "refusing to publish without --confirmed; the calling skill must pass its confirmation gate "
+            "first (use --dry-run to preview)",
+            EXIT_USAGE,
+        )
+    base, test_mode = api_base()
+    commentary = post_commentary(text)
+    key = args.idempotency_key
+
+    if args.dry_run:
+        return dry_run(base, commentary, image, key, first_comment)
+
+    token = load_token(test_mode)
+    member_urn = member_urn_reader(base, token)
+    urn, replayed = publish_post(base, test_mode, token, member_urn, commentary, image, key)
+    out = result(urn, token, key, replayed)
+    if first_comment is not None:
+        comment_key = key + FIRST_COMMENT_SUFFIX
+        try:
+            if not POST_URN_RE.fullmatch(urn):
+                raise ProviderError(f"the post URN {urn!r} has an unexpected shape; not commenting on it")
+            done = create_comment(base, token, member_urn, urn, None, first_comment, comment_key)
+        except ProviderError as exc:
+            # The post is out; only its first comment failed. Rerunning the same command replays the
+            # post (its key is published) and retries only the comment.
+            out["first_comment"] = None
+            out["first_comment_error"] = str(exc)
+            log(f"error: the post is published ({urn}) but its first comment failed: {exc}. "
+                "Rerun the same command: the post is not published again, only the comment is retried.")
+            print(json.dumps(out, indent=2))
+            return EXIT_SERVICE
+        out["first_comment"] = {
+            "comment_urn": done["comment_urn"],
+            "idempotency_key": comment_key,
+            "replayed": done["replayed"],
+        }
+    warn_expiry(token)
     print(json.dumps(out, indent=2))
     return EXIT_OK
+
+
+# --- comment -----------------------------------------------------------------
+
+
+def comment_body(actor: str, post_urn: str, text: str, parent: str | None) -> dict:
+    body = {"actor": actor, "object": post_urn, "message": {"text": text}}
+    if parent:
+        body["parentComment"] = parent
+    return body
+
+
+def comment_url(base: str, target: str) -> str:
+    # The target (a post URN, or the parent comment URN for a reply) is URL-encoded in the path.
+    return f"{base}/rest/socialActions/{urllib.parse.quote(target, safe='')}/comments"
+
+
+def comment_result(entry: dict, token: dict, key: str, replayed: bool) -> dict:
+    return {
+        "platform": "linkedin",
+        "comment_urn": entry.get("comment_urn"),
+        "post_urn": entry.get("post_urn"),
+        "parent_comment": entry.get("parent_comment"),
+        **token_fields(token),
+        "idempotency_key": key,
+        "replayed": replayed,
+    }
+
+
+def create_comment(base: str, token: dict, member_urn, post_urn: str, parent: str | None,
+                   text: str, key: str) -> dict:
+    """Post one comment at most once per key; return the comment result."""
+    claim = {"kind": "comment", "post_urn": post_urn, "parent_comment": parent}
+    existing = ledger_claim(key, claim)
+    if existing:
+        if entry_kind(existing) != "comment":
+            raise ProviderError(f"idempotency key {key!r} belongs to a post, not a comment; use another key",
+                                EXIT_USAGE)
+        if entry_status(existing) != "published":
+            raise ProviderError(pending_message(key, existing), EXIT_SERVICE)
+        if existing.get("post_urn") != post_urn or existing.get("parent_comment") != parent:
+            raise ProviderError(
+                f"idempotency key {key!r} already holds a comment on {existing.get('post_urn')} "
+                f"(parent {existing.get('parent_comment')}); one key per comment, use another key", EXIT_USAGE)
+        log(f"idempotency key {key!r} already published; returning the existing comment")
+        return comment_result(existing, token, key, True)
+
+    sent = False  # True once the comment request may have reached LinkedIn
+    try:
+        actor = member_urn()
+        sent = True
+        status, headers, raw = http(
+            "POST",
+            comment_url(base, parent or post_urn),
+            rest_headers(token["access_token"]),
+            json.dumps(comment_body(actor, post_urn, text, parent)).encode(),
+        )
+    except ProviderError as exc:
+        # A 4xx answer means LinkedIn refused the comment; anything else after sending is unknown.
+        refused = exc.status is not None and 400 <= exc.status < 500
+        if not sent or refused:
+            ledger_update(key, None)
+        else:
+            ledger_update(key, {**claim, "status": "pending", "started_at": now_iso(), "error": str(exc)})
+        if exc.status == 403:
+            raise ProviderError(f"{exc}; {COMMENT_SCOPE_HINT}", EXIT_SERVICE, 403) from None
+        if exc.status == 429:
+            raise ProviderError(f"{exc}; LinkedIn limits how many comments a member creates per minute: "
+                                "wait a minute and rerun the same command", EXIT_SERVICE, 429) from None
+        raise
+    except BaseException:
+        if not sent:
+            ledger_update(key, None)
+        raise
+    try:
+        data = json.loads(raw) if raw else {}
+    except ValueError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    comment_id = headers.get("x-restli-id") or data.get("id")
+    urn = data.get("commentUrn")
+    if not urn and comment_id and data.get("object"):
+        # The Comments API page: a comment's key is its object field and its id.
+        urn = f"urn:li:comment:({data['object']},{comment_id})"
+    if status not in (200, 201) or not (urn or comment_id):
+        error = f"unexpected Comments API response: status {status}, no comment id"
+        ledger_update(key, {**claim, "status": "pending", "started_at": now_iso(), "error": error})
+        raise ProviderError(error + "; the key stays pending until resolve settles it")
+    if not urn:
+        log(f"warning: LinkedIn returned comment id {comment_id} without a commentUrn")
+    entry = {**claim, "status": "published", "comment_urn": urn, "comment_id": str(comment_id or ""),
+             "created_at": now_iso()}
+    ledger_update(key, entry)
+    return comment_result(entry, token, key, False)
+
+
+def validate_comment_args(args) -> tuple[str, str | None, str | None]:
+    check_platform(args)
+    text = read_text_file(args.text_file, "--text-file")
+    if not (args.idempotency_key or "").strip():
+        raise ProviderError(
+            "comment needs --idempotency-key <k>: one key per comment, reused on every retry of that comment",
+            EXIT_USAGE,
+        )
+    if bool(args.on_key) == bool(args.post_urn):
+        raise ProviderError("comment needs exactly one of --on-key <post idempotency key> or --post-urn <urn>",
+                            EXIT_USAGE)
+    if args.post_urn and not POST_URN_RE.fullmatch(args.post_urn):
+        raise ProviderError("--post-urn must look like urn:li:share:<digits>, urn:li:ugcPost:<digits> or "
+                            "urn:li:activity:<digits>", EXIT_USAGE)
+    if args.parent_comment:
+        # A link copied from LinkedIn carries the short form urn:li:comment:(activity:N,N) (seen 2026-09-30);
+        # the API documents the full form, which is what is sent.
+        args.parent_comment = SHORT_COMMENT_URN_RE.sub(r"urn:li:comment:(urn:li:\1:\2,\3)", args.parent_comment)
+    if args.parent_comment and not COMMENT_URN_RE.fullmatch(args.parent_comment):
+        raise ProviderError("--parent-comment must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
+                            EXIT_USAGE)
+    return text, args.post_urn, args.parent_comment
+
+
+def post_urn_of_key(on_key: str, required: bool) -> str | None:
+    """The URN of the published post recorded under on_key; None (dry run only) when it is not published yet."""
+    entry = ledger_read()["entries"].get(on_key)
+    if entry and entry_kind(entry) == "post" and entry_status(entry) == "published" and entry.get("post_urn"):
+        urn = entry["post_urn"]
+        if not POST_URN_RE.fullmatch(urn):
+            raise ProviderError(f"the ledger holds {urn!r} for --on-key {on_key!r}, which is not a post URN this "
+                                "provider accepts; pass --post-urn instead", EXIT_USAGE)
+        return urn
+    if not required:
+        return None
+    state = "a comment" if entry and entry_kind(entry) == "comment" else (entry_status(entry) if entry else "absent")
+    raise ProviderError(f"--on-key {on_key!r} is {state} in the ledger, not a published post; publish the post "
+                        "first (a comment needs its URN) or pass --post-urn", EXIT_USAGE)
+
+
+def cmd_comment(args) -> int:
+    text, post_urn, parent = validate_comment_args(args)
+    if not args.dry_run and not args.confirmed:
+        raise ProviderError(
+            "refusing to comment without --confirmed; the calling skill must pass its confirmation gate "
+            "first (use --dry-run to preview)",
+            EXIT_USAGE,
+        )
+    base, test_mode = api_base()
+    key = args.idempotency_key
+    if not post_urn:
+        post_urn = post_urn_of_key(args.on_key, required=not args.dry_run)
+
+    if args.dry_run:
+        return comment_dry_run(base, post_urn, parent, text, key, args.on_key)
+
+    token = load_token(test_mode)
+    out = create_comment(base, token, member_urn_reader(base, token), post_urn, parent, text, key)
+    warn_expiry(token)
+    print(json.dumps(out, indent=2))
+    return EXIT_OK
+
+
+# --- resolve -----------------------------------------------------------------
 
 
 def cmd_resolve(args) -> int:
     key = (args.idempotency_key or "").strip()
     if not key:
         raise ProviderError("resolve needs --idempotency-key <k>", EXIT_USAGE)
-    if bool(args.post_urn) == bool(args.not_published):
-        raise ProviderError("resolve needs exactly one of --post-urn <urn> or --not-published", EXIT_USAGE)
+    if sum(bool(x) for x in (args.post_urn, args.comment_urn, args.not_published)) != 1:
+        raise ProviderError("resolve needs exactly one of --post-urn <urn> (a post), --comment-urn <urn> "
+                            "(a comment) or --not-published", EXIT_USAGE)
     if args.post_urn and not args.post_urn.startswith("urn:li:"):
         raise ProviderError("--post-urn must be a LinkedIn URN such as urn:li:share:<id>", EXIT_USAGE)
+    match = COMMENT_URN_RE.fullmatch(args.comment_urn) if args.comment_urn else None
+    if args.comment_urn and not match:
+        raise ProviderError("--comment-urn must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
+                            EXIT_USAGE)
     if not args.confirmed:
         raise ProviderError("refusing to resolve without --confirmed; the user decides what happened", EXIT_USAGE)
     with ledger_locked() as data:
@@ -581,25 +880,65 @@ def cmd_resolve(args) -> int:
         if not entry or entry_status(entry) != "pending":
             state = entry_status(entry) if entry else "absent"
             raise ProviderError(f"idempotency key {key!r} is {state}, not pending; nothing to resolve", EXIT_USAGE)
+        kind = entry_kind(entry)
+        if kind == "comment" and args.post_urn:
+            raise ProviderError(f"idempotency key {key!r} is a comment; use --comment-urn <urn>", EXIT_USAGE)
+        if kind == "post" and args.comment_urn:
+            raise ProviderError(f"idempotency key {key!r} is a post; use --post-urn <urn>", EXIT_USAGE)
         if args.post_urn:
             data["entries"][key] = {"status": "published", "post_urn": args.post_urn,
+                                    "created_at": now_iso(), "resolved": True}
+        elif args.comment_urn:
+            data["entries"][key] = {"kind": "comment", "post_urn": entry.get("post_urn"),
+                                    "parent_comment": entry.get("parent_comment"), "status": "published",
+                                    "comment_urn": args.comment_urn, "comment_id": match.group(2),
                                     "created_at": now_iso(), "resolved": True}
         else:
             del data["entries"][key]
         ledger_save(data)
-    out = {"idempotency_key": key, "status": "published" if args.post_urn else "released"}
+    published = bool(args.post_urn or args.comment_urn)
+    out = {"idempotency_key": key, "status": "published" if published else "released"}
     if args.post_urn:
         out["post_urn"], out["post_url"] = args.post_urn, post_url(args.post_urn)
+    if args.comment_urn:
+        out["comment_urn"] = args.comment_urn
     print(json.dumps(out, indent=2))
     return EXIT_OK
 
 
-def dry_run(base: str, commentary: str, image: Path | None, key: str) -> int:
+# --- dry runs ------------------------------------------------------------------
+
+
+def redacted_headers() -> dict:
+    shown = rest_headers(None)
+    shown["Authorization"] = "Bearer <redacted>"
+    return shown
+
+
+def comment_request(base: str, post_urn: str | None, parent: str | None, text: str) -> dict:
+    target = parent or post_urn
+    return {
+        "method": "POST",
+        "url": comment_url(base, target) if target else f"{base}/rest/socialActions/<URL-encoded post URN>/comments",
+        "headers": redacted_headers(),
+        "body": comment_body(AUTHOR_PLACEHOLDER, post_urn or POST_URN_PLACEHOLDER, text, parent),
+    }
+
+
+def existing_fields(key: str, prefix: str = "") -> dict:
+    existing = ledger_read()["entries"].get(key)
+    urn_field = "comment_urn" if existing and entry_kind(existing) == "comment" else "post_urn"
+    return {
+        f"{prefix}existing_status": entry_status(existing) if existing else None,
+        f"{prefix}existing_{urn_field}": existing.get(urn_field) if existing else None,
+    }
+
+
+def dry_run(base: str, commentary: str, image: Path | None, key: str, first_comment: str | None = None) -> int:
     # A dry run does nothing: no credential is read and no request is sent, so the author
     # URN, which only /v2/userinfo knows, is shown as a placeholder.
     author = AUTHOR_PLACEHOLDER
-    shown = rest_headers(None)
-    shown["Authorization"] = "Bearer <redacted>"
+    shown = redacted_headers()
     requests = []
     if image:
         requests.append({
@@ -621,9 +960,24 @@ def dry_run(base: str, commentary: str, image: Path | None, key: str) -> int:
         "body": post_body(author, commentary, IMAGE_URN_PLACEHOLDER if image else None),
     })
     out = {"dry_run": True, "platform": "linkedin", "requests": requests, "idempotency_key": key}
-    existing = ledger_read()["entries"].get(key)
-    out["existing_status"] = entry_status(existing) if existing else None
-    out["existing_post_urn"] = existing.get("post_urn") if existing else None
+    out.update(existing_fields(key))
+    if first_comment is not None:
+        # The post URN is known only once the post exists; a replayed post shows its real URN.
+        posted = out.get("existing_post_urn") if out["existing_status"] == "published" else None
+        requests.append(comment_request(base, posted, None, first_comment))
+        out["first_comment_idempotency_key"] = key + FIRST_COMMENT_SUFFIX
+        out.update(existing_fields(key + FIRST_COMMENT_SUFFIX, "first_comment_"))
+    print(json.dumps(out, indent=2, ensure_ascii=False))
+    return EXIT_OK
+
+
+def comment_dry_run(base: str, post_urn: str | None, parent: str | None, text: str, key: str,
+                    on_key: str | None) -> int:
+    # Reads no credential and sends nothing; the actor is a placeholder. With --on-key, a post that
+    # is not published yet is shown as a placeholder (the confirmed call refuses it).
+    out = {"dry_run": True, "platform": "linkedin", "requests": [comment_request(base, post_urn, parent, text)],
+           "idempotency_key": key, "post_urn": post_urn, "on_key": on_key, "parent_comment": parent}
+    out.update(existing_fields(key))
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return EXIT_OK
 
@@ -663,22 +1017,28 @@ def cmd_check() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="linkedin.py",
-        description="Publisher provider for LinkedIn: publishes a post as the authenticated member "
-        "through the versioned Posts API.",
+        description="Publisher provider for LinkedIn: publishes a post, and comments on posts, as the "
+        "authenticated member through the versioned Posts and Comments APIs.",
         epilog=HELP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("verb", nargs="?", choices=["publish", "resolve"], help="the action to run")
+    parser.add_argument("verb", nargs="?", choices=["publish", "comment", "resolve"], help="the action to run")
     parser.add_argument("--check", action="store_true", help="verify the token and print the member; no side effects")
     parser.add_argument("--platform", help="must be linkedin")
-    parser.add_argument("--text-file", help="UTF-8 file with the post text; reserved characters are escaped")
+    parser.add_argument("--text-file", help="UTF-8 file with the post or comment text")
+    parser.add_argument("--first-comment-file", help="with publish: UTF-8 file posted as the post's first comment")
     parser.add_argument("--media", action="append", help="one JPG, PNG or GIF image to attach")
     parser.add_argument("--at", help="ISO-8601 time; a future time is refused (use the scheduler class)")
     parser.add_argument("--idempotency-key", help="required: publish at most once per key (recorded in the local ledger)")
-    parser.add_argument("--post-urn", help="with resolve: the pending attempt was published as this URN")
+    parser.add_argument("--post-urn", help="with comment: the post to comment on; with resolve: the pending "
+                        "post was published as this URN")
+    parser.add_argument("--on-key", help="with comment: the publish idempotency key of the post to comment on")
+    parser.add_argument("--parent-comment", help="with comment: reply to this comment URN")
+    parser.add_argument("--comment-urn", help="with resolve: the pending comment was published as this URN")
     parser.add_argument("--not-published", action="store_true", help="with resolve: the pending attempt was not published")
     parser.add_argument("--dry-run", action="store_true", help="print the exact request bodies and do nothing else")
-    parser.add_argument("--confirmed", action="store_true", help="required to publish; set by the calling skill's gate")
+    parser.add_argument("--confirmed", action="store_true", help="required to publish or comment; set by the calling "
+                        "skill's gate")
     return parser
 
 
@@ -693,9 +1053,13 @@ def main(argv: list[str] | None = None) -> int:
             if not args.platform or not args.text_file:
                 raise ProviderError("publish needs --platform linkedin and --text-file <f>", EXIT_USAGE)
             return cmd_publish(args)
+        if args.verb == "comment":
+            if not args.platform or not args.text_file:
+                raise ProviderError("comment needs --platform linkedin and --text-file <f>", EXIT_USAGE)
+            return cmd_comment(args)
         if args.verb == "resolve":
             return cmd_resolve(args)
-        raise ProviderError("give a verb (publish, resolve) or --check; see --help", EXIT_USAGE)
+        raise ProviderError("give a verb (publish, comment, resolve) or --check; see --help", EXIT_USAGE)
     except ProviderError as exc:
         log(f"error: {exc}")
         return exc.code
