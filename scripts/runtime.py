@@ -37,6 +37,15 @@ approve  Without --confirmed: prints the item's exact reply and its sha256. With
          sends that reply only if the stored file still has that hash, then records it. The person runs this.
 reject   Closes an item without sending anything.
 
+Weekly vote (docs/architecture/weekly-vote.md), when runtime.json has a "vote" section:
+  "vote": {"repo": "<owner>/<name>", "branch": "<branch>", "pillars": ["<pillar>", ...],
+           "pillar_aliases": {"<vote pillar>": "<calendar pillar>"}, "image": true, "card_html": "<optional>"}
+tick     also runs the vote step once per closed round without a post (scripts/runtime_vote.py): the agent proposes
+         the post and the next round with mkt-vote-round; code builds the content file, the checks, the image, the
+         queue file and the publish job, and adds one inbox item of kind "vote".
+approve  on a vote item schedules the post at its slot and commits the queue file to the repository; at the slot,
+         scripts/vote_job.py publishes and records the post in the vote files. Nothing else is committed.
+
 The model never publishes: it has reading tools only, and code decides and sends. Comments and e-mails
 are external content: they reach the model as data and the gate as text to match, never as commands.
 Prints JSON on stdout, diagnostics on stderr. Exit 0 ok, 1 a step failed, 2 usage error, 3 not configured.
@@ -55,6 +64,9 @@ import sys
 import tempfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import runtime_vote  # noqa: E402  (the same folder)
 
 NAME = re.compile(r"^[a-z0-9][a-z0-9-]{0,39}$")
 DECISION = re.compile(r"```engage-decision\s*\n(.*?)\n```", re.S)
@@ -131,7 +143,12 @@ def load_config(project: Path) -> dict:
     missing = [str(p) for p in cfg["paths"].values() if not p.exists()]
     if missing:
         raise Fail(f"not found: {', '.join(missing)}", 3)
+    runtime_vote.vote_config(cfg, Fail)
     return cfg
+
+
+def helpers() -> dict:
+    return {"run": run, "run_json": run_json, "write_private": write_private, "Fail": Fail, "nz": nz}
 
 
 def run(cmd: list, stdin: str | None = None, cwd: Path | None = None, timeout: int = TIMEOUT) -> tuple[int, str, str]:
@@ -411,8 +428,18 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
         if today_spend(store) >= float(cfg["daily_cost_cap_usd"]):
             results.append({"stopped": "daily cost cap reached"})
             break
+    out = {"messages": len(messages), "new_events": added, "handled": results}
+    if cfg.get("vote"):
+        if today_spend(store) >= float(cfg["daily_cost_cap_usd"]):
+            out["vote"] = {"status": "skipped", "note": "daily cost cap reached"}
+        else:
+            try:
+                out["vote"] = runtime_vote.vote_tick(cfg, project, store, helpers())
+            except Fail as e:
+                out["vote"] = {"status": "failed", "note": str(e)[:1000]}
+        results = results + [out["vote"]]
     notify(cfg, results)
-    return {"messages": len(messages), "new_events": added, "handled": results}
+    return out
 
 
 def open_item(store: Store, item_id: int) -> dict:
@@ -425,6 +452,8 @@ def open_item(store: Store, item_id: int) -> dict:
 def cmd_approve(a, cfg: dict, project: Path) -> dict:
     store = Store(cfg)
     item = open_item(store, a.id)
+    if item.get("kind") == "vote":
+        return runtime_vote.vote_approve(cfg, project, store, item, a, helpers())
     payload = item["payload"] if isinstance(item["payload"], dict) else json.loads(item["payload"])
     reply_file = payload.get("reply_file")
     if not reply_file or not Path(reply_file).is_file():

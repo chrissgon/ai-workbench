@@ -1,6 +1,6 @@
 # Weekly vote to published post (backlog PB15)
 
-- Status: design, 2026-09-30; decisions by the user on 2026-09-30 (listed below)
+- Status: built, 2026-09-30 (`scripts/runtime_vote.py`, `scripts/vote_job.py`, tests in `scripts/tests/test_runtime_vote.py`); not yet configured in a project; decisions by the user on 2026-09-30 (listed below)
 - First real case: the profile repository `chrissgon/chrissgon` (public, default branch `master`, no ruleset), built in the personal-brand project
 
 ## What exists (read on 2026-09-30, read only)
