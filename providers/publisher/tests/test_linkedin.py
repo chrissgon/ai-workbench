@@ -32,6 +32,12 @@ POST_URN = "urn:li:share:7000000000000000001"
 IMAGE_URN = "urn:li:image:C4E10AQFoyyAjHPMQuQ"
 RESERVED_TEXT = "a\\b|c{d}e@f[g]h(i)j<k>l#m*n_o~p"
 RESERVED_ESCAPED = "a\\\\b\\|c\\{d\\}e\\@f\\[g\\]h\\(i\\)j\\<k\\>l\\#m\\*n\\_o\\~p"
+THREAD_URN = "urn:li:activity:7000000000000000009"
+COMMENT_ID = "7100000000000000001"
+COMMENT_URN = f"urn:li:comment:({THREAD_URN},{COMMENT_ID})"
+PARENT_URN = f"urn:li:comment:({THREAD_URN},7100000000000000000)"
+POST_COMMENTS_PATH = "/v2/socialActions/urn%3Ali%3Ashare%3A7000000000000000001/comments"
+COMMENT_TEXT = "Link: https://example.com/a_(b) #tag @name"
 
 
 def load_module():
@@ -50,6 +56,9 @@ class FakeLinkedIn:
         self.post_delay = 0.0
         self.userinfo_status = 200
         self.redirect_userinfo = False
+        self.comment_status = 201
+        self.comment_delay = 0.0
+        self.comment_message = "Comment create throttled: creation rate limit exceeded for member"
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -99,6 +108,15 @@ class FakeLinkedIn:
                     if fake.post_status != 201:
                         return self._send(fake.post_status, {"message": "MISSING_FIELD", "status": fake.post_status})
                     return self._send(201, None, {"x-restli-id": POST_URN})
+                if (self.path.startswith("/v2/socialActions/") or self.path.startswith("/rest/socialActions/")) and self.path.endswith("/comments"):
+                    if fake.comment_delay:
+                        time.sleep(fake.comment_delay)
+                    if fake.comment_status != 201:
+                        return self._send(fake.comment_status,
+                                          {"message": fake.comment_message, "status": fake.comment_status})
+                    return self._send(201, {"commentUrn": COMMENT_URN, "id": COMMENT_ID, "object": THREAD_URN,
+                                            "actor": AUTHOR, "message": {"attributes": [], "text": "x"}},
+                                      {"x-restli-id": COMMENT_ID})
                 self._send(404, {"message": "not found"})
 
             def do_PUT(self):  # noqa: N802
@@ -184,6 +202,25 @@ def ledger(env):
 
 def post_count(fake):
     return len([p for p in fake.paths() if p == ("POST", "/rest/posts")])
+
+
+def comment_count(fake):
+    return len([p for m, p in fake.paths() if m == "POST" and (p.startswith("/v2/socialActions/") or p.startswith("/rest/socialActions/"))])
+
+
+@pytest.fixture()
+def comment_file(tmp_path):
+    path = tmp_path / "comment.txt"
+    path.write_text(COMMENT_TEXT + "\n", encoding="utf-8")
+    return path
+
+
+def comment_args(comment_file, *extra):
+    """comment arguments; a fresh idempotency key is added unless the test passes one."""
+    args = ["comment", "--platform", "linkedin", "--text-file", str(comment_file), *extra]
+    if "--idempotency-key" not in extra:
+        args += ["--idempotency-key", f"c-{uuid.uuid4().hex}"]
+    return args
 
 
 def assert_rest_headers(request):
@@ -570,3 +607,365 @@ def test_a_scheduled_copy_needs_the_resolver_in_its_snapshot(env, fake, tmp_path
     proc = run(alone, ["--check"], env)
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["ready"] is True
+
+
+# --- hashtags in post commentary ---------------------------------------------------
+
+
+def test_hashtags_use_the_documented_template():
+    module = load_module()
+    render = module.post_commentary
+    assert render("Ship it #PerfectUI #design_systems now") == \
+        "Ship it {hashtag|\\#|PerfectUI} {hashtag|\\#|design\\_systems} now"
+    assert render("(#tag). #end") == "\\({hashtag|\\#|tag}\\). {hashtag|\\#|end}"
+    assert render("#tag\nnext") == "{hashtag|\\#|tag}\nnext"
+    # Not hashtags: inside a word, digits only, non-ASCII letters, a bare sign. They stay escaped.
+    for text in ("a#b", "#1 priority", "#café", "# alone", "C#"):
+        assert render(text) == module.escape_little_text(text), text
+    # A mention stays plain text.
+    assert render("@name") == "\\@name"
+    # Everything else is escaped exactly as before.
+    assert render(RESERVED_TEXT) == RESERVED_ESCAPED
+
+
+def test_publish_sends_hashtag_template(env, fake, tmp_path):
+    path = tmp_path / "tags.txt"
+    path.write_text("Launch #PerfectUI @team", encoding="utf-8")
+    proc = run(SCRIPT, publish_args(path, "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(fake.requests[1]["body"])["commentary"] == "Launch {hashtag|\\#|PerfectUI} \\@team"
+
+
+# --- comment ---------------------------------------------------------------------
+
+
+def test_help_documents_comment(env):
+    proc = run(SCRIPT, ["--help"], env)
+    for word in ("comment", "--first-comment-file", "--on-key", "--parent-comment", "--comment-urn",
+                 ".first-comment"):
+        assert word in proc.stdout
+
+
+def test_comment_sends_exact_request(env, fake, comment_file):
+    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1",
+                                    "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    assert fake.paths() == [("GET", "/v2/userinfo"), ("POST", POST_COMMENTS_PATH)]
+    req = fake.requests[1]
+    h = {k.lower(): v for k, v in req["headers"].items()}
+    assert h["authorization"] == f"Bearer {FAKE_TOKEN}" and "linkedin-version" not in h  # /v2 is unversioned
+    # The comment text is sent as written: comments are not little text.
+    assert json.loads(req["body"]) == {"actor": AUTHOR, "object": POST_URN, "message": {"text": COMMENT_TEXT}}
+    out = json.loads(proc.stdout)
+    assert out["comment_urn"] == COMMENT_URN
+    assert out["post_urn"] == POST_URN
+    assert out["parent_comment"] is None
+    assert out["idempotency_key"] == "c1"
+    assert out["replayed"] is False
+    assert out["token_expires_in_days"] == 45
+    assert ledger(env)["c1"]["status"] == "published"
+    assert ledger(env)["c1"]["comment_urn"] == COMMENT_URN
+
+
+def test_reply_targets_the_encoded_parent_comment(env, fake, comment_file):
+    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--parent-comment", PARENT_URN,
+                                    "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    req = fake.requests[1]
+    assert req["path"] == ("/v2/socialActions/urn%3Ali%3Acomment%3A%28urn%3Ali%3Aactivity%3A"
+                           "7000000000000000009%2C7100000000000000000%29/comments")
+    assert json.loads(req["body"]) == {"actor": AUTHOR, "object": POST_URN, "message": {"text": COMMENT_TEXT},
+                                       "parentComment": PARENT_URN}
+    assert json.loads(proc.stdout)["parent_comment"] == PARENT_URN
+
+
+def test_comment_replays_its_key(env, fake, comment_file):
+    args = comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1", "--confirmed")
+    assert run(SCRIPT, args, env).returncode == 0
+    again = run(SCRIPT, args, env)
+    assert again.returncode == 0, again.stderr
+    assert json.loads(again.stdout)["replayed"] is True
+    assert json.loads(again.stdout)["comment_urn"] == COMMENT_URN
+    assert comment_count(fake) == 1
+    # The same key on another post is a mistake, not a replay.
+    other = comment_args(comment_file, "--post-urn", "urn:li:share:1", "--idempotency-key", "c1", "--confirmed")
+    assert run(SCRIPT, other, env).returncode == 2
+    # A post key cannot be reused for a comment, nor a comment key for a post.
+    run(SCRIPT, publish_args(comment_file, "--idempotency-key", "p1", "--confirmed"), env)
+    assert run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "p1",
+                                    "--confirmed"), env).returncode == 2
+    assert run(SCRIPT, publish_args(comment_file, "--idempotency-key", "c1", "--confirmed"), env).returncode == 2
+    assert comment_count(fake) == 1 and post_count(fake) == 1
+
+
+def test_comment_on_key_uses_the_published_post(env, fake, text_file, comment_file):
+    assert run(SCRIPT, publish_args(text_file, "--idempotency-key", "p1", "--confirmed"), env).returncode == 0
+    proc = run(SCRIPT, comment_args(comment_file, "--on-key", "p1", "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    assert fake.requests[-1]["path"] == POST_COMMENTS_PATH
+    assert json.loads(fake.requests[-1]["body"])["object"] == POST_URN
+    assert json.loads(proc.stdout)["post_urn"] == POST_URN
+
+
+def test_comment_on_key_refuses_an_unpublished_post(env, fake, text_file, comment_file):
+    proc = run(SCRIPT, comment_args(comment_file, "--on-key", "never-published", "--confirmed"), env)
+    assert proc.returncode == 2
+    assert "not a published post" in proc.stderr
+    # A pending post is refused too.
+    fake.post_delay = 2.0
+    env["LINKEDIN_HTTP_TIMEOUT"] = "0.5"
+    assert run(SCRIPT, publish_args(text_file, "--idempotency-key", "p1", "--confirmed"), env).returncode == 1
+    fake.post_delay = 0.0
+    proc = run(SCRIPT, comment_args(comment_file, "--on-key", "p1", "--confirmed"), env)
+    assert proc.returncode == 2
+    assert "pending" in proc.stderr
+    assert comment_count(fake) == 0
+
+
+def test_comment_refuses_invalid_urns(env, fake, comment_file):
+    bad = [
+        ["--post-urn", "urn:li:share:123/../../v2/me"],
+        ["--post-urn", "urn:li:person:123"],
+        ["--post-urn", "urn:li:share:12a"],
+        ["--post-urn", POST_URN, "--parent-comment", "urn:li:comment:(urn:li:activity:1,2)/x"],
+        ["--post-urn", POST_URN, "--parent-comment", "urn:li:comment:(urn:li:person:1,2)"],
+        ["--post-urn", POST_URN, "--on-key", "p1"],
+        [],
+    ]
+    for extra in bad:
+        proc = run(SCRIPT, comment_args(comment_file, *extra, "--confirmed"), env)
+        assert proc.returncode == 2, extra
+    assert fake.requests == []
+
+
+def test_comment_refuses_empty_text_and_missing_key(env, fake, tmp_path, comment_file):
+    empty = tmp_path / "empty.txt"
+    empty.write_text("\n  \n", encoding="utf-8")
+    assert run(SCRIPT, comment_args(empty, "--post-urn", POST_URN, "--confirmed"), env).returncode == 2
+    args = ["comment", "--platform", "linkedin", "--text-file", str(comment_file), "--post-urn", POST_URN,
+            "--confirmed"]
+    proc = run(SCRIPT, args, env)
+    assert proc.returncode == 2 and "--idempotency-key" in proc.stderr
+    assert fake.requests == []
+
+
+def test_comment_refuses_without_confirmed(env, fake, comment_file):
+    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN), env)
+    assert proc.returncode == 2
+    assert "--confirmed" in proc.stderr
+    assert fake.requests == [] and proc.stdout == ""
+
+
+def test_comment_dry_run_reads_no_token(env, fake, comment_file):
+    del env["LINKEDIN_ACCESS_TOKEN"]
+    env["LINKEDIN_TOKEN_EXPIRES_AT"] = "not a date"  # reading the token would report this
+    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--parent-comment", PARENT_URN,
+                                    "--dry-run"), env)
+    assert proc.returncode == 0, proc.stderr
+    assert "token" not in proc.stderr.lower()
+    out = json.loads(proc.stdout)
+    assert out["dry_run"] is True
+    (req,) = out["requests"]
+    assert req["url"].endswith("/v2/socialActions/urn%3Ali%3Acomment%3A%28urn%3Ali%3Aactivity%3A"
+                               "7000000000000000009%2C7100000000000000000%29/comments")
+    assert req["headers"]["Authorization"] == "Bearer <redacted>"
+    body = dict(req["body"])
+    assert body.pop("actor").startswith("urn:li:person:<")
+    assert body == {"object": POST_URN, "message": {"text": COMMENT_TEXT}, "parentComment": PARENT_URN}
+    # With --on-key, a post not published yet is a placeholder in the dry run.
+    proc = run(SCRIPT, comment_args(comment_file, "--on-key", "later", "--dry-run"), env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["requests"][0]["body"]["object"].startswith("<post URN")
+    assert fake.requests == []
+
+
+def test_comment_timeout_stays_pending_until_resolve(env, fake, comment_file):
+    fake.comment_delay = 2.0
+    env["LINKEDIN_HTTP_TIMEOUT"] = "0.5"
+    args = comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1", "--confirmed")
+    first = run(SCRIPT, args, env)
+    assert first.returncode == 1 and "timed out" in first.stderr
+    assert ledger(env)["c1"]["status"] == "pending"
+    assert ledger(env)["c1"]["kind"] == "comment"
+    fake.comment_delay = 0.0
+    second = run(SCRIPT, args, env)
+    assert second.returncode == 1
+    assert "pending" in second.stderr and "--comment-urn" in second.stderr
+    assert comment_count(fake) == 1
+    resolve = ["resolve", "--idempotency-key", "c1", "--confirmed"]
+    assert run(SCRIPT, resolve + ["--post-urn", POST_URN], env).returncode == 2  # a comment key
+    assert run(SCRIPT, resolve + ["--comment-urn", "urn:li:comment:(bad)"], env).returncode == 2
+    done = run(SCRIPT, resolve + ["--comment-urn", COMMENT_URN], env)
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == {"idempotency_key": "c1", "status": "published", "comment_urn": COMMENT_URN}
+    replay = run(SCRIPT, args, env)
+    assert replay.returncode == 0, replay.stderr
+    assert json.loads(replay.stdout)["replayed"] is True
+    assert json.loads(replay.stdout)["comment_urn"] == COMMENT_URN
+    assert comment_count(fake) == 1
+
+
+def test_resolve_refuses_comment_urn_for_a_post_key(env, fake, text_file):
+    fake.post_delay = 2.0
+    env["LINKEDIN_HTTP_TIMEOUT"] = "0.5"
+    assert run(SCRIPT, publish_args(text_file, "--idempotency-key", "p1", "--confirmed"), env).returncode == 1
+    proc = run(SCRIPT, ["resolve", "--idempotency-key", "p1", "--comment-urn", COMMENT_URN, "--confirmed"], env)
+    assert proc.returncode == 2 and "--post-urn" in proc.stderr
+    both = ["resolve", "--idempotency-key", "p1", "--post-urn", POST_URN, "--comment-urn", COMMENT_URN,
+            "--confirmed"]
+    assert run(SCRIPT, both, env).returncode == 2
+    assert ledger(env)["p1"]["status"] == "pending"
+
+
+def test_comment_403_names_the_scope(env, fake, comment_file):
+    fake.comment_status = 403
+    fake.comment_message = "Not enough permissions to access: partnerApiSocialActions.CREATE"
+    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1",
+                                    "--confirmed"), env)
+    assert proc.returncode == 1
+    assert "403" in proc.stderr and "w_member_social" in proc.stderr
+    assert "c1" not in ledger(env)  # LinkedIn refused it: the key is free again
+
+
+def test_comment_429_is_a_service_error(env, fake, comment_file):
+    fake.comment_status = 429
+    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1",
+                                    "--confirmed"), env)
+    assert proc.returncode == 1
+    assert "429" in proc.stderr and "throttled" in proc.stderr and "minute" in proc.stderr
+    assert "c1" not in ledger(env)
+    fake.comment_status = 201
+    retry = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1",
+                                     "--confirmed"), env)
+    assert retry.returncode == 0, retry.stderr
+
+
+# --- publish with a first comment ------------------------------------------------------
+
+
+def test_publish_with_first_comment_in_one_command(env, fake, text_file, comment_file):
+    args = publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
+                        "--confirmed")
+    proc = run(SCRIPT, args, env)
+    assert proc.returncode == 0, proc.stderr
+    assert fake.paths() == [("GET", "/v2/userinfo"), ("POST", "/rest/posts"), ("POST", POST_COMMENTS_PATH)]
+    assert json.loads(fake.requests[1]["body"]) == expected_post()
+    assert json.loads(fake.requests[2]["body"]) == {"actor": AUTHOR, "object": POST_URN,
+                                                    "message": {"text": COMMENT_TEXT}}
+    out = json.loads(proc.stdout)
+    assert out["post_urn"] == POST_URN and out["replayed"] is False
+    assert out["first_comment"] == {"comment_urn": COMMENT_URN, "idempotency_key": "p1.first-comment",
+                                    "replayed": False}
+    entries = ledger(env)
+    assert entries["p1"]["status"] == "published"
+    assert entries["p1.first-comment"]["status"] == "published"
+    # Running it again sends nothing: both are replayed.
+    again = run(SCRIPT, args, env)
+    assert again.returncode == 0, again.stderr
+    out = json.loads(again.stdout)
+    assert out["replayed"] is True and out["first_comment"]["replayed"] is True
+    assert post_count(fake) == 1 and comment_count(fake) == 1
+
+
+def test_first_comment_failure_then_rerun_posts_only_the_comment(env, fake, text_file, comment_file):
+    fake.comment_status = 429
+    args = publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
+                        "--confirmed")
+    first = run(SCRIPT, args, env)
+    assert first.returncode == 1
+    out = json.loads(first.stdout)
+    assert out["post_urn"] == POST_URN
+    assert out["first_comment"] is None
+    assert "429" in out["first_comment_error"]
+    assert "published" in first.stderr and "Rerun the same command" in first.stderr
+    fake.comment_status = 201
+    second = run(SCRIPT, args, env)
+    assert second.returncode == 0, second.stderr
+    out = json.loads(second.stdout)
+    assert out["replayed"] is True
+    assert out["first_comment"]["comment_urn"] == COMMENT_URN and out["first_comment"]["replayed"] is False
+    assert post_count(fake) == 1
+    assert comment_count(fake) == 2  # the refused one and the one that went out
+
+
+def test_first_comment_unknown_outcome_blocks_only_the_comment(env, fake, text_file, comment_file):
+    fake.comment_status = 500
+    args = publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
+                        "--confirmed")
+    assert run(SCRIPT, args, env).returncode == 1
+    assert ledger(env)["p1.first-comment"]["status"] == "pending"
+    fake.comment_status = 201
+    again = run(SCRIPT, args, env)
+    assert again.returncode == 1
+    assert "pending" in json.loads(again.stdout)["first_comment_error"]
+    assert post_count(fake) == 1 and comment_count(fake) == 1
+
+
+def test_publish_dry_run_shows_the_first_comment(env, fake, text_file, comment_file):
+    proc = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file),
+                                    "--idempotency-key", "p1", "--dry-run"), env)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    post, comment = out["requests"]
+    assert post["url"].endswith("/rest/posts")
+    assert comment["method"] == "POST" and "/v2/socialActions/" in comment["url"]
+    assert comment["body"]["object"] == "<post URN returned by the Posts API>"
+    assert comment["body"]["message"] == {"text": COMMENT_TEXT}
+    assert out["first_comment_idempotency_key"] == "p1.first-comment"
+    assert out["first_comment_existing_status"] is None
+    assert fake.requests == []
+    # Once the post is out, the dry run shows its real URN.
+    run(SCRIPT, publish_args(text_file, "--idempotency-key", "p1", "--confirmed"), env)
+    proc = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file),
+                                    "--idempotency-key", "p1", "--dry-run"), env)
+    comment = json.loads(proc.stdout)["requests"][1]
+    assert comment["url"].endswith(POST_COMMENTS_PATH)
+    assert comment["body"]["object"] == POST_URN
+
+
+def test_first_comment_file_must_exist_and_have_text(env, fake, text_file, tmp_path):
+    missing = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(tmp_path / "no.txt"),
+                                       "--confirmed"), env)
+    assert missing.returncode == 2 and "--first-comment-file" in missing.stderr
+    empty = tmp_path / "empty.txt"
+    empty.write_text("", encoding="utf-8")
+    assert run(SCRIPT, publish_args(text_file, "--first-comment-file", str(empty), "--confirmed"),
+               env).returncode == 2
+    assert fake.requests == []
+
+
+def test_comment_dry_run_accepts_the_short_comment_urn_of_a_copied_link(tmp_path, monkeypatch):
+    text = tmp_path / "reply.txt"
+    text.write_text("Valeu!")
+    monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
+    r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
+                        "--idempotency-key", "reply-1", "--post-urn", "urn:li:activity:7400000000000000001",
+                        "--parent-comment", "urn:li:comment:(activity:7400000000000000001,7400000000000000002)",
+                        "--dry-run"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)" in r.stdout
+
+
+def test_comment_legacy_v2_dry_run_targets_the_unversioned_endpoint(tmp_path, monkeypatch):
+    text = tmp_path / "reply.txt"
+    text.write_text("Thanks!")
+    monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
+    r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
+                        "--idempotency-key", "reply-2", "--post-urn", "urn:li:activity:7400000000000000001",
+                        "--parent-comment", "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)",
+                        "--legacy-v2", "--dry-run"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    req = json.loads(r.stdout)["requests"][0]
+    assert "/v2/socialActions/" in req["url"] and "LinkedIn-Version" not in req["headers"]
+
+
+def test_comments_endpoint_rest_keeps_the_versioned_path(tmp_path, monkeypatch):
+    text = tmp_path / "reply.txt"
+    text.write_text("Thanks!")
+    monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
+    r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
+                        "--idempotency-key", "reply-3", "--post-urn", "urn:li:activity:7400000000000000001",
+                        "--comments-endpoint", "rest", "--dry-run"], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    req = json.loads(r.stdout)["requests"][0]
+    assert "/rest/socialActions/" in req["url"] and req["headers"]["LinkedIn-Version"]

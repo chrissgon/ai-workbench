@@ -1,0 +1,54 @@
+Return-Path: <notifications-noreply@notify.example.com>
+Received: from mail.example.com by mx.example.net; Mon, 28 Sep 2026 14:05:09 +0000
+Message-ID: <synthetic-0001@notify.example.com>
+Date: Mon, 28 Sep 2026 11:05:07 -0300
+From: =?UTF-8?Q?Zo=C3=AB_Example_=28via_Social=29?= <notifications-noreply@notify.example.com>
+To: Alex Sample <alex.sample@example.com>
+Subject: =?UTF-8?Q?Zo=C3=AB_Example_commented_on_your_post?=
+List-Id: <comments.notify.example.com>
+List-Unsubscribe: <https://notify.example.com/unsubscribe?u=abc>
+X-LinkedIn-Class: SYNTHETIC-COMMENT
+X-LinkedIn-Template: synthetic_fixture_v1
+X-Fixture-Note: synthetic test data with fictional names and example.com; not any real service's format
+MIME-Version: 1.0
+Content-Type: multipart/alternative; boundary="b1_synthetic"
+
+--b1_synthetic
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+Zo=C3=AB Example commented on your post:
+
+"Great write-up on design tokens. How do you version them across =
+teams?"
+
+Reply: https://notify.example.com/comm/feed/update/urn:li:activity:70000000000=
+00000001/?commentUrn=3Durn%3Ali%3Acomment%3A%28activity%3A7000000000000000001%=
+2C7100000000000000042%29&trk=3Deml-comment
+
+--b1_synthetic
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<!doctype html><html><head><title>Notification</title><style>p{color:red}</=
+style></head><body>
+<div style=3D"display:none">New comment =E2=80=8C=CD=8F =E2=80=8C=CD=8F</div>
+<table><tr><td>
+<a href=3D"https://notify.example.com/comm/in/zoe-example?trk=3Deml-avatar&a=
+mp;lipi=3Dxyz"><img src=3D"https://media.example.com/zoe.png" alt=3D"Zo=C3=
+=AB Example"></a>
+</td><td>
+<p><a href=3D"https://notify.example.com/comm/in/zoe-example?trk=3Deml-avatar&=
+amp;lipi=3Dxyz">Zo=C3=AB Example</a> commented on your post</p>
+<p>&ldquo;Great write-up on design tokens. How do you version them across   =
+teams?&rdquo;</p>
+<p><a href=3D"https://notify.example.com/comm/feed/update/urn:li:activity:700=
+0000000000000001/?commentUrn=3Durn%3Ali%3Acomment%3A%28activity%3A700000000=
+0000000001%2C7100000000000000042%29&amp;trk=3Deml-comment">Reply</a></p>
+<script>alert("never text")</script>
+</td></tr></table>
+<p><a href=3D"https://notify.example.com/unsubscribe?u=3Dabc">Unsubscribe</a>=
+</p>
+</body></html>
+
+--b1_synthetic--

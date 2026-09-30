@@ -14,7 +14,9 @@ Skills declare what they need from the environment as *classes*, never as produc
 | `generator:video` | any video model behind an API | marketing (slot reserved, not implemented) |
 | `publisher:<platform>` | LinkedIn via a scheduler API, X, blog CMS | marketing |
 | `mailer` | SMTP, a mail API | marketing, notifications |
+| `mailbox` | Gmail API, IMAP (read only: search and read messages) | marketing, engagement |
 | `scheduler` | native scheduling in the publisher, or a harness routine | marketing, operations |
+| `store` | SQLite (a local file); a cloud database later | the agent runtime: cursors, events, runs, approval inbox, executed actions |
 
 Add a class when a second skill needs it; do not add classes speculatively.
 
@@ -51,7 +53,7 @@ Rules:
 
 - The gate shows the exact payload or plan, asks once, and proceeds on an explicit yes. Silence, a previous different approval, or an approval for a similar item is not consent.
 - An approval covers exactly what was shown. Any deviation (changed content, new recipient, different time or target) needs a new approval for the changed part only.
-- **The approval binds a hash of the payload.** The skill writes the payload, exactly as shown, to a file in a folder from `mktemp -d` and records `sha256sum <file>` (macOS: `shasum -a 256`) in the approval's `Payload hash`. What it executes is that file, never a payload written again (a model does not write the same text twice). Before executing under an `action` or `plan` approval, it hashes the file again and executes only when the hash equals the approval's; a missing file or a different hash means showing the payload and asking again. Only the hash is stored, never the payload. `standing` approvals have no hash: they cover a class of action within bounds.
+- **The approval binds a hash of the payload.** The skill writes the payload, exactly as shown, to a file in a folder from `mktemp -d` and records `sha256sum <file>` (macOS: `shasum -a 256`) in the approval's `Payload hash`. What it executes is that file, never a payload written again (a model does not write the same text twice). Before executing under an `action` or `plan` approval, it hashes the file again and executes only when the hash equals the approval's; a missing file or a different hash means showing the payload and asking again. Only the hash is stored, never the payload. A `standing` approval covers a class of action within bounds, not a payload; when its bounds are written in a file (an engagement policy), its `Payload hash` is `policy:<sha256 of that file>`, and every action under it checks that hash first, so editing the bounds stops the actions until the person approves the new file.
 - Approvals are recorded in state with scope, summary, date, expiry and status (`pending-execution`, `executed`, `active`, `expired`). A resumed session reads them and never re-asks for what is already approved.
 - **Pre-approved execution**: when an action runs later or unattended (a scheduled post, a nightly job), the confirmation happens at scheduling time with the final payload. At execution time the skill verifies the payload still matches the approval (same `Payload hash`), executes, and updates the status to `executed` with a timestamp. If it no longer matches, it does not execute and leaves a note in "Open questions".
 - Standing approvals are never granted by default for public or irreversible actions; the user must state them explicitly, with bounds and expiry.

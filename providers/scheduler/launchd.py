@@ -3,12 +3,16 @@
 # requires-python = ">=3.9"
 # dependencies = []
 # ///
-"""Scheduler provider for macOS: run one command once, at a set time, through launchd.
+"""Scheduler provider for macOS: run a command through launchd, once at a set time or every N minutes.
 
-Sources (Apple documentation and manual pages, accessed 2026-09-26):
+Sources (Apple documentation and manual pages, accessed 2026-09-26 and 2026-09-29):
 - launchd.plist(5): StartCalendarInterval (Month, Day, Hour, Minute in local time; a
   missed interval while the computer sleeps fires once on wake), ProgramArguments,
   WorkingDirectory, EnvironmentVariables, StandardOutPath, StandardErrorPath.
+- launchd.plist(5), man page dated 30 July 2019, read on macOS 27.0.1 on 2026-09-29:
+  StartInterval starts the job every N seconds; a firing due while the system is asleep
+  is missed, and a firing due while the job is still running is missed too. RunAtLoad
+  defaults to false, so the first firing comes one interval after loading.
 - launchctl(1): `bootstrap gui/<uid> <plist>` loads a user agent, `bootout gui/<uid>/<label>`
   unloads it and stops its processes.
 - Creating Launch Daemons and Agents (Daemons and Services Programming Guide):
@@ -29,16 +33,29 @@ What a job guarantees:
   its launchd agent afterwards. launchd fires a missed time on wake; a run later than the
   grace period is recorded as missed and does not run.
 - Job folders are 0700 and the files written in them 0600 (copies 0400).
+
+What a recurring job (--every) adds:
+- Every firing re-verifies the copies, the program and the runner; a mismatch records the
+  firing as refused, marks the job refused and unloads it, so it stops firing.
+- A firing while the previous one still runs records skipped-overlap and exits: run.lock in
+  the job folder holds an flock and the holder's PID; the kernel drops the flock when the
+  holder dies, so a lock left by a dead runner is stale and taken over.
+- Each firing appends one line to runs.jsonl (started_at, ended_at, status, exit code,
+  stdout and stderr tails of at most 4 kB each).
+- The command runs in its own process group; past timeout_minutes the group is killed and
+  the firing recorded as failed with reason timeout.
 """
 from __future__ import annotations
 
 import argparse
+import fcntl
 import hashlib
 import json
 import os
 import plistlib
 import re
 import shutil
+import signal
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -54,19 +71,27 @@ ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
 DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 RUN_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 HISTORY = ".history"
+EVERY_MIN_MINUTES, EVERY_MAX_MINUTES = 5, 1440
+DEFAULT_TIMEOUT_MINUTES, MAX_TIMEOUT_MINUTES = 30, 240
+TIMEOUT_UNIT_SECONDS = 60  # seconds per timeout minute; tests shorten it in-process
+KILL_GRACE_SECONDS = 5  # between SIGTERM and SIGKILL to the command's process group
+TAIL_BYTES = 4096
+RUNS_MAX_BYTES = 4 * 1024 * 1024  # runs.jsonl is rotated to runs.1.jsonl past this size
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
 
 HELP_EPILOG = """\
 verbs:
-  schedule  Run the command in --command-file once at --at. Run it first with
-            --dry-run: it prints the job and its "approved" digest. After the
-            calling skill's gate, run it again with --confirmed --approved <digest>;
-            it refuses when anything changed since the dry run.
+  schedule  Run the command in --command-file once at --at, or every --every
+            minutes (5 to 1440). Run it first with --dry-run: it prints the job
+            and its "approved" digest. After the calling skill's gate, run it
+            again with --confirmed --approved <digest>; it refuses when anything
+            changed since the dry run.
   list      Print every job with its status (scheduled, running, done, failed,
-            refused, missed, cancelled).
-  cancel    Unload a scheduled job; needs --confirmed.
-  run       Internal: what launchd calls at the set time.
+            refused, missed, cancelled). A recurring job also shows every_minutes
+            and last_run (its last firing: done, failed, refused, skipped-overlap).
+  cancel    Unload a scheduled job, one-shot or recurring; needs --confirmed.
+  run       Internal: what launchd calls at the set time or at each interval.
 
 command file (JSON):
   {
@@ -76,6 +101,9 @@ command file (JSON):
     "outputs": ["/abs/result.json"],
     "grace_minutes": 120
   }
+  With --every, "grace_minutes" is refused and "timeout_minutes" (default 30,
+  1 to 240) bounds each firing: past it the command's process group is killed
+  and the firing is recorded as failed with reason timeout.
   "snapshot" is required. Every argv entry after argv[0] that names an existing
   file, bare or as --flag=<path>, absolute or relative to cwd, must be listed in
   it (as an absolute path) and is replaced by the job's copy of that file; a file
@@ -96,6 +124,8 @@ exit codes: 0 success, 1 provider error, 2 usage error, 3 not configured.
 
 The computer must be on, awake and logged in at the set time (a user agent runs in the
 login session). A time missed while asleep runs on wake, within the grace period.
+A recurring job's first firing comes one interval after loading; per launchd.plist(5), an
+interval firing due while the Mac sleeps, or while the previous firing runs, is missed.
 
 examples:
   python3 providers/scheduler/launchd.py --check
@@ -103,6 +133,8 @@ examples:
       --at 2026-09-29T09:00:00-03:00 --command-file job.json --dry-run
   python3 providers/scheduler/launchd.py schedule --id launch-post \\
       --at 2026-09-29T09:00:00-03:00 --command-file job.json --confirmed --approved <digest>
+  python3 providers/scheduler/launchd.py schedule --id social-tick --every 15 \
+      --command-file tick.json --dry-run
   python3 providers/scheduler/launchd.py list
   python3 providers/scheduler/launchd.py cancel --id launch-post --confirmed
 """
@@ -234,7 +266,7 @@ def validate_id(job_id: str) -> str:
     return job_id
 
 
-def load_command_file(path_arg: str) -> dict:
+def load_command_file(path_arg: str, recurring: bool = False) -> dict:
     path = Path(path_arg)
     if not path.is_file():
         raise ProviderError(f"--command-file not found: {path}", EXIT_USAGE)
@@ -263,6 +295,13 @@ def load_command_file(path_arg: str) -> dict:
     names = [Path(item).name for item in snapshot]
     if len(set(names)) != len(names):
         raise ProviderError("snapshot files must have distinct names", EXIT_USAGE)
+    if recurring:
+        if "grace_minutes" in spec:
+            raise ProviderError("grace_minutes applies to --at only; a recurring job uses timeout_minutes", EXIT_USAGE)
+        timeout = spec.get("timeout_minutes", DEFAULT_TIMEOUT_MINUTES)
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_TIMEOUT_MINUTES:
+            raise ProviderError(f"timeout_minutes must be an integer from 1 to {MAX_TIMEOUT_MINUTES}", EXIT_USAGE)
+        return {"argv": argv, "cwd": cwd, "snapshot": snapshot, "outputs": outputs, "timeout_minutes": timeout}
     grace = spec.get("grace_minutes", DEFAULT_GRACE_MINUTES)
     if not isinstance(grace, int) or grace < 0:
         raise ProviderError("grace_minutes must be a non-negative integer", EXIT_USAGE)
@@ -322,15 +361,23 @@ def snapshot_argv(argv: list[str], cwd: str, copies: dict[Path, str], outputs: s
 
 def approval_digest(job: dict) -> str:
     """SHA-256 over everything that decides what runs; printed by the dry run, checked on --confirmed."""
-    fields = {key: job[key] for key in ("id", "at", "grace_minutes", "argv", "cwd", "outputs", "program")}
+    if job.get("kind") == "recurring":
+        keys = ("id", "kind", "every_minutes", "timeout_minutes", "argv", "cwd", "outputs", "program")
+    else:
+        keys = ("id", "at", "grace_minutes", "argv", "cwd", "outputs", "program")
+    fields = {key: job[key] for key in keys}
     fields["files"] = {source: entry["sha256"] for source, entry in job["files"].items()}
     fields["runner"] = job["runner"]["sha256"]
     blob = json.dumps(fields, sort_keys=True, ensure_ascii=False).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()
 
 
-def plan_job(job_id: str, at: datetime, spec: dict) -> dict:
-    """The job as it will run, hashed from the current files; nothing is written."""
+def plan_job(job_id: str, at: datetime | None, spec: dict, every: int | None = None) -> dict:
+    """The job as it will run, hashed from the current files; nothing is written.
+
+    A one-shot job (at) keeps the fields it always had; a recurring job (every) has kind,
+    every_minutes and timeout_minutes instead of at, at_local and grace_minutes.
+    """
     folder = job_dir(job_id)
     files, copies = {}, {}
     for source in spec["snapshot"]:
@@ -341,12 +388,12 @@ def plan_job(job_id: str, at: datetime, spec: dict) -> dict:
     outputs = {Path(o).resolve() for o in spec["outputs"]}
     argv = [program] + snapshot_argv(spec["argv"][1:], spec["cwd"], copies, outputs)
     runner = Path(__file__).resolve()
-    job = {
-        "id": job_id,
-        "label": label(job_id),
-        "at": iso(at),
-        "at_local": at.astimezone().isoformat(),
-        "grace_minutes": spec["grace_minutes"],
+    job = {"id": job_id, "label": label(job_id)}
+    if every is None:
+        job.update({"at": iso(at), "at_local": at.astimezone().isoformat(), "grace_minutes": spec["grace_minutes"]})
+    else:
+        job.update({"kind": "recurring", "every_minutes": every, "timeout_minutes": spec["timeout_minutes"]})
+    job.update({
         "argv": argv,
         "cwd": spec["cwd"],
         "files": files,
@@ -354,20 +401,25 @@ def plan_job(job_id: str, at: datetime, spec: dict) -> dict:
         "program": {"path": program, "sha256": sha256(Path(program))},
         "runner": {"source": str(runner), "copy": str(folder / "runner" / runner.name), "sha256": sha256(runner)},
         "status": "scheduled",
-    }
+    })
     job["approved"] = approval_digest(job)
     return job
 
 
 def build_plist(job: dict) -> dict:
-    local = parse_iso(job["at"]).astimezone()
     folder = job_dir(job["id"])
+    if job.get("kind") == "recurring":
+        # launchd.plist(5): StartInterval starts the job every N seconds.
+        start = {"StartInterval": job["every_minutes"] * 60}
+    else:
+        local = parse_iso(job["at"]).astimezone()
+        start = {"StartCalendarInterval": {
+            "Month": local.month, "Day": local.day, "Hour": local.hour, "Minute": local.minute,
+        }}
     return {
         "Label": label(job["id"]),
         "ProgramArguments": [python_for_launchd(), job["runner"]["copy"], "run", "--id", job["id"]],
-        "StartCalendarInterval": {
-            "Month": local.month, "Day": local.day, "Hour": local.hour, "Minute": local.minute,
-        },
+        **start,
         "EnvironmentVariables": {
             "PATH": RUN_PATH,
             "SCHEDULER_HOME": str(home()),
@@ -403,15 +455,22 @@ def copy_verified(source: str, copy: Path, expected: str, mode: int) -> None:
 
 def cmd_schedule(args) -> int:
     job_id = validate_id(args.id)
-    try:
-        at = parse_iso(args.at)
-    except (TypeError, ValueError):
-        raise ProviderError(f"--at is not ISO-8601: {args.at}", EXIT_USAGE)
-    if at <= now():
-        raise ProviderError("--at is in the past", EXIT_USAGE)
-    if at - now() > timedelta(days=330):
-        raise ProviderError("--at is more than 330 days away; launchd calendar times repeat yearly", EXIT_USAGE)
-    spec = load_command_file(args.command_file)
+    every = args.every
+    if every is not None:
+        at = None
+        if not EVERY_MIN_MINUTES <= every <= EVERY_MAX_MINUTES:
+            raise ProviderError(f"--every must be from {EVERY_MIN_MINUTES} to {EVERY_MAX_MINUTES} minutes", EXIT_USAGE)
+        spec = load_command_file(args.command_file, recurring=True)
+    else:
+        try:
+            at = parse_iso(args.at)
+        except (TypeError, ValueError):
+            raise ProviderError(f"--at is not ISO-8601: {args.at}", EXIT_USAGE)
+        if at <= now():
+            raise ProviderError("--at is in the past", EXIT_USAGE)
+        if at - now() > timedelta(days=330):
+            raise ProviderError("--at is more than 330 days away; launchd calendar times repeat yearly", EXIT_USAGE)
+        spec = load_command_file(args.command_file)
     if not args.dry_run and not args.confirmed:
         raise ProviderError(
             "refusing to schedule without --confirmed; the calling skill must pass its confirmation "
@@ -426,7 +485,7 @@ def cmd_schedule(args) -> int:
         if existing["status"] in ("scheduled", "running"):
             raise ProviderError(f"job {job_id!r} is {existing['status']}; cancel it or wait for it first", EXIT_USAGE)
 
-    job = plan_job(job_id, at, spec)
+    job = plan_job(job_id, at, spec, every)
     plist = build_plist(job)
     if args.dry_run:
         out = {"dry_run": True, "approved": job["approved"], "job": job,
@@ -485,6 +544,10 @@ def cmd_list(_args) -> int:
             if (folder / "job.json").is_file():
                 job = json.loads((folder / "job.json").read_text(encoding="utf-8"))
                 job["plist_present"] = plist_path(job["id"]).exists()
+                if job.get("kind") == "recurring":
+                    last = last_firing(folder)
+                    job["last_run"] = ({k: last.get(k) for k in ("started_at", "ended_at", "status", "exit_code", "reason")}
+                                       if last else None)
                 jobs.append(job)
     print(json.dumps({"jobs": jobs}, indent=2, ensure_ascii=False))
     return EXIT_OK
@@ -549,8 +612,188 @@ def changed_since_approval(job: dict) -> str | None:
     return None
 
 
+# --- recurring jobs --------------------------------------------------------------
+
+
+class Stopped(Exception):
+    """The runner received SIGTERM, as launchd sends when the job is unloaded."""
+
+
+def runs_path(folder: Path) -> Path:
+    return folder / "runs.jsonl"
+
+
+def last_firing(folder: Path) -> dict | None:
+    """The last record in runs.jsonl, or None when the job has not fired yet."""
+    path = runs_path(folder)
+    if not path.is_file():
+        return None
+    for line in reversed(path.read_text(encoding="utf-8", errors="replace").splitlines()):
+        try:
+            record = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(record, dict):
+            return record
+    return None
+
+
+def record_firing(folder: Path, record: dict) -> None:
+    """Append one firing to runs.jsonl (0600); past RUNS_MAX_BYTES the file moves to runs.1.jsonl first."""
+    path = runs_path(folder)
+    if path.is_file() and path.stat().st_size > RUNS_MAX_BYTES:
+        os.replace(path, folder / "runs.1.jsonl")
+    line = (json.dumps(record, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+
+
+def acquire_lock(folder: Path) -> tuple[int | None, str]:
+    """Take run.lock: (fd, stale PID or "") when taken, (None, holder PID) when a firing still runs.
+
+    The flock is what excludes; the PID written in the file names the holder. The kernel
+    releases the flock when its holder dies, so a PID left in a lock that can be taken
+    belongs to a runner that died mid-firing: the lock was stale.
+    """
+    fd = os.open(folder / "run.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    os.fchmod(fd, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        holder = os.read(fd, 64).decode("ascii", errors="replace").strip()
+        os.close(fd)
+        return None, holder
+    stale = os.read(fd, 64).decode("ascii", errors="replace").strip()
+    os.ftruncate(fd, 0)
+    os.lseek(fd, 0, os.SEEK_SET)
+    os.write(fd, f"{os.getpid()}\n".encode("ascii"))
+    return fd, stale
+
+
+def release_lock(fd: int) -> None:
+    os.ftruncate(fd, 0)
+    fcntl.flock(fd, fcntl.LOCK_UN)
+    os.close(fd)
+
+
+def tail(data: bytes | None) -> str:
+    return (data or b"")[-TAIL_BYTES:].decode("utf-8", errors="replace")
+
+
+def kill_group(proc: subprocess.Popen) -> tuple[bytes, bytes]:
+    """SIGTERM the command's process group, SIGKILL it after KILL_GRACE_SECONDS; return its output."""
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            pass
+        try:
+            return proc.communicate(timeout=KILL_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            continue
+    # A process that left the group still holds the pipes; give up on its output.
+    for pipe in (proc.stdout, proc.stderr):
+        if pipe:
+            pipe.close()
+    try:
+        proc.wait(timeout=KILL_GRACE_SECONDS)
+    except subprocess.TimeoutExpired:
+        pass
+    return b"", b""
+
+
+def execute(job: dict) -> dict:
+    """Run the command in its own process group, bounded by timeout_minutes; the firing's outcome."""
+    timeout = job["timeout_minutes"] * TIMEOUT_UNIT_SECONDS
+    try:
+        proc = subprocess.Popen(job["argv"], cwd=job["cwd"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                start_new_session=True, env={**os.environ, "PATH": RUN_PATH})
+    except OSError as exc:
+        return {"status": "failed", "exit_code": None, "reason": f"{type(exc).__name__}: {exc}"}
+    stopping = []
+
+    def on_term(_signum, _frame):
+        if not stopping:
+            stopping.append(True)
+            raise Stopped()
+
+    try:
+        previous = signal.signal(signal.SIGTERM, on_term)
+    except ValueError:  # not the main thread; launchd always runs the runner as the main thread
+        previous = None
+    reason = None
+    try:
+        try:
+            out, err = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            reason = (f"timeout: ran longer than timeout_minutes ({job['timeout_minutes']}); "
+                      "its process group was killed")
+            out, err = kill_group(proc)
+        except Stopped:
+            reason = "the runner received SIGTERM (the job was cancelled or unloaded); the command's process group was killed"
+            out, err = kill_group(proc)
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGTERM, previous)
+    result = {"exit_code": proc.returncode, "stdout_tail": tail(out), "stderr_tail": tail(err)}
+    if reason:
+        result.update(status="failed", reason=reason)
+    else:
+        result["status"] = "done" if proc.returncode == 0 else "failed"
+    return result
+
+
+def run_recurring(job: dict) -> int:
+    """One firing of a recurring job: lock, verify, run, record. Never runs two firings at once."""
+    folder = job_dir(job["id"])
+    if job["status"] != "scheduled":
+        log(f"job {job['id']} is {job['status']}; nothing to run")
+        unload(job["id"])
+        return EXIT_OK
+    started = iso(now())
+    fd, other = acquire_lock(folder)
+    if fd is None:
+        record_firing(folder, {"started_at": started, "ended_at": iso(now()), "status": "skipped-overlap",
+                               "exit_code": None, "reason": f"the previous firing (pid {other or 'unknown'}) still runs"})
+        return EXIT_OK
+    previous = last_firing(folder)
+    record = {"started_at": started}
+    if other:
+        record["stale_lock_pid"] = other
+    try:
+        reason = changed_since_approval(job)
+        if reason:
+            record.update(ended_at=iso(now()), status="refused", exit_code=None, reason=reason)
+            record_firing(folder, record)
+            job.update(status="refused", reason=reason, finished_at=record["ended_at"])
+            write_job(job)
+        else:
+            outcome = execute(job)
+            record.update(ended_at=iso(now()), **outcome)
+            record_firing(folder, record)
+    finally:
+        release_lock(fd)
+    status = record["status"]
+    summary = record.get("reason") or f"exit {record.get('exit_code')}"
+    if status == "refused" or (status == "failed" and (previous or {}).get("status") != "failed"):
+        notify(f"ai-workbench: {job['id']} {status}", summary)
+    if status != "done":
+        log(f"job {job['id']} firing: {status} ({summary})")
+    if status == "refused":
+        # A recurring job that no longer matches its approval must stop firing. Unloading
+        # stops this process's launchd job, so it is the last thing done.
+        unload(job["id"])
+    return EXIT_OK if status == "done" else EXIT_SERVICE
+
+
 def cmd_run(args) -> int:
     job = read_job(validate_id(args.id))
+    if job.get("kind") == "recurring":
+        return run_recurring(job)
     if job["status"] != "scheduled":
         log(f"job {job['id']} is {job['status']}; nothing to run")
         unload(job["id"])
@@ -607,7 +850,7 @@ def cmd_check() -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="launchd.py",
-        description="Scheduler provider for macOS: runs one command once at a set time through launchd.",
+        description="Scheduler provider for macOS: runs a command through launchd once at a set time or every N minutes.",
         epilog=HELP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -615,7 +858,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check", action="store_true", help="verify launchd is usable; no side effects")
     parser.add_argument("--id", help="job id: lowercase letters, digits, dots and hyphens")
     parser.add_argument("--at", help="ISO-8601 time with offset, e.g. 2026-09-29T09:00:00-03:00")
-    parser.add_argument("--command-file", help="JSON file with argv, cwd, snapshot and grace_minutes")
+    parser.add_argument("--every", type=int, metavar="MINUTES",
+                        help=f"run every MINUTES ({EVERY_MIN_MINUTES} to {EVERY_MAX_MINUTES}) instead of once at --at")
+    parser.add_argument("--command-file", help="JSON file with argv, cwd, snapshot and grace_minutes (--at) "
+                        "or timeout_minutes (--every)")
     parser.add_argument("--dry-run", action="store_true", help="print the job, its approved digest and the plist; do nothing")
     parser.add_argument("--confirmed", action="store_true", help="required to schedule or cancel")
     parser.add_argument("--approved", help="with schedule --confirmed: the digest the dry run printed")
@@ -629,8 +875,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.check:
             return cmd_check()
         if args.verb == "schedule":
-            if not args.id or not args.at or not args.command_file:
-                raise ProviderError("schedule needs --id, --at and --command-file", EXIT_USAGE)
+            if args.at and args.every is not None:
+                raise ProviderError("--at and --every are mutually exclusive", EXIT_USAGE)
+            if not args.id or not (args.at or args.every is not None) or not args.command_file:
+                raise ProviderError("schedule needs --id, --command-file and one of --at or --every", EXIT_USAGE)
             return cmd_schedule(args)
         if args.verb == "list":
             return cmd_list(args)
