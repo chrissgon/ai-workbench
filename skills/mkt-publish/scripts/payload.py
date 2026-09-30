@@ -11,7 +11,9 @@ Usage:
 build   For each content file (written by mkt-social-copy): reads the slot time (the first ISO-8601
         date-time with offset in the header, before the first fenced block), the approval scope (a header
         line ending in ": plan" or ": action") and the exact text of the ```post and ```first-comment
-        blocks. Writes <out>/<key>/post.txt, <out>/<key>/comment.txt (when there is a first comment) and
+        blocks, and an optional image named on a header line "- Image: <path>" (JPG, PNG or GIF, relative to
+        the working directory). Writes <out>/<key>/post.txt, <out>/<key>/comment.txt (when there is a first comment),
+        <out>/<key>/image.<ext> (a copy of the image, when there is one) and
         <out>/<key>/job.json, the scheduler command file that publishes the post and its first comment
         with the idempotency key <key> (the content file name without .md). Writes <out>/manifest.json
         (every post with its time, scope and the SHA-256 of each file) and prints the manifest's own
@@ -36,6 +38,10 @@ FENCE = re.compile(r"^```([\w-]*)\s*$")
 ISO = re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:\d{2}|Z)")
 SCOPE = re.compile(r":\s*(plan|action)\s*$")
 KEY = re.compile(r"^[a-z0-9][a-z0-9.-]{0,79}$")
+IMAGE_LINE = re.compile(r"^\s*-\s*Image:\s*(\S+)\s*$")
+IMAGE_MAGIC = {".png": [b"\x89PNG\r\n\x1a\n"], ".jpg": [b"\xff\xd8\xff"], ".jpeg": [b"\xff\xd8\xff"],
+               ".gif": [b"GIF87a", b"GIF89a"]}
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 
 
 def fail(message: str, code: int = 2):
@@ -78,7 +84,26 @@ def parse(path: Path) -> dict:
     scopes = [m.group(1) for line in header for m in [SCOPE.search(line.strip())] if m]
     if len(scopes) != 1:
         raise ValueError(f"expected one approval line ending in ': plan' or ': action', found {scopes or 'none'}")
-    return {"at": at, "scope": scopes[0], "post": found["post"], "comment": found.get("first-comment") or None}
+    images = [m.group(1) for line in header for m in [IMAGE_LINE.match(line)] if m]
+    if len(images) > 1:
+        raise ValueError(f"at most one '- Image:' line, found {len(images)}")
+    return {"at": at, "scope": scopes[0], "post": found["post"], "comment": found.get("first-comment") or None,
+            "image": images[0] if images else None}
+
+
+def check_image(path: Path) -> str:
+    """Return the image's extension after checking that it is a JPG, PNG or GIF by its bytes; raise otherwise."""
+    ext = path.suffix.lower()
+    if ext not in IMAGE_MAGIC:
+        raise ValueError(f"image {path}: only .png, .jpg, .jpeg or .gif")
+    if not path.is_file():
+        raise ValueError(f"image {path} not found")
+    data = path.read_bytes()
+    if len(data) > MAX_IMAGE_BYTES:
+        raise ValueError(f"image {path}: {len(data)} bytes, more than {MAX_IMAGE_BYTES}")
+    if not any(data.startswith(m) for m in IMAGE_MAGIC[ext]):
+        raise ValueError(f"image {path}: the bytes are not a {ext[1:].upper()} file")
+    return ".jpg" if ext == ".jpeg" else ext
 
 
 def build(a) -> int:
@@ -119,6 +144,16 @@ def build(a) -> int:
             argv += ["--first-comment-file", str(comment_file)]
             snapshot.append(str(comment_file))
             entry.update(comment_file=str(comment_file), comment_sha256=sha256(comment_file))
+        if p["image"]:
+            try:
+                ext = check_image(Path(p["image"]))
+            except ValueError as e:
+                fail(f"{c}: {e}")
+            image_file = d / f"image{ext}"
+            image_file.write_bytes(Path(p["image"]).read_bytes())
+            argv += ["--media", str(image_file)]
+            snapshot.append(str(image_file))
+            entry.update(image_source=p["image"], image_file=str(image_file), image_sha256=sha256(image_file))
         argv.append("--confirmed")
         job = {"argv": argv, "cwd": str(wb), "snapshot": snapshot, "grace_minutes": a.grace_minutes}
         job_file = d / "job.json"
@@ -149,7 +184,8 @@ def verify(a) -> int:
         problems.append("manifest hash differs from the approval")
     data = json.loads(manifest.read_text(encoding="utf-8"))
     for e in data.get("posts", []):
-        for f, h in (("post_file", "post_sha256"), ("comment_file", "comment_sha256"), ("job_file", "job_sha256")):
+        for f, h in (("post_file", "post_sha256"), ("comment_file", "comment_sha256"), ("image_file", "image_sha256"),
+                     ("job_file", "job_sha256")):
             if f in e:
                 p = Path(e[f])
                 if not p.is_file():
