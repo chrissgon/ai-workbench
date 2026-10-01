@@ -17,7 +17,7 @@ metadata:
   area: design
   kind: capability
   inputs: [docs/design/design-system.md, docs/design/flows.md, docs/marketing/messaging.md, docs/product/specs/<feature>.md, docs/brand/identity.md, docs/workbench/state.md]
-  outputs: [docs/design/briefs/<artifact>.md]
+  outputs: [docs/design/briefs/<artifact>.md, docs/design/briefs/<artifact>.lint.json]
   requires: []
   side_effects: []
   version: "0.1"
@@ -52,14 +52,14 @@ AI design tools produce work as good as what they are told. A thin request ("mak
 
 Progress:
 - [ ] Step 1: Classify. Name the artifact and its type: `screen`, `mockup`, `logo`, `presentation`, `animation` or `image`. Read the profile for the type in `references/<type>.md`; it lists what the Content section must hold and the criteria that matter for the type. Name the tool if the user chose one; otherwise leave it to `design-execute`.
-- [ ] Step 2: Ground. Read the design system, the brand identity, the flows entry (screens), the copy source and the state decisions. Write the Sources list. Stop and ask when the text of the artifact has no source; recommend the source.
+- [ ] Step 2: Ground. List the project's files, then read the design system, the brand identity, the flows entry (screens), the copy source and the state decisions wherever the project keeps them (the paths in `inputs` are the default places, not the only ones). The copy source is whichever file holds the text the artifact shows: the messaging artifact for a landing or a share image, the page's own content file for a documentation or application page (a named example page, such as "use the Button page", is that page's content file), a spec, or the user's words. Write the Sources list. When neither a design system nor a brand identity exists, stop here: write no brief, and reply with (1) the next step named as `design-system`, which builds the visual foundation from code, images, documents or a short interview, and (2) the questions for whatever else has no source (for a logo, the exact name as it must be written), each with a recommended answer. Stop and ask only when a text the artifact shows has no source in any of these; recommend the source. A source that exists is used, not asked for again.
 - [ ] Step 3: Values mode. `loaded` when the target tool already holds the design system (a design-system project in the tool, a published library, a kit): the brief names it and restates only the rules and the few values the direction depends on. `inline` otherwise: write every colour in light and dark, every type role with size and weight, spacing, radii, borders, elevation and motion, because the tool cannot read the repository. When unsure, `inline`.
 - [ ] Step 4: Subject, audience and voice in words a stranger can act on: what the product is in two paragraphs with one concrete example, who looks at the artifact and what they fear, the voice rules, words to use and to avoid.
 - [ ] Step 5: Creative direction. When a previous version exists, say in one paragraph what it got wrong, quoting the user's review. Turn references into attitudes (scale, depth, motion, illustration style), never into layouts or copy to reproduce. Name three directions of two or three sentences each, different in idea and not only in colour, unless the user already chose one. List the identity hooks every direction keeps and what is allowed and not allowed. Read [references/prompting.md](references/prompting.md) first.
-- [ ] Step 6: Content, per the type profile: for a screen, the regions in priority order with the copy verbatim, states, breakpoints and motion; for a logo, the name, the variants and sizes; for a presentation, the slides; and so on. Real markup of components when the artifact shows the product's UI.
+- [ ] Step 6: Content, per the type profile: for a screen, the regions in priority order with the copy verbatim, states, breakpoints and motion; for a logo, the name, the variants and sizes; for a presentation, the slides; and so on. For a template (one artifact per page or per item), list every variable field with the longest real value it must fit: collect the field's real values from the sources (the page list in the flows, the content files) and run `python3 scripts/longest_value.py "<value>" "<value>"…`; write the value and its character count from the output, never an estimate. Real markup of components when the artifact shows the product's UI.
 - [ ] Step 7: Constraints (values only from Visual language, copy verbatim, accessibility, what the artifact must not contain, buildability or production limits), deliverables per round (round 1: directions at one size; round 2: the chosen one complete), and at least five evaluation criteria a reviewer can check by looking at the result, one per line as `- CRIT-n:`.
 - [ ] Step 8: Attachments and prompt. List what goes to the tool with the brief (reference images, the brief itself, the product's own assets) and what must not (an existing design of the same artifact in round 1, because tools reproduce what they are shown). Write the prompt: it opens by saying this is an exploration and what failure looks like, carries a `Direction:` slot, the non-negotiables, the drama the result needs, what to deliver, and asks the tool to list what the result does that a plain version would not.
-- [ ] Step 9: Lint: `python3 scripts/lint_brief.py --file docs/design/briefs/<artifact>.md --type <type> --values <inline|loaded> [--messaging docs/marketing/messaging.md] [--flows docs/design/flows.md --screen SCREEN-n]`. It checks the sections, the type profile's required content, values written out in `inline` mode, the design system named in `loaded` mode, messaging headlines verbatim, the SCREEN's regions and states, the criteria, the prompt and leftover placeholders. Fix until `ok` is true, then write `- Lint: ok (<date>)` in the header.
+- [ ] Step 9: Lint: `python3 scripts/lint_brief.py --file docs/design/briefs/<artifact>.md --type <type> --values <inline|loaded> --report docs/design/briefs/<artifact>.lint.json [--flows <flows file> --screen SCREEN-n] [--messaging <messaging file>]`. For a screen, always pass `--flows` and `--screen`; pass `--messaging` only for a screen that carries every section of that messaging artifact (a landing), never for an image, a logo or a documentation page. It checks the sections, the type profile's required content, values written out in `inline` mode, the design system named in `loaded` mode, messaging headlines verbatim, the SCREEN's regions and states, the criteria, the prompt and leftover placeholders. Fix the brief and rerun until `ok` is true; `--report` keeps the result of the last run, with its arguments, next to the brief as the evidence. Then write `- Lint: ok (<date>)` in the header. Never write `ok` without having run the script; when it cannot be run, write `- Lint: not run` and say so in the report.
 - [ ] Step 10: Register `docs/design/briefs/<artifact>.md` in `docs/workbench/state.md` (owner `design-brief`, status `draft`) when the state file exists; report with the template below; self-check against "Quality criteria".
 
 ## Output template
@@ -72,7 +72,8 @@ See [assets/brief-template.md](assets/brief-template.md). The report:
 - Values: <inline | loaded from <design system in the tool>>
 - Directions: <A name, B name, C name | chosen: <name>>
 - Content: <regions, slides, variants… counted>; copy from <source>
-- Criteria: <n>; lint ok
+- Criteria: <n>
+- Lint: `python3 scripts/lint_brief.py <the arguments used>` → `<the JSON line it printed, verbatim>`; recorded in docs/design/briefs/<artifact>.lint.json
 Next: design-execute in <tool> | the questions above
 ```
 
@@ -85,7 +86,8 @@ Approve the brief only if all of the following hold:
 - Every colour, type size, radius and spacing traces to the design system, written out in `inline` mode.
 - The directions differ in idea, and each names what makes it memorable.
 - Every criterion can be checked by looking at the result, and at least one checks faithfulness to the design system and one checks the drama the direction promised.
-- `lint_brief.py` reports `ok: true`.
+- `lint_brief.py` reports `ok: true`, the report quotes its command and output, and `<artifact>.lint.json` sits next to the brief.
+- Every variable field of a template names its longest real value and character count, from `longest_value.py`.
 
 ## Gotchas
 

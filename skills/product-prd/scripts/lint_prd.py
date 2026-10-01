@@ -83,7 +83,8 @@ def main(argv):
                 if part not in body:
                     errors.append(f"{i} lacks {part}")
             tm = re.search(r"Target:\s*([^.]*)", body)
-            if not tm or not re.search(r"\d", tm.group(1)):
+            # an id inside the target ("Target: OPEN-2") is not a number
+            if not tm or not re.search(r"\d", re.sub(r"\b(?:U|F|M|R|P|ASSUMPTION|OPEN)-\d+\b", "", tm.group(1))):
                 errors.append(f"{i} has no numeric Target:")
         if i.startswith("P-"):
             feats = re.findall(r"\bF-\d+\b", body)

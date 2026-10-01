@@ -121,7 +121,7 @@ Every skill is evaluated with a strong model and with a floor model (a large hos
 2. Fill `SKILL.md` from the template. Delete sections that do not apply; do not leave placeholders.
 3. Declare `inputs`, `outputs`, `requires`, `side_effects` honestly.
 4. Add `references/`, `assets/`, `scripts/` only when the body needs them.
-5. Add `evals/evals.json` with at least two realistic cases.
+5. Add `evals/evals.json` with at least two realistic cases, run them on the strong and the floor model, and record the result in `docs/inventory.md`. A skill without a recorded pass is not done.
 6. `python3 scripts/validate.py` until it reports zero errors.
    Then walk `shared/references/security.md`: every item `yes` or `n/a` with a reason.
 7. Ground the content in real expertise: past corrections, real artifacts, real failures. Do not generate from generic knowledge. Then anonymise it (principle 8): the lesson stays, the real project's names, people and numbers go, and fixtures copied from a real project are rewritten with fictional names. Follow `core-skill-creator`; its `references/authoring-guide.md` is the long-form reference.

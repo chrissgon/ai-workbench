@@ -9,7 +9,9 @@ Checks:
   - every REQ and NFR has a Source: line
   - every REQ and NFR is covered by at least one AC (Covers: line)
   - every AC has Given, When, Then and Covers lines
-  - vague words on REQ/NFR/AC lines without a number on the same line
+  - vague words on REQ/NFR/AC lines without a number on the same line (warnings)
+  - every NFR states a number outside its Source: text (no number, no NFR)
+  - every OPEN has a Blocks: and a Recommended: entry
   - every EDGE line has an arrow (→ or ->) with behaviour after it
   - TBD / TODO / ??? inside requirements
 
@@ -98,8 +100,16 @@ def main(argv):
             if not re.search(r"(→|->)\s*\S", joined):
                 errors.append(f"{i} has no '→ expected behaviour'")
     for i, body_lines in blocks.items():
-        if i.startswith("OPEN-") and "Blocks:" not in " ".join(body_lines):
-            errors.append(f"{i} has no Blocks: line")
+        if i.startswith("OPEN-"):
+            for part in ("Blocks:", "Recommended:"):
+                if part not in " ".join(body_lines):
+                    errors.append(f"{i} has no {part} entry")
+        if i.startswith("NFR-"):
+            # ids and the Source: citation do not count: the requirement itself must carry the figure
+            bare = re.sub(r"\b(?:REQ|NFR|EDGE|AC|ASSUMPTION|OPEN)-\d+\b", "", " ".join(body_lines))
+            bare = re.sub(r"Source:.*$", "", bare)
+            if not re.search(r"\d", bare):
+                errors.append(f"{i} states no number: give the sourced figure, or move it to an OPEN with a Recommended value")
     ok = not errors
     result = {"ok": ok, "counts": {k: sum(1 for i in blocks if i.startswith(k + "-")) for k in ("REQ", "NFR", "EDGE", "AC", "ASSUMPTION", "OPEN")},
               "errors": errors, "warnings": warnings}

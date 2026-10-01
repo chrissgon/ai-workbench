@@ -51,11 +51,11 @@ Decide what the product says about itself before anyone draws the page that says
 Progress:
 - [ ] Step 1: Ground. Read the PRD (users, goal, features of the landing), the positioning or research brief, the brand voice or the product's own texts, the specs of the page, and the reference page's structure when the user named one. Write the Sources list. Every fact you will use is copied here with its source before writing a line of copy.
 - [ ] Step 2: Audience and promise. One line per user group from the PRD: what they are trying to do and what they fear. One promise sentence for the whole page, in the product's own words where they exist. Read [references/copy-rules.md](references/copy-rules.md) for the rules on claims, numbers and tone.
-- [ ] Step 3: Proof points. One `PROOF-n` per claim the page will make: the claim in one sentence, the evidence (a measurement with its method and date, a documented behaviour with its file, a research citation), `Source:`. A claim without evidence is not written; a comparison without a measured or cited number is not written.
-- [ ] Step 4: Sections. One `SECTION-n` per block of the page, in order: purpose (what the reader must believe after it), the proof points it carries, headline, body (at most three sentences), the demo or visual it needs (described, for design-brief), the call to action when it has one, `Source:` for its facts. The first section carries the promise; every later section carries at least one proof point; a section with no proof is removed.
+- [ ] Step 3: Proof points. One `PROOF-n` per claim the page will make: the claim in one sentence, the evidence (a measurement, a documented behaviour with its file, a research citation), `Method:` (the command or count that produced the number, or `read in <file and section>`), `Date:` (the `YYYY-MM-DD` of the measurement, or the date the document carries; never a date from memory) and `Source:`. A count written as a word ("eight steps", "half the size") is a number and needs its PROOF like a digit. A claim without evidence is not written; a comparison without a measured or cited number is not written.
+- [ ] Step 4: Sections. One `SECTION-n` per block of the page, in order: purpose (what the reader must believe after it), the proof points it carries, headline, body (at most three sentences), the demo or visual it needs (described, for design-brief), the call to action when it has one, `Source:` for its facts. The first section carries the promise; every later section carries at least one proof point; a section with no proof is removed, and a later section with nothing to show (`Demo: none`) is merged into the section it supports.
 - [ ] Step 5: Taglines and words. Three tagline candidates with the promise, a list of words to use (the product's own vocabulary) and to avoid (hype and unsourced superlatives), `Source:` for the vocabulary.
 - [ ] Step 6: Ask what only the user can decide (a claim they may not want to make, a comparison to name, the tone), at most three questions with a recommended answer.
-- [ ] Step 7: Lint: `python3 scripts/lint_messaging.py --file docs/marketing/messaging.md`. It checks sections, that every PROOF has evidence and a source, that every SECTION has purpose, headline, body, demo or CTA and a source, that every number in a headline or body appears in a PROOF, and that no word from the avoid list appears in the copy. Fix until `ok` is true.
+- [ ] Step 7: Lint: `python3 scripts/lint_messaging.py --file docs/marketing/messaging.md`. It checks sections, that every PROOF has evidence, a method, a date and a source, that every SECTION has purpose, headline, body, demo or CTA and a source, that every number in a headline, a body or a tagline (digits or words) appears in a PROOF, and that no word from the avoid list appears in the copy. Fix the document, never the script, and rerun until `ok` is true. Copy the line the last run printed into the report; a report that only says "lint passed" is not accepted.
 - [ ] Step 8: Register `docs/marketing/messaging.md` in `docs/workbench/state.md` (owner `mkt-messaging`, status `draft`) when the state file exists, and report with the template.
 - [ ] Step 9: Self-check against "Quality criteria".
 
@@ -70,6 +70,7 @@ See [assets/messaging-template.md](assets/messaging-template.md). The report:
 - Proof points: <n> (<n> measured, <n> documented, <n> cited); sections: <n>
 - Comparisons: <named products, or none>
 - Open questions: <n>
+- Lint: `python3 scripts/lint_messaging.py --file docs/marketing/messaging.md` printed `<the JSON line of the last run, copied, with "ok": true>`
 Next: design-brief for the landing | the questions above
 ```
 
@@ -77,12 +78,12 @@ Next: design-brief for the landing | the questions above
 
 Approve the messaging only if all of the following hold:
 
-- Every claim on the page is a PROOF with evidence and a source; every number in the copy appears in a PROOF with its method and date.
+- Every claim on the page is a PROOF with evidence and a source; every number in the copy, digit or word, appears in a PROOF with its method and date.
 - Every section carries at least one proof point and states the demo or visual it needs.
 - Comparisons name only products with measured or cited numbers from a research brief, with the method stated.
 - The copy uses the product's own vocabulary and no word from the avoid list.
 - The reference page, when any, contributed structure only; no sentence was copied from it.
-- `lint_messaging.py` reports `ok: true`.
+- `lint_messaging.py` reports `ok: true`, and the report quotes the line it printed.
 
 ## Gotchas
 

@@ -54,13 +54,22 @@ Progress:
 - [ ] Step 3: Problem, goal, users. Write the problem and the goal in one sentence each, each with a source. For each user group: who they are, the situation they are in, what they need from the product, `Source:`. A group the sources do not name is not written; it becomes `OPEN-n`.
 - [ ] Step 4: Scope. `In`, `Out` and `Later`, one line each, each citing a brief decision or a user answer. What the brief marks as a later phase goes to `Later`, not `Out`.
 - [ ] Step 5: Features. One `F-n` per capability a user can notice and a feature spec can cover on its own. Each has: a name, one sentence of outcome written from the user's side ("the reader can …"), `Priority:` (`must`: launch cannot happen without it; `should`: launch is degraded without it; `later`: after launch), `Phase:` (from the recorded phase order, or `OPEN`), `Source:`. Implementation choices (a framework, a module, a hosting service) are constraints, not features.
-- [ ] Step 6: Success metrics. Read [references/metrics.md](references/metrics.md). For each goal at least one `M-n` with metric, target with a number and unit, baseline (today's value or `none`), how it is measured, `Source:`. A target with no source is not written as a metric: it becomes `OPEN-n` with a recommended target and why. Never copy a number from another product.
+- [ ] Step 6: Success metrics. Read [references/metrics.md](references/metrics.md). For each goal at least one `M-n` with metric, target with a number and unit, baseline (today's value or `none`), how it is measured, `Source:`. A target with no source is not written as a metric: it becomes `OPEN-n` with `Blocks:` naming the goal's metric and `Recommended:` with a target number and why. Never copy a number from another product; a vendor's or competitor's figure in a research brief is not a target for this product.
 - [ ] Step 7: Constraints, dependencies and risks. Constraints from the brief and decisions (stack, hosting, budget, compatibility, positioning claims that must stay true). Each `R-n` risk has a trigger, an impact and a mitigation; a worry without a trigger is not a risk.
-- [ ] Step 8: Release phases. `P-n` per phase in the recorded order: name, the `F-n` it includes, `Exit:` (what is observable when the phase is done). Dates only with a source; otherwise no dates.
-- [ ] Step 9: Assumptions and open questions. `ASSUMPTION-n` with why it is safe enough; `OPEN-n` with `Blocks:` naming the F, M or P it holds up and `Recommended:` with the answer and why. If any `OPEN-n` blocks a `must` feature or a metric of a stated goal, stop and ask the user, at most three questions at a time, each with the recommended answer; resume after the answers.
-- [ ] Step 10: Lint: `python3 scripts/lint_prd.py --file docs/product/prd.md`. It checks sections, ids, `Priority`/`Phase`/`Source` on every feature, numbers and sources on metrics, phases listing features with an exit criterion, `Blocks:` on open questions, vague words and unsourced dates. Fix until `ok` is true.
+- [ ] Step 8: Release phases. `P-n` per phase in the recorded order: name, the `F-n` it includes, `Exit:` (what is observable when the phase is done). Dates only with a source; otherwise no dates. The `Date:` header is today's date from the command `date +%F`, never from memory.
+- [ ] Step 9: Assumptions and open questions. `ASSUMPTION-n` with why it is safe enough; `OPEN-n` with `Blocks:` naming the F, M or P it holds up and `Recommended:` with the answer and why. An open question never stops the draft and is never answered by a guess: write it, finish steps 10 to 12, and when an `OPEN-n` blocks a `must` feature or a metric of a stated goal, ask it at the end of the report, at most three questions at a time, each with its recommended answer. The PRD stays `draft` and Readiness says `no, because OPEN-n blocks …` until the user answers.
+- [ ] Step 10: Lint. The script is `scripts/lint_prd.py` in this skill's folder (the folder that holds this file); run it by that path from the project root: `python3 <this skill's folder>/scripts/lint_prd.py --file docs/product/prd.md`. It checks sections, ids, `Priority`/`Phase`/`Source` on every feature, numbers and sources on metrics, phases listing features with an exit criterion, `Blocks:` on open questions, vague words and unsourced dates. Fix until `ok` is true, and fix only from the sources: a lint error is never silenced by inventing a number, a date or a `Source:`. Quote the final lint output (`"ok": true`) in the report.
 - [ ] Step 11: Register the artifact in `docs/workbench/state.md` (owner `product-prd`, status `draft`) when the state file exists, and report with the template.
 - [ ] Step 12: Self-check against "Quality criteria": list every user group, feature, number and date in the document and where each came from; remove or turn into `OPEN` what has no origin.
+
+## Fixing an existing PRD
+
+When the request is to lint, review or fix a PRD that already exists, do not rewrite it. Do this instead:
+
+1. Run the lint (step 10) before any edit and list every error and warning in the reply, as the script printed them.
+2. Read the brief named in the PRD's `Brief:` line and the decisions in `docs/workbench/state.md`, when they exist.
+3. Fix each finding from those sources, citing the decision. What the sources do not give is not filled in: an unsourced target number or date is removed and becomes an `OPEN-n` with `Blocks:` and `Recommended:`; a missing `Source:` the sources cannot supply becomes an `OPEN-n` too, and the line cites that `OPEN-n`. An invalid priority becomes `must`, `should` or `later` by the rule in step 5, with the source that decides it.
+4. Run the lint again until `ok` is true, then report: a table `Finding | Fix | Source`, the final lint output, and the open questions for the user with their recommended answers.
 
 ## Output template
 
@@ -92,7 +101,7 @@ Approve the PRD only if all of the following hold:
 ## Gotchas
 
 - The PRD is not a spec: no Given/When/Then, no REQ ids. A PRD that specifies is one nobody reads and one the specs will contradict.
-- Success metrics are where invention hides: "increase engagement by 20%" with no baseline and no instrument is a wish. Ask for the target, or write the metric with the baseline `none` and the target as `OPEN`.
+- Success metrics are where invention hides: "increase engagement by 20%" with no baseline and no instrument is a wish. Ask for the target: the metric line is left out and an `OPEN-n` carries the recommended target until the user answers.
 - "Timeline" invites made-up dates. Phases with exit criteria are enough; dates come from the user or the roadmap.
 - Personas written from imagination sound plausible and steer the product wrong; when the brief names two audiences, write two groups and nothing more.
 - For an existing product, today's behaviour is the baseline: cite the codebase map for what exists and what is removed, so scope "Out" includes what the rebuild drops on purpose.

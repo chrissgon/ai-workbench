@@ -862,3 +862,387 @@ def test_lint_design_system_infers_the_library_prefix(tmp_path):
     out = json.loads(run(LINT_DS, "--file", str(doc), "--library", str(css), "--prefix", "x").stdout)
     assert out["library_prefix"] == "x" and any("['--x-y']" in e for e in out["errors"])
     assert run(LINT_DS, "--file", str(doc), "--library", str(css), "--prefix", "../a").returncode == 2
+
+
+def lint(rel: str, path: Path, text: str, *args: str) -> tuple[int, dict]:
+    """Write `text` to `path`, lint it, and return the exit code and the parsed JSON result."""
+    path.write_text(text, encoding="utf-8")
+    r = run(rel, "--file", str(path), *args)
+    return r.returncode, json.loads(r.stdout)
+
+
+# ---------- design-brief/longest_value.py ----------
+
+LONGEST = "skills/design-brief/scripts/longest_value.py"
+
+
+def test_longest_value_counts_characters_and_keeps_the_first_of_a_tie():
+    r = run(LONGEST, "Button", "Input Group", " Date Picker ", "Tabs")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == {
+        "count": 4, "longest": "Input Group", "characters": 11, "words": 2,
+        "runners_up": [{"value": "Date Picker", "characters": 11}, {"value": "Button", "characters": 6}]}
+
+
+def test_longest_value_reads_stdin_and_refuses_no_value():
+    out = json.loads(run(LONGEST, stdin="Tabs\n\n  Größenübersicht  \n").stdout)
+    assert out["count"] == 2 and out["longest"] == "Größenübersicht" and out["characters"] == 15  # characters, not bytes
+    r = run(LONGEST, stdin="\n  \n")
+    assert r.returncode == 2 and "give the values" in r.stderr and r.stdout == ""
+
+
+# ---------- design-brief/lint_brief.py: --report ----------
+
+def test_lint_brief_report_records_the_arguments_date_and_result(tmp_path):
+    flows = tmp_path / "flows.md"
+    flows.write_text(FLOWS_BOTH_SEPARATORS, encoding="utf-8")
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Brief\n\n## Content\n\n- Regions: hero, project list, footer\n- States: default\n", encoding="utf-8")
+    report = tmp_path / "lint.json"
+    r = run(LINT_BRIEF, "--file", str(brief), "--type", "screen", "--values", "inline",
+            "--flows", str(flows), "--screen", "SCREEN-1", "--report", str(report))
+    printed, saved = json.loads(r.stdout), json.loads(report.read_text(encoding="utf-8"))
+    assert r.returncode == 1 and printed["ok"] is False
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", saved.pop("date"))
+    assert saved == {"ok": False, "file": str(brief), "type": "screen", "values": "inline", "screen": "SCREEN-1",
+                     "flows": str(flows), "messaging": None, "counts": printed["counts"], "errors": printed["errors"]}
+    assert any("reduced motion" in e for e in saved["errors"])
+
+
+def test_lint_brief_report_needs_a_writable_path(tmp_path):
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Brief\n", encoding="utf-8")
+    base = (LINT_BRIEF, "--file", str(brief), "--type", "screen", "--values", "inline")
+    r = run(*base, "--report")
+    assert r.returncode == 2 and "--report needs a value" in r.stderr
+    r = run(*base, "--report", str(tmp_path / "absent" / "lint.json"))
+    assert r.returncode == 2 and "cannot write the report" in r.stderr
+
+
+# ---------- design-system/lint_design_system.py: flows, library values, empty Components ----------
+
+DS_FLOWS = "# Flows\n\n## Screens\n\n- SCREEN-1: Home. Regions: hero.\n- SCREEN-2: Post. Regions: body.\n"
+DS_LIBRARY = "| Token | Light | Dark |\n|---|---|---|\n| `--ui-bg` | #FFFFFF | #000000 |\n| `--ui-gap` | 16px |\n"
+
+
+def design_system(bg: str = "#FFFFFF", gap: str = "16px",
+                  component: str = "| Button | library | size: sm, md | default, hover | SCREEN-1, SCREEN-2 | lib.md |") -> str:
+    return f"""# Design system: Plinth
+
+## Summary
+
+One library governs the values.
+
+## Sources
+
+- lib.md
+
+## Ownership
+
+- Colour: the library.
+
+## Colour
+
+| Token | Light | Dark | Role | Source |
+|-------|-------|------|------|--------|
+| `--ui-bg` | {bg} | #000000 | page background | lib.md |
+
+## Contrast
+
+| Text token | On background | Light ratio | Dark ratio | AA |
+|------------|---------------|-------------|------------|----|
+
+## Type
+
+- Typeface: Example Sans, fallback sans-serif. Source: lib.md
+- Reading width: 68ch. Source: lib.md
+
+## Space, radii, borders, elevation
+
+| Token | Value | Role | Source |
+|-------|-------|------|--------|
+| `--ui-gap` | {gap} | gap between blocks | lib.md |
+
+## Layout
+
+## Components
+
+| Component | Owner | Variants | States | Screens | Source |
+|-----------|-------|----------|--------|---------|--------|
+{component}
+
+## Design tool
+
+- File: none available
+
+## Assumptions
+
+## Open questions
+
+## Readiness
+
+- Ready for design-brief: yes
+"""
+
+
+def lint_ds(tmp_path: Path, text: str, *flags: str) -> tuple[int, dict]:
+    (tmp_path / "flows.md").write_text(DS_FLOWS, encoding="utf-8")
+    (tmp_path / "lib.md").write_text(DS_LIBRARY, encoding="utf-8")
+    args = []
+    for flag in flags:
+        args += [flag, str(tmp_path / ("flows.md" if flag == "--flows" else "lib.md"))]
+    return lint(LINT_DS, tmp_path / "ds.md", text, *args)
+
+
+def test_lint_design_system_accepts_a_document_that_mirrors_flows_and_library(tmp_path):
+    code, out = lint_ds(tmp_path, design_system(), "--flows", "--library")
+    assert (code, out["errors"]) == (0, []) and out["library_prefix"] == "ui"
+
+
+def test_lint_design_system_needs_a_screen_on_every_component_row(tmp_path):
+    row = "| Button | library | size: sm, md | default, hover | every page | lib.md |"
+    code, out = lint_ds(tmp_path, design_system(component=row), "--flows")
+    assert code == 1 and out["errors"] == ["component row Button cites no SCREEN-n in its Screens cell"]
+    assert lint_ds(tmp_path, design_system(component=row))[1]["errors"] == [], "the check runs only with --flows"
+
+
+def test_lint_design_system_refuses_a_screen_the_flows_do_not_have(tmp_path):
+    row = "| Button | library | size: sm, md | default, hover | SCREEN-1, SCREEN-9 | lib.md |"
+    code, out = lint_ds(tmp_path, design_system(component=row), "--flows")
+    assert code == 1 and out["errors"] == ["screens cited that the flows file does not have: ['SCREEN-9']"]
+    (tmp_path / "empty.md").write_text("# Flows\n", encoding="utf-8")
+    r = run(LINT_DS, "--file", str(tmp_path / "ds.md"), "--flows", str(tmp_path / "empty.md"))
+    assert json.loads(r.stdout)["errors"] == ["--flows: the flows file names no SCREEN-n"]
+
+
+def test_lint_design_system_refuses_a_changed_library_value(tmp_path):
+    code, out = lint_ds(tmp_path, design_system(bg="#FAFAFA"), "--library")
+    assert code == 1
+    assert out["errors"] == ["library value changed or absent: no line naming --ui-bg carries #FFFFFF and #000000"]
+    code, out = lint_ds(tmp_path, design_system(gap="1rem"), "--library")
+    assert out["errors"] == ["library value changed or absent: no line naming --ui-gap carries 16px"]
+    assert lint_ds(tmp_path, design_system(bg="#ffffff"), "--library")[0] == 0, "letter case of a hex value is not a change"
+
+
+def test_lint_design_system_refuses_an_empty_components_table(tmp_path):
+    code, out = lint_ds(tmp_path, design_system(component=""))
+    assert code == 1 and out["errors"] == ["Components table has no rows"] and out["counts"]["components"] == 0
+
+
+# ---------- product-prd/lint_prd.py: an id is not a numeric target ----------
+
+LINT_PRD = "skills/product-prd/scripts/lint_prd.py"
+
+
+def prd(target: str) -> str:
+    return f"""# PRD: Plinth
+
+## Summary
+
+## Problem and goal
+
+## Users
+
+- U-1: Site owners. Situation: publishing docs. Needs: search. Source: brief.
+
+## Scope
+
+## Sources
+
+## Features
+
+- F-1: Search. Outcome: the reader can find a page. Priority: must. Phase: P-1. Source: brief.
+
+## Success metrics
+
+- M-1: Searches that end in a click. Target: {target}. Baseline: none. Measured by: analytics. Source: brief.
+
+## Constraints
+
+## Dependencies and risks
+
+- R-1: The index grows. Trigger: many pages. Impact: slow builds. Mitigation: split the index.
+
+## Release phases
+
+- P-1: First release. Includes: F-1. Exit: search is live. Source: brief.
+
+## Assumptions
+
+## Open questions
+
+- OPEN-2: Which share of searches should end in a click? Blocks: M-1. Recommended: 40 percent, the brief's figure.
+
+## Readiness
+"""
+
+
+def test_lint_prd_accepts_a_numeric_target(tmp_path):
+    code, out = lint(LINT_PRD, tmp_path / "prd.md", prd("40 percent of searches"))
+    assert (code, out["errors"]) == (0, [])
+
+
+def test_lint_prd_does_not_take_an_id_for_a_numeric_target(tmp_path):
+    for target in ("OPEN-2", "set by OPEN-2 and F-1"):
+        code, out = lint(LINT_PRD, tmp_path / "prd.md", prd(target))
+        assert code == 1 and out["errors"] == ["M-1 has no numeric Target:"], target
+
+
+# ---------- product-feature-spec/lint_spec.py: an NFR needs a number, an OPEN a recommendation ----------
+
+LINT_SPEC = "skills/product-feature-spec/scripts/lint_spec.py"
+
+
+def spec(nfr: str = "Results appear within 200 ms of the last keystroke",
+         open_question: str = "Should search cover drafts? Blocks: nothing. Recommended: no, drafts are private") -> str:
+    return f"""# Feature specification: Search
+
+## Summary
+
+## Goal and users
+
+## Scope
+
+## Sources
+
+## Functional requirements
+
+- REQ-1: Show matching pages when the reader types a query. Source: PRD F-1.
+
+## Non-functional requirements
+
+- NFR-1: {nfr}. Source: PRD M-2, measured 2026-01-05.
+
+## Constraints
+
+## Edge cases
+
+- EDGE-1: empty query → show no results
+
+## Acceptance criteria
+
+- AC-1:
+  Given an index with one page
+  When the reader types its title
+  Then the page is listed
+  Covers: REQ-1, NFR-1
+
+## Assumptions
+
+## Open questions
+
+- OPEN-1: {open_question}.
+
+## Readiness
+"""
+
+
+def test_lint_spec_accepts_an_nfr_with_a_number_and_an_open_with_a_recommendation(tmp_path):
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec())
+    assert (code, out["errors"]) == (0, [])
+
+
+def test_lint_spec_refuses_an_nfr_without_a_number(tmp_path):
+    # the digits of its own id, of a cited id and of the Source: text are not the requirement's figure
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec(nfr="Results appear soon after REQ-1 runs"))
+    assert code == 1 and out["errors"] == [
+        "NFR-1 states no number: give the sourced figure, or move it to an OPEN with a Recommended value"]
+
+
+def test_lint_spec_refuses_an_open_without_a_recommendation(tmp_path):
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec(open_question="Should search cover drafts? Blocks: nothing"))
+    assert code == 1 and out["errors"] == ["OPEN-1 has no Recommended: entry"]
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec(open_question="Should search cover drafts"))
+    assert out["errors"] == ["OPEN-1 has no Blocks: entry", "OPEN-1 has no Recommended: entry"]
+
+
+# ---------- mkt-messaging/lint_messaging.py: proof method and date, number words, demos ----------
+
+LINT_MSG = "skills/mkt-messaging/scripts/lint_messaging.py"
+
+MSG_PROOF = ("The stylesheet is 8 kB gzipped. Evidence: size of the built file. "
+             "Method: `gzip -c dist/plinth.css | wc -c`. Date: 2026-03-14. Source: build output.")
+
+
+def messaging(proof: str = MSG_PROOF, headline: str = "Small enough to read", body: str = "The whole stylesheet is 8 kB.",
+              demo: str = "the file size next to the built file", tagline: str = "Styles you can read") -> str:
+    return f"""# Messaging: Plinth
+
+## Summary
+
+## Sources
+
+## Audience
+
+## Promise
+
+## Voice
+
+## Proof points
+
+- PROOF-1: {proof}
+
+## Sections
+
+- SECTION-1: Hero. Purpose: say what it is. Proof: none. Headline: A stylesheet for docs. Body: Plain CSS. CTA: Install → /install. Source: README.
+- SECTION-2: Size. Purpose: show the weight. Proof: PROOF-1. Headline: {headline}. Body: {body} Demo: {demo}. Source: PROOF-1.
+
+## Taglines
+
+- {tagline}
+
+## Words
+
+- Use: stylesheet. Source: README.
+- Avoid: blazing
+
+## Open questions
+
+## Readiness
+"""
+
+
+def msg_errors(tmp_path: Path, **parts: str) -> list[str]:
+    code, out = lint(LINT_MSG, tmp_path / "messaging.md", messaging(**parts))
+    assert code == (1 if out["errors"] else 0)
+    return out["errors"]
+
+
+def test_lint_messaging_accepts_dated_proof_and_a_first_section_without_a_demo(tmp_path):
+    assert msg_errors(tmp_path) == []
+
+
+def test_lint_messaging_needs_a_method_and_a_date_on_every_proof(tmp_path):
+    assert msg_errors(tmp_path, proof="The stylesheet is 8 kB gzipped. Evidence: size of the built file. Source: build output.") == [
+        "PROOF-1 lacks Method:", "PROOF-1 lacks Date:"]
+    assert msg_errors(tmp_path, proof=MSG_PROOF.replace("2026-03-14", "March 2026")) == [
+        "PROOF-1: Date: carries no YYYY-MM-DD date"]
+    # a date elsewhere in the proof does not stand in for the Date: field
+    assert msg_errors(tmp_path, proof=MSG_PROOF.replace("Date: 2026-03-14", "Date: last week").replace(
+        "build output", "build output of 2026-03-14")) == ["PROOF-1: Date: carries no YYYY-MM-DD date"]
+
+
+def test_lint_messaging_checks_number_words_against_the_proofs(tmp_path):
+    assert msg_errors(tmp_path, headline="Eight kilobytes, no more") == [], "a word whose digits a PROOF carries"
+    assert msg_errors(tmp_path, headline="Three kilobytes, no more") == [
+        "SECTION-2: number Three in the copy is not in any PROOF"]
+    assert msg_errors(tmp_path, body="Half the weight of a framework.") == [
+        "SECTION-2: number Half in the copy is not in any PROOF"]
+    assert msg_errors(tmp_path, tagline="Twice as light") == ["Taglines: number Twice is not in any PROOF"]
+    assert msg_errors(tmp_path, tagline="Docs in 5 minutes") == ["Taglines: number 5 is not in any PROOF"]
+    assert msg_errors(tmp_path, tagline="Half the weight",
+                      proof=MSG_PROOF.replace("gzipped.", "gzipped, half of the previous release.")) == []
+
+
+def test_lint_messaging_does_not_take_a_date_for_a_proof_number(tmp_path):
+    assert msg_errors(tmp_path, body="Ships with 14 themes.") == ["SECTION-2: number 14 in the copy is not in any PROOF"]
+    assert msg_errors(tmp_path, body="Released in 2026.") == ["SECTION-2: number 2026. in the copy is not in any PROOF"]
+
+
+def test_lint_messaging_needs_a_demo_on_every_later_section(tmp_path):
+    message = "SECTION-2: Demo: must describe what the design shows; a section with nothing to show is merged into another"
+    for demo in ("none", "None", "n/a", "no demo needed", ""):
+        assert msg_errors(tmp_path, demo=demo) == [message], demo
+    # a call to action does not replace the demo of a later section
+    text = messaging().replace("Demo: the file size next to the built file.", "CTA: Install → /install.")
+    assert lint(LINT_MSG, tmp_path / "messaging.md", text)[1]["errors"] == [message]

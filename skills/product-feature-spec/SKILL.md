@@ -16,7 +16,7 @@ metadata:
   outputs: [docs/product/specs/<feature>.md]
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Feature specification
@@ -35,7 +35,7 @@ One feature, one document that says what must be true when it ships, precisely e
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| A brief, a PRD, a ticket or the user's description of the feature | yes | Ask for it. |
+| A brief, a PRD, a ticket or the user's description of the feature | yes | Stop and write no file. Ask at most three numbered questions in total, one decision per question, each followed by `Recommended: <a concrete answer the user can accept with "yes">, because <reason>` (for example: what the first release covers, what happens to existing data or accounts, which platform comes first). When you cannot recommend an answer because it is a fact only the user has (the product, what exists today), state the assumption you would work under as the recommended answer ("Recommended: I assume a web app with email and password today; correct me"). Say that a brief, PRD or ticket would also do. Resume at step 1 after the answers. |
 | docs/workbench/briefs/<topic>.md or docs/product/prd.md | no | Ground in the user's words and the codebase; expect more questions in step 3. |
 | docs/engineering/architecture.md (codebase map) | no | Read the code paths the feature touches yourself; list them under Sources. |
 | docs/workbench/state.md | no | Skip the decision check; do not register the artifact. |
@@ -48,13 +48,13 @@ Progress:
 - [ ] Step 1: Ground. Read the brief or request, the decisions in the state file, the codebase map and the code the feature touches. Write the Sources list first: every document, decision and file you will cite. Nothing enters the spec without a source line.
 - [ ] Step 2: Cut one feature. A feature is one deliverable that can be accepted on its own. If the input is a phase or an epic with several deliverables, name them, propose which one this spec covers (recommend the one others depend on) and ask. One spec per feature.
 - [ ] Step 3: Functional requirements. For each thing the system must do, write `REQ-n` as action, object, condition, with `Source:` (brief decision, PRD section, user answer, file). When a requirement is implied but unsourced, it becomes `OPEN-n`, not a REQ. Read [references/requirements.md](references/requirements.md) when unsure what counts as functional versus non-functional.
-- [ ] Step 4: Non-functional requirements with numbers. Performance, reliability, security, accessibility, compatibility, size. A number without a source is not allowed: ask the user for the target with a recommended value and its reason, or record `OPEN-n`. Never write "fast", "responsive", "scalable", "intuitive" without a measurable figure next to it.
+- [ ] Step 4: Non-functional requirements with numbers. Performance, reliability, security, accessibility, compatibility, size. An NFR line carries only a number that a source states. A target nobody has set is not an NFR: record it as `OPEN-n` with `Recommended: <value and unit>, because <reason>`. The recommended value is required; it is your proposal, labelled as one, and becomes an NFR only when the user accepts it. Never write "fast", "responsive", "scalable", "intuitive" without a measurable figure next to it.
 - [ ] Step 5: Constraints, from the brief and the codebase: stack, hosting, compatibility, budget, dates, decisions already taken.
-- [ ] Step 6: Edge cases. Walk [references/edge-cases.md](references/edge-cases.md) category by category and write `EDGE-n: <scenario> → <expected behaviour>` for the ones that apply; skip a category explicitly when it does not.
+- [ ] Step 6: Edge cases. Walk [references/edge-cases.md](references/edge-cases.md) category by category and write `EDGE-n: <scenario> → <expected behaviour>` for the ones that apply; skip a category explicitly when it does not. The expected behaviour comes from a source. When no source states it, write the behaviour you recommend after the arrow, followed by `(proposed, see OPEN-n)`, and add that OPEN; never leave the arrow pointing only at a question.
 - [ ] Step 7: Acceptance criteria. For every REQ and NFR, at least one `AC-n` in Given / When / Then with a `Covers:` line naming the REQ or NFR ids. Each criterion is observable and binary; a reviewer can check it without asking the author.
-- [ ] Step 8: Assumptions and open questions. `ASSUMPTION-n` for what you took as true without a source (say why it is safe enough); `OPEN-n` for what only the user can decide, with `Blocks:` naming the REQ or AC it holds up. If any `OPEN-n` blocks a requirement in scope, stop and ask the user, at most three questions with a recommended answer each; resume after the answers.
-- [ ] Step 9: Lint: `python3 scripts/lint_spec.py --file docs/product/specs/<feature>.md`. It checks ids, coverage of every REQ and NFR by an AC, Given/When/Then structure, vague words without numbers, edge-case arrows and required sections. Fix until `ok` is true.
-- [ ] Step 10: Register the artifact in `docs/workbench/state.md` (owner `product-feature-spec`, status `draft`) when the state file exists, and report with the template.
+- [ ] Step 8: Assumptions and open questions. `ASSUMPTION-n` for what you took as true without a source (say why it is safe enough); `OPEN-n` for what only the user can decide, with `Blocks:` naming the REQ or AC it holds up. Every OPEN carries `Blocks:` and `Recommended:`. An OPEN never stops the draft: finish the file with `Ready for architecture: no, because OPEN-n blocks ...`, and put the blocking questions in the report (step 10), at most three, the ones that block the most first.
+- [ ] Step 9: Write the file from [assets/spec-template.md](assets/spec-template.md) to `docs/product/specs/<feature>.md`, then lint it. `lint_spec.py` is in the `scripts/` folder next to this file; run it from the project root by that path: `python3 <folder of this skill>/scripts/lint_spec.py --file docs/product/specs/<feature>.md`. It checks sections, ids, a `Source:` on every REQ and NFR, a number on every NFR, coverage of every REQ and NFR by an AC, Given/When/Then, edge-case arrows, `Blocks:` and `Recommended:` on every OPEN, and vague words. Fix and rerun until `ok` is true and `warnings` is empty. Fix by sourcing or by moving the item to an OPEN, never by inventing a figure or a source.
+- [ ] Step 10: When `docs/workbench/state.md` exists, add this row to its Artifacts table (or update the row if it is there): `| docs/product/specs/<feature>.md | product-feature-spec | draft | <today> |`. Then report with the template, quoting the last lint output.
 - [ ] Step 11: Self-check against "Quality criteria".
 
 ## Output template
@@ -68,8 +68,22 @@ See [assets/spec-template.md](assets/spec-template.md). The report:
 - Sources: <list>
 - Assumptions: <n>; open questions: <n> (<blocking | none blocking>)
 - Ready for architecture: <yes | no, because OPEN-n blocks REQ-n>
-Next: <eng-architecture | the questions above>
+- Registered in docs/workbench/state.md: <yes, owner product-feature-spec, status draft | no state file>
+
+### Questions for you (<n>, at most three)
+1. <OPEN-n as a question>. Recommended: <answer>, because <reason>.
+
+Next: <eng-architecture | answer the questions above>
 ```
+
+## Revising an existing spec
+
+When the request is to lint, fix or update a spec that already exists:
+
+1. Run `lint_spec.py` on the file before any edit and list every error and warning in the reply.
+2. Read the brief or PRD the spec names (its `Feature of:` line, its `Source:` lines) and the state file's decisions.
+3. Fix each finding from those sources: add the `Source:` with the decision number, write the edge case's behaviour the brief states, add the missing AC. What the sources do not state follows steps 4, 6 and 8: it becomes an OPEN with `Blocks:` and a recommended value, never an invented figure.
+4. Rerun the lint until `ok` is true and `warnings` is empty, then report with the template, with one line per finding: `<finding> → <fix> (<source or OPEN-n>)`.
 
 ## Quality criteria
 
@@ -80,7 +94,8 @@ Approve the specification only if all of the following hold:
 - No requirement, NFR or AC contains a judgment word (fast, easy, scalable, intuitive, robust, gracefully, user-friendly, responsive) without a number on the same line.
 - Every edge case states the expected behaviour after `→`.
 - Anything without a source is an ASSUMPTION with a reason or an OPEN with what it blocks; nothing was guessed silently.
-- `lint_spec.py` reports `ok: true`.
+- `lint_spec.py` reports `ok: true` with no warnings, and the report quotes it.
+- Every OPEN names what it blocks and a recommended answer with a reason.
 - The spec covers one feature; a phase with several deliverables was split or the split was asked.
 
 ## Gotchas

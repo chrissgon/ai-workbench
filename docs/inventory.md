@@ -208,6 +208,47 @@ Planned items are never scheduled; they are built when a project needs them.
 
 Skills in waves 2 to 5 are written alongside the phase of a real project that needs them and refined against it before they count as done. When that project is an AI product, the AI skills it needs (`ai-feature-requirements`, `ai-llm-integration`, `ai-evals`, `ai-governance`) move forward to the wave of its engineering, not wave 5; `ai-opportunity-assessment` still runs first and must still be able to say which parts do not need AI.
 
+## Evaluation status
+
+A skill counts as done only when its eval result is recorded here or in its Progress line (backlog T11): strong with and without the skill, floor with the skill, iteration. These skills are built but have no recorded pass (2026-09-30):
+
+- core-agents-md
+- core-clarify
+- core-critique
+- core-orchestrator
+- core-project-init
+- core-research
+- core-skill-creator
+- design-execute
+- design-handoff
+- design-ux-flows
+- eng-architecture
+- eng-code-review
+- eng-codebase-map
+- eng-docs
+- eng-impact-analysis
+- eng-implement
+- eng-integration-tests
+- eng-refactor
+- eng-root-cause
+- eng-tradeoffs
+- eng-unit-tests
+- ops-branch-sync
+- ops-ci-pipeline
+- ops-pull-request
+- product-backlog
+- product-feature-spec
+- product-prd
+- product-roadmap
+
+Recorded on 2026-10-01 (strong Opus 5.5, also the grader; floor DeepSeek V3.2; 3 runs per case):
+
+- design-brief: strong 0.96 with vs 0.36 without; floor 0.92 at iteration 4. The lint result is written to a `.lint.json` file and quoted, template fields get their longest value from `longest_value.py`, and the cases gained the page and messaging fixtures they cited.
+- design-system: strong 0.97 vs 0.37; floor 1.00 at iteration 3 (5 of 6 floor runs; one failed on a provider error). Fixtures rebuilt as a project tree with screens and components; the lint checks screens against the flows and library values verbatim; an unanswered typeface question is written as an open question.
+- mkt-messaging: strong 1.00 vs 0.62; floor 0.81 at iteration 4. Fixtures at the paths the prompt names; the lint needs a method and a date on every proof, checks number words against the proofs and refuses a section with no demo.
+- product-prd: strong 1.00 vs 0.48; floor 0.69 at iteration 6: not passing (the floor model is unstable on fixing an existing PRD).
+- product-feature-spec: strong 1.00 vs 0.25; floor 0.74 at iteration 5: not passing (the floor model is unstable on the no-input case and on revising a spec).
+
 ## Progress
 
 Wave 0:

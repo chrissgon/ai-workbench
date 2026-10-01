@@ -3,7 +3,10 @@
 
 Usage: python3 lint_brief.py --file <brief.md> --type <screen|mockup|logo|presentation|animation|image>
                              --values <inline|loaded> [--messaging <messaging.md>]
-                             [--flows <flows.md> --screen SCREEN-n] [--json]
+                             [--flows <flows.md> --screen SCREEN-n] [--report <lint.json>] [--json]
+
+--report <path> also writes the result to that file, with the command's own arguments ("file", "type",
+"values", "screen", "messaging") and the date, so a reviewer can check the lint ran and what it checked.
 
 Checks:
   - required sections are present
@@ -24,6 +27,7 @@ Checks:
 
 Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
+import datetime
 import json
 import re
 import sys
@@ -73,8 +77,11 @@ def main(argv):
         return 0 if argv else 2
     as_json = "--json" in argv
     args = {}
-    for flag in ("--file", "--type", "--values", "--messaging", "--flows", "--screen"):
+    for flag in ("--file", "--type", "--values", "--messaging", "--flows", "--screen", "--report"):
         if flag in argv:
+            if argv.index(flag) + 1 >= len(argv):
+                print(f"Error: {flag} needs a value.", file=sys.stderr)
+                return 2
             args[flag] = argv[argv.index(flag) + 1]
     if "--file" not in args or args.get("--type") not in PROFILE or args.get("--values") not in ("inline", "loaded"):
         print("Error: --file, --type <" + "|".join(PROFILE) + "> and --values <inline|loaded> are required.",
@@ -170,8 +177,21 @@ def main(argv):
         if "Blocks:" not in rest or "Recommended:" not in rest:
             errors.append(f"{oid} lacks Blocks: or Recommended:")
     ok = not errors
-    print(json.dumps({"ok": ok, "counts": {"hex_colours": len(hexes), "directions": len(set(directions)),
-                      "criteria": len(crits)}, "errors": errors}, indent=2 if as_json else None))
+    result = {"ok": ok, "counts": {"hex_colours": len(hexes), "directions": len(set(directions)),
+              "criteria": len(crits)}, "errors": errors}
+    if "--report" in args:
+        record = {"ok": ok, "date": datetime.date.today().isoformat(), "file": args["--file"],
+                  "type": args["--type"], "values": args["--values"], "screen": args.get("--screen"),
+                  "flows": args.get("--flows"), "messaging": args.get("--messaging"),
+                  "counts": result["counts"], "errors": errors}
+        try:
+            with open(args["--report"], "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error: cannot write the report: {e}", file=sys.stderr)
+            return 2
+    print(json.dumps(result, indent=2 if as_json else None))
     return 0 if ok else 1
 
 
