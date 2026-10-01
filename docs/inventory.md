@@ -224,22 +224,22 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | biz-icp-positioning | evaluated | 1.00 | 0.63 | 0.93 | 2026-10-01 | 1 |
 | biz-market-analysis | evaluated | 0.93 | 0.28 | 0.94 | 2026-10-01 | 1 |
 | brand-guidelines | evaluated | 1.00 | 0.63 | 1.00 | 2026-10-01 | 1 |
-| brand-identity | draft | — | — | — | — | — |
+| brand-identity | draft | 0.69 | 0.38 | 0.74 | 2026-10-01 | 4 |
 | brand-name | evaluated | 1.00 | 0.62 | 0.97 | 2026-10-01 | 1 |
 | brand-profile | evaluated | 0.94 | 0.48 | 0.97 | 2026-10-01 | 1 |
 | brand-strategy | evaluated | 1.00 | 0.80 | 1.00 | 2026-10-01 | 1 |
 | brand-voice | evaluated | 0.81 | 0.44 | 0.93 | 2026-10-01 | 1 |
 | core-agents-md | evaluated | 1.00 | 0.34 | 0.98 | 2026-10-01 | 3 |
-| core-clarify | evaluated | 0.96 | 0.39 | 1.00 | 2026-10-01 | 3 |
+| core-clarify | evaluated | 1.00 | 0.21 | 1.00 | 2026-10-01 | 4 |
 | core-critique | evaluated | 0.96 | 0.48 | 0.89 | 2026-10-01 | 1 |
 | core-orchestrator | evaluated | 0.90 | 0.48 | 0.86 | 2026-10-01 | 1 |
-| core-project-init | draft | 0.41 | 0.30 | 0.36 | 2026-10-01 | 1 |
+| core-project-init | evaluated | 1.00 | 0.42 | 1.00 | 2026-10-01 | 3 |
 | core-research | draft | — | — | — | — | — |
 | core-security-audit | evaluated | 0.90 | 0.75 | 0.94 | 2026-10-01 | 1 |
 | core-skill-creator | draft | — | — | — | — | — |
 | design-brief | evaluated | 1.00 | 0.36 | 0.98 | 2026-10-01 | 1 |
 | design-execute | draft | — | — | — | — | — |
-| design-handoff | draft | 0.53 | 0.31 | 0.42 | 2026-10-01 | 1 |
+| design-handoff | evaluated | 1.00 | 0.29 | 1.00 | 2026-10-01 | 3 |
 | design-system | evaluated | 1.00 | 0.44 | 1.00 | 2026-10-01 | 6 |
 | design-ux-flows | evaluated | 0.78 | 0.47 | 0.80 | 2026-10-01 | 1 |
 | eng-architecture | evaluated | 0.89 | 0.40 | 0.93 | 2026-10-01 | 1 |
@@ -265,12 +265,12 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | ops-ci-pipeline | draft | — | — | — | — | — |
 | ops-pull-request | draft | — | — | — | — | — |
 | ops-repo-baseline | draft | — | — | — | — | — |
-| product-backlog | evaluated | 0.93 | 0.54 | 0.91 | 2026-10-01 | 3 |
+| product-backlog | evaluated | 1.00 | 0.42 | 1.00 | 2026-10-01 | 4 |
 | product-feature-spec | evaluated | 1.00 | 0.29 | 1.00 | 2026-10-01 | 1 |
 | product-prd | evaluated | 1.00 | 0.46 | 0.99 | 2026-10-01 | 1 |
 | product-roadmap | evaluated | 1.00 | 0.63 | 1.00 | 2026-10-01 | 3 |
 
-Counts: 24 evaluated, 0 stale, 24 draft, 48 skills.
+Counts: 26 evaluated, 0 stale, 22 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

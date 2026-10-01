@@ -6,17 +6,22 @@ Usage:
   python3 init_project.py --root <dir> --apply --autonomy <mode> [--input <file>] [--name <name>] [--register <path>=<slot>]... [--dry-run]
   python3 init_project.py --root <dir> [--set-autonomy <mode>] [--input <file>] [--register <path>=<slot>]... [--dry-run]
 
---detect   prints JSON: is_project_root, name_guess, state_exists, agents_md (exists, has_section),
-           root_docs (specification-like *.md at the root), excluded, docs_dir (count, names).
+--detect   prints JSON: is_project_root, name_guess, state_exists, autonomy (the current mode, or null),
+           agents_md (exists, has_section), root_docs (specification-like *.md at the root),
+           proposed_registrations (file, slot and the ready --register value, matched by file name),
+           unmatched_root_docs (open them to pick a slot), excluded, docs_dir (count, names),
+           not_registered (file and reason), next ("init" or "update") and summary: one line to quote.
 --apply    creates docs/workbench/state.md and the workbench section in AGENTS.md. Refuses if state exists.
 Update     (no --apply) changes the autonomy mode and/or adds registrations to an existing state.
+           --apply and update print JSON with "report": the lines of the reply's report, filled in.
 --register <path>=<slot>  registers an existing document as the artifact <slot> (docs/<area>/...), in place.
                           The path must stay inside --root.
 --input <file>            a JSON file (or - for stdin) with the user's own words, which never go on the
                           command line where quotes or $( ) would break out:
                           {"name": "<name>", "decisions": ["<text>", ...], "open_questions": ["<text>", ...]}
                           Every key is optional. Decisions and open questions are recorded as stated;
-                          a line break inside one becomes a space.
+                          a line break inside one becomes a space. A file named
+                          .workbench-init-input.json is deleted after a run that wrote the state.
 --name <name>             the project name, when it is only letters, digits, spaces, '.', '_' or '-';
                           any other name goes in --input.
 --autonomy / --set-autonomy  one of: every-phase, milestones, end.
@@ -77,6 +82,44 @@ def refuse(msg):
     return 1
 
 
+INPUT_SCRATCH = ".workbench-init-input.json"
+
+# File-name stems (upper case, "_" read as "-") and the slot they fill; first match wins. A stem that is
+# ambiguous by name alone (DESIGN, SPEC, STYLE-GUIDE) is left out on purpose: the document must be opened.
+SLOT_PATTERNS = (
+    (("DESIGN-SYSTEM", "TOKENS", "THEME"), "docs/design/design-system.md"),
+    (("ARCHITECTURE", "SYSTEM-DESIGN"), "docs/engineering/architecture.md"),
+    (("ADR", "DECISIONS"), "docs/engineering/adr/"),
+    (("INTERFACE", "SCREENS", "UI"), "docs/design/screens/"),
+    (("JOURNEY", "FLOWS", "UX"), "docs/design/flows.md"),
+    (("HANDOFF",), "docs/engineering/plans/handoff.md"),
+    (("MIGRATION",), "docs/engineering/plans/migration.md"),
+    (("PRD", "REQUIREMENTS"), "docs/product/prd.md"),
+    (("ROADMAP",), "docs/product/roadmap.md"),
+    (("BRAND", "VOICE"), "docs/brand/guidelines.md"),
+    (("BUSINESS", "BUSINESS-PLAN", "PITCH"), "docs/business/business-plan.md"),
+    (("MARKETING", "LAUNCH", "LAUNCH-PLAN"), "docs/marketing/launch-plan.md"),
+)
+
+
+def slot_for(filename):
+    """The slot a root document fills by its name, or None when the name does not say."""
+    stem = filename[:-3].upper().replace("_", "-")
+    for stems, slot in SLOT_PATTERNS:
+        if stem in stems:
+            return slot
+    return None
+
+
+def current_autonomy(root):
+    try:
+        with open(os.path.join(root, "docs", "workbench", "state.md"), encoding="utf-8") as f:
+            m = re.search(r"^- Checkpoints: *([a-z-]+)", f.read(), re.M)
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
 INSTRUCTION_HEADINGS = ("always", "never", "rules", "hard rules", "communication", "do", "don't", "workflow")
 
 
@@ -132,23 +175,73 @@ def detect(root):
     if os.path.isdir(docs_dir):
         for dp, _, fns in os.walk(docs_dir):
             for fn in fns:
-                if fn.endswith(".md"):
-                    docs_files.append(os.path.relpath(os.path.join(dp, fn), root))
+                rel = os.path.relpath(os.path.join(dp, fn), root).replace(os.sep, "/")
+                if fn.endswith(".md") and not rel.startswith("docs/workbench/"):
+                    docs_files.append(rel)
     agents = os.path.join(root, "AGENTS.md")
     has_section = False
     if os.path.isfile(agents):
         with open(agents, encoding="utf-8") as f:
             has_section = START in f.read()
+    state_exists = os.path.isfile(os.path.join(root, "docs", "workbench", "state.md"))
+    registered = ""
+    if state_exists:
+        with open(os.path.join(root, "docs", "workbench", "state.md"), encoding="utf-8") as f:
+            registered = f.read()
+    proposed = [{"file": fn, "slot": slot_for(fn), "register": f"{fn}={slot_for(fn)}"}
+                for fn in root_docs if slot_for(fn) and f"(at {fn})" not in registered]
+    unmatched = [fn for fn in root_docs if not slot_for(fn) and f"(at {fn})" not in registered]
+    not_registered = [{"file": e["file"], "reason": e["reason"]} for e in excluded] + [
+        {"file": p, "reason": "end-user documentation under docs/; registered only when the user asks"}
+        for p in sorted(docs_files)[:50] if f"(at {p})" not in registered]
+    autonomy = current_autonomy(root) if state_exists else None
+    name = name_guess(root)
+    agents_exists = os.path.isfile(agents)
+    summary = "Detected: {root}; name guess `{name}`; state file {state}; AGENTS.md {agents}; root specifications: {specs}.".format(
+        root="a project root" if is_root else "NOT a project root (no version control, no manifest)",
+        name=name,
+        state=f"exists, autonomy `{autonomy}`" if state_exists else "missing (not initialized)",
+        agents=("exists, with the workbench section" if has_section else "exists, without the workbench section")
+        if agents_exists else "missing",
+        specs=", ".join(root_docs) or "none")
     return {
         "root": os.path.abspath(root),
         "is_project_root": is_root,
-        "name_guess": name_guess(root),
-        "state_exists": os.path.isfile(os.path.join(root, "docs", "workbench", "state.md")),
-        "agents_md": {"exists": os.path.isfile(agents), "has_section": has_section},
+        "name_guess": name,
+        "state_exists": state_exists,
+        "autonomy": autonomy,
+        "agents_md": {"exists": agents_exists, "has_section": has_section},
         "root_docs": root_docs,
+        "proposed_registrations": proposed,
+        "unmatched_root_docs": unmatched,
         "excluded": excluded,
         "docs_dir": {"count": len(docs_files), "files": sorted(docs_files)[:50]},
+        "not_registered": not_registered,
+        "next": "update" if state_exists else "init",
+        "summary": summary,
     }
+
+
+def report_lines(root, name, state_action, autonomy, agents_action, rows, not_registered):
+    """The reply's report, filled in from what the script did; `rows` are (slot, path) of every registration."""
+    lines = [f"## Project initialized: {name}" if state_action == "created" else f"## Project updated: {name}", "",
+             f"- State: docs/workbench/state.md ({state_action}), autonomy {autonomy}",
+             f"- Instructions: AGENTS.md ({agents_action}); other content untouched"]
+    if rows:
+        lines += ["- Registered as existing artifacts (in place, owner `existing`; nothing moved, renamed or edited):",
+                  "  | Slot | At | Owner | Status |", "  |------|----|-------|--------|"]
+        lines += [f"  | {s} | {p} | existing | approved |" for s, p in rows]
+    else:
+        lines.append("- Registered as existing artifacts: none")
+    skipped = [f"{e['file']} ({e['reason']})" for e in not_registered
+               if not any(p == e["file"] for _, p in rows)]
+    lines.append("- Not registered: " + ("; ".join(skipped) or "none"))
+    return lines
+
+
+def registered_rows(state):
+    """(slot, path) of every `existing` row in a state file's text."""
+    return re.findall(r"^\| *(\S+) \(at ([^)|]+)\) *\| *existing *\|", state, re.M)
 
 
 def parse_registrations(items, root):
@@ -213,13 +306,15 @@ def apply(root, name, autonomy, regs, dry, decisions=(), questions=()):
             content, action = upsert_section(f.read(), section)
     else:
         content, action = f"# {name}\n\n" + section, "created"
+    skipped = detect(root)["not_registered"]
     write(agents, content, dry)
     print(json.dumps({
         "dry_run": dry, "action": "apply", "name": name, "autonomy": autonomy,
         "state": "created", "agents_md": action,
         "registered": [{"slot": s, "at": p} for p, s in regs],
         "decisions": len(decisions), "open_questions": len(questions),
-    }))
+        "report": report_lines(root, name, "created", autonomy, action, [(s, p) for p, s in regs], skipped),
+    }, indent=1))
     return 0
 
 
@@ -231,6 +326,8 @@ def update(root, set_autonomy, regs, dry, decisions=(), questions=()):
     with open(state_path, encoding="utf-8") as f:
         state = f.read()
     changes = []
+    agents_action = "unchanged"
+    before = re.search(r"^- Checkpoints: *([a-z-]+)", state, re.M)
     if set_autonomy:
         new = re.sub(r"^- Checkpoints: .*$", f"- Checkpoints: {set_autonomy}", state, count=1, flags=re.M)
         if new != state:
@@ -238,7 +335,7 @@ def update(root, set_autonomy, regs, dry, decisions=(), questions=()):
         agents = os.path.join(root, "AGENTS.md")
         if os.path.isfile(agents):
             with open(agents, encoding="utf-8") as f:
-                content, _ = upsert_section(f.read(), section_text(set_autonomy))
+                content, agents_action = upsert_section(f.read(), section_text(set_autonomy))
             write(agents, content, dry)
             changes.append("AGENTS.md section refreshed")
     added = []
@@ -261,8 +358,17 @@ def update(root, set_autonomy, regs, dry, decisions=(), questions=()):
     if changes or added:
         state = re.sub(r"^- Updated: .*$", f"- Updated: {date}", state, count=1, flags=re.M)
         write(state_path, state, dry)
+    m = re.search(r"^- Project: *(.+)$", state, re.M)
+    mode = re.search(r"^- Checkpoints: *([a-z-]+)", state, re.M)
+    mode_text = mode.group(1) if mode else "unknown"
+    if before and mode and before.group(1) != mode.group(1):
+        mode_text = f"{mode.group(1)}: the mode was switched from {before.group(1)} to {mode.group(1)}"
     print(json.dumps({"dry_run": dry, "action": "update", "changes": changes, "registered": added,
-                      "unchanged": not (changes or added)}))
+                      "unchanged": not (changes or added),
+                      "report": report_lines(root, m.group(1).strip() if m else "unknown",
+                                             "updated" if changes or added else "unchanged",
+                                             mode_text, agents_action,
+                                             registered_rows(state), detect(root)["not_registered"])}, indent=1))
     return 0
 
 
@@ -290,6 +396,13 @@ def read_input(src):
         raise ValueError('"name" must be a string')
     return (one_line(name) if name else None), [one_line(t) for t in lists[0] if t.strip()], \
         [one_line(t) for t in lists[1] if t.strip()]
+
+
+def consume(input_src, dry, code):
+    """Delete the scratch input file after a real run that succeeded; any other file name is left alone."""
+    if code == 0 and not dry and input_src and os.path.basename(input_src) == INPUT_SCRATCH and os.path.isfile(input_src):
+        os.remove(input_src)
+    return code
 
 
 def main(argv):
@@ -354,12 +467,12 @@ def main(argv):
             return usage_error("--apply requires a name (--name, or \"name\" in --input) and --autonomy.")
         if autonomy not in MODES:
             return usage_error(f"--autonomy must be one of {MODES}.")
-        return apply(root, name, autonomy, parsed, dry, decisions, questions)
+        return consume(input_src, dry, apply(root, name, autonomy, parsed, dry, decisions, questions))
     if set_autonomy and set_autonomy not in MODES:
         return usage_error(f"--set-autonomy must be one of {MODES}.")
     if not set_autonomy and not parsed and not decisions and not questions:
         return usage_error("nothing to do: pass --detect, --apply, --set-autonomy, --register or --input.")
-    return update(root, set_autonomy, parsed, dry, decisions, questions)
+    return consume(input_src, dry, update(root, set_autonomy, parsed, dry, decisions, questions))
 
 
 if __name__ == "__main__":

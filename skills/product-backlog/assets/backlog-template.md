@@ -17,7 +17,7 @@
   Delivers: REQ-n
   Touches: {design components or files}
   Depends on: none
-  Check: {the design's "Verify by ..." sentence} (design assumption)
+  Check: {the design's "Verify by ..." sentence} (design assumption 1)
   Size: L, because {reason}
   Milestone: M1
 - T-{abbr}-2: {title}
@@ -39,8 +39,8 @@
 
 ### Order
 
-- Spikes first: T-{abbr}-1 (every other task depends on a spike)
-- Critical path: T-{abbr}-1 → T-{abbr}-2 → … (the `critical_path` of the lint output)
+- Spikes: T-{abbr}-1 (assumption 1) gates T-{abbr}-2
+- Critical path: T-{abbr}-… → T-{abbr}-… → … (the `critical_path` of the lint output)
 - Parallel tracks: {T-x-2 alongside T-x-3}
 
 ### Milestones

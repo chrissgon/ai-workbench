@@ -35,6 +35,14 @@ SPEC = """# Feature specification: lantern
 
 DESIGN = """# Design: lantern
 
+## Components
+
+| Component | Responsibility | Location |
+|-----------|----------------|----------|
+| Note parser | Parses a note | build/parse.mjs |
+| Note loader | Reads every note | build/load.mjs |
+| Page writer | Writes the pages | build/write.mjs |
+
 ## Verification plan
 
 | AC | Check | Type | Command or location |
@@ -44,7 +52,7 @@ DESIGN = """# Design: lantern
 
 ## Assumptions to verify before implementation
 
-- The parser keeps the note title. Verify by parsing one note in a scratch script.
+- The Note parser keeps the note title. Verify by parsing one note in a scratch script.
 
 ## Open questions
 
@@ -60,15 +68,15 @@ GOOD = """# Backlog: lantern
 - T-lan-1: Spike: the parser keeps the note title
   Does: parses one note in a scratch script
   Delivers: REQ-1
-  Touches: parser
+  Touches: Note parser
   Depends on: none
-  Check: parsing one note in a scratch script prints its title (design assumption)
+  Check: parsing one note in a scratch script prints its title (design assumption 1)
   Size: L, because it is a spike
   Milestone: M1
 - T-lan-2: Note loader
   Does: reads every note
   Delivers: REQ-1, NFR-1, AC-1
-  Touches: loader
+  Touches: Note loader, Note parser
   Depends on: T-lan-1
   Check: `node --test test/build.test.mjs`; a note is published (verification plan: AC-1)
   Size: S, because one file
@@ -159,21 +167,76 @@ def test_task_without_a_req_or_ac_id_is_an_error(tmp_path):
 
 
 def test_spike_with_a_dependency_is_an_error(tmp_path):
-    bad = GOOD.replace("  Touches: parser\n  Depends on: none", "  Touches: parser\n  Depends on: T-lan-2")
+    bad = GOOD.replace("  Touches: Note parser\n  Depends on: none", "  Touches: parser\n  Depends on: T-lan-2")
     _, out = lint(tmp_path, bad)
     assert errors_with(out, "T-lan-1 is a spike and must have 'Depends on: none'")
 
 
-def test_task_that_can_start_before_a_spike_is_an_error(tmp_path):
-    bad = GOOD.replace("  Touches: loader\n  Depends on: T-lan-1", "  Touches: loader\n  Depends on: none")
+def test_task_touching_a_component_the_assumption_names_must_depend_on_its_spike(tmp_path):
+    extra = GOOD.replace("### Milestones", """- T-lan-4: Parser options
+  Does: adds options
+  Delivers: REQ-1
+  Touches: Note parser
+  Depends on: none
+  Check: `node --test test/build.test.mjs`; options apply (verification plan: AC-1)
+  Size: S, because one file
+  Milestone: M1
+
+### Milestones""")
+    _, out = lint(tmp_path, extra)
+    found = errors_with(out, "T-lan-4 touches 'Note parser', which assumption 1 of the design names")
+    assert found and "T-lan-1" in found[0]
+
+
+def test_task_the_assumption_does_not_name_may_start_without_the_spike(tmp_path):
+    extra = GOOD.replace("### Milestones", """- T-lan-4: Page writer
+  Does: writes the pages
+  Delivers: REQ-1
+  Touches: Page writer
+  Depends on: none
+  Check: `node --test test/build.test.mjs`; pages exist (verification plan: AC-1)
+  Size: S, because one file
+  Milestone: M1
+
+### Milestones""")
+    r, out = lint(tmp_path, extra)
+    assert r.returncode == 0 and out["ok"] is True, out["errors"]
+
+
+def test_dependency_through_another_task_satisfies_the_spike_rule(tmp_path):
+    extra = GOOD.replace("### Milestones", """- T-lan-4: Parser options
+  Does: adds options
+  Delivers: REQ-1
+  Touches: Note parser
+  Depends on: T-lan-2
+  Check: `node --test test/build.test.mjs`; options apply (verification plan: AC-1)
+  Size: S, because one file
+  Milestone: M1
+
+### Milestones""")
+    _, out = lint(tmp_path, extra)
+    assert out["ok"] is True, out["errors"]
+
+
+def test_spike_without_a_dependant_is_an_error(tmp_path):
+    bad = GOOD.replace("  Touches: Note loader, Note parser\n  Depends on: T-lan-1",
+                       "  Touches: Note loader\n  Depends on: none")
     _, out = lint(tmp_path, bad)
-    assert errors_with(out, "can start before any spike is done")
-    assert "T-lan-2" in errors_with(out, "can start before any spike")[0]
+    assert errors_with(out, "T-lan-1 is a spike no task depends on")
+    _, out = lint(tmp_path, bad, design=False)
+    assert errors_with(out, "T-lan-1 is a spike no task depends on")
+
+
+def test_spike_check_needs_the_number_of_its_assumption(tmp_path):
+    for origin in ("(design assumption)", "(design assumption 2)"):
+        _, out = lint(tmp_path, GOOD.replace("(design assumption 1)", origin))
+        assert errors_with(out, "T-lan-1 Check must end with '(design assumption <n>)', n from 1 to 1")
+        assert errors_with(out, "assumption 1 of the design has no spike")
 
 
 def test_no_spike_rule_when_the_backlog_has_no_spike(tmp_path):
     no_spike = GOOD.replace("Spike: the parser keeps the note title", "Parser check").replace(
-        " (design assumption)", "")
+        " (design assumption 1)", "")
     _, out = lint(tmp_path, no_spike, design=False)
     assert not errors_with(out, "spike")
 
@@ -186,9 +249,9 @@ def test_removal_without_a_dependency_is_an_error(tmp_path):
 
 def test_design_requires_one_spike_per_assumption(tmp_path):
     bad = GOOD.replace("Spike: the parser keeps the note title", "Parser check").replace(
-        "(design assumption)", "(verification plan: AC-1) `node --test test/build.test.mjs`")
+        "(design assumption 1)", "(verification plan: AC-1) `node --test test/build.test.mjs`")
     _, out = lint(tmp_path, bad)
-    assert errors_with(out, "the design lists 1 assumptions to verify but the backlog has 0")
+    assert errors_with(out, "assumption 1 of the design has no spike")
 
 
 def test_check_origin_is_required_with_a_design(tmp_path):
@@ -218,7 +281,7 @@ def test_check_citing_an_ac_without_a_plan_row_is_an_error(tmp_path):
 
 def test_design_assumption_origin_on_a_task_that_is_not_a_spike(tmp_path):
     bad = GOOD.replace("`node --test test/build.test.mjs`; a note is published (verification plan: AC-1)",
-                       "a note is published (design assumption)")
+                       "a note is published (design assumption 1)")
     _, out = lint(tmp_path, bad)
     assert errors_with(out, "T-lan-2 Check cites '(design assumption)' but the task is not titled")
 

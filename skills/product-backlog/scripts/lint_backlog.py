@@ -14,13 +14,14 @@ Checks, for tasks whose id starts with T-<abbr>-:
   - Check is not a vague word ("works", "done", "ok"); it carries no duration in days and no date
   - Size is S, M or L followed by ", because"
   - every task's milestone appears in the Milestones list
-  - a task titled "Spike: ..." has `Depends on: none`; when spikes exist, every other task depends on a
-    spike, directly or through other tasks, so the critical path starts with a spike
+  - a task titled "Spike: ..." has `Depends on: none` and at least one task that depends on it
   - a task titled "Remove ..." depends on at least one task
 With --design:
-  - there are at least as many "Spike: ..." tasks as bullets under "Assumptions to verify"
-  - every Check ends with its origin: "(verification plan: AC-n)" and then contains that row's command,
-    or "(design assumption)" on a spike
+  - every bullet under "Assumptions to verify" has a "Spike: ..." task, whose Check ends with
+    "(design assumption <n>)", n being the position of the bullet
+  - every other Check ends with "(verification plan: AC-n)" and contains that row's command
+  - a task whose Touches names a design component that assumption n names depends on spike n,
+    directly or through other tasks; no other task is required to depend on a spike
 Prints JSON: ok, summary (one line to quote in the report), tasks, critical_path (longest dependency
 chain by task count), coverage, errors.
 
@@ -54,7 +55,7 @@ def defined_ids(spec_text):
 VAGUE_CHECKS = {"works", "it works", "work", "done", "ok", "okay", "passes", "pass", "tested", "test", "tests",
                 "manual", "verified", "fine", "good", "tbd", "todo", "n/a", "none"}
 DURATION_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:days?|weeks?|hours?|sprints?|months?)\b|\b\d{4}-\d{2}-\d{2}\b", re.I)
-ORIGIN_RE = re.compile(r"\(\s*verification plan:\s*((?:AC-\d+)(?:\s*,\s*AC-\d+)*)\s*\)|\(\s*design assumption[^)]*\)", re.I)
+ORIGIN_RE = re.compile(r"\(\s*verification plan:\s*((?:AC-\d+)(?:\s*,\s*AC-\d+)*)\s*\)|\(\s*design assumption\s*(\d*)[^)]*\)", re.I)
 
 
 def section(text, heading_start):
@@ -72,9 +73,19 @@ def section(text, heading_start):
 
 
 def design_facts(design_text):
-    """(number of assumptions to verify, {AC id: [commands in backticks of its verification-plan row]})."""
-    assumptions = sum(1 for ln in section(design_text, "Assumptions to verify") if re.match(r"^\s*[-*]\s+\S", ln)
-                      and ln.strip().lstrip("-* ").lower().rstrip(".") != "none")
+    """(assumptions, plan): assumptions is one list per bullet under "Assumptions to verify", holding the
+    design components (first column of the Components table) that the bullet names; plan maps an AC id
+    to the commands in backticks of its verification-plan row."""
+    components = []
+    for ln in section(design_text, "Components"):
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        if ln.lstrip().startswith("|") and cells and cells[0] and cells[0].lower() != "component" \
+                and not set(cells[0]) <= set("-: "):
+            components.append(cells[0])
+    assumptions = []
+    for ln in section(design_text, "Assumptions to verify"):
+        if re.match(r"^\s*[-*]\s+\S", ln) and ln.strip().lstrip("-* ").lower().rstrip(".") != "none":
+            assumptions.append([c for c in components if c.lower() in ln.lower()])
     plan = {}
     for ln in section(design_text, "Verification plan"):
         m = re.match(r"^\|\s*(AC-\d+)\s*\|", ln)
@@ -152,11 +163,9 @@ def main(argv):
     ids_seen = re.findall(r"^- (T-" + re.escape(abbr) + r"-\d+):", b, re.M)
     for dup in sorted({i for i in ids_seen if ids_seen.count(i) > 1}):
         errors.append(f"{dup} is defined more than once")
-    n_assumptions, plan = design_facts(d_text) if d_text is not None else (0, {})
+    assumptions, plan = design_facts(d_text) if d_text is not None else ([], {})
     spikes = [tid for tid, t in tasks.items() if is_spike(t)]
-    if d_text is not None and len(spikes) < n_assumptions:
-        errors.append(f"the design lists {n_assumptions} assumptions to verify but the backlog has {len(spikes)} "
-                      f"tasks titled 'Spike: ...'; each assumption needs one")
+    spike_of = {}
     if not tasks:
         errors.append(f"no tasks with prefix T-{abbr}- found")
     milestones = set(re.findall(r"^- (M\d+)\b", b, re.M))
@@ -203,7 +212,7 @@ def main(argv):
             m = ORIGIN_RE.search(check)
             if not m:
                 errors.append(f"{tid} Check must end with its origin: '(verification plan: AC-n)' or, on a spike, "
-                              f"'(design assumption)'")
+                              f"'(design assumption <n>)'")
             elif m.group(1):
                 for ac in re.findall(r"AC-\d+", m.group(1)):
                     if ac not in plan:
@@ -212,6 +221,11 @@ def main(argv):
                         errors.append(f"{tid} Check cites verification plan {ac} but lacks its command `{plan[ac][0]}`")
             elif not is_spike(t):
                 errors.append(f"{tid} Check cites '(design assumption)' but the task is not titled 'Spike: ...'")
+            elif not m.group(2) or not 1 <= int(m.group(2)) <= len(assumptions):
+                errors.append(f"{tid} Check must end with '(design assumption <n>)', n from 1 to {len(assumptions)}: "
+                              f"the position of the assumption in the design's list")
+            else:
+                spike_of.setdefault(int(m.group(2)), tid)
     # cycles + critical path
     order, state, path_len, longest = [], {}, {}, {}
     def visit(n, stack):
@@ -232,14 +246,22 @@ def main(argv):
         path_len[n] = best[0] + 1
         longest[n] = (longest[best[1]] if best[1] else []) + [n]
     critical = max(longest.values(), key=len) if longest else []
-    if spikes:
-        reach = {}
-        for n in order:
-            reach[n] = is_spike(tasks[n]) or any(reach.get(d, False) for d in deps.get(n, []))
-        loose = sorted((n for n in tasks if not reach.get(n, False)), key=lambda x: int(x.rsplit("-", 1)[1]))
-        if loose:
-            errors.append(f"tasks that can start before any spike is done (make each depend on a spike, directly "
-                          f"or through another task): {loose}")
+    for sp in spikes:
+        if not any(sp in deps.get(n, []) for n in tasks):
+            errors.append(f"{sp} is a spike no task depends on: make the tasks its assumption affects depend on it")
+    for n, named in enumerate(assumptions, 1):
+        if n not in spike_of:
+            errors.append(f"assumption {n} of the design has no spike: add a task titled 'Spike: ...' whose Check "
+                          f"ends with '(design assumption {n})'")
+            continue
+        sp, reach = spike_of[n], {}
+        for t in order:
+            reach[t] = t == sp or any(reach.get(d, False) for d in deps.get(t, []))
+        for t in sorted(tasks, key=lambda x: int(x.rsplit("-", 1)[1])):
+            touched = [c for c in named if c.lower() in (field(tasks[t], "Touches:") or "").lower()]
+            if touched and not is_spike(tasks[t]) and not reach.get(t, False):
+                errors.append(f"{t} touches {touched[0]!r}, which assumption {n} of the design names, but does not "
+                              f"depend on its spike {sp}, directly or through another task")
     must_cover = sorted((i for i in spec_ids if i.startswith(("REQ-", "NFR-", "AC-"))), key=lambda x: (x.split("-")[0], int(x.split("-")[1])))
     uncovered = [i for i in must_cover if i not in delivered]
     if uncovered:

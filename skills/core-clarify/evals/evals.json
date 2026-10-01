@@ -24,8 +24,8 @@
       "assertions": [
         "The first round contains at most three questions",
         "Every question has a recommended answer with a one-line reason",
-        "No question bundles two decisions",
-        "No question asks what the project files already answer (which site generator the docs use, where the header lives, whether dark styles already exist); the reply states at least one of these facts with the file it came from",
+        "No question bundles two decisions: each question can be settled by picking one of its options. Options that are alternative answers to the same question (for example 'yes, I will supply them; no, derive them') are one decision, not two",
+        "No question asks what the project files already answer (which site generator the docs use, where the header lives, whether dark styles already exist in the repository); the reply states at least one of these facts with the file it came from. A question about something only the user knows (a preference, a target, or material that is not in the repository) is not answered by the files",
         "No brief file and no state file is written in this turn, and no recommended answer is presented as already decided: the reply says the questions are open until the user answers"
       ]
     },
@@ -41,9 +41,7 @@
         "package.json"
       ],
       "assertions": [
-        "The reply shows the project's configuration was read before the first question: it cites `ssr: true` (server-side rendering already on) from nuxt.config.ts",
         "The conflict between the request (add server-side rendering) and nuxt.config.ts (server-side rendering is already on) is stated in the first round, and the user is asked which one wins",
-        "The premise is not silently accepted or silently corrected",
         "The fact established from the codebase appears under 'Facts established without asking' with its source"
       ]
     },
@@ -58,14 +56,11 @@
         "MIGRATION.md"
       ],
       "assertions": [
-        "Decisions present in docs/workbench/state.md (the v0 docs stay online under /v0 until 2027-01-31; the docs site keeps its current static generator) are cited rather than asked again",
         "Facts that MIGRATION.md answers (at least the renamed components or the removed props) appear in the brief under 'Facts established without asking' with MIGRATION.md as their source, and are neither asked nor parked as open questions",
         "The brief is written to docs/workbench/briefs/<topic>.md",
         "New decisions are appended to the Decisions section of the state file without rewriting existing lines: the two lines dated 2026-09-14 and 2026-09-21 are still there, unchanged, above the new ones",
-        "Open questions that remain are added as checkboxes to the state file: who reviews the pages is one of them, and the existing TypeScript question is still there",
-        "The brief contains an explicit 'Out' list under Scope that names the theming guide and the blog",
         "Each decision in the brief names who decided it",
-        "Who reviews the pages is not recorded as a decision in the brief or the state file; it stays an open question"
+        "Who reviews the pages is parked, not decided: it is a checkbox under the brief's 'Open questions' section that says what it blocks, and a checkbox under 'Open questions' in the state file next to the existing TypeScript question; it is in neither Decisions table nor Decisions list"
       ]
     }
   ]

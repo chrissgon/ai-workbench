@@ -10,9 +10,9 @@
     }
   },
   "skill": "design-handoff",
-  "content_sha256": "1a8c654290362419565d0a8c62e751d7b806a7e986d51f82cbca02d9f1ce3270",
+  "content_sha256": "7f0dff0575f05c7a1842d73a456b12c0de19b5635d8c7c3960a07b7dcdf54776",
   "date": "2026-10-01",
-  "iteration": 1,
+  "iteration": 3,
   "runs": 3,
   "cases": [
     1,
@@ -27,16 +27,16 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.528,
-    "strong_without": 0.306,
-    "floor_with": 0.417,
-    "floor_without": 0.25
+    "strong_with": 1.0,
+    "strong_without": 0.286,
+    "floor_with": 1.0,
+    "floor_without": 0.286
   },
   "complete": true,
   "infra_failures": 0,
   "gate": {
-    "floor": false,
+    "floor": true,
     "strong_delta": true,
-    "passed": false
+    "passed": true
   }
 }

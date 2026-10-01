@@ -16,7 +16,7 @@ metadata:
   outputs: [docs/product/backlog.md]
   requires: []
   side_effects: [create]
-  version: "0.3"
+  version: "0.4"
 ---
 
 # Backlog
@@ -66,18 +66,18 @@ Applies to creating or changing tickets in an issue tracker. Writing `docs/produ
 
 Progress:
 - [ ] Step 1: Ground. Read the specification (REQ, NFR, EDGE, AC), the design (components, contracts, flows, verification plan, assumptions to verify, removals) and the recorded decisions. List the Sources.
-- [ ] Step 2: Seed from the design. Every bullet under "Assumptions to verify" becomes one task titled `Spike: <what is verified>`, numbered first, with `Depends on: none`. Every component, generator and removal becomes at least one task; every verification-plan row becomes the Check of at least one task. A task is one unit an agent can complete and prove in one sitting: one component, one composable, one set of fixtures, one test file group.
+- [ ] Step 2: Seed from the design. Every bullet under "Assumptions to verify" becomes one task titled `Spike: <what is verified>`, numbered first, with `Depends on: none`; number the bullets 1, 2, … in the order the design lists them. Every component, generator and removal becomes at least one task; every verification-plan row becomes the Check of at least one task. A task is one unit an agent can complete and prove in one sitting: one component, one composable, one set of fixtures, one test file group.
 - [ ] Step 3: Write each task with the template fields, one per line, exactly these labels:
   - id `T-<feature-abbr>-<n>` and title.
   - `Does:` what is done.
   - `Delivers:` REQ, NFR, EDGE and AC ids, at least one REQ or AC id in every task (a spike cites the REQ or AC whose assumption it verifies; never `none`).
   - `Touches:` design components, files.
   - `Depends on:` task ids or `none`.
-  - `Check:` the command of a verification-plan row, copied, plus the observable result, ending with its origin `(verification plan: AC-n)`. A task with no row of its own (loader, renderer, fixtures, migration) uses the row of an AC it delivers or contributes to; never invent a test file or a command the plan does not list. A spike's Check is the design's own "Verify by ..." sentence and ends with `(design assumption)`.
+  - `Check:` the command of a verification-plan row, copied, plus the observable result, ending with its origin `(verification plan: AC-n)`. A task with no row of its own (loader, renderer, fixtures, migration) uses the row of an AC it delivers or contributes to; never invent a test file or a command the plan does not list. A spike's Check is the design's own "Verify by ..." sentence and ends with `(design assumption <n>)`, n being the bullet's number.
   - `Size:` S, M or L with one reason (S: one file or component with a clear contract; M: several files or a contract to confirm; L: a spike or cross-cutting change). No days, no dates.
   - `Milestone:` M<n>.
 - [ ] Step 4: Order by dependency.
-  - Spikes gate implementation: every task that is not a spike depends on a spike, directly or through another task. A task with no other dependency depends on the spikes.
+  - A task depends on a spike only when that spike's assumption affects it: the task touches a component, file or budget the assumption names, or builds on a task that does. Every spike has at least one such dependant. Never add a dependency on a spike only to put the spike first: a task the assumption does not affect starts without it.
   - A task titled `Remove ...` depends on the task of every component in its "Replaced by" cell of the design's Removals table and on the task that makes its "Checked by" test pass; its Check is that "Checked by" command.
   - The critical path is the longest chain; take it from the lint output at step 7, do not compute it by hand. List the parallel tracks.
 - [ ] Step 5: Milestones. Group tasks into two to four milestones, each ending with something usable that the checks prove (for example "pages render from Markdown", "build fails on bad content", "old site fully replaced"). Every task is in exactly one milestone.
@@ -116,7 +116,7 @@ See [assets/backlog-template.md](assets/backlog-template.md). The report:
 
 - Tasks: <n> (<s> S, <m> M, <l> L); milestones: <k>
 - Critical path: T-x-1 → T-x-4 → … (<n> tasks)
-- Spikes first: T-x-1, T-x-2 (`Depends on: none`; every other task depends on a spike)
+- Spikes: T-x-1 (assumption 1) gates T-x-5, T-x-6; T-x-2 (assumption 2) gates T-x-9
 - Removals: T-x-9 after T-x-7, T-x-8 (its replacements)
 - Lint (ran `<the command>`): `<the summary line, copied word for word, for example: lint_backlog: ok: true; errors: 0; tasks: 12; coverage: 13/13 (REQ 5/5, NFR 2/2, AC 6/6)>`
 - First task: T-x-1 <title>, because <it unblocks n tasks | it is the spike the design depends on>
@@ -147,7 +147,7 @@ Approve the backlog only if all of the following hold:
 
 - `lint_backlog.py` reports `ok: true`: every cited id exists in the spec, every dependency exists, no cycles, every REQ, NFR and AC covered, every task has a Check and a milestone. The report quotes its `summary` line.
 - Every task cites at least one REQ or AC id, and its Check is a verification-plan command with its origin (a spike: the design's "Verify by" sentence), not "works" and not a test file the plan does not list.
-- One spike per assumption of the design, each with `Depends on: none`; every other task depends on a spike, so the critical path starts with one.
+- One spike per assumption of the design, each numbered before its dependants, with `Depends on: none` and at least one dependant; every task the assumption affects depends on its spike, and no task depends on a spike whose assumption does not affect it.
 - Every removal depends on the tasks that replace what it removes.
 - Each milestone ends with a usable, checkable state named in one line.
 - Sizes carry a reason; no task carries a duration or a date.
