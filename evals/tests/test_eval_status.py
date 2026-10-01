@@ -248,7 +248,7 @@ def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(r
 
 def configure(root, **changes):
     config = {"strong_model": "s-model", "strong_harness": "h", "floor_model": "f-model", "floor_harness": "fh",
-              "floor_pass_env": ["FLOOR_KEY"], "grader": "s-model", "threshold": 0.8, "strong_tolerance": 0,
+              "floor_pass_env": ["FLOOR_KEY"], "strong_pass_env": [], "grader": "s-model", "threshold": 0.8, "strong_tolerance": 0,
               "measurement_version": 2, **changes}
     (root / "evals").mkdir(exist_ok=True)
     (root / "evals" / "eval-gate.json").write_text(json.dumps(config))
@@ -409,4 +409,19 @@ def test_a_record_written_under_the_earlier_rule_is_valid_and_stale(root):
 def test_a_configuration_needs_a_measurement_version_above_the_earlier_rule(root):
     configure(root, measurement_version=1)
     assert es.gate_problems(str(root)) == ["measurement_version must be above 1"]
+
+
+def test_a_record_of_the_container_era_names_its_environment(root):
+    record(root)
+    path = root / "skills" / "core-demo" / "evals" / "result.json"
+    rec = json.loads(path.read_text())
+    rec["measurement_version"] = 3
+    rec["gate"] = es.gate(rec["scores"], rec["threshold"], rec["tolerance"], 3)
+    path.write_text(json.dumps(rec))
+    errors, _ = check(root)
+    assert any("names the container it ran in" in e for e in errors)
+    rec["environment"] = {"kind": "container", "definition_sha256": "0" * 64, "image": "img:tag", "image_id": "sha256:1"}
+    path.write_text(json.dumps(rec))
+    errors, _ = check(root)
+    assert not [e for e in errors if "result.json" in e]
 

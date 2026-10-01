@@ -16,7 +16,8 @@ evals/eval_run.py, after a complete full run; or `record` here), never by hand:
    "complete": true|false, "infra_failures": <n>,
    "gate": {"floor": bool, "strong": bool, "strong_delta": bool, "passed": bool},
    "measurement_version": <n>, "tolerance": <number>,   (optional: a record without them is of version 1)
-   "environment": {...},   (optional: what the run executed in, written by the runner)
+   "environment": {"kind": "container", "definition_sha256", "image", "image_id"},   (required from version 3:
+                                                 the container the runs executed in, written by the runner)
    "early_ends": {"<tier>": {"early_ends": <n>, "rate": <float>}},   (optional: records written before it lack it)
    "baseline": {"date", "iteration", "runs"}}   (optional: the without-skill scores were measured again, alone,
                                                  by eval_run.py --only without --update-record)
@@ -33,8 +34,8 @@ evals/result.json, __pycache__ folders, *.pyc and .DS_Store. A change to SKILL.m
 script or an eval case changes it; files outside the folder do not.
 
 The eval gate is configured in evals/eval-gate.json, committed: {"strong_model", "strong_harness",
-"floor_model", "floor_harness", "floor_pass_env": [variables], "grader", "threshold", "strong_tolerance",
-"measurement_version"}. It names the models, the adapters and the grader a gate run uses (eval_run.py takes
+"floor_model", "floor_harness", "floor_pass_env": [variables], "strong_pass_env": [variables], "grader",
+"threshold", "strong_tolerance", "measurement_version"}. It names the models, the adapters and the grader a gate run uses (eval_run.py takes
 them as defaults) and what a record is judged against. "measurement_version" is a number raised by hand, in
 the same commit, when a change alters what a run measures (the gate's rule, the environment runs execute in,
 the grading template, what a model under test may do): every record of another version then reads stale. The
@@ -78,8 +79,9 @@ BEGIN, END = "<!-- eval-status:begin -->", "<!-- eval-status:end -->"
 INVENTORY_REL = os.path.join("docs", "inventory.md")
 GATE_REL = os.path.join("evals", "eval-gate.json")
 GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "floor_harness": str,
-               "floor_pass_env": list, "grader": str, "threshold": (int, float), "strong_tolerance": (int, float),
+               "floor_pass_env": list, "strong_pass_env": list, "grader": str, "threshold": (int, float), "strong_tolerance": (int, float),
                "measurement_version": int}
+CONTAINER_VERSION = 3  # from this version on every run executes in the eval container, and a record names it
 LEGACY_VERSION = 1  # a record with no "measurement_version": the gate had no threshold for the strong model
 STATUSES = ("evaluated", "stale", "draft")
 VARIANTS = {"strong_with": "with_skill", "strong_without": "without_skill",
@@ -113,8 +115,9 @@ def gate_problems(root=ROOT):
             out.append(f"missing field {key!r}")
         elif not isinstance(cfg[key], kind) or isinstance(cfg[key], bool) or cfg[key] == "":
             out.append(f"field {key!r} has the wrong type")
-    if not out and not all(isinstance(v, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v) for v in cfg["floor_pass_env"]):
-        out.append("floor_pass_env must list variable names")
+    for key in ("floor_pass_env", "strong_pass_env"):
+        if not out and not all(isinstance(v, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v) for v in cfg[key]):
+            out.append(f"{key} must list variable names")
     if not out and not 0 <= cfg["threshold"] <= 1:
         out.append("threshold must be between 0 and 1")
     if not out and not 0 <= cfg["strong_tolerance"] <= 1:
@@ -209,6 +212,8 @@ def record_problems(rec, skill):
         out.append("tolerance must be a number")
     if "environment" in rec and not isinstance(rec["environment"], dict):
         out.append("environment must be an object")
+    elif isinstance(version, int) and version >= CONTAINER_VERSION and (rec.get("environment") or {}).get("kind") != "container":
+        out.append(f"a record of measurement version {CONTAINER_VERSION} or above names the container it ran in (environment)")
     if out:
         return out
     for key in ("floor", "strong_delta", "passed") + (("strong",) if version > LEGACY_VERSION else ()):

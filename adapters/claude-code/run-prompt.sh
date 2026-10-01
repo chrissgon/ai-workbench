@@ -106,7 +106,12 @@ trap 'stop_runner; exit 143' TERM INT HUP
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
 set +e
 EXTRA=()
-if [[ "${CLAUDE_EVAL_SANDBOX:-on}" == "off" ]]; then
+if [[ "${CLAUDE_EVAL_SANDBOX:-on}" == "container" ]]; then
+  # The caller runs this script inside a container that is the boundary (evals/container): every tool is
+  # allowed, and the web tools only with --allow-web.
+  EXTRA=(--dangerously-skip-permissions)
+  [[ -n "$WEB" ]] || EXTRA+=(--disallowedTools "WebSearch,WebFetch")
+elif [[ "${CLAUDE_EVAL_SANDBOX:-on}" == "off" ]]; then
   ALLOW="${ALLOW:+$ALLOW${WEB:+,}}$WEB"
   [[ -n "$ALLOW" ]] && EXTRA=(--allowedTools "$ALLOW")
 else

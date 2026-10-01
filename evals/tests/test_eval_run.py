@@ -17,6 +17,7 @@ SCRIPT = Path(__file__).resolve().parents[1] / "eval_run.py"
 spec = importlib.util.spec_from_file_location("eval_run", SCRIPT)
 er = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(er)
+er.EXECUTOR = "host"  # these tests drive stand-in adapters; the container executor has its own tests
 REPO = Path(er.ROOT)
 
 
@@ -676,7 +677,7 @@ def test_retries_and_the_rate_are_checked(args):
 
 def configure_gate(tmp_path, **changes):
     config = {"strong_model": "m", "strong_harness": "h", "floor_model": "f", "floor_harness": "h",
-              "floor_pass_env": [], "grader": "m", "threshold": 0.8, "strong_tolerance": 0, "measurement_version": 2, **changes}
+              "floor_pass_env": [], "strong_pass_env": [], "grader": "m", "threshold": 0.8, "strong_tolerance": 0, "measurement_version": 2, **changes}
     (tmp_path / "evals").mkdir(exist_ok=True)
     (tmp_path / "evals" / "eval-gate.json").write_text(json.dumps(config))
 
@@ -785,6 +786,7 @@ def test_a_signal_to_the_runner_ends_every_run_it_started(tmp_path, signame, cod
     driver = ("import importlib.util, sys\n"
               f"spec = importlib.util.spec_from_file_location('eval_run', {str(SCRIPT)!r})\n"
               "er = importlib.util.module_from_spec(spec); spec.loader.exec_module(er)\n"
+              "er.EXECUTOR = 'host'\n"
               f"er.ROOT = {str(tmp_path)!r}\n"
               "sys.exit(er.main(['--skill', 'demo', '--harness', 'h', '--model', 'm', '--runs', '1', '--only', 'with', '--no-grade']))\n")
     proc = subprocess.Popen([sys.executable, "-c", driver], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
@@ -919,6 +921,7 @@ def test_after_a_stop_the_case_folder_is_in_the_workspace_and_the_temporary_one_
     driver = ("import importlib.util, sys\n"
               f"spec = importlib.util.spec_from_file_location('eval_run', {str(SCRIPT)!r})\n"
               "er = importlib.util.module_from_spec(spec); spec.loader.exec_module(er)\n"
+              "er.EXECUTOR = 'host'\n"
               f"er.ROOT = {str(tmp_path)!r}\n"
               "sys.exit(er.main(['--skill', 'demo', '--harness', 'h', '--model', 'm', '--runs', '1', '--only', 'without', '--no-grade']))\n")
     proc = subprocess.Popen([sys.executable, "-c", driver], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,

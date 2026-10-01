@@ -178,3 +178,9 @@ Done as decided (D2): `eval_run.py`, `eval_status.py`, `eval-gate.json`, the gra
 ## 2026-10-01: The record and the gate as built
 
 Done as decided (D3, D4). `evals/eval-gate.json` gains `grader`, `strong_tolerance` (0 until the proof of concept gives it a number) and `measurement_version` (2; a record without the field is version 1, the earlier rule). A record gains `measurement_version`, `tolerance` and, when the runner supplies it, `environment`. The status is `stale` when the measurement version, the strong model, the grader or the floor model differs from the configured one, or the skill folder changed. Records of version 1 stay valid files and all read `stale`; they are not rewritten, they are replaced when each skill is measured in the container. Raising the measurement version is a deliberate act in the commit that changes what a run measures: the next raise comes with the container environment.
+
+## 2026-10-01: The eval container, as built
+
+The proof of concept confirmed D1, D5 and D6 (`docs/architecture/container-poc-2026-10-01.md`). Every command of an eval (model run, grading, setup, fixture commit) runs in its own container, started by `evals/executor.py` from the definition in `evals/container/`. A container sees the run folder, the adapters, the shared references and the skill; it reaches the model providers through an allowlisting proxy on an internal network, nothing at all for setup, and the open network only for a case with `allow_web`. The strong runner's token and the floor runner's key come from the secret store and travel by variable name. A record names the definition's hash and the image id. Measurement version 3.
+
+The unit tests of the runner drive stand-in adapters on the host through a module switch; that switch is not an option of the runner and no record can be written through it by a person running the command.

@@ -31,6 +31,8 @@ Skills are invoked as `/ai-workbench:<skill-name>` and trigger automatically fro
 
 ## Commands in an eval run
 
+Since 2026-10-01 (later the same day) evals run only in a container (`evals/executor.py`), which sets `CLAUDE_EVAL_SANDBOX=container`: the container is the boundary, so the adapter passes `--dangerously-skip-permissions` and, without `--allow-web`, `--disallowedTools WebSearch,WebFetch`. The CLI authenticates with `CLAUDE_CODE_OAUTH_TOKEN` from the secret store. What follows describes the adapter run directly on a machine, which the eval runner no longer does; that code is to be removed (`docs/architecture/container-poc-2026-10-01.md`).
+
 Until 2026-10-01 a model could run only what matched a rule: each `--allow-command <prefix>` and each script of the skill was a `Bash(<prefix> *)` rule in `--allowedTools`, and print mode denied the rest. Rules match the text of a command, so harmless forms were denied: the skill's own script fed by a heredoc or called in a loop, a pipe into `tail`, a variable, `mktemp -d`. The strong model's runs kept on the maintainer's machine carry 809 denied commands; the skills where the strong model scored below the floor model are the ones with the most (22 in 6 runs of one skill, 17 of them its own script; 45 in 9 runs of another), while the floor model's adapter approved everything. The strong model was measured with fewer tools than the floor model.
 
 Now every command runs, and the CLI's sandbox confines it (`--settings` with `sandbox.enabled`, `failIfUnavailable`, `allowUnsandboxedCommands: false`, and a bare `Bash` rule; https://code.claude.com/docs/en/sandboxing, read 2026-10-01):

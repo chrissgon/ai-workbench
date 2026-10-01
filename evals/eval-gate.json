@@ -6,8 +6,11 @@
   "floor_pass_env": [
     "OPENROUTER_API_KEY"
   ],
+  "strong_pass_env": [
+    "CLAUDE_CODE_OAUTH_TOKEN"
+  ],
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "strong_tolerance": 0,
-  "measurement_version": 2
+  "measurement_version": 3
 }
