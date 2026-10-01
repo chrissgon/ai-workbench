@@ -154,3 +154,15 @@ Consequences: a record whose strong-tier runs were made under the rules understa
 In one day the eval harness was changed four times for causes found while measuring: runs that failed on infrastructure counted as scores, without-skill runs found the workbench by walking up, the strong tier was denied harmless commands the floor tier could run, and floor runs found the workbench by searching the disk. Each fix changed what the records mean, and 26 records were partly measured again twice. The last cause, and a shell profile on the maintainer's machine that breaks `cd` for every run, point at the same thing: results depend on the machine.
 
 Decided by the maintainer: before a container environment is tried (backlog T16), the state is written down (backlog T11), the whole architecture is reviewed, tests included, and a plan is made from the architecture that is decided, so that the remaining skills, and the 26 already recorded, are measured once more and not again after that.
+
+## 2026-10-01: Evals run only in a container; the runner leaves the skill; a record says how it was measured
+
+Decided by the maintainer on the review of that day (`docs/architecture/review-2026-10-01.md`, D1, D2, D3, D5, D6):
+
+- **One environment, no alternative.** Every eval run executes in a container built from one pinned image, one container per run, started by an executor layer between the runner and the adapters. The container is the boundary for both tiers, which get the same rights; nothing of the workbench or of the person's home is mounted. There is no host mode: one standard, so that every record is comparable. This closes backlog S19 and replaces T6.
+- **The eval runner moves out of `core-skill-creator`** to a top-level `evals/` folder with its tests, the grading template and the gate configuration.
+- **A record names how it was measured** (image digest, runner and CLI versions, strong model, grader, measurement version) and is `stale` when the skill folder, the floor model, the strong model, the grader or the measurement version differs. The measurement version is a number in the gate configuration, raised on purpose when a change alters what is measured; the runner's own hash is not used.
+- **In the container the strong runner authenticates with a long-lived token** from the secret store, passed as an environment variable; to be confirmed by the proof of concept.
+- **Network:** egress only to the model provider; a case with `allow_web` gets open egress; language dependencies and a browser come with the image.
+
+Open: the gate's rule (D4).
