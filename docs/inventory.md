@@ -221,16 +221,16 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 <!-- eval-status:begin -->
 | Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |
 |-------|--------|-------------|----------------|------------|------|-----------|
-| biz-icp-positioning | stale | 1.00 | 0.49 | 0.93 | 2026-10-01 | 1 |
+| biz-icp-positioning | evaluated | 0.95 | 0.48 | 0.98 | 2026-10-01 | 2 |
 | biz-market-analysis | stale | 0.93 | 0.22 | 0.94 | 2026-10-01 | 1 |
-| brand-guidelines | stale | 1.00 | 0.56 | 1.00 | 2026-10-01 | 1 |
+| brand-guidelines | evaluated | 0.98 | 0.54 | 1.00 | 2026-10-01 | 2 |
 | brand-identity | draft | 0.69 | 0.38 | 0.74 | 2026-10-01 | 4 |
-| brand-name | stale | 1.00 | 0.46 | 0.97 | 2026-10-01 | 1 |
-| brand-profile | stale | 0.94 | 0.39 | 0.97 | 2026-10-01 | 1 |
-| brand-strategy | stale | 1.00 | 0.75 | 1.00 | 2026-10-01 | 1 |
-| brand-voice | stale | 0.81 | 0.44 | 0.93 | 2026-10-01 | 1 |
+| brand-name | evaluated | 1.00 | 0.50 | 1.00 | 2026-10-01 | 2 |
+| brand-profile | evaluated | 0.97 | 0.41 | 0.94 | 2026-10-01 | 2 |
+| brand-strategy | evaluated | 0.97 | 0.86 | 0.92 | 2026-10-01 | 2 |
+| brand-voice | evaluated | 1.00 | 0.42 | 0.85 | 2026-10-01 | 5 |
 | core-agents-md | stale | 1.00 | 0.53 | 0.98 | 2026-10-01 | 3 |
-| core-clarify | stale | 1.00 | 0.02 | 1.00 | 2026-10-01 | 4 |
+| core-clarify | evaluated | 1.00 | 0.04 | 0.89 | 2026-10-01 | 5 |
 | core-critique | stale | 0.96 | 0.42 | 0.89 | 2026-10-01 | 1 |
 | core-orchestrator | stale | 0.90 | 0.44 | 0.86 | 2026-10-01 | 1 |
 | core-project-init | stale | 1.00 | 0.42 | 1.00 | 2026-10-01 | 3 |
@@ -240,7 +240,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | design-brief | stale | 1.00 | 0.36 | 0.98 | 2026-10-01 | 1 |
 | design-execute | draft | — | — | — | — | — |
 | design-handoff | stale | 1.00 | 0.31 | 1.00 | 2026-10-01 | 3 |
-| design-system | stale | 1.00 | 0.44 | 1.00 | 2026-10-01 | 6 |
+| design-system | evaluated | 1.00 | 0.53 | 0.97 | 2026-10-01 | 2 |
 | design-ux-flows | draft | 0.78 | 0.47 | 0.80 | 2026-10-01 | 1 |
 | eng-architecture | stale | 0.89 | 0.40 | 0.93 | 2026-10-01 | 1 |
 | eng-code-review | draft | — | — | — | — | — |
@@ -267,10 +267,10 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | ops-repo-baseline | draft | — | — | — | — | — |
 | product-backlog | stale | 1.00 | 0.36 | 1.00 | 2026-10-01 | 4 |
 | product-feature-spec | stale | 1.00 | 0.29 | 1.00 | 2026-10-01 | 1 |
-| product-prd | stale | 1.00 | 0.46 | 0.99 | 2026-10-01 | 1 |
+| product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
 | product-roadmap | stale | 1.00 | 0.59 | 1.00 | 2026-10-01 | 3 |
 
-Counts: 0 evaluated, 25 stale, 23 draft, 48 skills.
+Counts: 9 evaluated, 16 stale, 23 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

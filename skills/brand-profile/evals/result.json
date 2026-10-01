@@ -10,9 +10,9 @@
     }
   },
   "skill": "brand-profile",
-  "content_sha256": "4e622ced244ca7e9d9a35e742c54756ff1d269803d3b50d5a3c96bf742f7051a",
+  "content_sha256": "902086e6414823fd4cefbabc108b569d2925fb83efe51bec8980aea436a7bc0d",
   "date": "2026-10-01",
-  "iteration": 1,
+  "iteration": 2,
   "runs": 3,
   "cases": [
     1,
@@ -27,21 +27,25 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.944,
-    "strong_without": 0.389,
-    "floor_with": 0.972,
-    "floor_without": 0.361
+    "strong_with": 0.972,
+    "strong_without": 0.407,
+    "floor_with": 0.944,
+    "floor_without": 0.296
   },
   "complete": true,
   "infra_failures": 0,
+  "measurement_version": 4,
+  "tolerance": 0.05,
+  "environment": {
+    "kind": "container",
+    "definition_sha256": "a9f7f77b77ba5b10bd0401d80aa33f605cd6fb5d6482d5fea950f077a995acad",
+    "image": "wb-eval:a9f7f77b77ba",
+    "image_id": "sha256:caacfddc3312c2acba007ce0957c214419681be4576028bc28f4db34e9f71a95"
+  },
   "gate": {
     "floor": true,
+    "strong": true,
     "strong_delta": true,
     "passed": true
-  },
-  "baseline": {
-    "date": "2026-10-01",
-    "iteration": 2,
-    "runs": 3
   }
 }
