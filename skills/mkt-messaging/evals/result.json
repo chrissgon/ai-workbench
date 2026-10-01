@@ -1,0 +1,32 @@
+{
+  "skill": "mkt-messaging",
+  "content_sha256": "ba17865f080c1d4c331d09e3db3027eabb136a1d522af414d172aee486d7ae17",
+  "date": "2026-10-01",
+  "iteration": 4,
+  "runs": 3,
+  "cases": [
+    1,
+    2
+  ],
+  "harness": "claude-code",
+  "floor_harness": "agents-dir",
+  "models": {
+    "strong": "claude-opus-5-5",
+    "floor": "openrouter/deepseek/deepseek-v3.2"
+  },
+  "grader": "claude-opus-5-5",
+  "threshold": 0.8,
+  "scores": {
+    "strong_with": 1.0,
+    "strong_without": 0.625,
+    "floor_with": 0.806,
+    "floor_without": 0.292
+  },
+  "complete": true,
+  "infra_failures": 0,
+  "gate": {
+    "floor": true,
+    "strong_delta": true,
+    "passed": true
+  }
+}

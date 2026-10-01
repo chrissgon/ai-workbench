@@ -237,10 +237,10 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | core-research | draft | — | — | — | — | — |
 | core-security-audit | draft | — | — | — | — | — |
 | core-skill-creator | draft | — | — | — | — | — |
-| design-brief | draft | — | — | — | — | — |
+| design-brief | evaluated | 0.96 | 0.36 | 0.92 | 2026-10-01 | 4 |
 | design-execute | draft | — | — | — | — | — |
 | design-handoff | draft | — | — | — | — | — |
-| design-system | draft | — | — | — | — | — |
+| design-system | evaluated | 1.00 | 0.51 | 1.00 | 2026-10-01 | 1 |
 | design-ux-flows | draft | — | — | — | — | — |
 | eng-architecture | draft | — | — | — | — | — |
 | eng-code-review | draft | — | — | — | — | — |
@@ -257,7 +257,7 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | flow-fix-bug | draft | — | — | — | — | — |
 | mkt-content-plan | draft | — | — | — | — | — |
 | mkt-engage | draft | — | — | — | — | — |
-| mkt-messaging | draft | — | — | — | — | — |
+| mkt-messaging | evaluated | 1.00 | 0.62 | 0.81 | 2026-10-01 | 4 |
 | mkt-publish | draft | — | — | — | — | — |
 | mkt-social-copy | draft | — | — | — | — | — |
 | mkt-vote-round | draft | — | — | — | — | — |
@@ -266,11 +266,11 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | ops-pull-request | draft | — | — | — | — | — |
 | ops-repo-baseline | draft | — | — | — | — | — |
 | product-backlog | draft | — | — | — | — | — |
-| product-feature-spec | draft | — | — | — | — | — |
-| product-prd | draft | — | — | — | — | — |
+| product-feature-spec | evaluated | 1.00 | 0.31 | 0.89 | 2026-10-01 | 1 |
+| product-prd | evaluated | 1.00 | 0.47 | 1.00 | 2026-10-01 | 8 |
 | product-roadmap | draft | — | — | — | — | — |
 
-Counts: 0 evaluated, 0 stale, 48 draft, 48 skills.
+Counts: 5 evaluated, 0 stale, 43 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

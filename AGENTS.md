@@ -117,7 +117,7 @@ Every skill is evaluated with a strong model and with a floor model (a large hos
 
 **Eval status is computed, never ticked.** The eval runner writes the result of a complete run (every case, with and without the skill, both models) to `skills/<name>/evals/result.json`, with a hash of the skill folder; the file is committed and never edited by hand. `python3 scripts/eval_status.py status` derives one of three states from it:
 
-- `draft`: no record, or a record whose gate did not pass or whose run was incomplete (a run that failed on infrastructure is rerun, never scored).
+- `draft`: no record, or a record whose gate did not pass or whose run was incomplete (a run that failed on infrastructure, or in which the model ended its turn early with no error on every retry, is rerun, never scored).
 - `evaluated`: the gate passed and the skill folder is unchanged since. Only an `evaluated` skill is done.
 - `stale`: the gate passed, then anything inside the skill folder changed (`SKILL.md`, a reference, an asset, a script, an eval case). Rerun its evals until they pass again. Changes outside the folder do not make a skill stale.
 

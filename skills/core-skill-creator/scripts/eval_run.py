@@ -6,6 +6,7 @@ Usage:
                       [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
                       [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]... [--ablate <text>]
                       [--runs 3] [--jobs 4] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--no-record]
+                      [--retries 2] [--early-end-rate 0.15]
                       [--dry-run] [--check-cases]
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
@@ -85,12 +86,29 @@ URLs, absolute paths, globs and placeholders are ignored, and a path matches a f
 fixture's path or the end of it. Errors are printed one per line and stop the run before it spends anything.
 
 Infrastructure failures are not scores. A run whose adapter exits non-zero (a provider out of credits, a
-session limit, a missing runner), that passes --timeout, that leaves no response and no file, or whose
-grading returns nothing parsable, is listed in benchmark.json "infra_failures" ({"case", "variant", "tier",
+session limit, a missing runner), that passes --timeout, that ends its turn early on every attempt (below),
+or whose grading returns nothing parsable, is listed in benchmark.json "infra_failures" ({"case", "variant", "tier",
 "run", "reason"}) and never enters a mean. benchmark.json also carries "expected_runs", "completed_runs" and
 "complete" (true only when every expected run completed and was graded), "date", "iteration", "cases" and
 "content_sha256", the skill folder's hash when the run started. Rerun an incomplete iteration; never change
 the skill for it. A timeout that repeats on the same case is a reason to raise --timeout or to look at the case.
+
+Early ends. Some models end their turn before doing the work, with exit 0 and no error: they print a tool
+call as text, loop on their own reminder blocks, or stop after "Let me read the template first". A run is an
+early end only when the adapter exited 0 AND it created or changed no file in the case folder (the harness's
+installed skills and shared references do not count) AND its response is not a reply to the user: (a) it is
+empty; or (b) a line starts with tool-call or control markup printed as text (EARLY_END_MARKUP); or (c) the
+response has no question mark and its last line announces a next action (a sentence starting with one of
+EARLY_END_ANNOUNCE, with none of EARLY_END_NOT in the line). A reply that asks the user a question and
+writes nothing is a stop-and-ask, never an early end; neither is a run that wrote a file and then stopped
+before finishing: that one is graded as it is. An early-ended run is rerun in a fresh folder up to
+--retries <n> times (default 2, 0 disables; each early attempt is kept in <run folder>/early-end-<j>/, the
+last attempt stays in the run folder). One that early-ends on every attempt is an infrastructure failure
+with reason "early_end". benchmark.json "early_ends" counts, per model tier, {"attempts", "early_ends",
+"rate", "by_case"}; "early_end_warning" is a sentence, printed at the end, when a tier has at least 3 early
+ends and either a rate above --early-end-rate (default 0.15) or all of them on one case: retries hid them
+from the scores, so read the transcripts and decide between the skill, the case and the provider. The
+warning never changes the exit code.
 
 Record. After a complete run of every case, both variants and both models, without --case, --only, --tiers
 that drops a model, --ablate or --no-grade, the result is written to skills/<name>/evals/result.json through
@@ -140,7 +158,8 @@ def load_status():
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
             "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
-            "runs": 3, "jobs": 4, "timeout": 900, "max_cost": None, "record": True, "check_cases": False}
+            "runs": 3, "jobs": 4, "timeout": 900, "max_cost": None, "record": True, "check_cases": False, "retries": 2,
+            "early_rate": 0.15}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -167,6 +186,8 @@ def parse(argv):
         elif a == "--max-cost-usd": opts["max_cost"] = val(); i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--no-record": opts["record"] = False; i += 1
+        elif a == "--retries": opts["retries"] = val(); i += 2
+        elif a == "--early-end-rate": opts["early_rate"] = val(); i += 2
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a == "--check-cases": opts["check_cases"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
@@ -188,6 +209,14 @@ def parse(argv):
         die("--jobs must be between 1 and 8.")
     if not 1 <= opts["runs"] <= 10:
         die("--runs must be between 1 and 10.")
+    try:
+        opts["retries"], opts["early_rate"] = int(opts["retries"]), float(opts["early_rate"])
+    except (TypeError, ValueError):
+        die("--retries takes a whole number and --early-end-rate a number such as 0.15.")
+    if not 0 <= opts["retries"] <= 5:
+        die("--retries must be between 0 and 5.")
+    if not 0 <= opts["early_rate"] <= 1:
+        die("--early-end-rate must be between 0 and 1.")
     if opts["timeout"] < 30:
         die("--timeout is in seconds and at least 30.")
     if opts["max_cost"] is not None and not re.fullmatch(r"\d+(\.\d+)?", opts["max_cost"]):
@@ -548,10 +577,85 @@ def run_prompt(*args, **kwargs):
     return run_failure(*args, **kwargs) is None
 
 
-def installed_skill_file(rel, names):
-    """True for a file inside a copy of an installed skill (".../skills/<name>/..."), wherever the adapter put it."""
+def installed_skill_file(rel, names, cwd=None):
+    """True for a file the adapter installed, wherever it put it: inside a copy of an installed skill
+    (".../skills/<name>/...") or, with cwd, in the shared references copied beside the installed skills
+    (".../shared/..." next to a ".../skills" folder that holds one of them)."""
     parts = rel.split(os.sep)
-    return any(parts[i] == "skills" and parts[i + 1] in names for i in range(len(parts) - 2))
+    if any(parts[i] == "skills" and parts[i + 1] in names for i in range(len(parts) - 2)):
+        return True
+    return cwd is not None and any(
+        parts[i] == "shared" and any(os.path.isdir(os.path.join(cwd, *parts[:i], "skills", n)) for n in names)
+        for i in range(len(parts) - 1))
+
+
+# An early end: the model ended its turn before doing the work, with no error (see the module docstring).
+# Markup of a tool call or a control block printed as text; it counts only at the start of a line, so a reply
+# that quotes such markup inline to the user is left alone. Seen from a floor model: <skill_tool>, and loops
+# of <system-reminder> blocks it wrote itself. "<\uff5ctool" is the model's own tool-call token.
+EARLY_END_MARKUP = ("<skill_tool", "<tool_call", "<function_calls", "<invoke", "<system-reminder", "<|tool", "<\uff5ctool")
+# How a last line announces a next action instead of ending the turn's work. Matched, in lower case, at the
+# start of a sentence of the last line ("Let me update the file:", "Now I'll write the spec:").
+EARLY_END_ANNOUNCE = ("let me", "i'll ", "i will ", "now i", "now let me", "now, let me", "first, i", "first, let me",
+                      "first let me", "next, i", "next, let me", "i'm going to", "i am going to")
+# A last line with one of these waits for the user ("Let me know which you prefer", "I'll wait for the brief",
+# "If you approve it, I'll run it"): never an early end.
+EARLY_END_NOT = ("let me know", "wait", "if you", "once you", "when you", "after you", "unless you")
+PSEUDO_TAG_LINE_RE = re.compile(r"^<([A-Za-z_-]+)>.*</\1>$")
+# A trailing line that is only a tag, such as a tool call the model printed as text and never ran
+# (<read filePath="...">, </read>): skipped to reach the last line of prose.
+TAG_ONLY_LINE_RE = re.compile(r"^</?[A-Za-z_][\w-]*(\s[^<>]*)?/?>$")
+
+
+def early_end(response, changed):
+    """Why a run that exited 0 is an early end, or None. Conservative: a run that wrote a file, or a reply
+    that asks the user a question, is never one."""
+    if changed:
+        return None
+    lines = [line.strip() for line in response.splitlines() if line.strip()]
+    if not lines:
+        return "empty response and no file written"
+    for line in lines:
+        hit = next((m for m in EARLY_END_MARKUP if line.lower().startswith(m)), None)
+        if hit:
+            return f"tool or control markup printed as text ({hit}) and no file written"
+    if "?" in response:
+        return None
+    while len(lines) > 1 and (PSEUDO_TAG_LINE_RE.match(lines[-1]) or TAG_ONLY_LINE_RE.match(lines[-1])):
+        lines.pop()  # a trailing note the model wrapped in a tag of its own
+    last = lines[-1].lower().replace("\u2019", "'")
+    if any(phrase in last for phrase in EARLY_END_NOT):
+        return None
+    for sentence in re.split(r"(?<=[.!:;])\s+", last):
+        sentence = sentence.lstrip("-*>#_`0123456789.) ")
+        if sentence.startswith(EARLY_END_ANNOUNCE):
+            return "the last line announces a next action, no question was asked and no file written"
+    return None
+
+
+def early_end_stats(counts):
+    """benchmark.json "early_ends" from {tier: {"attempts", "early_ends", "by_case"}}: adds the rate."""
+    return {tier: {"attempts": c["attempts"], "early_ends": c["early_ends"],
+                   "rate": round(c["early_ends"] / c["attempts"], 3) if c["attempts"] else 0.0,
+                   "by_case": {str(k): n for k, n in c["by_case"].items() if n}}
+            for tier, c in counts.items()}
+
+
+def early_end_warning(stats, max_rate):
+    """A sentence when a tier's early ends are frequent or all on one case (at least 3 either way), else None."""
+    parts = []
+    for tier, s in stats.items():
+        one_case = list(s["by_case"]) if len(s["by_case"]) == 1 else []
+        if s["early_ends"] < 3 or not (s["rate"] > max_rate or one_case):
+            continue
+        where = (f"All of them are on case {one_case[0]}: the skill or that case may trigger it; read its transcripts "
+                 "before blaming the provider." if one_case else
+                 f"They spread over cases {', '.join(s['by_case'])}: if they concentrate on one case, the skill or the "
+                 "case may trigger it (read the transcripts); if they spread across cases, the provider or the model "
+                 f"may be unreliable: consider another provider for this model, or another {tier} model.")
+        parts.append(f"the {tier} model ended its turn early in {s['early_ends']} of {s['attempts']} attempts "
+                     f"({s['rate']:.0%}): retries hid them from the scores. {where}")
+    return " ".join(parts) or None
 
 
 def snapshot(cwd, before, installed=()):
@@ -564,7 +668,7 @@ def snapshot(cwd, before, installed=()):
         for fn in fns:
             p = os.path.join(dp, fn)
             rel = os.path.relpath(p, cwd)
-            if installed_skill_file(rel, names):
+            if installed_skill_file(rel, names, cwd):
                 continue
             try:
                 mtime = os.path.getmtime(p)
@@ -766,34 +870,48 @@ def main(argv):
     def one_run(c, v, tier, model, k):
         """Prepare, run and grade one (case, variant, model, run).
 
-        Returns (name, row or None, infrastructure failure or None, messages)."""
-        infra = lambda reason: {"case": c["id"], "variant": v, "tier": tier, "run": k, "reason": reason}
+        Returns (name, row or None, infrastructure failure or None, messages, {"attempts", "early_ends"})."""
+        infra = lambda reason, **more: {"case": c["id"], "variant": v, "tier": tier, "run": k, "reason": reason, **more}
         name = v if tier == "strong" else f"{v}.floor"
         run_dir = os.path.join(it_dir, f"eval-{c['id']}", name, *([f"run-{k}"] if o["runs"] > 1 else []))
         cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
-        os.makedirs(cwd, exist_ok=True)
-        os.makedirs(out, exist_ok=True)
-        build_tree(cwd, sources[c["id"]])
-        env = contained_env(run_dir, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
-        isolate_git(cwd, contained_env(run_dir))
-        run_setup(cwd, c.get("setup") or [], contained_env(run_dir))
-        pp = os.path.join(run_dir, "prompt.md")
-        with open(pp, "w", encoding="utf-8") as f:
-            f.write(c["prompt"])
-        before = file_index(cwd)
         variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
-        why = run_failure(runner_for[tier], pp, cwd, model, out, variant_dir,
-                          allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]])
-        if why:
-            return name, None, infra(why), [f"RUN FAILED  case {c['id']} {name} run {k} ({why}): see "
-                                            f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"]
         installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if variant_dir else [])
-        changed = snapshot(cwd, before, installed)
-        response = read_text(os.path.join(out, "response.md"), 200000)
-        if not response.strip() and not changed:
-            # The adapter exited 0 but the model said and wrote nothing: a provider that failed quietly.
-            why = "no response and no file written"
-            return name, None, infra(why), [f"RUN FAILED  case {c['id']} {name} run {k} ({why})"]
+        count, msgs = {"attempts": 0, "early_ends": 0}, []
+        while True:
+            count["attempts"] += 1
+            os.makedirs(cwd, exist_ok=True)
+            os.makedirs(out, exist_ok=True)
+            build_tree(cwd, sources[c["id"]])
+            env = contained_env(run_dir, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
+            isolate_git(cwd, contained_env(run_dir))
+            run_setup(cwd, c.get("setup") or [], contained_env(run_dir))
+            pp = os.path.join(run_dir, "prompt.md")
+            with open(pp, "w", encoding="utf-8") as f:
+                f.write(c["prompt"])
+            before = file_index(cwd)
+            why = run_failure(runner_for[tier], pp, cwd, model, out, variant_dir,
+                              allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]])
+            if why:
+                return name, None, infra(why), msgs + [f"RUN FAILED  case {c['id']} {name} run {k} ({why}): see "
+                                                       f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"], count
+            changed = snapshot(cwd, before, installed)
+            response = read_text(os.path.join(out, "response.md"), 200000)
+            early = early_end(response, changed)
+            if not early:
+                break
+            # The adapter exited 0 but the model ended its turn before doing the work: not the skill's score.
+            count["early_ends"] += 1
+            if count["attempts"] > o["retries"]:
+                return name, None, infra("early_end", detail=early, attempts=count["attempts"]), msgs + [
+                    f"RUN FAILED  case {c['id']} {name} run {k} (early_end on all {count['attempts']} attempt(s): {early})"], count
+            kept = os.path.join(run_dir, f"early-end-{count['attempts']}")
+            os.makedirs(kept)
+            for entry in os.listdir(run_dir):
+                if not entry.startswith("early-end-"):
+                    shutil.move(os.path.join(run_dir, entry), os.path.join(kept, entry))
+            msgs.append(f"EARLY END   case {c['id']} {name} run {k} attempt {count['attempts']} ({early}): retrying; "
+                        f"kept in {os.path.relpath(kept, ROOT)}")
         timing = {}
         try:
             with open(os.path.join(out, "timing.json"), encoding="utf-8") as f:
@@ -802,18 +920,18 @@ def main(argv):
             pass
         with open(os.path.join(run_dir, "timing.json"), "w", encoding="utf-8") as f:
             json.dump(timing, f)
-        g, failed, msgs = None, None, []
+        g, failed = None, None
         if o["grade"]:
             g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"])
             if g is None:
                 failed = infra("grading failed: the grader returned no parsable result")
-                msgs = [f"GRADE FAILED case {c['id']} {name} run {k}"]
+                msgs.append(f"GRADE FAILED case {c['id']} {name} run {k}")
             else:
                 with open(os.path.join(run_dir, "grading.json"), "w", encoding="utf-8") as f:
                     json.dump(g, f, indent=2)
         row = {"case": c["id"], "run": k, "pass_rate": g["summary"]["pass_rate"] if g else None,
                "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms")}
-        return name, row, failed, msgs
+        return name, row, failed, msgs, count
 
     jobs = [(c, v, t, m, k) for c in cases for v in variants for t, m in models for k in range(1, o["runs"] + 1)]
     infra_failures = []
@@ -823,8 +941,13 @@ def main(argv):
         for fut in concurrent.futures.as_completed(done):
             for msg in fut.result()[3]:
                 print(msg, file=sys.stderr)
-    for fut in done:  # submission order, so benchmark.json does not depend on which run finished first
-        name, row, failed, _ = fut.result()
+    early_counts = {t: {"attempts": 0, "early_ends": 0, "by_case": {}} for t, _ in models}
+    for job, fut in zip(jobs, done):  # submission order, so benchmark.json does not depend on which run finished first
+        name, row, failed, _, count = fut.result()
+        tier_count = early_counts[job[2]]
+        tier_count["attempts"] += count["attempts"]
+        tier_count["early_ends"] += count["early_ends"]
+        tier_count["by_case"][job[0]["id"]] = tier_count["by_case"].get(job[0]["id"], 0) + count["early_ends"]
         if failed:
             infra_failures.append(failed)
         if row is not None:
@@ -860,6 +983,8 @@ def main(argv):
     bench.update({"date": datetime.date.today().isoformat(), "iteration": iteration, "cases": [c["id"] for c in cases],
                   "content_sha256": start_hash, "expected_runs": len(jobs), "completed_runs": completed,
                   "complete": complete, "infra_failures": infra_failures})
+    bench["early_ends"] = early_end_stats(early_counts)
+    bench["early_end_warning"] = early_end_warning(bench["early_ends"], o["early_rate"])
     with open(os.path.join(it_dir, "benchmark.json"), "w", encoding="utf-8") as f:
         json.dump(bench, f, indent=2)
     if infra_failures:
@@ -886,9 +1011,14 @@ def main(argv):
     print(f"RECORD {o['skill']}: " + (f"{record['path']} written, status {record['status']}. Then run: python3 "
           "scripts/eval_status.py inventory --write" if record["written"] else f"not written ({record['reason']})"),
           file=sys.stderr)
+    if bench["early_end_warning"]:
+        print(f"WARNING early ends: {bench['early_end_warning']}", file=sys.stderr)
     print(json.dumps({"iteration_dir": os.path.relpath(it_dir, ROOT), "conditions": conditions,
                       "failures": len(infra_failures), "complete": complete, "expected_runs": len(jobs),
-                      "completed_runs": completed, "record": record}))
+                      "completed_runs": completed, "record": record,
+                      "early_ends": {t: {"early_ends": s["early_ends"], "attempts": s["attempts"], "rate": s["rate"]}
+                                     for t, s in bench["early_ends"].items()},
+                      "early_end_warning": bench["early_end_warning"]}))
     if infra_failures:
         return 1
     if conditions and not all(v for k, v in conditions.items() if k.endswith("_ok")):

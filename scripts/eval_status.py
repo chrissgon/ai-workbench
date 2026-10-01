@@ -14,7 +14,11 @@ skills/core-skill-creator/scripts/eval_run.py, after a complete full run; or `re
    "models": {"strong", "floor"}, "grader", "threshold",
    "scores": {"strong_with", "strong_without", "floor_with", "floor_without"},
    "complete": true|false, "infra_failures": <n>,
-   "gate": {"floor": bool, "strong_delta": bool, "passed": bool}}
+   "gate": {"floor": bool, "strong_delta": bool, "passed": bool},
+   "early_ends": {"<tier>": {"early_ends": <n>, "rate": <float>}}}   (optional: records written before it lack it)
+
+"early_ends" counts the attempts in which a model ended its turn early with no error; the runner retried them,
+so they are not in the scores (see eval_run.py --help).
 
 Gate: floor_with >= threshold and strong_with >= strong_without.
 
@@ -112,6 +116,11 @@ def record_problems(rec, skill):
         return out
     if rec["skill"] != skill:
         out.append(f"skill {rec['skill']!r} must equal the folder name {skill!r}")
+    early = rec.get("early_ends", {})
+    if not isinstance(early, dict) or not all(
+            isinstance(v, dict) and isinstance(v.get("early_ends"), int) and isinstance(v.get("rate"), (int, float))
+            for v in early.values()):
+        out.append("early_ends must map a tier to {\"early_ends\": <n>, \"rate\": <number>}")
     if not re.fullmatch(r"[0-9a-f]{64}", rec["content_sha256"]):
         out.append("content_sha256 must be 64 hexadecimal characters")
     try:
@@ -196,7 +205,10 @@ def build_record(skill_dir, bench, iteration, date, content_sha256=None):
     infra = bench.get("infra_failures")
     infra = len(infra) if isinstance(infra, list) else max(expected - completed, 0)
     threshold = bench.get("threshold", 0.8)
-    return {"skill": skill, "content_sha256": content_sha256 or bench.get("content_sha256") or content_hash(skill_dir),
+    early = bench.get("early_ends")
+    early = {"early_ends": {t: {"early_ends": v.get("early_ends", 0), "rate": v.get("rate", 0.0)}
+                            for t, v in early.items() if isinstance(v, dict)}} if isinstance(early, dict) else {}
+    return {**early, "skill": skill, "content_sha256": content_sha256 or bench.get("content_sha256") or content_hash(skill_dir),
             "date": date, "iteration": iteration, "runs": runs, "cases": wanted,
             "harness": bench.get("harness") or "", "floor_harness": bench.get("floor_harness") or bench.get("harness") or "",
             "models": {"strong": bench["models"]["strong"], "floor": bench["models"]["floor"]},

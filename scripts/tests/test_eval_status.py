@@ -221,3 +221,22 @@ def test_validate_fails_on_an_invalid_record(root, content, why):
     errors, _ = check(root)
     assert len(errors) == 1 and errors[0].startswith("skills/core-demo/evals/result.json") and why in errors[0]
     assert es.skill_status(str(root / "skills" / "core-demo"))["status"] == "draft"
+
+
+def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(root):
+    path = root / "b.json"
+    bench = benchmark()
+    bench["early_ends"] = {"strong": {"attempts": 4, "early_ends": 0, "rate": 0.0, "by_case": {}},
+                           "floor": {"attempts": 5, "early_ends": 1, "rate": 0.2, "by_case": {"1": 1}}}
+    path.write_text(json.dumps(bench))
+    assert es.main(["record", "--skill", "core-demo", "--benchmark", str(path)], root=str(root)) == 0
+    record_file = root / "skills" / "core-demo" / "evals" / "result.json"
+    rec = json.loads(record_file.read_text())
+    assert rec["early_ends"] == {"strong": {"early_ends": 0, "rate": 0.0}, "floor": {"early_ends": 1, "rate": 0.2}}
+    assert status(root) == "evaluated"
+    del rec["early_ends"]
+    record_file.write_text(json.dumps(rec))
+    assert status(root) == "evaluated"
+    rec["early_ends"] = {"floor": 3}
+    record_file.write_text(json.dumps(rec))
+    assert "early_ends must map" in es.skill_status(str(root / "skills" / "core-demo"))["reason"]
