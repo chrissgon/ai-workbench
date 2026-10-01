@@ -718,3 +718,73 @@ def test_a_full_run_on_another_floor_model_is_not_recorded_unless_asked(tmp_path
     out = json.loads(capsys.readouterr().out)
     assert out["record"]["written"] is True and out["record"]["status"] == "stale"
     assert json.loads((skill / "evals" / "result.json").read_text())["models"]["floor"] == "local/x"
+
+
+# --- stopping: nothing a run started outlives it --------------------------------------------------
+
+def pid_gone(pid, seconds=10):
+    import time
+    end = time.monotonic() + seconds
+    while time.monotonic() < end:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        time.sleep(0.1)
+    return False
+
+
+# A fake adapter whose "model session" starts a grandchild in the background, records both pids, and hangs.
+HANGS = 'here="$(dirname "$0")"\nsleep 300 &\necho $! > "$here/grandchild.pid"\necho $$ > "$here/adapter.pid"\nsleep 300\n'
+
+
+def test_a_timeout_ends_the_grandchildren_of_the_run(tmp_path):
+    runner = tmp_path / "run-prompt.sh"
+    runner.write_text(HANGS)
+    (tmp_path / "out").mkdir()
+    assert er.run_failure(str(runner), "p", str(tmp_path), "m", str(tmp_path / "out"), None, timeout=1) == "timeout: stopped after 1s"
+    assert pid_gone(int((tmp_path / "grandchild.pid").read_text())) and pid_gone(int((tmp_path / "adapter.pid").read_text()))
+    assert er.GROUPS == set()
+
+
+def test_what_a_run_leaves_in_the_background_ends_when_it_returns(tmp_path):
+    runner = tmp_path / "run-prompt.sh"
+    runner.write_text('sleep 300 > /dev/null 2>&1 &\necho $! > "$(dirname "$0")/grandchild.pid"\necho ok > "$8/response.md"\n')
+    (tmp_path / "out").mkdir()
+    assert er.run_failure(str(runner), "p", str(tmp_path), "m", str(tmp_path / "out"), None, timeout=30) is None
+    assert pid_gone(int((tmp_path / "grandchild.pid").read_text()))
+
+
+def test_a_setup_command_cannot_leave_a_process_behind(tmp_path):
+    er.run_setup(str(tmp_path), ["sleep 300 > /dev/null 2>&1 & echo $! > setup.pid"], er.contained_env(str(tmp_path)))
+    assert pid_gone(int((tmp_path / "setup.pid").read_text()))
+
+
+@pytest.mark.parametrize("signame, code", [("SIGTERM", 143), ("SIGINT", 130), ("SIGHUP", 129)])
+def test_a_signal_to_the_runner_ends_every_run_it_started(tmp_path, signame, code):
+    import signal
+    import sys
+    import time
+    skill = make_skill(tmp_path)
+    (skill / "SKILL.md").write_text("# demo\n")
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
+    adapter = tmp_path / "adapters" / "h"
+    adapter.mkdir(parents=True)
+    (adapter / "run-prompt.sh").write_text(HANGS)
+    driver = ("import importlib.util, sys\n"
+              f"spec = importlib.util.spec_from_file_location('eval_run', {str(SCRIPT)!r})\n"
+              "er = importlib.util.module_from_spec(spec); spec.loader.exec_module(er)\n"
+              f"er.ROOT = {str(tmp_path)!r}\n"
+              "sys.exit(er.main(['--skill', 'demo', '--harness', 'h', '--model', 'm', '--runs', '1', '--only', 'with', '--no-grade']))\n")
+    proc = subprocess.Popen([sys.executable, "-c", driver], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    end = time.monotonic() + 20
+    pid_file = adapter / "adapter.pid"
+    while not (pid_file.exists() and pid_file.read_text().strip()) and time.monotonic() < end:
+        time.sleep(0.05)
+    grandchild, adapter_pid = int((adapter / "grandchild.pid").read_text()), int(pid_file.read_text())
+    proc.send_signal(getattr(signal, signame))
+    _, err = proc.communicate(timeout=30)
+    assert proc.returncode == code and "ending every run that was started" in err
+    assert pid_gone(grandchild) and pid_gone(adapter_pid)
+    assert not (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "benchmark.json").exists()

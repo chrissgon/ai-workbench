@@ -19,6 +19,9 @@
 # without it print mode denies both.
 # --max-cost-usd becomes claude's --max-budget-usd: the run stops once it has spent that much.
 # Extra CLI flags: CLAUDE_EVAL_ARGS (default: --permission-mode acceptEdits).
+# HOME is left alone: the CLI's login lives in the person's home and login keychain, so, unlike an adapter that
+# runs in a throwaway HOME, no keychain is created here and a browser a model starts uses the person's own.
+# Stopping this script (TERM, INT, HUP) stops the CLI and everything it started.
 # A proxy for floor models: pass ANTHROPIC_BASE_URL and ANTHROPIC_AUTH_TOKEN (eval_run.py --pass-env).
 set -euo pipefail
 PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" ALLOW="" MAX_COST=""
@@ -38,7 +41,7 @@ while [[ $# -gt 0 ]]; do
     --max-cost-usd)
       [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
       MAX_COST="$2"; shift 2 ;;
-    --help|-h) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -77,6 +80,19 @@ if [[ -n "$SKILL_DIR" && -d "$SKILL_DIR/scripts" ]]; then
     done
   done
 fi
+# The runner gets its own session, so everything it starts (model sessions, browsers) is one process group
+# that can be stopped as a whole: when it exits, and when this script gets TERM, INT or HUP (a timeout or a
+# stop of eval_run.py). Without it a stopped eval left model sessions working for minutes.
+RUNNER_PID=""
+stop_runner() {
+  [[ -n "$RUNNER_PID" ]] || return 0
+  kill -TERM -- "-$RUNNER_PID" 2>/dev/null || return 0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 -- "-$RUNNER_PID" 2>/dev/null || return 0; sleep 0.2; done
+  kill -KILL -- "-$RUNNER_PID" 2>/dev/null || true
+}
+# exec, so that the session leader is the background job itself and RUNNER_PID names its process group.
+OWN_SESSION=(python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])')
+trap 'stop_runner; exit 143' TERM INT HUP
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
 set +e
 EXTRA=(); [[ -n "$ALLOW" ]] && EXTRA=(--allowedTools "$ALLOW")
@@ -84,10 +100,12 @@ EXTRA=(); [[ -n "$ALLOW" ]] && EXTRA=(--allowedTools "$ALLOW")
 # Connectors: https://code.claude.com/docs/en/mcp (read 2026-09-27): claude.ai connectors load when logged in
 # with a claude.ai account unless ENABLE_CLAUDEAI_MCP_SERVERS=false, and `claude -p` loads project servers
 # without asking unless --strict-mcp-config (checked in `claude --help`, 2.1.283).
-( cd "$CWD" && ENABLE_CLAUDEAI_MCP_SERVERS=false claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json \
+( cd "$CWD" && export ENABLE_CLAUDEAI_MCP_SERVERS=false && exec "${OWN_SESSION[@]}" claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json \
     --setting-sources project,local --strict-mcp-config ${CLAUDE_EVAL_ARGS:---permission-mode acceptEdits} ${EXTRA[@]+"${EXTRA[@]}"} ) \
-  < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log"
-RC=$?
+  < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log" &
+RUNNER_PID=$!
+wait "$RUNNER_PID"; RC=$?
+stop_runner   # what the CLI left running (a browser, a server) stops with it
 set -e
 END=$(python3 -c 'import time; print(int(time.time()*1000))')
 python3 - "$OUT" "$START" "$END" "$RC" <<'PY'
