@@ -23,7 +23,7 @@ metadata:
 
 ## Purpose
 
-A skill is done when a floor model passes its evals and a strong model scores at least as well with it as without it, on cases refined against a real task, and that result is on record for the skill's current content (status `evaluated`). This skill runs that loop. It operates on the workbench repository itself: `skills/`, `docs/inventory.md`, the templates, the validator and `evals/eval_status.py`.
+A skill is done when a floor model and a strong model both pass its evals and the strong model is not worse with it than without it, on cases refined against a real task, and that result is on record for the skill's current content (status `evaluated`). This skill runs that loop. It operates on the workbench repository itself: `skills/`, `docs/inventory.md`, the templates, the validator and `evals/eval_status.py`.
 
 ## When not to use
 
@@ -120,5 +120,5 @@ Approve only if all of the following hold:
 - A low or missing score can be the infrastructure's, not the skill's: a provider out of credits and a session limit once read as failing skills. `benchmark.json` lists such runs under `infra_failures` and sets `"complete": false`; rerun them.
 - A floor model served by a third party sometimes ends its turn early with exit 0 and no error: it stops mid-plan, prints a tool call as text, or loops on reminder blocks it wrote itself; about one floor run in nine did on one day. The runner retries those and counts them. Never tune the skill to "fix" a provider's early ends. Two things are not early ends and are graded as they are: a reply that asks the user a question and writes nothing (a stop-and-ask), and a run that wrote a file and then stopped before finishing (for example before its lint); the second is the skill's or the model's score.
 - A case can be broken while the skill is fine: a fixture copied to another path than the prompt names, a prompt citing a file the case does not ship, an assertion about an input the grader never sees. `--check-cases` finds the first two before any run; `grader_files` fixes the third.
-- When the floor model in `evals/eval-gate.json` changes, every record made on the previous floor model reads `stale` ("evaluated on another floor model"), whatever its scores: rerun the evals of each skill on the new one; never edit a record to match. A changed threshold is applied to the recorded scores without a rerun.
+- When the floor model in `evals/eval-gate.json` changes, every record made on the previous floor model reads `stale` ("evaluated on another floor model"), whatever its scores: rerun the evals of each skill on the new one; never edit a record to match. The same holds for the strong model, the grader and the measurement version named there (a number raised when what a run measures changes). A changed threshold or tolerance is applied to the recorded scores without a rerun.
 - Editing anything in the skill folder after the recorded run, even a typo in a reference or a new eval case, makes the skill `stale`, and `scripts/validate.py` fails until the status table is regenerated.

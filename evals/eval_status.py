@@ -14,7 +14,9 @@ evals/eval_run.py, after a complete full run; or `record` here), never by hand:
    "models": {"strong", "floor"}, "grader", "threshold",
    "scores": {"strong_with", "strong_without", "floor_with", "floor_without"},
    "complete": true|false, "infra_failures": <n>,
-   "gate": {"floor": bool, "strong_delta": bool, "passed": bool},
+   "gate": {"floor": bool, "strong": bool, "strong_delta": bool, "passed": bool},
+   "measurement_version": <n>, "tolerance": <number>,   (optional: a record without them is of version 1)
+   "environment": {...},   (optional: what the run executed in, written by the runner)
    "early_ends": {"<tier>": {"early_ends": <n>, "rate": <float>}},   (optional: records written before it lack it)
    "baseline": {"date", "iteration", "runs"}}   (optional: the without-skill scores were measured again, alone,
                                                  by eval_run.py --only without --update-record)
@@ -22,28 +24,35 @@ evals/eval_run.py, after a complete full run; or `record` here), never by hand:
 "early_ends" counts the attempts in which a model ended its turn early with no error; the runner retried them,
 so they are not in the scores (see eval_run.py --help).
 
-Gate: floor_with >= threshold and strong_with >= strong_without.
+Gate: floor_with >= threshold, strong_with >= threshold, and strong_with >= strong_without - tolerance.
+A record of measurement version 1 was written under the earlier rule (floor_with >= threshold and
+strong_with >= strong_without) and its "gate" has no "strong" key; it is valid as a record and always stale.
 
 Content hash: sha256 over the files of the skill folder (sorted relative paths and their bytes), leaving out
 evals/result.json, __pycache__ folders, *.pyc and .DS_Store. A change to SKILL.md, a reference, an asset, a
 script or an eval case changes it; files outside the folder do not.
 
 The eval gate is configured in evals/eval-gate.json, committed: {"strong_model", "strong_harness",
-"floor_model", "floor_harness", "floor_pass_env": [variables], "threshold"}. It names the models and adapters
-a gate run uses (eval_run.py takes them as defaults) and the floor model and threshold a record is judged
-against. It sits outside skills/, so changing it changes no content hash; the status below reacts instead.
-Without the file, a record is judged on its own threshold and any floor model.
+"floor_model", "floor_harness", "floor_pass_env": [variables], "grader", "threshold", "strong_tolerance",
+"measurement_version"}. It names the models, the adapters and the grader a gate run uses (eval_run.py takes
+them as defaults) and what a record is judged against. "measurement_version" is a number raised by hand, in
+the same commit, when a change alters what a run measures (the gate's rule, the environment runs execute in,
+the grading template, what a model under test may do): every record of another version then reads stale. The
+runner's own text is not hashed, so a change that measures the same thing stales nothing. The file sits
+outside skills/, so changing it changes no content hash; the status below reacts instead. Without the file, a
+record is judged on its own threshold, tolerance and version, and any model.
 
 Status of a skill:
   draft      no record, or a record whose gate did not pass (on the configured threshold) or that is not complete
-  evaluated  the record passed, is complete, was run on the configured floor model, and its content_sha256
-             equals the current hash
-  stale      the record passed and is complete, but it was run on another floor model than the configured
-             one, or the skill folder changed since
+  evaluated  the record passed, is complete, is of the configured measurement version, strong model, grader
+             and floor model, and its content_sha256 equals the current hash
+  stale      the record passed and is complete, but under another measurement version, strong model, grader
+             or floor model than the configured ones, or the skill folder changed since
 
 Commands:
   status     prints {"skills": [{"skill", "status", "date", "scores", "reason"}], "counts",
-             "gate": {"floor_model", "threshold"}} (the configured gate; null values without the file).
+             "gate": {"floor_model", "threshold", "strong_model", "grader", "strong_tolerance", "measurement_version"}}
+             (the configured gate; null values without the file).
   hash       prints the content hash of one skill.
   record     builds result.json from an existing benchmark.json (a run made before records existed, or with
              --no-record). Refused when the benchmark did not run every case of the skill, lacks one of the
@@ -69,7 +78,9 @@ BEGIN, END = "<!-- eval-status:begin -->", "<!-- eval-status:end -->"
 INVENTORY_REL = os.path.join("docs", "inventory.md")
 GATE_REL = os.path.join("evals", "eval-gate.json")
 GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "floor_harness": str,
-               "floor_pass_env": list, "threshold": (int, float)}
+               "floor_pass_env": list, "grader": str, "threshold": (int, float), "strong_tolerance": (int, float),
+               "measurement_version": int}
+LEGACY_VERSION = 1  # a record with no "measurement_version": the gate had no threshold for the strong model
 STATUSES = ("evaluated", "stale", "draft")
 VARIANTS = {"strong_with": "with_skill", "strong_without": "without_skill",
             "floor_with": "with_skill.floor", "floor_without": "without_skill.floor"}
@@ -106,6 +117,10 @@ def gate_problems(root=ROOT):
         out.append("floor_pass_env must list variable names")
     if not out and not 0 <= cfg["threshold"] <= 1:
         out.append("threshold must be between 0 and 1")
+    if not out and not 0 <= cfg["strong_tolerance"] <= 1:
+        out.append("strong_tolerance must be between 0 and 1")
+    if not out and cfg["measurement_version"] <= LEGACY_VERSION:
+        out.append(f"measurement_version must be above {LEGACY_VERSION}")
     return out
 
 
@@ -187,10 +202,19 @@ def record_problems(rec, skill):
     for key in VARIANTS:
         if not isinstance(rec["scores"].get(key), (int, float)) or isinstance(rec["scores"].get(key), bool):
             out.append(f"scores.{key} must be a number")
-    for key in ("floor", "strong_delta", "passed"):
+    version, tolerance = rec.get("measurement_version", LEGACY_VERSION), rec.get("tolerance", 0)
+    if not isinstance(version, int) or isinstance(version, bool) or version < LEGACY_VERSION:
+        out.append("measurement_version must be a whole number, 1 or more")
+    if not isinstance(tolerance, (int, float)) or isinstance(tolerance, bool):
+        out.append("tolerance must be a number")
+    if "environment" in rec and not isinstance(rec["environment"], dict):
+        out.append("environment must be an object")
+    if out:
+        return out
+    for key in ("floor", "strong_delta", "passed") + (("strong",) if version > LEGACY_VERSION else ()):
         if not isinstance(rec["gate"].get(key), bool):
             out.append(f"gate.{key} must be true or false")
-    if not out and rec["gate"] != gate(rec["scores"], rec["threshold"]):
+    if not out and rec["gate"] != gate(rec["scores"], rec["threshold"], tolerance, version):
         out.append("gate does not follow from scores and threshold (the record is written by tooling, never by hand)")
     return out
 
@@ -209,10 +233,15 @@ def load_record(skill_dir):
     return (None, problems) if problems else (rec, [])
 
 
-def gate(scores, threshold):
+def gate(scores, threshold, tolerance=0, version=LEGACY_VERSION + 1):
+    """Both models at the threshold with the skill, and the skill does not lower the strong model by more
+    than the tolerance. version 1 is the earlier rule, kept to read the records written under it."""
     floor = scores["floor_with"] >= threshold
-    delta = scores["strong_with"] >= scores["strong_without"]
-    return {"floor": floor, "strong_delta": delta, "passed": floor and delta}
+    delta = scores["strong_with"] >= scores["strong_without"] - tolerance
+    if version <= LEGACY_VERSION:
+        return {"floor": floor, "strong_delta": delta, "passed": floor and delta}
+    strong = scores["strong_with"] >= threshold
+    return {"floor": floor, "strong": strong, "strong_delta": delta, "passed": floor and strong and delta}
 
 
 def case_ids(skill_dir):
@@ -259,6 +288,8 @@ def build_record(skill_dir, bench, iteration, date, content_sha256=None):
     infra = bench.get("infra_failures")
     infra = len(infra) if isinstance(infra, list) else max(expected - completed, 0)
     threshold = bench.get("threshold", 0.8)
+    tolerance, version = bench.get("strong_tolerance") or 0, bench.get("measurement_version") or LEGACY_VERSION + 1
+    extra = {"environment": bench["environment"]} if isinstance(bench.get("environment"), dict) else {}
     early = bench.get("early_ends")
     early = {"early_ends": {t: {"early_ends": v.get("early_ends", 0), "rate": v.get("rate", 0.0)}
                             for t, v in early.items() if isinstance(v, dict)}} if isinstance(early, dict) else {}
@@ -268,7 +299,8 @@ def build_record(skill_dir, bench, iteration, date, content_sha256=None):
             "models": {"strong": bench["models"]["strong"], "floor": bench["models"]["floor"]},
             "grader": bench.get("grader") or bench["models"]["strong"], "threshold": threshold, "scores": scores,
             "complete": bool(bench.get("complete", True)) and completed >= expected and infra == 0,
-            "infra_failures": infra, "gate": gate(scores, threshold)}
+            "infra_failures": infra, "measurement_version": version, "tolerance": tolerance, **extra,
+            "gate": gate(scores, threshold, tolerance, version)}
 
 
 def update_baseline(skill_dir, bench, iteration, date, config=None):
@@ -299,6 +331,10 @@ def update_baseline(skill_dir, bench, iteration, date, config=None):
     for name, value in (("this run's", bench.get("threshold")), ("the configured one", config.get("threshold"))):
         if value is not None and value != rec["threshold"]:
             why.append(f"the record's threshold is {rec['threshold']}, {name} is {value}")
+    version = rec.get("measurement_version", LEGACY_VERSION)
+    for name, value in (("this run's", bench.get("measurement_version")), ("the configured one", config.get("measurement_version"))):
+        if value is not None and value != version:
+            why.append(f"the record's measurement version is {version}, {name} is {value}: run the full evals")
     summary, wanted, scores = bench.get("run_summary") or {}, case_ids(skill_dir), {}
     for key in ("strong_without", "floor_without"):
         entry = summary.get(VARIANTS[key]) or {}
@@ -311,7 +347,7 @@ def update_baseline(skill_dir, bench, iteration, date, config=None):
     if why:
         raise ValueError("; ".join(why))
     rec["scores"].update(scores)
-    rec["gate"] = gate(rec["scores"], rec["threshold"])
+    rec["gate"] = gate(rec["scores"], rec["threshold"], rec.get("tolerance", 0), version)
     rec["baseline"] = {"date": date, "iteration": iteration, "runs": bench.get("runs") or 1}
     return rec
 
@@ -341,13 +377,24 @@ def skill_status(skill_dir, config=None):
     row.update(date=rec["date"], scores=rec["scores"], iteration=rec["iteration"])
     # The record is judged against the configured gate, not the one it was run under.
     threshold = config.get("threshold", rec["threshold"])
-    s, g = rec["scores"], gate(rec["scores"], threshold)
+    tolerance = config.get("strong_tolerance", rec.get("tolerance", 0))
+    version = rec.get("measurement_version", LEGACY_VERSION)
+    s, g = rec["scores"], gate(rec["scores"], threshold, tolerance)
     if not rec["complete"]:
         row["reason"] = f"the recorded run is incomplete ({rec['infra_failures']} infrastructure failure(s)): rerun the evals"
     elif not g["passed"]:
         parts = ([] if g["floor"] else [f"floor {s['floor_with']} is below {threshold}"]) + \
-                ([] if g["strong_delta"] else [f"strong with the skill {s['strong_with']} is below without it {s['strong_without']}"])
+                ([] if g["strong"] else [f"strong {s['strong_with']} is below {threshold}"]) + \
+                ([] if g["strong_delta"] else [f"strong with the skill {s['strong_with']} is below without it {s['strong_without']}"
+                                               + (f" by more than {tolerance}" if tolerance else "")])
         row["reason"] = "the gate did not pass: " + "; ".join(parts)
+    elif config.get("measurement_version") and version != config["measurement_version"]:
+        row.update(status="stale", reason=f"measured under version {version} of the measurement, the configured one is "
+                                          f"{config['measurement_version']}; rerun the evals")
+    elif config.get("strong_model") and rec["models"]["strong"] != config["strong_model"]:
+        row.update(status="stale", reason=f"evaluated on another strong model ({rec['models']['strong']}); rerun the evals")
+    elif config.get("grader") and rec["grader"] != config["grader"]:
+        row.update(status="stale", reason=f"graded by another model ({rec['grader']}); rerun the evals")
     elif config.get("floor_model") and rec["models"]["floor"] != config["floor_model"]:
         row.update(status="stale", reason=f"evaluated on another floor model ({rec['models']['floor']}); rerun the evals")
     elif rec["content_sha256"] != content_hash(skill_dir):
@@ -363,7 +410,8 @@ def all_status(root=ROOT, only=None):
     rows = [skill_status(os.path.join(root, "skills", n), config) for n in names]
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}
     return {"skills": rows, "counts": counts,
-            "gate": {"floor_model": config.get("floor_model"), "threshold": config.get("threshold")}}
+            "gate": {k: config.get(k) for k in ("floor_model", "threshold", "strong_model", "grader", "strong_tolerance",
+                                                "measurement_version")}}
 
 
 def inventory_block(root=ROOT):

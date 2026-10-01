@@ -250,6 +250,8 @@ def parse(argv):
             opts[key] = gate.get(field)
     if opts["threshold"] is None:
         opts["threshold"] = 0.8
+    opts["grader"] = opts["grader"] or gate.get("grader")
+    opts["tolerance"], opts["measurement_version"] = gate.get("strong_tolerance") or 0, gate.get("measurement_version")
     if opts["floor"] and not opts["floor_harness"]:
         opts["floor_harness"] = gate.get("floor_harness")
     if opts["floor"] and opts["floor"] == gate.get("floor_model") and not opts["floor_pass_env"]:
@@ -1243,7 +1245,9 @@ def run(argv):
     conditions = {}
     if mean("with_skill") is not None and mean("without_skill") is not None:
         conditions["strong_delta"] = round(mean("with_skill") - mean("without_skill"), 3)
-        conditions["strong_delta_ok"] = conditions["strong_delta"] >= 0
+        conditions["strong_delta_ok"] = conditions["strong_delta"] >= -o["tolerance"]
+        conditions["strong_pass_rate"] = mean("with_skill")
+        conditions["strong_ok"] = mean("with_skill") >= o["threshold"]
     if o["floor"] and mean("with_skill.floor") is not None:
         conditions["floor_pass_rate"] = mean("with_skill.floor")
         conditions["floor_ok"] = mean("with_skill.floor") >= o["threshold"]
@@ -1252,6 +1256,7 @@ def run(argv):
             key = "ablation_delta" + ("_floor" if tier_suffix else "")
             conditions[key] = round(mean("with_skill" + tier_suffix) - mean("ablated_skill" + tier_suffix), 3)
     bench = {"skill": o["skill"], "runs": o["runs"], "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
+             "strong_tolerance": o["tolerance"], "measurement_version": o["measurement_version"],
              "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
              "run_summary": summary, "conditions": conditions, "failures": len(infra_failures)}
     # A run counts as completed when it produced a response and, unless --no-grade, was graded.

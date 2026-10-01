@@ -212,37 +212,37 @@ Skills in waves 2 to 5 are written alongside the phase of a real project that ne
 
 A skill is done only when its status is `evaluated`. The status is computed, never written by hand: `evals/eval_status.py status` reads each skill's committed record, `skills/<name>/evals/result.json` (written by the eval runner after a complete run of every case, with and without the skill, on the strong and the floor model), and compares the record's content hash with the skill folder.
 
-- `draft`: no record, or a record whose gate did not pass (floor with the skill at or above the threshold, strong with the skill at least as good as without it) or whose run was incomplete.
+- `draft`: no record, or a record whose gate did not pass (both models with the skill at or above the threshold, and the strong model with the skill not below the strong model without it by more than the tolerance) or whose run was incomplete.
 - `evaluated`: the gate passed and the skill folder is unchanged since that run.
-- `stale`: the gate passed, then something inside the skill folder changed (`SKILL.md`, a reference, an asset, a script, an eval case). Rerun its evals; changes outside the folder do not make a skill stale.
+- `stale`: the gate passed, then something inside the skill folder changed (`SKILL.md`, a reference, an asset, a script, an eval case), or the record was made under another measurement version, strong model, grader or floor model than the ones in `evals/eval-gate.json`. Rerun its evals.
 
 The table below is generated. Do not edit it: run `python3 evals/eval_status.py inventory --write` after an eval run or a change to a skill; `scripts/validate.py` fails while it is out of date.
 
 <!-- eval-status:begin -->
 | Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |
 |-------|--------|-------------|----------------|------------|------|-----------|
-| biz-icp-positioning | evaluated | 1.00 | 0.49 | 0.93 | 2026-10-01 | 1 |
-| biz-market-analysis | evaluated | 0.93 | 0.22 | 0.94 | 2026-10-01 | 1 |
-| brand-guidelines | evaluated | 1.00 | 0.56 | 1.00 | 2026-10-01 | 1 |
+| biz-icp-positioning | stale | 1.00 | 0.49 | 0.93 | 2026-10-01 | 1 |
+| biz-market-analysis | stale | 0.93 | 0.22 | 0.94 | 2026-10-01 | 1 |
+| brand-guidelines | stale | 1.00 | 0.56 | 1.00 | 2026-10-01 | 1 |
 | brand-identity | draft | 0.69 | 0.38 | 0.74 | 2026-10-01 | 4 |
-| brand-name | evaluated | 1.00 | 0.46 | 0.97 | 2026-10-01 | 1 |
-| brand-profile | evaluated | 0.94 | 0.39 | 0.97 | 2026-10-01 | 1 |
-| brand-strategy | evaluated | 1.00 | 0.75 | 1.00 | 2026-10-01 | 1 |
-| brand-voice | evaluated | 0.81 | 0.44 | 0.93 | 2026-10-01 | 1 |
-| core-agents-md | evaluated | 1.00 | 0.53 | 0.98 | 2026-10-01 | 3 |
-| core-clarify | evaluated | 1.00 | 0.02 | 1.00 | 2026-10-01 | 4 |
-| core-critique | evaluated | 0.96 | 0.42 | 0.89 | 2026-10-01 | 1 |
-| core-orchestrator | evaluated | 0.90 | 0.44 | 0.86 | 2026-10-01 | 1 |
-| core-project-init | evaluated | 1.00 | 0.42 | 1.00 | 2026-10-01 | 3 |
+| brand-name | stale | 1.00 | 0.46 | 0.97 | 2026-10-01 | 1 |
+| brand-profile | stale | 0.94 | 0.39 | 0.97 | 2026-10-01 | 1 |
+| brand-strategy | stale | 1.00 | 0.75 | 1.00 | 2026-10-01 | 1 |
+| brand-voice | stale | 0.81 | 0.44 | 0.93 | 2026-10-01 | 1 |
+| core-agents-md | stale | 1.00 | 0.53 | 0.98 | 2026-10-01 | 3 |
+| core-clarify | stale | 1.00 | 0.02 | 1.00 | 2026-10-01 | 4 |
+| core-critique | stale | 0.96 | 0.42 | 0.89 | 2026-10-01 | 1 |
+| core-orchestrator | stale | 0.90 | 0.44 | 0.86 | 2026-10-01 | 1 |
+| core-project-init | stale | 1.00 | 0.42 | 1.00 | 2026-10-01 | 3 |
 | core-research | draft | — | — | — | — | — |
-| core-security-audit | evaluated | 0.90 | 0.75 | 0.94 | 2026-10-01 | 1 |
+| core-security-audit | stale | 0.90 | 0.75 | 0.94 | 2026-10-01 | 1 |
 | core-skill-creator | draft | — | — | — | — | — |
-| design-brief | evaluated | 1.00 | 0.36 | 0.98 | 2026-10-01 | 1 |
+| design-brief | stale | 1.00 | 0.36 | 0.98 | 2026-10-01 | 1 |
 | design-execute | draft | — | — | — | — | — |
-| design-handoff | evaluated | 1.00 | 0.31 | 1.00 | 2026-10-01 | 3 |
-| design-system | evaluated | 1.00 | 0.44 | 1.00 | 2026-10-01 | 6 |
-| design-ux-flows | evaluated | 0.78 | 0.47 | 0.80 | 2026-10-01 | 1 |
-| eng-architecture | evaluated | 0.89 | 0.40 | 0.93 | 2026-10-01 | 1 |
+| design-handoff | stale | 1.00 | 0.31 | 1.00 | 2026-10-01 | 3 |
+| design-system | stale | 1.00 | 0.44 | 1.00 | 2026-10-01 | 6 |
+| design-ux-flows | draft | 0.78 | 0.47 | 0.80 | 2026-10-01 | 1 |
+| eng-architecture | stale | 0.89 | 0.40 | 0.93 | 2026-10-01 | 1 |
 | eng-code-review | draft | — | — | — | — | — |
 | eng-codebase-map | draft | — | — | — | — | — |
 | eng-docs | draft | — | — | — | — | — |
@@ -253,24 +253,24 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | eng-root-cause | draft | — | — | — | — | — |
 | eng-security-review | draft | — | — | — | — | — |
 | eng-tradeoffs | stale | 1.00 | 0.39 | 1.00 | 2026-10-01 | 3 |
-| eng-unit-tests | evaluated | 0.92 | 0.68 | 1.00 | 2026-10-01 | 1 |
+| eng-unit-tests | stale | 0.92 | 0.68 | 1.00 | 2026-10-01 | 1 |
 | flow-fix-bug | draft | — | — | — | — | — |
 | mkt-content-plan | draft | — | — | — | — | — |
 | mkt-engage | draft | — | — | — | — | — |
-| mkt-messaging | evaluated | 1.00 | 0.62 | 1.00 | 2026-10-01 | 1 |
-| mkt-publish | evaluated | 1.00 | 0.46 | 1.00 | 2026-10-01 | 5 |
+| mkt-messaging | stale | 1.00 | 0.62 | 1.00 | 2026-10-01 | 1 |
+| mkt-publish | stale | 1.00 | 0.46 | 1.00 | 2026-10-01 | 5 |
 | mkt-social-copy | draft | — | — | — | — | — |
 | mkt-vote-round | draft | — | — | — | — | — |
 | ops-branch-sync | draft | — | — | — | — | — |
 | ops-ci-pipeline | draft | — | — | — | — | — |
 | ops-pull-request | draft | — | — | — | — | — |
 | ops-repo-baseline | draft | — | — | — | — | — |
-| product-backlog | evaluated | 1.00 | 0.36 | 1.00 | 2026-10-01 | 4 |
-| product-feature-spec | evaluated | 1.00 | 0.29 | 1.00 | 2026-10-01 | 1 |
-| product-prd | evaluated | 1.00 | 0.46 | 0.99 | 2026-10-01 | 1 |
-| product-roadmap | evaluated | 1.00 | 0.59 | 1.00 | 2026-10-01 | 3 |
+| product-backlog | stale | 1.00 | 0.36 | 1.00 | 2026-10-01 | 4 |
+| product-feature-spec | stale | 1.00 | 0.29 | 1.00 | 2026-10-01 | 1 |
+| product-prd | stale | 1.00 | 0.46 | 0.99 | 2026-10-01 | 1 |
+| product-roadmap | stale | 1.00 | 0.59 | 1.00 | 2026-10-01 | 3 |
 
-Counts: 25 evaluated, 1 stale, 22 draft, 48 skills.
+Counts: 0 evaluated, 25 stale, 23 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

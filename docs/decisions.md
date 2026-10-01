@@ -174,3 +174,7 @@ Decided by the maintainer (D4): a skill passes when **both models score at the t
 ## 2026-10-01: The eval harness lives in `evals/`
 
 Done as decided (D2): `eval_run.py`, `eval_status.py`, `eval-gate.json`, the grading template and their tests moved to a top-level `evals/` folder. It is not part of the core: it reads `adapters/` to find a harness's runner, which a core file may not do. `core-skill-creator` keeps the procedure and names the commands; a change to the runner or to how every skill is graded no longer changes that skill's hash. Entries above this one name the old paths (`skills/core-skill-creator/scripts/eval_run.py`, `scripts/eval_status.py`, `scripts/eval-gate.json`); they are left as written.
+
+## 2026-10-01: The record and the gate as built
+
+Done as decided (D3, D4). `evals/eval-gate.json` gains `grader`, `strong_tolerance` (0 until the proof of concept gives it a number) and `measurement_version` (2; a record without the field is version 1, the earlier rule). A record gains `measurement_version`, `tolerance` and, when the runner supplies it, `environment`. The status is `stale` when the measurement version, the strong model, the grader or the floor model differs from the configured one, or the skill folder changed. Records of version 1 stay valid files and all read `stale`; they are not rewritten, they are replaced when each skill is measured in the container. Raising the measurement version is a deliberate act in the commit that changes what a run measures: the next raise comes with the container environment.
