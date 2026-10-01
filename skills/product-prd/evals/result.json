@@ -1,8 +1,18 @@
 {
+  "early_ends": {
+    "strong": {
+      "early_ends": 0,
+      "rate": 0.0
+    },
+    "floor": {
+      "early_ends": 0,
+      "rate": 0.0
+    }
+  },
   "skill": "product-prd",
   "content_sha256": "04d1445b87790086fb665b5b40ba87b71dd14937888809847e1fee24f2473a72",
   "date": "2026-10-01",
-  "iteration": 8,
+  "iteration": 1,
   "runs": 3,
   "cases": [
     1,
@@ -13,15 +23,15 @@
   "floor_harness": "agents-dir",
   "models": {
     "strong": "claude-opus-5-5",
-    "floor": "openrouter/deepseek/deepseek-v3.2"
+    "floor": "openrouter/deepseek/deepseek-v4.1-flash"
   },
   "grader": "claude-opus-5-5",
   "threshold": 0.8,
   "scores": {
     "strong_with": 1.0,
-    "strong_without": 0.468,
-    "floor_with": 1.0,
-    "floor_without": 0.148
+    "strong_without": 0.458,
+    "floor_with": 0.986,
+    "floor_without": 0.352
   },
   "complete": true,
   "infra_failures": 0,

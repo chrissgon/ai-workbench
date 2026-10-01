@@ -1,0 +1,8 @@
+{
+  "strong_model": "claude-opus-5-5",
+  "strong_harness": "claude-code",
+  "floor_model": "openrouter/deepseek/deepseek-v4.1-flash",
+  "floor_harness": "agents-dir",
+  "floor_pass_env": ["OPENROUTER_API_KEY"],
+  "threshold": 0.8
+}
