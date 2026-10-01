@@ -231,7 +231,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | brand-voice | evaluated | 1.00 | 0.42 | 0.85 | 2026-10-01 | 5 |
 | core-agents-md | evaluated | 1.00 | 0.59 | 1.00 | 2026-10-01 | 1 |
 | core-clarify | evaluated | 1.00 | 0.04 | 0.89 | 2026-10-01 | 5 |
-| core-critique | stale | 0.96 | 0.42 | 0.89 | 2026-10-01 | 1 |
+| core-critique | evaluated | 0.86 | 0.45 | 0.86 | 2026-10-01 | 2 |
 | core-orchestrator | draft | 0.69 | 0.46 | 0.88 | 2026-10-01 | 1 |
 | core-project-init | evaluated | 1.00 | 0.36 | 1.00 | 2026-10-01 | 1 |
 | core-research | draft | — | — | — | — | — |
@@ -243,11 +243,11 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | design-system | evaluated | 1.00 | 0.53 | 0.97 | 2026-10-01 | 2 |
 | design-ux-flows | draft | 0.79 | 0.47 | 0.83 | 2026-10-01 | 1 |
 | eng-architecture | evaluated | 0.91 | 0.45 | 0.91 | 2026-10-01 | 1 |
-| eng-code-review | draft | — | — | — | — | — |
-| eng-codebase-map | draft | — | — | — | — | — |
-| eng-docs | draft | — | — | — | — | — |
-| eng-impact-analysis | draft | — | — | — | — | — |
-| eng-implement | draft | — | — | — | — | — |
+| eng-code-review | evaluated | 0.90 | 0.66 | 0.82 | 2026-10-01 | 1 |
+| eng-codebase-map | draft | 0.76 | 0.35 | 0.49 | 2026-10-01 | 1 |
+| eng-docs | evaluated | 1.00 | 0.31 | 0.98 | 2026-10-01 | 1 |
+| eng-impact-analysis | evaluated | 1.00 | 0.70 | 1.00 | 2026-10-01 | 1 |
+| eng-implement | draft | 0.39 | 0.39 | 0.39 | 2026-10-01 | 1 |
 | eng-integration-tests | draft | — | — | — | — | — |
 | eng-refactor | draft | — | — | — | — | — |
 | eng-root-cause | draft | — | — | — | — | — |
@@ -265,12 +265,12 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | ops-ci-pipeline | draft | — | — | — | — | — |
 | ops-pull-request | draft | — | — | — | — | — |
 | ops-repo-baseline | draft | — | — | — | — | — |
-| product-backlog | stale | 1.00 | 0.36 | 1.00 | 2026-10-01 | 4 |
-| product-feature-spec | stale | 1.00 | 0.29 | 1.00 | 2026-10-01 | 1 |
+| product-backlog | evaluated | 0.97 | 0.36 | 1.00 | 2026-10-01 | 1 |
+| product-feature-spec | evaluated | 0.98 | 0.11 | 1.00 | 2026-10-01 | 1 |
 | product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
-| product-roadmap | stale | 1.00 | 0.59 | 1.00 | 2026-10-01 | 3 |
+| product-roadmap | evaluated | 0.97 | 0.59 | 0.92 | 2026-10-01 | 1 |
 
-Counts: 18 evaluated, 6 stale, 24 draft, 48 skills.
+Counts: 25 evaluated, 2 stale, 21 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

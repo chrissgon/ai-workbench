@@ -9,10 +9,10 @@
       "rate": 0.0
     }
   },
-  "skill": "core-critique",
-  "content_sha256": "5e26919a685a42d9402b6ae64ad1f649b3845989e5156f2e467169d634d50cc3",
+  "skill": "eng-code-review",
+  "content_sha256": "f86c7511aaa18a16768b508178488aa0510f6037ecac7686effaf3cb48e9c46a",
   "date": "2026-10-01",
-  "iteration": 2,
+  "iteration": 1,
   "runs": 3,
   "cases": [
     1,
@@ -29,10 +29,10 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.863,
-    "strong_without": 0.454,
-    "floor_with": 0.865,
-    "floor_without": 0.562
+    "strong_with": 0.9,
+    "strong_without": 0.662,
+    "floor_with": 0.825,
+    "floor_without": 0.683
   },
   "complete": true,
   "infra_failures": 0,

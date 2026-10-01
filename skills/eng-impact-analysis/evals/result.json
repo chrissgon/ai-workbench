@@ -9,16 +9,15 @@
       "rate": 0.0
     }
   },
-  "skill": "core-critique",
-  "content_sha256": "5e26919a685a42d9402b6ae64ad1f649b3845989e5156f2e467169d634d50cc3",
+  "skill": "eng-impact-analysis",
+  "content_sha256": "5465e184ece92ef3bfdf57c0e502465e6795a2f6728f464bb56aa2f10ecbe600",
   "date": "2026-10-01",
-  "iteration": 2,
+  "iteration": 1,
   "runs": 3,
   "cases": [
     1,
     2,
-    3,
-    4
+    3
   ],
   "harness": "claude-code",
   "floor_harness": "agents-dir",
@@ -29,10 +28,10 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.863,
-    "strong_without": 0.454,
-    "floor_with": 0.865,
-    "floor_without": 0.562
+    "strong_with": 1.0,
+    "strong_without": 0.704,
+    "floor_with": 1.0,
+    "floor_without": 0.769
   },
   "complete": true,
   "infra_failures": 0,

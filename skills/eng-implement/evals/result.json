@@ -1,24 +1,23 @@
 {
   "early_ends": {
     "strong": {
-      "early_ends": 0,
-      "rate": 0.0
+      "early_ends": 1,
+      "rate": 0.053
     },
     "floor": {
       "early_ends": 0,
       "rate": 0.0
     }
   },
-  "skill": "core-critique",
-  "content_sha256": "5e26919a685a42d9402b6ae64ad1f649b3845989e5156f2e467169d634d50cc3",
+  "skill": "eng-implement",
+  "content_sha256": "89285bc6db64d3033484719b01c8f12707cb84dc7811ab8aaf6233c84a65cdf4",
   "date": "2026-10-01",
-  "iteration": 2,
+  "iteration": 1,
   "runs": 3,
   "cases": [
     1,
     2,
-    3,
-    4
+    3
   ],
   "harness": "claude-code",
   "floor_harness": "agents-dir",
@@ -29,10 +28,10 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.863,
-    "strong_without": 0.454,
-    "floor_with": 0.865,
-    "floor_without": 0.562
+    "strong_with": 0.389,
+    "strong_without": 0.389,
+    "floor_with": 0.389,
+    "floor_without": 0.389
   },
   "complete": true,
   "infra_failures": 0,
@@ -45,9 +44,9 @@
     "image_id": "sha256:caacfddc3312c2acba007ce0957c214419681be4576028bc28f4db34e9f71a95"
   },
   "gate": {
-    "floor": true,
-    "strong": true,
+    "floor": false,
+    "strong": false,
     "strong_delta": true,
-    "passed": true
+    "passed": false
   }
 }
