@@ -26,7 +26,8 @@ Checks every skill under skills/ and every agent under agents/:
     with the record's fields and `skill` equal to the folder name; the generated block between the eval-status
     markers in docs/inventory.md is up to date (fix: python3 scripts/eval_status.py inventory --write); skills
     whose status is `stale` (the folder changed since the recorded pass) or `draft` (no passing, complete
-    record) are reported as warnings, one line per status, and are errors with --strict
+    record) are reported as warnings, one line per status, and are errors with --strict; scripts/eval-gate.json,
+    the gate's configuration (models, adapters, threshold), has its fields
   - scripts/security_scan.py finds no secret, hidden text or unsafe script pattern (its errors
     and warnings are reported here as they are there)
 
@@ -414,6 +415,9 @@ def check_eval_status(report, root=ROOT):
     """eval-status: records are valid, the inventory block is current, stale and draft skills are warned about."""
     es = load_eval_status()
     by_status = {"stale": [], "draft": []}
+    problems = es.gate_problems(root)
+    if problems:
+        report.error("scripts/eval-gate.json", f"[eval-status] {'; '.join(problems)}")
     for name in es.skill_names(root):
         skill_dir = os.path.join(root, "skills", name)
         _, problems = es.load_record(skill_dir)

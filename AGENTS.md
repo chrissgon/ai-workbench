@@ -24,7 +24,7 @@ providers/<class>/<impl>.py native providers for requirement classes; interface 
 templates/                  capability.SKILL.md, flow.SKILL.md, agent.md
 packs/<name>.txt            installation subsets; default.txt excludes optional areas (see packs/README.md)
 adapters/<harness>/         adapter.json, install.sh, optional build.*, overrides/, README.md
-scripts/                    validate.py, security_scan.py, eval_status.py (eval status per skill), install-hooks.sh, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
+scripts/                    validate.py, security_scan.py, eval_status.py (eval status per skill), eval-gate.json (the eval gate: models, adapters, threshold), install-hooks.sh, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
 docs/                       area-map.md, decisions.md, inventory.md, backlog.md (workbench tasks that are not skills)
 ```
 
@@ -113,13 +113,13 @@ Cheap models drop steps in long lists, invent structure when there is no templat
 
 **Do not cap strong models while helping weak ones.** Constrain the *contract*, not the *content*: the output structure and the quality criteria are mandatory; the procedure is the default path to satisfy them, and a model that meets the criteria another way is not wrong. Prefer "at least N" over "exactly N". Never prescribe the answer itself, only how to reach and check it.
 
-Every skill is evaluated with a strong model and with a floor model (a large hosted open-weight model). It passes only when the floor model passes **and** the strong model scores at least as well with the skill as without it. A negative delta on the strong model means the skill is over-specified: loosen the procedure, keep the criteria. Floor models are configured in the eval tooling, not named in skills.
+Every skill is evaluated with a strong model and with a floor model: an inexpensive hosted open-weight model, named with the threshold in the eval gate configuration, `scripts/eval-gate.json`. A model running on a person's own machine is measured and published as a goal; it does not gate a skill. It passes only when the floor model passes **and** the strong model scores at least as well with the skill as without it. A negative delta on the strong model means the skill is over-specified: loosen the procedure, keep the criteria. Floor models are configured there, not named in skills; when the configured floor model changes, every record made on the previous one reads `stale` until its evals are rerun.
 
 **Eval status is computed, never ticked.** The eval runner writes the result of a complete run (every case, with and without the skill, both models) to `skills/<name>/evals/result.json`, with a hash of the skill folder; the file is committed and never edited by hand. `python3 scripts/eval_status.py status` derives one of three states from it:
 
 - `draft`: no record, or a record whose gate did not pass or whose run was incomplete (a run that failed on infrastructure, or in which the model ended its turn early with no error on every retry, is rerun, never scored).
 - `evaluated`: the gate passed and the skill folder is unchanged since. Only an `evaluated` skill is done.
-- `stale`: the gate passed, then anything inside the skill folder changed (`SKILL.md`, a reference, an asset, a script, an eval case). Rerun its evals until they pass again. Changes outside the folder do not make a skill stale.
+- `stale`: the gate passed, but on another floor model than the configured one, or then anything inside the skill folder changed (`SKILL.md`, a reference, an asset, a script, an eval case). Rerun its evals until they pass again. Changes outside the folder do not make a skill stale.
 
 The status table in `docs/inventory.md` is generated: after an eval run or any change to a skill, run `python3 scripts/eval_status.py inventory --write`.
 

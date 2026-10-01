@@ -26,13 +26,22 @@ Content hash: sha256 over the files of the skill folder (sorted relative paths a
 evals/result.json, __pycache__ folders, *.pyc and .DS_Store. A change to SKILL.md, a reference, an asset, a
 script or an eval case changes it; files outside the folder do not.
 
+The eval gate is configured in scripts/eval-gate.json, committed: {"strong_model", "strong_harness",
+"floor_model", "floor_harness", "floor_pass_env": [variables], "threshold"}. It names the models and adapters
+a gate run uses (eval_run.py takes them as defaults) and the floor model and threshold a record is judged
+against. It sits outside skills/, so changing it changes no content hash; the status below reacts instead.
+Without the file, a record is judged on its own threshold and any floor model.
+
 Status of a skill:
-  draft      no record, or a record whose gate did not pass or that is not complete
-  evaluated  the record passed, is complete, and its content_sha256 equals the current hash
-  stale      the record passed and is complete, but the skill folder changed since
+  draft      no record, or a record whose gate did not pass (on the configured threshold) or that is not complete
+  evaluated  the record passed, is complete, was run on the configured floor model, and its content_sha256
+             equals the current hash
+  stale      the record passed and is complete, but it was run on another floor model than the configured
+             one, or the skill folder changed since
 
 Commands:
-  status     prints {"skills": [{"skill", "status", "date", "scores", "reason"}], "counts"}.
+  status     prints {"skills": [{"skill", "status", "date", "scores", "reason"}], "counts",
+             "gate": {"floor_model", "threshold"}} (the configured gate; null values without the file).
   hash       prints the content hash of one skill.
   record     builds result.json from an existing benchmark.json (a run made before records existed, or with
              --no-record). Refused when the benchmark did not run every case of the skill, lacks one of the
@@ -56,6 +65,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RECORD_REL = os.path.join("evals", "result.json")
 BEGIN, END = "<!-- eval-status:begin -->", "<!-- eval-status:end -->"
 INVENTORY_REL = os.path.join("docs", "inventory.md")
+GATE_REL = os.path.join("scripts", "eval-gate.json")
+GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "floor_harness": str,
+               "floor_pass_env": list, "threshold": (int, float)}
 STATUSES = ("evaluated", "stale", "draft")
 VARIANTS = {"strong_with": "with_skill", "strong_without": "without_skill",
             "floor_with": "with_skill.floor", "floor_without": "without_skill.floor"}
@@ -68,6 +80,40 @@ FIELDS = {"skill": str, "content_sha256": str, "date": str, "iteration": int, "r
 def die(msg, code=2):
     print(f"Error: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+def gate_problems(root=ROOT):
+    """Why scripts/eval-gate.json is not a valid configuration; an empty list when it is, or when there is none."""
+    path = os.path.join(root, GATE_REL)
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f)
+    except (OSError, ValueError) as e:
+        return [f"not valid JSON: {e}"]
+    if not isinstance(cfg, dict):
+        return ["the configuration must be a JSON object"]
+    out = [f"unknown field {k!r}" for k in cfg if k not in GATE_FIELDS]
+    for key, kind in GATE_FIELDS.items():
+        if key not in cfg:
+            out.append(f"missing field {key!r}")
+        elif not isinstance(cfg[key], kind) or isinstance(cfg[key], bool) or cfg[key] == "":
+            out.append(f"field {key!r} has the wrong type")
+    if not out and not all(isinstance(v, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v) for v in cfg["floor_pass_env"]):
+        out.append("floor_pass_env must list variable names")
+    if not out and not 0 <= cfg["threshold"] <= 1:
+        out.append("threshold must be between 0 and 1")
+    return out
+
+
+def load_gate(root=ROOT):
+    """The eval gate configuration, or {} when the file is missing or invalid (validate.py reports an invalid one)."""
+    path = os.path.join(root, GATE_REL)
+    if not os.path.isfile(path) or gate_problems(root):
+        return {}
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
 
 
 def skill_names(root=ROOT):
@@ -225,9 +271,13 @@ def write_record(skill_dir, record):
     return path
 
 
-def skill_status(skill_dir):
-    """{"skill", "status", "date", "scores", "iteration", "reason"} for one skill folder."""
+def skill_status(skill_dir, config=None):
+    """{"skill", "status", "date", "scores", "iteration", "reason"} for one skill folder.
+
+    config is the eval gate configuration; by default the one of the repository the skill folder is in."""
     skill = os.path.basename(os.path.normpath(skill_dir))
+    if config is None:
+        config = load_gate(os.path.dirname(os.path.dirname(os.path.normpath(os.path.abspath(skill_dir)))))
     rec, problems = load_record(skill_dir)
     row = {"skill": skill, "status": "draft", "date": None, "scores": None, "iteration": None, "reason": "no eval record"}
     if problems:
@@ -236,13 +286,17 @@ def skill_status(skill_dir):
     if rec is None:
         return row
     row.update(date=rec["date"], scores=rec["scores"], iteration=rec["iteration"])
-    s, g = rec["scores"], rec["gate"]
+    # The record is judged against the configured gate, not the one it was run under.
+    threshold = config.get("threshold", rec["threshold"])
+    s, g = rec["scores"], gate(rec["scores"], threshold)
     if not rec["complete"]:
         row["reason"] = f"the recorded run is incomplete ({rec['infra_failures']} infrastructure failure(s)): rerun the evals"
     elif not g["passed"]:
-        parts = ([] if g["floor"] else [f"floor {s['floor_with']} is below {rec['threshold']}"]) + \
+        parts = ([] if g["floor"] else [f"floor {s['floor_with']} is below {threshold}"]) + \
                 ([] if g["strong_delta"] else [f"strong with the skill {s['strong_with']} is below without it {s['strong_without']}"])
         row["reason"] = "the gate did not pass: " + "; ".join(parts)
+    elif config.get("floor_model") and rec["models"]["floor"] != config["floor_model"]:
+        row.update(status="stale", reason=f"evaluated on another floor model ({rec['models']['floor']}); rerun the evals")
     elif rec["content_sha256"] != content_hash(skill_dir):
         row.update(status="stale", reason="the skill folder changed since the recorded run: rerun the evals")
     else:
@@ -252,9 +306,11 @@ def skill_status(skill_dir):
 
 def all_status(root=ROOT, only=None):
     names = [only] if only else skill_names(root)
-    rows = [skill_status(os.path.join(root, "skills", n)) for n in names]
+    config = load_gate(root)
+    rows = [skill_status(os.path.join(root, "skills", n), config) for n in names]
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}
-    return {"skills": rows, "counts": counts}
+    return {"skills": rows, "counts": counts,
+            "gate": {"floor_model": config.get("floor_model"), "threshold": config.get("threshold")}}
 
 
 def inventory_block(root=ROOT):

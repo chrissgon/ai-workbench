@@ -240,3 +240,62 @@ def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(r
     rec["early_ends"] = {"floor": 3}
     record_file.write_text(json.dumps(rec))
     assert "early_ends must map" in es.skill_status(str(root / "skills" / "core-demo"))["reason"]
+
+
+# --- the eval gate configuration (scripts/eval-gate.json) -----------------------------------------
+
+def configure(root, **changes):
+    config = {"strong_model": "s-model", "strong_harness": "h", "floor_model": "f-model", "floor_harness": "fh",
+              "floor_pass_env": ["FLOOR_KEY"], "threshold": 0.8, **changes}
+    (root / "scripts").mkdir(exist_ok=True)
+    (root / "scripts" / "eval-gate.json").write_text(json.dumps(config))
+
+
+def test_a_record_on_the_configured_floor_model_is_evaluated_and_status_names_the_gate(root):
+    configure(root)
+    record(root)
+    out = es.all_status(str(root))
+    assert out["skills"][0]["status"] == "evaluated"
+    assert out["gate"] == {"floor_model": "f-model", "threshold": 0.8}
+
+
+def test_a_record_on_another_floor_model_is_stale(root):
+    record(root)
+    assert status(root) == "evaluated"  # no configuration: any floor model
+    configure(root, floor_model="new-floor")
+    row = es.skill_status(str(root / "skills" / "core-demo"))
+    assert row["status"] == "stale" and row["reason"] == "evaluated on another floor model (f-model); rerun the evals"
+    assert es.all_status(str(root))["counts"] == {"evaluated": 0, "stale": 1, "draft": 1}
+    es.main(["inventory", "--write"], root=str(root))
+    assert "| core-demo | stale | 1.00 | 0.50 | 0.90 |" in (root / "docs" / "inventory.md").read_text()
+
+
+def test_a_record_is_judged_against_the_configured_threshold(root):
+    record(root)  # floor 0.9 on a threshold of 0.8
+    configure(root, threshold=0.95)
+    row = es.skill_status(str(root / "skills" / "core-demo"))
+    assert row["status"] == "draft" and "floor 0.9 is below 0.95" in row["reason"]
+    errors, _ = check(root)  # the record itself stays valid: its gate follows from the threshold it ran under
+    assert not [e for e in errors if "result.json" in e]
+    record(root, floor=(0.7, 0.3))
+    configure(root, threshold=0.6)
+    assert status(root) == "evaluated"
+
+
+@pytest.mark.parametrize("content, why", [
+    ("{not json", "not valid JSON"),
+    ('{"floor_model": "f"}', "missing field 'strong_model'"),
+    (None, "threshold must be between 0 and 1"),
+])
+def test_validate_fails_on_an_invalid_gate_configuration(root, content, why):
+    configure(root, threshold=3)
+    if content is not None:
+        (root / "scripts" / "eval-gate.json").write_text(content)
+    es.main(["inventory", "--write"], root=str(root))
+    errors, _ = check(root)
+    assert len(errors) == 1 and errors[0].startswith("scripts/eval-gate.json") and why in errors[0]
+    assert es.load_gate(str(root)) == {}
+
+
+def test_the_repository_gate_configuration_is_valid():
+    assert es.gate_problems(str(REPO)) == [] and es.load_gate(str(REPO))["floor_model"]

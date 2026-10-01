@@ -1,8 +1,18 @@
 {
+  "early_ends": {
+    "strong": {
+      "early_ends": 0,
+      "rate": 0.0
+    },
+    "floor": {
+      "early_ends": 0,
+      "rate": 0.0
+    }
+  },
   "skill": "design-brief",
   "content_sha256": "4649f62c2bf2237e35b6057d3d27656ae26bf8ff9d169016d0008e0213fc3b99",
   "date": "2026-10-01",
-  "iteration": 4,
+  "iteration": 1,
   "runs": 3,
   "cases": [
     1,
@@ -13,15 +23,15 @@
   "floor_harness": "agents-dir",
   "models": {
     "strong": "claude-opus-5-5",
-    "floor": "openrouter/deepseek/deepseek-v3.2"
+    "floor": "openrouter/deepseek/deepseek-v4.1-flash"
   },
   "grader": "claude-opus-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.963,
+    "strong_with": 1.0,
     "strong_without": 0.356,
-    "floor_with": 0.922,
-    "floor_without": 0.156
+    "floor_with": 0.978,
+    "floor_without": 0.478
   },
   "complete": true,
   "infra_failures": 0,

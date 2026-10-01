@@ -14,6 +14,9 @@
 # the only containment is the environment eval_run.py sets (an allowlist, git local only, gh and npm
 # signed out). --allow-web turns on the default runner's web search (OPENCODE_ENABLE_EXA=1, verified with
 # opencode 1.18.32: without it the model can only fetch URLs it guesses); page fetch is always on.
+# A model id "ollama/<name>" runs a local model served by Ollama (http://127.0.0.1:11434, or
+# RUN_PROMPT_OLLAMA_URL): the provider entry is written into the throwaway HOME, never into the case
+# folder. Give the model a context that fits the runner's own prompt and the skill (see README.md).
 # Connectors and MCP servers: the throwaway HOME below hides the user's configuration and
 # project configuration is refused, so none load; RUN_PROMPT_KEEP_HOME=1 loses that guarantee.
 set -euo pipefail
@@ -77,6 +80,18 @@ START=$(python3 -c 'import time; print(int(time.time()*1000))')
 # from the environment. Set RUN_PROMPT_KEEP_HOME=1 to use the real home instead.
 ISO_HOME=""
 if [[ -z "${RUN_PROMPT_KEEP_HOME:-}" ]]; then ISO_HOME="$(mktemp -d)"; export HOME="$ISO_HOME" XDG_CONFIG_HOME="$ISO_HOME/.config" XDG_DATA_HOME="$ISO_HOME/.local/share"; fi
+if [[ "$MODEL" == ollama/* && -z "${RUN_PROMPT_CMD:-}" ]]; then
+  [[ "$MODEL" =~ ^ollama/[A-Za-z0-9._:/-]+$ ]] || { echo "Error: a local model id is ollama/<name> with letters, digits and . _ : / - only." >&2; exit 2; }
+  [[ -n "$ISO_HOME" ]] || { echo "Error: a local model needs the throwaway HOME (unset RUN_PROMPT_KEEP_HOME)." >&2; exit 2; }
+  mkdir -p "$XDG_CONFIG_HOME/opencode"
+  python3 - "${MODEL#ollama/}" "${RUN_PROMPT_OLLAMA_URL:-http://127.0.0.1:11434/v1}" > "$XDG_CONFIG_HOME/opencode/opencode.json" <<'PY'
+import json, sys
+name, url = sys.argv[1], sys.argv[2]
+print(json.dumps({"$schema": "https://opencode.ai/config.json", "provider": {"ollama": {
+    "npm": "@ai-sdk/openai-compatible", "name": "Ollama (local)", "options": {"baseURL": url},
+    "models": {name: {"name": name}}}}}))
+PY
+fi
 # stdin closed: the runner otherwise waits on an inherited pipe that never ends
 set +e; ( cd "$CWD" && "${RUN[@]}" ) < /dev/null > "$OUT/response.md" 2> "$OUT/stderr.log"; RC=$?; set -e
 [[ -n "$ISO_HOME" ]] && rm -rf "$ISO_HOME"

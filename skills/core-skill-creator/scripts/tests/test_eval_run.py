@@ -659,3 +659,62 @@ def test_no_warning_below_three_early_ends_or_under_the_rate(tmp_path, monkeypat
 def test_retries_and_the_rate_are_checked(args):
     with pytest.raises(SystemExit):
         er.parse(["--skill", "s", "--harness", "h", "--model", "m", *args])
+
+
+# --- the eval gate configuration supplies the defaults --------------------------------------------
+
+def configure_gate(tmp_path, **changes):
+    config = {"strong_model": "m", "strong_harness": "h", "floor_model": "f", "floor_harness": "h",
+              "floor_pass_env": [], "threshold": 0.8, **changes}
+    (tmp_path / "scripts").mkdir(exist_ok=True)
+    (tmp_path / "scripts" / "eval-gate.json").write_text(json.dumps(config))
+
+
+def test_the_configuration_supplies_models_adapters_key_and_threshold(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    configure_gate(tmp_path, floor_harness="fh", floor_pass_env=["FLOOR_KEY"], threshold=0.7)
+    o = er.parse(["--skill", "demo"])
+    assert (o["harness"], o["model"], o["floor"], o["floor_harness"], o["floor_pass_env"], o["threshold"], o["grader"]) == (
+        "h", "m", "f", "fh", ["FLOOR_KEY"], 0.7, "m")
+
+
+def test_explicit_flags_win_over_the_configuration(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    configure_gate(tmp_path, floor_harness="fh", floor_pass_env=["FLOOR_KEY"])
+    o = er.parse(["--skill", "demo", "--harness", "h2", "--model", "m2", "--floor-model", "local/x", "--threshold", "0.5"])
+    assert (o["harness"], o["model"], o["floor"], o["floor_harness"], o["threshold"]) == ("h2", "m2", "local/x", "fh", 0.5)
+    assert o["floor_pass_env"] == []  # the configured key belongs to the configured floor model only
+    o = er.parse(["--skill", "demo", "--floor-harness", "other", "--floor-pass-env", "MY_KEY"])
+    assert (o["floor_harness"], o["floor_pass_env"]) == ("other", ["MY_KEY"])
+
+
+def test_without_a_configuration_harness_and_model_are_required_and_there_is_no_floor(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    with pytest.raises(SystemExit) as e:
+        er.parse(["--skill", "demo"])
+    assert e.value.code == 2 and "--harness is required" in capsys.readouterr().err
+    o = er.parse(["--skill", "demo", "--harness", "h", "--model", "m"])
+    assert (o["floor"], o["floor_harness"], o["threshold"]) == (None, None, 0.8)
+    assert er.parse(["--skill", "demo", "--check-cases"])["check_cases"] is True
+
+
+def test_skill_alone_runs_the_configured_gate_and_records(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    configure_gate(tmp_path)
+    assert er.main(["--skill", "demo", "--runs", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["record"]["status"] == "evaluated"
+    assert json.loads((skill / "evals" / "result.json").read_text())["models"] == {"strong": "m", "floor": "f"}
+
+
+def test_a_full_run_on_another_floor_model_is_not_recorded_unless_asked(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    configure_gate(tmp_path)
+    assert er.main(["--skill", "demo", "--runs", "1", "--floor-model", "local/x"]) == 0
+    captured = capsys.readouterr()
+    reason = json.loads(captured.out)["record"]["reason"]
+    assert "local/x is not the configured one (f)" in reason and "--record-anyway" in reason
+    assert "RECORD demo: not written" in captured.err and not (skill / "evals" / "result.json").exists()
+    assert er.main(["--skill", "demo", "--runs", "1", "--floor-model", "local/x", "--record-anyway"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["record"]["written"] is True and out["record"]["status"] == "stale"
+    assert json.loads((skill / "evals" / "result.json").read_text())["models"]["floor"] == "local/x"
