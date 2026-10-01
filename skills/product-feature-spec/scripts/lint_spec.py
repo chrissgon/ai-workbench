@@ -14,8 +14,9 @@ Checks:
   - every OPEN has a Blocks: and a Recommended: entry
   - every EDGE line has an arrow (→ or ->) with behaviour after it
   - TBD / TODO / ??? inside requirements
+  - every bullet in an id section is written `- <ID>-n: ...` (no empty `-` bullet, no bullet without its id)
 
-Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
+Prints JSON: ok, counts, errors, warnings, `report` (the line to paste into the reply) and `next` (what to do now). Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
 import json
 import re
@@ -25,6 +26,9 @@ SECTIONS = ["## Summary", "## Goal and users", "## Scope", "## Sources", "## Fun
             "## Constraints", "## Edge cases", "## Acceptance criteria", "## Assumptions", "## Open questions", "## Readiness"]
 VAGUE = ("fast", "quick", "responsive", "easy", "simple", "intuitive", "user-friendly", "scalable", "robust", "reliable", "secure",
          "gracefully", "seamless", "modern", "clean", "performant", "efficient")
+# section heading -> the id prefix every top-level bullet in it carries
+ID_SECTIONS = {"## Functional requirements": "REQ", "## Non-functional requirements": "NFR", "## Edge cases": "EDGE",
+               "## Acceptance criteria": "AC", "## Assumptions": "ASSUMPTION", "## Open questions": "OPEN"}
 ID_RE = re.compile(r"^\s*-\s*((?:REQ|NFR|EDGE|AC|ASSUMPTION|OPEN)-\d+)\s*:", re.M)
 
 
@@ -65,6 +69,29 @@ def main(argv):
             blocks[current].append(ln)
         elif ln.strip() == "" or ln.startswith("#") or ln.startswith("- ") and not m:
             current = None
+    # shape of the bullets: a weak writer leaves empty "-" lines and bullets without their id, which the id checks cannot see
+    section, empty, unspaced = None, [], []
+    for n, ln in enumerate(lines, 1):
+        if ln.startswith("## "):
+            section = ln.strip()
+            continue
+        if ln.strip() == "-":
+            empty.append(n)
+            continue
+        prefix = ID_SECTIONS.get(section)
+        if not prefix or not ln.startswith("-"):
+            continue
+        if re.match(rf"-\s*{prefix}-\d+\s*:", ln):
+            if not ln.startswith("- "):
+                unspaced.append(n)
+        elif prefix == "EDGE" and not re.search(r"→|->", ln):
+            continue  # a note without an arrow (a skipped category and why) is not an edge case
+        elif not re.match(r"-\s*(none\b|categories skipped)", ln, re.I):
+            errors.append(f"line {n} in {section!r} is not '- {prefix}-n: ...': give it the next {prefix} id, or delete it: {ln.strip()[:60]}")
+    if empty:
+        errors.append(f"empty bullet '-' on lines {empty}: delete those lines")
+    if unspaced:
+        errors.append(f"no space after the dash on lines {unspaced}: write '- REQ-1: ...', not '-REQ-1: ...'")
     reqs = [i for i in blocks if i.startswith(("REQ-", "NFR-"))]
     acs = [i for i in blocks if i.startswith("AC-")]
     covered = set()
@@ -111,8 +138,16 @@ def main(argv):
             if not re.search(r"\d", bare):
                 errors.append(f"{i} states no number: give the sourced figure, or move it to an OPEN with a Recommended value")
     ok = not errors
-    result = {"ok": ok, "counts": {k: sum(1 for i in blocks if i.startswith(k + "-")) for k in ("REQ", "NFR", "EDGE", "AC", "ASSUMPTION", "OPEN")},
-              "errors": errors, "warnings": warnings}
+    counts = {k: sum(1 for i in blocks if i.startswith(k + "-")) for k in ("REQ", "NFR", "EDGE", "AC", "ASSUMPTION", "OPEN")}
+    report = (f"lint_spec.py --file {path}: ok: {'true' if ok else 'false'}, {len(errors)} errors, {len(warnings)} warnings ("
+              + ", ".join(f"{v} {k}" for k, v in counts.items()) + ")")
+    if errors or warnings:
+        nxt = ("Not done. 1) If you have not edited the file yet, copy every error and warning above into your reply first. "
+               "2) Fix each one from a source, or move the item to an OPEN with Blocks: and Recommended:. Never invent a number or a source. "
+               "3) Run this command again.")
+    else:
+        nxt = "Lint passed. Paste the `report` line into your reply as the `- Lint:` line, then go to the next step."
+    result = {"ok": ok, "counts": counts, "errors": errors, "warnings": warnings, "report": report, "next": nxt}
     print(json.dumps(result, indent=2 if as_json else None))
     return 0 if ok else 1
 
