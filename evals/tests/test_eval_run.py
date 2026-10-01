@@ -676,7 +676,7 @@ def test_retries_and_the_rate_are_checked(args):
 
 def configure_gate(tmp_path, **changes):
     config = {"strong_model": "m", "strong_harness": "h", "floor_model": "f", "floor_harness": "h",
-              "floor_pass_env": [], "threshold": 0.8, **changes}
+              "floor_pass_env": [], "grader": "m", "threshold": 0.8, "strong_tolerance": 0, "measurement_version": 2, **changes}
     (tmp_path / "evals").mkdir(exist_ok=True)
     (tmp_path / "evals" / "eval-gate.json").write_text(json.dumps(config))
 
@@ -999,7 +999,7 @@ def test_update_record_replaces_only_the_two_baseline_scores_and_the_gate(tmp_pa
     after = json.loads((skill / "evals" / "result.json").read_text())
     assert out["record"]["written"] is True and out["record"]["updated"] == "baseline" and out["record"]["status"] == "evaluated"
     assert after["scores"] == {"strong_with": 1.0, "strong_without": 0.0, "floor_with": 1.0, "floor_without": 0.0}
-    assert after["gate"] == {"floor": True, "strong_delta": True, "passed": True}
+    assert after["gate"] == {"floor": True, "strong": True, "strong_delta": True, "passed": True}
     assert after["baseline"] == {"date": after["date"], "iteration": 2, "runs": 1}
     for key in ("content_sha256", "iteration", "date", "runs", "cases", "models", "threshold", "complete", "infra_failures"):
         assert after[key] == before[key]

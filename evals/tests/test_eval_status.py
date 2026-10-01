@@ -99,7 +99,8 @@ def test_status_is_draft_then_evaluated_then_stale(root, capsys):
     assert rec["skill"] == "core-demo" and rec["iteration"] == 3 and rec["date"] == "2030-01-02"
     assert rec["cases"] == [1, 2] and rec["complete"] is True and rec["infra_failures"] == 0
     assert rec["scores"] == {"strong_with": 1.0, "strong_without": 0.5, "floor_with": 0.9, "floor_without": 0.3}
-    assert rec["gate"] == {"floor": True, "strong_delta": True, "passed": True}
+    assert rec["gate"] == {"floor": True, "strong": True, "strong_delta": True, "passed": True}
+    assert rec["measurement_version"] == 2 and rec["tolerance"] == 0
     assert rec["content_sha256"] == es.content_hash(str(root / "skills" / "core-demo"))
     assert status(root) == "evaluated"
     (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
@@ -247,7 +248,8 @@ def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(r
 
 def configure(root, **changes):
     config = {"strong_model": "s-model", "strong_harness": "h", "floor_model": "f-model", "floor_harness": "fh",
-              "floor_pass_env": ["FLOOR_KEY"], "threshold": 0.8, **changes}
+              "floor_pass_env": ["FLOOR_KEY"], "grader": "s-model", "threshold": 0.8, "strong_tolerance": 0,
+              "measurement_version": 2, **changes}
     (root / "evals").mkdir(exist_ok=True)
     (root / "evals" / "eval-gate.json").write_text(json.dumps(config))
 
@@ -257,7 +259,8 @@ def test_a_record_on_the_configured_floor_model_is_evaluated_and_status_names_th
     record(root)
     out = es.all_status(str(root))
     assert out["skills"][0]["status"] == "evaluated"
-    assert out["gate"] == {"floor_model": "f-model", "threshold": 0.8}
+    assert out["gate"] == {"floor_model": "f-model", "threshold": 0.8, "strong_model": "s-model", "grader": "s-model",
+                           "strong_tolerance": 0, "measurement_version": 2}
 
 
 def test_a_record_on_another_floor_model_is_stale(root):
@@ -329,7 +332,7 @@ def test_a_baseline_above_the_score_with_the_skill_makes_the_skill_draft(root):
         **baseline_bench()["run_summary"],
         "without_skill": {"pass_rate": {"mean": 1.0}, "cases": [{"case": c, "run": 1, "pass_rate": 1.0} for c in (1, 2)]}}}, 4, "2030-02-03")
     rec["scores"]["strong_with"] = 0.9  # as if run-to-run noise put the baseline above it
-    rec["gate"] = es.gate(rec["scores"], rec["threshold"])
+    rec["gate"] = es.gate(rec["scores"], rec["threshold"], rec["tolerance"], rec["measurement_version"])
     es.write_record(skill_dir, rec)
     row = es.skill_status(skill_dir)
     assert row["status"] == "draft" and "strong with the skill 0.9 is below without it 1.0" in row["reason"]
@@ -359,3 +362,51 @@ def test_update_baseline_refuses(root, how, why):
     with pytest.raises(ValueError) as e:
         es.update_baseline(skill_dir, bench, 4, "2030-02-03", config)
     assert why in str(e.value)
+
+
+# --- the gate asks the threshold of both models; a record says how it was measured ----------------
+
+def test_the_strong_model_below_the_threshold_fails_the_gate(root):
+    record(root, strong=(0.78, 0.4), floor=(0.9, 0.3))
+    row = es.skill_status(str(root / "skills" / "core-demo"))
+    assert row["status"] == "draft" and "strong 0.78 is below 0.8" in row["reason"]
+
+
+def test_the_tolerance_forgives_a_small_loss_to_the_baseline_and_no_more(root):
+    assert es.gate({"strong_with": 0.95, "strong_without": 0.96, "floor_with": 0.9, "floor_without": 0.2}, 0.8)["passed"] is False
+    scores = {"strong_with": 0.95, "strong_without": 0.96, "floor_with": 0.9, "floor_without": 0.2}
+    assert es.gate(scores, 0.8, 0.02)["passed"] is True
+    assert es.gate({**scores, "strong_without": 0.99}, 0.8, 0.02)["passed"] is False
+
+
+@pytest.mark.parametrize("change, why", [
+    ({"measurement_version": 3}, "measured under version 2 of the measurement, the configured one is 3"),
+    ({"strong_model": "new-strong"}, "evaluated on another strong model (s-model)"),
+    ({"grader": "new-grader"}, "graded by another model (s-model)"),
+])
+def test_a_record_of_another_measurement_strong_model_or_grader_is_stale(root, change, why):
+    configure(root)
+    record(root)
+    assert status(root) == "evaluated"
+    configure(root, **change)
+    row = es.skill_status(str(root / "skills" / "core-demo"))
+    assert row["status"] == "stale" and why in row["reason"]
+
+
+def test_a_record_written_under_the_earlier_rule_is_valid_and_stale(root):
+    record(root)
+    path = root / "skills" / "core-demo" / "evals" / "result.json"
+    rec = json.loads(path.read_text())
+    del rec["measurement_version"], rec["tolerance"], rec["gate"]["strong"]
+    path.write_text(json.dumps(rec))
+    configure(root)
+    errors, _ = check(root)
+    assert not [e for e in errors if "result.json" in e]
+    row = es.skill_status(str(root / "skills" / "core-demo"))
+    assert row["status"] == "stale" and "version 1" in row["reason"]
+
+
+def test_a_configuration_needs_a_measurement_version_above_the_earlier_rule(root):
+    configure(root, measurement_version=1)
+    assert es.gate_problems(str(root)) == ["measurement_version must be above 1"]
+

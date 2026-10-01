@@ -3,6 +3,11 @@
   "strong_harness": "claude-code",
   "floor_model": "openrouter/deepseek/deepseek-v4.1-flash",
   "floor_harness": "agents-dir",
-  "floor_pass_env": ["OPENROUTER_API_KEY"],
-  "threshold": 0.8
+  "floor_pass_env": [
+    "OPENROUTER_API_KEY"
+  ],
+  "grader": "claude-sonnet-5-5",
+  "threshold": 0.8,
+  "strong_tolerance": 0,
+  "measurement_version": 2
 }
