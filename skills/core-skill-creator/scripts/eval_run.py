@@ -5,6 +5,7 @@ Usage:
   python3 eval_run.py --skill <name>
                       [--harness <adapter>] [--model <strong-id>] [--floor-model <id>] [--floor-harness <adapter>]
                       [--grader <id>] [--case <id>]... [--threshold 0.8] [--record-anyway]
+                      [--allow-contaminated] [--only without --update-record]
                       [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]... [--ablate <text>]
                       [--runs 3] [--jobs 4] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--no-record]
                       [--retries 2] [--early-end-rate 0.15]
@@ -125,6 +126,31 @@ skill's status (draft, evaluated, stale) is printed. A partial or incomplete run
 folder that changed during the run is reported and not recorded. --no-record skips the record. A full run
 whose floor model is not the configured one runs and is reported, but writes no record (it would read as
 stale: evaluated on another floor model) unless --record-anyway is given.
+--only without --update-record, when its run is complete and not contaminated, replaces scores.strong_without
+and scores.floor_without of the existing record, recomputes its gate and adds "baseline": {"date", "iteration",
+"runs"}. It needs a valid record whose content_sha256 is the skill's current hash and whose models and
+threshold are the ones of this run and of the configuration; otherwise it changes nothing and says why. When
+the recomputed gate fails, the record is still written and the skill reads draft.
+
+Outside the repository. A model that runs inside the workbench finds it: it walks up from the case folder,
+reads the instruction file and the skills, and a without-skill run then scores with the skill's help. So every
+model run and every grading happens in a fresh folder under the system's temporary folder, <temp>/eval-<random>/
+(case/ is the case folder, with the prompt file and the adapter's output beside it): no parent of it holds a
+repository, an instruction file or a skills folder, and its path names neither the workbench nor the skill
+(a temporary folder that would is replaced by /tmp or /var/tmp). Setup commands run there too. When the run
+ends (also on a timeout, a failure or a stop) the folders are moved to where they have always been read,
+<run folder>/cwd and <run folder>/outputs (grading/cwd and grading/out for a grading), and the temporary
+folder is removed. The run's environment carries no path into the repository: PATH entries inside it and
+allowlisted variables that point into it are dropped, TMPDIR is the temporary base, the git, gh and npm
+configuration files sit in the temporary folder, and the adapter is started from there (a shell exports the
+folder it came from as OLDPWD). Only a variable named with --pass-env is passed as it is.
+Contamination. After each without-skill run the response and the adapter's stderr and raw output are searched
+for the repository's absolute path (which includes the path of the skill under test). A hit means the model
+reached the workbench anyway (a search from the filesystem root, a harness that loads user-level
+configuration): it is listed in benchmark.json "contaminated" ({"case", "variant", "tier", "run", "evidence"}),
+printed as a warning, and no record is written from that iteration unless --allow-contaminated.
+Baseline only. --only without --update-record measures the without-skill variant alone, on both models, and
+replaces the two baseline scores of an existing record (see Record).
 
 Stopping. Every adapter call (a model run, a grading) and every setup command runs in its own session, one
 process group per call. The group is ended (TERM, then KILL after a short wait) when the call passes its
@@ -177,7 +203,7 @@ def load_status():
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": None, "record_anyway": False, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
+            "threshold": None, "record_anyway": False, "allow_contaminated": False, "update_record": False, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
             "runs": 3, "jobs": 4, "timeout": 900, "max_cost": None, "record": True, "check_cases": False, "retries": 2,
             "early_rate": 0.15}
     i = 0
@@ -207,6 +233,8 @@ def parse(argv):
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--no-record": opts["record"] = False; i += 1
         elif a == "--record-anyway": opts["record_anyway"] = True; i += 1
+        elif a == "--allow-contaminated": opts["allow_contaminated"] = True; i += 1
+        elif a == "--update-record": opts["update_record"] = True; i += 1
         elif a == "--retries": opts["retries"] = val(); i += 2
         elif a == "--early-end-rate": opts["early_rate"] = val(); i += 2
         elif a == "--dry-run": opts["dry"] = True; i += 1
@@ -231,6 +259,10 @@ def parse(argv):
             die(f"--{k} is required" + (" (scripts/eval-gate.json sets no default)." if k != "skill" else "."))
     if opts["only"] not in (None, "with", "without", "ablated"):
         die("--only must be with, without or ablated.")
+    if opts["update_record"] and (opts["only"] != "without" or opts["cases"] or opts["tiers"] or opts["ablate"]
+                                  or not opts["grade"] or not opts["record"]):
+        die("--update-record goes with --only without, on every case and both models, graded: "
+            "eval_run.py --skill <name> --only without --update-record.")
     if opts["only"] == "ablated" and not opts["ablate"]:
         die("--only ablated needs --ablate <text>.")
     if opts["ablate"] is not None and not opts["ablate"].strip():
@@ -528,6 +560,89 @@ def preflight(skill_dir, cases, sources, setup=True):
     return errors, unchecked
 
 
+def repo_paths():
+    """The repository's absolute path as given and with links resolved (on some systems /var is a link)."""
+    return {ROOT, os.path.realpath(ROOT)}
+
+
+def temp_base(names=()):
+    """The folder run folders are created in: the system's temporary folder, or /tmp or /var/tmp when that one
+    is inside the repository, under a folder that holds a repository, an instruction file or a skills folder,
+    or has the repository's folder name or one of names (the skill under test) in its path."""
+    words = [w.lower() for w in (os.path.basename(os.path.realpath(ROOT)), *names) if w]
+    for base in (tempfile.gettempdir(), "/tmp", "/var/tmp"):
+        real = os.path.realpath(base)
+        if not os.path.isdir(real) or not os.access(real, os.W_OK):
+            continue
+        if any(real == root or real.startswith(root + os.sep) for root in repo_paths()) or any(w in real.lower() for w in words):
+            continue
+        parent, clean = real, True
+        while clean:
+            clean = not any(os.path.exists(os.path.join(parent, marker)) for marker in (".git", "AGENTS.md", "skills"))
+            if os.path.dirname(parent) == parent:
+                break
+            parent = os.path.dirname(parent)
+        if clean:
+            return real
+    die("no temporary folder outside the repository to run the cases in: set TMPDIR to one whose parents hold no "
+        ".git, AGENTS.md or skills folder.", 1)
+
+
+# Temporary run folders in use -> where their content goes back to, so a stop returns every one of them.
+RUN_ROOTS, RUN_ROOTS_LOCK = {}, threading.Lock()
+
+
+def new_run_root(dest, out_name="outputs", names=()):
+    """A fresh folder outside the repository for one model run or grading: case/ (the working folder), out/
+    (the adapter's output) and prompt.md. return_run() moves them to dest/cwd, dest/<out_name> and dest/prompt.md."""
+    with RUN_ROOTS_LOCK:
+        if STOPPING.is_set():
+            raise RuntimeError("stopping: no new run is started")
+        root = tempfile.mkdtemp(prefix="eval-", dir=temp_base(names))
+        RUN_ROOTS[root] = (dest, out_name)
+    os.makedirs(os.path.join(root, "case"))
+    os.makedirs(os.path.join(root, "out"))
+    return root
+
+
+def return_run(root):
+    """Move a temporary run folder's content into the workspace and remove it. Safe to call twice."""
+    with RUN_ROOTS_LOCK:  # held for the move, so a stop waits for a move in progress instead of cutting it
+        entry = RUN_ROOTS.pop(root, None)
+        if entry is None:
+            return
+        dest, out_name = entry
+        os.makedirs(dest, exist_ok=True)
+        for name, final in (("case", "cwd"), ("out", out_name), ("prompt.md", "prompt.md")):
+            src, target = os.path.join(root, name), os.path.join(dest, final)
+            if not os.path.lexists(src):
+                continue
+            if os.path.isdir(target) and not os.path.islink(target):
+                shutil.rmtree(target)
+            elif os.path.lexists(target):
+                os.remove(target)
+            shutil.move(src, target)
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def return_all_runs():
+    for root in list(RUN_ROOTS):
+        return_run(root)
+
+
+def contamination(out_dir):
+    """Evidence that a run reached the repository: its absolute path in the response or the adapter's output.
+    Exact path strings only; None when there is none."""
+    for name in ("response.md", "stderr.log", "raw.json"):
+        text = read_text(os.path.join(out_dir, name), 5000000)
+        for root in sorted(repo_paths(), key=len, reverse=True):
+            at = text.find(root)
+            if at != -1:
+                line = text[max(text.rfind("\n", 0, at) + 1, at - 80):at + len(root) + 120].split("\n")[0]
+                return f"{name}: {line.strip()[:300]}"
+    return None
+
+
 def contained_env(run_dir, pass_env=()):
     """Environment for a model run, a setup or the grader: an allowlist, git local only, gh and npm signed out."""
     contain = os.path.join(run_dir, ".contain")
@@ -538,6 +653,16 @@ def contained_env(run_dir, pass_env=()):
         open(path, "w").close()
     env = {k: v for k, v in os.environ.items()
            if (k in ENV_ALLOW or k.startswith("LC_") or k in pass_env) and k not in TOKEN_VARS}
+    # Nothing tells the run where the repository is: PATH entries inside it go, an allowlisted variable that
+    # points into it goes, and TMPDIR is the base the run folders are made in. A --pass-env variable is the
+    # caller's own choice and stays as it is.
+    inside = lambda value: any(root in value for root in repo_paths())
+    if "PATH" in env and "PATH" not in pass_env:
+        env["PATH"] = os.pathsep.join(p for p in env["PATH"].split(os.pathsep) if not inside(p))
+    for k in [k for k, v in env.items() if k not in pass_env and inside(v)]:
+        del env[k]
+    if "TMPDIR" not in pass_env:
+        env["TMPDIR"] = temp_base()
     env.update(GIT_ALLOW_PROTOCOL="file", GIT_TERMINAL_PROMPT="0", GIT_CONFIG_NOSYSTEM="1", GIT_CONFIG_GLOBAL=gitconfig,
                GIT_AUTHOR_NAME="eval", GIT_AUTHOR_EMAIL="eval@localhost",
                GIT_COMMITTER_NAME="eval", GIT_COMMITTER_EMAIL="eval@localhost",
@@ -657,7 +782,7 @@ def run_group(cmd, timeout, cwd=None, env=None):
 
 
 def run_failure(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), timeout=900,
-                max_cost=None, web=False):
+                max_cost=None, web=False, start_dir=None):
     """Run the adapter once. Returns None when it exited 0, else why it failed: an infrastructure failure,
     never a score (the adapter exits non-zero when the provider or the harness fails, not when the answer is poor)."""
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
@@ -672,7 +797,8 @@ def run_failure(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=N
     if web:
         cmd += ["--allow-web"]
     try:
-        r = run_group(cmd, timeout, env=env)
+        # start_dir: the adapter's shell exports the folder it starts in as OLDPWD once it changes to <cwd>.
+        r = run_group(cmd, timeout, cwd=start_dir, env=env)
     except subprocess.TimeoutExpired:
         with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
             f.write(f"stopped after --timeout {timeout}s\n")
@@ -874,13 +1000,17 @@ def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
             f"### {p}\n{shown(os.path.join(run_dir, 'cwd', p))}" for p in inputs)
     prompt = grading_prompt(tpl, case, response, files_blob)
     gdir = os.path.join(run_dir, "grading")
-    os.makedirs(os.path.join(gdir, "cwd"), exist_ok=True)
-    os.makedirs(os.path.join(gdir, "out"), exist_ok=True)
-    gp = os.path.join(gdir, "prompt.md")
-    with open(gp, "w", encoding="utf-8") as f:
-        f.write(prompt)
-    if not run_prompt(runner, gp, os.path.join(gdir, "cwd"), grader, os.path.join(gdir, "out"), None,
-                      env=contained_env(gdir, pass_env)):
+    # The grader is a model too: it works outside the repository, and its folders come back to grading/.
+    root = new_run_root(gdir, out_name="out")
+    try:
+        gp = os.path.join(root, "prompt.md")
+        with open(gp, "w", encoding="utf-8") as f:
+            f.write(prompt)
+        ok = run_prompt(runner, gp, os.path.join(root, "case"), grader, os.path.join(root, "out"), None,
+                        env=contained_env(root, pass_env), start_dir=root)
+    finally:
+        return_run(root)
+    if not ok:
         return None
     raw = read_text(os.path.join(gdir, "out", "response.md"), 200000)
     m = re.search(r"\[\s*\{.*\}\s*\]", raw, re.S)
@@ -917,6 +1047,7 @@ def main(argv):
     def on_signal(signum, _frame):
         print(f"stopped by signal {signum}: ending every run that was started", file=sys.stderr)
         stop_all_groups()
+        return_all_runs()  # the case folders go back to the workspace, the temporary folders are removed
         os._exit(128 + signum)  # worker threads would otherwise go on to the next run or grading
 
     previous = {}
@@ -927,6 +1058,7 @@ def main(argv):
         return run(argv)
     finally:
         stop_all_groups(grace=2.0)
+        return_all_runs()
         STOPPING.clear()
         for sig, handler in previous.items():
             signal.signal(sig, handler)
@@ -1011,25 +1143,33 @@ def run(argv):
         cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
         variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
         installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if variant_dir else [])
-        count, msgs = {"attempts": 0, "early_ends": 0}, []
+        count, msgs = {"attempts": 0, "early_ends": 0, "contaminated": None}, []
         while True:
             count["attempts"] += 1
-            os.makedirs(cwd, exist_ok=True)
-            os.makedirs(out, exist_ok=True)
-            build_tree(cwd, sources[c["id"]])
-            env = contained_env(run_dir, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
-            isolate_git(cwd, contained_env(run_dir))
-            run_setup(cwd, c.get("setup") or [], contained_env(run_dir))
-            pp = os.path.join(run_dir, "prompt.md")
-            with open(pp, "w", encoding="utf-8") as f:
-                f.write(c["prompt"])
-            before = file_index(cwd)
-            why = run_failure(runner_for[tier], pp, cwd, model, out, variant_dir,
-                              allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]])
+            # The run happens outside the repository; its folders come back to run_dir when it ends, however it ends.
+            root = new_run_root(run_dir, names=(o["skill"],))
+            case_dir, changed = os.path.join(root, "case"), {}
+            try:
+                build_tree(case_dir, sources[c["id"]])
+                env = contained_env(root, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
+                isolate_git(case_dir, contained_env(root))
+                run_setup(case_dir, c.get("setup") or [], contained_env(root))
+                pp = os.path.join(root, "prompt.md")
+                with open(pp, "w", encoding="utf-8") as f:
+                    f.write(c["prompt"])
+                before = file_index(case_dir)
+                why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), variant_dir,
+                                  allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]],
+                                  start_dir=root)
+                if not why:
+                    changed = snapshot(case_dir, before, installed)
+            finally:
+                return_run(root)
+            if v == "without_skill":
+                count["contaminated"] = contamination(out) or count["contaminated"]
             if why:
                 return name, None, infra(why), msgs + [f"RUN FAILED  case {c['id']} {name} run {k} ({why}): see "
                                                        f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"], count
-            changed = snapshot(cwd, before, installed)
             response = read_text(os.path.join(out, "response.md"), 200000)
             early = early_end(response, changed)
             if not early:
@@ -1076,12 +1216,16 @@ def run(argv):
             for msg in fut.result()[3]:
                 print(msg, file=sys.stderr)
     early_counts = {t: {"attempts": 0, "early_ends": 0, "by_case": {}} for t, _ in models}
+    contaminated = []
     for job, fut in zip(jobs, done):  # submission order, so benchmark.json does not depend on which run finished first
         name, row, failed, _, count = fut.result()
         tier_count = early_counts[job[2]]
         tier_count["attempts"] += count["attempts"]
         tier_count["early_ends"] += count["early_ends"]
         tier_count["by_case"][job[0]["id"]] = tier_count["by_case"].get(job[0]["id"], 0) + count["early_ends"]
+        if count["contaminated"]:
+            contaminated.append({"case": job[0]["id"], "variant": job[1], "tier": job[2], "run": job[4],
+                                 "evidence": count["contaminated"]})
         if failed:
             infra_failures.append(failed)
         if row is not None:
@@ -1117,6 +1261,7 @@ def run(argv):
     bench.update({"date": datetime.date.today().isoformat(), "iteration": iteration, "cases": [c["id"] for c in cases],
                   "content_sha256": start_hash, "expected_runs": len(jobs), "completed_runs": completed,
                   "complete": complete, "infra_failures": infra_failures})
+    bench["contaminated"] = contaminated
     bench["early_ends"] = early_end_stats(early_counts)
     bench["early_end_warning"] = early_end_warning(bench["early_ends"], o["early_rate"])
     with open(os.path.join(it_dir, "benchmark.json"), "w", encoding="utf-8") as f:
@@ -1126,9 +1271,37 @@ def run(argv):
               "(benchmark.json infra_failures). Rerun the iteration; do not change the skill for them.", file=sys.stderr)
     full = (o["grade"] and not o["cases"] and not o["only"] and not o["ablate"]
             and [t for t, _ in models] == ["strong", "floor"])
+    if contaminated:
+        print(f"CONTAMINATED: {len(contaminated)} without-skill run(s) show the repository's path in their output "
+              "(benchmark.json contaminated): the model reached the workbench, so the baseline may be inflated. Read "
+              "the evidence, close the way in, and rerun; --allow-contaminated records anyway.", file=sys.stderr)
     record = {"written": False, "reason": None}
+    blocked = contaminated and not o["allow_contaminated"]
     if not o["record"]:
         record["reason"] = "--no-record"
+    elif o["update_record"]:
+        # The baseline alone: both without-skill scores of the existing record are replaced.
+        if [t for t, _ in models] != ["strong", "floor"]:
+            record["reason"] = "no floor model: the baseline is measured on both models"
+        elif not complete:
+            record["reason"] = "incomplete iteration"
+        elif blocked:
+            record["reason"] = f"{len(contaminated)} contaminated without-skill run(s); see benchmark.json"
+        elif status.content_hash(skill_dir) != start_hash:
+            record["reason"] = "the skill folder changed during the run: rerun the evals on the current content"
+        else:
+            try:
+                updated = status.update_baseline(skill_dir, bench, iteration, bench["date"], status.load_gate(ROOT))
+                status.write_record(skill_dir, updated)
+                state = status.skill_status(skill_dir)
+                record = {"written": True, "path": os.path.relpath(status.record_path(skill_dir), ROOT),
+                          "status": state["status"], "updated": "baseline",
+                          "scores": {k: updated["scores"][k] for k in ("strong_without", "floor_without")}}
+                if not updated["gate"]["passed"]:
+                    print(f"RECORD {o['skill']}: with the new baseline the gate no longer passes ({state['reason']}); "
+                          "the record is written and the skill reads draft.", file=sys.stderr)
+            except ValueError as e:
+                record["reason"] = f"record not updated: {e}"
     elif not full:
         record["reason"] = "partial run: a record needs every case, both variants, both models, grading and no --ablate"
     elif o["configured_floor"] and o["floor"] != o["configured_floor"] and not o["record_anyway"]:
@@ -1136,6 +1309,8 @@ def run(argv):
                             "record would read as stale; pass --record-anyway to write it")
     elif not complete:
         record["reason"] = "incomplete iteration"
+    elif blocked:
+        record["reason"] = f"{len(contaminated)} contaminated without-skill run(s); see benchmark.json"
     elif status.content_hash(skill_dir) != start_hash:
         record["reason"] = "the skill folder changed during the run: rerun the evals on the current content"
     else:
@@ -1152,7 +1327,7 @@ def run(argv):
         print(f"WARNING early ends: {bench['early_end_warning']}", file=sys.stderr)
     print(json.dumps({"iteration_dir": os.path.relpath(it_dir, ROOT), "conditions": conditions,
                       "failures": len(infra_failures), "complete": complete, "expected_runs": len(jobs),
-                      "completed_runs": completed, "record": record,
+                      "completed_runs": completed, "record": record, "contaminated": len(contaminated),
                       "early_ends": {t: {"early_ends": s["early_ends"], "attempts": s["attempts"], "rate": s["rate"]}
                                      for t, s in bench["early_ends"].items()},
                       "early_end_warning": bench["early_end_warning"]}))

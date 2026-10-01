@@ -299,3 +299,62 @@ def test_validate_fails_on_an_invalid_gate_configuration(root, content, why):
 
 def test_the_repository_gate_configuration_is_valid():
     assert es.gate_problems(str(REPO)) == [] and es.load_gate(str(REPO))["floor_model"]
+
+
+# --- the baseline measured again, alone (eval_run.py --only without --update-record) ---------------
+
+def baseline_bench(strong=0.2, floor=0.1, **changes):
+    bench = benchmark(strong=(None, strong), floor=(None, floor), drop=("with_skill", "with_skill.floor"))
+    return {**bench, **changes}
+
+
+def test_update_baseline_replaces_the_two_scores_and_validates_the_field(root):
+    record(root)
+    skill_dir = str(root / "skills" / "core-demo")
+    rec = es.update_baseline(skill_dir, baseline_bench(), 7, "2030-02-03")
+    assert rec["scores"] == {"strong_with": 1.0, "strong_without": 0.2, "floor_with": 0.9, "floor_without": 0.1}
+    assert rec["baseline"] == {"date": "2030-02-03", "iteration": 7, "runs": 1} and rec["iteration"] == 3
+    es.write_record(skill_dir, rec)
+    assert status(root) == "evaluated"
+    rec["baseline"] = {"date": "yesterday"}
+    es.write_record(skill_dir, rec)
+    assert "baseline must be" in es.skill_status(skill_dir)["reason"]
+
+
+def test_a_baseline_above_the_score_with_the_skill_makes_the_skill_draft(root):
+    record(root)
+    skill_dir = str(root / "skills" / "core-demo")
+    rec = es.update_baseline(skill_dir, baseline_bench(strong=1.0, floor=0.5) | {"run_summary": {
+        **baseline_bench()["run_summary"],
+        "without_skill": {"pass_rate": {"mean": 1.0}, "cases": [{"case": c, "run": 1, "pass_rate": 1.0} for c in (1, 2)]}}}, 4, "2030-02-03")
+    rec["scores"]["strong_with"] = 0.9  # as if run-to-run noise put the baseline above it
+    rec["gate"] = es.gate(rec["scores"], rec["threshold"])
+    es.write_record(skill_dir, rec)
+    row = es.skill_status(skill_dir)
+    assert row["status"] == "draft" and "strong with the skill 0.9 is below without it 1.0" in row["reason"]
+
+
+@pytest.mark.parametrize("how, why", [
+    ("none", "no record to update"), ("stale", "another content of the skill"),
+    ("model", "the record's floor model is f-model, this run's is other"),
+    ("configured", "the configured one is new-floor"), ("threshold", "the record's threshold is 0.8, the configured one is 0.9"),
+    ("case", "without_skill.floor has no graded run of case(s) 2"),
+])
+def test_update_baseline_refuses(root, how, why):
+    skill_dir = str(root / "skills" / "core-demo")
+    if how != "none":
+        record(root)
+    bench, config = baseline_bench(), {}
+    if how == "stale":
+        (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
+    elif how == "model":
+        bench["models"]["floor"] = "other"
+    elif how == "configured":
+        config = {"floor_model": "new-floor", "strong_model": "s-model", "threshold": 0.8}
+    elif how == "threshold":
+        config = {"floor_model": "f-model", "strong_model": "s-model", "threshold": 0.9}
+    elif how == "case":
+        bench["run_summary"]["without_skill.floor"]["cases"].pop()
+    with pytest.raises(ValueError) as e:
+        es.update_baseline(skill_dir, bench, 4, "2030-02-03", config)
+    assert why in str(e.value)
