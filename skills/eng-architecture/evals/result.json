@@ -12,7 +12,7 @@
   "skill": "eng-architecture",
   "content_sha256": "f41df66ce607619977b3f948d0e7cce20d05ec7ea3e1e773e8462da3d8bc1447",
   "date": "2026-10-01",
-  "iteration": 1,
+  "iteration": 2,
   "runs": 3,
   "cases": [
     1,
@@ -28,10 +28,10 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.906,
-    "strong_without": 0.446,
-    "floor_with": 0.906,
-    "floor_without": 0.463
+    "strong_with": 0.744,
+    "strong_without": 0.528,
+    "floor_with": 0.911,
+    "floor_without": 0.42
   },
   "complete": true,
   "infra_failures": 0,
@@ -45,8 +45,8 @@
   },
   "gate": {
     "floor": true,
-    "strong": true,
+    "strong": false,
     "strong_delta": true,
-    "passed": true
+    "passed": false
   }
 }

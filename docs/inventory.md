@@ -224,7 +224,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | biz-icp-positioning | evaluated | 0.95 | 0.48 | 0.98 | 2026-10-01 | 2 |
 | biz-market-analysis | stale | 0.93 | 0.22 | 0.94 | 2026-10-01 | 1 |
 | brand-guidelines | evaluated | 0.98 | 0.54 | 1.00 | 2026-10-01 | 2 |
-| brand-identity | draft | 0.69 | 0.38 | 0.74 | 2026-10-01 | 4 |
+| brand-identity | draft | 0.86 | 0.29 | 0.69 | 2026-10-01 | 1 |
 | brand-name | evaluated | 1.00 | 0.50 | 1.00 | 2026-10-01 | 2 |
 | brand-profile | evaluated | 0.97 | 0.41 | 0.94 | 2026-10-01 | 2 |
 | brand-strategy | evaluated | 0.97 | 0.86 | 0.92 | 2026-10-01 | 2 |
@@ -242,26 +242,26 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | design-handoff | evaluated | 0.92 | 0.24 | 0.89 | 2026-10-01 | 1 |
 | design-system | evaluated | 1.00 | 0.53 | 0.97 | 2026-10-01 | 2 |
 | design-ux-flows | evaluated | 1.00 | 0.29 | 1.00 | 2026-10-01 | 2 |
-| eng-architecture | evaluated | 0.91 | 0.45 | 0.91 | 2026-10-01 | 1 |
-| eng-code-review | evaluated | 0.90 | 0.66 | 0.82 | 2026-10-01 | 1 |
-| eng-codebase-map | draft | 0.76 | 0.35 | 0.49 | 2026-10-01 | 1 |
+| eng-architecture | draft | 0.74 | 0.53 | 0.91 | 2026-10-01 | 2 |
+| eng-code-review | evaluated | 0.90 | 0.64 | 0.82 | 2026-10-01 | 2 |
+| eng-codebase-map | evaluated | 0.98 | 0.37 | 0.91 | 2026-10-01 | 2 |
 | eng-docs | evaluated | 1.00 | 0.31 | 0.98 | 2026-10-01 | 1 |
 | eng-impact-analysis | evaluated | 1.00 | 0.70 | 1.00 | 2026-10-01 | 1 |
 | eng-implement | draft | 0.39 | 0.39 | 0.39 | 2026-10-01 | 1 |
 | eng-integration-tests | evaluated | 0.98 | 0.53 | 0.93 | 2026-10-01 | 1 |
 | eng-refactor | evaluated | 1.00 | 0.54 | 1.00 | 2026-10-01 | 1 |
 | eng-root-cause | evaluated | 1.00 | 0.57 | 1.00 | 2026-10-01 | 1 |
-| eng-security-review | evaluated | 0.91 | 0.76 | 1.00 | 2026-10-01 | 1 |
+| eng-security-review | evaluated | 0.98 | 0.75 | 0.95 | 2026-10-01 | 2 |
 | eng-tradeoffs | evaluated | 1.00 | 0.39 | 1.00 | 2026-10-01 | 1 |
 | eng-unit-tests | evaluated | 0.83 | 0.68 | 0.94 | 2026-10-01 | 1 |
 | flow-fix-bug | evaluated | 0.91 | 0.51 | 0.89 | 2026-10-01 | 1 |
 | mkt-content-plan | evaluated | 1.00 | 0.71 | 1.00 | 2026-10-01 | 1 |
-| mkt-engage | draft | — | — | — | — | — |
+| mkt-engage | evaluated | 0.98 | 0.82 | 0.92 | 2026-10-01 | 1 |
 | mkt-messaging | evaluated | 1.00 | 0.62 | 0.96 | 2026-10-01 | 1 |
 | mkt-publish | evaluated | 0.88 | 0.54 | 1.00 | 2026-10-01 | 1 |
-| mkt-social-copy | draft | — | — | — | — | — |
+| mkt-social-copy | evaluated | 1.00 | 0.65 | 1.00 | 2026-10-01 | 1 |
 | mkt-vote-round | draft | — | — | — | — | — |
-| ops-branch-sync | draft | — | — | — | — | — |
+| ops-branch-sync | evaluated | 0.94 | 0.57 | 0.94 | 2026-10-01 | 1 |
 | ops-ci-pipeline | draft | — | — | — | — | — |
 | ops-pull-request | draft | — | — | — | — | — |
 | ops-repo-baseline | draft | — | — | — | — | — |
@@ -270,7 +270,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
 | product-roadmap | evaluated | 0.97 | 0.59 | 0.92 | 2026-10-01 | 1 |
 
-Counts: 33 evaluated, 2 stale, 13 draft, 48 skills.
+Counts: 36 evaluated, 2 stale, 10 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

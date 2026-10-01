@@ -12,7 +12,7 @@
   "skill": "eng-code-review",
   "content_sha256": "f86c7511aaa18a16768b508178488aa0510f6037ecac7686effaf3cb48e9c46a",
   "date": "2026-10-01",
-  "iteration": 1,
+  "iteration": 2,
   "runs": 3,
   "cases": [
     1,
@@ -30,9 +30,9 @@
   "threshold": 0.8,
   "scores": {
     "strong_with": 0.9,
-    "strong_without": 0.662,
-    "floor_with": 0.825,
-    "floor_without": 0.683
+    "strong_without": 0.642,
+    "floor_with": 0.821,
+    "floor_without": 0.646
   },
   "complete": true,
   "infra_failures": 0,

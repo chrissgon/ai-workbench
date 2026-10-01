@@ -28,8 +28,10 @@
 
 ## Components
 
-| Component | Files | Location | Imported by (afferent) | Imports (efferent) | Responsibility |
-|-----------|-------|----------|------------------------|--------------------|----------------|
+| Component | Files | Location | Script module | Imported by (afferent) | Imports (efferent) | Responsibility |
+|-----------|-------|----------|---------------|------------------------|--------------------|----------------|
+
+Afferent and efferent numbers are copied from the `modules` list printed by `map_codebase.py`; they are counted per module ({the limits the script prints}). {Name any component that is only part of a module and carries that module's numbers.}
 
 ## Main paths
 

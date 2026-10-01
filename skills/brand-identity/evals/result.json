@@ -10,9 +10,9 @@
     }
   },
   "skill": "brand-identity",
-  "content_sha256": "fd37324361165b0645049ea722d73eee7e36ba1b7259592e257296e8f5315f10",
+  "content_sha256": "f1b26d469d7f95f54d3e1e290e1b3202d112e3dc0caf869afd9aaf65fae97768",
   "date": "2026-10-01",
-  "iteration": 4,
+  "iteration": 1,
   "runs": 3,
   "cases": [
     1,
@@ -27,15 +27,24 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.694,
-    "strong_without": 0.375,
-    "floor_with": 0.736,
-    "floor_without": 0.167
+    "strong_with": 0.861,
+    "strong_without": 0.292,
+    "floor_with": 0.694,
+    "floor_without": 0.194
   },
   "complete": true,
   "infra_failures": 0,
+  "measurement_version": 4,
+  "tolerance": 0.05,
+  "environment": {
+    "kind": "container",
+    "definition_sha256": "a9f7f77b77ba5b10bd0401d80aa33f605cd6fb5d6482d5fea950f077a995acad",
+    "image": "wb-eval:a9f7f77b77ba",
+    "image_id": "sha256:caacfddc3312c2acba007ce0957c214419681be4576028bc28f4db34e9f71a95"
+  },
   "gate": {
     "floor": false,
+    "strong": true,
     "strong_delta": true,
     "passed": false
   }
