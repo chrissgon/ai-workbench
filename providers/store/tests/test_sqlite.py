@@ -164,16 +164,39 @@ def test_newer_schema_is_refused(db):
 
 
 def _init(path):
-    return run("init", db=path).returncode
+    r = run("init", db=path)
+    return r.returncode, r.stderr
 
 
 def test_concurrent_init(tmp_path):
     path = tmp_path / "race.sqlite"
     with multiprocessing.get_context("spawn").Pool(4) as pool:
-        codes = pool.map(_init, [str(path)] * 4)
-    assert codes == [0, 0, 0, 0]
+        results = pool.map(_init, [str(path)] * 4)
+    assert [code for code, _ in results] == [0, 0, 0, 0], results
     rows = sqlite3.connect(path).execute("SELECT version FROM schema_version").fetchall()
     assert rows == [(1,)]
+
+
+def test_a_wal_file_removed_by_another_process_does_not_fail_init(tmp_path, monkeypatch):
+    """Another process closing the last connection deletes the -wal and -shm files while this one sets modes."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("store_sqlite", SCRIPT)
+    store = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(store)
+    path = tmp_path / "gone.sqlite"
+    path.write_bytes(b"")
+    path.chmod(0o644)
+    Path(f"{path}-wal").write_bytes(b"")
+    real = os.chmod
+
+    def chmod(target, mode):
+        if str(target).endswith("-wal"):
+            os.unlink(target)  # the other process got there first
+        real(target, mode)
+
+    monkeypatch.setattr(store.os, "chmod", chmod)
+    store.private_files(path)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
 
 
 # --- cursors ----------------------------------------------------------------------------

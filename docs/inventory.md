@@ -258,7 +258,7 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | mkt-content-plan | draft | — | — | — | — | — |
 | mkt-engage | draft | — | — | — | — | — |
 | mkt-messaging | evaluated | 1.00 | 0.62 | 1.00 | 2026-10-01 | 1 |
-| mkt-publish | draft | — | — | — | — | — |
+| mkt-publish | evaluated | 1.00 | 0.46 | 1.00 | 2026-10-01 | 5 |
 | mkt-social-copy | draft | — | — | — | — | — |
 | mkt-vote-round | draft | — | — | — | — | — |
 | ops-branch-sync | draft | — | — | — | — | — |
@@ -270,7 +270,7 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | product-prd | evaluated | 1.00 | 0.46 | 0.99 | 2026-10-01 | 1 |
 | product-roadmap | draft | — | — | — | — | — |
 
-Counts: 5 evaluated, 0 stale, 43 draft, 48 skills.
+Counts: 6 evaluated, 0 stale, 42 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

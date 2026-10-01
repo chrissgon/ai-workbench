@@ -380,10 +380,14 @@ def schema_version(conn: sqlite3.Connection) -> int | None:
 
 
 def private_files(path: Path) -> None:
-    """The database and its WAL and shared-memory files are readable by the user only."""
+    """The database and its WAL and shared-memory files are readable by the user only. SQLite removes
+    the WAL and shared-memory files when the last connection closes, so another process may delete one
+    between the listing and the chmod: a file that is gone needs no mode."""
     for candidate in (path, Path(f"{path}-wal"), Path(f"{path}-shm")):
-        if candidate.exists():
+        try:
             os.chmod(candidate, 0o600)
+        except FileNotFoundError:
+            pass
 
 
 def open_ready(args) -> sqlite3.Connection:
