@@ -22,11 +22,11 @@ Checks every skill under skills/ and every agent under agents/:
     carrying `validate: allow private-term -- <reason>` or in a path the file excludes. The file lists one
     term per line (case-insensitive; `re:<regex>` for a pattern; `!<path glob>` to exclude a path; `#`
     comments). It keeps a maintainer's own names, projects and accounts out of this shared repository.
-  - eval-status (through scripts/eval_status.py): a skills/<name>/evals/result.json that exists is valid JSON
+  - eval-status (through evals/eval_status.py): a skills/<name>/evals/result.json that exists is valid JSON
     with the record's fields and `skill` equal to the folder name; the generated block between the eval-status
-    markers in docs/inventory.md is up to date (fix: python3 scripts/eval_status.py inventory --write); skills
+    markers in docs/inventory.md is up to date (fix: python3 evals/eval_status.py inventory --write); skills
     whose status is `stale` (the folder changed since the recorded pass) or `draft` (no passing, complete
-    record) are reported as warnings, one line per status, and are errors with --strict; scripts/eval-gate.json,
+    record) are reported as warnings, one line per status, and are errors with --strict; evals/eval-gate.json,
     the gate's configuration (models, adapters, threshold), has its fields
   - scripts/security_scan.py finds no secret, hidden text or unsafe script pattern (its errors
     and warnings are reported here as they are there)
@@ -405,7 +405,7 @@ def check_private_terms(report, root=ROOT):
 
 
 def load_eval_status():
-    spec = importlib.util.spec_from_file_location("eval_status", os.path.join(ROOT, "scripts", "eval_status.py"))
+    spec = importlib.util.spec_from_file_location("eval_status", os.path.join(ROOT, "evals", "eval_status.py"))
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -417,7 +417,7 @@ def check_eval_status(report, root=ROOT):
     by_status = {"stale": [], "draft": []}
     problems = es.gate_problems(root)
     if problems:
-        report.error("scripts/eval-gate.json", f"[eval-status] {'; '.join(problems)}")
+        report.error("evals/eval-gate.json", f"[eval-status] {'; '.join(problems)}")
     for name in es.skill_names(root):
         skill_dir = os.path.join(root, "skills", name)
         _, problems = es.load_record(skill_dir)
@@ -429,7 +429,7 @@ def check_eval_status(report, root=ROOT):
     try:
         if not es.inventory_current(root):
             report.error("docs/inventory.md", "[eval-status] the generated eval-status block is out of date: "
-                         "run python3 scripts/eval_status.py inventory --write")
+                         "run python3 evals/eval_status.py inventory --write")
     except ValueError as e:
         report.error("docs/inventory.md", f"[eval-status] {e}")
     if by_status["stale"]:
@@ -437,7 +437,7 @@ def check_eval_status(report, root=ROOT):
                     f"eval pass; rerun their evals: {', '.join(by_status['stale'])}")
     if by_status["draft"]:
         report.warn("skills", f"[eval-status] {len(by_status['draft'])} skill(s) are draft, with no passing eval record "
-                    f"(python3 scripts/eval_status.py status): {', '.join(by_status['draft'])}")
+                    f"(python3 evals/eval_status.py status): {', '.join(by_status['draft'])}")
 
 
 def check_security(report):

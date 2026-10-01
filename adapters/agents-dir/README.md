@@ -19,15 +19,15 @@ bash adapters/agents-dir/install.sh --project .    # project-level: ./.agents/sk
 
 ## Floor model through OpenRouter
 
-The floor model of the eval gate is `openrouter/deepseek/deepseek-v4.1-flash` since 2026-10-01 (it was `openrouter/deepseek/deepseek-v3.2`), set in `scripts/eval-gate.json` with this adapter and the key variable `OPENROUTER_API_KEY`, so `eval_run.py --skill <name>` needs no model flag. The floor runs recorded before 2026-09-28 used `claude-haiku-4-5-20251001` (35 runs, through the claude-code adapter) and `openrouter/deepseek/deepseek-v3.2` (6 runs, through this adapter), read from `evals-workspace/*/iteration-*/benchmark.json` on the maintainer's machine. OpenCode had no stored credentials (`opencode auth list`: 0), so the OpenRouter key came from the shell environment. Since the containment of 2026-09-27, `eval_run.py` passes only an allowlisted environment and this adapter uses a throwaway home, so the key must be named explicitly:
+The floor model of the eval gate is `openrouter/deepseek/deepseek-v4.1-flash` since 2026-10-01 (it was `openrouter/deepseek/deepseek-v3.2`), set in `evals/eval-gate.json` with this adapter and the key variable `OPENROUTER_API_KEY`, so `eval_run.py --skill <name>` needs no model flag. The floor runs recorded before 2026-09-28 used `claude-haiku-4-5-20251001` (35 runs, through the claude-code adapter) and `openrouter/deepseek/deepseek-v3.2` (6 runs, through this adapter), read from `evals-workspace/*/iteration-*/benchmark.json` on the maintainer's machine. OpenCode had no stored credentials (`opencode auth list`: 0), so the OpenRouter key came from the shell environment. Since the containment of 2026-09-27, `eval_run.py` passes only an allowlisted environment and this adapter uses a throwaway home, so the key must be named explicitly:
 
 ```bash
 # OPENROUTER_API_KEY from the environment settings, or stored once in the OS secret store:
 #   uv run --with keyring==25.7.0 keyring set ai-workbench openrouter
 # --pass-env reads it from there when it is not exported (contracts/secrets.md).
-python3 skills/core-skill-creator/scripts/eval_run.py --skill <name>
-# the same, spelled out (what scripts/eval-gate.json supplies):
-python3 skills/core-skill-creator/scripts/eval_run.py --skill <name> --harness claude-code --model <strong-id> \
+python3 evals/eval_run.py --skill <name>
+# the same, spelled out (what evals/eval-gate.json supplies):
+python3 evals/eval_run.py --skill <name> --harness claude-code --model <strong-id> \
   --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v4.1-flash --floor-pass-env OPENROUTER_API_KEY
 ```
 
@@ -65,7 +65,7 @@ ollama create <model>-32k -f Modelfile
 Then run the floor tier one run at a time (a local model serves one request at a time; more jobs only queue and hit the timeout):
 
 ```bash
-python3 skills/core-skill-creator/scripts/eval_run.py --skill <name> --harness <strong adapter> --model <strong-id> \
+python3 evals/eval_run.py --skill <name> --harness <strong adapter> --model <strong-id> \
     --floor-model ollama/<model>-32k --floor-harness agents-dir --jobs 1 --timeout 1800
 ```
 

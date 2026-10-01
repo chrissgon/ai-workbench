@@ -210,13 +210,13 @@ Skills in waves 2 to 5 are written alongside the phase of a real project that ne
 
 ## Evaluation status
 
-A skill is done only when its status is `evaluated`. The status is computed, never written by hand: `scripts/eval_status.py status` reads each skill's committed record, `skills/<name>/evals/result.json` (written by the eval runner after a complete run of every case, with and without the skill, on the strong and the floor model), and compares the record's content hash with the skill folder.
+A skill is done only when its status is `evaluated`. The status is computed, never written by hand: `evals/eval_status.py status` reads each skill's committed record, `skills/<name>/evals/result.json` (written by the eval runner after a complete run of every case, with and without the skill, on the strong and the floor model), and compares the record's content hash with the skill folder.
 
 - `draft`: no record, or a record whose gate did not pass (floor with the skill at or above the threshold, strong with the skill at least as good as without it) or whose run was incomplete.
 - `evaluated`: the gate passed and the skill folder is unchanged since that run.
 - `stale`: the gate passed, then something inside the skill folder changed (`SKILL.md`, a reference, an asset, a script, an eval case). Rerun its evals; changes outside the folder do not make a skill stale.
 
-The table below is generated. Do not edit it: run `python3 scripts/eval_status.py inventory --write` after an eval run or a change to a skill; `scripts/validate.py` fails while it is out of date.
+The table below is generated. Do not edit it: run `python3 evals/eval_status.py inventory --write` after an eval run or a change to a skill; `scripts/validate.py` fails while it is out of date.
 
 <!-- eval-status:begin -->
 | Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |
@@ -286,7 +286,7 @@ Wave 0:
 - [x] core-agents-md
 - [x] core-skill-creator
 - [x] researcher agent
-- [x] eval runner (`skills/core-skill-creator/scripts/eval_run.py`; first runs on real tasks of the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench, and may declare `setup` commands (a branch with commits) and `skills` it depends on (a flow's phases, linked in both variants); it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
+- [x] eval runner (`evals/eval_run.py`; first runs on real tasks of the engineering skills; each case now runs in its own git repository, after a floor run's `git commit` reached the workbench, and may declare `setup` commands (a branch with commits) and `skills` it depends on (a flow's phases, linked in both variants); it does not yet report whether the model invoked the skill, which had to be read from the session transcripts)
 
 Wave 1:
 - [x] eng-codebase-map

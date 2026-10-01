@@ -1,4 +1,4 @@
-"""Offline tests of scripts/eval_status.py (content hash, record, status, inventory block) and of the
+"""Offline tests of evals/eval_status.py (content hash, record, status, inventory block) and of the
 eval-status check in scripts/validate.py. No model is called: benchmarks are written by hand here."""
 import importlib.util
 import json
@@ -10,7 +10,8 @@ REPO = Path(__file__).resolve().parents[2]
 
 
 def load(name):
-    spec = importlib.util.spec_from_file_location(name, REPO / "scripts" / f"{name}.py")
+    folder = "evals" if name == "eval_status" else "scripts"
+    spec = importlib.util.spec_from_file_location(name, REPO / folder / f"{name}.py")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -197,7 +198,7 @@ def test_validate_passes_on_a_current_inventory_and_warns_once_per_status(root):
 
 def test_validate_fails_on_a_stale_inventory_block(root):
     errors, _ = check(root)
-    assert len(errors) == 1 and "python3 scripts/eval_status.py inventory --write" in errors[0]
+    assert len(errors) == 1 and "python3 evals/eval_status.py inventory --write" in errors[0]
 
 
 @pytest.mark.parametrize("content, why", [
@@ -242,13 +243,13 @@ def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(r
     assert "early_ends must map" in es.skill_status(str(root / "skills" / "core-demo"))["reason"]
 
 
-# --- the eval gate configuration (scripts/eval-gate.json) -----------------------------------------
+# --- the eval gate configuration (evals/eval-gate.json) -----------------------------------------
 
 def configure(root, **changes):
     config = {"strong_model": "s-model", "strong_harness": "h", "floor_model": "f-model", "floor_harness": "fh",
               "floor_pass_env": ["FLOOR_KEY"], "threshold": 0.8, **changes}
-    (root / "scripts").mkdir(exist_ok=True)
-    (root / "scripts" / "eval-gate.json").write_text(json.dumps(config))
+    (root / "evals").mkdir(exist_ok=True)
+    (root / "evals" / "eval-gate.json").write_text(json.dumps(config))
 
 
 def test_a_record_on_the_configured_floor_model_is_evaluated_and_status_names_the_gate(root):
@@ -290,10 +291,10 @@ def test_a_record_is_judged_against_the_configured_threshold(root):
 def test_validate_fails_on_an_invalid_gate_configuration(root, content, why):
     configure(root, threshold=3)
     if content is not None:
-        (root / "scripts" / "eval-gate.json").write_text(content)
+        (root / "evals" / "eval-gate.json").write_text(content)
     es.main(["inventory", "--write"], root=str(root))
     errors, _ = check(root)
-    assert len(errors) == 1 and errors[0].startswith("scripts/eval-gate.json") and why in errors[0]
+    assert len(errors) == 1 and errors[0].startswith("evals/eval-gate.json") and why in errors[0]
     assert es.load_gate(str(root)) == {}
 
 

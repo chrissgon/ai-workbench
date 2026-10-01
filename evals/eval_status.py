@@ -2,13 +2,13 @@
 """Eval status of every skill, computed from a committed record and the skill folder's content hash.
 
 Usage:
-  python3 scripts/eval_status.py status [--skill <name>]
-  python3 scripts/eval_status.py hash --skill <name>
-  python3 scripts/eval_status.py record --skill <name> --benchmark <path to benchmark.json> [--date YYYY-MM-DD]
-  python3 scripts/eval_status.py inventory --write | --check
+  python3 evals/eval_status.py status [--skill <name>]
+  python3 evals/eval_status.py hash --skill <name>
+  python3 evals/eval_status.py record --skill <name> --benchmark <path to benchmark.json> [--date YYYY-MM-DD]
+  python3 evals/eval_status.py inventory --write | --check
 
 A skill's eval result lives in skills/<name>/evals/result.json. It is written by tooling (the eval runner,
-skills/core-skill-creator/scripts/eval_run.py, after a complete full run; or `record` here), never by hand:
+evals/eval_run.py, after a complete full run; or `record` here), never by hand:
 
   {"skill", "content_sha256", "date", "iteration", "runs", "cases": [ids], "harness", "floor_harness",
    "models": {"strong", "floor"}, "grader", "threshold",
@@ -28,7 +28,7 @@ Content hash: sha256 over the files of the skill folder (sorted relative paths a
 evals/result.json, __pycache__ folders, *.pyc and .DS_Store. A change to SKILL.md, a reference, an asset, a
 script or an eval case changes it; files outside the folder do not.
 
-The eval gate is configured in scripts/eval-gate.json, committed: {"strong_model", "strong_harness",
+The eval gate is configured in evals/eval-gate.json, committed: {"strong_model", "strong_harness",
 "floor_model", "floor_harness", "floor_pass_env": [variables], "threshold"}. It names the models and adapters
 a gate run uses (eval_run.py takes them as defaults) and the floor model and threshold a record is judged
 against. It sits outside skills/, so changing it changes no content hash; the status below reacts instead.
@@ -67,7 +67,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RECORD_REL = os.path.join("evals", "result.json")
 BEGIN, END = "<!-- eval-status:begin -->", "<!-- eval-status:end -->"
 INVENTORY_REL = os.path.join("docs", "inventory.md")
-GATE_REL = os.path.join("scripts", "eval-gate.json")
+GATE_REL = os.path.join("evals", "eval-gate.json")
 GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "floor_harness": str,
                "floor_pass_env": list, "threshold": (int, float)}
 STATUSES = ("evaluated", "stale", "draft")
@@ -85,7 +85,7 @@ def die(msg, code=2):
 
 
 def gate_problems(root=ROOT):
-    """Why scripts/eval-gate.json is not a valid configuration; an empty list when it is, or when there is none."""
+    """Why evals/eval-gate.json is not a valid configuration; an empty list when it is, or when there is none."""
     path = os.path.join(root, GATE_REL)
     if not os.path.isfile(path):
         return []
@@ -420,7 +420,7 @@ def cmd_record(root, skill, bench_path, date):
     elif rec["content_sha256"] != content_hash(skill_dir):
         print(f"skills/{skill} changed since the benchmark's run: the record will read as stale.", file=sys.stderr)
     path = write_record(skill_dir, rec)
-    print(f"wrote {os.path.relpath(path, root)}; run: python3 scripts/eval_status.py inventory --write", file=sys.stderr)
+    print(f"wrote {os.path.relpath(path, root)}; run: python3 evals/eval_status.py inventory --write", file=sys.stderr)
     print(json.dumps({"record": rec, "status": skill_status(skill_dir)}, indent=2))
     return 0
 
@@ -476,7 +476,7 @@ def main(argv, root=None):
             die(str(e), 1)
         if "--check" in flags:
             if text != new:
-                print(f"{INVENTORY_REL}: the eval-status block is out of date; run python3 scripts/eval_status.py inventory --write",
+                print(f"{INVENTORY_REL}: the eval-status block is out of date; run python3 evals/eval_status.py inventory --write",
                       file=sys.stderr)
             print(json.dumps({"current": text == new}))
             return 0 if text == new else 1
