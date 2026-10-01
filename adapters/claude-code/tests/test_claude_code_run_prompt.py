@@ -15,7 +15,8 @@ SCRIPT = Path(__file__).resolve().parents[1] / "run-prompt.sh"
 FAKE = """#!/usr/bin/env bash
 python3 - "$@" <<'PY'
 import json, os, sys
-json.dump({"args": sys.argv[1:], "mcp": os.environ.get("ENABLE_CLAUDEAI_MCP_SERVERS")}, open(os.environ["FAKE_LOG"], "w"))
+json.dump({"args": sys.argv[1:], "mcp": os.environ.get("ENABLE_CLAUDEAI_MCP_SERVERS"),
+           "budget": os.environ.get("SLASH_COMMAND_TOOL_CHAR_BUDGET")}, open(os.environ["FAKE_LOG"], "w"))
 PY
 echo '{"result": "done"}'
 """
@@ -168,3 +169,10 @@ def test_outside_the_eval_container_the_adapter_refuses_to_start(env):
 
 def test_a_command_allowance_is_no_longer_an_option(env):
     assert run(env, "--allow-command", "git status").returncode == 2
+
+
+def test_the_skill_listing_budget_is_raised_so_the_skill_keeps_its_description(env):
+    r = run(env, "--skill-dir", str(env["skill"]))
+    assert r.returncode == 0, r.stderr
+    assert int(json.loads(env["log"].read_text())["budget"]) >= 100000
+
