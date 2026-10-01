@@ -196,3 +196,7 @@ Following the container (entry above), decided by the maintainer and built:
 - A CI job builds the image on Linux and checks, without a model, that a run writes only in its folder, sees no home and no checkout, reaches nothing without a network, only the providers through the proxy, and the open network when a case asks for it.
 
 None of this raises the measurement version: version 3 was set with the container and no record exists under it yet.
+
+## 2026-10-01: The strong adapter raises the skill-listing budget; measurement version 4
+
+The first skills measured in the container showed the strong model ignoring a skill it had been given. Cause: the harness lists skills to the model within a character budget, its bundled skills first, and listed the skill under test by name only, with no description (`adapters/claude-code/README.md`). The adapter now raises the budget so that the description is listed. This changes what a strong-tier run measures, so the measurement version goes from 3 to 4; the five records made under version 3 in the hours between were discarded before being committed, and those skills are measured again. What a person's own installation shows the model is a separate question: backlog T18.

@@ -16,6 +16,9 @@
 # --allow-web leaves WebSearch and WebFetch available, for a case that must search the web; without it
 # both are disallowed.
 # --max-cost-usd becomes claude's --max-budget-usd: the run stops once it has spent that much.
+# SLASH_COMMAND_TOOL_CHAR_BUDGET is raised (200000 unless set): the CLI lists skills to the model within a
+# character budget, its own bundled skills first, and past the budget a project skill is listed by name
+# only, with no description, so the model cannot tell when to use the skill under test.
 # The CLI authenticates with CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) from the environment.
 # Extra CLI flags: CLAUDE_EVAL_ARGS.
 # Stopping this script (TERM, INT, HUP) stops the CLI and everything it started.
@@ -34,7 +37,7 @@ while [[ $# -gt 0 ]]; do
     --max-cost-usd)
       [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
       MAX_COST="$2"; shift 2 ;;
-    --help|-h) sed -n '2,21p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -82,7 +85,7 @@ EXTRA=(--dangerously-skip-permissions)
 # Connectors: https://code.claude.com/docs/en/mcp (read 2026-09-27): claude.ai connectors load when logged in
 # with a claude.ai account unless ENABLE_CLAUDEAI_MCP_SERVERS=false, and `claude -p` loads project servers
 # without asking unless --strict-mcp-config (checked in `claude --help`, 2.1.283).
-( cd "$CWD" && export ENABLE_CLAUDEAI_MCP_SERVERS=false && exec "${OWN_SESSION[@]}" claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json \
+( cd "$CWD" && export ENABLE_CLAUDEAI_MCP_SERVERS=false SLASH_COMMAND_TOOL_CHAR_BUDGET="${SLASH_COMMAND_TOOL_CHAR_BUDGET:-200000}" && exec "${OWN_SESSION[@]}" claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json \
     --setting-sources project,local --strict-mcp-config ${CLAUDE_EVAL_ARGS:-} ${EXTRA[@]+"${EXTRA[@]}"} ) \
   < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log" &
 RUNNER_PID=$!

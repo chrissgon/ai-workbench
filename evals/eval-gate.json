@@ -12,5 +12,5 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "strong_tolerance": 0.05,
-  "measurement_version": 3
+  "measurement_version": 4
 }
