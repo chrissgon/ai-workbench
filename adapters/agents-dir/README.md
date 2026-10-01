@@ -40,6 +40,16 @@ Learned in a cloud session on 2026-09-28 (`opencode-ai@1.18.32`):
 - Decided by the user on 2026-09-28: the OpenRouter key is for the floor model only. Claude models (the strong model and the grader) run through the claude-code adapter with the maintainer's own login (`--harness claude-code --model <claude-id> --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v4.1-flash`); in a cloud session the CLI is already signed in, and `claude -p` works with only `PATH` and `HOME` from the allowlisted environment.
 - Run one `eval_run.py` at a time: three in parallel made `opencode run` fail within seconds with `UnknownError`, and those runs and their gradings were lost.
 
+## The throwaway home's keychain on macOS
+
+macOS finds a person's default keychain through `HOME`. A run here uses a throwaway `HOME`, which has no `Library/Keychains`, so a browser started inside a run (Chrome looks up its "Chrome Safe Storage" item) showed the person a "Keychain Not Found" dialog, once per launch. A skill's own script can start the browser with a mock keychain; a model that starts the browser by itself cannot be controlled.
+
+On macOS (`uname` is `Darwin` and `/usr/bin/security` exists) `run-prompt.sh` therefore gives the throwaway home an empty keychain before the runner starts: `create-keychain`, `default-keychain -s`, `list-keychains -d user -s`, `set-keychain-settings`, each with `HOME` set to the throwaway home. The person's keychains, default keychain and search list are never read or changed, and the system domain is never used. The keychain is deleted with the throwaway home. A step that fails is not fatal: one `note:` line on stderr names it and the run goes on. Nothing is done with `RUN_PROMPT_KEEP_HOME=1` (the real home already has a keychain) or on other systems.
+
+## Stopping a run
+
+`run-prompt.sh` starts the runner in a session of its own, so the runner and everything it starts (model sessions, browsers, servers) form one process group. The group is ended, with TERM and then KILL after two seconds, when the runner returns and when the script itself gets TERM, INT or HUP (it then exits with 143). `eval_run.py` does the same one level up for every adapter call and setup command, on a timeout, on a signal and on any way out, so stopping an evaluation leaves no model session working. Before this, killing `eval_run.py` or passing a timeout left the sessions alive for many minutes. A process that moves itself into yet another session escapes this.
+
 ## Floor model on your own machine (Ollama)
 
 A model id `ollama/<name>` runs a model served by Ollama on this machine (`http://127.0.0.1:11434`, or `RUN_PROMPT_OLLAMA_URL`). The adapter writes the provider entry into the run's throwaway home; nothing is added to the case folder and no key is needed.
