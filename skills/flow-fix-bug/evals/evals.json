@@ -1,33 +1,5 @@
 {
   "skill_name": "flow-fix-bug",
-  "allow_commands": [
-    "git status",
-    "git log",
-    "git diff",
-    "git show",
-    "git branch",
-    "git rev-parse",
-    "git ls-files",
-    "git blame",
-    "git add",
-    "git commit",
-    "git checkout",
-    "git switch",
-    "git restore",
-    "git stash",
-    "mkdir",
-    "npm test",
-    "npm run",
-    "ls",
-    "cat",
-    "grep",
-    "wc",
-    "date",
-    "TZ=UTC npm test",
-    "TZ=America/Sao_Paulo npm test",
-    "TZ=Asia/Tokyo npm test",
-    "TZ=Europe/Lisbon npm test"
-  ],
   "evals": [
     {
       "id": 1,

@@ -1,29 +1,5 @@
 {
   "skill_name": "ops-ci-pipeline",
-  "allow_commands": [
-    "git status",
-    "git log",
-    "git diff",
-    "git show",
-    "git branch",
-    "git rev-parse",
-    "git ls-files",
-    "git blame",
-    "git add",
-    "git commit",
-    "git checkout",
-    "git switch",
-    "git restore",
-    "git stash",
-    "mkdir",
-    "npm test",
-    "npm run",
-    "ls",
-    "cat",
-    "grep",
-    "wc",
-    "date"
-  ],
   "evals": [
     {
       "id": 1,

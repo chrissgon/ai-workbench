@@ -24,8 +24,8 @@ def case(tmp_path):
 
 
 def run(t, model="m", *extra, cmd="cat {prompt_file}; echo {model}", **more):
-    # RUN_PROMPT_OS: these tests never call the real `security`; the keychain tests below use a stand-in.
-    env = {"PATH": os.environ["PATH"], "HOME": str(t), "RUN_PROMPT_CMD": cmd, "RUN_PROMPT_OS": "Linux", **more}
+    # WB_EVAL_CONTAINER: the adapter starts only inside the eval container, which sets it.
+    env = {"PATH": os.environ["PATH"], "HOME": str(t), "RUN_PROMPT_CMD": cmd, "WB_EVAL_CONTAINER": "1", **more}
     return subprocess.run(["bash", str(SCRIPT), "--prompt-file", str(t / "prompt.md"), "--cwd", str(t / "cwd"),
                            "--model", model, "--out", str(t / "out"), *extra], capture_output=True, text=True, env=env)
 
@@ -85,7 +85,7 @@ def run_local(t, model, keep_home=False):
     fake = bindir / "opencode"
     fake.write_text('#!/usr/bin/env bash\ncat "$XDG_CONFIG_HOME/opencode/opencode.json" 2>/dev/null || echo "no config"\n')
     fake.chmod(0o755)
-    env = {"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(t)}
+    env = {"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(t), "WB_EVAL_CONTAINER": "1"}
     if keep_home:
         env["RUN_PROMPT_KEEP_HOME"] = "1"
     return subprocess.run(["bash", str(SCRIPT), "--prompt-file", str(t / "prompt.md"), "--cwd", str(t / "cwd"),
@@ -119,58 +119,10 @@ def test_a_local_model_needs_the_throwaway_home(case):
     assert r.returncode == 2 and "throwaway HOME" in r.stderr
 
 
-# --- macOS: the throwaway HOME gets its own keychain ----------------------------------------------
-
-def fake_security(t, exit_code=0):
-    """A stand-in for /usr/bin/security that records its arguments and the HOME it was given."""
-    path = t / "fake-security"
-    path.write_text(f'''#!/usr/bin/env bash
-printf '%s\\t%s\\n' "$HOME" "$*" >> "{t}/security.log"
-exit {exit_code}
-''')
-    path.chmod(0o755)
-    return {"RUN_PROMPT_OS": "Darwin", "RUN_PROMPT_SECURITY": str(path)}
-
-
-def security_calls(t):
-    log = t / "security.log"
-    return [line.split("\t") for line in log.read_text().splitlines()] if log.exists() else []
-
-
-def test_on_macos_the_throwaway_home_gets_an_empty_default_keychain(case):
-    r = run(case, cmd='echo "$HOME" > home.txt; ls "$HOME/Library"', **fake_security(case))
-    assert r.returncode == 0, r.stderr
-    home = (case / "cwd" / "home.txt").read_text().strip()
-    calls = security_calls(case)
-    keychain = f"{home}/Library/Keychains/login.keychain-db"
-    assert [args for _, args in calls] == [
-        f"create-keychain -p  {keychain}", f"default-keychain -s {keychain}", f"list-keychains -d user -s {keychain}",
-        f"set-keychain-settings {keychain}"]
-    # Every call ran with the throwaway home, never the caller's, and never on the system domain.
-    assert {h for h, _ in calls} == {home} and home != str(case) and home != os.environ.get("HOME")
-    assert not any("system" in args for _, args in calls)
-    assert (case / "out" / "response.md").read_text().split() == ["Keychains", "Preferences"]
-    assert not Path(home).exists()  # the keychain goes with the throwaway home
-
-
-def test_no_keychain_when_the_real_home_is_kept_or_off_macos(case):
-    r = run(case, RUN_PROMPT_KEEP_HOME="1", **fake_security(case))
-    assert r.returncode == 0, r.stderr
-    r = run(case, **{**fake_security(case), "RUN_PROMPT_OS": "Linux"})
-    assert r.returncode == 0, r.stderr
-    r = run(case, **{**fake_security(case), "RUN_PROMPT_SECURITY": str(case / "missing")})
-    assert r.returncode == 0, r.stderr
-    assert security_calls(case) == []
-
-
-def test_a_keychain_failure_is_one_note_and_the_run_goes_on(case):
-    r = run(case, **fake_security(case, exit_code=1))
-    assert r.returncode == 0 and (case / "out" / "response.md").read_text() == "hello\nm\n"
-    notes = [line for line in r.stderr.splitlines() if "keychain" in line]
-    assert len(notes) == 1 and notes[0].startswith("note: the keychain of the throwaway HOME is incomplete")
-    for step in ("create-keychain", "default-keychain", "list-keychains", "set-keychain-settings"):
-        assert f" {step} (" in notes[0]
-    assert len(security_calls(case)) == 4  # a failed step does not stop the later ones
+def test_outside_the_eval_container_the_adapter_refuses_to_start(case):
+    r = run(case, WB_EVAL_CONTAINER="")
+    assert r.returncode == 2 and "only inside the container" in r.stderr
+    assert not (case / "out").exists() and not (case / "cwd" / ".agents").exists()
 
 
 # --- stopping the adapter stops what the runner started --------------------------------------------
@@ -210,7 +162,7 @@ def test_what_the_runner_leaves_in_the_background_stops_when_it_returns(case):
 
 def test_a_stopped_adapter_stops_the_runner_and_its_children(case):
     import signal
-    env = {"PATH": os.environ["PATH"], "HOME": str(case), "RUN_PROMPT_OS": "Linux",
+    env = {"PATH": os.environ["PATH"], "HOME": str(case), "WB_EVAL_CONTAINER": "1",
            "RUN_PROMPT_CMD": "sleep 300 & echo $! > child.pid; echo $$ > runner.pid; sleep 300"}
     proc = subprocess.Popen(["bash", str(SCRIPT), "--prompt-file", str(case / "prompt.md"), "--cwd", str(case / "cwd"),
                              "--model", "m", "--out", str(case / "out")], env=env, start_new_session=True)

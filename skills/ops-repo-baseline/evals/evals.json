@@ -1,22 +1,5 @@
 {
   "skill_name": "ops-repo-baseline",
-  "allow_commands": [
-    "git status",
-    "git log",
-    "git rev-parse",
-    "git ls-remote",
-    "git diff",
-    "mkdir",
-    "cp",
-    "chmod",
-    "ls",
-    "cat",
-    "grep",
-    "date +%F",
-    "npm run lint",
-    "npm test",
-    "python3 scripts/secret-scan/secret_scan.py"
-  ],
   "evals": [
     {
       "id": 1,

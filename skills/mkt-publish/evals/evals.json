@@ -1,12 +1,5 @@
 {
   "skill_name": "mkt-publish",
-  "allow_commands": [
-    "python3 skills/mkt-publish/scripts/payload.py",
-    "uv run wb/providers/publisher/linkedin.py",
-    "python3 wb/providers/scheduler/launchd.py",
-    "date +%F",
-    "cat wb/calls.log"
-  ],
   "evals": [
     {
       "id": 1,

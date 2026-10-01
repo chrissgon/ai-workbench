@@ -1,11 +1,5 @@
 {
   "skill_name": "brand-profile",
-  "allow_commands": [
-    "python3 skills/brand-profile/scripts/linkedin_export.py",
-    "python3 skills/brand-profile/scripts/check_profile.py",
-    "date +%F",
-    "mkdir -p docs/brand"
-  ],
   "evals": [
     {
       "id": 1,

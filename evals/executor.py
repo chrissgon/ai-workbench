@@ -136,7 +136,7 @@ def command(cmd, root, cwd=None, env=None, skills=(), pass_names=(), network="no
     pairs = mounts(root, skills)
     name = f"wb-eval-run-{uuid.uuid4().hex[:16]}"
     argv = ["docker", "run", "--rm", "--init", "--name", name, "-w", translate(cwd or root, pairs),
-            "-e", "CLAUDE_EVAL_SANDBOX=container", "-e", "ENABLE_CLAUDEAI_MCP_SERVERS=false",
+            "-e", "ENABLE_CLAUDEAI_MCP_SERVERS=false",
             "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]
     if sys.platform.startswith("linux"):  # a bind mount keeps numeric owners there; elsewhere the runtime maps them
         argv += ["--user", f"{os.getuid()}:{os.getgid()}", "-e", "HOME=/home/eval"]
