@@ -38,5 +38,10 @@
     "floor": true,
     "strong_delta": true,
     "passed": true
+  },
+  "baseline": {
+    "date": "2026-10-01",
+    "iteration": 4,
+    "runs": 3
   }
 }

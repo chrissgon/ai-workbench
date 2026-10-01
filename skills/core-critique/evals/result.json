@@ -30,9 +30,9 @@
   "threshold": 0.8,
   "scores": {
     "strong_with": 0.963,
-    "strong_without": 0.476,
+    "strong_without": 0.417,
     "floor_with": 0.893,
-    "floor_without": 0.561
+    "floor_without": 0.546
   },
   "complete": true,
   "infra_failures": 0,
@@ -40,5 +40,10 @@
     "floor": true,
     "strong_delta": true,
     "passed": true
+  },
+  "baseline": {
+    "date": "2026-10-01",
+    "iteration": 2,
+    "runs": 3
   }
 }
