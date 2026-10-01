@@ -131,6 +131,10 @@ credentials (never from files or flags):
   LINKEDIN_TOKEN_EXPIRES_AT    optional; ISO-8601 expiry of LINKEDIN_ACCESS_TOKEN.
 
 other environment variables:
+  PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS  seconds to wait before each retry of a first comment that
+                               LinkedIn answers with 404 right after the post is created (it does, for
+                               a few seconds, longer with an image). Default: 5,15,30,60. Other
+                               refusals are not retried.
   PUBLISHER_LINKEDIN_LEDGER    path of the idempotency ledger (JSON). Default:
                                $XDG_CACHE_HOME/ai-workbench/publisher-linkedin.json,
                                or ~/.cache/ai-workbench/publisher-linkedin.json.
@@ -681,7 +685,7 @@ def cmd_publish(args) -> int:
         try:
             if not POST_URN_RE.fullmatch(urn):
                 raise ProviderError(f"the post URN {urn!r} has an unexpected shape; not commenting on it")
-            done = create_comment(base, token, member_urn, urn, None, first_comment, comment_key)
+            done = first_comment_with_retries(base, token, member_urn, urn, first_comment, comment_key)
         except ProviderError as exc:
             # The post is out; only its first comment failed. Rerunning the same command replays the
             # post (its key is published) and retries only the comment.
@@ -702,6 +706,35 @@ def cmd_publish(args) -> int:
 
 
 # --- comment -----------------------------------------------------------------
+
+
+def first_comment_delays() -> list:
+    """Seconds to wait before each retry of a first comment that LinkedIn answered with 404."""
+    raw = os.environ.get("PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS", "5,15,30,60")
+    try:
+        delays = [float(x) for x in raw.split(",") if x.strip()]
+    except ValueError:
+        raise ProviderError("PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS must be comma-separated seconds", EXIT_USAGE)
+    if any(d < 0 or d > 300 for d in delays) or len(delays) > 8:
+        raise ProviderError("PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS: at most 8 delays of 0 to 300 seconds", EXIT_USAGE)
+    return delays
+
+
+def first_comment_with_retries(base: str, token: dict, member_urn, post_urn: str, text: str, key: str) -> dict:
+    """The first comment of a post published a moment ago. LinkedIn answers 404 ("Unable to obtain activity")
+    for a few seconds after a post is created, longer when it carries an image, so a 404 is retried after each
+    delay. A refused comment leaves no ledger entry, so each retry is a fresh attempt under the same key; any
+    other answer is raised at once."""
+    delays = first_comment_delays()
+    for attempt in range(len(delays) + 1):
+        try:
+            return create_comment(base, token, member_urn, post_urn, None, text, key)
+        except ProviderError as exc:
+            if exc.status != 404 or attempt == len(delays):
+                raise
+            log(f"the post is not available for comments yet (404); retrying the first comment in "
+                f"{delays[attempt]:g} s ({attempt + 1} of {len(delays)})")
+            time.sleep(delays[attempt])
 
 
 def comment_body(actor: str, post_urn: str, text: str, parent: str | None) -> dict:

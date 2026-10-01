@@ -57,6 +57,7 @@ class FakeLinkedIn:
         self.userinfo_status = 200
         self.redirect_userinfo = False
         self.comment_status = 201
+        self.comment_statuses = []  # when set, each comment request takes the next status from this list first
         self.comment_delay = 0.0
         self.comment_message = "Comment create throttled: creation rate limit exceeded for member"
         fake = self
@@ -111,9 +112,9 @@ class FakeLinkedIn:
                 if (self.path.startswith("/v2/socialActions/") or self.path.startswith("/rest/socialActions/")) and self.path.endswith("/comments"):
                     if fake.comment_delay:
                         time.sleep(fake.comment_delay)
-                    if fake.comment_status != 201:
-                        return self._send(fake.comment_status,
-                                          {"message": fake.comment_message, "status": fake.comment_status})
+                    status = fake.comment_statuses.pop(0) if fake.comment_statuses else fake.comment_status
+                    if status != 201:
+                        return self._send(status, {"message": fake.comment_message, "status": status})
                     return self._send(201, {"commentUrn": COMMENT_URN, "id": COMMENT_ID, "object": THREAD_URN,
                                             "actor": AUTHOR, "message": {"attributes": [], "text": "x"}},
                                       {"x-restli-id": COMMENT_ID})
@@ -886,6 +887,48 @@ def test_first_comment_failure_then_rerun_posts_only_the_comment(env, fake, text
     assert out["first_comment"]["comment_urn"] == COMMENT_URN and out["first_comment"]["replayed"] is False
     assert post_count(fake) == 1
     assert comment_count(fake) == 2  # the refused one and the one that went out
+
+
+def test_first_comment_is_retried_while_the_post_is_not_available_yet(env, fake, text_file, comment_file):
+    fake.comment_statuses = [404, 404]
+    fake.comment_message = "Unable to obtain activity for urn"
+    env["PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS"] = "0,0,0"
+    r = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
+                                 "--confirmed"), env)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["first_comment"]["comment_urn"] == COMMENT_URN
+    assert r.stderr.count("retrying the first comment") == 2
+    assert post_count(fake) == 1 and comment_count(fake) == 3
+
+
+def test_first_comment_404_on_every_attempt_fails_and_can_be_rerun(env, fake, text_file, comment_file):
+    fake.comment_status = 404
+    env["PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS"] = "0,0"
+    args = publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1", "--confirmed")
+    r = run(SCRIPT, args, env)
+    assert r.returncode == 1 and "404" in json.loads(r.stdout)["first_comment_error"]
+    assert comment_count(fake) == 3  # one attempt and two retries
+    fake.comment_status = 201
+    r = run(SCRIPT, args, env)
+    assert r.returncode == 0 and json.loads(r.stdout)["first_comment"]["replayed"] is False
+    assert post_count(fake) == 1
+
+
+def test_first_comment_other_refusals_are_not_retried(env, fake, text_file, comment_file):
+    fake.comment_status = 403
+    env["PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS"] = "0,0"
+    r = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
+                                 "--confirmed"), env)
+    assert r.returncode == 1 and comment_count(fake) == 1
+
+
+def test_bad_retry_delays_are_refused(env, fake, text_file, comment_file):
+    fake.comment_status = 404
+    env["PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS"] = "soon"
+    r = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
+                                 "--confirmed"), env)
+    assert "PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS" in json.loads(r.stdout)["first_comment_error"]
 
 
 def test_first_comment_unknown_outcome_blocks_only_the_comment(env, fake, text_file, comment_file):
