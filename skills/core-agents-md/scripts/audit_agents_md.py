@@ -3,21 +3,33 @@
 
 Usage:
   python3 audit_agents_md.py --root <dir> --detect
-  python3 audit_agents_md.py --root <dir> --audit <path-to-AGENTS.md> [--baseline <path>]
+  python3 audit_agents_md.py --root <dir> --audit <path-to-AGENTS.md> [--fix] [--baseline <path>]
 
 --detect  prints JSON: manifests and scripts, Makefile targets, lint/format/type configs, test
           frameworks and folders, CI and deploy files, root documents, instruction-like files,
-          and the existing AGENTS.md sections plus whether it has the workbench section.
+          the existing AGENTS.md sections plus whether it has the workbench section, and two
+          ready lists: "commands" (the install command from the lockfile and one line per package
+          script or Makefile target, each with its source) and "tools" (each tool named by a
+          config file, with that file).
 --audit   checks every backticked command against package scripts, Makefile targets and
           binaries (PATH or node_modules/.bin), and every backticked path against the filesystem.
-          With --baseline <path> (a copy of the previous AGENTS.md), also reports whether the
-          workbench section is byte-identical. Exit 1 when the audit finds problems.
+          For each problem it prints "suggestions": the existing scripts or paths that could
+          replace it. It also reports whether the workbench section is byte-identical to the
+          baseline: the file given with --baseline <path> (a copy of the previous AGENTS.md),
+          or, without that option, the version of the file in the last git commit when there is
+          one ("baseline" in the output says which). Exit 1 when the audit finds problems.
+--fix     with --audit: first replaces, inside the file, every unknown command and missing path
+          that has exactly one suggestion, touching nothing else, prints them under "fixed",
+          then audits the result. A problem with no suggestion or several is left for a person.
 
 Exit codes: 0 ok, 1 audit problems, 2 usage error.
 """
+import difflib
+import hashlib
 import json
 import os
 import re
+import subprocess
 import sys
 
 MANIFESTS = ("package.json", "pyproject.toml", "go.mod", "Cargo.toml", "composer.json", "Gemfile", "Makefile")
@@ -32,7 +44,16 @@ CONFIG_PATTERNS = {
 TEST_DIRS = ("test", "tests", "__tests__", "e2e", "spec", "cypress")
 EXCLUDED_STEMS = {"README", "LICENSE", "CHANGELOG", "CONTRIBUTING", "CODE_OF_CONDUCT", "SECURITY", "AGENTS"}
 INSTRUCTION_HEADINGS = ("always", "never", "rules", "hard rules", "communication", "do", "don't", "workflow")
-RUNNERS = {"npm run", "npm", "bun run", "bun", "pnpm run", "pnpm", "yarn run", "yarn"}
+RUN_PREFIX = {"bun install": "bun run", "pnpm install": "pnpm run", "yarn install": "yarn run", "npm ci": "npm run"}
+TOOL_NAMES = ((r"^\.?eslint", "ESLint"), (r"^\.oxlintrc", "Oxlint"), (r"^biome\.json", "Biome"), (r"^ruff\.toml", "Ruff"),
+              (r"^\.golangci", "golangci-lint"), (r"^\.rubocop", "RuboCop"), (r"^\.stylelintrc", "Stylelint"),
+              (r"^\.prettierrc", "Prettier"), (r"^\.editorconfig", "EditorConfig"), (r"^rustfmt\.toml", "rustfmt"),
+              (r"^tsconfig", "TypeScript"), (r"^mypy\.ini", "mypy"), (r"^pyrightconfig", "Pyright"),
+              (r"^vitest\.config", "Vitest"), (r"^jest\.config", "Jest"), (r"^playwright\.config", "Playwright"),
+              (r"^pytest\.ini", "pytest"), (r"^cypress\.config", "Cypress"), (r"^karma\.conf", "Karma"),
+              (r"^commitlint|^\.commitlintrc", "commitlint"), (r"^\.husky$", "Husky"), (r"^lefthook", "Lefthook"),
+              (r"^\.pre-commit-config", "pre-commit"))
+SKIP_DIRS = {"node_modules", "dist", "build", "target", "vendor", "__pycache__"}
 START, END = "<!-- workbench:start -->", "<!-- workbench:end -->"
 
 
@@ -99,13 +120,30 @@ def detect(root):
             if stem == stem.upper():
                 (instruction_like if looks_like_instructions(os.path.join(root, e)) else root_docs).append(e)
     agents = os.path.join(root, "AGENTS.md")
-    agents_info = {"exists": False, "sections": [], "has_workbench_section": False, "lines": 0}
+    agents_info = {"exists": False, "sections": [], "has_workbench_section": False, "workbench_sha256": None, "lines": 0}
     if os.path.isfile(agents):
         with open(agents, encoding="utf-8") as f:
             text = f.read()
         agents_info = {"exists": True, "sections": re.findall(r"^## (.+)$", text, re.M),
-                       "has_workbench_section": START in text and END in text, "lines": text.count("\n") + 1}
+                       "has_workbench_section": START in text and END in text,
+                       "workbench_sha256": section_sha(text), "lines": text.count("\n") + 1}
+    lock, pkg = lockfile(root), package_scripts(root)
+    commands = []
+    if lock:
+        commands.append({"task": "install", "command": lock["install"], "source": lock["file"]})
+    prefix = RUN_PREFIX.get(lock["install"] if lock else "", "npm run")
+    for name, body in (pkg.get("scripts") or {}).items():
+        commands.append({"task": name, "command": f"{prefix} {name}", "runs": body, "source": f"package.json scripts.{name}"})
+    for t in makefile_targets(root):
+        commands.append({"task": t, "command": f"make {t}", "source": f"Makefile target {t}"})
+    tools = []
+    for e in entries:
+        for pat, tool in TOOL_NAMES:
+            if re.search(pat, e):
+                tools.append({"name": tool, "source": e})
     return {
+        "commands": commands,
+        "tools": tools,
         "root": os.path.abspath(root),
         "manifests": [m for m in MANIFESTS if os.path.isfile(os.path.join(root, m))],
         "package": package_scripts(root),
@@ -134,9 +172,77 @@ def known_binaries(root):
     return bins
 
 
-def audit(root, agents_path, baseline):
-    with open(agents_path, encoding="utf-8") as f:
-        text = f.read()
+def section(text):
+    """The workbench section, markers included, or None when the text has none."""
+    return text[text.index(START): text.index(END) + len(END)] if START in text and END in text else None
+
+
+def section_sha(text):
+    sec = section(text)
+    return hashlib.sha256(sec.encode("utf-8")).hexdigest() if sec is not None else None
+
+
+def committed_version(root, agents_path):
+    """The file as it is in the last git commit, or None (no git, no commit, or the file is not in it)."""
+    rel = os.path.relpath(os.path.abspath(agents_path), os.path.abspath(root))
+    if rel.startswith(".."):
+        return None
+    try:
+        r = subprocess.run(["git", "-C", root, "show", "HEAD:./" + rel.replace(os.sep, "/")],
+                           capture_output=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        return r.stdout.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def project_files(root, depth=3):
+    """Paths relative to root, down to `depth` folders, without hidden and dependency folders."""
+    found = []
+    base = os.path.abspath(root)
+    for cur, dirs, files in os.walk(base):
+        rel = os.path.relpath(cur, base)
+        level = 0 if rel == "." else rel.count(os.sep) + 1
+        dirs[:] = sorted(d for d in dirs if not d.startswith(".") and d not in SKIP_DIRS) if level < depth else []
+        for fn in sorted(files):
+            found.append(fn if rel == "." else os.path.join(rel, fn).replace(os.sep, "/"))
+    return found
+
+
+def suggest_command(span, scripts, targets):
+    """Existing commands that could replace an unknown one: same runner, a script or target with a close name."""
+    parts = span.split()
+    idx = 2 if len(parts) > 2 and parts[1] == "run" else 1
+    if idx >= len(parts):
+        return []
+    pool = targets if parts[0] == "make" else scripts
+    close = difflib.get_close_matches(parts[idx], sorted(pool), n=3, cutoff=0.8)
+    return [" ".join(parts[:idx] + [c] + parts[idx + 1:]) for c in close]
+
+
+def suggest_path(span, files):
+    """Existing files that could replace a missing path: same extension, and one name starts with the other or is close to it."""
+    anchor = "#" + span.split("#", 1)[1] if "#" in span else ""
+    want = os.path.basename(span.split("#")[0].rstrip("/"))
+    stem, ext = os.path.splitext(want.lower())
+    if not stem:
+        return []
+    out = []
+    for f in files:
+        s, e = os.path.splitext(os.path.basename(f).lower())
+        if e != ext:
+            continue
+        if s.startswith(stem) or stem.startswith(s) or difflib.SequenceMatcher(None, s, stem).ratio() >= 0.8:
+            out.append(f + anchor)
+    return out
+
+
+def check(root, text):
+    """Return (commands checked, unknown commands, missing paths) for the backticked spans of text."""
     scripts = set((package_scripts(root).get("scripts") or {}).keys())
     targets = set(makefile_targets(root))
     bins = known_binaries(root)
@@ -172,22 +278,58 @@ def audit(root, agents_path, baseline):
             continue
         if any(ch in s for ch in "<>{}*") or " " in s:
             continue  # placeholders and globs are not paths
-        if ("/" in s or s.endswith((".md", ".json", ".ts", ".js", ".yml", ".yaml", ".toml", ".css"))) and not s.startswith(("http", "pui-", "-", "@", ".")):
+        if ("/" in s or s.endswith((".md", ".json", ".ts", ".js", ".yml", ".yaml", ".toml", ".css"))) and not s.startswith(("http", "-", "@", ".")):
             target = s.split("#")[0].rstrip("/")
             if target and not os.path.exists(os.path.join(root, target)):
                 missing_paths.append(s)
-    section_state = "not checked"
+    dedup = lambda items: list(dict.fromkeys(items))
+    return checked, dedup(unknown_commands), dedup(missing_paths)
+
+
+def suggestions_for(root, unknown_commands, missing_paths):
+    scripts = set((package_scripts(root).get("scripts") or {}).keys())
+    targets = set(makefile_targets(root))
+    files = project_files(root) if missing_paths else []
+    out = {c: suggest_command(c, scripts, targets) for c in unknown_commands}
+    out.update({p: suggest_path(p, files) for p in missing_paths})
+    return out
+
+
+def audit(root, agents_path, baseline, fix=False):
+    with open(agents_path, encoding="utf-8") as f:
+        text = f.read()
+    committed = None if baseline else committed_version(root, agents_path)
+    fixed = []
+    if fix:
+        _, unknown, missing = check(root, text)
+        for old, candidates in suggestions_for(root, unknown, missing).items():
+            if len(candidates) == 1:
+                text = text.replace(f"`{old}`", f"`{candidates[0]}`")
+                fixed.append({"from": old, "to": candidates[0],
+                              "why": "the only existing path with a matching name" if old in missing
+                              else "the only package script or Makefile target with a close name"})
+        if fixed:
+            with open(agents_path, "w", encoding="utf-8") as f:
+                f.write(text)
+    checked, unknown_commands, missing_paths = check(root, text)
+    section_state, source = "not checked", "none"
     if baseline:
         with open(baseline, encoding="utf-8") as f:
-            old = f.read()
-        def section(t):
-            return t[t.index(START): t.index(END) + len(END)] if START in t and END in t else None
-        a, b = section(old), section(text)
+            old_text = f.read()
+        source = baseline
+    elif committed is not None:
+        old_text, source = committed, "last git commit"
+    if source != "none":
+        a, b = section(old_text), section(text)
         section_state = "unchanged" if a == b else ("missing" if b is None else "CHANGED")
-    ok = not unknown_commands and not missing_paths and section_state != "CHANGED" and section_state != "missing"
+        if a is None and b is None:
+            section_state = "none in the file"
+    ok = not unknown_commands and not missing_paths and section_state not in ("CHANGED", "missing")
     result = {"ok": ok, "commands_checked": checked, "unknown_commands": unknown_commands,
-              "missing_paths": missing_paths, "workbench_section": section_state,
-              "lines": text.count("\n") + 1}
+              "missing_paths": missing_paths,
+              "suggestions": suggestions_for(root, unknown_commands, missing_paths),
+              "fixed": fixed, "workbench_section": section_state, "baseline": source,
+              "workbench_sha256": section_sha(text), "lines": text.count("\n") + 1}
     print(json.dumps(result, indent=2))
     return 0 if ok else 1
 
@@ -196,7 +338,7 @@ def main(argv):
     if not argv or "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0 if argv else 2
-    root, mode, target, baseline = ".", None, None, None
+    root, mode, target, baseline, fix = ".", None, None, None, False
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -209,12 +351,18 @@ def main(argv):
         elif a == "--audit":
             mode, target = "audit", (argv[i + 1] if i + 1 < len(argv) else None)
             i += 2
+        elif a == "--fix":
+            fix = True
+            i += 1
         elif a == "--baseline":
             baseline = argv[i + 1] if i + 1 < len(argv) else None
             i += 2
         else:
             print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr)
             return 2
+    if fix and mode != "audit":
+        print("Error: --fix needs --audit <file>.", file=sys.stderr)
+        return 2
     if not root or not os.path.isdir(root):
         print(f"Error: --root {root!r} is not a directory.", file=sys.stderr)
         return 2
@@ -228,7 +376,7 @@ def main(argv):
         if baseline and not os.path.isfile(baseline):
             print(f"Error: --baseline {baseline!r} not found.", file=sys.stderr)
             return 2
-        return audit(root, target, baseline)
+        return audit(root, target, baseline, fix)
     print("Error: pass --detect or --audit <file>. See --help.", file=sys.stderr)
     return 2
 

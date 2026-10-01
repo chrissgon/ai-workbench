@@ -18,7 +18,7 @@ metadata:
   outputs: [docs/product/roadmap.md]
   requires: []
   side_effects: []
-  version: "0.1"
+  version: "0.2"
 ---
 
 # Roadmap
@@ -50,9 +50,9 @@ Progress:
 - [ ] Step 4: Releases. One `R-n` per PRD phase unless a phase must be split (a phase whose features do not all serve one exit criterion). Each release: name, goal in one sentence, `Includes:` (feature ids), `Order:` (the sequence inside the release with one reason per step), `Exit:` (the PRD phase's exit, made observable), `Depends on:` (previous releases or external events). Every `must` and `should` feature is in exactly one release; `later` features go to a release or to "Not planned".
 - [ ] Step 5: Now, next, later. Three lines listing feature ids: now is the first release's first step or steps, next is the rest of the first release, later is everything after. Nothing else.
 - [ ] Step 6: Risks per release from the PRD's risks: which release each risk lands in and what in the order mitigates it; a risk with no release is an open question.
-- [ ] Step 7: Dates and capacity. Write a date only when a source gives it (the user, a launch decision, an external event) and cite it; otherwise the roadmap has no dates and says so in one line. Never write effort, story points or weeks.
-- [ ] Step 8: Assumptions and open questions. `ASSUMPTION-n` with why it is safe; `OPEN-n` with `Blocks:` (an R or F id) and `Recommended:`. If an `OPEN-n` blocks the first release's order, stop and ask the user, at most three questions with recommended answers.
-- [ ] Step 9: Lint: `python3 scripts/lint_roadmap.py --file docs/product/roadmap.md --prd docs/product/prd.md`. It checks sections, that every must and should feature of the PRD is in exactly one release, that later features are placed or listed as not planned, that dependencies point at features in the same or an earlier release, that every release has Includes, Order, Exit and Depends on lines, the method paragraph, `Blocks:` and `Recommended:` on open questions, and dates without a source. Fix until `ok` is true.
+- [ ] Step 7: Dates and capacity. Write a delivery date only when a source gives it (the user, a launch decision, an external event) and cite it; otherwise the roadmap has no delivery dates and says so in the `Method` section's `Dates:` line. Never write effort, story points or weeks. The header's `Date:` line (the day the document was written) and the dates of cited sources are not delivery dates. When the user asked for dates, deadlines or a timeline and no source gives one, still write the roadmap without them, record `OPEN-n: What launch date or team capacity should the releases be planned against? Blocks: nothing. Recommended: <answer>`, and put the same question first in the report's `Questions`. The recommended answer is a concrete choice, not a restatement of the question: by default "present the releases with their exit criteria and no dates for now, and give me one target date for R-1 once it is decided", or better when the documents support one.
+- [ ] Step 8: Assumptions and open questions. `ASSUMPTION-n` with why it is safe; `OPEN-n` with `Blocks:` (an R or F id, or `nothing`) and `Recommended:`. Carry over every open question of the PRD that blocks a feature. An open question never stops the draft: write the roadmap with the question recorded (never a guessed value in its place), set `Readiness` to `no, because OPEN-n blocks <id>` when one blocks a release or a feature, and put at most three blocking questions, each with its recommended answer, in the report's `Questions`. Only a missing PRD stops before writing.
+- [ ] Step 9: Lint: `python3 scripts/lint_roadmap.py --file docs/product/roadmap.md --prd docs/product/prd.md`. It checks sections, that every must and should feature of the PRD is in exactly one release, that later features are placed or listed as not planned, that dependencies point at features in the same or an earlier release, that every release has Includes, Order, Exit and Depends on lines, the method paragraph, `Blocks:` and `Recommended:` on open questions, and dates without a source. Run it from the project root with the path of this skill's `scripts/` folder; always pass `--prd`. Fix the roadmap and rerun until `ok` is true. Keep the last output's `result_line` value: the report quotes it word for word.
 - [ ] Step 10: Register `docs/product/roadmap.md` in `docs/workbench/state.md` (owner `product-roadmap`, status `draft`) when the state file exists, and report with the template.
 - [ ] Step 11: Self-check against "Quality criteria": list every feature id, dependency and date in the document and where each came from.
 
@@ -68,8 +68,16 @@ See [assets/roadmap-template.md](assets/roadmap-template.md). The report:
 - Now: <F ids>; next: <F ids>; later: <F ids>
 - Dates: <none | from <source>>
 - Assumptions: <n>; open questions: <n> (<blocking | none blocking>)
+- Lint: `python3 scripts/lint_roadmap.py --file docs/product/roadmap.md --prd docs/product/prd.md` → `<result_line from the last lint output, copied word for word>`
+- Readiness: <yes: start with F-n | no, because OPEN-n blocks <id>>
+
+Questions (at most three; leave the heading out when there are none):
+1. <question>? Recommended: <a concrete answer and why>
+
 Next: <design or engineering for the "now" features | the questions above>
 ```
+
+The `Lint:` line is mandatory and always shows the full command with `--prd` and the quoted result; "lint passes" is not enough. Every question carries its own `Recommended:` answer.
 
 ## Quality criteria
 
@@ -79,9 +87,11 @@ Approve the roadmap only if all of the following hold:
 - Every dependency cites its reason and points at a feature in the same or an earlier release.
 - The ordering method is stated before the releases and the order inside each release follows it, with one reason per step.
 - Every release has an observable exit criterion taken from the PRD's phases.
-- No date, effort figure, story point or duration appears without a source; effort never appears.
+- No delivery date or duration appears without a source; effort and story points never appear. The header's `Date:` and source dates are not delivery dates.
+- A request for dates that no source can answer produced a dateless roadmap and a question with a recommended answer, never an invented timeline.
+- Open questions are recorded, not guessed and not a reason to withhold the draft; `Readiness` says `no` while one blocks a release or feature.
 - Every PRD risk is assigned to a release with a mitigation in the order, or is an open question.
-- `lint_roadmap.py` reports `ok: true`.
+- `lint_roadmap.py`, run with `--prd`, reports `ok: true`, and the report quotes the command and its `result_line`.
 
 ## Gotchas
 

@@ -14,7 +14,11 @@ Checks:
   - dates (YYYY-MM-DD, or a month name with a year) on R- lines without a Source: (warning)
   - effort words (story points, weeks, days, hours, sprint) on R- lines (error)
 
-Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
+  - an OPEN that blocks an R- or F- id while the Readiness section does not say "no" (error)
+
+Prints JSON. The "result_line" field is one line to quote in the report, for example
+"lint_roadmap.py --file docs/product/roadmap.md --prd docs/product/prd.md: ok: true, 0 errors, 0 warnings".
+Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
 import json
 import re
@@ -119,12 +123,18 @@ def main(argv):
                     errors.append(f"{fid} (in {placed[fid][0]}) depends on {d}, which ships later in {placed[d][0]}")
             elif fid in placed and d not in placed:
                 errors.append(f"{fid} depends on {d}, which is in no release")
-    for oid, body in blocks_of(text, ("OPEN-",)).items():
+    readiness = section(text, "Readiness")
+    for oid, body in blocks_of(section(text, "Open questions"), ("OPEN-",)).items():
         for part in ("Blocks:", "Recommended:"):
             if part not in body:
                 errors.append(f"{oid} lacks {part}")
+        bm = re.search(r"Blocks:\s*([^.]*)", body)
+        if bm and re.search(r"\b[RF]-\d+\b", bm.group(1)) and not re.search(r":\s*no\b", readiness):
+            errors.append(f"{oid} blocks {bm.group(1).strip()} but the Readiness section does not say 'no, because {oid} blocks ...'")
     ok = not errors
-    print(json.dumps({"ok": ok, "releases": order, "features": {k: v for k, v in placed.items()},
+    result_line = (f"lint_roadmap.py --file {path} --prd {prd}: ok: {'true' if ok else 'false'}, "
+                   f"{len(errors)} errors, {len(warnings)} warnings")
+    print(json.dumps({"ok": ok, "result_line": result_line, "releases": order, "features": {k: v for k, v in placed.items()},
                       "unplaced": sorted(f for f in prd_feats if f not in placed), "errors": errors, "warnings": warnings},
                      indent=2 if as_json else None))
     return 0 if ok else 1

@@ -19,7 +19,7 @@ metadata:
   outputs: [docs/engineering/adr/<NNNN>-<title>.md, docs/engineering/plans/<task>.md]
   requires: []
   side_effects: []
-  version: "0.3"
+  version: "0.4"
 ---
 
 # Tradeoffs
@@ -32,8 +32,9 @@ Replace "I think A is better" with a table of what each option did when it ran. 
 
 Check these before creating or editing any file, and again before replying. They override the procedure.
 
-1. **An option the user picked is still an option.** "Just go with X" does not skip the comparison: X is measured beside the others, and nothing is installed or implemented in the source tree by this skill. Never run an install command outside the scratch folder, and never add a dependency to the project's manifest.
+1. **An option the user picked is still an option.** "Just go with X" does not skip the comparison: X is compared beside the others, and nothing is installed or implemented in the source tree by this skill. Never add a dependency to the project's manifest. Run no install command, not even in the scratch folder, until the user has answered yes in this conversation to the package and exact version; until then the library option is recorded from its documentation and registry data, with `not measured: install not approved` where a number would go.
 2. **A written rule decides the status.** If the picked or recommended option crosses a rule the project wrote down (no runtime dependencies, a size budget), the ADR is `proposed`, the rule is quoted, and the reply ends by asking the user to choose: change the rule, or take the option within it. Never write `accepted` over a rule.
+3. **The record is always written.** A command that is refused, a runtime that is not installed or a question still open never ends the work without the ADR and the plan section. Write both with what was measured; put `not run: <command> (<reason>)` where a result is missing, list open questions under "Decision", keep the status `proposed` while a result is missing, and say in the reply what to allow or answer to complete it. Ask a question that changes the result; do not wait for the answer to measure: measure both readings.
 
 ## When not to use
 
@@ -56,8 +57,12 @@ Check these before creating or editing any file, and again before replying. They
 Progress:
 - [ ] Step 1: Write the criteria before looking at options: each preserved behaviour, each written rule and budget from the impact section, the cost to whoever runs the code (bytes, work per event), and the failure mode users can trigger. Criteria come from the plan and the rules; do not add taste.
 - [ ] Step 2: List the options: the one the request names, the obvious ones, doing nothing and documenting the limitation, and at least one that stays within every written rule. Search the platform for mechanisms that deliver the effect without the forbidden tool (an event that fires on insertion, a selector that styles an attribute, a native attribute). An option that combines two (the new mechanism plus today's as a fallback) is an option of its own.
-- [ ] Step 3: Prototype each option in a scratch folder that is not part of the change (a folder from `mktemp -d`, or a gitignored `<repo>/.scratch/<task>-options/` when only the working directory is writable; `<task>` matches `[a-z0-9-]+`; remove it at the end). Install third-party packages there only after naming each package and its exact version to the user; pin them, the smallest code that shows the behaviour, built the way the project builds (the same minifier and compression the size budget uses). Never put a prototype in the source tree.
-- [ ] Step 4: Run every prototype against the same cases, in every runtime the project supports: the plan's bug case and preserved behaviours, the edge states (hidden then shown, reduced motion, slow load), and the hostile conditions users create (global CSS resets, their own styles on the element, a framework re-rendering the node, a large page). Measure size and cost with the project's own tools. Record every number with the command that produced it.
+- [ ] Step 3: Prototype each option in a scratch folder that is not part of the change (a folder from `mktemp -d`, or a gitignored `<repo>/.scratch/<task>-options/` when only the working directory is writable; `<task>` matches `[a-z0-9-]+`; remove it at the end). Write the smallest code that shows the behaviour, built the way the project builds (the same minifier and compression the size budget uses), and one runner file in the scratch folder that prints each option's result for every case. A third-party package is installed there only under stop rule 1, pinned. Never put a prototype in the source tree.
+- [ ] Step 4: Run every prototype against the same cases, in every runtime the project supports: the plan's bug case and preserved behaviours, the edge states (hidden then shown, reduced motion, slow load), and the hostile conditions users create (global CSS resets, their own styles on the element, a framework re-rendering the node, a large page). Measure size and cost with the project's own tools. Record every number with the command that produced it. The skill's script runs the matrix in one command, with no shell and only on files inside the scratch folder:
+  - `python3 scripts/run_options.py runtimes <name>` lists the installed versions of a runtime (on the path and in version-manager folders) as JSON.
+  - `python3 scripts/run_options.py run --runtime <path> --runtime <path> --tz <zone> --tz <zone> <scratch>/<runner> [args]` runs the runner once per runtime and zone at the same time and prints one JSON record per combination (exit code, output). `--out <scratch>/<file>` writes the records to a file instead of a shell redirection. `--cwd <scratch>/<option>` runs from an option's own copy of the project, so a copy of the project's size tool measures that option.
+  - `python3 scripts/run_options.py size <file or folder>...` prints raw and gzip level 9 bytes when the project has no size tool; compare options with the baseline measured by the same command, never with a number from another tool.
+  The script path is relative to this skill's folder. If a command is refused, do not retry it in other spellings: use the script, and if that is refused too, apply stop rule 3.
 - [ ] Step 5: Classify the decision. If every option that passes the cases stays within the written rules, recommend the one with the best measured result and mark the ADR `accepted` only if the project's rules or a recorded decision settle it. If a passing option needs a written rule changed, the decision is the user's: stop and ask, with the recommendation and the rule quoted; the ADR stays `proposed`.
 - [ ] Step 6: Write the ADR from the template, append the "Options and decision" section to the plan, and delete the scratch folder. Self-check against "Quality criteria".
 
@@ -110,6 +115,7 @@ Approve only if all of the following hold:
 - Every option lists the condition under which it fails, verified by running it, or "none found" with the conditions tried.
 - An option that needs a written rule changed is never marked accepted by the skill; the ADR is `proposed` and the user was asked.
 - No prototype code was left in the repository; the scratch folder is gone.
+- The ADR and the plan section exist even when a run was refused; every missing result is labelled `not run` or `not measured` with the reason, never estimated.
 
 ## Gotchas
 

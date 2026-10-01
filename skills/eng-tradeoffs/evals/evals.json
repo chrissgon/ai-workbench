@@ -29,7 +29,11 @@
     "TZ=Europe/Lisbon npm test",
     "cp",
     "gzip",
-    "node scripts/size.mjs"
+    "node scripts/size.mjs",
+    "mktemp",
+    "which",
+    "chmod",
+    "npm view"
   ],
   "evals": [
     {

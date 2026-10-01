@@ -1,16 +1,28 @@
 #!/usr/bin/env python3
-"""Lint a feature section of a backlog against its specification.
+"""Lint a feature section of a backlog against its specification and, when given, its design.
 
-Usage: python3 lint_backlog.py --backlog <backlog.md> --spec <spec.md> --feature <abbr> [--json]
+Usage: python3 lint_backlog.py --backlog <backlog.md> --spec <spec.md> [--feature <abbr>] [--design <design.md>] [--json]
+
+--feature may be omitted when the backlog holds tasks of one feature only (ids `T-<abbr>-<n>`).
 
 Checks, for tasks whose id starts with T-<abbr>-:
   - task ids are unique and every task has Does, Delivers, Touches, Depends on, Check, Size and Milestone lines
   - every REQ/NFR/EDGE/AC id cited in Delivers or Check exists in the specification
+  - every task's Delivers cites at least one REQ or AC id
   - every dependency names an existing task of the same feature; no dependency cycles
   - every REQ, NFR and AC of the specification is delivered by at least one task (Delivers or Check)
+  - Check is not a vague word ("works", "done", "ok"); it carries no duration in days and no date
   - Size is S, M or L followed by ", because"
   - every task's milestone appears in the Milestones list
-Prints JSON including the critical path (longest dependency chain by task count).
+  - a task titled "Spike: ..." has `Depends on: none`; when spikes exist, every other task depends on a
+    spike, directly or through other tasks, so the critical path starts with a spike
+  - a task titled "Remove ..." depends on at least one task
+With --design:
+  - there are at least as many "Spike: ..." tasks as bullets under "Assumptions to verify"
+  - every Check ends with its origin: "(verification plan: AC-n)" and then contains that row's command,
+    or "(design assumption)" on a spike
+Prints JSON: ok, summary (one line to quote in the report), tasks, critical_path (longest dependency
+chain by task count), coverage, errors.
 
 Exit codes: 0 ok, 1 problems, 2 usage error.
 """
@@ -38,6 +50,46 @@ def defined_ids(spec_text):
         if m and "withdrawn" in line.lower():
             ids.discard(m.group(1))
     return ids
+
+VAGUE_CHECKS = {"works", "it works", "work", "done", "ok", "okay", "passes", "pass", "tested", "test", "tests",
+                "manual", "verified", "fine", "good", "tbd", "todo", "n/a", "none"}
+DURATION_RE = re.compile(r"\b\d+(?:[.,]\d+)?\s*(?:days?|weeks?|hours?|sprints?|months?)\b|\b\d{4}-\d{2}-\d{2}\b", re.I)
+ORIGIN_RE = re.compile(r"\(\s*verification plan:\s*((?:AC-\d+)(?:\s*,\s*AC-\d+)*)\s*\)|\(\s*design assumption[^)]*\)", re.I)
+
+
+def section(text, heading_start):
+    """Lines of the first `## ` section whose heading starts with heading_start (case-insensitive)."""
+    out, inside = [], False
+    for ln in text.splitlines():
+        if ln.startswith("## "):
+            if inside:
+                break
+            inside = ln[3:].strip().lower().startswith(heading_start.lower())
+            continue
+        if inside:
+            out.append(ln)
+    return out
+
+
+def design_facts(design_text):
+    """(number of assumptions to verify, {AC id: [commands in backticks of its verification-plan row]})."""
+    assumptions = sum(1 for ln in section(design_text, "Assumptions to verify") if re.match(r"^\s*[-*]\s+\S", ln)
+                      and ln.strip().lstrip("-* ").lower().rstrip(".") != "none")
+    plan = {}
+    for ln in section(design_text, "Verification plan"):
+        m = re.match(r"^\|\s*(AC-\d+)\s*\|", ln)
+        if m:
+            plan[m.group(1)] = re.findall(r"`([^`]+)`", ln.split("|")[-2] if ln.rstrip().endswith("|") else ln)
+    return assumptions, plan
+
+
+def is_spike(task):
+    return task["title"].lower().startswith("spike")
+
+
+def is_removal(task):
+    return re.match(r"^(remove|removal|delete)\b", task["title"], re.I) is not None
+
 
 FIELDS = ("Does:", "Delivers:", "Touches:", "Depends on:", "Check:", "Size:", "Milestone:")
 
@@ -69,7 +121,7 @@ def main(argv):
     if not argv or "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0 if argv else 2
-    backlog = spec = abbr = None
+    backlog = spec = abbr = design = None
     as_json = "--json" in argv
     i = 0
     while i < len(argv):
@@ -77,18 +129,34 @@ def main(argv):
         if a == "--backlog": backlog = argv[i + 1]; i += 2
         elif a == "--spec": spec = argv[i + 1]; i += 2
         elif a == "--feature": abbr = argv[i + 1]; i += 2
+        elif a == "--design": design = argv[i + 1]; i += 2
         elif a == "--json": i += 1
         else:
             print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr); return 2
-    if not (backlog and spec and abbr):
-        print("Error: --backlog, --spec and --feature are required. See --help.", file=sys.stderr); return 2
+    if not (backlog and spec):
+        print("Error: --backlog and --spec are required. See --help.", file=sys.stderr); return 2
     try:
         b, s = open(backlog, encoding="utf-8").read(), open(spec, encoding="utf-8").read()
+        d_text = open(design, encoding="utf-8").read() if design else None
     except OSError as e:
         print(f"Error: {e}", file=sys.stderr); return 2
+    if not abbr:
+        found = sorted(set(re.findall(r"^- T-([A-Za-z0-9]+)-\d+:", b, re.M)))
+        if len(found) != 1:
+            print(f"Error: --feature is required: the backlog holds tasks of {found or 'no feature'}. See --help.",
+                  file=sys.stderr); return 2
+        abbr = found[0]
     errors, warnings = [], []
     spec_ids = defined_ids(s)
     tasks = parse_tasks(b, abbr)
+    ids_seen = re.findall(r"^- (T-" + re.escape(abbr) + r"-\d+):", b, re.M)
+    for dup in sorted({i for i in ids_seen if ids_seen.count(i) > 1}):
+        errors.append(f"{dup} is defined more than once")
+    n_assumptions, plan = design_facts(d_text) if d_text is not None else (0, {})
+    spikes = [tid for tid, t in tasks.items() if is_spike(t)]
+    if d_text is not None and len(spikes) < n_assumptions:
+        errors.append(f"the design lists {n_assumptions} assumptions to verify but the backlog has {len(spikes)} "
+                      f"tasks titled 'Spike: ...'; each assumption needs one")
     if not tasks:
         errors.append(f"no tasks with prefix T-{abbr}- found")
     milestones = set(re.findall(r"^- (M\d+)\b", b, re.M))
@@ -103,6 +171,9 @@ def main(argv):
         if unknown:
             errors.append(f"{tid} cites ids not in the spec: {unknown}")
         delivered |= cited
+        if field(t, "Delivers:") is not None and not any(
+                c.startswith(("REQ-", "AC-")) for c in ID_RE.findall(field(t, "Delivers:"))):
+            errors.append(f"{tid} Delivers cites no REQ or AC id: {field(t, 'Delivers:')[:60]!r}")
         d = field(t, "Depends on:") or ""
         deps[tid] = [] if d.strip().lower() in ("none", "") else re.findall(r"T-" + re.escape(abbr) + r"-\d+", d)
         for dep in deps[tid]:
@@ -114,8 +185,33 @@ def main(argv):
         ms = field(t, "Milestone:") or ""
         if ms and milestones and ms.split()[0] not in milestones:
             errors.append(f"{tid} milestone {ms!r} is not in the Milestones list")
-        if not (field(t, "Check:") or "").strip():
+        check = (field(t, "Check:") or "").strip()
+        if field(t, "Check:") is not None and not check:
             errors.append(f"{tid} has an empty Check")
+        bare = ORIGIN_RE.sub("", check).strip().strip(".!`'\" ").lower()
+        if check and bare in VAGUE_CHECKS:
+            errors.append(f"{tid} Check {check!r} is not a command, a test file or an observable result")
+        for name in ("Does:", "Size:"):
+            m = DURATION_RE.search(field(t, name) or "")
+            if m:
+                errors.append(f"{tid} {name} carries a duration or a date: {m.group(0)!r}")
+        if is_spike(t) and deps[tid]:
+            errors.append(f"{tid} is a spike and must have 'Depends on: none'")
+        if is_removal(t) and not deps[tid]:
+            errors.append(f"{tid} is a removal and must depend on the tasks that replace what it removes")
+        if d_text is not None and check:
+            m = ORIGIN_RE.search(check)
+            if not m:
+                errors.append(f"{tid} Check must end with its origin: '(verification plan: AC-n)' or, on a spike, "
+                              f"'(design assumption)'")
+            elif m.group(1):
+                for ac in re.findall(r"AC-\d+", m.group(1)):
+                    if ac not in plan:
+                        errors.append(f"{tid} Check cites {ac}, which has no row in the design's verification plan")
+                    elif plan[ac] and not any(cmd in check for cmd in plan[ac]):
+                        errors.append(f"{tid} Check cites verification plan {ac} but lacks its command `{plan[ac][0]}`")
+            elif not is_spike(t):
+                errors.append(f"{tid} Check cites '(design assumption)' but the task is not titled 'Spike: ...'")
     # cycles + critical path
     order, state, path_len, longest = [], {}, {}, {}
     def visit(n, stack):
@@ -136,13 +232,30 @@ def main(argv):
         path_len[n] = best[0] + 1
         longest[n] = (longest[best[1]] if best[1] else []) + [n]
     critical = max(longest.values(), key=len) if longest else []
+    if spikes:
+        reach = {}
+        for n in order:
+            reach[n] = is_spike(tasks[n]) or any(reach.get(d, False) for d in deps.get(n, []))
+        loose = sorted((n for n in tasks if not reach.get(n, False)), key=lambda x: int(x.rsplit("-", 1)[1]))
+        if loose:
+            errors.append(f"tasks that can start before any spike is done (make each depend on a spike, directly "
+                          f"or through another task): {loose}")
     must_cover = sorted((i for i in spec_ids if i.startswith(("REQ-", "NFR-", "AC-"))), key=lambda x: (x.split("-")[0], int(x.split("-")[1])))
     uncovered = [i for i in must_cover if i not in delivered]
     if uncovered:
         errors.append(f"spec ids delivered by no task: {uncovered}")
     ok = not errors
-    print(json.dumps({"ok": ok, "tasks": len(tasks), "milestones": sorted(milestones), "critical_path": critical,
-                      "coverage": {"required": len(must_cover), "covered": len(must_cover) - len(uncovered)},
+    by_kind = {}
+    for kind in ("REQ", "NFR", "AC"):
+        need = [i for i in must_cover if i.startswith(kind + "-")]
+        by_kind[kind] = {"required": len(need), "covered": len([i for i in need if i in delivered])}
+    covered = len(must_cover) - len(uncovered)
+    summary = (f"lint_backlog: ok: {'true' if ok else 'false'}; errors: {len(errors)}; tasks: {len(tasks)}; "
+               f"coverage: {covered}/{len(must_cover)} ("
+               + ", ".join(f"{k} {v['covered']}/{v['required']}" for k, v in by_kind.items()) + ")")
+    print(json.dumps({"ok": ok, "summary": summary, "feature": abbr, "tasks": len(tasks),
+                      "milestones": sorted(milestones), "spikes": spikes, "critical_path": critical,
+                      "coverage": {"required": len(must_cover), "covered": covered, **by_kind},
                       "errors": errors, "warnings": warnings}, indent=2 if as_json else None))
     return 0 if ok else 1
 

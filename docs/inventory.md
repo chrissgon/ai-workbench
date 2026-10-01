@@ -229,8 +229,8 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | brand-profile | evaluated | 0.94 | 0.48 | 0.97 | 2026-10-01 | 1 |
 | brand-strategy | evaluated | 1.00 | 0.80 | 1.00 | 2026-10-01 | 1 |
 | brand-voice | evaluated | 0.81 | 0.44 | 0.93 | 2026-10-01 | 1 |
-| core-agents-md | draft | 0.21 | 0.40 | 0.16 | 2026-10-01 | 1 |
-| core-clarify | draft | 0.20 | 0.11 | 0.23 | 2026-10-01 | 1 |
+| core-agents-md | evaluated | 1.00 | 0.34 | 0.98 | 2026-10-01 | 3 |
+| core-clarify | evaluated | 0.96 | 0.39 | 1.00 | 2026-10-01 | 3 |
 | core-critique | evaluated | 0.96 | 0.48 | 0.89 | 2026-10-01 | 1 |
 | core-orchestrator | evaluated | 0.90 | 0.48 | 0.86 | 2026-10-01 | 1 |
 | core-project-init | draft | 0.41 | 0.30 | 0.36 | 2026-10-01 | 1 |
@@ -252,7 +252,7 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | eng-refactor | draft | — | — | — | — | — |
 | eng-root-cause | draft | — | — | — | — | — |
 | eng-security-review | draft | — | — | — | — | — |
-| eng-tradeoffs | draft | 0.35 | 0.43 | 0.92 | 2026-10-01 | 1 |
+| eng-tradeoffs | evaluated | 1.00 | 0.39 | 1.00 | 2026-10-01 | 3 |
 | eng-unit-tests | evaluated | 0.92 | 0.69 | 1.00 | 2026-10-01 | 1 |
 | flow-fix-bug | draft | — | — | — | — | — |
 | mkt-content-plan | draft | — | — | — | — | — |
@@ -265,12 +265,12 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | ops-ci-pipeline | draft | — | — | — | — | — |
 | ops-pull-request | draft | — | — | — | — | — |
 | ops-repo-baseline | draft | — | — | — | — | — |
-| product-backlog | draft | 0.84 | 0.47 | 0.79 | 2026-10-01 | 1 |
+| product-backlog | evaluated | 0.93 | 0.54 | 0.91 | 2026-10-01 | 3 |
 | product-feature-spec | evaluated | 1.00 | 0.29 | 1.00 | 2026-10-01 | 1 |
 | product-prd | evaluated | 1.00 | 0.46 | 0.99 | 2026-10-01 | 1 |
-| product-roadmap | draft | 0.85 | 0.58 | 0.80 | 2026-10-01 | 1 |
+| product-roadmap | evaluated | 1.00 | 0.63 | 1.00 | 2026-10-01 | 3 |
 
-Counts: 19 evaluated, 0 stale, 29 draft, 48 skills.
+Counts: 24 evaluated, 0 stale, 24 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

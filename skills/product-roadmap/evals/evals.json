@@ -10,7 +10,7 @@
       "assertions": [
         "Every must and should feature of the PRD is in exactly one release and the later feature F-3 is placed or listed as not planned",
         "The Method section states the ordering method before the releases",
-        "No date, week, day or story-point figure appears in the roadmap",
+        "No release or feature carries a delivery date, a duration (weeks, days) or a story-point figure; the header's Date line, the dates of cited sources and figures quoted from the PRD's own outcomes or risk mitigations (such as a 24-hour retry window) are not delivery dates or durations",
         "scripts/lint_roadmap.py is run with --prd and reports ok: true"
       ]
     },

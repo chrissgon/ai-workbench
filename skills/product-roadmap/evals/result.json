@@ -10,9 +10,9 @@
     }
   },
   "skill": "product-roadmap",
-  "content_sha256": "78c75164f76d9ade9fd97d25fc29f93cacf14c13097efca49325ae6d4d5401b6",
+  "content_sha256": "7a6637e687ee2029e101b9a95558966b1de07d8a2fc2156a1ee26ffcdde62ebc",
   "date": "2026-10-01",
-  "iteration": 1,
+  "iteration": 3,
   "runs": 3,
   "cases": [
     1,
@@ -28,16 +28,16 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.852,
-    "strong_without": 0.583,
-    "floor_with": 0.796,
-    "floor_without": 0.398
+    "strong_with": 1.0,
+    "strong_without": 0.63,
+    "floor_with": 1.0,
+    "floor_without": 0.519
   },
   "complete": true,
   "infra_failures": 0,
   "gate": {
-    "floor": false,
+    "floor": true,
     "strong_delta": true,
-    "passed": false
+    "passed": true
   }
 }

@@ -4,7 +4,7 @@
 
 ## Architecture
 
-See `{architecture artifact path}` for components, contracts and hard rules. {one sentence on the pattern, only if the artifact states it}
+See `{architecture artifact path}` for components, contracts and hard rules.
 
 ## Commands
 
@@ -35,7 +35,3 @@ See `{architecture artifact path}` for components, contracts and hard rules. {on
 ## Working rules
 
 {conventions carried over from tool-specific files, confirmed by the user, in tool-neutral words; one per line}
-
-<!-- workbench:start -->
-{preserved verbatim by core-project-init; never edited here}
-<!-- workbench:end -->

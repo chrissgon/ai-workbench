@@ -10,9 +10,9 @@
     }
   },
   "skill": "eng-tradeoffs",
-  "content_sha256": "52af909e4c502c21fa018e0a1d31f359f30fedd2c1fbe64d416ae423636a5cf5",
+  "content_sha256": "85232a870bd5adecbdc41a615348b0bc361f11ef8047615941dad616cb6963c6",
   "date": "2026-10-01",
-  "iteration": 1,
+  "iteration": 3,
   "runs": 3,
   "cases": [
     1,
@@ -27,16 +27,16 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.351,
-    "strong_without": 0.435,
-    "floor_with": 0.917,
-    "floor_without": 0.458
+    "strong_with": 1.0,
+    "strong_without": 0.393,
+    "floor_with": 1.0,
+    "floor_without": 0.393
   },
   "complete": true,
   "infra_failures": 0,
   "gate": {
     "floor": true,
-    "strong_delta": false,
-    "passed": false
+    "strong_delta": true,
+    "passed": true
   }
 }
