@@ -165,4 +165,8 @@ Decided by the maintainer on the review of that day (`docs/architecture/review-2
 - **In the container the strong runner authenticates with a long-lived token** from the secret store, passed as an environment variable; to be confirmed by the proof of concept.
 - **Network:** egress only to the model provider; a case with `allow_web` gets open egress; language dependencies and a browser come with the image.
 
-Open: the gate's rule (D4).
+## 2026-10-01: The gate asks the threshold of both models
+
+The rule in the code was: the floor model with the skill at the threshold (0.8) or above, and the strong model with the skill at least as good as without it. The strong model had no threshold of its own, so a skill passed with the strong model at 0.78; and the comparison had no tolerance, so a difference smaller than the spread between runs could fail a skill.
+
+Decided by the maintainer (D4): a skill passes when **both models score at the threshold or above with the skill, and the strong model with the skill is not below the strong model without it by more than a tolerance**. The tolerance is a number in the gate configuration, set from the spread measured in the container's proof of concept and approved by the maintainer; until then it is 0. Changing the rule raises the measurement version, so every record made under the old rule reads `stale`.
