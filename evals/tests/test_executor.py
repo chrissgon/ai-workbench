@@ -96,3 +96,14 @@ def test_only_the_model_providers_are_on_the_proxys_list():
     assert lines and all(l.startswith("^") and l.endswith("$") for l in lines)  # anchored: no partial match
     conf = (Path(ex.DEFINITION) / "proxy" / "tinyproxy.conf").read_text()
     assert "FilterDefaultDeny Yes" in conf and "ConnectPort 443" in conf
+
+
+def test_a_skills_eval_cases_are_covered_by_an_empty_folder(tmp_path):
+    root, skill = run_folder(tmp_path)
+    (skill / "evals").mkdir()
+    (skill / "evals" / "evals.json").write_text("{}")
+    argv, _ = ex.command(["true"], str(root), skills=[str(skill)])
+    assert argv[argv.index("--tmpfs") + 1].startswith("/skill/core-demo/evals:")
+    argv, _ = ex.command(["true"], str(root))
+    assert "--tmpfs" not in argv
+

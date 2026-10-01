@@ -116,3 +116,19 @@ def test_removing_a_container_by_name_ends_it(environment, root):
         assert not ex.docker("ps", "-aq", "--filter", f"name={name}").stdout.strip()
     finally:
         proc.kill()
+
+
+def test_a_run_cannot_read_the_cases_of_the_skill_it_is_given(environment, root, tmp_path):
+    skill = tmp_path / "core-demo"
+    (skill / "evals").mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# demo\n")
+    (skill / "evals" / "evals.json").write_text('{"expected_output": "the answer"}')
+    argv, name = ex.command(["bash", "-c", "cat /skill/core-demo/SKILL.md; ls -A /skill/core-demo/evals | wc -l"],  # security-scan: allow shell-string -- a literal of this test
+                            str(root), skills=[str(skill)])
+    try:
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=180)
+    finally:
+        ex.remove(name)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == ["#", "demo", "0"]
+
