@@ -40,6 +40,11 @@ def env(tmp_path):
             "env": {"PATH": f"{bin_dir}:{os.environ['PATH']}", "HOME": str(tmp_path), "FAKE_LOG": str(tmp_path / "log.json")}}
 
 
+def sandbox(args):
+    """The sandbox settings the adapter passed to the CLI."""
+    return json.loads(args[args.index("--settings") + 1])["sandbox"]
+
+
 def run(e, *extra):
     t = e["tmp"]
     cmd = ["bash", str(SCRIPT), "--prompt-file", str(t / "prompt.md"), "--cwd", str(t / "cwd"), "--model", "m",
@@ -57,7 +62,7 @@ def test_skills_are_copied_not_linked_and_connectors_are_off(env):
     assert (env["skill"] / "SKILL.md").read_text() == "demo\n"
     log = json.loads(env["log"].read_text())
     assert "--strict-mcp-config" in log["args"] and log["mcp"] == "false"
-    assert "Bash(npm test *)" in log["args"][log["args"].index("--allowedTools") + 1]
+    assert "npm test *" in sandbox(log["args"])["excludedCommands"]
     assert (env["tmp"] / "out" / "response.md").read_text() == "done"
 
 
@@ -105,14 +110,53 @@ def test_max_cost_becomes_a_budget_and_bad_values_are_refused(env):
     assert run(env, "--max-cost-usd", "0.5; rm -rf x").returncode == 2
 
 
-def test_skill_scripts_are_allowed_by_relative_and_absolute_path(env):
-    r = run(env, "--skill-dir", str(env["skill"]))
+def test_without_the_sandbox_skill_scripts_are_allowed_by_relative_and_absolute_path(env):
+    env["env"]["CLAUDE_EVAL_SANDBOX"] = "off"
+    r = run(env, "--skill-dir", str(env["skill"]), "--allow-command", "npm test", "--allow-web")
     assert r.returncode == 0, r.stderr
-    log = json.loads(env["log"].read_text())
-    rules = log["args"][log["args"].index("--allowedTools") + 1]
+    args = json.loads(env["log"].read_text())["args"]
+    rules = args[args.index("--allowedTools") + 1].split(",")
     cwd = env["tmp"] / "cwd"
     assert "Bash(python3 .claude/skills/demo/scripts/check.py *)" in rules
     assert f"Bash(python3 {cwd}/.claude/skills/demo/scripts/check.py *)" in rules
+    assert "Bash(npm test *)" in rules and "WebSearch" in rules and "WebFetch" in rules
+    assert "Bash" not in rules and "--settings" not in args   # no bare rule: an unlisted command is denied
+
+
+def test_commands_run_in_a_sandbox_that_refuses_to_start_unconfined(env):
+    r = run(env)
+    assert r.returncode == 0, r.stderr
+    args = json.loads(env["log"].read_text())["args"]
+    box = sandbox(args)
+    assert box["enabled"] is True and box["failIfUnavailable"] is True and box["allowUnsandboxedCommands"] is False
+    assert box["network"]["allowedDomains"] == [] and box["network"]["strictAllowlist"] is True
+    assert box["excludedCommands"] == []
+    # Every command is allowed, because the sandbox is what confines it; the web tools are not.
+    assert args[args.index("--allowedTools") + 1] == "Bash"
+
+
+def test_the_sandbox_hides_the_workbench_and_credentials_and_writes_only_in_temp(env):
+    r = run(env)
+    assert r.returncode == 0, r.stderr
+    files = sandbox(json.loads(env["log"].read_text())["args"])["filesystem"]
+    workbench = str(SCRIPT.resolve().parents[2])
+    assert workbench in files["denyRead"] and "~/.ssh" in files["denyRead"]
+    assert files["allowRead"] == [os.path.realpath(env["tmp"] / "cwd")]
+    home = os.path.realpath(os.path.expanduser("~"))
+    assert files["allowWrite"] and all(not home.startswith(os.path.realpath(p)) and p != workbench for p in files["allowWrite"])
+
+
+def test_the_skills_scripts_and_the_cases_prefixes_run_outside_the_sandbox(env):
+    r = run(env, "--skill-dir", str(env["skill"]), "--allow-command", "git status", "--allow-web")
+    assert r.returncode == 0, r.stderr
+    args = json.loads(env["log"].read_text())["args"]
+    excluded = sandbox(args)["excludedCommands"]
+    cwd = env["tmp"] / "cwd"
+    for pattern in ("git status *", "python3 .claude/skills/demo/scripts/check.py",
+                    "python3 .claude/skills/demo/scripts/check.py *", f"bash {cwd}/.claude/skills/demo/scripts/check.py *"):
+        assert pattern in excluded
+    assert all("WebSearch" not in p for p in excluded)
+    assert args[args.index("--allowedTools") + 1] == "Bash,WebSearch,WebFetch"
 
 
 # --- stopping the adapter stops what the CLI started; HOME is left alone ---------------------------
