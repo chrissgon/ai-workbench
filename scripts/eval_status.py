@@ -15,7 +15,9 @@ skills/core-skill-creator/scripts/eval_run.py, after a complete full run; or `re
    "scores": {"strong_with", "strong_without", "floor_with", "floor_without"},
    "complete": true|false, "infra_failures": <n>,
    "gate": {"floor": bool, "strong_delta": bool, "passed": bool},
-   "early_ends": {"<tier>": {"early_ends": <n>, "rate": <float>}}}   (optional: records written before it lack it)
+   "early_ends": {"<tier>": {"early_ends": <n>, "rate": <float>}},   (optional: records written before it lack it)
+   "baseline": {"date", "iteration", "runs"}}   (optional: the without-skill scores were measured again, alone,
+                                                 by eval_run.py --only without --update-record)
 
 "early_ends" counts the attempts in which a model ended its turn early with no error; the runner retried them,
 so they are not in the scores (see eval_run.py --help).
@@ -162,6 +164,12 @@ def record_problems(rec, skill):
         return out
     if rec["skill"] != skill:
         out.append(f"skill {rec['skill']!r} must equal the folder name {skill!r}")
+    base = rec.get("baseline")
+    if base is not None and not (isinstance(base, dict) and isinstance(base.get("date"), str)
+                                 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", base["date"])
+                                 and all(isinstance(base.get(k), int) and not isinstance(base.get(k), bool)
+                                         for k in ("iteration", "runs"))):
+        out.append("baseline must be {\"date\": YYYY-MM-DD, \"iteration\": <n>, \"runs\": <n>}")
     early = rec.get("early_ends", {})
     if not isinstance(early, dict) or not all(
             isinstance(v, dict) and isinstance(v.get("early_ends"), int) and isinstance(v.get("rate"), (int, float))
@@ -261,6 +269,51 @@ def build_record(skill_dir, bench, iteration, date, content_sha256=None):
             "grader": bench.get("grader") or bench["models"]["strong"], "threshold": threshold, "scores": scores,
             "complete": bool(bench.get("complete", True)) and completed >= expected and infra == 0,
             "infra_failures": infra, "gate": gate(scores, threshold)}
+
+
+def update_baseline(skill_dir, bench, iteration, date, config=None):
+    """The skill's record with its two without-skill scores replaced by a benchmark of that variant alone.
+
+    Raises ValueError, naming every reason, when there is no valid record, when the record is not of the
+    skill's current content, of the benchmark's models and of the configured models and threshold, or when
+    the benchmark lacks a graded run of a case. The caller checks that the run was complete and clean."""
+    skill = os.path.basename(os.path.normpath(skill_dir))
+    rec, problems = load_record(skill_dir)
+    if problems:
+        raise ValueError("the existing record is invalid: " + "; ".join(problems))
+    if rec is None:
+        raise ValueError("the skill has no record to update: run the full evals first")
+    config, why = config or {}, []
+    if bench.get("skill") != skill:
+        why.append(f"the benchmark is of skill {bench.get('skill')!r}, not {skill!r}")
+    if rec["content_sha256"] != content_hash(skill_dir):
+        why.append("the record is of another content of the skill (stale): run the full evals")
+    if bench.get("content_sha256") and bench["content_sha256"] != rec["content_sha256"]:
+        why.append("the benchmark was run on another content of the skill")
+    models = bench.get("models") or {}
+    for key in ("strong", "floor"):
+        if models.get(key) != rec["models"][key]:
+            why.append(f"the record's {key} model is {rec['models'][key]}, this run's is {models.get(key)}")
+        if config.get(f"{key}_model") and rec["models"][key] != config[f"{key}_model"]:
+            why.append(f"the record's {key} model is {rec['models'][key]}, the configured one is {config[f'{key}_model']}")
+    for name, value in (("this run's", bench.get("threshold")), ("the configured one", config.get("threshold"))):
+        if value is not None and value != rec["threshold"]:
+            why.append(f"the record's threshold is {rec['threshold']}, {name} is {value}")
+    summary, wanted, scores = bench.get("run_summary") or {}, case_ids(skill_dir), {}
+    for key in ("strong_without", "floor_without"):
+        entry = summary.get(VARIANTS[key]) or {}
+        graded = {r.get("case") for r in entry.get("cases") or [] if r.get("pass_rate") is not None}
+        missing = [c for c in wanted if c not in graded]
+        if missing or (entry.get("pass_rate") or {}).get("mean") is None:
+            why.append(f"variant {VARIANTS[key]} has no graded run of case(s) {', '.join(str(c) for c in missing) or 'any'}")
+        else:
+            scores[key] = entry["pass_rate"]["mean"]
+    if why:
+        raise ValueError("; ".join(why))
+    rec["scores"].update(scores)
+    rec["gate"] = gate(rec["scores"], rec["threshold"])
+    rec["baseline"] = {"date": date, "iteration": iteration, "runs": bench.get("runs") or 1}
+    return rec
 
 
 def write_record(skill_dir, record):

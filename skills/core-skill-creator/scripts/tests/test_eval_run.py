@@ -264,13 +264,13 @@ def test_floor_pass_env_reaches_only_the_floor_runs(tmp_path, monkeypatch, capsy
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "run-prompt.sh").write_text('env > "$(dirname "$4")/env.txt"; echo ok > "$8/response.md"\n')
+    (adapter / "run-prompt.sh").write_text('env > "$8/env.txt"; echo ok > "$8/response.md"\n')
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     monkeypatch.setenv("FLOOR_ONLY_KEY", "floor-secret")
     assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1",
                     "--only", "with", "--no-grade", "--floor-pass-env", "FLOOR_ONLY_KEY"]) == 0
-    strong = (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill" / "env.txt").read_text()
-    floor = (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill.floor" / "env.txt").read_text()
+    strong = (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill" / "outputs" / "env.txt").read_text()
+    floor = (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill.floor" / "outputs" / "env.txt").read_text()
     assert "FLOOR_ONLY_KEY" not in strong and "FLOOR_ONLY_KEY=floor-secret" in floor
     with pytest.raises(SystemExit):
         er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--floor-pass-env", "GITHUB_TOKEN"])
@@ -387,13 +387,17 @@ def write_demo(tmp_path, monkeypatch, runner, cases=None):
 
 
 # The fake adapter: grading prompts (their text carries "You are grading") get a pass or a fail by tier;
-# a model run answers "ok", or fails as told by a marker file next to the adapter.
+# a model run answers "ok", or fails as told by a marker file next to the adapter. The run's folders say nothing
+# about the case, the variant or the model (they are anonymous temporary folders), so the fake reads the
+# prompt (case 2 is "q"), the model id ("f" is the floor) and its own arguments (--skill-dir: with the skill).
 FAKE = r'''
 here="$(dirname "$0")"; out="$8"
 if grep -q "You are grading" "$2"; then
   echo '[{"id": 1, "text": "a", "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
 fi
-case "$4" in *"/eval-2/with_skill.floor/"*) [ -f "$here/fail-one" ] && { echo "provider: out of credits" >&2; exit 7; } ;; esac
+if [ -f "$here/fail-one" ] && grep -q "^q" "$2" && [ "$6" = f ] && echo " $* " | grep -q -- " --skill-dir "; then
+  echo "provider: out of credits" >&2; exit 7
+fi
 [ -f "$here/edit-skill" ] && echo "edited" >> "$here/../../skills/demo/SKILL.md"
 echo ok > "$out/response.md"
 '''
@@ -544,18 +548,24 @@ def test_files_the_adapter_installs_do_not_count_as_written(tmp_path):
     assert set(er.snapshot(str(tmp_path), {}, ["demo"])) == {os.path.join("shared", "notes.md"), os.path.join("docs", "out.md")}
 
 
-# The fake adapter for early ends: a model run of the tier named in the file "early-tier", on the cases listed
-# in "early-cases", ends early while its counter (one file per run folder) is at most the number in "early-times".
+# The fake adapter for early ends: a with-skill run of the tier named in the file "early-tier", on the cases listed
+# in "early-cases", ends early while its attempt number (counted per case, tier and variant) is at most the
+# number in "early-times", or is odd when the file "early-odd" exists. It knows the case from the prompt
+# ("case <id>"), the tier from the model id and the variant from --skill-dir: the folders are anonymous.
 EARLY = r'''
-here="$(dirname "$0")"; out="$8"; run="$(dirname "$4")"
+here="$(dirname "$0")"; out="$8"
 if grep -q "You are grading" "$2"; then
   echo '[{"id": 1, "text": "a", "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
 fi
-id="$(echo "$run" | sed 's|.*/eval-\([0-9]*\)/.*|\1|')"
-case "$run" in */with_skill.floor*) tier=floor ;; */with_skill*) tier=strong ;; *) tier=none ;; esac
-key="$here/count-$(echo "${run#*/evals-workspace/}" | tr '/' '_')"
-n=$(( $(cat "$key" 2>/dev/null || echo 0) + 1 )); echo "$n" > "$key"
-if [ "$tier" = "$(cat "$here/early-tier")" ] && grep -qw "$id" "$here/early-cases" && [ "$n" -le "$(cat "$here/early-times")" ]; then
+id="$(sed 's/[^0-9]//g' "$2")"
+tier=none
+if echo " $* " | grep -q -- " --skill-dir "; then [ "$6" = f ] && tier=floor || tier=strong; fi
+key="$here/count-$id-$6-$tier"
+n=1; while ! mkdir "$key.$n" 2>/dev/null; do n=$((n + 1)); done
+early=no
+[ "$n" -le "$(cat "$here/early-times")" ] && early=yes
+[ -f "$here/early-odd" ] && [ $((n % 2)) -eq 1 ] && early=yes
+if [ "$tier" = "$(cat "$here/early-tier")" ] && grep -qw "$id" "$here/early-cases" && [ "$early" = yes ]; then
   case "$(cat "$here/early-kind")" in
     plan) echo "Let me just read the template first." > "$out/response.md" ;;
     ask) echo "Which audience is this for? Recommended: developers." > "$out/response.md" ;;
@@ -568,7 +578,7 @@ echo "ok: attempt $n" > "$out/response.md"
 
 
 def early_demo(tmp_path, monkeypatch, tier="floor", cases="1", times=1, kind="plan", n_cases=2):
-    cases_json = [{"id": i, "prompt": "p", "assertions": ["a"]} for i in range(1, n_cases + 1)]
+    cases_json = [{"id": i, "prompt": f"case {i}", "assertions": ["a"]} for i in range(1, n_cases + 1)]
     skill = write_demo(tmp_path, monkeypatch, EARLY, cases_json)
     for name, value in (("early-tier", tier), ("early-cases", cases), ("early-times", str(times)), ("early-kind", kind)):
         (tmp_path / "adapters" / "h" / name).write_text(value + "\n")
@@ -631,8 +641,9 @@ def test_a_question_or_a_written_file_is_graded_not_retried(tmp_path, monkeypatc
 
 
 def test_the_warning_names_the_case_when_the_early_ends_concentrate_on_it(tmp_path, monkeypatch, capsys):
-    early_demo(tmp_path, monkeypatch, times=1, n_cases=3)
-    assert er.main(FULL + ["--runs", "3"]) == 0  # complete and passing: the warning does not change the exit code
+    early_demo(tmp_path, monkeypatch, times=0, n_cases=3)
+    (tmp_path / "adapters" / "h" / "early-odd").write_text("")  # one run after another: attempts 1, 3 and 5 end early
+    assert er.main(FULL + ["--runs", "3", "--jobs", "1"]) == 0  # complete and passing: the warning does not change the exit code
     captured = capsys.readouterr()
     warning = json.loads(captured.out)["early_end_warning"]
     assert warning.startswith("the floor model ended its turn early in 3 of 21 attempts (14%): retries hid them from the scores.")
@@ -788,3 +799,247 @@ def test_a_signal_to_the_runner_ends_every_run_it_started(tmp_path, signame, cod
     assert proc.returncode == code and "ending every run that was started" in err
     assert pid_gone(grandchild) and pid_gone(adapter_pid)
     assert not (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "benchmark.json").exists()
+
+
+# --- runs happen outside the repository -----------------------------------------------------------
+
+# A fake adapter that looks around like a model would: where it is, what its parents hold, what its
+# environment and arguments say. It writes a file in the case folder and answers; grading passes unless the
+# marker "grade-fail" exists; "say-repo" makes without-skill runs name the repository in their answer;
+# "fail-without" makes the floor's without-skill runs fail; "hang" makes a run write its file and never end.
+LOOKS = r'''
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  passed=true; [ -f "$here/grade-fail" ] && passed=false
+  echo "[{\"id\": 1, \"text\": \"a\", \"passed\": $passed, \"evidence\": \"e\"}]" > "$out/response.md"
+  (cd "$4" && pwd -P) > "$here/grader-pwd.txt"
+  exit 0
+fi
+with=no; echo " $* " | grep -q -- " --skill-dir " && with=yes
+echo "$*" > "$out/args.txt"
+cd "$4"
+pwd -P > "$out/pwd.txt"
+env > "$out/env.txt"
+d="$(dirname "$(pwd -P)")"; : > "$out/parents.txt"   # above the case folder, which is its own repository
+while [ "$d" != "/" ]; do
+  for marker in AGENTS.md skills .git; do [ -e "$d/$marker" ] && echo "$d/$marker" >> "$out/parents.txt"; done
+  d="$(dirname "$d")"
+done
+echo written > made-by-the-run.md
+dirname "$(pwd -P)" >> "$here/roots.txt"
+[ -f "$here/hang" ] && sleep 300
+[ -f "$here/fail-without" ] && [ "$with" = no ] && [ "$6" = f ] && { echo "provider down" >&2; exit 7; }
+if [ -f "$here/say-repo" ] && [ "$with" = no ]; then
+  echo "I found the capability in $(cd "$here/../.." && pwd)/skills/demo and used it." > "$out/response.md"
+else
+  echo "ok" > "$out/response.md"
+fi
+'''
+
+
+def looks_demo(tmp_path, monkeypatch):
+    skill = write_demo(tmp_path, monkeypatch, LOOKS, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "assertions": ["a"]}])
+    (tmp_path / "AGENTS.md").write_text("# the workbench\n")
+    (tmp_path / ".git").mkdir()
+    return skill
+
+
+def run_folder(tmp_path, variant="with_skill", iteration=1):
+    return tmp_path / "evals-workspace" / "demo" / f"iteration-{iteration}" / "eval-1" / variant
+
+
+def test_a_run_sees_a_case_folder_outside_the_repository_and_it_returns_to_the_workspace(tmp_path, monkeypatch, capsys):
+    looks_demo(tmp_path, monkeypatch)
+    assert er.main(FULL) == 0
+    repo = {str(tmp_path), os.path.realpath(tmp_path)}
+    roots = (tmp_path / "adapters" / "h" / "roots.txt").read_text().split()
+    assert len(roots) == 4 and len(set(roots)) == 4
+    for variant in ("with_skill", "without_skill", "with_skill.floor", "without_skill.floor"):
+        run = run_folder(tmp_path, variant)
+        seen = (run / "outputs" / "pwd.txt").read_text().strip()
+        assert not any(seen.startswith(r) for r in repo) and seen.endswith("/case")
+        assert "demo" not in seen and tmp_path.name not in seen  # the path names neither the skill nor the repository
+        assert (run / "outputs" / "parents.txt").read_text() == ""  # no instruction file, skills folder or repository above
+        # Back where readers and the grader expect it, with the fixture, the run's file and its repository.
+        assert (run / "cwd" / "a.txt").read_text() == "a\n" and (run / "cwd" / "made-by-the-run.md").is_file()
+        assert (run / "cwd" / ".git").is_dir() and (run / "prompt.md").read_text() == "p"
+        assert (run / "grading" / "prompt.md").is_file() and (run / "grading" / "out" / "response.md").is_file()
+        args = (run / "outputs" / "args.txt").read_text().split()
+        for flag in ("--prompt-file", "--cwd", "--out"):
+            assert not any(args[args.index(flag) + 1].startswith(r) for r in repo)
+    assert not any(os.path.exists(r) for r in roots)  # the temporary folders are gone
+    grader_pwd = (tmp_path / "adapters" / "h" / "grader-pwd.txt").read_text().strip()
+    assert not any(grader_pwd.startswith(r) for r in repo) and not os.path.exists(grader_pwd)
+    assert er.RUN_ROOTS == {}
+
+
+def test_the_environment_of_a_run_carries_no_path_into_the_repository(tmp_path, monkeypatch, capsys):
+    looks_demo(tmp_path, monkeypatch)
+    inside = str(tmp_path / "tools" / "bin")
+    monkeypatch.setenv("PATH", inside + os.pathsep + os.environ["PATH"])
+    for name in ("VIRTUAL_ENV", "PYTHONPATH", "UV_PROJECT", "PWD", "OLDPWD", "SSL_CERT_FILE", "TMPDIR"):
+        monkeypatch.setenv(name, str(tmp_path / "x"))
+    monkeypatch.setenv("CHOSEN_BY_THE_CALLER", str(tmp_path / "key"))
+    monkeypatch.chdir(tmp_path)  # eval_run.py is started from the repository's root
+    assert er.main(FULL + ["--only", "without", "--no-grade", "--pass-env", "CHOSEN_BY_THE_CALLER"]) == 0
+    for variant in ("without_skill", "without_skill.floor"):
+        env = dict(line.split("=", 1) for line in (run_folder(tmp_path, variant) / "outputs" / "env.txt").read_text().splitlines()
+                   if "=" in line)
+        leaks = {k: v for k, v in env.items() if str(tmp_path) in v or os.path.realpath(tmp_path) in v}
+        # The one exception: a variable the caller named with --pass-env is passed as it is.
+        assert set(leaks) == {"CHOSEN_BY_THE_CALLER"}
+        assert inside not in env["PATH"].split(os.pathsep) and "/usr/bin" in env["PATH"].split(os.pathsep)
+        assert env["PWD"].endswith("/case") and "VIRTUAL_ENV" not in env and "SSL_CERT_FILE" not in env
+        assert os.path.isdir(env["TMPDIR"]) and "HOME" in env
+
+
+def test_after_a_timeout_the_case_folder_is_in_the_workspace_and_the_temporary_one_is_gone(tmp_path, monkeypatch, capsys):
+    looks_demo(tmp_path, monkeypatch)
+    (tmp_path / "adapters" / "h" / "hang").write_text("")
+    parse = er.parse
+    monkeypatch.setattr(er, "parse", lambda argv: {**parse(argv), "timeout": 1})
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--only", "without", "--no-grade"]) == 1
+    run = run_folder(tmp_path, "without_skill")
+    assert (run / "cwd" / "made-by-the-run.md").is_file() and "stopped after --timeout 1s" in (run / "outputs" / "error.log").read_text()
+    root = (tmp_path / "adapters" / "h" / "roots.txt").read_text().strip()
+    assert not os.path.exists(root) and er.RUN_ROOTS == {}
+
+
+def test_after_a_stop_the_case_folder_is_in_the_workspace_and_the_temporary_one_is_gone(tmp_path):
+    import signal
+    import sys
+    import time
+    skill = make_skill(tmp_path)
+    (skill / "SKILL.md").write_text("# demo\n")
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
+    adapter = tmp_path / "adapters" / "h"
+    adapter.mkdir(parents=True)
+    (adapter / "run-prompt.sh").write_text(LOOKS)
+    (adapter / "hang").write_text("")
+    driver = ("import importlib.util, sys\n"
+              f"spec = importlib.util.spec_from_file_location('eval_run', {str(SCRIPT)!r})\n"
+              "er = importlib.util.module_from_spec(spec); spec.loader.exec_module(er)\n"
+              f"er.ROOT = {str(tmp_path)!r}\n"
+              "sys.exit(er.main(['--skill', 'demo', '--harness', 'h', '--model', 'm', '--runs', '1', '--only', 'without', '--no-grade']))\n")
+    proc = subprocess.Popen([sys.executable, "-c", driver], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                            start_new_session=True)
+    end = time.monotonic() + 20
+    roots = adapter / "roots.txt"
+    while not (roots.exists() and roots.read_text().strip()) and time.monotonic() < end:
+        time.sleep(0.05)
+    root = roots.read_text().strip()
+    assert os.path.isdir(os.path.join(root, "case"))
+    proc.send_signal(signal.SIGTERM)
+    proc.communicate(timeout=30)
+    assert proc.returncode == 143
+    assert (run_folder(tmp_path, "without_skill") / "cwd" / "made-by-the-run.md").is_file()
+    assert not os.path.exists(root)
+
+
+def test_a_temporary_folder_that_names_the_skill_or_sits_in_a_repository_is_not_used(tmp_path, monkeypatch):
+    import tempfile
+    monkeypatch.setattr(er, "ROOT", str(tmp_path / "workbench"))
+    (tmp_path / "workbench").mkdir()
+    for bad in (tmp_path / "workbench" / "tmp", tmp_path / "scratch-of-eng-docs", tmp_path / "checkout" / "tmp"):
+        bad.mkdir(parents=True)
+        (tmp_path / "checkout" / "AGENTS.md").parent.mkdir(exist_ok=True)
+        (tmp_path / "checkout" / "AGENTS.md").write_text("x")
+        monkeypatch.setattr(tempfile, "tempdir", str(bad))
+        assert er.temp_base(("eng-docs",)) in (os.path.realpath("/tmp"), os.path.realpath("/var/tmp"))
+    good = tmp_path / "plain"
+    good.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(good))
+    assert er.temp_base(("eng-docs",)) == os.path.realpath(good)
+
+
+# --- contamination: a without-skill run that reached the repository ---------------------------------
+
+def test_a_repository_path_in_a_without_skill_answer_marks_it_contaminated_and_blocks_the_record(tmp_path, monkeypatch, capsys):
+    skill = looks_demo(tmp_path, monkeypatch)
+    (tmp_path / "adapters" / "h" / "say-repo").write_text("")
+    assert er.main(FULL) == 0
+    captured = capsys.readouterr()
+    out, bench = json.loads(captured.out), bench_of(tmp_path)
+    assert [(c["case"], c["variant"], c["tier"], c["run"]) for c in bench["contaminated"]] == [
+        (1, "without_skill", "strong", 1), (1, "without_skill", "floor", 1)]
+    assert bench["contaminated"][0]["evidence"].startswith("response.md: I found the capability in ")
+    assert "/skills/demo" in bench["contaminated"][0]["evidence"]
+    assert out["contaminated"] == 2 and "contaminated without-skill run(s)" in out["record"]["reason"]
+    assert "CONTAMINATED: 2 without-skill run(s)" in captured.err and not (skill / "evals" / "result.json").exists()
+    assert er.main(FULL + ["--allow-contaminated"]) == 0
+    assert json.loads(capsys.readouterr().out)["record"]["written"] is True
+
+
+def test_a_clean_run_and_a_with_skill_run_are_not_contaminated(tmp_path, monkeypatch, capsys):
+    looks_demo(tmp_path, monkeypatch)
+    assert er.main(FULL) == 0
+    assert bench_of(tmp_path)["contaminated"] == [] and json.loads(capsys.readouterr().out)["record"]["written"] is True
+    out_dir = tmp_path / "o"
+    out_dir.mkdir()
+    (out_dir / "stderr.log").write_text(f"$ find {os.path.realpath(tmp_path)}/skills -name SKILL.md\n")
+    assert er.contamination(str(out_dir)).startswith("stderr.log: $ find ")
+    (out_dir / "stderr.log").write_text("$ find /somewhere/else\n")
+    assert er.contamination(str(out_dir)) is None
+
+
+# --- the baseline alone: --only without --update-record ---------------------------------------------
+
+BASELINE = ["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1", "--only", "without", "--update-record"]
+
+
+def test_update_record_replaces_only_the_two_baseline_scores_and_the_gate(tmp_path, monkeypatch, capsys):
+    skill = looks_demo(tmp_path, monkeypatch)
+    assert er.main(FULL) == 0
+    before = json.loads((skill / "evals" / "result.json").read_text())
+    assert before["scores"]["strong_without"] == 1.0 and "baseline" not in before
+    (tmp_path / "adapters" / "h" / "grade-fail").write_text("")  # the cleaner baseline scores nothing
+    capsys.readouterr()
+    assert er.main(BASELINE) == 0
+    out = json.loads(capsys.readouterr().out)
+    after = json.loads((skill / "evals" / "result.json").read_text())
+    assert out["record"]["written"] is True and out["record"]["updated"] == "baseline" and out["record"]["status"] == "evaluated"
+    assert after["scores"] == {"strong_with": 1.0, "strong_without": 0.0, "floor_with": 1.0, "floor_without": 0.0}
+    assert after["gate"] == {"floor": True, "strong_delta": True, "passed": True}
+    assert after["baseline"] == {"date": after["date"], "iteration": 2, "runs": 1}
+    for key in ("content_sha256", "iteration", "date", "runs", "cases", "models", "threshold", "complete", "infra_failures"):
+        assert after[key] == before[key]
+    assert not list(run_folder(tmp_path, "with_skill", 2).parent.glob("with_skill*"))  # only the without-skill variant ran
+
+
+@pytest.mark.parametrize("how, why", [
+    ("no-record", "no record to update"),
+    ("edited", "another content of the skill"),
+    ("other-floor", "the record's floor model is f, this run's is other"),
+    ("incomplete", "incomplete iteration"),
+    ("contaminated", "contaminated without-skill run(s)"),
+])
+def test_update_record_changes_nothing_and_says_why(tmp_path, monkeypatch, capsys, how, why):
+    skill = looks_demo(tmp_path, monkeypatch)
+    record = skill / "evals" / "result.json"
+    if how != "no-record":
+        assert er.main(FULL) == 0
+    before = record.read_text() if record.exists() else None
+    args = list(BASELINE)
+    if how == "edited":
+        (skill / "SKILL.md").write_text("# demo, edited\n")
+    elif how == "other-floor":
+        args[args.index("f")] = "other"
+    elif how == "incomplete":
+        (tmp_path / "adapters" / "h" / "fail-without").write_text("")
+    elif how == "contaminated":
+        (tmp_path / "adapters" / "h" / "say-repo").write_text("")
+    capsys.readouterr()
+    code = er.main(args)
+    out = json.loads(capsys.readouterr().out)
+    assert code == (1 if how == "incomplete" else 0)
+    assert out["record"]["written"] is False and why in out["record"]["reason"]
+    assert (record.read_text() if record.exists() else None) == before
+
+
+@pytest.mark.parametrize("args", [["--update-record"], ["--only", "with", "--update-record"],
+                                  ["--only", "without", "--update-record", "--case", "1"],
+                                  ["--only", "without", "--update-record", "--no-grade"]])
+def test_update_record_needs_the_whole_without_skill_variant(args):
+    with pytest.raises(SystemExit) as e:
+        er.parse(["--skill", "s", "--harness", "h", "--model", "m", *args])
+    assert e.value.code == 2
