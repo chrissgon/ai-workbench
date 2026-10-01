@@ -216,3 +216,17 @@ def test_a_stopped_adapter_stops_the_cli_and_its_children(env):
     proc.send_signal(signal.SIGTERM)
     assert proc.wait(timeout=15) == 143
     assert gone(child) and gone(cli)
+
+
+def test_inside_the_eval_container_every_tool_is_allowed_and_the_web_only_when_asked(env):
+    env["env"]["CLAUDE_EVAL_SANDBOX"] = "container"
+    r = run(env, "--skill-dir", str(env["skill"]), "--allow-command", "git status")
+    assert r.returncode == 0, r.stderr
+    args = json.loads(env["log"].read_text())["args"]
+    assert "--dangerously-skip-permissions" in args and "--settings" not in args and "--allowedTools" not in args
+    assert args[args.index("--disallowedTools") + 1] == "WebSearch,WebFetch"
+    import shutil
+    shutil.rmtree(env["tmp"] / "cwd" / ".claude")  # a second run needs a fresh case folder
+    r = run(env, "--allow-web")
+    assert r.returncode == 0, r.stderr
+    assert "--disallowedTools" not in json.loads(env["log"].read_text())["args"]

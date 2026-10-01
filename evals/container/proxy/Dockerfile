@@ -1,0 +1,8 @@
+# The only way out of the eval network: a forward proxy that lets through the hosts in allow.txt.
+FROM alpine:3.22
+RUN apk add --no-cache tinyproxy
+COPY tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
+COPY allow.txt /etc/tinyproxy/allow.txt
+USER tinyproxy
+EXPOSE 8888
+CMD ["tinyproxy", "-d", "-c", "/etc/tinyproxy/tinyproxy.conf"]

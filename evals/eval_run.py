@@ -181,7 +181,10 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, ".."))
-STATUS_SCRIPT = os.path.join(HERE, "eval_status.py")  # content hash and the per-skill record
+STATUS_SCRIPT = os.path.join(HERE, "eval_status.py")
+EXECUTOR_SCRIPT = os.path.join(HERE, "executor.py")  # where a run's commands execute: a container
+# "container" for every real run; the unit tests set "host" to drive stand-in adapters without docker.
+EXECUTOR = "container"  # content hash and the per-skill record
 GRADING_TEMPLATE = os.path.join(HERE, "grading-prompt.md")
 SETUP_TIMEOUT = 300  # seconds per setup command
 
@@ -189,6 +192,17 @@ SETUP_TIMEOUT = 300  # seconds per setup command
 def die(msg, code=2):
     print(f"Error: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+def load_executor():
+    """evals/executor.py as a module."""
+    name = "workbench_eval_executor"
+    if name not in sys.modules:
+        spec = importlib.util.spec_from_file_location(name, EXECUTOR_SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
 
 
 def load_status():
@@ -203,7 +217,7 @@ def load_status():
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": None, "record_anyway": False, "allow_contaminated": False, "update_record": False, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
+            "threshold": None, "strong_pass_env": [], "record_anyway": False, "allow_contaminated": False, "update_record": False, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
             "runs": 3, "jobs": 4, "timeout": 900, "max_cost": None, "record": True, "check_cases": False, "retries": 2,
             "early_rate": 0.15}
     i = 0
@@ -256,6 +270,8 @@ def parse(argv):
         opts["floor_harness"] = gate.get("floor_harness")
     if opts["floor"] and opts["floor"] == gate.get("floor_model") and not opts["floor_pass_env"]:
         opts["floor_pass_env"] = list(gate.get("floor_pass_env") or [])
+    # The strong runner's credential in a container (there is no login or keychain there): strong runs and gradings.
+    opts["strong_pass_env"] = list(gate.get("strong_pass_env") or []) if opts["model"] == gate.get("strong_model") else []
     for k in ("skill",) if opts["check_cases"] else ("skill", "harness", "model"):
         if not opts[k]:
             die(f"--{k} is required" + (" (evals/eval-gate.json sets no default)." if k != "skill" else "."))
@@ -753,7 +769,12 @@ def stop_all_groups(grace=STOP_GRACE):
     """End every group still registered; no new one starts afterwards."""
     STOPPING.set()
     with GROUPS_LOCK:
-        pending = list(GROUPS)
+        pending, containers = list(GROUPS), list(CONTAINERS)
+    for name in containers:  # first, so that the work stops; their docker clients end with them
+        try:
+            load_executor().remove(name)
+        except Exception:  # stopping goes on whatever one removal does
+            pass
     for pgid in pending:
         try:
             os.killpg(pgid, signal.SIGTERM)
@@ -769,15 +790,40 @@ def stop_all_groups(grace=STOP_GRACE):
             pass
 
 
-def run_group(cmd, timeout, cwd=None, env=None):
+CONTAINERS = set()  # names of containers started and not yet ended; guarded by GROUPS_LOCK
+
+
+def run_group(cmd, timeout, cwd=None, env=None, box=None):
     """subprocess.run for a command in a session of its own: its whole process group ends on a timeout
-    (subprocess.TimeoutExpired is raised) and when the command returns, so nothing it started outlives it."""
+    (subprocess.TimeoutExpired is raised) and when the command returns, so nothing it started outlives it.
+
+    box = {"root", "skills", "pass", "network"} runs the command in a container (evals/executor.py): root is
+    the run's folder, the only thing it can change. The container is removed by name when the command
+    returns, times out or the script is stopped, since ending the docker client does not end it."""
+    container = None
+    if box is not None and EXECUTOR == "container":
+        executor = load_executor()
+        cmd, container = executor.command(cmd, box["root"], cwd=cwd, env=env, skills=box.get("skills") or (),
+                                          pass_names=box.get("pass") or (), network=box.get("network") or "none")
+        cwd = None
+    try:
+        return _run_group(cmd, timeout, cwd, env, container)
+    finally:
+        if container:
+            load_executor().remove(container, env=env)
+            with GROUPS_LOCK:
+                CONTAINERS.discard(container)
+
+
+def _run_group(cmd, timeout, cwd, env, container):
     with GROUPS_LOCK:
         if STOPPING.is_set():
             raise subprocess.TimeoutExpired(cmd, 0)
         proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                                 stderr=subprocess.PIPE, start_new_session=True)
         GROUPS.add(proc.pid)
+        if container:
+            CONTAINERS.add(container)
     try:
         try:
             stdout, stderr = proc.communicate(timeout=timeout)
@@ -794,7 +840,7 @@ def run_group(cmd, timeout, cwd=None, env=None):
 
 
 def run_failure(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), timeout=900,
-                max_cost=None, web=False, start_dir=None):
+                max_cost=None, web=False, start_dir=None, box=None):
     """Run the adapter once. Returns None when it exited 0, else why it failed: an infrastructure failure,
     never a score (the adapter exits non-zero when the provider or the harness fails, not when the answer is poor)."""
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
@@ -810,7 +856,7 @@ def run_failure(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=N
         cmd += ["--allow-web"]
     try:
         # start_dir: the adapter's shell exports the folder it starts in as OLDPWD once it changes to <cwd>.
-        r = run_group(cmd, timeout, cwd=start_dir, env=env)
+        r = run_group(cmd, timeout, cwd=start_dir, env=env, box=box)
     except subprocess.TimeoutExpired:
         with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
             f.write(f"stopped after --timeout {timeout}s\n")
@@ -930,7 +976,7 @@ def snapshot(cwd, before, installed=()):
     return files
 
 
-def isolate_git(cwd, env):
+def isolate_git(cwd, env, box=None):
     """Give the case its own repository, so git commands in a run stay inside it.
 
     Without one, `git add -A` or `git commit` from the case folder reaches the enclosing
@@ -940,15 +986,17 @@ def isolate_git(cwd, env):
     if os.path.isdir(os.path.join(cwd, ".git")):
         return
     for args in (["init", "-q"], ["add", "-A"], ["-c", "commit.gpgsign=false", "commit", "-q", "--allow-empty", "-m", "fixture"]):
-        subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, timeout=SETUP_TIMEOUT)
+        r = run_group(["git", *args], SETUP_TIMEOUT, cwd=cwd, env=env, box=box)
+        if r.returncode != 0:
+            raise subprocess.CalledProcessError(r.returncode, ["git", *args], r.stdout, r.stderr)
 
 
-def run_setup(cwd, commands, env):
+def run_setup(cwd, commands, env, box=None):
     """Run a case's setup commands in its folder (a branch, commits), after its repository exists, contained."""
     for command in commands:
         try:
             # security-scan: allow shell-string -- setup lines come from the skill's evals.json, are listed by --dry-run and run in the contained environment
-            r = run_group(["bash", "-c", command], SETUP_TIMEOUT, cwd=cwd, env=env)
+            r = run_group(["bash", "-c", command], SETUP_TIMEOUT, cwd=cwd, env=env, box=box)
         except subprocess.TimeoutExpired:
             die(f"setup command timed out after {SETUP_TIMEOUT}s in {cwd}: {command}")
         if r.returncode != 0:
@@ -1019,7 +1067,8 @@ def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
         with open(gp, "w", encoding="utf-8") as f:
             f.write(prompt)
         ok = run_prompt(runner, gp, os.path.join(root, "case"), grader, os.path.join(root, "out"), None,
-                        env=contained_env(root, pass_env), start_dir=root)
+                        env=contained_env(root, pass_env), start_dir=root,
+                        box={"root": root, "pass": pass_env, "network": "proxy"})
     finally:
         return_run(root)
     if not ok:
@@ -1080,9 +1129,10 @@ def run(argv):
     o = parse(argv)
     if o["check_cases"]:
         return check_cases_only(o)
-    for filled in ([] if o["dry"] else resolve_pass_env(o["pass_env"] + o["floor_pass_env"])):
+    secrets = o["pass_env"] + o["floor_pass_env"] + (o["strong_pass_env"] if EXECUTOR == "container" else [])
+    for filled in ([] if o["dry"] else resolve_pass_env(secrets)):
         print(f"--pass-env {filled}", file=sys.stderr)
-    unset = [n for n in o["pass_env"] + o["floor_pass_env"] if not os.environ.get(n)]
+    unset = [n for n in secrets if not os.environ.get(n)]
     if unset and not o["dry"]:
         # A missing provider key makes some runners fail with an opaque error (opencode: "UnknownError")
         # on every run; stop before spending a whole iteration on it.
@@ -1125,6 +1175,12 @@ def run(argv):
     deps = {c["id"]: dependency_dirs(c) for c in cases}
     status = load_status()
     start_hash = status.content_hash(skill_dir)
+    environment = None
+    if EXECUTOR == "container" and not o["dry"]:
+        try:  # the images, the internal network and the proxy: built and started once, before any run
+            environment = load_executor().ensure()
+        except Exception as e:
+            die(f"the eval container is not available: {e}", 1)
     it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]), claim=not o["dry"])
     ablated_dir, ablated_lines = None, 0
     if "ablated_skill" in variants:
@@ -1163,16 +1219,20 @@ def run(argv):
             case_dir, changed = os.path.join(root, "case"), {}
             try:
                 build_tree(case_dir, sources[c["id"]])
-                env = contained_env(root, o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else []))
-                isolate_git(case_dir, contained_env(root))
-                run_setup(case_dir, c.get("setup") or [], contained_env(root))
+                tier_env = o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else o["strong_pass_env"])
+                env = contained_env(root, tier_env)
+                quiet = {"root": root, "network": "none"}  # setup and the fixture commit: no secret, no network
+                isolate_git(case_dir, contained_env(root), box=quiet)
+                run_setup(case_dir, c.get("setup") or [], contained_env(root), box=quiet)
                 pp = os.path.join(root, "prompt.md")
                 with open(pp, "w", encoding="utf-8") as f:
                     f.write(c["prompt"])
                 before = file_index(case_dir)
                 why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), variant_dir,
                                   allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]],
-                                  start_dir=root)
+                                  start_dir=root,
+                                  box={"root": root, "skills": [variant_dir] + list(deps[c["id"]]), "pass": tier_env,
+                                       "network": "open" if web[c["id"]] else "proxy"})
                 if not why:
                     changed = snapshot(case_dir, before, installed)
             finally:
@@ -1208,7 +1268,7 @@ def run(argv):
             json.dump(timing, f)
         g, failed = None, None
         if o["grade"]:
-            g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"])
+            g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"] + o["strong_pass_env"])
             if g is None:
                 failed = infra("grading failed: the grader returned no parsable result")
                 msgs.append(f"GRADE FAILED case {c['id']} {name} run {k}")
@@ -1267,6 +1327,7 @@ def run(argv):
             conditions[key] = round(mean("with_skill" + tier_suffix) - mean("ablated_skill" + tier_suffix), 3)
     bench = {"skill": o["skill"], "runs": o["runs"], "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
              "strong_tolerance": o["tolerance"], "measurement_version": o["measurement_version"],
+             **({"environment": environment} if environment else {}),
              "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
              "run_summary": summary, "conditions": conditions, "failures": len(infra_failures)}
     # A run counts as completed when it produced a response and, unless --no-grade, was graded.

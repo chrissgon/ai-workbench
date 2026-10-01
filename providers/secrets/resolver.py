@@ -108,6 +108,12 @@ REGISTRY: dict[str, Secret] = {s.name: s for s in (
            ("evals/eval_run.py --pass-env", "adapters/agents-dir/run-prompt.sh",
             "adapters/api/run_agent.py"),
            store_username="openrouter"),
+    Secret("CLAUDE_CODE_OAUTH_TOKEN",
+           "the strong model's eval runs and gradings inside the eval container, where the CLI's login and the "
+           "keychain do not exist",
+           "a long-lived token of the maintainer's own account, made with the CLI's setup-token command",
+           ("evals/eval_run.py strong_pass_env", "adapters/claude-code/run-prompt.sh"),
+           store_username="claude-code-oauth"),
     Secret("DEEPSEEK_API_KEY",
            "run the floor model's eval runs through DeepSeek's own API, when the floor model id is deepseek/<model>",
            "a key used only for evals; a spending limit on it is recommended",
