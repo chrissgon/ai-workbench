@@ -53,14 +53,14 @@
     {
       "id": 5,
       "prompt": "rename the variable usrCnt to userCount in src/stats.ts",
-      "expected_output": "No routing block; the variable is renamed directly in src/stats.ts (declaration and both uses) and nothing else changes.",
+      "expected_output": "No routing block; the variable is renamed directly in src/stats.ts (the declaration and its use) and nothing else changes.",
       "files": [
         "evals/files/rename-case"
       ],
       "assertions": [
         "No skill is named and no routing block is printed",
         "src/stats.ts no longer contains usrCnt and contains userCount in the declaration and in the returned object",
-        "No other file is created or modified",
+        "The case folder contains no source file other than src/stats.ts.",
         "The output does not invoke or describe the orchestrator procedure"
       ]
     },
@@ -70,7 +70,7 @@
       "expected_output": "No route yet; at most three questions with recommended answers that distinguish product (what users do first), design (screens and flows), engineering (signup code), and marketing (activation emails).",
       "files": [],
       "assertions": [
-        "No skill other than core-clarify is named as the route",
+        "Any skill named as the route is marked pending; none is presented as ready or as already invoked.",
         "At most three questions are asked",
         "Each question comes with a recommended answer",
         "The output does not pick an area silently"

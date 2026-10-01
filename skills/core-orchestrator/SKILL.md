@@ -3,10 +3,13 @@ name: core-orchestrator
 description: >
   Route a request to the one skill or flow that should handle it, across business, product,
   brand, design, engineering, delivery, marketing, AI and the workbench itself. Use this skill
-  first whenever a request could be handled by more than one skill, spans more than one area,
-  continues a previous multi-phase effort, or when it is unclear whether a skill applies at
-  all. Also use it when the user asks "where are we", "what's next" or "what can you do here".
-  Do not use it for a one-step request that needs no specialized knowledge; answer that directly.
+  first for any request to build, implement, fix, design, plan, write, publish, schedule or send
+  something, including one that names an external system (a ticket, a post): before checking
+  whether a tool for that system exists, and even when no other skill is installed. Use it too
+  when a request spans more than one area, continues a previous multi-phase effort, or when it
+  is unclear whether a skill applies at all, and when the user asks "where are we", "what's
+  next" or "what can you do here". Do not use it for a one-step request that needs no
+  specialized knowledge and has no side effects; answer that directly.
 license: MIT
 metadata:
   area: core
@@ -53,9 +56,9 @@ Progress:
   | ambiguous | two rows fit with different deliverables, or the target is unknown (which product, which repository) | ask (step 6) inside the routing block, with Route set to the most likely skill and status `pending`; use `core-clarify` only when the request is a plan that needs a full brief |
 
 - [ ] Step 3: Find the area. Read [references/routing.md](references/routing.md) and match the request's *intent*, not its words; requests arrive in any language. If two areas fit, apply the boundary test: would a senior practitioner of area X know how to do this without expertise from area Y? If yes, X. Keep in mind: AI *inside the product* is the `ai-` area; the workbench improving itself is `core-`.
-- [ ] Step 4: Pick the skill from the routing table row and copy its name exactly as written there; never compose, extend or abbreviate a name (there is no `-validator`, `-checker` or `-helper` variant of any skill). Then check that it is installed: look at the list of skills available in this session, or at the skills directories in the project and the user's home. If it is not there, the route status is `pending`, Context says `inputs unknown (skill not installed)`, Next proposes one fallback (the closest installed skill, or direct execution with its limits stated) as a recommendation, and you wait for the user's yes. Add `- [ ] Skill gap: <request> → <missing skill>` to "Open questions" in the state file when it exists. Never mark a skill `ready` that you have not seen installed.
+- [ ] Step 4: Pick the skill from the routing table row and copy its name exactly as written there; never compose, extend or abbreviate a name (there is no `-validator`, `-checker` or `-helper` variant of any skill). Then check that it is installed: look at the list of skills available in this session, or at the skills directories in the project and the user's home. If it is not there, the route status is `pending`, Context says `inputs unknown (skill not installed)`, Next proposes one fallback (the closest installed skill, or direct execution with its limits stated) as a recommendation, and you wait for the user's yes. Name the fallback in one line; do not describe its method or its steps. Add `- [ ] Skill gap: <request> → <missing skill>` to "Open questions" in the state file when it exists. Never mark a skill `ready` that you have not seen installed.
 - [ ] Step 5: Check what the skill needs. Open the installed skill's frontmatter and, for each artifact in its `inputs` (what it reads, not what it writes), note present or missing. For each class in its `requires`, check the environment (run the environment doctor if available; otherwise look for the integration or provider) and write the class name exactly as listed in [references/requirement-classes.md](references/requirement-classes.md). When the skill is not installed, infer the classes from the request using that list (a LinkedIn post needs `publisher:linkedin`; a ticket needs `integration:issue-tracker`) and say `inputs unknown (skill not installed)`. Missing inputs and requirements never block routing: the skill degrades as its body describes. You only report them.
-- [ ] Step 6: If the shape was ambiguous or a key fact is unknown, stop and ask. At most three questions, each with a recommended answer. Do not guess the product, the repository, the platform or the audience. Ask *inside* the routing block: Route names the most likely skill with its shape word (`capability` or `flow`) and the status `pending`; fill Why, Context and Requirements with what you know; put the questions under Next. Never replace the shape word with `ambiguous`; ambiguity is expressed by `pending`. The block is the structure the reader relies on; it is never skipped, even when the answer is a question.
+- [ ] Step 6: If the shape was ambiguous or a key fact is unknown, stop and ask. At most three questions, each with a recommended answer. Do not guess the product, the repository, the platform or the audience. Ask only what routing needs: which product, where the project lives, which deliverable, yes or no to the fallback. Never ask, and never recommend answers to, questions the routed skill owns (scope, technology stack, pricing, content); that skill asks them. Ask *inside* the routing block: Route names the most likely skill with its shape word (`capability` or `flow`) and the status `pending`; fill Why, Context and Requirements with what you know; put the questions under Next. Never replace the shape word with `ambiguous`; ambiguity is expressed by `pending`. The block is the structure the reader relies on; it is never skipped, even when the answer is a question.
 - [ ] Step 7: Write the routing block (template below), then invoke the chosen skill by name. Hand over everything you learned in steps 1 and 5 so the skill does not ask again.
 - [ ] Step 8: Self-check against "Quality criteria" before invoking.
 
@@ -64,7 +67,7 @@ Progress:
 ```markdown
 Route: <skill-name> (<capability | flow>, <ready | pending>)
 Why: <intent> → <area> → <skill>, in one line
-Context: found <artifacts present, or "none">; missing <artifacts absent, or "none">; state file <present | missing (the flow will create it through core-project-init)>
+Context: found <artifacts present, or "none">; missing <artifacts absent, or "none">; state file `docs/workbench/state.md`: <present | missing (the flow will create it through core-project-init)>
 Requirements: <class → satisfied by ... | missing → the skill will ...>; or "none"
 Autonomy: <Autonomy.Checkpoints value, or "not set">
 Next: <the first thing the routed skill will do>; or the questions, each on its own line as `Q<n>: <question> Recommended: <answer>, because <reason>`

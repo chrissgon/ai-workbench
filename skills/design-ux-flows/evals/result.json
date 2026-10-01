@@ -10,9 +10,9 @@
     }
   },
   "skill": "design-ux-flows",
-  "content_sha256": "0bc3cc2912438fa3b547ddf7e61ae0d7b3febdedf35725aa72b2007d27c0327d",
+  "content_sha256": "60ac201015d03cab3d9afb7ed24c7fc7b8f53d6987fd45223831b73cc3de7059",
   "date": "2026-10-01",
-  "iteration": 1,
+  "iteration": 2,
   "runs": 3,
   "cases": [
     1,
@@ -27,10 +27,10 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.789,
-    "strong_without": 0.467,
-    "floor_with": 0.833,
-    "floor_without": 0.433
+    "strong_with": 1.0,
+    "strong_without": 0.292,
+    "floor_with": 1.0,
+    "floor_without": 0.25
   },
   "complete": true,
   "infra_failures": 0,
@@ -44,8 +44,8 @@
   },
   "gate": {
     "floor": true,
-    "strong": false,
+    "strong": true,
     "strong_delta": true,
-    "passed": false
+    "passed": true
   }
 }

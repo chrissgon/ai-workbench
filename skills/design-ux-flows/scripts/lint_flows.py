@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Lint a UX flows document written from assets/flows-template.md against its PRD.
 
-Usage: python3 lint_flows.py --file <flows.md> --prd <prd.md> [--phase P-n] [--json]
+Usage: python3 lint_flows.py --file <flows.md> --prd <prd.md> [--phase P-n] [--report <lint.json>] [--json]
+
+--report <path> also writes the result to that file, with the command's own arguments ("file", "prd",
+"phase") and the date, so a reviewer can check the lint ran and what it checked.
 
 Checks:
   - required sections are present; ids (IA, SCREEN, FLOW, ASSUMPTION, OPEN) are unique
   - every IA has Parent:, URL:, Filled by: and Source:
   - every SCREEN has Purpose:, Regions:, States:, Breakpoints: and Source:
+  - screen-states: every SCREEN names at least one state called `empty` or `error` in States: (for a
+    message such as an email or a notification, the error state is the delivery failure)
   - every FLOW has Actor: U-n, Trigger:, Steps:, End:, Failures:, Keyboard: and Source:, and its
     steps name at least one SCREEN- that exists
   - every SCREEN is named by at least one FLOW
@@ -16,12 +21,14 @@ Checks:
 
 Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
+import datetime
 import json
 import re
 import sys
 
 SECTIONS = ["## Summary", "## Sources", "## Information architecture", "## Screens", "## Flows", "## Coverage",
             "## Assumptions", "## Open questions", "## Readiness"]
+STATES_RE = re.compile(r"States:\s*(.*?)(?=\s*(?:Purpose|Regions|Breakpoints|Source):|$)")
 ID_RE = re.compile(r"^\s*-\s*((?:IA|SCREEN|FLOW|ASSUMPTION|OPEN|F)-\d+)\s*:", re.M)
 
 
@@ -53,13 +60,17 @@ def main(argv):
         print(__doc__)
         return 0 if argv else 2
     as_json = "--json" in argv
-    path = prd = phase = None
-    for flag in ("--file", "--prd", "--phase"):
+    path = prd = phase = report = None
+    for flag in ("--file", "--prd", "--phase", "--report"):
         if flag in argv:
+            if argv.index(flag) + 1 >= len(argv):
+                print(f"Error: {flag} needs a value.", file=sys.stderr)
+                return 2
             val = argv[argv.index(flag) + 1]
             if flag == "--file": path = val
             elif flag == "--prd": prd = val
-            else: phase = val
+            elif flag == "--phase": phase = val
+            else: report = val
     if not path or not prd:
         print("Error: --file <flows.md> and --prd <prd.md> are required. See --help.", file=sys.stderr)
         return 2
@@ -88,6 +99,10 @@ def main(argv):
         for part in ("Purpose:", "Regions:", "States:", "Breakpoints:", "Source:"):
             if part not in b:
                 errors.append(f"{i} lacks {part}")
+        sm = STATES_RE.search(b)
+        if sm and not re.search(r"\b(?:empty|error)\b", sm.group(1), re.I):
+            errors.append(f"screen-states: {i} names no empty or error state in States: "
+                          "(for a message, the error state is the delivery failure)")
     crossed = set()
     for i, b in flows.items():
         for part in ("Trigger:", "Steps:", "End:", "Failures:", "Keyboard:", "Source:"):
@@ -129,8 +144,19 @@ def main(argv):
             if part not in b:
                 errors.append(f"{i} lacks {part}")
     ok = not errors
-    print(json.dumps({"ok": ok, "counts": {"IA": len(ia), "SCREEN": len(screens), "FLOW": len(flows),
-                      "covered": len(coverage)}, "errors": errors}, indent=2 if as_json else None))
+    result = {"ok": ok, "counts": {"IA": len(ia), "SCREEN": len(screens), "FLOW": len(flows),
+              "covered": len(coverage)}, "errors": errors}
+    if report:
+        record = {"ok": ok, "date": datetime.date.today().isoformat(), "file": path, "prd": prd, "phase": phase,
+                  "counts": result["counts"], "errors": errors}
+        try:
+            with open(report, "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error: cannot write the report: {e}", file=sys.stderr)
+            return 2
+    print(json.dumps(result, indent=2 if as_json else None))
     return 0 if ok else 1
 
 

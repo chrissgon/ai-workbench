@@ -1,26 +1,24 @@
 {
   "early_ends": {
     "strong": {
-      "early_ends": 1,
-      "rate": 0.027
+      "early_ends": 0,
+      "rate": 0.0
     },
     "floor": {
       "early_ends": 0,
       "rate": 0.0
     }
   },
-  "skill": "core-orchestrator",
-  "content_sha256": "469a3b0c73ffed7f92c82124c92e4bad5b414bc75f227c334a4d8d59e3e05bbe",
+  "skill": "eng-security-review",
+  "content_sha256": "62357bede38f46f4968a92e003a96e201121502d70b9592d56263dd6b69bb321",
   "date": "2026-10-01",
-  "iteration": 2,
+  "iteration": 1,
   "runs": 3,
   "cases": [
     1,
     2,
     3,
-    4,
-    5,
-    6
+    4
   ],
   "harness": "claude-code",
   "floor_harness": "agents-dir",
@@ -31,10 +29,10 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.933,
-    "strong_without": 0.45,
-    "floor_with": 0.894,
-    "floor_without": 0.492
+    "strong_with": 0.905,
+    "strong_without": 0.762,
+    "floor_with": 1.0,
+    "floor_without": 0.75
   },
   "complete": true,
   "infra_failures": 0,
