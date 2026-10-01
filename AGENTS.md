@@ -24,7 +24,7 @@ providers/<class>/<impl>.py native providers for requirement classes; interface 
 templates/                  capability.SKILL.md, flow.SKILL.md, agent.md
 packs/<name>.txt            installation subsets; default.txt excludes optional areas (see packs/README.md)
 adapters/<harness>/         adapter.json, install.sh, optional build.*, overrides/, README.md
-scripts/                    validate.py, security_scan.py, install-hooks.sh, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
+scripts/                    validate.py, security_scan.py, eval_status.py (eval status per skill), install-hooks.sh, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
 docs/                       area-map.md, decisions.md, inventory.md, backlog.md (workbench tasks that are not skills)
 ```
 
@@ -115,13 +115,21 @@ Cheap models drop steps in long lists, invent structure when there is no templat
 
 Every skill is evaluated with a strong model and with a floor model (a large hosted open-weight model). It passes only when the floor model passes **and** the strong model scores at least as well with the skill as without it. A negative delta on the strong model means the skill is over-specified: loosen the procedure, keep the criteria. Floor models are configured in the eval tooling, not named in skills.
 
+**Eval status is computed, never ticked.** The eval runner writes the result of a complete run (every case, with and without the skill, both models) to `skills/<name>/evals/result.json`, with a hash of the skill folder; the file is committed and never edited by hand. `python3 scripts/eval_status.py status` derives one of three states from it:
+
+- `draft`: no record, or a record whose gate did not pass or whose run was incomplete (a run that failed on infrastructure is rerun, never scored).
+- `evaluated`: the gate passed and the skill folder is unchanged since. Only an `evaluated` skill is done.
+- `stale`: the gate passed, then anything inside the skill folder changed (`SKILL.md`, a reference, an asset, a script, an eval case). Rerun its evals until they pass again. Changes outside the folder do not make a skill stale.
+
+The status table in `docs/inventory.md` is generated: after an eval run or any change to a skill, run `python3 scripts/eval_status.py inventory --write`.
+
 ## Adding a skill
 
 1. `bash scripts/new-skill.sh --name <prefix-name> --kind capability|flow --area <area>`
 2. Fill `SKILL.md` from the template. Delete sections that do not apply; do not leave placeholders.
 3. Declare `inputs`, `outputs`, `requires`, `side_effects` honestly.
 4. Add `references/`, `assets/`, `scripts/` only when the body needs them.
-5. Add `evals/evals.json` with at least two realistic cases, run them on the strong and the floor model, and record the result in `docs/inventory.md`. A skill without a recorded pass is not done.
+5. Add `evals/evals.json` with at least two realistic cases, check them (`eval_run.py --check-cases`: every file a prompt cites is shipped at the path it names), and run them on the strong and the floor model. The runner writes `evals/result.json`; then run `python3 scripts/eval_status.py inventory --write`. A skill is done only when its status is `evaluated`.
 6. `python3 scripts/validate.py` until it reports zero errors.
    Then walk `shared/references/security.md`: every item `yes` or `n/a` with a reason.
 7. Ground the content in real expertise: past corrections, real artifacts, real failures. Do not generate from generic knowledge. Then anonymise it (principle 8): the lesson stays, the real project's names, people and numbers go, and fixtures copied from a real project are rewritten with fictional names. Follow `core-skill-creator`; its `references/authoring-guide.md` is the long-form reference.
@@ -136,7 +144,7 @@ Create `adapters/<harness>/` with `adapter.json`, `install.sh`, `README.md`, and
 
 ## Validation
 
-`python3 scripts/validate.py` checks: folder name equals `name`; prefix and area are valid and consistent; `kind` matches the prefix; description length; line limit; no harness names or paths in the core; `side_effects` implies a `## Confirmation gate` section; every `inputs` path is some skill's `outputs`; relative links resolve; agent frontmatter keys; `english-only`, no Portuguese-specific diacritics or words outside a line carrying `validate: allow english-only -- <reason>`; `private-term`, none of the terms a maintainer lists in a local, git-ignored `.private-terms` file (their own names, projects and accounts, one per line; `re:<regex>` and `!<path glob>` allowed), outside a line carrying `validate: allow private-term -- <reason>`; and, through `scripts/security_scan.py`, no secrets, hidden text (invisible Unicode, HTML comments with prose in instruction files) or unsafe script patterns, and no remote writes from a skill that declares `side_effects: []`. Run it before every commit. A security finding that is intended is silenced on its line with `security-scan: allow <rule> -- <reason>`, or, where a comment would change the file (an eval fixture with a planted fake secret), with a line in `.security-scan-allow`; never without a reason. `--strict` turns warnings into errors. `bash scripts/install-hooks.sh` makes git run it, and the tests of whatever `providers/` or `scripts/` the commit touches, before every commit; never bypass the hook on your own.
+`python3 scripts/validate.py` checks: folder name equals `name`; prefix and area are valid and consistent; `kind` matches the prefix; description length; line limit; no harness names or paths in the core; `side_effects` implies a `## Confirmation gate` section; every `inputs` path is some skill's `outputs`; relative links resolve; agent frontmatter keys; `english-only`, no Portuguese-specific diacritics or words outside a line carrying `validate: allow english-only -- <reason>`; `eval-status`, every `evals/result.json` is a valid record, the generated status block in `docs/inventory.md` is up to date (an error until `python3 scripts/eval_status.py inventory --write` is run), and `stale` and `draft` skills are listed as warnings; `private-term`, none of the terms a maintainer lists in a local, git-ignored `.private-terms` file (their own names, projects and accounts, one per line; `re:<regex>` and `!<path glob>` allowed), outside a line carrying `validate: allow private-term -- <reason>`; and, through `scripts/security_scan.py`, no secrets, hidden text (invisible Unicode, HTML comments with prose in instruction files) or unsafe script patterns, and no remote writes from a skill that declares `side_effects: []`. Run it before every commit. A security finding that is intended is silenced on its line with `security-scan: allow <rule> -- <reason>`, or, where a comment would change the file (an eval fixture with a planted fake secret), with a line in `.security-scan-allow`; never without a reason. `--strict` turns warnings into errors. `bash scripts/install-hooks.sh` makes git run it, and the tests of whatever `providers/` or `scripts/` the commit touches, before every commit; never bypass the hook on your own.
 
 ## Never
 

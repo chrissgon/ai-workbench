@@ -673,6 +673,16 @@ Empty feedback = output looked fine. Focus improvements on cases with specific c
 - Explain the why (reasoning-based > rigid directives)
 - Bundle repeated work (scripts for repeated patterns)
 
+### In This Workbench: Checked Cases, a Record, a Computed Status
+
+The loop above is run by `scripts/eval_run.py` of this skill, and its result is kept on record:
+
+1. **Check the cases before running them**: `eval_run.py --skill <name> --check-cases` calls no model. It fails when a `files` entry does not exist, when the prompt cites a path that is not in the case folder (unless the path is an output named in `expected_output`, an assertion or the skill's `metadata.outputs`, or is listed in the case's `absent_on_purpose`), when a `grader_files` entry is not in the case folder, or when a `skills` dependency does not exist. Every real run does the same check first.
+2. **Infrastructure failures are not scores**: a run whose adapter fails, times out, returns nothing, or whose grading is unreadable goes to `infra_failures` in `benchmark.json`, never into a mean, and the iteration gets `"complete": false` (exit code 1). Rerun it; do not change the skill for it.
+3. **The record**: a complete run of every case, with and without the skill, on both models, writes `skills/<name>/evals/result.json`: scores, gate, date, iteration, and a sha256 of the skill folder taken when the run started. It is committed and never edited by hand. `python3 scripts/eval_status.py record --skill <name> --benchmark <path>` builds it from an older `benchmark.json`.
+4. **The status** (`python3 scripts/eval_status.py status`): `draft` (no record, a failed gate or an incomplete run), `evaluated` (gate passed, folder unchanged), `stale` (gate passed, folder changed since). Only `evaluated` is done.
+5. **The inventory**: `python3 scripts/eval_status.py inventory --write` regenerates the status table in `docs/inventory.md`; `scripts/validate.py` fails while it is out of date.
+
 ---
 
 ## Description Optimization

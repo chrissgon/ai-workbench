@@ -313,3 +313,186 @@ def test_jobs_runs_model_runs_at_the_same_time_and_keeps_the_order(tmp_path, mon
 def test_jobs_is_bounded(jobs):
     with pytest.raises(SystemExit):
         er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--jobs", jobs])
+
+
+# --- preflight: the cases are checked before any model call ---------------------------------------
+
+def preflight_of(tmp_path, monkeypatch, case, setup=True):
+    skill = tmp_path / "skills" / "demo"
+    if not skill.exists():
+        make_skill(tmp_path)
+    (skill / "SKILL.md").write_text("---\nname: demo\nmetadata:\n  outputs: [docs/out/report.md]\n---\n# demo\n")
+    (skill / "scripts").mkdir(exist_ok=True)
+    (skill / "scripts" / "lint_demo.py").write_text("print('ok')\n")
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    case = {"id": 1, "prompt": "p", "assertions": ["a"], **case}
+    return er.preflight(str(skill), [case], {1: er.case_files(str(skill), case)}, setup=setup)
+
+
+def test_preflight_accepts_a_case_that_ships_what_it_cites(tmp_path, monkeypatch):
+    errors, unchecked = preflight_of(tmp_path, monkeypatch, {
+        "files": ["evals/files/app"], "grader_files": ["a.txt"],
+        "prompt": "Read a.txt and https://site.example/guide.html, run lint_demo.py, see src/**/*.ts and "
+                  "<name>.md, we use Node.js, then write docs/out/report.md."})
+    assert errors == [] and unchecked == []
+
+
+def test_preflight_reports_a_missing_fixture(tmp_path, monkeypatch):
+    errors, _ = preflight_of(tmp_path, monkeypatch, {"files": ["evals/files/app", "evals/files/gone"]})
+    assert len(errors) == 1 and "files entry 'evals/files/gone' does not exist" in errors[0]
+
+
+def test_preflight_reports_a_prompt_path_that_is_not_in_the_case_folder(tmp_path, monkeypatch):
+    # The fixture lands at the root as a.txt; the prompt names it under docs/, where nothing was shipped.
+    errors, _ = preflight_of(tmp_path, monkeypatch, {
+        "files": ["evals/files/app"], "prompt": "Summarize docs/product/prd.md and config.yaml."})
+    assert len(errors) == 2 and errors[0].startswith("case 1: the prompt cites 'docs/product/prd.md'")
+    assert "'config.yaml'" in errors[1]
+
+
+def test_preflight_accepts_a_path_absent_on_purpose_or_named_as_an_output(tmp_path, monkeypatch):
+    case = {"prompt": "Fix docs/product/prd.md, then write docs/plan.md and notes/summary.md.",
+            "absent_on_purpose": ["docs/product/prd.md"], "expected_output": "A plan in docs/plan.md.",
+            "assertions": ["notes/summary.md lists every change"]}
+    assert preflight_of(tmp_path, monkeypatch, case)[0] == []
+    del case["absent_on_purpose"]
+    assert len(preflight_of(tmp_path, monkeypatch, case)[0]) == 1
+
+
+def test_preflight_reports_a_grader_file_and_a_dependency_that_do_not_exist(tmp_path, monkeypatch):
+    errors, _ = preflight_of(tmp_path, monkeypatch, {"files": ["evals/files/app"], "grader_files": ["a.txt", "docs/voice.md"],
+                                                    "skills": ["no-such-skill"]})
+    assert len(errors) == 2
+    assert "skills entry 'no-such-skill'" in errors[0] and "grader_files entry 'docs/voice.md'" in errors[1]
+
+
+def test_preflight_sees_what_setup_creates_and_dry_run_leaves_such_cases_unchecked(tmp_path, monkeypatch):
+    case = {"prompt": "Review src/tax.js.", "setup": ["mkdir src && echo x > src/tax.js"]}
+    assert preflight_of(tmp_path, monkeypatch, case) == ([], [])
+    errors, unchecked = preflight_of(tmp_path, monkeypatch, case, setup=False)
+    assert errors == [] and len(unchecked) == 1 and "setup" in unchecked[0]
+
+
+def write_demo(tmp_path, monkeypatch, runner, cases=None):
+    """A skill with two cases and a fake adapter; ROOT points at the temporary tree."""
+    skill = make_skill(tmp_path)
+    (skill / "SKILL.md").write_text("# demo\n")
+    cases = cases or [{"id": 1, "prompt": "p", "assertions": ["a"]}, {"id": 2, "prompt": "q", "assertions": ["a"]}]
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": cases}))
+    adapter = tmp_path / "adapters" / "h"
+    adapter.mkdir(parents=True)
+    (adapter / "run-prompt.sh").write_text(runner)
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    return skill
+
+
+# The fake adapter: grading prompts (their text carries "You are grading") get a pass or a fail by tier;
+# a model run answers "ok", or fails as told by a marker file next to the adapter.
+FAKE = r'''
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  echo '[{"id": 1, "text": "a", "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
+fi
+case "$4" in *"/eval-2/with_skill.floor/"*) [ -f "$here/fail-one" ] && { echo "provider: out of credits" >&2; exit 7; } ;; esac
+[ -f "$here/edit-skill" ] && echo "edited" >> "$here/../../skills/demo/SKILL.md"
+echo ok > "$out/response.md"
+'''
+FULL = ["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1"]
+
+
+def test_check_cases_and_a_real_run_stop_on_a_preflight_error_before_any_run(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, FAKE, [{"id": 1, "prompt": "Read docs/spec.md.", "assertions": ["a"]}])
+    assert er.main(["--skill", "demo", "--check-cases"]) == 2
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["errors"][0].startswith("case 1: the prompt cites 'docs/spec.md'")
+    assert captured.err.startswith("PREFLIGHT demo case 1:")
+    with pytest.raises(SystemExit) as e:
+        er.main(FULL)
+    assert e.value.code == 2 and not (tmp_path / "evals-workspace").exists()
+    assert er.main(FULL + ["--dry-run"]) == 2
+    assert json.loads(capsys.readouterr().out)["preflight"]["errors"]
+
+
+def test_a_complete_full_run_writes_the_record(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    assert er.main(FULL) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["complete"] is True and out["expected_runs"] == out["completed_runs"] == 8
+    assert out["record"] == {"written": True, "path": os.path.join("skills", "demo", "evals", "result.json"), "status": "evaluated"}
+    bench = json.loads((tmp_path / "evals-workspace" / "demo" / "iteration-1" / "benchmark.json").read_text())
+    assert bench["complete"] is True and bench["infra_failures"] == [] and bench["cases"] == [1, 2]
+    rec = json.loads((skill / "evals" / "result.json").read_text())
+    assert rec["content_sha256"] == bench["content_sha256"] and rec["iteration"] == 1 and rec["cases"] == [1, 2]
+    assert rec["scores"] == {"strong_with": 1.0, "strong_without": 1.0, "floor_with": 1.0, "floor_without": 1.0}
+    assert rec["gate"]["passed"] is True and rec["complete"] is True and rec["models"] == {"strong": "m", "floor": "f"}
+    # A second iteration records again: the record itself is not part of the content hash.
+    assert er.main(FULL) == 0
+    assert json.loads((skill / "evals" / "result.json").read_text())["iteration"] == 2
+
+
+@pytest.mark.parametrize("extra", [["--case", "1"], ["--only", "with"], ["--tiers", "strong"], ["--no-grade"], ["--no-record"],
+                                   ["--ablate", "demo"]])
+def test_a_partial_run_never_writes_the_record(tmp_path, monkeypatch, capsys, extra):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    assert er.main(FULL + extra) == 0
+    assert json.loads(capsys.readouterr().out)["record"]["written"] is False
+    assert not (skill / "evals" / "result.json").exists()
+
+
+def test_an_infrastructure_failure_is_listed_left_out_of_the_mean_and_exits_1(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    (tmp_path / "adapters" / "h" / "fail-one").write_text("")
+    assert er.main(FULL + ["--runs", "2"]) == 1
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    assert out["complete"] is False and (out["expected_runs"], out["completed_runs"], out["failures"]) == (16, 14, 2)
+    assert "INCOMPLETE: 2 of 16 runs failed on infrastructure" in captured.err
+    bench = json.loads((tmp_path / "evals-workspace" / "demo" / "iteration-1" / "benchmark.json").read_text())
+    assert bench["complete"] is False
+    assert [(f["case"], f["variant"], f["tier"], f["run"]) for f in bench["infra_failures"]] == [
+        (2, "with_skill", "floor", 1), (2, "with_skill", "floor", 2)]
+    assert bench["infra_failures"][0]["reason"] == "adapter exit 7: provider: out of credits"
+    floor = bench["run_summary"]["with_skill.floor"]
+    assert floor["pass_rate"] == {"mean": 1.0, "stddev": 0.0, "n": 2} and [r["case"] for r in floor["cases"]] == [1, 1]
+    assert out["record"]["reason"] == "incomplete iteration" and not (skill / "evals" / "result.json").exists()
+
+
+def test_a_gate_that_fails_on_a_complete_run_exits_3_and_records_a_draft(tmp_path, monkeypatch, capsys):
+    failing = FAKE.replace('"passed": true', '"passed": false')
+    skill = write_demo(tmp_path, monkeypatch, failing)
+    assert er.main(FULL) == 3
+    out = json.loads(capsys.readouterr().out)
+    assert out["complete"] is True and out["record"]["status"] == "draft"
+    assert json.loads((skill / "evals" / "result.json").read_text())["gate"]["floor"] is False
+
+
+def test_a_run_that_says_and_writes_nothing_is_an_infrastructure_failure(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, 'touch "$8/response.md"\n')
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--only", "with", "--no-grade"]) == 1
+    bench = json.loads((tmp_path / "evals-workspace" / "demo" / "iteration-1" / "benchmark.json").read_text())
+    assert [f["reason"] for f in bench["infra_failures"]] == ["no response and no file written"] * 2
+
+
+def test_a_timeout_is_an_infrastructure_failure_with_its_reason(tmp_path):
+    runner = tmp_path / "run-prompt.sh"
+    runner.write_text("sleep 5\n")
+    (tmp_path / "out").mkdir()
+    assert er.run_failure(str(runner), "p", str(tmp_path), "m", str(tmp_path / "out"), None, timeout=1) == "timeout: stopped after 1s"
+
+
+def test_a_skill_changed_during_the_run_is_not_recorded(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    (tmp_path / "adapters" / "h" / "edit-skill").write_text("")
+    assert er.main(FULL) == 0
+    captured = capsys.readouterr()
+    assert "changed during the run" in json.loads(captured.out)["record"]["reason"]
+    assert "RECORD demo: not written" in captured.err and not (skill / "evals" / "result.json").exists()
+
+
+def test_the_grader_sees_a_long_file_whole_up_to_the_limit(tmp_path):
+    assert er.FILE_LIMIT == 60000
+    path = tmp_path / "long.md"
+    path.write_text("x" * 59000 + "LAST SOURCE")
+    assert er.shown(str(path)).endswith("LAST SOURCE")
+    path.write_text("x" * 60001)
+    assert "truncated at 60000 characters" in er.shown(str(path))

@@ -22,6 +22,11 @@ Checks every skill under skills/ and every agent under agents/:
     carrying `validate: allow private-term -- <reason>` or in a path the file excludes. The file lists one
     term per line (case-insensitive; `re:<regex>` for a pattern; `!<path glob>` to exclude a path; `#`
     comments). It keeps a maintainer's own names, projects and accounts out of this shared repository.
+  - eval-status (through scripts/eval_status.py): a skills/<name>/evals/result.json that exists is valid JSON
+    with the record's fields and `skill` equal to the folder name; the generated block between the eval-status
+    markers in docs/inventory.md is up to date (fix: python3 scripts/eval_status.py inventory --write); skills
+    whose status is `stale` (the folder changed since the recorded pass) or `draft` (no passing, complete
+    record) are reported as warnings, one line per status, and are errors with --strict
   - scripts/security_scan.py finds no secret, hidden text or unsafe script pattern (its errors
     and warnings are reported here as they are there)
 
@@ -398,6 +403,39 @@ def check_private_terms(report, root=ROOT):
                          "write it generically, and keep the case in the project that uses it")
 
 
+def load_eval_status():
+    spec = importlib.util.spec_from_file_location("eval_status", os.path.join(ROOT, "scripts", "eval_status.py"))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def check_eval_status(report, root=ROOT):
+    """eval-status: records are valid, the inventory block is current, stale and draft skills are warned about."""
+    es = load_eval_status()
+    by_status = {"stale": [], "draft": []}
+    for name in es.skill_names(root):
+        skill_dir = os.path.join(root, "skills", name)
+        _, problems = es.load_record(skill_dir)
+        if problems:
+            report.error(f"skills/{name}/evals/result.json", f"[eval-status] {'; '.join(problems)}")
+        status = es.skill_status(skill_dir)["status"]
+        if status in by_status:
+            by_status[status].append(name)
+    try:
+        if not es.inventory_current(root):
+            report.error("docs/inventory.md", "[eval-status] the generated eval-status block is out of date: "
+                         "run python3 scripts/eval_status.py inventory --write")
+    except ValueError as e:
+        report.error("docs/inventory.md", f"[eval-status] {e}")
+    if by_status["stale"]:
+        report.warn("skills", f"[eval-status] {len(by_status['stale'])} skill(s) are stale, changed since their recorded "
+                    f"eval pass; rerun their evals: {', '.join(by_status['stale'])}")
+    if by_status["draft"]:
+        report.warn("skills", f"[eval-status] {len(by_status['draft'])} skill(s) are draft, with no passing eval record "
+                    f"(python3 scripts/eval_status.py status): {', '.join(by_status['draft'])}")
+
+
 def check_security(report):
     scanner = load_scanner()
     _, active, _ = scanner.scan(ROOT)
@@ -444,6 +482,7 @@ def main(argv):
     check_harness_names(report)
     check_english(report)
     check_private_terms(report)
+    check_eval_status(report)
     check_security(report)
     if spec:
         run_spec_validator(report)
