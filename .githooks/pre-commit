@@ -21,12 +21,14 @@ fi
 printf '%s\n' "$out" | grep -F '(see scripts/security_scan.py)' >&2 || true
 
 # NUL-separated so names with spaces or non-ASCII characters are not quoted; no rename detection,
-# so a file moved out of providers/ or scripts/ still counts for the folder it left.
+# so a file moved out of providers/, scripts/, evals/ or an adapter still counts for the folder it left.
 dirs=()
 while IFS= read -r -d '' f; do
   case "$f" in
     providers/*/*) d="providers/$(echo "$f" | cut -d/ -f2)/tests" ;;
     scripts/*) d="scripts/tests" ;;
+    evals/*) d="evals/tests" ;;
+    adapters/*/*) d="adapters/$(echo "$f" | cut -d/ -f2)/tests" ;;
     *) continue ;;
   esac
   if [[ ! -d "$d" ]]; then

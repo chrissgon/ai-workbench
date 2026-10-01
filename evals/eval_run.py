@@ -12,7 +12,7 @@ Usage:
                       [--dry-run] [--check-cases]
 
 Defaults. --harness, --model, --floor-model, --floor-harness, --floor-pass-env and --threshold default to the
-eval gate configuration, scripts/eval-gate.json (strong_harness, strong_model, floor_model, floor_harness,
+eval gate configuration, evals/eval-gate.json (strong_harness, strong_model, floor_model, floor_harness,
 floor_pass_env, threshold), so `eval_run.py --skill <name>` runs the gate as configured. A flag given on the
 command line wins; floor_pass_env is applied only when the floor model is the configured one (another floor
 model, such as one served on the same machine, needs no provider key). Without the file, --harness and
@@ -121,7 +121,7 @@ warning never changes the exit code.
 
 Record. After a complete run of every case, both variants and both models, without --case, --only, --tiers
 that drops a model, --ablate or --no-grade, the result is written to skills/<name>/evals/result.json through
-scripts/eval_status.py (the same function as its `record` command) with the hash taken at the start, and the
+evals/eval_status.py (the same function as its `record` command) with the hash taken at the start, and the
 skill's status (draft, evaluated, stale) is printed. A partial or incomplete run never writes it; a skill
 folder that changed during the run is reported and not recorded. --no-record skips the record. A full run
 whose floor model is not the configured one runs and is reported, but writes no record (it would read as
@@ -180,9 +180,9 @@ import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
-STATUS_SCRIPT = os.path.join(ROOT, "scripts", "eval_status.py")  # content hash and the per-skill record
-GRADING_TEMPLATE = os.path.join(HERE, "..", "assets", "grading-prompt.md")
+ROOT = os.path.normpath(os.path.join(HERE, ".."))
+STATUS_SCRIPT = os.path.join(HERE, "eval_status.py")  # content hash and the per-skill record
+GRADING_TEMPLATE = os.path.join(HERE, "grading-prompt.md")
 SETUP_TIMEOUT = 300  # seconds per setup command
 
 
@@ -192,9 +192,9 @@ def die(msg, code=2):
 
 
 def load_status():
-    """scripts/eval_status.py as a module: the content hash and the record are defined there, once."""
+    """evals/eval_status.py as a module: the content hash and the record are defined there, once."""
     if not os.path.isfile(STATUS_SCRIPT):
-        die("scripts/eval_status.py is missing: run this script from a checkout of the workbench.")
+        die("evals/eval_status.py is missing: run this script from a checkout of the workbench.")
     spec = importlib.util.spec_from_file_location("workbench_eval_status", STATUS_SCRIPT)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
@@ -241,7 +241,7 @@ def parse(argv):
         elif a == "--check-cases": opts["check_cases"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
         else: die(f"unknown option {a!r}. See --help.")
-    # What the command line leaves out comes from the eval gate configuration (scripts/eval-gate.json).
+    # What the command line leaves out comes from the eval gate configuration (evals/eval-gate.json).
     gate = {} if opts["check_cases"] else load_status().load_gate(ROOT)
     opts["configured_floor"] = gate.get("floor_model")
     for key, field in (("harness", "strong_harness"), ("model", "strong_model"), ("floor", "floor_model"),
@@ -256,7 +256,7 @@ def parse(argv):
         opts["floor_pass_env"] = list(gate.get("floor_pass_env") or [])
     for k in ("skill",) if opts["check_cases"] else ("skill", "harness", "model"):
         if not opts[k]:
-            die(f"--{k} is required" + (" (scripts/eval-gate.json sets no default)." if k != "skill" else "."))
+            die(f"--{k} is required" + (" (evals/eval-gate.json sets no default)." if k != "skill" else "."))
     if opts["only"] not in (None, "with", "without", "ablated"):
         die("--only must be with, without or ablated.")
     if opts["update_record"] and (opts["only"] != "without" or opts["cases"] or opts["tiers"] or opts["ablate"]
@@ -313,7 +313,7 @@ def resolve_pass_env(names):
     for name in missing:
         secret = resolver.REGISTRY.get(name)
         # Only a secret registered for eval runs is filled: a provider's credential never reaches a model.
-        if secret is None or not any(r.startswith("skills/core-skill-creator/scripts/eval_run.py") for r in secret.readers):
+        if secret is None or not any(r.startswith("evals/eval_run.py") for r in secret.readers):
             continue
         found = resolver.resolve(name)
         if found:
@@ -1076,7 +1076,7 @@ def run(argv):
         # on every run; stop before spending a whole iteration on it.
         die(f"{', '.join(unset)} is not set and was not found in the secret store. Export it, or run this "
             "script with the store's library available: uv run --with keyring==25.7.0 python3 "
-            "skills/core-skill-creator/scripts/eval_run.py ...", 2)
+            "evals/eval_run.py ...", 2)
     runner = os.path.join(ROOT, "adapters", o["harness"], "run-prompt.sh")
     if not os.path.isfile(runner):
         die(f"adapter {o['harness']!r} has no run-prompt.sh (see AGENTS.md, Adding an adapter).")
@@ -1321,7 +1321,7 @@ def run(argv):
         except ValueError as e:
             record["reason"] = str(e)
     print(f"RECORD {o['skill']}: " + (f"{record['path']} written, status {record['status']}. Then run: python3 "
-          "scripts/eval_status.py inventory --write" if record["written"] else f"not written ({record['reason']})"),
+          "evals/eval_status.py inventory --write" if record["written"] else f"not written ({record['reason']})"),
           file=sys.stderr)
     if bench["early_end_warning"]:
         print(f"WARNING early ends: {bench['early_end_warning']}", file=sys.stderr)
