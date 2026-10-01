@@ -1,0 +1,383 @@
+#!/usr/bin/env python3
+"""Eval status of every skill, computed from a committed record and the skill folder's content hash.
+
+Usage:
+  python3 scripts/eval_status.py status [--skill <name>]
+  python3 scripts/eval_status.py hash --skill <name>
+  python3 scripts/eval_status.py record --skill <name> --benchmark <path to benchmark.json> [--date YYYY-MM-DD]
+  python3 scripts/eval_status.py inventory --write | --check
+
+A skill's eval result lives in skills/<name>/evals/result.json. It is written by tooling (the eval runner,
+skills/core-skill-creator/scripts/eval_run.py, after a complete full run; or `record` here), never by hand:
+
+  {"skill", "content_sha256", "date", "iteration", "runs", "cases": [ids], "harness", "floor_harness",
+   "models": {"strong", "floor"}, "grader", "threshold",
+   "scores": {"strong_with", "strong_without", "floor_with", "floor_without"},
+   "complete": true|false, "infra_failures": <n>,
+   "gate": {"floor": bool, "strong_delta": bool, "passed": bool},
+   "early_ends": {"<tier>": {"early_ends": <n>, "rate": <float>}}}   (optional: records written before it lack it)
+
+"early_ends" counts the attempts in which a model ended its turn early with no error; the runner retried them,
+so they are not in the scores (see eval_run.py --help).
+
+Gate: floor_with >= threshold and strong_with >= strong_without.
+
+Content hash: sha256 over the files of the skill folder (sorted relative paths and their bytes), leaving out
+evals/result.json, __pycache__ folders, *.pyc and .DS_Store. A change to SKILL.md, a reference, an asset, a
+script or an eval case changes it; files outside the folder do not.
+
+Status of a skill:
+  draft      no record, or a record whose gate did not pass or that is not complete
+  evaluated  the record passed, is complete, and its content_sha256 equals the current hash
+  stale      the record passed and is complete, but the skill folder changed since
+
+Commands:
+  status     prints {"skills": [{"skill", "status", "date", "scores", "reason"}], "counts"}.
+  hash       prints the content hash of one skill.
+  record     builds result.json from an existing benchmark.json (a run made before records existed, or with
+             --no-record). Refused when the benchmark did not run every case of the skill, lacks one of the
+             four variants (with and without the skill, strong and floor model) or lacks a score. It stores
+             the CURRENT content hash unless the benchmark carries one: the caller answers for not having
+             edited the skill since that run. The date is the benchmark's, else its file date, else --date.
+  inventory  regenerates the block between <!-- eval-status:begin --> and <!-- eval-status:end --> in
+             docs/inventory.md (--write), or exits 1 when the block differs from what would be generated (--check).
+
+Data goes to stdout as JSON, diagnostics to stderr. Standard library only.
+Exit codes: 0 ok, 1 the inventory block is out of date (--check) or a record was refused, 2 usage error.
+"""
+import datetime
+import hashlib
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+RECORD_REL = os.path.join("evals", "result.json")
+BEGIN, END = "<!-- eval-status:begin -->", "<!-- eval-status:end -->"
+INVENTORY_REL = os.path.join("docs", "inventory.md")
+STATUSES = ("evaluated", "stale", "draft")
+VARIANTS = {"strong_with": "with_skill", "strong_without": "without_skill",
+            "floor_with": "with_skill.floor", "floor_without": "without_skill.floor"}
+# Field name -> accepted types, for a record read from disk.
+FIELDS = {"skill": str, "content_sha256": str, "date": str, "iteration": int, "runs": int, "cases": list,
+          "harness": str, "floor_harness": str, "models": dict, "grader": str, "threshold": (int, float),
+          "scores": dict, "complete": bool, "infra_failures": int, "gate": dict}
+
+
+def die(msg, code=2):
+    print(f"Error: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def skill_names(root=ROOT):
+    base = os.path.join(root, "skills")
+    if not os.path.isdir(base):
+        return []
+    return sorted(d for d in os.listdir(base) if os.path.isfile(os.path.join(base, d, "SKILL.md")))
+
+
+def content_hash(skill_dir):
+    """sha256 over the skill folder: each file's relative path and bytes, in sorted path order."""
+    files = []
+    for dp, dns, fns in os.walk(skill_dir):
+        dns[:] = sorted(d for d in dns if d != "__pycache__")
+        for fn in fns:
+            rel = os.path.relpath(os.path.join(dp, fn), skill_dir).replace(os.sep, "/")
+            if fn == ".DS_Store" or fn.endswith(".pyc") or rel == RECORD_REL.replace(os.sep, "/"):
+                continue
+            files.append(rel)
+    h = hashlib.sha256()
+    for rel in sorted(files):
+        try:
+            with open(os.path.join(skill_dir, rel), "rb") as f:
+                data = f.read()
+        except OSError:
+            data = b""  # a dangling link: its name still counts
+        h.update(rel.encode("utf-8") + b"\0" + str(len(data)).encode() + b"\0" + data)
+    return h.hexdigest()
+
+
+def record_path(skill_dir):
+    return os.path.join(skill_dir, RECORD_REL)
+
+
+def record_problems(rec, skill):
+    """Why a parsed result.json is not a valid record for the skill; an empty list when it is."""
+    if not isinstance(rec, dict):
+        return ["the record must be a JSON object"]
+    out = []
+    for key, kind in FIELDS.items():
+        if key not in rec:
+            out.append(f"missing field {key!r}")
+        elif not isinstance(rec[key], kind) or (kind is int and isinstance(rec[key], bool)):
+            out.append(f"field {key!r} has the wrong type")
+    if out:
+        return out
+    if rec["skill"] != skill:
+        out.append(f"skill {rec['skill']!r} must equal the folder name {skill!r}")
+    early = rec.get("early_ends", {})
+    if not isinstance(early, dict) or not all(
+            isinstance(v, dict) and isinstance(v.get("early_ends"), int) and isinstance(v.get("rate"), (int, float))
+            for v in early.values()):
+        out.append("early_ends must map a tier to {\"early_ends\": <n>, \"rate\": <number>}")
+    if not re.fullmatch(r"[0-9a-f]{64}", rec["content_sha256"]):
+        out.append("content_sha256 must be 64 hexadecimal characters")
+    try:
+        datetime.date.fromisoformat(rec["date"])
+    except ValueError:
+        out.append("date must be YYYY-MM-DD")
+    for key in ("strong", "floor"):
+        if not isinstance(rec["models"].get(key), str):
+            out.append(f"models.{key} must be a model id")
+    for key in VARIANTS:
+        if not isinstance(rec["scores"].get(key), (int, float)) or isinstance(rec["scores"].get(key), bool):
+            out.append(f"scores.{key} must be a number")
+    for key in ("floor", "strong_delta", "passed"):
+        if not isinstance(rec["gate"].get(key), bool):
+            out.append(f"gate.{key} must be true or false")
+    if not out and rec["gate"] != gate(rec["scores"], rec["threshold"]):
+        out.append("gate does not follow from scores and threshold (the record is written by tooling, never by hand)")
+    return out
+
+
+def load_record(skill_dir):
+    """Return (record, problems). (None, []) when the skill has no record."""
+    path = record_path(skill_dir)
+    if not os.path.isfile(path):
+        return None, []
+    try:
+        with open(path, encoding="utf-8") as f:
+            rec = json.load(f)
+    except (OSError, ValueError) as e:
+        return None, [f"not valid JSON: {e}"]
+    problems = record_problems(rec, os.path.basename(os.path.normpath(skill_dir)))
+    return (None, problems) if problems else (rec, [])
+
+
+def gate(scores, threshold):
+    floor = scores["floor_with"] >= threshold
+    delta = scores["strong_with"] >= scores["strong_without"]
+    return {"floor": floor, "strong_delta": delta, "passed": floor and delta}
+
+
+def case_ids(skill_dir):
+    with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
+        return [c.get("id") for c in json.load(f).get("evals") or []]
+
+
+def build_record(skill_dir, bench, iteration, date, content_sha256=None):
+    """A record from a benchmark.json. Raises ValueError, naming every reason, when the benchmark is partial."""
+    skill = os.path.basename(os.path.normpath(skill_dir))
+    why = []
+    if bench.get("skill") != skill:
+        why.append(f"the benchmark is of skill {bench.get('skill')!r}, not {skill!r}")
+    summary = bench.get("run_summary") or {}
+    try:
+        wanted = case_ids(skill_dir)
+    except (OSError, ValueError) as e:
+        raise ValueError(f"cannot read the skill's evals.json: {e}") from e
+    runs = bench.get("runs") or 1
+    scores, completed = {}, 0
+    for key, name in VARIANTS.items():
+        rows = (summary.get(name) or {}).get("cases") or []
+        rate = (summary.get(name) or {}).get("pass_rate") or {}
+        if name not in summary:
+            why.append(f"variant {name} did not run")
+            continue
+        graded = [r for r in rows if r.get("pass_rate") is not None]
+        missing = [c for c in wanted if c not in {r.get("case") for r in graded}]
+        if missing:
+            why.append(f"variant {name} has no graded run of case(s) {', '.join(str(c) for c in missing)}")
+        if rate.get("mean") is None:
+            why.append(f"variant {name} has no score")
+        else:
+            scores[key] = rate["mean"]
+        completed += len([r for r in graded if r.get("case") in wanted])
+    for key in ("strong", "floor"):
+        if not isinstance((bench.get("models") or {}).get(key), str):
+            why.append(f"the benchmark names no {key} model")
+    if not wanted:
+        why.append("the skill has no eval cases")
+    if why:
+        raise ValueError("; ".join(why))
+    expected = len(wanted) * len(VARIANTS) * runs
+    infra = bench.get("infra_failures")
+    infra = len(infra) if isinstance(infra, list) else max(expected - completed, 0)
+    threshold = bench.get("threshold", 0.8)
+    early = bench.get("early_ends")
+    early = {"early_ends": {t: {"early_ends": v.get("early_ends", 0), "rate": v.get("rate", 0.0)}
+                            for t, v in early.items() if isinstance(v, dict)}} if isinstance(early, dict) else {}
+    return {**early, "skill": skill, "content_sha256": content_sha256 or bench.get("content_sha256") or content_hash(skill_dir),
+            "date": date, "iteration": iteration, "runs": runs, "cases": wanted,
+            "harness": bench.get("harness") or "", "floor_harness": bench.get("floor_harness") or bench.get("harness") or "",
+            "models": {"strong": bench["models"]["strong"], "floor": bench["models"]["floor"]},
+            "grader": bench.get("grader") or bench["models"]["strong"], "threshold": threshold, "scores": scores,
+            "complete": bool(bench.get("complete", True)) and completed >= expected and infra == 0,
+            "infra_failures": infra, "gate": gate(scores, threshold)}
+
+
+def write_record(skill_dir, record):
+    path = record_path(skill_dir)
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(record, f, indent=2)
+        f.write("\n")
+    return path
+
+
+def skill_status(skill_dir):
+    """{"skill", "status", "date", "scores", "iteration", "reason"} for one skill folder."""
+    skill = os.path.basename(os.path.normpath(skill_dir))
+    rec, problems = load_record(skill_dir)
+    row = {"skill": skill, "status": "draft", "date": None, "scores": None, "iteration": None, "reason": "no eval record"}
+    if problems:
+        row["reason"] = "invalid record: " + "; ".join(problems)
+        return row
+    if rec is None:
+        return row
+    row.update(date=rec["date"], scores=rec["scores"], iteration=rec["iteration"])
+    s, g = rec["scores"], rec["gate"]
+    if not rec["complete"]:
+        row["reason"] = f"the recorded run is incomplete ({rec['infra_failures']} infrastructure failure(s)): rerun the evals"
+    elif not g["passed"]:
+        parts = ([] if g["floor"] else [f"floor {s['floor_with']} is below {rec['threshold']}"]) + \
+                ([] if g["strong_delta"] else [f"strong with the skill {s['strong_with']} is below without it {s['strong_without']}"])
+        row["reason"] = "the gate did not pass: " + "; ".join(parts)
+    elif rec["content_sha256"] != content_hash(skill_dir):
+        row.update(status="stale", reason="the skill folder changed since the recorded run: rerun the evals")
+    else:
+        row.update(status="evaluated", reason="the gate passed on the current content")
+    return row
+
+
+def all_status(root=ROOT, only=None):
+    names = [only] if only else skill_names(root)
+    rows = [skill_status(os.path.join(root, "skills", n)) for n in names]
+    counts = {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}
+    return {"skills": rows, "counts": counts}
+
+
+def inventory_block(root=ROOT):
+    """The generated lines that go between the markers."""
+    data = all_status(root)
+    num = lambda v: "—" if v is None else f"{v:.2f}"
+    lines = ["| Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |",
+             "|-------|--------|-------------|----------------|------------|------|-----------|"]
+    for r in data["skills"]:
+        s = r["scores"] or {}
+        lines.append(f"| {r['skill']} | {r['status']} | {num(s.get('strong_with'))} | {num(s.get('strong_without'))} | "
+                     f"{num(s.get('floor_with'))} | {r['date'] or '—'} | {r['iteration'] if r['iteration'] is not None else '—'} |")
+    c = data["counts"]
+    lines += ["", f"Counts: {c['evaluated']} evaluated, {c['stale']} stale, {c['draft']} draft, {len(data['skills'])} skills."]
+    return "\n".join(lines)
+
+
+def inventory_text(root=ROOT):
+    """Return (current text, text with the block regenerated). Raises ValueError when the markers are missing."""
+    path = os.path.join(root, INVENTORY_REL)
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        raise ValueError(f"cannot read {INVENTORY_REL}: {e}") from e
+    a, b = text.find(BEGIN), text.find(END)
+    if a == -1 or b == -1 or b < a:
+        raise ValueError(f"{INVENTORY_REL} lacks the markers {BEGIN} and {END}")
+    return text, text[:a + len(BEGIN)] + "\n" + inventory_block(root) + "\n" + text[b:]
+
+
+def inventory_current(root=ROOT):
+    text, new = inventory_text(root)
+    return text == new
+
+
+def cmd_record(root, skill, bench_path, date):
+    skill_dir = os.path.join(root, "skills", skill)
+    try:
+        with open(bench_path, encoding="utf-8") as f:
+            bench = json.load(f)
+    except (OSError, ValueError) as e:
+        die(f"cannot read the benchmark: {e}")
+    m = re.search(r"iteration-(\d+)", os.path.abspath(bench_path))
+    iteration = bench.get("iteration") or (int(m.group(1)) if m else 0)
+    date = date or bench.get("date") or datetime.date.fromtimestamp(os.path.getmtime(bench_path)).isoformat()
+    try:
+        rec = build_record(skill_dir, bench, iteration, date)
+    except ValueError as e:
+        die(f"record refused: {e}", 1)
+    if not bench.get("content_sha256"):
+        print(f"The benchmark carries no content hash: recording the CURRENT hash of skills/{skill} "
+              f"({rec['content_sha256'][:12]}). This is only true if the skill was not edited since that run.", file=sys.stderr)
+    elif rec["content_sha256"] != content_hash(skill_dir):
+        print(f"skills/{skill} changed since the benchmark's run: the record will read as stale.", file=sys.stderr)
+    path = write_record(skill_dir, rec)
+    print(f"wrote {os.path.relpath(path, root)}; run: python3 scripts/eval_status.py inventory --write", file=sys.stderr)
+    print(json.dumps({"record": rec, "status": skill_status(skill_dir)}, indent=2))
+    return 0
+
+
+def main(argv, root=None):
+    root = root or ROOT
+    if not argv or argv[0] in ("--help", "-h"):
+        print(__doc__)
+        return 0 if argv else 2
+    cmd, rest = argv[0], argv[1:]
+    if "--help" in rest or "-h" in rest:
+        print(__doc__)
+        return 0
+    opts, flags, i = {}, set(), 0
+    while i < len(rest):
+        if rest[i] in ("--skill", "--benchmark", "--date"):
+            if i + 1 >= len(rest):
+                die(f"{rest[i]} needs a value.")
+            opts[rest[i][2:]] = rest[i + 1]
+            i += 2
+        elif rest[i] in ("--write", "--check"):
+            flags.add(rest[i])
+            i += 1
+        else:
+            die(f"unknown option {rest[i]!r}. See --help.")
+    skill = opts.get("skill")
+    if skill is not None and (not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", skill)
+                              or not os.path.isdir(os.path.join(root, "skills", skill))):
+        die(f"no skill {skill!r} under skills/.")
+    if cmd == "status":
+        print(json.dumps(all_status(root, skill), indent=2))
+        return 0
+    if cmd == "hash":
+        if not skill:
+            die("hash needs --skill <name>.")
+        print(content_hash(os.path.join(root, "skills", skill)))
+        return 0
+    if cmd == "record":
+        if not skill or not opts.get("benchmark"):
+            die("record needs --skill <name> and --benchmark <path>.")
+        if opts.get("date"):
+            try:
+                datetime.date.fromisoformat(opts["date"])
+            except ValueError:
+                die("--date must be YYYY-MM-DD.")
+        return cmd_record(root, skill, opts["benchmark"], opts.get("date"))
+    if cmd == "inventory":
+        if len(flags) != 1:
+            die("inventory needs exactly one of --write or --check.")
+        try:
+            text, new = inventory_text(root)
+        except ValueError as e:
+            die(str(e), 1)
+        if "--check" in flags:
+            if text != new:
+                print(f"{INVENTORY_REL}: the eval-status block is out of date; run python3 scripts/eval_status.py inventory --write",
+                      file=sys.stderr)
+            print(json.dumps({"current": text == new}))
+            return 0 if text == new else 1
+        if text != new:
+            with open(os.path.join(root, INVENTORY_REL), "w", encoding="utf-8") as f:
+                f.write(new)
+        print(json.dumps({"written": text != new, "counts": all_status(root)["counts"]}))
+        return 0
+    die(f"unknown command {cmd!r}. See --help.")
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

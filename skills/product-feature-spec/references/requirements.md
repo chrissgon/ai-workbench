@@ -19,7 +19,7 @@ What a reviewer checks. Given a state, When an action, Then an observable result
 ## Assumption versus open question
 
 - ASSUMPTION: taken as true without a source, low cost if wrong, with the reason it is safe enough. Listed so it can be challenged.
-- OPEN: only the user can decide, or the cost of being wrong is high. Names what it blocks. The skill stops and asks when an OPEN blocks a requirement in scope.
+- OPEN: only the user can decide, or the cost of being wrong is high. Names what it blocks. Carries `Recommended:` with a concrete answer. An OPEN never stops the draft: the spec is finished, marked not ready, and the blocking questions go in the report.
 
 ## Words that are not requirements
 

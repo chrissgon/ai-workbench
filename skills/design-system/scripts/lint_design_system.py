@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Lint a design-system document written from assets/design-system-template.md.
 
-Usage: python3 lint_design_system.py --file <design-system.md> [--library <token file> [--prefix <p>]] [--json]
+Usage: python3 lint_design_system.py --file <design-system.md> [--library <token file> [--prefix <p>]] [--flows <flows.md>] [--json]
 
 Checks:
   - required sections are present
@@ -13,7 +13,11 @@ Checks:
   - with --library: every custom property of the library's prefix (--<prefix>-*) in the library file appears
     in the document. The prefix is --prefix, or, without it, the prefix most custom properties defined in the
     library file share (`ui` when most are `--ui-*`; in a document that lists tokens without defining them,
-    the prefix most of the listed properties share); the output names the prefix it used.
+    the prefix most of the listed properties share); the output names the prefix it used. When the library
+    file lists a property in a table row with its values (`| --ui-bg | #FFFFFF | #000000 | ... |`), the row of
+    the document that names the property must carry the same values
+  - with --flows: every row of the Components table cites at least one SCREEN-n, and every SCREEN-n the
+    document cites exists in the flows file
 
 Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
@@ -53,6 +57,7 @@ def main(argv):
         path = argv[argv.index("--file") + 1]
     if "--library" in argv:
         lib = argv[argv.index("--library") + 1]
+    flows = argv[argv.index("--flows") + 1] if "--flows" in argv else None
     prefix = argv[argv.index("--prefix") + 1].strip("-") if "--prefix" in argv else ""
     if prefix and not re.fullmatch(r"[a-z][a-z0-9]*", prefix):
         print("Error: --prefix must be lowercase letters and digits, e.g. ui", file=sys.stderr)
@@ -63,6 +68,7 @@ def main(argv):
     try:
         text = open(path, encoding="utf-8").read()
         lib_text = open(lib, encoding="utf-8").read() if lib else ""
+        flows_text = open(flows, encoding="utf-8").read() if flows else ""
     except OSError as e:
         print(f"Error: cannot read input: {e}", file=sys.stderr)
         return 2
@@ -108,6 +114,38 @@ def main(argv):
         missing = [p for p in props if p not in text]
         if missing:
             errors.append(f"library custom properties absent from the document: {missing}")
+        # Values: a library table row "| `--p-name` | v1 | v2 | ..." must be mirrored verbatim.
+        value_re = re.compile(r"#[0-9A-Fa-f]{3,8}\b|\b\d+(?:\.\d+)?(?:px|rem|em|%)")
+        doc_lines = text.splitlines()
+        for ln in lib_text.splitlines():
+            cells = [c.strip() for c in ln.strip().strip("|").split("|")] if ln.lstrip().startswith("|") else []
+            m = re.fullmatch(rf"`?(--{prefix}-[a-z][a-z0-9-]*)`?", cells[0]) if prefix and len(cells) > 1 else None
+            if not m or m.group(1) in missing:
+                continue
+            want = []
+            for c in cells[1:3]:  # the light and dark cells, or the single value cell
+                v = value_re.fullmatch(c)
+                if not v:
+                    break
+                want.append(c.lower())
+            if not want:
+                continue
+            tok = m.group(1)
+            named = [dl.lower() for dl in doc_lines if re.search(re.escape(tok) + r"(?![a-z0-9-])", dl)]
+            if not any(all(w in dl for w in want) for dl in named):
+                errors.append(f"library value changed or absent: no line naming {tok} carries {' and '.join(cells[1:1 + len(want)])}")
+    if flows:
+        known = set(re.findall(r"\bSCREEN-\d+\b", flows_text))
+        if not known:
+            errors.append("--flows: the flows file names no SCREEN-n")
+        for r in comps:
+            if len(r) >= 5 and not re.search(r"\bSCREEN-\d+\b", r[4]):
+                errors.append(f"component row {r[0]} cites no SCREEN-n in its Screens cell")
+        unknown = sorted(set(re.findall(r"\bSCREEN-\d+\b", text)) - known)
+        if known and unknown:
+            errors.append(f"screens cited that the flows file does not have: {unknown}")
+    if not comps:
+        errors.append("Components table has no rows")
     ok = not errors
     print(json.dumps({"ok": ok, **({"library_prefix": prefix} if lib_text else {}), "counts": {"colour": len(colour), "contrast": len(contrast), "components": len(comps)},
                       "errors": errors}, indent=2 if as_json else None))

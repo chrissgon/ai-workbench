@@ -1,0 +1,242 @@
+"""Offline tests of scripts/eval_status.py (content hash, record, status, inventory block) and of the
+eval-status check in scripts/validate.py. No model is called: benchmarks are written by hand here."""
+import importlib.util
+import json
+from pathlib import Path
+
+import pytest
+
+REPO = Path(__file__).resolve().parents[2]
+
+
+def load(name):
+    spec = importlib.util.spec_from_file_location(name, REPO / "scripts" / f"{name}.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+es = load("eval_status")
+validate = load("validate")
+
+INVENTORY = "# Inventory\n\n## Evaluation status\n\nIntro kept by hand.\n\n" + es.BEGIN + "\nold\n" + es.END + "\n\n## Progress\n"
+
+
+@pytest.fixture
+def root(tmp_path):
+    for name in ("core-demo", "eng-other"):
+        skill = tmp_path / "skills" / name
+        (skill / "evals" / "files").mkdir(parents=True)
+        (skill / "scripts").mkdir()
+        (skill / "SKILL.md").write_text(f"# {name}\n")
+        (skill / "scripts" / "check.py").write_text("print('ok')\n")
+        (skill / "evals" / "files" / "input.md").write_text("fixture\n")
+        (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [
+            {"id": 1, "prompt": "p", "assertions": ["a"]}, {"id": 2, "prompt": "q", "assertions": ["a"]}]}))
+    (tmp_path / "docs").mkdir()
+    (tmp_path / "docs" / "inventory.md").write_text(INVENTORY)
+    return tmp_path
+
+
+def benchmark(skill="core-demo", strong=(1.0, 0.5), floor=(0.9, 0.3), cases=(1, 2), runs=1, drop=()):
+    means = {"with_skill": strong[0], "without_skill": strong[1], "with_skill.floor": floor[0], "without_skill.floor": floor[1]}
+    summary = {name: {"pass_rate": {"mean": mean, "stddev": 0.0, "n": len(cases) * runs},
+                      "cases": [{"case": c, "run": k, "pass_rate": mean} for c in cases for k in range(1, runs + 1)]}
+               for name, mean in means.items() if name not in drop}
+    return {"skill": skill, "runs": runs, "harness": "h", "floor_harness": "fh", "models": {"strong": "s-model", "floor": "f-model"},
+            "grader": "s-model", "threshold": 0.8, "run_summary": summary, "failures": 0}
+
+
+def record(root, skill="core-demo", **kwargs):
+    path = root / "evals-workspace" / skill / "iteration-3" / "benchmark.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(benchmark(skill, **kwargs)))
+    return es.main(["record", "--skill", skill, "--benchmark", str(path), "--date", "2030-01-02"], root=str(root))
+
+
+def status(root, skill="core-demo"):
+    return es.skill_status(str(root / "skills" / skill))["status"]
+
+
+def test_the_hash_is_stable_and_ignores_the_record_and_caches(root):
+    skill = root / "skills" / "core-demo"
+    first = es.content_hash(str(skill))
+    assert first == es.content_hash(str(skill)) and len(first) == 64
+    (skill / "evals" / "result.json").write_text("{}")
+    (skill / "scripts" / "__pycache__").mkdir()
+    (skill / "scripts" / "__pycache__" / "check.cpython-311.pyc").write_text("x")
+    (skill / "scripts" / "stray.pyc").write_text("x")
+    (skill / ".DS_Store").write_text("x")
+    (root / "skills" / "eng-other" / "SKILL.md").write_text("# changed elsewhere\n")
+    (root / "outside.md").write_text("x")
+    assert es.content_hash(str(skill)) == first
+
+
+@pytest.mark.parametrize("rel", ["SKILL.md", "scripts/check.py", "evals/files/input.md", "evals/evals.json"])
+def test_the_hash_changes_with_any_file_of_the_skill(root, rel):
+    skill = root / "skills" / "core-demo"
+    first = es.content_hash(str(skill))
+    (skill / rel).write_text((skill / rel).read_text() + "\n")
+    assert es.content_hash(str(skill)) != first
+
+
+def test_the_hash_changes_when_a_file_is_added_or_renamed(root):
+    skill = root / "skills" / "core-demo"
+    first = es.content_hash(str(skill))
+    (skill / "references").mkdir()
+    (skill / "references" / "guide.md").write_text("g\n")
+    second = es.content_hash(str(skill))
+    (skill / "references" / "guide.md").rename(skill / "references" / "other.md")
+    assert len({first, second, es.content_hash(str(skill))}) == 3
+
+
+def test_status_is_draft_then_evaluated_then_stale(root, capsys):
+    assert status(root) == "draft"
+    assert record(root) == 0
+    assert "CURRENT hash" in capsys.readouterr().err
+    rec = json.loads((root / "skills" / "core-demo" / "evals" / "result.json").read_text())
+    assert rec["skill"] == "core-demo" and rec["iteration"] == 3 and rec["date"] == "2030-01-02"
+    assert rec["cases"] == [1, 2] and rec["complete"] is True and rec["infra_failures"] == 0
+    assert rec["scores"] == {"strong_with": 1.0, "strong_without": 0.5, "floor_with": 0.9, "floor_without": 0.3}
+    assert rec["gate"] == {"floor": True, "strong_delta": True, "passed": True}
+    assert rec["content_sha256"] == es.content_hash(str(root / "skills" / "core-demo"))
+    assert status(root) == "evaluated"
+    (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
+    assert status(root) == "stale"
+    out = es.all_status(str(root))
+    assert out["counts"] == {"evaluated": 0, "stale": 1, "draft": 1}
+    assert [r["skill"] for r in out["skills"]] == ["core-demo", "eng-other"]
+
+
+@pytest.mark.parametrize("kwargs", [{"floor": (0.79, 0.3)}, {"strong": (0.6, 0.7)}])
+def test_a_record_whose_gate_failed_is_draft(root, kwargs):
+    assert record(root, **kwargs) == 0
+    row = es.skill_status(str(root / "skills" / "core-demo"))
+    assert row["status"] == "draft" and "gate did not pass" in row["reason"]
+
+
+def test_a_record_of_an_incomplete_run_is_draft(root):
+    path = root / "b.json"
+    bench = benchmark(runs=2)
+    bench["run_summary"]["with_skill.floor"]["cases"].pop()  # one floor run failed on the provider
+    path.write_text(json.dumps(bench))
+    assert es.main(["record", "--skill", "core-demo", "--benchmark", str(path)], root=str(root)) == 0
+    rec = json.loads((root / "skills" / "core-demo" / "evals" / "result.json").read_text())
+    assert rec["complete"] is False and rec["infra_failures"] == 1 and rec["gate"]["passed"] is True
+    assert status(root) == "draft"
+
+
+@pytest.mark.parametrize("kwargs, why", [
+    ({"cases": (1,)}, "case(s) 2"),
+    ({"drop": ("without_skill.floor",)}, "without_skill.floor did not run"),
+    ({"floor": (None, 0.3)}, "no score"),
+    ({"skill": "eng-other"}, "not 'core-demo'"),
+])
+def test_record_refuses_a_partial_benchmark(root, capsys, kwargs, why):
+    path = root / "b.json"
+    bench = benchmark(**kwargs)
+    if kwargs.get("floor", (1,))[0] is None:
+        for row in bench["run_summary"]["with_skill.floor"]["cases"]:
+            row["pass_rate"] = None
+    path.write_text(json.dumps(bench))
+    with pytest.raises(SystemExit) as e:
+        es.main(["record", "--skill", "core-demo", "--benchmark", str(path)], root=str(root))
+    assert e.value.code == 1 and why in capsys.readouterr().err
+    assert not (root / "skills" / "core-demo" / "evals" / "result.json").exists()
+
+
+def test_inventory_write_then_check_and_check_fails_after_a_status_change(root, capsys):
+    assert es.main(["inventory", "--check"], root=str(root)) == 1
+    assert es.main(["inventory", "--write"], root=str(root)) == 0
+    text = (root / "docs" / "inventory.md").read_text()
+    assert "Intro kept by hand." in text and "\nold\n" not in text and text.endswith("## Progress\n")
+    assert "| core-demo | draft | — | — | — | — | — |" in text
+    assert "Counts: 0 evaluated, 0 stale, 2 draft, 2 skills." in text
+    assert es.main(["inventory", "--check"], root=str(root)) == 0
+    record(root)
+    assert es.main(["inventory", "--check"], root=str(root)) == 1
+    es.main(["inventory", "--write"], root=str(root))
+    assert "| core-demo | evaluated | 1.00 | 0.50 | 0.90 | 2030-01-02 | 3 |" in (root / "docs" / "inventory.md").read_text()
+    (root / "skills" / "core-demo" / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "new"}]}))
+    capsys.readouterr()
+    assert es.main(["inventory", "--check"], root=str(root)) == 1  # evaluated became stale
+    assert "inventory --write" in capsys.readouterr().err
+
+
+def test_inventory_without_markers_is_an_error(root):
+    (root / "docs" / "inventory.md").write_text("# Inventory\n")
+    with pytest.raises(SystemExit) as e:
+        es.main(["inventory", "--check"], root=str(root))
+    assert e.value.code == 1
+
+
+def test_usage_errors_exit_2(root):
+    for argv in (["hash"], ["record", "--skill", "core-demo"], ["inventory"], ["status", "--skill", "nope"], ["frobnicate"]):
+        with pytest.raises(SystemExit) as e:
+            es.main(argv, root=str(root))
+        assert e.value.code == 2
+
+
+# --- the eval-status check of scripts/validate.py -------------------------------------------------
+
+def check(root):
+    report = validate.Report()
+    validate.check_eval_status(report, root=str(root))
+    return [f"{e['where']}: {e['message']}" for e in report.errors], [w["message"] for w in report.warnings]
+
+
+def test_validate_passes_on_a_current_inventory_and_warns_once_per_status(root):
+    record(root)
+    (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
+    es.main(["inventory", "--write"], root=str(root))
+    errors, warnings = check(root)
+    assert errors == [] and len(warnings) == 2
+    assert "1 skill(s) are stale" in warnings[0] and "core-demo" in warnings[0]
+    assert "1 skill(s) are draft" in warnings[1] and "eng-other" in warnings[1]
+
+
+def test_validate_fails_on_a_stale_inventory_block(root):
+    errors, _ = check(root)
+    assert len(errors) == 1 and "python3 scripts/eval_status.py inventory --write" in errors[0]
+
+
+@pytest.mark.parametrize("content, why", [
+    ("{not json", "not valid JSON"),
+    ('{"skill": "core-demo"}', "missing field"),
+    (None, "must equal the folder name"),
+    ("hand-edited", "gate does not follow"),
+])
+def test_validate_fails_on_an_invalid_record(root, content, why):
+    record(root)
+    path = root / "skills" / "core-demo" / "evals" / "result.json"
+    rec = json.loads(path.read_text())
+    if content is None:
+        rec["skill"] = "eng-other"
+        content = json.dumps(rec)
+    elif content == "hand-edited":
+        rec["scores"]["floor_with"] = 0.2
+        content = json.dumps(rec)
+    path.write_text(content)
+    es.main(["inventory", "--write"], root=str(root))
+    errors, _ = check(root)
+    assert len(errors) == 1 and errors[0].startswith("skills/core-demo/evals/result.json") and why in errors[0]
+    assert es.skill_status(str(root / "skills" / "core-demo"))["status"] == "draft"
+
+
+def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(root):
+    path = root / "b.json"
+    bench = benchmark()
+    bench["early_ends"] = {"strong": {"attempts": 4, "early_ends": 0, "rate": 0.0, "by_case": {}},
+                           "floor": {"attempts": 5, "early_ends": 1, "rate": 0.2, "by_case": {"1": 1}}}
+    path.write_text(json.dumps(bench))
+    assert es.main(["record", "--skill", "core-demo", "--benchmark", str(path)], root=str(root)) == 0
+    record_file = root / "skills" / "core-demo" / "evals" / "result.json"
+    rec = json.loads(record_file.read_text())
+    assert rec["early_ends"] == {"strong": {"early_ends": 0, "rate": 0.0}, "floor": {"early_ends": 1, "rate": 0.2}}
+    assert status(root) == "evaluated"
+    del rec["early_ends"]
+    record_file.write_text(json.dumps(rec))
+    assert status(root) == "evaluated"
+    rec["early_ends"] = {"floor": 3}
+    record_file.write_text(json.dumps(rec))
+    assert "early_ends must map" in es.skill_status(str(root / "skills" / "core-demo"))["reason"]

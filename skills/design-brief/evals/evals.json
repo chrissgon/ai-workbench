@@ -1,11 +1,19 @@
 {
   "skill_name": "design-brief",
+  "allow_commands": [
+    "date +%F",
+    "mkdir -p docs/design/briefs"
+  ],
   "evals": [
     {
       "id": 1,
       "prompt": "I want the documentation screen in Claude Design, which already has our design system loaded. Use the Button page as the example.",
-      "expected_output": "docs/design/briefs/documentation-page.md of type screen in loaded mode: regions and states of SCREEN-2 from the flows named in Content, the Button page copy quoted from its source, three named directions, the brand colour restated as hex, at least five CRIT lines, attachments that exclude any earlier mockup, a prompt with a Direction slot; lint ok; the reply in English points to design-execute.",
-      "files": ["evals/files/flows.md", "evals/files/design-system.md"],
+      "expected_output": "docs/design/briefs/documentation-page.md of type screen in loaded mode: regions and states of SCREEN-2 from the flows named in Content, the Button page copy quoted from content/v1/components/button.md, three named directions, the brand colour restated as hex, at least five CRIT lines, attachments that exclude any earlier mockup, a prompt with a Direction slot; lint ok, recorded in documentation-page.lint.json and quoted in the reply; the reply in English points to design-execute.",
+      "files": [
+        "evals/files/flows.md",
+        "evals/files/design-system.md",
+        "evals/files/site-content"
+      ],
       "assertions": [
         "The header says Values: loaded and names the design system in the tool",
         "Every region and state of SCREEN-2 is named in Content",
@@ -13,6 +21,10 @@
         "Attachments tells not to send an existing design of the page in round 1",
         "scripts/lint_brief.py --type screen --values loaded --flows --screen SCREEN-2 reports ok: true",
         "The reply is in English, the language of the prompt, and names design-execute as the next step"
+      ],
+      "grader_files": [
+        "flows.md",
+        "content/v1/components/button.md"
       ]
     },
     {
@@ -29,14 +41,22 @@
     {
       "id": 3,
       "prompt": "Write the brief for the site's share images (og:image) for the landing and every docs page.",
-      "expected_output": "docs/design/briefs/og-image.md of type image in inline mode: Size, Format and Text parts in Content, the landing texts quoted from the messaging source, the variable fields of the documentation template with their longest values, colours and type written out, at least five CRIT lines including a thumbnail legibility check; lint ok.",
-      "files": ["evals/files/design-system.md"],
+      "expected_output": "docs/design/briefs/og-image.md of type image in inline mode: Size, Format and Text parts in Content, the landing card's texts quoted from the Share images part of messaging.md, the variable fields of the documentation template with their longest real values taken from the page list in the flows, colours and type written out, at least five CRIT lines including a thumbnail legibility check; lint ok, recorded in the .lint.json file next to the brief and quoted in the reply.",
+      "files": [
+        "evals/files/design-system.md",
+        "evals/files/flows.md",
+        "evals/files/messaging.md"
+      ],
       "assertions": [
         "Content has Size, Format and Text parts",
         "The variable fields name their longest value",
         "Visual language writes out hex colours and pixel sizes",
         "One criterion checks legibility at thumbnail size",
         "scripts/lint_brief.py --type image --values inline reports ok: true"
+      ],
+      "grader_files": [
+        "messaging.md",
+        "flows.md"
       ]
     }
   ]

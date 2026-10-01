@@ -3,7 +3,7 @@
 - Owner: product-feature-spec
 - Status: draft
 - Date: 2026-09-23
-- Feature of: test
+- Feature of: docs/workbench/briefs/docs-search.md
 
 ## Summary
 Search.

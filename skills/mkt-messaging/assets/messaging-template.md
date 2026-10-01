@@ -27,11 +27,11 @@
 
 ## Proof points
 
-- PROOF-1: {claim}. Evidence: {measurement, documented behaviour or citation}. Source: {…}
+- PROOF-1: {claim}. Evidence: {measurement, documented behaviour or citation}. Method: {the command or count that produced the number | read in <file and section>}. Date: {YYYY-MM-DD of the measurement, or the date the document carries}. Source: {…}
 
 ## Sections
 
-- SECTION-1: {name}. Purpose: {…}. Proof: PROOF-1. Headline: {…}. Body: {…}. Demo: {what the design must show}. CTA: {label → target | none}. Source: {…}
+- SECTION-1: {name}. Purpose: {…}. Proof: PROOF-1. Headline: {…}. Body: {…}. Demo: {what the design must show; never "none"}. CTA: {label → target | none}. Source: {…}
 
 ## Taglines
 

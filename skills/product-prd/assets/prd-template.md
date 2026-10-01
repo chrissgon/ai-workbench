@@ -34,7 +34,8 @@
 
 ## Success metrics
 
-- M-1: {metric}. Target: {number unit} {by when, only with a source}. Baseline: {value | none}. Measured by: {instrument}. Source: {…}
+- M-1: {metric}. Target: {number and unit copied from the source} {by when, only with a source}. Baseline: {value | none}. Measured by: {instrument}. Source: {document and decision that sets the target}
+- No metric yet for {goal whose source sets no target}: the target is OPEN-{n}.
 
 ## Constraints
 

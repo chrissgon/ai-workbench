@@ -1,0 +1,33 @@
+{
+  "skill": "design-brief",
+  "content_sha256": "4649f62c2bf2237e35b6057d3d27656ae26bf8ff9d169016d0008e0213fc3b99",
+  "date": "2026-10-01",
+  "iteration": 4,
+  "runs": 3,
+  "cases": [
+    1,
+    2,
+    3
+  ],
+  "harness": "claude-code",
+  "floor_harness": "agents-dir",
+  "models": {
+    "strong": "claude-opus-5-5",
+    "floor": "openrouter/deepseek/deepseek-v3.2"
+  },
+  "grader": "claude-opus-5-5",
+  "threshold": 0.8,
+  "scores": {
+    "strong_with": 0.963,
+    "strong_without": 0.356,
+    "floor_with": 0.922,
+    "floor_without": 0.156
+  },
+  "complete": true,
+  "infra_failures": 0,
+  "gate": {
+    "floor": true,
+    "strong_delta": true,
+    "passed": true
+  }
+}

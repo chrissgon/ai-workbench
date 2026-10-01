@@ -208,7 +208,74 @@ Planned items are never scheduled; they are built when a project needs them.
 
 Skills in waves 2 to 5 are written alongside the phase of a real project that needs them and refined against it before they count as done. When that project is an AI product, the AI skills it needs (`ai-feature-requirements`, `ai-llm-integration`, `ai-evals`, `ai-governance`) move forward to the wave of its engineering, not wave 5; `ai-opportunity-assessment` still runs first and must still be able to say which parts do not need AI.
 
+## Evaluation status
+
+A skill is done only when its status is `evaluated`. The status is computed, never written by hand: `scripts/eval_status.py status` reads each skill's committed record, `skills/<name>/evals/result.json` (written by the eval runner after a complete run of every case, with and without the skill, on the strong and the floor model), and compares the record's content hash with the skill folder.
+
+- `draft`: no record, or a record whose gate did not pass (floor with the skill at or above the threshold, strong with the skill at least as good as without it) or whose run was incomplete.
+- `evaluated`: the gate passed and the skill folder is unchanged since that run.
+- `stale`: the gate passed, then something inside the skill folder changed (`SKILL.md`, a reference, an asset, a script, an eval case). Rerun its evals; changes outside the folder do not make a skill stale.
+
+The table below is generated. Do not edit it: run `python3 scripts/eval_status.py inventory --write` after an eval run or a change to a skill; `scripts/validate.py` fails while it is out of date.
+
+<!-- eval-status:begin -->
+| Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |
+|-------|--------|-------------|----------------|------------|------|-----------|
+| biz-icp-positioning | draft | — | — | — | — | — |
+| biz-market-analysis | draft | — | — | — | — | — |
+| brand-guidelines | draft | — | — | — | — | — |
+| brand-identity | draft | — | — | — | — | — |
+| brand-name | draft | — | — | — | — | — |
+| brand-profile | draft | — | — | — | — | — |
+| brand-strategy | draft | — | — | — | — | — |
+| brand-voice | draft | — | — | — | — | — |
+| core-agents-md | draft | — | — | — | — | — |
+| core-clarify | draft | — | — | — | — | — |
+| core-critique | draft | — | — | — | — | — |
+| core-orchestrator | draft | — | — | — | — | — |
+| core-project-init | draft | — | — | — | — | — |
+| core-research | draft | — | — | — | — | — |
+| core-security-audit | draft | — | — | — | — | — |
+| core-skill-creator | draft | — | — | — | — | — |
+| design-brief | evaluated | 0.96 | 0.36 | 0.92 | 2026-10-01 | 4 |
+| design-execute | draft | — | — | — | — | — |
+| design-handoff | draft | — | — | — | — | — |
+| design-system | evaluated | 1.00 | 0.51 | 1.00 | 2026-10-01 | 1 |
+| design-ux-flows | draft | — | — | — | — | — |
+| eng-architecture | draft | — | — | — | — | — |
+| eng-code-review | draft | — | — | — | — | — |
+| eng-codebase-map | draft | — | — | — | — | — |
+| eng-docs | draft | — | — | — | — | — |
+| eng-impact-analysis | draft | — | — | — | — | — |
+| eng-implement | draft | — | — | — | — | — |
+| eng-integration-tests | draft | — | — | — | — | — |
+| eng-refactor | draft | — | — | — | — | — |
+| eng-root-cause | draft | — | — | — | — | — |
+| eng-security-review | draft | — | — | — | — | — |
+| eng-tradeoffs | draft | — | — | — | — | — |
+| eng-unit-tests | draft | — | — | — | — | — |
+| flow-fix-bug | draft | — | — | — | — | — |
+| mkt-content-plan | draft | — | — | — | — | — |
+| mkt-engage | draft | — | — | — | — | — |
+| mkt-messaging | evaluated | 1.00 | 0.62 | 0.81 | 2026-10-01 | 4 |
+| mkt-publish | draft | — | — | — | — | — |
+| mkt-social-copy | draft | — | — | — | — | — |
+| mkt-vote-round | draft | — | — | — | — | — |
+| ops-branch-sync | draft | — | — | — | — | — |
+| ops-ci-pipeline | draft | — | — | — | — | — |
+| ops-pull-request | draft | — | — | — | — | — |
+| ops-repo-baseline | draft | — | — | — | — | — |
+| product-backlog | draft | — | — | — | — | — |
+| product-feature-spec | evaluated | 1.00 | 0.31 | 0.89 | 2026-10-01 | 1 |
+| product-prd | evaluated | 1.00 | 0.47 | 1.00 | 2026-10-01 | 8 |
+| product-roadmap | draft | — | — | — | — | — |
+
+Counts: 5 evaluated, 0 stale, 43 draft, 48 skills.
+<!-- eval-status:end -->
+
 ## Progress
+
+A tick means the skill is built. Whether it passed its evals is in the status table above, not in the tick.
 
 Wave 0:
 - [x] core-orchestrator

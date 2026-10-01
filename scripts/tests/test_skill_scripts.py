@@ -862,3 +862,743 @@ def test_lint_design_system_infers_the_library_prefix(tmp_path):
     out = json.loads(run(LINT_DS, "--file", str(doc), "--library", str(css), "--prefix", "x").stdout)
     assert out["library_prefix"] == "x" and any("['--x-y']" in e for e in out["errors"])
     assert run(LINT_DS, "--file", str(doc), "--library", str(css), "--prefix", "../a").returncode == 2
+
+
+def lint(rel: str, path: Path, text: str, *args: str) -> tuple[int, dict]:
+    """Write `text` to `path`, lint it, and return the exit code and the parsed JSON result."""
+    path.write_text(text, encoding="utf-8")
+    r = run(rel, "--file", str(path), *args)
+    return r.returncode, json.loads(r.stdout)
+
+
+# ---------- design-brief/longest_value.py ----------
+
+LONGEST = "skills/design-brief/scripts/longest_value.py"
+
+
+def test_longest_value_counts_characters_and_keeps_the_first_of_a_tie():
+    r = run(LONGEST, "Button", "Input Group", " Date Picker ", "Tabs")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout) == {
+        "count": 4, "longest": "Input Group", "characters": 11, "words": 2,
+        "runners_up": [{"value": "Date Picker", "characters": 11}, {"value": "Button", "characters": 6}]}
+
+
+def test_longest_value_reads_stdin_and_refuses_no_value():
+    out = json.loads(run(LONGEST, stdin="Tabs\n\n  Größenübersicht  \n").stdout)
+    assert out["count"] == 2 and out["longest"] == "Größenübersicht" and out["characters"] == 15  # characters, not bytes
+    r = run(LONGEST, stdin="\n  \n")
+    assert r.returncode == 2 and "give the values" in r.stderr and r.stdout == ""
+
+
+# ---------- design-brief/lint_brief.py: --report ----------
+
+def test_lint_brief_report_records_the_arguments_date_and_result(tmp_path):
+    flows = tmp_path / "flows.md"
+    flows.write_text(FLOWS_BOTH_SEPARATORS, encoding="utf-8")
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Brief\n\n## Content\n\n- Regions: hero, project list, footer\n- States: default\n", encoding="utf-8")
+    report = tmp_path / "lint.json"
+    r = run(LINT_BRIEF, "--file", str(brief), "--type", "screen", "--values", "inline",
+            "--flows", str(flows), "--screen", "SCREEN-1", "--report", str(report))
+    printed, saved = json.loads(r.stdout), json.loads(report.read_text(encoding="utf-8"))
+    assert r.returncode == 1 and printed["ok"] is False
+    assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", saved.pop("date"))
+    assert saved == {"ok": False, "file": str(brief), "type": "screen", "values": "inline", "screen": "SCREEN-1",
+                     "flows": str(flows), "messaging": None, "counts": printed["counts"], "errors": printed["errors"]}
+    assert any("reduced motion" in e for e in saved["errors"])
+
+
+def test_lint_brief_report_needs_a_writable_path(tmp_path):
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Brief\n", encoding="utf-8")
+    base = (LINT_BRIEF, "--file", str(brief), "--type", "screen", "--values", "inline")
+    r = run(*base, "--report")
+    assert r.returncode == 2 and "--report needs a value" in r.stderr
+    r = run(*base, "--report", str(tmp_path / "absent" / "lint.json"))
+    assert r.returncode == 2 and "cannot write the report" in r.stderr
+
+
+# ---------- design-system/lint_design_system.py: flows, library values, empty Components ----------
+
+DS_FLOWS = "# Flows\n\n## Screens\n\n- SCREEN-1: Home. Regions: hero.\n- SCREEN-2: Post. Regions: body.\n"
+DS_LIBRARY = "| Token | Light | Dark |\n|---|---|---|\n| `--ui-bg` | #FFFFFF | #000000 |\n| `--ui-gap` | 16px |\n"
+
+
+def design_system(bg: str = "#FFFFFF", gap: str = "16px",
+                  component: str = "| Button | library | size: sm, md | default, hover | SCREEN-1, SCREEN-2 | lib.md |") -> str:
+    return f"""# Design system: Plinth
+
+## Summary
+
+One library governs the values.
+
+## Sources
+
+- lib.md
+
+## Ownership
+
+- Colour: the library.
+
+## Colour
+
+| Token | Light | Dark | Role | Source |
+|-------|-------|------|------|--------|
+| `--ui-bg` | {bg} | #000000 | page background | lib.md |
+
+## Contrast
+
+| Text token | On background | Light ratio | Dark ratio | AA |
+|------------|---------------|-------------|------------|----|
+
+## Type
+
+- Typeface: Example Sans, fallback sans-serif. Source: lib.md
+- Reading width: 68ch. Source: lib.md
+
+## Space, radii, borders, elevation
+
+| Token | Value | Role | Source |
+|-------|-------|------|--------|
+| `--ui-gap` | {gap} | gap between blocks | lib.md |
+
+## Layout
+
+## Components
+
+| Component | Owner | Variants | States | Screens | Source |
+|-----------|-------|----------|--------|---------|--------|
+{component}
+
+## Design tool
+
+- File: none available
+
+## Assumptions
+
+## Open questions
+
+## Readiness
+
+- Ready for design-brief: yes
+"""
+
+
+def lint_ds(tmp_path: Path, text: str, *flags: str) -> tuple[int, dict]:
+    (tmp_path / "flows.md").write_text(DS_FLOWS, encoding="utf-8")
+    (tmp_path / "lib.md").write_text(DS_LIBRARY, encoding="utf-8")
+    args = []
+    for flag in flags:
+        args += [flag, str(tmp_path / ("flows.md" if flag == "--flows" else "lib.md"))]
+    return lint(LINT_DS, tmp_path / "ds.md", text, *args)
+
+
+def test_lint_design_system_accepts_a_document_that_mirrors_flows_and_library(tmp_path):
+    code, out = lint_ds(tmp_path, design_system(), "--flows", "--library")
+    assert (code, out["errors"]) == (0, []) and out["library_prefix"] == "ui"
+
+
+def test_lint_design_system_needs_a_screen_on_every_component_row(tmp_path):
+    row = "| Button | library | size: sm, md | default, hover | every page | lib.md |"
+    code, out = lint_ds(tmp_path, design_system(component=row), "--flows")
+    assert code == 1 and out["errors"] == ["component row Button cites no SCREEN-n in its Screens cell"]
+    assert lint_ds(tmp_path, design_system(component=row))[1]["errors"] == [], "the check runs only with --flows"
+
+
+def test_lint_design_system_refuses_a_screen_the_flows_do_not_have(tmp_path):
+    row = "| Button | library | size: sm, md | default, hover | SCREEN-1, SCREEN-9 | lib.md |"
+    code, out = lint_ds(tmp_path, design_system(component=row), "--flows")
+    assert code == 1 and out["errors"] == ["screens cited that the flows file does not have: ['SCREEN-9']"]
+    (tmp_path / "empty.md").write_text("# Flows\n", encoding="utf-8")
+    r = run(LINT_DS, "--file", str(tmp_path / "ds.md"), "--flows", str(tmp_path / "empty.md"))
+    assert json.loads(r.stdout)["errors"] == ["--flows: the flows file names no SCREEN-n"]
+
+
+def test_lint_design_system_refuses_a_changed_library_value(tmp_path):
+    code, out = lint_ds(tmp_path, design_system(bg="#FAFAFA"), "--library")
+    assert code == 1
+    assert out["errors"] == ["library value changed or absent: no line naming --ui-bg carries #FFFFFF and #000000"]
+    code, out = lint_ds(tmp_path, design_system(gap="1rem"), "--library")
+    assert out["errors"] == ["library value changed or absent: no line naming --ui-gap carries 16px"]
+    assert lint_ds(tmp_path, design_system(bg="#ffffff"), "--library")[0] == 0, "letter case of a hex value is not a change"
+
+
+def test_lint_design_system_refuses_an_empty_components_table(tmp_path):
+    code, out = lint_ds(tmp_path, design_system(component=""))
+    assert code == 1 and out["errors"] == ["Components table has no rows"] and out["counts"]["components"] == 0
+
+
+# ---------- product-prd/lint_prd.py: an id is not a numeric target ----------
+
+LINT_PRD = "skills/product-prd/scripts/lint_prd.py"
+
+
+def prd(target: str) -> str:
+    return f"""# PRD: Plinth
+
+## Summary
+
+## Problem and goal
+
+## Users
+
+- U-1: Site owners. Situation: publishing docs. Needs: search. Source: brief.
+
+## Scope
+
+## Sources
+
+## Features
+
+- F-1: Search. Outcome: the reader can find a page. Priority: must. Phase: P-1. Source: brief.
+
+## Success metrics
+
+- M-1: Searches that end in a click. Target: {target}. Baseline: none. Measured by: analytics. Source: brief.
+
+## Constraints
+
+## Dependencies and risks
+
+- R-1: The index grows. Trigger: many pages. Impact: slow builds. Mitigation: split the index.
+
+## Release phases
+
+- P-1: First release. Includes: F-1. Exit: search is live. Source: brief.
+
+## Assumptions
+
+## Open questions
+
+- OPEN-2: Which share of searches should end in a click? Blocks: M-1. Recommended: 40 percent, the brief's figure.
+
+## Readiness
+"""
+
+
+def test_lint_prd_accepts_a_numeric_target(tmp_path):
+    code, out = lint(LINT_PRD, tmp_path / "prd.md", prd("40 percent of searches"))
+    assert (code, out["errors"]) == (0, [])
+
+
+def test_lint_prd_does_not_take_an_id_for_a_numeric_target(tmp_path):
+    for target in ("OPEN-2", "set by OPEN-2 and F-1"):
+        code, out = lint(LINT_PRD, tmp_path / "prd.md", prd(target))
+        assert code == 1 and out["errors"] == ["M-1 has no numeric Target:"], target
+
+
+# ---------- product-feature-spec/lint_spec.py: an NFR needs a number, an OPEN a recommendation ----------
+
+LINT_SPEC = "skills/product-feature-spec/scripts/lint_spec.py"
+
+
+def spec(nfr: str = "Results appear within 200 ms of the last keystroke",
+         open_question: str = "Should search cover drafts? Blocks: nothing. Recommended: no, drafts are private") -> str:
+    return f"""# Feature specification: Search
+
+## Summary
+
+## Goal and users
+
+## Scope
+
+## Sources
+
+## Functional requirements
+
+- REQ-1: Show matching pages when the reader types a query. Source: PRD F-1.
+
+## Non-functional requirements
+
+- NFR-1: {nfr}. Source: PRD M-2, measured 2026-01-05.
+
+## Constraints
+
+## Edge cases
+
+- EDGE-1: empty query → show no results
+
+## Acceptance criteria
+
+- AC-1:
+  Given an index with one page
+  When the reader types its title
+  Then the page is listed
+  Covers: REQ-1, NFR-1
+
+## Assumptions
+
+## Open questions
+
+- OPEN-1: {open_question}.
+
+## Readiness
+"""
+
+
+def test_lint_spec_accepts_an_nfr_with_a_number_and_an_open_with_a_recommendation(tmp_path):
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec())
+    assert (code, out["errors"]) == (0, [])
+
+
+def test_lint_spec_refuses_an_nfr_without_a_number(tmp_path):
+    # the digits of its own id, of a cited id and of the Source: text are not the requirement's figure
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec(nfr="Results appear soon after REQ-1 runs"))
+    assert code == 1 and out["errors"] == [
+        "NFR-1 states no number: give the sourced figure, or move it to an OPEN with a Recommended value"]
+
+
+def test_lint_spec_refuses_an_open_without_a_recommendation(tmp_path):
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec(open_question="Should search cover drafts? Blocks: nothing"))
+    assert code == 1 and out["errors"] == ["OPEN-1 has no Recommended: entry"]
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec(open_question="Should search cover drafts"))
+    assert out["errors"] == ["OPEN-1 has no Blocks: entry", "OPEN-1 has no Recommended: entry"]
+
+
+# ---------- mkt-messaging/lint_messaging.py: proof method and date, number words, demos ----------
+
+LINT_MSG = "skills/mkt-messaging/scripts/lint_messaging.py"
+
+MSG_PROOF = ("The stylesheet is 8 kB gzipped. Evidence: size of the built file. "
+             "Method: `gzip -c dist/plinth.css | wc -c`. Date: 2026-03-14. Source: build output.")
+
+
+def messaging(proof: str = MSG_PROOF, headline: str = "Small enough to read", body: str = "The whole stylesheet is 8 kB.",
+              demo: str = "the file size next to the built file", tagline: str = "Styles you can read") -> str:
+    return f"""# Messaging: Plinth
+
+## Summary
+
+## Sources
+
+## Audience
+
+## Promise
+
+## Voice
+
+## Proof points
+
+- PROOF-1: {proof}
+
+## Sections
+
+- SECTION-1: Hero. Purpose: say what it is. Proof: none. Headline: A stylesheet for docs. Body: Plain CSS. CTA: Install → /install. Source: README.
+- SECTION-2: Size. Purpose: show the weight. Proof: PROOF-1. Headline: {headline}. Body: {body} Demo: {demo}. Source: PROOF-1.
+
+## Taglines
+
+- {tagline}
+
+## Words
+
+- Use: stylesheet. Source: README.
+- Avoid: blazing
+
+## Open questions
+
+## Readiness
+"""
+
+
+def msg_errors(tmp_path: Path, **parts: str) -> list[str]:
+    code, out = lint(LINT_MSG, tmp_path / "messaging.md", messaging(**parts))
+    assert code == (1 if out["errors"] else 0)
+    return out["errors"]
+
+
+def test_lint_messaging_accepts_dated_proof_and_a_first_section_without_a_demo(tmp_path):
+    assert msg_errors(tmp_path) == []
+
+
+def test_lint_messaging_needs_a_method_and_a_date_on_every_proof(tmp_path):
+    assert msg_errors(tmp_path, proof="The stylesheet is 8 kB gzipped. Evidence: size of the built file. Source: build output.") == [
+        "PROOF-1 lacks Method:", "PROOF-1 lacks Date:"]
+    assert msg_errors(tmp_path, proof=MSG_PROOF.replace("2026-03-14", "March 2026")) == [
+        "PROOF-1: Date: carries no YYYY-MM-DD date"]
+    # a date elsewhere in the proof does not stand in for the Date: field
+    assert msg_errors(tmp_path, proof=MSG_PROOF.replace("Date: 2026-03-14", "Date: last week").replace(
+        "build output", "build output of 2026-03-14")) == ["PROOF-1: Date: carries no YYYY-MM-DD date"]
+
+
+def test_lint_messaging_checks_number_words_against_the_proofs(tmp_path):
+    assert msg_errors(tmp_path, headline="Eight kilobytes, no more") == [], "a word whose digits a PROOF carries"
+    assert msg_errors(tmp_path, headline="Three kilobytes, no more") == [
+        "SECTION-2: number Three in the copy is not in any PROOF"]
+    assert msg_errors(tmp_path, body="Half the weight of a framework.") == [
+        "SECTION-2: number Half in the copy is not in any PROOF"]
+    assert msg_errors(tmp_path, tagline="Twice as light") == ["Taglines: number Twice is not in any PROOF"]
+    assert msg_errors(tmp_path, tagline="Docs in 5 minutes") == ["Taglines: number 5 is not in any PROOF"]
+    assert msg_errors(tmp_path, tagline="Half the weight",
+                      proof=MSG_PROOF.replace("gzipped.", "gzipped, half of the previous release.")) == []
+
+
+def test_lint_messaging_does_not_take_a_date_for_a_proof_number(tmp_path):
+    assert msg_errors(tmp_path, body="Ships with 14 themes.") == ["SECTION-2: number 14 in the copy is not in any PROOF"]
+    assert msg_errors(tmp_path, body="Released in 2026.") == ["SECTION-2: number 2026. in the copy is not in any PROOF"]
+
+
+def test_lint_messaging_needs_a_demo_on_every_later_section(tmp_path):
+    message = "SECTION-2: Demo: must describe what the design shows; a section with nothing to show is merged into another"
+    for demo in ("none", "None", "n/a", "no demo needed", ""):
+        assert msg_errors(tmp_path, demo=demo) == [message], demo
+    # a call to action does not replace the demo of a later section
+    text = messaging().replace("Demo: the file size next to the built file.", "CTA: Install → /install.")
+    assert lint(LINT_MSG, tmp_path / "messaging.md", text)[1]["errors"] == [message]
+
+
+# ---------- product-prd/lint_prd.py: numbers and dates come from a source, ids are well formed ----------
+
+PRD_BRIEF = "# Brief: Plinth\n\nDecision 1: 40 percent of searches end in a click.\n"
+PRD_BRIEF_NO_FIGURE = "# Brief: Plinth\n\nDecision 1: most searches end in a click.\n"
+# the same document without the '- Brief:' line: every Source: names the document and the decision
+PRD_UNNAMED = prd("40 percent of searches").replace("Source: brief.", "Source: brief.md decision 1.")
+PRD_NAMED = PRD_UNNAMED.replace("# PRD: Plinth\n", "# PRD: Plinth\n\n- Brief: brief.md\n")
+PRD_TARGET = "Target: 40 percent of searches."
+PRD_USER_LINE = "- U-1: Site owners. Situation: publishing docs. Needs: search. Source: brief.md decision 1.\n"
+PRD_FEATURE_LINE = "- F-1: Search. Outcome: the reader can find a page. Priority: must. Phase: P-1. Source: brief.md decision 1.\n"
+PRD_METRIC_LINE = ("- M-1: Searches that end in a click. Target: 40 percent of searches. Baseline: none. "
+                   "Measured by: analytics. Source: brief.md decision 1.\n")
+PRD_PHASE_LINE = "- P-1: First release. Includes: F-1. Exit: search is live. Source: brief.md decision 1.\n"
+PRD_SKIPPED = "number check skipped: no source file could be read (name the brief on the '- Brief:' line or pass --source)"
+
+
+def prd_lint(tmp_path: Path, text: str, *args: str, brief: str | None = None) -> tuple[int, dict]:
+    """Lint `text` from inside `tmp_path`, so that only the files a test writes there can be sources."""
+    if brief is not None:
+        (tmp_path / "brief.md").write_text(brief, encoding="utf-8")
+    doc = tmp_path / "prd.md"
+    doc.write_text(text, encoding="utf-8")
+    r = run(LINT_PRD, "--file", str(doc), *args, cwd=tmp_path)
+    return r.returncode, json.loads(r.stdout)
+
+
+def test_lint_prd_fixture_lines_are_the_ones_the_tests_replace():
+    for line in (PRD_USER_LINE, PRD_FEATURE_LINE, PRD_METRIC_LINE, PRD_PHASE_LINE):
+        assert PRD_NAMED.count(line) == 1, line
+    assert PRD_UNNAMED != PRD_NAMED and "Source: brief.\n" not in PRD_NAMED
+
+
+def test_lint_prd_refuses_a_target_number_the_brief_does_not_have(tmp_path):
+    code, out = prd_lint(tmp_path, PRD_NAMED, brief=PRD_BRIEF_NO_FIGURE)
+    assert code == 1 and out["errors"] == ["M-1 target number 40 is in no source file"]
+    code, out = prd_lint(tmp_path, PRD_NAMED, brief=PRD_BRIEF)
+    assert (code, out["errors"], out["warnings"]) == (0, [], [])
+
+
+def test_lint_prd_reads_a_thousands_separator_as_the_same_number(tmp_path):
+    for in_prd, in_brief in (("1000", "1,000"), ("1,000", "1000")):
+        text = PRD_NAMED.replace(PRD_TARGET, f"Target: {in_prd} searches a week.")
+        code, out = prd_lint(tmp_path, text, brief=f"Decision 1: reach {in_brief} searches a week.\n")
+        assert (code, out["errors"]) == (0, []), in_prd
+    text = PRD_NAMED.replace(PRD_TARGET, "Target: 1,000 searches a week.")
+    code, out = prd_lint(tmp_path, text, brief="Decision 1: reach 100 searches a week.\n")
+    assert code == 1 and out["errors"] == ["M-1 target number 1000 is in no source file"]
+
+
+def test_lint_prd_list_numbering_and_iso_dates_do_not_ground_a_number(tmp_path):
+    text = PRD_NAMED.replace(PRD_TARGET, "Target: 3 percent of searches.")
+    code, out = prd_lint(tmp_path, text, brief="Decisions:\n\n3. Search ships first.\n4) Themes ship later.\n")
+    assert code == 1 and out["errors"] == ["M-1 target number 3 is in no source file"]
+    text = PRD_NAMED.replace(PRD_TARGET, "Target: 12 percent of searches.")
+    code, out = prd_lint(tmp_path, text, brief="Decided on 2031-05-12: search ships first.\n")
+    assert code == 1 and out["errors"] == ["M-1 target number 12 is in no source file"]
+
+
+def test_lint_prd_a_user_answer_line_grounds_a_number(tmp_path):
+    answered = PRD_NAMED.replace("## Sources\n", '## Sources\n\n- User answer 2031-05-12: "40 percent"\n')
+    assert answered != PRD_NAMED
+    code, out = prd_lint(tmp_path, answered, brief=PRD_BRIEF_NO_FIGURE)
+    assert (code, out["errors"]) == (0, [])
+    # the same words outside a "- User answer" line ground nothing
+    noted = PRD_NAMED.replace("## Sources\n", '## Sources\n\n- Note 2031-05-12: "40 percent"\n')
+    code, out = prd_lint(tmp_path, noted, brief=PRD_BRIEF_NO_FIGURE)
+    assert code == 1 and out["errors"] == ["M-1 target number 40 is in no source file"]
+
+
+def test_lint_prd_refuses_a_date_the_sources_do_not_have(tmp_path):
+    phase = PRD_NAMED.replace("Exit: search is live.", "Exit: search is live by 2031-06-30.")
+    code, out = prd_lint(tmp_path, phase, brief=PRD_BRIEF)
+    assert code == 1 and out["errors"] == ["P-1 date 2031-06-30 is in no source file"]
+    code, out = prd_lint(tmp_path, phase, brief=PRD_BRIEF + "Decision 2: launch on 2031-06-30.\n")
+    assert (code, out["errors"]) == (0, [])
+    metric = PRD_NAMED.replace(PRD_TARGET, "Target: 40 percent of searches by June 2031.")
+    code, out = prd_lint(tmp_path, metric, brief=PRD_BRIEF)
+    assert code == 1 and out["errors"] == ["M-1 date June 2031 is in no source file"]
+    code, out = prd_lint(tmp_path, metric, brief=PRD_BRIEF + "Decision 2: reach it by June 2031.\n")
+    assert (code, out["errors"]) == (0, [])
+
+
+def test_lint_prd_finds_sources_on_the_brief_line_under_sources_and_in_the_flag(tmp_path):
+    def real(paths: list[str]) -> list[Path]:
+        return [Path(p).resolve() for p in paths]
+
+    code, out = prd_lint(tmp_path, PRD_NAMED, brief=PRD_BRIEF)
+    assert code == 0 and real(out["sources_read"]) == [(tmp_path / "brief.md").resolve()]
+
+    listed = tmp_path / "listed"
+    (listed / "notes").mkdir(parents=True)
+    (listed / "notes" / "research.md").write_text(PRD_BRIEF, encoding="utf-8")
+    text = PRD_UNNAMED.replace("## Sources\n", "## Sources\n\n- notes/research.md: interview notes\n")
+    code, out = prd_lint(listed, text)
+    assert (code, out["errors"]) == (0, []) and real(out["sources_read"]) == [(listed / "notes" / "research.md").resolve()]
+
+    flagged = tmp_path / "flagged"
+    flagged.mkdir()
+    (flagged / "figures.txt").write_text(PRD_BRIEF_NO_FIGURE, encoding="utf-8")
+    code, out = prd_lint(flagged, PRD_UNNAMED, "--source", "figures.txt")
+    assert real(out["sources_read"]) == [(flagged / "figures.txt").resolve()]
+    assert code == 1 and out["errors"] == ["M-1 target number 40 is in no source file"]
+
+
+def test_lint_prd_skips_the_number_check_with_a_warning_when_no_source_can_be_read(tmp_path):
+    for text, args in ((PRD_UNNAMED, ()), (PRD_NAMED, ()), (PRD_UNNAMED, ("--source", "missing.md"))):
+        dated = text.replace("Exit: search is live.", "Exit: search is live by 2031-06-30.")
+        code, out = prd_lint(tmp_path, dated, *args)
+        assert (code, out["errors"], out["sources_read"]) == (0, [], [])
+        assert out["warnings"] == [PRD_SKIPPED]
+
+
+def test_lint_prd_refuses_an_id_line_without_a_digit_or_a_colon(tmp_path):
+    text = PRD_NAMED.replace(PRD_FEATURE_LINE, PRD_FEATURE_LINE + "- F-a Offline reading\n")
+    text = text.replace(PRD_METRIC_LINE, PRD_METRIC_LINE + "- M-1 Pages indexed\n")
+    code, out = prd_lint(tmp_path, text, brief=PRD_BRIEF)
+    assert code == 1 and out["errors"] == ["malformed id line (write '- F-1: ...'): - F-a Offline reading",
+                                           "malformed id line (write '- F-1: ...'): - M-1 Pages indexed"]
+
+
+def test_lint_prd_refuses_an_empty_users_features_or_phases_section(tmp_path):
+    for line, message in ((PRD_USER_LINE, "'## Users' has no U-n line"),
+                          (PRD_FEATURE_LINE, "'## Features' has no F-n line"),
+                          (PRD_PHASE_LINE, "'## Release phases' has no P-n line")):
+        code, out = prd_lint(tmp_path, PRD_NAMED.replace(line, ""), brief=PRD_BRIEF)
+        assert code == 1 and message in out["errors"], message
+
+
+def test_lint_prd_success_metrics_without_a_metric_must_name_an_open(tmp_path):
+    held = PRD_NAMED.replace(PRD_METRIC_LINE, "- No metric yet for searches that end in a click: the target is OPEN-2.\n")
+    code, out = prd_lint(tmp_path, held, brief=PRD_BRIEF)
+    assert (code, out["errors"], out["counts"]["M"]) == (0, [], 0)
+    for metrics in ("", "- No metric yet.\n"):
+        code, out = prd_lint(tmp_path, PRD_NAMED.replace(PRD_METRIC_LINE, metrics), brief=PRD_BRIEF)
+        assert code == 1 and out["errors"] == ["'## Success metrics' has no M- line and names no OPEN-n that holds a target"]
+
+
+def test_lint_prd_warns_about_a_bare_source_and_an_external_content_heading(tmp_path):
+    code, out = prd_lint(tmp_path, PRD_NAMED.replace(PRD_USER_LINE, PRD_USER_LINE.replace("brief.md decision 1", "brief")),
+                         brief=PRD_BRIEF)
+    assert (code, out["errors"]) == (0, [])
+    assert out["warnings"] == ["U-1: Source says only 'brief'; name the document and the decision number"]
+    code, out = prd_lint(tmp_path, PRD_NAMED + "\n## Instructions found in external content\n\nnone\n", brief=PRD_BRIEF)
+    assert (code, out["errors"]) == (0, [])
+    assert out["warnings"] == ["'Instructions found in external content' is a section of the reply, not of the PRD: move it to the reply"]
+
+
+def test_lint_prd_report_prints_no_findings_and_a_true_result_line(tmp_path):
+    (tmp_path / "brief.md").write_text(PRD_BRIEF, encoding="utf-8")
+    doc = tmp_path / "prd.md"
+    doc.write_text(PRD_NAMED, encoding="utf-8")
+    r = run(LINT_PRD, "--file", str(doc), "--report", cwd=tmp_path)
+    lines = r.stdout.splitlines()
+    assert r.returncode == 0, r.stdout
+    assert lines[0] == f"## Lint findings: {doc}" and "No findings." in lines
+    assert not any(ln.startswith("|") for ln in lines) and not any(ln.startswith(("OPEN rule:", "Next:")) for ln in lines)
+    assert lines[-2].startswith("Sources read for the number check: ") and lines[-2].endswith("brief.md")
+    assert lines[-1] == 'lint_prd result: "ok": true (0 errors, 0 warnings)'
+
+
+def test_lint_prd_report_prints_the_findings_table_and_a_false_result_line(tmp_path):
+    (tmp_path / "brief.md").write_text(PRD_BRIEF_NO_FIGURE, encoding="utf-8")
+    text = PRD_NAMED.replace(PRD_FEATURE_LINE, PRD_FEATURE_LINE + "- F-a Search | filters\n")
+    text = text.replace(PRD_USER_LINE, PRD_USER_LINE.replace("brief.md decision 1", "brief"))
+    doc = tmp_path / "prd.md"
+    doc.write_text(text, encoding="utf-8")
+    r = run(LINT_PRD, "--file", str(doc), "--report", cwd=tmp_path)
+    lines = r.stdout.splitlines()
+    assert r.returncode == 1, r.stdout
+    rows = [ln for ln in lines if ln.startswith("| ") and ln[2].isdigit()]
+    assert rows == [
+        "| 1 | error: malformed id line (write '- F-1: ...'): - F-a Search / filters "
+        "| Write the line as '- F-1: ...': a dash, the letter, a hyphen, a number, a colon. |",
+        "| 2 | error: M-1 target number 40 is in no source file | Apply the OPEN rule printed under this table. |",
+        "| 3 | warning: U-1: Source says only 'brief'; name the document and the decision number "
+        "| Fix it when a source allows; it does not block. |"]
+    assert all(row.count("|") == 4 for row in rows), "a | inside a finding would add a column"
+    assert "| # | Finding | How to fix it |" in lines
+    assert "OPEN rule: " + load(LINT_PRD, "lint_prd").OPEN_INSTEAD in lines
+    assert "Next: fix every error as its row says, then run this command again." in lines
+    assert lines[-1] == 'lint_prd result: "ok": false (2 errors, 1 warnings)'
+
+
+def test_lint_prd_how_to_fix_follows_the_errors_one_to_one(tmp_path):
+    mod = load(LINT_PRD, "lint_prd")
+    text = PRD_NAMED.replace(PRD_FEATURE_LINE, PRD_FEATURE_LINE + "- F-a Offline reading\n")
+    text = text.replace(" Exit: search is live.", "").replace("## Readiness\n", "")
+    code, out = prd_lint(tmp_path, text, brief=PRD_BRIEF_NO_FIGURE)
+    assert code == 1 and out["errors"] == ["missing section '## Readiness'",
+                                           "malformed id line (write '- F-1: ...'): - F-a Offline reading",
+                                           "M-1 target number 40 is in no source file",
+                                           "P-1 has no Exit: line"]
+    assert out["how_to_fix"] == [mod.how_to_fix(e) for e in out["errors"]]
+    assert [fix.split(":")[0].split(".")[0] for fix in out["how_to_fix"]] == [
+        "Add the heading exactly as in assets/prd-template", "Write the line as '- F-1",
+        "Do not pick another number or date", "Append 'Exit"]
+    code, out = prd_lint(tmp_path, PRD_NAMED, brief=PRD_BRIEF)
+    assert out["how_to_fix"] == []
+
+
+# ---------- product-feature-spec/lint_spec.py: the shape of the bullets, the report and next lines ----------
+
+SPEC_REQ_LINE = "- REQ-1: Show matching pages when the reader types a query. Source: PRD F-1.\n"
+SPEC_EDGE_LINE = "- EDGE-1: empty query → show no results\n"
+SPEC_COUNTS = "(1 REQ, 1 NFR, 1 EDGE, 1 AC, 0 ASSUMPTION, 1 OPEN)"
+
+
+def line_numbers(text: str, wanted: str) -> list[int]:
+    return [n for n, ln in enumerate(text.splitlines(), 1) if ln == wanted]
+
+
+def test_lint_spec_groups_the_empty_bullets_in_one_error(tmp_path):
+    text = spec().replace(SPEC_REQ_LINE, SPEC_REQ_LINE + "-\n").replace("## Assumptions\n", "## Assumptions\n\n-\n")
+    text = text.replace("## Summary\n", "## Summary\n\n  -\n")
+    where = sorted(line_numbers(text, "-") + line_numbers(text, "  -"))
+    assert len(where) == 3
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", text)
+    assert code == 1 and out["errors"] == [f"empty bullet '-' on lines {where}: delete those lines"]
+
+
+def test_lint_spec_groups_the_bullets_with_no_space_after_the_dash(tmp_path):
+    text = spec().replace(SPEC_REQ_LINE, "-" + SPEC_REQ_LINE[2:]).replace(SPEC_EDGE_LINE, "-" + SPEC_EDGE_LINE[2:])
+    where = [n for n, ln in enumerate(text.splitlines(), 1) if ln.startswith(("-REQ-1:", "-EDGE-1:"))]
+    assert len(where) == 2
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", text)
+    assert code == 1 and out["errors"] == [
+        f"no space after the dash on lines {where}: write '- REQ-1: ...', not '-REQ-1: ...'"]
+    assert out["counts"]["REQ"] == 1 and out["counts"]["EDGE"] == 1
+
+
+def test_lint_spec_refuses_an_edge_case_with_an_arrow_and_no_id(tmp_path):
+    for arrow in ("→", "->"):
+        bullet = f"- very long query {arrow} cut it at 200 characters"
+        text = spec().replace(SPEC_EDGE_LINE, SPEC_EDGE_LINE + bullet + "\n")
+        n = line_numbers(text, bullet)[0]
+        code, out = lint(LINT_SPEC, tmp_path / "spec.md", text)
+        assert code == 1 and out["errors"] == [
+            f"line {n} in '## Edge cases' is not '- EDGE-n: ...': give it the next EDGE id, or delete it: {bullet}"]
+
+
+def test_lint_spec_accepts_the_notes_of_skipped_edge_categories(tmp_path):
+    notes = "- Timing: not applicable\n- Categories skipped: permissions, the feature has no roles\n"
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec().replace(SPEC_EDGE_LINE, SPEC_EDGE_LINE + notes))
+    assert (code, out["errors"], out["counts"]["EDGE"]) == (0, [], 1)
+
+
+def test_lint_spec_refuses_a_requirement_bullet_without_its_id(tmp_path):
+    bullet = "- The reader can filter the results by tag"
+    text = spec().replace(SPEC_REQ_LINE, SPEC_REQ_LINE + bullet + "\n")
+    n = line_numbers(text, bullet)[0]
+    code, out = lint(LINT_SPEC, tmp_path / "spec.md", text)
+    assert code == 1 and out["errors"] == [
+        f"line {n} in '## Functional requirements' is not '- REQ-n: ...': give it the next REQ id, or delete it: {bullet}"]
+    for none in ("- none", "- None: the feature only changes a limit"):
+        code, out = lint(LINT_SPEC, tmp_path / "spec.md", spec().replace(SPEC_REQ_LINE, none + "\n"))
+        assert (code, out["errors"], out["counts"]["REQ"]) == (0, [], 0), none
+
+
+def test_lint_spec_prints_the_report_line_and_what_to_do_next(tmp_path):
+    doc = tmp_path / "spec.md"
+    code, out = lint(LINT_SPEC, doc, spec())
+    assert code == 0 and out["ok"] is True
+    assert out["report"] == f"lint_spec.py --file {doc}: ok: true, 0 errors, 0 warnings {SPEC_COUNTS}"
+    assert out["next"].startswith("Lint passed.")
+    code, out = lint(LINT_SPEC, doc, spec().replace(SPEC_REQ_LINE, SPEC_REQ_LINE + "-\n"))
+    assert code == 1 and out["ok"] is False
+    assert out["report"] == f"lint_spec.py --file {doc}: ok: false, 1 errors, 0 warnings {SPEC_COUNTS}"
+    assert out["next"].startswith("Not done")
+    # a warning alone keeps the exit code at 0 and still says the work is not done
+    code, out = lint(LINT_SPEC, doc, spec().replace("Show matching pages", "Show matching pages in a simple list"))
+    assert code == 0 and len(out["warnings"]) == 1
+    assert out["report"] == f"lint_spec.py --file {doc}: ok: true, 0 errors, 1 warnings {SPEC_COUNTS}"
+    assert out["next"].startswith("Not done")
+
+
+# ---------- product-feature-spec/check_input.py: is there enough input to write a specification ----------
+
+CHECK_INPUT = "skills/product-feature-spec/scripts/check_input.py"
+
+
+def check_input(root: Path, *args: str, stdin: str | None = None) -> dict:
+    r = run(CHECK_INPUT, *args, "--root", str(root), stdin=stdin)
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def words(count: int) -> str:
+    return " ".join(["search"] * count)
+
+
+def test_check_input_reports_none_for_a_short_request_in_an_empty_project(tmp_path):
+    out = check_input(tmp_path, "--request", "Add search to the docs site")
+    assert (out["input"], out["sources"], out["missing_sources"], out["candidates"]) == ("none", [], [], [])
+    assert out["request_words"] == 6 and out["next"].startswith("STOP. There is no input.")
+    assert out["reply_template"] == load(CHECK_INPUT, "check_input").REPLY
+    assert out["reply_template"].startswith("I cannot write this specification yet")
+    assert list(tmp_path.iterdir()) == [], "the check writes nothing"
+
+
+def test_check_input_finds_a_named_source_and_lists_a_missing_or_empty_one(tmp_path):
+    (tmp_path / "ticket.md").write_text("Search must match page titles.\n", encoding="utf-8")
+    (tmp_path / "empty.md").write_text("", encoding="utf-8")
+    out = check_input(tmp_path, "--request", "Add search", "--source", "ticket.md", "--source", "gone.md",
+                      "--source", "empty.md")
+    assert (out["input"], out["sources"], out["missing_sources"]) == ("found", ["ticket.md"], ["gone.md", "empty.md"])
+    assert "reply_template" not in out and out["next"] == "Input found. Go to step 1 and read: ticket.md."
+    out = check_input(tmp_path, "--request", "Add search", "--source", "gone.md")
+    assert (out["input"], out["sources"], out["missing_sources"]) == ("none", [], ["gone.md"])
+    assert "reply_template" in out
+    out = check_input(tmp_path / "elsewhere", "--source", str(tmp_path / "ticket.md"))
+    assert (out["input"], out["sources"]) == ("found", [str(tmp_path / "ticket.md")])
+
+
+def test_check_input_takes_a_request_of_forty_words_as_input(tmp_path):
+    out = check_input(tmp_path, "--request", words(40))
+    assert (out["input"], out["request_words"]) == ("found", 40)
+    assert out["next"] == "Input found. Go to step 1 and read: the user's request." and "reply_template" not in out
+    out = check_input(tmp_path, "--request", words(39))
+    assert (out["input"], out["request_words"]) == ("none", 39)
+
+
+def test_check_input_lists_an_unnamed_brief_or_prd_as_a_candidate(tmp_path):
+    (tmp_path / "docs" / "workbench" / "briefs").mkdir(parents=True)
+    (tmp_path / "docs" / "product").mkdir()
+    (tmp_path / "docs" / "workbench" / "briefs" / "search.md").write_text("# Brief: search\n", encoding="utf-8")
+    brief = str(Path("docs", "workbench", "briefs", "search.md"))
+    out = check_input(tmp_path, "--request", "Add search")
+    assert (out["input"], out["sources"], out["candidates"]) == ("found", [], [brief])
+    assert out["next"].startswith(f"The user named no document, but the project has: {brief}. Read them now.")
+    assert "reply_template" not in out
+    (tmp_path / "docs" / "product" / "prd.md").write_text("# PRD: Plinth\n", encoding="utf-8")
+    out = check_input(tmp_path, "--request", "Add search", "--source", brief)
+    assert (out["sources"], out["candidates"]) == ([brief], [str(Path("docs", "product", "prd.md"))])
+    assert out["next"] == (f"Input found. Go to step 1 and read: {brief}. Also read these and cite them if they are "
+                           "about this feature: " + str(Path("docs", "product", "prd.md")) + ".")
+
+
+def test_check_input_reads_the_request_from_stdin(tmp_path):
+    out = check_input(tmp_path, stdin=words(41))
+    assert (out["input"], out["request_words"]) == ("found", 41)
+    out = check_input(tmp_path, stdin="Add search\n")
+    assert (out["input"], out["request_words"]) == ("none", 2)
+
+
+def test_check_input_refuses_an_unknown_flag_and_a_flag_without_a_value(tmp_path):
+    r = run(CHECK_INPUT, "--request", "Add search", "--verbose")
+    assert r.returncode == 2 and r.stdout == "" and "unknown argument '--verbose'" in r.stderr
+    r = run(CHECK_INPUT, "Add search")
+    assert r.returncode == 2 and "unknown argument 'Add search'" in r.stderr
+    for flag in ("--request", "--source", "--root"):
+        r = run(CHECK_INPUT, flag)
+        assert r.returncode == 2 and r.stdout == "" and f"{flag} needs a value" in r.stderr, flag
+    r = run(CHECK_INPUT, "--help")
+    assert r.returncode == 0 and r.stdout.startswith("Decide whether there is enough input") and "Usage:" in r.stdout

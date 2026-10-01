@@ -5,13 +5,19 @@
       "id": 1,
       "prompt": "Define the design system for the docs site. The flows are in docs/design/flows.md and the component library ships its tokens in library/DESIGN-SYSTEM.md.",
       "expected_output": "docs/design/design-system.md that mirrors every library token verbatim with light and dark values, asks the user for the typeface with a recommended answer before defining type roles, records contrast ratios for the text-on-background pairs the screens use, lists components with owner, variants, states and screens, and passes the lint with --library.",
-      "files": ["evals/files/library-design-system.md", "evals/files/flows.md"],
+      "files": [
+        "evals/files/docs-site"
+      ],
       "assertions": [
-        "Every --pui- custom property of the library file appears in the document with the same light and dark values",
+        "Every --plu- custom property of the library file appears in the document with the same light and dark values",
         "The typeface is asked with a recommended answer, not chosen silently",
         "Every contrast row has two ratios and a pass or fail",
         "Every component row names at least one screen from the flows",
         "scripts/lint_design_system.py is run with --library and reports ok: true"
+      ],
+      "grader_files": [
+        "library/DESIGN-SYSTEM.md",
+        "docs/design/flows.md"
       ]
     },
     {
