@@ -4,39 +4,65 @@
     {
       "id": 1,
       "prompt": "Create an AGENTS.md for this project.",
-      "expected_output": "Detection is run; commands come from package.json scripts (build, test, test:e2e, lint, typecheck) and the install command from the lockfile; ESLint and Vitest are named from their configs; ARCHITECTURE.md is linked, not pasted; the audit passes; nothing is invented.",
-      "files": ["evals/files/project-with-tooling"],
+      "expected_output": "Detection is run; AGENTS.md is written in this turn with no question asked first; commands come from package.json scripts (build, test, test:e2e, lint, typecheck) and the install command from the lockfile; ESLint and Vitest are named from their configs; ARCHITECTURE.md is linked, not pasted; the audit passes and its output is shown; nothing is invented.",
+      "files": [
+        "evals/files/new-project"
+      ],
       "assertions": [
-        "Every command in the Commands table exists in package.json scripts or derives from the lockfile",
-        "ESLint and Vitest are mentioned because their config files exist, and no other tool is invented",
+        "Every command in the Commands table of the produced AGENTS.md exists in package.json scripts or derives from the lockfile",
+        "The produced AGENTS.md names ESLint and Vitest, and every other tool it names appears in package.json, in a config file name or in the lockfile name (no tool is invented)",
         "ARCHITECTURE.md is referenced by path and its content is not copied",
-        "The audit script reports ok: true",
+        "The response shows the audit script's result for the produced AGENTS.md, with ok: true",
         "No section is left empty or with template placeholders"
+      ],
+      "grader_files": [
+        "package.json",
+        "bun.lock",
+        "eslint.config.js",
+        "vitest.config.ts",
+        "ARCHITECTURE.md",
+        "README.md"
       ]
     },
     {
       "id": 2,
       "prompt": "Update our AGENTS.md and make it tool-neutral; we have an INSTRUCTIONS.md from an old setup.",
-      "expected_output": "The conventions in INSTRUCTIONS.md (run size before finishing, never break hard rules, reply in Portuguese) are listed and the user is asked which to carry over and what to do with the file; INSTRUCTIONS.md is not deleted or renamed; the workbench section is byte-identical; the false command `bun run tests` and the missing `docs/ARCH.md` are corrected and listed in the report.",
-      "files": ["evals/files/project-with-tooling"],
+      "expected_output": "AGENTS.md is corrected in this turn: the false command `bun run tests` and the missing `docs/ARCH.md` are replaced and listed in the report; the workbench section is byte-identical and the audit says so; the conventions in INSTRUCTIONS.md (run size before finishing, never break hard rules, reply in Portuguese) are not written yet: they are listed and the user is asked which to carry over and what to do with the file, with recommendations; INSTRUCTIONS.md is not deleted, renamed or edited.",
+      "files": [
+        "evals/files/project-with-tooling"
+      ],
       "assertions": [
         "The user is asked, with a recommendation, which INSTRUCTIONS.md conventions to carry over before they are written",
         "INSTRUCTIONS.md still exists, unrenamed, after the skill runs",
         "The workbench section is reported as unchanged by the audit",
         "`bun run tests` is replaced by an existing script and the change is listed in the report",
         "The reference to docs/ARCH.md is fixed or removed and listed in the report"
+      ],
+      "grader_files": [
+        "AGENTS.md",
+        "INSTRUCTIONS.md",
+        "package.json",
+        "ARCHITECTURE.md"
       ]
     },
     {
       "id": 3,
       "prompt": "Audit AGENTS.md, we changed the test runner last week.",
-      "expected_output": "Only the audit path runs; unknown commands and missing paths are reported; fixes are grounded in the current package.json scripts; no other section is rewritten.",
-      "files": ["evals/files/project-with-tooling"],
+      "expected_output": "Only the audit path runs: the audit script is run, its result before the edit is shown, the unknown command and the missing path are replaced by the existing script and path, the audit is run again; no other line or section of AGENTS.md is rewritten, no convention from INSTRUCTIONS.md is added, and the report lists each change.",
+      "files": [
+        "evals/files/project-with-tooling"
+      ],
       "assertions": [
-        "The audit script is run before any edit",
-        "Only commands and paths flagged by the audit are changed",
-        "Sections not affected by the audit are byte-identical",
-        "The report lists each change with the script it now points to"
+        "The response shows the audit script's result from before any edit: not ok, with `bun run tests` and `docs/ARCH.md` flagged",
+        "In the produced AGENTS.md the sentence 'Run ... before pushing. See ...' is kept with only its command and its path changed (the command to `bun run test`; the path to a file that exists, or removed), and nothing from INSTRUCTIONS.md is added",
+        "In the produced AGENTS.md the title line `# Widgets` and the workbench block (both markers, `## Working with the AI workbench`, `(section owned by core-project-init)`) are unchanged, and no new section is added",
+        "The report lists each change made with its old and new value: `bun run tests` to a script that exists in package.json, and `docs/ARCH.md` to a path that exists (or its removal)"
+      ],
+      "grader_files": [
+        "AGENTS.md",
+        "INSTRUCTIONS.md",
+        "package.json",
+        "ARCHITECTURE.md"
       ]
     }
   ]

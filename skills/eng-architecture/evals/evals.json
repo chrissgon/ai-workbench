@@ -5,25 +5,29 @@
       "id": 1,
       "prompt": "Design the Markdown content model from docs/product/specs/markdown-content-model.md. The codebase map is in docs/engineering/architecture.md.",
       "expected_output": "A design at docs/engineering/designs/markdown-content-model.md with components mapped to REQs, the content schema in the framework's own form citing its documentation and version, routes and generated artifacts as contracts, build and render flows with a failure path per EDGE, ADRs for decisions with viable alternatives, a verification plan with one row per AC, and check_design.py reporting ok; user-owned decisions asked, not assumed.",
-      "files": [],
+      "files": ["evals/files/content-model"],
       "assertions": [
         "Every REQ, NFR, EDGE and AC id from the specification appears in the design and check_design.py reports ok: true",
         "Every framework API named in the design cites a documentation URL with version or a file in the codebase",
         "Each ADR has at least two options with consequences and names the requirement ids it serves",
         "The verification plan has one concrete check per acceptance criterion",
         "No decision classified as the user's is made silently; such decisions appear as questions with a recommendation"
-      ]
+      ],
+      "grader_files": ["docs/product/specs/markdown-content-model.md", "docs/engineering/architecture.md", "docs/workbench/state.md", "package.json"],
+      "allow_web": true,
+      "allow_commands": ["mkdir -p docs/engineering", "date +%F"]
     },
     {
       "id": 2,
       "prompt": "Design the search architecture. The spec is in docs/product/specs/search.md but it still has an open question about the provider.",
       "expected_output": "The skill reads the spec, finds the OPEN that blocks the provider component, and stops with at most three questions with recommended answers instead of designing around a guessed provider; nothing is written to docs/engineering/designs/.",
-      "files": [],
+      "files": ["evals/files/search-open"],
       "assertions": [
         "No design file is written while the blocking OPEN is unresolved",
         "The user is asked at most three questions, each with a recommended answer",
         "The reply is in English, the language of the prompt"
-      ]
+      ],
+      "grader_files": ["docs/product/specs/search.md"]
     },
     {
       "id": 3,
@@ -35,7 +39,8 @@
         "REQ-2 gets a component and AC-2 gets a verification row",
         "The single-option ADR is completed with a second option or removed with the decision restated as following from a requirement",
         "The check reports ok: true after the fixes"
-      ]
+      ],
+      "grader_files": ["spec-tiny.md"]
     }
   ]
 }

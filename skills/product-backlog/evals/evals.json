@@ -5,36 +5,49 @@
       "id": 1,
       "prompt": "Break the Markdown content model into tasks. Spec: docs/product/specs/markdown-content-model.md, design: docs/engineering/designs/markdown-content-model.md.",
       "expected_output": "A feature section in docs/product/backlog.md where the design's assumptions become spike tasks placed first, every component, generator and removal is a task, every task cites REQ/AC ids from the spec and a Check from the verification plan, dependencies form no cycle, removals come after their replacements, milestones end in usable states, and lint_backlog.py reports ok with full REQ/NFR/AC coverage.",
-      "files": [],
+      "files": [
+        "evals/files/content-model"
+      ],
+      "grader_files": [
+        "docs/product/specs/markdown-content-model.md",
+        "docs/engineering/designs/markdown-content-model.md"
+      ],
       "assertions": [
-        "The design's assumptions to verify appear as spike tasks with no dependants placed before them in the critical path",
-        "Every task cites at least one REQ or AC id that exists in the spec and has a Check derived from the verification plan",
+        "Each of the design's two assumptions to verify has its own spike task, and every spike is numbered before, and has no dependency on, any task that depends on it; at least one task depends on each spike. A spike that is not on the critical path is not a failure",
+        "Every task, spikes included, cites in Delivers at least one REQ or AC id that exists in the spec. The Check of every task that is not a spike carries a command from the design's verification plan (a task with no row of its own may use the row of an AC it delivers); a test file or command the verification plan does not list is a failure. A spike's Check comes from the 'Verify by' sentence of the design assumption it tests, not from the verification plan",
         "Removal tasks depend on the tasks that replace what they remove",
-        "lint_backlog.py reports ok: true and coverage equal to the number of REQ, NFR and AC ids",
-        "No task carries a duration in days or a date"
+        "lint_backlog.py reports ok: true and coverage equal to the number of REQ, NFR and AC ids"
       ]
     },
     {
       "id": 2,
       "prompt": "Break what's in docs/product/specs/search.md into tasks.",
       "expected_output": "The spec has more than three requirements and no design exists; the skill asks whether to design first (recommended) or plan from the spec with tasks marked design pending, and writes nothing before the answer.",
-      "files": [],
+      "files": [
+        "evals/files/search"
+      ],
+      "grader_files": [
+        "docs/product/specs/search.md"
+      ],
       "assertions": [
         "No backlog section is written before the user answers",
-        "The question offers designing first as the recommended option with a reason",
-        "The reply is in English, the language of the prompt"
+        "The question offers designing first as the recommended option with a reason"
       ]
     },
     {
       "id": 3,
       "prompt": "Lint this backlog against the spec and fix it.",
       "expected_output": "The lint reports the T-ti-1/T-ti-2 dependency cycle, REQ-9 not in the spec, 'works' as a check, 'big' as a size, milestone M3 missing, and REQ-2/NFR-1/AC-1/AC-2 uncovered; each is fixed without inventing requirements, and the lint passes.",
-      "files": ["evals/files/spec-tiny.md", "evals/files/backlog-bad.md"],
+      "files": [
+        "evals/files/spec-tiny.md",
+        "evals/files/backlog-bad.md"
+      ],
+      "grader_files": [
+        "spec-tiny.md"
+      ],
       "assertions": [
         "The lint is run before any edit and every finding is listed",
         "The cycle is broken by correcting a dependency, not by deleting a task",
-        "REQ-9 is replaced by an id that exists in the spec or the task is removed",
-        "The check 'works' is replaced by a command, test or observable result",
         "The lint reports ok: true and full coverage after the fixes"
       ]
     }

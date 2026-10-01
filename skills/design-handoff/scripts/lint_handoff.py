@@ -2,7 +2,8 @@
 """Lint a design handoff spec.
 
 Usage: python3 lint_handoff.py --file <handoff.md> --flows <flows.md> --screen SCREEN-n
-                               [--inventory <inventory.json> --library <stylesheet.css>] [--json]
+                               [--inventory <inventory.json> --library <stylesheet.css>]
+                               [--report <handoff.lint.json>] [--json]
 
 Checks:
   - required sections are present
@@ -12,13 +13,19 @@ Checks:
     stylesheet does not define, and every fixed colour, appears in the Tokens table (custom properties
     may be grouped with a wildcard such as `--ds-*-ink`)
   - every Tokens row has an Action
-  - every Motion row has a Reduced motion entry
+  - with --inventory: every true or false constant of the export's scripts (inventory `script_flags`, the
+    candidates for preview-only switches) and every constant holding hard-coded data (`script_data`) is
+    named somewhere in the spec
+  - every Motion row has a Timing with a number in ms or s and a Reduced motion entry
   - every DEV-n has "Action:" with fix in code, back to design, or accepted
   - Acceptance names at least one width in px and a mode (light or dark)
   - no TBD or TODO; every OPEN has Blocks: and Recommended:
 
-Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
+Prints JSON: ok, summary (the line the report quotes), counts, errors. --report also writes that result,
+with the command's arguments and the date, to the given file, kept next to the spec as the evidence of the
+last run. Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
+import datetime
 import fnmatch
 import json
 import re
@@ -50,7 +57,12 @@ def main(argv):
         print(__doc__)
         return 0 if argv else 2
     as_json = "--json" in argv
-    args = {f: argv[argv.index(f) + 1] for f in ("--file", "--flows", "--screen", "--inventory", "--library") if f in argv}
+    try:
+        args = {f: argv[argv.index(f) + 1] for f in
+                ("--file", "--flows", "--screen", "--inventory", "--library", "--report") if f in argv}
+    except IndexError:
+        print("Error: every option needs a value. See --help.", file=sys.stderr)
+        return 2
     if not all(k in args for k in ("--file", "--flows", "--screen")) or (("--inventory" in args) != ("--library" in args)):
         print("Error: --file, --flows and --screen are required; --inventory and --library go together.", file=sys.stderr)
         return 2
@@ -98,10 +110,19 @@ def main(argv):
             libcol = c.lower() in lib.lower()
             if not libcol and c.lower() not in tok_text:
                 errors.append(f"fixed colour {c} is not in the library and has no Tokens row")
-    for r in rows(section(text, "Motion")):
+        for f in inv.get("script_flags", []) + inv.get("script_data", []):
+            if f.get("name") and f["name"] not in text:
+                errors.append(f"script constant {f['name']} ({f.get('script')}, line {f.get('line')}) is not named in "
+                              "the spec: say under 'Reference and shipping' whether it is a preview-only switch or "
+                              "placeholder data, or under Behaviour or Components what it is in the product")
+    motion = rows(section(text, "Motion"))
+    for r in motion:
         if len(r) < 5 or not r[4] or r[4] in ("-", "—"):
             errors.append(f"Motion row {r[0] if r else '?'} has no reduced-motion entry")
-    for did, rest in re.findall(r"^\s*-\s*(DEV-\d+):(.*)$", section(text, "Deviations"), re.M):
+        if len(r) >= 3 and not re.search(r"\d\s?(ms|s)\b", r[2]):
+            errors.append(f"Motion row {r[0]} has no timing in ms or s (read it from the export's scripts and styles)")
+    devs = re.findall(r"^\s*-\s*(DEV-\d+):(.*)$", section(text, "Deviations"), re.M)
+    for did, rest in devs:
         if not re.search(r"Action:\s*(fix in code|back to design|accepted)", rest):
             errors.append(f"{did} has no Action: fix in code | back to design | accepted")
     acc = section(text, "Acceptance")
@@ -113,8 +134,22 @@ def main(argv):
         if "Blocks:" not in rest or "Recommended:" not in rest:
             errors.append(f"{oid} lacks Blocks: or Recommended:")
     ok = not errors
-    print(json.dumps({"ok": ok, "counts": {"components": len(comps), "tokens": len(toks)}, "errors": errors},
-                     indent=2 if as_json else None))
+    counts = {"components": len(comps), "tokens": len(toks), "motion": len(motion), "deviations": len(devs)}
+    checked = "with inventory and library" if inv is not None else "without inventory (tokens not checked)"
+    summary = (f"lint_handoff {'ok' if ok else 'FAILED'}: {len(errors)} errors; {counts['components']} components, "
+               f"{counts['tokens']} tokens, {counts['motion']} motion rows, {counts['deviations']} deviations; {checked}")
+    result = {"ok": ok, "summary": summary, "counts": counts, "errors": errors}
+    if "--report" in args:
+        record = {"date": datetime.date.today().isoformat(),
+                  "arguments": {k: v for k, v in args.items() if k != "--report"}, **result}
+        try:
+            with open(args["--report"], "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error: cannot write the report: {e}", file=sys.stderr)
+            return 2
+    print(json.dumps(result, indent=2 if as_json else None))
     return 0 if ok else 1
 
 

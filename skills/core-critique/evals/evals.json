@@ -18,14 +18,15 @@
       "id": 2,
       "prompt": "Stress-test our business model doc at docs/business/business-model.md. It says the market is worth 2 billion, there are no direct competitors, and we'll charge 49 per month.",
       "expected_output": "Findings on top-down sizing without a bottom-up check, on 'no competitors' as an unperformed search including substitutes and doing nothing, and on pricing without willingness-to-pay evidence; each with severity and what evidence would resolve it.",
-      "files": [],
+      "files": ["evals/files/business-model"],
       "assertions": [
         "'No competitors' is treated as a finding about missing research, not accepted as a fact",
         "Top-down market sizing is flagged and a bottom-up check is proposed as the test",
         "The price is flagged as an unstated assumption unless evidence of willingness to pay is cited",
         "The business lens categories are used, not the engineering ones",
         "The document is not edited"
-      ]
+      ],
+      "grader_files": ["docs/business/business-model.md"]
     },
     {
       "id": 3,
@@ -42,13 +43,14 @@
       "id": 4,
       "prompt": "Critique the plan in docs/product/specs/export-csv.md. It has acceptance criteria, an explicit out-of-scope list, error states and a metric.",
       "expected_output": "If no finding with a real trigger exists, two what-if scenarios are written with the reason the plan holds under each, and the verdict is approved without invented problems.",
-      "files": [],
+      "files": ["evals/files/export-csv"],
       "assertions": [
         "No finding is invented without a concrete trigger",
         "If fewer than two findings exist, two what-if scenarios are written with reasons the plan holds",
         "The verdict is approved or approved with changes, consistent with the findings",
         "Assumptions are still listed even when the verdict is approved"
-      ]
+      ],
+      "grader_files": ["docs/product/specs/export-csv.md"]
     }
   ]
 }

@@ -148,3 +148,25 @@ Options weighed: a longer list of rules (still matches text, so the next harmles
 Decided: on the strong tier every command runs inside the harness's sandbox, enforced by the operating system: writes inside the case folder and temporary folders, no network, no read of the workbench or of credential folders, and no start at all when the sandbox is unavailable. The case's `allow_commands` prefixes and the skill's own scripts keep running unconfined when called plainly, as before, since a browser does not start inside the sandbox. `allow_web` stays a per-case decision. Details and the checks made: `adapters/claude-code/README.md`.
 
 Consequences: a record whose strong-tier runs were made under the rules understates the strong model; the gate was still passed under the harder condition, so those records stay valid, and they are measured again as each skill is next evaluated. `eval_status.py` does not turn a record `stale` for an adapter change. The two tiers are still not confined alike: confining the floor tier is backlog S19.
+
+## 2026-10-01: Skill evaluation pauses for an architecture review
+
+In one day the eval harness was changed four times for causes found while measuring: runs that failed on infrastructure counted as scores, without-skill runs found the workbench by walking up, the strong tier was denied harmless commands the floor tier could run, and floor runs found the workbench by searching the disk. Each fix changed what the records mean, and 26 records were partly measured again twice. The last cause, and a shell profile on the maintainer's machine that breaks `cd` for every run, point at the same thing: results depend on the machine.
+
+Decided by the maintainer: before a container environment is tried (backlog T16), the state is written down (backlog T11), the whole architecture is reviewed, tests included, and a plan is made from the architecture that is decided, so that the remaining skills, and the 26 already recorded, are measured once more and not again after that.
+
+## 2026-10-01: Evals run only in a container; the runner leaves the skill; a record says how it was measured
+
+Decided by the maintainer on the review of that day (`docs/architecture/review-2026-10-01.md`, D1, D2, D3, D5, D6):
+
+- **One environment, no alternative.** Every eval run executes in a container built from one pinned image, one container per run, started by an executor layer between the runner and the adapters. The container is the boundary for both tiers, which get the same rights; nothing of the workbench or of the person's home is mounted. There is no host mode: one standard, so that every record is comparable. This closes backlog S19 and replaces T6.
+- **The eval runner moves out of `core-skill-creator`** to a top-level `evals/` folder with its tests, the grading template and the gate configuration.
+- **A record names how it was measured** (image digest, runner and CLI versions, strong model, grader, measurement version) and is `stale` when the skill folder, the floor model, the strong model, the grader or the measurement version differs. The measurement version is a number in the gate configuration, raised on purpose when a change alters what is measured; the runner's own hash is not used.
+- **In the container the strong runner authenticates with a long-lived token** from the secret store, passed as an environment variable; to be confirmed by the proof of concept.
+- **Network:** egress only to the model provider; a case with `allow_web` gets open egress; language dependencies and a browser come with the image.
+
+## 2026-10-01: The gate asks the threshold of both models
+
+The rule in the code was: the floor model with the skill at the threshold (0.8) or above, and the strong model with the skill at least as good as without it. The strong model had no threshold of its own, so a skill passed with the strong model at 0.78; and the comparison had no tolerance, so a difference smaller than the spread between runs could fail a skill.
+
+Decided by the maintainer (D4): a skill passes when **both models score at the threshold or above with the skill, and the strong model with the skill is not below the strong model without it by more than a tolerance**. The tolerance is a number in the gate configuration, set from the spread measured in the container's proof of concept and approved by the maintainer; until then it is 0. Changing the rule raises the measurement version, so every record made under the old rule reads `stale`.

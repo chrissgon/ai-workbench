@@ -1,42 +1,66 @@
 {
   "skill_name": "core-clarify",
+  "allow_commands": [
+    "git status",
+    "git log",
+    "git ls-files",
+    "git ls-tree",
+    "ls",
+    "date"
+  ],
   "evals": [
     {
       "id": 1,
       "prompt": "Grill me on this plan: I want to add dark mode to our docs site. Users toggle it in the header, we remember the choice, and it should respect the OS setting by default.",
-      "expected_output": "A first round of at most three questions with recommended answers, ordered by dependency (goal/scope before approach), none of which asks something the codebase could answer, followed after answers by a brief with decisions and an explicit Out list.",
-      "files": [],
+      "expected_output": "One turn, no answers yet: the files are read first (Eleventy site, header in src/_includes/header.njk, colours as custom properties in src/css/site.css, no dark styles yet) and stated as facts with their source; then a first round of at most three questions, each about one decision, with a recommended answer and a one-sentence reason. Nothing is written: no brief and no state line exist before the user answers.",
+      "files": [
+        "evals/files/docs-site"
+      ],
+      "grader_files": [
+        "package.json",
+        "src/_includes/header.njk",
+        "src/css/site.css"
+      ],
       "assertions": [
         "The first round contains at most three questions",
         "Every question has a recommended answer with a one-line reason",
-        "No question bundles two decisions",
-        "The brief contains an explicit 'Out' list under Scope",
-        "Each decision in the brief names who decided it"
+        "No question bundles two decisions: each question can be settled by picking one of its options. Options that are alternative answers to the same question (for example 'yes, I will supply them; no, derive them') are one decision, not two",
+        "No question asks what the project files already answer (which site generator the docs use, where the header lives, whether dark styles already exist in the repository); the reply states at least one of these facts with the file it came from. A question about something only the user knows (a preference, a target, or material that is not in the repository) is not answered by the files",
+        "No brief file and no state file is written in this turn, and no recommended answer is presented as already decided: the reply says the questions are open until the user answers"
       ]
     },
     {
       "id": 2,
       "prompt": "Let's clarify the redesign. We'll keep the current Nuxt setup and add server-side rendering for SEO.",
-      "expected_output": "Before asking anything, the skill reads the project's configuration; if the project already renders on the server (or already generates static pages), it surfaces the contradiction between the request and the codebase in the first round instead of accepting the premise.",
-      "files": [],
+      "expected_output": "Before asking anything, the skill reads nuxt.config.ts, finds `ssr: true` (the project already renders on the server), and surfaces the contradiction between the request (add server-side rendering) and the codebase in the first round, asking the user which one holds, instead of accepting the premise. No brief is written.",
+      "files": [
+        "evals/files/nuxt-site"
+      ],
+      "grader_files": [
+        "nuxt.config.ts",
+        "package.json"
+      ],
       "assertions": [
-        "The skill inspects the project's configuration or build setup before the first question",
-        "If the premise conflicts with the codebase, the conflict is stated in the first round and the user is asked which wins",
-        "The premise is not silently accepted or silently corrected",
+        "The conflict between the request (add server-side rendering) and nuxt.config.ts (server-side rendering is already on) is stated in the first round, and the user is asked which one wins",
         "The fact established from the codebase appears under 'Facts established without asking' with its source"
       ]
     },
     {
       "id": 3,
-      "prompt": "Interview me about migrating our component library docs to v1.",
-      "expected_output": "Decisions already recorded in docs/workbench/state.md are cited, not re-asked; questions cover only the branches that are neither known nor answerable by reading MIGRATION.md; the brief lands in docs/workbench/briefs/ and decisions are appended to the state file.",
-      "files": [],
+      "prompt": "Interview me about migrating our component library docs to v1. I'm going offline in a minute so don't wait on me, here's what I know: goal is that every component page documents the v1 API before the v1 release on 2026-11-16, for app developers who use the library. In: the 14 component pages and the getting-started guide. Out for now: the theming guide and the blog. I haven't decided who reviews the pages, park that. Anything else still open, park it too and write the brief.",
+      "expected_output": "No round is asked, because the user said not to wait. Decisions already recorded in docs/workbench/state.md are cited, not re-asked; facts in MIGRATION.md (registered in the state file) are listed with their source; the brief lands in docs/workbench/briefs/ with the user's In and Out lists and decisions attributed to who made them; the new decisions are appended to the state file and the reviewer question is parked there as a checkbox.",
+      "files": [
+        "evals/files/library-docs"
+      ],
+      "grader_files": [
+        "MIGRATION.md"
+      ],
       "assertions": [
-        "Decisions present in docs/workbench/state.md are cited rather than asked again",
-        "Nothing asked is answered by the registered migration document",
+        "Facts that MIGRATION.md answers (at least the renamed components or the removed props) appear in the brief under 'Facts established without asking' with MIGRATION.md as their source, and are neither asked nor parked as open questions",
         "The brief is written to docs/workbench/briefs/<topic>.md",
-        "New decisions are appended to the Decisions section of the state file without rewriting existing lines",
-        "Open questions that remain are added as checkboxes to the state file"
+        "New decisions are appended to the Decisions section of the state file without rewriting existing lines: the two lines dated 2026-09-14 and 2026-09-21 are still there, unchanged, above the new ones",
+        "Each decision in the brief names who decided it",
+        "Who reviews the pages is parked, not decided: it is a checkbox under the brief's 'Open questions' section that says what it blocks, and a checkbox under 'Open questions' in the state file next to the existing TypeScript question; it is in neither Decisions table nor Decisions list"
       ]
     }
   ]

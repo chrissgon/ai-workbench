@@ -221,28 +221,28 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 <!-- eval-status:begin -->
 | Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |
 |-------|--------|-------------|----------------|------------|------|-----------|
-| biz-icp-positioning | draft | — | — | — | — | — |
-| biz-market-analysis | draft | — | — | — | — | — |
-| brand-guidelines | draft | — | — | — | — | — |
-| brand-identity | draft | — | — | — | — | — |
-| brand-name | draft | — | — | — | — | — |
-| brand-profile | draft | — | — | — | — | — |
-| brand-strategy | draft | — | — | — | — | — |
-| brand-voice | draft | — | — | — | — | — |
-| core-agents-md | draft | — | — | — | — | — |
-| core-clarify | draft | — | — | — | — | — |
-| core-critique | draft | — | — | — | — | — |
-| core-orchestrator | draft | — | — | — | — | — |
-| core-project-init | draft | — | — | — | — | — |
+| biz-icp-positioning | evaluated | 1.00 | 0.49 | 0.93 | 2026-10-01 | 1 |
+| biz-market-analysis | evaluated | 0.93 | 0.22 | 0.94 | 2026-10-01 | 1 |
+| brand-guidelines | evaluated | 1.00 | 0.56 | 1.00 | 2026-10-01 | 1 |
+| brand-identity | draft | 0.69 | 0.38 | 0.74 | 2026-10-01 | 4 |
+| brand-name | evaluated | 1.00 | 0.46 | 0.97 | 2026-10-01 | 1 |
+| brand-profile | evaluated | 0.94 | 0.39 | 0.97 | 2026-10-01 | 1 |
+| brand-strategy | evaluated | 1.00 | 0.75 | 1.00 | 2026-10-01 | 1 |
+| brand-voice | evaluated | 0.81 | 0.44 | 0.93 | 2026-10-01 | 1 |
+| core-agents-md | evaluated | 1.00 | 0.53 | 0.98 | 2026-10-01 | 3 |
+| core-clarify | evaluated | 1.00 | 0.02 | 1.00 | 2026-10-01 | 4 |
+| core-critique | evaluated | 0.96 | 0.42 | 0.89 | 2026-10-01 | 1 |
+| core-orchestrator | evaluated | 0.90 | 0.44 | 0.86 | 2026-10-01 | 1 |
+| core-project-init | evaluated | 1.00 | 0.42 | 1.00 | 2026-10-01 | 3 |
 | core-research | draft | — | — | — | — | — |
-| core-security-audit | draft | — | — | — | — | — |
+| core-security-audit | evaluated | 0.90 | 0.75 | 0.94 | 2026-10-01 | 1 |
 | core-skill-creator | draft | — | — | — | — | — |
 | design-brief | evaluated | 1.00 | 0.36 | 0.98 | 2026-10-01 | 1 |
 | design-execute | draft | — | — | — | — | — |
-| design-handoff | draft | — | — | — | — | — |
+| design-handoff | evaluated | 1.00 | 0.31 | 1.00 | 2026-10-01 | 3 |
 | design-system | evaluated | 1.00 | 0.44 | 1.00 | 2026-10-01 | 6 |
-| design-ux-flows | draft | — | — | — | — | — |
-| eng-architecture | draft | — | — | — | — | — |
+| design-ux-flows | evaluated | 0.78 | 0.47 | 0.80 | 2026-10-01 | 1 |
+| eng-architecture | evaluated | 0.89 | 0.40 | 0.93 | 2026-10-01 | 1 |
 | eng-code-review | draft | — | — | — | — | — |
 | eng-codebase-map | draft | — | — | — | — | — |
 | eng-docs | draft | — | — | — | — | — |
@@ -252,8 +252,8 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | eng-refactor | draft | — | — | — | — | — |
 | eng-root-cause | draft | — | — | — | — | — |
 | eng-security-review | draft | — | — | — | — | — |
-| eng-tradeoffs | draft | — | — | — | — | — |
-| eng-unit-tests | draft | — | — | — | — | — |
+| eng-tradeoffs | stale | 1.00 | 0.39 | 1.00 | 2026-10-01 | 3 |
+| eng-unit-tests | evaluated | 0.92 | 0.68 | 1.00 | 2026-10-01 | 1 |
 | flow-fix-bug | draft | — | — | — | — | — |
 | mkt-content-plan | draft | — | — | — | — | — |
 | mkt-engage | draft | — | — | — | — | — |
@@ -265,12 +265,12 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | ops-ci-pipeline | draft | — | — | — | — | — |
 | ops-pull-request | draft | — | — | — | — | — |
 | ops-repo-baseline | draft | — | — | — | — | — |
-| product-backlog | draft | — | — | — | — | — |
+| product-backlog | evaluated | 1.00 | 0.36 | 1.00 | 2026-10-01 | 4 |
 | product-feature-spec | evaluated | 1.00 | 0.29 | 1.00 | 2026-10-01 | 1 |
 | product-prd | evaluated | 1.00 | 0.46 | 0.99 | 2026-10-01 | 1 |
-| product-roadmap | draft | — | — | — | — | — |
+| product-roadmap | evaluated | 1.00 | 0.59 | 1.00 | 2026-10-01 | 3 |
 
-Counts: 6 evaluated, 0 stale, 42 draft, 48 skills.
+Counts: 25 evaluated, 1 stale, 22 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

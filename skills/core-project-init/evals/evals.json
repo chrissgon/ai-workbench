@@ -4,40 +4,62 @@
     {
       "id": 1,
       "prompt": "Set this project up for the workbench.",
-      "expected_output": "Detection run; questions for name (recommending the package name) and autonomy mode (recommending every-phase); then docs/workbench/state.md created and AGENTS.md created with the workbench section.",
-      "files": [],
+      "expected_output": "Detection run; the name and the autonomy mode are the user's decisions and the request states neither, so nothing is written: the reply asks for the name (recommending lumen-notes, the package name) and the autonomy mode (recommending every-phase).",
+      "files": [
+        "evals/files/new-project"
+      ],
       "assertions": [
-        "The detect command is run before any question",
+        "The reply says what was found in the project before it asks: that the project has no workbench state yet (not initialized) and the detected name `lumen-notes`. Evidence that counts: the reply states both; the command itself need not be shown",
+        "The reply asks for the project name with `lumen-notes` as the recommended answer, and for the autonomy mode with `every-phase` as the recommended answer",
         "At most three questions are asked, each with a recommended answer",
-        "docs/workbench/state.md is created with the chosen autonomy mode",
-        "AGENTS.md contains exactly one section between the workbench markers",
-        "No docs/<area>/ folder is created"
+        "Nothing is initialized on a guess: no docs/workbench/state.md and no AGENTS.md is among the files produced, and the reply does not say the project was initialized"
       ]
     },
     {
       "id": 2,
-      "prompt": "Onboard this repo to the workbench. Keep our docs where they are.",
-      "expected_output": "ARCHITECTURE.md and DESIGN-SYSTEM.md proposed as docs/engineering/architecture.md and docs/design/design-system.md; docs/button.md and CHANGELOG.md not proposed; the existing AGENTS.md content preserved with the section appended.",
-      "files": ["evals/files/existing-project"],
+      "prompt": "set this project up for the workbench. name: Lumen Notes, checkpoints at every phase",
+      "expected_output": "The request states the name and the mode and there is nothing to register, so no question is asked: docs/workbench/state.md is created with Project Lumen Notes and Checkpoints every-phase, AGENTS.md is created with the workbench section, and the reply reports both and names a next step.",
+      "files": [
+        "evals/files/new-project"
+      ],
       "assertions": [
-        "ARCHITECTURE.md is registered as docs/engineering/architecture.md with owner existing",
-        "DESIGN-SYSTEM.md is registered as docs/design/design-system.md with owner existing",
-        "docs/button.md is not registered and the report says why",
-        "CHANGELOG.md is neither registered nor edited",
-        "The original AGENTS.md lines are byte-identical and the workbench section appears once",
-        "No file was moved or renamed"
+        "docs/workbench/state.md is produced with the line `- Project: Lumen Notes` and the line `- Checkpoints: every-phase`",
+        "docs/workbench/state.md has the sections of the state contract: Autonomy, Artifacts (a table with the columns Artifact, Owner skill, Status, Updated), Decisions, Open questions and Approvals",
+        "AGENTS.md is produced and contains exactly one block between `<!-- workbench:start -->` and `<!-- workbench:end -->`, and that block states the mode `every-phase`",
+        "The reply does not ask for the name or the autonomy mode again and does not wait for an approval before writing",
+        "The files produced are only docs/workbench/state.md and AGENTS.md: no other file or folder under docs/ and no leftover scratch file",
+        "The reply reports the state file as created with autonomy every-phase and names a next step"
       ]
     },
     {
       "id": 3,
-      "prompt": "Switch this project to milestones mode.",
-      "expected_output": "Detection shows state exists; the update path is used with --set-autonomy milestones; nothing else changes.",
-      "files": ["evals/files/existing-project"],
+      "prompt": "Onboard this repo to the workbench: name widgets, checkpoints at milestones. Register the specs we have at the root the way you'd map them. Keep our docs where they are.",
+      "expected_output": "ARCHITECTURE.md and DESIGN-SYSTEM.md registered in place as docs/engineering/architecture.md and docs/design/design-system.md; docs/button.md and CHANGELOG.md not registered; the existing AGENTS.md content preserved with the section appended; state created with Checkpoints milestones.",
+      "files": [
+        "evals/files/existing-project"
+      ],
       "assertions": [
-        "--apply is not used",
-        "The Checkpoints line in docs/workbench/state.md reads milestones",
-        "The AGENTS.md section states milestones and still appears exactly once",
-        "No new questions about name or registrations are asked"
+        "docs/workbench/state.md has an Artifacts row registering docs/engineering/architecture.md at ARCHITECTURE.md with owner `existing`",
+        "docs/workbench/state.md has an Artifacts row registering docs/design/design-system.md at DESIGN-SYSTEM.md with owner `existing`",
+        "docs/workbench/state.md has the line `- Project: widgets` and the line `- Checkpoints: milestones`",
+        "docs/button.md is not registered (no row for it in state.md) and the reply says why (end-user or product documentation)",
+        "CHANGELOG.md is not registered (no row for it in state.md) and is not among the files produced",
+        "AGENTS.md still starts with its original content, unchanged: the heading `# Widgets` and the line \"Project conventions. Run `npm test` before pushing.\", followed by exactly one block between `<!-- workbench:start -->` and `<!-- workbench:end -->`",
+        "The documents are registered in place: no file under docs/engineering/ or docs/design/ is produced, and nothing in the reply says a document was moved, renamed or copied"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "Switch this project to milestones mode.",
+      "expected_output": "Detection shows the state exists with every-phase; the update path sets milestones in the state file and in the AGENTS.md section; the name and the registered rows stay; no question is asked.",
+      "files": [
+        "evals/files/initialized-project"
+      ],
+      "assertions": [
+        "The Checkpoints line in docs/workbench/state.md reads `- Checkpoints: milestones`",
+        "The project was updated, not initialized again: state.md still has `- Project: widgets` and both registered rows (docs/engineering/architecture.md at ARCHITECTURE.md, docs/design/design-system.md at DESIGN-SYSTEM.md), each exactly once",
+        "The workbench block in AGENTS.md states `milestones`, does not state `every-phase`, and appears exactly once; aGENTS.md still starts with its original content, unchanged: the heading `# Widgets` and the line \"Project conventions. Run `npm test` before pushing.\"",
+        "The reply asks no question about the name or the registrations and reports the change as done: it says the autonomy mode is milestones after the update (a report line such as \"state updated, autonomy milestones\" counts; a plan or an offer to switch does not)"
       ]
     }
   ]

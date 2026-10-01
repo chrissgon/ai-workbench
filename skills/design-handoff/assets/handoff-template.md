@@ -6,6 +6,7 @@
 - Screen: {SCREEN-n of the flows}
 - Approved design: {results document and run}
 - Export: {file}, unpacked to {folder}
+- Lint: {ok (YYYY-MM-DD) | failed | not run}
 
 ## Summary
 
@@ -17,7 +18,8 @@
 
 ## Reference and shipping
 
-- Reference only, never shipped: {tool runtime, inlined library copy, font CDN, preview switches}
+- Reference only, never shipped: {tool runtime and its URL, inlined library copy, font CDN}
+- Preview-only switches and placeholders: {each flag or data constant of the scripts by name: what it does in the preview, what the product does instead; or "none"}
 - Shipped: {library version and how it is loaded, fonts, icons}
 
 ## Tokens
@@ -37,6 +39,7 @@
 | Width | Columns and order | Sticky | Collapsed or hidden |
 |-------|-------------------|--------|---------------------|
 | {1280} | {…} | {…} | {…} |
+| {768, not designed} | {the rule the flows give} | {…} | {…} |
 
 ## Behaviour
 
@@ -48,7 +51,7 @@
 
 | Animation | Trigger | Timing | Final state | Reduced motion |
 |-----------|---------|--------|-------------|----------------|
-| {…} | {load, scroll into view, interaction} | {duration, easing, stagger} | {…} | {…} |
+| {…} | {load, scroll into view, interaction} | {duration in ms, easing, stagger in ms, from the export} | {…} | {…} |
 
 ## Assets
 
@@ -56,13 +59,17 @@
 
 ## Deviations
 
-- DEV-1: {what differs, from which source}. Action: {fix in code | back to design | accepted (user, date)}
+- DEV-1: {what the export does} against {what the source says, with its id: REQ-n, C-n, the design system, SCREEN-n}. Action: {fix in code | back to design | accepted (user, date)}
 
 ## Acceptance
 
-- Reference: {screenshot paths}
+- Reference: {screenshot paths, or the unpacked source.html when no screenshot was delivered}
 - Compare at: {widths} × {modes} × {states}
 - Tolerances: {layout, colour, type}
+
+## Assumptions
+
+- {Assumption: … | none}
 
 ## Open questions
 

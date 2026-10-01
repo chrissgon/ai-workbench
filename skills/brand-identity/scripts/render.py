@@ -272,6 +272,9 @@ def browser_command(browser, page, shot, profile, width, height):
     return [browser, "--headless", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
             "--force-color-profile=srgb", f"--window-size={width},{height}", f"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check", "--disable-extensions",
+            # No OS keychain: with a throwaway home (an eval run, a scheduled job) the browser finds no keychain
+            # and the system asks the person to create one. A screenshot stores no secret.
+            "--use-mock-keychain", "--password-store=basic",
             "--disable-background-networking", "--host-resolver-rules=MAP * ^NOTFOUND",
             f"--screenshot={shot}", page]
 

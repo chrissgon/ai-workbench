@@ -1,0 +1,49 @@
+{
+  "early_ends": {
+    "strong": {
+      "early_ends": 0,
+      "rate": 0.0
+    },
+    "floor": {
+      "early_ends": 0,
+      "rate": 0.0
+    }
+  },
+  "skill": "core-critique",
+  "content_sha256": "5e26919a685a42d9402b6ae64ad1f649b3845989e5156f2e467169d634d50cc3",
+  "date": "2026-10-01",
+  "iteration": 1,
+  "runs": 3,
+  "cases": [
+    1,
+    2,
+    3,
+    4
+  ],
+  "harness": "claude-code",
+  "floor_harness": "agents-dir",
+  "models": {
+    "strong": "claude-sonnet-5-5",
+    "floor": "openrouter/deepseek/deepseek-v4.1-flash"
+  },
+  "grader": "claude-sonnet-5-5",
+  "threshold": 0.8,
+  "scores": {
+    "strong_with": 0.963,
+    "strong_without": 0.417,
+    "floor_with": 0.893,
+    "floor_without": 0.546
+  },
+  "complete": true,
+  "infra_failures": 0,
+  "gate": {
+    "floor": true,
+    "strong_delta": true,
+    "passed": true
+  },
+  "baseline": {
+    "date": "2026-10-01",
+    "iteration": 2,
+    "runs": 3
+  }
+}

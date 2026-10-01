@@ -1,0 +1,23 @@
+:root {
+  --color-bg: #ffffff;
+  --color-text: #1c1f23;
+  --color-link: #0b5cad;
+  --color-code-bg: #f3f4f6;
+}
+
+body {
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: system-ui, sans-serif;
+}
+
+a { color: var(--color-link); }
+
+pre, code { background: var(--color-code-bg); }
+
+.site-header {
+  display: flex;
+  justify-content: space-between;
+  padding: 1rem 2rem;
+  border-bottom: 1px solid #e5e7eb;
+}

@@ -3,27 +3,35 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "The landing design is ready in docs/design/screens/landing-page (HTML exported from Claude Design). Generate the spec to implement it.",
-      "expected_output": "The export is unpacked with scripts/unpack_export.py; the spec separates the tool runtime, the inlined library copy and preview switches (such as a hard-coded reduced-motion flag) from what ships; every invented custom property and fixed colour has a Tokens row with an action; every region of SCREEN-1 has a component with its content source; motion timings are read from the script; deviations against the specs have actions; lint ok; the reply is in English.",
-      "files": [],
+      "prompt": "The landing design is approved, the export from Claude Design is at docs/design/screens/landing-page/landing.html. Generate the spec to implement it.",
+      "expected_output": "The export is unpacked with scripts/unpack_export.py into docs/design/handoff/landing-page/export; docs/design/handoff/landing-page.md separates the tool runtime, the inlined library copy, the font CDN and the preview switch PREVIEW_STATIC (a hard-coded flag that skips every animation) from what ships, and says the SIZE_DATA numbers are placeholders for the build's measurement; every invented custom property and fixed colour has a Tokens row with an action; every region of SCREEN-1 has a component with its content source; motion timings (600 ms, 80 ms stagger) are read from the export; deviations against the brief and the landing spec (3 showcase examples against at least 4, third-party fonts) have actions; lint ok, recorded in landing-page.lint.json and quoted in the reply.",
+      "files": [
+        "evals/files/landing"
+      ],
       "assertions": [
-        "scripts/unpack_export.py is run and its inventory.json is used",
-        "The spec names the preview-only switches found in the script",
-        "Every invented custom property of the inventory is covered by a Tokens row",
-        "Motion rows carry numbers from the script and a reduced-motion rule",
-        "scripts/lint_handoff.py with --inventory and --library reports ok: true",
-        "The reply is in English, the language of the prompt"
+        "The export was unpacked with scripts/unpack_export.py and its inventory is used: docs/design/handoff/landing-page/export/inventory.json exists and the spec's Tokens table carries entries of that inventory",
+        "The spec says that PREVIEW_STATIC, the hard-coded flag in the export's script that skips every animation, is a preview-only switch that does not ship",
+        "The spec says the size numbers hard-coded in the export (SIZE_DATA: 7.9 kB, 2.1 kB) are placeholders and that the product's numbers come from the build-time measurement",
+        "Each custom property the export invented (--ds-space-section, --ds-accent-ink, --ds-font-display, --hero-glow) and each fixed colour the library does not have (#e4e7ec, #ffb020) is in a Tokens row (alone or grouped) that says what it maps to and has an action",
+        "The entrance animation's Motion row carries the export's numbers (600 ms and the 80 ms stagger) and every Motion row has a reduced-motion rule",
+        "The showcase's 3 examples against the at least 4 of landing spec REQ-5 is listed as a deviation with an action",
+        "scripts/lint_handoff.py was run with --inventory and --library and its last result is ok: true; the evidence is docs/design/handoff/landing-page.lint.json (ok true, with those arguments) or the script's output quoted in the reply"
+      ],
+      "grader_files": [
+        "docs/product/specs/landing.md",
+        "docs/design/flows.md",
+        "library/plinthui.css"
       ]
     },
     {
       "id": 2,
       "prompt": "Here is a screenshot of the new settings page. Write the handoff.",
-      "expected_output": "Only a screenshot exists and no approved result is recorded: the skill asks for the approval to be recorded through design-execute (or records the user's explicit approval) and warns that timings, states and exact values will be estimates from a picture, marking undelivered widths as not designed.",
+      "expected_output": "No screenshot reached the run and the project holds no design, no approved result and no other input: the skill writes no spec, says which parts can only be estimated from a screenshot (timings, states, exact values), and asks, with a recommended answer for each question, where the design is (recommending the export) and for the approval to be recorded through design-execute (or the user's explicit approval, which it then records) before any spec.",
       "files": [],
       "assertions": [
-        "The reply says which parts can only be estimated from a screenshot",
-        "No width that was not delivered is specified as if designed",
-        "The approval is recorded before the spec is written"
+        "The reply says which parts can only be estimated from a screenshot, naming at least two of: timings or motion, states, exact values (colours, sizes, spacing), tokens",
+        "The reply asks for the approval of the design before any spec is written: that it be recorded through design-execute (docs/design/results/), or the user's explicit approval so that it can be recorded; and no spec file is written",
+        "The reply asks its questions with a recommended answer for each (for example: provide the export instead of a screenshot, because it carries exact values)"
       ]
     }
   ]
