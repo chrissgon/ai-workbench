@@ -113,3 +113,62 @@ def test_skill_scripts_are_allowed_by_relative_and_absolute_path(env):
     cwd = env["tmp"] / "cwd"
     assert "Bash(python3 .claude/skills/demo/scripts/check.py *)" in rules
     assert f"Bash(python3 {cwd}/.claude/skills/demo/scripts/check.py *)" in rules
+
+
+# --- stopping the adapter stops what the CLI started; HOME is left alone ---------------------------
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    return True
+
+
+def gone(pid, seconds=8):
+    import time
+    end = time.monotonic() + seconds
+    while alive(pid) and time.monotonic() < end:
+        time.sleep(0.1)
+    return not alive(pid)
+
+
+def stand_in(e, body):
+    cli = e["tmp"] / "bin" / "claude"
+    cli.write_text("#!/usr/bin/env bash\n" + body)
+    cli.chmod(0o755)
+
+
+def test_the_cli_keeps_the_callers_home_and_no_keychain_tool_is_called(env):
+    security = env["tmp"] / "bin" / "security"
+    security.write_text(f"#!/usr/bin/env bash\necho called >> {env['tmp']}/security.log\n")
+    security.chmod(0o755)
+    stand_in(env, f"echo \"$HOME\" > {env['tmp']}/home.txt\necho '{{\"result\": \"done\"}}'\n")
+    r = run(env)
+    assert r.returncode == 0, r.stderr
+    assert (env["tmp"] / "home.txt").read_text().strip() == str(env["tmp"])
+    assert not (env["tmp"] / "security.log").exists()
+
+
+def test_what_the_cli_leaves_in_the_background_stops_when_it_returns(env):
+    stand_in(env, f"sleep 300 &\necho $! > {env['tmp']}/child.pid\necho '{{\"result\": \"done\"}}'\n")
+    r = run(env)
+    assert r.returncode == 0, r.stderr
+    assert (env["tmp"] / "out" / "response.md").read_text() == "done"
+    assert gone(int((env["tmp"] / "child.pid").read_text()))
+
+
+def test_a_stopped_adapter_stops_the_cli_and_its_children(env):
+    import signal
+    import time
+    stand_in(env, f"sleep 300 &\necho $! > {env['tmp']}/child.pid\necho $$ > {env['tmp']}/cli.pid\nsleep 300\n")
+    t = env["tmp"]
+    proc = subprocess.Popen(["bash", str(SCRIPT), "--prompt-file", str(t / "prompt.md"), "--cwd", str(t / "cwd"),
+                             "--model", "m", "--out", str(t / "out")], env=env["env"], start_new_session=True)
+    end = time.monotonic() + 10
+    while not ((t / "cli.pid").exists() and (t / "cli.pid").read_text().strip()) and time.monotonic() < end:
+        time.sleep(0.05)
+    child, cli = int((t / "child.pid").read_text()), int((t / "cli.pid").read_text())
+    proc.send_signal(signal.SIGTERM)
+    assert proc.wait(timeout=15) == 143
+    assert gone(child) and gone(cli)

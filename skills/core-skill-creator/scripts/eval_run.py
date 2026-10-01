@@ -126,6 +126,13 @@ folder that changed during the run is reported and not recorded. --no-record ski
 whose floor model is not the configured one runs and is reported, but writes no record (it would read as
 stale: evaluated on another floor model) unless --record-anyway is given.
 
+Stopping. Every adapter call (a model run, a grading) and every setup command runs in its own session, one
+process group per call. The group is ended (TERM, then KILL after a short wait) when the call passes its
+timeout, when the call returns (so a browser or a server a run left behind stops with it), when this script
+gets TERM, INT or HUP (it then exits with 128 plus the signal number, without writing benchmark.json), and on
+every other way out. The adapters do the same for the runner they start, which they put in a session of its
+own. A process that moves itself to yet another session escapes this.
+
 Exit codes: 0 ok; 1 the iteration is incomplete (a run or a grading failed on infrastructure: rerun);
 2 usage error or a preflight error in the cases; 3 the iteration is complete and the conditions are not met
 (reported, not an error of the tool).
@@ -138,10 +145,13 @@ import os
 import re
 import secrets
 import shutil
+import signal
 import statistics
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", "..", ".."))
@@ -567,6 +577,85 @@ def next_iteration(ws):
     return os.path.join(ws, f"iteration-{max(nums, default=0) + 1}")
 
 
+# Process groups started and not yet ended, so that stopping this script stops every one of them.
+GROUPS, GROUPS_LOCK, STOPPING = set(), threading.Lock(), threading.Event()
+STOP_GRACE = 5.0  # seconds between TERM and KILL; an adapter needs about two to stop its own runner
+
+
+def group_alive(pgid):
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:  # only processes that already ended and wait to be reaped
+        return False
+    return True
+
+
+def stop_group(pgid, proc=None, grace=STOP_GRACE):
+    """End a process group: TERM, then KILL for what is still there after the grace period."""
+    try:
+        os.killpg(pgid, signal.SIGTERM)
+    except (ProcessLookupError, PermissionError):
+        return
+    deadline = time.monotonic() + grace
+    if proc is not None:
+        try:
+            proc.wait(timeout=grace)  # reaps the leader, so the check below sees only what outlived it
+        except subprocess.TimeoutExpired:
+            pass
+    while group_alive(pgid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    try:
+        os.killpg(pgid, signal.SIGKILL)
+    except (ProcessLookupError, PermissionError):
+        pass
+
+
+def stop_all_groups(grace=STOP_GRACE):
+    """End every group still registered; no new one starts afterwards."""
+    STOPPING.set()
+    with GROUPS_LOCK:
+        pending = list(GROUPS)
+    for pgid in pending:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except (ProcessLookupError, PermissionError):
+            pass
+    deadline = time.monotonic() + grace
+    while any(group_alive(p) for p in pending) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    for pgid in pending:
+        try:
+            os.killpg(pgid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+
+
+def run_group(cmd, timeout, cwd=None, env=None):
+    """subprocess.run for a command in a session of its own: its whole process group ends on a timeout
+    (subprocess.TimeoutExpired is raised) and when the command returns, so nothing it started outlives it."""
+    with GROUPS_LOCK:
+        if STOPPING.is_set():
+            raise subprocess.TimeoutExpired(cmd, 0)
+        proc = subprocess.Popen(cmd, cwd=cwd, env=env, text=True, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE, start_new_session=True)
+        GROUPS.add(proc.pid)
+    try:
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            stop_group(proc.pid, proc)
+            proc.kill()
+            proc.communicate()
+            raise
+        stop_group(proc.pid, grace=2.0)  # what the command left running in the background
+        return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+    finally:
+        with GROUPS_LOCK:
+            GROUPS.discard(proc.pid)
+
+
 def run_failure(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), timeout=900,
                 max_cost=None, web=False):
     """Run the adapter once. Returns None when it exited 0, else why it failed: an infrastructure failure,
@@ -583,7 +672,7 @@ def run_failure(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=N
     if web:
         cmd += ["--allow-web"]
     try:
-        r = subprocess.run(cmd, capture_output=True, text=True, stdin=subprocess.DEVNULL, env=env, timeout=timeout)
+        r = run_group(cmd, timeout, env=env)
     except subprocess.TimeoutExpired:
         with open(os.path.join(out, "error.log"), "w", encoding="utf-8") as f:
             f.write(f"stopped after --timeout {timeout}s\n")
@@ -721,8 +810,7 @@ def run_setup(cwd, commands, env):
     for command in commands:
         try:
             # security-scan: allow shell-string -- setup lines come from the skill's evals.json, are listed by --dry-run and run in the contained environment
-            r = subprocess.run(["bash", "-c", command], cwd=cwd, env=env, capture_output=True, text=True,
-                               stdin=subprocess.DEVNULL, timeout=SETUP_TIMEOUT)
+            r = run_group(["bash", "-c", command], SETUP_TIMEOUT, cwd=cwd, env=env)
         except subprocess.TimeoutExpired:
             die(f"setup command timed out after {SETUP_TIMEOUT}s in {cwd}: {command}")
         if r.returncode != 0:
@@ -823,6 +911,28 @@ def check_cases_only(o):
 
 
 def main(argv):
+    """Run, and leave nothing running: every process group started is ended on a signal and on any way out."""
+    STOPPING.clear()
+
+    def on_signal(signum, _frame):
+        print(f"stopped by signal {signum}: ending every run that was started", file=sys.stderr)
+        stop_all_groups()
+        os._exit(128 + signum)  # worker threads would otherwise go on to the next run or grading
+
+    previous = {}
+    if threading.current_thread() is threading.main_thread():
+        for sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+            previous[sig] = signal.signal(sig, on_signal)
+    try:
+        return run(argv)
+    finally:
+        stop_all_groups(grace=2.0)
+        STOPPING.clear()
+        for sig, handler in previous.items():
+            signal.signal(sig, handler)
+
+
+def run(argv):
     o = parse(argv)
     if o["check_cases"]:
         return check_cases_only(o)

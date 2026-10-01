@@ -17,6 +17,9 @@
 # A model id "ollama/<name>" runs a local model served by Ollama (http://127.0.0.1:11434, or
 # RUN_PROMPT_OLLAMA_URL): the provider entry is written into the throwaway HOME, never into the case
 # folder. Give the model a context that fits the runner's own prompt and the skill (see README.md).
+# On macOS the throwaway HOME gets its own empty keychain (below), so a browser a model starts finds a default
+# keychain there instead of showing the person a "Keychain Not Found" dialog; it is removed with that HOME.
+# Stopping this script (TERM, INT, HUP) stops the runner and everything it started.
 # Connectors and MCP servers: the throwaway HOME below hides the user's configuration and
 # project configuration is refused, so none load; RUN_PROMPT_KEEP_HOME=1 loses that guarantee.
 set -euo pipefail
@@ -33,7 +36,7 @@ while [[ $# -gt 0 ]]; do
     --allow-command) ALLOWED=1; shift 2 ;;
     --allow-web) WEB=1; shift ;;
     --max-cost-usd) CAPPED=1; shift 2 ;;
-    --help|-h) sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -80,6 +83,45 @@ START=$(python3 -c 'import time; print(int(time.time()*1000))')
 # from the environment. Set RUN_PROMPT_KEEP_HOME=1 to use the real home instead.
 ISO_HOME=""
 if [[ -z "${RUN_PROMPT_KEEP_HOME:-}" ]]; then ISO_HOME="$(mktemp -d)"; export HOME="$ISO_HOME" XDG_CONFIG_HOME="$ISO_HOME/.config" XDG_DATA_HOME="$ISO_HOME/.local/share"; fi
+# macOS resolves the default keychain through HOME, and the throwaway HOME has none: a browser started in the
+# run (Chrome looks up "Chrome Safe Storage") then shows a "Keychain Not Found" dialog on the person's screen,
+# once per launch. Give the throwaway HOME an empty keychain of its own. Every call sets HOME to the throwaway
+# home, so the person's keychains and default keychain are never read or changed; never with the real HOME.
+# A failure is not fatal. RUN_PROMPT_OS and RUN_PROMPT_SECURITY exist for the tests.
+throwaway_keychain() {
+  local sec="${RUN_PROMPT_SECURITY:-/usr/bin/security}" k="$ISO_HOME/Library/Keychains/login.keychain-db"
+  [[ -n "$ISO_HOME" && "${RUN_PROMPT_OS:-$(uname)}" == "Darwin" && -x "$sec" ]] || return 0
+  mkdir -p "$ISO_HOME/Library/Keychains" "$ISO_HOME/Library/Preferences"
+  # A keychain is unlocked when it is created, and set-keychain-settings without options removes its auto-lock;
+  # unlock-keychain is not called: it answers "passphrase not correct" for a keychain made this way (checked on
+  # macOS, 2026-10-01) although items can be added and read. Each step on its own: a later step still runs when one fails, and the note names what failed and why.
+  local step msg failed=""
+  for step in "create-keychain -p  $k" "default-keychain -s $k" "list-keychains -d user -s $k" "set-keychain-settings $k"; do
+    case "$step" in
+      create-keychain*) msg="$(HOME="$ISO_HOME" "$sec" create-keychain -p "" "$k" 2>&1)" ;;
+      default-keychain*) msg="$(HOME="$ISO_HOME" "$sec" default-keychain -s "$k" 2>&1)" ;;
+      list-keychains*) msg="$(HOME="$ISO_HOME" "$sec" list-keychains -d user -s "$k" 2>&1)" ;;
+      set-keychain-settings*) msg="$(HOME="$ISO_HOME" "$sec" set-keychain-settings "$k" 2>&1)" ;;
+    esac || failed="$failed ${step%% *} ($(printf '%s' "$msg" | tr '\n' ' ' | cut -c1-120));"
+  done
+  [[ -z "$failed" ]] || echo "note: the keychain of the throwaway HOME is incomplete, a browser started in this run may show a keychain dialog:$failed" >&2
+}
+throwaway_keychain
+# The runner gets its own session, so everything it starts (model sessions, browsers) is one process group
+# that can be stopped as a whole: when it exits, and when this script gets TERM, INT or HUP (a timeout or a
+# stop of eval_run.py). Without it a stopped eval left model sessions working for minutes.
+RUNNER_PID=""
+stop_runner() {
+  [[ -n "$RUNNER_PID" ]] || return 0
+  kill -TERM -- "-$RUNNER_PID" 2>/dev/null || return 0
+  for _ in 1 2 3 4 5 6 7 8 9 10; do kill -0 -- "-$RUNNER_PID" 2>/dev/null || return 0; sleep 0.2; done
+  kill -KILL -- "-$RUNNER_PID" 2>/dev/null || true
+}
+# exec, so that the session leader is the background job itself and RUNNER_PID names its process group.
+OWN_SESSION=(python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys.argv[1:])')
+cleanup() { stop_runner; [[ -n "$ISO_HOME" ]] && rm -rf "$ISO_HOME"; return 0; }
+trap cleanup EXIT
+trap 'exit 143' TERM INT HUP
 if [[ "$MODEL" == ollama/* && -z "${RUN_PROMPT_CMD:-}" ]]; then
   [[ "$MODEL" =~ ^ollama/[A-Za-z0-9._:/-]+$ ]] || { echo "Error: a local model id is ollama/<name> with letters, digits and . _ : / - only." >&2; exit 2; }
   [[ -n "$ISO_HOME" ]] || { echo "Error: a local model needs the throwaway HOME (unset RUN_PROMPT_KEEP_HOME)." >&2; exit 2; }
@@ -93,8 +135,12 @@ print(json.dumps({"$schema": "https://opencode.ai/config.json", "provider": {"ol
 PY
 fi
 # stdin closed: the runner otherwise waits on an inherited pipe that never ends
-set +e; ( cd "$CWD" && "${RUN[@]}" ) < /dev/null > "$OUT/response.md" 2> "$OUT/stderr.log"; RC=$?; set -e
-[[ -n "$ISO_HOME" ]] && rm -rf "$ISO_HOME"
+set +e
+( cd "$CWD" && exec "${OWN_SESSION[@]}" "${RUN[@]}" ) < /dev/null > "$OUT/response.md" 2> "$OUT/stderr.log" &
+RUNNER_PID=$!
+wait "$RUNNER_PID"; RC=$?
+set -e
+cleanup   # what the runner left running (a browser, a server) stops with it; the keychain goes with the home
 END=$(python3 -c 'import time; print(int(time.time()*1000))')
 printf '{"total_tokens": null, "duration_ms": %d, "cost_usd": null, "exit_code": %d}\n' "$((END-START))" "$RC" > "$OUT/timing.json"
 exit $RC
