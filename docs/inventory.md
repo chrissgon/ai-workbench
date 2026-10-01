@@ -252,7 +252,7 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | eng-refactor | draft | — | — | — | — | — |
 | eng-root-cause | draft | — | — | — | — | — |
 | eng-security-review | draft | — | — | — | — | — |
-| eng-tradeoffs | evaluated | 1.00 | 0.39 | 1.00 | 2026-10-01 | 3 |
+| eng-tradeoffs | stale | 1.00 | 0.39 | 1.00 | 2026-10-01 | 3 |
 | eng-unit-tests | evaluated | 0.92 | 0.68 | 1.00 | 2026-10-01 | 1 |
 | flow-fix-bug | draft | — | — | — | — | — |
 | mkt-content-plan | draft | — | — | — | — | — |
@@ -270,7 +270,7 @@ The table below is generated. Do not edit it: run `python3 scripts/eval_status.p
 | product-prd | evaluated | 1.00 | 0.46 | 0.99 | 2026-10-01 | 1 |
 | product-roadmap | evaluated | 1.00 | 0.59 | 1.00 | 2026-10-01 | 3 |
 
-Counts: 26 evaluated, 0 stale, 22 draft, 48 skills.
+Counts: 25 evaluated, 1 stale, 22 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

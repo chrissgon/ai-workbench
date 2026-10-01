@@ -65,7 +65,12 @@ def scratch_roots(cwd: Path) -> list[Path]:
 
 def in_scratch(path: Path, cwd: Path) -> bool:
     real = path.resolve()
-    for root in scratch_roots(cwd):
+    roots = scratch_roots(cwd)
+    # A project that itself lives under the temporary folder: inside it only .scratch/ counts,
+    # or its whole source tree would pass as scratch.
+    if real.is_relative_to(cwd.resolve()):
+        roots = roots[:1]
+    for root in roots:
         try:
             real.relative_to(root)
         except ValueError:
