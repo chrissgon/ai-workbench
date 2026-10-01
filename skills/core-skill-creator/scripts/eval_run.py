@@ -2,12 +2,20 @@
 """Run a skill's evals with and without the skill, on a strong and a floor model, and grade them.
 
 Usage:
-  python3 eval_run.py --skill <name> --harness <adapter> --model <strong-id>
-                      [--floor-model <id>] [--floor-harness <adapter>] [--grader <id>] [--case <id>]... [--threshold 0.8]
+  python3 eval_run.py --skill <name>
+                      [--harness <adapter>] [--model <strong-id>] [--floor-model <id>] [--floor-harness <adapter>]
+                      [--grader <id>] [--case <id>]... [--threshold 0.8] [--record-anyway]
                       [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]... [--ablate <text>]
                       [--runs 3] [--jobs 4] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--no-record]
                       [--retries 2] [--early-end-rate 0.15]
                       [--dry-run] [--check-cases]
+
+Defaults. --harness, --model, --floor-model, --floor-harness, --floor-pass-env and --threshold default to the
+eval gate configuration, scripts/eval-gate.json (strong_harness, strong_model, floor_model, floor_harness,
+floor_pass_env, threshold), so `eval_run.py --skill <name>` runs the gate as configured. A flag given on the
+command line wins; floor_pass_env is applied only when the floor model is the configured one (another floor
+model, such as one served on the same machine, needs no provider key). Without the file, --harness and
+--model are required, there is no floor model unless --floor-model names one, and the threshold is 0.8.
 
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files (paths inside the skill folder
@@ -114,7 +122,9 @@ Record. After a complete run of every case, both variants and both models, witho
 that drops a model, --ablate or --no-grade, the result is written to skills/<name>/evals/result.json through
 scripts/eval_status.py (the same function as its `record` command) with the hash taken at the start, and the
 skill's status (draft, evaluated, stale) is printed. A partial or incomplete run never writes it; a skill
-folder that changed during the run is reported and not recorded. --no-record skips the record.
+folder that changed during the run is reported and not recorded. --no-record skips the record. A full run
+whose floor model is not the configured one runs and is reported, but writes no record (it would read as
+stale: evaluated on another floor model) unless --record-anyway is given.
 
 Exit codes: 0 ok; 1 the iteration is incomplete (a run or a grading failed on infrastructure: rerun);
 2 usage error or a preflight error in the cases; 3 the iteration is complete and the conditions are not met
@@ -157,7 +167,7 @@ def load_status():
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": 0.8, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
+            "threshold": None, "record_anyway": False, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
             "runs": 3, "jobs": 4, "timeout": 900, "max_cost": None, "record": True, "check_cases": False, "retries": 2,
             "early_rate": 0.15}
     i = 0
@@ -186,15 +196,29 @@ def parse(argv):
         elif a == "--max-cost-usd": opts["max_cost"] = val(); i += 2
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--no-record": opts["record"] = False; i += 1
+        elif a == "--record-anyway": opts["record_anyway"] = True; i += 1
         elif a == "--retries": opts["retries"] = val(); i += 2
         elif a == "--early-end-rate": opts["early_rate"] = val(); i += 2
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a == "--check-cases": opts["check_cases"] = True; i += 1
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
         else: die(f"unknown option {a!r}. See --help.")
+    # What the command line leaves out comes from the eval gate configuration (scripts/eval-gate.json).
+    gate = {} if opts["check_cases"] else load_status().load_gate(ROOT)
+    opts["configured_floor"] = gate.get("floor_model")
+    for key, field in (("harness", "strong_harness"), ("model", "strong_model"), ("floor", "floor_model"),
+                       ("threshold", "threshold")):
+        if opts[key] is None:
+            opts[key] = gate.get(field)
+    if opts["threshold"] is None:
+        opts["threshold"] = 0.8
+    if opts["floor"] and not opts["floor_harness"]:
+        opts["floor_harness"] = gate.get("floor_harness")
+    if opts["floor"] and opts["floor"] == gate.get("floor_model") and not opts["floor_pass_env"]:
+        opts["floor_pass_env"] = list(gate.get("floor_pass_env") or [])
     for k in ("skill",) if opts["check_cases"] else ("skill", "harness", "model"):
         if not opts[k]:
-            die(f"--{k} is required.")
+            die(f"--{k} is required" + (" (scripts/eval-gate.json sets no default)." if k != "skill" else "."))
     if opts["only"] not in (None, "with", "without", "ablated"):
         die("--only must be with, without or ablated.")
     if opts["only"] == "ablated" and not opts["ablate"]:
@@ -997,6 +1021,9 @@ def main(argv):
         record["reason"] = "--no-record"
     elif not full:
         record["reason"] = "partial run: a record needs every case, both variants, both models, grading and no --ablate"
+    elif o["configured_floor"] and o["floor"] != o["configured_floor"] and not o["record_anyway"]:
+        record["reason"] = (f"the floor model {o['floor']} is not the configured one ({o['configured_floor']}), so the "
+                            "record would read as stale; pass --record-anyway to write it")
     elif not complete:
         record["reason"] = "incomplete iteration"
     elif status.content_hash(skill_dir) != start_hash:
