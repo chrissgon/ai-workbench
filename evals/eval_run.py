@@ -698,10 +698,20 @@ def ablated_copy(skill_dir, text, dest_root):
     return dest, len(lines) - len(kept)
 
 
-def next_iteration(ws):
+def next_iteration(ws, claim=True):
+    """The next iteration folder of a skill's workspace. With claim it is created here, atomically, so two
+    runs of the same skill started together never share one; a dry run only names it."""
     os.makedirs(ws, exist_ok=True)
-    nums = [int(d.split("-")[1]) for d in os.listdir(ws) if re.match(r"^iteration-\d+$", d)]
-    return os.path.join(ws, f"iteration-{max(nums, default=0) + 1}")
+    while True:
+        nums = [int(d.split("-")[1]) for d in os.listdir(ws) if re.match(r"^iteration-\d+$", d)]
+        path = os.path.join(ws, f"iteration-{max(nums, default=0) + 1}")
+        if not claim:
+            return path
+        try:
+            os.mkdir(path)
+            return path
+        except FileExistsError:
+            continue
 
 
 # Process groups started and not yet ended, so that stopping this script stops every one of them.
@@ -1115,7 +1125,7 @@ def run(argv):
     deps = {c["id"]: dependency_dirs(c) for c in cases}
     status = load_status()
     start_hash = status.content_hash(skill_dir)
-    it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]))
+    it_dir = next_iteration(os.path.join(ROOT, "evals-workspace", o["skill"]), claim=not o["dry"])
     ablated_dir, ablated_lines = None, 0
     if "ablated_skill" in variants:
         ablated_lines = ablated_line_count(skill_dir, o["ablate"])

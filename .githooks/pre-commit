@@ -28,6 +28,7 @@ while IFS= read -r -d '' f; do
     providers/*/*) d="providers/$(echo "$f" | cut -d/ -f2)/tests" ;;
     scripts/*) d="scripts/tests" ;;
     evals/*) d="evals/tests" ;;
+    skills/*/scripts/*) d="skills/$(echo "$f" | cut -d/ -f2)/scripts/tests" ;;
     adapters/*/*) d="adapters/$(echo "$f" | cut -d/ -f2)/tests" ;;
     *) continue ;;
   esac

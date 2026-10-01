@@ -1043,3 +1043,13 @@ def test_update_record_needs_the_whole_without_skill_variant(args):
     with pytest.raises(SystemExit) as e:
         er.parse(["--skill", "s", "--harness", "h", "--model", "m", *args])
     assert e.value.code == 2
+
+
+# --- two runs of one skill never share an iteration folder ----------------------------------------
+
+def test_an_iteration_folder_is_claimed_when_it_is_named(tmp_path):
+    ws = tmp_path / "ws"
+    first, second = er.next_iteration(str(ws)), er.next_iteration(str(ws))
+    assert (Path(first).name, Path(second).name) == ("iteration-1", "iteration-2")
+    assert Path(first).is_dir() and Path(second).is_dir()
+    assert Path(er.next_iteration(str(ws), claim=False)).name == "iteration-3" and not (ws / "iteration-3").exists()

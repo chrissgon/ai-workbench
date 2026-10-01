@@ -411,6 +411,28 @@ def load_eval_status():
     return module
 
 
+def check_eval_cases(report, root=ROOT):
+    """Every skill's eval cases pass the runner's preflight (evals/eval_run.py --check-cases; no model call):
+    a file a prompt cites is shipped at the path it names, grader files and dependency skills exist."""
+    from concurrent.futures import ThreadPoolExecutor
+    runner = os.path.join(root, "evals", "eval_run.py")
+    base = os.path.join(root, "skills")
+    if not os.path.isfile(runner) or not os.path.isdir(base):
+        return
+    names = sorted(d for d in os.listdir(base) if os.path.isfile(os.path.join(base, d, "evals", "evals.json")))
+
+    def one(name):
+        return name, subprocess.run([sys.executable, runner, "--skill", name, "--check-cases"],
+                                    capture_output=True, text=True, cwd=root)
+    with ThreadPoolExecutor(max_workers=8) as pool:  # independent checks, run together (principle 7)
+        results = list(pool.map(one, names))
+    for name, r in results:
+        if r.returncode != 0:
+            lines = [l for l in r.stderr.strip().splitlines() if l.strip()]
+            report.error(f"skills/{name}/evals/evals.json", "[eval-cases] " + ("; ".join(lines[-6:]) or "the preflight failed")
+                         + f" (python3 evals/eval_run.py --skill {name} --check-cases)")
+
+
 def check_eval_status(report, root=ROOT):
     """eval-status: records are valid, the inventory block is current, stale and draft skills are warned about."""
     es = load_eval_status()
@@ -487,6 +509,7 @@ def main(argv):
     check_english(report)
     check_private_terms(report)
     check_eval_status(report)
+    check_eval_cases(report)
     check_security(report)
     if spec:
         run_spec_validator(report)
