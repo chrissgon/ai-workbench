@@ -1,13 +1,5 @@
 {
   "skill_name": "biz-market-analysis",
-  "allow_commands": [
-    "python3 skills/biz-market-analysis/scripts/rank.py",
-    "python3 skills/biz-market-analysis/scripts/capacity.py",
-    "python3 skills/biz-market-analysis/scripts/check_refs.py",
-    "python3 skills/biz-market-analysis/scripts/lint_market.py",
-    "date +%F",
-    "mkdir -p docs/business"
-  ],
   "evals": [
     {
       "id": 1,

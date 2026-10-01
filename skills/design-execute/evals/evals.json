@@ -24,8 +24,7 @@
         "scripts/lint_result.py reports ok: true",
         "No confirmation gate is shown for the local prototype"
       ],
-      "grader_files": ["docs/design/briefs/og-image.md"],
-      "allow_commands": ["mkdir -p docs/design/results", "date +%F"]
+      "grader_files": ["docs/design/briefs/og-image.md"]
     },
     {
       "id": 3,

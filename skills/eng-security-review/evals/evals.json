@@ -1,15 +1,5 @@
 {
   "skill_name": "eng-security-review",
-  "allow_commands": [
-    "mktemp -d",
-    "date +%F",
-    "mkdir",
-    "ls",
-    "cat",
-    "grep",
-    "wc",
-    "sha256sum"
-  ],
   "evals": [
     {
       "id": 1,

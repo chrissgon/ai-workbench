@@ -1,12 +1,5 @@
 {
   "skill_name": "biz-icp-positioning",
-  "allow_commands": [
-    "python3 skills/biz-icp-positioning/scripts/rank.py",
-    "python3 skills/biz-icp-positioning/scripts/check_refs.py",
-    "python3 skills/biz-icp-positioning/scripts/lint_icp.py",
-    "date +%F",
-    "mkdir -p docs/business"
-  ],
   "evals": [
     {
       "id": 1,

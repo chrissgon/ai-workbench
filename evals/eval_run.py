@@ -51,19 +51,13 @@ open-weight model served through its own CLI) while the strong model and the gra
 --dry-run prints the runs, the allowed commands and every case's setup commands, and runs nothing.
 
 Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-[--extra-skill-dir <dir>]... [--allow-command <prefix>]... [--allow-web] copies each skill folder into <cwd> where the
+[--extra-skill-dir <dir>]... [--allow-web] copies each skill folder into <cwd> where the
 harness discovers it (never a link into the workbench) and must write <out>/response.md and
 <out>/timing.json ({"total_tokens", "duration_ms", "cost_usd"}).
 
-Commands. evals.json may list "allow_commands" at the top level (every case) and per case: command
-prefixes the model may run without asking ("npm test", "git status", "TZ=UTC npm test"). They are
-passed to the adapter as --allow-command; the adapter also allows the skill's own scripts. Refused,
-because the prefix alone would run any code: wildcards and the characters ( ) , ; command runners
-(env, xargs, find, npx, sudo...); a shell or an interpreter (node, python3, perl...) without a script
-path right after it; git without a subcommand, with an option before it (git -c ...) or with "config";
-leading assignments other than TZ, LANG, LC_*, CI, NODE_ENV, NO_COLOR, FORCE_COLOR.
-A prefix fixes only the start of a command: "npm test" runs whatever tests the model wrote, and git
-runs hooks it wrote. The environment below is what limits such code.
+Commands. Every command a model runs is allowed: the container a run executes in is the boundary
+(evals/executor.py). A case names no commands; an evals.json that still carries "allow_commands" (the list
+used while runs happened on a person's machine) is refused, so that no case keeps a setting that does nothing.
 
 Web. evals.json may set "allow_web": true at the top level or per case, for a skill that must search
 and read web pages (it requires search:web). The adapter then lets the model search and fetch pages,
@@ -348,20 +342,6 @@ def load_evals(skill):
         return json.load(f)
 
 
-# Commands that run another command: allowing one of them allows everything.
-RUNNERS = {"env", "xargs", "sudo", "doas", "su", "eval", "exec", "nohup", "time", "command", "nice", "timeout",
-           "watch", "script", "osascript", "find", "npx", "bunx", "awk", "gawk", "mawk", "nawk", "ssh"}
-RUNNER_SUBCOMMANDS = {("npm", "exec"), ("npm", "x"), ("pnpm", "exec"), ("pnpm", "dlx"), ("yarn", "exec"), ("yarn", "dlx")}
-# Shells and interpreters are accepted only with a script path after them ("bash scripts/check.sh").
-SHELLS = {"bash", "sh", "zsh", "dash", "fish", "ksh"}
-INTERPRETERS = {"node", "nodejs", "deno", "bun", "python", "python2", "python3", "pypy", "pypy3", "ruby", "perl",
-                "php", "lua", "Rscript", "pwsh", "powershell", "tclsh"}
-# git runs code through options before the subcommand (-c alias.x=!cmd) and through its config.
-GIT_REFUSED_SUBCOMMANDS = {"config"}
-# Leading assignments that cannot turn a command into a runner (NODE_OPTIONS, LD_PRELOAD, GIT_* could).
-SAFE_ASSIGNMENTS = {"TZ", "LANG", "LANGUAGE", "CI", "NODE_ENV", "NO_COLOR", "FORCE_COLOR"}
-# Characters that break out of an adapter's rule syntax or chain commands.
-REFUSED_CHARS = set("*(),;|&`$<>\\")
 # Credentials in the environment would sign gh, npm or git hosts back in.
 TOKEN_VARS = {"GH_TOKEN", "GITHUB_TOKEN", "VCS_GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN",
               "NPM_TOKEN", "NODE_AUTH_TOKEN"}
@@ -370,45 +350,13 @@ ENV_ALLOW = {"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TE
              "SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS", "REQUESTS_CA_BUNDLE"}
 
 
-def check_prefix(p):
-    """Return why an allow_commands prefix would allow any command, or None when it is acceptable."""
-    if not isinstance(p, str) or not p.strip():
-        return "it is empty"
-    bad = sorted({ch for ch in p if ch in REFUSED_CHARS or ord(ch) < 32})
-    if bad:
-        return f"it contains {' '.join(repr(ch) for ch in bad)}"
-    words = p.split()
-    while words and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=\S*$", words[0]):
-        var = words[0].split("=", 1)[0]
-        if var not in SAFE_ASSIGNMENTS and not var.startswith("LC_"):
-            return f"the assignment {var}= can change what the command runs"
-        words = words[1:]  # leading VAR=value assignments (TZ=UTC npm test)
-    if not words:
-        return "it names no command"
-    cmd = words[0]
-    if cmd in RUNNERS or tuple(words[:2]) in RUNNER_SUBCOMMANDS:
-        return f"{' '.join(words[:2]) if tuple(words[:2]) in RUNNER_SUBCOMMANDS else cmd} runs other commands"
-    if cmd in SHELLS or cmd in INTERPRETERS:
-        script = words[1] if len(words) > 1 else ""
-        if not script or script.startswith("-") or os.path.isabs(script) or ".." in script.split("/"):
-            return f"{cmd} without a script path inside the case folder runs any code"
-    if cmd == "git":
-        if len(words) < 2 or words[1].startswith("-"):
-            return "git needs a subcommand first (git status), since options such as -c run any command"
-        if words[1] in GIT_REFUSED_SUBCOMMANDS:
-            return f"git {words[1]} can make later git commands run any command"
-    return None
-
-
-def allowed_commands(data, case):
-    """The case's command prefixes (top-level list plus the case's own), refusing ones that allow everything."""
-    prefixes = list(dict.fromkeys((data.get("allow_commands") or []) + (case.get("allow_commands") or [])))
-    for p in prefixes:
-        why = check_prefix(p)
-        if why:
-            die(f"case {case.get('id')}: allow_commands entry {p!r} is refused: {why}. Name the command and its "
-                "subcommand (\"npm test\", \"git status\", \"node scripts/size.mjs\").")
-    return prefixes
+def refuse_allow_commands(data, cases):
+    """Exit when the evals file or a case still lists "allow_commands": the field has no effect any more."""
+    where = (["the top level"] if "allow_commands" in data else []) + \
+            [f"case {c.get('id')}" for c in cases if "allow_commands" in c]
+    if where:
+        die(f"\"allow_commands\" is no longer used ({', '.join(where)}): every command runs, inside the eval "
+            "container. Remove the field.")
 
 
 def allow_web(data, case):
@@ -559,8 +507,9 @@ def preflight(skill_dir, cases, sources, setup=True):
             os.makedirs(cwd)
             build_tree(cwd, sources[cid])
             if c.get("setup"):
-                isolate_git(cwd, contained_env(tmp))
-                run_setup(cwd, c["setup"], contained_env(tmp))
+                quiet = {"root": tmp, "network": "none"}  # in the eval container, like the run's own setup
+                isolate_git(cwd, contained_env(tmp), box=quiet)
+                run_setup(cwd, c["setup"], contained_env(tmp), box=quiet)
             tree = tree_paths(cwd)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -839,7 +788,7 @@ def _run_group(cmd, timeout, cwd, env, container):
             GROUPS.discard(proc.pid)
 
 
-def run_failure(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=None, extra_skills=(), timeout=900,
+def run_failure(runner, prompt_path, cwd, model, out, skill_dir, env=None, extra_skills=(), timeout=900,
                 max_cost=None, web=False, start_dir=None, box=None):
     """Run the adapter once. Returns None when it exited 0, else why it failed: an infrastructure failure,
     never a score (the adapter exits non-zero when the provider or the harness fails, not when the answer is poor)."""
@@ -850,8 +799,6 @@ def run_failure(runner, prompt_path, cwd, model, out, skill_dir, allow=(), env=N
         cmd += ["--skill-dir", skill_dir]
     for d in extra_skills:
         cmd += ["--extra-skill-dir", d]
-    for p in allow:
-        cmd += ["--allow-command", p]
     if web:
         cmd += ["--allow-web"]
     try:
@@ -1094,7 +1041,10 @@ def check_cases_only(o):
         cases = [c for c in cases if str(c.get("id")) in o["cases"]]
     if not cases:
         die("no matching eval cases.")
-    errors, unchecked = preflight(skill_dir, cases, {c["id"]: case_files(skill_dir, c) for c in cases})
+    refuse_allow_commands(load_evals(o["skill"]), cases)
+    # A case's setup commands run only in the eval container, which a real run starts; this static check
+    # needs no container, so such a case is listed as unchecked here and checked before the first model call.
+    errors, unchecked = preflight(skill_dir, cases, {c["id"]: case_files(skill_dir, c) for c in cases}, setup=False)
     for line in errors:
         print(f"PREFLIGHT {o['skill']} {line}", file=sys.stderr)
     print(json.dumps({"skill": o["skill"], "cases": len(cases), "errors": errors, "unchecked": unchecked}, indent=2))
@@ -1163,7 +1113,7 @@ def run(argv):
         models = [m for m in models if m[0] in o["tiers"]]
         if not models:
             die("--tiers selected no model.")
-    allow = {c["id"]: allowed_commands(evals, c) for c in cases}
+    refuse_allow_commands(evals, cases)
     web = {c["id"]: allow_web(evals, c) for c in cases}
     sources = {c["id"]: case_files(skill_dir, c) for c in cases}
     # Before anything is spent or written: a case that cites a file it does not ship measures nothing.
@@ -1187,8 +1137,7 @@ def run(argv):
         ablated_lines = ablated_line_count(skill_dir, o["ablate"])
         if not o["dry"]:
             ablated_dir, _ = ablated_copy(skill_dir, o["ablate"], os.path.join(it_dir, "ablated-skill"))
-    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "run": k, "allow_commands": allow[c["id"]],
-             "allow_web": web[c["id"]]}
+    plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "run": k, "allow_web": web[c["id"]]}
             for c in cases for v in variants for t, m in models for k in range(1, o["runs"] + 1)]
     if o["dry"]:
         print(json.dumps({"dry_run": True, "iteration_dir": os.path.relpath(it_dir, ROOT), "runner": os.path.relpath(runner, ROOT),
@@ -1229,7 +1178,7 @@ def run(argv):
                     f.write(c["prompt"])
                 before = file_index(case_dir)
                 why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), variant_dir,
-                                  allow[c["id"]], env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]],
+                                  env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]],
                                   start_dir=root,
                                   box={"root": root, "skills": [variant_dir] + list(deps[c["id"]]), "pass": tier_env,
                                        "network": "open" if web[c["id"]] else "proxy"})

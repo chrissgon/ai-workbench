@@ -1,12 +1,5 @@
 {
   "skill_name": "mkt-content-plan",
-  "allow_commands": [
-    "python3 skills/mkt-content-plan/scripts/slots.py",
-    "python3 skills/brand-profile/scripts/sensitive_topics.py",
-    "date +%F",
-    "date +%Z",
-    "mkdir -p docs/marketing"
-  ],
   "evals": [
     {
       "id": 1,

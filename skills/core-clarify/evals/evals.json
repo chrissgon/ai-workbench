@@ -1,13 +1,5 @@
 {
   "skill_name": "core-clarify",
-  "allow_commands": [
-    "git status",
-    "git log",
-    "git ls-files",
-    "git ls-tree",
-    "ls",
-    "date"
-  ],
   "evals": [
     {
       "id": 1,

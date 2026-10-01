@@ -21,37 +21,17 @@ er.EXECUTOR = "host"  # these tests drive stand-in adapters; the container execu
 REPO = Path(er.ROOT)
 
 
-@pytest.mark.parametrize("prefix", [
-    "node", "node -e", "python3", "python3 -c", "TZ=UTC node", "perl -e", "bash", "bash -c", "sh",
-    "node /tmp/x.js", "python3 ../x.py",
-    "git", "git -c", "git -C /tmp status", "git config", "git --exec-path=/tmp status",
-    "find", "find .", "xargs", "env", "npx", "npm exec", "npm x", "sudo npm test", "awk",
-    "npm test)", "git status,Bash(rm", "npm test *", "npm test; rm", "npm test && x", "echo $HOME", "a\nb",
-    "NODE_OPTIONS=--require=x npm test", "GIT_DIR=/x git status", "LD_PRELOAD=x ls", "", "   ",
-])
-def test_prefixes_that_run_any_code_are_refused(prefix):
-    assert er.check_prefix(prefix) is not None
-
-
-@pytest.mark.parametrize("prefix", [
-    "npm test", "npm run", "TZ=UTC npm test", "TZ=America/Sao_Paulo npm test", "git status", "git push",  # security-scan: allow undeclared-side-effect -- prefixes checked as strings, never run
-    "gh pr view", "node scripts/size.mjs", "bash scripts/check.sh", "ls", "date", "LC_ALL=C sort",
-])
-def test_named_commands_are_accepted(prefix):
-    assert er.check_prefix(prefix) is None
-
-
-def test_allowed_commands_exits_on_a_refused_prefix():
-    with pytest.raises(SystemExit) as e:
-        er.allowed_commands({"allow_commands": ["npm test"]}, {"id": 1, "allow_commands": ["node"]})
-    assert e.value.code == 2
-
-
-def test_every_evals_file_in_the_repository_passes():
+def test_no_evals_file_in_the_repository_lists_commands():
     for path in glob.glob(str(REPO / "skills" / "*" / "evals" / "evals.json")):
         data = json.loads(Path(path).read_text(encoding="utf-8"))
-        for case in data.get("evals") or []:
-            er.allowed_commands(data, case)
+        er.refuse_allow_commands(data, data.get("evals") or [])
+
+
+def test_a_case_that_still_lists_commands_is_refused():
+    for data in ({"allow_commands": ["git status"], "evals": [{"id": 1}]}, {"evals": [{"id": 1, "allow_commands": ["ls"]}]}):
+        with pytest.raises(SystemExit) as e:
+            er.refuse_allow_commands(data, data["evals"])
+        assert e.value.code == 2
 
 
 def make_skill(tmp_path):
@@ -138,7 +118,7 @@ def test_grading_prompt_fences_the_response_and_fills_in_one_pass():
 
 def test_dry_run_lists_setup_and_runs_nothing(tmp_path, monkeypatch, capsys):
     skill = make_skill(tmp_path)
-    (skill / "evals" / "evals.json").write_text(json.dumps({"allow_commands": ["git status"], "evals": [
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [
         {"id": 1, "prompt": "p", "files": ["evals/files/app"], "setup": ["touch marker"], "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
@@ -173,9 +153,9 @@ def test_run_prompt_passes_allow_web_only_when_set(tmp_path):
     runner = tmp_path / "run-prompt.sh"
     log = tmp_path / "args"
     runner.write_text(f'printf "%s\\n" "$@" > {log}\n')
-    er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None, ["git status"], None, (), web=True)
+    er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None, None, (), web=True)
     assert "--allow-web" in log.read_text().split("\n")
-    er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None, ["git status"])
+    er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None)
     assert "--allow-web" not in log.read_text().split("\n")
 
 

@@ -184,3 +184,15 @@ Done as decided (D3, D4). `evals/eval-gate.json` gains `grader`, `strong_toleran
 The proof of concept confirmed D1, D5 and D6 (`docs/architecture/container-poc-2026-10-01.md`). Every command of an eval (model run, grading, setup, fixture commit) runs in its own container, started by `evals/executor.py` from the definition in `evals/container/`. A container sees the run folder, the adapters, the shared references and the skill; it reaches the model providers through an allowlisting proxy on an internal network, nothing at all for setup, and the open network only for a case with `allow_web`. The strong runner's token and the floor runner's key come from the secret store and travel by variable name. A record names the definition's hash and the image id. Measurement version 3.
 
 The unit tests of the runner drive stand-in adapters on the host through a module switch; that switch is not an option of the runner and no record can be written through it by a person running the command.
+
+## 2026-10-01: Adapters run only in the container; cases list no commands; tolerance 0.05
+
+Following the container (entry above), decided by the maintainer and built:
+
+- **The eval adapters refuse to start outside the eval container.** Both allow a model every tool; that is safe only where the container is the boundary. The code that existed for running on a person's machine is removed: command rules and sandbox settings in the strong adapter, the throwaway keychain in the floor adapter.
+- **`allow_commands` is gone** from the runner, from the adapter contract and from the 32 case files that listed it. It named what a model could run on a person's machine; in the container every command runs. An `evals.json` that still carries it is refused, so that no case keeps a setting that does nothing.
+- **A case's setup runs in the container**, also in the check made before the first model call. The static check (`--check-cases`, which `validate.py` runs) needs no container: a case with setup is listed there as unchecked.
+- **`strong_tolerance` is 0.05**, approved by the maintainer from the spread measured in the proof of concept; to be revisited when the 48 skills are measured.
+- A CI job builds the image on Linux and checks, without a model, that a run writes only in its folder, sees no home and no checkout, reaches nothing without a network, only the providers through the proxy, and the open network when a case asks for it.
+
+None of this raises the measurement version: version 3 was set with the container and no record exists under it yet.

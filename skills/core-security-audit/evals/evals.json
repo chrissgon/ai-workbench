@@ -1,6 +1,5 @@
 {
   "skill_name": "core-security-audit",
-  "allow_commands": ["mktemp -d", "cp -R", "date +%F", "mkdir -p docs/security"],
   "evals": [
     {
       "id": 1,

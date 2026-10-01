@@ -40,6 +40,8 @@ Spread between the three runs of a case, with the skill: the strong tier's stand
 
 ## Left for phase 4
 
+Done the same day, in the change that followed: the first four items below (host-only adapter code removed, the preflight's setup, the Linux path and an `allow_web` network exercised by a CI job that builds the image). Open: the last two.
+
 - Host-only code in the adapters is now unused by evals (the strong adapter's sandbox settings, the floor adapter's throwaway home and keychain): remove it, and move the adapters' shared parts to one helper.
 - The case preflight (`--check-cases`, which `validate.py` runs) still executes a case's setup commands on the host: it is a static check and writes no score, but it should not need the host either.
 - On Linux a run keeps the caller's numeric user (`--user`); written, not yet run there. CI does not build the image.

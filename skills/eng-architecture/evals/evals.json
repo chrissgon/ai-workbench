@@ -14,8 +14,7 @@
         "No decision classified as the user's is made silently; such decisions appear as questions with a recommendation"
       ],
       "grader_files": ["docs/product/specs/markdown-content-model.md", "docs/engineering/architecture.md", "docs/workbench/state.md", "package.json"],
-      "allow_web": true,
-      "allow_commands": ["mkdir -p docs/engineering", "date +%F"]
+      "allow_web": true
     },
     {
       "id": 2,

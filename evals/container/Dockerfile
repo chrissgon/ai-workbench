@@ -16,6 +16,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.12.19 /uv /uvx /usr/local/bin/
 # A browser a skill's script can find, and no sandbox of its own: the container is the boundary.
 ENV CHROME_BIN=/usr/bin/chromium PUPPETEER_EXECUTABLE_PATH=/usr/bin/chromium
 
+# The adapters allow a model every tool and start only where this is set: here.
+ENV WB_EVAL_CONTAINER=1
+
 RUN useradd --create-home --shell /bin/bash eval \
     && git config --system user.name "Eval" && git config --system user.email "eval@example.invalid" \
     && git config --system init.defaultBranch main && git config --system --add safe.directory '*'

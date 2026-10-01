@@ -1,9 +1,5 @@
 {
   "skill_name": "design-brief",
-  "allow_commands": [
-    "date +%F",
-    "mkdir -p docs/design/briefs"
-  ],
   "evals": [
     {
       "id": 1,

@@ -1,10 +1,5 @@
 {
   "skill_name": "brand-voice",
-  "allow_commands": [
-    "python3 skills/brand-voice/scripts/voice_stats.py",
-    "date +%F",
-    "mkdir -p docs/brand"
-  ],
   "evals": [
     {
       "id": 1,
