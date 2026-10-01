@@ -16,14 +16,16 @@
       "id": 2,
       "prompt": "Run docs/design/briefs/og-image.md as a code prototype.",
       "expected_output": "docs/design/results/og-image.md with one run per direction, a prompt pack and HTML plus PNG outputs per run rendered with scripts/screenshot.mjs at 1200 × 630, a verdict with evidence for every CRIT of the brief per run, a recommendation and a pending decision; lint_result.py ok; no confirmation asked, because a local prototype writes to no external account.",
-      "files": [],
+      "files": ["evals/files/og-image"],
       "assertions": [
         "Every run has prompt.md, HTML and PNG files under docs/design/results/og-image/round-1/",
         "Every CRIT of the brief has a pass, partial or fail verdict with evidence for every run",
         "The decision is recorded as pending, not taken by the agent",
         "scripts/lint_result.py reports ok: true",
         "No confirmation gate is shown for the local prototype"
-      ]
+      ],
+      "grader_files": ["docs/design/briefs/og-image.md"],
+      "allow_commands": ["mkdir -p docs/design/results", "date +%F"]
     },
     {
       "id": 3,

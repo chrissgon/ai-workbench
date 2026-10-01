@@ -5,14 +5,15 @@
       "id": 1,
       "prompt": "Define the user flows and screens for phase P-1 from docs/product/prd.md.",
       "expected_output": "docs/design/flows.md with an information architecture, screens with regions in priority order and states, one flow per must feature of P-1 (invoice list, overdue reminders) with numbered steps on named screens, failure branches and a keyboard path, a Coverage line per must/should feature of P-1, no colours or copy, lint ok.",
-      "files": ["evals/files/prd.md"],
+      "files": ["evals/files/ledger"],
       "assertions": [
         "Every flow names a screen in its steps, has an End state, a Failures line and a Keyboard line",
         "Every screen lists regions in priority order and at least an empty or error state",
         "F-1 and F-2 each have a Coverage line naming a flow or screen",
         "No colour, font or spacing value appears in the document",
         "scripts/lint_flows.py is run with --prd and --phase P-1 and reports ok: true"
-      ]
+      ],
+      "grader_files": ["docs/product/prd.md"]
     },
     {
       "id": 2,

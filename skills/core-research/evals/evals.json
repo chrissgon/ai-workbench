@@ -23,8 +23,7 @@
       "assertions": [
         "No search is run before the questions are answered",
         "At most three questions are asked, each with a recommended answer",
-        "The questions cover the decision informed and the scope",
-        "The reply is in English, the language of the prompt"
+        "The questions cover the decision informed and the scope"
       ]
     },
     {

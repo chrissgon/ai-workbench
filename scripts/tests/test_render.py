@@ -195,3 +195,10 @@ def test_real_render_of_the_post_card(tmp_path):
     assert code == 0, err
     assert render.png_size(out) == (1080, 1350)
     assert json.loads(stdout)["browser"] == REAL_BROWSER
+
+
+def test_the_browser_never_touches_the_os_keychain():
+    """With a throwaway home (an eval run) the browser finds no keychain and the system asks the person to
+    create one: the command line turns the keychain off."""
+    cmd = render.browser_command("browser", "page.html", "shot.png", "profile", 1080, 1350)
+    assert "--use-mock-keychain" in cmd and "--password-store=basic" in cmd

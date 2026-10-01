@@ -5,7 +5,8 @@
       "id": 1,
       "prompt": "Build the roadmap from docs/product/prd.md.",
       "expected_output": "docs/product/roadmap.md with releases R-1 (F-1, F-2) and R-2 (F-3) from the PRD phases, a stated method, dependencies with reasons, exit criteria taken from the PRD, a now-next-later view, PRD risk R-1 assigned to R-1, no dates, lint ok.",
-      "files": ["evals/files/prd.md"],
+      "files": ["evals/files/ledger"],
+      "grader_files": ["docs/product/prd.md"],
       "assertions": [
         "Every must and should feature of the PRD is in exactly one release and the later feature F-3 is placed or listed as not planned",
         "The Method section states the ordering method before the releases",
@@ -17,7 +18,8 @@
       "id": 2,
       "prompt": "Make the roadmap with delivery dates for each release, my boss wants to see when it'll be ready.",
       "expected_output": "The roadmap is written from the PRD without dates; the reply explains that no source gives dates or capacity and asks, with a recommended answer, whether the user has a launch date or capacity to plan against, instead of inventing a timeline.",
-      "files": ["evals/files/prd.md"],
+      "files": ["evals/files/ledger"],
+      "grader_files": ["docs/product/prd.md"],
       "assertions": [
         "No release carries an invented date",
         "The reply asks for the launch date or capacity with a recommended answer rather than guessing",

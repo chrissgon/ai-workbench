@@ -1,0 +1,37 @@
+---
+import "@plinthkit/plinthui/plinthui.css";
+
+interface Props {
+  title: string;
+  description: string;
+}
+const { title, description } = Astro.props;
+
+// The sidebar is written by hand; every new page is added here.
+const nav = [
+  { section: "Guide", items: [{ title: "Getting started", url: "/guide/getting-started" }] },
+  { section: "Components", items: [{ title: "Button", url: "/components/button" }] },
+];
+---
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>{title} | Plinth UI</title>
+    <meta name="description" content={description} />
+  </head>
+  <body>
+    <nav aria-label="Documentation">
+      {nav.map((group) => (
+        <section>
+          <h2>{group.section}</h2>
+          <ul>
+            {group.items.map((item) => (
+              <li><a href={item.url} aria-current={Astro.url.pathname === item.url ? "page" : undefined}>{item.title}</a></li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </nav>
+    <main><slot /></main>
+  </body>
+</html>
