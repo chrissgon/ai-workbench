@@ -118,3 +118,22 @@ def test_a_merge_in_conflict_lists_the_files_in_conflict(repo, tmp_path):
     assert merge.returncode != 0
     out = json.loads(run(repo, tmp_path, "--no-fetch").stdout)
     assert out["merging"] is True and out["conflicted"] == ["feature.py"]
+
+
+@pytest.mark.parametrize("flag", ["--base", "--remote"])
+def test_a_value_flag_given_last_exits_two_with_a_message(tmp_path, flag):
+    r = run(tmp_path, tmp_path, flag)
+    assert r.returncode == 2 and f"{flag} needs a value" in r.stderr and r.stdout == ""
+    assert "unbound variable" not in r.stderr
+
+
+def test_an_option_like_or_invalid_base_or_remote_is_refused_before_git_sees_it(repo, tmp_path):
+    for base in ("--upload-pack=touch pwned", "-x", "main..evil", "a b"):
+        r = run(repo, tmp_path, "--no-fetch", "--base", base)
+        assert r.returncode == 2 and "is not a branch name" in r.stderr, (base, r.stderr)
+    for remote in ("--upload-pack=touch pwned", "-x", "a b", "../elsewhere"):
+        r = run(repo, tmp_path, "--remote", remote)
+        assert r.returncode == 2 and "is not a remote name" in r.stderr, (remote, r.stderr)
+    assert not (repo / "pwned").exists()
+    out = json.loads(run(repo, tmp_path, "--no-fetch", "--base", "main").stdout)
+    assert out["base"] == "main" and out["ahead"] == 1

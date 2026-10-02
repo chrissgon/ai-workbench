@@ -9,23 +9,37 @@
 # an open pull request, uncommitted changes to tracked files, untracked files, files in conflict (during a merge), and which
 # dependency manifests and lockfiles the base changed since the branch left it (reinstall after
 # the sync when this list is not empty).
+#
+# A --base that is not a valid branch name (git check-ref-format --branch), or a --remote that is
+# not a plain remote name, is refused with exit 2 before any git call uses it, so neither can be
+# read as an option. The open pull request is asked of the code host's command-line tool only
+# when it is installed.
 set -euo pipefail
 BASE=""; REMOTE=origin; FETCH=true
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --base) BASE="$2"; shift 2 ;;
-    --remote) REMOTE="$2"; shift 2 ;;
+    --base) [[ $# -ge 2 ]] || { echo "Error: --base needs a value. See --help." >&2; exit 2; }; BASE="$2"; shift 2 ;;
+    --remote) [[ $# -ge 2 ]] || { echo "Error: --remote needs a value. See --help." >&2; exit 2; }; REMOTE="$2"; shift 2 ;;
     --no-fetch) FETCH=false; shift ;;
-    --help|-h) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
+valid_branch() { [[ -n "$1" && "$1" != -* ]] && git check-ref-format --branch "$1" >/dev/null 2>&1; }
+if [[ -n "$BASE" ]] && ! valid_branch "$BASE"; then
+  echo "Error: --base '$BASE' is not a branch name. See --help." >&2
+  exit 2
+fi
+if ! [[ "$REMOTE" =~ ^[A-Za-z0-9_][A-Za-z0-9._-]*$ ]]; then
+  echo "Error: --remote '$REMOTE' is not a remote name. See --help." >&2
+  exit 2
+fi
 ROOT=$(git rev-parse --show-toplevel)
 cd "$ROOT"
 BRANCH=$(git branch --show-current)
 FETCHED=false
 if $FETCH && git remote get-url "$REMOTE" >/dev/null 2>&1; then
-  git fetch --quiet "$REMOTE" && FETCHED=true
+  git fetch --quiet --end-of-options "$REMOTE" && FETCHED=true
 fi
 if [[ -z "$BASE" ]]; then
   BASE=$(git symbolic-ref --quiet --short "refs/remotes/$REMOTE/HEAD" 2>/dev/null | sed "s#^$REMOTE/##" || true)
@@ -33,6 +47,7 @@ if [[ -z "$BASE" ]]; then
     git show-ref --verify --quiet "refs/remotes/$REMOTE/$b" && { BASE=$b; break; }
     git show-ref --verify --quiet "refs/heads/$b" && { BASE=$b; break; }
   done
+  if [[ -n "$BASE" ]] && ! valid_branch "$BASE"; then BASE=""; fi
 fi
 OPEN_PR=""
 command -v gh >/dev/null && OPEN_PR=$(gh pr list --head "$BRANCH" --json url --jq '.[0].url' 2>/dev/null || true)
