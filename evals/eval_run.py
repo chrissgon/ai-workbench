@@ -21,8 +21,9 @@ model, such as one served on the same machine, needs no provider key). Without t
 Reads skills/<name>/evals/evals.json. For each case and each variant (with_skill, without_skill)
 and each model, it prepares a working directory with the case's files (paths inside the skill folder
 only) in its own git repository (one "fixture" commit, then the case's optional "setup" shell commands,
-such as a branch with commits), runs the prompt through adapters/<harness>/run-prompt.sh with the skills
-listed in the case's optional "skills" (a flow's phases) for both variants, grades every assertion with
+such as a branch with commits), stages the skill under test (with-skill runs only) and the skills listed in
+the case's optional "skills" (a flow's phases; both variants) where the harness discovers them, runs the
+prompt through adapters/<harness>/run-prompt.sh, grades every assertion with
 the grader model (which sees the files the run produced, and the case's optional "grader_files": input files,
 relative to the case folder, that assertions check facts against), and writes:
 
@@ -52,10 +53,27 @@ open-weight model served through its own CLI) while the strong model and the gra
 variables that would be passed, every case with its files, dependency skills and setup commands, and the
 result of the preflight.
 
-Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-[--extra-skill-dir <dir>]... [--allow-web] copies each skill folder into <cwd> where the
-harness discovers it (never a link into the workbench) and must write <out>/response.md and
-<out>/timing.json ({"total_tokens", "duration_ms", "cost_usd"}).
+Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--allow-web]
+[--max-cost-usd <amount>] runs the prompt in <cwd> and must write <out>/response.md and <out>/timing.json
+({"total_tokens", "duration_ms", "cost_usd"}). It installs nothing: the runner stages the skills. What the
+runner needs to know about a harness is data, the "eval" object of adapters/<harness>/adapter.json:
+"skills_dir", the folder inside a project where the harness discovers skills, and "settings", the names of
+the files and folders that carry the harness's settings or instructions at project level.
+
+Staging. Before the container of a run starts, the runner copies into the case folder, through
+scripts/stage_skills.py (the same module the installers use), the skill under test (a with-skill run only)
+and the case's dependency skills (both variants) into <case>/<skills_dir>/<name>, never as links and without
+their evals/ and scripts/tests/ folders. Of shared/references/, a with-skill run gets the files the skill
+under test cites in its SKILL.md or in its own references, beside the skills folder so that
+../../shared/references/<file> resolves, and the references of the platforms the case names in
+"platforms": ["<name>"]; a without-skill run gets none of them, also when it brings dependency skills.
+shared/scripts/ and tests are never staged. It happens after the fixture commit and the setup, so the
+staged files are not part of the case's history.
+
+Harness settings. A case folder that holds, after its files and its setup, a file or folder whose name is in
+the "settings" list of any eval adapter (at any depth, outside .git) is refused: the harness would apply
+those rules, hooks, servers or instructions to the run. The preflight reports it for every case; a run
+checks again before it stages.
 
 Commands. Every command a model runs is allowed: the container a run executes in is the boundary
 (evals/executor.py). A case names no commands; an evals.json that still carries "allow_commands" (the list
@@ -68,10 +86,10 @@ the search, and a with-skill run of a research skill measures only its degraded 
 
 Containment. Every model run, grading, setup command and fixture commit executes in a container built
 from evals/container/, one container per command (evals/executor.py); there is no host mode. A container
-sees the run's folder (read-write, the only thing a run can change), the adapters and the shared references
-(read-only), and the skill under test with the case's dependency skills (read-only, their evals/ folder
-covered by an empty one). Nothing else of the machine: no home folder, no other checkout, no credential
-store. Network, per command: none for setup commands and the fixture commit; for model runs and gradings an
+sees the run's folder (read-write, the only thing a run can change: the case folder with what was staged
+into it, the prompt and the output folder) and, for a model run or a grading, the one run-prompt.sh in use
+(read-only). Nothing else of the machine or of the workbench: no adapters folder, no skill folder, no shared
+folder, no home folder, no other checkout, no credential store. Network, per command: none for setup commands and the fixture commit; for model runs and gradings an
 internal network whose only way out is a proxy that lets through the model providers' hosts
 (evals/container/proxy/allow.txt); the default network only for a case with "allow_web": true.
 Environment: the image's own (its clock is UTC, its locale C.UTF-8, and the one git identity of a run is the
@@ -96,7 +114,9 @@ so it leaves the cases that have a setup unchecked and says so) and every path t
 unless the path also appears in "expected_output" or an assertion, or in the skill's metadata.outputs (the run
 creates it), is one of the skill's own files outside evals/ or a workbench file under contracts/, shared/,
 templates/, providers/, adapters/ or skills/, or the case lists it in "absent_on_purpose": ["path", ...] (a case that tests a missing input);
-(c) each "grader_files" entry exists in that folder; (d) each "skills" dependency exists. A cited path is a
+(c) each "grader_files" entry exists in that folder; (d) each "skills" dependency exists; (e) each "platforms"
+entry has its reference, shared/references/platforms/<name>.md; (f) the folder holds no harness settings
+(above). A cited path is a
 token with a "/" and a file extension, or one ending in .md .json .yml .yaml .toml .css .js .ts .py .html;
 URLs, absolute paths, globs and placeholders are ignored, and a path matches a fixture when it is that
 fixture's path or the end of it. Errors are printed one per line and stop the run before it spends anything.
@@ -111,8 +131,8 @@ the skill for it. A timeout that repeats on the same case is a reason to raise -
 
 Early ends. Some models end their turn before doing the work, with exit 0 and no error: they print a tool
 call as text, loop on their own reminder blocks, or stop after "Let me read the template first". A run is an
-early end only when the adapter exited 0 AND it created or changed no file in the case folder (the harness's
-installed skills and shared references do not count) AND its response is not a reply to the user: (a) it is
+early end only when the adapter exited 0 AND it created or changed no file in the case folder (the staged
+skills and shared references do not count) AND its response is not a reply to the user: (a) it is
 empty; or (b) a line starts with tool-call or control markup printed as text (EARLY_END_MARKUP); or (c) the
 response has no question mark and its last line announces a next action (a sentence starting with one of
 EARLY_END_ANNOUNCE, with none of EARLY_END_NOT in the line). A reply that asks the user a question and
@@ -204,6 +224,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, ".."))
 STATUS_SCRIPT = os.path.join(HERE, "eval_status.py")
 EXECUTOR_SCRIPT = os.path.join(HERE, "executor.py")  # where a run's commands execute: a container
+STAGE_SCRIPT = os.path.join(HERE, "..", "scripts", "stage_skills.py")  # what a run sees of the skills: staged copies
 # "container" for every real run; the unit tests set "host" to drive stand-in adapters without docker.
 EXECUTOR = "container"  # content hash and the per-skill record
 GRADING_TEMPLATE = os.path.join(HERE, "grading-prompt.md")
@@ -224,6 +245,88 @@ def load_executor():
         sys.modules[name] = module
         spec.loader.exec_module(module)
     return sys.modules[name]
+
+
+def load_stage():
+    """scripts/stage_skills.py as a module: the one place that copies a skill for a model, shared with the installers."""
+    name = "workbench_stage_skills"
+    if name not in sys.modules:
+        if not os.path.isfile(STAGE_SCRIPT):
+            die("scripts/stage_skills.py is missing: run this script from a checkout of the workbench.")
+        spec = importlib.util.spec_from_file_location(name, STAGE_SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return sys.modules[name]
+
+
+def adapter_eval(harness, required=True):
+    """The "eval" object of adapters/<harness>/adapter.json: {"skills_dir", "settings"}. What the runner must
+    know about a harness to stage a case folder for it; it is data of the adapter, never code here.
+    With required=False a missing manifest or object gives None (a plan that runs nothing)."""
+    path = os.path.join(ROOT, "adapters", harness, "adapter.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            cfg = json.load(f).get("eval")
+    except (OSError, ValueError, AttributeError):
+        cfg = None
+    if cfg is None:
+        if required:
+            die(f"adapters/{harness}/adapter.json has no \"eval\" object: it names where the harness discovers skills "
+                "(\"skills_dir\") and which names carry its settings (\"settings\"). See AGENTS.md, Adding an adapter.")
+        return None
+    skills_dir, settings = cfg.get("skills_dir") if isinstance(cfg, dict) else None, (cfg.get("settings") if isinstance(cfg, dict) else None)
+    parts = skills_dir.split("/") if isinstance(skills_dir, str) else []
+    if len(parts) < 2 or any(not re.fullmatch(r"[A-Za-z0-9._-]+", p) or p in (".", "..", ".git") for p in parts):
+        die(f"adapters/{harness}/adapter.json: eval.skills_dir must be a relative folder of at least two parts, "
+            "such as .tool/skills (the shared references are staged beside it).")
+    if not isinstance(settings, list) or not all(isinstance(n, str) and n and "/" not in n and n not in (".", "..", ".git")
+                                                 for n in settings):
+        die(f"adapters/{harness}/adapter.json: eval.settings must list file or folder names, without a folder.")
+    return {"skills_dir": skills_dir, "settings": list(settings)}
+
+
+def harness_settings():
+    """Every name that carries a harness's settings at project level: the "settings" lists of all eval adapters.
+    A fixture carries none of them, whichever harness runs it: one runner may read another tool's folder."""
+    names = set()
+    for manifest in sorted(glob.glob(os.path.join(ROOT, "adapters", "*", "adapter.json"))):
+        cfg = adapter_eval(os.path.basename(os.path.dirname(manifest)), required=False)
+        names.update(cfg["settings"] if cfg else ())
+    return names
+
+
+def settings_in(cwd, names):
+    """The first path of a case folder, outside .git, whose name carries harness settings; None when there is none."""
+    for dp, dns, fns in os.walk(cwd):
+        if dp == cwd and ".git" in dns:
+            dns.remove(".git")
+        dns.sort()
+        for n in sorted(dns + fns):
+            if n in names:
+                return os.path.relpath(os.path.join(dp, n), cwd).replace(os.sep, "/")
+    return None
+
+
+def stage_run(case_dir, eval_cfg, variant_dir, deps, case):
+    """Stage what one run sees of the skills, into its case folder. Returns the paths staged, relative to the
+    case folder, and the manifest of scripts/stage_skills.py.
+
+    The skill under test only when the variant has it (variant_dir); the dependency skills always. The shared
+    references the skill under test cites, and the references of the platforms the case names, only with the
+    skill: a run without it gets no shared reference, even one that brings dependency skills."""
+    skills = ([variant_dir] if variant_dir else []) + list(deps)
+    if not skills:
+        return [], None
+    stage = load_stage()
+    skills_dir = os.path.join(case_dir, *eval_cfg["skills_dir"].split("/"))
+    manifest = stage.stage(skills, skills_dir, root=ROOT, references="cited" if variant_dir else "none",
+                           cite_from=[variant_dir] if variant_dir else [],
+                           platforms=(case.get("platforms") or []) if variant_dir else [])
+    staged = [os.path.relpath(os.path.join(skills_dir, name), case_dir) for name in manifest["skills"]]
+    if manifest["shared_dir"]:
+        staged.append(os.path.relpath(manifest["shared_dir"], case_dir))
+    return staged, manifest
 
 
 def load_status():
@@ -426,7 +529,7 @@ def case_files(skill_dir, case):
 
 
 def dependency_dirs(case):
-    """Folders of the skills a case depends on (a flow's phases), installed by the adapter in both variants."""
+    """Folders of the skills a case depends on (a flow's phases), staged by the runner in both variants."""
     dirs = []
     for name in case.get("skills") or []:
         if not isinstance(name, str) or not re.match(r"^[a-z0-9-]+$", name):
@@ -547,6 +650,7 @@ def preflight(skill_dir, cases, sources, setup=True):
     setup=False (--dry-run) runs no setup command, so cases that have one are not checked against their folder."""
     errors, unchecked = [], []
     outputs = declared_outputs(skill_dir)
+    settings = harness_settings()
     # The skill's own files (scripts, references, assets) reach a run with the skill, not through the case.
     own = {p for p in tree_paths(skill_dir) if not p.startswith("evals/") and p != "evals"}
     known = lambda p: (p in own or any(t.endswith("/" + p) for t in own)
@@ -564,6 +668,13 @@ def preflight(skill_dir, cases, sources, setup=True):
         if not isinstance(absent, list) or not all(isinstance(p, str) for p in absent):
             err("absent_on_purpose must be a list of paths")
             absent = []
+        platforms = c.get("platforms") or []
+        if not isinstance(platforms, list) or not all(isinstance(p, str) and re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", p) for p in platforms):
+            err("platforms must be a list of platform names")
+            platforms = []
+        for name in platforms:
+            if not os.path.isfile(os.path.join(ROOT, "shared", "references", "platforms", name + ".md")):
+                err(f"platforms entry {name!r} has no reference: shared/references/platforms/{name}.md does not exist")
         if c.get("setup") and not setup:
             unchecked.append(f"case {cid}: has setup commands, which --dry-run does not run; prompt paths and "
                              "grader_files are checked by --check-cases and by a real run")
@@ -578,8 +689,11 @@ def preflight(skill_dir, cases, sources, setup=True):
                 isolate_git(cwd, contained_env(tmp), box=quiet)
                 run_setup(cwd, c["setup"], contained_env(tmp), box=quiet)
             tree = tree_paths(cwd)
+            carried = settings_in(cwd, settings)
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
+        if carried:
+            err(f"the case folder holds {carried}: a fixture or setup must not carry harness settings")
         present = lambda p: p in tree or any(t.endswith("/" + p) for t in tree)
         produced = " ".join([str(c.get("expected_output") or "")] + [str(a) for a in c.get("assertions") or []])
         for p in prompt_paths(c.get("prompt")):
@@ -828,13 +942,14 @@ def run_group(cmd, timeout, cwd=None, env=None, box=None):
     """subprocess.run for a command in a session of its own: its whole process group ends on a timeout
     (subprocess.TimeoutExpired is raised) and when the command returns, so nothing it started outlives it.
 
-    box = {"root", "skills", "pass", "network"} runs the command in a container (evals/executor.py): root is
-    the run's folder, the only thing it can change. The container is removed by name when the command
+    box = {"root", "runner", "pass", "network"} runs the command in a container (evals/executor.py): root is
+    the run's folder, the only thing it can change; runner is the one run-prompt.sh the command starts, the
+    only file of the workbench the container sees. The container is removed by name when the command
     returns, times out or the script is stopped, since ending the docker client does not end it."""
     container = None
     if box is not None and EXECUTOR == "container":
         executor = load_executor()
-        cmd, container = executor.command(cmd, box["root"], cwd=cwd, env=env, skills=box.get("skills") or (),
+        cmd, container = executor.command(cmd, box["root"], cwd=cwd, env=env, runner=box.get("runner"),
                                           pass_names=box.get("pass") or (), network=box.get("network") or "none")
         cwd = None
     try:
@@ -870,17 +985,14 @@ def _run_group(cmd, timeout, cwd, env, container):
             GROUPS.discard(proc.pid)
 
 
-def run_failure(runner, prompt_path, cwd, model, out, skill_dir, env=None, extra_skills=(), timeout=900,
-                max_cost=None, web=False, start_dir=None, box=None):
+def run_failure(runner, prompt_path, cwd, model, out, env=None, timeout=900, max_cost=None, web=False,
+                start_dir=None, box=None):
     """Run the adapter once. Returns None when it exited 0, else why it failed: an infrastructure failure,
-    never a score (the adapter exits non-zero when the provider or the harness fails, not when the answer is poor)."""
+    never a score (the adapter exits non-zero when the provider or the harness fails, not when the answer is poor).
+    The adapter is told nothing about skills: the runner staged them in <cwd> before this call."""
     cmd = ["bash", runner, "--prompt-file", prompt_path, "--cwd", cwd, "--model", model, "--out", out]
     if max_cost:
         cmd += ["--max-cost-usd", max_cost]
-    if skill_dir:
-        cmd += ["--skill-dir", skill_dir]
-    for d in extra_skills:
-        cmd += ["--extra-skill-dir", d]
     if web:
         cmd += ["--allow-web"]
     try:
@@ -903,16 +1015,9 @@ def run_prompt(*args, **kwargs):
     return run_failure(*args, **kwargs) is None
 
 
-def installed_skill_file(rel, names, cwd=None):
-    """True for a file the adapter installed, wherever it put it: inside a copy of an installed skill
-    (".../skills/<name>/...") or, with cwd, in the shared references copied beside the installed skills
-    (".../shared/..." next to a ".../skills" folder that holds one of them)."""
-    parts = rel.split(os.sep)
-    if any(parts[i] == "skills" and parts[i + 1] in names for i in range(len(parts) - 2)):
-        return True
-    return cwd is not None and any(
-        parts[i] == "shared" and any(os.path.isdir(os.path.join(cwd, *parts[:i], "skills", n)) for n in names)
-        for i in range(len(parts) - 1))
+def staged_file(rel, staged):
+    """True for a file the runner staged: one inside a path stage_run() returned (a skill's copy, the shared references)."""
+    return any(rel == s or rel.startswith(s + os.sep) for s in staged)
 
 
 # An early end: the model ended its turn before doing the work, with no error (see the module docstring).
@@ -984,9 +1089,8 @@ def early_end_warning(stats, max_rate):
     return " ".join(parts) or None
 
 
-def snapshot(cwd, before, installed=()):
+def snapshot(cwd, before, staged=()):
     files = {}
-    names = set(installed)
     for dp, _, fns in os.walk(cwd):
         # Match whole folder names: "/.git" as a substring would also skip ".github".
         if {"node_modules", ".git"} & set(os.path.relpath(dp, cwd).split(os.sep)):
@@ -994,7 +1098,7 @@ def snapshot(cwd, before, installed=()):
         for fn in fns:
             p = os.path.join(dp, fn)
             rel = os.path.relpath(p, cwd)
-            if installed_skill_file(rel, names, cwd):
+            if staged_file(rel, staged):
                 continue
             try:
                 mtime = os.path.getmtime(p)
@@ -1120,9 +1224,9 @@ def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
         gp = os.path.join(root, "prompt.md")
         with open(gp, "w", encoding="utf-8") as f:
             f.write(prompt)
-        ok = run_prompt(runner, gp, os.path.join(root, "case"), grader, os.path.join(root, "out"), None,
+        ok = run_prompt(runner, gp, os.path.join(root, "case"), grader, os.path.join(root, "out"),
                         env=contained_env(root, pass_env), start_dir=root,
-                        box={"root": root, "pass": pass_env, "network": "proxy"})
+                        box={"root": root, "runner": runner, "pass": pass_env, "network": "proxy"})
     finally:
         return_run(root)
     if not ok:
@@ -1205,6 +1309,11 @@ def run(argv):
         if not os.path.isfile(floor_runner):
             die(f"adapter {o['floor_harness']!r} has no run-prompt.sh.")
     runner_for = {"strong": runner, "floor": floor_runner}
+    # Where each tier's harness discovers skills, and which names carry its settings: the adapter's own data.
+    # A plan (--dry-run) runs nothing and stages nothing, so it needs none of it.
+    eval_for = {} if o["dry"] else {"strong": adapter_eval(o["harness"]),
+                                    "floor": adapter_eval(o["floor_harness"] or o["harness"])}
+    settings = set() if o["dry"] else harness_settings()
     skill_dir = os.path.join(ROOT, "skills", o["skill"])
     evals = load_evals(o["skill"])
     cases = evals.get("evals") or []
@@ -1266,7 +1375,6 @@ def run(argv):
         run_dir = os.path.join(it_dir, f"eval-{c['id']}", name, *([f"run-{k}"] if o["runs"] > 1 else []))
         cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
         variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
-        installed = [os.path.basename(d) for d in deps[c["id"]]] + ([o["skill"]] if variant_dir else [])
         count, msgs = {"attempts": 0, "early_ends": 0, "contaminated": None}, []
         while True:
             count["attempts"] += 1
@@ -1280,17 +1388,22 @@ def run(argv):
                 quiet = {"root": root, "network": "none"}  # setup and the fixture commit: no secret, no network
                 isolate_git(case_dir, contained_env(root), box=quiet)
                 run_setup(case_dir, c.get("setup") or [], contained_env(root), box=quiet)
-                pp = os.path.join(root, "prompt.md")
-                with open(pp, "w", encoding="utf-8") as f:
-                    f.write(c["prompt"])
-                before = file_index(case_dir)
-                why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), variant_dir,
-                                  env, deps[c["id"]], o["timeout"], o["max_cost"], web[c["id"]],
-                                  start_dir=root,
-                                  box={"root": root, "skills": [variant_dir] + list(deps[c["id"]]), "pass": tier_env,
-                                       "network": "open" if web[c["id"]] else "proxy"})
+                # The preflight refused such a case before any run; this is the same check on the folder that runs.
+                carried = settings_in(case_dir, settings)
+                why = (f"the case folder holds {carried}: a fixture or setup must not carry harness settings"
+                       if carried else None)
                 if not why:
-                    changed = snapshot(case_dir, before, installed)
+                    staged, _ = stage_run(case_dir, eval_for[tier], variant_dir, deps[c["id"]], c)
+                    pp = os.path.join(root, "prompt.md")
+                    with open(pp, "w", encoding="utf-8") as f:
+                        f.write(c["prompt"])
+                    before = file_index(case_dir)
+                    why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), env,
+                                      o["timeout"], o["max_cost"], web[c["id"]], start_dir=root,
+                                      box={"root": root, "runner": runner_for[tier], "pass": tier_env,
+                                           "network": "open" if web[c["id"]] else "proxy"})
+                    if not why:
+                        changed = snapshot(case_dir, before, staged)
             finally:
                 return_run(root)
             if v == "without_skill":

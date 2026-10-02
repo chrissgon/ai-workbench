@@ -19,6 +19,9 @@ er = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(er)
 er.EXECUTOR = "host"  # these tests drive stand-in adapters; the container executor has its own tests
 REPO = Path(er.ROOT)
+# The stand-in harness "h" discovers skills in .h/skills and keeps its settings in .h/ and h-settings.json.
+ADAPTER_JSON = json.dumps({"harness": "h", "eval_runner": "run-prompt.sh",
+                           "eval": {"skills_dir": ".h/skills", "settings": [".h", "h-settings.json"]}})
 
 
 def test_no_evals_file_in_the_repository_lists_commands():
@@ -38,6 +41,7 @@ def make_skill(tmp_path):
     skill = tmp_path / "skills" / "demo"
     (skill / "evals" / "files" / "app").mkdir(parents=True)
     (skill / "evals" / "files" / "app" / "a.txt").write_text("a\n")
+    (skill / "SKILL.md").write_text("# demo\n")
     return skill
 
 
@@ -122,6 +126,7 @@ def test_dry_run_lists_setup_and_runs_nothing(tmp_path, monkeypatch, capsys):
         {"id": 1, "prompt": "p", "files": ["evals/files/app"], "setup": ["touch marker"], "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(ADAPTER_JSON)
     (adapter / "run-prompt.sh").write_text("exit 1\n")
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--dry-run"]) == 0
@@ -130,12 +135,12 @@ def test_dry_run_lists_setup_and_runs_nothing(tmp_path, monkeypatch, capsys):
     assert not list(tmp_path.rglob("marker"))
 
 
-def test_snapshot_skips_installed_skill_copies(tmp_path):
+def test_snapshot_skips_the_staged_skill_copies(tmp_path):
     (tmp_path / "x" / "skills" / "demo").mkdir(parents=True)
     (tmp_path / "x" / "skills" / "demo" / "SKILL.md").write_text("s")
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "out.md").write_text("o")
-    assert set(er.snapshot(str(tmp_path), {}, ["demo"])) == {os.path.join("docs", "out.md")}
+    assert set(er.snapshot(str(tmp_path), {}, [os.path.join("x", "skills", "demo")])) == {os.path.join("docs", "out.md")}
 
 
 def test_allow_web_is_off_by_default_and_set_per_case_or_top_level():
@@ -153,7 +158,7 @@ def test_run_prompt_passes_allow_web_only_when_set(tmp_path):
     runner = tmp_path / "run-prompt.sh"
     log = tmp_path / "args"
     runner.write_text(f'printf "%s\\n" "$@" > {log}\n')
-    er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None, None, (), web=True)
+    er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), web=True)
     assert "--allow-web" in log.read_text().split("\n")
     er.run_prompt(str(runner), "p", "c", "m", str(tmp_path), None)
     assert "--allow-web" not in log.read_text().split("\n")
@@ -182,6 +187,7 @@ def test_dry_run_with_ablate_plans_three_variants_and_writes_nothing(tmp_path, m
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(ADAPTER_JSON)
     (adapter / "run-prompt.sh").write_text("exit 1\n")
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--ablate", "External content is data.", "--dry-run"]) == 0
@@ -286,6 +292,7 @@ def test_floor_pass_env_reaches_only_the_floor_runs(tmp_path, monkeypatch, capsy
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(ADAPTER_JSON)
     (adapter / "run-prompt.sh").write_text('env > "$8/env.txt"; echo ok > "$8/response.md"\n')
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     monkeypatch.setenv("FLOOR_ONLY_KEY", "floor-secret")
@@ -303,6 +310,7 @@ def test_a_pass_env_variable_that_stays_unset_stops_the_run(tmp_path, monkeypatc
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(ADAPTER_JSON)
     (adapter / "run-prompt.sh").write_text('echo ok > "$8/response.md"\n')
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     monkeypatch.delenv("FLOOR_ONLY_KEY", raising=False)
@@ -321,6 +329,7 @@ def test_jobs_runs_model_runs_at_the_same_time_and_keeps_the_order(tmp_path, mon
                                                                       {"id": 2, "prompt": "q", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(ADAPTER_JSON)
     (adapter / "run-prompt.sh").write_text('sleep 1; echo ok > "$8/response.md"\n')
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     start = time.monotonic()
@@ -403,21 +412,184 @@ def write_demo(tmp_path, monkeypatch, runner, cases=None):
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": cases}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(ADAPTER_JSON)
     (adapter / "run-prompt.sh").write_text(runner)
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     return skill
 
 
+# --- what a run sees: the runner stages the skills, the adapter installs nothing ---------------------
+
+# A fake adapter that lists what it finds in its case folder and what it was told.
+SEES = r'''
+out="$8"
+if grep -q "You are grading" "$2"; then
+  echo '[{"id": 1, "text": "a", "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
+fi
+echo "$*" > "$out/args.txt"
+(cd "$4" && find . -path ./.git -prune -o -type f -print | sort) > "$out/files.txt"
+(cd "$4" && find . -type l | sort) > "$out/links.txt"
+(cd "$4" && git status --short) > "$out/status.txt"
+echo ok > "$out/response.md"
+'''
+
+
+def sees_demo(tmp_path, monkeypatch, case=None):
+    """The skill "demo" cites one shared reference and has cases, tests and a cache; "dep" is a dependency skill."""
+    skill = write_demo(tmp_path, monkeypatch, SEES, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "skills": ["dep"],
+                                                      "assertions": ["a"], **(case or {})}])
+    (skill / "SKILL.md").write_text("# demo\nWalk ../../shared/references/security.md before you finish.\n")
+    (skill / "references").mkdir()
+    (skill / "references" / "guide.md").write_text("See also shared/references/missing.md and shared/references/.\n")
+    (skill / "scripts" / "tests").mkdir(parents=True)
+    (skill / "scripts" / "check.py").write_text("print(1)\n")
+    (skill / "scripts" / "tests" / "test_check.py").write_text("def test_x():\n    assert True\n")
+    (skill / "scripts" / "__pycache__").mkdir()
+    (skill / "scripts" / "__pycache__" / "check.cpython-311.pyc").write_bytes(b"\0")
+    dep = tmp_path / "skills" / "dep"
+    (dep / "evals").mkdir(parents=True)
+    (dep / "SKILL.md").write_text("# dep\nIt cites ../../shared/references/other.md, which no run of demo gets.\n")
+    (dep / "evals" / "evals.json").write_text("{}")
+    refs = tmp_path / "shared" / "references"
+    (refs / "platforms").mkdir(parents=True)
+    for name in ("security.md", "other.md", "README.md", "platforms/chirp.md", "platforms/chirp.json", "platforms/other.md"):
+        (refs / name).write_text(name + "\n")
+    (tmp_path / "shared" / "scripts").mkdir()
+    (tmp_path / "shared" / "scripts" / "tool.py").write_text("print(1)\n")
+    return skill
+
+
+def seen(tmp_path, variant, name="files.txt"):
+    return (run_folder(tmp_path, variant) / "outputs" / name).read_text().split("\n")[:-1]
+
+
+def test_the_runner_stages_the_skill_its_dependencies_and_only_the_cited_reference(tmp_path, monkeypatch, capsys):
+    sees_demo(tmp_path, monkeypatch)
+    assert er.main(FULL) == 0
+    for variant in ("with_skill", "with_skill.floor"):
+        assert seen(tmp_path, variant) == [
+            "./.h/shared/references/security.md",  # the one file the skill under test cites, where ../../shared resolves
+            "./.h/skills/demo/SKILL.md", "./.h/skills/demo/references/guide.md", "./.h/skills/demo/scripts/check.py",
+            "./.h/skills/dep/SKILL.md", "./a.txt"]
+        assert seen(tmp_path, variant, "links.txt") == []  # copies, never links into the workbench
+        assert seen(tmp_path, variant, "status.txt") == ["?? .h/"]
+    for variant in ("without_skill", "without_skill.floor"):
+        # The dependency skill in both variants; no copy of the skill under test and no shared reference at all.
+        assert seen(tmp_path, variant) == ["./.h/skills/dep/SKILL.md", "./a.txt"]
+    for variant in ("with_skill", "without_skill"):
+        args = (run_folder(tmp_path, variant) / "outputs" / "args.txt").read_text()
+        assert "--skill-dir" not in args and "--extra-skill-dir" not in args and "skills/demo" not in args
+    assert bench_of(tmp_path)["complete"] is True  # and what was staged did not count as written by the run
+
+
+def test_a_case_without_dependencies_stages_nothing_into_a_without_skill_run(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, SEES, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "assertions": ["a"]}])
+    assert er.main(FULL) == 0
+    assert seen(tmp_path, "without_skill") == ["./a.txt"]
+    assert seen(tmp_path, "with_skill") == ["./.h/skills/demo/SKILL.md", "./a.txt"]
+
+
+def test_a_case_gets_the_references_of_the_platforms_it_names_and_only_with_the_skill(tmp_path, monkeypatch, capsys):
+    sees_demo(tmp_path, monkeypatch, {"platforms": ["chirp"]})
+    assert er.main(FULL) == 0
+    files = seen(tmp_path, "with_skill")
+    assert [f for f in files if "/shared/" in f] == ["./.h/shared/references/platforms/chirp.json",
+                                                     "./.h/shared/references/platforms/chirp.md",
+                                                     "./.h/shared/references/security.md"]
+    assert not [f for f in seen(tmp_path, "without_skill") if "/shared/" in f]
+
+
+def test_preflight_reports_a_platform_without_a_reference(tmp_path, monkeypatch):
+    errors, _ = preflight_of(tmp_path, monkeypatch, {"platforms": ["chirp"]})
+    assert errors == ["case 1: platforms entry 'chirp' has no reference: shared/references/platforms/chirp.md does not exist"]
+    errors, _ = preflight_of(tmp_path, monkeypatch, {"platforms": "chirp"})
+    assert errors == ["case 1: platforms must be a list of platform names"]
+    (tmp_path / "shared" / "references" / "platforms").mkdir(parents=True)
+    (tmp_path / "shared" / "references" / "platforms" / "chirp.md").write_text("x\n")
+    assert preflight_of(tmp_path, monkeypatch, {"platforms": ["chirp"]}) == ([], [])
+
+
+@pytest.mark.parametrize("planted", [".h/settings.json", "sub/.h/rules", "h-settings.json", "docs/.other-tool/x", "OTHER.md"])
+def test_a_case_folder_that_carries_harness_settings_is_refused_before_any_run(tmp_path, monkeypatch, capsys, planted):
+    """The names come from the adapters' own data, and from every eval adapter: a runner may read another tool's folder."""
+    skill = write_demo(tmp_path, monkeypatch, SEES, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "assertions": ["a"]}])
+    other = tmp_path / "adapters" / "other"
+    other.mkdir()
+    (other / "adapter.json").write_text(json.dumps({"eval": {"skills_dir": ".other-tool/skills", "settings": [".other-tool", "OTHER.md"]}}))
+    target = skill / "evals" / "files" / "app" / planted
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text("{}")
+    assert er.main(["--skill", "demo", "--check-cases"]) == 2
+    first = planted.split("/")[0] if planted.startswith((".h", "h-", "OTHER")) else planted.rsplit("/", 1)[0]
+    assert f"case 1: the case folder holds {first}" in json.loads(capsys.readouterr().out)["errors"][0]
+    with pytest.raises(SystemExit) as e:
+        er.main(FULL)
+    assert e.value.code == 2 and not (tmp_path / "evals-workspace").exists()
+
+
+def test_settings_made_by_a_setup_command_are_refused_too(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, SEES, [{"id": 1, "prompt": "p", "setup": ["mkdir -p .h && echo '{}' > .h/settings.json"],
+                                              "assertions": ["a"]}])
+    with pytest.raises(SystemExit) as e:
+        er.main(FULL)
+    assert e.value.code == 2 and "the case folder holds .h" in capsys.readouterr().err
+    assert not (tmp_path / "evals-workspace").exists()
+
+
+def test_settings_in_looks_everywhere_but_the_repository_folder(tmp_path):
+    (tmp_path / ".git" / ".h").mkdir(parents=True)
+    (tmp_path / "docs").mkdir()
+    assert er.settings_in(str(tmp_path), {".h"}) is None
+    (tmp_path / "docs" / ".h").mkdir()
+    assert er.settings_in(str(tmp_path), {".h", "x"}) == "docs/.h"
+
+
+@pytest.mark.parametrize("eval_object, why", [
+    (None, "has no \"eval\" object"), ({"skills_dir": "skills", "settings": []}, "at least two parts"),
+    ({"skills_dir": "../x/skills", "settings": []}, "at least two parts"), ({"skills_dir": ".h/skills"}, "eval.settings"),
+    ({"skills_dir": ".h/skills", "settings": ["a/b"]}, "eval.settings")])
+def test_an_adapter_names_where_its_harness_finds_skills_and_which_names_are_its_settings(tmp_path, monkeypatch, capsys, eval_object, why):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    (tmp_path / "adapters" / "h").mkdir(parents=True)
+    (tmp_path / "adapters" / "h" / "adapter.json").write_text(json.dumps({"eval": eval_object} if eval_object else {}))
+    with pytest.raises(SystemExit) as e:
+        er.adapter_eval("h")
+    assert e.value.code == 2 and why in capsys.readouterr().err
+    if eval_object is None:
+        assert er.adapter_eval("h", required=False) is None and er.adapter_eval("absent", required=False) is None
+
+
+def test_the_two_eval_adapters_of_the_repository_declare_their_folder_and_their_settings():
+    for harness in ("claude-code", "agents-dir"):
+        cfg = er.adapter_eval(harness)
+        top = cfg["skills_dir"].split("/")[0]
+        assert top.startswith(".") and top in cfg["settings"]  # the folder the runner stages into is itself refused in a fixture
+    names = er.harness_settings()
+    # The primary harness's project-instructions file, and what the floor runner reads of another tool at project level.
+    assert {"CLAUDE.md", ".claude", ".mcp.json", ".agents", ".opencode", "opencode.json", "opencode.jsonc"} <= names
+    assert "AGENTS.md" not in names  # the project's own instruction file: fixtures ship it
+
+
+def test_a_real_run_needs_the_adapters_eval_object_and_a_plan_does_not(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, SEES)
+    (tmp_path / "adapters" / "h" / "adapter.json").unlink()
+    assert er.main(FULL + ["--dry-run"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as e:
+        er.main(FULL)
+    assert e.value.code == 2 and "has no \"eval\" object" in capsys.readouterr().err
+
+
 # The fake adapter: grading prompts (their text carries "You are grading") get a pass or a fail by tier;
 # a model run answers "ok", or fails as told by a marker file next to the adapter. The run's folders say nothing
 # about the case, the variant or the model (they are anonymous temporary folders), so the fake reads the
-# prompt (case 2 is "q"), the model id ("f" is the floor) and its own arguments (--skill-dir: with the skill).
+# prompt (case 2 is "q"), the model id ("f" is the floor) and what the runner staged in its folder ($4/.h/skills/demo: with the skill).
 FAKE = r'''
 here="$(dirname "$0")"; out="$8"
 if grep -q "You are grading" "$2"; then
   echo '[{"id": 1, "text": "a", "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
 fi
-if [ -f "$here/fail-one" ] && grep -q "^q" "$2" && [ "$6" = f ] && echo " $* " | grep -q -- " --skill-dir "; then
+if [ -f "$here/fail-one" ] && grep -q "^q" "$2" && [ "$6" = f ] && [ -d "$4/.h/skills/demo" ]; then
   echo "provider: out of credits" >&2; exit 7
 fi
 [ -f "$here/edit-skill" ] && echo "edited" >> "$here/../../skills/demo/SKILL.md"
@@ -563,17 +735,21 @@ def test_a_run_that_wrote_a_file_is_never_an_early_end():
     assert er.early_end("<skill_tool>\n</skill_tool>", {"docs/prd.md": 1.0}) is None
 
 
-def test_files_the_adapter_installs_do_not_count_as_written(tmp_path):
-    for rel in ("h/skills/demo/SKILL.md", "h/shared/references/security.md", "shared/notes.md", "docs/out.md"):
+def test_files_the_runner_staged_do_not_count_as_written(tmp_path):
+    for rel in ("h/skills/demo/SKILL.md", "h/shared/references/security.md", "shared/notes.md", "docs/out.md",
+                "h/skills/demo-two/SKILL.md"):
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text("x")
-    assert set(er.snapshot(str(tmp_path), {}, ["demo"])) == {os.path.join("shared", "notes.md"), os.path.join("docs", "out.md")}
+    staged = [os.path.join("h", "skills", "demo"), os.path.join("h", "shared")]
+    # Exact paths: a folder the run made next to a staged one, or one whose name starts like it, still counts.
+    assert set(er.snapshot(str(tmp_path), {}, staged)) == {
+        os.path.join("shared", "notes.md"), os.path.join("docs", "out.md"), os.path.join("h", "skills", "demo-two", "SKILL.md")}
 
 
 # The fake adapter for early ends: a with-skill run of the tier named in the file "early-tier", on the cases listed
 # in "early-cases", ends early while its attempt number (counted per case, tier and variant) is at most the
 # number in "early-times", or is odd when the file "early-odd" exists. It knows the case from the prompt
-# ("case <id>"), the tier from the model id and the variant from --skill-dir: the folders are anonymous.
+# ("case <id>"), the tier from the model id and the variant from the staged skill: the folders are anonymous.
 EARLY = r'''
 here="$(dirname "$0")"; out="$8"
 if grep -q "You are grading" "$2"; then
@@ -581,7 +757,7 @@ if grep -q "You are grading" "$2"; then
 fi
 id="$(sed 's/[^0-9]//g' "$2")"
 tier=none
-if echo " $* " | grep -q -- " --skill-dir "; then [ "$6" = f ] && tier=floor || tier=strong; fi
+if [ -d "$4/.h/skills/demo" ]; then [ "$6" = f ] && tier=floor || tier=strong; fi
 key="$here/count-$id-$6-$tier"
 n=1; while ! mkdir "$key.$n" 2>/dev/null; do n=$((n + 1)); done
 early=no
@@ -831,6 +1007,7 @@ def test_a_signal_to_the_runner_ends_every_run_it_started(tmp_path, signame, cod
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(ADAPTER_JSON)
     (adapter / "run-prompt.sh").write_text(HANGS)
     driver = ("import importlib.util, sys\n"
               f"spec = importlib.util.spec_from_file_location('eval_run', {str(SCRIPT)!r})\n"
@@ -866,7 +1043,7 @@ if grep -q "You are grading" "$2"; then
   (cd "$4" && pwd -P) > "$here/grader-pwd.txt"
   exit 0
 fi
-with=no; echo " $* " | grep -q -- " --skill-dir " && with=yes
+with=no; [ -d "$4/.h/skills/demo" ] && with=yes
 echo "$*" > "$out/args.txt"
 cd "$4"
 pwd -P > "$out/pwd.txt"
@@ -965,6 +1142,7 @@ def test_after_a_stop_the_case_folder_is_in_the_workspace_and_the_temporary_one_
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(ADAPTER_JSON)
     (adapter / "run-prompt.sh").write_text(LOOKS)
     (adapter / "hang").write_text("")
     driver = ("import importlib.util, sys\n"
@@ -1163,7 +1341,7 @@ if grep -q "You are grading" "$2"; then
   echo '[{"id": 1, "text": "a", "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
 fi
 if grep -q "^q" "$2" && [ "$6" = m ]; then
-  if [ -f "$here/refuse-with-skill" ] || ! echo " $* " | grep -q -- " --skill-dir "; then
+  if [ -f "$here/refuse-with-skill" ] || ! [ -d "$4/.h/skills/demo" ]; then
     echo '{"is_error": true, "result": "API Error: the safeguards flagged this message"}' > "$out/raw.json"; exit 1
   fi
 fi

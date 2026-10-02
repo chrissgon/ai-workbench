@@ -23,6 +23,10 @@ SCRIPT = Path(__file__).resolve().parents[1] / "executor.py"
 spec = importlib.util.spec_from_file_location("executor", SCRIPT)
 ex = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ex)
+spec = importlib.util.spec_from_file_location("eval_run_docker", SCRIPT.parent / "eval_run.py")
+er = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(er)
+REPO = SCRIPT.parents[1]
 if os.environ.get("WB_EVAL_DOCKER_TESTS") == "1" and not os.environ.get(ex.PLATFORM_ENV):
     try:
         native = subprocess.run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"],
@@ -48,10 +52,10 @@ def root(tmp_path):
     return folder
 
 
-def inside(root, script, network="none", env=None, pass_names=()):
+def inside(root, script, network="none", env=None, pass_names=(), runner=None):
     # security-scan: allow shell-string -- every script is a literal of this test file, run inside the container
     argv, name = ex.command(["bash", "-c", script], str(root), cwd=str(root / "case"), env=env or {},
-                            pass_names=pass_names, network=network)
+                            pass_names=pass_names, network=network, runner=runner)
     try:
         return subprocess.run(argv, capture_output=True, text=True, timeout=180, env={**os.environ, **(env or {})})
     finally:
@@ -79,12 +83,23 @@ def test_a_run_writes_in_its_folder_and_the_caller_owns_the_result(environment, 
     (root / "case" / "docs" / "a.md").unlink()
 
 
-def test_a_run_sees_no_home_no_checkout_and_cannot_change_the_adapters(environment, root):
-    r = inside(root, "ls /wb; ls /skill 2>&1 | head -1; touch /wb/adapters/x 2>&1 | tail -1; "
-                     "find / -xdev -name AGENTS.md -not -path '/proc/*' 2>/dev/null | head -1; echo WB=$WB_EVAL_CONTAINER")
+@pytest.mark.parametrize("harness", ["claude-code", "agents-dir"])
+def test_a_run_sees_its_folder_and_the_one_adapter_script_and_nothing_else_of_the_workbench(environment, root, harness):
+    runner = REPO / "adapters" / harness / "run-prompt.sh"
+    r = inside(root, "find /wb | sort; echo --; ls -d /skill /wb/adapters /wb/shared 2>&1 | grep -c 'No such file'; "
+                     "echo x >> /wb/run-prompt.sh 2>&1 | tail -1; head -c 19 /wb/run-prompt.sh; echo; "
+                     "find / -xdev \\( -name AGENTS.md -o -name adapter.json -o -name SKILL.md -o -name README.md -path '*adapters*' \\) "
+                     "-not -path '/proc/*' -not -path '/opt/runners/*' -not -path '/usr/*' 2>/dev/null | head -3; echo WB=$WB_EVAL_CONTAINER",
+               runner=str(runner))
     assert r.returncode == 0, r.stderr
-    assert "adapters" in r.stdout and "shared" in r.stdout and "WB=1" in r.stdout
-    assert "Read-only file system" in r.stdout and "AGENTS.md" not in r.stdout.replace("find", "")
+    listing, rest = r.stdout.split("--\n", 1)
+    assert listing.split() == ["/wb", "/wb/run-prompt.sh"]  # the one file: not its folder, its README, its tests
+    lines = rest.splitlines()
+    assert lines[0] == "3"  # no /skill, no /wb/adapters, no /wb/shared
+    assert "Read-only file system" in (r.stdout + r.stderr) and "#!/usr/bin/env bash" in rest
+    assert lines[-1] == "WB=1" and not [l for l in lines if l.startswith("/")]  # no instruction file, manifest or skill anywhere
+    r = inside(root, "ls /wb 2>&1 | grep -c 'No such file'")  # a setup command or the fixture commit: not even the script
+    assert r.stdout.strip() == "1"
 
 
 def test_without_a_network_nothing_is_reached(environment, root):
@@ -186,17 +201,33 @@ def test_removing_a_container_by_name_ends_it(environment, root):
         proc.kill()
 
 
-def test_a_run_cannot_read_the_cases_of_the_skill_it_is_given(environment, root, tmp_path):
-    skill = tmp_path / "core-demo"
-    (skill / "evals").mkdir(parents=True)
-    (skill / "SKILL.md").write_text("# demo\n")
+def demo_workbench(tmp_path):
+    """A small workbench: a skill under test that cites one shared reference, and a dependency skill."""
+    wb = tmp_path / "wb"
+    skill, dep = wb / "skills" / "core-demo", wb / "skills" / "core-dep"
+    for folder in (skill / "evals", skill / "scripts" / "tests", dep / "evals", wb / "shared" / "references", wb / "shared" / "scripts"):
+        folder.mkdir(parents=True)
+    (skill / "SKILL.md").write_text("# demo\nWalk ../../shared/references/security.md.\n")
     (skill / "evals" / "evals.json").write_text('{"expected_output": "the answer"}')
-    argv, name = ex.command(["bash", "-c", "cat /skill/core-demo/SKILL.md; ls -A /skill/core-demo/evals | wc -l"],  # security-scan: allow shell-string -- a literal of this test
-                            str(root), skills=[str(skill)])
-    try:
-        r = subprocess.run(argv, capture_output=True, text=True, timeout=180)
-    finally:
-        ex.remove(name)
+    (skill / "scripts" / "check.py").write_text("print(1)\n")
+    (skill / "scripts" / "tests" / "test_check.py").write_text("def test_x():\n    assert True\n")
+    (dep / "SKILL.md").write_text("# dep\n")
+    (dep / "evals" / "evals.json").write_text('{"expected_output": "another answer"}')
+    for name in ("security.md", "other.md"):
+        (wb / "shared" / "references" / name).write_text(name + "\n")
+    (wb / "shared" / "scripts" / "tool.py").write_text("print(1)\n")
+    return wb, skill, dep
+
+
+def test_a_run_reads_the_staged_skill_and_never_its_cases_its_tests_or_an_uncited_reference(environment, root, tmp_path, monkeypatch):
+    """What the runner stages (eval_run.stage_run, as a real run calls it) is all a container holds of a skill."""
+    wb, skill, dep = demo_workbench(tmp_path)
+    monkeypatch.setattr(er, "ROOT", str(wb))
+    staged, manifest = er.stage_run(str(root / "case"), {"skills_dir": ".tool/skills", "settings": [".tool"]}, str(skill), [str(dep)], {"id": 1})
+    assert sorted(staged) == [".tool/shared", ".tool/skills/core-demo", ".tool/skills/core-dep"]
+    r = inside(root, "cat .tool/skills/core-demo/SKILL.md | head -1; cat .tool/skills/core-demo/../../shared/references/security.md; "
+                     "find / -xdev \\( -name evals.json -o -name 'test_check.py' -o -name other.md -o -name tool.py \\) "
+                     "-not -path '/proc/*' -not -path '/usr/*' -not -path '/opt/*' 2>/dev/null | wc -l; find /eval -type l | wc -l")
     assert r.returncode == 0, r.stderr
-    assert r.stdout.split() == ["#", "demo", "0"]
+    assert r.stdout.split() == ["#", "demo", "security.md", "0", "0"]
 

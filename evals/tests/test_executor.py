@@ -43,17 +43,24 @@ def test_the_definition_hash_follows_the_files_and_names_everything(tmp_path):
     assert all(second[:12] in value for value in n.values()) and set(n) == {"image", "proxy_image", "network", "proxy"}
 
 
-def test_a_command_sees_the_run_folder_the_adapters_and_the_skill_and_nothing_else(tmp_path):
+def test_a_command_sees_the_run_folder_and_the_one_adapter_script_and_nothing_else(tmp_path):
     root, skill = run_folder(tmp_path)
-    cmd = ["bash", os.path.join(ex.ROOT, "adapters", "demo", "run-prompt.sh"), "--prompt-file", str(root / "prompt.md"),
-           "--cwd", str(root / "case"), "--out", str(root / "out"), "--skill-dir", str(skill), "--model", "m"]
-    argv, name = ex.command(cmd, str(root), cwd=str(root), skills=[str(skill)], network="proxy")
+    adapter = tmp_path / "adapters" / "demo"
+    adapter.mkdir(parents=True)
+    runner = adapter / "run-prompt.sh"
+    runner.write_text("exit 0\n")
+    (adapter / "README.md").write_text("how the harness is judged\n")
+    cmd = ["bash", str(runner), "--prompt-file", str(root / "prompt.md"), "--cwd", str(root / "case"), "--out", str(root / "out"),
+           "--model", "m"]
+    argv, name = ex.command(cmd, str(root), cwd=str(root), runner=str(runner), network="proxy")
     inside = argv[argv.index(ex.names()["image"]) + 1:]
-    assert inside == ["bash", "/wb/adapters/demo/run-prompt.sh", "--prompt-file", "/eval/prompt.md", "--cwd", "/eval/case",
-                      "--out", "/eval/out", "--skill-dir", "/skill/core-demo", "--model", "m"]
+    assert inside == ["bash", "/wb/run-prompt.sh", "--prompt-file", "/eval/prompt.md", "--cwd", "/eval/case",
+                      "--out", "/eval/out", "--model", "m"]
     targets = {m.split(":")[1]: m for m in mounted(argv)}
-    assert set(targets) == {"/eval", "/wb/adapters", "/wb/shared", "/skill/core-demo"}
-    assert not targets["/eval"].endswith(":ro") and all(targets[t].endswith(":ro") for t in targets if t != "/eval")
+    assert set(targets) == {"/eval", "/wb/run-prompt.sh"}  # no adapters folder, no skill folder, no shared folder
+    assert targets["/wb/run-prompt.sh"].split(":")[0] == os.path.realpath(runner)  # the file, not its folder
+    assert not targets["/eval"].endswith(":ro") and targets["/wb/run-prompt.sh"].endswith(":ro")
+    assert str(skill) not in " ".join(argv) and "--tmpfs" not in argv
     home = os.path.realpath(os.path.expanduser("~"))
     assert all(m.split(":")[0] != home and not home.startswith(m.split(":")[0] + os.sep) for m in mounted(argv))
     assert argv[argv.index("-w") + 1] == "/eval" and name.startswith("wb-eval-run-") and name in argv
@@ -185,12 +192,10 @@ def test_only_the_model_providers_are_on_the_proxys_list():
     assert "FilterDefaultDeny Yes" in conf and "ConnectPort 443" in conf
 
 
-def test_a_skills_eval_cases_are_covered_by_an_empty_folder(tmp_path):
-    root, skill = run_folder(tmp_path)
-    (skill / "evals").mkdir()
-    (skill / "evals" / "evals.json").write_text("{}")
-    argv, _ = ex.command(["true"], str(root), skills=[str(skill)])
-    assert argv[argv.index("--tmpfs") + 1].startswith("/skill/core-demo/evals:")
-    argv, _ = ex.command(["true"], str(root))
-    assert "--tmpfs" not in argv
+def test_a_setup_command_sees_only_the_run_folder_and_a_missing_script_is_refused(tmp_path):
+    root, _ = run_folder(tmp_path)
+    argv, _ = ex.command(["git", "init"], str(root))
+    assert [m.split(":")[1] for m in mounted(argv)] == ["/eval"]
+    with pytest.raises(ex.ExecutorError):
+        ex.command(["true"], str(root), runner=str(tmp_path / "no-such" / "run-prompt.sh"))
 

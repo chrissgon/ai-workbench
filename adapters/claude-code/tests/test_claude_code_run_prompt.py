@@ -49,57 +49,41 @@ def run(e, *extra):
     return subprocess.run(cmd, capture_output=True, text=True, env=e["env"])
 
 
-def test_skills_are_copied_not_linked_and_connectors_are_off(env):
-    r = run(env, "--skill-dir", str(env["skill"]), "--extra-skill-dir", str(env["dep"]))
+def test_the_adapter_installs_nothing_and_connectors_are_off(env):
+    """The runner stages the skills before the adapter starts (scripts/stage_skills.py): the adapter runs the prompt."""
+    r = run(env)
     assert r.returncode == 0, r.stderr
-    for name in ("demo", "dep"):
-        dest = env["tmp"] / "cwd" / ".claude" / "skills" / name
-        assert dest.is_dir() and not dest.is_symlink()
-    (env["tmp"] / "cwd" / ".claude" / "skills" / "demo" / "SKILL.md").write_text("edited\n")
-    assert (env["skill"] / "SKILL.md").read_text() == "demo\n"
+    assert list((env["tmp"] / "cwd").iterdir()) == []  # no skill folder, no shared folder: nothing was written
     log = json.loads(env["log"].read_text())
     assert "--strict-mcp-config" in log["args"] and log["mcp"] == "false"
     assert (env["tmp"] / "out" / "response.md").read_text() == "done"
 
 
-@pytest.mark.parametrize("planted", [".claude/settings.json", "sub/.claude/settings.local.json", ".mcp.json"])
-def test_a_case_folder_with_harness_settings_is_refused(env, planted):
-    p = env["tmp"] / "cwd" / planted
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("{}")
-    r = run(env, "--skill-dir", str(env["skill"]))
-    assert r.returncode == 2 and "harness settings" in r.stderr
-    assert not env["log"].exists()
+@pytest.mark.parametrize("flag", ["--skill-dir", "--extra-skill-dir"])
+def test_the_options_that_made_the_adapter_copy_a_skill_are_gone(env, flag):
+    r = run(env, flag, str(env["skill"]))
+    assert r.returncode == 2 and "unknown option" in r.stderr
+    assert not env["log"].exists() and list((env["tmp"] / "cwd").iterdir()) == []
 
 
-def test_shared_references_resolve_from_the_copied_skill(env):
-    r = run(env, "--skill-dir", str(env["skill"]))
+def test_a_skill_the_runner_staged_is_left_as_it_is(env):
+    staged = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
+    staged.mkdir(parents=True)
+    (staged / "SKILL.md").write_text("staged by the runner\n")
+    r = run(env)
     assert r.returncode == 0, r.stderr
-    skill = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
-    assert (skill / ".." / ".." / "shared" / "references" / "security.md").is_file()
-    assert not (env["tmp"] / "cwd" / ".claude" / "shared").is_symlink()
+    assert (staged / "SKILL.md").read_text() == "staged by the runner\n"
+    assert sorted(p.name for p in (env["tmp"] / "cwd" / ".claude").iterdir()) == ["skills"]
 
 
-def test_the_skill_evals_are_not_copied(env):
-    evals = env["skill"] / "evals"
-    evals.mkdir()
-    (evals / "evals.json").write_text('{"assertions": ["the answer"]}\n')
-    r = run(env, "--skill-dir", str(env["skill"]))
-    assert r.returncode == 0, r.stderr
-    dest = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
-    assert (dest / "SKILL.md").is_file() and not (dest / "evals").exists()
-    assert (evals / "evals.json").is_file()
-
-
-def test_the_tests_of_the_skill_scripts_are_not_copied(env):
-    tests = env["skill"] / "scripts" / "tests"
-    tests.mkdir()
-    (tests / "test_x.py").write_text("def test_x():\n    assert True\n")
-    r = run(env, "--skill-dir", str(env["skill"]))
-    assert r.returncode == 0, r.stderr
-    dest = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
-    assert (dest / "scripts" / "check.py").is_file() and not (dest / "scripts" / "tests").exists()
-    assert (tests / "test_x.py").is_file()
+def test_the_manifest_names_where_the_harness_finds_skills_and_what_carries_its_settings():
+    manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
+    assert manifest["eval"]["skills_dir"] == ".claude/skills"
+    # Its settings folder, its server list and its project-instructions files: the runner refuses a case that carries one.
+    assert set(manifest["eval"]["settings"]) == {".claude", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md"}
+    assert manifest["eval_runner"] == "run-prompt.sh" and manifest["runtime_runner"] == "run-agent.sh"
+    assert (SCRIPT.parent / manifest["runtime_runner"]).is_file()
+    assert set(manifest["consumes"]) == set(manifest["strategy"])  # nothing consumed without saying how
 
 
 def test_max_cost_becomes_a_budget_and_bad_values_are_refused(env):
@@ -159,13 +143,11 @@ def test_a_stopped_adapter_stops_the_cli_and_its_children(env):
 
 
 def test_inside_the_eval_container_every_tool_is_allowed_and_the_web_only_when_asked(env):
-    r = run(env, "--skill-dir", str(env["skill"]))
+    r = run(env)
     assert r.returncode == 0, r.stderr
     args = json.loads(env["log"].read_text())["args"]
     assert "--dangerously-skip-permissions" in args and "--settings" not in args and "--allowedTools" not in args
     assert args[args.index("--disallowedTools") + 1] == "WebSearch,WebFetch"
-    import shutil
-    shutil.rmtree(env["tmp"] / "cwd" / ".claude")  # a second run needs a fresh case folder
     r = run(env, "--allow-web")
     assert r.returncode == 0, r.stderr
     assert "--disallowedTools" not in json.loads(env["log"].read_text())["args"]
@@ -173,9 +155,9 @@ def test_inside_the_eval_container_every_tool_is_allowed_and_the_web_only_when_a
 
 def test_outside_the_eval_container_the_adapter_refuses_to_start(env):
     env["env"]["WB_EVAL_CONTAINER"] = ""
-    r = run(env, "--skill-dir", str(env["skill"]))
+    r = run(env)
     assert r.returncode == 2 and "only inside the container" in r.stderr
-    assert not env["log"].exists() and not (env["tmp"] / "cwd" / ".claude").exists()
+    assert not env["log"].exists() and not (env["tmp"] / "out").exists()
 
 
 def test_a_command_allowance_is_no_longer_an_option(env):
@@ -183,7 +165,7 @@ def test_a_command_allowance_is_no_longer_an_option(env):
 
 
 def test_the_skill_listing_budget_is_raised_so_the_skill_keeps_its_description(env):
-    r = run(env, "--skill-dir", str(env["skill"]))
+    r = run(env)
     assert r.returncode == 0, r.stderr
     assert int(json.loads(env["log"].read_text())["budget"]) >= 100000
 

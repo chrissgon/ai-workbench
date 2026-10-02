@@ -4,11 +4,12 @@ executes in a container built from evals/container/, one container per command (
 2026-10-01: one environment, no host mode).
 
 What a container sees:
-  /eval          the run's folder (case/, out/, prompt.md), read-write: the only thing a run can change
-  /wb/adapters   the adapters, read-only          /wb/shared   the shared references, read-only
-  /skill/<name>  the skill under test and the case's dependency skills, read-only, with their evals/
-                 folder covered by an empty one (the cases hold the expected output and the assertions)
-Nothing else of the machine: no home folder, no other checkout, no credential store.
+  /eval               the run's folder (case/, out/, prompt.md), read-write: the only thing a run can change.
+                      The runner staged in case/ the copies of the skills this run is given, before the
+                      container started (evals/eval_run.py, scripts/stage_skills.py)
+  /wb/run-prompt.sh   the one adapter script the command starts, read-only (model runs and gradings only)
+Nothing else of the machine or of the workbench: no adapters folder, no skill folder, no shared folder, no
+home folder, no other checkout, no credential store.
 
 Network, per command:
   none    no network at all (setup commands, the fixture commit)
@@ -54,6 +55,7 @@ ROOT = os.path.dirname(HERE)
 DEFINITION = os.path.join(HERE, "container")
 NETWORKS = ("none", "proxy", "open")
 PROXY_PORT = 8888
+RUNNER_MOUNT = "/wb/run-prompt.sh"  # where the one adapter script in use is seen inside a container
 # Passed into a container when the caller's environment has them: what keeps git inside the case folder.
 # Neither a time zone nor a git identity: both are the image's, the same for every caller.
 FORWARD = ("GIT_ALLOW_PROTOCOL", "GIT_TERMINAL_PROMPT")
@@ -164,13 +166,12 @@ def clean(env=None):
     docker("network", "rm", n["network"], env=env, check=False)
 
 
-def mounts(root, skills=()):
-    """[(host path, container path, read_only)], longest host path first, for translating a command."""
-    pairs = [(os.path.join(ROOT, "adapters"), "/wb/adapters", True), (os.path.join(ROOT, "shared"), "/wb/shared", True),
-             (root, "/eval", False)]
-    for d in skills:
-        if d:
-            pairs.append((d, f"/skill/{os.path.basename(os.path.normpath(d))}", True))
+def mounts(root, runner=None):
+    """[(host path, container path, read_only)], longest host path first, for translating a command.
+    The run's folder, and the one adapter script the command starts when there is one."""
+    pairs = [(root, "/eval", False)]
+    if runner:
+        pairs.append((runner, RUNNER_MOUNT, True))
     return sorted(pairs, key=lambda p: len(p[0]), reverse=True)
 
 
@@ -183,12 +184,15 @@ def translate(value, pairs):
     return value
 
 
-def command(cmd, root, cwd=None, env=None, skills=(), pass_names=(), network="none"):
-    """(docker argv, container name) that runs cmd in a container. cmd, cwd and the mounts are host paths."""
+def command(cmd, root, cwd=None, env=None, runner=None, pass_names=(), network="none"):
+    """(docker argv, container name) that runs cmd in a container. cmd, cwd and the mounts are host paths.
+    runner is the adapter script cmd starts: a file, the only one of the workbench the container sees."""
+    if runner and not os.path.isfile(runner):
+        raise ExecutorError(f"the adapter script {runner} does not exist")
     if network not in NETWORKS:
         raise ExecutorError(f"network must be one of {', '.join(NETWORKS)}")
     n, env = names(), env or {}
-    pairs = mounts(root, skills)
+    pairs = mounts(root, runner)
     name = f"wb-eval-run-{uuid.uuid4().hex[:16]}"
     argv = ["docker", "run", "--rm", "--init", "--platform", image_platform(), *CONFINED,
             "--pids-limit", str(PIDS_LIMIT), "--name", name, "-w", translate(cwd or root, pairs),
@@ -199,10 +203,6 @@ def command(cmd, root, cwd=None, env=None, skills=(), pass_names=(), network="no
     for host, inside, read_only in pairs:
         if os.path.exists(host):
             argv += ["-v", f"{os.path.realpath(host)}:{inside}" + (":ro" if read_only else "")]
-            # A skill's eval cases carry the expected output and the assertions: an empty folder covers
-            # them, so that a model that looks into /skill cannot read what it is graded on.
-            if inside.startswith("/skill/") and os.path.isdir(os.path.join(host, "evals")):
-                argv += ["--tmpfs", f"{inside}/evals:ro,size=1k"]
     for key in FORWARD:
         if env.get(key):
             argv += ["-e", f"{key}={env[key]}"]
