@@ -39,6 +39,7 @@ LANG = re.compile(r"^[A-Z]{2}$")
 ROUND = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")  # a round id, as it goes into a cursor name
 QUEUE_ALLOW = ["data/pick-queue.json"]
 SYSTEM_PYTHON = "/usr/bin/python3"
+JOB_TIMEOUT_MINUTES = 30  # vote_job.py's own limits add up to 27 minutes (scripts/vote_job.py)
 MAX_POST = 3000
 
 
@@ -389,7 +390,10 @@ def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d:
     if image:
         argv += ["--image", str(image), "--image-path", f"assets/posts/{key}.png"]
         snapshot.append(str(image))
-    job = {"argv": argv, "cwd": cfg["workbench"], "snapshot": snapshot, "grace_minutes": 120}
+    # The job publishes (up to 10 minutes), reads three files, computes and commits (up to 10 more): the
+    # scheduler's default limit for a one-shot command, 10 minutes, would kill it after the post is out.
+    job = {"argv": argv, "cwd": cfg["workbench"], "snapshot": snapshot, "grace_minutes": 120,
+           "timeout_minutes": JOB_TIMEOUT_MINUTES}
     f = work / "job.json"
     f.write_text(json.dumps(job, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return f

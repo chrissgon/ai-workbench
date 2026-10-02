@@ -414,6 +414,8 @@ def test_the_vote_job_uses_the_system_interpreter_and_carries_the_configured_fol
     job = json.loads(Path(inbox(env)[0]["payload"]["files"]["job"]["path"]).read_text())
     system = "/usr/bin/python3"
     assert job["argv"][0] == (system if Path(system).exists() else sys.executable)
+    # SC5: the scheduler's default limit for a one-shot command is 10 minutes; the job's own steps may take 27.
+    assert job["timeout_minutes"] == 30
     assert [job["argv"][i + 1] for i, a in enumerate(job["argv"]) if a == "--path"] == [str(tools)]
     empty = tmp_path / "empty"
     empty.mkdir()
