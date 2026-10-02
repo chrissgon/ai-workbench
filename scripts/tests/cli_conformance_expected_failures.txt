@@ -19,9 +19,7 @@ skills/design-ux-flows/scripts/lint_flows.py report  # the record's shape; argum
 skills/eng-architecture/scripts/check_design.py report  # the record's shape; arguments as top-level keys
 skills/eng-code-review/scripts/change_scope.py value-flag-last  # traceback
 skills/eng-codebase-map/scripts/map_codebase.py value-flag-last  # traceback
-skills/eng-implement/scripts/task.py value-flag-last  # traceback
 skills/mkt-engage/scripts/parse_notification.py help  # no --help: it reads standard input and exits 2
-skills/mkt-messaging/scripts/lint_messaging.py value-flag-last  # traceback
 skills/ops-branch-sync/scripts/sync-status.sh value-flag-last  # exit 1 with the shell's "unbound variable"
 skills/product-backlog/scripts/lint_backlog.py value-flag-last  # traceback
 skills/product-prd/scripts/lint_prd.py report  # --report is a switch
