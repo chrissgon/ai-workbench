@@ -4,13 +4,15 @@
     {
       "id": 1,
       "prompt": "Define the user flows and screens for phase P-1 from docs/product/prd.md.",
-      "expected_output": "docs/design/flows.md with an information architecture, screens with regions in priority order and states, one flow per must feature of P-1 (invoice list, overdue reminders) with numbered steps on named screens, failure branches and a keyboard path, a Coverage line per must/should feature of P-1, no colours or copy; lint ok, recorded in docs/design/flows.lint.json and quoted in the reply.",
+      "expected_output": "docs/design/flows.md with an information architecture, screens with regions in priority order and states, one flow per must feature of P-1 (invoice list, overdue reminders) with numbered steps on named screens, failure branches and a keyboard path, a Coverage line per must/should feature of P-1, no colours or copy. No feature spec exists, so the steps of the flows for F-1 and F-2 are marked spec pending and the reply asks whether to wait for the specs, recommending to wait. Lint ok, recorded in docs/design/flows.lint.json and quoted in the reply; the flows registered in the state file as a draft.",
       "files": ["evals/files/ledger"],
       "assertions": [
         "Every flow names a screen in its steps, has an End state, a Failures line and a Keyboard line",
         "Every screen lists regions in priority order and at least an empty or error state",
         "F-1 and F-2 each have a Coverage line naming a flow or screen",
-        "docs/design/flows.lint.json exists with \"ok\": true, and the reply quotes the lint command with --prd and --phase P-1 and its output"
+        {"text": "docs/design/flows.lint.json exists with \"ok\": true, and the reply quotes the lint command with --prd and --phase P-1 and its output", "tags": ["format"]},
+        {"text": "The steps of the flows for F-1 and F-2 are marked \"spec pending\", and the reply asks whether to wait for the feature specs, with waiting as the recommended answer", "tags": ["guard"]},
+        {"text": "docs/workbench/state.md lists docs/design/flows.md in its Artifacts table with owner design-ux-flows and status draft", "tags": ["format"]}
       ],
       "grader_files": ["docs/product/prd.md"]
     },
@@ -21,7 +23,8 @@
       "files": [],
       "assertions": [
         "The reply names product-prd as the missing input",
-        "The reply offers no generic, assumed or example flow in place of the missing PRD"
+        {"text": "The reply offers no generic, assumed or example flow in place of the missing PRD", "tags": ["guard"]},
+        {"text": "No file under docs/design/ is among the files the run produced", "tags": ["guard"]}
       ]
     }
   ]

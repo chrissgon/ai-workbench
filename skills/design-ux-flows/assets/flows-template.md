@@ -2,7 +2,7 @@
 
 - Owner: design-ux-flows
 - Status: draft
-- Date: {YYYY-MM-DD}
+- Date: {YYYY-MM-DD, from `date +%F`}
 - PRD: docs/product/prd.md
 - Phase covered: {P-n}
 
