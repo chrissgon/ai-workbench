@@ -6,7 +6,10 @@ Usage (built by scripts/runtime.py after the person's approval, run by the sched
       --repo <owner>/<name> --branch <branch> --platform linkedin --post-file post.txt \
       [--comment-file comment.txt] [--image post.png --image-path assets/posts/<key>.png] \
       --publisher linkedin.py --resolver resolver.py --vcs github.py \
-      --vote-update vote_update.py --vote-state vote_state.py --work <folder>
+      --vote-update vote_update.py --vote-state vote_state.py --work <folder> [--path <folder>]...
+
+The scheduler starts it with the system interpreter (/usr/bin/python3) and a short PATH; each --path folder
+(runtime.json's "path") goes first on PATH, so that uv resolves where the person installed it.
 
 Steps, each only when the one before it succeeded:
   1. publish the post (with its first comment and image) with the publisher and the idempotency key <key>;
@@ -29,6 +32,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
@@ -63,6 +67,9 @@ def main(argv=None) -> int:
                  "--publisher", "--resolver", "--vcs", "--vote-update", "--vote-state", "--work"):
         p.add_argument(name, required=True)
     p.add_argument("--platform", default="linkedin")
+    p.add_argument("--path", action="append", default=[], metavar="FOLDER",
+                   help="an absolute folder to put first on PATH, so that uv resolves under a scheduler's short "
+                        "PATH (the folders of runtime.json's \"path\"); repeat for several")
     p.add_argument("--comment-file")
     p.add_argument("--image")
     p.add_argument("--image-path")
@@ -76,6 +83,11 @@ def main(argv=None) -> int:
     if Path(a.vote_update).resolve().parent != Path(a.vote_state).resolve().parent:
         log("error: vote_update.py and vote_state.py must be in one folder")
         return 2
+    if not all(os.path.isabs(folder) for folder in a.path):
+        log("error: --path takes absolute folders")
+        return 2
+    if a.path:
+        os.environ["PATH"] = os.pathsep.join(a.path + [os.environ.get("PATH", "/usr/bin:/bin")])
     work = Path(a.work)
     work.mkdir(parents=True, exist_ok=True, mode=0o700)
     result = {"key": a.key, "round": a.round, "published": False, "post_url": None, "recorded": False}

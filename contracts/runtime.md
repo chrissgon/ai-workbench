@@ -54,7 +54,7 @@ When `runtime.json` has a `vote` section (`repo`, `branch`, `pillars`, optional 
 2. The agent runs read-only with `mkt-vote-round` and returns one `vote-proposal` block. The runtime checks it against the state (the winner's text or one of the three options with a reason, the slot's language, the next pillar, three non-empty options) and never repairs it.
 3. Code builds everything the approval covers: the content file, `check_post.py`, the post image (`render.py`; without a browser the post goes text-only and the item says so), the next round's queue file (`vote_update.py --queue-round`, which refuses used topics), the publish job, and one bundle file. The bundle's sha256 is the inbox item's hash. A failed check leaves the item not ready: it cannot be approved.
 4. `approve --id <n> --confirmed --sha256 <hash>` on a `vote` item re-hashes every file, refuses when the queue file in the repository moved, schedules the job at the slot (the scheduler's dry run, then the confirmed call with its digest) and commits the queue file (`commit-files`, only `data/pick-queue.json`).
-5. At the slot, `scripts/vote_job.py` publishes the post (first comment, image), reads the vote files again and commits only `post_url` on the round, the post in `posts.json` and its image. A failure after publishing prints what to record by hand.
+5. At the slot, `scripts/vote_job.py`, scheduled with the system interpreter's fixed path and carrying the folders of `runtime.json`'s `path` (the scheduler's own `PATH` is short), publishes the post (first comment, image), reads the vote files again and commits only `post_url` on the round, the post in `posts.json` and its image. A failure after publishing prints what to record by hand.
 
 ## Safety rules
 

@@ -38,6 +38,7 @@ BRANCH = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 LANG = re.compile(r"^[A-Z]{2}$")
 ROUND = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")  # a round id, as it goes into a cursor name
 QUEUE_ALLOW = ["data/pick-queue.json"]
+SYSTEM_PYTHON = "/usr/bin/python3"
 MAX_POST = 3000
 
 
@@ -367,7 +368,10 @@ def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d:
     """The scheduler command file for vote_job.py. Every file it reads is in the snapshot."""
     p = v["paths"]
     publisher = cfg["paths"]["publisher"]
-    argv = ["python3", str(p["job"]), "--key", key, "--round", rid, "--date", slot["when"][:10],
+    # The system interpreter, by its fixed path: the scheduler hashes argv[0], and that file does not change
+    # with a package upgrade between the approval and the slot (providers/CONTRACT.md, "Python version").
+    python = SYSTEM_PYTHON if Path(SYSTEM_PYTHON).exists() else sys.executable
+    argv = [python, str(p["job"]), "--key", key, "--round", rid, "--date", slot["when"][:10],
             "--lang", d["post"]["language"], "--title", d["topic"], "--repo", v["repo"], "--branch", v["branch"],
             "--platform", cfg["publisher"], "--post-file", entry["post_file"],
             "--publisher", str(publisher), "--resolver", str(p["resolver"]), "--vcs", str(p["vcs"]),
@@ -375,6 +379,10 @@ def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d:
             "--work", str(Path(cfg["data_dir"]) / "vote" / rid / "job-work")]
     snapshot = [str(p["job"]), entry["post_file"], str(publisher), str(p["resolver"]), str(p["vcs"]),
                 str(p["vote_update"]), str(p["vote_state"])]
+    for folder in cfg.get("path") or []:
+        # The scheduler runs the job on its own short PATH; these are the folders runtime.json lists so that
+        # uv resolves, and the job puts them first, as the tick does.
+        argv += ["--path", folder]
     if entry.get("comment_file"):
         argv += ["--comment-file", entry["comment_file"]]
         snapshot.append(entry["comment_file"])

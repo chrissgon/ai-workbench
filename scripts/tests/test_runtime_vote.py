@@ -399,6 +399,36 @@ def test_vote_job_publishes_then_records_the_post(env, tmp_path):
     assert posts[-1]["url"] == out["post_url"] and posts[-1]["image"] == f"assets/posts/{b['key']}.png"
 
 
+def test_the_vote_job_uses_the_system_interpreter_and_carries_the_configured_folders(env, tmp_path):
+    # RT4: the job was scheduled as a bare "python3" (hashed wherever the approver's PATH found it, so an
+    # interpreter upgrade before the slot refused the job) and called "uv" by name on the scheduler's fixed
+    # PATH, without the folders runtime.json lists for exactly that.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    uv = tools / "uv"  # stands for a uv installed outside the scheduler's PATH: "uv run <script> ..."
+    uv.write_text(f'#!/bin/sh\nshift\nexec "{sys.executable}" "$@"\n')
+    uv.chmod(0o755)
+    edit_config(env, path=[str(tools)])
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["vote"]["status"] == "to_inbox", err
+    job = json.loads(Path(inbox(env)[0]["payload"]["files"]["job"]["path"]).read_text())
+    system = "/usr/bin/python3"
+    assert job["argv"][0] == (system if Path(system).exists() else sys.executable)
+    assert [job["argv"][i + 1] for i, a in enumerate(job["argv"]) if a == "--path"] == [str(tools)]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    bare = {**os.environ, "PATH": str(empty)}  # a scheduler's PATH, on which uv is not
+    i = job["argv"].index("--path")
+    without = job["argv"][1:i] + job["argv"][i + 2:]
+    r = subprocess.run([sys.executable] + without, capture_output=True, text=True, timeout=120, env=bare, cwd=job["cwd"])
+    assert r.returncode == 1 and "publish failed (127)" in r.stdout
+    assert calls(env, "publisher") == []
+    r = subprocess.run([sys.executable] + job["argv"][1:], capture_output=True, text=True, timeout=120, env=bare,
+                       cwd=job["cwd"])
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["published"] and len(calls(env, "publisher")) == 1
+
+
 # --- the scheduler and the vcs provider are resolved by class (providers/resolve.py) ---
 
 def add_systemd(env):
