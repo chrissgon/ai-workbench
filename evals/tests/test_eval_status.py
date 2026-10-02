@@ -277,7 +277,8 @@ def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(r
 def configure(root, **changes):
     config = {"strong_model": "s-model", "strong_harness": "h", "floor_model": "f-model", "floor_harness": "fh",
               "floor_pass_env": ["FLOOR_KEY"], "strong_pass_env": [], "grader": "s-model", "threshold": 0.8, "strong_tolerance": 0,
-              "measurement_version": 2, **changes}
+              "measurement_version": 2, "measurement_floor": 2, "measurement_sha256": "0" * 64, **changes}
+    config = {k: v for k, v in config.items() if v is not None}  # None leaves a key out
     (root / "evals").mkdir(exist_ok=True)
     (root / "evals" / "eval-gate.json").write_text(json.dumps(config))
 
@@ -437,6 +438,42 @@ def test_a_record_written_under_the_earlier_rule_is_valid_and_stale(root):
 def test_a_configuration_needs_a_measurement_version_above_the_earlier_rule(root):
     configure(root, measurement_version=1)
     assert es.gate_problems(str(root)) == ["measurement_version must be above 1"]
+
+
+@pytest.mark.parametrize("floor", [0, 3, True, "2"])
+def test_the_measurement_floor_is_a_version_up_to_the_measurement_version(root, floor):
+    configure(root, measurement_floor=floor)
+    assert len(es.gate_problems(str(root))) == 1 and "measurement_floor" in es.gate_problems(str(root))[0]
+    configure(root, measurement_floor=None)
+    assert es.gate_problems(str(root)) == ["missing field 'measurement_floor'"]
+
+
+def test_the_fingerprint_is_optional_and_checked_when_present(root):
+    configure(root, measurement_sha256=None)
+    assert es.gate_problems(str(root)) == [] and es.load_gate(str(root))["measurement_floor"] == 2
+    configure(root, measurement_sha256="abc")
+    assert es.gate_problems(str(root)) == ["measurement_sha256 must be 64 hexadecimal characters"]
+
+
+def test_no_evidence_is_written_while_the_gate_file_carries_no_fingerprint(root, capsys):
+    assert es.evidence_refusal(str(root)) is None  # no gate file: a tree with no measurement to protect
+    configure(root)
+    assert es.evidence_refusal(str(root)) is None and record(root) == 0
+    recorded = (root / "skills" / "core-demo" / "evals" / "result.json").read_text()
+    configure(root, measurement_sha256=None)
+    assert "carries no measurement_sha256: measurement version 2 is open" in es.evidence_refusal(str(root))
+    with pytest.raises(SystemExit) as e:
+        record(root, strong=(0.9, 0.5))
+    assert e.value.code == 1 and "record refused" in capsys.readouterr().err
+    assert (root / "skills" / "core-demo" / "evals" / "result.json").read_text() == recorded
+    configure(root, threshold=3)
+    assert "is not valid" in es.evidence_refusal(str(root))
+
+
+def test_the_repository_measurement_is_at_version_5_with_its_floor(root):
+    """Phase B changes what the grader is shown, so nothing measured before it counts: version 5, floor 5."""
+    gate = es.load_gate(str(REPO))
+    assert gate["measurement_version"] >= 5 and gate["measurement_floor"] >= 5
 
 
 def test_a_record_of_the_container_era_names_its_environment(root):

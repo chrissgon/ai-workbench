@@ -4,11 +4,12 @@ executes in a container built from evals/container/, one container per command (
 2026-10-01: one environment, no host mode).
 
 What a container sees:
-  /eval          the run's folder (case/, out/, prompt.md), read-write: the only thing a run can change
-  /wb/adapters   the adapters, read-only          /wb/shared   the shared references, read-only
-  /skill/<name>  the skill under test and the case's dependency skills, read-only, with their evals/
-                 folder covered by an empty one (the cases hold the expected output and the assertions)
-Nothing else of the machine: no home folder, no other checkout, no credential store.
+  /eval               the run's folder (case/, out/, prompt.md), read-write: the only thing a run can change.
+                      The runner staged in case/ the copies of the skills this run is given, before the
+                      container started (evals/eval_run.py, scripts/stage_skills.py)
+  /wb/run-prompt.sh   the one adapter script the command starts, read-only (model runs and gradings only)
+Nothing else of the machine or of the workbench: no adapters folder, no skill folder, no shared folder, no
+home folder, no other checkout, no credential store.
 
 Network, per command:
   none    no network at all (setup commands, the fixture commit)
@@ -19,12 +20,28 @@ Network, per command:
 Secrets reach a container as environment variables named by the caller; their values travel in the
 environment of the docker client, never on a command line.
 
-The images, the network and the proxy are named after a hash of evals/container/, so a change to the
-definition builds new ones and a record can say which definition it was measured in.
+Environment. The clock (TZ=UTC), the locale, the user name and the git identity of a run are the
+image's own: nothing of the caller's machine sets them. From the caller come only the two variables
+that keep git inside the case folder (FORWARD) and the variables the caller names.
+
+Privileges. A run container starts with every capability dropped, with no way to gain a privilege
+(no-new-privileges) and with a limit on the number of processes (PIDS_LIMIT).
+
+The image. Its definition is pinned (base images by digest, a dated package index, a lock file for
+the two runners), and it is built for one CPU platform, IMAGE_PLATFORM: lab evidence is made on that
+platform only. WB_EVAL_IMAGE_PLATFORM builds and runs another one (the CI job, which tests the
+definition on its own architecture); `ensure` then says so in "image_platform", and the runner
+writes no evidence from such an environment. The images, the network and the proxy are named after
+a hash of evals/container/ (the hash of the definition's text, not of an image: two builds of one
+definition can differ, which is why a built image is kept as an archive), so a change to the
+definition builds new ones.
 
 Usage (the runner imports this module; the commands are for a person):
   python3 evals/executor.py ensure     build what is missing, start the proxy, print the environment
   python3 evals/executor.py clean      remove the proxy and the network of the current definition
+  python3 evals/executor.py archive --out <file.tar>
+                                       save the built image as an archive, to be kept: prints its
+                                       sha256, the image's digest and its platform as JSON
 """
 import hashlib
 import json
@@ -38,9 +55,17 @@ ROOT = os.path.dirname(HERE)
 DEFINITION = os.path.join(HERE, "container")
 NETWORKS = ("none", "proxy", "open")
 PROXY_PORT = 8888
+RUNNER_MOUNT = "/wb/run-prompt.sh"  # where the one adapter script in use is seen inside a container
 # Passed into a container when the caller's environment has them: what keeps git inside the case folder.
-FORWARD = ("GIT_ALLOW_PROTOCOL", "GIT_TERMINAL_PROMPT", "GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL",
-           "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "TZ")
+# Neither a time zone nor a git identity: both are the image's, the same for every caller.
+FORWARD = ("GIT_ALLOW_PROTOCOL", "GIT_TERMINAL_PROMPT")
+# The CPU platform lab evidence is made on (the plan's decision 4). Another one is for testing the definition.
+IMAGE_PLATFORM = "linux/arm64"
+PLATFORM_ENV = "WB_EVAL_IMAGE_PLATFORM"
+# The most processes and threads a run container may hold: room for a browser and a test suite, an end to a fork loop.
+PIDS_LIMIT = 4096
+# What every container of the harness starts without: capabilities, and a way to gain a privilege.
+CONFINED = ("--cap-drop", "ALL", "--security-opt", "no-new-privileges")
 
 
 class ExecutorError(RuntimeError):
@@ -61,8 +86,18 @@ def definition_hash(folder=DEFINITION):
     return h.hexdigest()
 
 
+def image_platform():
+    """The CPU platform the image is built for and run as: IMAGE_PLATFORM, unless WB_EVAL_IMAGE_PLATFORM names another."""
+    value = os.environ.get(PLATFORM_ENV) or IMAGE_PLATFORM
+    if not value.startswith("linux/") or not value[len("linux/"):].replace("/", "").isalnum():
+        raise ExecutorError(f"{PLATFORM_ENV} must be a platform such as linux/amd64, not {value!r}")
+    return value
+
+
 def names(folder=DEFINITION):
     tag = definition_hash(folder)[:12]
+    if image_platform() != IMAGE_PLATFORM:  # an image of another platform never takes the evidence image's name
+        tag += "-" + image_platform().split("/", 1)[1].replace("/", "")
     return {"image": f"wb-eval:{tag}", "proxy_image": f"wb-eval-proxy:{tag}", "network": f"wb-eval-net-{tag}",
             "proxy": f"wb-eval-proxy-{tag}"}
 
@@ -80,13 +115,13 @@ def docker(*args, env=None, check=True, timeout=1800):
 def ensure(env=None):
     """Build the images that are missing, create the internal network and start the proxy. Idempotent, and
     safe when several runners call it at once (a second create of the same name is not an error).
-    Returns the environment a record names."""
-    n = names()
+    Returns the environment a record names: the definition's hash, the image, its digest and its platform."""
+    n, platform = names(), image_platform()
     if docker("info", "--format", "{{.ServerVersion}}", env=env, check=False).returncode != 0:
         raise ExecutorError("the docker daemon is not running: start it; evals run only in a container")
     for image, folder in ((n["image"], DEFINITION), (n["proxy_image"], os.path.join(DEFINITION, "proxy"))):
         if docker("image", "inspect", image, env=env, check=False).returncode != 0:
-            docker("build", "-q", "-t", image, folder, env=env)
+            docker("build", "-q", "--platform", platform, "-t", image, folder, env=env)
     if docker("network", "inspect", n["network"], env=env, check=False).returncode != 0:
         r = docker("network", "create", "--internal", n["network"], env=env, check=False)
         if r.returncode != 0 and "already exists" not in r.stderr:
@@ -94,14 +129,35 @@ def ensure(env=None):
     state = docker("inspect", "--format", "{{.State.Running}}", n["proxy"], env=env, check=False)
     if state.returncode != 0 or state.stdout.strip() != "true":
         docker("rm", "-f", n["proxy"], env=env, check=False)
-        r = docker("run", "-d", "--restart", "unless-stopped", "--name", n["proxy"], n["proxy_image"], env=env, check=False)
+        r = docker("run", "-d", "--restart", "unless-stopped", "--platform", platform, *CONFINED, "--name", n["proxy"],
+                   n["proxy_image"], env=env, check=False)
         if r.returncode != 0 and "already in use" not in r.stderr:
             raise ExecutorError(f"cannot start the eval proxy: {r.stderr.strip()[-300:]}")
         r = docker("network", "connect", n["network"], n["proxy"], env=env, check=False)
         if r.returncode != 0 and "already exists" not in r.stderr:
             raise ExecutorError(f"cannot connect the eval proxy: {r.stderr.strip()[-300:]}")
     image_id = docker("image", "inspect", "--format", "{{.Id}}", n["image"], env=env).stdout.strip()
-    return {"kind": "container", "definition_sha256": definition_hash(), "image": n["image"], "image_id": image_id}
+    # image_digest is the id of the built image: it survives `docker save` and `docker load`, so the kept
+    # archive and the image a run executed in can be told to be the same. image_id is the same value under
+    # the name the records of the first round use.
+    return {"kind": "container", "definition_sha256": definition_hash(), "image": n["image"], "image_id": image_id,
+            "image_digest": image_id, "image_platform": platform}
+
+
+def archive(out, env=None):
+    """Save the built image as an archive at out. Returns its checksum, the image's digest and its platform:
+    the values docs/decisions.md records when a measurement version is closed."""
+    environment = ensure(env=env)
+    out = os.path.abspath(out)
+    if os.path.exists(out):
+        raise ExecutorError(f"{out} exists: an archive is never overwritten")
+    docker("save", "-o", out, environment["image"], env=env, timeout=3600)
+    h = hashlib.sha256()
+    with open(out, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return {"archive": out, "archive_sha256": h.hexdigest(), "image": environment["image"],
+            "image_digest": environment["image_digest"], "image_platform": environment["image_platform"]}
 
 
 def clean(env=None):
@@ -110,13 +166,12 @@ def clean(env=None):
     docker("network", "rm", n["network"], env=env, check=False)
 
 
-def mounts(root, skills=()):
-    """[(host path, container path, read_only)], longest host path first, for translating a command."""
-    pairs = [(os.path.join(ROOT, "adapters"), "/wb/adapters", True), (os.path.join(ROOT, "shared"), "/wb/shared", True),
-             (root, "/eval", False)]
-    for d in skills:
-        if d:
-            pairs.append((d, f"/skill/{os.path.basename(os.path.normpath(d))}", True))
+def mounts(root, runner=None):
+    """[(host path, container path, read_only)], longest host path first, for translating a command.
+    The run's folder, and the one adapter script the command starts when there is one."""
+    pairs = [(root, "/eval", False)]
+    if runner:
+        pairs.append((runner, RUNNER_MOUNT, True))
     return sorted(pairs, key=lambda p: len(p[0]), reverse=True)
 
 
@@ -129,14 +184,18 @@ def translate(value, pairs):
     return value
 
 
-def command(cmd, root, cwd=None, env=None, skills=(), pass_names=(), network="none"):
-    """(docker argv, container name) that runs cmd in a container. cmd, cwd and the mounts are host paths."""
+def command(cmd, root, cwd=None, env=None, runner=None, pass_names=(), network="none"):
+    """(docker argv, container name) that runs cmd in a container. cmd, cwd and the mounts are host paths.
+    runner is the adapter script cmd starts: a file, the only one of the workbench the container sees."""
+    if runner and not os.path.isfile(runner):
+        raise ExecutorError(f"the adapter script {runner} does not exist")
     if network not in NETWORKS:
         raise ExecutorError(f"network must be one of {', '.join(NETWORKS)}")
     n, env = names(), env or {}
-    pairs = mounts(root, skills)
+    pairs = mounts(root, runner)
     name = f"wb-eval-run-{uuid.uuid4().hex[:16]}"
-    argv = ["docker", "run", "--rm", "--init", "--name", name, "-w", translate(cwd or root, pairs),
+    argv = ["docker", "run", "--rm", "--init", "--platform", image_platform(), *CONFINED,
+            "--pids-limit", str(PIDS_LIMIT), "--name", name, "-w", translate(cwd or root, pairs),
             "-e", "ENABLE_CLAUDEAI_MCP_SERVERS=false",
             "-e", "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1"]
     if sys.platform.startswith("linux"):  # a bind mount keeps numeric owners there; elsewhere the runtime maps them
@@ -144,10 +203,6 @@ def command(cmd, root, cwd=None, env=None, skills=(), pass_names=(), network="no
     for host, inside, read_only in pairs:
         if os.path.exists(host):
             argv += ["-v", f"{os.path.realpath(host)}:{inside}" + (":ro" if read_only else "")]
-            # A skill's eval cases carry the expected output and the assertions: an empty folder covers
-            # them, so that a model that looks into /skill cannot read what it is graded on.
-            if inside.startswith("/skill/") and os.path.isdir(os.path.join(host, "evals")):
-                argv += ["--tmpfs", f"{inside}/evals:ro,size=1k"]
     for key in FORWARD:
         if env.get(key):
             argv += ["-e", f"{key}={env[key]}"]
@@ -176,6 +231,8 @@ def main(argv=None):
         print(json.dumps(ensure(), indent=2))
     elif argv == ["clean"]:
         clean()
+    elif len(argv) == 3 and argv[:2] == ["archive", "--out"]:
+        print(json.dumps(archive(argv[2]), indent=2))
     else:
         print(__doc__.strip())
         return 0 if argv in (["--help"], ["-h"]) else 2

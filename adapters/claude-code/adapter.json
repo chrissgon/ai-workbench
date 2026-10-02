@@ -7,13 +7,24 @@
   ],
   "strategy": {
     "skills": "generate: build.py --pack <name> creates build/<pack>/skills/<name> symlinks into the core for the selected skills",
-    "agents": "generate: build.py merges ../../agents/*.md with overrides/*.yaml into build/<pack>/agents/"
+    "agents": "generate: build.py merges ../../agents/*.md with overrides/*.yaml into build/<pack>/agents/",
+    "shared": "generate: build.py links build/<pack>/shared/references to ../../shared/references, beside the skills, so that a skill's ../../shared/references/<file> resolves by the installed path"
   },
   "install": "install.sh [--pack <name>] builds and symlinks build/<pack>/ to ~/.claude/skills/ai-workbench",
   "generated": [
     "build/"
   ],
   "eval_runner": "run-prompt.sh",
+  "runtime_runner": "run-agent.sh",
+  "eval": {
+    "skills_dir": ".claude/skills",
+    "settings": [
+      ".claude",
+      ".mcp.json",
+      "CLAUDE.md",
+      "CLAUDE.local.md"
+    ]
+  },
   "secrets": [
     {
       "name": "CLAUDE_CODE_OAUTH_TOKEN",
