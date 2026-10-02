@@ -16,6 +16,17 @@ Nine read-only audits of the whole repository, made on 2026-10-02 before one fin
 | [cross-skill.md](cross-skill.md) | what crosses skills: the artifact contract (decision D7), shared code (D8), command-line conventions of the 55 skill scripts, canonical sentences, a change list per skill | `3cbc7f2` |
 | [backlog.md](backlog.md) | every item of `docs/backlog.md`: done or not, still worth doing, where it belongs; work no item covers (N1 to N19) | `3cbc7f2` |
 
+## Reviews of the plan
+
+The plan built from the audits was itself reviewed twice on 2026-10-02, read-only. The plan's section "Review of 2026-10-02 and what it changed" says what each finding led to.
+
+| File | Scope |
+|------|-------|
+| [plan-review-consistency.md](plan-review-consistency.md) | the plan against itself: counts, order, defaults and decisions that contradict each other (2 blockers, 19 should-fix, 9 nits) |
+| [plan-review-architecture.md](plan-review-architecture.md) | the plan against the code and the architecture, with 38 of its items checked in the files they name (5 blockers, 10 should-fix, 6 nits) |
+
+Both are the reports as written, except the name of the working tree one of them was made in, replaced by a description. Both cite the plan by the line numbers it had before it was amended: search for the quoted text.
+
 ## How it was made
 
 - Nine audits ran in parallel, each with its own scope and none changing a file: no eval was run, no model was called by the harness, no provider touched a real service. Scripts and tests were run on copies outside the repository.
