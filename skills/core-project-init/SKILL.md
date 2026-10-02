@@ -46,6 +46,8 @@ Check these before creating or editing any file, and again before replying. They
 2. **A decision of the user's is missing.** Three decisions block initialization: (a) the project name; (b) the autonomy mode; (c) the mapping from step 4, when it has at least one row. (c) is answered when the user said to register the existing documents or specifications, or named them. If any of the three is not answered by step 2: write nothing, do not run `--apply`, reply with the "Questions template" below, and stop. `name_guess` and `every-phase` are recommendations to offer, never values to apply: a recommendation the user has not accepted is not an answer. A "go", "proceed", "set it up" or "use your judgement" with no name or mode is not an answer and does not accept the recommendations: ask again. Only a stated value, or "yes" or "yes to all" after the questions were shown, is an answer.
 3. **The docs/ decision is an open question, not a stop.** Which workbench folders under `docs/` go into git (`all`, `code` or `none`) is the user's decision too, but nothing is committed at initialization, so it never blocks it: when the user has not stated it, apply without `--docs`. The script records `- Docs in git: undecided` and an open question in the state file, and the reply ends with that question, recommending `code`. Never pass `--docs` on a guess.
 
+## Procedure
+
 The scripts are in the `scripts/` folder next to this file, not in the project. Run each from the project root by that path, one command at a time: `python3 <this skill's folder>/scripts/init_project.py`.
 
 Progress:
