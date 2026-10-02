@@ -67,9 +67,10 @@ class Secret:
 
 REGISTRY: dict[str, Secret] = {s.name: s for s in (
     Secret("VCS_GITHUB_TOKEN",
-           "read (and, with a separate token, dismiss) Dependabot alerts",
+           "read (and, with a separate token, dismiss) Dependabot alerts; read one file of a repository",
            "fine-grained token, only the repositories concerned: \"Dependabot alerts: Read-only\" "
-           "(\"Read and write\" only in the separate token used to dismiss)",
+           "(\"Read and write\" only in the separate token used to dismiss); \"Contents: Read-only\" to read a "
+           "file of a private repository (read-file); commit-files uses no token",
            ("providers/vcs/github.py", ".github/workflows/dependabot-alerts.yml"),
            store_username="github", aliases=("GITHUB_TOKEN",),
            note="GITHUB_TOKEN is read last: a harness or CI may set its own, with other permissions"),

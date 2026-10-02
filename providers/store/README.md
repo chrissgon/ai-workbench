@@ -16,7 +16,7 @@ Standard library only (`sqlite3`); runs with `python3` or `uv run`. No credentia
 | `cursors` | where a trigger source left off, by name (for example the mailbox "since" time) | `cursor-set`, `cursor-clear` (the cursor is absent again) |
 | `events` | triggers to handle (a notification e-mail, a calendar time), one per source and external id, with a status: `pending`, `claimed`, then `done`, `failed` or `to_inbox` | `event-add`, `event-next`, `event-done` |
 | `runs` | one row per agent run (backlog R7): agent, triggering event, status, exit code, cost, tokens, duration, output folder, error | `run-start`, `run-end` |
-| `inbox` | what waits for the user (backlog R5): kind, title, the payload as JSON and its SHA-256 (the approval hash of `contracts/environment.md`), status `open`, then `approved`, `rejected` or `done`, and who decided when | `inbox-add`, `inbox-resolve` |
+| `inbox` | what waits for the user (backlog R5): kind, title, the payload as JSON and the approval hash the caller gave (`--payload-sha256`: the SHA-256 of what the person approves, in the sense of `contracts/environment.md`; it may be the hash of a file the payload only points to, and the store does not compare it with the payload), status `open`, then `approved`, `rejected` or `done`, and who decided when | `inbox-add`, `inbox-resolve` |
 | `actions` | every outward action the runtime executed: kind, idempotency key (unique), target, payload hash, the provider's result | `action-add` |
 
 `action-count --kind reply --since <start of day>` is how a daily limit is enforced; `actions` and `export` are the audit.

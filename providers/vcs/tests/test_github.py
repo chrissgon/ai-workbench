@@ -661,3 +661,24 @@ def test_old_ledger_that_is_not_json_stops_the_run(env, fake, comment_file, tmp_
     proc = run(dismiss_args(comment_file, "--confirmed"), e)
     assert proc.returncode == 1 and "cannot be copied" in proc.stderr
     assert fake.patches() == [] and not new.exists() and old.read_text() == "{not json"
+
+
+# --- VS7: the contract says what this provider does ------------------------------------------------
+
+
+def test_the_contract_states_the_dry_run_of_commit_files_resolves_flag_and_the_token_permissions():
+    root = HERE.parents[2]
+    contract = (root / "providers" / "CONTRACT.md").read_text(encoding="utf-8")
+    (rule,) = [line for line in contract.splitlines() if line.startswith("- `--dry-run` on every verb")]
+    # The rule said "no credential is read and no network call is made" and the row said "clones".
+    assert "commit-files" in rule and "exception" in rule
+    table = contract.split("\n## Verbs per class\n", 1)[1]
+    (row,) = [line for line in table.splitlines() if line.startswith("| `integration:vcs` |")]
+    assert "--not-committed) --confirmed`" in row  # resolve is refused without it (test_github_files.py)
+    assert "[--ref <branch, tag or commit>]" in row
+    # read-file needs a permission the secrets contract did not list.
+    module = load_module()
+    permission = module.secret_resolver().REGISTRY["VCS_GITHUB_TOKEN"].permission
+    assert "Contents: Read-only" in permission and "Dependabot alerts: Read-only" in permission
+    assert permission in (root / "contracts" / "secrets.md").read_text(encoding="utf-8")
+    assert '"Contents: Read-only"' in module.HELP_EPILOG
