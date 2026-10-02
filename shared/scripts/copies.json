@@ -42,7 +42,7 @@
     },
     {
      "path": "skills/biz-market-analysis/scripts/rank.py",
-     "adopted": false
+     "adopted": true
     }
    ]
   },
@@ -55,7 +55,7 @@
     },
     {
      "path": "skills/biz-market-analysis/scripts/check_refs.py",
-     "adopted": false
+     "adopted": true
     }
    ]
   },
