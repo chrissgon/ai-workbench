@@ -6,10 +6,12 @@ Usage: python3 scripts/doctor.py [--harness <name>] [--json] [--strict]
 Collects `metadata.requires` from every skill, then checks each class against:
   1. connectors declared by the chosen adapter in adapters/<harness>/connectors.json
      ({"classes": {"integration:issue-tracker": "mcp: atlassian"}})
-  2. a native provider selected by <CLASS>_<SUBCLASS>_PROVIDER or <CLASS>_PROVIDER, whose
-     script exists under providers/<class>/ and passes `--check`. An integration:<service>
-     class uses providers/<service>/ and only INTEGRATION_<SERVICE>_PROVIDER (a hyphen
-     becomes "_"): integration:vcs is providers/vcs/, selected by INTEGRATION_VCS_PROVIDER
+  2. the native provider that providers/resolve.py chooses for the class (the same function the
+     runtime and the skills use: <CLASS>_<SUBCLASS>_PROVIDER or <CLASS>_PROVIDER, then the
+     platform default, then the only implementation shipped), when its script passes `--check`.
+     An integration:<service> class uses providers/<service>/ and only
+     INTEGRATION_<SERVICE>_PROVIDER (a hyphen becomes "_"): integration:vcs is providers/vcs/,
+     selected by INTEGRATION_VCS_PROVIDER. `python3 providers/resolve.py --list` shows the choices.
 
 Options:
   --harness <name>  include connectors declared by that adapter
@@ -23,6 +25,7 @@ prints a value. Missing secrets do not change the exit code; see contracts/secre
 
 Exit codes: 0 ok, 1 missing classes with --strict, 2 usage error.
 """
+import importlib.util
 import json
 import os
 import re
@@ -58,56 +61,70 @@ def collect_requires():
     return req
 
 
-def env_key(parts):
-    return "_".join(parts).upper().replace("-", "_") + "_PROVIDER"
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module  # dataclasses look their module up here
+    spec.loader.exec_module(module)
+    return module
+
+
+# The one resolution function (class -> provider script); this script builds no provider path itself.
+resolution = _load("workbench_provider_resolve", os.path.join(PROVIDERS, "resolve.py"))
+NAME_RE = re.compile(r"[a-z0-9-]+")
 
 
 def env_provider(cls):
-    parts = cls.split(":")
-    keys = [env_key(parts)]
-    if parts[0] != "integration":  # integration:<service> classes are unrelated services: no shared fallback
-        keys.append(env_key(parts[:1]))
-    for k in dict.fromkeys(keys):
-        if os.environ.get(k):
-            return k, os.environ[k]
-    return None, None
-
-
-NAME_RE = re.compile(r"[a-z0-9-]+")
-NOT_PROVIDERS = {"auth"}  # helpers that live next to providers (providers/CONTRACT.md) and are not one
+    """(variable, value) of the environment variable that selects the class's provider, or (None, None)."""
+    try:
+        return resolution.from_environment(cls)
+    except resolution.UnknownClass:
+        return None, None
 
 
 def provider_folder(cls):
     """providers/<folder>/ for a class: a:b -> a, except integration:<service> -> <service>."""
-    parts = cls.split(":")
-    return parts[1] if parts[0] == "integration" and len(parts) > 1 else parts[0]
+    return resolution.folder(cls)
 
 
 def known_providers(kind):
-    """Provider names shipped for a class: providers/<kind>/<name>.py, helpers excluded."""
-    folder = os.path.join(PROVIDERS, kind)
-    if not NAME_RE.fullmatch(kind) or not os.path.isdir(folder):
-        return []
-    return sorted(f[:-3] for f in os.listdir(folder)
-                  if f.endswith(".py") and NAME_RE.fullmatch(f[:-3]) and f[:-3] not in NOT_PROVIDERS)
+    """Provider names shipped in providers/<kind>/, helpers excluded."""
+    return resolution.implementations_in(kind, root=ROOT)
 
 
-def check_provider(cls, impl):
-    # The name comes from the environment and becomes a script path that is executed: only a
-    # provider shipped under providers/<class>/ is accepted, never a path.
-    kind = provider_folder(cls)
-    known = known_providers(kind)
-    if impl not in known:
-        return "missing", f"{impl!r} is not a provider of {kind}; known: {known}"
-    script = os.path.join(PROVIDERS, kind, f"{impl}.py")
+def run_check(script):
     runner = ["uv", "run", script] if _which("uv") else ["python3", script]
     try:
         r = subprocess.run(runner + ["--check"], capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
         return "missing", f"--check failed to run: {e}"
     if r.returncode == 0:
-        return "provider", os.path.relpath(script, ROOT)
+        return "provider", os.path.relpath(script, os.path.realpath(ROOT))
     return "missing", f"--check exit {r.returncode}: {(r.stderr or r.stdout).strip()[:200]}"
+
+
+def check_provider(cls, impl):
+    # The name comes from outside and becomes a script path that is executed: the resolution
+    # function accepts only a provider shipped under the class's folder, never a path.
+    try:
+        got = resolution.resolve(cls, root=ROOT, implementation=impl)
+    except (resolution.UnknownClass, resolution.Unresolved) as e:
+        return "missing", str(e)
+    return run_check(got["path"])
+
+
+def check_class(cls):
+    """Resolve the class as the runtime and the skills do, then run the chosen provider's --check."""
+    try:
+        got = resolution.resolve(cls, root=ROOT)
+    except resolution.Unresolved as e:
+        return "missing", f"no connector declared and no provider resolves: {e}"
+    except resolution.UnknownClass as e:
+        return "missing", str(e)
+    status, detail = run_check(got["path"])
+    how = f"{got['variable']}={got['implementation']}" if got["source"] == "environment" else \
+        f"{got['implementation']} ({got['source']})"
+    return status, f"{how}: {detail}"
 
 
 def _which(name):
@@ -130,14 +147,10 @@ def load_connectors(harness):
 def secrets_report(classes):
     """Every registered secret (providers/secrets/resolver.py): found or not, where, and which of the
     installed skills' classes read it. Never the value."""
-    path = os.path.join(PROVIDERS, "secrets", "resolver.py")
+    path = str(resolution.secret_resolver(root=ROOT))
     if not os.path.isfile(path):
         return []
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("workbench_secret_resolver", path)
-    resolver = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = resolver  # dataclasses look their module up here
-    spec.loader.exec_module(resolver)
+    resolver = _load("workbench_secret_resolver", path)
     rows = []
     for row in resolver.report():
         folders = {r.split("/")[1] for r in row["readers"] if r.startswith("providers/")}
@@ -175,12 +188,7 @@ def main(argv):
         if cls in connectors:
             status, detail = "connector", connectors[cls]
         else:
-            var, impl = env_provider(cls)
-            if impl:
-                status, detail = check_provider(cls, impl)
-                detail = f"{var}={impl}: {detail}"
-            else:
-                status, detail = "missing", "no connector declared and no <CLASS>_PROVIDER set"
+            status, detail = check_class(cls)
         if status == "missing":
             missing += 1
         report[cls] = {"status": status, "detail": detail, "skills": skills}

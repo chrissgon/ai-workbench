@@ -3,7 +3,11 @@
 Configuration: a "vote" section in runtime.json (no secrets):
   "vote": {"repo": "<owner>/<name>", "branch": "<branch>", "pillars": ["<p1>", "<p2>", "<p3>"],
            "pillar_aliases": {"<pillar in the vote data>": "<pillar in the calendar>"},
-           "vcs": "github", "image": true, "card_html": "<project-relative HTML piece; default: brand-identity's post card>"}
+           "image": true, "card_html": "<project-relative HTML piece; default: brand-identity's post card>"}
+Providers come from cfg["providers"] (scripts/runtime.py, through providers/resolve.py): the vcs provider is the
+class `integration:vcs` and the scheduler the class `scheduler` (launchd on macOS, systemd on Linux, or what
+SCHEDULER_PROVIDER names). The optional key "vcs" here and the optional key "scheduler" at the top of runtime.json
+name an implementation explicitly and win, so a "vote" section that says "vcs": "github" keeps working.
 
 tick     vote_tick: reads the vote files (read only), runs vote_state.py, and, once per closed round without a post
          (cursor vote:<round>), runs the agent read-only with mkt-vote-round, takes its vote-proposal block, and
@@ -67,21 +71,21 @@ def vote_config(cfg: dict, Fail) -> dict | None:
     aliases = v.setdefault("pillar_aliases", {})
     if not isinstance(aliases, dict) or not all(isinstance(k, str) and isinstance(x, str) for k, x in aliases.items()):
         raise Fail("runtime.json vote.pillar_aliases must map vote pillars to calendar pillars", 2)
-    v.setdefault("vcs", "github")
     v.setdefault("image", True)
-    if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", v["vcs"]):
+    if "vcs" in v and (not isinstance(v["vcs"], str) or not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", v["vcs"])):
         raise Fail("runtime.json vote.vcs must be a provider name", 2)
     wb = Path(cfg["workbench"])
+    providers = cfg["providers"]  # scripts/runtime.py: provider scripts by requirement class
     paths = {
-        "vcs": wb / "providers" / "vcs" / f"{v['vcs']}.py",
+        "vcs": providers.path("integration:vcs", v.get("vcs")),
         "vote_state": wb / "skills" / "mkt-vote-round" / "scripts" / "vote_state.py",
         "vote_update": wb / "skills" / "mkt-vote-round" / "scripts" / "vote_update.py",
         "check_post": wb / "skills" / "mkt-social-copy" / "scripts" / "check_post.py",
         "payload": wb / "skills" / "mkt-publish" / "scripts" / "payload.py",
         "render": wb / "skills" / "brand-identity" / "scripts" / "render.py",
         "card": wb / "skills" / "brand-identity" / "assets" / "post-card-template.html",
-        "scheduler": wb / "providers" / "scheduler" / "launchd.py",
-        "resolver": wb / "providers" / "secrets" / "resolver.py",
+        "scheduler": providers.path("scheduler", cfg.get("scheduler")),
+        "resolver": providers.secret_resolver(),
         "job": wb / "scripts" / "vote_job.py",
         "skill": wb / "skills" / "mkt-vote-round",
     }

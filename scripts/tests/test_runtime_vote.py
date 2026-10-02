@@ -317,3 +317,59 @@ def test_vote_job_publishes_then_records_the_post(env, tmp_path):
     assert closed["post_url"] == out["post_url"]
     posts = json.loads((env["profile"] / "data/posts.json").read_text())
     assert posts[-1]["url"] == out["post_url"] and posts[-1]["image"] == f"assets/posts/{b['key']}.png"
+
+
+# --- the scheduler and the vcs provider are resolved by class (providers/resolve.py) ---
+
+def add_systemd(env):
+    (env["wb"] / "providers/scheduler/systemd.py").write_text(
+        FAKE_SCHEDULER.replace('["scheduler"] + args', '["scheduler-systemd"] + args'))
+
+
+def edit_config(env, **changes):
+    path = env["proj"] / "docs/workbench/runtime.json"
+    cfg = json.loads(path.read_text())
+    cfg.update(changes)
+    path.write_text(json.dumps(cfg))
+
+
+def test_vote_step_chooses_the_scheduler_the_platform_resolves_to(env, monkeypatch):
+    import runtime
+    add_systemd(env)
+    monkeypatch.setenv("PATH", os.environ["PATH"])  # load_config puts the configured folders first
+    for name in [n for n in os.environ if n.endswith("_PROVIDER")]:
+        monkeypatch.delenv(name)
+    folder = env["wb"].resolve() / "providers" / "scheduler"
+    for platform, script in (("linux", "systemd.py"), ("darwin", "launchd.py")):
+        monkeypatch.setattr(sys, "platform", platform)
+        paths = runtime.load_config(env["proj"])["vote"]["paths"]
+        assert paths["scheduler"] == folder / script
+        assert paths["vcs"] == env["wb"].resolve() / "providers/vcs/github.py"  # the only vcs provider
+        assert paths["resolver"] == env["wb"].resolve() / "providers/secrets/resolver.py"
+    monkeypatch.setattr(sys, "platform", "linux")
+    edit_config(env, scheduler="launchd")  # an implementation named in runtime.json wins
+    assert runtime.load_config(env["proj"])["vote"]["paths"]["scheduler"] == folder / "launchd.py"
+
+
+def test_approve_schedules_with_the_systemd_provider_when_it_is_the_one_resolved(env, monkeypatch):
+    add_systemd(env)
+    monkeypatch.setenv("SCHEDULER_PROVIDER", "systemd")
+    rt(env, "tick")
+    item = inbox(env)[0]
+    code, out, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", item["payload_sha256"])
+    assert code == 0, err
+    sched = calls(env, "scheduler-systemd")
+    assert [("--dry-run" in c, "--confirmed" in c) for c in sched] == [(True, False), (False, True)]
+    assert calls(env, "scheduler") == []  # the launchd provider was not called
+
+
+def test_a_second_vcs_provider_needs_a_choice_and_the_configured_name_still_works(env, monkeypatch):
+    (env["wb"] / "providers/vcs/gitlab.py").write_text("")
+    monkeypatch.delenv("INTEGRATION_VCS_PROVIDER", raising=False)
+    code, out, err = rt(env, "status")
+    assert code == 3 and "INTEGRATION_VCS_PROVIDER" in err
+    cfg = json.loads((env["proj"] / "docs/workbench/runtime.json").read_text())
+    edit_config(env, vote={**cfg["vote"], "vcs": "github"})  # a runtime.json written before resolution by class
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["vote"]["status"] == "to_inbox", err
+    assert all(c[0] == "read-file" for c in calls(env, "vcs")) and calls(env, "vcs")

@@ -76,7 +76,7 @@ uv run providers/vcs/github.py resolve --idempotency-key vote-12-queue --not-com
 | Variable | Purpose |
 |----------|---------|
 | `VCS_GITHUB_TOKEN` | Optional; a token from the environment instead of the secret store (service `ai-workbench`, username `github`). Read before `GITHUB_TOKEN`. |
-| `VCS_GITHUB_LEDGER` | Path of the idempotency ledger. Default `~/.cache/ai-workbench/vcs-github.json` (or under `$XDG_CACHE_HOME`). |
+| `VCS_GITHUB_LEDGER` | Path of the idempotency ledger. Default, in a data folder: `~/Library/Application Support/ai-workbench/vcs-github.json` on macOS, `$XDG_DATA_HOME/ai-workbench/vcs-github.json` (or `~/.local/share/...`) elsewhere. It used to be `~/.cache/ai-workbench/vcs-github.json` (or under `$XDG_CACHE_HOME`), where clearing the cache lost the record: on first use, when the new file does not exist and the old one does, the provider copies the old ledger to the new place, says so on stderr and never deletes the old one. Jobs scheduled before this change run a copy of the old provider and keep writing to the old location, so they must be scheduled again after upgrading. |
 | `VCS_GITHUB_API_BASE` | Tests only: a loopback URL that replaces `https://api.github.com`. When set, the secret store is not read. |
 | `VCS_GITHUB_HTTP_TIMEOUT` | Tests only, with `VCS_GITHUB_API_BASE`: request timeout in seconds (default 30). |
 | `VCS_TEST` | `1` enables test mode; required by the two variables below. |

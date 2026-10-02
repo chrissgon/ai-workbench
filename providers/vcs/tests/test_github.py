@@ -595,3 +595,54 @@ def test_vcs_github_token_wins_over_github_token(env, fake):
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["token_source"] == "environment (VCS_GITHUB_TOKEN)"
     assert "w" * 36 not in str(fake.requests[0])
+
+
+# --- the ledger lives in a data folder; a ledger at its old place in the cache folder is copied once ---
+
+def default_ledger_env(env, tmp_path):
+    """The environment without a ledger override: (env, new ledger path, old ledger path)."""
+    e = {k: v for k, v in env.items() if k != "VCS_GITHUB_LEDGER"}
+    e["XDG_DATA_HOME"] = str(tmp_path / "data")
+    if sys.platform == "darwin":
+        new = tmp_path / "home" / "Library" / "Application Support" / "ai-workbench" / "vcs-github.json"
+    else:
+        new = tmp_path / "data" / "ai-workbench" / "vcs-github.json"
+    return e, new, tmp_path / "cache" / "ai-workbench" / "vcs-github.json"
+
+
+def test_default_ledger_is_in_the_data_folder_not_the_cache(env, fake, comment_file, tmp_path):
+    e, new, old = default_ledger_env(env, tmp_path)
+    proc = run(dismiss_args(comment_file, "--confirmed"), e)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(new.read_text())["entries"]["web-3"]["status"] == "dismissed"
+    assert not old.exists() and "ledger moved" not in proc.stderr
+    assert oct(new.stat().st_mode & 0o777) == "0o600" and oct(new.parent.stat().st_mode & 0o777) == "0o700"
+    assert json.loads(run(dismiss_args(comment_file, "--confirmed"), e).stdout)["replayed"] is True
+    assert len(fake.patches()) == 1
+
+
+def test_old_ledger_is_copied_on_first_use_and_its_alert_is_not_dismissed_again(env, fake, comment_file, tmp_path):
+    e, new, old = default_ledger_env(env, tmp_path)
+    # The dismissal happened before the move: the provider of that time recorded it in the cache folder.
+    first = run(dismiss_args(comment_file, "--confirmed"), {**env, "VCS_GITHUB_LEDGER": str(old)})
+    assert first.returncode == 0 and len(fake.patches()) == 1 and not new.exists()
+    before = old.read_bytes()
+    proc = run(dismiss_args(comment_file, "--confirmed"), e)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["replayed"] is True
+    assert len(fake.patches()) == 1  # not dismissed twice
+    assert "ledger moved" in proc.stderr and str(old) in proc.stderr and str(new) in proc.stderr
+    assert json.loads(new.read_text())["entries"] == json.loads(before)["entries"]
+    assert old.read_bytes() == before  # never edited, never deleted
+    again = run(dismiss_args(comment_file, "--confirmed"), e)
+    assert json.loads(again.stdout)["replayed"] is True and "ledger moved" not in again.stderr
+    assert len(fake.patches()) == 1 and old.read_bytes() == before
+
+
+def test_old_ledger_that_is_not_json_stops_the_run(env, fake, comment_file, tmp_path):
+    e, new, old = default_ledger_env(env, tmp_path)
+    old.parent.mkdir(parents=True)
+    old.write_text("{not json")
+    proc = run(dismiss_args(comment_file, "--confirmed"), e)
+    assert proc.returncode == 1 and "cannot be copied" in proc.stderr
+    assert fake.patches() == [] and not new.exists() and old.read_text() == "{not json"

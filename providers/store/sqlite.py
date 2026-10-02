@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.9"
 # dependencies = []
 # ///
 """Store provider on SQLite: the agent runtime's durable state in one local database file.

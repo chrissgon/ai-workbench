@@ -314,3 +314,72 @@ def test_a_mailbox_failure_does_not_stop_pasted_comments(env, tmp_path, monkeypa
     assert out["handled"][0]["status"] == "done" and len(publisher_calls(env)) == 1
     code, out, err = rt(env, "tick")
     assert code == 0 and out["mailbox"]["status"] == "failed"
+
+
+# --- providers are resolved by requirement class (providers/resolve.py), never by a path built in the runtime ---
+
+STORE_WRAPPER = r'''
+import os, runpy, sys
+from pathlib import Path
+with open(os.environ["FAKE_CALLS"] + ".store", "a") as f:
+    f.write(sys.argv[1] + "\n")
+runpy.run_path(str(Path(__file__).with_name("sqlite.py")), run_name="__main__")
+'''
+
+
+def load_runtime():
+    sys.path.insert(0, str(REPO / "scripts"))
+    import runtime
+    return runtime
+
+
+def edit_config(env, **changes):
+    path = env["proj"] / "docs/workbench/runtime.json"
+    cfg = json.loads(path.read_text())
+    cfg.update(changes)
+    path.write_text(json.dumps(cfg))
+
+
+def test_store_is_resolved_by_class_not_a_hardcoded_path(env, monkeypatch):
+    (env["wb"] / "providers/store/filedb.py").write_text(STORE_WRAPPER)
+    monkeypatch.delenv("STORE_PROVIDER", raising=False)
+    code, out, err = rt(env, "status")  # two store providers and nothing selects one
+    assert code == 3 and "STORE_PROVIDER" in err and "filedb" in err
+    monkeypatch.setenv("STORE_PROVIDER", "filedb")
+    code, out, err = rt(env, "status")
+    assert code == 0, err
+    assert Path(str(env["calls"]) + ".store").read_text().splitlines()[0] == "init"  # the chosen provider ran
+    edit_config(env, store="sqlite")  # an implementation named in runtime.json wins over the environment
+    Path(str(env["calls"]) + ".store").unlink()
+    code, out, err = rt(env, "status")
+    assert code == 0 and not Path(str(env["calls"]) + ".store").exists()
+    edit_config(env, store="../sqlite")
+    assert rt(env, "status")[0] == 2
+    edit_config(env, store="nope")
+    code, out, err = rt(env, "status")
+    assert code == 3 and "is not a provider of store" in err
+
+
+def test_configured_names_keep_working_and_auto_resolves_the_class(env, monkeypatch):
+    runtime = load_runtime()
+    monkeypatch.setenv("PATH", os.environ["PATH"])  # load_config puts the configured folders first
+    for name in [n for n in os.environ if n.endswith("_PROVIDER")]:
+        monkeypatch.delenv(name)
+    wb = env["wb"].resolve()
+    paths = runtime.load_config(env["proj"])["paths"]  # "mailbox": "gmail", "publisher": "linkedin", as before
+    assert paths["mailbox"] == wb / "providers/mailbox/gmail.py"
+    assert paths["publisher"] == wb / "providers/publisher/linkedin.py"
+    assert paths["store"] == wb / "providers/store/sqlite.py"
+    (env["wb"] / "providers/mailbox/imap.py").write_text("")
+    assert runtime.load_config(env["proj"])["paths"]["mailbox"].name == "gmail.py"  # the explicit name still wins
+    edit_config(env, mailbox="auto")
+    with pytest.raises(runtime.Fail) as e:
+        runtime.load_config(env["proj"])
+    assert e.value.code == 3 and "MAILBOX_PROVIDER" in str(e.value)
+    monkeypatch.setenv("MAILBOX_PROVIDER", "imap")
+    assert runtime.load_config(env["proj"])["paths"]["mailbox"].name == "imap.py"
+    # The publisher key is the platform: an implementation of another name serves it when the environment says so.
+    (env["wb"] / "providers/publisher/buffer.py").write_text("")
+    edit_config(env, publisher="mastodon")
+    monkeypatch.setenv("PUBLISHER_MASTODON_PROVIDER", "buffer")
+    assert runtime.load_config(env["proj"])["paths"]["publisher"].name == "buffer.py"

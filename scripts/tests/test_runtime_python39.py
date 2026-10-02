@@ -1,8 +1,19 @@
 """The scheduled tick runs scripts/runtime.py with /usr/bin/python3 (Python 3.9 on macOS), and the runtime starts
-the scripts below with that same interpreter. A `X | None` annotation evaluated at definition time raises TypeError
-on 3.9, so each of them either has no such annotation or defers annotations with `from __future__ import annotations`.
-Providers that reach the network run through `uv run` under their own `requires-python` and are not listed."""
+the scripts below with that same interpreter (providers/CONTRACT.md, "Python version"). Three guards:
+
+1. Syntax: each file parses as Python 3.9, and a `X | None` annotation, which 3.9 evaluates at definition time and
+   refuses, is either absent or deferred with `from __future__ import annotations`.
+2. Header: a script with an inline-metadata header declares a `requires-python` that admits 3.9, so the header
+   never claims a newer interpreter than the one the scheduler starts it with.
+3. Execution: each file is imported by the interpreter running this test. CI runs this file, and the tests of the
+   scripts on this path, on Python 3.9 (.github/workflows/checks.yml, job python39), where the import is the real check.
+
+Providers that reach the network run through `uv run` under their own `requires-python` and are not listed.
+A new script the runtime or a scheduler starts with the system interpreter is added to ON_SYSTEM_PYTHON."""
 import ast
+import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -10,13 +21,20 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 ON_SYSTEM_PYTHON = [
     "scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py",
-    "providers/store/sqlite.py", "providers/scheduler/launchd.py",
+    "providers/resolve.py", "providers/store/sqlite.py",
+    "providers/scheduler/launchd.py", "providers/scheduler/systemd.py",
     "skills/mkt-engage/scripts/policy_gate.py", "skills/mkt-engage/scripts/parse_notification.py",
     "skills/mkt-vote-round/scripts/vote_state.py", "skills/mkt-vote-round/scripts/vote_update.py",
     "skills/mkt-social-copy/scripts/check_post.py", "skills/mkt-publish/scripts/payload.py",
     "skills/brand-identity/scripts/render.py", "skills/brand-identity/scripts/contrast.py",
     "skills/brand-voice/scripts/voice_stats.py", "skills/brand-profile/scripts/sensitive_topics.py",
 ]
+SYSTEM_PYTHON = (3, 9)
+REQUIRES = re.compile(r'^# requires-python = "([^"]+)"$', re.M)
+IMPORT = ("import importlib.util, sys; sys.path.insert(0, sys.argv[2]); "
+          "spec = importlib.util.spec_from_file_location('on_system_python', sys.argv[1]); "
+          "module = importlib.util.module_from_spec(spec); sys.modules[spec.name] = module; "
+          "spec.loader.exec_module(module)")
 
 
 def annotations(tree):
@@ -32,9 +50,33 @@ def annotations(tree):
             yield node.annotation
 
 
+def admits(spec, version):
+    """True when a requires-python specifier made of >=, >, ==, <, <= clauses on X.Y admits `version`."""
+    for clause in spec.split(","):
+        m = re.fullmatch(r"\s*(>=|<=|==|>|<)\s*(\d+)\.(\d+)(?:\.\d+)?\s*", clause)
+        assert m, f"requires-python clause not understood: {clause!r}"
+        bound = (int(m.group(2)), int(m.group(3)))
+        ok = {">=": version >= bound, ">": version > bound, "==": version == bound,
+              "<": version < bound, "<=": version <= bound}[m.group(1)]
+        if not ok:
+            return False
+    return True
+
+
+def test_the_specifier_check_knows_what_admits_python_39():
+    assert admits(">=3.9", SYSTEM_PYTHON) and admits(">=3.8,<3.13", SYSTEM_PYTHON)
+    assert not admits(">=3.10", SYSTEM_PYTHON) and not admits(">=3.9,<3.9", SYSTEM_PYTHON)
+
+
+def test_every_scheduler_provider_and_the_resolution_function_are_listed():
+    shipped = {str(p.relative_to(REPO)) for p in (REPO / "providers" / "scheduler").glob("*.py")}
+    shipped |= {str(p.relative_to(REPO)) for p in (REPO / "providers" / "store").glob("*.py")}
+    assert shipped | {"providers/resolve.py"} <= set(ON_SYSTEM_PYTHON)
+
+
 @pytest.mark.parametrize("rel", ON_SYSTEM_PYTHON)
 def test_no_union_annotation_is_evaluated_on_python_39(rel):
-    tree = ast.parse((REPO / rel).read_text(encoding="utf-8"), feature_version=(3, 9))
+    tree = ast.parse((REPO / rel).read_text(encoding="utf-8"), feature_version=SYSTEM_PYTHON)
     deferred = any(isinstance(n, ast.ImportFrom) and n.module == "__future__" and
                    any(x.name == "annotations" for x in n.names) for n in tree.body)
     if deferred:
@@ -42,3 +84,23 @@ def test_no_union_annotation_is_evaluated_on_python_39(rel):
     unions = [ast.unparse(a) for a in annotations(tree)
               if any(isinstance(n, ast.BinOp) and isinstance(n.op, ast.BitOr) for n in ast.walk(a))]
     assert not unions, f"{rel}: add 'from __future__ import annotations' (3.9 evaluates {unions[0]!r})"
+
+
+@pytest.mark.parametrize("rel", ON_SYSTEM_PYTHON)
+def test_header_does_not_claim_a_newer_python_than_the_scheduler_uses(rel):
+    head = (REPO / rel).read_text(encoding="utf-8")[:600]
+    found = REQUIRES.search(head)
+    if rel.startswith("providers/"):
+        assert found, f"{rel}: a provider carries an inline-metadata header with requires-python"
+    if found:
+        assert admits(found.group(1), SYSTEM_PYTHON), \
+            f"{rel}: requires-python = {found.group(1)!r} excludes 3.9, the interpreter the scheduler starts it with"
+
+
+@pytest.mark.parametrize("rel", ON_SYSTEM_PYTHON)
+def test_imports_on_the_interpreter_running_the_tests(rel, tmp_path):
+    """On the python39 CI job this is Python 3.9: definitions, annotations and imports are really evaluated."""
+    path = REPO / rel
+    r = subprocess.run([sys.executable, "-c", IMPORT, str(path), str(path.parent)], cwd=tmp_path,
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, f"{rel} does not import on Python {sys.version_info[:2]}: {r.stderr[-600:]}"

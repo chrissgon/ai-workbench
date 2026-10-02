@@ -37,6 +37,13 @@ local ledger, under a file lock, before anything is sent, and as published with 
 comment URN after the answer. A pending key whose outcome is unknown (a timeout, a crash) blocks every new attempt
 until `resolve` records what happened. Redirects are refused, so the bearer token is only
 ever sent to the URL that was checked.
+
+The ledger lives in a data folder (~/Library/Application Support/ai-workbench/ on macOS,
+$XDG_DATA_HOME/ai-workbench/ or ~/.local/share/ai-workbench/ elsewhere), next to the scheduler's jobs.
+It used to live in the cache folder, where clearing the cache lost the record of what was already
+published; on first use the old ledger is copied to the new place (a note on stderr says so) and is
+never deleted. Jobs scheduled before this change run a copy of the old provider and keep writing to the
+old location, so they must be scheduled again after upgrading.
 """
 from __future__ import annotations
 
@@ -135,9 +142,12 @@ other environment variables:
                                LinkedIn answers with 404 right after the post is created (it does, for
                                a few seconds, longer with an image). Default: 5,15,30,60. Other
                                refusals are not retried.
-  PUBLISHER_LINKEDIN_LEDGER    path of the idempotency ledger (JSON). Default:
-                               $XDG_CACHE_HOME/ai-workbench/publisher-linkedin.json,
-                               or ~/.cache/ai-workbench/publisher-linkedin.json.
+  PUBLISHER_LINKEDIN_LEDGER    path of the idempotency ledger (JSON). Default, in a data folder:
+                               ~/Library/Application Support/ai-workbench/publisher-linkedin.json
+                               on macOS; elsewhere $XDG_DATA_HOME/ai-workbench/publisher-linkedin.json,
+                               or ~/.local/share/ai-workbench/publisher-linkedin.json. A ledger at
+                               its old place ($XDG_CACHE_HOME/ai-workbench/ or ~/.cache/ai-workbench/)
+                               is copied there on first use and never deleted.
   LINKEDIN_API_BASE            tests only. Replaces {DEFAULT_API_BASE} with a
                                loopback URL (http://127.0.0.1:<port>). Any other
                                host is refused. When set, the secret store is not
@@ -296,19 +306,70 @@ def days_until(expires_at: str | None) -> int | None:
     return int((parse_iso(expires_at) - datetime.now(timezone.utc)).total_seconds() // 86400)
 
 
+LEDGER_NAME = "publisher-linkedin.json"
+
+
+def data_home() -> Path:
+    """The folder for state that must outlive cache cleaning: the one the scheduler providers use."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "ai-workbench"
+    data = os.environ.get("XDG_DATA_HOME")
+    base = Path(data) if data and os.path.isabs(data) else Path.home() / ".local" / "share"
+    return base / "ai-workbench"
+
+
 def ledger_path() -> Path:
     override = os.environ.get("PUBLISHER_LINKEDIN_LEDGER")
     if override:
         return Path(override).expanduser()
+    return data_home() / LEDGER_NAME
+
+
+def old_ledger_path() -> Path | None:
+    """Where the ledger lived before it moved to the data folder; None when PUBLISHER_LINKEDIN_LEDGER is set."""
+    if os.environ.get("PUBLISHER_LINKEDIN_LEDGER"):
+        return None
     cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(cache) / "ai-workbench" / "publisher-linkedin.json"
+    return Path(cache) / "ai-workbench" / LEDGER_NAME
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def ledger_migrate() -> None:
+    """First use after the move: copy the old ledger to the new place, so no recorded key is lost.
+
+    Runs before every read, and does something only while the new ledger does not exist and the old one
+    does. The copy appears under its final name in one step (a hard link, which fails when the name
+    exists), so two runs at once cannot overwrite each other. The old file is never changed or deleted.
+    """
+    path, old = ledger_path(), old_ledger_path()
+    if old is None or path.exists() or not old.is_file():
+        return
+    try:
+        content = old.read_bytes()
+        json.loads(content.decode("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ProviderError(f"the idempotency ledger at {old} cannot be copied to {path}: {exc}", EXIT_SERVICE)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".publisher-linkedin.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+        os.chmod(tmp, 0o600)
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            return  # another run copied it first
+    finally:
+        os.unlink(tmp)
+    print(f"note: the idempotency ledger moved: copied {old} to {path}; the old file is kept and no longer read",
+          file=sys.stderr)
+
+
 def ledger_read() -> dict:
+    ledger_migrate()
     path = ledger_path()
     if not path.exists():
         return {"version": 2, "entries": {}}

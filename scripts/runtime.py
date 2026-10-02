@@ -12,12 +12,27 @@ Usage:
 Contract: contracts/runtime.md. Configuration: <project>/docs/workbench/runtime.json (no secrets):
   {"agent": "social-manager", "harness": "claude-code", "model": "<model id>",
    "workbench": "<absolute path of the workbench checkout>", "data_dir": "<absolute folder for runs>",
-   "store_db": "<absolute path of the store database>", "mailbox": "gmail", "publisher": "linkedin",
+   "store_db": "<absolute path of the store database>", "mailbox": "auto | none | <implementation>",
+   "publisher": "<platform, for example linkedin>",
    "notification_query": "<mailbox search query>", "first_lookback_minutes": 1440,
    "max_events_per_tick": 5, "max_cost_usd_per_run": 0.5, "daily_cost_cap_usd": 3, "timeout_seconds": 600,
    "path": ["<absolute folders holding uv and the harness CLI>"], "notify": "none | macos"}
   A scheduler runs the tick with a minimal PATH: "path" lists the folders to put first, so uv and the harness
   CLI resolve. Schedule the tick with /usr/bin/python3, whose hash does not change with package upgrades.
+
+Providers are reached by requirement class through providers/resolve.py, never by a path built here:
+  mailbox    class `mailbox`. "auto" resolves it; "none" means no mailbox; any other value names the
+             implementation explicitly and wins over the environment (a runtime.json written before resolution
+             by class, with "mailbox": "gmail", keeps working unchanged).
+  publisher  class `publisher:<platform>`; the value is the platform, passed as --platform. When an
+             implementation of that same name is shipped it is used, as before; otherwise the class is resolved.
+  store      class `store`; the optional key "store" names an implementation explicitly.
+  scheduler  class `scheduler` (the vote step); the optional key "scheduler" names an implementation explicitly.
+  vcs        class `integration:vcs` (the vote step); the optional key "vcs" of "vote" names one explicitly.
+  Without an explicit name the order is the resolution function's: the <CLASS>_PROVIDER variable, the platform
+  default (scheduler: launchd on macOS, systemd on Linux), the only implementation shipped.
+  The resolution module is loaded from the first of: resolve.py next to this script (the copy a scheduled job
+  keeps when its "snapshot" lists providers/resolve.py), ../providers/resolve.py, <workbench>/providers/resolve.py.
 
 tick     1. Reads new notification e-mails since the store's cursor (mailbox provider, read only) and adds
             each as an event (deduplicated by message id).
@@ -56,6 +71,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -94,6 +110,40 @@ def sha256_file(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def load_resolution(workbench: Path):
+    """The module providers/resolve.py: the copy next to this script (a scheduled job's snapshot), the checkout
+    this script is in, or the configured workbench."""
+    here = Path(__file__).resolve().parent
+    for path in (here / "resolve.py", here.parent / "providers" / "resolve.py", workbench / "providers" / "resolve.py"):
+        if path.is_file():
+            spec = importlib.util.spec_from_file_location("workbench_provider_resolve", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    raise Fail(f"providers/resolve.py not found next to this script or under {workbench}", 3)
+
+
+class Providers:
+    """Provider scripts of the configured workbench, by requirement class (providers/resolve.py)."""
+
+    def __init__(self, workbench: Path):
+        self.workbench = workbench
+        self.resolution = load_resolution(workbench)
+
+    def shipped(self, cls: str) -> list:
+        return self.resolution.implementations(cls, root=self.workbench)
+
+    def path(self, cls: str, implementation: str | None = None) -> Path:
+        """The script for a class; `implementation` is a name runtime.json gives explicitly, and wins."""
+        try:
+            return Path(self.resolution.resolve(cls, root=self.workbench, implementation=implementation)["path"])
+        except (self.resolution.UnknownClass, self.resolution.Unresolved) as e:
+            raise Fail(f"runtime.json: {e}", 3)
+
+    def secret_resolver(self) -> Path:
+        return self.resolution.secret_resolver(root=self.workbench)
+
+
 def load_config(project: Path) -> dict:
     path = project / "docs" / "workbench" / "runtime.json"
     if not path.is_file():
@@ -107,8 +157,10 @@ def load_config(project: Path) -> dict:
             raise Fail(f"runtime.json needs {key}", 3)
     if cfg["mailbox"] == "none":
         cfg["notification_query"] = cfg.get("notification_query") or "-"
-    for key in ("agent", "harness", "mailbox", "publisher"):
-        if not NAME.match(cfg[key]):
+    for key in ("agent", "harness", "mailbox", "publisher", "store", "scheduler"):
+        if key in ("store", "scheduler") and key not in cfg:
+            continue  # optional: an implementation named explicitly
+        if not isinstance(cfg[key], str) or not NAME.match(cfg[key]):
             raise Fail(f"runtime.json {key} must match {NAME.pattern}", 2)
     for key in ("workbench", "data_dir", "store_db"):
         if not Path(cfg[key]).is_absolute():
@@ -126,10 +178,14 @@ def load_config(project: Path) -> dict:
         raise Fail("runtime.json path must be a list of absolute folders", 2)
     os.environ["PATH"] = os.pathsep.join(extra + [os.environ.get("PATH", "/usr/bin:/bin")])
     wb = Path(cfg["workbench"])
+    providers = cfg["providers"] = Providers(wb)
+    platform = cfg["publisher"]
     cfg["paths"] = {
-        "mailbox": wb / "providers" / "mailbox" / f"{cfg['mailbox']}.py",
-        "publisher": wb / "providers" / "publisher" / f"{cfg['publisher']}.py",
-        "store": wb / "providers" / "store" / "sqlite.py",
+        "mailbox": wb if cfg["mailbox"] == "none" else
+        providers.path("mailbox", None if cfg["mailbox"] == "auto" else cfg["mailbox"]),
+        "publisher": providers.path(f"publisher:{platform}",
+                                    platform if platform in providers.shipped("publisher") else None),
+        "store": providers.path("store", cfg.get("store")),
         "run_agent": wb / "adapters" / cfg["harness"] / "run-agent.sh",
         "agent": wb / "agents" / f"{cfg['agent']}.md",
         "parser": wb / "skills" / "mkt-engage" / "scripts" / "parse_notification.py",

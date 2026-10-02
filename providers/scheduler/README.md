@@ -47,12 +47,13 @@ A command file for the agent runtime's tick:
   "argv": ["python3", "/abs/ai-workbench/scripts/runtime.py", "tick",
            "--project", "/abs/project", "--agent", "social-manager"],
   "cwd": "/abs/project",
-  "snapshot": ["/abs/ai-workbench/scripts/runtime.py"],
+  "snapshot": ["/abs/ai-workbench/scripts/runtime.py", "/abs/ai-workbench/scripts/runtime_vote.py",
+               "/abs/ai-workbench/providers/resolve.py"],
   "timeout_minutes": 30
 }
 ```
 
-The job runs the copy of `runtime.py` kept in its folder, so whatever that script finds next to itself (sibling modules, the workbench root) has to be in the snapshot too or passed as an argument; a folder argument such as `--project` is not snapshotted or verified.
+The job runs the copy of `runtime.py` kept in its folder, so whatever that script finds next to itself (its sibling module `runtime_vote.py`, and `providers/resolve.py`, which it loads from its own folder first and from the configured workbench otherwise) has to be in the snapshot too or passed as an argument; a folder argument such as `--project` is not snapshotted or verified.
 
 ### Usage
 
