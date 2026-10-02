@@ -104,8 +104,8 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/engineering/plans/<task>.md` | eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request | - |
 | `docs/engineering/reviews/<change>.md` | eng-code-review | - |
 | `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
-| `docs/marketing/calendar.md` | mkt-content-plan, mkt-social-copy | mkt-publish |
-| `docs/marketing/content/<post>.md` | mkt-social-copy, mkt-vote-round | - |
+| `docs/marketing/calendar.md` | mkt-content-plan, mkt-social-copy | mkt-publish, mkt-vote-round |
+| `docs/marketing/content/<post>.md` | mkt-social-copy | mkt-vote-round |
 | `docs/marketing/engagement-inbox.md` | mkt-engage | - |
 | `docs/marketing/engagement-log.jsonl` | mkt-engage | - |
 | `docs/marketing/engagement-policy.md` | mkt-engage | - |
