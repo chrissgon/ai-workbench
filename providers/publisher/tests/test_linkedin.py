@@ -595,6 +595,81 @@ def test_auth_without_client_env_is_not_configured(env):
     assert "LINKEDIN_CLIENT_ID" in proc.stderr
 
 
+class FakeTokenEndpoint:
+    """A token endpoint that answers 302 to /elsewhere, which hands out a token: what a hijacked or
+    misconfigured endpoint would do. Both live on 127.0.0.1."""
+
+    def __init__(self, redirect: bool):
+        self.requests: list[dict] = []
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _answer(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                fake.requests.append({"method": self.command, "path": self.path,
+                                      "body": self.rfile.read(length).decode() if length else ""})
+                if self.path == "/token" and redirect:
+                    self.send_response(302)
+                    self.send_header("Location", f"{fake.base}/elsewhere")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                data = json.dumps({"access_token": "FAKE-token-from-" + self.path.strip("/"),
+                                   "expires_in": 5184000}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            do_GET = do_POST = _answer  # noqa: N815
+
+            def log_message(self, *args):
+                return
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def load_auth():
+    spec = importlib.util.spec_from_file_location("linkedin_auth", AUTH_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_token_exchange_refuses_a_redirect(monkeypatch):
+    # PUB4: the exchange used the default opener, which follows redirects: the answer of wherever the
+    # redirect pointed was taken as the member's token, for a request that carried the client secret.
+    auth = load_auth()
+    endpoint = FakeTokenEndpoint(redirect=True)
+    try:
+        monkeypatch.setattr(auth, "LINKEDIN_TOKEN_URL", f"{endpoint.base}/token")
+        with pytest.raises(auth.AuthError) as err:
+            auth.exchange_code("FAKE-code", "FAKE-client-id", "FAKE-client-secret")
+        assert "redirect" in str(err.value) and "FAKE-client-secret" not in str(err.value)
+        assert [r["path"] for r in endpoint.requests] == ["/token"]  # /elsewhere was never asked
+    finally:
+        endpoint.close()
+
+
+def test_token_exchange_takes_the_endpoint_s_own_answer(monkeypatch):
+    auth = load_auth()
+    endpoint = FakeTokenEndpoint(redirect=False)
+    try:
+        monkeypatch.setattr(auth, "LINKEDIN_TOKEN_URL", f"{endpoint.base}/token")
+        token = auth.exchange_code("FAKE-code", "FAKE-client-id", "FAKE-client-secret")
+        assert token["access_token"] == "FAKE-token-from-token"
+        assert "client_secret=FAKE-client-secret" in endpoint.requests[0]["body"]
+    finally:
+        endpoint.close()
+
+
 def test_a_scheduled_copy_needs_the_resolver_in_its_snapshot(env, fake, tmp_path):
     """The scheduler runs a copy of this script from <job>/files/; the resolver must be copied with it."""
     import shutil

@@ -89,6 +89,18 @@ def log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
+class RefuseRedirect(urllib.request.HTTPRedirectHandler):
+    """Never follow a redirect on the token exchange: the request carries the client secret, and the answer
+    is stored as the member's token, so it is only taken from the URL that was asked."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        fp.close()
+        raise AuthError(f"refusing to follow a {code} redirect on the token exchange; nothing was stored")
+
+
+OPENER = urllib.request.build_opener(RefuseRedirect)
+
+
 def now_utc() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -215,7 +227,7 @@ def exchange_code(code: str, client_id: str, client_secret: str) -> dict:
         headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
     try:
-        with urllib.request.urlopen(request, timeout=60) as response:
+        with OPENER.open(request, timeout=60) as response:
             data = json.loads(response.read())
     except urllib.error.HTTPError as exc:
         detail = ""
