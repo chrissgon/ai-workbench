@@ -3,7 +3,9 @@
 #
 # 1. scripts/validate.py: conventions and the security scan. It reads the working tree, not only
 #    what is staged, so a file with a finding blocks the commit even if it is not part of it.
-# 2. The tests of providers/<class>/, scripts/, evals/, an adapter or a skill's scripts/ (its
+# 2. scripts/security_scan.py --strict: a security warning (hidden text, a shell run on a built string,
+#    an unguarded recursive delete, an unpinned dependency...) blocks the commit like an error does.
+# 3. The tests of providers/<class>/, scripts/, evals/, an adapter or a skill's scripts/ (its
 #    scripts/tests/ folder, also when only a test changed) when the commit touches them; a provider
 #    class left without tests is refused.
 #
@@ -18,8 +20,12 @@ if ! out="$(python3 scripts/validate.py 2>&1 >/dev/null)"; then
   echo "$out" >&2
   fail "scripts/validate.py found errors (listed above). Fix them; an intended security finding is silenced on its line with 'security-scan: allow <rule> -- <reason>'."
 fi
-# The commit goes through, but security warnings are shown; the standing convention warnings are not.
-printf '%s\n' "$out" | grep -F '(see scripts/security_scan.py)' >&2 || true
+# The standing convention warnings of the validator are not shown. Security warnings fail the commit:
+# same step as the validate job of .github/workflows/checks.yml.
+if ! out="$(python3 scripts/security_scan.py --strict 2>&1 >/dev/null)"; then
+  echo "$out" >&2
+  fail "scripts/security_scan.py --strict found warnings (listed above). Fix them; an intended one is silenced on its line with 'security-scan: allow <rule> -- <reason>'."
+fi
 
 # NUL-separated so names with spaces or non-ASCII characters are not quoted; no rename detection,
 # so a file moved out of providers/, scripts/, evals/ or an adapter still counts for the folder it left.

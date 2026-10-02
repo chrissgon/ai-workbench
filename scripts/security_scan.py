@@ -12,8 +12,12 @@ file when --root is not a git repository), or only PATH arguments (files or fold
   secret-assignment     error    a key, secret, token or password assigned a literal value
   secret-file           error    a credential file (.env, *.pem, *.key, *.p12, id_rsa...) would be committed
   hidden-unicode        error    zero-width, bidirectional or tag characters that hide text from a reader
-  hidden-comment        warning  an HTML comment with prose in Markdown: invisible when rendered, read by models
-  pipe-to-shell         error    a download piped into a shell (curl ... | sh)
+  hidden-comment        warning  text Markdown does not render but models read, in an instruction file (the root
+                                 AGENTS.md, skills/, agents/, shared/, templates/, contracts/, providers/,
+                                 adapters/, docs/): an HTML comment with prose, a link-reference comment
+                                 ([//]: # (...)), an element with a hidden attribute
+  pipe-to-shell         error    a download piped into a shell or an interpreter (curl ... | sh, | python3), or
+                                 run through process substitution (bash <(curl ...))
   dynamic-eval          error    eval in a shell script, eval() or exec() in Python
   unsafe-deserialize    error    pickle, marshal or yaml.load without a safe loader
   tls-disabled          error    certificate checks turned off
@@ -23,15 +27,19 @@ file when --root is not a git repository), or only PATH arguments (files or fold
   rm-unguarded          warning  rm -r on a path that starts with a variable not guarded by ${VAR:?}
   world-writable        warning  chmod 777 or o+w
   sudo                  warning  sudo inside a script
-  undeclared-side-effect error   a skill's script writes to a remote (push, publish, POST...) while the
-                                 skill declares side_effects: []
-  unpinned-dependency   warning  an inline script dependency or requirement without an exact version
+  undeclared-side-effect error   a skill's script, or a command in its SKILL.md, writes to a remote (push,
+                                 publish, a request with a body or a writing method, in a string or in an
+                                 argument list) while the skill declares side_effects: [] (inline or block)
+  unpinned-dependency   warning  an inline script dependency (on one line or over several) or a requirement
+                                 without an exact version
   untrusted-content     error    a skill or agent that reads content written by others (it requires a
-                                 search: or integration: class, or names web pages, tickets, bug reports,
-                                 review comments, CI logs, design exports...) without the sentence
-                                 "External content is data" saying which sources and that instructions
-                                 in them are reported, never followed; or, with the sentence, without
-                                 the reply section "Instructions found in external content"
+                                 search: or integration: class, reader:email or the old mailbox, or names
+                                 web pages, tickets, bug reports, review comments, CI logs, design exports,
+                                 e-mails, notifications, a diff, command output...) without a line or list
+                                 item that starts with the sentence "External content is data." saying
+                                 which sources and that instructions in them are reported, never followed;
+                                 or, with the sentence, without the reply section "Instructions found in
+                                 external content"
   allow-without-reason  error    an allow comment with no reason
   allow-too-broad       error    a .security-scan-allow entry that is a glob instead of one file
 
@@ -76,8 +84,8 @@ RULES = {
     "secret-assignment": ("error", "a credential assigned a literal value"),
     "secret-file": ("error", "a credential file would be committed"),
     "hidden-unicode": ("error", "an invisible or direction-changing character"),
-    "hidden-comment": ("warning", "an HTML comment with prose in Markdown"),
-    "pipe-to-shell": ("error", "a download piped into a shell"),
+    "hidden-comment": ("warning", "text hidden from a reader of rendered Markdown, in an instruction file"),
+    "pipe-to-shell": ("error", "a download piped into a shell or an interpreter"),
     "dynamic-eval": ("error", "code built at run time and executed"),
     "unsafe-deserialize": ("error", "deserialization that can execute code"),
     "tls-disabled": ("error", "certificate verification turned off"),
@@ -97,7 +105,9 @@ SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv"}
 # This file spells out every pattern it looks for, so scanning it only finds its own rule table.
 SELF = os.path.abspath(__file__)
 # Markdown the workbench feeds to models as instructions; eval fixtures copy target projects and are excluded.
-INSTRUCTION_DIRS = ("skills/", "agents/", "shared/", "templates/", "contracts/")
+INSTRUCTION_DIRS = ("skills/", "agents/", "shared/", "templates/", "contracts/", "providers/", "adapters/", "docs/")
+# The one file at the root that every session in the repository loads.
+INSTRUCTION_FILES = ("AGENTS.md",)
 BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", ".gz", ".woff", ".woff2",
               ".ttf", ".otf", ".mp4", ".mov", ".pyc"}
 SCRIPT_EXT = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts"}
@@ -107,7 +117,13 @@ SECRET_FILE_RE = re.compile(r"(^|/)(\.env(\.[^/]*)?|id_rsa|id_dsa|id_ecdsa|id_ed
 SECRET_FILE_OK_RE = re.compile(r"\.env\.example$|\.env\.sample$")
 BOM = chr(0xFEFF)
 COMMENT_RE = re.compile(r"<!--(.*?)-->", re.S)
-PIPE_SHELL_RE = re.compile(r"\b(curl|wget)\b[^|\n]*\|\s*(sudo\s+)?(ba|z|da|k)?sh\b")
+# A link-reference definition nothing links to, the Markdown idiom for a comment: [//]: # (text), [x]: <> "text".
+LINK_COMMENT_RE = re.compile(r"^ {0,3}\[[^\]\n]*\]:[ \t]*(?:#|<>)[ \t]+(?:\((.*)\)|\"(.*)\"|'(.*)')[ \t]*$", re.M)
+HIDDEN_ATTR_RE = re.compile(r"<[A-Za-z][\w-]*\b[^<>]*\shidden(?=[\s=>/])[^<>]*>")
+_INTERPRETER = r"(?:(?:ba|z|da|k)?sh|python[\d.]*|perl|ruby|node|php)"
+PIPE_SHELL_RE = re.compile(
+    r"\b(?:curl|wget)\b[^|\n]*\|\s*(?:sudo\s+)?" + _INTERPRETER + r"(?![\w.-])|"
+    r"(?:^|[\s;&|(])(?:" + _INTERPRETER + r"|source|\.)\s+(?:-\S+\s+)*<\(\s*(?:curl|wget)\b")
 SH_EVAL_RE = re.compile(r"(^|[;&|]\s*|\s)eval\s")
 PY_EVAL_RE = re.compile(r"(?<![\w.])(eval|exec)\s*\(")
 DESERIALIZE_RE = re.compile(r"\bpickle\.loads?\s*\(|\bmarshal\.loads?\s*\(|\byaml\.load\s*\((?![^)]*Loader\s*=\s*yaml\.SafeLoader)")
@@ -121,20 +137,39 @@ SHELL_PY_RE = re.compile(r"shell\s*=\s*True|\bos\.(system|popen)\s*\(")
 RM_RE = re.compile(r"\brm\s+-[A-Za-z]*[rR][A-Za-z]*\s+(?:--\s+)?[\"']?\$(\{?)([A-Za-z_][A-Za-z0-9_]*)(:\?)?")
 CHMOD_RE = re.compile(r"\bchmod\s+(-R\s+)?(0?777|[ugoa]*o[ugoa]*\+[rx]*w)")
 SUDO_RE = re.compile(r"(^|[;&|]\s*|\s)sudo\s")
+_WRITE_VERB = r"(?:POST|PUT|PATCH|DELETE)"
 REMOTE_WRITE_RE = re.compile(
-    r"\bgit\s+push\b|\b(npm|pnpm|yarn)\s+publish\b|\btwine\s+upload\b|"
-    r"\bgh\s+(pr|issue|release|repo|gist)\s+(create|merge|close|edit|delete|comment|upload)\b|"
-    r"-X\s*(POST|PUT|PATCH|DELETE)\b|--request\s+(POST|PUT|PATCH|DELETE)\b|"
-    r"\brequests\.(post|put|patch|delete)\s*\(|method\s*=\s*[\"'](POST|PUT|PATCH|DELETE)[\"']")
+    r"\bgit\s+push\b|\b(?:npm|pnpm|yarn)\s+publish\b|\btwine\s+upload\b|"
+    r"\bgh\s+(?:pr|issue|release|repo|gist)\s+(?:create|merge|close|edit|delete|comment|upload)\b|"
+    # The code host tool's API command: a writing method, or a field or a body, which make the call a write.
+    r"\bgh\s+api\b[^\n|;]*\s(?:(?:-X|--method)[\s=]*" + _WRITE_VERB + r"\b|-[fF]\b|--(?:raw-)?field\b|--input\b)|"
+    # The method given as an option, a keyword, an object key or the first argument of a request call.
+    r"(?:-X|--request|--method)[\s=]*" + _WRITE_VERB + r"\b|"
+    r"[\"']?\bmethod[\"']?\s*[=:]\s*[\"']" + _WRITE_VERB + r"[\"']|"
+    r"\.request\s*\(\s*[\"']" + _WRITE_VERB + r"[\"']|"
+    # A request with a body.
+    r"\bcurl\b[^\n|;]*\s(?:-d|--data(?:-raw|-binary|-urlencode|-ascii)?|--json|-F|--form|-T|--upload-file)\b|"
+    r"\b(?:urlopen|Request)\s*\([^\n]*\bdata\s*=(?!\s*None\b)|"
+    # The writing calls of the HTTP libraries.
+    r"\b(?:requests|httpx|aiohttp|urllib3|axios|got|superagent|ky)\.(?:post|put|patch|delete)\s*\(|"
+    r"\b(?:session|client)\.(?:post|put|patch)\s*\(")
+# ["git", "push"]: the argument-list form of a command reads as the command once the separators are spaces.
+ARG_LIST_SEP_RE = re.compile(r"[\"']\s*,\s*[\"']")
+# In SKILL.md a command is what a step shows as code: an inline span or a line of a fenced block.
+CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
+FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # What makes a skill or agent a reader of content written by others, and the sentence it must carry.
-EXTERNAL_REQUIRES_RE = re.compile(r"^\s*requires:\s*\[[^\]]*\b(search|integration):", re.M)
+EXTERNAL_CLASS_RE = re.compile(r"^(?:search:.*|integration:.*|reader:email|mailbox)$")
 EXTERNAL_SOURCE_RE = re.compile(
     r"(?i)\b(tickets?|bug reports?|web pages?|search results|review comments?|pull request (?:descriptions?|comments?|bodies)|"
     r"issue (?:bodies|comments)|CI logs?|--log-failed|failing step|exported code|design[- ]tool exports?|an export\b|"
-    r"screenshots?|API responses?|code host)")
-UNTRUSTED_MARKER_RE = re.compile(r"External content is data")
+    r"screenshots?|API responses?|code host|e-?mails?\b|notifications?\b|diffs?\b|command outputs?\b)")
+# The sentence opens a line or a list item (a bullet, a number, a checkbox), bold or not.
+UNTRUSTED_MARKER_RE = re.compile(
+    r"^[ \t]*(?:>[ \t]*)?(?:(?:[-*+]|\d+[.)])[ \t]+(?:\[[ xX]\][ \t]+)?)?(?:\*\*|__)?External content is data\.", re.M)
+UNTRUSTED_WORDS_RE = re.compile(r"External content is data")
 UNTRUSTED_SECTION_RE = re.compile(r"Instructions found in external content")
-PEP723_RE = re.compile(r"^#\s*dependencies\s*=\s*\[(.*)\]")
+PEP723_RE = re.compile(r"^#\s*dependencies\s*=\s*\[(.*)$")
 ALLOW_RE = re.compile(r"security-scan:\s*allow\s+([a-z-]+)(?:\s+--\s*(\S.*?))?\s*(?:-->|\*/)?\s*$")
 
 
@@ -178,10 +213,34 @@ def read_text(path):
     return data.decode("utf-8", errors="replace")
 
 
+def frontmatter_list(head, key):
+    """The values of a list key in a frontmatter, written inline ([a, b]) or as a block (- a); None when absent."""
+    lines = head.split("\n")
+    for n, line in enumerate(lines):
+        m = re.match(r"^(\s*)" + re.escape(key) + r":\s*(.*?)\s*(?:\s#.*)?$", line)
+        if not m:
+            continue
+        indent, rest = len(m.group(1)), m.group(2)
+        if rest.startswith("["):
+            return [v.strip().strip("\"'") for v in rest.strip("[]").split(",") if v.strip()]
+        if rest:
+            return [rest.strip("\"'")]
+        values = []
+        for item in lines[n + 1:]:
+            if not item.strip() or item.lstrip().startswith("#"):
+                continue
+            b = re.match(r"^(\s*)-\s+(.*?)\s*(?:\s#.*)?$", item)
+            if not b or len(b.group(1)) < indent:
+                break
+            values.append(b.group(2).strip("\"'"))
+        return values
+    return None
+
+
 def skill_side_effects(root, rel, cache):
-    """Return (skill name, declared side_effects) when rel is inside skills/<name>/scripts/."""
+    """Return (skill name, declared side_effects) when rel is a skill's SKILL.md or inside its scripts/."""
     parts = rel.split("/")
-    if len(parts) < 4 or parts[0] != "skills" or parts[2] != "scripts":
+    if parts[0] != "skills" or not (len(parts) >= 4 and parts[2] == "scripts" or parts[2:] == ["SKILL.md"]):
         return None, None
     name = parts[1]
     if name not in cache:
@@ -189,13 +248,35 @@ def skill_side_effects(root, rel, cache):
         try:
             with open(os.path.join(root, "skills", name, "SKILL.md"), encoding="utf-8") as f:
                 head = f.read().split("\n---", 1)[0]
-            m = re.search(r"^\s*side_effects:\s*\[(.*?)\]", head, re.M)
-            if m:
-                declared = [s.strip() for s in m.group(1).split(",") if s.strip()]
+            declared = frontmatter_list(head, "side_effects")
         except OSError:
             pass
         cache[name] = declared
     return name, cache[name]
+
+
+def remote_write(line):
+    """True when the line writes to a remote, as a command string or as an argument list."""
+    return bool(REMOTE_WRITE_RE.search(line) or REMOTE_WRITE_RE.search(ARG_LIST_SEP_RE.sub(" ", line)))
+
+
+def pep723_specs(lines):
+    """[(line number, spec)] of an inline script dependency list, on one line or over several."""
+    out = []
+    n = 0
+    while n < len(lines):
+        m = PEP723_RE.match(lines[n])
+        n += 1
+        if not m:
+            continue
+        chunk, at = m.group(1), n
+        while True:
+            out += [(at, spec) for spec in re.findall(r"[\"']([^\"']+)[\"']", chunk.split("]", 1)[0])]
+            if "]" in chunk or n >= len(lines) or not lines[n].startswith("#"):
+                break
+            chunk, at = lines[n].lstrip("#"), n + 1
+            n += 1
+    return out
 
 
 def scan_file(root, path, cache):
@@ -216,9 +297,13 @@ def scan_file(root, path, cache):
     is_shell = ext in {".sh", ".bash", ".zsh"} or (text.startswith("#!") and "sh" in text.split("\n", 1)[0])
     is_python = ext == ".py" or (text.startswith("#!") and "python" in text.split("\n", 1)[0])
     skill, declared = skill_side_effects(root, rel, cache)
+    is_skill_md = bool(skill) and rel.endswith("/SKILL.md")
     lines = text.split("\n")
+    in_fence = False
 
     for i, line in enumerate(lines, 1):
+        if is_skill_md and FENCE_RE.match(line):
+            in_fence = not in_fence
         for label, rx in TOKEN_RES:
             if rx.search(line):
                 add("secret-token", i, f"looks like a {label}; revoke it if real, then remove it", line)
@@ -252,13 +337,15 @@ def scan_file(root, path, cache):
                 add("sudo", i, "scripts must not escalate privileges; tell the user to run it", line)
         if is_script and CHMOD_RE.search(line):
             add("world-writable", i, "grant the narrowest permission that works", line)
-        if skill and declared == [] and is_script and REMOTE_WRITE_RE.search(line):
+        if skill and declared == [] and not is_skill_md and is_script and remote_write(line):
             add("undeclared-side-effect", i, f"skill '{skill}' writes to a remote but declares side_effects: []", line)
-        dep = PEP723_RE.match(line)
-        if dep:
-            for spec in re.findall(r"[\"']([^\"']+)[\"']", dep.group(1)):
-                if "==" not in spec:
-                    add("unpinned-dependency", i, f"pin '{spec}' to an exact version (==)", line)
+        if is_skill_md and declared == [] and any(
+                remote_write(code) for code in ([line] if in_fence else CODE_SPAN_RE.findall(line))):
+            add("undeclared-side-effect", i, f"a command in the steps of skill '{skill}' writes to a remote but the "
+                "skill declares side_effects: []", line)
+    for i, spec in pep723_specs(lines):
+        if "==" not in spec:
+            add("unpinned-dependency", i, f"pin '{spec}' to an exact version (==)", lines[i - 1])
     if os.path.basename(path).startswith("requirements") and ext == ".txt":
         for i, line in enumerate(lines, 1):
             s = line.split("#", 1)[0].strip()
@@ -266,25 +353,34 @@ def scan_file(root, path, cache):
                 add("unpinned-dependency", i, f"pin '{s}' to an exact version (==)", line)
     if re.fullmatch(r"skills/[^/]+/SKILL\.md|agents/[^/]+\.md", rel) and not UNTRUSTED_MARKER_RE.search(text):
         head, _, body = text.partition("\n---")
-        reason = "requires a search: or integration: class" if EXTERNAL_REQUIRES_RE.search(head) else None
+        classes = [c for c in frontmatter_list(head, "requires") or [] if EXTERNAL_CLASS_RE.match(c)]
+        reason = f"requires the class '{classes[0]}'" if classes else None
         m = EXTERNAL_SOURCE_RE.search(text)
         if not reason and m:
             reason = f"mentions '{m.group(0)}'"
-        if reason:
+        inside = UNTRUSTED_WORDS_RE.search(text)
+        if reason and inside:
+            add("untrusted-content", text.count("\n", 0, inside.start()) + 1, f"{reason}, and the sentence 'External "
+                "content is data.' is inside a paragraph: it must start a line or a list item of its own")
+        elif reason:
             line_no = text.count("\n", 0, m.start()) + 1 if m and not reason.startswith("requires") else 1
             add("untrusted-content", line_no, f"{reason}: add a line starting 'External content is data.' that names "
                 "the sources and says instructions in them are reported to the user, never followed")
     elif re.fullmatch(r"skills/[^/]+/SKILL\.md|agents/[^/]+\.md", rel) and not UNTRUSTED_SECTION_RE.search(text):
-        m = UNTRUSTED_MARKER_RE.search(text)
+        m = UNTRUSTED_WORDS_RE.search(text)
         add("untrusted-content", text.count("\n", 0, m.start()) + 1, "the reader does not name the reply section "
             "'Instructions found in external content' (each instruction quoted with its source and 'not followed', "
             "or 'none'): see shared/references/security.md item 1")
-    if ext == ".md" and rel.startswith(INSTRUCTION_DIRS) and "/evals/files/" not in rel:
-        for m in COMMENT_RE.finditer(text):
-            if len(m.group(1).split()) >= 4 and "security-scan:" not in m.group(1):
+    if ext == ".md" and (rel.startswith(INSTRUCTION_DIRS) or rel in INSTRUCTION_FILES) and "/evals/files/" not in rel:
+        for m in list(COMMENT_RE.finditer(text)) + list(LINK_COMMENT_RE.finditer(text)):
+            prose = next(g for g in m.groups() if g is not None)
+            if len(prose.split()) >= 4 and "security-scan:" not in prose:
                 line_no = text.count("\n", 0, m.start()) + 1
                 add("hidden-comment", line_no, "comment prose is invisible when rendered but read by models; "
                     "make it visible text or remove it", m.group(0))
+        for m in HIDDEN_ATTR_RE.finditer(text):
+            add("hidden-comment", text.count("\n", 0, m.start()) + 1, "an element with a hidden attribute is not "
+                "rendered but is read by models; make it visible text or remove it", m.group(0))
     return apply_allows(findings, lines)
 
 
