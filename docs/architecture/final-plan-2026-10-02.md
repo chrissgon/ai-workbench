@@ -35,7 +35,7 @@
 
 ## Open for the maintainer
 
-One thing, and it holds the start of the plan. On 2026-10-02 the maintainer asked, before phase A starts, to rethink how skills are tested: today every measurement is a separate session that costs time and account quota, and the question is how much of it can come from the skills' ordinary use in projects. Until that is settled, nothing of this plan is executed; what it decides may change phases B, D and E.
+The question that held the start of the plan, how skills are tested, is decided. On 2026-10-02 the maintainer decided the reliability model: a skill's three computed states give way to a score per model, built from accumulated evidence of full, targeted and field tests. [`reliability-model-2026-10-02.md`](reliability-model-2026-10-02.md) states the model and lists its changes to this plan, item by item. Where the two documents differ, that document wins. Its changes are folded into this plan after the model's review; until then this plan's text on the record, the freeze, the runs per case and phases D and E is read together with it.
 
 The three points the independent review raised were answered by the maintainer on 2026-10-02, all as recommended:
 
