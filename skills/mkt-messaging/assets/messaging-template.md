@@ -27,7 +27,7 @@
 
 ## Proof points
 
-- PROOF-1: {claim}. Evidence: {measurement, documented behaviour or citation}. Method: {the command or count that produced the number | read in <file and section>}. Date: {YYYY-MM-DD of the measurement, or the date the document carries}. Source: {…}
+- PROOF-1: {claim}. Evidence: {measurement, documented behaviour or citation}. Method: {the command or count that produced the number | read in <file and section>: <the method that source states, word for word>}. Date: {YYYY-MM-DD of the measurement, or the date the document carries}. Source: {…}
 
 ## Sections
 
@@ -47,6 +47,10 @@
 ## Open questions
 
 - OPEN-1: {question}. Blocks: {SECTION-n | nothing}. Recommended: {answer and why}
+
+## Assumptions
+
+{one line per assumption, each starting `Assumption:`; `none` when every fact has a source}
 
 ## Readiness
 
