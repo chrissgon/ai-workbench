@@ -1,0 +1,28 @@
+{
+  "assertion_results": [
+    {
+      "id": 1,
+      "text": "docs/release/notes-2.4.0.md is created",
+      "passed": true,
+      "evidence": "The run created docs/release/notes-2.4.0.md."
+    },
+    {
+      "id": 2,
+      "text": "The notes have the sections Added, Changed and Fixed, in that order",
+      "passed": false,
+      "evidence": "The sections are 'Features', 'Changes' and 'Fixes'."
+    },
+    {
+      "id": 3,
+      "text": "Every entry traces to a line of the changes list; nothing is invented",
+      "passed": true,
+      "evidence": "All five entries match lines of the changes list."
+    }
+  ],
+  "summary": {
+    "passed": 2,
+    "failed": 1,
+    "total": 3,
+    "pass_rate": 0.6666666666666666
+  }
+}

@@ -18,8 +18,23 @@
       "prompt": "Here is the transcript where you kept guessing the ticket type before reading it (attached). Turn what we learned into the flow-implement-ticket skill.",
       "expected_output": "Grounding note listing the observed failures (guessed ticket type, did not ask for the ticket when the tracker was unavailable); placement confirmed against the inventory (flow, engineering); scaffold via new-skill.sh; SKILL.md with a read-before-classify step, a degraded path asking for the ticket text, and gates; validator clean; evals with at least two cases including the no-tracker case; the run step is prepared with --dry-run and the user is asked which harness and models to use.",
       "files": ["evals/files/transcript-guessing.md"],
+      "workbench_files": [
+        "scripts/new-skill.sh",
+        "scripts/validate.py",
+        "scripts/security_scan.py",
+        "scripts/redact.py",
+        "templates",
+        "evals/eval_run.py",
+        "evals/eval_status.py",
+        "docs/inventory.md",
+        "docs/area-map.md",
+        "adapters/agents-dir/run-prompt.sh"
+      ],
+      "grader_files": [
+        "transcript-guessing.md"
+      ],
       "assertions": [
-        "A grounding note lists the failures observed in the transcript before any file is written",
+        "The reply, or the report on the new skill, contains a grounding note that names the transcript as the real material and lists the failures observed in it",
         "scripts/new-skill.sh is used to scaffold flow-implement-ticket with kind flow",
         "SKILL.md contains an explicit step to read the ticket before classifying it and a degraded path when the tracker integration is missing",
         "python3 scripts/validate.py is run and reports zero errors",
@@ -29,12 +44,40 @@
     },
     {
       "id": 3,
-      "prompt": "core-research got 0.6 on the floor model in iteration-2, transcripts attached. Improve it.",
+      "prompt": "ops-release-notes got 0.39 on the floor model in iteration-1, transcripts attached. Improve it.",
       "expected_output": "Each failing transcript is classified (vague instruction, too many options, reinvented logic, guessed instead of asking, invented fact); SKILL.md is changed only where a classification points; assertions that passed in every configuration are flagged for removal; a new iteration is run or planned; the report shows before and after pass rates and the conditions.",
-      "files": ["evals/files/iteration-2"],
+      "files": ["evals/files/improve-skill"],
+      "workbench_files": [
+        "scripts/new-skill.sh",
+        "scripts/validate.py",
+        "scripts/security_scan.py",
+        "scripts/redact.py",
+        "templates",
+        "evals/eval_run.py",
+        "evals/eval_status.py",
+        "docs/inventory.md",
+        "docs/area-map.md",
+        "adapters/agents-dir/run-prompt.sh"
+      ],
+      "grader_files": [
+        "evals-workspace/ops-release-notes/iteration-1/benchmark.json",
+        "skills/ops-release-notes/evals/evals.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-1/with_skill/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-1/with_skill.floor/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-1/without_skill/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-1/without_skill.floor/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-2/with_skill/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-2/with_skill.floor/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-2/without_skill/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-2/without_skill.floor/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-3/with_skill/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-3/with_skill.floor/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-3/without_skill/run-1/grading.json",
+        "evals-workspace/ops-release-notes/iteration-1/eval-3/without_skill.floor/run-1/grading.json"
+      ],
       "assertions": [
-        "Every failing case in the transcripts is classified into one of the failure categories with the evidence",
-        "Changes to SKILL.md map one to one to classifications",
+        "Every failing case in the transcripts is classified, with the evidence, into one of the skill's failure categories or as a defect of the case itself (a prompt or fixture that makes the case impossible)",
+        "Changes to SKILL.md map one to one to the classified skill failures; a case classified as a case defect is fixed in evals.json, not by changing SKILL.md",
         "Assertions that passed in all configurations are listed for removal",
         "The report includes pass rates before and after, or the planned rerun if models are not available",
         "The skill is not marked done unless the floor condition and the strong-delta condition both hold"

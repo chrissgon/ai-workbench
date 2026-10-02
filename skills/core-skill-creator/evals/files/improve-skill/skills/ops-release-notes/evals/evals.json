@@ -1,0 +1,42 @@
+{
+  "skill_name": "ops-release-notes",
+  "evals": [
+    {
+      "id": 1,
+      "prompt": "write the release notes for 2.4.0 from docs/release/changes.md",
+      "expected_output": "docs/release/notes-2.4.0.md with the five changes under Added, Changed and Fixed, each with its change number, and nothing that the list does not say.",
+      "files": [
+        "evals/files/release-2.4.0"
+      ],
+      "assertions": [
+        "docs/release/notes-2.4.0.md is created",
+        "The notes have the sections Added, Changed and Fixed, in that order",
+        "Every entry traces to a line of the changes list; nothing is invented"
+      ]
+    },
+    {
+      "id": 2,
+      "prompt": "release notes from docs/release/changes.md pls",
+      "expected_output": "No notes file. The reply says the list names no version and asks which version the release is.",
+      "files": [
+        "evals/files/no-version"
+      ],
+      "assertions": [
+        "The reply asks which version the release is",
+        "No notes file is written before the version is known"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "hotfix 2.4.1 went out, write its notes from docs/release/changes-hotfix.md",
+      "expected_output": "Notes for 2.4.1 with the two fixes of the hotfix list (sessions expiring early, the export crash on an empty list) under Fixed.",
+      "files": [
+        "evals/files/changes-hotfix.md"
+      ],
+      "assertions": [
+        "The notes list both hotfix changes: the session expiry fix and the export crash fix",
+        "No change is listed that is not in the hotfix list"
+      ]
+    }
+  ]
+}

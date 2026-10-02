@@ -1,0 +1,28 @@
+{
+  "assertion_results": [
+    {
+      "id": 1,
+      "text": "docs/release/notes-2.4.0.md is created",
+      "passed": true,
+      "evidence": "The run created docs/release/notes-2.4.0.md."
+    },
+    {
+      "id": 2,
+      "text": "The notes have the sections Added, Changed and Fixed, in that order",
+      "passed": false,
+      "evidence": "The notes are one flat list under 'What's new in 2.4.0'; there are no Added, Changed or Fixed sections."
+    },
+    {
+      "id": 3,
+      "text": "Every entry traces to a line of the changes list; nothing is invented",
+      "passed": false,
+      "evidence": "'Performance improvements across the app' matches no line of the changes list."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 2,
+    "total": 3,
+    "pass_rate": 0.3333333333333333
+  }
+}

@@ -35,7 +35,7 @@ A skill is done when a floor model and a strong model both pass its evals and th
 
 | Source | Required | If missing |
 |--------|----------|------------|
-| Real expertise: a conversation trace with corrections, a real artifact, a runbook, a recorded failure, or a real task to run the draft against | yes | Stop. Say that the skill would be generic knowledge, and ask for a real task or material. Do not write it. |
+| Real expertise: a conversation trace with corrections, a real artifact, a runbook, a recorded failure, or a real task to run the draft against | yes | Stop. Say that the skill would be generic knowledge, and ask for a real task or material, with a recommended answer: name the one kind to bring first and say why. Recommend a conversation trace in which the user corrected the work when one may exist, because it shows what a model gets wrong; otherwise a real task to run the draft against. Do not write it. |
 | `docs/inventory.md` entry for the skill (area, wave, sources) | no | Propose the entry (area by the boundary test, prefix, inputs and outputs) and ask before scaffolding. |
 | The eval gate configuration, `evals/eval-gate.json` (strong and floor model, their adapters, the floor model's key variable, the threshold), and an adapter with `run-prompt.sh` for each harness it names | for step 9 | Write, validate and review the skill through step 8, then ask which harness and models to use. The skill stays `draft` until the runs are on record. |
 
@@ -44,7 +44,7 @@ A skill is done when a floor model and a strong model both pass its evals and th
 ## Procedure
 
 Progress:
-- [ ] Step 1: Ground. Collect the material listed under Inputs. Write, in a scratch note, the five to ten facts, procedures or corrections the skill must carry that a model would not know or would get wrong. If the note is empty, stop (see Inputs).
+- [ ] Step 1: Ground. Collect the material listed under Inputs. Write the grounding note: the real material, and the five to ten facts, procedures or corrections from it that the skill must carry and that a model would not know or would get wrong. If the note is empty, stop (see Inputs).
 - [ ] Step 2: Place it. Confirm area and name against `docs/inventory.md` and the boundary test in `docs/area-map.md`; decide `capability` or `flow`; list `inputs`, `outputs`, `requires`, `side_effects` honestly. Ask the user when two areas fit.
 - [ ] Step 3: Scaffold: `bash scripts/new-skill.sh --name <name> --kind <kind> --area <area>`. For an existing skill, skip.
 - [ ] Step 4: Write `SKILL.md` from the template, then check it against the writing standard in the workbench `AGENTS.md`: one default path; every step executable without inference; a template for every output; criteria for every judgment; a stop-and-ask gate for every decision that is the user's; grounding rules; the contract constrained, not the content; under 500 lines with depth in `references/`. When you find yourself writing a rule from general knowledge, delete it or trace it to step 1's note. Read [references/authoring-guide.md](references/authoring-guide.md) §"Best Practices" and §"Patterns for Effective Instructions" when a section is hard to write.
@@ -54,6 +54,7 @@ Progress:
 - [ ] Step 8: Write `evals/evals.json`: at least two cases for a new skill, one per behaviour that matters (the happy path, the ambiguous request that must trigger a question, the degraded mode, the case the skill must refuse or hand off). Prompts read like the user writes (casual, terse, with realistic paths and context), in English: every file in the workbench is English, eval prompts included. Each assertion is checkable by reading the output or a produced file; no "the output is good". Add fixture files under `evals/files/` when a case needs them. A case whose skill requires `search:web` sets `"allow_web": true`; without it the with-skill run can only show the degraded mode. Read [references/authoring-guide.md](references/authoring-guide.md) §"Evaluation Framework" for assertion and prompt design. Rules for every case:
   - Ship every file the prompt cites, at the path the prompt names. A `files` folder is copied by content into the root of the case folder and a single file by its name only, so a prompt that says `docs/product/prd.md` needs a fixture folder that holds `docs/product/prd.md`.
   - A case that tests a missing input lists that path in `"absent_on_purpose": ["<path>"]`.
+  - `"workbench_files": ["<path>"]` copies files or folders of this repository into the case folder at the same path. It is legitimate only for a skill whose job is the workbench itself (it creates, validates or evaluates skills and needs the real tooling to act on); a skill that works on a project never lists it.
   - Give the grader its inputs: list in `grader_files` (paths in the case folder) every input file an assertion checks facts against. The grader otherwise sees only what the run produced.
   - A case never expects an output where the skill must stop and ask, unless the prompt or a fixture already provides the answer. Expect the question instead.
   Then run the preflight until it prints no error; it calls no model:
@@ -72,10 +73,16 @@ Progress:
 
 ## Output template
 
+Every reply that reports work on a skill carries the "Grounding note" block, also a reply that stops to ask before the evals have run.
+
 ```markdown
 ## Skill <created | improved>: <name> (v<version>)
 
-- Grounded in: <trace, artifact, task>
+### Grounding note
+- Real material: <the trace, artifact, runbook, recorded failure or task, with its file or where the user gave it>
+- What it showed: <one line per failure, correction or fact the skill carries>
+
+### Result
 - Files: SKILL.md (<n> lines), references/<...>, scripts/<...>, evals/evals.json (<n> cases)
 - Validator: clean | <warnings and why>
 - Security: scan clean | <findings silenced and why>; checklist <n> yes, <n> n/a (<item: why>)

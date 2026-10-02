@@ -1,0 +1,208 @@
+{
+  "skill": "ops-release-notes",
+  "runs": 1,
+  "timeout": 900,
+  "max_cost_usd": null,
+  "harness": "agents-dir",
+  "floor_harness": "agents-dir",
+  "models": {
+    "strong": "example-strong-1",
+    "floor": "example-floor-1"
+  },
+  "grader": "example-strong-1",
+  "threshold": 0.8,
+  "strong_tolerance": 0.05,
+  "measurement_version": 4,
+  "ablate": null,
+  "run_summary": {
+    "with_skill": {
+      "pass_rate": {
+        "mean": 0.833,
+        "stddev": 0.236,
+        "n": 3
+      },
+      "tokens": {
+        "mean": 43400,
+        "stddev": 898.146,
+        "n": 3
+      },
+      "duration_ms": {
+        "mean": 11200,
+        "stddev": 571.548,
+        "n": 3
+      },
+      "cases": [
+        {
+          "case": 1,
+          "run": 1,
+          "pass_rate": 1.0,
+          "tokens": 42300,
+          "duration_ms": 10500
+        },
+        {
+          "case": 2,
+          "run": 1,
+          "pass_rate": 1.0,
+          "tokens": 43400,
+          "duration_ms": 11200
+        },
+        {
+          "case": 3,
+          "run": 1,
+          "pass_rate": 0.5,
+          "tokens": 44500,
+          "duration_ms": 11900
+        }
+      ]
+    },
+    "with_skill.floor": {
+      "pass_rate": {
+        "mean": 0.389,
+        "stddev": 0.283,
+        "n": 3
+      },
+      "tokens": null,
+      "duration_ms": {
+        "mean": 22900,
+        "stddev": 571.548,
+        "n": 3
+      },
+      "cases": [
+        {
+          "case": 1,
+          "run": 1,
+          "pass_rate": 0.6666666666666666,
+          "tokens": null,
+          "duration_ms": 22200
+        },
+        {
+          "case": 2,
+          "run": 1,
+          "pass_rate": 0.0,
+          "tokens": null,
+          "duration_ms": 22900
+        },
+        {
+          "case": 3,
+          "run": 1,
+          "pass_rate": 0.5,
+          "tokens": null,
+          "duration_ms": 23600
+        }
+      ]
+    },
+    "without_skill": {
+      "pass_rate": {
+        "mean": 0.722,
+        "stddev": 0.208,
+        "n": 3
+      },
+      "tokens": {
+        "mean": 32300,
+        "stddev": 898.146,
+        "n": 3
+      },
+      "duration_ms": {
+        "mean": 8800,
+        "stddev": 571.548,
+        "n": 3
+      },
+      "cases": [
+        {
+          "case": 1,
+          "run": 1,
+          "pass_rate": 0.6666666666666666,
+          "tokens": 31200,
+          "duration_ms": 8100
+        },
+        {
+          "case": 2,
+          "run": 1,
+          "pass_rate": 1.0,
+          "tokens": 32300,
+          "duration_ms": 8800
+        },
+        {
+          "case": 3,
+          "run": 1,
+          "pass_rate": 0.5,
+          "tokens": 33400,
+          "duration_ms": 9500
+        }
+      ]
+    },
+    "without_skill.floor": {
+      "pass_rate": {
+        "mean": 0.111,
+        "stddev": 0.157,
+        "n": 3
+      },
+      "tokens": null,
+      "duration_ms": {
+        "mean": 18300,
+        "stddev": 571.548,
+        "n": 3
+      },
+      "cases": [
+        {
+          "case": 1,
+          "run": 1,
+          "pass_rate": 0.3333333333333333,
+          "tokens": null,
+          "duration_ms": 17600
+        },
+        {
+          "case": 2,
+          "run": 1,
+          "pass_rate": 0.0,
+          "tokens": null,
+          "duration_ms": 18300
+        },
+        {
+          "case": 3,
+          "run": 1,
+          "pass_rate": 0.0,
+          "tokens": null,
+          "duration_ms": 19000
+        }
+      ]
+    }
+  },
+  "conditions": {
+    "strong_delta": 0.111,
+    "strong_delta_ok": true,
+    "strong_pass_rate": 0.833,
+    "strong_ok": true,
+    "floor_pass_rate": 0.389,
+    "floor_ok": false
+  },
+  "failures": 0,
+  "date": "2026-09-14",
+  "iteration": 1,
+  "cases": [
+    1,
+    2,
+    3
+  ],
+  "content_sha256": "3897f08b1b92e200016c436386db553e8dddbdd513c415d983105b3e920ae17b",
+  "expected_runs": 12,
+  "completed_runs": 12,
+  "complete": true,
+  "infra_failures": [],
+  "contaminated": [],
+  "early_ends": {
+    "strong": {
+      "attempts": 6,
+      "early_ends": 0,
+      "rate": 0.0,
+      "by_case": {}
+    },
+    "floor": {
+      "attempts": 6,
+      "early_ends": 0,
+      "rate": 0.0,
+      "by_case": {}
+    }
+  },
+  "early_end_warning": null
+}
