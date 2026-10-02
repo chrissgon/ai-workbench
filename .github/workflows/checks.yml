@@ -28,6 +28,8 @@ jobs:
           python-version: "3.11"
       - name: Conventions and security scan
         run: python3 scripts/validate.py
+      - name: Security scan, warnings included
+        run: python3 scripts/security_scan.py --strict
       - name: Secrets in history
         run: python3 scripts/security_scan.py --history
 
