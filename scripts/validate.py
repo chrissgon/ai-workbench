@@ -23,6 +23,9 @@ Checks every skill under skills/ and every agent under agents/:
     contracts/ and templates/ (a code fence or a code span holds an example and is not read; neither is a
     link to a place in the same file or one written with a placeholder)
   - agent frontmatter keys are only name, description, metadata
+  - copies: every adopted copy listed in shared/scripts/copies.json is byte-identical to its source, and the
+    manifest itself is valid (scripts/sync_copies.py --check; fix: change the source, then run
+    python3 scripts/sync_copies.py). A generated copy is never edited by hand
   - frontmatter is read by this file's own parser on every machine, whatever library is installed
   - english-only: no tracked text file contains Portuguese-specific diacritics or words, except
     on a line carrying `validate: allow english-only -- <reason>` or a path listed in
@@ -60,6 +63,9 @@ They say what a skill or its cases still have to change; none reads a skill's sc
     its own artifact is not one);
     [contract-owner-table] the contract's generated table of owning skills equals the frontmatters
     (fix: python3 scripts/owner_table.py)
+  - [copy-not-adopted] a copy the manifest lists is generated from its source: a skill is listed while a
+    file of it still differs from the shared source or is not there yet (fix, in the pull request that
+    changes that skill: python3 scripts/sync_copies.py --adopt <copy>)
   - [requires-role] every metadata.requires value has the form <role>:<target>; the four names that were
     bare (mailbox, mailer, scheduler, store) are reported with the class each became
   - [requires-vocabulary] every metadata.requires value that has a role is a class of the table in
@@ -87,7 +93,7 @@ They say what a skill or its cases still have to change; none reads a skill's sc
     that table is built or marked (planned), never both
   - [test-file-names] test file names are unique across the folders scripts/test_dirs.py lists
 A rule whose file is not in the tree being validated (the class table, the layout contract, the owner-table
-script, the routing table, test_dirs.py) is
+script, the manifest of copies and its script, the routing table, test_dirs.py) is
 skipped and says so in a NOTE line on stderr, which counts as neither an error nor a warning.
 
 Options:
@@ -694,6 +700,38 @@ def check_test_names(report, root=ROOT):
                         + "; names are unique across the test folders", "test-file-names")
 
 
+def check_copies(report, root=ROOT):
+    """copies and copy-not-adopted: the generated copies of shared files (scripts/sync_copies.py)."""
+    script = os.path.join(root, "scripts", "sync_copies.py")
+    if not os.path.isfile(script):
+        report.note("[copies] skipped: scripts/sync_copies.py is not in this tree")
+        return
+    spec = importlib.util.spec_from_file_location("sync_copies", script)
+    sync = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync)
+    if not os.path.isfile(os.path.join(root, sync.MANIFEST)):
+        report.note(f"[copies] skipped: {sync.MANIFEST} is not in this tree")
+        return
+    try:
+        rows = sync.states(root)
+    except sync.ManifestError as e:
+        report.error(sync.MANIFEST, f"[copies] {e}")
+        return
+    pending = {}
+    for r in rows:
+        if r["adopted"] and r["state"] != "identical":
+            report.error(r["path"], f"[copies] {r['state']}: it is a generated copy of {r['source']}; change the "
+                         "source, then run python3 scripts/sync_copies.py")
+        elif not r["adopted"]:
+            parts = r["path"].split("/")
+            where = "/".join(parts[:2]) if parts[0] == "skills" and len(parts) > 2 else r["path"]
+            pending.setdefault(where, []).append(f"{'/'.join(parts[2:]) if where != r['path'] else r['path']} "
+                                                 f"({r['state']}; source {r['source']})")
+    for where, files in sorted(pending.items()):
+        report.warn(where, "not yet generated from the shared source: " + "; ".join(files)
+                    + "; adopt each with python3 scripts/sync_copies.py --adopt <copy>", "copy-not-adopted")
+
+
 def flags_markdown(report, skills):
     """The named warning rules and the skills each one lists, as the Markdown of docs/architecture/phase-c-flags.md."""
     by_rule = {}
@@ -723,7 +761,7 @@ WARNING_RULES = ("meta-keys", "requires-role", "requires-vocabulary", "side-effe
                  "eval-conditional-assertion", "eval-run-assertion", "eval-prompt-names-skill",
                  "eval-product-names", "skill-name", "routing-table", "test-file-names",
                  "contract-updates", "contract-owner", "contract-inputs", "contract-overlap", "contract-placeholder",
-                 "contract-cycle", "contract-owner-table")
+                 "contract-cycle", "contract-owner-table", "copy-not-adopted")
 
 
 def artifact_key(path):
@@ -1185,6 +1223,7 @@ def main(argv):
             if fn.endswith(".md"):
                 check_agent(fn, report)
     check_doc_links(report)
+    check_copies(report)
     check_test_names(report)
     check_harness_names(report)
     check_english(report)

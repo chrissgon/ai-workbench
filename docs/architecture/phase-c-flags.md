@@ -30,6 +30,7 @@ Skills validated: 48.
 | `contract-placeholder` | 0 |
 | `contract-cycle` | 1 |
 | `contract-owner-table` | 0 |
+| `copy-not-adopted` | 12 |
 
 ## `meta-keys`
 
@@ -243,3 +244,18 @@ Nothing listed.
 ## `contract-owner-table`
 
 Nothing listed.
+
+## `copy-not-adopted`
+
+- `biz-icp-positioning`: not yet generated from the shared source: scripts/rank.py (differs; source shared/scripts/rank.py); scripts/check_refs.py (differs; source shared/scripts/check_refs.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `biz-market-analysis`: not yet generated from the shared source: scripts/rank.py (differs; source shared/scripts/rank.py); scripts/check_refs.py (differs; source shared/scripts/check_refs.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `brand-identity`: not yet generated from the shared source: scripts/contrast.py (differs; source shared/scripts/contrast.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `brand-voice`: not yet generated from the shared source: scripts/voice_stats.py (differs; source shared/scripts/voice_stats.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `core-orchestrator`: not yet generated from the shared source: references/requirement-classes.md (differs; source contracts/environment.md); references/owners.md (missing; source contracts/project-layout.md); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `design-system`: not yet generated from the shared source: scripts/contrast.py (differs; source shared/scripts/contrast.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `eng-code-review`: not yet generated from the shared source: scripts/redact.py (differs; source shared/scripts/redact.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `mkt-content-plan`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `mkt-engage`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `mkt-social-copy`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); scripts/voice_stats.py (missing; source shared/scripts/voice_stats.py); scripts/check_post.py (differs; source shared/scripts/check_post.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `mkt-vote-round`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); scripts/voice_stats.py (missing; source shared/scripts/voice_stats.py); scripts/check_post.py (missing; source shared/scripts/check_post.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `ops-repo-baseline`: not yet generated from the shared source: scripts/redact.py (differs; source shared/scripts/redact.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>

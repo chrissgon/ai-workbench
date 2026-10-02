@@ -4,6 +4,7 @@ Skills declare what they need from the environment as *classes*, never as produc
 
 ## Classes
 
+<!-- class-table:begin -->
 | Class | What satisfies it | Used by |
 |-------|-------------------|---------|
 | `integration:issue-tracker` | Jira, Linear, GitHub Issues | engineering flows |
@@ -17,6 +18,7 @@ Skills declare what they need from the environment as *classes*, never as produc
 | `reader:email` | Gmail API, IMAP (read only: search and read messages) | marketing, engagement |
 | `scheduler:job` | launchd on macOS, systemd on Linux (a job runs a command once at a set time or every N minutes); or a harness routine | marketing, operations, the agent runtime's trigger |
 | `store:runtime` | SQLite (a local file); a cloud database later | the agent runtime: cursors, events, runs, approval inbox, executed actions |
+<!-- class-table:end -->
 
 Add a class when a second skill needs it; do not add classes speculatively. A skill copies a name exactly as this table spells it, and every skill that uses a class declares it in `requires`, whether its procedure needs the class or only uses it when it is there: the body says what the skill does without it ("Resolution order", step 3), and `scripts/doctor.py` then reports it.
 

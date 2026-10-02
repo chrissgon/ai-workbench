@@ -7,9 +7,16 @@ Usage: python3 scripts/security_scan.py [PATH ...] [--root DIR] [--strict] [--js
 Scans the files git would commit under --root (tracked plus untracked, minus ignored; every
 file when --root is not a git repository), or only PATH arguments (files or folders). Rules:
   secret-token          error    a known credential format (cloud, git host, chat, model API keys,
-                                 payment and hosting tokens, private key blocks, JWTs; the list is
-                                 scripts/redact.py, shared with the skill scripts that quote code)
-  secret-assignment     error    a key, secret, token or password assigned a literal value
+                                 payment and hosting tokens, private key blocks, JWTs), the password
+                                 inside a connection address (scheme://user:PASSWORD@host) or the token
+                                 after the word Bearer. The formats are in scripts/redact.py, a generated
+                                 copy of shared/scripts/redact.py that the skill scripts which quote code
+                                 carry too
+  secret-assignment     error    a key, secret, token or password assigned a literal value. A value is a
+                                 placeholder, and not reported, when it is one word or identifier with no
+                                 digit (letters, "_" and "."), a URL, or carries a placeholder mark (<...>,
+                                 ${...}, example, fake, test...); a phrase of several words joined by
+                                 hyphens is a value
   secret-file           error    a credential file (.env, *.pem, *.key, *.p12, id_rsa...) would be committed
   hidden-unicode        error    zero-width, bidirectional or tag characters that hide text from a reader
   hidden-comment        warning  text Markdown does not render but models read, in an instruction file (the root
@@ -74,8 +81,9 @@ import subprocess
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-# The credential formats and the redaction are shared with the skill scripts that quote code.
-from redact import ASSIGN_RE, HIDDEN_RE, TOKEN_RES, redact  # noqa: E402
+# The credential formats and the redaction are shared with the skill scripts that quote code: redact.py
+# beside this file is a generated copy of shared/scripts/redact.py (scripts/sync_copies.py).
+from redact import ASSIGN_RE, HIDDEN_RE, TOKEN_RES, VALUE_RES, redact  # noqa: E402
 
 WORKBENCH = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -112,7 +120,9 @@ BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".pdf", ".zip", 
               ".ttf", ".otf", ".mp4", ".mov", ".pyc"}
 SCRIPT_EXT = {".sh", ".bash", ".zsh", ".py", ".js", ".mjs", ".cjs", ".ts"}
 
-PLACEHOLDER_RE = re.compile(r"(?i)^https?://|^\D*$|[<>{}$]|example|sample|placeholder|changeme|your[_-]|xxx|fake|dummy|test|redacted|\*\*\*")
+# A literal that is not a secret. "No digit" alone is not the test: it let any passphrase of words through.
+# A value without a digit is a placeholder only when it is one word or identifier (letters, "_", ".").
+PLACEHOLDER_RE = re.compile(r"(?i)^https?://|^[A-Za-z_.]*$|[<>{}$]|example|sample|placeholder|changeme|your[_-]|xxx|fake|dummy|test|redacted|\*\*\*")
 SECRET_FILE_RE = re.compile(r"(^|/)(\.env(\.[^/]*)?|id_rsa|id_dsa|id_ecdsa|id_ed25519|[^/]*\.(pem|key|p12|pfx|keystore|jks))$")
 SECRET_FILE_OK_RE = re.compile(r"\.env\.example$|\.env\.sample$")
 BOM = chr(0xFEFF)
@@ -306,6 +316,9 @@ def scan_file(root, path, cache):
             in_fence = not in_fence
         for label, rx in TOKEN_RES:
             if rx.search(line):
+                add("secret-token", i, f"looks like a {label}; revoke it if real, then remove it", line)
+        for label, rx in VALUE_RES:
+            if any(not PLACEHOLDER_RE.search(m.group(1)) for m in rx.finditer(line)):
                 add("secret-token", i, f"looks like a {label}; revoke it if real, then remove it", line)
         m = ASSIGN_RE.search(line)
         if m and not PLACEHOLDER_RE.search(m.group(2)) and not any(rx.search(line) for _, rx in TOKEN_RES):
@@ -506,6 +519,9 @@ def scan_history(root):
                 continue
             for label, rx in TOKEN_RES:
                 if rx.search(line):
+                    add("secret-token", i, f"looks like a {label}")
+            for label, rx in VALUE_RES:
+                if any(not PLACEHOLDER_RE.search(m.group(1)) for m in rx.finditer(line)):
                     add("secret-token", i, f"looks like a {label}")
             m = ASSIGN_RE.search(line)
             if m and not PLACEHOLDER_RE.search(m.group(2)) and not any(rx.search(line) for _, rx in TOKEN_RES):
