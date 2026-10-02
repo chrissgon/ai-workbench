@@ -96,12 +96,12 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/design/handoff/<screen>.lint.json` | design-handoff | - |
 | `docs/design/handoff/<screen>.md` | design-handoff | - |
 | `docs/design/results/<artifact>.md` | design-execute | - |
-| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture, eng-tradeoffs | - |
+| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture | eng-tradeoffs |
 | `docs/engineering/architecture.md` | eng-codebase-map | - |
 | `docs/engineering/codebase-map.md` | eng-codebase-map | - |
 | `docs/engineering/designs/<feature>.check.json` | eng-architecture | - |
 | `docs/engineering/designs/<feature>.md` | eng-architecture | - |
-| `docs/engineering/plans/<task>.md` | eng-docs, eng-impact-analysis, eng-integration-tests, eng-root-cause, eng-tradeoffs, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-refactor, eng-unit-tests |
+| `docs/engineering/plans/<task>.md` | eng-docs, eng-impact-analysis, eng-integration-tests, eng-root-cause, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-refactor, eng-tradeoffs, eng-unit-tests |
 | `docs/engineering/reviews/<change>.md` | eng-code-review | - |
 | `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
 | `docs/marketing/calendar.md` | mkt-content-plan, mkt-publish, mkt-social-copy | - |
