@@ -1303,15 +1303,16 @@ def cmd_commit_files(args) -> int:
 def cmd_check(args) -> int:
     repo = check_repo(args.repo) if args.repo else None
     base, test_mode = api_base()
-    try:
-        token, source = load_token(test_mode)
-    except ProviderError as exc:
-        raise ProviderError(str(exc), EXIT_SERVICE)  # the contract: --check exits 1 when not ready
+    # The contract's one reading of --check: 3 when the person has something to do (no token, or one the
+    # service rejects), 1 when the service could not be asked. load_token and http say which.
+    token, source = load_token(test_mode)
     path = f"/repos/{repo}/dependabot/alerts?per_page=1" if repo else "/rate_limit"
     try:
         http("GET", base + path, headers(token))
     except ProviderError as exc:
-        raise ProviderError(str(exc), EXIT_SERVICE, exc.status)
+        if exc.status == 403 and "the token needs" in str(exc):  # the service names the missing permission
+            raise ProviderError(str(exc), EXIT_NOT_CONFIGURED, 403)
+        raise
     out = {"ready": True, "provider": "github", "token_source": source, "checked": "GET " + path.split("?")[0],
            "api_version": GITHUB_API_VERSION}
     if repo:

@@ -577,15 +577,30 @@ def test_check_with_repo_reads_one_alert(env, fake):
     assert "per_page=1" in fake.requests[0]["path"]
 
 
-def test_check_not_ready(env, fake):
+def test_check_exits_3_when_the_person_has_something_to_do(env, fake):
+    """The contract's one reading: 3 is "not configured" (no token, or one the service rejects)."""
     fake.auth_status = 401
     proc = run(["--check"], env)
-    assert proc.returncode == 1
-    assert proc.stderr.strip()
+    assert proc.returncode == 3 and "rejected the token" in proc.stderr
     del env["GITHUB_TOKEN"]
     proc = run(["--check"], env)
-    assert proc.returncode == 1
-    assert "GITHUB_TOKEN" in proc.stderr
+    assert proc.returncode == 3
+    assert "GITHUB_TOKEN" in proc.stderr and not proc.stdout.strip()
+
+
+def test_check_exits_1_when_the_service_could_not_be_asked(env, fake):
+    """1 is "whether the provider is ready is not known": the service is down or answered something else."""
+    env["VCS_GITHUB_API_BASE"] = "http://127.0.0.1:1"  # nothing listens there
+    proc = run(["--check"], env)
+    assert proc.returncode == 1 and "cannot reach GitHub" in proc.stderr and not proc.stdout.strip()
+
+
+def test_check_exits_3_when_the_token_lacks_the_permission(env, fake):
+    """A 403 that names the permission the token needs is the service rejecting the credential: the person
+    has something to do, and the reason says what."""
+    fake.auth_status = 403
+    proc = run(["--check", "--repo", REPO], env)
+    assert proc.returncode == 3 and "the token needs" in proc.stderr
 
 
 def test_vcs_github_token_wins_over_github_token(env, fake):
