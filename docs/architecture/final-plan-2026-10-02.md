@@ -1,6 +1,6 @@
 # Final plan, 2026-10-02: everything that remains, ordered around one last measurement round
 
-**This is the plan in force.** It replaces `docs/architecture/plan-2026-10.md`, whose phases 0 to 4 are done and whose phases 5 and 6 are absorbed here. It is built from the audit of 2026-10-02 (`docs/architecture/audit-2026-10-02/`, nine reports), from the triage of every item of `docs/backlog.md`, from two rounds of review of the plan itself and from an independent review of the repository and of the plan (section "Reviews"). Every decision in it was taken by the maintainer on 2026-10-02. Its start waits on one question, how skills are tested (section "Open for the maintainer").
+**This is the plan in force.** It replaces `docs/architecture/plan-2026-10.md`, whose phases 0 to 4 are done and whose phases 5 and 6 are absorbed here. It is built from the audit of 2026-10-02 (`docs/architecture/audit-2026-10-02/`, nine reports), from the triage of every item of `docs/backlog.md`, from two rounds of review of the plan itself and from an independent review of the repository and of the plan (section "Reviews"). Every decision in it was taken by the maintainer on 2026-10-02. It is amended by `reliability-model-2026-10-02.md`, which replaces the three computed states with a reliability score per model and lists its changes to this plan; where the two differ, that document wins (section "Open for the maintainer").
 
 ## Purpose and the one rule that orders everything
 
