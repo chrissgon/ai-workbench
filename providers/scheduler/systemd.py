@@ -5,9 +5,9 @@
 # ///
 """Scheduler provider for Linux: run a command through systemd user units, once at a set time or every N minutes.
 
-The same interface and guarantees as launchd.py, on a systemd user manager (the VPS option in
-docs/architecture/always-on-runtime.md, section 4.2). A job approved here means what it means on
-the Mac: the approval digest is computed from the same fields, the same way.
+The same interface and guarantees as launchd.py, on a systemd user manager (a small always-on
+server is the case it was written for). A job approved here means what it means under launchd:
+the approval digest is computed from the same fields, the same way.
 
 Sources: the systemd manual pages, accessed 2026-09-30. freedesktop.org answered with a bot check,
 so the text was read from the pages' source in the systemd repository (man/*.xml and

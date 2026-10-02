@@ -24,6 +24,8 @@ Exposed by scenario validation. Keeps capabilities independent and testable, let
 
 ## 2026-09-22: Flat `skills/`, root is harness-neutral, adapters self-contained
 
+**Reversed in part the same day** (entry "Packs are the unit of installation; optional areas exist"): the Claude Code adapter is no longer itself the plugin with `skills` symlinked to the core; it builds one plugin folder per pack. What stands: `skills/` is flat, the root privileges no harness, each adapter is self-contained.
+
 Rejected: nesting skills by area (the plugin loader scans `skills/<name>/SKILL.md`; nesting would need manifest arrays for one rule more) and making the repository root a Claude Code plugin (privileges one harness at the root). The Claude Code adapter is itself the plugin, with `skills` symlinked to the core. A generic `agents-dir` adapter covers every tool that reads `~/.agents/skills/`.
 
 ## 2026-09-22: Environment requirement classes and actuator contract
@@ -31,6 +33,8 @@ Rejected: nesting skills by area (the plugin loader scans `skills/<name>/SKILL.m
 Exposed by the "schedule a social post" scenario. Skills declare `requires` as classes, resolved by harness connector, then provider script, then graceful degradation. Skills with `side_effects` must implement a confirmation gate. Image generation ships first; video is a reserved slot.
 
 ## 2026-09-22: Write for the weakest model, evaluate against a floor model
+
+**Reversed in part on 2026-10-02** (entry of 2026-10-02, "The reliability model, simplified after its independent review"): a skill no longer has to pass on the floor model. The gate is evaluated on the reference model; the floor model's results are recorded and shown, and no rule reads them. What stands: skills are written for the weakest model that will run them, and every skill is run on a floor model.
 
 Detailed means explicit and templated, not long. Each skill must pass its evals on a floor model, not only on the strongest one. Floor models are configured in the eval tooling.
 
@@ -62,9 +66,9 @@ Stated by the user as a design rule after a first initialization of a real proje
 
 `eng-code-review` writes `docs/engineering/reviews/<change>.md` (task id, else branch, else pull request number) so a flow can resume at the review step in a new session and `ops-pull-request` can carry the verdict and its conditions into the pull request description. Like plans, reviews are day-to-day artifacts: removed or archived when the change ships. The review never edits code; findings go back to `eng-implement` or the backlog. The `reviewer` agent is one perspective per instance, for harnesses that run work in isolation; the skill runs the perspectives sequentially everywhere else.
 
-## 2026-09-28: An agent runtime as a new, tool-free layer; storage behind an interface; a real company as the first case
+## 2026-09-28: An agent runtime as a new, tool-free layer; storage behind an interface; a real company's case first
 
-Decided by the user. The end goal is a company run by agents, one per department, that take tasks, talk to each other through recorded messages and keep their data, managed from a local web app. The runtime is a new layer on top of the current core (skills, agents, contracts, providers), not a rewrite of it, and it names no AI tool: it runs agents through adapters, the way evals already run prompts through `run-prompt.sh`. Persistence is an interface with interchangeable implementations (SQLite first, a cloud store later), chosen by the user, in the same open-closed shape as providers. The first case is a real one-person company with no clients yet, starting with marketing agents that look for clients.
+Decided by the user. The end goal is a company run by agents, one per department, that take tasks, talk to each other through recorded messages and keep their data, managed from a local web app. The runtime is a new layer on top of the current core (skills, agents, contracts, providers), not a rewrite of it, and it names no AI tool: it runs agents through adapters, the way evals already run prompts through `run-prompt.sh`. Persistence is an interface with interchangeable implementations (SQLite first, a cloud store later), chosen by the user, in the same open-closed shape as providers. It is built against a real company's case, marketing agents first; what describes that company, its decisions and its data live in its own project, not here.
 
 Rejected: building on one agent framework directly (it would tie the core to one vendor, against principle 1); keeping `docs/workbench/state.md` as the only store (a Markdown file does not take several agents writing at once); starting with a library project (not a company). Also rejected on 2026-09-28: a per-request "quick mode" without gates like Kiro's Quick Spec (https://kiro.dev/blog/faster-smarter-specs/, from a search snippet, accessed 2026-09-27). It runs every spec phase without approvals, which is what `Autonomy.Checkpoints: end` already does, while ours keeps confirmation gates for outward actions in every mode; switching it per request instead of per project adds a second switch to maintain and no safety.
 
@@ -73,6 +77,8 @@ Rejected: building on one agent framework directly (it would tie the core to one
 `docs/area-map.md` treats security as a transversal reference that produces no artifact of its own. `eng-security-review` is the exception: triaging a project's dependency alerts ends in decisions (update, or dismiss with the host's reason and evidence) that must survive the session and back the dismissals, so it writes `docs/engineering/security-reviews/<date>.md`, the same shape as `eng-code-review`'s reports. The reference stays in `shared/references/security.md` for the rules every skill follows; the skill applies them to one project's state at one date. Version 0.1 covers dependency alerts only, by the user's decision (backlog S14 for the rest). Dismissals are an outward action with a confirmation gate; updates are proposed as tasks for `eng-implement`, never applied by the review.
 
 ## 2026-09-28: Claude models run on the maintainer's account; OpenRouter only for the floor model
+
+**Reversed in part on 2026-10-01** (entries "The floor model is DeepSeek V4.1 Flash", "Evals run only in a container" and "The eval container, as built"): the strong runner is no longer the CLI signed in on the maintainer's machine; in the container it authenticates with a long-lived token from the secret store, passed by variable name; the floor model named here was replaced; and the options are read from `evals/eval-gate.json`, not passed by hand. What stands: the strong model and the grader run on the maintainer's account, and the floor provider's key reaches floor runs only.
 
 Stated by the maintainer. Strong-model runs and the grader go through the claude-code adapter, signed in with the maintainer's own account; OpenRouter is used only to run the floor model (DeepSeek V3.2 through the agents-dir adapter). `eval_run.py --floor-pass-env` passes the OpenRouter key to floor runs only; before it, `--pass-env` handed the key to every run and to the grader. Rejected: running Claude models through OpenRouter (a second bill and a key the Claude runs do not need).
 
@@ -93,6 +99,8 @@ A comparison of models on real comments (2026-09-30, 8 comments, 2 runs each) sh
 
 ## 2026-10-01: Eval results are recorded per skill; status is computed
 
+**Decided to be replaced on 2026-10-02** (entry of 2026-10-02, "The reliability model, simplified after its independent review"): one record per skill and the three states give way to evidence lines per run and to bands. Until phase B of the plan in force builds that, the record, the three states and the generated table described here are what the tools do. The paths are the ones of the day: the status script is `evals/eval_status.py` since the entry "The eval harness lives in `evals/`".
+
 A review of the inventory found that most of the skills ticked as built had no eval result on record, and some of them scored low once measured. Five causes: "done" was a tick written by hand; results lived only in the git-ignored `evals-workspace/`; changing a skill did not force a new evaluation; `eval_run.py` let infrastructure failures (a provider out of credits, a session limit) pass as low or missing scores; and eval cases were never checked (fixtures copied to another path than the prompt named, prompts citing files the case did not ship, assertions the grader could not verify).
 
 Decided: a complete, full run writes `skills/<name>/evals/result.json`, committed, with the scores, the gate and a sha256 of the skill folder. `scripts/eval_status.py` computes each skill's status from it: `draft` (no record, a failed gate or an incomplete run), `evaluated` (gate passed on the current content) or `stale` (gate passed, then the folder changed). The status table in `docs/inventory.md` is generated from it, and `scripts/validate.py` fails when a record is invalid or the table is out of date, so a commit that changes an evaluated skill shows it as stale in the same diff. `eval_run.py` checks every case before any model call, lists infrastructure failures apart from scores and marks the iteration incomplete, with its own exit code.
@@ -109,6 +117,8 @@ Retries hide the problem from the scores, so they must not hide it from the repo
 
 ## 2026-10-01: The floor model is DeepSeek V4.1 Flash; local models are a measured goal
 
+**Reversed in part on 2026-10-02** (entry of 2026-10-02, "The reliability model, simplified after its independent review"): "a good score on a very affordable open model is the passing criterion" no longer holds; the floor model's results are information. What stands: the floor model named here, and a local model as a goal that is measured and published.
+
 The floor model changes from `openrouter/deepseek/deepseek-v3.2` to `openrouter/deepseek/deepseek-v4.1-flash`. All measured on 2026-10-01: it has open weights (MIT) and costs a fraction of the previous one; on the five evaluated skills it scored 1.00 with the skill in every run (0.40 to 0.57 without it), with no early end in 66 attempts, where the previous floor scored 0.81 to 1.00 and ended its turn early in 22% of the attempts of one run.
 
 The purpose of the floor is restated: a good score on a very affordable open model is the passing criterion. Running on a person's own machine (Ollama, models of 20 to 30 billion parameters) is a goal that is measured and published, and it does not block a skill. First local results on one skill (design-system, 2 cases, 3 runs each, with the skill): gpt-oss 20B 0.26; Qwen3-Coder 30B 0.43; Devstral Small 2 24B unusable through the runner (it announces a step and ends its turn every time); Qwen3.8 27B still being measured. Other inexpensive hosted models on the same skill: DeepSeek V4 Flash 1.00, Qwen3.7 Flash 0.89, gpt-oss 120B 0.17 with early ends.
@@ -119,11 +129,15 @@ Rejected: keeping the previous records as passed (they did not pass on the curre
 
 ## 2026-10-01: The strong model is Claude Sonnet 5.5; both eval models are named in one file
 
+**Reversed in part the same day** (entries "Evals run only in a container; the runner leaves the skill; a record says how it was measured" and "The record and the gate as built"): a record made with another strong model does not stay valid; it reads `stale`. The command and the file are `evals/eval_run.py` and `evals/eval-gate.json` since "The eval harness lives in `evals/`". What stands: the strong model, and both models named in one file and never passed by hand.
+
 Decided by the maintainer. Every evaluation until this date used Claude Opus 5.5 as the strong model and as the grader; it used up the account's usage limit three times in two days, and 42 skills are still to be evaluated. The strong model of the gate is now Claude Sonnet 5.5: it is strong enough for the condition "the skill does not make a strong model worse" and for grading assertions, at a fraction of the usage. A record names the strong model it was made with; records made with the previous strong model stay valid (only a change of floor model or of the skill's content makes a record stale).
 
 Both models, their adapters and the threshold live in `scripts/eval-gate.json`, and nowhere else. A session never passes a model to the runner: `python3 skills/core-skill-creator/scripts/eval_run.py --skill <name>` reads them from that file, so every session evaluates on the same pair. Changing a model is a change to that file, with an entry here.
 
 ## 2026-10-01: An eval run leaves nothing running and shows no dialog
+
+**Reversed in part the same day** (entry "Adapters run only in the container; cases list no commands; tolerance 0.05"): the throwaway keychain was removed with the rest of the code for running on a person's machine. What stands: a run's processes are ended as a group, on every way out.
 
 Two defects found while running the gate on many skills on macOS.
 
@@ -133,6 +147,8 @@ Stopping an evaluation left its model sessions working for many minutes, and sta
 
 ## 2026-10-01: Eval runs happen outside the repository
 
+**Superseded in part the same day** (entry "The eval container, as built"): what the last paragraph leaves open is closed by the container, which sees no home folder, no checkout and no disk to search. What stands: case folders are created outside the repository.
+
 Case folders lived under `<repository>/evals-workspace/`, so a model could walk up from its case folder and find the workbench. Evidence from the runs of that day: a floor model's log shows `find <repository>/evals-workspace/...` and its reply to a without-skill case says it will use "the workbench's own" capability, "which lives in the skills repo"; 3 of 12 floor without-skill replies of one skill name the skill; on the strong tier, without-skill replies that mention the repository by name exist for six skills (6, 3, 3, 3, 2 and 2 response files). A harness may also load instruction files from the parents of the folder it runs in. The without-skill baseline was therefore inflated, which understates what a skill adds and can change the gate's strong condition (with the skill at least as good as without it).
 
 Decided: `eval_run.py` runs every case and every grading in a fresh temporary folder outside the repository, whose parents hold no repository, instruction file or skills folder and whose path names neither the workbench nor the skill; the environment carries no path into the repository; the folder is moved to its place under `evals-workspace/` when the run ends, also after a timeout or a stop. As a guard, the output of every without-skill run is searched for the repository's path; a hit is recorded as `contaminated` and blocks the record unless `--allow-contaminated`. Records made before this keep their scores with the skill; `eval_run.py --only without --update-record` measures the baseline again, alone, and replaces the two without-skill scores of a record that is still current.
@@ -140,6 +156,8 @@ Decided: `eval_run.py` runs every case and every grading in a fresh temporary fo
 Not closed by this: a workbench installed globally in a harness, and a model that searches the whole disk; the guard reports the second.
 
 ## 2026-10-01: The strong model's eval commands are confined by a sandbox, not listed
+
+**Reversed the same day** (entry "Adapters run only in the container; cases list no commands; tolerance 0.05"): the sandbox settings, the command rules and `allow_commands` were removed; the container is the boundary for both tiers. What stands: the finding that a list of allowed command texts denies harmless commands.
 
 The strong model scored below the floor model on several skills. The cause was the eval harness, not the skills: the strong model's adapter let a command run only when its text matched a rule (the case's `allow_commands` and the skill's scripts), while the floor model's adapter approved everything. Harmless forms did not match: the skill's own script fed by a heredoc or called in a loop, a pipe, a variable, `mktemp -d`. The runs kept on the maintainer's machine carry 809 denied commands on the strong tier, most on the skills where it lost to the floor (22 in 6 runs of one, 17 of them the skill's own script; 53 in 15 runs of a research skill, 40 of them web tools its cases had not allowed).
 
@@ -166,6 +184,8 @@ Decided by the maintainer on the review of that day (`docs/architecture/review-2
 - **Network:** egress only to the model provider; a case with `allow_web` gets open egress; language dependencies and a browser come with the image.
 
 ## 2026-10-01: The gate asks the threshold of both models
+
+**Reversed in part on 2026-10-02** (entry of 2026-10-02, "The reliability model, simplified after its independent review"): the gate is evaluated on the reference model alone; the floor model's score is information. What stands: the threshold of 0.8 and the tolerance against the baseline.
 
 The rule in the code was: the floor model with the skill at the threshold (0.8) or above, and the strong model with the skill at least as good as without it. The strong model had no threshold of its own, so a skill passed with the strong model at 0.78; and the comparison had no tolerance, so a difference smaller than the spread between runs could fail a skill.
 
@@ -233,6 +253,8 @@ Decided by the maintainer, on the decision table of `docs/architecture/review-20
 
 ## 2026-10-02: The orchestrator is the one capability that hands a request over; requirement classes keep their names
 
+**Reversed in part the same day** (decision 14a of `docs/architecture/final-plan-2026-10-02.md`): requirement classes are renamed; every class takes the form `<role>:<target>` (`mailer` becomes `sender:email`, `mailbox` `reader:email`, `scheduler` `scheduler:job`, `store` `store:runtime`), in phase C of that plan. What stands: the orchestrator is the one exception to principle 4.
+
 Approved by the maintainer, closing what backlog item T20 left open. `core-orchestrator` is the one exception to principle 4: it is the router, so it names a skill and hands the request over to it, and does none of that skill's work; every other capability reads and writes artifacts, and `AGENTS.md` says so in the principle, in "Skill kinds" and in "Never". Requirement class names are not renamed: some carry a prefix and some are bare (`mailer`, `mailbox`, `scheduler`, `store`), a skill copies a name exactly as `contracts/environment.md` spells it; renaming would change every skill and provider that declares one.
 
 ## 2026-10-02: Providers are resolved by class; one interpreter rule; ledgers in a data folder (D9, D13)
@@ -248,6 +270,8 @@ Decisions D9 and D13 of `docs/architecture/review-2026-10-01.md`, as built.
 - **Left for D11:** the runtime still names the skill scripts it calls, and `payload.py` still builds the publisher's path from the workbench path and the platform.
 
 ## 2026-10-02: A full audit before one final measurement round
+
+**Reversed in part the same day** (entry of 2026-10-02, "The reliability model, simplified after its independent review"): there is no final round and no freeze after it. The next measurement is the first full test of the 48 skills under the model, and a later change costs a small test. The section this entry says awaits the maintainer was answered in full on 2026-10-02. What stands: the audit, its findings, and the order of the plan (what is known to need fixing is fixed before the 48 skills are tested).
 
 The 48 skills were measured once in the container (backlog T11), and the changes merged since then left 15 of them `stale`. The maintainer decided that the skills are measured one more time and that this round is to be the last for the skills as they are: everything that has to be fixed is fixed before it, even at the cost of measuring all 48 again, and whatever changes a skill's folder or what a run measures is frozen after it.
 
@@ -303,3 +327,28 @@ What it costs: the first full test of the 48 skills is 1,437 runs and 1,437 grad
 Left for later, on purpose: field evidence counting toward a band, once recorded uses can be compared with verdicts; the numeric decays.
 
 The model is in `docs/architecture/reliability-model-2026-10-02.md` and the work in `docs/architecture/final-plan-2026-10-02.md`: the first describes the model, the second the work, and the plan already contains the model's consequences.
+
+## 2026-10-02: Dependency alerts raised by eval fixtures: a standing rule
+
+The code host's dependency graph reads every manifest in the repository, whatever `.github/dependabot.yml` says, so an eval fixture that names real packages raises alerts on packages nothing here ever installs. It has happened twice: 30 alerts from two fixtures of `ops-ci-pipeline`, dismissed by hand on 2026-09-28 (`docs/security/dependabot-triage-2026-09-28.md`), and 21 open on 2026-10-02, all from one manifest, `skills/eng-architecture/evals/files/content-model/package.json` (read from the host's alerts API that day). New advisories keep arriving against fixtures that do not change.
+
+Bumping the fixture each time is not the answer. A fixture's manifest is part of its case, so a bump changes the case's hash, which drops that case's lab evidence and asks for a test of the skill, to silence an alert about code that never runs.
+
+The rule, item A14 of `docs/architecture/final-plan-2026-10-02.md`:
+
+1. **Invented packages wherever the case does not need the real ones.** A fixture manifest names packages that exist in no registry, under a fictional scope, as the fixture of `eng-security-review` already does: such a manifest raises no alert at all.
+2. **Where the case needs real packages** (the skill must read a real framework's version, or a real tool's configuration), the versions are current on the day the skill's row is written, and **no lockfile that lists real transitive packages is committed**: a lockfile puts hundreds of packages into the dependency graph for one case. A lockfile of invented packages is fine.
+3. **An alert a fixture raises later is dismissed**, with the reason "not used" and the comment "a test fixture, never installed". It is not fixed by a bump.
+4. **The fixture is bumped only when its skill is next changed** for another reason, in the same pull request, so that the case changes once.
+
+For case authors the rule is repeated in `evals/README.md`, which item C0.7 of the plan creates. The 21 open alerts are handled by the row of `eng-architecture` in phase C, which edits that fixture once; the row of `ops-ci-pipeline` follows point 2 for the lockfile it was going to add.
+
+Whether the host can do point 3 by itself, with an alert rule that dismisses by manifest path under `skills/*/evals/files/`, was to be tried with this change. It was not settled, and this is what is known:
+
+- The host's REST API, read with the command-line tool on 2026-10-02, has no endpoint for alert rules at the two paths tried under `dependabot/` (both answer "Not Found"), so the rule could not be created or tested from a pull request.
+- Such a rule is created in the repository's settings page. That is a change of the repository's settings, which is the maintainer's to make, so it was not made here.
+- Not verified: whether a custom rule of the host can match on a manifest path at all. If it can, the maintainer adds the rule and records it here; until then point 3 is done by hand, or through `eng-security-review`, whose dismissals sit behind a confirmation gate.
+
+One setting goes with the rule: the host's automatic security-update pull requests stay off for this repository, so that none edits a fixture manifest. Read on 2026-10-02 from the repository's settings through the API: they are disabled.
+
+Rejected: bumping fixtures as alerts arrive (each bump costs the case's evidence); removing the manifests from the fixtures (a project without a manifest is not the small real project a case needs); moving the fixtures out of the repository (the cases must ship with their skill).
