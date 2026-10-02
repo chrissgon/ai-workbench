@@ -41,12 +41,15 @@ tick     1. Reads new notification e-mails since the store's cursor (mailbox pro
             only; takes the engage-decision block of its answer; runs mkt-engage's policy_gate.py; on
             "auto" sends the reply with the publisher's comment verb and an idempotency key; otherwise adds
             an inbox item. Every step is recorded in the store and in docs/marketing/engagement-log.jsonl.
-         3. Stops starting runs once today's agent spend reaches daily_cost_cap_usd.
+         3. Stops starting runs once today's agent spend reaches daily_cost_cap_usd. A run whose cost is
+            unknown (no price for the model, a timeout, a run that never ended) counts as
+            max_cost_usd_per_run; the output says how many there were (runs_without_cost_today).
          --dry-run reads the mailbox and parses, and runs nothing else.
 add-comment  Queues a comment the person pasted (the link from "Copy link to comment", the name, the text) as an
          event of source "pasted"; the next tick handles it like a notification. This is also how the runtime
          works with "mailbox": "none", when no mailbox is connected.
-status   Recent runs, pending events, open inbox items, today's spend and replies.
+status   Recent runs, open inbox items, today's spend (with the number of runs counted at the per-run maximum
+         because their cost is unknown) and replies.
 inbox    Open inbox items, each with its reply text and its sha256.
 approve  Without --confirmed: prints the item's exact reply and its sha256. With --confirmed --sha256 <hash>:
          sends that reply only if the stored file still has that hash, then records it. The person runs this.
@@ -335,18 +338,44 @@ def gate_record(cfg: dict, project: Path, entry: dict) -> None:
                   str(project / "docs/marketing/engagement-log.jsonl"), "--entry-file", str(f)])
 
 
-def today_spend(store: Store) -> float:
+def today_spend(cfg: dict, store: Store) -> tuple[float, int]:
+    """(today's agent spend in USD, how many of today's runs have no known cost).
+
+    A run without a cost (the harness has no price for the model, the run timed out before it wrote its
+    timing, or it never ended) counts as max_cost_usd_per_run, the most its adapter was allowed to spend:
+    counted as nothing, such runs would never reach the daily cap."""
     runs = store("runs", "--limit", "500").get("runs", [])
     start = now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-    total = 0.0
+    total, unknown = 0.0, 0
     for r in runs:
         try:
             when = datetime.fromisoformat(str(r.get("started_at", "")).replace("Z", "+00:00"))
         except ValueError:
             continue
-        if when >= start:
-            total += float(r.get("cost_usd") or 0)
-    return total
+        if when < start:
+            continue
+        if r.get("cost_usd") is None:
+            unknown += 1
+            total += float(cfg["max_cost_usd_per_run"])
+        else:
+            total += float(r["cost_usd"])
+    return total, unknown
+
+
+def cap_reached(cfg: dict, store: Store) -> str | None:
+    """Why no new run may start today, or None while the daily cap is not reached."""
+    spend, unknown = today_spend(cfg, store)
+    if spend < float(cfg["daily_cost_cap_usd"]):
+        return None
+    counted = (f", {unknown} runs of unknown cost counted as {float(cfg['max_cost_usd_per_run']):g} USD each"
+               if unknown else "")
+    return f"daily cost cap reached ({spend:.2f} USD{counted})"
+
+
+def without_cost(cfg: dict, store: Store) -> dict:
+    """The tick's line about runs of unknown cost; empty when every run of today reported one."""
+    unknown = today_spend(cfg, store)[1]
+    return {"runs_without_cost_today": unknown} if unknown else {}
 
 
 def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
@@ -503,10 +532,10 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
     if newest:
         store("cursor-set", "--name", f"mailbox:{cfg['agent']}", "--value", newest)
 
-    results, spend = [], today_spend(store)
-    if spend >= float(cfg["daily_cost_cap_usd"]):
-        return {"messages": len(messages), "new_events": added, "handled": [], "stopped": f"daily cost cap reached ({spend:.2f} USD)",
-                **({"mailbox": mailbox} if mailbox else {})}
+    results, stopped = [], cap_reached(cfg, store)
+    if stopped:
+        return {"messages": len(messages), "new_events": added, "handled": [], "stopped": stopped,
+                **without_cost(cfg, store), **({"mailbox": mailbox} if mailbox else {})}
     events = []
     for source in ("pasted", "mailbox"):
         left = int(cfg["max_events_per_tick"]) - len(events)
@@ -522,7 +551,7 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
         store("event-done", "--id", event["id"], "--token", event["claim_token"], "--status", outcome["status"],
               "--note", outcome["note"] or "-")
         results.append({"event": event["id"], **outcome})
-        if today_spend(store) >= float(cfg["daily_cost_cap_usd"]):
+        if cap_reached(cfg, store):
             results.append({"stopped": "daily cost cap reached"})
             break
     out = {"messages": len(messages), "new_events": added, "handled": results}
@@ -533,7 +562,7 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             store("cursor-set", "--name", "mailbox:failure-notified", "--value", day)
             results = results + [mailbox]  # notified once a day, not on every tick
     if cfg.get("vote"):
-        if today_spend(store) >= float(cfg["daily_cost_cap_usd"]):
+        if cap_reached(cfg, store):
             out["vote"] = {"status": "skipped", "note": "daily cost cap reached"}
         else:
             try:
@@ -543,6 +572,7 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             except Exception as e:  # the comments this tick handled are already recorded; the round stays open
                 out["vote"] = {"status": "failed", "note": unexpected(e)}
         results = results + [out["vote"]]
+    out.update(without_cost(cfg, store))
     notify(cfg, results)
     return out
 
@@ -645,9 +675,10 @@ def main(argv=None) -> int:
             out = Store(cfg)("inbox-list", "--status", "open")
         else:
             store = Store(cfg)
+            spend, unknown = today_spend(cfg, store)
             out = {"runs": store("runs", "--limit", "10").get("runs", []),
                    "open_inbox": len(store("inbox-list", "--status", "open").get("items", [])),
-                   "spend_today_usd": round(today_spend(store), 4),
+                   "spend_today_usd": round(spend, 4), "runs_without_cost_today": unknown,
                    "replies_today": store("action-count", "--kind", "reply", "--since",
                                           now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()).get("count")}
     except Fail as e:

@@ -218,6 +218,24 @@ def test_daily_cost_cap_stops_new_runs(env, monkeypatch):
     assert out["handled"][-1] == {"stopped": "daily cost cap reached"}
 
 
+def test_a_run_of_unknown_cost_counts_as_the_per_run_maximum(env, monkeypatch):
+    # RT2: an adapter with no price for the model reports "cost_usd": null. Such runs counted as 0, so the daily
+    # cap never stopped anything and "status" printed 0.0.
+    monkeypatch.setenv("FAKE_COST", "null")
+    set_case(env, [message(1), message(2, commenter="Bruno"), message(3, commenter="Carla")], decision())
+    edit_config(env, max_events_per_tick=5, max_cost_usd_per_run=0.5, daily_cost_cap_usd=0.6)
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert len([h for h in out["handled"] if "event" in h]) == 2  # 0.5, then 1.0 >= 0.6
+    assert out["handled"][-1] == {"stopped": "daily cost cap reached"}
+    assert out["runs_without_cost_today"] == 2
+    code, status, _ = rt(env, "status")
+    assert status["spend_today_usd"] == 1.0 and status["runs_without_cost_today"] == 2
+    code, out, _ = rt(env, "tick")
+    assert out["handled"] == [] and "daily cost cap reached" in out["stopped"]
+    assert "2 runs of unknown cost" in out["stopped"]
+
+
 def test_publisher_failure_goes_to_the_inbox(env, monkeypatch):
     monkeypatch.setenv("FAKE_PUBLISHER_FAIL", "1")
     set_case(env, [message(1)], decision())
@@ -232,6 +250,7 @@ def test_an_unexpected_error_fails_the_event_and_the_run_and_the_tick_goes_on(en
     # a traceback, the two claimed events stayed claimed for an hour and the run row stayed "running".
     (env["wb"] / "agents/social-manager.md").write_text("---\nname: social-manager\ndescription: x\n---\n# Agent\n")
     set_case(env, [message(1), message(2, commenter="Bruno")], decision())
+    edit_config(env, daily_cost_cap_usd=5)  # a run that broke has no cost and counts as the per-run maximum (RT2)
     code, out, err = rt(env, "tick")
     assert code == 0, err
     assert [h["status"] for h in out["handled"]] == ["failed", "failed"]
