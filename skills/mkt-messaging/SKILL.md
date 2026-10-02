@@ -37,7 +37,7 @@ Decide what the product says about itself before anyone draws the page that says
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| `docs/product/prd.md` (users, features, metrics) | yes | Route to `product-prd`. |
+| `docs/product/prd.md` (users, features, metrics) | yes | Stop and tell the user that `product-prd` writes it and to run it first. |
 | Positioning: `docs/business/positioning.md` or a research brief with competitor facts | yes for comparisons | Make no comparison; say why. |
 | `docs/brand/voice.md` | no | Derive the voice from the product's own texts (README, documentation) and state the three rules you derived, labelled `derived`. |
 | The product's own facts: README, documentation, changelog, measured numbers | yes | Ask the user for the facts; never fill from memory of similar products. |

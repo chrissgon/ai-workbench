@@ -51,8 +51,8 @@ Progress:
   |-------|---------|----------|
   | direct | one step, no specialized knowledge, no side effects | no skill; answer directly |
   | capability | one deliverable, one area ("validate the business model", "review this diff") | one `<area>-` skill |
-  | flow, one area | several steps in one area, or a deliverable that needs earlier steps ("marketing strategy for the launch", "fix this bug end to end") | one `flow-` skill |
-  | flow, cross-area | outcome spanning areas ("build a product from scratch", "launch X") | `flow-new-product` or the cross-area flow that matches |
+  | flow, one area | several steps in one area, or a deliverable that needs earlier steps ("marketing strategy for the launch", "fix this bug end to end") | one `flow-` skill (only `flow-fix-bug` is built; any other flow is planned: route to it as `pending` and propose the fallback of step 4) |
+  | flow, cross-area | outcome spanning areas ("build a product from scratch", "launch X") | the cross-area flow that matches in the routing table (`flow-new-product`; planned, not built: route to it as `pending` and propose the fallback of step 4) |
   | ambiguous | two rows fit with different deliverables, or the target is unknown (which product, which repository) | ask (step 6) inside the routing block, with Route set to the most likely skill and status `pending`; use `core-clarify` only when the request is a plan that needs a full brief |
 
 - [ ] Step 3: Find the area. Read [references/routing.md](references/routing.md) and match the request's *intent*, not its words; requests arrive in any language. If two areas fit, apply the boundary test: would a senior practitioner of area X know how to do this without expertise from area Y? If yes, X. Keep in mind: AI *inside the product* is the `ai-` area; the workbench improving itself is `core-`.
@@ -96,6 +96,6 @@ Approve the route only if all of the following hold:
 - A request that names a product with no `docs/` artifacts and no state file: ask where the project lives before assuming it is the current directory.
 - Skill names are identifiers, not descriptions. If the table says `biz-business-model`, the route says `biz-business-model`, not a longer name that sounds more precise.
 - Never start two flows for one request. A cross-area outcome goes to one cross-area flow, which invokes the others one level deep.
-- A request that ends in something being published and where the thing still has to be produced is a flow (`flow-social-post`), not the publishing capability; `mkt-publish` only takes a finished post.
+- A request that ends in something being published and where the thing still has to be produced is a flow (`flow-social-post`), not the publishing capability; `mkt-publish` only takes a finished post. That flow is planned, not built: the route names it as `pending` and step 4's fallback applies.
 - Requests with side effects ("post", "send", "deploy", "delete") are never `direct`, even when they look like one step. Route to the skill that owns the confirmation gate; if none exists, execute only after showing the exact payload and getting an explicit yes, and record the approval in "Approvals" of `docs/workbench/state.md` (scope `action`, what, date, the user's words, status `executed`).
 - The user writing in Portuguese does not change the route. Match intent; reply in the user's language; keep artifacts in English unless the project says otherwise.

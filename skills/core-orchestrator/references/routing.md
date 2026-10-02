@@ -1,6 +1,6 @@
 # Routing table: intent → area → skill
 
-Match the intent column, not the example words. Skills marked (planned) are not built yet; when routed to one, say so and fall back (see SKILL.md step 4). Keep this table in sync with `docs/inventory.md` in the workbench.
+Match the intent column, not the example words. Skills marked (planned) are not built yet; when routed to one, say so and fall back (see SKILL.md step 4). Of the flows, only `flow-fix-bug` is built; every other flow below is planned. Keep this table in sync with `docs/inventory.md` in the workbench.
 
 ## Business (`biz-`)
 
@@ -12,7 +12,7 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | How we make money; pricing; unit economics; validate the business model | biz-business-model |
 | How we reach and acquire the first customers | biz-gtm |
 | The whole plan in one document; investor narrative | biz-business-plan |
-| Validate or build a business end to end | flow-business-plan |
+| Validate or build a business end to end | flow-business-plan (planned) |
 
 ## Product (`product-`)
 
@@ -33,7 +33,7 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Logo direction, color, typography, imagery, brand tokens | brand-identity |
 | How the brand speaks; tone; messaging pillars | brand-voice |
 | The brand book that compiles it all | brand-guidelines |
-| Create a brand from nothing | flow-brand |
+| Create a brand from nothing | flow-brand (planned) |
 
 ## Design (`design-`)
 
@@ -47,7 +47,7 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Does the implementation match the design | design-implementation-validation |
 | Run a brief in a design tool, a generator or a code prototype; review what a tool produced | design-execute |
 | Accessibility audit | design-accessibility-review (planned) |
-| Design a product's experience end to end | flow-design |
+| Design a product's experience end to end | flow-design (planned) |
 
 ## Engineering (`eng-`)
 
@@ -65,10 +65,10 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Review a diff; security, edge cases, regressions, performance | eng-code-review |
 | Update documentation for a change | eng-docs |
 | Fix a bug end to end | flow-fix-bug |
-| Build a feature end to end | flow-build-feature |
-| Improve existing code end to end | flow-improve-code |
-| Start a codebase from nothing | flow-new-project |
-| Take a ticket and implement it ("check ticket N and implement it", any ticket id or issue link) | flow-implement-ticket |
+| Build a feature end to end | flow-build-feature (planned) |
+| Improve existing code end to end | flow-improve-code (planned) |
+| Start a codebase from nothing | flow-new-project (planned) |
+| Take a ticket and implement it ("check ticket N and implement it", any ticket id or issue link) | flow-implement-ticket (planned) |
 
 ## Delivery and operations (`ops-`)
 
@@ -93,8 +93,8 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | SEO plan | mkt-seo (planned) |
 | Email campaign or sequence | mkt-email (planned) |
 | Measurement plan; experiments | mkt-analytics (planned) |
-| Any request that ends in a post being published or scheduled and the post still has to be written or illustrated ("schedule a post about X", "post about our launch tomorrow") | flow-social-post |
-| Launch end to end | flow-launch |
+| Any request that ends in a post being published or scheduled and the post still has to be written or illustrated ("schedule a post about X", "post about our launch tomorrow") | flow-social-post (planned) |
+| Launch end to end | flow-launch (planned) |
 
 ## AI inside the product (`ai-`)
 
@@ -122,5 +122,5 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 
 | Intent | Skill |
 |--------|-------|
-| Build a digital product from scratch, business through launch | flow-new-product |
+| Build a digital product from scratch, business through launch | flow-new-product (planned) |
 | Where are we; what's next | read state, summarize, propose the next phase (no skill) |

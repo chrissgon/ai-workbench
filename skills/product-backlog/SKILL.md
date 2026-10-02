@@ -35,7 +35,7 @@ Turn a specification and a design into the list a person or an agent can start e
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| docs/product/specs/<feature>.md with `Ready for architecture: yes` | yes | Ask for it or route to `product-feature-spec`. |
+| docs/product/specs/<feature>.md with `Ready for architecture: yes` | yes | Ask for it, or tell the user that `product-feature-spec` writes it and to run it first. |
 | docs/engineering/designs/<feature>.md | yes when the spec has more than three requirements (REQ and NFR together) | Write nothing. Stop and ask the question under "Missing design". |
 | docs/product/backlog.md | no | Create it from the template; the feature becomes its first section. |
 | docs/workbench/state.md | no | Skip the decision check; do not register the artifact. |

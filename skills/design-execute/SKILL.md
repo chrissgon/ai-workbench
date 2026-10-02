@@ -7,7 +7,7 @@ description: >
   chosen direction. It runs automatically when the agent can drive the tool and in assisted
   mode otherwise: it prepares the exact prompt and attachments per direction, the user runs
   them and brings the results back. When the request has no brief or a thin one ("make the
-  landing in Figma Make"), it runs design-brief first. Use this skill when someone asks to
+  landing in Figma Make"), it asks for design-brief first. Use this skill when someone asks to
   generate, create, render or produce a screen, mockup, logo, presentation, animation or
   image, to run or execute a brief, or to review what a design tool produced. Not for
   writing the brief itself (design-brief) or implementing the chosen design in the product
@@ -31,7 +31,7 @@ A brief is worth what the tool makes of it, and a tool's first result is rarely 
 
 ## When not to use
 
-- There is nothing decided yet about the artifact (no design system, no copy source): `design-brief` routes to what is missing.
+- There is nothing decided yet about the artifact (no design system, no copy source): `design-brief` says what is missing and which skill writes it.
 - The chosen design must become product code: `design-handoff`, then `eng-implement`.
 - Comparing the built product with the approved design: `design-implementation-validation`.
 
@@ -39,7 +39,7 @@ A brief is worth what the tool makes of it, and a tool's first result is rarely 
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| `docs/design/briefs/<artifact>.md` with `Lint: ok` and `Ready for design-execute: yes` | yes | Run `design-brief` first. A request that names only the artifact and a tool ("a landing in Claude Design") is a missing brief, not a brief. |
+| `docs/design/briefs/<artifact>.md` with `Lint: ok` and `Ready for design-execute: yes` | yes | This needs the brief, which `design-brief` writes: stop and tell the user to run it first. A request that names only the artifact and a tool ("a landing in Claude Design") is a missing brief, not a brief. |
 | The user's choice of tool | no | Recommend one from [references/tools.md](references/tools.md) by artifact type and ask. |
 | Previous results of the same artifact (`docs/design/results/<artifact>.md`) | no | Start at round 1. |
 | `docs/workbench/state.md` | no | Skip approvals and registration. |
@@ -49,7 +49,7 @@ A brief is worth what the tool makes of it, and a tool's first result is rarely 
 ## Procedure
 
 Progress:
-- [ ] Step 1: Brief. Open the brief. It is ready when its header has `Lint: ok` and its Readiness says `yes`. If there is no brief, the brief is not ready, or the user's request adds decisions the brief lacks (a new direction, new copy), stop and run `design-brief`, then come back.
+- [ ] Step 1: Brief. Open the brief. It is ready when its header has `Lint: ok` and its Readiness says `yes`. If there is no brief, the brief is not ready, or the user's request adds decisions the brief lacks (a new direction, new copy), stop: tell the user what is missing and that `design-brief` writes or updates the brief, and continue from this step once the brief is ready.
 - [ ] Step 2: Tool and mode. Read [references/tools.md](references/tools.md). Use the user's tool, or recommend one for the artifact type and ask. Decide the mode: `automatic` when this environment can drive the tool (an integration, a provider for the class, or code with a browser), `assisted` otherwise. Say which and why. If the brief's values mode is `loaded`, confirm the design system is actually loaded in the tool; if it is not, set that up first (the tool's design-system onboarding, see the tool notes) or switch the brief to `inline`.
 - [ ] Step 3: Round plan. Round 1 is one run per direction in the brief's Deliverables; round 2 is the chosen direction complete. Write the plan into `docs/design/results/<artifact>.md` from [assets/result-template.md](assets/result-template.md): the brief, tool, mode and one row per run with status `planned`.
 - [ ] Step 4: Run pack. For each run, write `docs/design/results/<artifact>/round-<n>/<direction>/prompt.md`: the brief's prompt with the `Direction:` slot filled with that direction's paragraph, adapted to the tool per the tool notes (for example a skill invocation or a stylesheet link the tool needs), and the list of attachments from the brief's Attachments section.
@@ -57,7 +57,7 @@ Progress:
   - Automatic: pass the confirmation gate below when the run writes to an external account or spends credits, then run each pack in the tool as the tool notes describe (code prototypes: see [references/code-prototype.md](references/code-prototype.md); `scripts/screenshot.mjs` renders with a browser already on the machine, so a code prototype needs no install and no question before rendering). Save every output (images, exported files, links) under the run's folder; set status `done`.
   - Assisted: hand the user the run packs in order with the tool notes' steps, in their language, and stop. Set status `waiting on user`. When the user brings results (screenshots, links, exported code), save them under the run's folder and set status `done`.
 - [ ] Step 6: Look before judging. Open every output. For screens, check each required width and state exists; for images, check the size; list anything missing as a finding, not as a failure of the direction.
-- [ ] Step 7: Critique. For every run, judge each CRIT of the brief as `pass`, `partial` or `fail` with one line of evidence (what in the output shows it). Add findings outside the criteria that would block implementation (a component that is not the product's, invented copy, a colour outside the design system). For a deeper review, run `core-critique` on the result with the brief's criteria as the bar.
+- [ ] Step 7: Critique. For every run, judge each CRIT of the brief as `pass`, `partial` or `fail` with one line of evidence (what in the output shows it). Add findings outside the criteria that would block implementation (a component that is not the product's, invented copy, a colour outside the design system). A deeper review is what `core-critique` writes: offer it to the user as a next step, with the brief's criteria as the bar.
 - [ ] Step 8: Decide with the user. Recommend one direction, or a round 2 with named changes, based on the critique; ask; record the answer under Decision with the date. The user decides; a recommendation is not a decision.
 - [ ] Step 9: Round 2. Run the chosen direction per the brief's round-2 deliverables (an earlier design may be attached now, as the record of structure), repeat steps 5 to 8, and mark the final outputs as approved.
 - [ ] Step 10: Lint: `python3 scripts/lint_result.py --file docs/design/results/<artifact>.md --brief docs/design/briefs/<artifact>.md`. Register the result in `docs/workbench/state.md` (owner `design-execute`), record approvals, and report with the template below.
