@@ -4,18 +4,30 @@
     {
       "id": 1,
       "prompt": "The time-zone change in dueLabel is already implemented in the invoices project (plan in docs/engineering/plans/due-label-customer-time-zone.md). Write the integration tests.",
-      "expected_output": "Tests are written with node:test and import through src/index.js (the public API); they run the label under several server time zones by starting child processes with TZ set, and pass; the same tests are run against releases/1.2.0/src (the previous release) in a scratch copy, where the server-zone cases fail in America/Sao_Paulo and the preserved cases pass; npm test passes with the change; the plan gains an 'Integration tests' section with both runs' counts; src/ is unchanged.",
+      "expected_output": "Tests are written with node:test and import through src/index.js (the public API; a library with no server, so the readiness signal is n/a); they run the label under several server time zones by starting child processes with TZ set, and pass; the same tests are run against releases/1.2.0/src (the previous release) in a scratch copy made in one chained command, where the server-zone cases fail in America/Sao_Paulo and the preserved cases pass; npm test passes with the change; the plan gains an 'Integration tests' section with both runs' count lines quoted, the full check, git worktree list and the working tree; src/ is unchanged.",
       "files": [
         "evals/files/invoices"
       ],
+      "grader_files": [
+        "src/due.js",
+        "src/index.js",
+        "releases/1.2.0/src/due.js",
+        "AGENTS.md",
+        "docs/engineering/plans/due-label-customer-time-zone.md"
+      ],
       "assertions": [
         "New test files import dueLabel through src/index.js and use node:test",
-        "The tests run code under at least two server time zones (TZ set per process or per run)",
-        "The tests are also run against the previous release (releases/1.2.0/src) and the reply or plan reports which fail there",
-        "npm test is run with the change and its result is reported",
-        "The plan file gains an 'Integration tests' section with the counts of both runs",
-        "src/due.js and src/index.js are unchanged",
-        "The reply is in English, the language of the prompt"
+        "Each time-zone test starts a separate process with TZ set (a child process or `TZ=<zone> <command>`), in at least two zones, and no test assigns `process.env.TZ` inside the test process",
+        "The reply or the plan quotes the command run against releases/1.2.0/src with the runner's count lines, and names the tests that fail there",
+        "The reply or the plan quotes `npm test` with its count lines for the change",
+        {
+          "text": "The plan's 'Integration tests' section carries both runs with their count lines",
+          "tags": ["format"]
+        },
+        {
+          "text": "Neither src/due.js nor src/index.js is among the files the run produced or changed",
+          "tags": ["guard"]
+        }
       ]
     },
     {
@@ -25,10 +37,26 @@
       "files": [
         "evals/files/invoices"
       ],
+      "grader_files": [
+        "src/due.js",
+        "src/index.js",
+        "releases/1.2.0/src/due.js",
+        "AGENTS.md",
+        "docs/engineering/plans/due-label-customer-time-zone.md"
+      ],
       "assertions": [
-        "The reply says integration tests come after the implementation, pointing to writing failing unit tests first",
-        "No integration test for a locale option is added and reported as passing",
-        "src/ is unchanged"
+        {
+          "text": "The reply says integration tests come after the implementation, pointing to writing failing unit tests first",
+          "tags": ["guard"]
+        },
+        {
+          "text": "No test file is among the files the run produced",
+          "tags": ["guard"]
+        },
+        {
+          "text": "No file under src/ is among the files the run produced or changed",
+          "tags": ["guard"]
+        }
       ]
     }
   ]
