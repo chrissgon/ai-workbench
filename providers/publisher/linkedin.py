@@ -87,6 +87,10 @@ COMMENT_SCOPE_HINT = (
 )
 HTTP_TIMEOUT_SECONDS = 60
 LOCK_TIMEOUT_SECONDS = 10
+# 4xx answers that do not say the request was refused: 408 (the service gave up waiting, after a request that
+# may have been taken) and 429 (a limit, which a gateway can answer for a request already accepted behind it).
+# After one of them the key stays pending, like after a timeout; every other 4xx releases it.
+UNKNOWN_OUTCOME_STATUSES = (408, 429)
 
 # Reserved characters of the little text format. Backslash comes first so that the
 # escapes added for the other characters are not escaped twice.
@@ -122,12 +126,16 @@ verbs:
             the member's recent posts or the post's comments: --post-urn <urn>
             (the post was published), --comment-urn <urn> (the comment was) or
             --not-published (it was not; the key may be used again). Needs
-            --confirmed.
+            --confirmed; with --dry-run it prints what it would record and
+            changes nothing.
 
 idempotency:
   Each key publishes one post or one comment at most once. It is recorded as pending in the ledger
   before the request and as published after it, under a file lock; a pending
-  key refuses every new attempt until resolve settles it.
+  key refuses every new attempt until resolve settles it. A key is released
+  when nothing was sent, or when LinkedIn refused the request with a 4xx answer
+  other than 408 and 429; after a timeout, a dropped connection, a 5xx, a 408
+  or a 429 the outcome is unknown and the key stays pending.
 
 credentials (never from files or flags):
   The access token is read from the OS secret store (service "{KEYRING_SERVICE}",
@@ -443,6 +451,19 @@ def ledger_update(key: str, entry: dict | None) -> None:
         ledger_save(data)
 
 
+def refused(exc: ProviderError) -> bool:
+    """Whether the service's answer says it did not take the request: a 4xx other than 408 and 429."""
+    return exc.status is not None and 400 <= exc.status < 500 and exc.status not in UNKNOWN_OUTCOME_STATUSES
+
+
+def after_unknown(key: str, kind: str) -> str:
+    """What to do after an answer that leaves the outcome unknown."""
+    where, flag = (("the comments on the post", "--comment-urn <urn>") if kind == "comment"
+                   else ("the member's recent posts", "--post-urn <urn>"))
+    return (f"check {where}, then run linkedin.py resolve --idempotency-key {key} with {flag} if it is there or "
+            "--not-published if it is not, and --confirmed; after --not-published the same command may run again")
+
+
 def pending_message(key: str, entry: dict) -> str:
     if entry_kind(entry) == "comment":
         where = f"the comments on {entry.get('post_urn') or 'the post'}"
@@ -701,11 +722,15 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
             json.dumps(post_body(author, commentary, image_urn)).encode(),
         )
     except ProviderError as exc:
-        # A 4xx answer means LinkedIn refused the post; anything else after sending is unknown.
-        if not sent or (exc.status is not None and 400 <= exc.status < 500):
+        # A 4xx answer other than 408 and 429 means LinkedIn refused the post; anything else after sending is
+        # unknown, and the key stays pending until resolve settles it.
+        if not sent or refused(exc):
             ledger_update(key, None)
         else:
             ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": str(exc)})
+            if exc.status in UNKNOWN_OUTCOME_STATUSES:
+                raise ProviderError(f"{exc}; that answer does not say whether the post was taken, so the key "
+                                    f"stays pending: {after_unknown(key, 'post')}", EXIT_SERVICE, exc.status) from None
         raise
     except BaseException:
         if not sent:
@@ -866,17 +891,18 @@ def create_comment(base: str, token: dict, member_urn, post_urn: str, parent: st
             json.dumps(comment_body(actor, post_urn, text, parent)).encode(),
         )
     except ProviderError as exc:
-        # A 4xx answer means LinkedIn refused the comment; anything else after sending is unknown.
-        refused = exc.status is not None and 400 <= exc.status < 500
-        if not sent or refused:
+        # A 4xx answer other than 408 and 429 means LinkedIn refused the comment; anything else after sending
+        # is unknown, and the key stays pending until resolve settles it.
+        if not sent or refused(exc):
             ledger_update(key, None)
         else:
             ledger_update(key, {**claim, "status": "pending", "started_at": now_iso(), "error": str(exc)})
         if exc.status == 403:
             raise ProviderError(f"{exc}; {COMMENT_SCOPE_HINT}", EXIT_SERVICE, 403) from None
-        if exc.status == 429:
-            raise ProviderError(f"{exc}; LinkedIn limits how many comments a member creates per minute: "
-                                "wait a minute and rerun the same command", EXIT_SERVICE, 429) from None
+        if sent and exc.status in UNKNOWN_OUTCOME_STATUSES:
+            limit = ("LinkedIn limits how many comments a member creates per minute. " if exc.status == 429 else "")
+            raise ProviderError(f"{exc}; {limit}That answer does not say whether the comment was taken, so the "
+                                f"key stays pending: {after_unknown(key, 'comment')}", EXIT_SERVICE, exc.status) from None
         raise
     except BaseException:
         if not sent:
@@ -986,10 +1012,11 @@ def cmd_resolve(args) -> int:
     if args.comment_urn and not match:
         raise ProviderError("--comment-urn must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
                             EXIT_USAGE)
-    if not args.confirmed:
-        raise ProviderError("refusing to resolve without --confirmed; the user decides what happened", EXIT_USAGE)
-    with ledger_locked() as data:
-        entry = data["entries"].get(key)
+    if not args.confirmed and not args.dry_run:
+        raise ProviderError("refusing to resolve without --confirmed; the user decides what happened "
+                            "(use --dry-run to preview)", EXIT_USAGE)
+
+    def check(entry: dict | None) -> None:
         if not entry or entry_status(entry) != "pending":
             state = entry_status(entry) if entry else "absent"
             raise ProviderError(f"idempotency key {key!r} is {state}, not pending; nothing to resolve", EXIT_USAGE)
@@ -998,6 +1025,19 @@ def cmd_resolve(args) -> int:
             raise ProviderError(f"idempotency key {key!r} is a comment; use --comment-urn <urn>", EXIT_USAGE)
         if kind == "post" and args.comment_urn:
             raise ProviderError(f"idempotency key {key!r} is a post; use --post-urn <urn>", EXIT_USAGE)
+
+    if args.dry_run:
+        # A dry run does nothing, also when --confirmed is given with it: the entry is read and left as it is.
+        entry = ledger_read()["entries"].get(key)
+        check(entry)
+        print(json.dumps({"dry_run": True, "idempotency_key": key, "ledger": str(ledger_path()),
+                          "pending_entry": entry,
+                          "would_record": "published" if (args.post_urn or args.comment_urn) else "released",
+                          "post_urn": args.post_urn, "comment_urn": args.comment_urn}, indent=2))
+        return EXIT_OK
+    with ledger_locked() as data:
+        entry = data["entries"].get(key)
+        check(entry)
         if args.post_urn:
             data["entries"][key] = {"status": "published", "post_urn": args.post_urn,
                                     "created_at": now_iso(), "resolved": True}
@@ -1156,7 +1196,8 @@ def build_parser() -> argparse.ArgumentParser:
                              "endpoint needs partner access for member comments)")
     parser.add_argument("--comment-urn", help="with resolve: the pending comment was published as this URN")
     parser.add_argument("--not-published", action="store_true", help="with resolve: the pending attempt was not published")
-    parser.add_argument("--dry-run", action="store_true", help="print the exact request bodies and do nothing else")
+    parser.add_argument("--dry-run", action="store_true", help="print the exact request bodies (with resolve: what "
+                        "it would record) and do nothing else")
     parser.add_argument("--confirmed", action="store_true", help="required to publish or comment; set by the calling "
                         "skill's gate")
     return parser
