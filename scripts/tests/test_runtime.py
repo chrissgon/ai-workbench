@@ -673,3 +673,28 @@ def test_a_pin_that_cannot_be_read_stops_the_tick_and_pin_goes_with_tick_only(en
     assert publisher_calls(env) == [] and not env["data"].joinpath("store.sqlite").exists()
     code, _, err = rt(env, "status", "--pin", str(tmp_path / "bad.json"))
     assert code == 2 and "--pin goes with tick" in err
+
+
+# --- CT4, CT5: the contracts promise what the code does --------------------------------------------------
+
+
+def test_the_runtime_contract_promises_only_what_the_code_does():
+    contract = (REPO / "contracts/runtime.md").read_text(encoding="utf-8")
+    # CT5: the gate was "bound by hash to what the person approved"; only the policy file was, and the gate
+    # script is bound only for a pinned tick (RT5).
+    assert "the gate is code, bound by hash" not in contract
+    assert "the gate script is bound only for a scheduled tick that carries `--pin`" in contract
+    # CT5: "read access to the project folder" is the adapter's doing, not the runtime's.
+    assert "read access to the project folder" not in contract and "gives the model read access" not in contract
+    assert "The runtime itself confines nothing" in contract
+    # CT5: the daily cap is checked before each run and counts a run of unknown cost (RT2, HP1).
+    assert "checked before each run from the store" in contract and "runs_without_cost_today" in contract
+
+
+def test_the_environment_contract_says_where_each_approval_is_recorded():
+    # CT4: the contract named only the state file; the runtime records its approvals in the store's inbox.
+    contract = (REPO / "contracts/environment.md").read_text(encoding="utf-8")
+    (paragraph,) = [p for p in contract.split("\n\n") if p.startswith("**Two records of approvals.**")]
+    for words in ("docs/workbench/state.md", "inbox item", "action row", "writes nothing to the state file",
+                  "policy:<sha256>", "never executed on the strength of the other"):
+        assert words in paragraph, words

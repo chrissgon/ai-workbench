@@ -17,7 +17,7 @@ The runtime starts agents without a person at the keyboard: a scheduler fires, t
 
 ## An agent run
 
-- **Input:** the agent definition (`agents/<name>.md`), a task file the runtime writes (what to do, and the trigger's data marked as external content), the skills the agent lists, read access to the project folder.
+- **Input:** the agent definition (`agents/<name>.md`), a task file the runtime writes (what to do, and the trigger's data marked as external content), the skills the agent lists, and the project folder, which the runtime passes to the adapter as `--project`. The runtime itself confines nothing: what the model can read, inside the project and outside it, is what the adapter and its harness allow (each adapter's README says how far that goes; containing a runtime agent beyond its tool list is backlog N15).
 - **Tools:** read only. The model reads files and answers; it cannot write files, run commands or call a network service. Everything it proposes comes back as a fenced JSON block in its answer, whose shape the task names.
 - **Budget:** a spend limit per run (`max_cost_usd`) and a time limit (`timeout_seconds`); a daily spend cap across runs (`daily_cost_cap_usd`), checked before each run from the store. A run whose cost is unknown (the adapter has no price for the model, the run timed out, or it never ended) counts as `max_cost_usd_per_run`, and the tick's output says how many such runs the day has (`runs_without_cost_today`).
 - **Output:** `<out>/response.md`, `<out>/timing.json` (`total_tokens`, `duration_ms`, `cost_usd`, `exit_code`), `<out>/raw.json` and `<out>/stderr.log`. The runtime keeps `<out>` under the run's folder and records the run in the store.
@@ -29,7 +29,7 @@ run-agent.sh --agent-file <agents/name.md> --task-file <f> --project <dir> --mod
              [--skill-dir <dir>]... [--max-cost-usd <amount>] [--timeout-seconds <n>]
 ```
 
-It copies the skills (never links them) into a fresh working folder for the run, gives the model read access to `--project`, allows only reading tools, loads no connectors and no user-level settings, and writes the files above. It exits 0 when the model answered, 1 otherwise.
+It copies the skills (never links them) into a fresh working folder for the run, names `--project` to the harness as a folder to read, allows only reading tools (how far they reach outside `--project` is the harness's doing, and the adapter's README says it), loads no connectors and no user-level settings, and writes the files above. It exits 0 when the model answered, 1 otherwise.
 
 ## Why the model never acts
 
