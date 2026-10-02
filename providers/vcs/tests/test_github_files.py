@@ -14,9 +14,11 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -693,3 +695,69 @@ def test_a_tag_is_refused_as_branch(remote, out_files):
     assert git(remote.env, remote.bare, "for-each-ref", "--format=%(refname)") == refs_before
     assert "refs/heads/v1" not in refs_before
     assert ledger(env) == {} and list(work_root(env).iterdir()) == []
+
+
+# --- VS6: a signal cleans up and stops git -----------------------------------------------------
+
+
+@needs_tools
+def test_sigterm_stops_git_removes_the_clone_and_keeps_the_key_pending(remote, out_files, tmp_path):
+    # git runs in its own session and the provider had no signal handler: SIGTERM (what a scheduler sends a
+    # job at its limit) killed the provider at once, left the clone behind, and the push landed after it died.
+    started, finished = tmp_path / "receive-started", tmp_path / "receive-finished"
+    hook = remote.bare / "hooks" / "pre-receive"
+    hook.write_text(f'#!/bin/sh\ntouch "{started}"\nsleep 4\ntouch "{finished}"\n')
+    hook.chmod(0o755)
+    env = remote.provider_env()
+    before = remote.head()
+    proc = subprocess.Popen([sys.executable, str(SCRIPT), *commit_args(out_files, "k1", "--confirmed")], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(300):  # until the remote is receiving the push
+            if started.exists():
+                break
+            time.sleep(0.1)
+        assert started.exists(), "the push never started"
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert proc.returncode == 128 + signal.SIGTERM, err
+    assert "stopped by signal" in err and "Traceback" not in err and not out.strip()
+    assert list(work_root(env).iterdir()) == []  # the clone is gone
+    entry = ledger(env)["k1"]
+    assert entry["status"] == "pending" and len(entry["attempted_commit"]) == 40 and entry["error"] == "interrupted"
+    time.sleep(5)  # longer than the remote's hook would have needed
+    assert not finished.exists(), "git went on after the provider was stopped"
+    assert remote.head() == before
+    again = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert again.returncode == 1 and "pending" in again.stderr
+
+
+@needs_tools
+def test_sigterm_during_the_clone_releases_the_key(remote, out_files, tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "clone-started"
+    wrapper = bin_dir / "git"
+    wrapper.write_text(f'#!/bin/sh\nif [ "$1" = clone ]; then touch "{marker}"; sleep 30; fi\nexec "$REAL_GIT" "$@"\n')
+    wrapper.chmod(0o755)
+    env = remote.provider_env()
+    env.update({"REAL_GIT": shutil.which("git"), "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}"})
+    proc = subprocess.Popen([sys.executable, str(SCRIPT), *commit_args(out_files, "k1", "--confirmed")], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(300):
+            if marker.exists():
+                break
+            time.sleep(0.1)
+        assert marker.exists()
+        proc.send_signal(signal.SIGTERM)
+        _, err = proc.communicate(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert proc.returncode == 128 + signal.SIGTERM, err
+    assert list(work_root(env).iterdir()) == []
+    assert ledger(env) == {}  # nothing was sent: the key is free

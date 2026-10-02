@@ -890,6 +890,26 @@ class PushRejected(NotPushed):
     """The remote refused the push because the branch moved: worth one fresh attempt."""
 
 
+class Stopped(BaseException):
+    """A signal asked the provider to stop (a scheduler at a job's limit sends SIGTERM). It unwinds like any
+    exception, so that git and everything it started are stopped, the clone is removed and a push that had
+    started is recorded as pending with the commit it attempted; left to the default action, the provider died
+    at once, its clone stayed behind and git went on pushing without it."""
+
+    def __init__(self, signum: int):
+        super().__init__(f"signal {signum}")
+        self.signum = signum
+
+
+STOP_SIGNALS = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+
+
+def stop_on_signal(signum, frame) -> None:
+    for sig in STOP_SIGNALS:  # the cleanup that follows is not interrupted by a second signal
+        signal.signal(sig, signal.SIG_IGN)
+    raise Stopped(signum)
+
+
 def vcs_test_mode() -> bool:
     return os.environ.get("VCS_TEST") == "1"
 
@@ -1396,6 +1416,9 @@ def main(argv: list[str] | None = None) -> int:
     os.umask(0o077)  # the ledger, its lock and its folder are private to the user
     parser = build_parser()
     args = parser.parse_args(argv)
+    with contextlib.suppress(ValueError):  # only the main thread may set handlers; elsewhere the default stays
+        for sig in STOP_SIGNALS:
+            signal.signal(sig, stop_on_signal)
     try:
         if args.check:
             return cmd_check(args)
@@ -1414,6 +1437,10 @@ def main(argv: list[str] | None = None) -> int:
     except ProviderError as exc:
         log(f"error: {exc}")
         return exc.code
+    except Stopped as stop:
+        log(f"error: stopped by signal {stop.signum}: git was stopped and the clone removed. A push that had "
+            "started is pending in the ledger with the commit it attempted; settle it with resolve")
+        return 128 + stop.signum
 
 
 if __name__ == "__main__":
