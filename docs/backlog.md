@@ -1,5 +1,7 @@
 # Backlog: workbench tasks
 
+**Read first:** every item below was triaged on 2026-10-02. What is done, what is still worth doing and where each item is handled is in the "Backlog map" of [architecture/final-plan-2026-10-02.md](architecture/final-plan-2026-10-02.md), the plan in force, with the evidence in [architecture/audit-2026-10-02/](architecture/audit-2026-10-02/README.md); this file is rewritten by that plan's item A2 and is not yet.
+
 Work on the workbench itself that is not writing a skill: tooling, checks, rules, repository settings. Skills, flows and agents are tracked in [inventory.md](inventory.md); an item here that becomes a skill also gets a row there.
 
 Each item says where it came from, so none is written from generic knowledge. Tick an item when its "Done when" holds, and add the commit.
