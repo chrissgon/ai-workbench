@@ -91,6 +91,34 @@ def test_the_hash_changes_when_a_file_is_added_or_renamed(root):
     assert len({first, second, es.content_hash(str(skill))}) == 3
 
 
+def test_the_hash_leaves_out_the_tests_of_the_skills_scripts(root):
+    skill = root / "skills" / "core-demo"
+    first = es.content_hash(str(skill))
+    tests = skill / "scripts" / "tests"
+    (tests / "fixtures").mkdir(parents=True)
+    (tests / "test_check.py").write_text("def test_ok():\n    assert True\n")
+    (tests / "conftest.py").write_text("")
+    (tests / "fixtures" / "input.md").write_text("fixture\n")
+    assert es.content_hash(str(skill)) == first  # added
+    (tests / "test_check.py").write_text("def test_ok():\n    assert 1 == 1\n")
+    assert es.content_hash(str(skill)) == first  # changed
+    (tests / "test_check.py").unlink()
+    (tests / "fixtures" / "input.md").unlink()
+    assert es.content_hash(str(skill)) == first  # removed
+    (skill / "scripts" / "check.py").write_text("print('changed')\n")
+    assert es.content_hash(str(skill)) != first
+
+
+def test_only_the_tests_folder_directly_under_scripts_is_left_out(root):
+    skill = root / "skills" / "core-demo"
+    first = es.content_hash(str(skill))
+    (skill / "evals" / "files" / "scripts" / "tests").mkdir(parents=True)
+    (skill / "evals" / "files" / "scripts" / "tests" / "test_app.py").write_text("x\n")
+    second = es.content_hash(str(skill))
+    (skill / "scripts" / "tests_helper.py").write_text("x\n")
+    assert len({first, second, es.content_hash(str(skill))}) == 3
+
+
 def test_status_is_draft_then_evaluated_then_stale(root, capsys):
     assert status(root) == "draft"
     assert record(root) == 0

@@ -238,12 +238,12 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | core-project-init | evaluated | 1.00 | 0.36 | 1.00 | 2026-10-01 | 1 |
 | core-research | evaluated | 0.94 | 0.50 | 0.88 | 2026-10-01 | 1 |
 | core-security-audit | evaluated | 0.98 | 0.38 | 0.96 | 2026-10-01 | 2 |
-| core-skill-creator | evaluated | 0.93 | 0.50 | 0.92 | 2026-10-02 | 3 |
+| core-skill-creator | stale | 0.93 | 0.50 | 0.92 | 2026-10-02 | 3 |
 | design-brief | stale | 0.98 | 0.31 | 0.98 | 2026-10-01 | 1 |
 | design-execute | stale | 0.84 | 0.48 | 0.89 | 2026-10-01 | 2 |
 | design-handoff | evaluated | 0.92 | 0.24 | 0.89 | 2026-10-01 | 1 |
 | design-system | evaluated | 1.00 | 0.53 | 0.97 | 2026-10-01 | 2 |
-| design-ux-flows | evaluated | 1.00 | 0.29 | 1.00 | 2026-10-01 | 2 |
+| design-ux-flows | stale | 1.00 | 0.29 | 1.00 | 2026-10-01 | 2 |
 | eng-architecture | stale | 0.95 | 0.39 | 0.91 | 2026-10-01 | 3 |
 | eng-code-review | evaluated | 0.90 | 0.64 | 0.82 | 2026-10-01 | 2 |
 | eng-codebase-map | evaluated | 0.98 | 0.37 | 0.91 | 2026-10-01 | 2 |
@@ -272,7 +272,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
 | product-roadmap | stale | 0.97 | 0.59 | 0.92 | 2026-10-01 | 1 |
 
-Counts: 38 evaluated, 10 stale, 0 draft, 48 skills.
+Counts: 36 evaluated, 12 stale, 0 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

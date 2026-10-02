@@ -3,8 +3,9 @@
 #
 # 1. scripts/validate.py: conventions and the security scan. It reads the working tree, not only
 #    what is staged, so a file with a finding blocks the commit even if it is not part of it.
-# 2. The tests of providers/<class>/ and scripts/ when the commit touches them; a provider class
-#    left without tests is refused.
+# 2. The tests of providers/<class>/, scripts/, evals/, an adapter or a skill's scripts/ (its
+#    scripts/tests/ folder, also when only a test changed) when the commit touches them; a provider
+#    class left without tests is refused.
 #
 # Skipping the hook (git commit --no-verify) is the user's decision, never a skill's.
 set -euo pipefail

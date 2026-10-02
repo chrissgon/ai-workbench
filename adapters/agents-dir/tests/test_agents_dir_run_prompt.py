@@ -72,6 +72,18 @@ def test_the_skill_evals_are_not_copied(case):
     assert (evals / "evals.json").is_file()
 
 
+def test_the_tests_of_the_skill_scripts_are_not_copied(case):
+    scripts = case / "skills" / "demo" / "scripts"
+    (scripts / "tests").mkdir(parents=True)
+    (scripts / "check.py").write_text("print(1)\n")
+    (scripts / "tests" / "test_x.py").write_text("def test_x():\n    assert True\n")
+    r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"))
+    assert r.returncode == 0, r.stderr
+    dest = case / "cwd" / ".agents" / "skills" / "demo"
+    assert (dest / "scripts" / "check.py").is_file() and not (dest / "scripts" / "tests").exists()
+    assert (scripts / "tests" / "test_x.py").is_file()
+
+
 def test_max_cost_is_accepted_and_said_to_be_unenforced(case):
     r = run(case, "m", "--max-cost-usd", "0.50")
     assert r.returncode == 0, r.stderr
