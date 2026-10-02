@@ -10,6 +10,7 @@ Usage:
                       [--runs 3] [--jobs 4] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--no-record]
                       [--retries 2] [--early-end-rate 0.15]
                       [--dry-run] [--check-cases]
+  python3 eval_run.py --regrade <run folder> [--grader <id>] [--harness <adapter>] [--jobs 4] [--timeout 900]
 
 Defaults. --harness, --model, --floor-model, --floor-harness, --floor-pass-env and --threshold default to the
 eval gate configuration, evals/eval-gate.json (strong_harness, strong_model, floor_model, floor_harness,
@@ -24,8 +25,7 @@ only) in its own git repository (one "fixture" commit, then the case's optional 
 such as a branch with commits), stages the skill under test (with-skill runs only) and the skills listed in
 the case's optional "skills" (a flow's phases; both variants) where the harness discovers them, runs the
 prompt through adapters/<harness>/run-prompt.sh, grades every assertion with
-the grader model (which sees the files the run produced, and the case's optional "grader_files": input files,
-relative to the case folder, that assertions check facts against), and writes:
+the grader model (see "Grading" below), and writes:
 
   evals-workspace/<name>/iteration-N/eval-<id>/<variant>[.floor]/{prompt.md,cwd/,outputs/,grading.json,timing.json}
   evals-workspace/<name>/iteration-N/benchmark.json
@@ -117,6 +117,33 @@ command; read a contributed skill's evals.json before running it all the same, b
 no tool: the grading call is made with the adapter's --no-tools, because the grader holds the strong tier's
 credential and reads text a model under test wrote.
 
+Grading. Every run is graded once, by the grader model, with evals/grading-prompt.md and no tools. The
+grader is given, and nothing else: the case's prompt; the reply, which is the assistant's last message as
+the adapter stored it in response.md; a facts block the runner builds; every file the run created or changed
+(up to FILE_LIMIT characters each; an image or another binary file as one line that says what it is); and the
+case's optional "grader_files", input files relative to the case folder, shown as the run found them, before
+it changed anything, even when it changed them. "expected_output" is never shown to the grader: it is
+context for a person and for the preflight.
+The facts block is measured, not reported by the model. From the content hash of every file of the case
+folder, taken before and after the run (run_files() decides which files): "created", "modified" (the bytes
+differ), "deleted" and "unchanged inputs"; a file that was rewritten with the same bytes is unchanged. From
+the case's repository, read by commands the runner runs in the case folder after the run, in a container
+with no network: `git status --short`, `git log --oneline -n 20 --all`, `git branch -a` and the branch heads
+of each remote the case has. The facts are stored beside the run as facts.md.
+An assertion in evals.json is a text, or an object {"text": ..., "tags": [...]}: the grader is given the
+text and never the tags.
+The grader answers with a JSON array, one object per assertion in order: {"id", "passed", "evidence"}.
+Results are read by position. An answer that is not such an array, or whose count differs from the number of
+assertions, is refused and the grading is made again, up to GRADING_RETRIES times (the refused attempts stay
+in <run folder>/grading-refused-<k>/); after that the run has no score and the iteration is incomplete.
+benchmark.json carries "grading": {"template_sha256", "refused"}.
+--regrade <run folder> grades stored replies again: for every graded run under the folder (an iteration, a
+case or one run) it sends the stored grading prompt to the grader once more, the configured one or the one
+named with --grader, and compares the verdicts by position with the stored ones. It prints {"gradings",
+"failed", "verdicts", "differ", "share", "failed_verdicts", "failed_differ", "runs"}, keeps each new result in
+<run folder>/regrade-<k>/, changes no score and writes no evidence. It measures how much two gradings of the
+same material disagree, and compares a new grader with the old one on a sample.
+
 Preflight. Before any model call, and in --dry-run and --check-cases (which runs only this check; --harness
 and --model are then optional), every case is checked: (a) each "files" entry exists in the skill folder;
 (b) the case folder is built as a run builds it (the files, then the "setup" commands; --dry-run runs nothing,
@@ -126,14 +153,14 @@ creates it), is one of the skill's own files outside evals/ or a workbench file 
 templates/, providers/, adapters/ or skills/, or the case lists it in "absent_on_purpose": ["path", ...] (a case that tests a missing input);
 (c) each "grader_files" entry exists in that folder; (d) each "skills" dependency exists; (e) each "platforms"
 entry has its reference, shared/references/platforms/<name>.md; (f) the folder holds no harness settings
-(above). A cited path is a
+(above); (g) each assertion is a text, or an object with a text. A cited path is a
 token with a "/" and a file extension, or one ending in .md .json .yml .yaml .toml .css .js .ts .py .html;
 URLs, absolute paths, globs and placeholders are ignored, and a path matches a fixture when it is that
 fixture's path or the end of it. Errors are printed one per line and stop the run before it spends anything.
 
 Infrastructure failures are not scores. A run whose adapter exits non-zero (a provider out of credits, a
 session limit, a missing runner), that passes --timeout, that ends its turn early on every attempt (below),
-or whose grading returns nothing parsable, is listed in benchmark.json "infra_failures" ({"case", "variant", "tier",
+or whose grading is refused on every attempt, is listed in benchmark.json "infra_failures" ({"case", "variant", "tier",
 "run", "reason"}) and never enters a mean. benchmark.json also carries "expected_runs", "completed_runs" and
 "complete" (true only when every expected run completed and was graded), "date", "iteration", "cases" and
 "content_sha256", the skill folder's hash when the run started. Rerun an incomplete iteration; never change
@@ -141,8 +168,8 @@ the skill for it. A timeout that repeats on the same case is a reason to raise -
 
 Early ends. Some models end their turn before doing the work, with exit 0 and no error: they print a tool
 call as text, loop on their own reminder blocks, or stop after "Let me read the template first". A run is an
-early end only when the adapter exited 0 AND it created or changed no file in the case folder (the staged
-skills and shared references do not count) AND its response is not a reply to the user: (a) it is
+early end only when the adapter exited 0 AND it created, changed or deleted no file in the case folder (the
+staged skills and shared references do not count) AND its response is not a reply to the user: (a) it is
 empty; or (b) a line starts with tool-call or control markup printed as text (EARLY_END_MARKUP); or (c) the
 response has no question mark and its last line announces a next action (a sentence starting with one of
 EARLY_END_ANNOUNCE, with none of EARLY_END_NOT in the line). A reply that asks the user a question and
@@ -220,6 +247,7 @@ Exit codes: 0 ok; 1 the iteration is incomplete (a run or a grading failed on in
 import concurrent.futures
 import datetime
 import glob
+import hashlib
 import importlib.util
 import json
 import os
@@ -378,7 +406,7 @@ def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
             "threshold": None, "strong_pass_env": [], "record_anyway": False, "allow_contaminated": False, "update_record": False, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
             "runs": 3, "jobs": 4, "timeout": 900, "max_cost": None, "record": True, "check_cases": False, "retries": 2,
-            "early_rate": 0.15}
+            "early_rate": 0.15, "regrade": None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -412,6 +440,7 @@ def parse(argv):
         elif a == "--early-end-rate": opts["early_rate"] = val(); i += 2
         elif a == "--dry-run": opts["dry"] = True; i += 1
         elif a == "--check-cases": opts["check_cases"] = True; i += 1
+        elif a == "--regrade": opts["regrade"] = val(); i += 2
         elif a in ("--help", "-h"): print(__doc__); sys.exit(0)
         else: die(f"unknown option {a!r}. See --help.")
     # What the command line leaves out comes from the eval gate configuration (evals/eval-gate.json).
@@ -433,7 +462,12 @@ def parse(argv):
     opts["strong_pass_env"] = list(gate.get("strong_pass_env") or []) if opts["model"] == gate.get("strong_model") else []
     # What the command line passes beyond the gate file's own variables: a run with one is another measurement.
     opts["extra_pass_env"] = sorted(set(opts["pass_env"]) | (set(opts["floor_pass_env"]) - set(gate.get("floor_pass_env") or [])))
-    for k in ("skill",) if opts["check_cases"] else ("skill", "harness", "model"):
+    if opts["regrade"] is not None:
+        if opts["skill"] or opts["cases"] or opts["only"] or opts["check_cases"] or opts["dry"]:
+            die("--regrade takes a run folder and goes with --grader, --harness, --jobs and --timeout only.")
+        if not os.path.isdir(opts["regrade"]):
+            die(f"--regrade {opts['regrade']!r} is not a folder.")
+    for k in () if opts["regrade"] is not None else ("skill",) if opts["check_cases"] else ("skill", "harness", "model"):
         if not opts[k]:
             die(f"--{k} is required" + (" (evals/eval-gate.json sets no default)." if k != "skill" else "."))
     if opts["only"] not in (None, "with", "without", "ablated"):
@@ -472,6 +506,8 @@ def parse(argv):
         if name in TOKEN_VARS:
             die(f"--pass-env {name}: token variables for git hosts and npm never reach a model run.")
     opts["grader"] = opts["grader"] or opts["model"]
+    if opts["regrade"] is not None and not (opts["harness"] and opts["grader"]):
+        die("--regrade needs a grader and its adapter: evals/eval-gate.json, or --grader and --harness.")
     return opts
 
 
@@ -746,7 +782,10 @@ def preflight(skill_dir, cases, sources, setup=True):
         if carried:
             err(f"the case folder holds {carried}: a fixture or setup must not carry harness settings")
         present = lambda p: p in tree or any(t.endswith("/" + p) for t in tree)
-        produced = " ".join([str(c.get("expected_output") or "")] + [str(a) for a in c.get("assertions") or []])
+        for n, a in enumerate(c.get("assertions") or [], 1):
+            if assertion_text(a) is None:
+                err(f"assertion {n} must be a text, or an object with a \"text\"")
+        produced = " ".join([str(c.get("expected_output") or "")] + [assertion_text(a) or "" for a in c.get("assertions") or []])
         for p in prompt_paths(c.get("prompt")):
             if (present(p) or p in absent or p in produced or known(p)
                     or any(o == p or o.endswith("/" + p) for o in outputs)):
@@ -1191,17 +1230,21 @@ def readable(cwd, rel):
     return all(not os.path.islink(p) for p in on_the_way) and host_may_touch(cwd, path) and os.path.isfile(path)
 
 
+def changes(cwd, before, staged=()):
+    """What a run did to the files of its case folder, against the index taken before it, by content:
+    {"created", "modified", "deleted", "unchanged"}, each a sorted list of relative paths. A file rewritten
+    with the same bytes is unchanged; a file that is gone, or that a link replaced, is deleted."""
+    after = file_index(cwd, staged)
+    return {"created": sorted(p for p in after if p not in before),
+            "modified": sorted(p for p in after if p in before and after[p] != before[p]),
+            "deleted": sorted(p for p in before if p not in after),
+            "unchanged": sorted(p for p in after if before.get(p) == after[p])}
+
+
 def snapshot(cwd, before, staged=()):
-    """The files a run created or changed, against the index taken before it: {relative path: modification time}."""
-    files = {}
-    for rel in run_files(cwd, staged):
-        try:
-            mtime = os.path.getmtime(os.path.join(cwd, rel))
-        except OSError:
-            continue
-        if rel not in before or before[rel] != mtime:
-            files[rel] = mtime
-    return files
+    """The files a run created or changed (changes()), as a sorted list."""
+    delta = changes(cwd, before, staged)
+    return sorted(delta["created"] + delta["modified"])
 
 
 def isolate_git(cwd, env, box=None):
@@ -1232,14 +1275,62 @@ def run_setup(cwd, commands, env, box=None):
 
 
 def file_index(cwd, staged=()):
-    """{relative path: modification time} of the files of a case folder, taken before a run (run_files())."""
+    """{relative path: sha256 of the bytes} of the files of a case folder (run_files()): taken before a run and
+    after it, the two say what the run created, changed and deleted. A modification time would call a file
+    that was overwritten and restored "changed", and cannot see a deletion."""
     idx = {}
     for rel in run_files(cwd, staged):
+        h = hashlib.sha256()
         try:
-            idx[rel] = os.path.getmtime(os.path.join(cwd, rel))
+            with open(os.path.join(cwd, rel), "rb") as f:
+                for block in iter(lambda: f.read(1 << 20), b""):
+                    h.update(block)
         except OSError:
-            pass
+            continue
+        idx[rel] = h.hexdigest()
     return idx
+
+
+# What the harness asks the case's repository after a run, in the case folder, in a container with no
+# network. One literal script: nothing of a case or of a run is put into it.
+VCS_SCRIPT = """
+if ! git rev-parse --git-dir >/dev/null 2>&1; then echo "(the case folder is not a repository)"; exit 0; fi
+echo '$ git status --short'; git status --short 2>&1 | head -n 200
+echo '$ git log --oneline -n 20 --all'; git log --oneline -n 20 --all 2>&1
+echo '$ git branch -a'; git branch -a 2>&1 | head -n 100
+for remote in $(git remote 2>/dev/null); do
+  echo "\\$ git ls-remote --heads $remote"; git ls-remote --heads "$remote" 2>&1 | head -n 50
+done
+"""
+VCS_TIMEOUT = 120  # seconds
+VCS_LIMIT = 12000  # characters of the version-control facts shown to the grader
+
+
+def version_control(case_dir, env, box=None):
+    """The state of the case's repository after a run, as text for the facts block: the working tree, the last
+    commits of every branch, the branches, and the branch heads of each remote the case has (a local bare
+    repository; another protocol is refused by GIT_ALLOW_PROTOCOL=file). Commits, branches and pushes live
+    under .git, which the file lists leave out: without this an assertion about a push rests on the reply."""
+    try:
+        # security-scan: allow shell-string -- VCS_SCRIPT is a literal of this file; it runs in the case folder, contained, with no network
+        r = run_group(["bash", "-c", VCS_SCRIPT], VCS_TIMEOUT, cwd=case_dir, env=env, box=box)
+    except subprocess.TimeoutExpired:
+        return f"(not read: the commands did not end within {VCS_TIMEOUT}s)"
+    text = (r.stdout or "").strip() or "(no output)"
+    if len(text) > VCS_LIMIT:
+        text = text[:VCS_LIMIT] + f"\n[... cut at {VCS_LIMIT} characters ...]"
+    return text
+
+
+def facts_block(delta, vcs):
+    """The facts the grader is given: what the harness measured, never what the model said."""
+    listing = lambda paths: "\n".join(f"- {p.replace(os.sep, '/')}" for p in paths) or "- (none)"
+    return (f"created:\n{listing(delta['created'])}\n"
+            f"modified:\n{listing(delta['modified'])}\n"
+            f"deleted:\n{listing(delta['deleted'])}\n"
+            f"unchanged inputs:\n{listing(delta['unchanged'])}\n"
+            "version control (commands the harness ran in the case folder after the run):\n"
+            f"{vcs if vcs is not None else '(not read)'}")
 
 
 def read_text(path, limit=4000):
@@ -1294,55 +1385,188 @@ def shown(path):
     return text
 
 
-def grading_prompt(tpl, case, response, files_blob):
-    """Fill the grading template in one pass, fencing the model's output with a marker it cannot predict.
+def assertion_text(assertion):
+    """The text of an assertion of evals.json: the assertion itself, or the "text" of one written as an object
+    with tags. None when it is neither. The tags (guard, format) are for the status and the validator: the
+    grader is given the text and never the tags."""
+    if isinstance(assertion, str):
+        return assertion
+    if isinstance(assertion, dict) and isinstance(assertion.get("text"), str):
+        return assertion["text"]
+    return None
+
+
+def template_hash():
+    """sha256 of the grading template: the instrument a grading was made with."""
+    with open(GRADING_TEMPLATE, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def grading_prompt(tpl, case, response, facts="(none)", files_blob="(none)", inputs_blob="(none)"):
+    """Fill the grading template in one pass, fencing what the model wrote or left with a marker it cannot predict.
 
     One pass: a response that contains "{files}" or "{assertions}" stays text instead of being replaced.
+    The assertions are given as their text, numbered in the case's order; their tags are never shown.
     """
     marker = secrets.token_hex(8)
-    while marker in response or marker in files_blob:
+    while any(marker in text for text in (response, facts, files_blob, inputs_blob)):
         marker = secrets.token_hex(8)
-    values = {"prompt": case["prompt"], "response": response, "files": files_blob, "marker": marker,
-              "assertions": "\n".join(f"{i + 1}. {a}" for i, a in enumerate(case.get("assertions") or []))}
-    return re.sub(r"\{(prompt|response|files|assertions|marker)\}", lambda m: values[m.group(1)], tpl)
+    values = {"prompt": case["prompt"], "response": response, "facts": facts, "files": files_blob, "inputs": inputs_blob,
+              "marker": marker,
+              "assertions": "\n".join(f"{i + 1}. {assertion_text(a)}" for i, a in enumerate(case.get("assertions") or []))}
+    return re.sub(r"\{(prompt|response|facts|files|inputs|assertions|marker)\}", lambda m: values[m.group(1)], tpl)
 
 
-def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
+GRADING_RETRIES = 2  # a refused or unparsable grading is made again up to this many times
+
+
+def read_grading(raw, count):
+    """The grader's verdicts, read by position: (results, None), or (None, why the answer is refused).
+
+    Refused: no JSON array, an array whose length is not the number of assertions (one grading of the first
+    round returned 6 results for 5 assertions and was scored over 6), an item that is not an object with a
+    true or false "passed". The assertion's text is not asked for and not read."""
+    m = re.search(r"\[\s*\{.*\}\s*\]", raw, re.S)
+    if not m:
+        return None, "no JSON array in the answer"
+    try:
+        items = json.loads(m.group(0))
+    except ValueError as e:
+        return None, f"the array is not valid JSON ({e})"
+    if not isinstance(items, list) or len(items) != count:
+        return None, f"{len(items) if isinstance(items, list) else 'no'} results for {count} assertions"
+    if not all(isinstance(item, dict) and isinstance(item.get("passed"), bool) for item in items):
+        return None, "a result is not an object with \"passed\": true or false"
+    return [{"id": i + 1, "passed": item["passed"], "evidence": str(item.get("evidence", ""))}
+            for i, item in enumerate(items)], None
+
+
+def grading_call(runner, grader, prompt, dest, count, pass_env=(), timeout=900):
+    """Send one grading prompt to the grader, with no tools, until an answer is accepted or the retries are
+    spent. Its folders come back to dest (prompt.md, out/); a refused attempt is kept in <dest>-refused-<k>.
+    Returns (results or None, refused attempts, why the last one was refused)."""
+    refused, why = 0, None
+    while True:
+        # The grader is a model too: it works outside the repository, in a folder of its own.
+        root = new_run_root(dest, out_name="out")
+        try:
+            gp = os.path.join(root, "prompt.md")
+            with open(gp, "w", encoding="utf-8") as f:
+                f.write(prompt)
+            ok = run_prompt(runner, gp, os.path.join(root, "case"), grader, os.path.join(root, "out"),
+                            env=contained_env(root, pass_env), timeout=timeout, start_dir=root, no_tools=True,
+                            box={"root": root, "runner": runner, "pass": pass_env, "network": "proxy"})
+        finally:
+            return_run(root)
+        if ok:
+            results, why = read_grading(read_text(os.path.join(dest, "out", "response.md"), 400000), count)
+            if results is not None:
+                return results, refused, None
+        else:
+            why = "the grader's adapter failed: " + read_text(os.path.join(dest, "out", "error.log"), 300).strip()
+        refused += 1
+        kept = f"{dest}-refused-{refused}"
+        if os.path.isdir(kept):
+            shutil.rmtree(kept)
+        shutil.move(dest, kept)
+        if refused > GRADING_RETRIES or STOPPING.is_set():
+            return None, refused, why
+
+
+def grading_summary(results):
+    passed = sum(1 for r in results if r["passed"])
+    return {"passed": passed, "failed": len(results) - passed, "total": len(results),
+            "pass_rate": (passed / len(results)) if results else 0.0}
+
+
+def grade(runner, grader, run_dir, case, response, delta, inputs=None, vcs=None, pass_env=(), timeout=900):
+    """Grade one run. delta is changes() of its case folder, inputs the case's "grader_files" as the run found
+    them ({path: what the grader is shown}), vcs the text of version_control().
+    Returns {"assertion_results", "summary", "refused"}, or {"refused", "reason"} with no results when every
+    attempt was refused."""
     with open(GRADING_TEMPLATE, encoding="utf-8") as f:
         tpl = f.read()
     cwd = os.path.join(run_dir, "cwd")
-    files_blob = "\n".join(f"### {p}\n{shown_in(cwd, p)}" for p in sorted(changed_files)) or "(none)"
-    inputs = [p for p in case.get("grader_files") or [] if p not in changed_files
-              and not os.path.isabs(p) and ".." not in p.split("/")]
-    if inputs:
-        files_blob += "\n\nInput files of the case, as the model found them (not produced by it):\n" + "\n".join(
-            f"### {p}\n{shown_in(cwd, p)}" for p in inputs)
-    prompt = grading_prompt(tpl, case, response, files_blob)
-    gdir = os.path.join(run_dir, "grading")
-    # The grader is a model too: it works outside the repository, and its folders come back to grading/.
-    root = new_run_root(gdir, out_name="out")
-    try:
-        gp = os.path.join(root, "prompt.md")
-        with open(gp, "w", encoding="utf-8") as f:
-            f.write(prompt)
-        ok = run_prompt(runner, gp, os.path.join(root, "case"), grader, os.path.join(root, "out"),
-                        env=contained_env(root, pass_env), start_dir=root, no_tools=True,
-                        box={"root": root, "runner": runner, "pass": pass_env, "network": "proxy"})
-    finally:
-        return_run(root)
-    if not ok:
-        return None
-    raw = read_text(os.path.join(gdir, "out", "response.md"), 200000)
-    m = re.search(r"\[\s*\{.*\}\s*\]", raw, re.S)
-    if not m:
-        return None
-    try:
-        results = json.loads(m.group(0))
-    except ValueError:
-        return None
-    passed = sum(1 for r in results if r.get("passed") is True)
-    return {"assertion_results": results, "summary": {"passed": passed, "failed": len(results) - passed,
-            "total": len(results), "pass_rate": (passed / len(results)) if results else 0.0}}
+    produced = sorted(delta["created"] + delta["modified"])
+    files_blob = "\n".join(f"### {p}\n{shown_in(cwd, p)}" for p in produced) or "(none)"
+    inputs_blob = "\n".join(f"### {p}\n{text}" for p, text in (inputs or {}).items()) or "(none)"
+    facts = facts_block(delta, vcs)
+    with open(os.path.join(run_dir, "facts.md"), "w", encoding="utf-8") as f:
+        f.write(facts + "\n")
+    prompt = grading_prompt(tpl, case, response, facts, files_blob, inputs_blob)
+    results, refused, why = grading_call(runner, grader, prompt, os.path.join(run_dir, "grading"),
+                                         len(case.get("assertions") or []), pass_env, timeout)
+    if results is None:
+        return {"refused": refused, "reason": why}
+    return {"assertion_results": results, "summary": grading_summary(results), "refused": refused}
+
+
+def regrade(o):
+    """--regrade: grade stored replies again and report how many verdicts differ. No score moves, no evidence."""
+    runner = os.path.join(ROOT, "adapters", o["harness"], "run-prompt.sh")
+    if not os.path.isfile(runner):
+        die(f"adapter {o['harness']!r} has no run-prompt.sh (see AGENTS.md, Adding an adapter).")
+    base = os.path.abspath(o["regrade"])
+    found = []
+    for dp, dns, fns in os.walk(base):
+        dns.sort()
+        if "grading.json" in fns and os.path.isfile(os.path.join(dp, "grading", "prompt.md")):
+            found.append(dp)
+            dns[:] = []
+    if not found:
+        die(f"no graded run under {o['regrade']}: a graded run has grading.json and grading/prompt.md.")
+    pass_env = o["pass_env"] + (o["strong_pass_env"] if EXECUTOR == "container" else [])
+    for filled in resolve_pass_env(pass_env):
+        print(f"--pass-env {filled}", file=sys.stderr)
+    unset = [n for n in pass_env if not os.environ.get(n)]
+    if unset:
+        die(f"{', '.join(unset)} is not set and was not found in the secret store.", 2)
+    if EXECUTOR == "container":
+        try:
+            load_executor().ensure()
+        except Exception as e:
+            die(f"the eval container is not available: {e}", 1)
+
+    def one(run_dir):
+        with open(os.path.join(run_dir, "grading.json"), encoding="utf-8") as f:
+            old = [bool(r.get("passed")) for r in json.load(f).get("assertion_results") or []]
+        prompt = read_text(os.path.join(run_dir, "grading", "prompt.md"), 50000000)
+        k = 1
+        while True:  # claimed here, so two regrades of one folder never share a number
+            try:
+                os.mkdir(os.path.join(run_dir, f"regrade-{k}"))
+                break
+            except FileExistsError:
+                k += 1
+        dest = os.path.join(run_dir, f"regrade-{k}", "grading")
+        results, refused, why = grading_call(runner, o["grader"], prompt, dest, len(old), pass_env, o["timeout"])
+        row = {"run": os.path.relpath(run_dir, base), "verdicts": len(old), "refused": refused}
+        if results is None:
+            return {**row, "failed": why}
+        new = [r["passed"] for r in results]
+        with open(os.path.join(run_dir, f"regrade-{k}", "grading.json"), "w", encoding="utf-8") as f:
+            json.dump({"grader": o["grader"], "assertion_results": results, "summary": grading_summary(results)}, f, indent=2)
+        return {**row, "differ": [i + 1 for i, (a, b) in enumerate(zip(old, new)) if a != b],
+                "failed_verdicts": [i + 1 for i, a in enumerate(old) if not a],
+                "failed_differ": [i + 1 for i, (a, b) in enumerate(zip(old, new)) if not a and b]}
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=o["jobs"]) as pool:
+        rows = list(pool.map(one, found))
+    done = [row for row in rows if "failed" not in row]
+    verdicts, differ = sum(row["verdicts"] for row in done), sum(len(row["differ"]) for row in done)
+    old_failed, failed_differ = sum(len(row["failed_verdicts"]) for row in done), sum(len(row["failed_differ"]) for row in done)
+    for row in rows:
+        if "failed" in row:
+            print(f"REGRADE FAILED {row['run']}: {row['failed']}", file=sys.stderr)
+    print(json.dumps({"regrade": os.path.relpath(base, ROOT) if base.startswith(ROOT + os.sep) else base, "grader": o["grader"],
+                      "gradings": len(done), "failed": len(rows) - len(done), "verdicts": verdicts, "differ": differ,
+                      "share": (differ / verdicts) if verdicts else None,
+                      # The verdicts the stored grading failed, and how many of them the new one passed: a grader
+                      # that approves everything agrees on most verdicts and on none of these.
+                      "failed_verdicts": old_failed, "failed_differ": failed_differ,
+                      "runs": [{k: v for k, v in row.items() if k in ("run", "verdicts", "differ", "failed", "refused")} for row in rows]},
+                     indent=2))
+    return 1 if len(done) < len(rows) else 0
 
 
 def check_cases_only(o):
@@ -1391,6 +1615,8 @@ def run(argv):
     o = parse(argv)
     if o["check_cases"]:
         return check_cases_only(o)
+    if o["regrade"] is not None:
+        return regrade(o)
     secrets = o["pass_env"] + o["floor_pass_env"] + (o["strong_pass_env"] if EXECUTOR == "container" else [])
     for filled in ([] if o["dry"] else resolve_pass_env(secrets)):
         print(f"--pass-env {filled}", file=sys.stderr)
@@ -1481,7 +1707,7 @@ def run(argv):
             count["attempts"] += 1
             # The run happens outside the repository; its folders come back to run_dir when it ends, however it ends.
             root = new_run_root(run_dir, names=(o["skill"],))
-            case_dir, changed = os.path.join(root, "case"), {}
+            case_dir, changed, delta, inputs, vcs = os.path.join(root, "case"), [], None, {}, None
             try:
                 build_tree(case_dir, sources[c["id"]], c)
                 tier_env = o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else o["strong_pass_env"])
@@ -1498,13 +1724,19 @@ def run(argv):
                     pp = os.path.join(root, "prompt.md")
                     with open(pp, "w", encoding="utf-8") as f:
                         f.write(c["prompt"])
+                    # The input files the assertions check facts against, as the run finds them: the grader
+                    # is shown this, even when the run changes them afterwards.
+                    inputs = {p: shown_in(case_dir, p) for p in c.get("grader_files") or [] if isinstance(p, str)}
                     before = file_index(case_dir, staged)
                     why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), env,
                                       o["timeout"], o["max_cost"], web[c["id"]], start_dir=root,
                                       box={"root": root, "runner": runner_for[tier], "pass": tier_env,
                                            "network": "open" if web[c["id"]] else "proxy"})
                     if not why:
-                        changed = snapshot(case_dir, before, staged)
+                        delta = changes(case_dir, before, staged)
+                        changed = delta["created"] + delta["modified"] + delta["deleted"]
+                        if o["grade"]:  # commits, branches and pushes: read here, where the case folder still is
+                            vcs = version_control(case_dir, contained_env(root), box=quiet)
             finally:
                 return_run(root)
             if v == "without_skill":
@@ -1546,15 +1778,20 @@ def run(argv):
             json.dump(timing, f)
         g, failed = None, None
         if o["grade"]:
-            g = grade(runner, o["grader"], run_dir, c, response, changed, o["pass_env"] + o["strong_pass_env"])
-            if g is None:
-                failed = infra("grading failed: the grader returned no parsable result")
-                msgs.append(f"GRADE FAILED case {c['id']} {name} run {k}")
+            g = grade(runner, o["grader"], run_dir, c, response, delta, inputs, vcs, o["pass_env"] + o["strong_pass_env"],
+                      o["timeout"])
+            count["grading_refused"] = g["refused"]
+            if "assertion_results" not in g:
+                failed = infra(f"grading failed: the grader's answer was refused on all {g['refused']} attempt(s) ({g['reason']})")
+                msgs.append(f"GRADE FAILED case {c['id']} {name} run {k}: {g['reason']}")
+                g = None
             else:
                 with open(os.path.join(run_dir, "grading.json"), "w", encoding="utf-8") as f:
                     json.dump(g, f, indent=2)
         row = {"case": c["id"], "run": k, "pass_rate": g["summary"]["pass_rate"] if g else None,
                "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms")}
+        if g:  # one 0 or 1 per assertion, in the case's order: what a per-assertion count is made from
+            row["results"] = [1 if r["passed"] else 0 for r in g["assertion_results"]]
         return name, row, failed, msgs, count
 
     jobs = [(c, v, t, m, k) for c in cases for v in variants for t, m in models for k in range(1, o["runs"] + 1)]
@@ -1566,9 +1803,10 @@ def run(argv):
             for msg in fut.result()[3]:
                 print(msg, file=sys.stderr)
     early_counts = {t: {"attempts": 0, "early_ends": 0, "by_case": {}} for t, _ in models}
-    contaminated, refusals = [], []
+    contaminated, refusals, grading_refused = [], [], 0
     for job, fut in zip(jobs, done):  # submission order, so benchmark.json does not depend on which run finished first
         name, row, failed, _, count = fut.result()
+        grading_refused += count.get("grading_refused", 0)
         tier_count = early_counts[job[2]]
         tier_count["attempts"] += count["attempts"]
         tier_count["early_ends"] += count["early_ends"]
@@ -1620,6 +1858,7 @@ def run(argv):
                   "complete": complete, "infra_failures": infra_failures})
     bench["contaminated"] = contaminated
     bench["baseline_refusals"] = refusals
+    bench["grading"] = {"template_sha256": template_hash(), "refused": grading_refused}
     bench["early_ends"] = early_end_stats(early_counts)
     bench["early_end_warning"] = early_end_warning(bench["early_ends"], o["early_rate"])
     with open(os.path.join(it_dir, "benchmark.json"), "w", encoding="utf-8") as f:

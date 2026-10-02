@@ -201,6 +201,21 @@ def test_removing_a_container_by_name_ends_it(environment, root):
         proc.kill()
 
 
+def test_the_version_control_facts_are_read_in_a_container_with_no_network(environment, root):
+    """The runner's own calls, as a real run makes them: the fixture commit, a setup, then the facts for the grader."""
+    (root / "case" / "f.txt").write_text("x\n")
+    quiet = {"root": str(root), "network": "none"}
+    env = er.contained_env(str(root))
+    er.isolate_git(str(root / "case"), env, box=quiet)
+    er.run_setup(str(root / "case"), ["git init -q --bare /eval/origin.git && git remote add origin /eval/origin.git",
+                                      "git checkout -q -b feature && echo y >> f.txt && git commit -q -am 'feature work' "
+                                      "&& git push -q origin feature", "echo z > loose.md"], env, box=quiet)
+    facts = er.version_control(str(root / "case"), env, box=quiet)
+    assert "$ git status --short\n?? loose.md" in facts and "feature work" in facts and "fixture" in facts
+    assert "* feature" in facts and "refs/heads/feature" in facts.split("$ git ls-remote --heads origin")[1]
+    assert str(root) not in facts  # nothing of the host's paths
+
+
 def demo_workbench(tmp_path):
     """A small workbench: a skill under test that cites one shared reference, and a dependency skill."""
     wb = tmp_path / "wb"
