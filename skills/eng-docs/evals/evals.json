@@ -4,31 +4,54 @@
     {
       "id": 1,
       "prompt": "The dueLabel change is already implemented in the invoices project (plan in docs/engineering/plans/due-label-customer-time-zone.md). Update the documentation.",
-      "expected_output": "README.md's dueLabel entry gains the timeZone parameter and loses 'in the server's local time zone'; docs/guide.md's claim that dueLabel always prints in the server's zone is rewritten and its example is run and corrected; the new claims are checked by running node under different TZ values; CHANGELOG.md is not edited because it is generated, and a commit message is proposed instead; shop-web is named as a follow-up; the plan gains a Docs section with before and after sentences.",
+      "expected_output": "README.md's dueLabel entry gains the timeZone parameter and loses 'in the server's local time zone'; docs/guide.md's claim that dueLabel always prints in the server's zone is rewritten and its example is run and corrected; the new claims are checked by running node with different TZ values and timeZone arguments, each command quoted with its output; a run shows the case the change does not cover (a customer zone at UTC+12 or later, such as Pacific/Auckland, prints the next day: 2026-09-26 for 2026-09-25) and the documents state it; CHANGELOG.md is not edited because it is generated, and a commit message is proposed instead; shop-web is named as a follow-up; the plan gains a Docs section with before and after sentences, the claims run and the working tree.",
       "files": [
         "evals/files/invoices"
       ],
+      "grader_files": [
+        "src/due.js",
+        "CHANGELOG.md",
+        "README.md",
+        "docs/guide.md",
+        "AGENTS.md"
+      ],
       "assertions": [
-        "README.md documents the timeZone parameter of dueLabel and no longer says the label uses the server's local time zone",
-        "docs/guide.md no longer claims dueLabel always prints in the server's local time zone",
+        "README.md and docs/guide.md describe the timeZone parameter of dueLabel and no longer say the label follows the server's local time zone",
+        "The documentation states the case the change does not cover, found by running it: for a customer zone at UTC+12 or later (for example Pacific/Auckland) the label is the next day, and the reply or the plan shows the command and its output",
         "The reply or the plan shows a command that ran dueLabel (for example with node and different TZ values) and its output",
-        "CHANGELOG.md is unchanged, and a commit message is proposed",
+        "CHANGELOG.md is not among the files the run produced or changed, and a commit message is proposed",
         "shop-web is named as a follow-up outside the repository",
-        "The plan file gains a 'Docs' section with before and after sentences",
-        "src/due.js is unchanged",
-        "The reply is in English, the language of the prompt"
+        {
+          "text": "The plan file gains a 'Docs' section with before and after sentences",
+          "tags": ["format"]
+        },
+        {
+          "text": "src/due.js is not among the files the run produced or changed",
+          "tags": ["guard"]
+        }
       ]
     },
     {
       "id": 2,
       "prompt": "Tomorrow we'll add a `locale` option to dueLabel in the invoices project. Please document it now so the docs are ready.",
-      "expected_output": "The change is not implemented; the skill does not write documentation for code that does not exist; it says so and offers to document after implementation, or to draft notes outside the published docs, and edits no document.",
+      "expected_output": "The change is not implemented; the skill does not write documentation for code that does not exist; it says so, offers to note the sentences that will change once the option exists (in the reply, not in a published document), and edits no document.",
       "files": [
         "evals/files/invoices"
       ],
+      "grader_files": [
+        "src/due.js",
+        "CHANGELOG.md",
+        "README.md",
+        "docs/guide.md",
+        "AGENTS.md"
+      ],
       "assertions": [
-        "README.md and docs/guide.md are unchanged",
-        "The reply says the locale option is not implemented and that the documentation follows the implementation"
+        {
+          "text": "Neither README.md nor docs/guide.md is among the files the run produced or changed",
+          "tags": ["guard"]
+        },
+        "The reply says the locale option is not implemented and that the documentation follows the implementation",
+        "The reply offers to note which sentences will change once the option exists, and writes that note in no published document"
       ]
     }
   ]

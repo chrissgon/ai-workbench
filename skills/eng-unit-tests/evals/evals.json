@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "The cause of the due-date bug in the invoices project is confirmed in docs/engineering/plans/due-date-one-day-early.md. Write the tests before the fix.",
-      "expected_output": "Tests are written with node:test in test/ (the project's runner), covering dueLabel for a date-only string in UTC, Europe/Lisbon and America/Sao_Paulo, the date-time form, and daysLeft; they are run under the time zones (TZ set per run or per child process) and the date-only case fails in America/Sao_Paulo with the received value 2026-09-24 while the preserved cases pass; a 'Failing tests' section is added to the plan with the observed results; src/due.js is unchanged and no dependency is added.",
+      "expected_output": "Tests are written with node:test in test/ (the project's runner), covering dueLabel for a date-only string in UTC, Europe/Lisbon and America/Sao_Paulo, the date-time form, and daysLeft the day before the due date at 12:00 local time; they are run under the time zones (TZ set per run or per child process) and the date-only case fails in America/Sao_Paulo with the received value 2026-09-24 while the preserved cases pass; a 'Failing tests' section is added to the plan with the observed results; src/due.js is not changed and no dependency is added.",
       "files": [
         "evals/files/invoices"
       ],
@@ -15,19 +15,18 @@
         "docs/engineering/plans/due-date-one-day-early.md"
       ],
       "assertions": [
-        "New or changed test files live under test/ and use node:test (no Jest, Vitest or new dependency in package.json)",
+        {"text": "New or changed test files live under test/ and use node:test (no Jest, Vitest or new dependency in package.json)", "tags": ["guard"]},
         "The tests are run and their output is quoted, including a failure that shows 2026-09-24 for America/Sao_Paulo",
         "Tests exist for Europe/Lisbon or UTC that pass before the fix and are labelled as behaviour to preserve",
-        "A test covers daysLeft",
-        "The plan file gains a 'Failing tests' section listing each test with its source and its result before the change",
-        "src/due.js is unchanged",
-        "The reply is in English, the language of the prompt"
+        "A test asserts that daysLeft(\"2026-09-25\", now) is 1 for now = 2026-09-24 at 12:00 local time, and names 'What a fix must preserve' as its source",
+        {"text": "The plan file gains a 'Failing tests' section listing each test with its source and its result before the change", "tags": ["format"]},
+        {"text": "src/due.js is not among the files the run produced or changed", "tags": ["guard"]}
       ]
     },
     {
       "id": 2,
       "prompt": "Write Jest tests for the due-date bug in the invoices project (plan in docs/engineering/plans/due-date-one-day-early.md) before we fix it.",
-      "expected_output": "The project uses node:test and has no Jest; the skill does not install Jest silently: it asks whether to add Jest, recommending node:test because it is the project's runner, and either waits or proceeds with node:test while saying so; no package is installed.",
+      "expected_output": "The project uses node:test and has no Jest; the skill does not install Jest silently: it says the project's runner is node:test, asks whether to add Jest, recommending node:test because it is the project's runner, and waits for the answer; nothing is written and no package is installed.",
       "files": [
         "evals/files/invoices"
       ],
@@ -38,15 +37,16 @@
         "docs/engineering/plans/due-date-one-day-early.md"
       ],
       "assertions": [
-        "package.json gains no jest dependency and no install command for jest is run",
-        "The reply points out that the project already uses node:test and asks or recommends before using another runner",
-        "src/due.js is unchanged"
+        {"text": "package.json is not among the files the run produced or changed, and the run created no node_modules folder, lockfile or Jest configuration file", "tags": ["guard"]},
+        {"text": "The reply points out that the project already uses node:test and asks or recommends before using another runner", "tags": ["guard"]},
+        {"text": "src/due.js is not among the files the run produced or changed", "tags": ["guard"]},
+        {"text": "No file under test/ is among the files the run produced or changed: the reply stops at the question about the runner", "tags": ["guard"]}
       ]
     },
     {
       "id": 3,
-      "prompt": "Write the missing tests for daysLeft in the invoices project: I want to make sure daysLeft returns 0 on the due date.",
-      "expected_output": "The plan says nothing about the due day itself (it states daysLeft is 1 the day before at noon); whether daysLeft is 0 or 1 at a given hour of the due day depends on rounding the task does not state; the skill writes the stated cases and asks what 'the day of the due date' means (which hour, or calendar days instead of 24-hour periods) with a recommendation, marking that case pending instead of choosing silently.",
+      "prompt": "Write the missing tests for daysLeft in the invoices project. Some invoices come in without a due date; make sure daysLeft doesn't break on those.",
+      "expected_output": "No source in the project says what daysLeft returns for an invoice without a due date (the plan states only that daysLeft is 1 the day before at 12:00 local time), and 'without a due date' can be read as a missing value, null or an empty string, for which today's code returns NaN, a large negative number (null is read as 1970-01-01) and NaN. The skill runs the code for each reading and shows the results, writes the case the plan states (daysLeft is 1 on 2026-09-24 at 12:00 local time for an invoice due 2026-09-25), marks the missing-date case pending decision with no test asserting a value for it, and ends by asking what daysLeft should return for such an invoice, with a recommendation or with what the choice depends on; src/due.js is not changed.",
       "files": [
         "evals/files/invoices"
       ],
@@ -57,10 +57,9 @@
         "docs/engineering/plans/due-date-one-day-early.md"
       ],
       "assertions": [
-        "The reply asks a question about what daysLeft should return on the due day (the hour, or calendar days versus 24-hour periods), with a recommended answer",
-        "No test asserts a value for the due day without that question being raised",
-        "src/due.js is unchanged",
-        "The reply is in English, the language of the prompt"
+        {"text": "The reply asks what daysLeft should return for an invoice without a due date, with a recommended answer or a statement of what the choice depends on, and no test file the run produced or changed asserts a value (NaN, a number, null, a thrown error or anything else) for a call without a due date", "tags": ["guard"]},
+        "A test for the case the plan does state is written: daysLeft(\"2026-09-25\", now) is 1 for now = 2026-09-24 at 12:00 local time",
+        {"text": "src/due.js is not among the files the run produced or changed", "tags": ["guard"]}
       ]
     }
   ]

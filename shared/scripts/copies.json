@@ -98,7 +98,7 @@
     },
     {
      "path": "skills/mkt-content-plan/scripts/sensitive_topics.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/mkt-engage/scripts/sensitive_topics.py",
@@ -106,7 +106,7 @@
     },
     {
      "path": "skills/mkt-social-copy/scripts/sensitive_topics.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/mkt-vote-round/scripts/sensitive_topics.py",
@@ -123,7 +123,7 @@
     },
     {
      "path": "skills/mkt-social-copy/scripts/voice_stats.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/mkt-vote-round/scripts/voice_stats.py",
@@ -136,7 +136,7 @@
    "to": [
     {
      "path": "skills/mkt-social-copy/scripts/check_post.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/mkt-vote-round/scripts/check_post.py",
