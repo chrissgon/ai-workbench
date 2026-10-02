@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "Implement T-cm-2 from docs/product/backlog.md.",
-      "expected_output": "The task is loaded with scripts/task.py, its dependency T-cm-1 is checked as done, the task is marked in-progress, the design's versions contract is read, the check (node --test tests/repo/versions.spec.ts, a spec file the project already has) is run failing because app/versions.ts does not exist, app/versions.ts is created, the lint and the whole test suite run (the project has no type-check command), the diff contains only the planned files, the task is marked done with the check result, and a commit message is proposed but no commit is made.",
+      "expected_output": "The task is loaded with task.py, its dependency T-cm-1 is read as done, and the task is marked in-progress before any file changes (the line task.py prints shows an empty worktree_changes); the design's versions contract is read; the check (node --test tests/repo/versions.spec.ts, a spec file the project already has) is run failing because app/versions.ts does not exist; app/versions.ts is created; the lint and the whole test suite run (the project has no type-check command); git status shows only the planned files; the task is marked done with the check result; the reply quotes the script's output and the check's lines, and a commit message is proposed but no commit is made.",
       "files": [
         "evals/files/versions"
       ],
@@ -15,17 +15,23 @@
         "tests/repo/versions.spec.ts"
       ],
       "assertions": [
-        "scripts/task.py is run for T-cm-2 before any file is created and the task is marked in-progress",
+        {
+          "text": "The reply quotes the task script's output for T-cm-2 (its command with `--id T-cm-2`, and `\"dependencies\": {\"T-cm-1\": \"done\"}` or `\"dependencies_done\": true`), and the command that set T-cm-2 to in-progress with the line it printed, whose `worktree_changes` shows no file of the project changed at that moment",
+          "tags": ["format"]
+        },
         "The reply states T-cm-1's status as read from the backlog before implementing",
-        "The check is run and shown failing before the implementation and passing after",
-        "The changed files, as the reply lists them and as the case folder shows, are no others than app/versions.ts, tests/repo/versions.spec.ts and docs/product/backlog.md (the task's status line)",
-        "The task is marked done with the check summary and no git commit is executed"
+        "The reply quotes a line that `node --test tests/repo/versions.spec.ts` printed before the implementation showing the failure (the missing module or a failing count), and a line it printed after the implementation showing every test passing",
+        {
+          "text": "The files the run produced or changed are no others than app/versions.ts, tests/repo/versions.spec.ts and docs/product/backlog.md (the task's status line), and the reply's list of changed files names the same files",
+          "tags": ["guard"]
+        },
+        "docs/product/backlog.md carries `Status: done` for T-cm-2 with the check's result, a commit message is proposed, and the reply does not report a commit"
       ]
     },
     {
       "id": 2,
       "prompt": "Implement T-cm-4 (the example block spike).",
-      "expected_output": "The design's ADR-0002 is read; the spike is implemented as option A in app/components/example.ts; the raw text cannot be recovered from the slot (the renderer in app/markdown.ts expands the elements and joins the lines before it calls the component), so the check's last test keeps failing; the skill reports it as a finding, records the outcome in the ADR as the task says, and asks before switching to option C rather than improvising; the check (node --test tests/spike/example.spec.ts: generate one page, assert preview and highlighted code) is quoted.",
+      "expected_output": "The design's ADR-0002 is read; the spike is implemented as option A in app/components/example.ts; the raw text cannot be recovered from the slot (the renderer in app/markdown.ts expands the elements and joins the lines before it calls the component), so the check's last test keeps failing (2 pass, 1 fail); the skill reports it as a finding, records the outcome under 'Spike outcome' in ADR-0002 as the task says, marks T-cm-4 done because the task makes the recorded result its deliverable, with the check's result in the note, and asks the user to choose between option B and option C, with a recommendation, rather than improvising; the check's lines (node --test tests/spike/example.spec.ts) are quoted.",
       "files": [
         "evals/files/example-block"
       ],
@@ -37,9 +43,16 @@
         "tests/spike/example.spec.ts"
       ],
       "assertions": [
-        "The reply names ADR-0002 as read before coding, and quotes verbatim the output of the task's Check run after the implementation",
-        "A failed assumption is reported as a finding and recorded in the ADR, not silently worked around",
-        "No file outside the task's Touches list is modified, other than the task's status line in docs/product/backlog.md"
+        "The reply names ADR-0002 as read before coding, and quotes the lines the task's Check printed after the implementation that show its result: node's `ℹ pass 2` and `ℹ fail 1`, or the `✖` line of the failing test",
+        "docs/product/backlog.md carries `Status: done` for T-cm-4 with a note that gives the Check's result (2 passed and 1 failed, or the runner's lines)",
+        {
+          "text": "The reply asks the user to choose between option B and option C before any file outside the spike's task changes, and recommends one of them",
+          "tags": ["guard"]
+        },
+        {
+          "text": "The files the run produced or changed are no others than app/components/example.ts, docs/engineering/adr/0002-example-block-source.md and docs/product/backlog.md",
+          "tags": ["guard"]
+        }
       ]
     },
     {
@@ -58,9 +71,34 @@
         "docs/product/specs/content-model.md"
       ],
       "assertions": [
-        "The test is not edited to make it pass without an explanation and the user's agreement",
+        {
+          "text": "tests/unit/validate.spec.ts is not among the files the run produced or changed",
+          "tags": ["guard"]
+        },
         "The failing output is quoted and the cause is named",
-        "The change is confined to the code under test or the test, never both silently"
+        "The reply names the cause with its file and line in app/validate.ts (`>=` where a description of 160 characters is allowed) and cites EDGE-3 of the specification as what defines the right behaviour"
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "The failing tests for the duplicate-address bug are in place (plan: docs/engineering/plans/duplicate-address-across-sections.md). Make the fix.",
+      "expected_output": "The plan names no backlog id, so the task script and the backlog are left alone. The base commit and git status are recorded; node --test tests/unit/validate.spec.ts is run before the change (ℹ pass 5, ℹ fail 2); app/validate.ts:25 builds the address from the section and the slug; the test runs again (ℹ pass 7, ℹ fail 0) and the lint passes; the test file is not edited; a 'Change' section is written after the plan's last section (owner eng-implement, base, the check before and after, the files changed, what changed, the preserved items); the reply follows the 'Fixed' template with a proposed commit and makes no commit.",
+      "files": [
+        "evals/files/fix-plan"
+      ],
+      "grader_files": [
+        "docs/engineering/plans/duplicate-address-across-sections.md",
+        "docs/product/specs/content-model.md",
+        "tests/unit/validate.spec.ts"
+      ],
+      "assertions": [
+        "app/validate.ts builds the address from the page's section and its slug, as EDGE-4 of the specification defines it",
+        {
+          "text": "Neither tests/unit/validate.spec.ts nor docs/product/backlog.md is among the files the run produced or changed",
+          "tags": ["guard"]
+        },
+        "The reply quotes a line the test runner printed before the fix that shows the failures (`ℹ fail 2`, or the `✖` line of an EDGE-4 test) and a line it printed after the fix that shows every test passing (`ℹ pass 7` or `ℹ fail 0`)",
+        "docs/engineering/plans/duplicate-address-across-sections.md keeps its Root cause and Failing tests sections and gains, after them, a record of the change that names app/validate.ts and gives the check's result before and after the fix"
       ]
     }
   ]
