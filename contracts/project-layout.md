@@ -96,28 +96,29 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/design/handoff/<screen>.lint.json` | design-handoff | - |
 | `docs/design/handoff/<screen>.md` | design-handoff | - |
 | `docs/design/results/<artifact>.md` | design-execute | - |
-| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture, eng-tradeoffs | - |
+| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture | eng-implement, eng-tradeoffs |
 | `docs/engineering/architecture.md` | eng-codebase-map | - |
 | `docs/engineering/codebase-map.md` | eng-codebase-map | - |
 | `docs/engineering/designs/<feature>.check.json` | eng-architecture | - |
 | `docs/engineering/designs/<feature>.md` | eng-architecture | - |
-| `docs/engineering/plans/<task>.md` | eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request | - |
+| `docs/engineering/plans/<task>.md` | eng-root-cause, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests |
 | `docs/engineering/reviews/<change>.md` | eng-code-review | - |
 | `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
-| `docs/marketing/calendar.md` | mkt-content-plan, mkt-social-copy | mkt-publish, mkt-vote-round |
+| `docs/marketing/calendar.md` | mkt-content-plan | mkt-publish, mkt-social-copy, mkt-vote-round |
 | `docs/marketing/content/<post>.md` | mkt-social-copy | mkt-vote-round |
 | `docs/marketing/engagement-inbox.md` | mkt-engage | - |
 | `docs/marketing/engagement-log.jsonl` | mkt-engage | - |
 | `docs/marketing/engagement-policy.md` | mkt-engage | - |
+| `docs/marketing/messaging.lint.json` | mkt-messaging | - |
 | `docs/marketing/messaging.md` | mkt-messaging | - |
-| `docs/product/backlog.md` | eng-implement, product-backlog | - |
+| `docs/product/backlog.md` | product-backlog | eng-implement |
 | `docs/product/prd.md` | product-prd | - |
 | `docs/product/roadmap.md` | product-roadmap | - |
 | `docs/product/specs/<feature>.md` | product-feature-spec | - |
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, ops-branch-sync | mkt-engage, mkt-publish |
+| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, ops-branch-sync | eng-security-review, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish |
 <!-- owner-table:end -->
 
 ## Rules

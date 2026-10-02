@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
 """Lint a messaging document written from assets/messaging-template.md.
 
-Usage: python3 lint_messaging.py --file <messaging.md> [--json]
+Usage: python3 lint_messaging.py --file <messaging.md> [--report <path>] [--json]
 
 Checks:
   - required sections are present
   - every PROOF has Evidence:, Method:, Date: (with a YYYY-MM-DD date) and Source:
-  - every SECTION has Purpose:, Proof:, Headline:, Body:, Demo: (or CTA:) and Source:, and its Proof: names existing PROOF ids
-    (the first section may carry no proof); every later section's Demo: describes something (not empty, not "none")
+  - every SECTION has Purpose:, Proof:, Headline:, Body:, Demo: (or CTA:) and Source:, and its Proof: names
+    existing PROOF ids (the first section may carry no proof); every later section's Demo: describes something
+    (not empty, not "none")
   - every number in a Headline:, a Body: or a tagline also appears in some PROOF: digits ("14", "2.9") and
     number words ("eight", "half", "twice"; a PROOF may carry the word or its digits)
   - no word from the "Avoid:" list appears in any Headline: or Body:
   - every OPEN has Blocks: and Recommended:
   - no TBD / TODO / ???
 
-Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
+It cannot check that a Method: belongs to its number: that is checked by reading.
+
+Options:
+  --file <path>     the messaging document (required)
+  --report <path>   also write the record of this run there, as one JSON object: script, date, arguments,
+                    ok, summary, errors, counts
+  --json            pretty-print the output (indented); the output is JSON either way
+
+Prints one JSON line: ok, summary, counts (proofs, sections), errors.
+Exit codes: 0 ok, 1 problems found, 2 usage error or unreadable file.
 """
+import argparse
+import datetime
 import json
 import re
 import sys
 
 SECTIONS = ["## Summary", "## Sources", "## Audience", "## Promise", "## Voice", "## Proof points", "## Sections",
-            "## Taglines", "## Words", "## Open questions", "## Readiness"]
+            "## Taglines", "## Words", "## Open questions", "## Assumptions", "## Readiness"]
 DATE_RE = re.compile(r"\b\d{4}-\d{2}-\d{2}\b")
 NUM_RE = re.compile(r"\d[\d,.]*")
 WORDS = {"two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven": "7", "eight": "8", "nine": "9",
@@ -29,6 +41,22 @@ WORDS = {"two": "2", "three": "3", "four": "4", "five": "5", "six": "6", "seven"
          "thousand": "1000", "half": None, "twice": None, "double": None, "triple": None}
 WORD_RE = re.compile(r"\b(" + "|".join(WORDS) + r")\b", re.I)
 ID_RE = re.compile(r"^\s*-\s*((?:PROOF|SECTION|OPEN)-\d+)\s*:", re.M)
+
+
+class Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print(f"Error: {message}. See --help.", file=sys.stderr)
+        sys.exit(2)
+
+
+def parse(argv):
+    p = Parser(prog="lint_messaging.py", description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter,
+               usage="python3 lint_messaging.py --file <messaging.md> [--report <path>] [--json]")
+    p.add_argument("--file", required=True, metavar="<messaging.md>")
+    p.add_argument("--report", metavar="<path>")
+    p.add_argument("--json", action="store_true")
+    return p.parse_args(argv)
 
 
 def blocks(text, prefixes):
@@ -49,17 +77,8 @@ def field(body, name):
     return m.group(1).strip() if m else ""
 
 
-def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
-        print(__doc__); return 0 if argv else 2
-    as_json = "--json" in argv
-    path = argv[argv.index("--file") + 1] if "--file" in argv else None
-    if not path:
-        print("Error: --file <messaging.md> is required. See --help.", file=sys.stderr); return 2
-    try:
-        text = open(path, encoding="utf-8").read()
-    except OSError as e:
-        print(f"Error: cannot read {path}: {e}", file=sys.stderr); return 2
+def lint(text):
+    """The problems of one messaging document, and the counts of its proofs and sections."""
     errors = []
     for s in SECTIONS:
         if s not in text:
@@ -117,8 +136,35 @@ def main(argv):
         for part in ("Blocks:", "Recommended:"):
             if part not in b:
                 errors.append(f"{oid} lacks {part}")
+    return errors, {"proofs": len(proofs), "sections": len(sections)}
+
+
+def main(argv):
+    args = parse(argv)
+    try:
+        with open(args.file, encoding="utf-8") as f:
+            text = f.read()
+    except OSError as e:
+        print(f"Error: cannot read {args.file}: {e}", file=sys.stderr)
+        return 2
+    errors, counts = lint(text)
     ok = not errors
-    print(json.dumps({"ok": ok, "counts": {"proofs": len(proofs), "sections": len(sections)}, "errors": errors}, indent=2 if as_json else None))
+    summary = (f"lint_messaging {'ok' if ok else 'FAILED'}: {len(errors)} errors, "
+               f"{counts['proofs']} proofs, {counts['sections']} sections")
+    if args.report:
+        arguments = {"--file": args.file}
+        if args.json:
+            arguments["--json"] = True
+        record = {"script": "lint_messaging.py", "date": datetime.date.today().isoformat(), "arguments": arguments,
+                  "ok": ok, "summary": summary, "errors": errors, "counts": counts}
+        try:
+            with open(args.report, "w", encoding="utf-8") as f:
+                f.write(json.dumps(record, indent=2) + "\n")
+        except OSError as e:
+            print(f"Error: cannot write {args.report}: {e}", file=sys.stderr)
+            return 2
+    print(json.dumps({"ok": ok, "summary": summary, "counts": counts, "errors": errors},
+                     indent=2 if args.json else None))
     return 0 if ok else 1
 
 

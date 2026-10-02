@@ -18,7 +18,7 @@
       "ghsa_id": "GHSA-q7m2-9hvx-4c8r",
       "cve_id": null,
       "summary": "@shopco/template-engine: prototype pollution through helper names",
-      "html_url": "https://github.com/shopco/shop/security/dependabot/15",
+      "html_url": "https://code.example/shopco/shop/security/alerts/15",
       "created_at": "2026-09-20T10:00:00Z"
     },
     {
@@ -33,7 +33,7 @@
       "ghsa_id": "GHSA-w3p8-6fjk-2m9t",
       "cve_id": null,
       "summary": "@shopco/template-engine: code execution when rendering a template built from user input",
-      "html_url": "https://github.com/shopco/shop/security/dependabot/14",
+      "html_url": "https://code.example/shopco/shop/security/alerts/14",
       "created_at": "2026-09-20T10:00:00Z"
     },
     {
@@ -48,7 +48,7 @@
       "ghsa_id": "GHSA-h4c9-3rtz-8v2x",
       "cve_id": null,
       "summary": "@shopco/http-kit: server version disclosed in error pages",
-      "html_url": "https://github.com/shopco/shop/security/dependabot/13",
+      "html_url": "https://code.example/shopco/shop/security/alerts/13",
       "created_at": "2026-09-20T10:00:00Z"
     },
     {
@@ -63,7 +63,7 @@
       "ghsa_id": "GHSA-p9j6-5wqe-7k3n",
       "cve_id": null,
       "summary": "@shopco/http-kit: open redirect in res.redirect() with protocol-relative URLs",
-      "html_url": "https://github.com/shopco/shop/security/dependabot/12",
+      "html_url": "https://code.example/shopco/shop/security/alerts/12",
       "created_at": "2026-09-20T10:00:00Z"
     },
     {
@@ -78,7 +78,7 @@
       "ghsa_id": "GHSA-x2v5-8ndq-6r4h",
       "cve_id": null,
       "summary": "@shopco/http-kit: regular expression denial of service in the json() body parser's content-type check",
-      "html_url": "https://github.com/shopco/shop/security/dependabot/11",
+      "html_url": "https://code.example/shopco/shop/security/alerts/11",
       "created_at": "2026-09-20T10:00:00Z"
     }
   ]
