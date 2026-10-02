@@ -302,6 +302,12 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
     data = work / "data"
     base_shas = read_vote_files(cfg, v, data, run, h["Fail"])
     problems, notes = [], []
+    held = mask_credentials(d, h)
+    if held:
+        # The post, its first comment and the next round are public once approved: a credential in them (the
+        # model reads files) is masked in everything built from here on, and the item cannot be approved.
+        problems.append(f"the proposal holds what looks like a credential ({', '.join(held)}); it is masked here "
+                        "and cannot be approved: reject this item so the next tick redoes the round")
 
     queue_cmd = [sys.executable, str(v["paths"]["vote_update"]), "--pick", str(data / "pick.json"),
                  "--queue", str(data / "pick-queue.json"), "--posts", str(data / "posts.json"), "--queue-round",
@@ -366,6 +372,21 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
     out = to_inbox(store, write_private, folder, f"vote {rid}: {d['topic']}", bundle)
     return {"status": "to_inbox", "note": "; ".join(problems + notes) or f"vote post and next round for round {rid}",
             **out}
+
+
+def mask_credentials(value, h) -> list:
+    """Mask in place every string of a proposal in which the shared credential formats match; their kinds."""
+    found = []
+    items = value.items() if isinstance(value, dict) else enumerate(value) if isinstance(value, list) else ()
+    for k, item in list(items):
+        if isinstance(item, str):
+            label = h["credential_in"](item)
+            if label:
+                value[k] = h["masked"](item)
+                found.append(label)
+        else:
+            found += mask_credentials(item, h)
+    return found
 
 
 def publisher_ledger(cfg: dict, run, post_file: str, key: str):

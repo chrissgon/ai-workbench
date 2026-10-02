@@ -562,3 +562,57 @@ def test_a_runtime_copy_that_still_asks_for_the_old_class_names_keeps_running(en
     with pytest.raises(runtime.Fail) as e:
         providers.path("scheduler")
     assert "scheduler:job" in str(e.value) and "SCHEDULER_PROVIDER" in str(e.value)
+
+
+# --- RT7: nothing that looks like a credential is published ------------------------------------------
+
+# Built at run time so that no credential-shaped literal sits in the repository (the security scan reads it).
+FAKE_GITHUB_TOKEN = "ghp" + "_" + "Z9" * 18
+
+
+def test_a_reply_holding_a_credential_is_never_sent_and_is_masked_in_the_inbox(env):
+    # The model reads files and a comment can ask it to quote one; the gate checked links, topics and length,
+    # and the text went out in public.
+    reply = f"Thanks, Ana. The token is {FAKE_GITHUB_TOKEN}."
+    set_case(env, [message(1)], decision(reply=reply))
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "to_inbox"
+    assert "looks like a credential (GitHub token)" in out["handled"][0]["note"]
+    assert publisher_calls(env) == []
+    inbox_md = (env["proj"] / "docs/marketing/engagement-inbox.md").read_text()
+    assert FAKE_GITHUB_TOKEN not in inbox_md and "<redacted GitHub token>" in inbox_md
+    assert "(cannot be sent)" in inbox_md
+    code, items, err = rt(env, "inbox")
+    assert code == 0 and FAKE_GITHUB_TOKEN not in json.dumps(items)
+    (item,) = items["items"]
+    assert item["payload"]["reply_file"] is None
+    code, _, err = rt(env, "approve", "--id", str(item["id"]))
+    assert code == 2 and "no drafted reply" in err
+    leftovers = [f for f in env["data"].rglob("*") if f.is_file() and FAKE_GITHUB_TOKEN.encode() in f.read_bytes()]
+    # The agent's own answer stays where the adapter wrote it (the run's record, 0600); nothing derived from it
+    # holds the value.
+    assert all(f.name == "response.md" for f in leftovers), leftovers
+
+
+def test_approve_refuses_a_reply_that_holds_a_credential(env):
+    # An item written before this check, or by hand: approve checks the text it is about to send as well.
+    set_case(env, [], decision())
+    assert rt(env, "status")[0] == 0  # creates the store
+    folder = env["data"] / "manual"
+    folder.mkdir(parents=True)
+    reply = folder / "reply.txt"
+    reply.write_text(f"Here you go: Bearer {'k' * 32}\n")
+    sha = hashlib.sha256(reply.read_bytes()).hexdigest()
+    comment = message(7)["fake_comment"]
+    item = folder / "item.json"
+    item.write_text(json.dumps({"comment": comment, "decision": None, "reasons": [], "reply_file": str(reply),
+                                "idempotency_key": "reply-7"}))
+    store = [sys.executable, str(env["wb"] / "providers/store/sqlite.py")]
+    added = subprocess.run(store + ["inbox-add", "--db", str(env["data"] / "store.sqlite"), "--kind", "reply",
+                                    "--title", "t", "--payload-file", str(item), "--payload-sha256", sha],
+                           capture_output=True, text=True, check=True)
+    item_id = json.loads(added.stdout)["id"]
+    code, _, err = rt(env, "approve", "--id", str(item_id), "--confirmed", "--sha256", sha)
+    assert code == 1 and "looks like a credential (bearer token)" in err and "nothing sent" in err
+    assert publisher_calls(env) == []

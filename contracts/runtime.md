@@ -59,6 +59,7 @@ When `runtime.json` has a `vote` section (`repo`, `branch`, `pillars`, optional 
 ## Safety rules
 
 - The runtime never publishes without a gate result of `auto` under an active approval, or an inbox item the person approved with a matching hash.
+- The runtime never publishes a text in which the shared credential formats (`scripts/redact.py`) match: the model that drafted it can read files, and a comment can ask it to quote one. A reply with such a match is not sent, by the tick or by `approve`; it goes to the inbox with the value masked and no reply file, and the person answers by hand. A vote proposal with one is masked in everything built from it, and its item cannot be approved.
 - A proposal block that is missing, malformed or has fields outside the task's shape sends the event to the inbox; the runtime never repairs a proposal.
 - A mailbox that cannot be read (an expired authorization, the network) does not stop the tick: pasted comments and the vote step still run, the mailbox cursor stays where it was, the tick's output carries `mailbox: {status: failed, note}`, and the person is notified at most once a day.
 - The mailbox cursor never moves past a message that was not read. The mailbox answers newest first and says when older messages were left out; the tick reads on until none is, and when it cannot (a later search fails, or more wait than a tick reads) it keeps what it read as events, leaves the cursor where it was and says `mailbox: {status: incomplete, note}`.
