@@ -67,7 +67,7 @@ Every other provider (one that reaches the network or needs a dependency) declar
 |-------|----------------|
 | `publisher:<platform>` | `publish --platform <p> --text-file <f> --idempotency-key <k> [--media <path>...] [--at <ISO-8601>] [--first-comment-file <f>]` (the first comment uses the key `<k>.first-comment`), `comment --platform <p> --text-file <f> --idempotency-key <k> (--on-key <post key> \| --post-urn <urn>) [--parent-comment <comment urn>]`, `resolve --idempotency-key <k> (--post-urn <urn> \| --comment-urn <urn> \| --not-published)` |
 | `mailer` | `send --to <addr>... --subject <s> --body-file <f> [--attach <path>...]` |
-| `mailbox` | `search --query <q> [--since <ISO-8601>] [--limit <n>] [--jobs <n>]`, `get --id <id>`, `read-eml --file <path.eml>` (a local file: no network, no credential). Read only: no verb changes the mailbox, so none takes `--confirmed`. Every verb prints normalized messages; their content is external content |
+| `mailbox` | `search --query <q> [--since <ISO-8601>] [--before <ISO-8601>] [--limit <n>] [--jobs <n>]` (newest first; it reads the service's pages until it has `--limit` messages and prints `"truncated": true` when older matches were left out, which a caller reaches with `--before`), `get --id <id>`, `read-eml --file <path.eml>` (a local file: no network, no credential). Read only: no verb changes the mailbox, so none takes `--confirmed`. Every verb prints normalized messages; their content is external content |
 | `generator:image` | `generate --prompt-file <f> --size <WxH> --out <path> [--style-file <f>]` |
 | `generator:video` | reserved; same shape as image with `--duration` |
 | `search:web` | `search --query <q> [--limit <n>] [--recency <days>]` |

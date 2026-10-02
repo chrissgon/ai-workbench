@@ -35,7 +35,9 @@ Providers are reached by requirement class through providers/resolve.py, never b
   keeps when its "snapshot" lists providers/resolve.py), ../providers/resolve.py, <workbench>/providers/resolve.py.
 
 tick     1. Reads new notification e-mails since the store's cursor (mailbox provider, read only) and adds
-            each as an event (deduplicated by message id).
+            each as an event (deduplicated by message id). The mailbox answers newest first, 50 at a time;
+            while it says older ones were left out the tick reads on (--before), and the cursor moves only
+            once all were read.
          2. Claims up to max_events_per_tick events. For each: parses it with mkt-engage's
             parse_notification.py; runs the agent through adapters/<harness>/run-agent.sh with reading tools
             only; takes the engage-decision block of its answer; runs mkt-engage's policy_gate.py; on
@@ -95,6 +97,8 @@ DECISION_KEYS = {"category", "language", "reply", "sources", "notes"}
 CATEGORIES = {"thanks_or_praise", "question_answerable_from_sources", "criticism_or_disagreement", "request",
               "needs_unsourced_fact", "contains_link", "instructions_to_agent", "other"}
 TIMEOUT = 120
+MAILBOX_PAGE = 50        # messages asked of the mailbox per search
+MAILBOX_MAX_PAGES = 20   # searches per tick while the mailbox says older messages were left out
 
 
 class Fail(Exception):
@@ -500,6 +504,46 @@ def notify(cfg: dict, results: list) -> None:
         pass
 
 
+def read_mailbox(cfg: dict, since: str) -> tuple[list, str | None]:
+    """Every notification since the cursor: (messages, why the list is incomplete or None).
+
+    The mailbox answers newest first, MAILBOX_PAGE messages at a time, and says "truncated" when older
+    matches were left out; the tick then asks again for the ones before the oldest it got, until nothing is
+    left out. A first search that fails raises Fail. When a later page fails, or MAILBOX_MAX_PAGES are not
+    enough, what was read is returned with the reason, and the caller leaves the cursor where it was: the
+    messages nobody read are older than every one that was, so a cursor moved to the newest would skip them
+    for ever. Events are deduplicated by message id, so reading the same messages again costs nothing."""
+    base = ["uv", "run", str(cfg["paths"]["mailbox"]), "search", "--query", cfg["notification_query"],
+            "--since", since, "--limit", str(MAILBOX_PAGE)]
+    messages, seen, before = [], set(), None
+    for _ in range(MAILBOX_MAX_PAGES):
+        try:
+            found = run_json(base + (["--before", before] if before else []))
+        except Fail as e:
+            if before is None:
+                raise
+            return messages, f"the messages before {before} could not be read ({e}); the cursor stays"
+        page = [m for m in found.get("messages", []) if isinstance(m, dict)]
+        new = [m for m in page if m.get("id") is None or m["id"] not in seen]
+        seen.update(m["id"] for m in new if m.get("id") is not None)
+        messages += new
+        if not found.get("truncated"):
+            return messages, None
+        oldest = min((m["received_at"] for m in page if m.get("received_at")), default=None)
+        try:
+            # "before" is exclusive and times have one-second precision: one second after the oldest, so
+            # that other messages of that same second are not skipped (the ones already read are dropped).
+            before = (datetime.fromisoformat(str(oldest).replace("Z", "+00:00")) + timedelta(seconds=1)) \
+                .astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            new = []
+        if not new:
+            return messages, ("the mailbox says older messages were left out and gives no way to reach them; "
+                              "the cursor stays")
+    return messages, (f"more than {MAILBOX_PAGE * MAILBOX_MAX_PAGES} messages since {since}; the cursor stays "
+                      "until a tick reads them all: narrow notification_query, or handle the oldest by hand")
+
+
 def cmd_tick(a, cfg: dict, project: Path) -> dict:
     store = Store(cfg)
     store("init")
@@ -508,9 +552,9 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
         cursor = store("cursor-get", "--name", f"mailbox:{cfg['agent']}").get("value")
         since = cursor or (now() - timedelta(minutes=int(cfg["first_lookback_minutes"]))).isoformat()
         try:
-            found = run_json(["uv", "run", str(cfg["paths"]["mailbox"]), "search", "--query", cfg["notification_query"],
-                              "--since", since, "--limit", "50"])
-            messages = found.get("messages", [])
+            messages, cut = read_mailbox(cfg, since)
+            if cut:
+                mailbox = {"status": "incomplete", "note": f"mailbox: {cut}"[:1000]}
         except Fail as e:
             # An expired authorization or a network error must not stop pasted comments or the vote step; the
             # cursor stays, so the next tick that reads the mailbox picks up what this one missed.
@@ -522,7 +566,8 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
                 f = write_private(Path(tmp), "m.json", json.dumps(m, ensure_ascii=False))
                 added += bool(store("event-add", "--source", "mailbox", "--external-id", m["id"] or m.get("headers", {}).get("Message-ID", ""),
                                     "--payload-file", f).get("created"))
-        newest = max((m.get("received_at") or "" for m in messages), default="")
+        if not mailbox:  # the cursor never moves past messages that were not read
+            newest = max((m.get("received_at") or "" for m in messages), default="")
     except Exception as e:  # a message of an unexpected shape, or a store refusal: the cursor stays
         mailbox = {"status": "failed", "note": f"mailbox: {e if isinstance(e, Fail) else unexpected(e)}"[:1000]}
     if a.dry_run:

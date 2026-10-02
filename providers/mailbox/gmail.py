@@ -8,7 +8,9 @@
 Sources (official Google documentation, all accessed 2026-09-29):
 - users.messages.list (GET /gmail/v1/users/{userId}/messages; q "supports the same query format as
   the Gmail search box"; maxResults defaults to 100, at most 500; each item carries only id and
-  threadId; gmail.readonly is an accepted scope):
+  threadId; gmail.readonly is an accepted scope). Paging, added on 2026-10-02 from the same reference
+  as it is known, not read again that day (the tests run it against the fake service only): the
+  request takes pageToken and the answer carries nextPageToken while further results exist:
   https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/list
 - users.messages.get (GET /gmail/v1/users/{userId}/messages/{id}; format MINIMAL, FULL, RAW or METADATA):
   https://developers.google.com/workspace/gmail/api/reference/rest/v1/users.messages/get
@@ -60,6 +62,7 @@ HTTP_TIMEOUT_SECONDS = 60
 TEXT_LIMIT_BYTES = 100_000
 EML_LIMIT_BYTES = 50 * 1024 * 1024  # a local safety limit, not a Gmail limit
 DEFAULT_LIMIT, MAX_LIMIT = 20, 100
+MAX_LIST_PAGES = MAX_LIMIT  # a page holds at least one id, so --limit ids never need more list requests
 DEFAULT_JOBS, MAX_JOBS = 4, 10
 LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 # A Gmail message id goes into a URL path, so its shape is checked before use.
@@ -87,15 +90,22 @@ verbs:
             newest first. --since <ISO-8601> keeps messages received at or after
             that time (a time without offset is local time); it is added to the
             query as after:<epoch seconds> and checked again on each message.
-            --limit <n>: 1 to {MAX_LIMIT}, default {DEFAULT_LIMIT}. Messages are fetched
-            in parallel, --jobs <n> at a time (1 to {MAX_JOBS}, default {DEFAULT_JOBS}).
+            --before <ISO-8601> keeps messages received before that time, the
+            same way (before:<epoch seconds>).
+            --limit <n>: 1 to {MAX_LIMIT}, default {DEFAULT_LIMIT}. The list is read page by
+            page (pageToken) until it holds n messages. "truncated" is true when
+            the mailbox holds more matches than were returned: the ones left out
+            are older, so read on with --before <the oldest received_at returned,
+            plus one second> (times have one-second precision; a message printed
+            twice has the same id). Messages are fetched in parallel, --jobs <n>
+            at a time (1 to {MAX_JOBS}, default {DEFAULT_JOBS}).
   get       One message by its Gmail id (--id, as returned by search).
   read-eml  Parse a local RFC 822 file (--file <path.eml>) into the same shape.
             No network, no credential: use it to inspect a saved message and
             to feed tests and eval fixtures.
 
 output (JSON on stdout; diagnostics on stderr; tokens are never printed):
-  search    {{"query": <q sent>, "messages": [<message>...]}}
+  search    {{"query": <q sent>, "messages": [<message>...], "truncated": <bool>}}
   get, read-eml  <message>
   --check   {{"ok": true, "account": <address>, "token_source": <where the
             refresh token was found>, "scope": <granted scopes>}}
@@ -365,13 +375,29 @@ class Gmail:
     def profile(self) -> dict:
         return self.get("/gmail/v1/users/me/profile")
 
-    def list_ids(self, query: str, limit: int) -> list[str]:
-        data = self.get("/gmail/v1/users/me/messages", {"q": query, "maxResults": limit})
-        ids = [m.get("id") for m in data.get("messages") or [] if isinstance(m, dict)]
-        for message_id in ids:
-            if not isinstance(message_id, str) or not MESSAGE_ID_RE.fullmatch(message_id):
-                raise ProviderError("Gmail returned a message id of an unexpected shape")
-        return ids[:limit]
+    def list_ids(self, query: str, limit: int) -> tuple[list[str], bool]:
+        """Up to `limit` message ids, newest first, and whether the mailbox holds more matches than that.
+
+        The service may answer with fewer ids than maxResults and a nextPageToken, so the list is read page
+        by page until it holds `limit` ids or the service has no further page."""
+        ids: list[str] = []
+        token = None
+        for _ in range(MAX_LIST_PAGES):
+            params = {"q": query, "maxResults": limit - len(ids)}
+            if token:
+                params["pageToken"] = token
+            data = self.get("/gmail/v1/users/me/messages", params)
+            page = [m.get("id") for m in data.get("messages") or [] if isinstance(m, dict)]
+            for message_id in page:
+                if not isinstance(message_id, str) or not MESSAGE_ID_RE.fullmatch(message_id):
+                    raise ProviderError("Gmail returned a message id of an unexpected shape")
+            ids += page
+            token = data.get("nextPageToken")
+            if token is not None and not isinstance(token, str):
+                raise ProviderError("Gmail returned a page token of an unexpected shape")
+            if not token or not page or len(ids) >= limit:
+                break
+        return ids[:limit], bool(token) or len(ids) > limit
 
     def message(self, message_id: str) -> dict:
         quoted = urllib.parse.quote(message_id, safe="")
@@ -602,8 +628,15 @@ def cmd_search(args) -> int:
         except ValueError:
             raise ProviderError(f"--since is not ISO-8601: {args.since}", EXIT_USAGE)
         query = f"{query} after:{int(since.timestamp())}"
+    before = None
+    if args.before:
+        try:
+            before = parse_iso(args.before)
+        except ValueError:
+            raise ProviderError(f"--before is not ISO-8601: {args.before}", EXIT_USAGE)
+        query = f"{query} before:{int(before.timestamp())}"
     client, _, _ = connect()
-    ids = client.list_ids(query, limit)
+    ids, truncated = client.list_ids(query, limit)
     if ids:
         with ThreadPoolExecutor(max_workers=min(args.jobs, len(ids))) as pool:
             messages = list(pool.map(client.message, ids))
@@ -612,8 +645,11 @@ def cmd_search(args) -> int:
     if since is not None:
         floor = iso_utc(since)
         messages = [m for m in messages if m["received_at"] and m["received_at"] >= floor]
+    if before is not None:
+        ceiling = iso_utc(before)
+        messages = [m for m in messages if m["received_at"] and m["received_at"] < ceiling]
     messages.sort(key=lambda m: m["received_at"] or "", reverse=True)
-    emit({"query": query, "messages": messages})
+    emit({"query": query, "messages": messages, "truncated": truncated})
     return EXIT_OK
 
 
@@ -649,6 +685,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check", action="store_true", help="refresh a token and read the profile; prints no secret")
     parser.add_argument("--query", help="with search: a Gmail search query")
     parser.add_argument("--since", help="with search: ISO-8601; keep messages received at or after it")
+    parser.add_argument("--before", help="with search: ISO-8601; keep messages received before it")
     parser.add_argument("--limit", type=int, help=f"with search: 1 to {MAX_LIMIT} messages (default {DEFAULT_LIMIT})")
     parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
                         help=f"with search: messages fetched at the same time, 1 to {MAX_JOBS} (default {DEFAULT_JOBS})")

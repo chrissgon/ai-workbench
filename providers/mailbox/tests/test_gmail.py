@@ -106,6 +106,7 @@ class FakeGoogle:
         self.token_scope = SCOPE
         self.redirect_profile = False
         self.challenge: str | None = None
+        self.page_cap: int | None = None
         self.messages = {
             "m1": (multipart_qp(), ms("2026-09-28T10:00:05Z"), "t1"),
             "m2": (html_only(), ms("2026-09-29T08:30:00Z"), "t2"),
@@ -165,9 +166,17 @@ class FakeGoogle:
                     return self._send(200, {"emailAddress": ACCOUNT, "messagesTotal": 3, "threadsTotal": 3,
                                             "historyId": "1"})
                 if parsed.path == "/gmail/v1/users/me/messages":
-                    items = [{"id": i, "threadId": t} for i, (_, _, t) in fake.messages.items()]
-                    return self._send(200, {"messages": items[:int(query.get("maxResults", 100))],
-                                            "resultSizeEstimate": len(items)})
+                    # Newest first, in pages: pageToken is the offset of the page, nextPageToken is present
+                    # while further results exist, and page_cap stands for a service that answers with
+                    # fewer ids than maxResults.
+                    items = [{"id": i, "threadId": t} for i, (_, when, t) in
+                             sorted(fake.messages.items(), key=lambda kv: kv[1][1], reverse=True)]
+                    start = int(query.get("pageToken", "0"))
+                    size = min(int(query.get("maxResults", 100)), fake.page_cap or 500)
+                    answer = {"messages": items[start:start + size], "resultSizeEstimate": len(items)}
+                    if start + size < len(items):
+                        answer["nextPageToken"] = str(start + size)
+                    return self._send(200, answer)
                 prefix = "/gmail/v1/users/me/messages/"
                 if parsed.path.startswith(prefix) and parsed.path[len(prefix):] in fake.messages:
                     if query.get("format") != "raw":
@@ -325,6 +334,44 @@ def test_search_since_adds_after_and_filters(env, fake):
     epoch = int(datetime(2026, 9, 28, tzinfo=timezone.utc).timestamp())
     assert out["query"] == f"comment after:{epoch}"
     assert [m["id"] for m in out["messages"]] == ["m2", "m1"]  # the fake ignores q; the provider checks again
+
+
+def listings(fake):
+    return [urllib.parse.parse_qs(urllib.parse.urlparse(r["path"]).query) for r in fake.requests
+            if urllib.parse.urlparse(r["path"]).path == "/gmail/v1/users/me/messages"]
+
+
+def test_search_pages_until_the_limit_and_says_when_the_list_was_cut(env, fake):
+    # RT3: one request with maxResults and no page token; a list cut by the service, or by --limit, was
+    # printed as if it were whole.
+    fake.page_cap = 1  # the service answers one id per page
+    proc = run(SCRIPT, ["search", "--query", "x", "--limit", "2", "--jobs", "1"], env)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    assert [m["id"] for m in out["messages"]] == ["m2", "m1"] and out["truncated"] is True
+    assert [q.get("pageToken") for q in listings(fake)] == [None, ["1"]]
+    assert [q["maxResults"] for q in listings(fake)] == [["2"], ["1"]]
+    fake.requests.clear()
+    proc = run(SCRIPT, ["search", "--query", "x", "--limit", "3", "--jobs", "1"], env)
+    out = json.loads(proc.stdout)
+    assert [m["id"] for m in out["messages"]] == ["m2", "m1", "m0"] and out["truncated"] is False
+    assert len(listings(fake)) == 3
+    fake.page_cap = None
+    proc = run(SCRIPT, ["search", "--query", "x", "--limit", "20"], env)
+    assert json.loads(proc.stdout)["truncated"] is False
+
+
+def test_search_before_adds_before_and_filters(env, fake):
+    proc = run(SCRIPT, ["search", "--query", "comment", "--since", "2026-09-28T00:00:00Z",
+                        "--before", "2026-09-28T10:00:06Z"], env)
+    assert proc.returncode == 0, proc.stderr
+    out = json.loads(proc.stdout)
+    after = int(datetime(2026, 9, 28, tzinfo=timezone.utc).timestamp())
+    before = int(datetime(2026, 9, 28, 10, 0, 6, tzinfo=timezone.utc).timestamp())
+    assert out["query"] == f"comment after:{after} before:{before}"
+    assert [m["id"] for m in out["messages"]] == ["m1"]  # the fake ignores q; the provider checks again
+    proc = run(SCRIPT, ["search", "--query", "comment", "--before", "yesterday"], env)
+    assert proc.returncode == 2 and "--before" in proc.stderr
 
 
 def test_search_limit_bounds(env, fake):

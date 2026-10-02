@@ -24,7 +24,21 @@ if sys.argv[1] == "search" and os.environ.get("FAKE_MAILBOX_FAIL"):
     sys.exit(1)
 msgs = json.loads(open(os.environ["FAKE_MESSAGES"]).read())
 if sys.argv[1] == "search":
-    print(json.dumps({"messages": msgs}))
+    args = sys.argv[2:]
+    with open(os.environ["FAKE_CALLS"] + ".mailbox", "a") as f:
+        f.write(json.dumps(args) + "\n")
+    page = os.environ.get("FAKE_MAILBOX_PAGE")  # a mailbox that answers newest first, this many at a time
+    if not page:
+        print(json.dumps({"messages": msgs}))
+        sys.exit(0)
+    before = args[args.index("--before") + 1] if "--before" in args else None
+    if before and os.environ.get("FAKE_MAILBOX_FAIL_OLDER"):
+        print("error: the network went away", file=sys.stderr)
+        sys.exit(1)
+    pool = sorted(msgs, key=lambda m: m["received_at"], reverse=True)
+    if before:
+        pool = [m for m in pool if m["received_at"] < before]
+    print(json.dumps({"messages": pool[:int(page)], "truncated": len(pool) > int(page)}))
 '''
 
 FAKE_PARSER = r'''
@@ -234,6 +248,51 @@ def test_a_run_of_unknown_cost_counts_as_the_per_run_maximum(env, monkeypatch):
     code, out, _ = rt(env, "tick")
     assert out["handled"] == [] and "daily cost cap reached" in out["stopped"]
     assert "2 runs of unknown cost" in out["stopped"]
+
+
+def mailbox_calls(env):
+    path = Path(str(env["calls"]) + ".mailbox")
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_more_notifications_than_one_page_are_all_read(env, monkeypatch):
+    # RT3: the tick took the newest page, moved the cursor to its newest message, and the older ones were
+    # never read. Here the mailbox answers two messages at a time and five wait.
+    monkeypatch.setenv("FAKE_MAILBOX_PAGE", "2")
+    names = ["Ana Lima", "Bruno", "Carla", "Davi", "Elisa"]
+    set_case(env, [message(n, commenter=names[n - 1]) for n in range(1, 6)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["messages"] == 5 and out["new_events"] == 5 and "mailbox" not in out
+    calls = mailbox_calls(env)
+    # Each further search asks for what came before the oldest message of the last page, plus one second (the
+    # mailbox's times have one-second precision), so the oldest message comes back once more and is dropped.
+    assert [c[c.index("--before") + 1] if "--before" in c else None for c in calls] == \
+        [None, "2026-09-29T10:04:01Z", "2026-09-29T10:03:01Z", "2026-09-29T10:02:01Z"]
+    assert len([h for h in out["handled"] if h.get("status") == "done"]) == 5
+    code, out, _ = rt(env, "tick")
+    assert out["new_events"] == 0
+    since = mailbox_calls(env)[-1]
+    assert since[since.index("--since") + 1] == "2026-09-29T10:05:00Z"  # the cursor moved once all were read
+
+
+def test_the_cursor_stays_when_the_older_messages_could_not_be_read(env, monkeypatch):
+    # RT3: the newest page is read and the next one fails. What was read becomes events; the cursor must not
+    # move past the messages nobody read.
+    monkeypatch.setenv("FAKE_MAILBOX_PAGE", "2")
+    monkeypatch.setenv("FAKE_MAILBOX_FAIL_OLDER", "1")
+    names = ["Ana Lima", "Bruno", "Carla", "Davi", "Elisa"]
+    set_case(env, [message(n, commenter=names[n - 1]) for n in range(1, 6)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["new_events"] == 2
+    assert out["mailbox"]["status"] == "incomplete" and "cursor stays" in out["mailbox"]["note"]
+    monkeypatch.delenv("FAKE_MAILBOX_FAIL_OLDER")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["new_events"] == 3 and "mailbox" not in out
+    again = [c for c in mailbox_calls(env) if "--before" not in c][-1]
+    assert not again[again.index("--since") + 1].startswith("2026-09-29")  # no cursor yet: the lookback again
 
 
 def test_publisher_failure_goes_to_the_inbox(env, monkeypatch):
