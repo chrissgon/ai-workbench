@@ -1,29 +1,29 @@
 # Routing table: intent → area → skill
 
-Match the intent column, not the example words. Skills marked (planned) are not built yet; when routed to one, say so and fall back (see SKILL.md step 4). Of the flows, only `flow-fix-bug` is built; every other flow below is planned. Keep this table in sync with `docs/inventory.md` in the workbench.
+Match the intent column, not the example words. Skills marked (planned) are not built yet, capabilities and flows alike: route to one by its name (the mark is not part of the name) with the status `pending`, say that it is not built, and propose the fallback of SKILL.md step 4. Of the flows, only `flow-fix-bug` is built; every other flow below is planned. Keep this table in sync with `docs/inventory.md` in the workbench.
 
 ## Business (`biz-`)
 
 | Intent | Skill |
 |--------|-------|
-| Is this idea worth pursuing; who has the problem; is there a market | biz-validate-idea |
+| Is this idea worth pursuing; who has the problem; is there a market | biz-validate-idea (planned) |
 | Size the market, map competitors and alternatives | biz-market-analysis |
 | Who exactly we sell to; how we position against alternatives | biz-icp-positioning |
-| How we make money; pricing; unit economics; validate the business model | biz-business-model |
-| How we reach and acquire the first customers | biz-gtm |
-| The whole plan in one document; investor narrative | biz-business-plan |
+| How we make money; pricing; unit economics; validate the business model | biz-business-model (planned) |
+| How we reach and acquire the first customers | biz-gtm (planned) |
+| The whole plan in one document; investor narrative | biz-business-plan (planned) |
 | Validate or build a business end to end | flow-business-plan (planned) |
 
 ## Product (`product-`)
 
 | Intent | Skill |
 |--------|-------|
-| Frame the problem, hypotheses and segments before deciding what to build | product-discovery |
+| Frame the problem, hypotheses and segments before deciding what to build | product-discovery (planned) |
 | Product-level requirements document | product-prd |
 | Feature-level spec with edge cases and acceptance criteria | product-feature-spec |
 | What to build first and why; prioritization | product-roadmap |
 | Break work into epics, stories, tasks | product-backlog |
-| How we measure product success | product-metrics |
+| How we measure product success | product-metrics (planned) |
 
 ## Brand (`brand-`)
 
@@ -39,12 +39,12 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 
 | Intent | Skill |
 |--------|-------|
-| Plan or synthesize research with users | design-user-research |
+| Plan or synthesize research with users | design-user-research (planned) |
 | User flows, information architecture, wireframes | design-ux-flows |
 | Tokens and components as a system | design-system |
 | Brief for any visual artifact (screen, mockup, logo, presentation, animation, image) for an AI design tool | design-brief |
 | Spec for engineering: layout, tokens, states, breakpoints | design-handoff |
-| Does the implementation match the design | design-implementation-validation |
+| Does the implementation match the design | design-implementation-validation (planned) |
 | Run a brief in a design tool, a generator or a code prototype; review what a tool produced | design-execute |
 | Accessibility audit | design-accessibility-review (planned) |
 | Design a product's experience end to end | flow-design (planned) |
@@ -76,7 +76,7 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 |--------|-------|
 | Open a pull request | ops-pull-request |
 | Update my branch with its base; resolve conflicts | ops-branch-sync |
-| Set up or change the CI pipeline | ops-ci-pipeline (planned) |
+| Set up or change the CI pipeline | ops-ci-pipeline |
 | Cut a release; release notes; versioning | ops-release (planned) |
 | Notes for QA about a change | ops-qa-handover (planned) |
 
@@ -85,7 +85,7 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Intent | Skill |
 |--------|-------|
 | What we say and to whom; messaging framework | mkt-messaging |
-| Plan a launch | mkt-launch-plan |
+| Plan a launch | mkt-launch-plan (planned) |
 | Content calendar | mkt-content-plan |
 | Write a social post (text only, nothing published) | mkt-social-copy |
 | Publish or schedule a post that is already written and illustrated | mkt-publish |
@@ -100,12 +100,12 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 
 | Intent | Skill |
 |--------|-------|
-| Where would AI add value here; build or buy; is it feasible and affordable | ai-opportunity-assessment |
-| Requirements for an AI feature: quality bar, fallbacks, cost ceiling | ai-feature-requirements |
-| How the interface should handle uncertainty and feedback | ai-ux-patterns |
-| Integrate a model: prompts, retrieval, tool use | ai-llm-integration |
-| Evaluate the product's AI: datasets, graders, thresholds | ai-evals |
-| Privacy, prompt injection, compliance for AI features | ai-governance |
+| Where would AI add value here; build or buy; is it feasible and affordable | ai-opportunity-assessment (planned) |
+| Requirements for an AI feature: quality bar, fallbacks, cost ceiling | ai-feature-requirements (planned) |
+| How the interface should handle uncertainty and feedback | ai-ux-patterns (planned) |
+| Integrate a model: prompts, retrieval, tool use | ai-llm-integration (planned) |
+| Evaluate the product's AI: datasets, graders, thresholds | ai-evals (planned) |
+| Privacy, prompt injection, compliance for AI features | ai-governance (planned) |
 
 ## Workbench and methods (`core-`)
 

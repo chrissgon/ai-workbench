@@ -7,7 +7,7 @@ description: >
   chosen direction. It runs automatically when the agent can drive the tool and in assisted
   mode otherwise: it prepares the exact prompt and attachments per direction, the user runs
   them and brings the results back. When the request has no brief or a thin one ("make the
-  landing in Figma Make"), it asks for design-brief first. Use this skill when someone asks to
+  landing in" a named design tool), it asks for design-brief first. Use this skill when someone asks to
   generate, create, render or produce a screen, mockup, logo, presentation, animation or
   image, to run or execute a brief, or to review what a design tool produced. Not for
   writing the brief itself (design-brief) or implementing the chosen design in the product
@@ -39,7 +39,7 @@ A brief is worth what the tool makes of it, and a tool's first result is rarely 
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| `docs/design/briefs/<artifact>.md` with `Lint: ok` and `Ready for design-execute: yes` | yes | This needs the brief, which `design-brief` writes: stop and tell the user to run it first. A request that names only the artifact and a tool ("a landing in Claude Design") is a missing brief, not a brief. |
+| `docs/design/briefs/<artifact>.md` with `Lint: ok` and `Ready for design-execute: yes` | yes | This needs the brief, which `design-brief` writes: stop and tell the user to run it first. A request that names only the artifact and a tool ("a landing in" a named design tool) is a missing brief, not a brief. |
 | The user's choice of tool | no | Recommend one from [references/tools.md](references/tools.md) by artifact type and ask. |
 | Previous results of the same artifact (`docs/design/results/<artifact>.md`) | no | Start at round 1. |
 | `docs/workbench/state.md` | no | Skip approvals and registration. |

@@ -170,6 +170,7 @@ Flows may invoke flows one level deep (`flow-new-product` invokes `flow-business
 | explorer | read-only codebase exploration, returns a map or impact list | eng-codebase-map, eng-impact-analysis | — | create | 1 |
 | implementer | writes code and tests for one task in isolation, stack from the project's `AGENTS.md` | eng-implement, eng-unit-tests | backend-engineer (NestJS), frontend-engineer (React) | rewrite, stack-agnostic | 1 |
 | reviewer | one review perspective per instance; several run in parallel when the harness allows | eng-code-review, core-critique | code-reviewer, multi-agent-analyzer | rewrite | 1 |
+| social-manager | classifies each new comment on a person's own posts and drafts a reply in their voice, and proposes the post and next round of a closed weekly vote; returns a proposal the runtime checks against the approved engagement policy, never acts | mkt-engage, mkt-vote-round | — | create | 4 |
 
 ## Dropped from the old repository
 
@@ -189,7 +190,7 @@ Flows may invoke flows one level deep (`flow-new-product` invokes `flow-business
 |------|-------|---------|-------|
 | Capabilities | 62 | 8 | 70 |
 | Flows | 11 | 0 | 11 |
-| Agents | 4 | 0 | 4 |
+| Agents | 5 | 0 | 5 |
 
 Sixty-two skills is the reason packs exist. It is also why each wave must ship refined skills, not drafts of everything.
 

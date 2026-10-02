@@ -8,7 +8,7 @@ Skills declare what they need from the environment as *classes*, never as produc
 |-------|-------------------------------|---------|
 | `integration:issue-tracker` | Jira, Linear, GitHub Issues | engineering flows |
 | `integration:vcs` | GitHub, GitLab | delivery |
-| `integration:design-tool` | Figma; Claude Design design-system projects | design, validation |
+| `integration:design-tool` | Figma; the design-system projects of a generative design tool | design, validation |
 | `search:web` | any web search tool, including fetching the pages it returns | research, business, marketing |
 | `generator:image` | any image model behind an API | design assets, marketing |
 | `generator:video` | any video model behind an API | marketing (slot reserved, not implemented) |
@@ -18,7 +18,7 @@ Skills declare what they need from the environment as *classes*, never as produc
 | `scheduler` | native scheduling in the publisher, or a harness routine | marketing, operations |
 | `store` | SQLite (a local file); a cloud database later | the agent runtime: cursors, events, runs, approval inbox, executed actions |
 
-Add a class when a second skill needs it; do not add classes speculatively.
+Add a class when a second skill needs it; do not add classes speculatively. Class names are identifiers and are not renamed: some carry a prefix (`integration:`, `search:`, `generator:`, `publisher:`) and some are bare (`mailer`, `mailbox`, `scheduler`, `store`; the last three have a native provider under `providers/`), and a skill copies a name exactly as this table spells it.
 
 ## Resolution order
 
