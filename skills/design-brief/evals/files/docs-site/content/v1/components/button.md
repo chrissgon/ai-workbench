@@ -7,10 +7,10 @@ section: Components
 
 ## Usage
 
-Add the class `pui-btn` to a `button` or an `a` element. Without a style class the button is solid; without a colour class it uses the theme colour.
+Add the class `plu-btn` to a `button` or an `a` element. Without a style class the button is solid; without a colour class it uses the theme colour.
 
 ```html
-<button class="pui-btn">Save</button>
+<button class="plu-btn">Save</button>
 ```
 
 ## Styles
@@ -18,10 +18,10 @@ Add the class `pui-btn` to a `button` or an `a` element. Without a style class t
 Four styles change how much weight the button carries: `solid`, `soft`, `outline` and `text`.
 
 ```html
-<button class="pui-btn">Solid</button>
-<button class="pui-btn pui-soft">Soft</button>
-<button class="pui-btn pui-outline">Outline</button>
-<button class="pui-btn pui-text">Text</button>
+<button class="plu-btn">Solid</button>
+<button class="plu-btn plu-soft">Soft</button>
+<button class="plu-btn plu-outline">Outline</button>
+<button class="plu-btn plu-text">Text</button>
 ```
 
 ## Colours
@@ -29,17 +29,17 @@ Four styles change how much weight the button carries: `solid`, `soft`, `outline
 Seven colour classes set the role: `theme`, `success`, `error`, `warn`, `muted`, `surface` and `inverse`.
 
 ```html
-<button class="pui-btn pui-success">Publish</button>
-<button class="pui-btn pui-error pui-outline">Delete</button>
-<button class="pui-btn pui-surface">Cancel</button>
+<button class="plu-btn plu-success">Publish</button>
+<button class="plu-btn plu-error plu-outline">Delete</button>
+<button class="plu-btn plu-surface">Cancel</button>
 ```
 
 ## Rounded
 
-Add `pui-rounded` for a pill shape.
+Add `plu-rounded` for a pill shape.
 
 ```html
-<button class="pui-btn pui-rounded">Subscribe</button>
+<button class="plu-btn plu-rounded">Subscribe</button>
 ```
 
 ## Disabled
@@ -47,7 +47,7 @@ Add `pui-rounded` for a pill shape.
 A disabled button keeps its colour at 50% opacity and ignores the pointer.
 
 ```html
-<button class="pui-btn" disabled>Save</button>
+<button class="plu-btn" disabled>Save</button>
 ```
 
 ## Accessibility

@@ -9,8 +9,6 @@
 #
 # What each check asks, and the reason of each failure:
 #   uv run --with pytest python3 scripts/tests/test_cli_conformance.py
-skills/design-brief/scripts/lint_brief.py report  # the record's shape; arguments as top-level keys
-skills/design-brief/scripts/longest_value.py unknown-flag  # an unknown flag is ignored, exit 0
 skills/design-handoff/scripts/lint_handoff.py report  # the record's shape
 skills/design-system/scripts/contrast.py value-flag-last  # traceback
 skills/design-system/scripts/lint_design_system.py value-flag-last  # traceback

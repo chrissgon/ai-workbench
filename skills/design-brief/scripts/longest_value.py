@@ -7,17 +7,27 @@ Usage: python3 longest_value.py <value> [<value>...]
 Values come as arguments or, when there are none, one per line on stdin. Empty lines are ignored and
 surrounding whitespace is trimmed. Prints JSON: {"count", "longest", "characters", "words", "runners_up"}
 where "runners_up" holds the next two values by length. A tie keeps the first value in input order.
+The script has no flags but --help: an argument that starts with "--" is refused as an unknown flag; a
+value that starts with "--" goes after a lone "--" or on stdin.
 
-Exit codes: 0 ok, 2 usage error (no value given).
+Exit codes: 0 ok, 2 usage error (no value given, an unknown flag), on stderr.
 """
 import json
 import sys
 
 
 def main(argv):
-    if "--help" in argv or "-h" in argv:
+    if argv[:1] == ["--"]:
+        argv = argv[1:]
+    elif "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0
+    else:
+        flags = [a for a in argv if a.startswith("--")]
+        if flags:
+            print(f"Error: unknown argument {flags[0]!r}; a value that starts with -- goes after a lone --. "
+                  "See --help.", file=sys.stderr)
+            return 2
     values = argv if argv else sys.stdin.read().splitlines()
     values = [v.strip() for v in values if v.strip()]
     if not values:
