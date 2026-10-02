@@ -24,7 +24,7 @@ Would you let a model touch your query plans?
 ## First comment
 
 ```first-comment
-The experiment log: https://github.com/dana-example/tinykv-dana-example/discussions
+The experiment log: https://code.example/dana-example/tinykv-dana-example/discussions
 ```
 
 ## Checks

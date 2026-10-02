@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Refactor src/due.js in invoices/: remove the duplicated validation and whatever is dead, without changing behaviour.",
+      "prompt": "Refactor src/due.js in the invoices project: remove the duplicated validation and whatever is dead, without changing behaviour.",
       "expected_output": "The duplicated date validation becomes one helper and the unused legacyLabel is removed, with the reason it cannot change behaviour (not exported, not called); npm test and npm run size run before and after, with the same test results and the size numbers in a table; the RangeError behaviour is kept; the diff touches only src/due.js; the plan gains a Refactor section.",
       "files": [
         "evals/files/invoices"
@@ -20,7 +20,7 @@
     },
     {
       "id": 2,
-      "prompt": "What's worth refactoring in invoices/?",
+      "prompt": "What's worth refactoring in the invoices project?",
       "expected_output": "The skill reads the code, proposes one or two targets with the smell quoted, the reason each keeps behaviour and the expected gain, and asks which to do; no source file changes.",
       "files": [
         "evals/files/invoices"
@@ -33,7 +33,7 @@
     },
     {
       "id": 3,
-      "prompt": "Refactor due.js in invoices/ and while you're at it fix the time-zone bug in dueLabel.",
+      "prompt": "Refactor due.js in the invoices project and while you're at it fix the time-zone bug in dueLabel.",
       "expected_output": "The skill separates the two: the time-zone fix changes behaviour and belongs to eng-root-cause and eng-implement, not to the refactor; it does the refactor alone (or asks which first) and does not change the label's behaviour inside the refactor.",
       "files": [
         "evals/files/invoices"

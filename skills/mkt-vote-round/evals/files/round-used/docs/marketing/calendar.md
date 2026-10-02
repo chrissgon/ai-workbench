@@ -31,7 +31,7 @@
 | 9 | 2026-10-23T09:00:00-03:00 | AI for databases, built in public | EN | Schema in the prompt: invented columns in 4 of 10 answers without it | backend engineers | docs/notes/2026-10.md, AI for databases [4] | plan | — | proposed |
 
 ## Sources
-[1] https://github.com/dana-example/tinykv-dana-example/releases, accessed 2026-09-28.
+[1] https://code.example/dana-example/tinykv-dana-example/releases, accessed 2026-09-28.
 [2] docs/brand/profile.md.
 [3] docs/brand/strategy.md.
 [4] docs/notes/2026-10.md, Dana's notes.
