@@ -15,7 +15,7 @@ Skills declare what they need from the environment as *classes*, never as produc
 | `publisher:<platform>` | LinkedIn via a scheduler API, X, blog CMS | marketing |
 | `mailer` | SMTP, a mail API | marketing, notifications |
 | `mailbox` | Gmail API, IMAP (read only: search and read messages) | marketing, engagement |
-| `scheduler` | native scheduling in the publisher, or a harness routine | marketing, operations |
+| `scheduler` | launchd on macOS, systemd on Linux (a job runs a command once at a set time or every N minutes); or a harness routine | marketing, operations, the agent runtime's trigger |
 | `store` | SQLite (a local file); a cloud database later | the agent runtime: cursors, events, runs, approval inbox, executed actions |
 
 Add a class when a second skill needs it; do not add classes speculatively. Class names are identifiers and are not renamed: some carry a prefix (`integration:`, `search:`, `generator:`, `publisher:`) and some are bare (`mailer`, `mailbox`, `scheduler`, `store`; the last three have a native provider under `providers/`), and a skill copies a name exactly as this table spells it.
@@ -28,10 +28,19 @@ Add a class when a second skill needs it; do not add classes speculatively. Clas
 
 A skill's body must describe its behaviour at step 3 for every class it requires.
 
+## Reaching a provider script
+
+A skill, the agent runtime and `scripts/doctor.py` reach a provider by its class, through one resolution function, `providers/resolve.py`. None of them names an implementation or builds a provider's path.
+
+- **The command:** `python3 <workbench root>/providers/resolve.py --class <class>` prints the path of the provider script for the class (`--json` adds the implementation and how it was chosen; `--list` prints every class with its implementations and the one that resolves now). Exit 0 with the path, 3 when nothing resolves (the message names the variable to set; the skill degrades), 2 on an unknown class.
+- **The order:** the environment variable of the class, `<CLASS>_<SUBCLASS>_PROVIDER` then `<CLASS>_PROVIDER` (`PUBLISHER_LINKEDIN_PROVIDER`, `SCHEDULER_PROVIDER`, `INTEGRATION_VCS_PROVIDER`); then the platform default where one exists (`scheduler`: launchd on macOS, systemd on Linux); then the only implementation, when the class ships exactly one. Details: `providers/CONTRACT.md`, "Selection".
+- **The workbench root:** the environment variable `WORKBENCH_ROOT`, the absolute path of the workbench checkout a project uses. Unset, the function uses the checkout it is in; a skill, which runs from the project and cannot know that path, asks the user once and records the answer as a decision in the state file.
+- **In a skill:** write "Resolve the provider by its class: `python3 <workbench root>/providers/resolve.py --class scheduler` prints the path of the provider script", then use the printed path in the commands that follow. `requires` in the frontmatter names the same class.
+
 ## Credentials
 
 - Never in this repository. `.env` files are ignored by git.
-- Provider scripts read `<CLASS>_PROVIDER` to pick the implementation and provider-specific variables for credentials (documented in the script's `--help`).
+- `<CLASS>_PROVIDER` picks the implementation of a class (read by `providers/resolve.py`, see "Reaching a provider script"); it holds a name, never a credential. Provider scripts read provider-specific variables for credentials (documented in the script's `--help`).
 - OAuth-based services need a one-time interactive authorization performed by the user with a dedicated script, which stores the refresh token in the OS secret store, never in a file inside a project.
 - Service-side access approval (for example, platform APIs that require an approved developer application) is outside this repository's control. Skills say so when relevant.
 
@@ -61,4 +70,4 @@ Rules:
 
 ## Checking an environment
 
-`python3 scripts/doctor.py [--harness <adapter>]` lists every class the installed skills require and whether a connector (declared in `adapters/<harness>/connectors.json`) or a native provider satisfies it. Flows run it before a phase that needs an external tool and degrade accordingly.
+`python3 scripts/doctor.py [--harness <adapter>]` lists every class the installed skills require and whether a connector (declared in `adapters/<harness>/connectors.json`) or a native provider satisfies it: the provider `providers/resolve.py` chooses for the class, when its `--check` passes. Flows run it before a phase that needs an external tool and degrade accordingly.

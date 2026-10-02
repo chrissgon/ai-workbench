@@ -78,7 +78,7 @@ Sources, accessed 2026-09-29: [Comments API](https://learn.microsoft.com/en-us/l
 | `LINKEDIN_CLIENT_SECRET` | `auth.py` | App client secret; required for the authorization. |
 | `LINKEDIN_ACCESS_TOKEN` | `linkedin.py` | Optional; a token from the environment instead of the secret store. |
 | `LINKEDIN_TOKEN_EXPIRES_AT` | `linkedin.py` | Optional; ISO-8601 expiry of `LINKEDIN_ACCESS_TOKEN`. |
-| `PUBLISHER_LINKEDIN_LEDGER` | `linkedin.py` | Path of the idempotency ledger. Default `~/.cache/ai-workbench/publisher-linkedin.json` (or under `$XDG_CACHE_HOME`). |
+| `PUBLISHER_LINKEDIN_LEDGER` | `linkedin.py` | Path of the idempotency ledger. Default, in a data folder: `~/Library/Application Support/ai-workbench/publisher-linkedin.json` on macOS, `$XDG_DATA_HOME/ai-workbench/publisher-linkedin.json` (or `~/.local/share/...`) elsewhere. It used to be `~/.cache/ai-workbench/publisher-linkedin.json` (or under `$XDG_CACHE_HOME`), where clearing the cache lost the record: on first use, when the new file does not exist and the old one does, the provider copies the old ledger to the new place, says so on stderr and never deletes the old one. Jobs scheduled before this change run a copy of the old provider and keep writing to the old location, so they must be scheduled again after upgrading. |
 | `LINKEDIN_API_BASE` | `linkedin.py` | Tests only: a loopback URL that replaces `https://api.linkedin.com`. When set, the secret store is not read. |
 | `LINKEDIN_HTTP_TIMEOUT` | `linkedin.py` | Tests only, honoured with `LINKEDIN_API_BASE`: request timeout in seconds (default 60). |
 

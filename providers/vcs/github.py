@@ -55,6 +55,13 @@ in the local ledger, under a file lock, before the request (the push), and as do
 pending key whose outcome is unknown (a timeout, a crash) blocks every new attempt until `resolve`
 records what happened. Redirects are refused and pagination links are followed only on the API
 host, so the token is only ever sent to a URL that was checked.
+
+The ledger lives in a data folder (~/Library/Application Support/ai-workbench/ on macOS,
+$XDG_DATA_HOME/ai-workbench/ or ~/.local/share/ai-workbench/ elsewhere), next to the scheduler's jobs.
+It used to live in the cache folder, where clearing the cache lost the record of what was already
+dismissed or committed; on first use the old ledger is copied to the new place (a note on stderr says so) and is
+never deleted. Jobs scheduled before this change run a copy of the old provider and keep writing to the
+old location, so they must be scheduled again after upgrading.
 """
 from __future__ import annotations
 
@@ -176,9 +183,12 @@ credentials (never from files or flags):
   The token is never printed, not even partially.
 
 other environment variables:
-  VCS_GITHUB_LEDGER      path of the idempotency ledger (JSON). Default:
-                         $XDG_CACHE_HOME/ai-workbench/vcs-github.json,
-                         or ~/.cache/ai-workbench/vcs-github.json.
+  VCS_GITHUB_LEDGER      path of the idempotency ledger (JSON). Default, in a data folder:
+                         ~/Library/Application Support/ai-workbench/vcs-github.json on macOS;
+                         elsewhere $XDG_DATA_HOME/ai-workbench/vcs-github.json, or
+                         ~/.local/share/ai-workbench/vcs-github.json. A ledger at its old place
+                         ($XDG_CACHE_HOME/ai-workbench/ or ~/.cache/ai-workbench/) is copied
+                         there on first use and never deleted.
   VCS_GITHUB_API_BASE    tests only. Replaces {DEFAULT_API_BASE} with a loopback URL
                          (http://127.0.0.1:<port>). Any other host is refused. When set,
                          the secret store is not read; the token must come from GITHUB_TOKEN.
@@ -293,15 +303,66 @@ def load_token(test_mode: bool, required: bool = True) -> tuple[str, str]:
     return token, source
 
 
+LEDGER_NAME = "vcs-github.json"
+
+
+def data_home() -> Path:
+    """The folder for state that must outlive cache cleaning: the one the scheduler providers use."""
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "ai-workbench"
+    data = os.environ.get("XDG_DATA_HOME")
+    base = Path(data) if data and os.path.isabs(data) else Path.home() / ".local" / "share"
+    return base / "ai-workbench"
+
+
 def ledger_path() -> Path:
     override = os.environ.get("VCS_GITHUB_LEDGER")
     if override:
         return Path(override).expanduser()
+    return data_home() / LEDGER_NAME
+
+
+def old_ledger_path() -> Path | None:
+    """Where the ledger lived before it moved to the data folder; None when VCS_GITHUB_LEDGER is set."""
+    if os.environ.get("VCS_GITHUB_LEDGER"):
+        return None
     cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-    return Path(cache) / "ai-workbench" / "vcs-github.json"
+    return Path(cache) / "ai-workbench" / LEDGER_NAME
+
+
+def ledger_migrate() -> None:
+    """First use after the move: copy the old ledger to the new place, so no recorded key is lost.
+
+    Runs before every read, and does something only while the new ledger does not exist and the old one
+    does. The copy appears under its final name in one step (a hard link, which fails when the name
+    exists), so two runs at once cannot overwrite each other. The old file is never changed or deleted.
+    """
+    path, old = ledger_path(), old_ledger_path()
+    if old is None or path.exists() or not old.is_file():
+        return
+    try:
+        content = old.read_bytes()
+        json.loads(content.decode("utf-8"))
+    except (OSError, ValueError) as exc:
+        raise ProviderError(f"the idempotency ledger at {old} cannot be copied to {path}: {exc}", EXIT_SERVICE)
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".vcs-github.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(content)
+        os.chmod(tmp, 0o600)
+        try:
+            os.link(tmp, path)
+        except FileExistsError:
+            return  # another run copied it first
+    finally:
+        os.unlink(tmp)
+    print(f"note: the idempotency ledger moved: copied {old} to {path}; the old file is kept and no longer read",
+          file=sys.stderr)
 
 
 def ledger_read() -> dict:
+    ledger_migrate()
     path = ledger_path()
     if not path.exists():
         return {"version": 1, "entries": {}}

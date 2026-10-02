@@ -5,7 +5,8 @@ A provider is a self-contained script that satisfies one requirement class from 
 ```
 providers/
 ├── CONTRACT.md                 # this file
-└── <class>/<impl>.py           # e.g. publisher/buffer.py, mailer/smtp.py, image/openai.py
+├── resolve.py                  # the one function that turns a class into a provider script
+└── <class>/<impl>.py           # e.g. publisher/buffer.py, mailer/smtp.py, generator/openai.py
 ```
 
 Class `a:b` maps to folder `providers/a/`; the sub-class (`linkedin` in `publisher:linkedin`) is passed as `--platform`, because one implementation often serves several sub-classes.
@@ -14,14 +15,19 @@ The exception is `integration:<service>`: each integration is a different kind o
 
 ## Selection
 
-`scripts/doctor.py` and skills pick an implementation from environment variables, most specific first:
+One function chooses the implementation of a class: `providers/resolve.py` (`resolve(cls)` when imported; `python3 providers/resolve.py --class <class>` prints the script's path, `--list` every class with its implementations and the one that resolves now). Skills, the agent runtime (`scripts/runtime.py`) and `scripts/doctor.py` all go through it. Nothing outside `providers/` names an implementation or builds a provider's path: a skill names the class and runs the path the function prints.
 
-1. `<CLASS>_<SUBCLASS>_PROVIDER` (for example `PUBLISHER_LINKEDIN_PROVIDER=buffer`)
-2. `<CLASS>_PROVIDER` (for example `PUBLISHER_PROVIDER=buffer`)
+The order, first match wins:
 
-A class without sub-classes uses the second form: `SCHEDULER_PROVIDER=launchd` on macOS, `SCHEDULER_PROVIDER=systemd` on Linux (`providers/scheduler/README.md`). A hyphen in a class name becomes `_`. `integration:<service>` classes use only the first form (`INTEGRATION_VCS_PROVIDER=github`), because one integration's provider never serves another.
+1. The environment, most specific first: `<CLASS>_<SUBCLASS>_PROVIDER` (for example `PUBLISHER_LINKEDIN_PROVIDER=buffer`), then `<CLASS>_PROVIDER` (`PUBLISHER_PROVIDER=buffer`). A class without sub-classes has only the second form (`SCHEDULER_PROVIDER=systemd`). A hyphen in a class name becomes `_`. `integration:<service>` classes use only the first form (`INTEGRATION_VCS_PROVIDER=github`), because one integration's provider never serves another.
+2. The platform default, where the class has one: `scheduler` is `launchd` on macOS and `systemd` on Linux (`providers/scheduler/README.md`).
+3. The only implementation, when the class's folder ships exactly one.
 
-Unset means "no native provider"; the skill degrades as described in its body.
+Otherwise nothing resolves (exit 3, naming the variable to set): "no native provider", and the skill degrades as described in its body. A name from the environment is accepted only when it is an implementation shipped in the class's folder; it is never used as a path. A caller with its own configuration (the runtime's `runtime.json`) may pass an implementation name explicitly, which wins over the environment.
+
+The workbench root, where `providers/` is, comes from the environment variable `WORKBENCH_ROOT` (the absolute path of the checkout a project uses); unset, it is the checkout `resolve.py` itself is in. A skill runs `python3 <workbench root>/providers/resolve.py --class <class>` and asks the user for the path when the variable is not set.
+
+A new class is added to `contracts/environment.md` and to the list in `resolve.py` in the same change (a test compares them); a platform default is added to `PLATFORM_DEFAULTS` there.
 
 ## Interface every provider implements
 
@@ -31,12 +37,29 @@ Unset means "no native provider"; the skill degrades as described in its body.
 - Data to stdout as JSON; diagnostics to stderr. Never print tokens, keys or full credentials, not even partially.
 - Credentials only through the secret resolver, `providers/secrets/resolver.py` (the environment variable, then the OS secret store; `contracts/secrets.md`), never from files inside a project or from flags. A new credential is registered there first.
 - Idempotent: a verb that publishes, sends or creates a record at a remote service takes a required idempotency key (the scheduler's job id plays that role locally). The key is recorded as pending in a local ledger, under a file lock, before the request, and as done after it. A pending key whose outcome is unknown (a timeout, a crash) blocks every new attempt until a `resolve` verb records what the user found.
+- A ledger is state, not cache: it lives in the data folder the scheduler uses (`~/Library/Application Support/ai-workbench/` on macOS, `$XDG_DATA_HOME/ai-workbench/` or `~/.local/share/ai-workbench/` elsewhere), never in a cache folder, where clearing the cache would lose the record of what was already published. The publisher and vcs ledgers moved there on 2026-10-02: on first use, when the new file does not exist and the old one (under `$XDG_CACHE_HOME/ai-workbench/` or `~/.cache/ai-workbench/`) does, the provider copies the old ledger to the new place, says so on stderr, and never deletes the old one. Jobs scheduled before this change run a copy of the old provider and keep writing to the old location, so they must be scheduled again after upgrading. A provider that moves a state file later does the same.
 - Every network call and subprocess has a timeout. A request that carries a credential never follows a redirect.
 - Files and folders a provider writes outside the repository (ledgers, job folders, logs) are 0600 and 0700.
 - An override that replaces a real service or binary for tests is honoured only in test mode: a loopback URL, or an explicit test flag such as `SCHEDULER_TEST=1`.
 - Exit codes: 0 success, 1 provider or service error, 2 usage error, 3 not configured.
-- PEP 723 inline dependencies pinned to exact versions (`==`); run with `uv run providers/<class>/<impl>.py ...`.
+- PEP 723 inline dependencies pinned to exact versions (`==`); run with `uv run providers/<class>/<impl>.py ...`. The header's `requires-python` is the oldest version the script really runs on (see "Python version").
 - Offline tests in `providers/<class>/tests/` (no network, no real credentials: a fake service on 127.0.0.1 and fake tokens from the environment). The pre-commit hook runs them whenever the class changes, and refuses a commit that leaves an existing class without tests.
+
+## Python version
+
+A scheduler starts its jobs with the system interpreter (`/usr/bin/python3`, Python 3.9 on macOS), because that path and its hash survive package upgrades and cache cleaning. So one set of scripts must run on Python 3.9, standard library only:
+
+- the scheduler providers themselves (`providers/scheduler/*.py`), whose runner copy the scheduler calls;
+- the agent runtime the scheduler runs (`scripts/runtime.py`, `scripts/runtime_vote.py`, `scripts/vote_job.py`) and `providers/resolve.py`, which it imports;
+- every script the runtime starts with its own interpreter: the store provider (`providers/store/*.py`) and the skill scripts it calls (the gate, the parsers, the builders).
+
+Rules for a script in that set:
+
+- Its header says `requires-python = ">=3.9"` and `dependencies = []`. A header never claims a newer version than the script needs: the header is what `uv run` obeys, and what a reader trusts.
+- It starts with `from __future__ import annotations` when it annotates with `X | None`, and uses no syntax or standard-library call newer than 3.9.
+- It is listed in `ON_SYSTEM_PYTHON` in `scripts/tests/test_runtime_python39.py`, which checks the syntax, the header and that the file imports. CI runs that file and the tests of those scripts on Python 3.9 (`.github/workflows/checks.yml`, job `python39`).
+
+Every other provider (one that reaches the network or needs a dependency) declares the version it needs and is started through its declared runner, `uv run <script>`, never with the caller's interpreter. A provider that needs newer syntax stays out of the set above and is started that way.
 
 ## Verbs per class
 

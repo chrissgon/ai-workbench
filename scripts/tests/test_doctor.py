@@ -64,3 +64,27 @@ def test_vcs_provider_runs_its_check(monkeypatch):
     assert status == "provider" and detail == "providers/vcs/github.py"
     assert ran[0][-2:] == [str(Path(doctor.PROVIDERS) / "vcs" / "github.py"), "--check"]
     assert doctor.check_provider("integration:vcs", "gitlab")[0] == "missing"
+
+
+def test_a_class_is_checked_through_the_resolution_function(monkeypatch):
+    ran = []
+
+    class Done:
+        returncode, stdout, stderr = 0, "{}", ""
+
+    monkeypatch.setattr(doctor.subprocess, "run", lambda cmd, **k: ran.append(cmd) or Done())
+    for name in [n for n in list(doctor.os.environ) if n.endswith("_PROVIDER")]:
+        monkeypatch.delenv(name)
+    # No variable is set: the only store provider resolves, and the scheduler follows the platform.
+    assert doctor.check_class("store") == ("provider", "sqlite (only-implementation): providers/store/sqlite.py")
+    monkeypatch.setattr(doctor.sys, "platform", "linux")
+    assert doctor.check_class("scheduler")[1] == "systemd (platform-default): providers/scheduler/systemd.py"
+    monkeypatch.setenv("SCHEDULER_PROVIDER", "launchd")
+    assert doctor.check_class("scheduler")[1] == "SCHEDULER_PROVIDER=launchd: providers/scheduler/launchd.py"
+    assert [c[-2:] for c in ran] == [[str(Path(doctor.PROVIDERS) / rel), "--check"] for rel in
+                                     ("store/sqlite.py", "scheduler/systemd.py", "scheduler/launchd.py")]
+    # Nothing to choose, or a name that is not a shipped provider: missing, and nothing is run.
+    status, detail = doctor.check_class("mailer")
+    assert status == "missing" and "MAILER_PROVIDER" in detail
+    monkeypatch.setenv("SCHEDULER_PROVIDER", "../x")
+    assert doctor.check_class("scheduler")[0] == "missing" and len(ran) == 3

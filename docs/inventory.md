@@ -254,14 +254,14 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | eng-integration-tests | evaluated | 0.98 | 0.53 | 0.93 | 2026-10-01 | 1 |
 | eng-refactor | evaluated | 1.00 | 0.54 | 1.00 | 2026-10-01 | 1 |
 | eng-root-cause | stale | 1.00 | 0.57 | 1.00 | 2026-10-01 | 1 |
-| eng-security-review | evaluated | 0.98 | 0.75 | 0.95 | 2026-10-01 | 2 |
+| eng-security-review | stale | 0.98 | 0.75 | 0.95 | 2026-10-01 | 2 |
 | eng-tradeoffs | stale | 1.00 | 0.39 | 1.00 | 2026-10-01 | 1 |
 | eng-unit-tests | evaluated | 0.83 | 0.68 | 0.94 | 2026-10-01 | 1 |
 | flow-fix-bug | evaluated | 0.91 | 0.51 | 0.89 | 2026-10-01 | 1 |
 | mkt-content-plan | evaluated | 1.00 | 0.71 | 1.00 | 2026-10-01 | 1 |
-| mkt-engage | evaluated | 0.98 | 0.82 | 0.92 | 2026-10-01 | 1 |
+| mkt-engage | stale | 0.98 | 0.82 | 0.92 | 2026-10-01 | 1 |
 | mkt-messaging | stale | 1.00 | 0.62 | 0.96 | 2026-10-01 | 1 |
-| mkt-publish | evaluated | 0.88 | 0.54 | 1.00 | 2026-10-01 | 1 |
+| mkt-publish | stale | 0.88 | 0.54 | 1.00 | 2026-10-01 | 1 |
 | mkt-social-copy | evaluated | 1.00 | 0.65 | 1.00 | 2026-10-01 | 1 |
 | mkt-vote-round | evaluated | 0.96 | 0.67 | 0.95 | 2026-10-01 | 2 |
 | ops-branch-sync | evaluated | 0.94 | 0.57 | 0.94 | 2026-10-01 | 1 |
@@ -273,7 +273,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
 | product-roadmap | stale | 0.97 | 0.59 | 0.92 | 2026-10-01 | 1 |
 
-Counts: 36 evaluated, 12 stale, 0 draft, 48 skills.
+Counts: 33 evaluated, 15 stale, 0 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

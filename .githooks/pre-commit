@@ -27,6 +27,7 @@ dirs=()
 while IFS= read -r -d '' f; do
   case "$f" in
     providers/*/*) d="providers/$(echo "$f" | cut -d/ -f2)/tests" ;;
+    providers/*) d="scripts/tests" ;;  # providers/resolve.py: its tests are scripts/tests/test_provider_resolve.py
     scripts/*) d="scripts/tests" ;;
     evals/*) d="evals/tests" ;;
     skills/*/scripts/*) d="skills/$(echo "$f" | cut -d/ -f2)/scripts/tests" ;;
