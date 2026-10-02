@@ -1185,10 +1185,19 @@ def test_first_comment_other_refusals_are_not_retried(env, fake, text_file, comm
 
 def test_bad_retry_delays_are_refused(env, fake, text_file, comment_file):
     fake.comment_status = 404
-    env["PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS"] = "soon"
-    r = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
-                                 "--confirmed"), env)
-    assert "PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS" in json.loads(r.stdout)["first_comment_error"]
+    """PUB6: the setting was read inside the first-comment step, after the post was public. It is a usage
+    error found before anything is sent: no request, no ledger entry, in a dry run too."""
+    for bad in ("soon", "5,-1", "1,2,3,4,5,6,7,8,9", "301"):
+        env["PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS"] = bad
+        for mode in ("--confirmed", "--dry-run"):
+            r = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file),
+                                         "--idempotency-key", "p1", mode), env)
+            assert r.returncode == 2 and "PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS" in r.stderr, (bad, mode)
+            assert not r.stdout.strip()
+    assert fake.requests == [] and ledger(env) == {}
+    # A post without a first comment does not read the setting at all.
+    r = run(SCRIPT, publish_args(text_file, "--idempotency-key", "p2", "--confirmed"), env)
+    assert r.returncode == 0, r.stderr
 
 
 def test_first_comment_unknown_outcome_blocks_only_the_comment(env, fake, text_file, comment_file):
