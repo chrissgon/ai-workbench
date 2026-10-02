@@ -1,0 +1,260 @@
+"""Offline tests of the one-shot path of both scheduler providers (launchd.py and systemd.py): what happens
+to a job between "running" and its end.
+
+Run: uv run --with pytest pytest providers/scheduler/tests
+
+Every test runs once per provider. Nothing is loaded into launchd or systemd: the service managers are fake
+scripts that record their arguments (honoured only with SCHEDULER_TEST=1), and the job and unit folders live
+in a temporary directory.
+"""
+from __future__ import annotations
+
+import fcntl
+import importlib.util
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+import pytest
+
+HERE = Path(__file__).resolve().parent.parent
+OK = "import json; print(json.dumps({'post_url': 'https://example.test/post'}))"
+
+
+class Scheduler:
+    def __init__(self, name: str, tmp_path: Path):
+        self.name, self.tmp = name, tmp_path
+        self.script = HERE / f"{name}.py"
+        self.calls = tmp_path / "manager-calls.txt"
+        fake = tmp_path / "manager"
+        fake.write_text(f'#!/bin/sh\necho "$@" >> "{self.calls}"\nexit 0\n')
+        fake.chmod(0o755)
+        login = tmp_path / "loginctl"
+        login.write_text("#!/bin/sh\necho yes\n")
+        login.chmod(0o755)
+        self.env = {**os.environ, "SCHEDULER_HOME": str(tmp_path / "jobs"), "SCHEDULER_NOTIFY": "0",
+                    "SCHEDULER_TEST": "1"}
+        if name == "launchd":
+            self.env.update({"SCHEDULER_AGENTS_DIR": str(tmp_path / "agents"), "SCHEDULER_LAUNCHCTL": str(fake)})
+        else:
+            self.env.update({"SCHEDULER_UNITS_DIR": str(tmp_path / "units"), "SCHEDULER_SYSTEMCTL": str(fake),
+                             "SCHEDULER_LOGINCTL": str(login)})
+
+    def run(self, *args):
+        return subprocess.run([sys.executable, str(self.script), *args], env=self.env, capture_output=True,
+                              text=True, timeout=120)
+
+    def command_file(self, code=OK, **extra) -> Path:
+        spec = {"argv": [sys.executable, "-c", code], "cwd": str(self.tmp), "snapshot": [], **extra}
+        path = self.tmp / "job.json"
+        path.write_text(json.dumps(spec))
+        return path
+
+    def schedule(self, path: Path, job_id="post-1"):
+        at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        base = ["schedule", "--id", job_id, "--at", at, "--command-file", str(path)]
+        dry = self.run(*base, "--dry-run")
+        if dry.returncode != 0:
+            return dry, None
+        return self.run(*base, "--confirmed", "--approved", json.loads(dry.stdout)["approved"]), json.loads(dry.stdout)
+
+    def folder(self, job_id="post-1") -> Path:
+        return Path(self.env["SCHEDULER_HOME"]) / job_id
+
+    def job(self, job_id="post-1") -> dict:
+        return json.loads((self.folder(job_id) / "job.json").read_text())
+
+    def set_job(self, job_id="post-1", **fields) -> None:
+        path = self.folder(job_id) / "job.json"
+        path.write_text(json.dumps({**json.loads(path.read_text()), **fields}))
+
+    def module(self, monkeypatch):
+        for key, value in self.env.items():
+            if key.startswith("SCHEDULER_"):
+                monkeypatch.setenv(key, value)
+        spec = importlib.util.spec_from_file_location(f"{self.name}_one_shot", self.script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+
+@pytest.fixture(params=["launchd", "systemd"])
+def s(request, tmp_path):
+    return Scheduler(request.param, tmp_path)
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+# --- SC1: output that is not UTF-8 ---------------------------------------------------
+
+
+def test_output_that_is_not_utf8_does_not_leave_the_job_running(s):
+    # The command's output was decoded as text: bytes that are not UTF-8 raised UnicodeDecodeError after the job
+    # was marked "running", and nothing ever changed that status.
+    code = ("import sys; sys.stdout.buffer.write(b'\\xff\\xfe caf\\xe9\\n'); "
+            "sys.stderr.buffer.write(b'warn \\xff\\n')")
+    done, _ = s.schedule(s.command_file(code))
+    assert done.returncode == 0, done.stderr
+    fired = s.run("run", "--id", "post-1")
+    assert fired.returncode == 0, fired.stderr
+    assert "Traceback" not in fired.stderr
+    data = s.job()
+    assert data["status"] == "done" and data["exit_code"] == 0
+    assert (s.folder() / "run.stdout.log").read_bytes() == b"\xff\xfe caf\xe9\n"  # kept as the command wrote it
+    assert (s.folder() / "run.stderr.log").read_bytes() == b"warn \xff\n"
+
+
+def test_post_url_is_still_read_next_to_bytes_that_are_not_utf8(s):
+    code = ("import sys, json; sys.stdout.buffer.write(json.dumps({'post_url': 'https://example.test/p', "
+            "'note': 'X'}).replace('X', '\\udcff').encode('utf-8', 'surrogateescape'))")
+    assert s.schedule(s.command_file(code))[0].returncode == 0
+    assert s.run("run", "--id", "post-1").returncode == 0
+    assert s.job()["post_url"] == "https://example.test/p"
+
+
+def test_an_error_while_the_job_runs_is_recorded_as_failed(s, monkeypatch):
+    # Whatever breaks between "running" and the end, the job ends: it never stays "running".
+    assert s.schedule(s.command_file())[0].returncode == 0
+    module = s.module(monkeypatch)
+
+    def broken(*_args, **_kw):
+        raise RuntimeError("the disk went away")
+
+    monkeypatch.setattr(module, "run_command", broken)
+    assert module.main(["run", "--id", "post-1"]) == 1
+    data = s.job()
+    assert data["status"] == "failed" and "RuntimeError" in data["reason"]
+
+
+# --- SC5: the one-shot limit -----------------------------------------------------------
+
+
+def test_the_one_shot_limit_kills_the_process_group_and_keeps_the_output(s, monkeypatch):
+    # The limit was a fixed 600 s that no document stated; past it only the direct child was killed and what
+    # the command had printed was lost, so a job that had already published ended "failed" with nothing kept.
+    child_pid = s.tmp / "child.pid"
+    code = ("import subprocess, sys, time; "
+            "p = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']); "
+            f"open({str(child_pid)!r}, 'w').write(str(p.pid)); "
+            "print('{\"post_url\": \"https://example.test/out\"}', flush=True); time.sleep(60)")
+    done, _ = s.schedule(s.command_file(code, timeout_minutes=20))
+    assert done.returncode == 0, done.stderr
+    assert s.job()["timeout_minutes"] == 20
+    module = s.module(monkeypatch)
+    module.TIMEOUT_UNIT_SECONDS = 0.05  # 20 "minutes" -> 1 second
+    module.KILL_GRACE_SECONDS = 2
+    began = time.monotonic()
+    assert module.main(["run", "--id", "post-1"]) == 1
+    assert time.monotonic() - began < 15
+    data = s.job()
+    assert data["status"] == "failed" and data["reason"].startswith("timeout")
+    assert "timeout_minutes (20)" in data["reason"]
+    assert data["post_url"] == "https://example.test/out"  # what it printed before the limit is kept and read
+    assert b"example.test/out" in (s.folder() / "run.stdout.log").read_bytes()
+    grandchild = int(child_pid.read_text())
+    deadline = time.monotonic() + 5
+    while pid_alive(grandchild) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert not pid_alive(grandchild)
+
+
+def test_the_default_one_shot_limit_is_stated_and_timeout_minutes_is_checked(s, monkeypatch):
+    module = s.module(monkeypatch)
+    assert module.DEFAULT_ONE_SHOT_TIMEOUT_MINUTES == 10
+    help_text = s.run("--help").stdout
+    assert "timeout_minutes" in help_text and "default 10" in help_text
+    plain, dry = s.schedule(s.command_file())
+    assert plain.returncode == 0 and "timeout_minutes" not in s.job()  # a job without it is the job it always was
+    _, longer = s.schedule(s.command_file(timeout_minutes=30), job_id="post-2")
+    assert longer["job"]["timeout_minutes"] == 30
+    _, other = s.schedule(s.command_file(timeout_minutes=40), job_id="post-3")
+    assert other["approved"] != longer["approved"]  # the limit is part of what is approved
+    for bad in (0, 241, True, "10"):
+        at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        refused = s.run("schedule", "--id", "post-4", "--at", at, "--command-file",
+                        str(s.command_file(timeout_minutes=bad)), "--dry-run")
+        assert refused.returncode == 2 and "timeout_minutes" in refused.stderr, bad
+
+
+# --- SC2: a job in "running" -----------------------------------------------------------
+
+
+def test_a_running_job_whose_runner_is_gone_can_be_cancelled_and_scheduled_again(s):
+    # After a crash or a power loss the job stayed "running": cancel exited 0 and changed nothing, and the id
+    # could not be scheduled again until job.json was edited by hand.
+    path = s.command_file()
+    assert s.schedule(path)[0].returncode == 0
+    s.set_job(status="running", started_at="2026-10-01T09:00:00Z")
+    blocked, _ = s.schedule(path)
+    assert blocked.returncode == 2 and "running" in blocked.stderr and "resolve" in blocked.stderr
+    assert s.run("cancel", "--id", "post-1").returncode == 2  # needs --confirmed
+    cancelled = s.run("cancel", "--id", "post-1", "--confirmed")
+    assert cancelled.returncode == 0, cancelled.stderr
+    data = s.job()
+    assert data["status"] == "cancelled" and data["interrupted"] is True
+    assert "outcome is unknown" in data["reason"] and "finished_at" in data
+    again, _ = s.schedule(path)
+    assert again.returncode == 0, again.stderr
+    assert s.job()["status"] == "scheduled"
+
+
+def test_a_running_job_whose_runner_is_gone_can_be_resolved(s):
+    assert s.schedule(s.command_file())[0].returncode == 0
+    base = ["resolve", "--id", "post-1"]
+    assert s.run(*base, "--done", "--confirmed").returncode == 2  # a scheduled job has nothing to resolve
+    s.set_job(status="running", started_at="2026-10-01T09:00:00Z")
+    assert s.run(*base, "--done").returncode == 2  # needs --confirmed
+    assert s.run(*base, "--confirmed").returncode == 2  # needs the outcome
+    assert s.run(*base, "--done", "--failed", "--confirmed").returncode == 2
+    shown = s.run(*base, "--failed", "--dry-run")
+    assert shown.returncode == 0 and json.loads(shown.stdout)["dry_run"] is True
+    assert s.job()["status"] == "running"  # a dry run changes nothing
+    done = s.run(*base, "--done", "--confirmed")
+    assert done.returncode == 0, done.stderr
+    data = s.job()
+    assert data["status"] == "done" and data["resolved"] is True and "finished_at" in data
+    assert s.run(*base, "--failed", "--confirmed").returncode == 2  # only a running job
+
+
+def test_resolve_refuses_while_the_runner_is_alive(s):
+    assert s.schedule(s.command_file())[0].returncode == 0
+    s.set_job(status="running", started_at="2026-10-01T09:00:00Z")
+    lock = os.open(s.folder() / "run.lock", os.O_RDWR | os.O_CREAT, 0o600)  # what a live runner holds
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.write(lock, f"{os.getpid()}\n".encode())
+        refused = s.run("resolve", "--id", "post-1", "--failed", "--confirmed")
+        assert refused.returncode == 1 and "still runs" in refused.stderr
+        assert s.job()["status"] == "running"
+    finally:
+        os.close(lock)
+    assert s.run("resolve", "--id", "post-1", "--failed", "--confirmed").returncode == 0
+    assert s.job()["status"] == "failed"
+
+
+def test_a_second_runner_does_not_run_the_command_again(s):
+    marker = s.tmp / "ran.txt"
+    code = f"open({str(marker)!r}, 'a').write('x')"
+    assert s.schedule(s.command_file(code))[0].returncode == 0
+    lock = os.open(s.folder() / "run.lock", os.O_RDWR | os.O_CREAT, 0o600)  # another runner holds the job
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        second = s.run("run", "--id", "post-1")
+        assert second.returncode == 0 and not marker.exists()
+        assert s.job()["status"] == "scheduled"
+    finally:
+        os.close(lock)
+    assert s.run("run", "--id", "post-1").returncode == 0
+    assert marker.read_text() == "x" and s.job()["status"] == "done"

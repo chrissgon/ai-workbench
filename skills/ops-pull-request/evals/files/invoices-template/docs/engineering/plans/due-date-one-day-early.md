@@ -12,6 +12,6 @@
 - `src/due.js`: parse the date-only string into a local date (year, month, day) before formatting.
 - `test/due.test.js`: the label for a date in time zones behind UTC.
 - Checks run on the branch, 2026-09-25:
-  - `npm run lint`: no problems
+  - `npm run lint`: exit 0
   - `TZ=America/Sao_Paulo npm test`: 2 passed, 0 failed
   - `TZ=Asia/Tokyo npm test`: 2 passed, 0 failed

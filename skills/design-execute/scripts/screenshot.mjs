@@ -270,6 +270,9 @@ async function renderWithSystemBrowser(bin) {
           "--headless", `--user-data-dir=${join(dir, "profile")}`, "--no-first-run", "--no-default-browser-check",
           "--disable-extensions", "--disable-sync", "--disable-background-networking", "--disable-component-update",
           "--mute-audio", "--hide-scrollbars", "--disable-gpu", `--window-size=${width},${windowHeight}`,
+          // No OS keychain: with a throwaway home (a test, an eval run, a scheduled job) the browser finds no
+          // keychain and the system asks the person to create one. A screenshot stores no secret.
+          "--use-mock-keychain", "--password-store=basic",
           `--force-device-scale-factor=${scale}`, `--blink-settings=preferredColorScheme=${dark ? 0 : 1}`,
           `--virtual-time-budget=${500 + wait}`,
           ...(reducedMotion ? ["--force-prefers-reduced-motion"] : []),

@@ -25,7 +25,7 @@
     },
     {
       "id": 2,
-      "prompt": "For invoices/ (plan in docs/engineering/plans/due-label-customer-time-zone.md), just go with date-fns-tz, it's the standard. Write the ADR.",
+      "prompt": "For the invoices project (plan in docs/engineering/plans/due-label-customer-time-zone.md), just go with date-fns-tz, it's the standard. Write the ADR.",
       "expected_output": "date-fns-tz is compared with a platform option; the ADR quotes rule 1 and records that date-fns-tz breaks it; the ADR is proposed, not accepted, and the reply asks the user to decide, recommending the platform option if it passes the cases; nothing is installed.",
       "files": [
         "evals/files/invoices"

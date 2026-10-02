@@ -56,6 +56,15 @@ Write to `docs/<area>/<file>.md`:
 <one line of guidance>
 ```
 
+End the reply with the evidence lines, copied from what the commands printed and never written from memory (delete the `Check` line when the skill runs no check script):
+
+```markdown
+- Check: `<the command exactly as run>` → `<the summary line it printed, copied character for character>`; recorded in <the path given to --report>
+- Files changed: <the lines `git status --short` printed, copied; `none` when it printed nothing>
+```
+
+Check scripts (delete this paragraph from the skill; it is the rule for the script the `Check` line quotes): a script that checks the output takes `--report <path>` and, on every run that reaches the check (exit 0 or 1, never on a usage error), writes one JSON object to that path with these keys and no other: `script` (its file name), `date` (YYYY-MM-DD), `arguments` (every flag given except `--report`, as typed: a value flag with its value, a repeated one with the list of its values, a switch with true), `ok` (true exactly when the script exits 0), `summary` (one line, the same `summary` the script prints on stdout, and the line the reply quotes), `errors` (a list of strings, empty exactly when `ok` is true) and, when the script has them, `warnings` (a list of strings) and `counts` (an object, name to number). The eval assertion that goes with the two lines asks for the file and the quote, never for the claim that the check ran: "`<report path>` is among the files the run produced, its `ok` is true, and the reply quotes its `summary` line".
+
 ## Quality criteria
 
 Approve the output only if all of the following hold:
