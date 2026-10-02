@@ -1,6 +1,6 @@
 # Independent review of the repository and of the final plan, 2026-10-02: digest
 
-This file is a digest, not the report. The report was written in another language by a reviewer outside the sessions that wrote the audit and the plan, and it is kept by the maintainer outside the repository. The digest has one entry per finding: its id, its severity, where it lies, the evidence in one or two sentences, and the item of [the plan](../final-plan-2026-10-02.md) that now carries it.
+This file is a digest, not the report. The report was written in another language by a reviewer outside the sessions that wrote the audit and the plan, and it is kept by the maintainer outside the repository. The digest has one entry per finding: its id, its severity, where it lies, the evidence in one or two sentences, and the item of [the plan](../final-plan-2026-10-02.md) that now carries it. The column "Carried by" names the plan's items as they stand after the reliability model and after the reading of its pull request; the columns "Where" and "Evidence" describe the plan as the reviewer read it.
 
 ## Scope and method
 
@@ -34,8 +34,8 @@ When the plan was amended, the main claims were checked again against the code a
 
 | Id | Where | Evidence | Carried by |
 |----|-------|----------|------------|
-| FR-I1 | phase E rules 5 and 7; decision 1; B7 | Rule 5 measured again only a skill that failed by little and let the new record replace the old one, which is the option decision 1 rejected. A skill whose true score is 0.78 passes one measurement 28% of the time and 49% with a second chance; and the standard error inside an iteration is two to three times smaller than the movement between iterations | decision 1, B7, rules 5 and 7 of phase E |
-| FR-I2 | the gate's third criterion; the rule for case changes; C0.7 | Of 655 assertions with all four variants, 196 pass everywhere and another 196 never pass without the skill and always pass with it, most of them on a form only the skill defines. The criterion that should catch an over-specified skill cannot fire on them | default 92, C0.7, B7, the rule for case changes |
+| FR-I1 | phase E rules 5 and 7; decision 1; B7 | Rule 5 measured again only a skill that failed by little and let the new record replace the old one, which is the option decision 1 rejected. A skill whose true score is 0.78 passes one measurement 28% of the time and 49% with a second chance; and the standard error inside an iteration is two to three times smaller than the movement between iterations | decision 1, B12, B7b, rules 4 and 7 of phase E |
+| FR-I2 | the gate's third criterion; the rule for case changes; C0.7 | Of 655 assertions with all four variants, 196 pass everywhere and another 196 never pass without the skill and always pass with it, most of them on a form only the skill defines. The criterion that should catch an over-specified skill cannot fire on them | default 92, C0.7, B7, B7b, the rule for case changes |
 | FR-I3 | the risk table; the batches of phase E | Without the always-passing assertions five skills fall under 0.8 on a tier and five more are between 0.80 and 0.87; the plan named two, and two of the ten were in the last batch | batches 1 and 2 of phase E, the risk table |
 | FR-I4 | B10, default 21, B6a | Only two skills cite `shared/references/`, yet the whole folder was in the fingerprint, and so was `scripts/redact.py`, whose pattern matching would also mask a planted fake secret before grading. Two files that would have been frozen are already wrong: one line of the security checklist and the README's enumeration | default 21, B2, B6a, B7, B10, C0.6, C0.9 |
 | FR-I5 | HP3 (CT2), HP2 (PUB1), C0.9 against row 44 | Three things the platform skills quote would change after the round: the limits that are constants of the runtime today, the reading of the exit codes of `--check` (the skill says 3, the provider exits 1), and the field names the gate script reads | C0.2, C0.9, rows 44 and 46, the limits of phase P, HP3 |
@@ -47,7 +47,7 @@ When the plan was amended, the main claims were checked again against the code a
 | FR-I11 | the runner's snapshot and file listing | These functions run on the host after a run and follow a symbolic link a run leaves: the target's content, up to the file limit, goes into the grading prompt and to the provider | B2a |
 | FR-I12 | the vote job; the publisher; HP1 | When only the first comment fails, the provider prints the post's address and exits with a service code, and the job reports that nothing was published; the pending entry is deleted on every 4xx answer; a scheduled job may use another ledger. In the API adapter, the text of an external comment chooses which project files are sent to the model | HP1, HP2 |
 | FR-I13 | phase E; decision 2; D4 | Measured from the first round's `timing.json` files: 155 million tokens in 843 strong runs and 54 million in 1,689 gradings; the final round is near 490 million, 2.3 times as much, and the plan had no agreed fallback | phase E's arithmetic, the proof run, D4; open point b |
-| FR-I14 | default 16; B5; phase E rule 1 | A repeated timeout scored 0 with the skill and was left undefined without it, and a persistent refusal was resumed with no limit | default 16, B5, rule 1 of phase E |
+| FR-I14 | default 16; B5; phase E rule 1 | A repeated timeout scored 0 with the skill and was left undefined without it, and a persistent refusal was resumed with no limit | default 16, B5, B7, rule 1 of phase E |
 | FR-I15 | A5 part 2; A11 | The widened harness pattern would fail on a case file's `workbench_files`, on two contracts and on two files that only A11 cleans, with no order between the two items | A5, A11, the lanes of phase A |
 | FR-I16 | "Shared files and their order"; phase B's "Depends on"; A11; C0.3 | The order of the validator's editors made two items of phase B wait for phase C; seven files with several editors were missing from the table; the pass-through variables had two homes; one CI job lists test paths by hand; a correction was attributed to the wrong script | the table of shared files, phase B's "Depends on", A11, C0.3 |
 
@@ -57,7 +57,7 @@ When the plan was amended, the main claims were checked again against the code a
 |----|-------|----------|------------|
 | FR-M0 | A7 | The API adapter's timeout test failed 4 of 6 local runs and is in a required check | A7, first of phase A |
 | FR-M1 | B7, B10 | The record did not carry the fingerprint, so a measuring checkout with an altered file could write a record unnoticed | B10, B7 |
-| FR-M2 | D3, D4 | If D4 sets `grading_passes` to 1, the pilot's record, made with 2, reads `stale` | decision 2, D3, D4 |
+| FR-M2 | D3, D4 | If D4 sets `grading_passes` to 1, the pilot's record, made with 2, reads `stale` | moot: there is no key for grading passes, and every run is graded once (decision 2) |
 | FR-M3 | B7 | The floor model's upstream provider is reported and not pinned; not verified, for lack of network | B8 |
 | FR-M4 | phase E | The round's gradings and replies sit on one disk, outside the repository | phase E (the archive of each batch) |
 | FR-M5 | several | Facts stated wrongly, with small effect: the count of skills that declare no publisher; the resolver has no class-to-folder map; nine of eleven fixture copies carry the runtime line; two shell scripts have a hyphen; the proof run's count of cases; "after C0" includes C0.10 | decisions 14a and 14c, C0.2, default 71, "Where things stand", the proof run, A15 |
@@ -74,7 +74,7 @@ When the plan was amended, the main claims were checked again against the code a
 
 ## Triggers of a second round
 
-The report closes with a table of what can change after the round and whether the plan protects against it. Its rows are the plan's section "What would make a second round necessary", each with the protection the plan now has.
+The report closes with a table of what can change after the round and whether the plan protects against it. Its rows were the plan's section then called "What would make a second round necessary". That section is now "What a change costs now", which says which item builds each rule; the costs themselves are in one place, the table "What a change costs" of the reliability model.
 
 ## What the review checked and found correct
 

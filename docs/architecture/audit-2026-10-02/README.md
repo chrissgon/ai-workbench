@@ -1,6 +1,6 @@
 # Audit of 2026-10-02
 
-Nine read-only audits of the whole repository, made on 2026-10-02 before one final measurement round of the 48 skills. The plan built from them is [../final-plan-2026-10-02.md](../final-plan-2026-10-02.md); this folder is its evidence.
+Nine read-only audits of the whole repository, made on 2026-10-02 before the 48 skills are tested again in full. The plan built from them is [../final-plan-2026-10-02.md](../final-plan-2026-10-02.md); this folder is its evidence.
 
 ## What was audited
 
@@ -18,7 +18,7 @@ Nine read-only audits of the whole repository, made on 2026-10-02 before one fin
 
 ## Reviews of the plan
 
-The plan built from the audits was itself reviewed in two rounds on 2026-10-02, read-only, and then once more, with the repository, by an independent reviewer. The plan's section "Reviews" says where each round's findings went.
+The plan built from the audits was itself reviewed in two rounds on 2026-10-02, read-only, and then once more, with the repository, by an independent reviewer. The plan's section "Reviews" says where each round's findings went. The reliability model, which replaced the plan's three computed states the same day, was reviewed independently as well; the model was rewritten after that review and its consequences are in the plan. The same reviewer then read the pull request that carried the rewritten model and the plan, and its ten points (P1 to P10) are applied in both.
 
 First round:
 
@@ -40,6 +40,12 @@ Third review, independent, made on the repository and on the plan as amended aft
 | File | Scope |
 |------|-------|
 | [independent-review.md](independent-review.md) | a digest, one entry per finding, of a review made by a reviewer outside the sessions that wrote the audit and the plan: the harness, 17 skills read in full, the platform architecture, security, and the stored runs of the first round processed by script (5 blockers, 16 important findings, 16 minor ones). The report itself is in another language and is kept outside the repository; the plan cites its findings with the prefix FR |
+
+Review of the reliability model, independent, made on the model as first written (`03e16ee`), and the same reviewer's reading of the pull request that carried version 2 (`e618902`):
+
+| File | Scope |
+|------|-------|
+| [model-review.md](model-review.md) | a digest, one entry per finding, of a review of [the reliability model](../reliability-model-2026-10-02.md) by a reviewer outside the sessions that wrote it: the backtest redone from the 48 records, the variance of the scores measured on the gradings of the first round, guard coverage in the skills with side effects, the change classes against the history, the fit with the plan (4 blockers, 14 important findings, 9 minor ones, and the answers to the model's twelve open questions), followed by one line per point of the reading of the pull request (P1 to P10: three rules that did not work as written, seven important points). Both reports are in another language and are kept outside the repository; the model and the plan cite the findings by their own ids, MB, MI, MM and P |
 
 The five reports of the first two rounds are the reports as written, with these changes: the name of the working tree two of them were made in is replaced by a description; in the second round, one quoted probe value that the repository's secret scan rejects and three quoted phrases in another language are replaced by descriptions. They cite the plan by the line numbers it had when they were written ("L123" in `round2-plan.md`): search for the quoted text. Three ids differ between the second round's reports and the plan, which renamed them to avoid a clash with backlog ids: the reports' "R1 to R7" for the first round's resolutions are the plan's PR1 to PR7, the providers report's findings PB1 to PB16 are the plan's PUB1 to PUB16, and the plan's phase P items are HP1 to HP3.
 
