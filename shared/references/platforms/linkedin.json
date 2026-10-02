@@ -1,0 +1,39 @@
+{
+ "platform": "linkedin",
+ "hosts": ["www.linkedin.com", "linkedin.com"],
+ "post": {
+  "requires_text": true,
+  "max_characters": 3000,
+  "scheduling": false,
+  "first_comment": {"supported": true, "max_characters": 1250},
+  "url": {
+   "scheme": "https",
+   "hosts": ["www.linkedin.com", "linkedin.com"],
+   "path_pattern": "^/(feed/update/urn:li:(share|activity|ugcPost):\\d+|posts/[A-Za-z0-9_%-]+)/?$",
+   "allows_query": false,
+   "allows_fragment": false,
+   "template": "https://www.linkedin.com/feed/update/{post_id}/"
+  }
+ },
+ "media": {
+  "max_count": 1,
+  "max_bytes": 8388608,
+  "types": [
+   {"name": "png", "extensions": [".png"], "magic_hex": ["89504e470d0a1a0a"]},
+   {"name": "jpg", "extensions": [".jpg", ".jpeg"], "magic_hex": ["ffd8ff"]},
+   {"name": "gif", "extensions": [".gif"], "magic_hex": ["474946383761", "474946383961"]}
+  ],
+  "post_image": {"width": 1080, "height": 1350}
+ },
+ "reply": {"max_characters": 1500},
+ "comment": {
+  "max_characters_kept": 3000,
+  "link": {"comment_parameter": "commentUrn", "reply_parameter": "replyUrn", "nesting_levels": 1}
+ },
+ "identifiers": {
+  "post": {"pattern": "^urn:li:(?:share|ugcPost|activity):\\d+$"},
+  "comment": {"pattern": "^urn:li:comment:\\((urn:li:(?:activity|share|ugcPost):\\d+),(\\d+)\\)$"},
+  "comment_short": {"pattern": "^urn:li:comment:\\((activity|share|ugcPost):(\\d+),(\\d+)\\)$"}
+ },
+ "notification_email": {"header_prefix": "x-linkedin-", "layout_verified": false}
+}

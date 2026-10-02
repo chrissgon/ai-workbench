@@ -70,6 +70,14 @@ Progress:
 
 When you reach step N, read [references/<file>.md](references/<file>.md).
 
+A skill whose work is for a social platform names none in its procedure. It carries the step below, word for word, and a stop rule for the platform nobody named. (Delete the step and these three paragraphs when the skill has nothing to do with a platform.)
+
+- [ ] Step <n>: Find the platform: the `Network:` field of the calendar row or of the post file this step works on, lowercased; when there is none, the platform the task line of the request names (`Platform: <name>`); when neither names one, Stop rule <n>: ask which platform, and take none by default. Read the reference of that platform, `../../shared/references/platforms/<platform>.md`; if there is no such file, stop and say the platform is not supported. Read no other file of that folder.
+
+A script that needs a platform's data takes `--platform <platform>` and `--platform-file <path>`, and the step passes both: `python3 <this skill's folder>/scripts/<name>.py --platform <platform> --platform-file <this skill's folder>/../../shared/references/platforms/<platform>.json`. The script reads host names, URL patterns, limits and media types from that file; it holds no table of platforms and no limit of a platform as a constant, and it never finds the file by a path of its own.
+
+One exception: a parser that is code for one platform's own format (a copied link, an export) stays in the skill as code, selected by `--platform`, and still takes the hosts and patterns it checks from the data file. A platform that needs a new parser edits that script.
+
 A step that needs a scratch copy of the project makes it in one chained command that prints the path, and every later command uses the literal path it printed, never a shell variable of an earlier command: `d="$(mktemp -d)" && git worktree add --detach "$d/copy" HEAD && echo "$d/copy"`. (Delete this paragraph when no step needs one.)
 
 ## Output template

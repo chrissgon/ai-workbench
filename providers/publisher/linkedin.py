@@ -120,17 +120,24 @@ verbs:
             the same command replays the post and retries only the comment.
   comment   Comment on a post as the authenticated member: --text-file <f>,
             --idempotency-key <k>, and the post by --on-key <the post's
-            publish key> (it must be published) or --post-urn <urn:li:share:N,
-            urn:li:ugcPost:N or urn:li:activity:N>. --parent-comment
+            publish key> (it must be published) or --post-id <urn:li:share:N,
+            urn:li:ugcPost:N or urn:li:activity:N>. --parent-comment-id
             <urn:li:comment:(urn:li:activity:N,N)> makes it a reply. Needs
             --confirmed (or --dry-run). The text is sent as written: comments
             do not use the little text format.
   resolve   Settle a key left pending by a timeout or a crash, after checking
-            the member's recent posts or the post's comments: --post-urn <urn>
-            (the post was published), --comment-urn <urn> (the comment was) or
+            the member's recent posts or the post's comments: --post-id <urn>
+            (the post was published), --comment-id <urn> (the comment was) or
             --not-published (it was not; the key may be used again). Needs
             --confirmed; with --dry-run it prints what it would record and
             changes nothing.
+
+identifiers:
+  --post-id, --comment-id and --parent-comment-id are the generic names of
+  the publisher class (providers/CONTRACT.md): a caller passes the value it
+  was given and never builds one. Here a post id is a post URN and a comment
+  id a comment URN. --post-urn, --comment-urn and --parent-comment, the names
+  in use before 2026-10-02, are accepted as aliases.
 
 idempotency:
   Each key publishes one post or one comment at most once. It is recorded as pending in the ledger
@@ -195,7 +202,7 @@ examples:
       --idempotency-key launch-2026-10 --confirmed
   uv run providers/publisher/linkedin.py comment --platform linkedin \\
       --text-file reply.txt --idempotency-key reply-1 --on-key launch-2026-10 \\
-      --parent-comment 'urn:li:comment:(urn:li:activity:123,456)' --dry-run
+      --parent-comment-id 'urn:li:comment:(urn:li:activity:123,456)' --dry-run
   uv run providers/publisher/linkedin.py resolve --idempotency-key launch-2026-10 \\
       --not-published --confirmed
 """
@@ -480,8 +487,8 @@ def refused(exc: ProviderError) -> bool:
 
 def after_unknown(key: str, kind: str) -> str:
     """What to do after an answer that leaves the outcome unknown."""
-    where, flag = (("the comments on the post", "--comment-urn <urn>") if kind == "comment"
-                   else ("the member's recent posts", "--post-urn <urn>"))
+    where, flag = (("the comments on the post", "--comment-id <urn>") if kind == "comment"
+                   else ("the member's recent posts", "--post-id <urn>"))
     return (f"check {where}, then run linkedin.py resolve --idempotency-key {key} with {flag} if it is there or "
             "--not-published if it is not, and --confirmed; after --not-published the same command may run again")
 
@@ -489,9 +496,9 @@ def after_unknown(key: str, kind: str) -> str:
 def pending_message(key: str, entry: dict) -> str:
     if entry_kind(entry) == "comment":
         where = f"the comments on {entry.get('post_urn') or 'the post'}"
-        flag = "--comment-urn <urn>"
+        flag = "--comment-id <urn>"
     else:
-        where, flag = "the member's recent posts", "--post-urn <urn>"
+        where, flag = "the member's recent posts", "--post-id <urn>"
     return (
         f"idempotency key {key!r} has a pending attempt from {entry.get('started_at', 'an unknown time')} whose "
         f"outcome is unknown (a timeout or a crash); nothing was sent this time. Check {where}, "
@@ -963,17 +970,17 @@ def validate_comment_args(args) -> tuple[str, str | None, str | None]:
             EXIT_USAGE,
         )
     if bool(args.on_key) == bool(args.post_urn):
-        raise ProviderError("comment needs exactly one of --on-key <post idempotency key> or --post-urn <urn>",
+        raise ProviderError("comment needs exactly one of --on-key <post idempotency key> or --post-id <urn>",
                             EXIT_USAGE)
     if args.post_urn and not POST_URN_RE.fullmatch(args.post_urn):
-        raise ProviderError("--post-urn must look like urn:li:share:<digits>, urn:li:ugcPost:<digits> or "
+        raise ProviderError("--post-id must look like urn:li:share:<digits>, urn:li:ugcPost:<digits> or "
                             "urn:li:activity:<digits>", EXIT_USAGE)
     if args.parent_comment:
         # A link copied from LinkedIn carries the short form urn:li:comment:(activity:N,N) (seen 2026-09-30);
         # the API documents the full form, which is what is sent.
         args.parent_comment = SHORT_COMMENT_URN_RE.sub(r"urn:li:comment:(urn:li:\1:\2,\3)", args.parent_comment)
     if args.parent_comment and not COMMENT_URN_RE.fullmatch(args.parent_comment):
-        raise ProviderError("--parent-comment must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
+        raise ProviderError("--parent-comment-id must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
                             EXIT_USAGE)
     return text, args.post_urn, args.parent_comment
 
@@ -985,13 +992,13 @@ def post_urn_of_key(on_key: str, required: bool) -> str | None:
         urn = entry["post_urn"]
         if not POST_URN_RE.fullmatch(urn):
             raise ProviderError(f"the ledger holds {urn!r} for --on-key {on_key!r}, which is not a post URN this "
-                                "provider accepts; pass --post-urn instead", EXIT_USAGE)
+                                "provider accepts; pass --post-id instead", EXIT_USAGE)
         return urn
     if not required:
         return None
     state = "a comment" if entry and entry_kind(entry) == "comment" else (entry_status(entry) if entry else "absent")
     raise ProviderError(f"--on-key {on_key!r} is {state} in the ledger, not a published post; publish the post "
-                        "first (a comment needs its URN) or pass --post-urn", EXIT_USAGE)
+                        "first (a comment needs its URN) or pass --post-id", EXIT_USAGE)
 
 
 def cmd_comment(args) -> int:
@@ -1027,13 +1034,13 @@ def cmd_resolve(args) -> int:
     if not key:
         raise ProviderError("resolve needs --idempotency-key <k>", EXIT_USAGE)
     if sum(bool(x) for x in (args.post_urn, args.comment_urn, args.not_published)) != 1:
-        raise ProviderError("resolve needs exactly one of --post-urn <urn> (a post), --comment-urn <urn> "
+        raise ProviderError("resolve needs exactly one of --post-id <urn> (a post), --comment-id <urn> "
                             "(a comment) or --not-published", EXIT_USAGE)
     if args.post_urn and not args.post_urn.startswith("urn:li:"):
-        raise ProviderError("--post-urn must be a LinkedIn URN such as urn:li:share:<id>", EXIT_USAGE)
+        raise ProviderError("--post-id must be a LinkedIn URN such as urn:li:share:<id>", EXIT_USAGE)
     match = COMMENT_URN_RE.fullmatch(args.comment_urn) if args.comment_urn else None
     if args.comment_urn and not match:
-        raise ProviderError("--comment-urn must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
+        raise ProviderError("--comment-id must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
                             EXIT_USAGE)
     if not args.confirmed and not args.dry_run:
         raise ProviderError("refusing to resolve without --confirmed; the user decides what happened "
@@ -1045,9 +1052,9 @@ def cmd_resolve(args) -> int:
             raise ProviderError(f"idempotency key {key!r} is {state}, not pending; nothing to resolve", EXIT_USAGE)
         kind = entry_kind(entry)
         if kind == "comment" and args.post_urn:
-            raise ProviderError(f"idempotency key {key!r} is a comment; use --comment-urn <urn>", EXIT_USAGE)
+            raise ProviderError(f"idempotency key {key!r} is a comment; use --comment-id <urn>", EXIT_USAGE)
         if kind == "post" and args.comment_urn:
-            raise ProviderError(f"idempotency key {key!r} is a post; use --post-urn <urn>", EXIT_USAGE)
+            raise ProviderError(f"idempotency key {key!r} is a post; use --post-id <urn>", EXIT_USAGE)
 
     if args.dry_run:
         # A dry run does nothing, also when --confirmed is given with it: the entry is read and left as it is.
@@ -1209,17 +1216,25 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--media", action="append", help="one JPG, PNG or GIF image to attach")
     parser.add_argument("--at", help="ISO-8601 time; a future time is refused (use the scheduler class)")
     parser.add_argument("--idempotency-key", help="required: publish at most once per key (recorded in the local ledger)")
-    parser.add_argument("--post-urn", help="with comment: the post to comment on; with resolve: the pending "
-                        "post was published as this URN")
+    # The identifiers are the class's generic ones (providers/CONTRACT.md): a caller passes the value it was
+    # given and never builds one. On this platform they are URNs. The names in use before 2026-10-02
+    # (--post-urn, --comment-urn, --parent-comment) stay as aliases, for commands written with them.
+    parser.add_argument("--post-id", "--post-urn", dest="post_urn",
+                        help="with comment: the post to comment on; with resolve: the pending post was published "
+                             "as this id (a post URN). Alias: --post-urn")
     parser.add_argument("--on-key", help="with comment: the publish idempotency key of the post to comment on")
-    parser.add_argument("--parent-comment", help="with comment: reply to this comment URN")
+    parser.add_argument("--parent-comment-id", "--parent-comment", dest="parent_comment",
+                        help="with comment: reply to the comment with this id (a comment URN). "
+                             "Alias: --parent-comment")
     parser.add_argument("--comments-endpoint", choices=["v2", "rest"], default="v2",
                         help="comments: v2 (default; works with a member's w_member_social token, checked "
                              "2026-09-30) or rest (the versioned endpoint; needs LinkedIn partner access)")
     parser.add_argument("--legacy-v2", action="store_true",
                         help="with comment: use the unversioned /v2/socialActions endpoint (a trial: the versioned "
                              "endpoint needs partner access for member comments)")
-    parser.add_argument("--comment-urn", help="with resolve: the pending comment was published as this URN")
+    parser.add_argument("--comment-id", "--comment-urn", dest="comment_urn",
+                        help="with resolve: the pending comment was published as this id (a comment URN). "
+                             "Alias: --comment-urn")
     parser.add_argument("--not-published", action="store_true", help="with resolve: the pending attempt was not published")
     parser.add_argument("--ledger", metavar="PATH",
                         help="the absolute path of the idempotency ledger to use, as a dry run printed it; refused "
