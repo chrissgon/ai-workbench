@@ -2,5 +2,5 @@
   "name": "invoices",
   "private": true,
   "type": "module",
-  "scripts": { "test": "node --test", "lint": "eslint ." }
+  "scripts": { "test": "node --test", "lint": "node --check src/due.js" }
 }

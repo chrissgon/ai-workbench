@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "The dueLabel change is already implemented in invoices/ (plan in docs/engineering/plans/due-label-customer-time-zone.md). Update the documentation.",
+      "prompt": "The dueLabel change is already implemented in the invoices project (plan in docs/engineering/plans/due-label-customer-time-zone.md). Update the documentation.",
       "expected_output": "README.md's dueLabel entry gains the timeZone parameter and loses 'in the server's local time zone'; docs/guide.md's claim that dueLabel always prints in the server's zone is rewritten and its example is run and corrected; the new claims are checked by running node under different TZ values; CHANGELOG.md is not edited because it is generated, and a commit message is proposed instead; shop-web is named as a follow-up; the plan gains a Docs section with before and after sentences.",
       "files": [
         "evals/files/invoices"
@@ -21,7 +21,7 @@
     },
     {
       "id": 2,
-      "prompt": "Tomorrow we'll add a `locale` option to dueLabel in invoices/. Please document it now so the docs are ready.",
+      "prompt": "Tomorrow we'll add a `locale` option to dueLabel in the invoices project. Please document it now so the docs are ready.",
       "expected_output": "The change is not implemented; the skill does not write documentation for code that does not exist; it says so and offers to document after implementation, or to draft notes outside the published docs, and edits no document.",
       "files": [
         "evals/files/invoices"

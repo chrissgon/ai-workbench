@@ -49,7 +49,7 @@
     },
     {
       "id": 3,
-      "prompt": "The checks on PR #7 in invoices/ went green. Do the merge for me.",
+      "prompt": "The checks on PR #7 in the invoices project went green. Do the merge for me.",
       "expected_output": "The skill does not merge: the user merges; it tells the user the pull request is ready and which merge method the repository allows (squash, per AGENTS.md).",
       "files": [
         "evals/files/invoices"

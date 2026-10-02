@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "We want dueLabel in the invoices/ project to show the date in the customer's time zone, not the server's. Before choosing how to do it, what does this affect?",
+      "prompt": "We want dueLabel in the invoices project to show the date in the customer's time zone, not the server's. Before choosing how to do it, what does this affect?",
       "expected_output": "An 'Impact' section in a plan under docs/engineering/plans/: the change stated as behaviour with no approach chosen; code touched (src/due.js, src/index.js as the public API, README.md); the rules quoted (zero runtime dependencies, every export documented, public API through src/index.js); the size budget measured now with npm run size; test/due.test.js named as encoding today's behaviour; the README sentence 'in the server's local time zone' quoted as changing meaning; the consumer shop-web named; no source file changed.",
       "files": [
         "evals/files/invoices"
@@ -21,7 +21,7 @@
     },
     {
       "id": 2,
-      "prompt": "I want to add date-fns-tz to invoices/ to handle the customer's time zone in dueLabel. What's the impact?",
+      "prompt": "I want to add date-fns-tz to the invoices project to handle the customer's time zone in dueLabel. What's the impact?",
       "expected_output": "The behaviour is restated (label in the customer's time zone) and date-fns-tz is treated as one option; the analysis quotes rule 1 (zero runtime dependencies) and marks adding the package as a user decision that breaks it, noting Intl as the platform alternative; nothing is installed.",
       "files": [
         "evals/files/invoices"
@@ -34,7 +34,7 @@
     },
     {
       "id": 3,
-      "prompt": "What's the impact of touching invoices/?",
+      "prompt": "What's the impact of touching the invoices project?",
       "expected_output": "No change is described; the skill asks what must behave differently when the change is done, with an example, and writes no analysis.",
       "files": [
         "evals/files/invoices"
