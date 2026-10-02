@@ -117,7 +117,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, mkt-engage, mkt-publish | flow-fix-bug, ops-branch-sync, ops-ci-pipeline, ops-pull-request |
+| `docs/workbench/state.md` | core-clarify, core-project-init, mkt-engage, mkt-publish | flow-fix-bug, ops-branch-sync, ops-ci-pipeline, ops-pull-request, ops-repo-baseline |
 <!-- owner-table:end -->
 
 ## Rules

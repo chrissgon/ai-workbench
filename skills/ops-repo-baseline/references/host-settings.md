@@ -1,23 +1,23 @@
 # Host settings, in the order that works
 
-Every item comes from setting up the ai-workbench repository on 2026-09-27 (backlog S6), on GitHub. Each step names what breaks when it is done out of order. The user applies them in the host's settings; the skill writes the list, it does not call the host's API (version 0.1).
+Every item comes from setting up a repository on GitHub on 2026-09-27, the one code host this version writes for. Each step names what breaks when it is done out of order. The user applies them in the host's settings; the skill writes the list, it does not call the host's API (this version).
 
 ## Before the first push
 
-1. **Scan the history for secrets.** Run `python3 scripts/secret-scan/secret_scan.py --history`. Everything in the history is published by the first push and stays public after a later commit removes it. On the first push of ai-workbench, the host's push protection refused a fake key planted in an eval fixture in the exact format of a real provider, which the scanner of the time did not know; the unpublished history had to be rewritten. Once pushed, a leaked secret is revoked, not deleted.
+1. **Scan the history for secrets.** Run `python3 scripts/secret-scan/secret_scan.py --history`. Everything in the history is published by the first push and stays public after a later commit removes it. On a first push, the host's push protection refused a fake key planted in an eval fixture in the exact format of a real provider, which the scanner of the time did not know; the unpublished history had to be rewritten. Once pushed, a leaked secret is revoked, not deleted.
 2. **Sign commits, if the project will require signed commits.** The user configures signing on their machine (SSH or GPG key registered on the host) before the rule is on: the host checks every commit of a pull request, and one unsigned commit on a branch blocks even a squash merge. The skill never runs `git config` for the user; it names the settings (`gpg.format ssh`, `user.signingkey`, `commit.gpgsign true`) and lets the user run them.
 
 ## Right after the first push
 
 3. **Secret scanning with push protection.** Code security settings. It refuses a push that carries a known credential format.
 4. **Private vulnerability reporting.** Security settings. `SECURITY.md` points to it; without it the policy names a door that does not exist.
-5. **Dependency alerts (Dependabot alerts).** Code security settings. Alerts cover every manifest in the repository, including test fixtures and examples; expect alerts from folders that do not ship, and triage them with `eng-security-review` rather than deleting the fixtures.
+5. **Dependency alerts (Dependabot alerts).** Code security settings. Alerts cover every manifest in the repository, including test fixtures and examples; expect alerts from folders that do not ship, and dismiss those as not used (a test fixture, never installed) rather than deleting the fixtures.
 6. **Read-only workflow permissions; Actions cannot approve pull requests.** Actions settings, "Workflow permissions".
 
 ## After the first green run of the checks workflow
 
 7. **Merge method: squash only.** General settings, "Pull Requests". The pull request's title becomes the commit on the default branch.
-8. **A ruleset on the default branch.** Rules settings. Required status checks can only be chosen after they have run once; add them after the first green run. In ai-workbench the ruleset held:
+8. **A ruleset on the default branch.** Rules settings. Required status checks can only be chosen after they have run once; add them after the first green run. A ruleset that works:
    - block deletion and force pushes;
    - require linear history;
    - require signed commits (only after step 2 for everyone who commits);
