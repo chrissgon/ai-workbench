@@ -222,7 +222,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |
 |-------|--------|-------------|----------------|------------|------|-----------|
 | biz-icp-positioning | evaluated | 0.95 | 0.48 | 0.98 | 2026-10-01 | 2 |
-| biz-market-analysis | stale | 0.93 | 0.22 | 0.94 | 2026-10-01 | 1 |
+| biz-market-analysis | evaluated | 0.89 | 0.24 | 0.93 | 2026-10-01 | 4 |
 | brand-guidelines | evaluated | 0.98 | 0.54 | 1.00 | 2026-10-01 | 2 |
 | brand-identity | evaluated | 1.00 | 0.18 | 0.96 | 2026-10-01 | 2 |
 | brand-name | evaluated | 1.00 | 0.50 | 1.00 | 2026-10-01 | 2 |
@@ -234,7 +234,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | core-critique | evaluated | 0.86 | 0.45 | 0.86 | 2026-10-01 | 2 |
 | core-orchestrator | evaluated | 0.93 | 0.45 | 0.89 | 2026-10-01 | 2 |
 | core-project-init | evaluated | 1.00 | 0.36 | 1.00 | 2026-10-01 | 1 |
-| core-research | draft | — | — | — | — | — |
+| core-research | evaluated | 0.94 | 0.50 | 0.88 | 2026-10-01 | 1 |
 | core-security-audit | stale | 0.90 | 0.75 | 0.94 | 2026-10-01 | 1 |
 | core-skill-creator | draft | 0.57 | 0.24 | 0.58 | 2026-10-01 | 1 |
 | design-brief | evaluated | 0.98 | 0.31 | 0.98 | 2026-10-01 | 1 |
@@ -270,7 +270,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
 | product-roadmap | evaluated | 0.97 | 0.59 | 0.92 | 2026-10-01 | 1 |
 
-Counts: 44 evaluated, 2 stale, 2 draft, 48 skills.
+Counts: 46 evaluated, 1 stale, 1 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress
