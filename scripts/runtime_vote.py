@@ -10,8 +10,8 @@ SCHEDULER_PROVIDER names). The optional key "vcs" here and the optional key "sch
 name an implementation explicitly and win, so a "vote" section that says "vcs": "github" keeps working.
 
 tick     vote_tick: reads the vote files (read only), runs vote_state.py, and, once per closed round without a post
-         (cursor vote:<round>), runs the agent read-only with mkt-vote-round, takes its vote-proposal block, and
-         builds in code: the content file, check_post.py, the post image (render.py; degrades to text-only), the
+         (cursor vote:<round>, written when the round's inbox item exists and cleared by reject), runs the agent
+         read-only with mkt-vote-round, takes its vote-proposal block, and builds in code: the content file, check_post.py, the post image (render.py; degrades to text-only), the
          next round's queue file (vote_update.py --queue-round), the publish job and one bundle file whose sha256
          the person approves. Everything goes to the inbox as kind "vote"; nothing is published or committed.
 approve  vote_approve: without --confirmed prints the bundle; with --confirmed --sha256 <hash> checks every file
@@ -36,6 +36,7 @@ PROPOSAL = re.compile(r"```vote-proposal\s*\n(.*?)\n```", re.S)
 REPO = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 BRANCH = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 LANG = re.compile(r"^[A-Z]{2}$")
+ROUND = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")  # a round id, as it goes into a cursor name
 QUEUE_ALLOW = ["data/pick-queue.json"]
 MAX_POST = 3000
 
@@ -210,10 +211,23 @@ def state_cmd(v: dict, project: Path, folder: Path, today: str) -> list:
 
 
 def to_inbox(store, write_private, folder: Path, title: str, bundle: dict) -> dict:
+    """One inbox item for the round, and only then the round's cursor: a round counts as handled once the
+    person has an item to act on, never before (a failure before this point leaves the round for the next tick)."""
     f = write_private(folder, "vote.json", json.dumps(bundle, ensure_ascii=False, indent=1))
     item = store("inbox-add", "--kind", "vote", "--title", title[:200], "--payload-file", f,
                  "--payload-sha256", sha256_file(f))
+    store("cursor-set", "--name", f"vote:{bundle['round']}", "--value", f"inbox:{item['id']}")
     return {"inbox_id": item["id"], "sha256": sha256_file(f)}
+
+
+def vote_reject(store, item: dict) -> dict:
+    """Rejecting a vote item gives the round back to the next tick: its cursor is cleared before the item is
+    closed, so "fix it, then reject" redoes the round instead of leaving it handled for ever."""
+    rid = load_bundle(item).get("round")
+    if not isinstance(rid, str) or not ROUND.match(rid):
+        return {"round": None, "cursor_cleared": False}
+    cleared = store("cursor-clear", "--name", f"vote:{rid}").get("cleared")
+    return {"round": rid, "cursor_cleared": bool(cleared)}
 
 
 def vote_tick(cfg: dict, project: Path, store, h) -> dict:
@@ -242,7 +256,6 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
     if blockers:
         out = to_inbox(store, write_private, folder, f"vote {rid}: needs you", {"round": rid, "ready": False,
                        "problems": blockers, "state": state})
-        store("cursor-set", "--name", f"vote:{rid}", "--value", f"inbox:{out['inbox_id']}")
         return {"status": "to_inbox", "note": "; ".join(blockers), **out}
 
     run_id = store("run-start", "--agent", cfg["agent"], "--event-id", "none", "--trigger", "vote")["run_id"]
@@ -261,7 +274,6 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
           "--exit-code", code, "--cost-usd", h["nz"](timing.get("cost_usd")), "--tokens", h["nz"](timing.get("total_tokens")),
           "--duration-ms", h["nz"](timing.get("duration_ms")), "--out-dir", run_dir / "out",
           *(["--error", err.strip()[-1000:]] if code != 0 and err.strip() else []))
-    store("cursor-set", "--name", f"vote:{rid}", "--value", f"run:{run_id}")
     try:
         d = parse_proposal(response, state)
     except (ValueError, json.JSONDecodeError) as e:

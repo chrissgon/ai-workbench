@@ -43,6 +43,12 @@ def val(flag):
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(["vcs"] + args) + "\n")
 if args[0] == "read-file":
+    limit = os.environ.get("FAKE_READ_FAIL_FROM")  # fail from the Nth read-file call of the test on
+    if limit:
+        with open(os.environ["FAKE_CALLS"]) as f:
+            n = sum(1 for line in f if json.loads(line)[:2] == ["vcs", "read-file"])
+        if n >= int(limit):
+            print("network down", file=sys.stderr); sys.exit(1)
     p = Path(os.environ["FAKE_REPO"]) / val("--path")
     print(json.dumps({"repo": val("--repo"), "path": val("--path"), "ref": val("--ref"), "content": p.read_text()}))
 elif args[0] == "commit-files":
@@ -212,6 +218,37 @@ def test_a_round_is_handled_once(env):
     code, out, _ = rt(env, "tick")
     assert code == 0 and out["vote"]["status"] == "none" and "already handled" in out["vote"]["note"]
     assert len(inbox(env)) == 1
+
+
+def test_rejecting_a_vote_item_lets_the_next_tick_redo_the_round(env):
+    # RT1: the messages tell the person to reject so that the next tick retries; the round's cursor must go.
+    rt(env, "tick")
+    first = inbox(env)[0]
+    code, out, err = rt(env, "reject", "--id", str(first["id"]), "--note", "the calendar has a row now")
+    assert code == 0, err
+    assert out["status"] == "rejected" and out["vote"] == {"round": "2026-10-05", "cursor_cleared": True}
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox", out
+    items = inbox(env)
+    assert len(items) == 1 and items[0]["id"] != first["id"] and items[0]["payload"]["ready"] is True
+
+
+def test_a_failure_after_the_agent_run_does_not_lose_the_round(env, monkeypatch):
+    # RT1: the second read of the vote files fails (calls 4 to 6 are build_bundle's). No inbox item exists, so
+    # the round is not marked as handled and the next tick redoes it.
+    monkeypatch.setenv("FAKE_READ_FAIL_FROM", "4")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "failed" and "read-file" in out["vote"]["note"]
+    assert inbox(env) == []
+    monkeypatch.delenv("FAKE_READ_FAIL_FROM")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox", out
+    assert len(inbox(env)) == 1
+    code, out, _ = rt(env, "tick")
+    assert out["vote"]["status"] == "none" and "already handled" in out["vote"]["note"]
 
 
 def test_approve_schedules_the_post_and_commits_only_the_queue(env):

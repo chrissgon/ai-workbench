@@ -50,7 +50,8 @@ status   Recent runs, pending events, open inbox items, today's spend and replie
 inbox    Open inbox items, each with its reply text and its sha256.
 approve  Without --confirmed: prints the item's exact reply and its sha256. With --confirmed --sha256 <hash>:
          sends that reply only if the stored file still has that hash, then records it. The person runs this.
-reject   Closes an item without sending anything.
+reject   Closes an item without sending anything. On a vote item it also clears the round's cursor, so the next
+         tick redoes the round (a new agent run and a new item).
 
 Weekly vote (docs/architecture/weekly-vote.md), when runtime.json has a "vote" section:
   "vote": {"repo": "<owner>/<name>", "branch": "<branch>", "pillars": ["<pillar>", ...],
@@ -598,8 +599,13 @@ def main(argv=None) -> int:
             out = cmd_approve(a, cfg, project)
         elif a.verb == "reject":
             store = Store(cfg)
-            open_item(store, a.id)
+            item = open_item(store, a.id)
+            # A vote item's round goes back to the next tick first: were the cursor cleared after the item is
+            # closed and that step failed, the round would stay "handled" with nothing left to reject.
+            vote = runtime_vote.vote_reject(store, item) if item.get("kind") == "vote" else None
             out = store("inbox-resolve", "--id", a.id, "--status", "rejected", "--by", "user", "--note", a.note)
+            if vote:
+                out["vote"] = vote
         elif a.verb == "inbox":
             out = Store(cfg)("inbox-list", "--status", "open")
         else:
