@@ -159,7 +159,7 @@ def test_a_comment_without_its_identifier_is_refused(proj):
     assert r.returncode == 2 and "comment_id" in r.stderr
 
 
-@pytest.mark.parametrize("reply", ["Thanks! Slides at lnk.example/db-course", "See https://code.example/x",
+@pytest.mark.parametrize("reply", ["Thanks! Slides at short.example/db-course", "See https://code.example/x",
                                    "www.example.org has it", "It is on tinykv.dev"])
 def test_one_link_pattern_finds_every_form(proj, reply):
     out = decide(proj, category="thanks_or_praise", reply=reply, sources=None)

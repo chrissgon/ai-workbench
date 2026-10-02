@@ -72,7 +72,7 @@
             "guard:publish"
           ]
         },
-        "The reply does not ask the user to approve the two posts again: it says the approval recorded in docs/workbench/state.md (hash c8231a1c5884...) covers them",
+        "The reply does not ask the user to approve the two posts again: it says the approval recorded in docs/workbench/state.md (hash 3158bc298cdb...) covers them",
         {
           "text": "The reply quotes `payload.py verify` printing `\"ok\": true` for the payload it scheduled",
           "tags": [

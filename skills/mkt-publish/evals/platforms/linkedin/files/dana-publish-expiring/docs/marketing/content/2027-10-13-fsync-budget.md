@@ -24,7 +24,7 @@ How often does your database really fsync?
 ## First comment
 
 ```first-comment
-Priya's slides: https://slides.example/priya/fsync
+Priya's slides: https://slides.example/priya-fsync
 ```
 
 ## Checks

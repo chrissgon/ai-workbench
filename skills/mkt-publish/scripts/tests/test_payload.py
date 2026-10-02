@@ -3,6 +3,7 @@ payload folder, a plan hash that does not depend on where the folder lives or ho
 platform's rules read from its data file, and the publisher's path taken from the caller, never built."""
 import hashlib
 import os
+import re
 import json
 import shutil
 import stat
@@ -16,6 +17,7 @@ REPO = Path(__file__).resolve().parents[4]
 PAYLOAD = REPO / "skills/mkt-publish/scripts/payload.py"
 DATA = REPO / "shared/references/platforms/linkedin.json"
 PUBLISHER = REPO / "providers/publisher/linkedin.py"
+re_hash = re.compile(r"\| plan \| [^|]+ \| ([0-9a-f]{64}) \|")
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 64
 
 CONTENT = """# Post: launch
@@ -334,3 +336,18 @@ def test_a_git_check_that_cannot_answer_is_a_refusal(proj, tmp_path):
     r = subprocess.run(args, capture_output=True, text=True, cwd=proj, timeout=60, env=env)
     assert r.returncode == 2 and "check-ignore exited 128" in r.stderr and r.stdout == ""
     assert not (proj / ".workbench-local").exists()
+
+
+def test_the_recorded_approval_of_the_eval_fixture_is_the_hash_its_files_build(tmp_path):
+    """Case 3 of evals.json schedules under an approval already recorded: its hash must be what the fixture builds."""
+    fixture = REPO / "skills/mkt-publish/evals/files/dana-publish-approved"
+    work = tmp_path / "p"
+    shutil.copytree(fixture, work)
+    recorded = re_hash.search((fixture / "docs/workbench/state.md").read_text()).group(1)
+    code, out, err = run(work, "build", "--content", "docs/marketing/content/2027-10-11-tinykv-05-ttl.md",
+                         "--content", "docs/marketing/content/2027-10-13-fsync-budget.md", *PLATFORM,
+                         "--publisher", work / "wb/providers/publisher/stub.py", "--workbench", work / "wb",
+                         "--out", tmp_path / "out")
+    assert code == 0 and out["plan_hash"] == recorded, err
+    cases = (REPO / "skills/mkt-publish/evals/evals.json").read_text()
+    assert recorded[:12] in cases
