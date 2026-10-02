@@ -101,7 +101,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/engineering/codebase-map.md` | eng-codebase-map | - |
 | `docs/engineering/designs/<feature>.check.json` | eng-architecture | - |
 | `docs/engineering/designs/<feature>.md` | eng-architecture | - |
-| `docs/engineering/plans/<task>.md` | eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-implement |
+| `docs/engineering/plans/<task>.md` | eng-docs, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-impact-analysis, eng-implement |
 | `docs/engineering/reviews/<change>.md` | eng-code-review | - |
 | `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
 | `docs/marketing/calendar.md` | mkt-content-plan, mkt-publish, mkt-social-copy | - |
