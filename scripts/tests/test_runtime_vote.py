@@ -251,6 +251,37 @@ def test_a_failure_after_the_agent_run_does_not_lose_the_round(env, monkeypatch)
     assert out["vote"]["status"] == "none" and "already handled" in out["vote"]["note"]
 
 
+def test_an_unexpected_error_in_the_vote_step_is_recorded_and_the_round_is_redone(env):
+    # RT6: the content folder cannot be created (a file is in its place), so build_bundle raises an OSError.
+    # The tick ended in a traceback; with RT1 the round was also lost.
+    content = env["proj"] / "docs/marketing/content"
+    if content.is_dir():
+        shutil.rmtree(content)
+    content.write_text("not a folder\n")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "failed" and "Error" in out["vote"]["note"], out
+    assert "Traceback" in err
+    assert inbox(env) == []
+    code, status, _ = rt(env, "status")
+    assert [r["status"] for r in status["runs"]] == ["ok"]  # the agent's run had ended before the failure
+    content.unlink()
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox", out
+
+
+def test_an_unexpected_error_during_the_vote_run_ends_the_run_row(env):
+    # RT6: the agent's task cannot be written, between run-start and run-end; the run row stayed "running".
+    (env["data"] / "runs").mkdir(parents=True)
+    (env["data"] / "runs" / "1").write_text("not a folder\n")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "failed", out
+    code, status, _ = rt(env, "status")
+    assert [r["status"] for r in status["runs"]] == ["failed"]
+
+
 def test_approve_schedules_the_post_and_commits_only_the_queue(env):
     rt(env, "tick")
     item = inbox(env)[0]

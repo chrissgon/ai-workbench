@@ -260,16 +260,20 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
 
     run_id = store("run-start", "--agent", cfg["agent"], "--event-id", "none", "--trigger", "vote")["run_id"]
     run_dir = Path(cfg["data_dir"]) / "runs" / str(run_id)
-    task = write_private(run_dir, "task.md", task_text(project, state))
-    paths = cfg["paths"]
-    cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
-           "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),
-           "--max-cost-usd", str(cfg["max_cost_usd_per_run"]), "--timeout-seconds", str(cfg["timeout_seconds"]),
-           "--skill-dir", str(v["paths"]["skill"])]
-    code, _, err = run(cmd, timeout=int(cfg["timeout_seconds"]) + 60)
-    timing = _read_json(run_dir / "out" / "timing.json")
-    response_file = run_dir / "out" / "response.md"
-    response = response_file.read_text(encoding="utf-8") if response_file.is_file() else ""
+    try:
+        task = write_private(run_dir, "task.md", task_text(project, state))
+        paths = cfg["paths"]
+        cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
+               "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),
+               "--max-cost-usd", str(cfg["max_cost_usd_per_run"]), "--timeout-seconds", str(cfg["timeout_seconds"]),
+               "--skill-dir", str(v["paths"]["skill"])]
+        code, _, err = run(cmd, timeout=int(cfg["timeout_seconds"]) + 60)
+        timing = _read_json(run_dir / "out" / "timing.json")
+        response_file = run_dir / "out" / "response.md"
+        response = response_file.read_text(encoding="utf-8") if response_file.is_file() else ""
+    except Exception as e:  # the run row is open: it must not stay "running"
+        h["end_failed_run"](store, run_id, run_dir, e)
+        raise
     store("run-end", "--run-id", run_id, "--status", "ok" if code == 0 else ("timeout" if code == 124 else "failed"),
           "--exit-code", code, "--cost-usd", h["nz"](timing.get("cost_usd")), "--tokens", h["nz"](timing.get("total_tokens")),
           "--duration-ms", h["nz"](timing.get("duration_ms")), "--out-dir", run_dir / "out",

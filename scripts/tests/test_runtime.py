@@ -227,6 +227,40 @@ def test_publisher_failure_goes_to_the_inbox(env, monkeypatch):
     assert [e["action"] for e in log_entries(env)] == ["failed", "to_inbox"]
 
 
+def test_an_unexpected_error_fails_the_event_and_the_run_and_the_tick_goes_on(env):
+    # RT6: an agent file without a skills line raised IndexError after the run row was opened. The tick ended in
+    # a traceback, the two claimed events stayed claimed for an hour and the run row stayed "running".
+    (env["wb"] / "agents/social-manager.md").write_text("---\nname: social-manager\ndescription: x\n---\n# Agent\n")
+    set_case(env, [message(1), message(2, commenter="Bruno")], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert [h["status"] for h in out["handled"]] == ["failed", "failed"]
+    assert all("IndexError" in h["note"] for h in out["handled"])
+    assert "Traceback" in err  # the traceback stays on stderr, for whoever reads the tick's log
+    code, status, _ = rt(env, "status")
+    assert [r["status"] for r in status["runs"]] == ["failed", "failed"]
+    assert all("IndexError" in r["error"] for r in status["runs"])
+    code, again, _ = rt(env, "tick")
+    assert again["handled"] == []  # the events ended "failed": none is left claimed for a later tick
+    assert publisher_calls(env) == []
+
+
+def test_a_malformed_mailbox_message_does_not_stop_the_tick(env, tmp_path):
+    # RT6: a message without an id raised KeyError before any event was handled.
+    shutil.copy(REPO / "skills/mkt-engage/scripts/parse_notification.py",
+                env["wb"] / "skills/mkt-engage/scripts/parse_notification.py")
+    text = tmp_path / "comment.txt"
+    text.write_text("Nice, I will try it!")
+    code, _, err = rt(env, "add-comment", "--link", REAL_LINK, "--commenter", "Rita", "--text-file", str(text))
+    assert code == 0, err
+    set_case(env, [{"received_at": "2026-09-29T10:01:00Z", "headers": {}}],
+             decision(reply="Thanks, Rita. Let me know how it goes."))
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["mailbox"]["status"] == "failed" and "KeyError" in out["mailbox"]["note"]
+    assert out["handled"][0]["status"] == "done" and len(publisher_calls(env)) == 1
+
+
 def test_approve_sends_only_the_exact_reply_shown(env):
     set_case(env, [message(1, text="I disagree, CSS frameworks are dead")],
              decision(category="criticism_or_disagreement", reply="Fair point. I still measure 3.7 kB."))

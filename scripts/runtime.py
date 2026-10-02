@@ -79,6 +79,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -205,7 +206,28 @@ def load_config(project: Path) -> dict:
 
 
 def helpers() -> dict:
-    return {"run": run, "run_json": run_json, "write_private": write_private, "Fail": Fail, "nz": nz}
+    return {"run": run, "run_json": run_json, "write_private": write_private, "Fail": Fail, "nz": nz,
+            "end_failed_run": end_failed_run}
+
+
+def one_line(error: BaseException, limit: int = 1000) -> str:
+    """An exception as one line for a note: its type, then its message."""
+    return " ".join(f"{type(error).__name__}: {error}".split())[:limit]
+
+
+def unexpected(error: Exception) -> str:
+    """An error that is not the runtime's own (Fail): the traceback goes to stderr, one line goes on record."""
+    traceback.print_exc()
+    return one_line(error)
+
+
+def end_failed_run(store, run_id, run_dir: Path, error: BaseException) -> None:
+    """Close a run row whose run broke between run-start and run-end, so that it never stays "running"."""
+    try:
+        store("run-end", "--run-id", run_id, "--status", "failed", "--exit-code", "null", "--cost-usd", "null",
+              "--tokens", "null", "--duration-ms", "null", "--out-dir", run_dir / "out", "--error", one_line(error))
+    except Fail as e:
+        log(f"could not end run {run_id}: {e}")
 
 
 def run(cmd: list, stdin: str | None = None, cwd: Path | None = None, timeout: int = TIMEOUT) -> tuple[int, str, str]:
@@ -355,20 +377,26 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
 
     run_id = store("run-start", "--agent", cfg["agent"], "--event-id", event["id"], "--trigger", event["source"])["run_id"]
     run_dir = Path(cfg["data_dir"]) / "runs" / str(run_id)
-    task = write_private(run_dir, "task.md", task_text(cfg, project, comment))
-    skills = [s.strip() for s in re.findall(r"skills:\s*\[(.*?)\]", paths["agent"].read_text(encoding="utf-8"))[0].split(",")]
-    cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
-           "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),
-           "--max-cost-usd", str(cfg["max_cost_usd_per_run"]), "--timeout-seconds", str(cfg["timeout_seconds"])]
-    for s in skills:
-        cmd += ["--skill-dir", str(paths["skills"] / s)]
-    code, _, err = run(cmd, timeout=int(cfg["timeout_seconds"]) + 60)
-    timing = {}
     try:
-        timing = json.loads((run_dir / "out" / "timing.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        pass
-    response = (run_dir / "out" / "response.md").read_text(encoding="utf-8") if (run_dir / "out" / "response.md").is_file() else ""
+        task = write_private(run_dir, "task.md", task_text(cfg, project, comment))
+        skills = [s.strip() for s in re.findall(r"skills:\s*\[(.*?)\]", paths["agent"].read_text(encoding="utf-8"))[0].split(",")]
+        cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
+               "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),
+               "--max-cost-usd", str(cfg["max_cost_usd_per_run"]), "--timeout-seconds", str(cfg["timeout_seconds"])]
+        for s in skills:
+            cmd += ["--skill-dir", str(paths["skills"] / s)]
+        code, _, err = run(cmd, timeout=int(cfg["timeout_seconds"]) + 60)
+        timing = {}
+        try:
+            timing = json.loads((run_dir / "out" / "timing.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+        if not isinstance(timing, dict):
+            timing = {}
+        response = (run_dir / "out" / "response.md").read_text(encoding="utf-8") if (run_dir / "out" / "response.md").is_file() else ""
+    except Exception as e:  # the run row is open: it must not stay "running"
+        end_failed_run(store, run_id, run_dir, e)
+        raise
     store("run-end", "--run-id", run_id, "--status", "ok" if code == 0 else ("timeout" if code == 124 else "failed"),
           "--exit-code", code, "--cost-usd", nz(timing.get("cost_usd")), "--tokens", nz(timing.get("total_tokens")),
           "--duration-ms", nz(timing.get("duration_ms")), "--out-dir", run_dir / "out",
@@ -458,13 +486,16 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             # An expired authorization or a network error must not stop pasted comments or the vote step; the
             # cursor stays, so the next tick that reads the mailbox picks up what this one missed.
             mailbox = {"status": "failed", "note": f"mailbox: {e}"[:1000]}
-    added = 0
-    for m in messages:
-        with tempfile.TemporaryDirectory() as tmp:
-            f = write_private(Path(tmp), "m.json", json.dumps(m, ensure_ascii=False))
-            added += bool(store("event-add", "--source", "mailbox", "--external-id", m["id"] or m.get("headers", {}).get("Message-ID", ""),
-                                "--payload-file", f).get("created"))
-    newest = max((m.get("received_at") or "" for m in messages), default="")
+    added, newest = 0, ""
+    try:
+        for m in messages:
+            with tempfile.TemporaryDirectory() as tmp:
+                f = write_private(Path(tmp), "m.json", json.dumps(m, ensure_ascii=False))
+                added += bool(store("event-add", "--source", "mailbox", "--external-id", m["id"] or m.get("headers", {}).get("Message-ID", ""),
+                                    "--payload-file", f).get("created"))
+        newest = max((m.get("received_at") or "" for m in messages), default="")
+    except Exception as e:  # a message of an unexpected shape, or a store refusal: the cursor stays
+        mailbox = {"status": "failed", "note": f"mailbox: {e if isinstance(e, Fail) else unexpected(e)}"[:1000]}
     if a.dry_run:
         parsed = [json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(m))[1] or "{}") for m in messages]
         return {"dry_run": True, "messages": len(messages), "new_events": added, "parsed": parsed,
@@ -486,6 +517,8 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             outcome = handle_event(cfg, project, store, event)
         except Fail as e:
             outcome = {"status": "failed", "note": str(e)[:1000]}
+        except Exception as e:  # not the runtime's own error: the event must still end, not stay claimed
+            outcome = {"status": "failed", "note": unexpected(e)}
         store("event-done", "--id", event["id"], "--token", event["claim_token"], "--status", outcome["status"],
               "--note", outcome["note"] or "-")
         results.append({"event": event["id"], **outcome})
@@ -507,6 +540,8 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
                 out["vote"] = runtime_vote.vote_tick(cfg, project, store, helpers())
             except Fail as e:
                 out["vote"] = {"status": "failed", "note": str(e)[:1000]}
+            except Exception as e:  # the comments this tick handled are already recorded; the round stays open
+                out["vote"] = {"status": "failed", "note": unexpected(e)}
         results = results + [out["vote"]]
     notify(cfg, results)
     return out
