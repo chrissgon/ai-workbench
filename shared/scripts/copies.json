@@ -98,7 +98,7 @@
     },
     {
      "path": "skills/mkt-content-plan/scripts/sensitive_topics.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/mkt-engage/scripts/sensitive_topics.py",
