@@ -1,0 +1,69 @@
+# Platform references
+
+One reference per social platform: what the platform is as a medium, written once, so that a skill's procedure names no platform and adding a platform edits no skill (design rules 2 and 3 of `AGENTS.md`).
+
+| File | Read by | Holds |
+|------|---------|-------|
+| `<platform>.md` | a model, at the step of a skill that says so | what a person who writes, designs or publishes for the platform must know |
+| `<platform>.json` | a script, through `--platform-file <path>` | the same facts as numbers, patterns and lists, for code |
+
+The name of a platform is lowercase letters, digits and hyphens. It is the name everywhere: the file names here, the part after the colon of `publisher:<platform>`, the value of `--platform`, the `Network:` field of a post file once lowercased. The files of a platform are found by that name, so this file lists none of them.
+
+## Which platform a step works on
+
+A skill's step is literal and the same in every skill: "read the reference of the platform, `../../shared/references/platforms/<platform>.md`; if there is no such file, stop and say the platform is not supported". The platform is found in this order, and the first that gives a name wins:
+
+1. The `Network:` field of the calendar row or of the post file the step works on, lowercased.
+2. The line of the request that names it. A task of the agent runtime carries it as a line of its own, `Platform: <name>`, above the data it quotes; in a person's request it is the platform they name.
+3. Neither names one: the skill asks. It never takes the platform from a default, from the files that happen to be in this folder or from the provider that is installed.
+
+A skill reads the one reference of that platform and no other file of this folder. A run that has no tool to read files (an adapter that calls a model once) is sent that reference with the task.
+
+## What goes in a reference
+
+What the platform is as a medium, whoever publishes to it and with whatever tool:
+
+- the shape of a post: whether it needs text, the limits of its text, the media it takes or requires;
+- how links, hashtags and mentions behave, and what the first comment is used for;
+- comments and replies: how deep they nest, what a reply must name;
+- the identifiers of a post and of a comment, and the shape of a post's address;
+- the pieces of a profile and their sizes, and how a person exports their own profile;
+- what can be read from outside, and what only the person can see.
+
+Rules for writing one:
+
+- Every fact carries where it came from and when it was checked: the platform's own documentation with its address and the date, an observation on a real case with the date, or "the limit the workbench enforces" for a bound that is the workbench's own. A fact with no origin is labelled `not checked`.
+- A reference is written when the platform has a real task, never from general knowledge. It is started from what that task found out.
+- It describes a medium, not a project (principle 8): no account, no handle, no person, no post of anyone. Real limits and real dates stay.
+- It is prose a model reads at one step: short sections, one fact per line, no procedure. What a skill does with a fact is the skill's step.
+
+## What goes in the data file
+
+What a script needs and cannot read from prose: host names, URL patterns, the patterns of identifiers, length limits, the types, size and count of the media a post may carry, whether a post needs text. The keys every data file has:
+
+| Key | Value |
+|-----|-------|
+| `platform` | the platform's name, equal to the file's name |
+| `hosts` | the host names of the platform's addresses, compared exactly, never by suffix |
+| `post` | `requires_text`, `max_characters`, `scheduling` (whether the platform itself can hold a post for later), `first_comment` (`supported`, `max_characters`), `url` (`scheme`, `hosts`, `path_pattern`, `allows_query`, `allows_fragment`, `template`) |
+| `media` | `max_count`, `max_bytes`, `types` (each with `name`, `extensions` and `magic_hex`, the first bytes of such a file), `post_image` (`width`, `height`) |
+| `reply` | `max_characters` |
+| `comment` | `max_characters_kept` (how much of a comment's text is kept when it is read), `link` (the query parameters that carry the comment and the reply, `nesting_levels`) |
+| `identifiers` | `post`, `comment` and, where a copied link uses another form, `comment_short`: each a `pattern` for the whole value |
+| `notification_email` | `header_prefix` (the mail headers of the platform's own notifications), `layout_verified` |
+
+Rules:
+
+- A script takes `--platform <name>` and `--platform-file <path>`; the skill's step passes the path of this folder's file. A script never finds the file by a path of its own: a scheduled job runs a script from a flat folder of copies, where a relative path leads nowhere, and the job's snapshot carries the data file under its own name.
+- A script holds no table of platforms and no limit of a platform as a constant. A value it needs and the file lacks is added here.
+- A parser that is code for one platform's format (a copied comment link, a profile export) stays in the skill that owns it, selected by `--platform`; the data file gives it the hosts and patterns it checks, never the parsing.
+- A limit is written once. The first data file holds every limit the runtime and the skills' scripts held as constants when it was written, so that moving a script to the file changes no value.
+- Changing a value here changes what the skills that read the file do: it is a change of their context, and their lab evidence made with the old file becomes inherited (the reliability model, "What a change costs").
+
+## What stays in a provider
+
+What belongs to one implementation and not to the medium: credentials and how long they last, how the service is called, its versions and endpoints, its errors and rate limits, how text is escaped on the way in, the ledger of what was sent. One provider may serve several platforms, and most skills that need to know a platform declare no publisher. A provider's verbs name a post and a comment by generic flags (`--post-id`, `--comment-id`, `--parent-comment-id`) whose value a caller passes as it received it; what the value looks like on a platform is in that platform's reference, section "Identifiers" (`providers/CONTRACT.md`).
+
+## Adding a platform
+
+Add `<platform>.md` and, where a script needs data, `<platform>.json`; where something is executed, a provider that declares the platform. Add the platform's cases to the skills that have a task on it, in `skills/<name>/evals/platforms/<platform>.json`. No skill's procedure is edited and no file of this folder changes. The limit of the rule: it holds for a platform whose post is text with optional media; a platform of another shape edits the skills `AGENTS.md` names in design rule 3.

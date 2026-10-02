@@ -169,10 +169,12 @@ ARG_LIST_SEP_RE = re.compile(r"[\"']\s*,\s*[\"']")
 CODE_SPAN_RE = re.compile(r"`([^`\n]+)`")
 FENCE_RE = re.compile(r"^\s*(```|~~~)")
 # What makes a skill or agent a reader of content written by others, and the sentence it must carry.
+# The source words cover every kind of source the canonical sentence lists (templates/capability.SKILL.md);
+# scripts/tests/test_canonical_sentences.py keeps the two in agreement.
 EXTERNAL_CLASS_RE = re.compile(r"^(?:search:.*|integration:.*|reader:email|mailbox)$")
 EXTERNAL_SOURCE_RE = re.compile(
-    r"(?i)\b(tickets?|bug reports?|web pages?|search results|review comments?|pull request (?:descriptions?|comments?|bodies)|"
-    r"issue (?:bodies|comments)|CI logs?|--log-failed|failing step|exported code|design[- ]tool exports?|an export\b|"
+    r"(?i)\b(tickets?|bug reports?|web pages?|search results|review comments?|pull request (?:text|descriptions?|comments?|bodies)|"
+    r"issue (?:text|bodies|comments)|issue and pull request (?:text|bodies|comments)|CI logs?|--log-failed|failing step|exported code|design[- ]tool exports?|an export\b|"
     r"screenshots?|API responses?|code host|e-?mails?\b|notifications?\b|diffs?\b|command outputs?\b)")
 # The sentence opens a line or a list item (a bullet, a number, a checkbox), bold or not.
 UNTRUSTED_MARKER_RE = re.compile(

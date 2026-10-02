@@ -99,9 +99,13 @@ def vote_config(cfg: dict, Fail) -> dict | None:
     return v
 
 
-def task_text(project: Path, state: dict) -> str:
+def task_text(project: Path, state: dict, platform: str) -> str:
+    """The task of the vote step. Its "Platform:" line names the platform the post is for: a skill's step
+    takes the platform from there when no calendar row or post file gives it, and the adapter sends that
+    platform's reference with the task."""
     return f"""This task comes from the agent runtime (contracts/runtime.md). Follow "Runtime mode" in the skill mkt-vote-round.
 
+Platform: {platform}
 Project folder (read only): {project}
 Read: {project}/docs/workbench/state.md, {project}/docs/brand/strategy.md, {project}/docs/brand/voice.md,
 {project}/docs/brand/profile.md, {project}/docs/marketing/calendar.md, and the material the state file points to.
@@ -263,7 +267,7 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
     run_id = store("run-start", "--agent", cfg["agent"], "--event-id", "none", "--trigger", "vote")["run_id"]
     run_dir = Path(cfg["data_dir"]) / "runs" / str(run_id)
     try:
-        task = write_private(run_dir, "task.md", task_text(project, state))
+        task = write_private(run_dir, "task.md", task_text(project, state, cfg["publisher"]))
         paths = cfg["paths"]
         cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
                "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),

@@ -381,6 +381,15 @@ def test_failed_post_check_is_not_ready(env, monkeypatch):
     assert b["ready"] is False and "a link in the body" in b["problems"][0]
 
 
+def test_the_vote_task_names_the_configured_platform(env):
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    (task,) = sorted((env["data"] / "runs").glob("*/task.md"))
+    head = task.read_text().split("```", 1)[0]
+    assert "\nPlatform: linkedin\n" in head, "above the vote state, which is data"
+    assert runtime_vote.task_text(Path("/p"), {}, "demo-net").split("```", 1)[0].count("Platform: demo-net") == 1
+
+
 def test_parse_proposal_rules():
     state = {"round": {"round": "2026-10-05", "winner": None, "winner_topic": None,
                        "options": {"A": "One", "B": "Two", "C": "Three"}},
