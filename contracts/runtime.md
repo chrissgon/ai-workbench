@@ -36,8 +36,19 @@ It copies the skills (never links them) into a fresh working folder for the run,
 The trigger's data is written by strangers (comments, e-mails). A model that could run the publisher could be talked into publishing. So the model proposes; code decides and executes:
 
 1. The model returns a proposal (a category, a language, a reply text).
-2. The runtime writes the proposal's text to a file and runs the gate script with the approved policy; the gate is code, bound by hash to what the person approved.
+2. The runtime writes the proposal's text to a file and runs the gate script with the approved policy. The policy file is bound by hash to what the person approved (its `policy:<sha256>` in the state file's standing approval); the gate script is bound only for a scheduled tick that carries `--pin` (below).
 3. Only a gate result of `auto` makes the runtime call the actuator, with the file the gate checked and an idempotency key. Anything else goes to the inbox with the gate's reasons.
+
+## What the approval of a recurring tick covers
+
+The person approves the tick once, when it is scheduled (`scheduler:job`, `--every`), and it then runs unattended with the publishing credential. That approval covers:
+
+- what the scheduler hashes: the command's arguments, the program, the scheduler's runner, and the files in the command file's snapshot (`runtime.py`, `runtime_vote.py`, `redact.py`, `providers/resolve.py`, the pin file). The job runs its own copies of them, and a firing whose hashes differ is refused;
+- with `--pin <file>`: `docs/workbench/runtime.json` and the gate script (`mkt-engage/scripts/policy_gate.py` of the workbench `runtime.json` names), by the sha256 that `runtime.py pin` recorded in the pin file. Before anything else, every firing hashes both again and refuses (exit 3, nothing runs) when either differs. A tick without `--pin`, run by hand, checks nothing.
+
+It does not cover the rest of what a firing loads from the workbench checkout that `runtime.json` names: the notification parser, the adapter's `run-agent.sh`, the agent file and its skills, the providers (the publisher included), the vote step's scripts, and the folders of `path`. A change to them (a pull in that checkout) takes effect at the next firing, without a new approval. Keep that checkout on a reviewed revision; to bind one of those files, add it to the pin first.
+
+A change to `runtime.json` or to the gate script stops the tick until the person reviews it, runs `runtime.py pin` again and schedules the tick again with the new pin file: that is the new approval.
 
 ## Records
 

@@ -616,3 +616,60 @@ def test_approve_refuses_a_reply_that_holds_a_credential(env):
     code, _, err = rt(env, "approve", "--id", str(item_id), "--confirmed", "--sha256", sha)
     assert code == 1 and "looks like a credential (bearer token)" in err and "nothing sent" in err
     assert publisher_calls(env) == []
+
+
+# --- RT5: a scheduled tick runs only on the configuration and the gate it was approved with ----------------
+
+
+def test_a_pinned_tick_refuses_when_the_configuration_or_the_gate_changed(env):
+    # The approval of the recurring job covered three scripts; runtime.json (which names the workbench every
+    # other script comes from) and the gate were read live at every firing, so an edit changed what the
+    # unattended job ran with the publishing credential, with no new approval and no refused firing.
+    set_case(env, [message(1)], decision())
+    code, pin, err = rt(env, "pin")
+    assert code == 0, err
+    pin_file = Path(pin["pin"])
+    assert pin_file.stat().st_mode & 0o777 == 0o600
+    recorded = json.loads(pin_file.read_text())
+    config = env["proj"] / "docs/workbench/runtime.json"
+    gate = env["wb"] / "skills/mkt-engage/scripts/policy_gate.py"
+    assert recorded["runtime_json"] == {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()}
+    assert recorded["gate"] == {"path": str(gate), "sha256": hashlib.sha256(gate.read_bytes()).hexdigest()}
+    code, out, err = rt(env, "tick", "--pin", str(pin_file))
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "done" and len(publisher_calls(env)) == 1
+
+    original = config.read_text()
+    config.write_text(original.replace('"daily_cost_cap_usd": 1', '"daily_cost_cap_usd": 100'))
+    set_case(env, [message(1), message(2)], decision())
+    code, out, err = rt(env, "tick", "--pin", str(pin_file))
+    assert code == 3 and out is None
+    assert "changed since the tick was approved" in err and str(config) in err and "nothing ran" in err
+    assert len(publisher_calls(env)) == 1 and len(env["calls"].with_suffix(".jsonl.agent").read_text().splitlines()) == 1
+
+    config.write_text(original)
+    gate.write_text(gate.read_text() + "\n# changed\n")
+    code, _, err = rt(env, "tick", "--pin", str(pin_file))
+    assert code == 3 and str(gate) in err and str(config) not in err
+    assert len(publisher_calls(env)) == 1
+
+    # The person reviews the change and pins again: the tick runs (the scheduler needs a new approval too).
+    code, pin, err = rt(env, "pin")
+    assert code == 0, err
+    code, out, err = rt(env, "tick", "--pin", pin["pin"])
+    assert code == 0, err
+    # The tick ran: message 2, which the refused ticks left waiting, is handled (to the inbox: one auto reply
+    # per person and post).
+    assert [h["event"] for h in out["handled"]] and len(env["calls"].with_suffix(".jsonl.agent").read_text().splitlines()) == 2
+
+
+def test_a_pin_that_cannot_be_read_stops_the_tick_and_pin_goes_with_tick_only(env, tmp_path):
+    set_case(env, [message(1)], decision())
+    code, _, err = rt(env, "tick", "--pin", str(tmp_path / "missing.json"))
+    assert code == 3 and "nothing ran" in err
+    (tmp_path / "bad.json").write_text("{}")
+    code, _, err = rt(env, "tick", "--pin", str(tmp_path / "bad.json"))
+    assert code == 3 and "nothing ran" in err
+    assert publisher_calls(env) == [] and not env["data"].joinpath("store.sqlite").exists()
+    code, _, err = rt(env, "status", "--pin", str(tmp_path / "bad.json"))
+    assert code == 2 and "--pin goes with tick" in err

@@ -2,7 +2,8 @@
 """Agent runtime: find new work, run an agent on it read-only, gate its proposal, execute or queue it.
 
 Usage:
-  python3 scripts/runtime.py tick    --project <dir> [--dry-run]
+  python3 scripts/runtime.py tick    --project <dir> [--dry-run] [--pin <file>]
+  python3 scripts/runtime.py pin     --project <dir>
   python3 scripts/runtime.py add-comment --project <dir> --link <comment link> --commenter <name> --text-file <f>
   python3 scripts/runtime.py status  --project <dir>
   python3 scripts/runtime.py inbox   --project <dir>
@@ -50,6 +51,13 @@ tick     1. Reads new notification e-mails since the store's cursor (mailbox pro
             max_cost_usd_per_run; the output says how many there were (runs_without_cost_today).
          --dry-run reads the mailbox and parses, and does nothing else: it writes nothing (no store is
          created, no event is added, the cursor stays, no lock is taken), runs no agent and no vote step.
+         --pin <file> (a scheduled tick carries it): before anything else, the tick hashes runtime.json and
+         the gate script and refuses (exit 3, nothing runs) when either differs from the pin file.
+pin      Records the sha256 of runtime.json and of the gate script in <data_dir>/tick-pin.json and prints its
+         path. Run it when the tick is scheduled: the tick's command carries --pin <that path> and its snapshot
+         lists the file, so the approval of the recurring job covers both hashes. A later change to either
+         stops the tick until the person runs pin again and schedules the tick again (contracts/runtime.md,
+         "What the approval of a recurring tick covers").
 add-comment  Queues a comment the person pasted (the link from "Copy link to comment", the name, the text) as an
          event of source "pasted"; the next tick handles it like a notification. This is also how the runtime
          works with "mailbox": "none", when no mailbox is connected.
@@ -188,8 +196,49 @@ class Providers:
         return self.resolution.secret_resolver(root=self.workbench)
 
 
+def config_path(project: Path) -> Path:
+    return project / "docs" / "workbench" / "runtime.json"
+
+
+def gate_path(workbench: Path) -> Path:
+    return workbench / "skills" / "mkt-engage" / "scripts" / "policy_gate.py"
+
+
+def pinned_files(project: Path, workbench: Path) -> dict:
+    """What a pin covers: the configuration and the gate script, by path and sha256."""
+    files = {"runtime_json": config_path(project), "gate": gate_path(workbench)}
+    return {name: {"path": str(f), "sha256": sha256_file(f) if f.is_file() else None} for name, f in files.items()}
+
+
+def check_pin(project: Path, pin_arg: str) -> None:
+    """Refuse to tick when runtime.json or the gate script is not what the pin recorded. Runs before the
+    configuration is used at all: runtime.json names the workbench every other script is loaded from."""
+    config = config_path(project)
+    if not config.is_file():
+        raise Fail(f"{config} not found; see --help for its fields", 3)
+    try:
+        pin = json.loads(Path(pin_arg).read_text(encoding="utf-8"))
+        recorded = {name: pin[name] for name in ("runtime_json", "gate")}
+        workbench = Path(json.loads(config.read_text(encoding="utf-8"))["workbench"])
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise Fail(f"--pin {pin_arg}, or runtime.json, cannot be read ({type(e).__name__}); nothing ran", 3)
+    changed = [current["path"] for name, current in pinned_files(project, workbench).items()
+               if current != recorded[name]]
+    if changed:
+        raise Fail(f"changed since the tick was approved: {', '.join(changed)}; nothing ran. Review the change, run "
+                   "`runtime.py pin`, then schedule the tick again: that is the new approval", 3)
+
+
+def cmd_pin(cfg: dict, project: Path) -> dict:
+    files = pinned_files(project, Path(cfg["workbench"]))
+    pin = {**files, "pinned_at": now().isoformat()}
+    path = write_private(Path(cfg["data_dir"]), "tick-pin.json", json.dumps(pin, indent=1) + "\n")
+    return {"pin": str(path), **files,
+            "next": f"schedule the tick with --pin {path} in its argv and {path} in its snapshot"}
+
+
 def load_config(project: Path) -> dict:
-    path = project / "docs" / "workbench" / "runtime.json"
+    path = config_path(project)
     if not path.is_file():
         raise Fail(f"{path} not found; see --help for its fields", 3)
     try:
@@ -232,7 +281,7 @@ def load_config(project: Path) -> dict:
         "run_agent": wb / "adapters" / cfg["harness"] / "run-agent.sh",
         "agent": wb / "agents" / f"{cfg['agent']}.md",
         "parser": wb / "skills" / "mkt-engage" / "scripts" / "parse_notification.py",
-        "gate": wb / "skills" / "mkt-engage" / "scripts" / "policy_gate.py",
+        "gate": gate_path(wb),
         "skills": wb / "skills",
     }
     if cfg["mailbox"] == "none":
@@ -748,7 +797,8 @@ def cmd_add_comment(a, cfg: dict, project: Path) -> dict:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("verb", choices=["tick", "add-comment", "status", "inbox", "approve", "reject"])
+    p.add_argument("verb", choices=["tick", "pin", "add-comment", "status", "inbox", "approve", "reject"])
+    p.add_argument("--pin", help="with tick: the pin file whose hashes runtime.json and the gate must still have")
     p.add_argument("--link")
     p.add_argument("--commenter")
     p.add_argument("--text-file")
@@ -761,6 +811,10 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
     project = Path(a.project).resolve()
     try:
+        if a.pin is not None:
+            if a.verb != "tick":
+                raise Fail("--pin goes with tick", 2)
+            check_pin(project, a.pin)
         cfg = load_config(project)
         if a.verb in ("approve", "reject") and a.id is None:
             raise Fail("--id is required", 2)
@@ -775,6 +829,8 @@ def main(argv=None) -> int:
                 except BlockingIOError:
                     raise Fail("another tick is running", 1)
                 out = cmd_tick(a, cfg, project)
+        elif a.verb == "pin":
+            out = cmd_pin(cfg, project)
         elif a.verb == "add-comment":
             out = cmd_add_comment(a, cfg, project)
         elif a.verb == "approve":
