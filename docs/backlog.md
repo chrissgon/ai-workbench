@@ -20,7 +20,7 @@ The workbench is a set of instructions that models execute with a terminal, file
 - [ ] **S14. `eng-security-review` beyond dependency alerts.** Extend the skill from 0.1 (dependency alerts only) to the rest of S8's scope: secrets in the code and the history, authentication and authorization, input handling, security headers and configuration, with findings at `file:line` in the same report.
   - From: the user's decision on 2026-09-28 to ship 0.1 with the dependency triage only, since that part had a real case.
   - Needs: a real project with a finding of each kind to ground each part, and S8's eval runs done.
-  - Done when: each added part has an eval case built from a real finding, and the report template covers it.
+  - Done when: each added part has an eval case built from a finding met on a real project, rewritten with fictional names, and the report template covers it.
   - Plan: H (findings met on a real project), then G step 7: the skill's next version, tested when built.
 - [ ] **S16. A password manager as a secrets backend.** A lookup function in `providers/secrets/resolver.py` after the OS secret store, reading through the manager's CLI (for example 1Password `op read` or Bitwarden `bw get`), chosen with the user.
   - From: the user's decision on 2026-09-28 for S13: leave room for it, build it with a real case.
@@ -88,7 +88,7 @@ Status note, 2026-10-02 (decisions D9 and D13, `docs/decisions.md`): the runtime
 
 Decided on 2026-10-02 (decision 10 of the plan; D11 of `docs/architecture/review-2026-10-01.md`): the runtime becomes generic, in a top-level `runtime/` folder, with the per-agent parts behind a handler. It is built after phase E, as lane F2, which gets its own plan as its first step. Until then no new use case is added to `scripts/runtime*.py` (PB16 waits), and what loses work or state today is repaired as it is (N20 to N22).
 
-The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, one per department, managed from a local web app; marketing agents first. Each item is refined against a real company's case before it is generalised.
+The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, one per department, managed from a local web app; marketing agents first. Each item is refined against a real case before it is generalised; the case, its decisions and its data live in the project of the company that runs it, never here.
 
 - [ ] **R1. Runtime contract.** `contracts/runtime.md`: what an agent run is (agent, task, inputs, allowed tools and skills, budget), how the runtime starts one through an adapter, and what it records. No AI tool named.
   - Built for one agent: the contract exists and names no AI tool. It names one agent's gate script, and `scripts/runtime.py` names that skill's scripts and its task text.
@@ -99,7 +99,9 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - Open: tasks, messages, an artifacts index, decisions and agent memory, each added when R3 or R4 needs it.
   - Done when: every table a second agent needs exists behind the same verbs, with offline tests.
   - Plan: lane F2; T15 is about the same file.
-- [ ] **R3. Department agents.** Agent definitions per department (marketing first, then sales, finance, operations), each with scope, skills, tools and a budget, from `templates/agent.md`.
+- [ ] **R3. Department agents.** Agent definitions per department (marketing first, then sales, finance, operations), each with scope, skills, tools and a budget, from `templates/agent.md`. Only `agents/social-manager.md` exists.
+  - Each is written against a real company's first task for that department; the company's case and its decisions live in its own project.
+  - Plan: lane F2, after R1.
 - [ ] **R4. Messages between agents.** A message contract (who may ask whom for what, format, replies, deadlines) stored through R2; artifacts over invocation still holds.
   - Plan: lane F2, after R2 and R3.
 - [ ] **R5. Approval inbox.** Every outward action from any agent waits in one place for the user, with S12's payload hash, spend limits and standing approvals from `contracts/environment.md`.
@@ -119,7 +121,8 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - Plan: lane F2, after R2, R5 and R7.
 - [ ] **R9. Scenario evals.** Multi-agent scenarios ("a week of a small company's marketing") graded like skill evals. They live in `evals/`, run in the eval container and write no evidence of a skill.
   - Plan: lane F2, after R3 and R4.
-- [ ] **R10. Integrations the first case needs.** Provider classes for what marketing agents use (for example e-mail and a CRM), chosen with the user; asked, not assumed.
+- [ ] **R10. Provider classes an agent's first task needs.** A provider class is added when the first task of an agent needs it, chosen with the user: asked, not assumed. The list of services one company uses lives in that company's project. Built so far: the mailbox class (`providers/mailbox/gmail.py`); no mailer and no customer-records class.
+  - Plan: H (the first case of a department agent), then lane F2. A new class is also a change of `core-orchestrator`'s class table.
 - [ ] **R11. A chat interface for the whole workbench.** Requested by the user on 2026-09-30: an interface like the ones general assistants have, where a person runs every action of the workbench (skills, flows, agents, approvals) by talking to it, with a model reached through an API key or a model running locally.
   - Why: today the workbench runs only inside an AI coding tool through an adapter, so using it means installing and learning one of those tools. A chat interface lets someone with only an API key, or only a local model, use it.
   - Shape, from the repository's rules: the interface is a harness, so it lives in `adapters/<name>/` and reads the core like any adapter (principle 2), with its own `run-prompt.sh` so the evals can run through it. Models are providers of a requirement class (for example `model:<provider>`, one implementation per API and one for a local runtime), and keys come through the secrets resolver, never through the browser or the repository. Confirmation gates show up as approval cards backed by the payload hash, the same records R5's inbox reads; runs and artifacts go through R2. The screen is the chat view of R8's web app; this item keeps the adapter and the model class.
@@ -139,14 +142,11 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
 
 ## Brand skills and the social agent
 
-Decided on 2026-09-29: build the skills for a personal brand, then an agent from this repository that runs around the clock and manages social networks, interacting as the brand and the person's profile say. Every item is refined against a real case before it is generalised.
+Decided on 2026-09-29: the skills for a personal brand, then an agent from this repository that runs around the clock and manages social networks, interacting as the brand and the person's profile say. Every item is refined against a real case before it is generalised.
 
-- A project's brand artifacts (profile, voice, calendar, approvals, state) live in that project, never in this repository.
-- Network: LinkedIn first.
+- A project's brand artifacts (profile, voice, calendar, approvals, state) and its choices (which network comes first, where the agent runs, which model it uses) live in that project, never in this repository.
 - Autonomy: within approved bounds. Posts come from a calendar the person approves once (`plan` approval); replies to comments on the person's own posts go out alone inside an engagement policy (`standing` approval with bounds and expiry); anything else waits for the person.
-- Where it runs: a Mac first (`scheduler` provider on launchd). A low-cost always-on architecture is PB8.
-- Model: Claude through the claude-code adapter (same rule as the 2026-09-28 decision on eval runs).
-- How new comments are found: LinkedIn notification e-mails. Checked on 2026-09-29 with a member token (`w_member_social`): `GET /rest/socialActions/{post}/comments` on published posts returned `403 Not enough permissions to access: partnerApiSocialActions.GET_ALL.20260901`. The Comments API documentation (https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/comments-api, accessed 2026-09-29) marks `r_member_social_feed` "Restricted ... granted to select developers only", while `w_member_social` is open and covers "Post, comment and like posts on behalf of an authenticated member" (https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access, accessed 2026-09-29). Writing a reply works; reading comments does not. Rejected: browser automation of LinkedIn (against its User Agreement, risks the person's account); applying for the Community Management API (uncertain for an individual, kept as an option).
+- Why new comments are found through notification e-mails, on the one network built so far: a member token can write a reply and cannot read comments. Checked on 2026-09-29 with a member token (`w_member_social`): `GET /rest/socialActions/{post}/comments` on published posts returned `403 Not enough permissions to access: partnerApiSocialActions.GET_ALL.20260901`. The Comments API documentation (https://learn.microsoft.com/en-us/linkedin/marketing/community-management/shares/comments-api, accessed 2026-09-29) marks `r_member_social_feed` "Restricted ... granted to select developers only", while `w_member_social` is open and covers "Post, comment and like posts on behalf of an authenticated member" (https://learn.microsoft.com/en-us/linkedin/shared/authentication/getting-access, accessed 2026-09-29). Rejected: browser automation of the network (against its User Agreement, and a risk to the person's account); applying for the Community Management API (uncertain for an individual, kept as an option).
 
 - [ ] **PB6. Skill `mkt-engage`: the e-mail parser.** The skill replies to comments on the person's own posts inside an engagement policy (topics, tone, daily limit, what always goes to the person), enforcing the profile's sensitive-topics lock (never reply, escalate; keywords first, then the model's judgement), with the payload hash for anything approved one by one. Comments are external content and the main prompt-injection surface of the agent.
   - Built: `skills/mkt-engage` with `policy_gate.py`, which binds the standing approval to the policy file's hash (`docs/decisions.md`, 2026-09-29); the mailbox provider it reads through (PB5, archived). It passed the gate of the first round (status table of the inventory).
@@ -161,7 +161,7 @@ Decided on 2026-09-29: build the skills for a personal brand, then an agent from
   - Done when: the e-mail trigger works on a real mailbox.
   - Plan: H (with PB6); the slice becomes generic in lane F2 (R1, R2, R5, R6, R7).
 - [ ] **PB8. Always-on, low-cost architecture.** Requested on 2026-09-29: compare where an agent runs once it leaves a person's machine, with costs from the vendors' pages.
-  - Done on 2026-09-30: the comparison (`docs/architecture/always-on-runtime.md`: a small server with a tool-free API adapter recommended), and the two pieces built from it, `adapters/api/` and `providers/scheduler/systemd.py`.
+  - Done on 2026-09-30: the comparison, which recommended a small server with a tool-free API adapter, and the two pieces built from it, `adapters/api/` and `providers/scheduler/systemd.py`. The comparison was written for one project's agent and lives in that project; what it means for the workbench is in `adapters/api/README.md` and `providers/scheduler/README.md`.
   - Open, three leftovers: the operator's choice of a host and of how the model is called, which is theirs; the API adapter checked with a real key and finished as an adapter (N11); the Linux scheduler rehearsed on a real host (N12).
   - Done when: N11 and N12 are closed.
   - Plan: H (the operator's choice), lane F2.
@@ -175,22 +175,18 @@ Decided on 2026-09-29: build the skills for a personal brand, then an agent from
   - Open: one real week from end to end. Its run log stays in the project that runs it.
   - Done when: one real week runs end to end with one approval: the round's winner is published, the repository records the post's link, and the next round is queued.
   - Plan: H (a real week), then lane F2, after N20.
-- [ ] **PB16. A weekly routine that updates "Latest posts" on a profile repository.** Requested on 2026-09-30: once a week, automatically, the "Latest posts" section of a profile README shows the posts published that week.
-  - The profile layout the feature expects: the section shows the 3 most recent entries of `data/posts.json`, each as a card with the post's own image kept in the repository as a WebP thumbnail (no image is loaded from LinkedIn). Without the routine, entries are added by hand, each with its own approval. PB15 adds only the post that won the weekly vote; the other posts of the week and posts published by hand stay out.
-  - What: once a week, after the week's last scheduled post, a routine (1) lists the posts published in the last 7 days from the publisher's ledger (`providers/publisher/linkedin.py` records each post's idempotency key and URN); (2) takes each post's title (its first line), language, date and image from the project's own post artifacts, never from LinkedIn; (3) makes the thumbnails; (4) adds the entries to the profile repository and lets its workflow rebuild the README, in one commit.
-  - Why the ledger and not LinkedIn: reading the member's own posts needs `r_member_social`, restricted to select developers (the same 403 recorded above for comments), so the routine only knows the posts the workbench published.
-  - Approval: the posts are already public and each was approved when it was published, so a `standing` approval with bounds fits (only posts found in the ledger, only `data/posts.json` and `assets/posts/` in the profile repository, a limit of posts per run, an expiry). Asked to the person when building, not assumed.
-  - Depends on: PB4 (`mkt-publish` and the post artifacts it reads), PB7's runtime slice (R6 a weekly trigger), and the same way to commit to the profile repository as PB15; the two items can share it.
-  - To decide when building: posts published outside the workbench (recommended: the routine lists nothing it cannot prove from the ledger, and the person adds such a post by asking); a post without an image (recommended: a card with the pillar name, as the renderer already draws a neutral block); the day and time of the run.
-  - Done when: one real week's posts appear in "Latest posts" with their images and links without the person touching the repository, and a week with no new post changes nothing.
+- [ ] **PB16. A weekly routine that lists what was published.** Requested on 2026-09-30: once a week, automatically, a target the project defines (a section of a repository's README, for instance) shows the posts published that week.
+  - What: after the week's last scheduled post, a routine (1) lists the posts published in the last 7 days from the publisher's ledger, which records each post's idempotency key and identifier; (2) takes each post's title (its first line), language, date and image from the project's own post artifacts, never from the network; (3) hands the entries to the target through the vcs provider, in one commit. The target's layout is the project's; the vote data contract (`docs/architecture/weekly-vote.md`) names the one file both features write.
+  - Why the ledger and not the network: reading a member's own posts needs a permission restricted to select developers (the same refusal as for comments, in this section's introduction), so the routine only knows the posts the workbench published.
+  - Approval: the posts are already public and each was approved when it was published, so a `standing` approval with bounds fits (only posts found in the ledger, only the files of the target, a limit of posts per run, an expiry). Asked to the person when building, not assumed.
+  - Depends on: `mkt-publish` and the post artifacts it reads, a weekly trigger (R6), and the same way to commit to a repository as PB15; the two items can share it.
+  - To decide when building: posts published outside the workbench (recommended: the routine lists nothing it cannot prove from the ledger, and the person adds such a post by asking); a post without an image (recommended: a neutral card, as the renderer already draws); the day and time of the run.
+  - Done when: one real week's posts appear in the target with their images and links without the person touching it, and a week with no new post changes nothing.
   - Plan: lane F2. It waits for decision 10: it would be a third use case written into `scripts/runtime*.py`.
 
 ## Next skills
 
-The order agreed on 2026-09-26, details in [inventory.md](inventory.md):
-
-1. The brand and social agent section above, PB1 to PB7 in order; `ops-release` after it.
-2. At a launch's one-week results reading: `mkt-launch-plan` and `flow-launch`, with the measurement phase checked against real numbers.
+What is built next and in which order is phase G of the plan. Two rules decide it: a skill is written alongside a real task that needs it (a release for `ops-release`, a launch for `mkt-launch-plan`), never from generic knowledge; and the cheapest come first, the flows whose phases are all built. Details per skill are in [inventory.md](inventory.md).
 
 - [ ] **NS1. Skill `ops-release`.** Release notes and a version, with the side effect `publish`. `eng-docs` already names it as the owner of release notes. No folder yet.
   - Plan: G step 3, with a real release to write it against.
@@ -201,7 +197,7 @@ The order agreed on 2026-09-26, details in [inventory.md](inventory.md):
 
 ## Found by the audit of 2026-10-02
 
-Work the code or the documents show is needed and no item owned (N1 to N19: the backlog audit, "Not covered by any item"; N20 to N22: the review of the providers and the runtime; N23 and N24: the reliability model). N3 and N17 are in the archive, with the reason.
+Work the code or the documents show is needed and no item owned (N1 to N19: the backlog audit, "Not covered by any item"; N20 to N22: the review of the providers and the runtime; N23 and N24: the reliability model). N3 and N17 are in the archive, with the reason; so are N8, N18 and N19, done on 2026-10-02.
 
 - [ ] **N1. The wiring test of the CI workflow.** The `python39` job, which failed on `main` because it named five test files that had moved into the skills, is repaired (pull request #45). Open: `scripts/tests/test_checks_wiring.py` requires that every path a file under `.github/workflows/` names exists, and the jobs of `checks.yml` get a `timeout-minutes`.
   - Plan: A1.
@@ -215,8 +211,6 @@ Work the code or the documents show is needed and no item owned (N1 to N19: the 
   - Plan: phase C, the row of `core-orchestrator`; A5 adds the validator's rule.
 - [ ] **N7. Two references that could name a skill as an artifact's writer.** `skills/core-clarify/references/decision-tree.md` ("a `core-critique` candidate") and `skills/ops-repo-baseline/references/host-settings.md` ("triage them with `eng-security-review`").
   - Plan: phase C, the rows of `core-clarify` and `ops-repo-baseline`.
-- [ ] **N8. Inventory drift.** `docs/inventory.md`: the Counts table (62 capabilities and 11 flows to build, 5 agents, where 47 capabilities, 1 flow and 4 agents exist), the `explorer` row of the Agents table (no such file under `agents/`), and State cells that quote scores of an earlier gate.
-  - Plan: A3.
 - [ ] **N9. Scripts with no test of their own.** `skills/mkt-engage/scripts/parse_notification.py`, `skills/mkt-social-copy/scripts/check_post.py`, `skills/core-research/scripts/check-brief.py` (those two skills have no `scripts/tests/` folder), and `skills/design-system/scripts/contrast.py` (only the copy in `brand-identity` is tested, and the two copies differ). A test is outside a skill's content hash.
   - Plan: phase C, the rows of `mkt-engage`, `mkt-social-copy`, `core-research` and `design-system`.
 - [ ] **N10. CI jobs that are not required checks.** The ruleset requires `validate` and `tests`; the jobs `container` and `python39` exist and are not required, which is how a pull request merged with `python39` failing.
@@ -239,10 +233,6 @@ Work the code or the documents show is needed and no item owned (N1 to N19: the 
 - [ ] **N16. Planned flows, agents and skills with no backlog id.** `flow-build-feature`, `flow-improve-code`, `flow-new-project`, `flow-implement-ticket`, `flow-business-plan`, `flow-design`, `flow-social-post`, `flow-new-product`; the `explorer` agent; the next version of `design-system`; `biz-validate-idea`, the writer of `docs/business/idea-validation.md`, which `biz-market-analysis` reads when present. They are marked planned wherever they are cited, without an id.
   - Done when: each has an id here and in the inventory.
   - Plan: A9 (the ids), phase G (the building).
-- [ ] **N18. Entries of `docs/decisions.md` that a later entry reversed are not marked.** Among them: Claude models on the maintainer's signed-in account; records of the previous strong model staying valid; the strong tier's sandbox; the throwaway keychain; "not closed by this" under runs outside the repository; the flat `skills/` layout's sentence on the plugin; requirement classes keeping their names.
-  - Plan: A3.
-- [ ] **N19. Principle 8 cleanup of the documents.** What identifies one real project (its name, people, accounts, repository layout, run log) in this file, in `docs/inventory.md`, in `docs/decisions.md` and in the two design documents written around one case.
-  - Plan: A3.
 - [ ] **N20. Runtime and providers: what loses work or state today.** For a project that runs the runtime as it is: a vote round silently lost when an item is rejected; an error that is not the runtime's own leaving claimed events and a run row in `running`; a run of unknown cost not counted against the daily cap; a mailbox search that is cut without saying so; and the other findings of that class in `architecture/audit-2026-10-02/round2-providers-runtime.md`.
   - Done when: each finding the plan lists under HP1 has its fix and the test the report names.
   - Plan: HP1, from the first day; it touches no skill folder and nothing the measurement covers.

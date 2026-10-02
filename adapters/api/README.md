@@ -1,6 +1,6 @@
 # API adapter (tool-free)
 
-Runs one agent on one task for the agent runtime (`contracts/runtime.md`) with **one model API call and no tools**. It is adapter B of `docs/architecture/always-on-runtime.md` (section 3.1): the agent, its skills and the project files the task names go into the prompt; the answer comes back as text. The model cannot read, write, run or fetch anything, because no tool is ever sent, so "the model has no tool that acts" holds by construction rather than by configuration.
+Runs one agent on one task for the agent runtime (`contracts/runtime.md`) with **one model API call and no tools**. It is the tool-free way to call the model, for a runtime that runs on a small always-on server: the agent, its skills and the project files the task names go into the prompt; the answer comes back as text. The model cannot read, write, run or fetch anything, because no tool is ever sent, so "the model has no tool that acts" holds by construction rather than by configuration.
 
 It implements only the runtime's entry point, `run-agent.sh`. It installs nothing and has no eval runner (`run-prompt.sh`): skills are evaluated through the other adapters.
 
@@ -10,7 +10,7 @@ It implements only the runtime's entry point, `run-agent.sh`. It installs nothin
 |---|---|---|
 | Needs | Python 3.10+, a network connection, an API key | the Claude Code CLI, signed in (4 GB+ RAM on a server) |
 | How the model sees files | the adapter inlines the files the task names | the model reads the project with read-only tools |
-| Terms | API terms, paid per token | the CLI's sign-in; see the architecture document, section 3.1 |
+| Terms | API terms, paid per token | the CLI's sign-in; whether that sign-in's terms cover an unattended run on a server is the operator's question to settle with the provider before using it there |
 | Cost per run | one call: input + output tokens | several tool turns, each resending context |
 | Best for | a small server (VPS), a scheduled runtime | a local machine, while files the task cannot name are needed |
 
