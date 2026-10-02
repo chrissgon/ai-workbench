@@ -104,6 +104,7 @@ else:
 
 FAKE_PUBLISHER = r'''
 import json, os, sys
+PLATFORMS = ("linkedin",)
 if "--dry-run" in sys.argv:
     # A dry run sends nothing: it says which idempotency ledger this environment uses.
     with open(os.environ["FAKE_CALLS"], "a") as f:

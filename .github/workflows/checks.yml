@@ -52,6 +52,8 @@ jobs:
   # The scheduler starts the runtime, and the runtime starts these scripts, with the system interpreter
   # (Python 3.9 on macOS): providers/CONTRACT.md, "Python version". Only their tests run here; the rest of
   # the suite needs a newer Python. pytest 9 needs Python 3.10, so this job pins the last release for 3.9.
+  # shared/scripts/tests holds the tests of the scripts those skills carry as generated copies (the contrast
+  # check among them, whose test moved there from skills/brand-identity/scripts/tests).
   python39:
     name: python39
     runs-on: ubuntu-24.04
@@ -71,6 +73,7 @@ jobs:
           scripts/tests/test_runtime.py scripts/tests/test_runtime_vote.py
           skills/mkt-engage/scripts/tests skills/mkt-publish/scripts/tests
           skills/mkt-vote-round/scripts/tests skills/brand-identity/scripts/tests
+          shared/scripts/tests
           providers/store/tests providers/scheduler/tests
 
   container:

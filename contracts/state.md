@@ -1,6 +1,6 @@
 # Artifact contract: `docs/workbench/state.md`
 
-The state file is what lets a flow resume in a new session and lets the orchestrator know where a project stands. Every flow reads it first and updates it at every checkpoint. Capabilities update only the row of the artifact they own.
+The state file is what lets a flow resume in a new session and lets the orchestrator know where a project stands. Every flow reads it first and updates it at every checkpoint. `core-project-init` owns the file and creates it; every other skill that writes into it lists it in `metadata.updates` (`contracts/project-layout.md`). A capability writes only the row of an artifact it owns, the decisions and open questions of its own work, and the approvals of its own confirmation gate.
 
 Keep it small. It is a table of contents with status, not a journal.
 
@@ -46,6 +46,8 @@ Keep it small. It is a table of contents with status, not a journal.
 ## Rules
 
 - `Status` is `draft`, `approved` or `skipped`. Only the user approves. A skill sets `draft`; a checkpoint sets `approved` or `skipped`.
+- Those three words are the only ones a row of the Artifacts table carries. An artifact's own header may carry a finer status that its owner's template defines (a post that is `drafted`, `scheduled` or `published`; a review that is `open`); the row keeps `draft` until the user approves the artifact, whatever the header says.
+- **Who registers.** An artifact is registered in the Artifacts table, by its owner, when it is a named slot of the layout that later skills read as the project's current answer to something (a market analysis, a research brief, a critique, a repository baseline). Working records are not registered: plans, reviews, logs, inboxes and a check script's report file. A skill that registers lists the state file in `updates`.
 - A pre-existing document is registered as `<slot> (at <real path>)` with owner `existing`. Skills that list the slot as an input read the real path. It is never moved or edited by registration.
 - A flow resumes from the first phase whose artifacts are not `approved` or `skipped`.
 - Decisions record what was decided, by whom, and where the reasoning lives. One line each.

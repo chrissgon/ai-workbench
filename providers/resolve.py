@@ -5,8 +5,8 @@
 # ///
 """Resolve a requirement class to the provider script that satisfies it.
 
-This is the one place that turns a class from contracts/environment.md (`scheduler`,
-`publisher:linkedin`, `integration:vcs`) into a script under providers/. Skills, the agent
+This is the one place that turns a class from contracts/environment.md (`scheduler:job`,
+`publisher:<platform>`, `integration:vcs`) into a script under providers/. Skills, the agent
 runtime and scripts/doctor.py all ask here; none of them names an implementation.
 
 Usage:
@@ -20,30 +20,48 @@ Usage:
                    implementations shipped and the one that resolves now
   --root <path>    the workbench checkout to look in, instead of WORKBENCH_ROOT
 
-How a class maps to a folder (providers/CONTRACT.md):
-  a          -> providers/a/                  scheduler -> providers/scheduler/
-  a:b        -> providers/a/                  publisher:linkedin -> providers/publisher/
-  integration:<service> -> providers/<service>/   integration:vcs -> providers/vcs/
+A class is <role>:<target> (providers/CONTRACT.md). How it maps to a folder and to its variables:
+  <role>:<target>        -> providers/<role>/      generator:image -> providers/generator/
+                            <ROLE>_<TARGET>_PROVIDER, then <ROLE>_PROVIDER
+  integration:<service>  -> providers/<service>/   integration:vcs -> providers/vcs/
+                            INTEGRATION_<SERVICE>_PROVIDER only: one integration never serves another
+  the four classes of the table FIXED keep the folder and the variable they had when their names
+  were bare:
+    reader:email   -> providers/mailbox/    MAILBOX_PROVIDER
+    sender:email   -> providers/mailer/     MAILER_PROVIDER
+    scheduler:job  -> providers/scheduler/  SCHEDULER_PROVIDER
+    store:runtime  -> providers/store/      STORE_PROVIDER
+  Their old names (mailbox, mailer, scheduler, store) are still read, as aliases: a job scheduled
+  before the rename runs a copy of the runtime that asks for `store`.
 An implementation is providers/<folder>/<name>.py; helpers next to it (auth.py) are not one.
-A sub-class written as a placeholder (`publisher:<platform>`) means "any": only the class is used.
+
+A class with a parameter. In `publisher:<platform>` the part after the colon is not a second name
+of the class: it is handed to the implementation as --platform, and one implementation may serve
+several platforms. Each implementation of such a class declares the platforms it serves in one
+line at the top level of its file, `PLATFORMS = ("<platform>", ...)`, which is read here as text,
+without importing the file. `publisher:<p>` is resolved among the implementations that serve <p>;
+an implementation that declares nothing serves nothing. Written with the placeholder
+(`publisher:<platform>`) the class means "any platform": every implementation is a candidate.
 
 How the implementation is chosen, first match wins:
   0. An implementation the caller names explicitly (the function's `implementation` argument;
      the runtime passes what a project's runtime.json names). Not available on the command line.
-  1. The environment: <CLASS>_<SUBCLASS>_PROVIDER, then <CLASS>_PROVIDER (PUBLISHER_LINKEDIN_PROVIDER,
-     then PUBLISHER_PROVIDER; a hyphen becomes "_"). integration:<service> uses only the first
-     form (INTEGRATION_VCS_PROVIDER): one integration's provider never serves another.
+  1. The environment, most specific variable first (PUBLISHER_<PLATFORM>_PROVIDER, then
+     PUBLISHER_PROVIDER; a hyphen becomes "_"). For a class with a parameter the general variable
+     is a preference: when the implementation it names does not serve the platform asked, it is
+     passed over, so that a variable set for a first platform does not break a second.
   2. The platform default, where the class has one and that implementation is shipped:
-     scheduler is launchd on macOS and systemd on Linux.
-  3. The only implementation, when the class's folder ships exactly one.
+     scheduler:job is launchd on macOS and systemd on Linux.
+  3. The only candidate, when exactly one implementation is left.
 Otherwise nothing resolves (exit 3): the message names the variable to set and the choices.
 A name from the environment or the caller is accepted only when it is an implementation shipped
-in the class's folder; it is never used as a path.
+in the class's folder (and, for a class with a parameter, one that serves the platform asked);
+it is never used as a path.
 
 environment variables:
   WORKBENCH_ROOT            the workbench checkout a project uses (an absolute path). Default:
                             the checkout this script is in.
-  <CLASS>[_<SUBCLASS>]_PROVIDER   the implementation of a class, as above.
+  <ROLE>[_<TARGET>]_PROVIDER      the implementation of a class, as above.
 
 output: the path on stdout (JSON with --json or --list); diagnostics on stderr.
 exit codes: 0 resolved, 2 usage error or unknown class, 3 nothing resolves.
@@ -53,6 +71,7 @@ imports it (providers/CONTRACT.md, "Python version").
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import os
 import re
@@ -63,13 +82,23 @@ ROOT_VARIABLE = "WORKBENCH_ROOT"
 NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 PLACEHOLDER = re.compile(r"<[^<>]*>")
 NOT_IMPLEMENTATIONS = {"auth"}  # helpers that live next to providers (providers/CONTRACT.md)
-# Every class of contracts/environment.md. True: the class always has a sub-class.
-HEADS = {"integration": True, "search": True, "generator": True, "publisher": True,
-         "mailer": False, "mailbox": False, "scheduler": False, "store": False}
+# Every class of contracts/environment.md, as it is written there.
 LISTED = ["generator:image", "generator:video", "integration:design-tool", "integration:issue-tracker",
-          "integration:vcs", "mailbox", "mailer", "publisher:<platform>", "scheduler", "search:web", "store"]
+          "integration:vcs", "publisher:<platform>", "reader:email", "scheduler:job", "search:web", "sender:email",
+          "store:runtime"]
+# Roles whose folder and variables are derived from the text of the class.
+ROLES = {"integration", "search", "generator", "publisher"}
+# The four classes that were bare names: (folder, variable), both kept as they were, so that no provider file,
+# no test folder, no scheduled job and no project's environment has to move.
+FIXED = {"reader:email": ("mailbox", "MAILBOX_PROVIDER"), "sender:email": ("mailer", "MAILER_PROVIDER"),
+         "scheduler:job": ("scheduler", "SCHEDULER_PROVIDER"), "store:runtime": ("store", "STORE_PROVIDER")}
+# The old names, still read.
+ALIASES = {"mailbox": "reader:email", "mailer": "sender:email", "scheduler": "scheduler:job", "store": "store:runtime"}
+# The roles whose part after the colon is a parameter handed to the implementation (--platform).
+PARAMETER_ROLES = {"publisher"}
+PLATFORMS_LINE = re.compile(r"^PLATFORMS\s*=\s*([(\[].*?[)\]])\s*(?:#.*)?$", re.M)
 # Documented defaults per platform (sys.platform prefix -> implementation).
-PLATFORM_DEFAULTS = {"scheduler": {"darwin": "launchd", "linux": "systemd"}}
+PLATFORM_DEFAULTS = {"scheduler:job": {"darwin": "launchd", "linux": "systemd"}}
 
 EXIT_OK, EXIT_USAGE, EXIT_UNRESOLVED = 0, 2, 3
 
@@ -84,31 +113,51 @@ class Unresolved(LookupError):
     code = EXIT_UNRESOLVED
 
 
+def canonical(cls: str) -> str:
+    """The class as contracts/environment.md writes it: an old bare name becomes its <role>:<target>."""
+    return ALIASES.get(str(cls), str(cls))
+
+
 def split_class(cls: str) -> tuple[str, str | None]:
-    """("publisher", "linkedin") for publisher:linkedin; the sub-class is None when absent or a placeholder."""
-    parts = str(cls).split(":")
+    """(role, target): ("publisher", "<p>") for publisher:<p>, ("reader", "email") for reader:email and for its
+    old name. The target is None when it is absent or written as a placeholder."""
+    cls = canonical(cls)
+    parts = cls.split(":")
+    if cls in FIXED:
+        return parts[0], parts[1]
     head = parts[0]
-    if len(parts) > 2 or head not in HEADS:
+    if len(parts) > 2 or head not in ROLES:
         raise UnknownClass(f"unknown class {cls!r}; known: {', '.join(LISTED)}")
     sub = parts[1] if len(parts) == 2 else None
     if sub is not None and PLACEHOLDER.fullmatch(sub):
         sub = None
     if sub is not None and not NAME.fullmatch(sub):
-        raise UnknownClass(f"unknown class {cls!r}: the sub-class must be lowercase letters, digits and hyphens")
+        raise UnknownClass(f"unknown class {cls!r}: the part after the colon must be lowercase letters, digits and hyphens")
     if head == "integration" and sub is None:
         raise UnknownClass(f"unknown class {cls!r}: an integration names its service, for example integration:vcs")
     return head, sub
 
 
-def folder(cls: str) -> str:
-    """The folder under providers/ for a class: a and a:b -> a, integration:<service> -> <service>."""
+def platform_of(cls: str) -> str | None:
+    """The platform a class with a parameter asks for (publisher:<p> gives <p>); None for every other class
+    and for the placeholder form, which means any platform."""
     head, sub = split_class(cls)
+    return sub if head in PARAMETER_ROLES else None
+
+
+def folder(cls: str) -> str:
+    """The folder under providers/ for a class: the table FIXED, integration:<service> -> <service>, else the role."""
+    head, sub = split_class(cls)
+    if canonical(cls) in FIXED:
+        return FIXED[canonical(cls)][0]
     return sub if head == "integration" else head
 
 
 def variables(cls: str) -> list[str]:
     """The environment variables that select the implementation, most specific first."""
     head, sub = split_class(cls)
+    if canonical(cls) in FIXED:
+        return [FIXED[canonical(cls)][1]]
 
     def key(parts):
         return "_".join(parts).upper().replace("-", "_") + "_PROVIDER"
@@ -148,6 +197,28 @@ def implementations(cls: str, root=None, env=None) -> list[str]:
     return implementations_in(folder(cls), root, env)
 
 
+def served_platforms(cls: str, name: str, root=None, env=None) -> list[str]:
+    """The platforms an implementation of a class with a parameter declares, read from the one line
+    `PLATFORMS = (...)` at the top level of its file, as text: the file is never imported. [] when the file
+    declares nothing, or something that is not a list of names."""
+    path = workbench_root(root, env) / "providers" / folder(cls) / f"{name}.py"
+    try:
+        found = PLATFORMS_LINE.search(path.read_text(encoding="utf-8"))
+        value = ast.literal_eval(found.group(1)) if found else ()
+    except (OSError, ValueError, SyntaxError):
+        return []
+    return [v for v in value if isinstance(v, str) and NAME.fullmatch(v)] if isinstance(value, (tuple, list)) else []
+
+
+def serving(cls: str, root=None, env=None) -> list[str]:
+    """The implementations that can satisfy the class: for publisher:<p>, those that declare <p>; for every
+    other class, and for the placeholder form, every implementation shipped."""
+    shipped, asked = implementations(cls, root, env), platform_of(cls)
+    if asked is None:
+        return shipped
+    return [name for name in shipped if asked in served_platforms(cls, name, root, env)]
+
+
 def from_environment(cls: str, env=None) -> tuple[str | None, str | None]:
     """(variable, value) of the first selection variable that is set, or (None, None)."""
     env = os.environ if env is None else env
@@ -158,16 +229,22 @@ def from_environment(cls: str, env=None) -> tuple[str | None, str | None]:
 
 
 def resolve(cls: str, root=None, env=None, platform=None, implementation=None) -> dict:
-    """Choose the provider script for a class. Returns class, implementation, path, source, variables.
+    """Choose the provider script for a class. Returns class (as contracts/environment.md writes it),
+    implementation, path, source, variable, variables.
 
     source is one of: configuration (the caller's `implementation`), environment, platform-default,
     only-implementation. Raises UnknownClass (not a class) or Unresolved (nothing to choose).
+    `platform` is the operating system (sys.platform), for the platform default; the platform of a class
+    with a parameter is part of the class.
     """
     env = os.environ if env is None else env
     platform = sys.platform if platform is None else platform
     names = variables(cls)  # raises UnknownClass first
+    cls = canonical(cls)
     base = workbench_root(root, env) / "providers" / folder(cls)
     shipped = implementations(cls, root, env)
+    asked = platform_of(cls)
+    candidates = serving(cls, root, env)
 
     def chosen(name: str, source: str, variable=None) -> dict:
         return {"class": cls, "implementation": name, "path": str(base / f"{name}.py"), "source": source,
@@ -177,22 +254,33 @@ def resolve(cls: str, root=None, env=None, platform=None, implementation=None) -
         if name not in shipped:
             raise Unresolved(f"{name!r} (from {origin}) is not a provider of {cls} "
                              f"(providers/{folder(cls)}/); shipped: {shipped}")
+        if name not in candidates:
+            raise Unresolved(f"{name!r} (from {origin}) does not serve {asked}: providers/{folder(cls)}/{name}.py "
+                             f"does not list it in PLATFORMS; providers that serve it: {candidates}")
         return name
 
     if implementation is not None:
         return chosen(checked(str(implementation), "the caller's configuration"), "configuration")
-    variable, value = from_environment(cls, env)
-    if value:
+    for variable in names:
+        value = env.get(variable)
+        if not value:
+            continue
+        general = asked is not None and variable == names[-1]
+        if general and value in shipped and value not in candidates:
+            continue  # a preference set for another platform: passed over, never an error
         return chosen(checked(value, variable), "environment", variable)
-    for prefix, name in PLATFORM_DEFAULTS.get(split_class(cls)[0], {}).items():
-        if platform.startswith(prefix) and name in shipped:
+    for prefix, name in PLATFORM_DEFAULTS.get(cls, {}).items():
+        if platform.startswith(prefix) and name in candidates:
             return chosen(name, "platform-default")
-    if len(shipped) == 1:
-        return chosen(shipped[0], "only-implementation")
+    if len(candidates) == 1:
+        return chosen(candidates[0], "only-implementation")
     if not shipped:
         raise Unresolved(f"no provider is shipped for {cls} (providers/{folder(cls)}/ has none); "
                          f"a provider added there is selected with {names[0]}")
-    raise Unresolved(f"{cls} has several providers and none is selected: set {names[0]} to one of {shipped}")
+    if not candidates:
+        raise Unresolved(f"no provider in providers/{folder(cls)}/ serves {asked} (shipped: {shipped}; each lists "
+                         "the platforms it serves in PLATFORMS)")
+    raise Unresolved(f"{cls} has several providers and none is selected: set {names[0]} to one of {candidates}")
 
 
 def provider_path(cls: str, **kw) -> Path:
@@ -210,6 +298,10 @@ def listing(root=None, env=None, platform=None) -> dict:
     for cls in LISTED:
         row = {"class": cls, "folder": f"providers/{folder(cls)}/", "variables": variables(cls),
                "implementations": implementations(cls, root, env), "resolves": None, "source": None, "note": None}
+        if split_class(cls)[0] in PARAMETER_ROLES:  # which platforms each implementation serves
+            row["platforms"] = {name: served_platforms(cls, name, root, env) for name in row["implementations"]}
+        if cls in ALIASES.values():
+            row["old_name"] = next(old for old, new in ALIASES.items() if new == cls)
         try:
             got = resolve(cls, root=root, env=env, platform=platform)
             row.update(resolves=got["implementation"], source=got["source"], path=got["path"])
@@ -234,6 +326,8 @@ def main(argv=None) -> int:
             print(json.dumps(listing(root=a.root), indent=1))
             return EXIT_OK
         got = resolve(a.cls, root=a.root)
+        if a.cls in ALIASES:
+            print(f"note: {a.cls} is the old name of the class {ALIASES[a.cls]}", file=sys.stderr)
     except (UnknownClass, Unresolved) as e:
         print(f"error: {e}", file=sys.stderr)
         return e.code

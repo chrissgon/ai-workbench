@@ -7,11 +7,16 @@ Collects `metadata.requires` from every skill, then checks each class against:
   1. connectors declared by the chosen adapter in adapters/<harness>/connectors.json
      ({"classes": {"integration:issue-tracker": "mcp: atlassian"}})
   2. the native provider that providers/resolve.py chooses for the class (the same function the
-     runtime and the skills use: <CLASS>_<SUBCLASS>_PROVIDER or <CLASS>_PROVIDER, then the
-     platform default, then the only implementation shipped), when its script passes `--check`.
-     An integration:<service> class uses providers/<service>/ and only
-     INTEGRATION_<SERVICE>_PROVIDER (a hyphen becomes "_"): integration:vcs is providers/vcs/,
-     selected by INTEGRATION_VCS_PROVIDER. `python3 providers/resolve.py --list` shows the choices.
+     runtime and the skills use: the class's variable, then the platform default, then the only
+     implementation left), when its script passes `--check`. For a class with a parameter the
+     platform is passed too (`--check --platform <p>` for publisher:<p>), and the provider is chosen
+     among the implementations that declare that platform, so a platform nobody serves is missing.
+     `python3 providers/resolve.py --list` shows the folders, the variables and the choices.
+
+Status of a class: `connector`, `provider`, `missing` (nothing satisfies it), or `unknown` (the name
+is not a class of contracts/environment.md: a typo, or a name the resolution function does not have
+yet). An unknown class counts as missing. A class written with one of the four old bare names
+(mailbox, mailer, scheduler, store) is checked as the class it became, and the detail says so.
 
 Options:
   --harness <name>  include connectors declared by that adapter
@@ -85,8 +90,11 @@ def env_provider(cls):
 
 
 def provider_folder(cls):
-    """providers/<folder>/ for a class: a:b -> a, except integration:<service> -> <service>."""
-    return resolution.folder(cls)
+    """providers/<folder>/ for a class, as providers/resolve.py maps it; None for a name that is not a class."""
+    try:
+        return resolution.folder(cls)
+    except resolution.UnknownClass:
+        return None
 
 
 def known_providers(kind):
@@ -94,10 +102,12 @@ def known_providers(kind):
     return resolution.implementations_in(kind, root=ROOT)
 
 
-def run_check(script):
+def run_check(script, platform=None):
+    """Run the provider's --check; for a class with a parameter, --check --platform <p>."""
     runner = ["uv", "run", script] if _which("uv") else ["python3", script]
+    check = ["--check"] + (["--platform", platform] if platform else [])
     try:
-        r = subprocess.run(runner + ["--check"], capture_output=True, text=True, timeout=60)
+        r = subprocess.run(runner + check, capture_output=True, text=True, timeout=60)
     except (OSError, subprocess.TimeoutExpired) as e:
         return "missing", f"--check failed to run: {e}"
     if r.returncode == 0:
@@ -110,9 +120,11 @@ def check_provider(cls, impl):
     # function accepts only a provider shipped under the class's folder, never a path.
     try:
         got = resolution.resolve(cls, root=ROOT, implementation=impl)
-    except (resolution.UnknownClass, resolution.Unresolved) as e:
+    except resolution.UnknownClass as e:
+        return "unknown", str(e)
+    except resolution.Unresolved as e:
         return "missing", str(e)
-    return run_check(got["path"])
+    return run_check(got["path"], resolution.platform_of(cls))
 
 
 def check_class(cls):
@@ -122,11 +134,12 @@ def check_class(cls):
     except resolution.Unresolved as e:
         return "missing", f"no connector declared and no provider resolves: {e}"
     except resolution.UnknownClass as e:
-        return "missing", str(e)
-    status, detail = run_check(got["path"])
+        return "unknown", str(e)
+    status, detail = run_check(got["path"], resolution.platform_of(cls))
     how = f"{got['variable']}={got['implementation']}" if got["source"] == "environment" else \
         f"{got['implementation']} ({got['source']})"
-    return status, f"{how}: {detail}"
+    renamed = f" (declared as {cls}, the old name of {got['class']})" if got["class"] != cls else ""
+    return status, f"{how}: {detail}{renamed}"
 
 
 def _which(name):
@@ -197,7 +210,7 @@ def main(argv):
             status, detail = "connector", connectors[cls]
         else:
             status, detail = check_class(cls)
-        if status == "missing":
+        if status in ("missing", "unknown"):
             missing += 1
         report[cls] = {"status": status, "detail": detail, "skills": skills}
 

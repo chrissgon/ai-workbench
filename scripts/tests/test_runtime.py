@@ -50,6 +50,7 @@ print(json.dumps({"parsed": True, **c} if c else {"parsed": False, "reason": "no
 
 FAKE_PUBLISHER = r'''
 import json, os, sys
+PLATFORMS = ("linkedin",)
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
 if os.environ.get("FAKE_PUBLISHER_FAIL"):
@@ -509,7 +510,7 @@ def test_store_is_resolved_by_class_not_a_hardcoded_path(env, monkeypatch):
     assert rt(env, "status")[0] == 2
     edit_config(env, store="nope")
     code, out, err = rt(env, "status")
-    assert code == 3 and "is not a provider of store" in err
+    assert code == 3 and "is not a provider of store:runtime" in err
 
 
 def test_configured_names_keep_working_and_auto_resolves_the_class(env, monkeypatch):
@@ -530,8 +531,34 @@ def test_configured_names_keep_working_and_auto_resolves_the_class(env, monkeypa
     assert e.value.code == 3 and "MAILBOX_PROVIDER" in str(e.value)
     monkeypatch.setenv("MAILBOX_PROVIDER", "imap")
     assert runtime.load_config(env["proj"])["paths"]["mailbox"].name == "imap.py"
-    # The publisher key is the platform: an implementation of another name serves it when the environment says so.
-    (env["wb"] / "providers/publisher/buffer.py").write_text("")
+    # The publisher key is the platform: the resolution function chooses the implementation that declares it,
+    # whatever its name, and the runtime has no rule of its own (the platform's name is not an implementation's).
     edit_config(env, publisher="mastodon")
-    monkeypatch.setenv("PUBLISHER_MASTODON_PROVIDER", "buffer")
+    with pytest.raises(runtime.Fail) as e:
+        runtime.load_config(env["proj"])
+    assert e.value.code == 3 and "serves mastodon" in str(e.value)
+    (env["wb"] / "providers/publisher/buffer.py").write_text('PLATFORMS = ("mastodon", "linkedin")\n')
     assert runtime.load_config(env["proj"])["paths"]["publisher"].name == "buffer.py"
+    (env["wb"] / "providers/publisher/mastodon.py").write_text('PLATFORMS = ("pixelfed",)\n')
+    assert runtime.load_config(env["proj"])["paths"]["publisher"].name == "buffer.py"
+    edit_config(env, publisher="linkedin")  # two implementations declare it now: the variable chooses
+    with pytest.raises(runtime.Fail) as e:
+        runtime.load_config(env["proj"])
+    assert "PUBLISHER_LINKEDIN_PROVIDER" in str(e.value)
+    monkeypatch.setenv("PUBLISHER_LINKEDIN_PROVIDER", "buffer")
+    assert runtime.load_config(env["proj"])["paths"]["publisher"].name == "buffer.py"
+
+
+def test_a_runtime_copy_that_still_asks_for_the_old_class_names_keeps_running(env, monkeypatch):
+    """A recurring job scheduled before the classes were renamed runs its copy of the runtime, which asks the
+    resolution function of the live checkout for `store`, `mailbox` and `scheduler`."""
+    runtime = load_runtime()
+    for name in [n for n in os.environ if n.endswith("_PROVIDER")]:
+        monkeypatch.delenv(name)
+    providers = runtime.Providers(env["wb"])
+    wb = env["wb"].resolve()
+    assert providers.path("store") == providers.path("store:runtime") == wb / "providers/store/sqlite.py"
+    assert providers.path("mailbox") == providers.path("reader:email") == wb / "providers/mailbox/gmail.py"
+    with pytest.raises(runtime.Fail) as e:
+        providers.path("scheduler")
+    assert "scheduler:job" in str(e.value) and "SCHEDULER_PROVIDER" in str(e.value)

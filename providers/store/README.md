@@ -1,6 +1,6 @@
 # Store providers
 
-Implementations of the `store` class: the durable state of the agent runtime (backlog R2). Interface: `providers/CONTRACT.md`. Selected with `STORE_PROVIDER=sqlite`; the runtime calls the store only through its CLI, so another implementation (a cloud database) can replace it without changing the runtime.
+Implementations of the `store:runtime` class (`store` until 2026-10-02; the folder and `STORE_PROVIDER` keep that name): the durable state of the agent runtime (backlog R2). Interface: `providers/CONTRACT.md`. Selected with `STORE_PROVIDER=sqlite`; the runtime calls the store only through its CLI, so another implementation (a cloud database) can replace it without changing the runtime.
 
 The decision behind it is in `docs/decisions.md` ("2026-09-28: An agent runtime as a new, tool-free layer; storage behind an interface"): a Markdown file does not take several agents writing at once, so state that agents write goes to a store. The first user is the `social-manager` agent (backlog PB7).
 

@@ -20,17 +20,18 @@ Contract: contracts/runtime.md. Configuration: <project>/docs/workbench/runtime.
   A scheduler runs the tick with a minimal PATH: "path" lists the folders to put first, so uv and the harness
   CLI resolve. Schedule the tick with /usr/bin/python3, whose hash does not change with package upgrades.
 
-Providers are reached by requirement class through providers/resolve.py, never by a path built here:
-  mailbox    class `mailbox`. "auto" resolves it; "none" means no mailbox; any other value names the
+Providers are reached by requirement class through providers/resolve.py, never by a path built here. The keys
+below are configuration keys of runtime.json and keep their names; the class each one maps to is named beside it:
+  mailbox    class `reader:email`. "auto" resolves it; "none" means no mailbox; any other value names the
              implementation explicitly and wins over the environment (a runtime.json written before resolution
              by class, with "mailbox": "gmail", keeps working unchanged).
-  publisher  class `publisher:<platform>`; the value is the platform, passed as --platform. When an
-             implementation of that same name is shipped it is used, as before; otherwise the class is resolved.
-  store      class `store`; the optional key "store" names an implementation explicitly.
-  scheduler  class `scheduler` (the vote step); the optional key "scheduler" names an implementation explicitly.
+  publisher  class `publisher:<platform>`; the value is the platform, passed as --platform. The resolution
+             function chooses among the implementations that declare that platform.
+  store      class `store:runtime`; the optional key "store" names an implementation explicitly.
+  scheduler  class `scheduler:job` (the vote step); the optional key "scheduler" names an implementation explicitly.
   vcs        class `integration:vcs` (the vote step); the optional key "vcs" of "vote" names one explicitly.
   Without an explicit name the order is the resolution function's: the <CLASS>_PROVIDER variable, the platform
-  default (scheduler: launchd on macOS, systemd on Linux), the only implementation shipped.
+  default (scheduler:job: launchd on macOS, systemd on Linux), the only implementation shipped.
   The resolution module is loaded from the first of: resolve.py next to this script (the copy a scheduled job
   keeps when its "snapshot" lists providers/resolve.py), ../providers/resolve.py, <workbench>/providers/resolve.py.
 
@@ -140,9 +141,6 @@ class Providers:
         self.workbench = workbench
         self.resolution = load_resolution(workbench)
 
-    def shipped(self, cls: str) -> list:
-        return self.resolution.implementations(cls, root=self.workbench)
-
     def path(self, cls: str, implementation: str | None = None) -> Path:
         """The script for a class; `implementation` is a name runtime.json gives explicitly, and wins."""
         try:
@@ -192,10 +190,9 @@ def load_config(project: Path) -> dict:
     platform = cfg["publisher"]
     cfg["paths"] = {
         "mailbox": wb if cfg["mailbox"] == "none" else
-        providers.path("mailbox", None if cfg["mailbox"] == "auto" else cfg["mailbox"]),
-        "publisher": providers.path(f"publisher:{platform}",
-                                    platform if platform in providers.shipped("publisher") else None),
-        "store": providers.path("store", cfg.get("store")),
+        providers.path("reader:email", None if cfg["mailbox"] == "auto" else cfg["mailbox"]),
+        "publisher": providers.path(f"publisher:{platform}"),
+        "store": providers.path("store:runtime", cfg.get("store")),
         "run_agent": wb / "adapters" / cfg["harness"] / "run-agent.sh",
         "agent": wb / "agents" / f"{cfg['agent']}.md",
         "parser": wb / "skills" / "mkt-engage" / "scripts" / "parse_notification.py",

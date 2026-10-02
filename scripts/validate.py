@@ -9,14 +9,23 @@ Checks every skill under skills/ and every agent under agents/:
   - metadata.kind is capability or flow, and matches the flow- prefix
   - description is 1-1024 characters
   - SKILL.md is at most 500 lines
-  - core files, packs/ included, contain no harness names, paths or tool names
+  - harness-name: no text file of the core (packs/ included), whatever its extension, names a harness: its
+    name in any spelling (capitalised, lower-case, with a hyphen or an underscore), its folders, its
+    environment variables, its tool names, or a path inside an adapter. Exempt: skills/*/evals/result.json and
+    everything under skills/*/evals/evidence/ (a record and an evidence line name their adapter by design);
+    the values of `workbench_files` in a case file; the placeholder form adapters/<harness>/. The fixtures of
+    eval cases, and a file listed in .security-scan-allow with the rule harness-name, are read for the
+    harness names and folders only (the rule as it was before it was widened)
+  - a skill's frontmatter has only the top-level keys name, description, license and metadata
   - non-empty metadata.side_effects implies a "## Confirmation gate" section: the heading on a line of its
     own, outside a code fence
-  - every metadata.inputs path is some skill's metadata.outputs (warning unless --strict)
   - relative links resolve, with or without an anchor, in SKILL.md, in a skill's references/, in agents/,
     contracts/ and templates/ (a code fence or a code span holds an example and is not read; neither is a
     link to a place in the same file or one written with a placeholder)
   - agent frontmatter keys are only name, description, metadata
+  - copies: every adopted copy listed in shared/scripts/copies.json is byte-identical to its source, and the
+    manifest itself is valid (scripts/sync_copies.py --check; fix: change the source, then run
+    python3 scripts/sync_copies.py). A generated copy is never edited by hand
   - frontmatter is read by this file's own parser on every machine, whatever library is installed
   - english-only: no tracked text file contains Portuguese-specific diacritics or words, except
     on a line carrying `validate: allow english-only -- <reason>` or a path listed in
@@ -37,10 +46,31 @@ Checks every skill under skills/ and every agent under agents/:
 
 Rules reported as warnings, one line per skill and rule, each starting with the rule's name in brackets.
 They say what a skill or its cases still have to change; none reads a skill's score or band:
-  - [meta-keys] metadata carries inputs, outputs, requires, side_effects and version; the frontmatter
-    carries license
-  - [requires-vocabulary] every metadata.requires value is a class of the table in contracts/environment.md
-    (a class the table writes with a placeholder, publisher:<platform>, is legal as written or with a value)
+  - [meta-keys] metadata carries inputs, outputs, updates, requires, side_effects and version; the
+    frontmatter carries license
+  - the artifact contract (contracts/project-layout.md), seven rules. Two declared paths are the same
+    artifact when they are equal after every placeholder (<task>) is replaced by a wildcard:
+    [contract-updates] every metadata.updates path is in some skill's metadata.outputs, in this tree or in
+    the contract's table of owning skills;
+    [contract-owner] a path is in the outputs of one skill only;
+    [contract-inputs] every metadata.inputs path is in some skill's outputs (this tree or the contract's
+    table of owning skills) or in the contract's table "Slots no built skill writes"; a row of that table is
+    `user` or `planned: <skill>`, names no path a skill of this tree owns and no planned skill that is built;
+    [contract-overlap] no path is in outputs and updates of one skill;
+    [contract-placeholder] a declared path uses only the placeholders of the contract's vocabulary and no
+    other wildcard (*, {}, #, a bare NNNN), and one artifact is spelled with the same placeholders everywhere;
+    [contract-cycle] the graph "owner of a path -> skill that reads it" has no cycle (a skill that reads
+    its own artifact is not one);
+    [contract-owner-table] the contract's generated table of owning skills equals the frontmatters
+    (fix: python3 scripts/owner_table.py)
+  - [copy-not-adopted] a copy the manifest lists is generated from its source: a skill is listed while a
+    file of it still differs from the shared source or is not there yet (fix, in the pull request that
+    changes that skill: python3 scripts/sync_copies.py --adopt <copy>)
+  - [requires-role] every metadata.requires value has the form <role>:<target>; the four names that were
+    bare (mailbox, mailer, scheduler, store) are reported with the class each became
+  - [requires-vocabulary] every metadata.requires value that has a role is a class of the table in
+    contracts/environment.md (a class the table writes with a placeholder, publisher:<platform>, is legal as
+    written or with a value)
   - [side-effects-vocabulary] every metadata.side_effects value is one of publish, send, schedule, deploy,
     create, push, dismiss
   - [description-when] the description says when to use the skill (it has the word "when")
@@ -62,7 +92,8 @@ They say what a skill or its cases still have to change; none reads a skill's sc
   - [routing-table] every built skill is in skills/core-orchestrator/references/routing.md, and a name in
     that table is built or marked (planned), never both
   - [test-file-names] test file names are unique across the folders scripts/test_dirs.py lists
-A rule whose file is not in the tree being validated (the class table, the routing table, test_dirs.py) is
+A rule whose file is not in the tree being validated (the class table, the layout contract, the owner-table
+script, the manifest of copies and its script, the routing table, test_dirs.py) is
 skipped and says so in a NOTE line on stderr, which counts as neither an error nor a warning.
 
 Options:
@@ -107,10 +138,20 @@ KINDS = {"capability", "flow"}
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_LINES = 500
 AGENT_KEYS = {"name", "description", "metadata"}
+SKILL_KEYS = {"name", "description", "license", "metadata"}
 
 # --- the rules reported as warnings (see the module docstring) -----------------------
-REQUIRED_META = ("inputs", "outputs", "requires", "side_effects", "version")  # area and kind are errors already
-SIDE_EFFECTS = ("publish", "send", "schedule", "deploy", "create", "push", "dismiss")
+REQUIRED_META = ("inputs", "outputs", "updates", "requires", "side_effects", "version")  # area and kind are errors already
+ARTIFACT_FIELDS = ("inputs", "outputs", "updates")
+LAYOUT = "contracts/project-layout.md"
+SLOTS_HEADING = "Slots no built skill writes"
+PLACEHOLDER_RE = re.compile(r"<[^<>]*>")
+PATH_OK_RE = re.compile(r"^[A-Za-z0-9._/<>-]+$")  # no *, {}, # (a section of a file) or space
+SIDE_EFFECTS = ("publish", "send", "schedule", "deploy", "create", "push", "dismiss")  # contracts/environment.md
+# The four classes that were bare names (decision 14a). providers/resolve.py still reads the old names; a
+# skill's requires does not use them.
+RENAMED_CLASSES = {"mailer": "sender:email", "mailbox": "reader:email", "scheduler": "scheduler:job",
+                   "store": "store:runtime"}
 DESCRIPTION_WARN = 900  # characters
 TOKEN_WARN = 5000       # characters / 4
 MIN_CASES, MIN_ASSERTIONS = 2, 3
@@ -144,7 +185,23 @@ HARNESS_PATTERNS = [
     r"\bCLAUDE\.md\b", r"\$\{?CLAUDE_PLUGIN_ROOT\}?", r"\bClaude Code\b", r"\bCopilot\b",
     r"\bCursor\b", r"\bCodex\b", r"\bGemini CLI\b", r"\bOpenCode\b", r"\bCline\b",
 ]
-HARNESS_RE = re.compile("|".join(HARNESS_PATTERNS))
+# Principle 1 as written: the other spellings of a harness, its folders without a trailing slash, its
+# environment variables, a path inside an adapter (never the placeholder adapters/<harness>/) and its tool
+# names. "cursor" in lower case is a common word (the store's cursors) and is left out, as above.
+HARNESS_WIDE_PATTERNS = [
+    r"(?<![\w-])\.(?:claude|cursor|codex|agents|opencode|gemini|cline|clinerules)(?![\w-])",
+    r"\b(?:CLAUDE|CODEX|OPENCODE|GEMINI_CLI|CLINE)_[A-Z0-9_]+",
+    r"\b[Cc]laude\b(?! Design)",  # the design tool of that name is a product, not a harness: eval-product-names
+    r"(?<![A-Za-z])(?:claude_?code|gemini[-_]cli|open[-_]code|opencode|codex|copilot|cline)(?![A-Za-z])",
+    r"(?<![\w-])agents-dir(?![\w-])",
+    r"\badapters/(?!<)[\w*{.-]",
+    r"\b(?:TodoWrite|WebFetch|WebSearch|NotebookEdit|MultiEdit|AskUserQuestion|ExitPlanMode)\b",
+    r"\ballowed-tools\b",
+    r"\b(?:Task|Bash|Read|Write|Edit|Grep|Glob) tool\b",
+]
+HARNESS_NARROW_RE = re.compile("|".join(HARNESS_PATTERNS))
+HARNESS_RE = re.compile("|".join(HARNESS_PATTERNS + HARNESS_WIDE_PATTERNS))
+HARNESS_RULE = "harness-name"
 
 # english-only: diacritics that do not occur in English (a with tilde, o with tilde, c with
 # cedilla) and a few unambiguous Portuguese words, written as escapes so this file passes.
@@ -365,6 +422,10 @@ def check_skill(dirname, report, outputs_index, classes=None):
     name = fm.get("name")
     if name != dirname:
         report.error(where, f"frontmatter name {name!r} must equal folder name {dirname!r}")
+    extra = sorted(set(fm) - SKILL_KEYS)
+    if extra:
+        report.error(where, f"unknown top-level frontmatter key(s) {', '.join(extra)}; a skill has only "
+                     f"{', '.join(sorted(SKILL_KEYS))} (what belongs to one harness goes to adapters/<harness>/overrides/)")
     if not isinstance(name, str) or not NAME_RE.match(name or "") or len(name) > 64:
         report.error(where, "name must be 1-64 chars, lowercase a-z0-9 and single hyphens")
 
@@ -393,7 +454,7 @@ def check_skill(dirname, report, outputs_index, classes=None):
     if expected_area and area and area != expected_area:
         report.error(where, f"prefix {prefix}- implies area {expected_area!r}, got {area!r}")
 
-    for key in ("inputs", "outputs", "requires", "side_effects"):
+    for key in ("inputs", "outputs", "updates", "requires", "side_effects"):
         if key in meta and meta[key] is not None and not isinstance(meta[key], list):
             report.error(where, f"metadata.{key} must be a list")
 
@@ -415,7 +476,12 @@ def check_skill(dirname, report, outputs_index, classes=None):
     if unknown:
         report.warn(where, f"side_effects {', '.join(unknown)}: not in the vocabulary ({', '.join(SIDE_EFFECTS)})",
                     "side-effects-vocabulary")
-    unknown = [v for v in strings("requires") if classes is not None and not known_class(v, classes)]
+    bare = [v for v in strings("requires") if ":" not in v]
+    if bare:
+        report.warn(where, "requires " + ", ".join(
+            f"{v} (now {RENAMED_CLASSES[v]})" if v in RENAMED_CLASSES else v for v in bare)
+            + ": a class has the form <role>:<target>", "requires-role")
+    unknown = [v for v in strings("requires") if ":" in v and classes is not None and not known_class(v, classes)]
     if unknown:
         report.warn(where, f"requires {', '.join(unknown)}: not a class of {CLASS_TABLE}", "requires-vocabulary")
     if desc and not re.search(r"\bwhen\b", desc, re.I):
@@ -442,7 +508,27 @@ def check_skill(dirname, report, outputs_index, classes=None):
 
     for out in meta.get("outputs") or []:
         outputs_index.setdefault(out, []).append(name or dirname)
-    return {"name": name, "inputs": meta.get("inputs") or [], "where": where}
+    return {"name": name or dirname, "where": where, **declared_paths(meta)}
+
+
+def declared_paths(meta):
+    """inputs, outputs and updates of a frontmatter's metadata, as lists of texts."""
+    return {k: [v for v in (meta.get(k) if isinstance(meta.get(k), list) else []) if isinstance(v, str)]
+            for k in ARTIFACT_FIELDS}
+
+
+def declarations(root=ROOT):
+    """[{name, where, inputs, outputs, updates}] of every skill of a tree whose frontmatter can be read:
+    what scripts/owner_table.py generates the table of owning skills from."""
+    found = []
+    for name in built_skills(root):
+        fm_text, _ = split_frontmatter(os.path.join(root, "skills", name, "SKILL.md"))
+        try:
+            meta = (load_yaml(fm_text) if fm_text is not None else {}).get("metadata") or {}
+        except Exception:  # noqa: BLE001
+            continue
+        found.append({"name": name, "where": f"skills/{name}", **declared_paths(meta if isinstance(meta, dict) else {})})
+    return found
 
 
 def built_skills(root=ROOT):
@@ -614,6 +700,38 @@ def check_test_names(report, root=ROOT):
                         + "; names are unique across the test folders", "test-file-names")
 
 
+def check_copies(report, root=ROOT):
+    """copies and copy-not-adopted: the generated copies of shared files (scripts/sync_copies.py)."""
+    script = os.path.join(root, "scripts", "sync_copies.py")
+    if not os.path.isfile(script):
+        report.note("[copies] skipped: scripts/sync_copies.py is not in this tree")
+        return
+    spec = importlib.util.spec_from_file_location("sync_copies", script)
+    sync = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sync)
+    if not os.path.isfile(os.path.join(root, sync.MANIFEST)):
+        report.note(f"[copies] skipped: {sync.MANIFEST} is not in this tree")
+        return
+    try:
+        rows = sync.states(root)
+    except sync.ManifestError as e:
+        report.error(sync.MANIFEST, f"[copies] {e}")
+        return
+    pending = {}
+    for r in rows:
+        if r["adopted"] and r["state"] != "identical":
+            report.error(r["path"], f"[copies] {r['state']}: it is a generated copy of {r['source']}; change the "
+                         "source, then run python3 scripts/sync_copies.py")
+        elif not r["adopted"]:
+            parts = r["path"].split("/")
+            where = "/".join(parts[:2]) if parts[0] == "skills" and len(parts) > 2 else r["path"]
+            pending.setdefault(where, []).append(f"{'/'.join(parts[2:]) if where != r['path'] else r['path']} "
+                                                 f"({r['state']}; source {r['source']})")
+    for where, files in sorted(pending.items()):
+        report.warn(where, "not yet generated from the shared source: " + "; ".join(files)
+                    + "; adopt each with python3 scripts/sync_copies.py --adopt <copy>", "copy-not-adopted")
+
+
 def flags_markdown(report, skills):
     """The named warning rules and the skills each one lists, as the Markdown of docs/architecture/phase-c-flags.md."""
     by_rule = {}
@@ -638,17 +756,198 @@ def flags_markdown(report, skills):
     return "\n".join(lines) + "\n"
 
 
-WARNING_RULES = ("meta-keys", "requires-vocabulary", "side-effects-vocabulary", "description-when",
+WARNING_RULES = ("meta-keys", "requires-role", "requires-vocabulary", "side-effects-vocabulary", "description-when",
                  "description-length", "skill-tokens", "eval-cases-count", "eval-keys", "eval-assertions-count",
                  "eval-conditional-assertion", "eval-run-assertion", "eval-prompt-names-skill",
-                 "eval-product-names", "skill-name", "routing-table", "test-file-names")
+                 "eval-product-names", "skill-name", "routing-table", "test-file-names",
+                 "contract-updates", "contract-owner", "contract-inputs", "contract-overlap", "contract-placeholder",
+                 "contract-cycle", "contract-owner-table", "copy-not-adopted")
 
 
-def check_inputs_chain(skills, outputs_index, report):
+def artifact_key(path):
+    """What makes two declared paths the same artifact: every placeholder read as a wildcard."""
+    return PLACEHOLDER_RE.sub("*", path)
+
+
+def markdown_table(text, first_header, after=None):
+    """The rows (lists of cells, backticks stripped) of the first Markdown table whose first header cell is
+    `first_header`, looked for after the heading `after` when one is given; None when there is none."""
+    if after is not None:
+        m = re.search(r"^#+\s*" + re.escape(after) + r"\s*$", text, re.M)
+        if not m:
+            return None
+        text = text[m.end():]
+    m = re.search(r"^\|\s*" + re.escape(first_header) + r"\s*\|.*$", text, re.M)
+    if not m:
+        return None
+    rows = []
+    for line in text[m.end():].lstrip("\n").split("\n"):
+        if not line.startswith("|"):
+            break
+        cells = [c.strip().strip("`").strip() for c in line.strip().strip("|").split("|")]
+        if not re.fullmatch(r":?-+:?", cells[0]):
+            rows.append(cells)
+    return rows
+
+
+def load_owner_table_script(report, root=ROOT):
+    """scripts/owner_table.py of the tree being validated; None, with a note, when it is not there (a folder
+    an eval case builds brings the validator and not the generator)."""
+    path = os.path.join(root, "scripts", "owner_table.py")
+    if not os.path.isfile(path):
+        report.note("[contract-owner-table] skipped: scripts/owner_table.py is not in this tree")
+        return None
+    spec = importlib.util.spec_from_file_location("owner_table", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def load_layout(report, root=ROOT):
+    """What the rules read in contracts/project-layout.md: {"vocabulary": set of placeholders, "slots":
+    [(path, provided by)], "owned": set of artifact keys the table of owning skills gives an owner}; None,
+    with a note, when the contract is not in this tree."""
+    path = os.path.join(root, LAYOUT)
+    if not os.path.isfile(path):
+        report.note(f"[contract-placeholder] skipped: {LAYOUT} is not in this tree (no slot and no owner is read from it)")
+        return None
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    vocabulary = markdown_table(text, "Placeholder")
+    slots = markdown_table(text, "Path", after=SLOTS_HEADING)
+    if vocabulary is None:
+        report.note(f"[contract-placeholder] skipped: {LAYOUT} has no table whose first column is Placeholder")
+    owned = set()
+    block = re.search(r"<!-- owner-table:begin -->(.*?)<!-- owner-table:end -->", text, re.S)
+    for line in (block.group(1) if block else "").splitlines():
+        m = re.match(r"\|\s*`([^`]+)`\s*\|\s*([^|]*?)\s*\|", line)
+        if m and m.group(2) not in ("", "-"):
+            owned.add(artifact_key(m.group(1)))
+    return {"vocabulary": None if vocabulary is None else {r[0] for r in vocabulary if PLACEHOLDER_RE.fullmatch(r[0])},
+            "slots": [(r[0], r[1] if len(r) > 1 else "") for r in slots or []], "owned": owned}
+
+
+def cycles(edges):
+    """The groups of more than one node that reach each other, in a graph given as {node: set of nodes}
+    (Tarjan's strongly connected components, without recursion)."""
+    index, low, on_stack, stack, found, counter = {}, {}, set(), [], [], [0]
+    for start in sorted(edges):
+        if start in index:
+            continue
+        work = [(start, iter(sorted(edges.get(start, ()))))]
+        index[start] = low[start] = counter[0]
+        counter[0] += 1
+        stack.append(start)
+        on_stack.add(start)
+        while work:
+            node, successors = work[-1]
+            advanced = False
+            for nxt in successors:
+                if nxt not in index:
+                    index[nxt] = low[nxt] = counter[0]
+                    counter[0] += 1
+                    stack.append(nxt)
+                    on_stack.add(nxt)
+                    work.append((nxt, iter(sorted(edges.get(nxt, ())))))
+                    advanced = True
+                    break
+                if nxt in on_stack:
+                    low[node] = min(low[node], index[nxt])
+            if advanced:
+                continue
+            work.pop()
+            if work:
+                low[work[-1][0]] = min(low[work[-1][0]], low[node])
+            if low[node] == index[node]:
+                group = []
+                while True:
+                    member = stack.pop()
+                    on_stack.discard(member)
+                    group.append(member)
+                    if member == node:
+                        break
+                if len(group) > 1:
+                    found.append(sorted(group))
+    return sorted(found)
+
+
+def check_contract(skills, report, root=ROOT):
+    """The seven rules of the artifact contract (see the module docstring), as warnings."""
+    layout = load_layout(report, root)
+    built = {s["name"] for s in skills}
+    owners, canonical = {}, {}  # canonical: the spelling of an artifact, its owner's when it has one
+    for field in ("outputs", "updates", "inputs"):
+        for s in skills:
+            for path in s[field]:
+                canonical.setdefault(artifact_key(path), (path, s["name"]))
+                if field == "outputs" and s["name"] not in owners.setdefault(artifact_key(path), []):
+                    owners[artifact_key(path)].append(s["name"])
+    known = set(owners) | (layout["owned"] if layout else set())
+    slots = {artifact_key(p) for p, _ in layout["slots"]} if layout else set()
+    vocabulary = layout["vocabulary"] if layout else None
+
     for s in skills:
-        for inp in s["inputs"]:
-            if inp not in outputs_index:
-                report.warn(s["where"], f"input {inp!r} is not produced by any skill's outputs")
+        where, own = s["where"], {artifact_key(p) for p in s["outputs"]}
+        lost = [p for p in s["updates"] if artifact_key(p) not in known]
+        if lost:
+            report.warn(where, f"updates {', '.join(lost)}: no skill's outputs lists it, so it has no owner", "contract-updates")
+        shared = [f"{p} (also {', '.join(o for o in owners[artifact_key(p)] if o != s['name'])})"
+                  for p in s["outputs"] if len(owners[artifact_key(p)]) > 1]
+        if shared:
+            report.warn(where, f"outputs {'; '.join(shared)}: an artifact has one owner, and every other skill "
+                        "that writes into it lists it in updates", "contract-owner")
+        dangling = [p for p in s["inputs"] if artifact_key(p) not in known and artifact_key(p) not in slots]
+        if dangling:
+            report.warn(where, f"input {', '.join(dangling)}: no skill's outputs lists it and it is not in the table "
+                        f"\"{SLOTS_HEADING}\" of {LAYOUT}", "contract-inputs")
+        both = [p for p in s["updates"] if artifact_key(p) in own]
+        if both:
+            report.warn(where, f"{', '.join(both)} is in outputs and in updates: the owner lists it in outputs only",
+                        "contract-overlap")
+        bad = []
+        for field in ARTIFACT_FIELDS:
+            for path in s[field]:
+                unknown = [] if vocabulary is None else sorted(set(PLACEHOLDER_RE.findall(path)) - vocabulary)
+                stripped = PLACEHOLDER_RE.sub("", path)
+                if unknown:
+                    bad.append(f"{path} ({', '.join(unknown)} is not in the vocabulary of {LAYOUT})")
+                elif not PATH_OK_RE.match(path) or "<" in stripped or ">" in stripped or re.search(r"(?<![A-Za-z])NNNN(?![A-Za-z])", stripped):
+                    bad.append(f"{path} (a wildcard other than a placeholder: no *, {{}}, #, bare NNNN or space)")
+                elif canonical[artifact_key(path)][0] != path:
+                    bad.append("{} (the same artifact is spelled {} in {})".format(path, *canonical[artifact_key(path)]))
+        if bad:
+            report.warn(where, "declared path " + "; ".join(bad), "contract-placeholder")
+
+    for path, provided in layout["slots"] if layout else []:
+        problem = None
+        planned = re.fullmatch(r"planned:\s*(\S+)", provided)
+        if artifact_key(path) in owners:
+            problem = f"{', '.join(owners[artifact_key(path)])} owns it now: remove the row"
+        elif planned and planned.group(1) in built:
+            problem = f"{planned.group(1)} is built: remove the row and declare the path in its outputs"
+        elif provided != "user" and not planned:
+            problem = f"\"Provided by\" is {provided!r}; it is user or planned: <skill>"
+        if problem:
+            report.warn(LAYOUT, f"slot {path}: {problem}", "contract-inputs")
+
+    edges = {}
+    for s in skills:
+        for path in s["inputs"]:
+            for owner in owners.get(artifact_key(path), []):
+                if owner != s["name"]:
+                    edges.setdefault(owner, set()).add(s["name"])
+    for group in cycles(edges):
+        report.warn("skills", f"the graph \"owner of a path -> skill that reads it\" has a cycle of {len(group)} "
+                    f"skills, so it gives no order: {', '.join(group)}", "contract-cycle")
+
+    generator = load_owner_table_script(report, root)
+    if generator is not None and layout is not None:
+        state = generator.current(skills, root)
+        if state is None:
+            report.note(f"[contract-owner-table] skipped: {LAYOUT} has no owner-table block")
+        elif not state:
+            report.warn(LAYOUT, "the table of owning skills differs from the skills' frontmatter: "
+                        "run python3 scripts/owner_table.py", "contract-owner-table")
 
 
 def check_agent(filename, report):
@@ -671,20 +970,57 @@ def check_agent(filename, report):
         report.error(where, f"harness-specific keys belong in adapters/<harness>/overrides/: {sorted(extra)}")
 
 
-def check_harness_names(report):
-    for d in CORE_DIRS:
-        base = os.path.join(ROOT, d)
-        for dirpath, _, files in os.walk(base):
-            for fn in files:
-                if not fn.endswith((".md", ".json", ".yaml", ".yml", ".py", ".sh", ".txt")):
-                    continue
-                p = os.path.join(dirpath, fn)
-                with open(p, encoding="utf-8", errors="ignore") as f:
-                    for ln, line in enumerate(f, 1):
-                        m = HARNESS_RE.search(line)
-                        if m:
-                            rel = os.path.relpath(p, ROOT)
-                            report.error(f"{rel}:{ln}", f"core file references a harness: {m.group(0)!r}")
+def harness_scope(rel):
+    """How a core file is read for harness names: None (not read), "narrow" (names and folders only: the
+    fixtures of eval cases) or "wide"."""
+    parts = rel.split("/")
+    if parts[0] == "skills" and len(parts) > 3 and parts[2] == "evals":
+        if parts[3:] == ["result.json"] or parts[3] == "evidence":
+            return None  # an old record and an evidence line name their adapter by design
+        if "files" in parts[3:-1]:
+            return "narrow"  # evals/files/... and evals/platforms/<platform>/files/...
+    return "wide"
+
+
+def workbench_file_values(text):
+    """The paths a case file brings from the repository (`workbench_files`): adapter paths, legally."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    cases = data.get("evals") if isinstance(data, dict) else None
+    values = set()
+    for c in cases if isinstance(cases, list) else []:
+        listed = c.get("workbench_files") if isinstance(c, dict) else None
+        values.update(v for v in (listed if isinstance(listed, list) else []) if isinstance(v, str))
+    return sorted(values, key=len, reverse=True)
+
+
+def check_harness_names(report, root=None):
+    """harness-name: principle 1 (see the module docstring for what is read and what is exempt)."""
+    root = root or ROOT
+    scanner = load_scanner()
+    entries, _ = scanner.load_allow_file(root)
+    for path in sorted(scanner.list_files(root, None)):
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if rel.split("/")[0] not in CORE_DIRS:
+            continue
+        scope = harness_scope(rel)
+        text = scanner.read_text(path) if scope else None
+        if text is None:
+            continue
+        if scope == "wide" and scanner.path_allowed(entries, rel, HARNESS_RULE):
+            scope = "narrow"
+        pattern = HARNESS_RE if scope == "wide" else HARNESS_NARROW_RE
+        exempt = []
+        if scope == "wide" and re.fullmatch(r"skills/[^/]+/evals/(?:evals|platforms/[^/]+)\.json", rel):
+            exempt = [json.dumps(v) for v in workbench_file_values(text)]
+        for ln, line in enumerate(text.splitlines(), 1):
+            for quoted in exempt:
+                line = line.replace(quoted, '""')
+            m = pattern.search(line)
+            if m:
+                report.error(f"{rel}:{ln}", f"[{HARNESS_RULE}] core file references a harness: {m.group(0)!r}")
 
 
 def load_scanner():
@@ -881,12 +1217,13 @@ def main(argv):
                     check_evals(d, report)
                     check_skill_names(d, report, built)
         check_routing(report, built)
-    check_inputs_chain(skills, outputs_index, report)
+    check_contract(skills, report)
     if os.path.isdir(AGENTS):
         for fn in sorted(os.listdir(AGENTS)):
             if fn.endswith(".md"):
                 check_agent(fn, report)
     check_doc_links(report)
+    check_copies(report)
     check_test_names(report)
     check_harness_names(report)
     check_english(report)

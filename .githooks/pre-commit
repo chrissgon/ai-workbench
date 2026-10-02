@@ -5,10 +5,13 @@
 #    what is staged, so a file with a finding blocks the commit even if it is not part of it.
 # 2. scripts/security_scan.py --strict: a security warning (hidden text, a shell run on a built string,
 #    an unguarded recursive delete, an unpinned dependency...) blocks the commit like an error does.
-# 3. The tests of providers/<class>/, scripts/, evals/, an adapter or a skill's scripts/ (its
+# 3. The tests of providers/<class>/, scripts/, evals/, shared/, an adapter or a skill's scripts/ (its
 #    scripts/tests/ folder, also when only a test changed) when the commit touches them; a provider
 #    class left without tests is refused. A commit that touches .githooks/, .github/, packs/, templates/
 #    or agents/ runs scripts/tests, where the tests of that wiring, of the installers and of the scaffold are.
+#    A commit that touches shared/ or a generated copy (shared/scripts/copies.json lists them) also runs
+#    scripts/tests, where the identity test of the copies is; the validator of step 1 already refuses an
+#    adopted copy that differs from its source.
 #
 # Skipping the hook (git commit --no-verify) is the user's decision, never a skill's.
 set -euo pipefail
@@ -31,8 +34,14 @@ fi
 # NUL-separated so names with spaces or non-ASCII characters are not quoted; no rename detection,
 # so a file moved out of providers/, scripts/, evals/ or an adapter still counts for the folder it left.
 dirs=()
+copies="$(python3 scripts/sync_copies.py --destinations 2>/dev/null || true)"
 while IFS= read -r -d '' f; do
+  # A shared source, the manifest or a generated copy: the identity test of the copies is in scripts/tests.
+  if [[ "$f" == shared/* ]] || grep -qxF -- "$f" <<<"$copies"; then
+    if [[ " ${dirs[*]-} " != *" scripts/tests "* ]]; then dirs+=("scripts/tests"); fi
+  fi
   case "$f" in
+    shared/*) d="shared/scripts/tests" ;;  # the tests of a shared script live at its source
     providers/*/*) d="providers/$(echo "$f" | cut -d/ -f2)/tests" ;;
     providers/*) d="scripts/tests" ;;  # providers/resolve.py: its tests are scripts/tests/test_provider_resolve.py
     scripts/*) d="scripts/tests" ;;

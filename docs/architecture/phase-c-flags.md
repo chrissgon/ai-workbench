@@ -6,7 +6,8 @@ Skills validated: 48.
 
 | Rule | Skills listed |
 |------|---------------|
-| `meta-keys` | 0 |
+| `meta-keys` | 48 |
+| `requires-role` | 2 |
 | `requires-vocabulary` | 0 |
 | `side-effects-vocabulary` | 1 |
 | `description-when` | 0 |
@@ -22,10 +23,70 @@ Skills validated: 48.
 | `skill-name` | 10 |
 | `routing-table` | 1 |
 | `test-file-names` | 0 |
+| `contract-updates` | 0 |
+| `contract-owner` | 22 |
+| `contract-inputs` | 0 |
+| `contract-overlap` | 0 |
+| `contract-placeholder` | 0 |
+| `contract-cycle` | 1 |
+| `contract-owner-table` | 0 |
+| `copy-not-adopted` | 12 |
 
 ## `meta-keys`
 
-Nothing listed.
+- `biz-icp-positioning`: missing: metadata.updates
+- `biz-market-analysis`: missing: metadata.updates
+- `brand-guidelines`: missing: metadata.updates
+- `brand-identity`: missing: metadata.updates
+- `brand-name`: missing: metadata.updates
+- `brand-profile`: missing: metadata.updates
+- `brand-strategy`: missing: metadata.updates
+- `brand-voice`: missing: metadata.updates
+- `core-agents-md`: missing: metadata.updates
+- `core-clarify`: missing: metadata.updates
+- `core-critique`: missing: metadata.updates
+- `core-orchestrator`: missing: metadata.updates
+- `core-project-init`: missing: metadata.updates
+- `core-research`: missing: metadata.updates
+- `core-security-audit`: missing: metadata.updates
+- `core-skill-creator`: missing: metadata.updates
+- `design-brief`: missing: metadata.updates
+- `design-execute`: missing: metadata.updates
+- `design-handoff`: missing: metadata.updates
+- `design-system`: missing: metadata.updates
+- `design-ux-flows`: missing: metadata.updates
+- `eng-architecture`: missing: metadata.updates
+- `eng-code-review`: missing: metadata.updates
+- `eng-codebase-map`: missing: metadata.updates
+- `eng-docs`: missing: metadata.updates
+- `eng-impact-analysis`: missing: metadata.updates
+- `eng-implement`: missing: metadata.updates
+- `eng-integration-tests`: missing: metadata.updates
+- `eng-refactor`: missing: metadata.updates
+- `eng-root-cause`: missing: metadata.updates
+- `eng-security-review`: missing: metadata.updates
+- `eng-tradeoffs`: missing: metadata.updates
+- `eng-unit-tests`: missing: metadata.updates
+- `flow-fix-bug`: missing: metadata.updates
+- `mkt-content-plan`: missing: metadata.updates
+- `mkt-engage`: missing: metadata.updates
+- `mkt-messaging`: missing: metadata.updates
+- `mkt-publish`: missing: metadata.updates
+- `mkt-social-copy`: missing: metadata.updates
+- `mkt-vote-round`: missing: metadata.updates
+- `ops-branch-sync`: missing: metadata.updates
+- `ops-ci-pipeline`: missing: metadata.updates
+- `ops-pull-request`: missing: metadata.updates
+- `ops-repo-baseline`: missing: metadata.updates
+- `product-backlog`: missing: metadata.updates
+- `product-feature-spec`: missing: metadata.updates
+- `product-prd`: missing: metadata.updates
+- `product-roadmap`: missing: metadata.updates
+
+## `requires-role`
+
+- `mkt-engage`: requires mailbox (now reader:email): a class has the form <role>:<target>
+- `mkt-publish`: requires scheduler (now scheduler:job): a class has the form <role>:<target>
 
 ## `requires-vocabulary`
 
@@ -133,3 +194,68 @@ Nothing listed.
 ## `test-file-names`
 
 Nothing listed.
+
+## `contract-updates`
+
+Nothing listed.
+
+## `contract-owner`
+
+- `core-agents-md`: outputs AGENTS.md (also core-project-init): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `core-clarify`: outputs docs/workbench/state.md (also core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `core-project-init`: outputs docs/workbench/state.md (also core-clarify, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync); AGENTS.md (also core-agents-md): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-architecture`: outputs docs/engineering/adr/<NNNN>-<title>.md (also eng-tradeoffs): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-docs`: outputs docs/engineering/plans/<task>.md (also eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-impact-analysis`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-implement`: outputs docs/product/backlog.md (also product-backlog): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-integration-tests`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-refactor`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-root-cause`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-tradeoffs`: outputs docs/engineering/adr/<NNNN>-<title>.md (also eng-architecture); docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `eng-unit-tests`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `flow-fix-bug`: outputs docs/workbench/state.md (also core-clarify, core-project-init, mkt-engage, mkt-publish, ops-branch-sync); docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `mkt-content-plan`: outputs docs/marketing/calendar.md (also mkt-publish, mkt-social-copy): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `mkt-engage`: outputs docs/workbench/state.md (also core-clarify, core-project-init, flow-fix-bug, mkt-publish, ops-branch-sync): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `mkt-publish`: outputs docs/marketing/calendar.md (also mkt-content-plan, mkt-social-copy); docs/workbench/state.md (also core-clarify, core-project-init, flow-fix-bug, mkt-engage, ops-branch-sync): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `mkt-social-copy`: outputs docs/marketing/content/<post>.md (also mkt-vote-round); docs/marketing/calendar.md (also mkt-content-plan, mkt-publish): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `mkt-vote-round`: outputs docs/marketing/content/<post>.md (also mkt-social-copy): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `ops-branch-sync`: outputs docs/workbench/state.md (also core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `ops-ci-pipeline`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `ops-pull-request`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline): an artifact has one owner, and every other skill that writes into it lists it in updates
+- `product-backlog`: outputs docs/product/backlog.md (also eng-implement): an artifact has one owner, and every other skill that writes into it lists it in updates
+
+## `contract-inputs`
+
+Nothing listed.
+
+## `contract-overlap`
+
+Nothing listed.
+
+## `contract-placeholder`
+
+Nothing listed.
+
+## `contract-cycle`
+
+- `skills`: the graph "owner of a path -> skill that reads it" has a cycle of 22 skills, so it gives no order: biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-agents-md, core-clarify, core-research, eng-codebase-map, flow-fix-bug, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish, mkt-social-copy, mkt-vote-round, ops-branch-sync, product-feature-spec, product-prd
+- `skills`: the graph "owner of a path -> skill that reads it" has a cycle of 8 skills, so it gives no order: eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-root-cause, eng-tradeoffs, eng-unit-tests, ops-pull-request
+
+## `contract-owner-table`
+
+Nothing listed.
+
+## `copy-not-adopted`
+
+- `biz-icp-positioning`: not yet generated from the shared source: scripts/rank.py (differs; source shared/scripts/rank.py); scripts/check_refs.py (differs; source shared/scripts/check_refs.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `biz-market-analysis`: not yet generated from the shared source: scripts/rank.py (differs; source shared/scripts/rank.py); scripts/check_refs.py (differs; source shared/scripts/check_refs.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `brand-identity`: not yet generated from the shared source: scripts/contrast.py (differs; source shared/scripts/contrast.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `brand-voice`: not yet generated from the shared source: scripts/voice_stats.py (differs; source shared/scripts/voice_stats.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `core-orchestrator`: not yet generated from the shared source: references/requirement-classes.md (differs; source contracts/environment.md); references/owners.md (missing; source contracts/project-layout.md); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `design-system`: not yet generated from the shared source: scripts/contrast.py (differs; source shared/scripts/contrast.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `eng-code-review`: not yet generated from the shared source: scripts/redact.py (differs; source shared/scripts/redact.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `mkt-content-plan`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `mkt-engage`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `mkt-social-copy`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); scripts/voice_stats.py (missing; source shared/scripts/voice_stats.py); scripts/check_post.py (differs; source shared/scripts/check_post.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `mkt-vote-round`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); scripts/voice_stats.py (missing; source shared/scripts/voice_stats.py); scripts/check_post.py (missing; source shared/scripts/check_post.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+- `ops-repo-baseline`: not yet generated from the shared source: scripts/redact.py (differs; source shared/scripts/redact.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>

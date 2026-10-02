@@ -571,6 +571,19 @@ def test_check_warns_under_seven_days(env, fake):
     assert "warning" in proc.stderr
 
 
+def test_check_with_a_platform_answers_whether_this_provider_serves_it(env, fake):
+    proc = run(SCRIPT, ["--check", "--platform", "linkedin"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["platform"] == "linkedin"
+    proc = run(SCRIPT, ["--check", "--platform", "chirp"], env)
+    assert proc.returncode == 2 and "is not served by this provider" in proc.stderr and not proc.stdout.strip()
+
+
+def test_the_served_platforms_are_declared_on_one_line_the_resolver_reads_as_text():
+    lines = [line for line in SCRIPT.read_text(encoding="utf-8").splitlines() if line.startswith("PLATFORMS")]
+    assert lines == ['PLATFORMS = ("linkedin",)']
+
+
 def test_check_not_ready_without_token(env, fake):
     del env["LINKEDIN_ACCESS_TOKEN"]
     proc = run(SCRIPT, ["--check"], env)

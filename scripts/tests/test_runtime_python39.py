@@ -28,6 +28,10 @@ ON_SYSTEM_PYTHON = [
     "skills/mkt-social-copy/scripts/check_post.py", "skills/mkt-publish/scripts/payload.py",
     "skills/brand-identity/scripts/render.py", "skills/brand-identity/scripts/contrast.py",
     "skills/brand-voice/scripts/voice_stats.py", "skills/brand-profile/scripts/sensitive_topics.py",
+    # The sources of the four above that are generated copies (shared/scripts/copies.json): a copy is adopted
+    # from its source, so the source runs on the system interpreter too.
+    "shared/scripts/check_post.py", "shared/scripts/contrast.py", "shared/scripts/voice_stats.py",
+    "shared/scripts/sensitive_topics.py",
 ]
 SYSTEM_PYTHON = (3, 9)
 REQUIRES = re.compile(r'^# requires-python = "([^"]+)"$', re.M)

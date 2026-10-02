@@ -6,13 +6,13 @@ The runtime starts agents without a person at the keyboard: a scheduler fires, t
 
 | Piece | Where | What it does |
 |-------|-------|--------------|
-| Trigger | `scheduler` class, a recurring job | runs `scripts/runtime.py tick` every N minutes |
+| Trigger | `scheduler:job` class, a recurring job | runs `scripts/runtime.py tick` every N minutes |
 | Runtime | `scripts/runtime.py` | finds new work, records it, runs the agent, applies the gate, executes, logs |
-| Store | `store` class (`providers/store/`) | events, cursors, runs, inbox, actions; many writers at once |
+| Store | `store:runtime` class (`providers/store/`) | events, cursors, runs, inbox, actions; many writers at once |
 | Agent run | `adapters/<harness>/run-agent.sh` | runs one agent on one task, read-only, and returns its answer |
 | Gate | the skill's own script (`mkt-engage/scripts/policy_gate.py`) | decides whether a proposal is inside the person's approval |
 | Actuator | a provider (`publisher:<platform>`) | executes, with an idempotency key |
-| Configuration | `docs/workbench/runtime.json` in the project | paths, model, budgets, and optionally the implementation of a class; no secret |
+| Configuration | `docs/workbench/runtime.json` in the project | paths, model, budgets, and optionally the implementation of a class; no secret. Its keys `mailbox`, `store`, `scheduler` and `publisher` are configuration keys, not class names: the runtime maps them to `reader:email`, `store:runtime`, `scheduler:job` and `publisher:<platform>` |
 | Provider resolution | `providers/resolve.py` | turns a requirement class into the provider script; the runtime builds no provider path itself |
 
 ## An agent run

@@ -16,14 +16,14 @@ validate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validate)
 
 CLASSES = "# Environment\n\n| Class | Examples | Used by |\n|---|---|---|\n| `search:web` | any | research |\n" \
-          "| `publisher:<platform>` | a network | marketing |\n| `store` | a file | runtime |\n\nText.\n\n" \
+          "| `publisher:<platform>` | a network | marketing |\n| `store:runtime` | a file | runtime |\n\nText.\n\n" \
           "| Scope | What |\n|---|---|\n| `action` | one payload |\n"
 ASSERTIONS = ["The report lists every file", "The reply is in English", "No file is deleted"]
 
 
 def skill_md(name="eng-demo", description="Does a thing. Use this skill when a thing is asked for.", meta=None,
              body="# Demo\n\nText.\n", license_line="license: MIT\n"):
-    meta = {"area": "engineering", "kind": "capability", "inputs": "[]", "outputs": "[]", "requires": "[]",
+    meta = {"area": "engineering", "kind": "capability", "inputs": "[]", "outputs": "[]", "updates": "[]", "requires": "[]",
             "side_effects": "[]", "version": '"0.1"', **(meta or {})}
     lines = "".join(f"  {k}: {v}\n" for k, v in meta.items() if v is not None)
     return f"---\nname: {name}\ndescription: >\n  {description}\n{license_line}metadata:\n{lines}---\n\n{body}"
@@ -87,7 +87,8 @@ def test_every_new_rule_is_a_warning_and_never_an_error(tree):
     assert report.errors == []
     assert rules(report) == ["description-length", "description-when", "eval-assertions-count", "eval-cases-count",
                              "eval-conditional-assertion", "eval-keys", "eval-prompt-names-skill",
-                             "eval-run-assertion", "meta-keys", "requires-vocabulary", "side-effects-vocabulary",
+                             "eval-run-assertion", "meta-keys", "requires-role", "requires-vocabulary",
+                             "side-effects-vocabulary",
                              "skill-name", "skill-tokens"]
     assert all(w["message"].startswith(f"[{w['rule']}] ") for w in report.warnings)
     assert "metadata.version, license" in messages(report, "meta-keys")[0]
@@ -98,16 +99,38 @@ def test_requires_is_read_against_the_class_table_and_a_placeholder_class_is_leg
     write(tree, "contracts/environment.md", CLASSES)
     report = validate.Report()
     classes = validate.load_classes(report, str(tree))
-    assert classes == ["search:web", "publisher:<platform>", "store"] and report.notes == []
-    assert all(validate.known_class(v, classes) for v in ("search:web", "store", "publisher:<platform>", "publisher:mastodon"))
+    assert classes == ["search:web", "publisher:<platform>", "store:runtime"] and report.notes == []
+    assert all(validate.known_class(v, classes)
+               for v in ("search:web", "store:runtime", "publisher:<platform>", "publisher:mastodon"))
     assert not any(validate.known_class(v, classes) for v in ("mailbox", "search:docs", "publisher:", "action", "store:x"))
-    add_skill(tree, meta={"requires": "[search:web, mailbox, publisher:<platform>]"})
+    add_skill(tree, meta={"requires": "[search:web, reader:rss, publisher:<platform>]"})
     assert messages(run_skill(tree, classes=classes), "requires-vocabulary") == [
-        "[requires-vocabulary] requires mailbox: not a class of contracts/environment.md"]
+        "[requires-vocabulary] requires reader:rss: not a class of contracts/environment.md"]
+
+
+def test_a_class_without_a_role_is_reported_with_the_class_it_became(tree):
+    add_skill(tree, meta={"requires": "[search:web, mailbox, scheduler, store, mailer, teleporter]"})
+    report = run_skill(tree, classes=["search:web"])
+    assert report.errors == [] and rules(report) == ["requires-role"]  # one rule, and never both for one value
+    assert messages(report, "requires-role") == [
+        "[requires-role] requires mailbox (now reader:email), scheduler (now scheduler:job), store (now store:runtime), "
+        "mailer (now sender:email), teleporter: a class has the form <role>:<target>"]
+
+
+def test_the_renamed_classes_are_the_resolver_aliases_and_the_side_effect_words_are_the_contract_table():
+    spec = importlib.util.spec_from_file_location("resolve_for_validate_test", REPO / "providers" / "resolve.py")
+    resolve = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(resolve)
+    assert validate.RENAMED_CLASSES == resolve.ALIASES
+    text = (REPO / "contracts" / "environment.md").read_text(encoding="utf-8")
+    words = [row[0] for row in validate.markdown_table(text, "Word")]
+    assert tuple(words) == validate.SIDE_EFFECTS
+    report = validate.Report()
+    assert set(validate.RENAMED_CLASSES.values()) <= set(validate.load_classes(report, str(REPO)))
 
 
 def test_without_the_class_table_the_rule_is_skipped_with_a_note(tree):
-    add_skill(tree, meta={"requires": "[anything]"})
+    add_skill(tree, meta={"requires": "[any:thing]"})
     report = validate.Report()
     assert validate.load_classes(report, str(tree)) is None
     assert report.notes == ["[requires-vocabulary] skipped: contracts/environment.md is not in this tree"]
@@ -182,7 +205,7 @@ def test_a_cited_skill_is_built_or_its_line_says_planned(tree):
     write(tree, "skills/eng-demo/evals/files/doc.md", "`biz-in-a-fixture`\n")
     assert messages(run_skill(tree), "skill-name") == [
         '[skill-name] cites a skill that is not built, with no "planned" on the line: '
-        "ops-later (SKILL.md:19); biz-unbuilt (references/more.md:1)"]  # line numbers count the frontmatter
+        "ops-later (SKILL.md:20); biz-unbuilt (references/more.md:1)"]  # line numbers count the frontmatter
 
 
 def test_the_routing_table_names_every_built_skill_and_marks_the_others_planned(tree):
@@ -290,6 +313,92 @@ def test_packs_are_read_as_core(tree):
     report = validate.Report()
     validate.check_harness_names(report)
     assert [e["where"] for e in report.errors] == ["packs/default.txt:2"]
+
+
+def harness_errors(tree):
+    report = validate.Report()
+    validate.check_harness_names(report)
+    return {e["where"]: e["message"].split(": ", 1)[1] for e in report.errors}
+
+
+@pytest.mark.parametrize("line", [
+    "Use the Task tool to delegate, then wait.",
+    "Call TodoWrite and then WebFetch.",
+    "Ask Claude to summarise the file.",
+    "Put it in ~/.claude or in .opencode/skills",
+    "export CLAUDE_CODE_OAUTH_TOKEN",
+    "allowed-tools: Read, Grep",
+    "installed with claude-code",
+    "the claude_code runner",
+    "run it under codex",
+    "see adapters/api/run_agent.py",
+    "bash adapters/agents-dir/install.sh",
+    "glob adapters/*/adapter.json",
+    "the agents-dir layout",
+])
+def test_principle_1_holds_for_the_spellings_the_narrow_pattern_let_through(tree, line):
+    assert not validate.HARNESS_NARROW_RE.search(line)
+    write(tree, "contracts/notes.md", f"# Notes\n\n{line}\n")
+    assert list(harness_errors(tree)) == ["contracts/notes.md:3"]
+
+
+@pytest.mark.parametrize("line", [
+    "Anything specific to one tool lives in adapters/<harness>/overrides/.",
+    "The store keeps a cursor per source: cursor-get, cursor-set.",
+    "def agents_dir() -> Path:",
+    "AGENTS.md holds the project's conventions.",
+    "The mockup was drawn with Claude Design.",
+    "not any(reader.startswith((\"adapters/\", \"evals/\")))",
+    "codexes and declined offers",
+])
+def test_what_is_not_a_harness_passes(tree, line):
+    write(tree, "providers/notes.md", line + "\n")
+    assert harness_errors(tree) == {}
+
+
+def test_every_text_file_of_the_core_is_read_whatever_its_extension(tree):
+    write(tree, "skills/eng-demo/scripts/shot.mjs", "// started by claude-code\n")
+    write(tree, "templates/notes", "copilot\n")
+    (tree / "shared").mkdir()
+    (tree / "shared" / "logo.png").write_bytes(b"\x89PNG\x00claude-code")
+    write(tree, "scripts/outside_the_core.py", "# adapters/api/run_agent.py\n")
+    assert sorted(harness_errors(tree)) == ["skills/eng-demo/scripts/shot.mjs:1", "templates/notes:1"]
+
+
+def test_records_evidence_and_workbench_files_are_exempt_and_fixtures_keep_the_narrow_rule(tree):
+    brought = "adapters/agents-dir/run-prompt.sh"
+    write(tree, "skills/eng-demo/evals/result.json", {"strong_harness": "claude-code"})
+    write(tree, "skills/eng-demo/evals/evidence/lab-1.jsonl", '{"adapter": "agents-dir"}\n')
+    write(tree, "skills/eng-demo/evals/evals.json", json.dumps(
+        {"skill_name": "eng-demo", "evals": [case(1, prompt="Read adapters/api/README.md.", workbench_files=[brought])]},
+        indent=1))
+    write(tree, "skills/eng-demo/evals/platforms/chirp.json", json.dumps(
+        {"skill_name": "eng-demo", "evals": [case(2, workbench_files=[brought])]}, indent=1))
+    write(tree, "skills/eng-demo/evals/files/site/benchmark.json", '{"adapter": "agents-dir"}\n')
+    write(tree, "skills/eng-demo/evals/files/site/notes.md", "Settings are in ." + "claude/settings.json\n")
+    write(tree, "skills/eng-demo/evals/platforms/chirp/files/a/notes.md", "Opened in " + "Cursor.\n")
+    found = harness_errors(tree)
+    assert sorted(found) == ["skills/eng-demo/evals/evals.json:6", "skills/eng-demo/evals/files/site/notes.md:1",
+                             "skills/eng-demo/evals/platforms/chirp/files/a/notes.md:1"]
+    assert "adapters/a" in found["skills/eng-demo/evals/evals.json:6"]  # the prompt, never the brought path
+
+
+def test_a_path_allowed_for_harness_name_keeps_the_narrow_rule(tree):
+    write(tree, "skills/eng-demo/references/guide.md", "allowed-tools: Read\nSettings: ." + "claude/x\n")
+    write(tree, ".security-scan-allow", "skills/eng-demo/references/guide.md harness-name -- fixed in its row\n")
+    assert list(harness_errors(tree)) == ["skills/eng-demo/references/guide.md:2"]
+
+
+def test_this_repository_names_no_harness_in_its_core():
+    report = validate.Report()
+    validate.check_harness_names(report, root=str(REPO))
+    assert report.errors == []
+
+
+def test_a_skill_frontmatter_has_only_the_known_top_level_keys(tree):
+    add_skill(tree, license_line="license: MIT\nallowed-tools: Read\ncompatibility: any\n")
+    errors = [e["message"] for e in run_skill(tree).errors]
+    assert len(errors) == 1 and errors[0].startswith("unknown top-level frontmatter key(s) allowed-tools, compatibility")
 
 
 def test_flags_lists_each_rule_with_the_skills_it_names(tree):

@@ -63,6 +63,30 @@ def test_literal_secret_assignment_but_not_placeholders(tmp_path):
     assert rules(tmp_path) == ["secret-assignment"]
 
 
+def test_a_passphrase_of_words_is_a_value_and_a_single_word_is_a_placeholder(tmp_path):
+    """Any value without a digit used to count as a placeholder, so a passphrase of words passed."""
+    write(tmp_path, "a.py", 'password = "' + "correct-horse" + "-battery" + '"\n')
+    write(tmp_path, "b.py", 'token = "claim_token_name"\npassword = "placeholder.value"\nSTORE_KEY = "idempotency"\n'
+                           'api_key = "<your-api-key-here>"\nsecret = "some-fake-secret-value"\n')
+    _, active, _ = scanner.scan(str(tmp_path))
+    assert [(f["path"], f["rule"]) for f in active] == [("a.py", "secret-assignment")]
+    assert "horse" not in json.dumps(active)
+
+
+def test_a_credential_in_a_connection_address_and_a_bearer_token_are_found(tmp_path):
+    password, bearer = "Sup3r" + "S3cr3tPw", "9f8e7d6c5b4a" + "39281706f5e4d3c2b1a0"
+    write(tmp_path, "a.py", f"conn = 'postgres://admin:{password}@db.internal:5432/app'\n")
+    write(tmp_path, "b.py", "headers = {'Authorization': 'Bearer " + bearer + "'}\n")
+    write(tmp_path, "c.md", "Connect with `postgres://user:password@localhost/db` or `redis://:$REDIS_PASSWORD@host`.\n"
+                           "Send `Authorization: Bearer <token>` or `Bearer ${TOKEN}`; a bearer of long words.\n"
+                           "Clone with ssh://git@host:22/path or https://example.org/a:b@c.\n")
+    _, active, _ = scanner.scan(str(tmp_path))
+    assert [(f["path"], f["rule"]) for f in active] == [("a.py", "secret-token"), ("b.py", "secret-token")]
+    assert "connection address" in active[0]["message"] and "bearer token" in active[1]["message"]
+    assert password not in json.dumps(active) and bearer[:8] not in json.dumps(active)
+    assert "<redacted>" in active[0]["excerpt"] and "<redacted>" in active[1]["excerpt"]
+
+
 def test_credential_file_but_not_example(tmp_path):
     write(tmp_path, ".env", "X=1\n")
     write(tmp_path, ".env.example", "X=\n")

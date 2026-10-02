@@ -8,7 +8,7 @@
 Tables: cursors (where a trigger source left off), events (triggers to handle, deduplicated and
 claimed atomically), runs (one row per agent run), inbox (what waits for the user) and actions
 (outward actions the runtime executed, for daily limits and audit). The runtime calls this script
-through its CLI, so another implementation of the `store` class can replace it (STORE_PROVIDER).
+through its CLI, so another implementation of the `store:runtime` class can replace it (STORE_PROVIDER).
 
 Concurrency: the database runs in WAL mode (readers never block the writer) with a 10-second busy
 timeout, and every write is one BEGIN IMMEDIATE transaction, so several agents and overlapping

@@ -1,0 +1,176 @@
+{
+ "copies": [
+  {
+   "source": "shared/scripts/conftest.py",
+   "to": [
+    {
+     "path": "skills/core-agents-md/scripts/tests/conftest.py",
+     "adopted": true
+    },
+    {
+     "path": "skills/eng-code-review/scripts/tests/conftest.py",
+     "adopted": true
+    },
+    {
+     "path": "skills/mkt-publish/scripts/tests/conftest.py",
+     "adopted": true
+    },
+    {
+     "path": "skills/mkt-vote-round/scripts/tests/conftest.py",
+     "adopted": true
+    },
+    {
+     "path": "skills/ops-branch-sync/scripts/tests/conftest.py",
+     "adopted": true
+    },
+    {
+     "path": "skills/ops-pull-request/scripts/tests/conftest.py",
+     "adopted": true
+    },
+    {
+     "path": "skills/ops-repo-baseline/scripts/tests/conftest.py",
+     "adopted": true
+    }
+   ]
+  },
+  {
+   "source": "shared/scripts/rank.py",
+   "to": [
+    {
+     "path": "skills/biz-icp-positioning/scripts/rank.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/biz-market-analysis/scripts/rank.py",
+     "adopted": false
+    }
+   ]
+  },
+  {
+   "source": "shared/scripts/check_refs.py",
+   "to": [
+    {
+     "path": "skills/biz-icp-positioning/scripts/check_refs.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/biz-market-analysis/scripts/check_refs.py",
+     "adopted": false
+    }
+   ]
+  },
+  {
+   "source": "shared/scripts/redact.py",
+   "to": [
+    {
+     "path": "scripts/redact.py",
+     "adopted": true
+    },
+    {
+     "path": "skills/eng-code-review/scripts/redact.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/ops-repo-baseline/scripts/redact.py",
+     "adopted": false
+    }
+   ]
+  },
+  {
+   "source": "shared/scripts/contrast.py",
+   "to": [
+    {
+     "path": "skills/brand-identity/scripts/contrast.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/design-system/scripts/contrast.py",
+     "adopted": false
+    }
+   ]
+  },
+  {
+   "source": "shared/scripts/sensitive_topics.py",
+   "to": [
+    {
+     "path": "skills/brand-profile/scripts/sensitive_topics.py",
+     "adopted": true
+    },
+    {
+     "path": "skills/mkt-content-plan/scripts/sensitive_topics.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/mkt-engage/scripts/sensitive_topics.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/mkt-social-copy/scripts/sensitive_topics.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/mkt-vote-round/scripts/sensitive_topics.py",
+     "adopted": false
+    }
+   ]
+  },
+  {
+   "source": "shared/scripts/voice_stats.py",
+   "to": [
+    {
+     "path": "skills/brand-voice/scripts/voice_stats.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/mkt-social-copy/scripts/voice_stats.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/mkt-vote-round/scripts/voice_stats.py",
+     "adopted": false
+    }
+   ]
+  },
+  {
+   "source": "shared/scripts/check_post.py",
+   "to": [
+    {
+     "path": "skills/mkt-social-copy/scripts/check_post.py",
+     "adopted": false
+    },
+    {
+     "path": "skills/mkt-vote-round/scripts/check_post.py",
+     "adopted": false
+    }
+   ]
+  },
+  {
+   "source": "contracts/environment.md",
+   "between": [
+    "<!-- class-table:begin -->",
+    "<!-- class-table:end -->"
+   ],
+   "header": "# Requirement classes\n",
+   "to": [
+    {
+     "path": "skills/core-orchestrator/references/requirement-classes.md",
+     "adopted": false
+    }
+   ]
+  },
+  {
+   "source": "contracts/project-layout.md",
+   "between": [
+    "<!-- owner-table:begin -->",
+    "<!-- owner-table:end -->"
+   ],
+   "header": "# Owning skills\n",
+   "to": [
+    {
+     "path": "skills/core-orchestrator/references/owners.md",
+     "adopted": false
+    }
+   ]
+  }
+ ]
+}

@@ -1,6 +1,6 @@
 # Mailbox providers
 
-Implementations of the `mailbox` class: search and read the user's own messages. Interface: `providers/CONTRACT.md`. Selected with `MAILBOX_PROVIDER=gmail`; `python3 scripts/doctor.py` then runs `gmail.py --check` for any skill that requires the class.
+Implementations of the `reader:email` class (`mailbox` until 2026-10-02; the folder and `MAILBOX_PROVIDER` keep that name): search and read the user's own messages. Interface: `providers/CONTRACT.md`. Selected with `MAILBOX_PROVIDER=gmail`; `python3 scripts/doctor.py` then runs `gmail.py --check` for any skill that requires the class.
 
 The first use is backlog PB5: finding new comments on the user's LinkedIn posts through the notification e-mails LinkedIn sends, because LinkedIn's API answers 403 when the member's comments are read.
 

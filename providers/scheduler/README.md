@@ -1,6 +1,6 @@
 # Scheduler providers
 
-Implementations of the `scheduler` class. Interface: `providers/CONTRACT.md` (`schedule (--at <ISO-8601> | --every <minutes>) --command-file <f> [--approved <digest>]`, `list`, `cancel --id <id>`, `resolve --id <id> (--done | --failed)`).
+Implementations of the `scheduler:job` class (`scheduler` until 2026-10-02; the folder and `SCHEDULER_PROVIDER` keep that name). Interface: `providers/CONTRACT.md` (`schedule (--at <ISO-8601> | --every <minutes>) --command-file <f> [--approved <digest>]`, `list`, `cancel --id <id>`, `resolve --id <id> (--done | --failed)`).
 
 | Implementation | Host | Select with |
 |----------------|------|-------------|
