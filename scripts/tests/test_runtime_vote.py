@@ -106,8 +106,16 @@ FAKE_PUBLISHER = r'''
 import json, os, sys
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(["publisher"] + sys.argv[1:]) + "\n")
-print(json.dumps({"post_urn": "urn:li:share:7300000000000000001",
-                  "post_url": "https://www.linkedin.com/feed/update/urn:li:share:7300000000000000001/"}))
+out = {"post_urn": "urn:li:share:7300000000000000001",
+       "post_url": "https://www.linkedin.com/feed/update/urn:li:share:7300000000000000001/"}
+if os.environ.get("FAKE_FIRST_COMMENT_FAIL"):
+    # What the publisher does when the post went out and only its first comment failed: the post's address on
+    # stdout, the comment's error next to it, and its service exit code.
+    out.update(first_comment=None, first_comment_error="LinkedIn returned 403 on POST /v2/socialActions/x/comments")
+    print(json.dumps(out))
+    print("error: the post is published but its first comment failed", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps(out))
 '''
 
 
@@ -397,6 +405,41 @@ def test_vote_job_publishes_then_records_the_post(env, tmp_path):
     assert closed["post_url"] == out["post_url"]
     posts = json.loads((env["profile"] / "data/posts.json").read_text())
     assert posts[-1]["url"] == out["post_url"] and posts[-1]["image"] == f"assets/posts/{b['key']}.png"
+
+
+def test_vote_job_records_a_post_whose_first_comment_failed(env, monkeypatch):
+    # FR-I12: with only the first comment failing, the publisher prints post_url and exits with its service
+    # code. The job then said "publish failed; nothing was recorded" for a post that is public, and a rerun
+    # of the round could publish it again.
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    monkeypatch.setenv("FAKE_FIRST_COMMENT_FAIL", "1")
+    r = subprocess.run([sys.executable] + job["argv"][1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    out = json.loads(r.stdout)
+    assert out["published"] is True and out["recorded"] is True, r.stderr
+    assert "403" in out["first_comment_error"] and "first comment" in out["error"]
+    assert "nothing was recorded" not in r.stdout
+    assert r.returncode == 1  # a step failed: the scheduler shows the job as failed, with the post's address
+    pick = json.loads((env["profile"] / "data/pick.json").read_text())
+    closed = [h for h in pick["history"] if h["round"] == "2026-10-05"][0]
+    assert closed["post_url"] == out["post_url"]
+    assert len([c for c in calls(env, "vcs") if c[0] == "commit-files"]) == 1
+
+
+def test_vote_job_without_a_post_address_records_nothing(env, tmp_path):
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    (env["wb"] / "providers/publisher/linkedin.py").write_text(
+        "import sys\nprint('error: LinkedIn returned 400', file=sys.stderr)\nsys.exit(1)\n")
+    argv = [str(env["wb"] / "providers/publisher/linkedin.py") if a.endswith("linkedin.py") else a for a in job["argv"]]
+    r = subprocess.run([sys.executable] + argv[1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    out = json.loads(r.stdout)
+    assert r.returncode == 1 and out["published"] is False and "nothing was recorded" in out["error"]
+    assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
 
 
 def test_the_vote_job_uses_the_system_interpreter_and_carries_the_configured_folders(env, tmp_path):

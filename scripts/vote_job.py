@@ -12,7 +12,9 @@ The scheduler starts it with the system interpreter (/usr/bin/python3) and a sho
 (runtime.json's "path") goes first on PATH, so that uv resolves where the person installed it.
 
 Steps, each only when the one before it succeeded:
-  1. publish the post (with its first comment and image) with the publisher and the idempotency key <key>;
+  1. publish the post (with its first comment and image) with the publisher and the idempotency key <key>. The
+     step succeeded when the publisher printed the post's address (post_url): a post that went out while only
+     its first comment failed is recorded like any other, and the comment's error is reported at the end;
   2. read data/pick.json, data/pick-queue.json and data/posts.json from the repository (read only), as they
      are now: the profile's own workflow may have committed since the approval;
   3. compute the recorded files with vote_update.py --record-post (post_url on the round, the post in
@@ -25,7 +27,8 @@ vote_update.py and vote_state.py sit in one folder and the import between them w
 all of it at once (scripts/runtime.py approve); a failure after the post went out leaves the post published
 and prints what to record by hand.
 
-Prints JSON on stdout, diagnostics on stderr. Exit 0 all done, 1 a step failed, 2 usage error.
+Prints JSON on stdout, diagnostics on stderr. Exit 0 all done, 1 a step failed (the first comment included),
+2 usage error. "published" and "recorded" in the JSON say how far it got.
 Standard library only; the providers run through uv.
 """
 from __future__ import annotations
@@ -49,7 +52,9 @@ def log(message: str) -> None:
 
 def call(cmd: list, timeout: int = TIMEOUT) -> tuple[int, dict, str]:
     try:
-        r = subprocess.run([str(c) for c in cmd], capture_output=True, text=True, timeout=timeout)
+        # errors="replace": a provider that prints bytes that are not UTF-8 must not end the job in a traceback
+        # after the post went out.
+        r = subprocess.run([str(c) for c in cmd], capture_output=True, text=True, errors="replace", timeout=timeout)
     except subprocess.TimeoutExpired:
         return 124, {}, f"timeout after {timeout} s"
     except OSError as e:
@@ -99,12 +104,20 @@ def main(argv=None) -> int:
     if a.image:
         pub += ["--media", a.image]
     code, out, err = call(pub + ["--confirmed"])
-    if code != 0 or not out.get("post_url"):
+    if not out.get("post_url"):
         log(f"publish exited {code}: {err}")
         result["error"] = f"publish failed ({code}); nothing was recorded"
         print(json.dumps(result, indent=1))
         return 1
+    # The post's address means the post is public, whatever the exit code: the publisher exits with its service
+    # code when the post went out and only its first comment failed. The post is recorded all the same, and
+    # the comment's error is reported at the end.
     result.update(published=True, post_url=out["post_url"], replayed=out.get("replayed"))
+    comment_error = None
+    if code != 0:
+        comment_error = str(out.get("first_comment_error") or err or f"the publisher exited {code}")
+        log(f"publish exited {code} after the post went out: {comment_error}")
+        result["first_comment_error"] = comment_error
 
     data = work / "current"
     data.mkdir(exist_ok=True, mode=0o700)
@@ -130,8 +143,7 @@ def main(argv=None) -> int:
     if not files:
         result["recorded"] = True
         result["note"] = "the vote files already held this post"
-        print(json.dumps(result, indent=1))
-        return 0
+        return done(result, comment_error)
     message = work / "message.txt"
     message.write_text(f"vote: record the post of round {a.round}\n\n{result['post_url']}\n", encoding="utf-8")
     commit = ["uv", "run", a.vcs, "commit-files", "--repo", a.repo, "--branch", a.branch,
@@ -144,13 +156,26 @@ def main(argv=None) -> int:
     if code != 0:
         return finish(result, f"commit-files exited {code}: {err}")
     result.update(recorded=True, commit=out.get("commit"), unchanged=out.get("unchanged"))
+    return done(result, comment_error)
+
+
+def done(result: dict, comment_error) -> int:
+    """The post is out and recorded. Exit 1 when its first comment failed, so that the job shows as failed."""
+    if comment_error:
+        result["error"] = ("the post is published and recorded, but its first comment failed: "
+                           f"{comment_error}")
+        result["by_hand"] = ("post the first comment yourself, or run the publisher's publish command again with "
+                             f"the same key ({result['key']}): the post is not published again, only the comment "
+                             "is retried; a comment key left pending is settled with the publisher's resolve first")
     print(json.dumps(result, indent=1))
-    return 0
+    return 1 if comment_error else 0
 
 
 def finish(result: dict, error: str) -> int:
     """The post is out but the record failed: say what to record by hand."""
     log(error)
+    if result.get("first_comment_error"):
+        error = f"{error}; its first comment failed too: {result['first_comment_error']}"
     result["error"] = error
     result["by_hand"] = (f"record post_url {result['post_url']} on round {result['round']} with "
                          "mkt-vote-round's vote_update.py --record-post, then commit data/pick.json and data/posts.json")
