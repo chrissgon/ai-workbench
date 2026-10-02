@@ -168,6 +168,7 @@ Exit codes: 0 ok; 1 the iteration is incomplete (a run or a grading failed on in
 """
 import concurrent.futures
 import datetime
+import glob
 import importlib.util
 import json
 import os
@@ -320,8 +321,11 @@ def parse(argv):
 def resolve_pass_env(names):
     """Fill a --pass-env variable missing from the environment from the workbench's secret resolver
     (providers/secrets/resolver.py: the OS secret store), so a key kept there reaches the runs
-    without an export. Only secrets whose registered readers include eval_run.py are filled;
-    other names and values that are not found are left alone."""
+    without an export. The names come from the caller (the flags, and floor_pass_env and
+    strong_pass_env of the gate file, their one home): each is checked against the secrets the
+    adapters register in the "secrets" list of their adapter.json, and no name is taken from that
+    registry. Only secrets whose registered readers include eval_run.py are filled; other names and
+    values that are not found are left alone."""
     path = os.path.join(ROOT, "providers", "secrets", "resolver.py")
     missing = [n for n in names if not os.environ.get(n)]
     if not missing or not os.path.isfile(path):
@@ -330,6 +334,13 @@ def resolve_pass_env(names):
     resolver = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = resolver  # dataclasses look their module up here
     spec.loader.exec_module(resolver)
+    # The core's registry holds the providers' credentials; a model provider's key is registered by the
+    # adapter that reads it, and the resolver merges a manifest only when it is handed one.
+    for manifest in sorted(glob.glob(os.path.join(ROOT, "adapters", "*", "adapter.json"))):
+        try:
+            resolver.register_file(manifest)
+        except ValueError as e:
+            die(f"the secrets list of {os.path.relpath(manifest, ROOT)} is not valid: {e}", 2)
     filled = []
     for name in missing:
         secret = resolver.REGISTRY.get(name)

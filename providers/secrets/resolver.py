@@ -13,15 +13,23 @@ The first non-empty value wins. Values are never printed, logged or written, not
 Adding a backend (a password manager) means adding one lookup function to BACKENDS; callers do
 not change.
 
-Usage:
-  python3 providers/secrets/resolver.py --list [--json]
-  python3 providers/secrets/resolver.py --check <NAME>
+The registry below holds the secrets the core reads: the providers' credentials. An adapter
+registers the secrets its own runs need in the "secrets" list of adapters/<harness>/adapter.json.
+The resolver never opens an adapter by itself: a caller outside the core hands it the file
+(--registry <file>, or register_file(path)), and the list is merged into the registry for that call.
 
-  --list    every registered secret: purpose, minimum permission, readers, whether it is found
-            and where (environment or store), and how to set it; never the value
-  --check   exit 0 when <NAME> is found, 3 when not, 2 when <NAME> is not registered
-  --json    machine-readable output for --list
-  --help    this text
+Usage:
+  python3 providers/secrets/resolver.py [--registry <file>]... --list [--json]
+  python3 providers/secrets/resolver.py [--registry <file>]... --check <NAME>
+
+  --list      every registered secret: purpose, minimum permission, readers, whether it is found
+              and where (environment or store), and how to set it; never the value
+  --check     exit 0 when <NAME> is found, 3 when not, 2 when <NAME> is not registered
+  --registry  a JSON file whose "secrets" list is merged into the registry first (repeatable);
+              each entry has name, purpose, permission and readers, and optionally
+              store_username, aliases, note and set_local
+  --json      machine-readable output for --list
+  --help      this text
 
 Setting a secret:
   cloud session  the environment's settings, as an environment variable named like the secret
@@ -101,34 +109,68 @@ REGISTRY: dict[str, Secret] = {s.name: s for s in (
            "the Desktop app client's secret",
            ("providers/mailbox/auth.py", "providers/mailbox/gmail.py"),
            store_username="gmail-client-secret"),
-    Secret("OPENROUTER_API_KEY",
-           "run the floor model's eval runs through OpenRouter, and the runtime's model calls through the "
-           "API adapter when its model is openrouter/<vendor>/<model>",
-           "a key used only for evals and the runtime; a credit limit on it is recommended",
-           ("evals/eval_run.py --pass-env", "adapters/agents-dir/run-prompt.sh",
-            "adapters/api/run_agent.py"),
-           store_username="openrouter"),
-    Secret("CLAUDE_CODE_OAUTH_TOKEN",
-           "the strong model's eval runs and gradings inside the eval container, where the CLI's login and the "
-           "keychain do not exist",
-           "a long-lived token of the maintainer's own account, made with the CLI's setup-token command",
-           ("evals/eval_run.py strong_pass_env", "adapters/claude-code/run-prompt.sh"),
-           store_username="claude-code-oauth"),
-    Secret("DEEPSEEK_API_KEY",
-           "run the floor model's eval runs through DeepSeek's own API, when the floor model id is deepseek/<model>",
-           "a key used only for evals; a spending limit on it is recommended",
-           ("evals/eval_run.py --floor-pass-env", "adapters/agents-dir/run-prompt.sh"),
-           store_username="deepseek"),
-    Secret("ANTHROPIC_API_KEY",
-           "the runtime's model calls through the API adapter (adapters/api/) when its model is anthropic/<model>",
-           "an API key with a spend limit",
-           ("adapters/api/run_agent.py",),
-           store_username="anthropic"),
 )}
 
 
 class NotRegistered(KeyError):
     pass
+
+
+ENTRY_REQUIRED = ("name", "purpose", "permission", "readers")
+ENTRY_OPTIONAL = ("store_username", "aliases", "note", "set_local")
+_NAME_OK = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
+
+
+def register(entries, origin: str = "a registry") -> list[str]:
+    """Merge secrets registered outside the core (the "secrets" list of an adapter's manifest) into
+    REGISTRY and return their names. An entry is a mapping with name, purpose, permission and
+    readers, and optionally store_username, aliases, note and set_local. A name registered twice
+    must agree on where it is looked up (store username and aliases); its readers are joined and
+    the first purpose, permission and note stay. Anything else raises ValueError, before any entry
+    is merged, so a malformed registry never leaves half of itself behind."""
+    if not isinstance(entries, list):
+        raise ValueError(f"{origin}: \"secrets\" must be a list")
+    merged: dict[str, Secret] = {}
+    for entry in entries:
+        if not isinstance(entry, dict):
+            raise ValueError(f"{origin}: every secret is an object")
+        unknown = sorted(set(entry) - set(ENTRY_REQUIRED) - set(ENTRY_OPTIONAL))
+        missing = [k for k in ENTRY_REQUIRED if not entry.get(k)]
+        if unknown or missing:
+            raise ValueError(f"{origin}: a secret has unknown keys {unknown} or lacks {missing}")
+        name, readers, aliases = entry["name"], entry["readers"], entry.get("aliases") or []
+        texts = [name, entry["purpose"], entry["permission"], *(entry.get(k) or "" for k in ENTRY_OPTIONAL if k != "aliases")]
+        if not all(isinstance(t, str) for t in texts) or not all(
+                isinstance(group, list) and all(isinstance(x, str) and x for x in group) for group in (readers, aliases)):
+            raise ValueError(f"{origin}: {name!r} has a value of the wrong type")
+        if not name or name[0].isdigit() or any(c not in _NAME_OK for c in name):
+            raise ValueError(f"{origin}: {name!r} is not a variable name in capitals")
+        new = Secret(name, entry["purpose"], entry["permission"], tuple(readers),
+                     store_username=entry.get("store_username") or None, aliases=tuple(aliases),
+                     note=entry.get("note") or "", set_local=entry.get("set_local") or "")
+        old = merged.get(name) or REGISTRY.get(name)
+        if old is not None:
+            if (old.store_username, old.aliases) != (new.store_username, new.aliases):
+                raise ValueError(f"{origin}: {name} is already registered with another store username or other aliases")
+            new = Secret(old.name, old.purpose, old.permission,
+                         old.readers + tuple(r for r in new.readers if r not in old.readers),
+                         store_username=old.store_username, aliases=old.aliases, note=old.note, set_local=old.set_local)
+        merged[name] = new
+    REGISTRY.update(merged)
+    return list(merged)
+
+
+def register_file(path) -> list[str]:
+    """Merge the "secrets" list of a JSON file (an adapter's manifest) into REGISTRY. A file with no
+    such list registers nothing; a file that cannot be read or parsed raises ValueError."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError) as e:
+        raise ValueError(f"{path}: cannot be read as JSON ({type(e).__name__})") from None
+    if not isinstance(data, dict) or "secrets" not in data:
+        return []
+    return register(data["secrets"], origin=str(path))
 
 
 def _from_env(secret: Secret, environ) -> tuple[str, str] | None:
@@ -200,6 +242,19 @@ def main(argv: list[str]) -> int:
     if not argv or argv[0] in ("--help", "-h"):
         print(__doc__)
         return 0 if argv else EXIT_USAGE
+    while argv and argv[0] == "--registry":
+        if len(argv) < 2:
+            print("error: --registry needs a file; see --help", file=sys.stderr)
+            return EXIT_USAGE
+        try:
+            register_file(argv[1])
+        except ValueError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return EXIT_USAGE
+        argv = argv[2:]
+    if not argv:
+        print("error: --registry goes with --list or --check; see --help", file=sys.stderr)
+        return EXIT_USAGE
     if argv[0] == "--list" and len(argv) <= 2 and (len(argv) == 1 or argv[1] == "--json"):
         rows = report()
         if "--json" in argv:

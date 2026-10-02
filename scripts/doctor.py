@@ -19,12 +19,14 @@ Options:
   --strict          exit 1 when any required class is missing
   --help            show this text
 
-It also lists every secret registered in providers/secrets/resolver.py: found or missing, where
+It also lists every secret registered in providers/secrets/resolver.py or by an adapter (the
+"secrets" list of its adapter.json): found or missing, where
 it was found (environment or OS secret store), which classes read it and how to set it. It never
 prints a value. Missing secrets do not change the exit code; see contracts/secrets.md.
 
 Exit codes: 0 ok, 1 missing classes with --strict, 2 usage error.
 """
+import glob
 import importlib.util
 import json
 import os
@@ -151,6 +153,12 @@ def secrets_report(classes):
     if not os.path.isfile(path):
         return []
     resolver = _load("workbench_secret_resolver", path)
+    # The core's registry holds the providers' credentials; each adapter registers its own.
+    for manifest in sorted(glob.glob(os.path.join(ADAPTERS, "*", "adapter.json"))):
+        try:
+            resolver.register_file(manifest)
+        except ValueError as e:
+            print(f"warning: {e}", file=sys.stderr)
     rows = []
     for row in resolver.report():
         folders = {r.split("/")[1] for r in row["readers"] if r.startswith("providers/")}

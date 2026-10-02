@@ -210,6 +210,47 @@ def test_pass_env_fills_a_registered_secret_from_the_resolver(tmp_path, monkeypa
     assert os.environ["SET_ALREADY"] == "kept"
 
 
+def test_pass_env_checks_names_against_what_the_adapters_register_and_takes_none_from_it(tmp_path, monkeypatch):
+    """The core's registry names no adapter secret: the runner hands every adapter's manifest to the
+    resolver, then looks up only the names it was given (the gate file's and the flags')."""
+    resolver = tmp_path / "providers" / "secrets" / "resolver.py"
+    resolver.parent.mkdir(parents=True)
+    resolver.write_text("import json\n"
+                        "class S:\n    def __init__(self, readers):\n        self.readers = readers\n"
+                        "REGISTRY = {}\n"
+                        "def register_file(path):\n"
+                        "    for e in json.load(open(path)).get('secrets', []):\n"
+                        "        if e['name'] == 'BROKEN':\n            raise ValueError('lacks readers')\n"
+                        "        REGISTRY[e['name']] = S(tuple(e['readers']))\n"
+                        "def resolve(name):\n    return ('from-store', 'secret store')\n")
+    manifest = tmp_path / "adapters" / "demo" / "adapter.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text(json.dumps({"harness": "demo", "secrets": [
+        {"name": "DEMO_KEY", "readers": ["evals/eval_run.py --pass-env", "adapters/demo/run-prompt.sh"]},
+        {"name": "NEVER_ASKED_KEY", "readers": ["evals/eval_run.py --pass-env"]},
+        {"name": "RUNTIME_ONLY_KEY", "readers": ["adapters/demo/run_agent.py"]}]}))
+    (tmp_path / "adapters" / "plain").mkdir()
+    (tmp_path / "adapters" / "plain" / "adapter.json").write_text(json.dumps({"harness": "plain"}))
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    for name in ("DEMO_KEY", "NEVER_ASKED_KEY", "RUNTIME_ONLY_KEY", "HTTPS_PROXY_DEMO"):
+        monkeypatch.delenv(name, raising=False)
+    assert er.resolve_pass_env(["DEMO_KEY", "RUNTIME_ONLY_KEY", "HTTPS_PROXY_DEMO"]) == ["DEMO_KEY (secret store)"]
+    assert os.environ["DEMO_KEY"] == "from-store"
+    assert not {"NEVER_ASKED_KEY", "RUNTIME_ONLY_KEY", "HTTPS_PROXY_DEMO"} & set(os.environ)
+    monkeypatch.delenv("DEMO_KEY")
+    manifest.write_text(json.dumps({"secrets": [{"name": "BROKEN"}]}))
+    with pytest.raises(SystemExit):
+        er.resolve_pass_env(["DEMO_KEY"])
+    assert "DEMO_KEY" not in os.environ
+
+
+def test_the_gate_file_is_the_one_home_of_the_variables_passed_into_runs():
+    gate = json.load(open(os.path.join(REPO, "evals", "eval-gate.json"), encoding="utf-8"))
+    assert gate["floor_pass_env"] and gate["strong_pass_env"]
+    for path in sorted(glob.glob(os.path.join(REPO, "adapters", "*", "adapter.json"))):
+        assert not [k for k in json.load(open(path, encoding="utf-8")) if "pass_env" in k], path
+
+
 @pytest.mark.parametrize("args", [["--runs", "0"], ["--runs", "11"], ["--runs", "two"], ["--timeout", "5"],
                                   ["--max-cost-usd", "1;rm"], ["--max-cost-usd", "-1"]])
 def test_runs_timeout_and_cost_are_checked(args):

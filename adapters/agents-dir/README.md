@@ -25,7 +25,8 @@ The floor model of the eval gate is `openrouter/deepseek/deepseek-v4.1-flash` si
 ```bash
 # OPENROUTER_API_KEY from the environment settings, or stored once in the OS secret store:
 #   uv run --with keyring==25.7.0 keyring set ai-workbench openrouter
-# --pass-env reads it from there when it is not exported (contracts/secrets.md).
+# --pass-env reads it from there when it is not exported (contracts/secrets.md): this adapter registers
+# the key in the "secrets" list of its adapter.json; the name to pass stays in evals/eval-gate.json.
 python3 evals/eval_run.py --skill <name>
 # the same, spelled out (what evals/eval-gate.json supplies):
 python3 evals/eval_run.py --skill <name> --harness claude-code --model <strong-id> \

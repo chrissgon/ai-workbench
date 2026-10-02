@@ -292,6 +292,7 @@ def load_resolver():
     mod = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = mod  # dataclasses look their module up here
     spec.loader.exec_module(mod)
+    mod.register_file(HERE / "adapter.json")  # this adapter's own secrets: the core's registry names no adapter
     return mod
 
 
@@ -464,7 +465,7 @@ def main(argv: list[str]) -> int:
     if not found:
         secret = ENDPOINTS[opts["provider"]]["secret"]
         run.log(f"refused: {secret} not found (environment or OS secret store); "
-                f"see python3 providers/secrets/resolver.py --check {secret}")
+                f"see python3 providers/secrets/resolver.py --registry adapters/api/adapter.json --check {secret}")
         return run.finish(CODE_NO_KEY)
     run.key, source = found
     run.log(f"key: {ENDPOINTS[opts['provider']]['secret']} from {source}")

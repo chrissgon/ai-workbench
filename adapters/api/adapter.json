@@ -14,5 +14,25 @@
   },
   "install": "none: nothing is installed; scripts/runtime.py calls run-agent.sh from this folder when runtime.json has \"harness\": \"api\"",
   "generated": [],
-  "runtime_runner": "run-agent.sh"
+  "runtime_runner": "run-agent.sh",
+  "secrets": [
+    {
+      "name": "OPENROUTER_API_KEY",
+      "purpose": "run the floor model's eval runs through OpenRouter, and the runtime's model calls through the API adapter when its model is openrouter/<vendor>/<model>",
+      "permission": "a key used only for evals and the runtime; a credit limit on it is recommended",
+      "readers": [
+        "adapters/api/run_agent.py"
+      ],
+      "store_username": "openrouter"
+    },
+    {
+      "name": "ANTHROPIC_API_KEY",
+      "purpose": "the runtime's model calls through the API adapter (adapters/api/) when its model is anthropic/<model>",
+      "permission": "an API key with a spend limit",
+      "readers": [
+        "adapters/api/run_agent.py"
+      ],
+      "store_username": "anthropic"
+    }
+  ]
 }
