@@ -238,6 +238,11 @@ The ids stay valid. A citation of one of these ids anywhere in the repository (a
   - Plan: A3.
   - Done 2026-10-02 (item A3 of the plan): the brand and runtime sections of the backlog, the inventory, the decisions log and `docs/architecture/weekly-vote.md` name no project, person, account or repository of a real case; the hosting comparison written for one project left the repository. Numbers, dates and lessons stayed (decision 11 of the plan, as narrowed).
 
+- [x] **N16. Planned flows, agents and skills with no backlog id.** `flow-build-feature`, `flow-improve-code`, `flow-new-project`, `flow-implement-ticket`, `flow-business-plan`, `flow-design`, `flow-social-post`, `flow-new-product`; the `explorer` agent; the next version of `design-system`; `biz-validate-idea`, the writer of `docs/business/idea-validation.md`, which `biz-market-analysis` reads when present. They are marked planned wherever they are cited, without an id.
+  - Done when: each has an id here and in the inventory.
+  - Plan: A9 (the ids), phase G (the building).
+  - Done 2026-10-02 (item A9 of the plan): the flows are NS4 to NS11, the `explorer` agent NS12, the next version of `design-system` NS13, `biz-validate-idea` NS14, and the other skills that are not built NS15 to NS39; `flow-brand` already was PB14 and `flow-launch` NS3. The inventory names each id on its row.
+
 ## Dropped, or not tracked here
 
 - **S15. Optional copy of the approved payload.** Dropped on 2026-10-02 (default 85 of the plan). Since 2026-10-01 a payload that is executed later is kept on disk in `.workbench-local/payloads/<date>/` (`contracts/environment.md`), which is what showing a changed payload as a diff needs; a copy under `docs/` would break "the table stores the hash, never the payload" (`contracts/state.md`), would need a rule for payloads with personal data first, and would change every actuator. As it was written:

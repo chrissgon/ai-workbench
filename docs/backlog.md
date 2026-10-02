@@ -186,7 +186,7 @@ Decided on 2026-09-29: the skills for a personal brand, then an agent from this 
 
 ## Next skills
 
-What is built next and in which order is phase G of the plan. Two rules decide it: a skill is written alongside a real task that needs it (a release for `ops-release`, a launch for `mkt-launch-plan`), never from generic knowledge; and the cheapest come first, the flows whose phases are all built. Details per skill are in [inventory.md](inventory.md).
+What is built next and in which order is phase G of the plan. Two rules decide it: a skill is written alongside a real task that needs it (a release for `ops-release`, a launch for `mkt-launch-plan`), never from generic knowledge; and the cheapest come first, the flows whose phases are all built. Details per skill are in [inventory.md](inventory.md), where each row that is not built names its id here.
 
 - [ ] **NS1. Skill `ops-release`.** Release notes and a version, with the side effect `publish`. `eng-docs` already names it as the owner of release notes. No folder yet.
   - Plan: G step 3, with a real release to write it against.
@@ -195,9 +195,60 @@ What is built next and in which order is phase G of the plan. Two rules decide i
 - [ ] **NS3. Flow `flow-launch`.** messaging → launch-plan → content-plan → landing-page → analytics. Two of its phases, `mkt-landing-page` and `mkt-analytics`, are not built either.
   - Plan: G step 4, after NS2.
 
+- [ ] **NS4. Flow `flow-build-feature`.** feature-spec → architecture → unit-tests → implement → integration-tests → code-review → docs → pull-request. Its phases are all built.
+  - Plan: G step 2, first of the three.
+- [ ] **NS5. Flow `flow-improve-code`.** codebase-map or impact-analysis → tradeoffs → refactor → code-review → pull-request. Its phases are all built.
+  - Plan: G step 2.
+- [ ] **NS6. Flow `flow-new-project`.** clarify → prd or feature-spec → backlog → architecture → implement per task → pull-request. Its phases are all built.
+  - Plan: G step 2.
+- [ ] **NS7. Flow `flow-implement-ticket`.** read ticket → clarify → route to fix-bug, build-feature or improve-code → update ticket. Requires `integration:issue-tracker`, for which no provider exists.
+  - Plan: G step 8, as projects ask; after NS4 and NS5.
+- [ ] **NS8. Flow `flow-business-plan`.** validate-idea → ai-opportunity-assessment → market-analysis → icp-positioning → business-model → gtm → business-plan. Five of its seven phases are not built (NS14, NS15, NS16, NS17, NS32).
+  - Plan: G step 8, as projects ask.
+- [ ] **NS9. Flow `flow-design`.** user-research → ux-flows → design-system → brief and execute → handoff. Its first phase is not built (NS21).
+  - Plan: G step 8, as projects ask.
+- [ ] **NS10. Flow `flow-social-post`.** social-copy → asset → confirmation gate → publish → calendar. Its phases are built.
+  - Plan: G step 8, as projects ask.
+- [ ] **NS11. Flow `flow-new-product`.** the capstone: business-plan → discovery, prd, roadmap → brand (optional) → design → new-project → ci-pipeline, release → launch. It invokes other flows one level deep, so it comes after them.
+  - Plan: G step 8, last.
+- [ ] **NS12. Agent `explorer`.** Read-only codebase exploration that returns a map or an impact list (`eng-codebase-map`, `eng-impact-analysis`). No file under `agents/`.
+  - Plan: G step 8, as projects ask.
+- [ ] **NS13. The next version of `design-system`.** Any input (code, images, documents, a live site) or a short interview, and an onboarding prompt for the design tool. A change of an existing skill, tested as the reliability model asks.
+  - Plan: G step 8, as projects ask.
+- [ ] **NS14. Skill `biz-validate-idea`.** The writer of `docs/business/idea-validation.md`, which `biz-market-analysis` reads when present and no built skill writes.
+  - Plan: G step 5, with a real idea to validate.
+
+The other skills the inventory lists and nobody has built. Each has its row in [inventory.md](inventory.md) (what it produces and reads); none is scheduled: a skill is built when a real project needs it, from the templates, and is done when its first full test has passed (phase G of the plan; `design-implementation-validation` is named in its step 8, `mkt-landing-page` and `mkt-analytics` in its step 4, as phases of NS3).
+
+- [ ] **NS15. Skill `biz-business-model`.**
+- [ ] **NS16. Skill `biz-gtm`.**
+- [ ] **NS17. Skill `biz-business-plan`.**
+- [ ] **NS18. Skill `product-discovery`.**
+- [ ] **NS19. Skill `product-metrics`.**
+- [ ] **NS20. Skill `design-implementation-validation`.**
+- [ ] **NS21. Skill `design-user-research`.**
+- [ ] **NS22. Skill `design-accessibility-review`.**
+- [ ] **NS23. Skill `eng-data-model`.**
+- [ ] **NS24. Skill `ops-qa-handover`.**
+- [ ] **NS25. Skill `ops-infra`.**
+- [ ] **NS26. Skill `ops-observability`.**
+- [ ] **NS27. Skill `ops-incident`.**
+- [ ] **NS28. Skill `mkt-landing-page`.**
+- [ ] **NS29. Skill `mkt-seo`.**
+- [ ] **NS30. Skill `mkt-email`.**
+- [ ] **NS31. Skill `mkt-analytics`.**
+- [ ] **NS32. Skill `ai-opportunity-assessment`.**
+- [ ] **NS33. Skill `ai-feature-requirements`.**
+- [ ] **NS34. Skill `ai-ux-patterns`.**
+- [ ] **NS35. Skill `ai-llm-integration`.**
+- [ ] **NS36. Skill `ai-evals`.**
+- [ ] **NS37. Skill `ai-governance`.**
+- [ ] **NS38. Skill `ai-observability-cost`.**
+- [ ] **NS39. Skill `ai-ml-model`.**
+
 ## Found by the audit of 2026-10-02
 
-Work the code or the documents show is needed and no item owned (N1 to N19: the backlog audit, "Not covered by any item"; N20 to N22: the review of the providers and the runtime; N23 and N24: the reliability model). N3 and N17 are in the archive, with the reason; so are N8, N18 and N19, done on 2026-10-02.
+Work the code or the documents show is needed and no item owned (N1 to N19: the backlog audit, "Not covered by any item"; N20 to N22: the review of the providers and the runtime; N23 and N24: the reliability model). N3 and N17 are in the archive, with the reason; so are N8, N16, N18 and N19, done on 2026-10-02.
 
 - [ ] **N1. The wiring test of the CI workflow.** The `python39` job, which failed on `main` because it named five test files that had moved into the skills, is repaired (pull request #45). Open: `scripts/tests/test_checks_wiring.py` requires that every path a file under `.github/workflows/` names exists, and the jobs of `checks.yml` get a `timeout-minutes`.
   - Plan: A1.
@@ -230,9 +281,6 @@ Work the code or the documents show is needed and no item owned (N1 to N19: the 
   - Plan: lane F7.
 - [ ] **N15. Containment of runtime agents.** T5 (archived) promised the eval containment as the sandbox of runtime agents. Today a runtime agent is limited by its tool list only (`run-agent.sh --tools Read,Glob,Grep`).
   - Plan: lane F2, with R1.
-- [ ] **N16. Planned flows, agents and skills with no backlog id.** `flow-build-feature`, `flow-improve-code`, `flow-new-project`, `flow-implement-ticket`, `flow-business-plan`, `flow-design`, `flow-social-post`, `flow-new-product`; the `explorer` agent; the next version of `design-system`; `biz-validate-idea`, the writer of `docs/business/idea-validation.md`, which `biz-market-analysis` reads when present. They are marked planned wherever they are cited, without an id.
-  - Done when: each has an id here and in the inventory.
-  - Plan: A9 (the ids), phase G (the building).
 - [ ] **N20. Runtime and providers: what loses work or state today.** For a project that runs the runtime as it is: a vote round silently lost when an item is rejected; an error that is not the runtime's own leaving claimed events and a run row in `running`; a run of unknown cost not counted against the daily cap; a mailbox search that is cut without saying so; and the other findings of that class in `architecture/audit-2026-10-02/round2-providers-runtime.md`.
   - Done when: each finding the plan lists under HP1 has its fix and the test the report names.
   - Plan: HP1, from the first day; it touches no skill folder and nothing the measurement covers.

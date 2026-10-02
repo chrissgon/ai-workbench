@@ -4,7 +4,7 @@ What the workbench should contain, per area. This is a plan, not a promise: a sk
 
 **State legend.** `reuse`: content carried over from earlier work, adapted to the template. `rewrite`: same purpose, new content (the earlier one was organization-specific, stack-bound or duplicated). `merge`: folded into another skill. `create`: no prior content; must be written alongside a real task, never from generic knowledge. `planned`: not built until a real project demands it.
 
-**Wave** is the build order (see the end of this document).
+**Wave** is the build order (see the end of this document). A row that is not built names its id in [backlog.md](backlog.md), where the plan for it is.
 
 ## Core (`core-`), horizontal
 
@@ -27,12 +27,12 @@ All six come from splitting two earlier prompts of more than 500 lines each, whi
 
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
-| biz-validate-idea | docs/business/idea-validation.md | — | rewrite | 2 |
+| biz-validate-idea | docs/business/idea-validation.md | — | rewrite (backlog NS14) | 2 |
 | biz-market-analysis | docs/business/market.md | idea-validation (optional), research briefs | built; grounded in earlier content and in a real market research; requires `search:web`; scripts rank.py, capacity.py, check_refs.py, lint_market.py | 2 |
 | biz-icp-positioning | docs/business/icp.md, docs/business/positioning.md | market | built; grounded in earlier content and in a real segment research; requires `search:web`; scripts rank.py, check_refs.py, lint_icp.py | 2 |
-| biz-business-model | docs/business/business-model.md, docs/business/pricing.md | icp, positioning | rewrite | 2 |
-| biz-gtm | docs/business/gtm.md | icp, positioning, business-model | rewrite | 2 |
-| biz-business-plan | docs/business/business-plan.md | all of the above | rewrite | 2 |
+| biz-business-model | docs/business/business-model.md, docs/business/pricing.md | icp, positioning | rewrite (backlog NS15) | 2 |
+| biz-gtm | docs/business/gtm.md | icp, positioning, business-model | rewrite (backlog NS16) | 2 |
+| biz-business-plan | docs/business/business-plan.md | all of the above | rewrite (backlog NS17) | 2 |
 
 ## Product (`product-`)
 
@@ -40,10 +40,10 @@ All six come from splitting two earlier prompts of more than 500 lines each, whi
 |-------|----------|-------|-------|------|
 | product-feature-spec | docs/product/specs/<feature>.md: requirements, edge cases, acceptance criteria | prd (optional) | reuse | 1 |
 | product-backlog | docs/product/backlog.md: epics, stories, tasks, dependencies | prd or spec | reuse | 1 |
-| product-discovery | docs/product/discovery.md: problem, hypotheses, segments | business artifacts | create | 2 |
+| product-discovery | docs/product/discovery.md: problem, hypotheses, segments | business artifacts | create (backlog NS18) | 2 |
 | product-prd | docs/product/prd.md | discovery, positioning | rewrite | 2 |
 | product-roadmap | docs/product/roadmap.md: prioritized, with method stated | prd | create | 2 |
-| product-metrics | docs/product/metrics.md: north star, KPIs, instrumentation | prd | create | 2 |
+| product-metrics | docs/product/metrics.md: north star, KPIs, instrumentation | prd | create (backlog NS19) | 2 |
 
 Two spec levels on purpose: `product-prd` is product-level, `product-feature-spec` is feature-level and is what engineering flows consume.
 
@@ -69,9 +69,9 @@ The strategy, identity, voice and guidelines skills come from splitting two earl
 | design-brief | docs/design/briefs/<artifact>.md: brief and prompt for an AI design tool, any visual artifact (screen, mockup, logo, presentation, animation, image) | design-system, flows, messaging | create; replaces design-ui | 3 |
 | design-execute | docs/design/results/<artifact>.md: runs per direction, outputs, critique, decision | briefs | create; automatic with `integration:design-tool`, `generator:image` or a browser, assisted otherwise; side effect `create`; replaces design-generate-asset | 3 |
 | design-handoff | docs/design/handoff/<screen>.md: implementation spec from an approved design or export | results, briefs, design-system, flows, specs | create | 3 |
-| design-implementation-validation | validation report, design vs. code | handoff or design tool, code | reuse, restructure to standard folders; requires `integration:design-tool` | 3 |
-| design-user-research | docs/design/research.md: plan, guide, synthesis | discovery | create | 3 |
-| design-accessibility-review | docs/design/a11y-audit.md | screens or code | create | 5 |
+| design-implementation-validation | validation report, design vs. code | handoff or design tool, code | reuse, restructure to standard folders; requires `integration:design-tool` (backlog NS20) | 3 |
+| design-user-research | docs/design/research.md: plan, guide, synthesis | discovery | create (backlog NS21) | 3 |
+| design-accessibility-review | docs/design/a11y-audit.md | screens or code | create (backlog NS22) | 5 |
 
 ## Engineering (`eng-`)
 
@@ -91,7 +91,7 @@ The most mature area: its content comes from earlier work. Stack-agnostic proced
 | eng-code-review | review report; perspectives (quality, edge cases, regression, performance, security) and a bug-fix checklist | diff | merge | 1 |
 | eng-docs | documentation updates for the change | changes | reuse | 1 |
 | eng-security-review | security review of a project: 0.1 triages dependency alerts (grouped by manifest and package, update or dismiss with the host's reason, dismissals behind a confirmation gate); later secrets, authentication and authorization, input handling, configuration (backlog S14) | alerts from `integration:vcs`, codebase | built, 0.1 (dependency alerts); grounded in the triage of this repository's 30 dependency alerts on 2026-09-28 | — |
-| eng-data-model | schema and migration plan | architecture | planned | — |
+| eng-data-model | schema and migration plan | architecture | planned (backlog NS23) | — |
 
 ## Delivery and operations (`ops-`)
 
@@ -101,11 +101,11 @@ The most mature area: its content comes from earlier work. Stack-agnostic proced
 | ops-branch-sync | branch updated with its base, conflicts resolved | — | rewrite, generic; side effect `push` | 1 |
 | ops-repo-baseline | a repository's security baseline: CI with pinned actions, CODEOWNERS, Dependabot, SECURITY.md, pre-commit hook, and the host settings (ruleset with signed commits, linear history and required checks; squash only; secret scanning with push protection; private reporting) applied after one approval or as a checklist | repository | built, 0.1; grounded in this repository's setup of 2026-09-27; writes the in-repository files and the host checklist, changes no host setting (backlog S17 for that) | — |
 | ops-ci-pipeline | pipeline configuration, settings checklist, Pipeline section of the plan | repository | create; requires `integration:vcs`; side effect `push` | 4 |
-| ops-release | release notes and version | changes | create; side effect `publish` | 4 |
-| ops-qa-handover | docs/delivery/qa/<ticket>.md | diff, spec | rewrite | 5 |
-| ops-infra | infrastructure as code | architecture | planned | — |
-| ops-observability | dashboards and alerts plan | architecture | planned | — |
-| ops-incident | runbook and postmortem | incident | planned | — |
+| ops-release | release notes and version | changes | create; side effect `publish` (backlog NS1) | 4 |
+| ops-qa-handover | docs/delivery/qa/<ticket>.md | diff, spec | rewrite (backlog NS24) | 5 |
+| ops-infra | infrastructure as code | architecture | planned (backlog NS25) | — |
+| ops-observability | dashboards and alerts plan | architecture | planned (backlog NS26) | — |
+| ops-incident | runbook and postmortem | incident | planned (backlog NS27) | — |
 
 ## Marketing and growth (`mkt-`)
 
@@ -114,29 +114,29 @@ No prior content. Every skill here is `create` and must be written alongside a r
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
 | mkt-messaging | docs/marketing/messaging.md | positioning, brand voice | create | 4 |
-| mkt-launch-plan | docs/marketing/launch-plan.md | messaging, gtm | create | 4 |
+| mkt-launch-plan | docs/marketing/launch-plan.md | messaging, gtm | create (backlog NS2) | 4 |
 | mkt-content-plan | docs/marketing/calendar.md | launch-plan | create | 4 |
 | mkt-social-copy | docs/marketing/content/<post>.md | messaging, voice | create | 4 |
 | mkt-publish | a scheduled or published post, recorded in calendar and state | content, asset | create; requires `publisher:<platform>`; side effect `publish` | 4 |
 | mkt-engage | replies to comments on the person's own posts inside an engagement policy | voice, strategy, notification e-mails | create; requires `publisher:<platform>` and a mailbox class; side effect `publish` (backlog PB6) | 4 |
 | mkt-vote-round | the weekly vote's post and the next round's topics, for one approval | vote files, calendar, voice, strategy | create; requires `integration:vcs` (backlog PB15) | 4 |
-| mkt-landing-page | docs/marketing/landing.md: structure and copy | messaging | create | 5 |
-| mkt-seo | docs/marketing/seo.md | landing, content | create | 5 |
-| mkt-email | docs/marketing/campaigns/<name>.md | messaging | create; requires `mailer` for the send step; side effect `send` | 5 |
-| mkt-analytics | docs/marketing/analytics.md: measurement plan, experiments | launch-plan | create | 5 |
+| mkt-landing-page | docs/marketing/landing.md: structure and copy | messaging | create (backlog NS28) | 5 |
+| mkt-seo | docs/marketing/seo.md | landing, content | create (backlog NS29) | 5 |
+| mkt-email | docs/marketing/campaigns/<name>.md | messaging | create; requires `mailer` for the send step; side effect `send` (backlog NS30) | 5 |
+| mkt-analytics | docs/marketing/analytics.md: measurement plan, experiments | launch-plan | create (backlog NS31) | 5 |
 
 ## AI and machine learning (`ai-`), horizontal
 
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
-| ai-opportunity-assessment | docs/ai/opportunity.md; must be able to conclude "no AI here" | idea or discovery | create | 2 |
-| ai-feature-requirements | docs/ai/requirements.md: quality metrics, fallbacks, cost ceiling | prd, opportunity | create | 5 |
-| ai-ux-patterns | docs/ai/ux.md: uncertainty, feedback, human-in-the-loop | flows | create | 5 |
-| ai-llm-integration | code plus docs/ai/integration.md: prompts, retrieval, tool use | requirements | create | 5 |
-| ai-evals | docs/ai/evals/: datasets, graders, thresholds for the product's AI | requirements | create | 5 |
-| ai-governance | docs/ai/governance.md: privacy, prompt injection, compliance | requirements | create | 5 |
-| ai-observability-cost | monitoring and cost plan | integration | planned | — |
-| ai-ml-model | classical model and its training data plan | data | planned | — |
+| ai-opportunity-assessment | docs/ai/opportunity.md; must be able to conclude "no AI here" | idea or discovery | create (backlog NS32) | 2 |
+| ai-feature-requirements | docs/ai/requirements.md: quality metrics, fallbacks, cost ceiling | prd, opportunity | create (backlog NS33) | 5 |
+| ai-ux-patterns | docs/ai/ux.md: uncertainty, feedback, human-in-the-loop | flows | create (backlog NS34) | 5 |
+| ai-llm-integration | code plus docs/ai/integration.md: prompts, retrieval, tool use | requirements | create (backlog NS35) | 5 |
+| ai-evals | docs/ai/evals/: datasets, graders, thresholds for the product's AI | requirements | create (backlog NS36) | 5 |
+| ai-governance | docs/ai/governance.md: privacy, prompt injection, compliance | requirements | create (backlog NS37) | 5 |
+| ai-observability-cost | monitoring and cost plan | integration | planned (backlog NS38) | — |
+| ai-ml-model | classical model and its training data plan | data | planned (backlog NS39) | — |
 
 ## Assistant (`asst-`), optional
 
@@ -149,16 +149,16 @@ Only `flow-fix-bug` is built (2026-10-02). Every other row is planned: its name 
 | Flow | Area | Phases | State | Wave |
 |------|------|--------|-------|------|
 | flow-fix-bug | engineering | root-cause → unit-tests → impact-analysis (optional) → tradeoffs (optional) → implement → integration-tests (optional) → docs (optional) → code-review → pull-request | rewrite | 1 |
-| flow-build-feature | engineering | feature-spec → architecture → unit-tests → implement → integration-tests → code-review → docs → pull-request | rewrite | 1 |
-| flow-improve-code | engineering | codebase-map or impact-analysis → tradeoffs → refactor → code-review → pull-request | rewrite | 1 |
-| flow-new-project | engineering | clarify → prd or feature-spec → backlog → architecture → implement per task → pull-request | rewrite | 1 |
-| flow-implement-ticket | engineering | read ticket → clarify → route to fix-bug, build-feature or improve-code → update ticket | create; requires `integration:issue-tracker` | 1 |
-| flow-business-plan | business | validate-idea → ai-opportunity-assessment → market-analysis → icp-positioning → business-model → gtm → business-plan | rewrite | 2 |
-| flow-brand | brand | profile (person) → name → strategy → identity → voice → guidelines | rewrite; phases requested by the user on 2026-09-29 | 3 |
-| flow-design | design | user-research → ux-flows → design-system → ui → handoff | create | 3 |
-| flow-social-post | marketing | social-copy → generate-asset → confirmation gate → publish → calendar | create | 4 |
-| flow-launch | marketing | messaging → launch-plan → content-plan → landing-page → analytics | create | 4 |
-| flow-new-product | cross-area | business-plan → discovery, prd, roadmap → brand (optional) → design → new-project → ci-pipeline, release → launch | create | 5 |
+| flow-build-feature | engineering | feature-spec → architecture → unit-tests → implement → integration-tests → code-review → docs → pull-request | rewrite (backlog NS4) | 1 |
+| flow-improve-code | engineering | codebase-map or impact-analysis → tradeoffs → refactor → code-review → pull-request | rewrite (backlog NS5) | 1 |
+| flow-new-project | engineering | clarify → prd or feature-spec → backlog → architecture → implement per task → pull-request | rewrite (backlog NS6) | 1 |
+| flow-implement-ticket | engineering | read ticket → clarify → route to fix-bug, build-feature or improve-code → update ticket | create; requires `integration:issue-tracker` (backlog NS7) | 1 |
+| flow-business-plan | business | validate-idea → ai-opportunity-assessment → market-analysis → icp-positioning → business-model → gtm → business-plan | rewrite (backlog NS8) | 2 |
+| flow-brand | brand | profile (person) → name → strategy → identity → voice → guidelines | rewrite; phases requested by the user on 2026-09-29 (backlog PB14) | 3 |
+| flow-design | design | user-research → ux-flows → design-system → ui → handoff | create (backlog NS9) | 3 |
+| flow-social-post | marketing | social-copy → generate-asset → confirmation gate → publish → calendar | create (backlog NS10) | 4 |
+| flow-launch | marketing | messaging → launch-plan → content-plan → landing-page → analytics | create (backlog NS3) | 4 |
+| flow-new-product | cross-area | business-plan → discovery, prd, roadmap → brand (optional) → design → new-project → ci-pipeline, release → launch | create (backlog NS11) | 5 |
 
 Flows may invoke flows one level deep (`flow-new-product` invokes `flow-business-plan`, `flow-new-project`, `flow-launch`). Never deeper.
 
@@ -167,7 +167,7 @@ Flows may invoke flows one level deep (`flow-new-product` invokes `flow-business
 | Agent | Purpose | Skills | State | Wave |
 |-------|---------|--------|-------|------|
 | researcher | sourced research in isolation, returns a brief | core-research | create | 0 |
-| explorer | read-only codebase exploration, returns a map or impact list | eng-codebase-map, eng-impact-analysis | planned: no file under `agents/` yet | 1 |
+| explorer | read-only codebase exploration, returns a map or impact list | eng-codebase-map, eng-impact-analysis | planned: no file under `agents/` yet (backlog NS12) | 1 |
 | implementer | writes code and tests for one task in isolation, stack from the project's `AGENTS.md` | eng-implement, eng-unit-tests | rewrite, stack-agnostic | 1 |
 | reviewer | one review perspective per instance; several run in parallel when the harness allows | eng-code-review, core-critique | rewrite | 1 |
 | social-manager | classifies each new comment on a person's own posts and drafts a reply in their voice, and proposes the post and next round of a closed weekly vote; returns a proposal the runtime checks against the approved engagement policy, never acts | mkt-engage, mkt-vote-round | create | 4 |
@@ -298,9 +298,9 @@ Wave 1:
 - [x] ops-pull-request (from two real pull requests and the generic part of an earlier prompt; bundles `scripts/pr-context.sh`; the floor model once changed code while preparing a pull request, to watch in real use)
 - [x] ops-branch-sync
 - [x] flow-fix-bug (from a real bug taken through the nine phases, the fix in one repository and the records in another; floor 0.8 at the threshold, the floor model sometimes starts eng-root-cause directly instead of the flow)
-- [ ] flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket
+- [ ] flow-build-feature, flow-improve-code, flow-new-project, flow-implement-ticket (backlog NS4 to NS7)
 - [x] agents implementer, reviewer
-- [ ] agent explorer (planned)
+- [ ] agent explorer (planned; backlog NS12)
 
 Built ahead of their wave, with a real project that needed them:
 - [x] product-prd, product-roadmap (wave 2)
@@ -309,7 +309,7 @@ Built ahead of their wave, with a real project that needed them:
 - [x] mkt-messaging (wave 4)
 - [x] ops-ci-pipeline (wave 4; from a real project's pipeline: one build tested and deployed, previews per pull request, a protected main branch; the floor model still misses the revoke-the-pasted-token rule and exact version pins now and then)
 - [x] design-handoff (wave 3; unpacks single-file HTML exports, maps invented tokens, reads motion from scripts)
-- [ ] design-system v0.3: any input (code, images, documents, a live site) or a short interview; onboarding prompt for the design tool
+- [ ] design-system v0.3: any input (code, images, documents, a live site) or a short interview; onboarding prompt for the design tool (backlog NS13)
 
 Built against a real personal brand (2026-09-29). Evals: strong claude-code Opus 5.5 (also the grader), floor DeepSeek V3.2 through agents-dir, 3 runs per case, floor runs in parallel with `eval_run.py --jobs`:
 - [x] brand-profile 0.4 (strong 1.0 with vs 0.58 without; floor 0.917. Floor went 0.48 → 0.51 while the gate said "ask only what is missing": the floor model kept asking to confirm recorded decisions and stopped without writing. What worked was writing the profile first and turning every question into an open question inside it, with a default recommendation per item. Scripts: `linkedin_export.py` (drops contact data, computes durations), `check_profile.py`, `sensitive_topics.py`.)
