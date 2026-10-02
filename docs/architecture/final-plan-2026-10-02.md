@@ -1,6 +1,6 @@
 # Final plan, 2026-10-02: everything that remains, ordered around one last measurement round
 
-**This is the plan in force.** It replaces `docs/architecture/plan-2026-10.md`, whose phases 0 to 4 are done and whose phases 5 and 6 are absorbed here. It is built from the audit of 2026-10-02 (`docs/architecture/audit-2026-10-02/`, nine reports), from the triage of every item of `docs/backlog.md`, from two rounds of review of the plan itself and from an independent review of the repository and of the plan (section "Reviews"). Every decision in it was taken by the maintainer on 2026-10-02, except three points that the independent review raised and that wait for an answer, each with a recommendation (section "Open for the maintainer"). Nothing else in it waits for an answer.
+**This is the plan in force.** It replaces `docs/architecture/plan-2026-10.md`, whose phases 0 to 4 are done and whose phases 5 and 6 are absorbed here. It is built from the audit of 2026-10-02 (`docs/architecture/audit-2026-10-02/`, nine reports), from the triage of every item of `docs/backlog.md`, from two rounds of review of the plan itself and from an independent review of the repository and of the plan (section "Reviews"). Every decision in it was taken by the maintainer on 2026-10-02. Its start waits on one question, how skills are tested (section "Open for the maintainer").
 
 ## Purpose and the one rule that orders everything
 
@@ -35,11 +35,13 @@
 
 ## Open for the maintainer
 
-Three points, raised by the independent review. Each has a recommendation, and the plan is written to the recommendation, so that no item waits; a "no" changes only the lines named under the point.
+One thing, and it holds the start of the plan. On 2026-10-02 the maintainer asked, before phase A starts, to rethink how skills are tested: today every measurement is a separate session that costs time and account quota, and the question is how much of it can come from the skills' ordinary use in projects. Until that is settled, nothing of this plan is executed; what it decides may change phases B, D and E.
 
-- **a. Web cases of the strong tier run with a low-limit API key instead of the account's token (FR-I10).** A web case runs with the network open and every tool allowed, and the credential in its environment is a long-lived token of the maintainer's own account, with no spend limit: an instruction planted in a fetched page could send it out. With a key, a leak costs at most the key's limit. The cost is real money, for about 9 cases in 5 skills, and the maintainer creates and stores the key. **Recommended: yes.** It is written into default 17, B5 and the maintainer's actions of phase A; with a "no", the web cases keep the account's token and those three places lose the key.
-- **b. The fallback order if the pilot shows that the round does not fit the account (FR-I13).** First, the second grading pass is made only for the skills whose score is inside the margin of FR-I1 (`max(2 x SE, 0.07)` of a threshold); then, if that is still too much, grading goes through an API key. **Recommended: agree to this order before D4**, so that it is not decided after seeing scores. It is written into decision 2, D4 and phase E; with a "no", D4 computes the calendar and the round takes as long as the account makes it.
-- **c. A recorded approval and a later push (FR-I8).** `ops-branch-sync` is aligned with `ops-pull-request` and with `contracts/environment.md`: a later push is covered only by a `standing` approval with bounds and validity, and the fixtures of both skills' new cases use such a row. **Recommended: yes.** It is written into rows 39 and 41; with a "no", `ops-branch-sync` keeps its rule that the approval of the pull request covers a sync push without conflicts, and its new case keeps an `action` row.
+The three points the independent review raised were answered by the maintainer on 2026-10-02, all as recommended:
+
+- **a. Web cases of the strong tier run with a low-limit API key instead of the account's token (FR-I10).** A web case runs with the network open and every tool allowed; with a key, a leak costs at most the key's limit. The cost is real money, for about 9 cases in 5 skills; the maintainer creates and stores the key (default 17, B5, the maintainer's actions of phase A).
+- **b. The fallback order if the pilot shows that the round does not fit the account (FR-I13).** First, the second grading pass is made only for the skills whose score is inside the margin of FR-I1 (`max(2 x SE, 0.07)` of a threshold); then, if that is still too much, grading goes through an API key. Agreed before D4, so that it is not decided after seeing scores (decision 2, D4, phase E).
+- **c. A recorded approval and a later push (FR-I8).** `ops-branch-sync` is aligned with `ops-pull-request` and with `contracts/environment.md`: a later push is covered only by a `standing` approval with bounds and validity, and the fixtures of both skills' new cases use such a row (rows 39 and 41).
 
 ## Reviews
 
