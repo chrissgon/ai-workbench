@@ -49,4 +49,5 @@ The line assumes the string is read as a local date. ECMAScript reads a date-onl
 | daysLeft is 1 at noon the day before in each zone | Root cause › What a fix must preserve, 3 | passes now | passes in every runtime |
 
 - Result before the change: 1 failed, 8 passed (the failure is exactly the `fails now` row)
+- Not run: none
 - Pending decisions: none
