@@ -81,7 +81,7 @@
    "to": [
     {
      "path": "skills/brand-identity/scripts/contrast.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/design-system/scripts/contrast.py",
