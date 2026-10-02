@@ -6,7 +6,8 @@ Usage (built by scripts/runtime.py after the person's approval, run by the sched
       --repo <owner>/<name> --branch <branch> --platform linkedin --post-file post.txt \
       [--comment-file comment.txt] [--image post.png --image-path assets/posts/<key>.png] \
       --publisher linkedin.py --resolver resolver.py --vcs github.py \
-      --vote-update vote_update.py --vote-state vote_state.py --work <folder> [--path <folder>]...
+      --vote-update vote_update.py --vote-state vote_state.py --work <folder> [--path <folder>]... \
+      [--ledger <the publisher's idempotency ledger>]
 
 The scheduler starts it with the system interpreter (/usr/bin/python3) and a short PATH; each --path folder
 (runtime.json's "path") goes first on PATH, so that uv resolves where the person installed it.
@@ -75,6 +76,8 @@ def main(argv=None) -> int:
     p.add_argument("--path", action="append", default=[], metavar="FOLDER",
                    help="an absolute folder to put first on PATH, so that uv resolves under a scheduler's short "
                         "PATH (the folders of runtime.json's \"path\"); repeat for several")
+    p.add_argument("--ledger", help="the publisher's idempotency ledger this job was approved with (absolute path); "
+                                    "passed on to the publisher, which refuses another one")
     p.add_argument("--comment-file")
     p.add_argument("--image")
     p.add_argument("--image-path")
@@ -103,6 +106,8 @@ def main(argv=None) -> int:
         pub += ["--first-comment-file", a.comment_file]
     if a.image:
         pub += ["--media", a.image]
+    if a.ledger:
+        pub += ["--ledger", a.ledger]
     code, out, err = call(pub + ["--confirmed"])
     if not out.get("post_url"):
         log(f"publish exited {code}: {err}")

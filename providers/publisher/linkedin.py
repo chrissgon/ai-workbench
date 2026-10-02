@@ -150,7 +150,10 @@ other environment variables:
                                LinkedIn answers with 404 right after the post is created (it does, for
                                a few seconds, longer with an image). Default: 5,15,30,60. Other
                                refusals are not retried.
-  PUBLISHER_LINKEDIN_LEDGER    path of the idempotency ledger (JSON). Default, in a data folder:
+  PUBLISHER_LINKEDIN_LEDGER    path of the idempotency ledger (JSON). A scheduler does not pass this
+                               variable on to its jobs: a command that runs later carries --ledger
+                               <the "ledger" its dry run printed> instead, and is refused when
+                               this variable then names another file. Default, in a data folder:
                                ~/Library/Application Support/ai-workbench/publisher-linkedin.json
                                on macOS; elsewhere $XDG_DATA_HOME/ai-workbench/publisher-linkedin.json,
                                or ~/.local/share/ai-workbench/publisher-linkedin.json. A ledger at
@@ -164,6 +167,7 @@ other environment variables:
                                a request times out (default {HTTP_TIMEOUT_SECONDS}).
 
 output:
+  every dry run: "ledger", the path of the idempotency ledger this environment uses.
   publish: JSON on stdout with post_urn, post_url, token_expires_at,
   token_expires_in_days, idempotency_key, replayed, and with
   --first-comment-file, first_comment (comment_urn, idempotency_key, replayed)
@@ -326,16 +330,31 @@ def data_home() -> Path:
     return base / "ai-workbench"
 
 
+# The ledger --ledger pins, set by main(). A command that runs later (a scheduled job) carries the path of the
+# ledger it was approved with: a scheduler does not pass on the variable that selects another ledger, and a
+# key looked up in the wrong ledger is a post published twice.
+PINNED_LEDGER: Path | None = None
+
+
 def ledger_path() -> Path:
     override = os.environ.get("PUBLISHER_LINKEDIN_LEDGER")
-    if override:
-        return Path(override).expanduser()
-    return data_home() / LEDGER_NAME
+    chosen = Path(override).expanduser() if override else None
+    if PINNED_LEDGER is not None:
+        if chosen is not None and os.path.abspath(chosen) != os.path.abspath(PINNED_LEDGER):
+            raise ProviderError(
+                f"--ledger pins the idempotency ledger {PINNED_LEDGER}, and PUBLISHER_LINKEDIN_LEDGER names "
+                f"another one ({chosen}). A key recorded in one is unknown to the other, so nothing was sent: "
+                "unset the variable, or run the command with the ledger it was approved with", EXIT_USAGE)
+        return PINNED_LEDGER
+    return chosen or data_home() / LEDGER_NAME
 
 
 def old_ledger_path() -> Path | None:
-    """Where the ledger lived before it moved to the data folder; None when PUBLISHER_LINKEDIN_LEDGER is set."""
+    """Where the ledger lived before it moved to the data folder; None when another ledger was chosen
+    (PUBLISHER_LINKEDIN_LEDGER, or --ledger with a path that is not the default one)."""
     if os.environ.get("PUBLISHER_LINKEDIN_LEDGER"):
+        return None
+    if PINNED_LEDGER is not None and os.path.abspath(PINNED_LEDGER) != os.path.abspath(data_home() / LEDGER_NAME):
         return None
     cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(cache) / "ai-workbench" / LEDGER_NAME
@@ -1113,7 +1132,8 @@ def dry_run(base: str, commentary: str, image: Path | None, key: str, first_comm
         "headers": shown,
         "body": post_body(author, commentary, IMAGE_URN_PLACEHOLDER if image else None),
     })
-    out = {"dry_run": True, "platform": "linkedin", "requests": requests, "idempotency_key": key}
+    out = {"dry_run": True, "platform": "linkedin", "requests": requests, "idempotency_key": key,
+           "ledger": str(ledger_path())}
     out.update(existing_fields(key))
     if first_comment is not None:
         # The post URN is known only once the post exists; a replayed post shows its real URN.
@@ -1130,7 +1150,8 @@ def comment_dry_run(base: str, post_urn: str | None, parent: str | None, text: s
     # Reads no credential and sends nothing; the actor is a placeholder. With --on-key, a post that
     # is not published yet is shown as a placeholder (the confirmed call refuses it).
     out = {"dry_run": True, "platform": "linkedin", "requests": [comment_request(base, post_urn, parent, text)],
-           "idempotency_key": key, "post_urn": post_urn, "on_key": on_key, "parent_comment": parent}
+           "idempotency_key": key, "post_urn": post_urn, "on_key": on_key, "parent_comment": parent,
+           "ledger": str(ledger_path())}
     out.update(existing_fields(key))
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return EXIT_OK
@@ -1196,6 +1217,9 @@ def build_parser() -> argparse.ArgumentParser:
                              "endpoint needs partner access for member comments)")
     parser.add_argument("--comment-urn", help="with resolve: the pending comment was published as this URN")
     parser.add_argument("--not-published", action="store_true", help="with resolve: the pending attempt was not published")
+    parser.add_argument("--ledger", metavar="PATH",
+                        help="the absolute path of the idempotency ledger to use, as a dry run printed it; refused "
+                             "when PUBLISHER_LINKEDIN_LEDGER names another one. For commands that run later")
     parser.add_argument("--dry-run", action="store_true", help="print the exact request bodies (with resolve: what "
                         "it would record) and do nothing else")
     parser.add_argument("--confirmed", action="store_true", help="required to publish or comment; set by the calling "
@@ -1207,7 +1231,13 @@ def main(argv: list[str] | None = None) -> int:
     os.umask(0o077)  # the ledger, its lock and its folder are private to the user
     parser = build_parser()
     args = parser.parse_args(argv)
+    global PINNED_LEDGER
     try:
+        if args.ledger is not None:
+            if not os.path.isabs(args.ledger):
+                raise ProviderError("--ledger must be an absolute path", EXIT_USAGE)
+            PINNED_LEDGER = Path(args.ledger)
+            ledger_path()  # refuse a different ledger in the environment before anything else happens
         if args.check:
             return cmd_check()
         if args.verb == "publish":

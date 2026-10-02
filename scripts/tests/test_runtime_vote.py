@@ -104,6 +104,16 @@ else:
 
 FAKE_PUBLISHER = r'''
 import json, os, sys
+if "--dry-run" in sys.argv:
+    # A dry run sends nothing: it says which idempotency ledger this environment uses.
+    with open(os.environ["FAKE_CALLS"], "a") as f:
+        f.write(json.dumps(["publisher-dry-run"] + sys.argv[1:]) + "\n")
+    if os.environ.get("FAKE_DRY_RUN_FAIL"):
+        print("error: --platform is not served by this provider", file=sys.stderr); sys.exit(2)
+    out = {"dry_run": True}
+    if os.environ.get("FAKE_LEDGER"):
+        out["ledger"] = os.environ["FAKE_LEDGER"]
+    print(json.dumps(out)); sys.exit(0)
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(["publisher"] + sys.argv[1:]) + "\n")
 out = {"post_urn": "urn:li:share:7300000000000000001",
@@ -426,6 +436,43 @@ def test_vote_job_records_a_post_whose_first_comment_failed(env, monkeypatch):
     closed = [h for h in pick["history"] if h["round"] == "2026-10-05"][0]
     assert closed["post_url"] == out["post_url"]
     assert len([c for c in calls(env, "vcs") if c[0] == "commit-files"]) == 1
+
+
+def test_the_vote_job_carries_the_ledger_the_publisher_named(env, tmp_path, monkeypatch):
+    # FR-I12: the scheduler starts the job without the variable that selects the publisher's ledger, so the
+    # job could look its key up in another ledger than the one it was approved with. The job now carries the
+    # ledger's path, from the publisher's dry run, and hands it to the publisher at the slot.
+    ledger = tmp_path / "state" / "publisher.json"
+    ledger.parent.mkdir()
+    ledger.write_text("{}")  # it exists: the scheduler must not take it for a file to snapshot
+    monkeypatch.setenv("FAKE_LEDGER", str(ledger))
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["vote"]["status"] == "to_inbox", err
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is True, b["problems"]
+    dry = calls(env, "publisher-dry-run")
+    assert len(dry) == 1 and dry[0][0] == "publish" and "--confirmed" not in dry[0]
+    assert calls(env, "publisher") == []  # the tick still publishes nothing
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    assert job["argv"][job["argv"].index("--ledger") + 1] == str(ledger)
+    assert job["outputs"] == [str(ledger)] and str(ledger) not in job["snapshot"]
+    r = subprocess.run([sys.executable] + job["argv"][1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    assert r.returncode == 0, r.stderr
+    pub = calls(env, "publisher")[0]
+    assert pub[pub.index("--ledger") + 1] == str(ledger)
+
+
+def test_a_publisher_that_names_no_ledger_gets_none_and_a_failing_dry_run_is_a_problem(env, monkeypatch):
+    code, out, err = rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    assert b["ready"] is True and "--ledger" not in job["argv"] and "outputs" not in job
+    code, _, _ = rt(env, "reject", "--id", str(inbox(env)[0]["id"]))
+    monkeypatch.setenv("FAKE_DRY_RUN_FAIL", "1")
+    code, out, err = rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is False and any("dry run" in p for p in b["problems"])
 
 
 def test_vote_job_without_a_post_address_records_nothing(env, tmp_path):

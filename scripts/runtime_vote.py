@@ -348,7 +348,10 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
         problems.append(f"payload.py build exited {code}: {err.strip()[-300:]}")
         job_file = None
     else:
-        job_file = write_job(cfg, v, work, key, rid, slot, d, entry, image)
+        ledger, why = publisher_ledger(cfg, run, entry["post_file"], key)
+        if why:
+            problems.append(why)
+        job_file = write_job(cfg, v, work, key, rid, slot, d, entry, image, ledger)
 
     files = {"content": content, "post": entry.get("post_file"), "comment": entry.get("comment_file"),
              "image": image, "job": job_file}
@@ -365,7 +368,24 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
             **out}
 
 
-def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d: dict, entry: dict, image) -> Path:
+def publisher_ledger(cfg: dict, run, post_file: str, key: str):
+    """(the idempotency ledger the publisher uses in this environment or None, a problem or None).
+
+    Asked through the publisher's dry run, which reads no credential and sends nothing. The job carries the
+    path: the scheduler starts it without the variables of the shell that approved it, so a publisher left to
+    choose again at the slot could look the key up in another ledger and publish a post a second time. A
+    publisher whose dry run prints no "ledger" gets none; a dry run that fails is a problem, since the same
+    command would fail at the slot."""
+    code, out, err = run(["uv", "run", str(cfg["paths"]["publisher"]), "publish", "--platform", cfg["publisher"],
+                          "--text-file", post_file, "--idempotency-key", key, "--dry-run"])
+    if code != 0:
+        return None, f"the publisher's dry run exited {code}: {err.strip()[-300:]}"
+    ledger = _loads(out).get("ledger")
+    return (ledger if isinstance(ledger, str) and os.path.isabs(ledger) else None), None
+
+
+def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d: dict, entry: dict, image,
+              ledger=None) -> Path:
     """The scheduler command file for vote_job.py. Every file it reads is in the snapshot."""
     p = v["paths"]
     publisher = cfg["paths"]["publisher"]
@@ -394,6 +414,11 @@ def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d:
     # scheduler's default limit for a one-shot command, 10 minutes, would kill it after the post is out.
     job = {"argv": argv, "cwd": cfg["workbench"], "snapshot": snapshot, "grace_minutes": 120,
            "timeout_minutes": JOB_TIMEOUT_MINUTES}
+    if ledger:
+        # The ledger is state the publisher reads and writes in place: it is named in "outputs" so that the
+        # scheduler leaves the argument as it is instead of asking for a snapshot (a copy would be another ledger).
+        argv += ["--ledger", ledger]
+        job["outputs"] = [ledger]
     f = work / "job.json"
     f.write_text(json.dumps(job, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return f

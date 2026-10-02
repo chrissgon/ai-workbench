@@ -1144,6 +1144,34 @@ def test_old_ledger_that_is_not_json_stops_the_run(env, fake, text_file, tmp_pat
     assert fake.requests == [] and not new.exists() and old.read_text() == "{not json"
 
 
+def test_ledger_flag_pins_the_ledger_and_refuses_another(env, fake, text_file, tmp_path):
+    # FR-I12: a scheduler starts its jobs without the caller's environment, so a job approved where
+    # PUBLISHER_LINKEDIN_LEDGER was set looked its key up in the default ledger at its slot, and the other way
+    # round: one key, two ledgers, two posts. A command that runs later carries the ledger's path.
+    pinned = tmp_path / "pinned" / "ledger.json"
+    scheduled = {k: v for k, v in env.items() if k != "PUBLISHER_LINKEDIN_LEDGER"}  # the variable is not inherited
+    args = publish_args(text_file, "--idempotency-key", "launch-1", "--ledger", str(pinned))
+    dry = run(SCRIPT, args + ["--dry-run"], scheduled)
+    assert dry.returncode == 0 and json.loads(dry.stdout)["ledger"] == str(pinned)
+    first = run(SCRIPT, args + ["--confirmed"], scheduled)
+    assert first.returncode == 0, first.stderr
+    assert json.loads(pinned.read_text())["entries"]["launch-1"]["post_urn"] == POST_URN
+    assert not (tmp_path / "home").exists() or not list((tmp_path / "home").rglob("publisher-linkedin.json"))
+    # The same command by hand, where the variable names another ledger: refused before anything is sent.
+    for extra in (["--confirmed"], ["--dry-run"]):
+        other = run(SCRIPT, args + extra, env)
+        assert other.returncode == 2 and "--ledger" in other.stderr and "PUBLISHER_LINKEDIN_LEDGER" in other.stderr
+    assert post_count(fake) == 1 and ledger(env) == {}
+    # The variable naming the same file changes nothing: the key is found, the post is replayed.
+    same = run(SCRIPT, args + ["--confirmed"], {**env, "PUBLISHER_LINKEDIN_LEDGER": str(pinned)})
+    assert same.returncode == 0 and json.loads(same.stdout)["replayed"] is True and post_count(fake) == 1
+    relative = run(SCRIPT, publish_args(text_file, "--ledger", "ledger.json", "--dry-run"), scheduled)
+    assert relative.returncode == 2 and "absolute" in relative.stderr
+    # Without the flag a dry run still says which ledger this environment uses, for a caller to carry.
+    shown = run(SCRIPT, publish_args(text_file, "--dry-run"), env)
+    assert json.loads(shown.stdout)["ledger"] == env["PUBLISHER_LINKEDIN_LEDGER"]
+
+
 def test_ledger_override_reads_no_old_ledger(env, fake, text_file, tmp_path):
     _, _, old = default_ledger_env(env, tmp_path)
     old.parent.mkdir(parents=True)
