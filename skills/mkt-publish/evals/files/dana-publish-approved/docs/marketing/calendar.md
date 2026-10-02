@@ -12,4 +12,3 @@
 |---|------|--------|----------|-------|--------|---------------------|----------|---------|--------|
 | 1 | 2027-10-11T09:00:00-03:00 | Small tools | EN | tinykv 0.5: TTL without a dependency | backend engineers | the post file's Claims and sources | plan | docs/marketing/content/2027-10-11-tinykv-05-ttl.md | drafted |
 | 2 | 2027-10-13T09:00:00-03:00 | Database performance | EN | What Priya Raman's fsync demo taught me about write throughput | database people | the post file's Claims and sources | plan | docs/marketing/content/2027-10-13-fsync-budget.md | drafted |
-| 3 | 2027-10-15T09:00:00-03:00 | AI for databases, built in public | EN | The query-hint experiment: 3 faster, 2 slower | backend engineers | the post file's Claims and sources | action | docs/marketing/content/2027-10-15-query-hints.md | drafted |
