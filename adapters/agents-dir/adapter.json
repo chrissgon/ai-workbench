@@ -16,5 +16,27 @@
   },
   "install": "install.sh [--pack <name>]",
   "generated": [],
-  "eval_runner": "run-prompt.sh"
+  "eval_runner": "run-prompt.sh",
+  "secrets": [
+    {
+      "name": "OPENROUTER_API_KEY",
+      "purpose": "run the floor model's eval runs through OpenRouter, and the runtime's model calls through the API adapter when its model is openrouter/<vendor>/<model>",
+      "permission": "a key used only for evals and the runtime; a credit limit on it is recommended",
+      "readers": [
+        "evals/eval_run.py --pass-env",
+        "adapters/agents-dir/run-prompt.sh"
+      ],
+      "store_username": "openrouter"
+    },
+    {
+      "name": "DEEPSEEK_API_KEY",
+      "purpose": "run the floor model's eval runs through DeepSeek's own API, when the floor model id is deepseek/<model>",
+      "permission": "a key used only for evals; a spending limit on it is recommended",
+      "readers": [
+        "evals/eval_run.py --floor-pass-env",
+        "adapters/agents-dir/run-prompt.sh"
+      ],
+      "store_username": "deepseek"
+    }
+  ]
 }

@@ -11,7 +11,7 @@ metadata:
   outputs: []
   requires: []
   side_effects: []
-  version: "0.1"
+  version: "0.1.0"
 ---
 
 # __TITLE__

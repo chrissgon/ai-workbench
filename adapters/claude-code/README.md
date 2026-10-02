@@ -36,6 +36,10 @@ The CLI lists the available skills to the model within a character budget, its b
 
 How it got here, in one day (2026-10-01, `docs/decisions.md`): rules that matched the text of a command denied harmless forms and made the strong model score below the floor model (809 denied commands in the runs kept on the maintainer's machine); the CLI's own sandbox fixed that on the host; then every eval moved into a container, which made both the rules and the sandbox settings unnecessary and removed them.
 
+The home a run sees is the container's own (`/home/eval`): this adapter does not replace `HOME`, while the floor model's adapter (`adapters/agents-dir/`) gives each run an empty temporary home. The two tiers' commands therefore see different homes, both inside the container and neither the home of the person who runs the evals; a case must not depend on what a home holds.
+
+The token the strong model's runs use inside the container is registered by this adapter, in the `secrets` list of `adapter.json` (the core's registry in `providers/secrets/resolver.py` names no adapter); the name passed into the runs has one home, `strong_pass_env` of `evals/eval-gate.json`, and `eval_run.py` fills it from the OS secret store when it is not exported. `python3 scripts/doctor.py` shows whether it is found, never its value.
+
 ## Stopping a run
 
 `run-prompt.sh` starts the runner in a session of its own, so the runner and everything it starts (model sessions, browsers, servers) form one process group. The group is ended, with TERM and then KILL after two seconds, when the runner returns and when the script itself gets TERM, INT or HUP (it then exits with 143). `eval_run.py` does the same one level up for every adapter call and setup command, on a timeout, on a signal and on any way out, so stopping an evaluation leaves no model session working. Before this, killing `eval_run.py` or passing a timeout left the sessions alive for many minutes. A process that moves itself into yet another session escapes this.

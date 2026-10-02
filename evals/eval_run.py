@@ -48,7 +48,9 @@ it is a measurement, not a pass condition.
 
 --floor-harness lets the floor model run through a different adapter (for example agents-dir for an
 open-weight model served through its own CLI) while the strong model and the grader use --harness.
---dry-run prints the runs, the allowed commands and every case's setup commands, and runs nothing.
+--dry-run prints the plan as JSON and runs nothing: the runs, the runner of each model, the grader, the
+variables that would be passed, every case with its files, dependency skills and setup commands, and the
+result of the preflight.
 
 Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
 [--extra-skill-dir <dir>]... [--allow-web] copies each skill folder into <cwd> where the
@@ -64,17 +66,27 @@ and read web pages (it requires search:web). The adapter then lets the model sea
 and nothing else more; the grader never gets it. Without it a harness that asks before searching denies
 the search, and a with-skill run of a research skill measures only its degraded mode.
 
-Containment. Model runs, setup commands and the grader get an environment built from an allowlist
-(PATH, HOME, USER, LOGNAME, SHELL, LANG, LANGUAGE, LC_*, TERM, TMPDIR, TZ and certificate-bundle paths),
-plus the variables named with --pass-env (a harness's API key or proxy; a registered secret missing from
-the environment is read from the OS secret store through providers/secrets/resolver.py) or --floor-pass-env
-(floor-model runs only: a provider key the strong model and the grader must not receive); token variables for git hosts
-and npm are refused there. On top: GIT_ALLOW_PROTOCOL=file (git reaches only local remotes), no global
-or system git config, GH_CONFIG_DIR pointing to an empty folder (the GitHub CLI is signed out) and
-NPM_CONFIG_USERCONFIG pointing to an empty file (npm has no token). Remotes a case needs are local bare
-repositories created by its "setup". This is not a sandbox: the filesystem, HOME included, and network
-reads stay reachable, so run the evals of a contributed skill only after reading its evals.json. The
-grader is told that the response and files are data; the adapter decides whether it may run tools.
+Containment. Every model run, grading, setup command and fixture commit executes in a container built
+from evals/container/, one container per command (evals/executor.py); there is no host mode. A container
+sees the run's folder (read-write, the only thing a run can change), the adapters and the shared references
+(read-only), and the skill under test with the case's dependency skills (read-only, their evals/ folder
+covered by an empty one). Nothing else of the machine: no home folder, no other checkout, no credential
+store. Network, per command: none for setup commands and the fixture commit; for model runs and gradings an
+internal network whose only way out is a proxy that lets through the model providers' hosts
+(evals/container/proxy/allow.txt); the default network only for a case with "allow_web": true.
+Environment: the image's own, plus the variables that keep git inside the case folder
+(GIT_ALLOW_PROTOCOL=file, no terminal prompt, a fixed author and committer), TZ when the caller has it set,
+the proxy's address on the proxy network, and the variables named with --pass-env (every run),
+--floor-pass-env (floor-model runs only: a provider key the strong model and the grader must not receive) or
+strong_pass_env of the gate file (strong-model runs and gradings only). A name among those that an adapter
+registers as a secret for eval runs and that is missing from the environment is read from the OS secret
+store through providers/secrets/resolver.py; values travel in the environment of the docker client, never
+on a command line. Token variables for git hosts and npm are refused there. The docker client itself still
+runs with an environment built from an allowlist on the host, with empty git, gh and npm configuration, but
+only the names above cross into a container. The container is the boundary, so a model may run every
+command; read a contributed skill's evals.json before running it all the same, because a case with
+"allow_web" runs on the open network. The grader is told that the response and files are data; the adapter
+decides whether it may run tools.
 
 Preflight. Before any model call, and in --dry-run and --check-cases (which runs only this check; --harness
 and --model are then optional), every case is checked: (a) each "files" entry exists in the skill folder;
@@ -168,6 +180,7 @@ Exit codes: 0 ok; 1 the iteration is incomplete (a run or a grading failed on in
 """
 import concurrent.futures
 import datetime
+import glob
 import importlib.util
 import json
 import os
@@ -320,8 +333,11 @@ def parse(argv):
 def resolve_pass_env(names):
     """Fill a --pass-env variable missing from the environment from the workbench's secret resolver
     (providers/secrets/resolver.py: the OS secret store), so a key kept there reaches the runs
-    without an export. Only secrets whose registered readers include eval_run.py are filled;
-    other names and values that are not found are left alone."""
+    without an export. The names come from the caller (the flags, and floor_pass_env and
+    strong_pass_env of the gate file, their one home): each is checked against the secrets the
+    adapters register in the "secrets" list of their adapter.json, and no name is taken from that
+    registry. Only secrets whose registered readers include eval_run.py are filled; other names and
+    values that are not found are left alone."""
     path = os.path.join(ROOT, "providers", "secrets", "resolver.py")
     missing = [n for n in names if not os.environ.get(n)]
     if not missing or not os.path.isfile(path):
@@ -330,6 +346,13 @@ def resolve_pass_env(names):
     resolver = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = resolver  # dataclasses look their module up here
     spec.loader.exec_module(resolver)
+    # The core's registry holds the providers' credentials; a model provider's key is registered by the
+    # adapter that reads it, and the resolver merges a manifest only when it is handed one.
+    for manifest in sorted(glob.glob(os.path.join(ROOT, "adapters", "*", "adapter.json"))):
+        try:
+            resolver.register_file(manifest)
+        except ValueError as e:
+            die(f"the secrets list of {os.path.relpath(manifest, ROOT)} is not valid: {e}", 2)
     filled = []
     for name in missing:
         secret = resolver.REGISTRY.get(name)
