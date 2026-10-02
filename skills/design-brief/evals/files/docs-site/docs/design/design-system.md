@@ -18,6 +18,11 @@ The library's own token specification governs every colour, size and component t
 - Contrast ratios computed with `contrast.py` of the design-system skill (WCAG 2.x relative luminance), 2026-09-23
 - Tailwind CSS default breakpoints (the site's utility layer): sm 640, md 768, lg 1024, xl 1280
 
+## Ownership
+
+- Colour roles, spacing, radii, border, component anatomy and states: the plinthui library (`DESIGN-SYSTEM.md`), mirrored verbatim; the site never edits a mirrored value.
+- Type roles, layout, site-only components and the rules for using library tokens on the site: this document.
+
 ## Colour
 
 | Token | Light | Dark | Role | Source |
