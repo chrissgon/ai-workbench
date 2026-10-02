@@ -17,7 +17,7 @@
       "id": 2,
       "prompt": "Here is the transcript where you kept guessing the ticket type before reading it (attached). Turn what we learned into the flow-implement-ticket skill.",
       "expected_output": "Grounding note listing the observed failures (guessed ticket type, did not ask for the ticket when the tracker was unavailable); placement confirmed against the inventory (flow, engineering); scaffold via new-skill.sh; SKILL.md with a read-before-classify step, a degraded path asking for the ticket text, and gates; validator clean; evals with at least two cases including the no-tracker case; the run step is prepared with --dry-run and the user is asked which harness and models to use.",
-      "files": ["evals/files/transcript-guessing.md"],
+      "files": ["evals/files/transcript-guessing.md", "evals/files/new-skill-base"],
       "workbench_files": [
         "scripts/new-skill.sh",
         "scripts/validate.py",
@@ -26,7 +26,6 @@
         "templates",
         "evals/eval_run.py",
         "evals/eval_status.py",
-        "docs/inventory.md",
         "docs/area-map.md",
         "adapters/agents-dir/run-prompt.sh"
       ],
@@ -55,7 +54,6 @@
         "templates",
         "evals/eval_run.py",
         "evals/eval_status.py",
-        "docs/inventory.md",
         "docs/area-map.md",
         "adapters/agents-dir/run-prompt.sh"
       ],
