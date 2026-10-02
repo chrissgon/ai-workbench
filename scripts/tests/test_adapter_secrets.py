@@ -27,10 +27,12 @@ SENTINEL = "zz-not-a-real-value-57"
 # name: (aliases, store username, readers), as the one registry held them before the adapters took theirs.
 BEFORE = {
     "VCS_GITHUB_TOKEN": (("GITHUB_TOKEN",), "github", ("providers/vcs/github.py", ".github/workflows/dependabot-alerts.yml")),
-    "LINKEDIN_ACCESS_TOKEN": ((), "publisher-linkedin", ("providers/publisher/linkedin.py",)),
+    # The two tokens gained auth.py as a reader when its --check began to read through the resolver.
+    "LINKEDIN_ACCESS_TOKEN": ((), "publisher-linkedin", ("providers/publisher/linkedin.py",
+                                                         "providers/publisher/auth.py")),
     "LINKEDIN_CLIENT_ID": ((), "linkedin-client-id", ("providers/publisher/auth.py",)),
     "LINKEDIN_CLIENT_SECRET": ((), "linkedin-client-secret", ("providers/publisher/auth.py",)),
-    "GMAIL_REFRESH_TOKEN": ((), "mailbox-gmail", ("providers/mailbox/gmail.py",)),
+    "GMAIL_REFRESH_TOKEN": ((), "mailbox-gmail", ("providers/mailbox/gmail.py", "providers/mailbox/auth.py")),
     "GMAIL_CLIENT_ID": ((), "gmail-client-id", ("providers/mailbox/auth.py", "providers/mailbox/gmail.py")),
     "GMAIL_CLIENT_SECRET": ((), "gmail-client-secret", ("providers/mailbox/auth.py", "providers/mailbox/gmail.py")),
     "OPENROUTER_API_KEY": ((), "openrouter", ("evals/eval_run.py --pass-env", "adapters/agents-dir/run-prompt.sh",
