@@ -22,5 +22,9 @@
   "skills/product-feature-spec/scripts/lint_spec.py": {
     "args": ["--file", "spec.md"],
     "files": {"spec.md": "# Feature specification: list\n\n## Functional requirements\n\n- REQ-1: the list loads\n"}
+  },
+  "skills/product-prd/scripts/lint_prd.py": {
+    "args": ["--file", "prd.md"],
+    "files": {"prd.md": "# PRD: list\n\n## Features\n\n- F-1: the reader sees the list. Priority: must. Phase: P-1. Source: brief.md decision 1\n"}
   }
 }

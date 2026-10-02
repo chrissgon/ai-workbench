@@ -1,7 +1,7 @@
 # Workbench state
 
 - Project: cragline-booking
-- Current flow: flow-new-product
+- Current flow: none
 - Current phase: Product
 - Updated: 2026-09-20
 
