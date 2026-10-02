@@ -110,6 +110,8 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/marketing/engagement-log.jsonl` | mkt-engage | - |
 | `docs/marketing/engagement-policy.md` | mkt-engage | - |
 | `docs/marketing/messaging.md` | mkt-messaging | - |
+| `docs/product/backlog.lint-before.json` | product-backlog | - |
+| `docs/product/backlog.lint.json` | product-backlog | - |
 | `docs/product/backlog.md` | eng-implement, product-backlog | - |
 | `docs/product/prd.md` | product-prd | - |
 | `docs/product/roadmap.md` | product-roadmap | - |
@@ -117,7 +119,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | - |
+| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | product-backlog |
 <!-- owner-table:end -->
 
 ## Rules

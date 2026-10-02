@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """Lint a feature section of a backlog against its specification and, when given, its design.
 
-Usage: python3 lint_backlog.py --backlog <backlog.md> --spec <spec.md> [--feature <abbr>] [--design <design.md>] [--json]
+Usage: python3 lint_backlog.py --backlog <backlog.md> --spec <spec.md> [--feature <abbr>] [--design <design.md>]
+                               [--report <path>] [--components-heading <text>] [--assumptions-heading <text>]
+                               [--plan-heading <text>] [--json]
 
 --feature may be omitted when the backlog holds tasks of one feature only (ids `T-<abbr>-<n>`).
+--report <path> writes the record of the run to <path>: one JSON object with script, date, arguments, ok,
+  summary, errors, warnings and counts, on every run that reaches the check, never on a usage error.
+--components-heading, --assumptions-heading and --plan-heading give the start of the design's "## " headings
+  of its components table, its assumptions to verify and its verification plan, for a design written in
+  another language (defaults "Components", "Assumptions to verify", "Verification plan"; any case).
 
 Checks, for tasks whose id starts with T-<abbr>-:
   - task ids are unique and every task has Does, Delivers, Touches, Depends on, Check, Size and Milestone lines
@@ -25,11 +32,20 @@ With --design:
 Prints JSON: ok, summary (one line to quote in the report), tasks, critical_path (longest dependency
 chain by task count), coverage, errors.
 
-Exit codes: 0 ok, 1 problems, 2 usage error.
+Output: the JSON on stdout; a usage error on stderr.
+Exit codes: 0 ok, 1 problems, 2 usage error (a flag without its value, an unknown flag, a file that cannot be
+read or written).
 """
+import datetime
 import json
 import re
 import sys
+
+VALUE_FLAGS = ("--backlog", "--spec", "--feature", "--design", "--report", "--components-heading",
+               "--assumptions-heading", "--plan-heading")
+SWITCHES = ("--json",)
+HEADING_DEFAULTS = {"--components-heading": "Components", "--assumptions-heading": "Assumptions to verify",
+                    "--plan-heading": "Verification plan"}
 
 ID_RE = re.compile(r"\b((?:REQ|NFR|EDGE|AC)-\d+)\b")
 
@@ -72,22 +88,28 @@ def section(text, heading_start):
     return out
 
 
-def design_facts(design_text):
+def design_facts(design_text, headings=None):
     """(assumptions, plan): assumptions is one list per bullet under "Assumptions to verify", holding the
-    design components (first column of the Components table) that the bullet names; plan maps an AC id
-    to the commands in backticks of its verification-plan row."""
-    components = []
-    for ln in section(design_text, "Components"):
+    design components (first column of the Components table, its header row left out) that the bullet
+    names; plan maps an AC id to the commands in backticks of its verification-plan row. headings maps a
+    heading option to the text its section's heading starts with; a missing one takes its default."""
+    headings = {**HEADING_DEFAULTS, **(headings or {})}
+    components, header_seen = [], False
+    for ln in section(design_text, headings["--components-heading"]):
+        if not ln.lstrip().startswith("|"):
+            continue
         cells = [c.strip() for c in ln.strip().strip("|").split("|")]
-        if ln.lstrip().startswith("|") and cells and cells[0] and cells[0].lower() != "component" \
-                and not set(cells[0]) <= set("-: "):
+        if not header_seen:
+            header_seen = True
+            continue
+        if cells and cells[0] and not set(cells[0]) <= set("-: "):
             components.append(cells[0])
     assumptions = []
-    for ln in section(design_text, "Assumptions to verify"):
+    for ln in section(design_text, headings["--assumptions-heading"]):
         if re.match(r"^\s*[-*]\s+\S", ln) and ln.strip().lstrip("-* ").lower().rstrip(".") != "none":
             assumptions.append([c for c in components if c.lower() in ln.lower()])
     plan = {}
-    for ln in section(design_text, "Verification plan"):
+    for ln in section(design_text, headings["--plan-heading"]):
         m = re.match(r"^\|\s*(AC-\d+)\s*\|", ln)
         if m:
             plan[m.group(1)] = re.findall(r"`([^`]+)`", ln.split("|")[-2] if ln.rstrip().endswith("|") else ln)
@@ -128,22 +150,37 @@ def field(task, name):
     return None
 
 
-def main(argv):
-    if not argv or "--help" in argv or "-h" in argv:
-        print(__doc__)
-        return 0 if argv else 2
-    backlog = spec = abbr = design = None
-    as_json = "--json" in argv
-    i = 0
+def parse_args(argv):
+    """(values, None), or (None, a usage error). values maps each flag given to its value, a switch to True."""
+    values, i = {}, 0
     while i < len(argv):
         a = argv[i]
-        if a == "--backlog": backlog = argv[i + 1]; i += 2
-        elif a == "--spec": spec = argv[i + 1]; i += 2
-        elif a == "--feature": abbr = argv[i + 1]; i += 2
-        elif a == "--design": design = argv[i + 1]; i += 2
-        elif a == "--json": i += 1
+        if a in VALUE_FLAGS:
+            if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+                return None, f"Error: {a} needs a value. See --help."
+            values[a] = argv[i + 1]
+            i += 2
+        elif a in SWITCHES:
+            values[a] = True
+            i += 1
         else:
-            print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr); return 2
+            return None, f"Error: unknown option {a!r}. See --help."
+    return values, None
+
+
+def main(argv):
+    if "--help" in argv or "-h" in argv:
+        print(__doc__)
+        return 0
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    values, problem = parse_args(argv)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    backlog, spec, abbr, design = (values.get(f) for f in ("--backlog", "--spec", "--feature", "--design"))
+    as_json = "--json" in values
     if not (backlog and spec):
         print("Error: --backlog and --spec are required. See --help.", file=sys.stderr); return 2
     try:
@@ -163,7 +200,8 @@ def main(argv):
     ids_seen = re.findall(r"^- (T-" + re.escape(abbr) + r"-\d+):", b, re.M)
     for dup in sorted({i for i in ids_seen if ids_seen.count(i) > 1}):
         errors.append(f"{dup} is defined more than once")
-    assumptions, plan = design_facts(d_text) if d_text is not None else ([], {})
+    headings = {f: values[f] for f in HEADING_DEFAULTS if f in values}
+    assumptions, plan = design_facts(d_text, headings) if d_text is not None else ([], {})
     spikes = [tid for tid, t in tasks.items() if is_spike(t)]
     spike_of = {}
     if not tasks:
@@ -279,6 +317,19 @@ def main(argv):
                       "milestones": sorted(milestones), "spikes": spikes, "critical_path": critical,
                       "coverage": {"required": len(must_cover), "covered": covered, **by_kind},
                       "errors": errors, "warnings": warnings}, indent=2 if as_json else None))
+    if "--report" in values:
+        record = {"script": "lint_backlog.py", "date": datetime.date.today().isoformat(),
+                  "arguments": {k: v for k, v in values.items() if k != "--report"}, "ok": ok,
+                  "summary": summary, "errors": errors, "warnings": warnings,
+                  "counts": {"tasks": len(tasks), "milestones": len(milestones), "spikes": len(spikes),
+                             "critical_path": len(critical), "required": len(must_cover), "covered": covered}}
+        try:
+            with open(values["--report"], "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error: cannot write the report {values['--report']}: {e}", file=sys.stderr)
+            return 2
     return 0 if ok else 1
 
 
