@@ -116,6 +116,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/product/prd.lint-before.json` | product-prd | - |
 | `docs/product/prd.lint.json` | product-prd | - |
 | `docs/product/prd.md` | product-prd | - |
+| `docs/product/roadmap.lint.json` | product-roadmap | - |
 | `docs/product/roadmap.md` | product-roadmap | - |
 | `docs/product/specs/<feature>.lint-before.json` | product-feature-spec | - |
 | `docs/product/specs/<feature>.lint.json` | product-feature-spec | - |
@@ -123,7 +124,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | product-backlog, product-feature-spec, product-prd |
+| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | product-backlog, product-feature-spec, product-prd, product-roadmap |
 <!-- owner-table:end -->
 
 ## Rules

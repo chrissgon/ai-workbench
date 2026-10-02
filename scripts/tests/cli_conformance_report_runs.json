@@ -26,5 +26,10 @@
   "skills/product-prd/scripts/lint_prd.py": {
     "args": ["--file", "prd.md"],
     "files": {"prd.md": "# PRD: list\n\n## Features\n\n- F-1: the reader sees the list. Priority: must. Phase: P-1. Source: brief.md decision 1\n"}
+  },
+  "skills/product-roadmap/scripts/lint_roadmap.py": {
+    "args": ["--file", "roadmap.md", "--prd", "prd.md"],
+    "files": {"roadmap.md": "# Roadmap: list\n\n## Releases\n\n- R-1: First. Includes: F-1.\n",
+              "prd.md": "# PRD: list\n\n## Features\n\n- F-1: the reader sees the list. Priority: must. Phase: P-1.\n"}
   }
 }
