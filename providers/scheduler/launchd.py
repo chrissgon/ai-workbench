@@ -219,12 +219,15 @@ def launchctl() -> str:
 
 
 def run_launchctl(*args: str) -> subprocess.CompletedProcess | None:
-    """Run launchctl with a timeout; None when it timed out."""
+    """Run launchctl with a timeout; None when it timed out or could not be started."""
     try:
         return subprocess.run([launchctl(), *args], capture_output=True, text=True,
                               timeout=LAUNCHCTL_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         log(f"launchctl {args[0]} timed out after {LAUNCHCTL_TIMEOUT_SECONDS} s")
+        return None
+    except OSError as exc:
+        log(f"launchctl {args[0]} could not be started: {type(exc).__name__}")
         return None
 
 
@@ -959,6 +962,14 @@ def cmd_check() -> int:
         raise ProviderError("launchd exists only on macOS")
     if not Path(launchctl()).exists():
         raise ProviderError(f"launchctl not found at {launchctl()}")
+    # Jobs are loaded into the user's own launchd domain, which exists only while the user has a graphical
+    # session: without it every schedule would fail at bootstrap. That is "not configured" (exit 3): the
+    # person has something to do, the same reading systemd.py gives an unreachable user manager.
+    probe = run_launchctl("print", domain())
+    if probe is None or probe.returncode != 0:
+        detail = "timed out or could not run" if probe is None else probe.stderr.strip()
+        raise ProviderError(f"the user's launchd domain is not reachable (launchctl print {domain()}: {detail}); "
+                            "log in to the Mac's desktop as this user, then try again", EXIT_NOT_CONFIGURED)
     print(json.dumps({
         "ready": True,
         "jobs_dir": str(home()),
