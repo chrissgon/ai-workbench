@@ -57,7 +57,9 @@ Cost
   After the call: cost_usd is OpenRouter's usage.cost when present; otherwise the reported tokens times
   prices.json; otherwise null with a warning. max_tokens is MAX_OUTPUT_TOKENS (4096).
 
-Limits: --timeout-seconds (default 600, 1 to 3600) bounds the whole run, request included. Redirects
+Limits: --timeout-seconds (default 600, 1 to 3600) bounds the whole run, request included. The run's own
+clock decides a timeout: the socket waits SOCKET_MARGIN seconds longer than the time left, and a socket
+that gives up anyway is reported as the same timeout (code 124), never as a network failure. Redirects
 are never followed (the credential would go with them). ANTHROPIC_API_BASE and OPENROUTER_API_BASE
 replace the endpoint's base for offline tests and are honoured only when they point to
 http://127.0.0.1; any other value is a usage error.
@@ -77,6 +79,7 @@ import math
 import os
 import re
 import secrets as pyrandom
+import socket
 import sys
 import threading
 import time
@@ -109,6 +112,10 @@ SECRET_NAME_RE = re.compile(r"(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519|[^/]*\.(pe
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
 CODE_COST, CODE_NO_KEY, CODE_TOO_LARGE, CODE_TIMEOUT = 3, 4, 5, 124
+# The socket and the run's deadline must not expire together: whichever fired first used to decide between
+# "timeout" and "network error". The socket gets this much longer, so the deadline is the one that fires.
+SOCKET_MARGIN = 5.0
+TIMED_OUT = "timed out"  # call()'s error text when the socket itself gave up
 
 
 class Usage(Exception):
@@ -314,7 +321,9 @@ def build_request(opts: dict, key: str, system: str, user: str) -> tuple[dict, d
 
 
 def call(url: str, body: dict, headers: dict, timeout: float) -> tuple[int | None, bytes, str]:
-    """POST once. Returns (status, body bytes, error text); status None on a network error."""
+    """POST once. Returns (status, body bytes, error text); status None on a network error.
+
+    A socket timeout, while connecting or while reading, returns the error text TIMED_OUT."""
     handlers = [NoRedirect()]
     if urllib.parse.urlsplit(url).hostname == "127.0.0.1":
         handlers.append(urllib.request.ProxyHandler({}))
@@ -330,6 +339,10 @@ def call(url: str, body: dict, headers: dict, timeout: float) -> tuple[int | Non
             data = b""
         return e.code, data, f"HTTP {e.code}"
     except (urllib.error.URLError, OSError, ValueError) as e:
+        # socket.timeout is TimeoutError from Python 3.10 on and its own class on 3.9; urllib wraps the one
+        # raised while connecting in URLError and lets the one raised while reading through.
+        if isinstance(e, socket.timeout) or isinstance(getattr(e, "reason", None), socket.timeout):
+            return None, b"", TIMED_OUT
         return None, b"", f"network error: {getattr(e, 'reason', e)}"
 
 
@@ -461,12 +474,12 @@ def main(argv: list[str]) -> int:
     result: dict = {}
 
     def worker():
-        result["r"] = call(opts["url"], body, headers, max(1.0, deadline - time.monotonic()))
+        result["r"] = call(opts["url"], body, headers, max(1.0, deadline - time.monotonic()) + SOCKET_MARGIN)
 
     t = threading.Thread(target=worker, daemon=True)
     t.start()
     t.join(max(0.0, deadline - time.monotonic()))
-    if t.is_alive() or "r" not in result:
+    if t.is_alive() or "r" not in result or result["r"][2] == TIMED_OUT:
         run.log(f"timeout after {opts['timeout']} s; no answer")
         return run.finish(CODE_TIMEOUT)
     status, data, err = result["r"]

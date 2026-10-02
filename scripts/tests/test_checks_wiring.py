@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 import shutil
+import subprocess
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -39,6 +41,31 @@ def test_every_test_folder_of_this_repository_is_in_the_list_ci_runs():
     assert {"scripts/tests", "evals/tests"} <= found
     workflow = (REPO / ".github" / "workflows" / "checks.yml").read_text()
     assert "$(python3 scripts/test_dirs.py)" in workflow
+
+
+HOOK_CASES = [
+    (".githooks/pre-commit", "scripts/tests"), (".github/workflows/checks.yml", "scripts/tests"),
+    ("packs/default.txt", "scripts/tests"), ("templates/agent.md", "scripts/tests"),
+    ("agents/reviewer.md", "scripts/tests"), ("scripts/validate.py", "scripts/tests"),
+    ("providers/resolve.py", "scripts/tests"), ("providers/store/sqlite.py", "providers/store/tests"),
+    ("evals/eval_run.py", "evals/tests"), ("adapters/api/run_agent.py", "adapters/api/tests"),
+    ("skills/core-demo/scripts/tool.py", "skills/core-demo/scripts/tests"),
+    ("skills/core-demo/SKILL.md", None), ("docs/backlog.md", None), ("README.md", None),
+]
+
+
+def test_the_hook_maps_each_folder_to_the_tests_that_cover_it(tmp_path):
+    """The hook's own `case` block, taken from the file and run on one path at a time."""
+    hook = (REPO / ".githooks" / "pre-commit").read_text()
+    start, end = hook.index('  case "$f" in'), hook.index("  esac\n") + len("  esac\n")
+    block = hook[start:end].replace("*) continue ;;", '*) d="" ;;')
+    script = tmp_path / "map.sh"
+    script.write_text('set -euo pipefail\nf="$1"\n' + block + 'printf "%s" "$d"\n')
+    for path, expected in HOOK_CASES:
+        out = subprocess.run(["bash", str(script), path], capture_output=True, text=True,
+                             env={"PATH": os.environ["PATH"]}, timeout=30)
+        assert out.returncode == 0, out.stderr
+        assert (out.stdout or None) == expected, path
 
 
 def tree(tmp_path, cited):
