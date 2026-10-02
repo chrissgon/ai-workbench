@@ -9,7 +9,6 @@
 #
 # What each check asks, and the reason of each failure:
 #   uv run --with pytest python3 scripts/tests/test_cli_conformance.py
-skills/design-handoff/scripts/lint_handoff.py report  # the record's shape
 skills/design-ux-flows/scripts/lint_flows.py report  # the record's shape; arguments as top-level keys
 skills/eng-architecture/scripts/check_design.py report  # the record's shape; arguments as top-level keys
 skills/eng-code-review/scripts/change_scope.py value-flag-last  # traceback
