@@ -23,7 +23,7 @@ ASSERTIONS = ["The report lists every file", "The reply is in English", "No file
 
 def skill_md(name="eng-demo", description="Does a thing. Use this skill when a thing is asked for.", meta=None,
              body="# Demo\n\nText.\n", license_line="license: MIT\n"):
-    meta = {"area": "engineering", "kind": "capability", "inputs": "[]", "outputs": "[]", "requires": "[]",
+    meta = {"area": "engineering", "kind": "capability", "inputs": "[]", "outputs": "[]", "updates": "[]", "requires": "[]",
             "side_effects": "[]", "version": '"0.1"', **(meta or {})}
     lines = "".join(f"  {k}: {v}\n" for k, v in meta.items() if v is not None)
     return f"---\nname: {name}\ndescription: >\n  {description}\n{license_line}metadata:\n{lines}---\n\n{body}"
@@ -182,7 +182,7 @@ def test_a_cited_skill_is_built_or_its_line_says_planned(tree):
     write(tree, "skills/eng-demo/evals/files/doc.md", "`biz-in-a-fixture`\n")
     assert messages(run_skill(tree), "skill-name") == [
         '[skill-name] cites a skill that is not built, with no "planned" on the line: '
-        "ops-later (SKILL.md:19); biz-unbuilt (references/more.md:1)"]  # line numbers count the frontmatter
+        "ops-later (SKILL.md:20); biz-unbuilt (references/more.md:1)"]  # line numbers count the frontmatter
 
 
 def test_the_routing_table_names_every_built_skill_and_marks_the_others_planned(tree):
