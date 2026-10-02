@@ -11,7 +11,8 @@ bash adapters/agents-dir/install.sh --project .    # project-level: ./.agents/sk
 ## Limitations
 
 - Agents (`agents/`) are not installed by this adapter: agent formats differ per tool. Add a dedicated adapter when a tool's subagent format is needed.
-- References to `../../shared/` resolve only when the whole repository is present next to the symlinked skills. With `--copy`, shared references are not copied yet; use symlinks where possible.
+- The shared references are installed beside the skills, in `<skills folder>/../shared/references` (a link, or a copy with `--copy`), so a skill's `../../shared/references/<file>` resolves by the installed path. The `shared` folder holds the installer's marker file; a `shared` folder the installer did not make is left alone and reported, and the run exits 1.
+- One pack is installed at a time: installing a pack removes what an earlier pack installed and this one does not select (a dangling link to a renamed skill included), and `--uninstall` removes everything the installer made, whatever pack installed it.
 
 ## Evals
 

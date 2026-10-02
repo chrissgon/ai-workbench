@@ -1,14 +1,22 @@
 #!/usr/bin/env python3
 """Build an installable Claude Code plugin for one pack.
 
-Usage: python3 adapters/claude-code/build.py [--pack <name>] [--dry-run]
+Usage: python3 adapters/claude-code/build.py [--pack <name>] [--prune] [--dry-run]
+       python3 adapters/claude-code/build.py --clean [--dry-run]
 
 Creates build/<pack>/ inside this adapter:
   .claude-plugin/plugin.json   copied from plugin.json
   skills/<name>                one symlink per selected skill into ../../skills
+  shared/references            one symlink into ../../shared, so that a skill's
+                               ../../shared/references/<file> resolves by the installed path
   agents/<name>.md             core agents merged with overrides/<name>.yaml
 
+--prune   after the build, remove the builds of every other pack (install.sh does this: one pack
+          is installed at a time, and an old build would keep skills the new pack dropped)
+--clean   remove every build and exit (install.sh --uninstall does this)
+
 The build folder is ignored by git; the adapter tracks no symlinks. Default pack: default.
+Prints one JSON line. Exit codes: 0 ok, 2 usage error (unknown pack or option, a flag without its value).
 """
 import json
 import os
@@ -55,11 +63,41 @@ def build_agents(out_dir, dry):
     return built
 
 
+def remove_builds(build_root, keep, dry):
+    """Remove every entry of build/ except `keep`; returns the names removed. Links are unlinked, never followed."""
+    removed = []
+    if not os.path.isdir(build_root):
+        return removed
+    for name in sorted(os.listdir(build_root)):
+        if name == keep:
+            continue
+        path = os.path.join(build_root, name)
+        removed.append(name)
+        if dry:
+            continue
+        if os.path.islink(path) or not os.path.isdir(path):
+            os.unlink(path)
+        else:
+            shutil.rmtree(path)
+    return removed
+
+
 def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0
     pack, dry = "default", "--dry-run" in argv
+    known = ("--pack", "--prune", "--clean", "--dry-run")
+    unknown = [a for i, a in enumerate(argv) if a not in known and not (i > 0 and argv[i - 1] == "--pack")]
+    if unknown:
+        print(f"Error: unknown option {unknown[0]!r}. See --help.", file=sys.stderr)
+        return 2
+    if "--clean" in argv:
+        removed = remove_builds(os.path.join(HERE, "build"), None, dry)
+        if not dry and os.path.isdir(os.path.join(HERE, "build")):
+            os.rmdir(os.path.join(HERE, "build"))
+        print(json.dumps({"dry_run": dry, "cleaned": removed}))
+        return 0
     if "--pack" in argv:
         i = argv.index("--pack")
         if i + 1 >= len(argv):
@@ -87,8 +125,13 @@ def main(argv):
         for n in names:
             target = os.path.relpath(os.path.join(CORE_SKILLS, n), os.path.join(out, "skills"))
             os.symlink(target, os.path.join(out, "skills", n))
+        os.makedirs(os.path.join(out, "shared"))
+        os.symlink(os.path.relpath(os.path.join(ROOT, "shared", "references"), os.path.join(out, "shared")),
+                   os.path.join(out, "shared", "references"))
     agents = build_agents(os.path.join(out, "agents"), dry)
-    print(json.dumps({"dry_run": dry, "pack": pack, "output": os.path.relpath(out, ROOT), "skills": len(names), "agents": agents}))
+    pruned = remove_builds(build_root, pack, dry) if "--prune" in argv else []
+    print(json.dumps({"dry_run": dry, "pack": pack, "output": os.path.relpath(out, ROOT), "skills": len(names),
+                      "shared": ["references"], "agents": agents, "pruned": pruned}))
     return 0
 
 
