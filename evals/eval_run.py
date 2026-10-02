@@ -138,6 +138,15 @@ folder is removed. The run's environment carries no path into the repository: PA
 allowlisted variables that point into it are dropped, TMPDIR is the temporary base, the git, gh and npm
 configuration files sit in the temporary folder, and the adapter is started from there (a shell exports the
 folder it came from as OLDPWD). Only a variable named with --pass-env is passed as it is.
+Repository files. A case may list "workbench_files": files and folders of this repository copied into the
+case folder at the same relative path (a skill's evals/ folder is left out; version control, eval workspaces
+and eval cases are refused). It is for a skill whose job is the workbench itself, which needs the real
+tooling to act on; such a case deliberately shows the model part of the repository.
+
+Refusals. When the provider declines a without-skill run on policy grounds, the run scores 0 and is listed in
+benchmark.json "baseline_refusals": the model alone could not do the task, which is what a baseline says. The
+same refusal of a run that has the skill is an infrastructure failure, never a score.
+
 Contamination. After each without-skill run the response and the adapter's stderr and raw output are searched
 for the repository's absolute path (which includes the path of the skill under test). A hit means the model
 reached the workbench anyway (a search from the filesystem root, a harness that loads user-level
@@ -401,8 +410,38 @@ def dependency_dirs(case):
     return dirs
 
 
-def build_tree(cwd, sources):
-    """Copy a case's files into its folder: a folder's content goes to the root, a file keeps only its name."""
+def workbench_files(case):
+    """The case's "workbench_files" entries as (source path, path in the case folder): files and folders of
+    this repository copied into the case at the same relative path, for a skill whose job is the workbench
+    itself (it creates, validates or evaluates skills and needs the real tooling to act on). Refused: a path
+    that leaves the repository, the repository root, version control, eval workspaces and any skill's eval
+    cases (they hold expected outputs)."""
+    base, out = os.path.realpath(ROOT), []
+    for rel in case.get("workbench_files") or []:
+        parts = [p for p in re.split(r"[\\/]", rel) if p] if isinstance(rel, str) else [".."]
+        if not parts or os.path.isabs(rel) or rel.startswith("~") or ".." in parts:
+            die(f"case {case.get('id')}: workbench_files entry {rel!r} must be a relative path inside the repository, without '..'.")
+        src = os.path.realpath(os.path.join(ROOT, *parts))
+        if os.path.commonpath([base, src]) != base or src == base or not os.path.exists(src):
+            die(f"case {case.get('id')}: workbench_files entry {rel!r} is not a file or folder of the repository.")
+        if parts[0] in (".git", "evals-workspace") or (parts[0] == "skills" and "evals" in parts[1:]):
+            die(f"case {case.get('id')}: workbench_files entry {rel!r} is refused: version control, eval workspaces "
+                "and a skill's eval cases never go into a case folder.")
+        out.append((src, os.path.join(*parts)))
+    return out
+
+
+def build_tree(cwd, sources, case=None):
+    """Copy a case's files into its folder: a folder's content goes to the root, a file keeps only its name.
+    Then the case's "workbench_files", each at its own relative path, without any skill's evals/ folder."""
+    for src, rel in workbench_files(case) if case else []:
+        dest = os.path.join(cwd, rel)
+        if os.path.isdir(src):
+            shutil.copytree(src, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns(
+                "evals", "__pycache__", "*.pyc", ".DS_Store") if rel.split(os.sep)[0] == "skills" else shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
+        else:
+            os.makedirs(os.path.dirname(dest), exist_ok=True)
+            shutil.copy(src, dest)
     for src in sources:
         if os.path.isdir(src):
             shutil.copytree(src, cwd, dirs_exist_ok=True)
@@ -505,7 +544,7 @@ def preflight(skill_dir, cases, sources, setup=True):
         try:
             cwd = os.path.join(tmp, "cwd")
             os.makedirs(cwd)
-            build_tree(cwd, sources[cid])
+            build_tree(cwd, sources[cid], c)
             if c.get("setup"):
                 quiet = {"root": tmp, "network": "none"}  # in the eval container, like the run's own setup
                 isolate_git(cwd, contained_env(tmp), box=quiet)
@@ -595,6 +634,21 @@ def return_run(root):
 def return_all_runs():
     for root in list(RUN_ROOTS):
         return_run(root)
+
+
+# What a provider answers when it declines a request on policy grounds, as the adapters record it.
+PROVIDER_REFUSALS = ("safeguards flagged this message",)
+
+
+def provider_refusal(out_dir):
+    """The provider's refusal message when the run ended because the provider declined the request, else None."""
+    for name in ("response.md", "raw.json", "error.log"):
+        text = read_text(os.path.join(out_dir, name), 200000)
+        for marker in PROVIDER_REFUSALS:
+            at = text.find(marker)
+            if at != -1:
+                return text[max(0, at - 80):at + 160].replace("\n", " ").strip()
+    return None
 
 
 def contamination(out_dir):
@@ -1192,7 +1246,7 @@ def run(argv):
             root = new_run_root(run_dir, names=(o["skill"],))
             case_dir, changed = os.path.join(root, "case"), {}
             try:
-                build_tree(case_dir, sources[c["id"]])
+                build_tree(case_dir, sources[c["id"]], c)
                 tier_env = o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else o["strong_pass_env"])
                 env = contained_env(root, tier_env)
                 quiet = {"root": root, "network": "none"}  # setup and the fixture commit: no secret, no network
@@ -1213,6 +1267,14 @@ def run(argv):
                 return_run(root)
             if v == "without_skill":
                 count["contaminated"] = contamination(out) or count["contaminated"]
+            refusal = provider_refusal(out) if why and v == "without_skill" else None
+            if refusal:
+                # The model alone could not do the task: a baseline of zero, not a missing score. A refusal
+                # of a run that has the skill stays an infrastructure failure: it says nothing about the skill.
+                count["refused"] = refusal
+                row = {"case": c["id"], "run": k, "pass_rate": 0.0, "tokens": None, "duration_ms": None, "refused": True}
+                return name, row, None, msgs + [f"REFUSED     case {c['id']} {name} run {k}: the provider declined the "
+                                                "request; scored 0 for the baseline"], count
             if why:
                 return name, None, infra(why), msgs + [f"RUN FAILED  case {c['id']} {name} run {k} ({why}): see "
                                                        f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"], count
@@ -1262,7 +1324,7 @@ def run(argv):
             for msg in fut.result()[3]:
                 print(msg, file=sys.stderr)
     early_counts = {t: {"attempts": 0, "early_ends": 0, "by_case": {}} for t, _ in models}
-    contaminated = []
+    contaminated, refusals = [], []
     for job, fut in zip(jobs, done):  # submission order, so benchmark.json does not depend on which run finished first
         name, row, failed, _, count = fut.result()
         tier_count = early_counts[job[2]]
@@ -1272,6 +1334,9 @@ def run(argv):
         if count["contaminated"]:
             contaminated.append({"case": job[0]["id"], "variant": job[1], "tier": job[2], "run": job[4],
                                  "evidence": count["contaminated"]})
+        if count.get("refused"):
+            refusals.append({"case": job[0]["id"], "variant": job[1], "tier": job[2], "run": job[4],
+                             "evidence": count["refused"][:300]})
         if failed:
             infra_failures.append(failed)
         if row is not None:
@@ -1312,6 +1377,7 @@ def run(argv):
                   "content_sha256": start_hash, "expected_runs": len(jobs), "completed_runs": completed,
                   "complete": complete, "infra_failures": infra_failures})
     bench["contaminated"] = contaminated
+    bench["baseline_refusals"] = refusals
     bench["early_ends"] = early_end_stats(early_counts)
     bench["early_end_warning"] = early_end_warning(bench["early_ends"], o["early_rate"])
     with open(os.path.join(it_dir, "benchmark.json"), "w", encoding="utf-8") as f:

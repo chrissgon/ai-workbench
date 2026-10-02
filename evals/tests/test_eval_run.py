@@ -1051,3 +1051,73 @@ def test_a_png_is_shown_to_the_grader_as_its_size_and_dimensions(tmp_path):
     text.write_text("# Notes\nplain text\n")
     assert er.shown(str(text)) == "# Notes\nplain text\n"
 
+
+# --- a case may bring files of the repository; a refused baseline run scores zero ------------------
+
+def test_workbench_files_are_copied_at_their_own_path_without_eval_cases(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    (tmp_path / "scripts").mkdir()
+    (tmp_path / "scripts" / "check.py").write_text("print('ok')\n")
+    other = tmp_path / "skills" / "core-other"
+    (other / "evals").mkdir(parents=True)
+    (other / "SKILL.md").write_text("# other\n")
+    (other / "evals" / "evals.json").write_text("{}")
+    case = {"id": 1, "workbench_files": ["scripts/check.py", "skills/core-other"]}
+    cwd = tmp_path / "case"
+    cwd.mkdir()
+    er.build_tree(str(cwd), [], case)
+    assert (cwd / "scripts" / "check.py").read_text() == "print('ok')\n"
+    assert (cwd / "skills" / "core-other" / "SKILL.md").exists() and not (cwd / "skills" / "core-other" / "evals").exists()
+
+
+@pytest.mark.parametrize("entry", ["../outside", "/etc/passwd", ".git", "evals-workspace/x", "skills/core-other/evals", "missing.txt", "", "."])
+def test_workbench_files_refuses_what_must_not_enter_a_case(tmp_path, monkeypatch, entry):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    for folder in (".git", "evals-workspace/x", "skills/core-other/evals"):
+        (tmp_path / folder).mkdir(parents=True)
+    with pytest.raises(SystemExit) as e:
+        er.workbench_files({"id": 1, "workbench_files": [entry]})
+    assert e.value.code == 2
+
+
+def test_a_provider_refusal_is_recognised_in_what_the_adapter_left(tmp_path):
+    (tmp_path / "raw.json").write_text(json.dumps({"is_error": True, "result": "API Error: the model's safeguards flagged this message. Details: [policy]"}))
+    assert "safeguards flagged this message" in er.provider_refusal(str(tmp_path))
+    (tmp_path / "raw.json").write_text(json.dumps({"is_error": True, "result": "API Error: overloaded"}))
+    assert er.provider_refusal(str(tmp_path)) is None
+
+
+
+REFUSING = r'''
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  echo '[{"id": 1, "text": "a", "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
+fi
+if grep -q "^q" "$2" && [ "$6" = m ]; then
+  if [ -f "$here/refuse-with-skill" ] || ! echo " $* " | grep -q -- " --skill-dir "; then
+    echo '{"is_error": true, "result": "API Error: the safeguards flagged this message"}' > "$out/raw.json"; exit 1
+  fi
+fi
+echo ok > "$out/response.md"
+'''
+
+
+def test_a_refused_baseline_run_scores_zero_and_the_run_is_complete(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, REFUSING)
+    assert er.main(FULL) == 0
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    assert out["complete"] is True and out["failures"] == 0 and "REFUSED     case 2 without_skill run 1" in captured.err
+    bench = json.loads((tmp_path / out["iteration_dir"] / "benchmark.json").read_text())
+    assert [(r["case"], r["tier"], r["variant"]) for r in bench["baseline_refusals"]] == [(2, "strong", "without_skill")]
+    rows = {r["case"]: r for r in bench["run_summary"]["without_skill"]["cases"]}
+    assert rows[2]["pass_rate"] == 0.0 and rows[2]["refused"] is True and rows[1]["pass_rate"] == 1.0
+    assert json.loads((skill / "evals" / "result.json").read_text())["scores"]["strong_without"] == 0.5
+
+
+def test_a_refused_run_that_has_the_skill_is_an_infrastructure_failure(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, REFUSING)
+    (tmp_path / "adapters" / "h" / "refuse-with-skill").write_text("")
+    assert er.main(FULL) == 1  # an incomplete iteration
+    out = json.loads(capsys.readouterr().out)
+    assert out["complete"] is False and out["failures"] == 1 and out["record"]["written"] is False
