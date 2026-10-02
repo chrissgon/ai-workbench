@@ -68,7 +68,15 @@ under test cites in its SKILL.md or in its own references, beside the skills fol
 ../../shared/references/<file> resolves, and the references of the platforms the case names in
 "platforms": ["<name>"]; a without-skill run gets none of them, also when it brings dependency skills.
 shared/scripts/ and tests are never staged. It happens after the fixture commit and the setup, so the
-staged files are not part of the case's history.
+staged files are not part of the case's history, and each staged path is added to the case repository's
+exclude list (.git/info/exclude), so `git status` and `git add -A` in a run do not see them.
+
+What the host reads after a run. A run can leave anything in its case folder, a symbolic link to a file of
+the host included. One function, run_files(), decides which paths of a case folder the host reads or writes
+once a run has ended: regular files only, never a symbolic link, never a path whose real path leaves the
+case folder (a link to a folder on the way), never version control, dependency or cache folders, never what
+the runner staged. The list of files a run wrote and what the grader is shown go through it; a path it
+leaves out is shown to the grader as a one-line note, never as content.
 
 Harness settings. A case folder that holds, after its files and its setup, a file or folder whose name is in
 the "settings" list of any eval adapter (at any depth, outside .git) is refused: the harness would apply
@@ -153,6 +161,9 @@ skill's status (draft, evaluated, stale) is printed. A partial or incomplete run
 folder that changed during the run is reported and not recorded. --no-record skips the record. A full run
 whose floor model is not the configured one runs and is reported, but writes no record (it would read as
 stale: evaluated on another floor model) unless --record-anyway is given.
+Extra variables. A variable named with --pass-env, or with --floor-pass-env when it is not the gate file's
+own, changes what a run is (an adapter reads several). benchmark.json names them in "extra_pass_env", and a
+run that passes one writes no record: the record has no field for them.
 No evidence while the measurement is open. While evals/eval-gate.json carries no "measurement_sha256" (the
 fingerprint that closes a measurement version), and when the image was built for another CPU platform than
 the one evidence is made on (evals/executor.py), runs execute and benchmark.json is written, but no record
@@ -176,8 +187,9 @@ allowlisted variables that point into it are dropped, TMPDIR is the temporary ba
 configuration files sit in the temporary folder, and the adapter is started from there (a shell exports the
 folder it came from as OLDPWD). Only a variable named with --pass-env is passed as it is.
 Repository files. A case may list "workbench_files": files and folders of this repository copied into the
-case folder at the same relative path (a skill's evals/ folder is left out; version control, eval workspaces
-and eval cases are refused). It is for a skill whose job is the workbench itself, which needs the real
+case folder at the same relative path (a skill's evals/ and scripts/tests/ folders are left out, as in a
+staged copy; version control, eval workspaces and eval cases are refused). Fixture and repository files are
+copied without bytecode and system files (__pycache__, *.pyc, .pytest_cache, .DS_Store). It is for a skill whose job is the workbench itself, which needs the real
 tooling to act on; such a case deliberately shows the model part of the repository.
 
 Refusals. When the provider declines a without-skill run on policy grounds, the run scores 0 and is listed in
@@ -247,16 +259,20 @@ def load_executor():
     return sys.modules[name]
 
 
+STAGE_LOCK = threading.Lock()
+
+
 def load_stage():
     """scripts/stage_skills.py as a module: the one place that copies a skill for a model, shared with the installers."""
     name = "workbench_stage_skills"
-    if name not in sys.modules:
-        if not os.path.isfile(STAGE_SCRIPT):
-            die("scripts/stage_skills.py is missing: run this script from a checkout of the workbench.")
-        spec = importlib.util.spec_from_file_location(name, STAGE_SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
+    with STAGE_LOCK:  # runs stage from several threads: the module is whole before any of them sees it
+        if name not in sys.modules:
+            if not os.path.isfile(STAGE_SCRIPT):
+                die("scripts/stage_skills.py is missing: run this script from a checkout of the workbench.")
+            spec = importlib.util.spec_from_file_location(name, STAGE_SCRIPT)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            sys.modules[name] = module
     return sys.modules[name]
 
 
@@ -326,7 +342,24 @@ def stage_run(case_dir, eval_cfg, variant_dir, deps, case):
     staged = [os.path.relpath(os.path.join(skills_dir, name), case_dir) for name in manifest["skills"]]
     if manifest["shared_dir"]:
         staged.append(os.path.relpath(manifest["shared_dir"], case_dir))
+    exclude_from_git(case_dir, staged)
     return staged, manifest
+
+
+def exclude_from_git(case_dir, staged):
+    """Add the staged paths to the exclude list of the case's repository, so that `git status` in a run shows
+    what the run did and `git add -A` does not commit a copy of the skill. Each path exactly, never its
+    parent: a file a run writes beside them is still seen."""
+    info = os.path.join(case_dir, ".git", "info")
+    if not staged or not os.path.isdir(os.path.join(case_dir, ".git")) or not host_may_touch(case_dir, os.path.join(case_dir, ".git")):
+        return
+    os.makedirs(info, exist_ok=True)
+    path = os.path.join(info, "exclude")
+    if os.path.lexists(path) and not host_may_touch(case_dir, path):
+        return
+    with open(path, "a", encoding="utf-8") as f:
+        f.write("\n# staged by the eval runner: the skills this run is given\n")
+        f.writelines(f"/{rel.replace(os.sep, '/')}/\n" for rel in staged)
 
 
 def load_status():
@@ -396,6 +429,8 @@ def parse(argv):
         opts["floor_pass_env"] = list(gate.get("floor_pass_env") or [])
     # The strong runner's credential in a container (there is no login or keychain there): strong runs and gradings.
     opts["strong_pass_env"] = list(gate.get("strong_pass_env") or []) if opts["model"] == gate.get("strong_model") else []
+    # What the command line passes beyond the gate file's own variables: a run with one is another measurement.
+    opts["extra_pass_env"] = sorted(set(opts["pass_env"]) | (set(opts["floor_pass_env"]) - set(gate.get("floor_pass_env") or [])))
     for k in ("skill",) if opts["check_cases"] else ("skill", "harness", "model"):
         if not opts[k]:
             die(f"--{k} is required" + (" (evals/eval-gate.json sets no default)." if k != "skill" else "."))
@@ -562,20 +597,34 @@ def workbench_files(case):
     return out
 
 
+# Never copied into a case folder: what an interpreter or a desktop left beside a fixture or a repository file.
+LITTER = ("__pycache__", "*.pyc", ".pytest_cache", ".DS_Store")
+
+
+def _skill_ignore(folder, names):
+    """For a "workbench_files" entry under skills/: no eval cases and no tests of a skill's scripts, the two
+    folders a staged copy of a skill leaves out too, and no litter."""
+    drop = set(shutil.ignore_patterns(*LITTER)(folder, names))
+    drop.update(n for n in names if n == "evals" or (n == "tests" and os.path.basename(folder) == "scripts"))
+    return drop
+
+
 def build_tree(cwd, sources, case=None):
     """Copy a case's files into its folder: a folder's content goes to the root, a file keeps only its name.
-    Then the case's "workbench_files", each at its own relative path, without any skill's evals/ folder."""
+    Then the case's "workbench_files", each at its own relative path, without any skill's evals/ and
+    scripts/tests/ folders. Bytecode and system files are never copied."""
+    litter = shutil.ignore_patterns(*LITTER)
     for src, rel in workbench_files(case) if case else []:
         dest = os.path.join(cwd, rel)
         if os.path.isdir(src):
-            shutil.copytree(src, dest, dirs_exist_ok=True, ignore=shutil.ignore_patterns(
-                "evals", "__pycache__", "*.pyc", ".DS_Store") if rel.split(os.sep)[0] == "skills" else shutil.ignore_patterns("__pycache__", "*.pyc", ".DS_Store"))
+            shutil.copytree(src, dest, dirs_exist_ok=True,
+                            ignore=_skill_ignore if rel.split(os.sep)[0] == "skills" else litter)
         else:
             os.makedirs(os.path.dirname(dest), exist_ok=True)
             shutil.copy(src, dest)
     for src in sources:
         if os.path.isdir(src):
-            shutil.copytree(src, cwd, dirs_exist_ok=True)
+            shutil.copytree(src, cwd, dirs_exist_ok=True, ignore=litter)
         elif os.path.isfile(src):
             shutil.copy(src, cwd)
 
@@ -1089,23 +1138,65 @@ def early_end_warning(stats, max_rate):
     return " ".join(parts) or None
 
 
+# Folders of a case folder the host never looks into after a run: version control, dependencies, caches.
+# Whole folder names: ".git" as a substring would also skip ".github".
+SKIP_DIRS = {".git", "node_modules", "__pycache__", ".pytest_cache", ".venv"}
+NOT_SHOWN = "[not shown: a symbolic link, a special file or a path outside the case folder; the harness does not read it]"
+
+
+def host_may_touch(cwd, path):
+    """True when the host may read or write path, a path of the case folder cwd, after a run: it is not a
+    symbolic link, and its real path stays inside the case folder (so no folder on the way to it is a link
+    that leaves). A run can leave a link to any file of the host; followed, its target would be read here,
+    outside the container, and sent to the grader's provider."""
+    if os.path.islink(path):
+        return False
+    base, real = os.path.realpath(cwd), os.path.realpath(path)
+    return real == base or real.startswith(base + os.sep)
+
+
+def run_files(cwd, staged=()):
+    """The files of a case folder that the host reads or writes after a run, as sorted relative paths. This is
+    the one place that decides it: the list of what a run wrote, what the grader is shown and anything the
+    harness rewrites in a case folder all take their paths from here.
+
+    Left out: every symbolic link, and everything under a folder that is one; every path whose real path
+    leaves the case folder; what is not a regular file (a named pipe would block the reader); the folders of
+    SKIP_DIRS; bytecode and system files; and what the runner staged."""
+    found = []
+    for dp, dns, fns in os.walk(cwd):  # os.walk does not descend into a link to a folder; such a link is dropped here too
+        dns[:] = sorted(d for d in dns if d not in SKIP_DIRS and host_may_touch(cwd, os.path.join(dp, d)))
+        for fn in sorted(fns):
+            path = os.path.join(dp, fn)
+            rel = os.path.relpath(path, cwd)
+            if fn.endswith(".pyc") or fn == ".DS_Store" or staged_file(rel, staged):
+                continue
+            if host_may_touch(cwd, path) and os.path.isfile(path):
+                found.append(rel)
+    return found
+
+
+def readable(cwd, rel):
+    """True when the host may read the one path rel of the case folder: a regular file run_files() would list
+    (links, special files and paths that leave the folder are not), wherever it sits."""
+    if not isinstance(rel, str) or not rel or os.path.isabs(rel) or ".." in re.split(r"[\\/]", rel):
+        return False
+    path = os.path.join(cwd, rel)
+    parts = os.path.normpath(rel).split(os.sep)
+    on_the_way = [os.path.join(cwd, *parts[:i]) for i in range(1, len(parts))]
+    return all(not os.path.islink(p) for p in on_the_way) and host_may_touch(cwd, path) and os.path.isfile(path)
+
+
 def snapshot(cwd, before, staged=()):
+    """The files a run created or changed, against the index taken before it: {relative path: modification time}."""
     files = {}
-    for dp, _, fns in os.walk(cwd):
-        # Match whole folder names: "/.git" as a substring would also skip ".github".
-        if {"node_modules", ".git"} & set(os.path.relpath(dp, cwd).split(os.sep)):
+    for rel in run_files(cwd, staged):
+        try:
+            mtime = os.path.getmtime(os.path.join(cwd, rel))
+        except OSError:
             continue
-        for fn in fns:
-            p = os.path.join(dp, fn)
-            rel = os.path.relpath(p, cwd)
-            if staged_file(rel, staged):
-                continue
-            try:
-                mtime = os.path.getmtime(p)
-            except OSError:
-                continue
-            if rel not in before or before[rel] != mtime:
-                files[rel] = mtime
+        if rel not in before or before[rel] != mtime:
+            files[rel] = mtime
     return files
 
 
@@ -1136,15 +1227,14 @@ def run_setup(cwd, commands, env, box=None):
             die(f"setup command failed in {cwd}: {command}\n{r.stderr}")
 
 
-def file_index(cwd):
+def file_index(cwd, staged=()):
+    """{relative path: modification time} of the files of a case folder, taken before a run (run_files())."""
     idx = {}
-    for dp, _, fns in os.walk(cwd):
-        for fn in fns:
-            p = os.path.join(dp, fn)
-            try:
-                idx[os.path.relpath(p, cwd)] = os.path.getmtime(p)
-            except OSError:
-                pass
+    for rel in run_files(cwd, staged):
+        try:
+            idx[rel] = os.path.getmtime(os.path.join(cwd, rel))
+        except OSError:
+            pass
     return idx
 
 
@@ -1184,6 +1274,12 @@ def binary_stub(path):
     return None
 
 
+def shown_in(cwd, rel):
+    """What the grader is told about the path rel of a case folder: its content, or one line when the host does
+    not read it (readable())."""
+    return shown(os.path.join(cwd, rel)) if readable(cwd, rel) else NOT_SHOWN
+
+
 def shown(path):
     stub = binary_stub(path)
     if stub:
@@ -1210,12 +1306,13 @@ def grading_prompt(tpl, case, response, files_blob):
 def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
     with open(GRADING_TEMPLATE, encoding="utf-8") as f:
         tpl = f.read()
-    files_blob = "\n".join(f"### {p}\n{shown(os.path.join(run_dir, 'cwd', p))}" for p in sorted(changed_files)) or "(none)"
+    cwd = os.path.join(run_dir, "cwd")
+    files_blob = "\n".join(f"### {p}\n{shown_in(cwd, p)}" for p in sorted(changed_files)) or "(none)"
     inputs = [p for p in case.get("grader_files") or [] if p not in changed_files
               and not os.path.isabs(p) and ".." not in p.split("/")]
     if inputs:
         files_blob += "\n\nInput files of the case, as the model found them (not produced by it):\n" + "\n".join(
-            f"### {p}\n{shown(os.path.join(run_dir, 'cwd', p))}" for p in inputs)
+            f"### {p}\n{shown_in(cwd, p)}" for p in inputs)
     prompt = grading_prompt(tpl, case, response, files_blob)
     gdir = os.path.join(run_dir, "grading")
     # The grader is a model too: it works outside the repository, and its folders come back to grading/.
@@ -1397,7 +1494,7 @@ def run(argv):
                     pp = os.path.join(root, "prompt.md")
                     with open(pp, "w", encoding="utf-8") as f:
                         f.write(c["prompt"])
-                    before = file_index(case_dir)
+                    before = file_index(case_dir, staged)
                     why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), env,
                                       o["timeout"], o["max_cost"], web[c["id"]], start_dir=root,
                                       box={"root": root, "runner": runner_for[tier], "pass": tier_env,
@@ -1505,7 +1602,7 @@ def run(argv):
         if mean("with_skill" + tier_suffix) is not None and mean("ablated_skill" + tier_suffix) is not None:
             key = "ablation_delta" + ("_floor" if tier_suffix else "")
             conditions[key] = round(mean("with_skill" + tier_suffix) - mean("ablated_skill" + tier_suffix), 3)
-    bench = {"skill": o["skill"], "runs": o["runs"], "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
+    bench = {"skill": o["skill"], "runs": o["runs"], "timeout": o["timeout"], "max_cost_usd": o["max_cost"], "extra_pass_env": o["extra_pass_env"], "harness": o["harness"], "floor_harness": o["floor_harness"] or o["harness"], "models": dict(models), "grader": o["grader"], "threshold": o["threshold"],
              "strong_tolerance": o["tolerance"], "measurement_version": o["measurement_version"],
              **({"environment": environment} if environment else {}),
              "ablate": {"text": o["ablate"], "lines_removed": ablated_lines} if o["ablate"] else None,
@@ -1542,6 +1639,9 @@ def run(argv):
         record["reason"] = "--no-record"
     elif refusal:
         record["reason"] = refusal
+    elif o["extra_pass_env"]:
+        record["reason"] = (f"extra variables were passed into the runs ({', '.join(o['extra_pass_env'])}): they change what a "
+                            "run is, and a record has no field that names them")
     elif o["update_record"]:
         # The baseline alone: both without-skill scores of the existing record are replaced.
         if [t for t, _ in models] != ["strong", "floor"]:

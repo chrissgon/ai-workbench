@@ -472,7 +472,7 @@ def test_the_runner_stages_the_skill_its_dependencies_and_only_the_cited_referen
             "./.h/skills/demo/SKILL.md", "./.h/skills/demo/references/guide.md", "./.h/skills/demo/scripts/check.py",
             "./.h/skills/dep/SKILL.md", "./a.txt"]
         assert seen(tmp_path, variant, "links.txt") == []  # copies, never links into the workbench
-        assert seen(tmp_path, variant, "status.txt") == ["?? .h/"]
+        assert seen(tmp_path, variant, "status.txt") == []  # the staged paths are on the repository's exclude list
     for variant in ("without_skill", "without_skill.floor"):
         # The dependency skill in both variants; no copy of the skill under test and no shared reference at all.
         assert seen(tmp_path, variant) == ["./.h/skills/dep/SKILL.md", "./a.txt"]
@@ -480,6 +480,141 @@ def test_the_runner_stages_the_skill_its_dependencies_and_only_the_cited_referen
         args = (run_folder(tmp_path, variant) / "outputs" / "args.txt").read_text()
         assert "--skill-dir" not in args and "--extra-skill-dir" not in args and "skills/demo" not in args
     assert bench_of(tmp_path)["complete"] is True  # and what was staged did not count as written by the run
+
+
+# --- hygiene of a run -------------------------------------------------------------------------------
+
+def test_the_staged_paths_are_excluded_from_the_case_repository_and_nothing_else_is(tmp_path, monkeypatch, capsys):
+    """`git status` in a run shows what the run did; `git add -A` does not commit a copy of the skill."""
+    sees = SEES.replace('(cd "$4" && git status --short)', '(cd "$4" && echo note > .h/made-by-the-run.md && echo x > new.md && git status --short -uall)')
+    write_demo(tmp_path, monkeypatch, sees, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "assertions": ["a"]}])
+    assert er.main(FULL) == 0
+    assert seen(tmp_path, "with_skill", "status.txt") == ["?? .h/made-by-the-run.md", "?? new.md"]
+    exclude = (run_folder(tmp_path, "with_skill") / "cwd" / ".git" / "info" / "exclude").read_text()
+    assert "/.h/skills/demo/\n" in exclude and "/.h/\n" not in exclude
+    assert "/.h/" not in (run_folder(tmp_path, "without_skill") / "cwd" / ".git" / "info" / "exclude").read_text()
+
+
+def test_fixture_copies_leave_out_bytecode_and_system_files(tmp_path, monkeypatch):
+    skill = make_skill(tmp_path)
+    app = skill / "evals" / "files" / "app"
+    (app / "src" / "__pycache__").mkdir(parents=True)
+    (app / "src" / "__pycache__" / "money.cpython-311.pyc").write_bytes(b"\0")
+    (app / "src" / "money.py").write_text("X = 1\n")
+    (app / "src" / "stray.pyc").write_bytes(b"\0")
+    (app / ".DS_Store").write_bytes(b"\0")
+    (app / ".pytest_cache").mkdir()
+    (app / ".pytest_cache" / "README.md").write_text("cache\n")
+    cwd = tmp_path / "case"
+    cwd.mkdir()
+    er.build_tree(str(cwd), er.case_files(str(skill), {"id": 1, "files": ["evals/files/app"]}))
+    assert sorted(str(p.relative_to(cwd)) for p in cwd.rglob("*") if p.is_file()) == ["a.txt", "src/money.py"]
+
+
+def test_repository_files_of_a_skill_come_without_its_cases_and_its_script_tests(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    other = tmp_path / "skills" / "core-other"
+    for folder in ("evals", "scripts/tests", "scripts/__pycache__", "references/tests"):
+        (other / folder).mkdir(parents=True)
+    (other / "SKILL.md").write_text("# other\n")
+    (other / "evals" / "evals.json").write_text("{}")
+    (other / "scripts" / "lint.py").write_text("print(1)\n")
+    (other / "scripts" / "tests" / "test_lint.py").write_text("def test_x():\n    assert True\n")
+    (other / "scripts" / "__pycache__" / "lint.cpython-311.pyc").write_bytes(b"\0")
+    (other / "references" / "tests" / "how-to-test.md").write_text("a reference that happens to be named tests\n")
+    (tmp_path / "scripts" / "tests").mkdir(parents=True)
+    (tmp_path / "scripts" / "tests" / "test_tool.py").write_text("def test_y():\n    assert True\n")
+    cwd = tmp_path / "case"
+    cwd.mkdir()
+    er.build_tree(str(cwd), [], {"id": 1, "workbench_files": ["skills/core-other", "scripts"]})
+    assert sorted(str(p.relative_to(cwd)) for p in cwd.rglob("*") if p.is_file()) == [
+        "scripts/tests/test_tool.py",  # the repository's own tests are what the case asked for
+        "skills/core-other/SKILL.md", "skills/core-other/references/tests/how-to-test.md", "skills/core-other/scripts/lint.py"]
+
+
+# A fake adapter that leaves in its case folder what a hostile run could: links to a file and to a folder of
+# the host, a link over an input file, a named pipe, and one honest file. HOST_SECRET is a file of the host.
+LINKS = r'''
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  echo '[{"id": 1, "text": "a", "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
+fi
+cd "$4"
+secret="$(cat "$here/host-secret-path")"
+ln -s "$secret" leak.txt
+ln -s "$(dirname "$secret")" leakdir
+mkdir -p docs && ln -s "$secret" docs/also.md
+rm -f notes.md && ln -s "$secret" notes.md
+mkfifo pipe.txt
+echo honest > report.md
+echo ok > "$out/response.md"
+'''
+
+
+def test_a_link_a_run_leaves_to_a_file_of_the_host_is_never_read(tmp_path, monkeypatch, capsys):
+    """FR-I11: the snapshot and the grader's listing followed such a link, and the target went to the provider."""
+    skill = write_demo(tmp_path, monkeypatch, LINKS, [{"id": 1, "prompt": "p", "files": ["evals/files/app"],
+                                                       "grader_files": ["notes.md", "a.txt"], "assertions": ["a"]}])
+    (skill / "evals" / "files" / "app" / "notes.md").write_text("the notes the case ships\n")
+    host = tmp_path / "host-home"
+    host.mkdir()
+    (host / "credentials.txt").write_text("HOST-ONLY-CONTENT-7f3a\n")
+    (host / "other.txt").write_text("HOST-ONLY-NEIGHBOUR-91bc\n")
+    (tmp_path / "adapters" / "h" / "host-secret-path").write_text(str(host / "credentials.txt"))
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--only", "without"]) == 0
+    run = run_folder(tmp_path, "without_skill")
+    assert (run / "cwd" / "leak.txt").is_symlink()  # the run did leave them
+    prompt = (run / "grading" / "prompt.md").read_text()
+    assert "HOST-ONLY" not in prompt
+    assert "### report.md\nhonest" in prompt  # the honest file is shown
+    for name in ("leak.txt", "leakdir", "docs/also.md", "pipe.txt"):
+        assert f"### {name}" not in prompt
+    # The input file the run replaced by a link is named, with a note in place of the target's content.
+    assert f"### notes.md\n{er.NOT_SHOWN}" in prompt and "### a.txt\na\n" in prompt
+
+
+def test_run_files_is_the_one_list_of_what_the_host_touches_after_a_run(tmp_path):
+    case, host = tmp_path / "case", tmp_path / "host"
+    for folder in (case / "docs", case / ".git" / "info", case / "node_modules" / "x", case / "src" / "__pycache__",
+                   case / ".github", case / ".h" / "skills" / "demo", host / "deep"):
+        folder.mkdir(parents=True)
+    (host / "secret.txt").write_text("s\n")
+    (host / "deep" / "more.txt").write_text("m\n")
+    for rel in ("docs/out.md", ".git/config", "node_modules/x/index.js", "src/__pycache__/a.pyc", "src/a.py", "src/b.pyc",
+                ".github/ci.yml", ".h/skills/demo/SKILL.md", ".DS_Store"):
+        (case / rel).write_text("x\n")
+    os.symlink(host / "secret.txt", case / "link-to-file.txt")
+    os.symlink(host, case / "link-to-folder")
+    os.symlink(case / "docs" / "out.md", case / "link-inside.md")  # a link is skipped even when it stays inside
+    os.symlink(host / "gone", case / "dangling")
+    os.mkfifo(case / "pipe")
+    staged = [os.path.join(".h", "skills", "demo")]
+    assert er.run_files(str(case), staged) == [os.path.join(".github", "ci.yml"), os.path.join("docs", "out.md"),
+                                               os.path.join("src", "a.py")]
+    assert set(er.file_index(str(case), staged)) == set(er.run_files(str(case), staged))
+    assert set(er.snapshot(str(case), {}, staged)) == set(er.run_files(str(case), staged))
+    for rel, ok in (("docs/out.md", True), ("link-to-file.txt", False), ("link-to-folder/secret.txt", False),
+                    ("link-to-folder/deep/more.txt", False), ("link-inside.md", False), ("dangling", False), ("pipe", False),
+                    ("../host/secret.txt", False), (str(host / "secret.txt"), False), ("docs", False), ("", False)):
+        assert er.readable(str(case), rel) is ok, rel
+        assert (er.shown_in(str(case), rel) == er.NOT_SHOWN) is (not ok)
+    assert er.host_may_touch(str(case), str(case / "docs")) and not er.host_may_touch(str(case), str(case / "link-to-folder"))
+
+
+def test_a_run_that_passes_an_extra_variable_names_it_and_writes_no_record(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    configure_gate(tmp_path, floor_pass_env=["FLOOR_KEY"])
+    monkeypatch.setenv("FLOOR_KEY", "k")
+    monkeypatch.setenv("SOME_ADAPTER_SWITCH", "1")
+    assert er.main(["--skill", "demo", "--runs", "1", "--pass-env", "SOME_ADAPTER_SWITCH"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["record"]["written"] is False and "SOME_ADAPTER_SWITCH" in out["record"]["reason"]
+    assert bench_of(tmp_path)["extra_pass_env"] == ["SOME_ADAPTER_SWITCH"] and not (skill / "evals" / "result.json").exists()
+    # The gate file's own variable is not extra: the configured run records.
+    assert er.main(["--skill", "demo", "--runs", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["record"]["written"] is True
+    assert json.loads((tmp_path / "evals-workspace" / "demo" / "iteration-2" / "benchmark.json").read_text())["extra_pass_env"] == []
+    assert er.parse(["--skill", "demo", "--floor-pass-env", "OTHER_KEY"])["extra_pass_env"] == ["OTHER_KEY"]
 
 
 def test_a_case_without_dependencies_stages_nothing_into_a_without_skill_run(tmp_path, monkeypatch, capsys):
