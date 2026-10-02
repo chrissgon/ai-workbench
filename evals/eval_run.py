@@ -170,15 +170,23 @@ Early ends. Some models end their turn before doing the work, with exit 0 and no
 call as text, loop on their own reminder blocks, or stop after "Let me read the template first". A run is an
 early end only when the adapter exited 0 AND it created, changed or deleted no file in the case folder (the
 staged skills and shared references do not count) AND its response is not a reply to the user: (a) it is
-empty; or (b) a line starts with tool-call or control markup printed as text (EARLY_END_MARKUP); or (c) the
-response has no question mark and its last line announces a next action (a sentence starting with one of
-EARLY_END_ANNOUNCE, with none of EARLY_END_NOT in the line). A reply that asks the user a question and
+empty; or (b) a line starts with tool-call or control markup printed as text (EARLY_END_MARKUP); or (c) it is
+a short reply whose final sentence announces a next action: the response has no question mark, the final
+sentence of its last line starts with one of EARLY_END_ANNOUNCE, and the response is at most
+EARLY_END_SHORT characters or its last line ends with a colon or an ellipsis. A reply that states a blocker
+is never one: a response of more than EARLY_END_BLOCKER_MIN characters that holds one of EARLY_END_BLOCKER
+("can't", "need", "paste", "tell me", ...), or a last line that waits for the user (EARLY_END_NOT: "let me
+know", "once you", ...). In the first round the earlier rule, any sentence of the last line starting with
+"I'll", threw away seven legitimate replies of the strong model, each a stop that named what it lacked and
+asked for it in the imperative. A reply that asks the user a question and
 writes nothing is a stop-and-ask, never an early end; neither is a run that wrote a file and then stopped
 before finishing: that one is graded as it is. An early-ended run is rerun in a fresh folder up to
 --retries <n> times (default 2, 0 disables; each early attempt is kept in <run folder>/early-end-<j>/, the
 last attempt stays in the run folder). One that early-ends on every attempt is an infrastructure failure
 with reason "early_end". benchmark.json "early_ends" counts, per model tier, {"attempts", "early_ends",
-"rate", "by_case"}; "early_end_warning" is a sentence, printed at the end, when a tier has at least 3 early
+"rate", "by_case", "by_variant"} (an early end thrown away and drawn again conditions a variant's score on
+phrasing, so the count is kept per variant too); each run's timing.json keeps the stop reason and the number
+of turns the adapter's raw output names ("stop_reason", "num_turns", "terminal_reason"), beside the reply; "early_end_warning" is a sentence, printed at the end, when a tier has at least 3 early
 ends and either a rate above --early-end-rate (default 0.15) or all of them on one case: retries hid them
 from the scores, so read the transcripts and decide between the skill, the case and the provider. The
 warning never changes the exit code.
@@ -1119,11 +1127,22 @@ def staged_file(rel, staged):
 EARLY_END_MARKUP = ("<skill_tool", "<tool_call", "<function_calls", "<invoke", "<system-reminder", "<|tool", "<\uff5ctool")
 # How a last line announces a next action instead of ending the turn's work. Matched, in lower case, at the
 # start of a sentence of the last line ("Let me update the file:", "Now I'll write the spec:").
-EARLY_END_ANNOUNCE = ("let me", "i'll ", "i will ", "now i", "now let me", "now, let me", "first, i", "first, let me",
-                      "first let me", "next, i", "next, let me", "i'm going to", "i am going to")
+# Not a bare "i'll": "I'll also need to know where the code should go" ends a reply that states a blocker.
+EARLY_END_ANNOUNCE = ("let me", "now i", "now let me", "now, let me", "first, i", "first, let me", "first let me",
+                      "next, i", "next, let me", "i'm going to", "i am going to",
+                      "i'll start", "i'll begin", "i'll now", "i'll first", "i will now", "i will start", "i will first")
 # A last line with one of these waits for the user ("Let me know which you prefer", "I'll wait for the brief",
 # "If you approve it, I'll run it"): never an early end.
-EARLY_END_NOT = ("let me know", "wait", "if you", "once you", "when you", "after you", "unless you")
+EARLY_END_NOT = ("let me know", "wait", "if you", "once you", "when you", "after you", "unless you", "once i have")
+# A reply longer than EARLY_END_BLOCKER_MIN characters that holds one of these states a blocker or asks for an
+# input in the imperative ("I can't read the ticket ... paste it"): a stop, never an early end. The length
+# keeps a one-line "Now I need the format. Let me update the file:" an early end.
+EARLY_END_BLOCKER = ("can't", "cannot", "couldn't", "could not", "unable", "don't have", "do not have", "no access",
+                     "not installed", "need", "paste", "tell me", "provide", "please", "either", "which",
+                     "let me know", "wait", "if you", "once you", "when you", "after you", "unless you", "once i have")
+EARLY_END_BLOCKER_MIN = 280
+# An announcement is an early end in a short reply, or when the last line ends as one that was cut (":", "...").
+EARLY_END_SHORT = 600
 PSEUDO_TAG_LINE_RE = re.compile(r"^<([A-Za-z_-]+)>.*</\1>$")
 # A trailing line that is only a tag, such as a tool call the model printed as text and never ran
 # (<read filePath="...">, </read>): skipped to reach the last line of prose.
@@ -1131,8 +1150,8 @@ TAG_ONLY_LINE_RE = re.compile(r"^</?[A-Za-z_][\w-]*(\s[^<>]*)?/?>$")
 
 
 def early_end(response, changed):
-    """Why a run that exited 0 is an early end, or None. Conservative: a run that wrote a file, or a reply
-    that asks the user a question, is never one."""
+    """Why a run that exited 0 is an early end, or None. Conservative: a run that wrote a file, a reply that
+    asks the user a question and a reply that states a blocker are never one."""
     if changed:
         return None
     lines = [line.strip() for line in response.splitlines() if line.strip()]
@@ -1146,21 +1165,43 @@ def early_end(response, changed):
         return None
     while len(lines) > 1 and (PSEUDO_TAG_LINE_RE.match(lines[-1]) or TAG_ONLY_LINE_RE.match(lines[-1])):
         lines.pop()  # a trailing note the model wrapped in a tag of its own
+    low = response.lower().replace("\u2019", "'")
+    if len(response) > EARLY_END_BLOCKER_MIN and any(phrase in low for phrase in EARLY_END_BLOCKER):
+        return None  # states a blocker or asks for an input
     last = lines[-1].lower().replace("\u2019", "'")
     if any(phrase in last for phrase in EARLY_END_NOT):
         return None
-    for sentence in re.split(r"(?<=[.!:;])\s+", last):
-        sentence = sentence.lstrip("-*>#_`0123456789.) ")
-        if sentence.startswith(EARLY_END_ANNOUNCE):
-            return "the last line announces a next action, no question was asked and no file written"
+    # The FINAL sentence of the last line, not any sentence of it: "I'll fetch it myself. I'll also need to
+    # know which project it belongs to." ends on a request.
+    final = re.split(r"(?<=[.!:;])\s+", last)[-1].lstrip("-*>#_`0123456789.) ")
+    if final.startswith(EARLY_END_ANNOUNCE) and (len(response) <= EARLY_END_SHORT or lines[-1].endswith((":", "...", "\u2026"))):
+        return "the reply ends by announcing a next action, no question was asked and no file written"
     return None
 
 
+def run_ending(out_dir):
+    """How the runner says a run ended, read from the adapter's raw output when it is JSON that names it:
+    {"stop_reason", "num_turns", "terminal_reason"}, the keys that are there. Kept beside the reply: an early
+    end and a turn that ran to its limit look alike in the reply alone."""
+    try:
+        with open(os.path.join(out_dir, "raw.json"), encoding="utf-8", errors="ignore") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    if isinstance(data, list):  # a stream of events: the result is one of them
+        data = next((x for x in data if isinstance(x, dict) and x.get("type") == "result"), data[-1] if data else {})
+    if not isinstance(data, dict):
+        return {}
+    return {k: data[k] for k in ("stop_reason", "num_turns", "terminal_reason")
+            if isinstance(data.get(k), (str, int)) and not isinstance(data.get(k), bool)}
+
+
 def early_end_stats(counts):
-    """benchmark.json "early_ends" from {tier: {"attempts", "early_ends", "by_case"}}: adds the rate."""
+    """benchmark.json "early_ends" from {tier: {"attempts", "early_ends", "by_case", "by_variant"}}: adds the rate."""
     return {tier: {"attempts": c["attempts"], "early_ends": c["early_ends"],
                    "rate": round(c["early_ends"] / c["attempts"], 3) if c["attempts"] else 0.0,
-                   "by_case": {str(k): n for k, n in c["by_case"].items() if n}}
+                   "by_case": {str(k): n for k, n in c["by_case"].items() if n},
+                   "by_variant": {str(k): n for k, n in (c.get("by_variant") or {}).items() if n}}
             for tier, c in counts.items()}
 
 
@@ -1774,6 +1815,9 @@ def run(argv):
                 timing = json.load(f)
         except (OSError, ValueError):
             pass
+        if not isinstance(timing, dict):
+            timing = {}
+        timing.update(run_ending(out))  # the stop reason and the turn count, kept beside the reply
         with open(os.path.join(run_dir, "timing.json"), "w", encoding="utf-8") as f:
             json.dump(timing, f)
         g, failed = None, None
@@ -1789,7 +1833,8 @@ def run(argv):
                 with open(os.path.join(run_dir, "grading.json"), "w", encoding="utf-8") as f:
                     json.dump(g, f, indent=2)
         row = {"case": c["id"], "run": k, "pass_rate": g["summary"]["pass_rate"] if g else None,
-               "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms")}
+               "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms"),
+               **{key: timing[key] for key in ("stop_reason", "num_turns") if key in timing}}
         if g:  # one 0 or 1 per assertion, in the case's order: what a per-assertion count is made from
             row["results"] = [1 if r["passed"] else 0 for r in g["assertion_results"]]
         return name, row, failed, msgs, count
@@ -1802,7 +1847,7 @@ def run(argv):
         for fut in concurrent.futures.as_completed(done):
             for msg in fut.result()[3]:
                 print(msg, file=sys.stderr)
-    early_counts = {t: {"attempts": 0, "early_ends": 0, "by_case": {}} for t, _ in models}
+    early_counts = {t: {"attempts": 0, "early_ends": 0, "by_case": {}, "by_variant": {}} for t, _ in models}
     contaminated, refusals, grading_refused = [], [], 0
     for job, fut in zip(jobs, done):  # submission order, so benchmark.json does not depend on which run finished first
         name, row, failed, _, count = fut.result()
@@ -1811,6 +1856,7 @@ def run(argv):
         tier_count["attempts"] += count["attempts"]
         tier_count["early_ends"] += count["early_ends"]
         tier_count["by_case"][job[0]["id"]] = tier_count["by_case"].get(job[0]["id"], 0) + count["early_ends"]
+        tier_count["by_variant"][job[1]] = tier_count["by_variant"].get(job[1], 0) + count["early_ends"]
         if count["contaminated"]:
             contaminated.append({"case": job[0]["id"], "variant": job[1], "tier": job[2], "run": job[4],
                                  "evidence": count["contaminated"]})

@@ -1137,6 +1137,104 @@ def test_replies_to_the_user_are_not_early_ends(response):
     assert er.early_end(response, {}) is None
 
 
+# The early-end folders of the first round (harness audit, section 3): 7 empty replies, all real early ends; 7
+# replies of the strong model that the earlier rule threw away, each a stop that states a blocker and asks for an
+# input in the imperative, with "I'll" somewhere in its last line; and the 3 replies the new rule flags among the
+# 1,368 runs that wrote no file. The stored replies are outside the repository: the empty ones are exact, the
+# others are rebuilt here around the passages the audit quotes, at the length such replies have.
+FIRST_ROUND_EMPTY = ["", "\n", "  \n\n", "\t", " ", "\n\n\n", "\r\n"]
+FIRST_ROUND_STOPS = [
+    # core-orchestrator, with the skill: a stop-and-ask with no question mark
+    "I can't read ticket 34324: no issue-tracker integration is available in this session, and nothing in the project "
+    "folder holds a copy of it. Without the ticket I would be guessing at the acceptance criteria, the affected screens "
+    "and the priority, so I am stopping here instead of routing the request on a guess.\n\n"
+    "To continue, paste the ticket (title, description and acceptance criteria) into the chat. I'll also need to know where the code should go.",
+    # core-orchestrator, without the skill
+    "I can't open ticket 34324 from here. There is no tracker connection in this environment and the repository has no "
+    "export of the ticket, so the request as written does not tell me what to build or what done means for it.\n\n"
+    "Paste the ticket's text here, or give me read access to the tracker and I'll fetch it myself. I'll also need to know which project it belongs to.",
+    # core-orchestrator, without the skill: asks five inputs
+    "Before I route this I need five inputs that neither the request nor the project state gives me:\n"
+    "1. The product the idea is for, in one sentence.\n2. Who it is for.\n3. The market you want to enter first.\n"
+    "4. Whether a validation of the idea already exists.\n5. The deadline, if there is one.\n\n"
+    "Send these and I will pick the route. Once I have this, I'll test the key assumptions against the market analysis first.",
+    # core-research, without the skill
+    "I couldn't get current pricing for the three services: web access is not available in this session, and the "
+    "figures I remember may be out of date, so I will not present them as facts in a comparison you would decide on.\n\n"
+    "Paste the current pricing pages of the three services (or their plan tables) and tell me the monthly volume you "
+    "expect. With that I'll compute the cost per plan and show the break-even points.",
+    # eng-implement, with the skill
+    "I can't implement T-cm-2 yet. The backlog has no task with that id: docs/product/backlog.md lists T-cm-1 and "
+    "T-cm-3, and the plan for the change does not describe a second task either, so there is no acceptance criterion "
+    "to implement against and no test I could write first.\n\n"
+    "Tell me what T-cm-2 should do (one or two sentences and how to verify it), or point me to where it is specified. I'll write the check down in the backlog before I touch the code.",
+    # eng-security-review, without the skill
+    "I couldn't go through the alerts: the code host's command-line tool is not signed in here and the repository holds "
+    "no export of the code-scanning or dependency alerts, so I have nothing to triage beyond the source itself.\n\n"
+    "Export the open alerts (rule, severity, file and line) or paste them here. Once I have the alerts, I'll triage them by exploitability and propose a fix order.",
+    # ops-pull-request, without the skill
+    "I couldn't merge PR #7. The code host's tool reports that it is not authenticated in this environment, and the "
+    "local repository has no remote I am allowed to push to, so neither the merge nor the status checks can be run from here.\n\n"
+    "Give me access (a signed-in session of the tool), or run the merge yourself and tell me the result. I'll then check the PR's status and update the branch.",
+]
+FIRST_ROUND_ANNOUNCES = [
+    "I have the brief and the template open. Let me write the spec now",                       # "Let me ..." as the last words
+    "The repository has a plan and a backlog.\n\nLet me read the plan before I change anything.\n</system-reminder>",  # a stray closing tag
+    "I'll map the codebase starting from the entry points.\n\nNow let me examine the key files...",
+]
+
+
+@pytest.mark.parametrize("response", FIRST_ROUND_EMPTY + FIRST_ROUND_ANNOUNCES)
+def test_the_first_rounds_real_early_ends_are_still_detected(response):
+    assert er.early_end(response, []) is not None
+
+
+@pytest.mark.parametrize("response", FIRST_ROUND_STOPS)
+def test_the_first_rounds_seven_stops_that_state_a_blocker_are_no_longer_thrown_away(response):
+    assert len(response) > er.EARLY_END_BLOCKER_MIN and "?" not in response  # the shape that fooled the earlier rule
+    assert er.early_end(response, []) is None
+
+
+def test_the_seventeen_replies_of_the_first_round_are_all_here():
+    assert len(FIRST_ROUND_EMPTY) == 7 and len(FIRST_ROUND_STOPS) == 7 and len(FIRST_ROUND_ANNOUNCES) == 3
+
+
+@pytest.mark.parametrize("response, early", [
+    ("I'll also need the brief.", False),                                   # a bare "I'll" announces nothing
+    ("The lint is clean. I'll start with the spec.", True),                 # the final sentence announces
+    ("I'll start with the spec. The lint is clean.", False),                # an announcement that is not the final sentence
+    ("Now I need the format. Let me update the file:", True),               # short: a blocker word does not excuse it
+    ("x" * 700 + "\nNow let me write the report.", False),                  # a long reply that ends on a plain sentence
+    ("x" * 700 + "\nNow let me write the report:", True),                   # ... and one that was cut
+    ("x" * 700 + "\nLet me look at the remaining files\u2026", True),
+])
+def test_the_final_sentence_decides_and_a_long_reply_must_end_as_one_that_was_cut(response, early):
+    assert (er.early_end(response, []) is not None) is early
+
+
+def test_the_stop_reason_and_the_turn_count_are_read_from_the_adapters_raw_output(tmp_path):
+    assert er.run_ending(str(tmp_path)) == {}
+    (tmp_path / "raw.json").write_text(json.dumps({"type": "result", "result": "ok", "stop_reason": "end_turn", "num_turns": 7,
+                                                   "terminal_reason": "completed", "usage": {"input_tokens": 3}}))
+    assert er.run_ending(str(tmp_path)) == {"stop_reason": "end_turn", "num_turns": 7, "terminal_reason": "completed"}
+    (tmp_path / "raw.json").write_text(json.dumps([{"type": "system"}, {"type": "result", "num_turns": 2}]))
+    assert er.run_ending(str(tmp_path)) == {"num_turns": 2}
+    (tmp_path / "raw.json").write_text("plain text, as another runner writes it")
+    assert er.run_ending(str(tmp_path)) == {}
+
+
+def test_a_run_keeps_how_it_ended_beside_its_reply(tmp_path, monkeypatch, capsys):
+    runner = ('out="$8"\nif grep -q "You are grading" "$2"; then echo \'[{"id": 1, "passed": true, "evidence": "ok"}]\' > "$out/response.md"; exit 0; fi\n'
+              'echo \'{"type": "result", "result": "ok", "stop_reason": "end_turn", "num_turns": 4}\' > "$out/raw.json"\n'
+              'echo ok > "$out/response.md"; echo \'{"total_tokens": 10, "duration_ms": 5, "cost_usd": null}\' > "$out/timing.json"\n')
+    write_demo(tmp_path, monkeypatch, runner, [{"id": 1, "prompt": "p", "assertions": ["a"]}])
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--only", "without"]) == 0
+    timing = json.loads((run_folder(tmp_path, "without_skill") / "timing.json").read_text())
+    assert timing == {"total_tokens": 10, "duration_ms": 5, "cost_usd": None, "stop_reason": "end_turn", "num_turns": 4}
+    row = bench_of(tmp_path)["run_summary"]["without_skill"]["cases"][0]
+    assert (row["stop_reason"], row["num_turns"], row["tokens"]) == ("end_turn", 4, 10)
+
+
 def test_a_run_that_wrote_a_file_is_never_an_early_end():
     assert er.early_end("Now I'll write the PRD. First, let me create the Sources section.", {"docs/prd.md": 1.0}) is None
     assert er.early_end("<skill_tool>\n</skill_tool>", {"docs/prd.md": 1.0}) is None
@@ -1200,8 +1298,10 @@ def test_an_early_end_is_retried_and_the_second_attempt_is_scored(tmp_path, monk
     captured = capsys.readouterr()
     out, bench = json.loads(captured.out), bench_of(tmp_path)
     assert out["complete"] is True and bench["infra_failures"] == [] and out["early_end_warning"] is None
-    assert bench["early_ends"]["floor"] == {"attempts": 5, "early_ends": 1, "rate": 0.2, "by_case": {"1": 1}}
-    assert bench["early_ends"]["strong"] == {"attempts": 4, "early_ends": 0, "rate": 0.0, "by_case": {}}
+    # Counted per case and per variant: an early end thrown away and drawn again conditions that variant's score.
+    assert bench["early_ends"]["floor"] == {"attempts": 5, "early_ends": 1, "rate": 0.2, "by_case": {"1": 1},
+                                            "by_variant": {"with_skill": 1}}
+    assert bench["early_ends"]["strong"] == {"attempts": 4, "early_ends": 0, "rate": 0.0, "by_case": {}, "by_variant": {}}
     assert bench["run_summary"]["with_skill.floor"]["pass_rate"] == {"mean": 1.0, "stddev": 0.0, "n": 2}
     run = tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill.floor"
     assert (run / "outputs" / "response.md").read_text() == "ok: attempt 2\n" and (run / "grading.json").is_file()
@@ -1219,7 +1319,7 @@ def test_a_run_that_ends_early_on_every_attempt_is_an_infrastructure_failure(tmp
     out, bench = json.loads(capsys.readouterr().out), bench_of(tmp_path)
     assert out["complete"] is False and not (skill / "evals" / "result.json").exists()
     assert bench["infra_failures"] == [{"case": 1, "variant": "with_skill", "tier": "floor", "run": 1, "reason": "early_end",
-                                        "detail": "the last line announces a next action, no question was asked and no file written",
+                                        "detail": "the reply ends by announcing a next action, no question was asked and no file written",
                                         "attempts": 3}]
     assert bench["early_ends"]["floor"]["early_ends"] == 3 and bench["early_ends"]["floor"]["attempts"] == 6
     assert [r["case"] for r in bench["run_summary"]["with_skill.floor"]["cases"]] == [2]
@@ -1241,7 +1341,7 @@ def test_a_question_or_a_written_file_is_graded_not_retried(tmp_path, monkeypatc
     early_demo(tmp_path, monkeypatch, times=9, kind=kind)
     assert er.main(FULL) == 0
     bench = bench_of(tmp_path)
-    assert bench["early_ends"]["floor"] == {"attempts": 4, "early_ends": 0, "rate": 0.0, "by_case": {}}
+    assert bench["early_ends"]["floor"] == {"attempts": 4, "early_ends": 0, "rate": 0.0, "by_case": {}, "by_variant": {}}
     assert bench["complete"] is True and bench["early_end_warning"] is None
 
 
