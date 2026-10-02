@@ -387,6 +387,23 @@ def test_not_a_comment_is_done_without_a_run(env):
     assert not Path(str(env["calls"]) + ".agent").exists()
 
 
+def test_the_tick_command_the_scheduler_readme_documents_is_one_the_runtime_accepts(tmp_path):
+    # RT10: the README's command file carried "--agent social-manager", which the runtime refuses (exit 2,
+    # "unrecognized arguments"): a job scheduled from the README failed at every firing.
+    import re
+    readme = (REPO / "providers/scheduler/README.md").read_text()
+    blocks = [json.loads(b) for b in re.findall(r"```json\n(.*?)\n```", readme, re.S)]
+    ticks = [b for b in blocks if "tick" in b["argv"]]
+    assert len(ticks) == 1
+    argv = ticks[0]["argv"]
+    assert argv[0] == "/usr/bin/python3" and argv[1].endswith("scripts/runtime.py")
+    (tmp_path / "docs/workbench").mkdir(parents=True)
+    args = [str(tmp_path) if a == "/abs/project" else a for a in argv[2:]]
+    r = subprocess.run([sys.executable, str(RUNTIME), *args], capture_output=True, text=True, timeout=60)
+    assert "unrecognized arguments" not in r.stderr
+    assert r.returncode == 3 and "runtime.json" in r.stderr  # the arguments parse; only the project is not set up
+
+
 def test_missing_config_exits_3(tmp_path):
     (tmp_path / "docs/workbench").mkdir(parents=True)
     r = subprocess.run([sys.executable, str(RUNTIME), "status", "--project", str(tmp_path)],

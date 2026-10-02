@@ -44,8 +44,8 @@ A command file for the agent runtime's tick:
 
 ```json
 {
-  "argv": ["python3", "/abs/ai-workbench/scripts/runtime.py", "tick",
-           "--project", "/abs/project", "--agent", "social-manager"],
+  "argv": ["/usr/bin/python3", "/abs/ai-workbench/scripts/runtime.py", "tick",
+           "--project", "/abs/project"],
   "cwd": "/abs/project",
   "snapshot": ["/abs/ai-workbench/scripts/runtime.py", "/abs/ai-workbench/scripts/runtime_vote.py",
                "/abs/ai-workbench/providers/resolve.py"],
@@ -53,7 +53,7 @@ A command file for the agent runtime's tick:
 }
 ```
 
-The job runs the copy of `runtime.py` kept in its folder, so whatever that script finds next to itself (its sibling module `runtime_vote.py`, and `providers/resolve.py`, which it loads from its own folder first and from the configured workbench otherwise) has to be in the snapshot too or passed as an argument; a folder argument such as `--project` is not snapshotted or verified.
+The agent is not an argument: the tick reads it from the project's `docs/workbench/runtime.json`. `argv[0]` is the system interpreter by its fixed path, whose hash does not change with a package upgrade (a bare `python3` is resolved on the approver's `PATH` and hashed wherever it was found). The job runs the copy of `runtime.py` kept in its folder, so whatever that script finds next to itself (its sibling module `runtime_vote.py`, and `providers/resolve.py`, which it loads from its own folder first and from the configured workbench otherwise) has to be in the snapshot too or passed as an argument; a folder argument such as `--project` is not snapshotted or verified.
 
 ### Usage
 
