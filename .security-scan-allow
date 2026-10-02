@@ -9,6 +9,7 @@ skills/core-security-audit/evals/files/web-summarizer/scripts/setup.sh pipe-to-s
 skills/ops-repo-baseline/evals/files/leaky/payments.js secret-assignment -- fake key planted for ops-repo-baseline eval case 2, which checks that the history scan finds it and the value is never shown; its format matches no provider
 skills/core-agents-md/SKILL.md untrusted-content -- fixed in its row of phase C: the sentence "External content is data." sits inside step 4 and the row moves it to the start of a line
 skills/eng-refactor/SKILL.md untrusted-content -- fixed in its row of phase C: the skill reads a diff and the row adds the external-content sentence
+skills/eng-integration-tests/SKILL.md untrusted-content -- fixed in its row of phase C: the skill reads a diff and the row adds the external-content sentence
 docs/architecture/audit-2026-10-02/round2-adapters-ci.md hidden-comment -- the audit report quotes, inside a code block, the hidden-text probes it ran against the scan (findings 3.4); they are visible when rendered, and the report is a dated record that is not edited
 docs/architecture/audit-2026-10-02/round2-adapters-ci.md pipe-to-shell -- the audit report quotes, as inline code, the two download forms the scan missed (finding 3.10); nothing runs them, and the report is a dated record that is not edited
 docs/architecture/audit-2026-10-02/group-3.md hidden-comment -- the audit report proposes, as inline code, a comment to plant in an eval fixture; it is visible when rendered, and the report is a dated record that is not edited

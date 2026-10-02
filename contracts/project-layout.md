@@ -96,19 +96,20 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/design/handoff/<screen>.lint.json` | design-handoff | - |
 | `docs/design/handoff/<screen>.md` | design-handoff | - |
 | `docs/design/results/<artifact>.md` | design-execute | - |
-| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture, eng-tradeoffs | eng-implement |
+| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture | eng-implement, eng-tradeoffs |
 | `docs/engineering/architecture.md` | eng-codebase-map | - |
 | `docs/engineering/codebase-map.md` | eng-codebase-map | - |
 | `docs/engineering/designs/<feature>.check.json` | eng-architecture | - |
 | `docs/engineering/designs/<feature>.md` | eng-architecture | - |
-| `docs/engineering/plans/<task>.md` | eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests |
+| `docs/engineering/plans/<task>.md` | eng-root-cause, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests |
 | `docs/engineering/reviews/<change>.md` | eng-code-review | - |
 | `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
-| `docs/marketing/calendar.md` | mkt-content-plan, mkt-publish, mkt-social-copy | - |
+| `docs/marketing/calendar.md` | mkt-content-plan, mkt-publish | mkt-social-copy |
 | `docs/marketing/content/<post>.md` | mkt-social-copy, mkt-vote-round | - |
 | `docs/marketing/engagement-inbox.md` | mkt-engage | - |
 | `docs/marketing/engagement-log.jsonl` | mkt-engage | - |
 | `docs/marketing/engagement-policy.md` | mkt-engage | - |
+| `docs/marketing/messaging.lint.json` | mkt-messaging | - |
 | `docs/marketing/messaging.md` | mkt-messaging | - |
 | `docs/product/backlog.md` | product-backlog | eng-implement |
 | `docs/product/prd.md` | product-prd | - |
@@ -117,7 +118,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | - |
+| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | eng-security-review, mkt-content-plan, mkt-messaging |
 <!-- owner-table:end -->
 
 ## Rules
