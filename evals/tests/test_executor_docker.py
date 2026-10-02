@@ -3,6 +3,10 @@
 They build the images on first use (a few minutes) and are skipped unless WB_EVAL_DOCKER_TESTS=1:
   WB_EVAL_DOCKER_TESTS=1 uv run --with pytest pytest evals/tests/test_executor_docker.py
 CI runs them in its own job, on Linux.
+
+The image is built for the platform evidence is made on (executor.IMAGE_PLATFORM). On a machine of another
+architecture, such as the CI job's, these tests build and run it for that machine's own architecture
+instead (WB_EVAL_IMAGE_PLATFORM, set below): they test the definition, and no evidence comes from them.
 """
 from __future__ import annotations
 
@@ -19,6 +23,14 @@ SCRIPT = Path(__file__).resolve().parents[1] / "executor.py"
 spec = importlib.util.spec_from_file_location("executor", SCRIPT)
 ex = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(ex)
+if os.environ.get("WB_EVAL_DOCKER_TESTS") == "1" and not os.environ.get(ex.PLATFORM_ENV):
+    try:
+        native = subprocess.run(["docker", "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}"],
+                                capture_output=True, text=True, timeout=60).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        native = ""
+    if native and native != ex.IMAGE_PLATFORM:
+        os.environ[ex.PLATFORM_ENV] = native  # no emulation: the definition is what is under test here
 PROVIDER = "https://openrouter.ai/api/v1/models"  # public, needs no key; on the proxy's list
 OTHER = "https://github.com"  # reachable from anywhere; not on the list
 
@@ -50,9 +62,12 @@ def code(url):
     return f"curl -s -m 15 -o /dev/null -w '%{{http_code}}' {url}"
 
 
-def test_the_environment_names_the_definition_and_the_image(environment):
+def test_the_environment_names_the_definition_the_image_its_digest_and_its_platform(environment, root):
     assert environment["kind"] == "container" and environment["definition_sha256"] == ex.definition_hash()
-    assert environment["image_id"].startswith("sha256:")
+    assert environment["image_id"].startswith("sha256:") and environment["image_digest"] == environment["image_id"]
+    assert environment["image_platform"] == ex.image_platform()
+    machine = {"linux/arm64": "aarch64", "linux/amd64": "x86_64"}[ex.image_platform()]
+    assert inside(root, "uname -m").stdout.strip() == machine
 
 
 def test_a_run_writes_in_its_folder_and_the_caller_owns_the_result(environment, root):
@@ -97,9 +112,62 @@ def test_a_secret_reaches_the_run_by_name_and_only_when_passed(environment, root
 
 def test_the_image_carries_the_pinned_tools(environment, root):
     r = inside(root, "claude --version; opencode --version; uv --version; git --version; python3 --version; "
-                     "node --version; chromium --version")
+                     "node --version; chromium --version; gh --version; file --version; patch --version")
     assert r.returncode == 0, r.stderr
     assert "2.1.283" in r.stdout and "1.18.32" in r.stdout and "0.12.19" in r.stdout and "v24.10.0" in r.stdout
+    assert "gh version 2.102.0" in r.stdout and "GNU patch" in r.stdout and "magic file from" in r.stdout
+    lock = (Path(ex.DEFINITION) / "runners" / "package-lock.json").read_text()
+    assert '"version": "2.1.283"' in lock and '"version": "1.18.32"' in lock  # the lock file is what was installed
+
+
+def test_the_code_hosts_tool_is_installed_and_signed_out(environment, root):
+    r = inside(root, "gh auth status; echo status=$?; env | grep -c -i -E '^(GH|GITHUB)_' ; ls -A ~/.config 2>/dev/null | wc -l")
+    out = (r.stdout + r.stderr).lower()
+    assert "status=1" in out and "not logged in" in out, out
+    assert r.stdout.split()[-2:] == ["0", "0"]  # no token variable, no stored configuration
+
+
+def test_the_clock_the_locale_and_the_user_are_the_images_own(environment, root):
+    host = {"TZ": "America/Sao_Paulo", "LANG": "pt_BR.UTF-8", "USER": "someone"}
+    r = inside(root, 'echo "$TZ|$LANG|$USER|$PYTHONDONTWRITEBYTECODE|${DEBIAN_FRONTEND:-unset}|$(date +%Z)"; '
+                     "python3 -c 'import locale, sys; print(sys.stdout.encoding, locale.getpreferredencoding())'", env=host)
+    assert r.returncode == 0, r.stderr
+    lines = r.stdout.strip().splitlines()
+    assert lines[0] == "UTC|C.UTF-8|eval|1|unset|UTC"
+    assert lines[1].lower().replace("-", "") == "utf8 utf8"
+
+
+def test_python_leaves_no_bytecode_in_the_case_folder(environment, root):
+    r = inside(root, "printf 'X = 1\\n' > mod.py && python3 -c 'import mod; print(mod.X)' && find . -name '*.pyc' -o -name __pycache__ | wc -l")
+    assert r.returncode == 0 and r.stdout.split() == ["1", "0"], r.stdout + r.stderr
+
+
+def test_a_run_has_one_identity_for_its_commits_the_images(environment, root):
+    host = {"GIT_AUTHOR_NAME": "someone", "GIT_AUTHOR_EMAIL": "s@host.example", "GIT_COMMITTER_NAME": "someone",
+            "GIT_COMMITTER_EMAIL": "s@host.example", "GIT_ALLOW_PROTOCOL": "file"}
+    r = inside(root, "git init -q . && echo x > f && git add f && git commit -q -m one && git log -1 --format='%an <%ae> / %cn <%ce>' "
+                     "&& git branch --show-current && echo protocol=$GIT_ALLOW_PROTOCOL", env=host)
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.splitlines() == ["Eval <eval@example.invalid> / Eval <eval@example.invalid>", "main", "protocol=file"]
+
+
+def test_the_floor_runners_scratch_folder_can_be_written_by_the_run(environment, root):
+    r = inside(root, "mkdir -p /tmp/opencode/work && echo ok > /tmp/opencode/work/pairs.json && cat /tmp/opencode/work/pairs.json "
+                     "&& stat -c %a /tmp/opencode")
+    assert r.returncode == 0 and r.stdout.split() == ["ok", "1777"], r.stdout + r.stderr
+
+
+def test_a_run_holds_no_capability_cannot_gain_one_and_has_a_process_limit(environment, root):
+    r = inside(root, "grep -E '^(CapEff|CapPrm|CapBnd|NoNewPrivs):' /proc/self/status; cat /sys/fs/cgroup/pids.max 2>/dev/null")
+    assert r.returncode == 0, r.stderr
+    status = dict(line.split(":") for line in r.stdout.splitlines() if ":" in line)
+    assert int(status["CapEff"], 16) == 0 and int(status["CapPrm"], 16) == 0 and int(status["CapBnd"], 16) == 0
+    assert status["NoNewPrivs"].strip() == "1"
+    limits = [line for line in r.stdout.splitlines() if ":" not in line and line.strip()]
+    assert limits == [str(ex.PIDS_LIMIT)]  # the cgroup's own limit, as the container sees it
+    # The tools a run uses still work without them: a commit, a script, the browser.
+    r = inside(root, "git init -q . && python3 -c 'print(1)' && chromium --headless --no-sandbox --disable-gpu --dump-dom about:blank 2>/dev/null | head -c 6")
+    assert r.returncode == 0 and r.stdout.split()[0] == "1" and "<html" in r.stdout, r.stdout + r.stderr
 
 
 def test_removing_a_container_by_name_ends_it(environment, root):

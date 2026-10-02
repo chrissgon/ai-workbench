@@ -74,9 +74,10 @@ covered by an empty one). Nothing else of the machine: no home folder, no other 
 store. Network, per command: none for setup commands and the fixture commit; for model runs and gradings an
 internal network whose only way out is a proxy that lets through the model providers' hosts
 (evals/container/proxy/allow.txt); the default network only for a case with "allow_web": true.
-Environment: the image's own, plus the variables that keep git inside the case folder
-(GIT_ALLOW_PROTOCOL=file, no terminal prompt, a fixed author and committer), TZ when the caller has it set,
-the proxy's address on the proxy network, and the variables named with --pass-env (every run),
+Environment: the image's own (its clock is UTC, its locale C.UTF-8, and the one git identity of a run is the
+image's: nothing of the caller's machine sets them), plus the variables that keep git inside the case folder
+(GIT_ALLOW_PROTOCOL=file, no terminal prompt), the proxy's address on the proxy network, and the variables
+named with --pass-env (every run),
 --floor-pass-env (floor-model runs only: a provider key the strong model and the grader must not receive) or
 strong_pass_env of the gate file (strong-model runs and gradings only). A name among those that an adapter
 registers as a secret for eval runs and that is missing from the environment is read from the OS secret
@@ -132,6 +133,10 @@ skill's status (draft, evaluated, stale) is printed. A partial or incomplete run
 folder that changed during the run is reported and not recorded. --no-record skips the record. A full run
 whose floor model is not the configured one runs and is reported, but writes no record (it would read as
 stale: evaluated on another floor model) unless --record-anyway is given.
+No evidence while the measurement is open. While evals/eval-gate.json carries no "measurement_sha256" (the
+fingerprint that closes a measurement version), and when the image was built for another CPU platform than
+the one evidence is made on (evals/executor.py), runs execute and benchmark.json is written, but no record
+is written or updated, whatever the options: the reason is printed.
 --only without --update-record, when its run is complete and not contaminated, replaces scores.strong_without
 and scores.floor_without of the existing record, recomputes its gate and adds "baseline": {"date", "iteration",
 "runs"}. It needs a valid record whose content_sha256 is the skill's current hash and whose models and
@@ -1416,8 +1421,14 @@ def run(argv):
               "the evidence, close the way in, and rerun; --allow-contaminated records anyway.", file=sys.stderr)
     record = {"written": False, "reason": None}
     blocked = contaminated and not o["allow_contaminated"]
+    refusal = status.evidence_refusal(ROOT)
+    if not refusal and environment and environment.get("image_platform") != load_executor().IMAGE_PLATFORM:
+        refusal = (f"the image was built for {environment.get('image_platform')}, and evidence is made on "
+                   f"{load_executor().IMAGE_PLATFORM} only")
     if not o["record"]:
         record["reason"] = "--no-record"
+    elif refusal:
+        record["reason"] = refusal
     elif o["update_record"]:
         # The baseline alone: both without-skill scores of the existing record are replaced.
         if [t for t, _ in models] != ["strong", "floor"]:

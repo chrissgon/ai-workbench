@@ -698,7 +698,9 @@ def test_retries_and_the_rate_are_checked(args):
 
 def configure_gate(tmp_path, **changes):
     config = {"strong_model": "m", "strong_harness": "h", "floor_model": "f", "floor_harness": "h",
-              "floor_pass_env": [], "strong_pass_env": [], "grader": "m", "threshold": 0.8, "strong_tolerance": 0, "measurement_version": 2, **changes}
+              "floor_pass_env": [], "strong_pass_env": [], "grader": "m", "threshold": 0.8, "strong_tolerance": 0, "measurement_version": 2,
+              "measurement_floor": 2, "measurement_sha256": "0" * 64, **changes}
+    config = {k: v for k, v in config.items() if v is not None}  # None leaves a key out
     (tmp_path / "evals").mkdir(exist_ok=True)
     (tmp_path / "evals" / "eval-gate.json").write_text(json.dumps(config))
 
@@ -737,6 +739,32 @@ def test_skill_alone_runs_the_configured_gate_and_records(tmp_path, monkeypatch,
     assert er.main(["--skill", "demo", "--runs", "1"]) == 0
     assert json.loads(capsys.readouterr().out)["record"]["status"] == "evaluated"
     assert json.loads((skill / "evals" / "result.json").read_text())["models"] == {"strong": "m", "floor": "f"}
+
+
+def test_while_the_gate_file_carries_no_fingerprint_a_complete_run_writes_no_record(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    configure_gate(tmp_path, measurement_sha256=None)
+    for extra in ([], ["--record-anyway"], ["--only", "without", "--update-record"]):
+        assert er.main(["--skill", "demo", "--runs", "1"] + extra) == 0
+        captured = capsys.readouterr()
+        out = json.loads(captured.out)
+        assert out["complete"] is True and out["record"]["written"] is False
+        assert "carries no measurement_sha256: measurement version 2 is open" in out["record"]["reason"]
+        assert "RECORD demo: not written" in captured.err and not (skill / "evals" / "result.json").exists()
+    assert bench_of(tmp_path)["complete"] is True  # the runs happened and are on disk; only the record is withheld
+
+
+def test_an_image_of_another_platform_writes_no_record(tmp_path, monkeypatch, capsys):
+    """The CI job builds the image for its own architecture to test the definition; evidence is made on one platform."""
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    executor = er.load_executor()
+    monkeypatch.setattr(er, "EXECUTOR", "container")
+    monkeypatch.setattr(executor, "ensure", lambda: {"kind": "container", "image_platform": "linux/amd64"})
+    monkeypatch.setattr(er, "run_group", lambda cmd, timeout, cwd=None, env=None, box=None: er._run_group(cmd, timeout, cwd, env, None))
+    assert er.main(FULL) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["record"]["written"] is False and "built for linux/amd64" in out["record"]["reason"]
+    assert not (skill / "evals" / "result.json").exists()
 
 
 def test_a_full_run_on_another_floor_model_is_not_recorded_unless_asked(tmp_path, monkeypatch, capsys):
