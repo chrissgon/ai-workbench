@@ -9,14 +9,28 @@
     "any tool that reads .agents/skills or ~/.agents/skills"
   ],
   "consumes": [
-    "skills"
+    "skills",
+    "shared"
   ],
   "strategy": {
-    "skills": "symlink each selected skills/<name> into ~/.agents/skills/<name> (or ./.agents/skills with --project); selection by --pack"
+    "skills": "symlink each selected skills/<name> into ~/.agents/skills/<name> (or ./.agents/skills with --project); selection by --pack",
+    "shared": "symlink shared/references into <skills folder>/../shared/references (a copy with --copy), in a folder holding the installer's marker, so that a skill's ../../shared/references/<file> resolves"
   },
   "install": "install.sh [--pack <name>]",
   "generated": [],
   "eval_runner": "run-prompt.sh",
+  "eval": {
+    "skills_dir": ".agents/skills",
+    "settings": [
+      ".agents",
+      ".opencode",
+      "opencode.json",
+      "opencode.jsonc",
+      ".claude",
+      "CLAUDE.md",
+      "CONTEXT.md"
+    ]
+  },
   "secrets": [
     {
       "name": "OPENROUTER_API_KEY",

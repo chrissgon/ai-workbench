@@ -37,13 +37,20 @@ not copied into an eval run, so adding, changing or removing one measures nothin
 
 The eval gate is configured in evals/eval-gate.json, committed: {"strong_model", "strong_harness",
 "floor_model", "floor_harness", "floor_pass_env": [variables], "strong_pass_env": [variables], "grader",
-"threshold", "strong_tolerance", "measurement_version"}. It names the models, the adapters and the grader a gate run uses (eval_run.py takes
+"threshold", "strong_tolerance", "measurement_version", "measurement_floor"} and, once a measurement version is
+closed, "measurement_sha256". It names the models, the adapters and the grader a gate run uses (eval_run.py takes
 them as defaults) and what a record is judged against. "measurement_version" is a number raised by hand, in
 the same commit, when a change alters what a run measures (the gate's rule, the environment runs execute in,
 the grading template, what a model under test may do): every record of another version then reads stale. The
 runner's own text is not hashed, so a change that measures the same thing stales nothing. The file sits
 outside skills/, so changing it changes no content hash; the status below reacts instead. Without the file, a
 record is judged on its own threshold, tolerance and version, and any model.
+
+"measurement_floor" is the version below which lab evidence weighs nothing (the reliability model, section 8):
+a whole number from 1 to the measurement version. "measurement_sha256" is the fingerprint of the files that
+decide what a run measures, 64 hexadecimal characters. A gate file without it describes a measurement version
+that is still open: files that decide what a run measures are still changing under that number, so nothing
+measured meanwhile is written as evidence (evidence_refusal below; the runner and `record` both ask it).
 
 Status of a skill:
   draft      no record, or a record whose gate did not pass (on the configured threshold) or that is not complete
@@ -59,7 +66,8 @@ Commands:
   hash       prints the content hash of one skill.
   record     builds result.json from an existing benchmark.json (a run made before records existed, or with
              --no-record). Refused when the benchmark did not run every case of the skill, lacks one of the
-             four variants (with and without the skill, strong and floor model) or lacks a score. It stores
+             four variants (with and without the skill, strong and floor model) or lacks a score, and while
+             the gate file carries no "measurement_sha256" (an open measurement version). It stores
              the CURRENT content hash unless the benchmark carries one: the caller answers for not having
              edited the skill since that run. The date is the benchmark's, else its file date, else --date.
   inventory  regenerates the block between <!-- eval-status:begin --> and <!-- eval-status:end --> in
@@ -83,7 +91,8 @@ INVENTORY_REL = os.path.join("docs", "inventory.md")
 GATE_REL = os.path.join("evals", "eval-gate.json")
 GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "floor_harness": str,
                "floor_pass_env": list, "strong_pass_env": list, "grader": str, "threshold": (int, float), "strong_tolerance": (int, float),
-               "measurement_version": int}
+               "measurement_version": int, "measurement_floor": int}
+GATE_OPTIONAL = {"measurement_sha256": str}  # absent while a measurement version is open
 CONTAINER_VERSION = 3  # from this version on every run executes in the eval container, and a record names it
 LEGACY_VERSION = 1  # a record with no "measurement_version": the gate had no threshold for the strong model
 STATUSES = ("evaluated", "stale", "draft")
@@ -112,7 +121,7 @@ def gate_problems(root=ROOT):
         return [f"not valid JSON: {e}"]
     if not isinstance(cfg, dict):
         return ["the configuration must be a JSON object"]
-    out = [f"unknown field {k!r}" for k in cfg if k not in GATE_FIELDS]
+    out = [f"unknown field {k!r}" for k in cfg if k not in GATE_FIELDS and k not in GATE_OPTIONAL]
     for key, kind in GATE_FIELDS.items():
         if key not in cfg:
             out.append(f"missing field {key!r}")
@@ -127,7 +136,33 @@ def gate_problems(root=ROOT):
         out.append("strong_tolerance must be between 0 and 1")
     if not out and cfg["measurement_version"] <= LEGACY_VERSION:
         out.append(f"measurement_version must be above {LEGACY_VERSION}")
+    if not out and (isinstance(cfg["measurement_floor"], bool) or not 1 <= cfg["measurement_floor"] <= cfg["measurement_version"]):
+        out.append("measurement_floor must be a whole number from 1 to the measurement version")
+    if not out and "measurement_sha256" in cfg and not (isinstance(cfg["measurement_sha256"], str)
+                                                        and re.fullmatch(r"[0-9a-f]{64}", cfg["measurement_sha256"])):
+        out.append("measurement_sha256 must be 64 hexadecimal characters")
     return out
+
+
+def evidence_refusal(root=ROOT):
+    """Why nothing measured now may be written as evidence, or None when it may.
+
+    A gate file that carries no "measurement_sha256" describes a measurement version that is open: the
+    files that decide what a run measures are still changing under its number, so a result written now
+    could not be told from one made after the version is closed. A tree with no gate file (a case folder
+    that builds a skill of its own) has no measurement to protect and is not refused."""
+    path = os.path.join(root, GATE_REL)
+    if not os.path.isfile(path):
+        return None
+    problems = gate_problems(root)
+    if problems:
+        return f"{GATE_REL} is not valid ({'; '.join(problems)})"
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    if "measurement_sha256" not in cfg:
+        return (f"{GATE_REL} carries no measurement_sha256: measurement version {cfg['measurement_version']} is open, "
+                "and nothing measured while it is open is written as evidence")
+    return None
 
 
 def load_gate(root=ROOT):
@@ -463,6 +498,9 @@ def inventory_current(root=ROOT):
 
 def cmd_record(root, skill, bench_path, date):
     skill_dir = os.path.join(root, "skills", skill)
+    refusal = evidence_refusal(root)
+    if refusal:
+        die(f"record refused: {refusal}.", 1)
     try:
         with open(bench_path, encoding="utf-8") as f:
             bench = json.load(f)

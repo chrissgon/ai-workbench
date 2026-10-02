@@ -1,12 +1,17 @@
 #!/usr/bin/env bash
 # Eval contract for tools that read .agents/skills. Default runner: OpenCode (`opencode run`).
 #
-# Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-#                      [--extra-skill-dir <dir>]... [--allow-web] [--max-cost-usd <amount>]
+# Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir>
+#                      [--allow-web] [--max-cost-usd <amount>]
 #
-# Writes <out>/response.md and <out>/timing.json (tokens unknown: null). --skill-dir and each
-# --extra-skill-dir are copied, never linked, into <cwd>/.agents/skills/<name>. A case folder that
-# already holds .agents/, .opencode/ or opencode.json[c] (from a fixture or a setup) is refused.
+# Writes <out>/response.md and <out>/timing.json (tokens unknown: null). It installs nothing: the eval
+# runner stages the skill under test and a case's dependency skills in <cwd>/.agents/skills/<name>
+# before this script starts (the "eval" object of adapter.json names that folder). The runner refuses
+# a case folder that carries a name of adapter.json's "eval.settings": .agents/, .opencode/ and
+# opencode.json[c], and what the default runner also reads at project level, another tool's skills
+# folder and instruction file (.claude/, CLAUDE.md) and its own older instruction file (CONTEXT.md);
+# checked in the binary of opencode 1.18.32. AGENTS.md is not in the list: it is the project's own
+# instruction file, which fixtures ship and this runner reads.
 # Override the command with RUN_PROMPT_CMD, a template with {prompt_file}, {model} and {cwd}, each
 # replaced by a shell-quoted value, e.g. RUN_PROMPT_CMD='mytool --model {model} < {prompt_file}'.
 # Flags verified against opencode 1.18.32 (run --help); re-check after upgrades.
@@ -21,46 +26,23 @@
 # Connectors and MCP servers: the throwaway HOME below hides the user's configuration and
 # project configuration is refused, so none load; RUN_PROMPT_KEEP_HOME=1 loses that guarantee.
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" WEB=0 CAPPED=0
-EXTRA_SKILLS=()
+PROMPT="" CWD="" MODEL="" OUT="" WEB=0 CAPPED=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prompt-file) PROMPT="$2"; shift 2 ;;
     --cwd) CWD="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
-    --skill-dir) SKILL_DIR="$2"; shift 2 ;;
-    --extra-skill-dir) EXTRA_SKILLS+=("$2"); shift 2 ;;
     --allow-web) WEB=1; shift ;;
     --max-cost-usd) CAPPED=1; shift 2 ;;
-    --help|-h) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
 [[ -f "$PROMPT" && -d "$CWD" && -n "$MODEL" && -n "$OUT" ]] || { echo "Error: --prompt-file, --cwd, --model and --out are required. See --help." >&2; exit 2; }
 [[ "${WB_EVAL_CONTAINER:-}" == "1" ]] || { echo "Error: this adapter approves every tool a model asks for, so it runs only inside the container that evals/eval_run.py starts." >&2; exit 2; }
-FOUND="$(find "$CWD" -path "$CWD/.git" -prune -o \( -name .agents -o -name .opencode -o -name opencode.json -o -name opencode.jsonc \) -print -quit)"
-[[ -z "$FOUND" ]] || { echo "Error: the case folder already holds ${FOUND#"$CWD"/}; a fixture or setup must not carry harness settings." >&2; exit 2; }
 mkdir -p "$OUT"
 [[ $CAPPED -eq 1 ]] && echo "note: --max-cost-usd is not enforced by this runner (opencode has no spend limit); eval_run.py --timeout and a credit limit on the provider key are the caps." >&2
-install_skill() {
-  local src dest
-  src="$(cd "$1" && pwd)"; dest="$CWD/.agents/skills/$(basename "$src")"
-  mkdir -p "$CWD/.agents/skills"
-  rm -rf "${dest:?}"
-  cp -RL "$src" "$dest"   # -L: a link inside the skill is copied as its content, never kept pointing back
-  rm -rf "${dest:?}/evals"   # the cases, their fixtures and assertions: the model under test never reads them
-  rm -rf "${dest:?}/scripts/tests"   # the tests of the skill's scripts: not part of what a model uses
-}
-[[ -n "$SKILL_DIR" ]] && install_skill "$SKILL_DIR"
-for d in ${EXTRA_SKILLS[@]+"${EXTRA_SKILLS[@]}"}; do install_skill "$d"; done
-# Skills link the workbench's shared references as ../../shared/references/<file>: copy them beside
-# the installed skills so those links resolve inside the case folder too.
-WORKBENCH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if [[ -d "$CWD/.agents/skills" && -d "$WORKBENCH/shared" ]]; then
-  rm -rf "${CWD:?}/.agents/shared"
-  cp -RL "$WORKBENCH/shared" "$CWD/.agents/shared"
-fi
 if [[ -n "${RUN_PROMPT_CMD:-}" ]]; then
   # Values are shell-quoted so a model id or path cannot add commands to the template.
   CMD="${RUN_PROMPT_CMD//\{prompt_file\}/$(printf '%q' "$PROMPT")}"

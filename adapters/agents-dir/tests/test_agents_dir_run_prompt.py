@@ -4,6 +4,7 @@ Run: uv run --with pytest pytest adapters/agents-dir/tests
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -30,11 +31,39 @@ def run(t, model="m", *extra, cmd="cat {prompt_file}; echo {model}", **more):
                            "--model", model, "--out", str(t / "out"), *extra], capture_output=True, text=True, env=env)
 
 
-def test_the_skill_is_copied_not_linked(case):
-    r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"), "--extra-skill-dir", str(case / "skills" / "demo"))
+def test_the_adapter_installs_nothing(case):
+    """The runner stages the skills before the adapter starts (scripts/stage_skills.py): the adapter runs the prompt."""
+    r = run(case)
     assert r.returncode == 0, r.stderr
-    dest = case / "cwd" / ".agents" / "skills" / "demo"
-    assert dest.is_dir() and not dest.is_symlink()
+    assert list((case / "cwd").iterdir()) == []  # no skill folder, no shared folder
+    assert (case / "out" / "response.md").read_text() == "hello\nm\n"
+
+
+@pytest.mark.parametrize("flag", ["--skill-dir", "--extra-skill-dir"])
+def test_the_options_that_made_the_adapter_copy_a_skill_are_gone(case, flag):
+    r = run(case, "m", flag, str(case / "skills" / "demo"))
+    assert r.returncode == 2 and "unknown option" in r.stderr
+    assert not (case / "out").exists() and list((case / "cwd").iterdir()) == []
+
+
+def test_a_skill_the_runner_staged_is_left_as_it_is(case):
+    staged = case / "cwd" / ".agents" / "skills" / "demo"
+    staged.mkdir(parents=True)
+    (staged / "SKILL.md").write_text("staged by the runner\n")
+    r = run(case)
+    assert r.returncode == 0, r.stderr
+    assert (staged / "SKILL.md").read_text() == "staged by the runner\n"
+    assert sorted(p.name for p in (case / "cwd" / ".agents").iterdir()) == ["skills"]
+
+
+def test_the_manifest_names_where_the_harness_finds_skills_and_what_carries_its_settings():
+    manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
+    assert manifest["eval"]["skills_dir"] == ".agents/skills"
+    settings = set(manifest["eval"]["settings"])
+    assert {".agents", ".opencode", "opencode.json", "opencode.jsonc"} <= settings
+    # What the default runner also reads at project level: another tool's folder and instruction file.
+    assert {".claude", "CLAUDE.md"} <= settings and "AGENTS.md" not in settings
+    assert set(manifest["consumes"]) == set(manifest["strategy"])  # nothing consumed without saying how
 
 
 def test_the_model_id_cannot_add_commands(case):
@@ -42,46 +71,6 @@ def test_the_model_id_cannot_add_commands(case):
     assert r.returncode == 0, r.stderr
     assert not (case / "cwd" / "pwned").exists()
     assert (case / "out" / "response.md").read_text() == "hello\nm; touch pwned\n"
-
-
-@pytest.mark.parametrize("planted", [".agents/skills/x/SKILL.md", "opencode.json", "sub/.opencode/config"])
-def test_a_case_folder_with_harness_settings_is_refused(case, planted):
-    p = case / "cwd" / planted
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text("{}")
-    r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"))
-    assert r.returncode == 2 and "harness settings" in r.stderr
-
-
-def test_shared_references_resolve_from_the_copied_skill(case):
-    r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"))
-    assert r.returncode == 0, r.stderr
-    skill = case / "cwd" / ".agents" / "skills" / "demo"
-    assert (skill / ".." / ".." / "shared" / "references" / "security.md").is_file()
-    assert not (case / "cwd" / ".agents" / "shared").is_symlink()
-
-
-def test_the_skill_evals_are_not_copied(case):
-    evals = case / "skills" / "demo" / "evals"
-    evals.mkdir()
-    (evals / "evals.json").write_text('{"assertions": ["the answer"]}\n')
-    r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"))
-    assert r.returncode == 0, r.stderr
-    dest = case / "cwd" / ".agents" / "skills" / "demo"
-    assert (dest / "SKILL.md").is_file() and not (dest / "evals").exists()
-    assert (evals / "evals.json").is_file()
-
-
-def test_the_tests_of_the_skill_scripts_are_not_copied(case):
-    scripts = case / "skills" / "demo" / "scripts"
-    (scripts / "tests").mkdir(parents=True)
-    (scripts / "check.py").write_text("print(1)\n")
-    (scripts / "tests" / "test_x.py").write_text("def test_x():\n    assert True\n")
-    r = run(case, "m", "--skill-dir", str(case / "skills" / "demo"))
-    assert r.returncode == 0, r.stderr
-    dest = case / "cwd" / ".agents" / "skills" / "demo"
-    assert (dest / "scripts" / "check.py").is_file() and not (dest / "scripts" / "tests").exists()
-    assert (scripts / "tests" / "test_x.py").is_file()
 
 
 def test_max_cost_is_accepted_and_said_to_be_unenforced(case):
@@ -134,7 +123,7 @@ def test_a_local_model_needs_the_throwaway_home(case):
 def test_outside_the_eval_container_the_adapter_refuses_to_start(case):
     r = run(case, WB_EVAL_CONTAINER="")
     assert r.returncode == 2 and "only inside the container" in r.stderr
-    assert not (case / "out").exists() and not (case / "cwd" / ".agents").exists()
+    assert not (case / "out").exists() and list((case / "cwd").iterdir()) == []
 
 
 # --- stopping the adapter stops what the runner started --------------------------------------------

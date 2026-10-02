@@ -1,20 +1,25 @@
 #!/usr/bin/env bash
 # Eval contract: run one prompt through Claude Code non-interactively, inside the eval container.
 #
-# Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--skill-dir <dir>]
-#                      [--extra-skill-dir <dir>]... [--allow-web] [--max-cost-usd <amount>]
+# Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir>
+#                      [--allow-web] [--max-cost-usd <amount>] [--no-tools]
 #
-# Writes <out>/response.md and <out>/timing.json. --skill-dir (the skill under test) and each
-# --extra-skill-dir (a case's dependencies, a flow's phases) are copied, never linked, into
-# <cwd>/.claude/skills/<name>, so they are discoverable at project scope. Settings are limited to the
-# project scope; a case folder that already holds .claude/ or .mcp.json (from a fixture or a setup) is
-# refused, since the project scope would apply its rules, hooks or servers.
+# Writes <out>/response.md and <out>/timing.json. It installs nothing: the eval runner stages the
+# skill under test and a case's dependency skills in <cwd>/.claude/skills/<name> before this script
+# starts (the "eval" object of adapter.json names that folder; scripts/stage_skills.py copies them),
+# so they are discoverable at project scope. Settings are limited to the project scope; the runner
+# refuses a case folder that carries a name of adapter.json's "eval.settings" (.claude, .mcp.json or
+# the project-instructions files CLAUDE.md and CLAUDE.local.md, from a fixture or a setup), since the
+# project scope would apply its rules, hooks, servers or instructions.
 # No MCP servers or claude.ai connectors are loaded (--strict-mcp-config, ENABLE_CLAUDEAI_MCP_SERVERS=false).
 # It runs only inside the eval container (evals/executor.py; the image sets WB_EVAL_CONTAINER=1) and
 # refuses to start anywhere else: the container is the boundary, so every tool is allowed
 # (--dangerously-skip-permissions), which on a person's machine would let a model do anything.
 # --allow-web leaves WebSearch and WebFetch available, for a case that must search the web; without it
 # both are disallowed.
+# --no-tools is for a grading call: the model gets no tool at all (--tools ""), and no permission is
+# skipped, since there is nothing to permit. A grader holds this tier's credential and reads text a
+# model under test wrote; it judges that text and does not act. Not combined with --allow-web.
 # --max-cost-usd becomes claude's --max-budget-usd: the run stops once it has spent that much.
 # SLASH_COMMAND_TOOL_CHAR_BUDGET is raised (200000 unless set): the CLI lists skills to the model within a
 # character budget, its own bundled skills first, and past the budget a project skill is listed by name
@@ -25,48 +30,27 @@
 # is larger than one argument may be.
 # Stopping this script (TERM, INT, HUP) stops the CLI and everything it started.
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" WEB="" MAX_COST=""
-EXTRA_SKILLS=()
+PROMPT="" CWD="" MODEL="" OUT="" WEB="" MAX_COST="" NO_TOOLS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prompt-file) PROMPT="$2"; shift 2 ;;
     --cwd) CWD="$2"; shift 2 ;;
     --model) MODEL="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
-    --skill-dir) SKILL_DIR="$2"; shift 2 ;;
-    --extra-skill-dir) EXTRA_SKILLS+=("$2"); shift 2 ;;
     --allow-web) WEB=1; shift ;;
+    --no-tools) NO_TOOLS=1; shift ;;
     --max-cost-usd)
       [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
       MAX_COST="$2"; shift 2 ;;
-    --help|-h) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
 [[ -f "$PROMPT" && -d "$CWD" && -n "$MODEL" && -n "$OUT" ]] || { echo "Error: --prompt-file, --cwd, --model and --out are required. See --help." >&2; exit 2; }
+[[ -z "$NO_TOOLS" || -z "$WEB" ]] || { echo "Error: --no-tools and --allow-web do not go together: a call with no tools has no web tools." >&2; exit 2; }
 [[ "${WB_EVAL_CONTAINER:-}" == "1" ]] || { echo "Error: this adapter allows a model every tool, so it runs only inside the container that evals/eval_run.py starts." >&2; exit 2; }
 command -v claude >/dev/null || { echo "Error: 'claude' CLI not found on PATH." >&2; exit 1; }
-FOUND="$(find "$CWD" -path "$CWD/.git" -prune -o \( -name .claude -o -name .mcp.json \) -print -quit)"
-[[ -z "$FOUND" ]] || { echo "Error: the case folder already holds ${FOUND#"$CWD"/}; a fixture or setup must not carry harness settings." >&2; exit 2; }
 mkdir -p "$OUT"
-install_skill() {
-  local src dest
-  src="$(cd "$1" && pwd)"; dest="$CWD/.claude/skills/$(basename "$src")"
-  mkdir -p "$CWD/.claude/skills"
-  rm -rf "${dest:?}"
-  cp -RL "$src" "$dest"   # -L: a link inside the skill is copied as its content, never kept pointing back
-  rm -rf "${dest:?}/evals"   # the cases, their fixtures and assertions: the model under test never reads them
-  rm -rf "${dest:?}/scripts/tests"   # the tests of the skill's scripts: not part of what a model uses
-}
-[[ -n "$SKILL_DIR" ]] && install_skill "$SKILL_DIR"
-for d in ${EXTRA_SKILLS[@]+"${EXTRA_SKILLS[@]}"}; do install_skill "$d"; done
-# Skills link the workbench's shared references as ../../shared/references/<file>: copy them beside
-# the installed skills so those links resolve inside the case folder too.
-WORKBENCH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-if [[ -d "$CWD/.claude/skills" && -d "$WORKBENCH/shared" ]]; then
-  rm -rf "${CWD:?}/.claude/shared"
-  cp -RL "$WORKBENCH/shared" "$CWD/.claude/shared"
-fi
 # The runner gets its own session, so everything it starts (model sessions, browsers) is one process group
 # that can be stopped as a whole: when it exits, and when this script gets TERM, INT or HUP (a timeout or a
 # stop of eval_run.py). Without it a stopped eval left model sessions working for minutes.
@@ -82,8 +66,12 @@ OWN_SESSION=(python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys
 trap 'stop_runner; exit 143' TERM INT HUP
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
 set +e
-EXTRA=(--dangerously-skip-permissions)
-[[ -n "$WEB" ]] || EXTRA+=(--disallowedTools "WebSearch,WebFetch")
+if [[ -n "$NO_TOOLS" ]]; then
+  EXTRA=(--tools "")   # checked in `claude --help`, 2.1.283: "" disables every built-in tool
+else
+  EXTRA=(--dangerously-skip-permissions)
+  [[ -n "$WEB" ]] || EXTRA+=(--disallowedTools "WebSearch,WebFetch")
+fi
 [[ -n "$MAX_COST" ]] && EXTRA+=(--max-budget-usd "$MAX_COST")
 # Connectors: https://code.claude.com/docs/en/mcp (read 2026-09-27): claude.ai connectors load when logged in
 # with a claude.ai account unless ENABLE_CLAUDEAI_MCP_SERVERS=false, and `claude -p` loads project servers
