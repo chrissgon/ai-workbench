@@ -50,6 +50,7 @@ install_skill() {
   rm -rf "${dest:?}"
   cp -RL "$src" "$dest"   # -L: a link inside the skill is copied as its content, never kept pointing back
   rm -rf "${dest:?}/evals"   # the cases, their fixtures and assertions: the model under test never reads them
+  rm -rf "${dest:?}/scripts/tests"   # the tests of the skill's scripts: not part of what a model uses
 }
 [[ -n "$SKILL_DIR" ]] && install_skill "$SKILL_DIR"
 for d in ${EXTRA_SKILLS[@]+"${EXTRA_SKILLS[@]}"}; do install_skill "$d"; done

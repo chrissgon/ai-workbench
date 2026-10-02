@@ -30,8 +30,10 @@ A record of measurement version 1 was written under the earlier rule (floor_with
 strong_with >= strong_without) and its "gate" has no "strong" key; it is valid as a record and always stale.
 
 Content hash: sha256 over the files of the skill folder (sorted relative paths and their bytes), leaving out
-evals/result.json, __pycache__ folders, *.pyc and .DS_Store. A change to SKILL.md, a reference, an asset, a
-script or an eval case changes it; files outside the folder do not.
+evals/result.json, everything under scripts/tests/, __pycache__ folders, *.pyc and .DS_Store. A change to
+SKILL.md, a reference, an asset, a script or an eval case changes it; files outside the folder do not. The
+tests of a skill's scripts (skills/<name>/scripts/tests/) are left out because no model reads them: they are
+not copied into an eval run, so adding, changing or removing one measures nothing differently.
 
 The eval gate is configured in evals/eval-gate.json, committed: {"strong_model", "strong_harness",
 "floor_model", "floor_harness", "floor_pass_env": [variables], "strong_pass_env": [variables], "grader",
@@ -75,6 +77,7 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RECORD_REL = os.path.join("evals", "result.json")
+TESTS_REL = "scripts/tests"  # the tests of a skill's scripts: outside the content hash and outside eval runs
 BEGIN, END = "<!-- eval-status:begin -->", "<!-- eval-status:end -->"
 INVENTORY_REL = os.path.join("docs", "inventory.md")
 GATE_REL = os.path.join("evals", "eval-gate.json")
@@ -144,12 +147,17 @@ def skill_names(root=ROOT):
 
 
 def content_hash(skill_dir):
-    """sha256 over the skill folder: each file's relative path and bytes, in sorted path order."""
+    """sha256 over the skill folder: each file's relative path and bytes, in sorted path order.
+
+    Left out: the record, caches and the tests of the skill's scripts (TESTS_REL), which no eval run copies.
+    """
     files = []
     for dp, dns, fns in os.walk(skill_dir):
         dns[:] = sorted(d for d in dns if d != "__pycache__")
         for fn in fns:
             rel = os.path.relpath(os.path.join(dp, fn), skill_dir).replace(os.sep, "/")
+            if rel.startswith(TESTS_REL + "/"):
+                continue
             if fn == ".DS_Store" or fn.endswith(".pyc") or rel == RECORD_REL.replace(os.sep, "/"):
                 continue
             files.append(rel)

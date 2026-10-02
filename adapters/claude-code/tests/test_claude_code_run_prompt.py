@@ -91,6 +91,17 @@ def test_the_skill_evals_are_not_copied(env):
     assert (evals / "evals.json").is_file()
 
 
+def test_the_tests_of_the_skill_scripts_are_not_copied(env):
+    tests = env["skill"] / "scripts" / "tests"
+    tests.mkdir()
+    (tests / "test_x.py").write_text("def test_x():\n    assert True\n")
+    r = run(env, "--skill-dir", str(env["skill"]))
+    assert r.returncode == 0, r.stderr
+    dest = env["tmp"] / "cwd" / ".claude" / "skills" / "demo"
+    assert (dest / "scripts" / "check.py").is_file() and not (dest / "scripts" / "tests").exists()
+    assert (tests / "test_x.py").is_file()
+
+
 def test_max_cost_becomes_a_budget_and_bad_values_are_refused(env):
     r = run(env, "--max-cost-usd", "0.50")
     assert r.returncode == 0, r.stderr
