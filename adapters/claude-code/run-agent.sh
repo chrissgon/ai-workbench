@@ -16,18 +16,21 @@
 set -euo pipefail
 AGENT="" TASK="" PROJECT="" MODEL="" OUT="" MAX_COST="" TIMEOUT=600
 SKILLS=()
+need() { [[ $# -ge 2 ]] || { echo "Error: $1 needs a value. See --help." >&2; exit 2; }; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --agent-file) AGENT="$2"; shift 2 ;;
-    --task-file) TASK="$2"; shift 2 ;;
-    --project) PROJECT="$2"; shift 2 ;;
-    --model) MODEL="$2"; shift 2 ;;
-    --out) OUT="$2"; shift 2 ;;
-    --skill-dir) SKILLS+=("$2"); shift 2 ;;
+    --agent-file) need "$@"; AGENT="$2"; shift 2 ;;
+    --task-file) need "$@"; TASK="$2"; shift 2 ;;
+    --project) need "$@"; PROJECT="$2"; shift 2 ;;
+    --model) need "$@"; MODEL="$2"; shift 2 ;;
+    --out) need "$@"; OUT="$2"; shift 2 ;;
+    --skill-dir) need "$@"; SKILLS+=("$2"); shift 2 ;;
     --max-cost-usd)
+      need "$@"
       [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
       MAX_COST="$2"; shift 2 ;;
     --timeout-seconds)
+      need "$@"
       [[ "$2" =~ ^[0-9]+$ && "$2" -ge 30 && "$2" -le 3600 ]] || { echo "Error: --timeout-seconds takes 30 to 3600." >&2; exit 2; }
       TIMEOUT="$2"; shift 2 ;;
     --help|-h) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;

@@ -218,6 +218,21 @@ def test_timeout_bounds_the_whole_run(case, server):
     assert "timeout after 1 s" in r.files["stderr.log"]
 
 
+def test_a_socket_that_gives_up_is_a_timeout_too(server):
+    """The socket and the deadline used to expire together, and the one that fired first chose between
+    code 124 and code 1. The socket now waits longer than the deadline, and when it gives up anyway
+    (a deadline already passed, a read that stalls) the run reports the same timeout."""
+    spec = importlib.util.spec_from_file_location("api_run_agent_under_test", SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    assert mod.SOCKET_MARGIN >= 1
+    server.delay = 1.5
+    status, data, err = mod.call(server.base + "/v1/messages", {"x": 1}, {"content-type": "application/json"}, 0.2)
+    assert (status, data, err) == (None, b"", mod.TIMED_OUT)
+    source = SCRIPT.read_text()
+    assert "+ SOCKET_MARGIN)" in source and 'result["r"][2] == TIMED_OUT' in source
+
+
 @pytest.mark.skipif(importlib.util.find_spec("keyring") is not None,
                     reason="with keyring installed the resolver would also look in the real OS secret store")
 def test_no_key_refuses_without_calling(case, server):
