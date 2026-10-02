@@ -36,22 +36,29 @@ below are configuration keys of runtime.json and keep their names; the class eac
   keeps when its "snapshot" lists providers/resolve.py), ../providers/resolve.py, <workbench>/providers/resolve.py.
 
 tick     1. Reads new notification e-mails since the store's cursor (mailbox provider, read only) and adds
-            each as an event (deduplicated by message id).
+            each as an event (deduplicated by message id). The mailbox answers newest first, 50 at a time;
+            while it says older ones were left out the tick reads on (--before), and the cursor moves only
+            once all were read.
          2. Claims up to max_events_per_tick events. For each: parses it with mkt-engage's
             parse_notification.py; runs the agent through adapters/<harness>/run-agent.sh with reading tools
             only; takes the engage-decision block of its answer; runs mkt-engage's policy_gate.py; on
             "auto" sends the reply with the publisher's comment verb and an idempotency key; otherwise adds
             an inbox item. Every step is recorded in the store and in docs/marketing/engagement-log.jsonl.
-         3. Stops starting runs once today's agent spend reaches daily_cost_cap_usd.
-         --dry-run reads the mailbox and parses, and runs nothing else.
+         3. Stops starting runs once today's agent spend reaches daily_cost_cap_usd. A run whose cost is
+            unknown (no price for the model, a timeout, a run that never ended) counts as
+            max_cost_usd_per_run; the output says how many there were (runs_without_cost_today).
+         --dry-run reads the mailbox and parses, and does nothing else: it writes nothing (no store is
+         created, no event is added, the cursor stays, no lock is taken), runs no agent and no vote step.
 add-comment  Queues a comment the person pasted (the link from "Copy link to comment", the name, the text) as an
          event of source "pasted"; the next tick handles it like a notification. This is also how the runtime
          works with "mailbox": "none", when no mailbox is connected.
-status   Recent runs, pending events, open inbox items, today's spend and replies.
+status   Recent runs, open inbox items, today's spend (with the number of runs counted at the per-run maximum
+         because their cost is unknown) and replies.
 inbox    Open inbox items, each with its reply text and its sha256.
 approve  Without --confirmed: prints the item's exact reply and its sha256. With --confirmed --sha256 <hash>:
          sends that reply only if the stored file still has that hash, then records it. The person runs this.
-reject   Closes an item without sending anything.
+reject   Closes an item without sending anything. On a vote item it also clears the round's cursor, so the next
+         tick redoes the round (a new agent run and a new item).
 
 Weekly vote (docs/architecture/weekly-vote.md), when runtime.json has a "vote" section:
   "vote": {"repo": "<owner>/<name>", "branch": "<branch>", "pillars": ["<pillar>", ...],
@@ -79,6 +86,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -91,6 +99,8 @@ DECISION_KEYS = {"category", "language", "reply", "sources", "notes"}
 CATEGORIES = {"thanks_or_praise", "question_answerable_from_sources", "criticism_or_disagreement", "request",
               "needs_unsourced_fact", "contains_link", "instructions_to_agent", "other"}
 TIMEOUT = 120
+MAILBOX_PAGE = 50        # messages asked of the mailbox per search
+MAILBOX_MAX_PAGES = 20   # searches per tick while the mailbox says older messages were left out
 
 
 class Fail(Exception):
@@ -201,7 +211,28 @@ def load_config(project: Path) -> dict:
 
 
 def helpers() -> dict:
-    return {"run": run, "run_json": run_json, "write_private": write_private, "Fail": Fail, "nz": nz}
+    return {"run": run, "run_json": run_json, "write_private": write_private, "Fail": Fail, "nz": nz,
+            "end_failed_run": end_failed_run}
+
+
+def one_line(error: BaseException, limit: int = 1000) -> str:
+    """An exception as one line for a note: its type, then its message."""
+    return " ".join(f"{type(error).__name__}: {error}".split())[:limit]
+
+
+def unexpected(error: Exception) -> str:
+    """An error that is not the runtime's own (Fail): the traceback goes to stderr, one line goes on record."""
+    traceback.print_exc()
+    return one_line(error)
+
+
+def end_failed_run(store, run_id, run_dir: Path, error: BaseException) -> None:
+    """Close a run row whose run broke between run-start and run-end, so that it never stays "running"."""
+    try:
+        store("run-end", "--run-id", run_id, "--status", "failed", "--exit-code", "null", "--cost-usd", "null",
+              "--tokens", "null", "--duration-ms", "null", "--out-dir", run_dir / "out", "--error", one_line(error))
+    except Fail as e:
+        log(f"could not end run {run_id}: {e}")
 
 
 def run(cmd: list, stdin: str | None = None, cwd: Path | None = None, timeout: int = TIMEOUT) -> tuple[int, str, str]:
@@ -225,10 +256,11 @@ def run_json(cmd: list, **kw) -> dict:
 
 
 class Store:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, init: bool = True):
         self.cmd = [sys.executable, str(cfg["paths"]["store"])]
         self.db = cfg["store_db"]
-        run_json(self.cmd + ["init", "--db", self.db])  # idempotent; creates the database on first use
+        if init:
+            run_json(self.cmd + ["init", "--db", self.db])  # idempotent; creates the database on first use
 
     def __call__(self, verb: str, *args) -> dict:
         return run_json(self.cmd + [verb, "--db", self.db, *[str(a) for a in args]])
@@ -309,18 +341,44 @@ def gate_record(cfg: dict, project: Path, entry: dict) -> None:
                   str(project / "docs/marketing/engagement-log.jsonl"), "--entry-file", str(f)])
 
 
-def today_spend(store: Store) -> float:
+def today_spend(cfg: dict, store: Store) -> tuple[float, int]:
+    """(today's agent spend in USD, how many of today's runs have no known cost).
+
+    A run without a cost (the harness has no price for the model, the run timed out before it wrote its
+    timing, or it never ended) counts as max_cost_usd_per_run, the most its adapter was allowed to spend:
+    counted as nothing, such runs would never reach the daily cap."""
     runs = store("runs", "--limit", "500").get("runs", [])
     start = now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-    total = 0.0
+    total, unknown = 0.0, 0
     for r in runs:
         try:
             when = datetime.fromisoformat(str(r.get("started_at", "")).replace("Z", "+00:00"))
         except ValueError:
             continue
-        if when >= start:
-            total += float(r.get("cost_usd") or 0)
-    return total
+        if when < start:
+            continue
+        if r.get("cost_usd") is None:
+            unknown += 1
+            total += float(cfg["max_cost_usd_per_run"])
+        else:
+            total += float(r["cost_usd"])
+    return total, unknown
+
+
+def cap_reached(cfg: dict, store: Store) -> str | None:
+    """Why no new run may start today, or None while the daily cap is not reached."""
+    spend, unknown = today_spend(cfg, store)
+    if spend < float(cfg["daily_cost_cap_usd"]):
+        return None
+    counted = (f", {unknown} runs of unknown cost counted as {float(cfg['max_cost_usd_per_run']):g} USD each"
+               if unknown else "")
+    return f"daily cost cap reached ({spend:.2f} USD{counted})"
+
+
+def without_cost(cfg: dict, store: Store) -> dict:
+    """The tick's line about runs of unknown cost; empty when every run of today reported one."""
+    unknown = today_spend(cfg, store)[1]
+    return {"runs_without_cost_today": unknown} if unknown else {}
 
 
 def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
@@ -351,20 +409,26 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
 
     run_id = store("run-start", "--agent", cfg["agent"], "--event-id", event["id"], "--trigger", event["source"])["run_id"]
     run_dir = Path(cfg["data_dir"]) / "runs" / str(run_id)
-    task = write_private(run_dir, "task.md", task_text(cfg, project, comment))
-    skills = [s.strip() for s in re.findall(r"skills:\s*\[(.*?)\]", paths["agent"].read_text(encoding="utf-8"))[0].split(",")]
-    cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
-           "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),
-           "--max-cost-usd", str(cfg["max_cost_usd_per_run"]), "--timeout-seconds", str(cfg["timeout_seconds"])]
-    for s in skills:
-        cmd += ["--skill-dir", str(paths["skills"] / s)]
-    code, _, err = run(cmd, timeout=int(cfg["timeout_seconds"]) + 60)
-    timing = {}
     try:
-        timing = json.loads((run_dir / "out" / "timing.json").read_text())
-    except (OSError, json.JSONDecodeError):
-        pass
-    response = (run_dir / "out" / "response.md").read_text(encoding="utf-8") if (run_dir / "out" / "response.md").is_file() else ""
+        task = write_private(run_dir, "task.md", task_text(cfg, project, comment))
+        skills = [s.strip() for s in re.findall(r"skills:\s*\[(.*?)\]", paths["agent"].read_text(encoding="utf-8"))[0].split(",")]
+        cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
+               "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),
+               "--max-cost-usd", str(cfg["max_cost_usd_per_run"]), "--timeout-seconds", str(cfg["timeout_seconds"])]
+        for s in skills:
+            cmd += ["--skill-dir", str(paths["skills"] / s)]
+        code, _, err = run(cmd, timeout=int(cfg["timeout_seconds"]) + 60)
+        timing = {}
+        try:
+            timing = json.loads((run_dir / "out" / "timing.json").read_text())
+        except (OSError, json.JSONDecodeError):
+            pass
+        if not isinstance(timing, dict):
+            timing = {}
+        response = (run_dir / "out" / "response.md").read_text(encoding="utf-8") if (run_dir / "out" / "response.md").is_file() else ""
+    except Exception as e:  # the run row is open: it must not stay "running"
+        end_failed_run(store, run_id, run_dir, e)
+        raise
     store("run-end", "--run-id", run_id, "--status", "ok" if code == 0 else ("timeout" if code == 124 else "failed"),
           "--exit-code", code, "--cost-usd", nz(timing.get("cost_usd")), "--tokens", nz(timing.get("total_tokens")),
           "--duration-ms", nz(timing.get("duration_ms")), "--out-dir", run_dir / "out",
@@ -439,6 +503,72 @@ def notify(cfg: dict, results: list) -> None:
         pass
 
 
+def read_mailbox(cfg: dict, since: str) -> tuple[list, str | None]:
+    """Every notification since the cursor: (messages, why the list is incomplete or None).
+
+    The mailbox answers newest first, MAILBOX_PAGE messages at a time, and says "truncated" when older
+    matches were left out; the tick then asks again for the ones before the oldest it got, until nothing is
+    left out. A first search that fails raises Fail. When a later page fails, or MAILBOX_MAX_PAGES are not
+    enough, what was read is returned with the reason, and the caller leaves the cursor where it was: the
+    messages nobody read are older than every one that was, so a cursor moved to the newest would skip them
+    for ever. Events are deduplicated by message id, so reading the same messages again costs nothing."""
+    base = ["uv", "run", str(cfg["paths"]["mailbox"]), "search", "--query", cfg["notification_query"],
+            "--since", since, "--limit", str(MAILBOX_PAGE)]
+    messages, seen, before = [], set(), None
+    for _ in range(MAILBOX_MAX_PAGES):
+        try:
+            found = run_json(base + (["--before", before] if before else []))
+        except Fail as e:
+            if before is None:
+                raise
+            return messages, f"the messages before {before} could not be read ({e}); the cursor stays"
+        page = [m for m in found.get("messages", []) if isinstance(m, dict)]
+        new = [m for m in page if m.get("id") is None or m["id"] not in seen]
+        seen.update(m["id"] for m in new if m.get("id") is not None)
+        messages += new
+        if not found.get("truncated"):
+            return messages, None
+        oldest = min((m["received_at"] for m in page if m.get("received_at")), default=None)
+        try:
+            # "before" is exclusive and times have one-second precision: one second after the oldest, so
+            # that other messages of that same second are not skipped (the ones already read are dropped).
+            before = (datetime.fromisoformat(str(oldest).replace("Z", "+00:00")) + timedelta(seconds=1)) \
+                .astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        except ValueError:
+            new = []
+        if not new:
+            return messages, ("the mailbox says older messages were left out and gives no way to reach them; "
+                              "the cursor stays")
+    return messages, (f"more than {MAILBOX_PAGE * MAILBOX_MAX_PAGES} messages since {since}; the cursor stays "
+                      "until a tick reads them all: narrow notification_query, or handle the oldest by hand")
+
+
+def dry_tick(cfg: dict) -> dict:
+    """What a tick would find: reads the mailbox and parses each message. It writes nothing: no store is
+    created or migrated, no event is added, no cursor moves, and it takes no lock (it excludes nothing)."""
+    messages, mailbox, parsed = [], None, []
+    if cfg["mailbox"] != "none":
+        cursor = None
+        if Path(cfg["store_db"]).is_file():
+            try:
+                cursor = Store(cfg, init=False)("cursor-get", "--name", f"mailbox:{cfg['agent']}").get("value")
+            except Fail as e:  # a store this script cannot read yet (a tick migrates it): the lookback is used
+                log(f"dry run: the mailbox cursor could not be read ({e})")
+        since = cursor or (now() - timedelta(minutes=int(cfg["first_lookback_minutes"]))).isoformat()
+        try:
+            messages, cut = read_mailbox(cfg, since)
+            if cut:
+                mailbox = {"status": "incomplete", "note": f"mailbox: {cut}"[:1000]}
+        except Fail as e:
+            mailbox = {"status": "failed", "note": f"mailbox: {e}"[:1000]}
+    for m in messages:
+        try:
+            parsed.append(json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(m))[1] or "{}"))
+        except json.JSONDecodeError:
+            parsed.append({"parsed": False, "reason": "the parser printed no JSON"})
+    return {"dry_run": True, "messages": len(messages), "parsed": parsed, **({"mailbox": mailbox} if mailbox else {})}
+
+
 def cmd_tick(a, cfg: dict, project: Path) -> dict:
     store = Store(cfg)
     store("init")
@@ -447,31 +577,31 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
         cursor = store("cursor-get", "--name", f"mailbox:{cfg['agent']}").get("value")
         since = cursor or (now() - timedelta(minutes=int(cfg["first_lookback_minutes"]))).isoformat()
         try:
-            found = run_json(["uv", "run", str(cfg["paths"]["mailbox"]), "search", "--query", cfg["notification_query"],
-                              "--since", since, "--limit", "50"])
-            messages = found.get("messages", [])
+            messages, cut = read_mailbox(cfg, since)
+            if cut:
+                mailbox = {"status": "incomplete", "note": f"mailbox: {cut}"[:1000]}
         except Fail as e:
             # An expired authorization or a network error must not stop pasted comments or the vote step; the
             # cursor stays, so the next tick that reads the mailbox picks up what this one missed.
             mailbox = {"status": "failed", "note": f"mailbox: {e}"[:1000]}
-    added = 0
-    for m in messages:
-        with tempfile.TemporaryDirectory() as tmp:
-            f = write_private(Path(tmp), "m.json", json.dumps(m, ensure_ascii=False))
-            added += bool(store("event-add", "--source", "mailbox", "--external-id", m["id"] or m.get("headers", {}).get("Message-ID", ""),
-                                "--payload-file", f).get("created"))
-    newest = max((m.get("received_at") or "" for m in messages), default="")
-    if a.dry_run:
-        parsed = [json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(m))[1] or "{}") for m in messages]
-        return {"dry_run": True, "messages": len(messages), "new_events": added, "parsed": parsed,
-                **({"mailbox": mailbox} if mailbox else {})}
+    added, newest = 0, ""
+    try:
+        for m in messages:
+            with tempfile.TemporaryDirectory() as tmp:
+                f = write_private(Path(tmp), "m.json", json.dumps(m, ensure_ascii=False))
+                added += bool(store("event-add", "--source", "mailbox", "--external-id", m["id"] or m.get("headers", {}).get("Message-ID", ""),
+                                    "--payload-file", f).get("created"))
+        if not mailbox:  # the cursor never moves past messages that were not read
+            newest = max((m.get("received_at") or "" for m in messages), default="")
+    except Exception as e:  # a message of an unexpected shape, or a store refusal: the cursor stays
+        mailbox = {"status": "failed", "note": f"mailbox: {e if isinstance(e, Fail) else unexpected(e)}"[:1000]}
     if newest:
         store("cursor-set", "--name", f"mailbox:{cfg['agent']}", "--value", newest)
 
-    results, spend = [], today_spend(store)
-    if spend >= float(cfg["daily_cost_cap_usd"]):
-        return {"messages": len(messages), "new_events": added, "handled": [], "stopped": f"daily cost cap reached ({spend:.2f} USD)",
-                **({"mailbox": mailbox} if mailbox else {})}
+    results, stopped = [], cap_reached(cfg, store)
+    if stopped:
+        return {"messages": len(messages), "new_events": added, "handled": [], "stopped": stopped,
+                **without_cost(cfg, store), **({"mailbox": mailbox} if mailbox else {})}
     events = []
     for source in ("pasted", "mailbox"):
         left = int(cfg["max_events_per_tick"]) - len(events)
@@ -482,10 +612,12 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             outcome = handle_event(cfg, project, store, event)
         except Fail as e:
             outcome = {"status": "failed", "note": str(e)[:1000]}
+        except Exception as e:  # not the runtime's own error: the event must still end, not stay claimed
+            outcome = {"status": "failed", "note": unexpected(e)}
         store("event-done", "--id", event["id"], "--token", event["claim_token"], "--status", outcome["status"],
               "--note", outcome["note"] or "-")
         results.append({"event": event["id"], **outcome})
-        if today_spend(store) >= float(cfg["daily_cost_cap_usd"]):
+        if cap_reached(cfg, store):
             results.append({"stopped": "daily cost cap reached"})
             break
     out = {"messages": len(messages), "new_events": added, "handled": results}
@@ -496,14 +628,17 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             store("cursor-set", "--name", "mailbox:failure-notified", "--value", day)
             results = results + [mailbox]  # notified once a day, not on every tick
     if cfg.get("vote"):
-        if today_spend(store) >= float(cfg["daily_cost_cap_usd"]):
+        if cap_reached(cfg, store):
             out["vote"] = {"status": "skipped", "note": "daily cost cap reached"}
         else:
             try:
                 out["vote"] = runtime_vote.vote_tick(cfg, project, store, helpers())
             except Fail as e:
                 out["vote"] = {"status": "failed", "note": str(e)[:1000]}
+            except Exception as e:  # the comments this tick handled are already recorded; the round stays open
+                out["vote"] = {"status": "failed", "note": unexpected(e)}
         results = results + [out["vote"]]
+    out.update(without_cost(cfg, store))
     notify(cfg, results)
     return out
 
@@ -580,7 +715,9 @@ def main(argv=None) -> int:
         cfg = load_config(project)
         if a.verb in ("approve", "reject") and a.id is None:
             raise Fail("--id is required", 2)
-        if a.verb == "tick":
+        if a.verb == "tick" and a.dry_run:
+            out = dry_tick(cfg)
+        elif a.verb == "tick":
             lock_path = Path(cfg["data_dir"]) / "tick.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             with open(lock_path, "w") as lock:
@@ -595,15 +732,21 @@ def main(argv=None) -> int:
             out = cmd_approve(a, cfg, project)
         elif a.verb == "reject":
             store = Store(cfg)
-            open_item(store, a.id)
+            item = open_item(store, a.id)
+            # A vote item's round goes back to the next tick first: were the cursor cleared after the item is
+            # closed and that step failed, the round would stay "handled" with nothing left to reject.
+            vote = runtime_vote.vote_reject(store, item) if item.get("kind") == "vote" else None
             out = store("inbox-resolve", "--id", a.id, "--status", "rejected", "--by", "user", "--note", a.note)
+            if vote:
+                out["vote"] = vote
         elif a.verb == "inbox":
             out = Store(cfg)("inbox-list", "--status", "open")
         else:
             store = Store(cfg)
+            spend, unknown = today_spend(cfg, store)
             out = {"runs": store("runs", "--limit", "10").get("runs", []),
                    "open_inbox": len(store("inbox-list", "--status", "open").get("items", [])),
-                   "spend_today_usd": round(today_spend(store), 4),
+                   "spend_today_usd": round(spend, 4), "runs_without_cost_today": unknown,
                    "replies_today": store("action-count", "--kind", "reply", "--since",
                                           now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()).get("count")}
     except Fail as e:

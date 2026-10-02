@@ -15,7 +15,7 @@
 | 3 | 2026-10-09T09:00:00-03:00 | AI for databases, built in public | EN | Why I do not call myself an AI expert yet | backend engineers | strategy [3] | plan | docs/marketing/content/2026-10-09-not-an-expert.md | scheduled |
 
 ## Sources
-[1] https://github.com/dana-example/tinykv-dana-example/releases, accessed 2026-09-28.
+[1] https://code.example/dana-example/tinykv-dana-example/releases, accessed 2026-09-28.
 [2] docs/brand/profile.md.
 [3] docs/brand/strategy.md.
 

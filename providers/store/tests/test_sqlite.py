@@ -210,6 +210,16 @@ def test_cursors(db):
     assert got["value"] == "2026-09-29T11:00:00Z" and got["updated_at"].endswith("Z")
 
 
+def test_cursor_clear_makes_the_cursor_absent_again(db):
+    ok("cursor-set", "--name", "vote:2026-10-05", "--value", "inbox:1", db=db)
+    ok("cursor-set", "--name", "other", "--value", "kept", db=db)
+    assert ok("cursor-clear", "--name", "vote:2026-10-05", db=db) == {"name": "vote:2026-10-05", "cleared": True}
+    assert ok("cursor-get", "--name", "vote:2026-10-05", db=db)["value"] is None
+    assert ok("cursor-get", "--name", "other", db=db)["value"] == "kept"
+    assert ok("cursor-clear", "--name", "vote:2026-10-05", db=db)["cleared"] is False  # harmless twice
+    assert run("cursor-clear", db=db).returncode == 2  # --name is required
+
+
 # --- events -----------------------------------------------------------------------------
 
 

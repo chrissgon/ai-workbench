@@ -87,6 +87,10 @@ COMMENT_SCOPE_HINT = (
 )
 HTTP_TIMEOUT_SECONDS = 60
 LOCK_TIMEOUT_SECONDS = 10
+# 4xx answers that do not say the request was refused: 408 (the service gave up waiting, after a request that
+# may have been taken) and 429 (a limit, which a gateway can answer for a request already accepted behind it).
+# After one of them the key stays pending, like after a timeout; every other 4xx releases it.
+UNKNOWN_OUTCOME_STATUSES = (408, 429)
 
 # Reserved characters of the little text format. Backslash comes first so that the
 # escapes added for the other characters are not escaped twice.
@@ -125,12 +129,16 @@ verbs:
             the member's recent posts or the post's comments: --post-urn <urn>
             (the post was published), --comment-urn <urn> (the comment was) or
             --not-published (it was not; the key may be used again). Needs
-            --confirmed.
+            --confirmed; with --dry-run it prints what it would record and
+            changes nothing.
 
 idempotency:
   Each key publishes one post or one comment at most once. It is recorded as pending in the ledger
   before the request and as published after it, under a file lock; a pending
-  key refuses every new attempt until resolve settles it.
+  key refuses every new attempt until resolve settles it. A key is released
+  when nothing was sent, or when LinkedIn refused the request with a 4xx answer
+  other than 408 and 429; after a timeout, a dropped connection, a 5xx, a 408
+  or a 429 the outcome is unknown and the key stays pending.
 
 credentials (never from files or flags):
   The access token is read from the OS secret store (service "{KEYRING_SERVICE}",
@@ -145,7 +153,10 @@ other environment variables:
                                LinkedIn answers with 404 right after the post is created (it does, for
                                a few seconds, longer with an image). Default: 5,15,30,60. Other
                                refusals are not retried.
-  PUBLISHER_LINKEDIN_LEDGER    path of the idempotency ledger (JSON). Default, in a data folder:
+  PUBLISHER_LINKEDIN_LEDGER    path of the idempotency ledger (JSON). A scheduler does not pass this
+                               variable on to its jobs: a command that runs later carries --ledger
+                               <the "ledger" its dry run printed> instead, and is refused when
+                               this variable then names another file. Default, in a data folder:
                                ~/Library/Application Support/ai-workbench/publisher-linkedin.json
                                on macOS; elsewhere $XDG_DATA_HOME/ai-workbench/publisher-linkedin.json,
                                or ~/.local/share/ai-workbench/publisher-linkedin.json. A ledger at
@@ -159,6 +170,7 @@ other environment variables:
                                a request times out (default {HTTP_TIMEOUT_SECONDS}).
 
 output:
+  every dry run: "ledger", the path of the idempotency ledger this environment uses.
   publish: JSON on stdout with post_urn, post_url, token_expires_at,
   token_expires_in_days, idempotency_key, replayed, and with
   --first-comment-file, first_comment (comment_urn, idempotency_key, replayed)
@@ -321,16 +333,31 @@ def data_home() -> Path:
     return base / "ai-workbench"
 
 
+# The ledger --ledger pins, set by main(). A command that runs later (a scheduled job) carries the path of the
+# ledger it was approved with: a scheduler does not pass on the variable that selects another ledger, and a
+# key looked up in the wrong ledger is a post published twice.
+PINNED_LEDGER: Path | None = None
+
+
 def ledger_path() -> Path:
     override = os.environ.get("PUBLISHER_LINKEDIN_LEDGER")
-    if override:
-        return Path(override).expanduser()
-    return data_home() / LEDGER_NAME
+    chosen = Path(override).expanduser() if override else None
+    if PINNED_LEDGER is not None:
+        if chosen is not None and os.path.abspath(chosen) != os.path.abspath(PINNED_LEDGER):
+            raise ProviderError(
+                f"--ledger pins the idempotency ledger {PINNED_LEDGER}, and PUBLISHER_LINKEDIN_LEDGER names "
+                f"another one ({chosen}). A key recorded in one is unknown to the other, so nothing was sent: "
+                "unset the variable, or run the command with the ledger it was approved with", EXIT_USAGE)
+        return PINNED_LEDGER
+    return chosen or data_home() / LEDGER_NAME
 
 
 def old_ledger_path() -> Path | None:
-    """Where the ledger lived before it moved to the data folder; None when PUBLISHER_LINKEDIN_LEDGER is set."""
+    """Where the ledger lived before it moved to the data folder; None when another ledger was chosen
+    (PUBLISHER_LINKEDIN_LEDGER, or --ledger with a path that is not the default one)."""
     if os.environ.get("PUBLISHER_LINKEDIN_LEDGER"):
+        return None
+    if PINNED_LEDGER is not None and os.path.abspath(PINNED_LEDGER) != os.path.abspath(data_home() / LEDGER_NAME):
         return None
     cache = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     return Path(cache) / "ai-workbench" / LEDGER_NAME
@@ -444,6 +471,19 @@ def ledger_update(key: str, entry: dict | None) -> None:
         else:
             data["entries"][key] = entry
         ledger_save(data)
+
+
+def refused(exc: ProviderError) -> bool:
+    """Whether the service's answer says it did not take the request: a 4xx other than 408 and 429."""
+    return exc.status is not None and 400 <= exc.status < 500 and exc.status not in UNKNOWN_OUTCOME_STATUSES
+
+
+def after_unknown(key: str, kind: str) -> str:
+    """What to do after an answer that leaves the outcome unknown."""
+    where, flag = (("the comments on the post", "--comment-urn <urn>") if kind == "comment"
+                   else ("the member's recent posts", "--post-urn <urn>"))
+    return (f"check {where}, then run linkedin.py resolve --idempotency-key {key} with {flag} if it is there or "
+            "--not-published if it is not, and --confirmed; after --not-published the same command may run again")
 
 
 def pending_message(key: str, entry: dict) -> str:
@@ -705,11 +745,15 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
             json.dumps(post_body(author, commentary, image_urn)).encode(),
         )
     except ProviderError as exc:
-        # A 4xx answer means LinkedIn refused the post; anything else after sending is unknown.
-        if not sent or (exc.status is not None and 400 <= exc.status < 500):
+        # A 4xx answer other than 408 and 429 means LinkedIn refused the post; anything else after sending is
+        # unknown, and the key stays pending until resolve settles it.
+        if not sent or refused(exc):
             ledger_update(key, None)
         else:
             ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": str(exc)})
+            if exc.status in UNKNOWN_OUTCOME_STATUSES:
+                raise ProviderError(f"{exc}; that answer does not say whether the post was taken, so the key "
+                                    f"stays pending: {after_unknown(key, 'post')}", EXIT_SERVICE, exc.status) from None
         raise
     except BaseException:
         if not sent:
@@ -870,17 +914,18 @@ def create_comment(base: str, token: dict, member_urn, post_urn: str, parent: st
             json.dumps(comment_body(actor, post_urn, text, parent)).encode(),
         )
     except ProviderError as exc:
-        # A 4xx answer means LinkedIn refused the comment; anything else after sending is unknown.
-        refused = exc.status is not None and 400 <= exc.status < 500
-        if not sent or refused:
+        # A 4xx answer other than 408 and 429 means LinkedIn refused the comment; anything else after sending
+        # is unknown, and the key stays pending until resolve settles it.
+        if not sent or refused(exc):
             ledger_update(key, None)
         else:
             ledger_update(key, {**claim, "status": "pending", "started_at": now_iso(), "error": str(exc)})
         if exc.status == 403:
             raise ProviderError(f"{exc}; {COMMENT_SCOPE_HINT}", EXIT_SERVICE, 403) from None
-        if exc.status == 429:
-            raise ProviderError(f"{exc}; LinkedIn limits how many comments a member creates per minute: "
-                                "wait a minute and rerun the same command", EXIT_SERVICE, 429) from None
+        if sent and exc.status in UNKNOWN_OUTCOME_STATUSES:
+            limit = ("LinkedIn limits how many comments a member creates per minute. " if exc.status == 429 else "")
+            raise ProviderError(f"{exc}; {limit}That answer does not say whether the comment was taken, so the "
+                                f"key stays pending: {after_unknown(key, 'comment')}", EXIT_SERVICE, exc.status) from None
         raise
     except BaseException:
         if not sent:
@@ -990,10 +1035,11 @@ def cmd_resolve(args) -> int:
     if args.comment_urn and not match:
         raise ProviderError("--comment-urn must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
                             EXIT_USAGE)
-    if not args.confirmed:
-        raise ProviderError("refusing to resolve without --confirmed; the user decides what happened", EXIT_USAGE)
-    with ledger_locked() as data:
-        entry = data["entries"].get(key)
+    if not args.confirmed and not args.dry_run:
+        raise ProviderError("refusing to resolve without --confirmed; the user decides what happened "
+                            "(use --dry-run to preview)", EXIT_USAGE)
+
+    def check(entry: dict | None) -> None:
         if not entry or entry_status(entry) != "pending":
             state = entry_status(entry) if entry else "absent"
             raise ProviderError(f"idempotency key {key!r} is {state}, not pending; nothing to resolve", EXIT_USAGE)
@@ -1002,6 +1048,19 @@ def cmd_resolve(args) -> int:
             raise ProviderError(f"idempotency key {key!r} is a comment; use --comment-urn <urn>", EXIT_USAGE)
         if kind == "post" and args.comment_urn:
             raise ProviderError(f"idempotency key {key!r} is a post; use --post-urn <urn>", EXIT_USAGE)
+
+    if args.dry_run:
+        # A dry run does nothing, also when --confirmed is given with it: the entry is read and left as it is.
+        entry = ledger_read()["entries"].get(key)
+        check(entry)
+        print(json.dumps({"dry_run": True, "idempotency_key": key, "ledger": str(ledger_path()),
+                          "pending_entry": entry,
+                          "would_record": "published" if (args.post_urn or args.comment_urn) else "released",
+                          "post_urn": args.post_urn, "comment_urn": args.comment_urn}, indent=2))
+        return EXIT_OK
+    with ledger_locked() as data:
+        entry = data["entries"].get(key)
+        check(entry)
         if args.post_urn:
             data["entries"][key] = {"status": "published", "post_urn": args.post_urn,
                                     "created_at": now_iso(), "resolved": True}
@@ -1077,7 +1136,8 @@ def dry_run(base: str, commentary: str, image: Path | None, key: str, first_comm
         "headers": shown,
         "body": post_body(author, commentary, IMAGE_URN_PLACEHOLDER if image else None),
     })
-    out = {"dry_run": True, "platform": "linkedin", "requests": requests, "idempotency_key": key}
+    out = {"dry_run": True, "platform": "linkedin", "requests": requests, "idempotency_key": key,
+           "ledger": str(ledger_path())}
     out.update(existing_fields(key))
     if first_comment is not None:
         # The post URN is known only once the post exists; a replayed post shows its real URN.
@@ -1094,7 +1154,8 @@ def comment_dry_run(base: str, post_urn: str | None, parent: str | None, text: s
     # Reads no credential and sends nothing; the actor is a placeholder. With --on-key, a post that
     # is not published yet is shown as a placeholder (the confirmed call refuses it).
     out = {"dry_run": True, "platform": "linkedin", "requests": [comment_request(base, post_urn, parent, text)],
-           "idempotency_key": key, "post_urn": post_urn, "on_key": on_key, "parent_comment": parent}
+           "idempotency_key": key, "post_urn": post_urn, "on_key": on_key, "parent_comment": parent,
+           "ledger": str(ledger_path())}
     out.update(existing_fields(key))
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return EXIT_OK
@@ -1160,7 +1221,11 @@ def build_parser() -> argparse.ArgumentParser:
                              "endpoint needs partner access for member comments)")
     parser.add_argument("--comment-urn", help="with resolve: the pending comment was published as this URN")
     parser.add_argument("--not-published", action="store_true", help="with resolve: the pending attempt was not published")
-    parser.add_argument("--dry-run", action="store_true", help="print the exact request bodies and do nothing else")
+    parser.add_argument("--ledger", metavar="PATH",
+                        help="the absolute path of the idempotency ledger to use, as a dry run printed it; refused "
+                             "when PUBLISHER_LINKEDIN_LEDGER names another one. For commands that run later")
+    parser.add_argument("--dry-run", action="store_true", help="print the exact request bodies (with resolve: what "
+                        "it would record) and do nothing else")
     parser.add_argument("--confirmed", action="store_true", help="required to publish or comment; set by the calling "
                         "skill's gate")
     return parser
@@ -1170,7 +1235,13 @@ def main(argv: list[str] | None = None) -> int:
     os.umask(0o077)  # the ledger, its lock and its folder are private to the user
     parser = build_parser()
     args = parser.parse_args(argv)
+    global PINNED_LEDGER
     try:
+        if args.ledger is not None:
+            if not os.path.isabs(args.ledger):
+                raise ProviderError("--ledger must be an absolute path", EXIT_USAGE)
+            PINNED_LEDGER = Path(args.ledger)
+            ledger_path()  # refuse a different ledger in the environment before anything else happens
         if args.check:
             if args.platform:  # --check --platform <p>: "do you serve this one, and are you ready for it"
                 check_platform(args)

@@ -608,6 +608,81 @@ def test_auth_without_client_env_is_not_configured(env):
     assert "LINKEDIN_CLIENT_ID" in proc.stderr
 
 
+class FakeTokenEndpoint:
+    """A token endpoint that answers 302 to /elsewhere, which hands out a token: what a hijacked or
+    misconfigured endpoint would do. Both live on 127.0.0.1."""
+
+    def __init__(self, redirect: bool):
+        self.requests: list[dict] = []
+        fake = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def _answer(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                fake.requests.append({"method": self.command, "path": self.path,
+                                      "body": self.rfile.read(length).decode() if length else ""})
+                if self.path == "/token" and redirect:
+                    self.send_response(302)
+                    self.send_header("Location", f"{fake.base}/elsewhere")
+                    self.send_header("Content-Length", "0")
+                    self.end_headers()
+                    return
+                data = json.dumps({"access_token": "FAKE-token-from-" + self.path.strip("/"),
+                                   "expires_in": 5184000}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            do_GET = do_POST = _answer  # noqa: N815
+
+            def log_message(self, *args):
+                return
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, kwargs={"poll_interval": 0.05}, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+def load_auth():
+    spec = importlib.util.spec_from_file_location("linkedin_auth", AUTH_SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_token_exchange_refuses_a_redirect(monkeypatch):
+    # PUB4: the exchange used the default opener, which follows redirects: the answer of wherever the
+    # redirect pointed was taken as the member's token, for a request that carried the client secret.
+    auth = load_auth()
+    endpoint = FakeTokenEndpoint(redirect=True)
+    try:
+        monkeypatch.setattr(auth, "LINKEDIN_TOKEN_URL", f"{endpoint.base}/token")
+        with pytest.raises(auth.AuthError) as err:
+            auth.exchange_code("FAKE-code", "FAKE-client-id", "FAKE-client-secret")
+        assert "redirect" in str(err.value) and "FAKE-client-secret" not in str(err.value)
+        assert [r["path"] for r in endpoint.requests] == ["/token"]  # /elsewhere was never asked
+    finally:
+        endpoint.close()
+
+
+def test_token_exchange_takes_the_endpoint_s_own_answer(monkeypatch):
+    auth = load_auth()
+    endpoint = FakeTokenEndpoint(redirect=False)
+    try:
+        monkeypatch.setattr(auth, "LINKEDIN_TOKEN_URL", f"{endpoint.base}/token")
+        token = auth.exchange_code("FAKE-code", "FAKE-client-id", "FAKE-client-secret")
+        assert token["access_token"] == "FAKE-token-from-token"
+        assert "client_secret=FAKE-client-secret" in endpoint.requests[0]["body"]
+    finally:
+        endpoint.close()
+
+
 def test_a_scheduled_copy_needs_the_resolver_in_its_snapshot(env, fake, tmp_path):
     """The scheduler runs a copy of this script from <job>/files/; the resolver must be copied with it."""
     import shutil
@@ -841,17 +916,79 @@ def test_comment_403_names_the_scope(env, fake, comment_file):
     assert "c1" not in ledger(env)  # LinkedIn refused it: the key is free again
 
 
-def test_comment_429_is_a_service_error(env, fake, comment_file):
-    fake.comment_status = 429
-    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1",
-                                    "--confirmed"), env)
+@pytest.mark.parametrize("status", [408, 429])
+def test_comment_408_or_429_keeps_the_key_pending(env, fake, comment_file, status):
+    # FR-I12: every 4xx answer deleted the pending entry, so a rerun sent the comment again. A 408 or a 429
+    # does not say that the request was refused: the key stays pending until resolve settles it.
+    fake.comment_status = status
+    args = comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1", "--confirmed")
+    proc = run(SCRIPT, args, env)
     assert proc.returncode == 1
-    assert "429" in proc.stderr and "throttled" in proc.stderr and "minute" in proc.stderr
-    assert "c1" not in ledger(env)
+    assert str(status) in proc.stderr and "stays pending" in proc.stderr and "resolve" in proc.stderr
+    if status == 429:
+        assert "throttled" in proc.stderr and "minute" in proc.stderr
+    assert ledger(env)["c1"]["status"] == "pending"
     fake.comment_status = 201
-    retry = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1",
-                                     "--confirmed"), env)
+    blocked = run(SCRIPT, args, env)
+    assert blocked.returncode == 1 and "pending" in blocked.stderr
+    assert comment_count(fake) == 1  # nothing was sent a second time
+    released = run(SCRIPT, ["resolve", "--idempotency-key", "c1", "--not-published", "--confirmed"], env)
+    assert released.returncode == 0, released.stderr
+    retry = run(SCRIPT, args, env)
     assert retry.returncode == 0, retry.stderr
+    assert comment_count(fake) == 2
+
+
+@pytest.mark.parametrize("status", [408, 429])
+def test_post_408_or_429_keeps_the_key_pending(env, fake, text_file, status):
+    fake.post_status = status
+    args = publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed")
+    first = run(SCRIPT, args, env)
+    assert first.returncode == 1 and "stays pending" in first.stderr
+    assert ledger(env)["launch-1"]["status"] == "pending"
+    fake.post_status = 201
+    second = run(SCRIPT, args, env)
+    assert second.returncode == 1 and "pending" in second.stderr and "resolve" in second.stderr
+    assert post_count(fake) == 1  # not posted again on the rerun
+    done = run(SCRIPT, ["resolve", "--idempotency-key", "launch-1", "--post-urn", POST_URN, "--confirmed"], env)
+    assert done.returncode == 0, done.stderr
+    replay = run(SCRIPT, args, env)
+    assert replay.returncode == 0 and json.loads(replay.stdout)["replayed"] is True and post_count(fake) == 1
+
+
+@pytest.mark.parametrize("status", [400, 403, 404, 422])
+def test_a_refused_post_releases_the_key(env, fake, text_file, status):
+    fake.post_status = status
+    args = publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed")
+    assert run(SCRIPT, args, env).returncode == 1
+    assert "launch-1" not in ledger(env)
+
+
+def test_resolve_dry_run_changes_nothing(env, fake, text_file):
+    # PUB2: resolve ignored --dry-run. With --confirmed next to it, the pending entry was deleted and the next
+    # run published a second time.
+    fake.post_delay = 2.0
+    env["LINKEDIN_HTTP_TIMEOUT"] = "0.5"
+    args = publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed")
+    assert run(SCRIPT, args, env).returncode == 1
+    fake.post_delay = 0.0
+    before = Path(env["PUBLISHER_LINKEDIN_LEDGER"]).read_bytes()
+    resolve = ["resolve", "--idempotency-key", "launch-1", "--not-published"]
+    for extra in (["--dry-run", "--confirmed"], ["--dry-run"]):
+        shown = run(SCRIPT, resolve + extra, env)
+        assert shown.returncode == 0, shown.stderr
+        out = json.loads(shown.stdout)
+        assert out["dry_run"] is True and out["would_record"] == "released"
+        assert out["pending_entry"]["status"] == "pending"
+        assert Path(env["PUBLISHER_LINKEDIN_LEDGER"]).read_bytes() == before
+    blocked = run(SCRIPT, args, env)
+    assert blocked.returncode == 1 and "pending" in blocked.stderr
+    assert post_count(fake) == 1  # the key is still held: nothing was published again
+    shown = run(SCRIPT, ["resolve", "--idempotency-key", "launch-1", "--post-urn", POST_URN, "--dry-run"], env)
+    assert json.loads(shown.stdout)["would_record"] == "published"
+    assert run(SCRIPT, ["resolve", "--idempotency-key", "nope", "--not-published", "--dry-run"], env).returncode == 2
+    assert run(SCRIPT, resolve + ["--confirmed"], env).returncode == 0
+    assert "launch-1" not in ledger(env)
 
 
 # --- publish with a first comment ------------------------------------------------------
@@ -882,15 +1019,15 @@ def test_publish_with_first_comment_in_one_command(env, fake, text_file, comment
 
 
 def test_first_comment_failure_then_rerun_posts_only_the_comment(env, fake, text_file, comment_file):
-    fake.comment_status = 429
+    fake.comment_status = 403  # a refusal: the comment's key is released, so the rerun sends it again
     args = publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
                         "--confirmed")
     first = run(SCRIPT, args, env)
     assert first.returncode == 1
     out = json.loads(first.stdout)
-    assert out["post_urn"] == POST_URN
+    assert out["post_urn"] == POST_URN and out["post_url"]
     assert out["first_comment"] is None
-    assert "429" in out["first_comment_error"]
+    assert "403" in out["first_comment_error"]
     assert "published" in first.stderr and "Rerun the same command" in first.stderr
     fake.comment_status = 201
     second = run(SCRIPT, args, env)
@@ -1093,6 +1230,34 @@ def test_old_ledger_that_is_not_json_stops_the_run(env, fake, text_file, tmp_pat
     proc = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed"), e)
     assert proc.returncode == 1 and "cannot be copied" in proc.stderr
     assert fake.requests == [] and not new.exists() and old.read_text() == "{not json"
+
+
+def test_ledger_flag_pins_the_ledger_and_refuses_another(env, fake, text_file, tmp_path):
+    # FR-I12: a scheduler starts its jobs without the caller's environment, so a job approved where
+    # PUBLISHER_LINKEDIN_LEDGER was set looked its key up in the default ledger at its slot, and the other way
+    # round: one key, two ledgers, two posts. A command that runs later carries the ledger's path.
+    pinned = tmp_path / "pinned" / "ledger.json"
+    scheduled = {k: v for k, v in env.items() if k != "PUBLISHER_LINKEDIN_LEDGER"}  # the variable is not inherited
+    args = publish_args(text_file, "--idempotency-key", "launch-1", "--ledger", str(pinned))
+    dry = run(SCRIPT, args + ["--dry-run"], scheduled)
+    assert dry.returncode == 0 and json.loads(dry.stdout)["ledger"] == str(pinned)
+    first = run(SCRIPT, args + ["--confirmed"], scheduled)
+    assert first.returncode == 0, first.stderr
+    assert json.loads(pinned.read_text())["entries"]["launch-1"]["post_urn"] == POST_URN
+    assert not (tmp_path / "home").exists() or not list((tmp_path / "home").rglob("publisher-linkedin.json"))
+    # The same command by hand, where the variable names another ledger: refused before anything is sent.
+    for extra in (["--confirmed"], ["--dry-run"]):
+        other = run(SCRIPT, args + extra, env)
+        assert other.returncode == 2 and "--ledger" in other.stderr and "PUBLISHER_LINKEDIN_LEDGER" in other.stderr
+    assert post_count(fake) == 1 and ledger(env) == {}
+    # The variable naming the same file changes nothing: the key is found, the post is replayed.
+    same = run(SCRIPT, args + ["--confirmed"], {**env, "PUBLISHER_LINKEDIN_LEDGER": str(pinned)})
+    assert same.returncode == 0 and json.loads(same.stdout)["replayed"] is True and post_count(fake) == 1
+    relative = run(SCRIPT, publish_args(text_file, "--ledger", "ledger.json", "--dry-run"), scheduled)
+    assert relative.returncode == 2 and "absolute" in relative.stderr
+    # Without the flag a dry run still says which ledger this environment uses, for a caller to carry.
+    shown = run(SCRIPT, publish_args(text_file, "--dry-run"), env)
+    assert json.loads(shown.stdout)["ledger"] == env["PUBLISHER_LINKEDIN_LEDGER"]
 
 
 def test_ledger_override_reads_no_old_ledger(env, fake, text_file, tmp_path):

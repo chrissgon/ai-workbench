@@ -43,6 +43,12 @@ def val(flag):
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(["vcs"] + args) + "\n")
 if args[0] == "read-file":
+    limit = os.environ.get("FAKE_READ_FAIL_FROM")  # fail from the Nth read-file call of the test on
+    if limit:
+        with open(os.environ["FAKE_CALLS"]) as f:
+            n = sum(1 for line in f if json.loads(line)[:2] == ["vcs", "read-file"])
+        if n >= int(limit):
+            print("network down", file=sys.stderr); sys.exit(1)
     p = Path(os.environ["FAKE_REPO"]) / val("--path")
     print(json.dumps({"repo": val("--repo"), "path": val("--path"), "ref": val("--ref"), "content": p.read_text()}))
 elif args[0] == "commit-files":
@@ -99,10 +105,28 @@ else:
 FAKE_PUBLISHER = r'''
 import json, os, sys
 PLATFORMS = ("linkedin",)
+if "--dry-run" in sys.argv:
+    # A dry run sends nothing: it says which idempotency ledger this environment uses.
+    with open(os.environ["FAKE_CALLS"], "a") as f:
+        f.write(json.dumps(["publisher-dry-run"] + sys.argv[1:]) + "\n")
+    if os.environ.get("FAKE_DRY_RUN_FAIL"):
+        print("error: --platform is not served by this provider", file=sys.stderr); sys.exit(2)
+    out = {"dry_run": True}
+    if os.environ.get("FAKE_LEDGER"):
+        out["ledger"] = os.environ["FAKE_LEDGER"]
+    print(json.dumps(out)); sys.exit(0)
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(["publisher"] + sys.argv[1:]) + "\n")
-print(json.dumps({"post_urn": "urn:li:share:7300000000000000001",
-                  "post_url": "https://www.linkedin.com/feed/update/urn:li:share:7300000000000000001/"}))
+out = {"post_urn": "urn:li:share:7300000000000000001",
+       "post_url": "https://www.linkedin.com/feed/update/urn:li:share:7300000000000000001/"}
+if os.environ.get("FAKE_FIRST_COMMENT_FAIL"):
+    # What the publisher does when the post went out and only its first comment failed: the post's address on
+    # stdout, the comment's error next to it, and its service exit code.
+    out.update(first_comment=None, first_comment_error="LinkedIn returned 403 on POST /v2/socialActions/x/comments")
+    print(json.dumps(out))
+    print("error: the post is published but its first comment failed", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps(out))
 '''
 
 
@@ -213,6 +237,68 @@ def test_a_round_is_handled_once(env):
     code, out, _ = rt(env, "tick")
     assert code == 0 and out["vote"]["status"] == "none" and "already handled" in out["vote"]["note"]
     assert len(inbox(env)) == 1
+
+
+def test_rejecting_a_vote_item_lets_the_next_tick_redo_the_round(env):
+    # RT1: the messages tell the person to reject so that the next tick retries; the round's cursor must go.
+    rt(env, "tick")
+    first = inbox(env)[0]
+    code, out, err = rt(env, "reject", "--id", str(first["id"]), "--note", "the calendar has a row now")
+    assert code == 0, err
+    assert out["status"] == "rejected" and out["vote"] == {"round": "2026-10-05", "cursor_cleared": True}
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox", out
+    items = inbox(env)
+    assert len(items) == 1 and items[0]["id"] != first["id"] and items[0]["payload"]["ready"] is True
+
+
+def test_a_failure_after_the_agent_run_does_not_lose_the_round(env, monkeypatch):
+    # RT1: the second read of the vote files fails (calls 4 to 6 are build_bundle's). No inbox item exists, so
+    # the round is not marked as handled and the next tick redoes it.
+    monkeypatch.setenv("FAKE_READ_FAIL_FROM", "4")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "failed" and "read-file" in out["vote"]["note"]
+    assert inbox(env) == []
+    monkeypatch.delenv("FAKE_READ_FAIL_FROM")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox", out
+    assert len(inbox(env)) == 1
+    code, out, _ = rt(env, "tick")
+    assert out["vote"]["status"] == "none" and "already handled" in out["vote"]["note"]
+
+
+def test_an_unexpected_error_in_the_vote_step_is_recorded_and_the_round_is_redone(env):
+    # RT6: the content folder cannot be created (a file is in its place), so build_bundle raises an OSError.
+    # The tick ended in a traceback; with RT1 the round was also lost.
+    content = env["proj"] / "docs/marketing/content"
+    if content.is_dir():
+        shutil.rmtree(content)
+    content.write_text("not a folder\n")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "failed" and "Error" in out["vote"]["note"], out
+    assert "Traceback" in err
+    assert inbox(env) == []
+    code, status, _ = rt(env, "status")
+    assert [r["status"] for r in status["runs"]] == ["ok"]  # the agent's run had ended before the failure
+    content.unlink()
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox", out
+
+
+def test_an_unexpected_error_during_the_vote_run_ends_the_run_row(env):
+    # RT6: the agent's task cannot be written, between run-start and run-end; the run row stayed "running".
+    (env["data"] / "runs").mkdir(parents=True)
+    (env["data"] / "runs" / "1").write_text("not a folder\n")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "failed", out
+    code, status, _ = rt(env, "status")
+    assert [r["status"] for r in status["runs"]] == ["failed"]
 
 
 def test_approve_schedules_the_post_and_commits_only_the_queue(env):
@@ -330,6 +416,110 @@ def test_vote_job_publishes_then_records_the_post(env, tmp_path):
     assert closed["post_url"] == out["post_url"]
     posts = json.loads((env["profile"] / "data/posts.json").read_text())
     assert posts[-1]["url"] == out["post_url"] and posts[-1]["image"] == f"assets/posts/{b['key']}.png"
+
+
+def test_vote_job_records_a_post_whose_first_comment_failed(env, monkeypatch):
+    # FR-I12: with only the first comment failing, the publisher prints post_url and exits with its service
+    # code. The job then said "publish failed; nothing was recorded" for a post that is public, and a rerun
+    # of the round could publish it again.
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    monkeypatch.setenv("FAKE_FIRST_COMMENT_FAIL", "1")
+    r = subprocess.run([sys.executable] + job["argv"][1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    out = json.loads(r.stdout)
+    assert out["published"] is True and out["recorded"] is True, r.stderr
+    assert "403" in out["first_comment_error"] and "first comment" in out["error"]
+    assert "nothing was recorded" not in r.stdout
+    assert r.returncode == 1  # a step failed: the scheduler shows the job as failed, with the post's address
+    pick = json.loads((env["profile"] / "data/pick.json").read_text())
+    closed = [h for h in pick["history"] if h["round"] == "2026-10-05"][0]
+    assert closed["post_url"] == out["post_url"]
+    assert len([c for c in calls(env, "vcs") if c[0] == "commit-files"]) == 1
+
+
+def test_the_vote_job_carries_the_ledger_the_publisher_named(env, tmp_path, monkeypatch):
+    # FR-I12: the scheduler starts the job without the variable that selects the publisher's ledger, so the
+    # job could look its key up in another ledger than the one it was approved with. The job now carries the
+    # ledger's path, from the publisher's dry run, and hands it to the publisher at the slot.
+    ledger = tmp_path / "state" / "publisher.json"
+    ledger.parent.mkdir()
+    ledger.write_text("{}")  # it exists: the scheduler must not take it for a file to snapshot
+    monkeypatch.setenv("FAKE_LEDGER", str(ledger))
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["vote"]["status"] == "to_inbox", err
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is True, b["problems"]
+    dry = calls(env, "publisher-dry-run")
+    assert len(dry) == 1 and dry[0][0] == "publish" and "--confirmed" not in dry[0]
+    assert calls(env, "publisher") == []  # the tick still publishes nothing
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    assert job["argv"][job["argv"].index("--ledger") + 1] == str(ledger)
+    assert job["outputs"] == [str(ledger)] and str(ledger) not in job["snapshot"]
+    r = subprocess.run([sys.executable] + job["argv"][1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    assert r.returncode == 0, r.stderr
+    pub = calls(env, "publisher")[0]
+    assert pub[pub.index("--ledger") + 1] == str(ledger)
+
+
+def test_a_publisher_that_names_no_ledger_gets_none_and_a_failing_dry_run_is_a_problem(env, monkeypatch):
+    code, out, err = rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    assert b["ready"] is True and "--ledger" not in job["argv"] and "outputs" not in job
+    code, _, _ = rt(env, "reject", "--id", str(inbox(env)[0]["id"]))
+    monkeypatch.setenv("FAKE_DRY_RUN_FAIL", "1")
+    code, out, err = rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is False and any("dry run" in p for p in b["problems"])
+
+
+def test_vote_job_without_a_post_address_records_nothing(env, tmp_path):
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    (env["wb"] / "providers/publisher/linkedin.py").write_text(
+        "import sys\nprint('error: LinkedIn returned 400', file=sys.stderr)\nsys.exit(1)\n")
+    argv = [str(env["wb"] / "providers/publisher/linkedin.py") if a.endswith("linkedin.py") else a for a in job["argv"]]
+    r = subprocess.run([sys.executable] + argv[1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    out = json.loads(r.stdout)
+    assert r.returncode == 1 and out["published"] is False and "nothing was recorded" in out["error"]
+    assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
+
+
+def test_the_vote_job_uses_the_system_interpreter_and_carries_the_configured_folders(env, tmp_path):
+    # RT4: the job was scheduled as a bare "python3" (hashed wherever the approver's PATH found it, so an
+    # interpreter upgrade before the slot refused the job) and called "uv" by name on the scheduler's fixed
+    # PATH, without the folders runtime.json lists for exactly that.
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    uv = tools / "uv"  # stands for a uv installed outside the scheduler's PATH: "uv run <script> ..."
+    uv.write_text(f'#!/bin/sh\nshift\nexec "{sys.executable}" "$@"\n')
+    uv.chmod(0o755)
+    edit_config(env, path=[str(tools)])
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["vote"]["status"] == "to_inbox", err
+    job = json.loads(Path(inbox(env)[0]["payload"]["files"]["job"]["path"]).read_text())
+    system = "/usr/bin/python3"
+    assert job["argv"][0] == (system if Path(system).exists() else sys.executable)
+    # SC5: the scheduler's default limit for a one-shot command is 10 minutes; the job's own steps may take 27.
+    assert job["timeout_minutes"] == 30
+    assert [job["argv"][i + 1] for i, a in enumerate(job["argv"]) if a == "--path"] == [str(tools)]
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    bare = {**os.environ, "PATH": str(empty)}  # a scheduler's PATH, on which uv is not
+    i = job["argv"].index("--path")
+    without = job["argv"][1:i] + job["argv"][i + 2:]
+    r = subprocess.run([sys.executable] + without, capture_output=True, text=True, timeout=120, env=bare, cwd=job["cwd"])
+    assert r.returncode == 1 and "publish failed (127)" in r.stdout
+    assert calls(env, "publisher") == []
+    r = subprocess.run([sys.executable] + job["argv"][1:], capture_output=True, text=True, timeout=120, env=bare,
+                       cwd=job["cwd"])
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["published"] and len(calls(env, "publisher")) == 1
 
 
 # --- the scheduler and the vcs provider are resolved by class (providers/resolve.py) ---

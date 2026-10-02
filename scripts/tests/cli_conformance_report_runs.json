@@ -1,0 +1,18 @@
+{
+  "skills/design-brief/scripts/lint_brief.py": {
+    "args": ["--file", "brief.md", "--type", "screen", "--values", "inline"],
+    "files": {"brief.md": "# Brief\n"}
+  },
+  "skills/design-handoff/scripts/lint_handoff.py": {
+    "args": ["--file", "handoff.md", "--flows", "flows.md", "--screen", "SCREEN-1"],
+    "files": {"handoff.md": "# Handoff\n", "flows.md": "# Flows\n"}
+  },
+  "skills/design-ux-flows/scripts/lint_flows.py": {
+    "args": ["--file", "flows.md", "--prd", "prd.md"],
+    "files": {"flows.md": "# Flows\n", "prd.md": "# PRD\n"}
+  },
+  "skills/eng-architecture/scripts/check_design.py": {
+    "args": ["--spec", "spec.md", "--design", "design.md"],
+    "files": {"spec.md": "# Spec\n\n- REQ-1: the list loads\n", "design.md": "# Design\n"}
+  }
+}

@@ -497,6 +497,96 @@ def test_an_unsigned_commit_is_never_pushed(remote, out_files):
 
 
 @needs_tools
+def test_git_gets_neither_the_callers_git_variables_nor_the_secrets(remote, out_files, tmp_path):
+    # VS3: git, ssh and the user's hooks got the caller's whole environment. Started from a git hook, where
+    # GIT_DIR and GIT_INDEX_FILE are set, the provider committed in that other repository; and the token of
+    # the provider reached every hook.
+    other = tmp_path / "other"
+    git(remote.env, tmp_path, "init", "-q", str(other))
+    dump = tmp_path / "hook-env.txt"
+    hook = remote.tmp / "template" / "hooks" / "pre-commit"
+    hook.write_text('#!/bin/sh\nenv > "$ENV_DUMP"\nexit 0\n')
+    hook.chmod(0o755)
+    env = remote.provider_env()
+    env.update({"GIT_DIR": str(other / ".git"), "GIT_WORK_TREE": str(other), "GIT_INDEX_FILE": str(other / ".git/index"),
+                "GIT_AUTHOR_NAME": "Someone Else", "VCS_GITHUB_TOKEN": FAKE_TOKEN,
+                "LINKEDIN_ACCESS_TOKEN": "FAKE-another-registered-secret", "ENV_DUMP": str(dump)})
+    before = remote.count()
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    assert remote.count() == before + 1  # the commit went to the remote the provider cloned
+    assert remote.changed() == ["assets/posts/vote-12.png", "data/pick-queue.json"]
+    author = git(remote.env, remote.bare, "log", "-1", "--format=%an", "refs/heads/main").strip()
+    assert author == "Test Person"  # the user's git configuration, not the caller's GIT_AUTHOR_NAME
+    assert git(remote.env, other, "rev-list", "--all", "--count").strip() == "0"  # nothing landed in the other one
+    seen = dict(line.split("=", 1) for line in dump.read_text().splitlines() if "=" in line)
+    assert FAKE_TOKEN not in dump.read_text() and "FAKE-another-registered-secret" not in dump.read_text()
+    for name in ("VCS_GITHUB_TOKEN", "GITHUB_TOKEN", "LINKEDIN_ACCESS_TOKEN"):
+        assert name not in seen, name
+    # git sets some of these itself for a hook (its own repository, the author it resolved); never the caller's.
+    assert seen.get("GIT_DIR") != str(other / ".git") and seen.get("GIT_WORK_TREE") != str(other)
+    assert seen.get("GIT_INDEX_FILE") != str(other / ".git/index")
+    assert seen.get("GIT_AUTHOR_NAME") != "Someone Else"
+    assert seen["GIT_CONFIG_GLOBAL"] == str(remote.gitconfig)  # where the user's configuration lives is kept
+    assert seen["ENV_DUMP"] == str(dump)  # everything else passes through
+
+
+GIT_THAT_LOSES_THE_CONNECTION = """#!/bin/sh
+# Stands for a push whose connection dies after the remote took the commit: the real push runs, then git
+# reports an SSH failure and exits as it does when ssh goes away.
+if [ "$1" = push ]; then
+  "$REAL_GIT" "$@"
+  echo "ssh: connect to host github.com port 22: Operation timed out" >&2
+  echo "fatal: Could not read from remote repository." >&2
+  exit 128
+fi
+exec "$REAL_GIT" "$@"
+"""
+
+
+@needs_tools
+def test_an_ssh_failure_after_the_push_started_keeps_the_key_pending(remote, out_files, tmp_path):
+    # VS1: any SSH failure text was read as "nothing was sent" and released the key, also on the stderr of a
+    # push that had started. Here the remote takes the commit and the connection then dies.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    wrapper = bin_dir / "git"
+    wrapper.write_text(GIT_THAT_LOSES_THE_CONNECTION)
+    wrapper.chmod(0o755)
+    env = remote.provider_env()
+    env.update({"REAL_GIT": shutil.which("git"), "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}"})
+    before = remote.head()
+    first = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert first.returncode == 1
+    assert "Operation timed out" in first.stderr and "outcome is unknown" in first.stderr
+    assert remote.head() != before  # the remote did take the commit
+    entry = ledger(env)["k1"]
+    assert entry["status"] == "pending" and entry["attempted_commit"] == remote.head()
+    again = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert again.returncode == 1 and "pending" in again.stderr and "--commit" in again.stderr
+    done = run(["resolve", "--idempotency-key", "k1", "--commit", remote.head(), "--confirmed"], env)
+    assert done.returncode == 0, done.stderr
+    replay = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert replay.returncode == 0 and json.loads(replay.stdout)["replayed"] is True
+    assert remote.count() == 2  # the seed and one commit: never a second one
+
+
+@needs_tools
+def test_an_ssh_failure_before_the_clone_still_releases_the_key(remote, out_files, tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    wrapper = bin_dir / "git"
+    wrapper.write_text('#!/bin/sh\nif [ "$1" = clone ]; then echo "ssh: Could not resolve hostname github.com" >&2; '
+                       'exit 128; fi\nexec "$REAL_GIT" "$@"\n')
+    wrapper.chmod(0o755)
+    env = remote.provider_env()
+    env.update({"REAL_GIT": shutil.which("git"), "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}"})
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 1 and "could not reach GitHub" in proc.stderr
+    assert ledger(env) == {}  # nothing left the machine
+
+
+@needs_tools
 def test_an_unknown_push_outcome_stays_pending_until_resolved(remote, out_files):
     env = remote.provider_env()
     hook = remote.bare / "hooks" / "pre-receive"

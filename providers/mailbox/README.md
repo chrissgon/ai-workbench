@@ -37,7 +37,7 @@ uv run providers/mailbox/gmail.py get --id <Gmail message id>
 uv run providers/mailbox/gmail.py read-eml --file notification.eml
 ```
 
-- `search` takes a query in the syntax of the Gmail search box. `--since <ISO-8601>` is added as `after:<epoch seconds>` (Google reads a date in `q` as midnight Pacific time, so seconds are used) and checked again on each message. `--limit` is 1 to 100, default 20. Messages are fetched in parallel, `--jobs` at a time (1 to 10, default 4), and printed newest first.
+- `search` takes a query in the syntax of the Gmail search box. `--since <ISO-8601>` is added as `after:<epoch seconds>` (Google reads a date in `q` as midnight Pacific time, so seconds are used) and checked again on each message; `--before <ISO-8601>` does the same with `before:<epoch seconds>`. `--limit` is 1 to 100, default 20: the provider reads the service's pages (`pageToken`) until it has that many, and the output's `truncated` is `true` when the mailbox holds more matches than were returned. Those are older: read on with `--before <the oldest received_at returned, plus one second>` (a message that comes back twice has the same `id`). Messages are fetched in parallel, `--jobs` at a time (1 to 10, default 4), and printed newest first.
 - `get` returns one message by the id `search` printed.
 - `read-eml` parses a saved RFC 822 file with no network and no credential. Use it to inspect a real notification before building on its layout, and to feed tests and eval fixtures.
 

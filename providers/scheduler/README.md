@@ -1,6 +1,6 @@
 # Scheduler providers
 
-Implementations of the `scheduler:job` class (`scheduler` until 2026-10-02; the folder and `SCHEDULER_PROVIDER` keep that name). Interface: `providers/CONTRACT.md` (`schedule (--at <ISO-8601> | --every <minutes>) --command-file <f> [--approved <digest>]`, `list`, `cancel --id <id>`).
+Implementations of the `scheduler:job` class (`scheduler` until 2026-10-02; the folder and `SCHEDULER_PROVIDER` keep that name). Interface: `providers/CONTRACT.md` (`schedule (--at <ISO-8601> | --every <minutes>) --command-file <f> [--approved <digest>]`, `list`, `cancel --id <id>`, `resolve --id <id> (--done | --failed)`).
 
 | Implementation | Host | Select with |
 |----------------|------|-------------|
@@ -17,7 +17,9 @@ Runs a command as a launchd user agent, once at a set time (`--at`) or every N m
 
 - **What was approved is what runs.** `snapshot` is required, and every argument that names an existing file (bare or as `--flag=/path`, absolute or relative to `cwd`) must be in it, or the job is refused; paths the command only writes go in `outputs`. The files are copied into the job folder with their SHA-256 and the arguments are swapped for the copies. The program (`argv[0]`) and this runner are hashed too, and launchd calls a copy of the runner kept in the job folder. Editing the originals, switching branches or merging and deleting the branch changes nothing. At run time the copies, the program and the runner are hashed again; a mismatch records the job as `refused` and runs nothing. Directories (`cwd`, a folder argument) are not snapshotted: files read from them are not verified.
 - **Fixed at approval.** The dry run prints an `approved` digest of everything above. The confirmed call must pass it back (`--confirmed --approved <digest>`); if anything changed since the dry run, it refuses and the gate has to show the new dry run.
-- **At most once.** The job records `running` before the command starts and removes its agent afterwards; a second firing finds the status and exits.
+- **At most once.** The runner takes `run.lock` in the job folder, records `running` before the command starts and removes its agent afterwards; a second firing finds the lock or the status and exits.
+- **A one-shot job always ends.** The command runs in its own process group for at most `timeout_minutes` (optional in the command file for `--at`: default 10, 1 to 240, part of the approved digest when given). Past the limit the whole group gets SIGTERM, then SIGKILL 5 seconds later, and the job is `failed` with a reason starting `timeout`. What the command printed is kept as it was written, bytes that are not UTF-8 included, in `run.stdout.log` and `run.stderr.log`, also after a timeout, and a `post_url` it printed before the limit is still read. An error in the runner itself records the job as `failed`. A command that takes longer than 10 minutes (a publication followed by a commit) needs its own `timeout_minutes`.
+- **A job left `running` can be settled.** When the runner died mid-run (a crash, a power loss), `job.json` stays `running` and the id is refused by `schedule`. `cancel --id <id> --confirmed` stops whatever still runs, waits up to 15 seconds for a live runner to record its own outcome, and otherwise records `cancelled` with `"interrupted": true`: the command may have acted, so check before scheduling it again. `resolve --id <id> (--done | --failed) --confirmed` records what the user found instead; it is refused while a runner still holds the lock. A runner copied into a job folder before this rule holds no lock, so for such a job `resolve` cannot tell and takes the user's word.
 - **Late means missed.** launchd fires a time missed during sleep on wake. Within `grace_minutes` (default 120) the command runs; after it, the job is recorded as `missed`.
 - **A notification** reports every outcome (the post URL when the command prints one), and the job folder keeps `job.json` and the command's output.
 - **Private files.** Job folders are 0700, `job.json`, logs and the plist 0600, the copies 0400. Scheduling an id whose job has finished moves the old folder to `.history/` in the jobs folder.
@@ -44,8 +46,8 @@ A command file for the agent runtime's tick:
 
 ```json
 {
-  "argv": ["python3", "/abs/ai-workbench/scripts/runtime.py", "tick",
-           "--project", "/abs/project", "--agent", "social-manager"],
+  "argv": ["/usr/bin/python3", "/abs/ai-workbench/scripts/runtime.py", "tick",
+           "--project", "/abs/project"],
   "cwd": "/abs/project",
   "snapshot": ["/abs/ai-workbench/scripts/runtime.py", "/abs/ai-workbench/scripts/runtime_vote.py",
                "/abs/ai-workbench/providers/resolve.py"],
@@ -53,7 +55,7 @@ A command file for the agent runtime's tick:
 }
 ```
 
-The job runs the copy of `runtime.py` kept in its folder, so whatever that script finds next to itself (its sibling module `runtime_vote.py`, and `providers/resolve.py`, which it loads from its own folder first and from the configured workbench otherwise) has to be in the snapshot too or passed as an argument; a folder argument such as `--project` is not snapshotted or verified.
+The agent is not an argument: the tick reads it from the project's `docs/workbench/runtime.json`. `argv[0]` is the system interpreter by its fixed path, whose hash does not change with a package upgrade (a bare `python3` is resolved on the approver's `PATH` and hashed wherever it was found). The job runs the copy of `runtime.py` kept in its folder, so whatever that script finds next to itself (its sibling module `runtime_vote.py`, and `providers/resolve.py`, which it loads from its own folder first and from the configured workbench otherwise) has to be in the snapshot too or passed as an argument; a folder argument such as `--project` is not snapshotted or verified.
 
 ### Usage
 
@@ -100,7 +102,7 @@ Schedule a job two minutes ahead whose command has no side effect (for the Linke
 
 ## Linux systemd (`systemd.py`)
 
-The same verbs, command file and guarantees as `launchd.py`, on the user's systemd service manager: the snapshot and its hashes, the approval digest (same fields, same computation; a test checks that `launchd.py` computes the same digest for a job planned here), re-verification at every firing, at most once and late means missed for `--at`, no overlap, `timeout_minutes` and `runs.jsonl` for `--every`, files 0600 and folders 0700. Standard library only; the service runs the runner's copy with `/usr/bin/python3`.
+The same verbs, command file and guarantees as `launchd.py`, on the user's systemd service manager: the snapshot and its hashes, the approval digest (same fields, same computation; a test checks that `launchd.py` computes the same digest for a job planned here), re-verification at every firing, at most once, late means missed, the one-shot limit with its kept output and `cancel` and `resolve` of a job left `running` for `--at`, no overlap, `timeout_minutes` and `runs.jsonl` for `--every`, files 0600 and folders 0700. Standard library only; the service runs the runner's copy with `/usr/bin/python3`.
 
 ### What it writes
 
@@ -165,4 +167,4 @@ freedesktop.org answered with a bot check on 2026-09-30, so the pages were read 
 
 ### Tests
 
-`test_systemd.py`, in the same run as launchd's: offline, with a fake `systemctl` and `loginctl` and temporary job and unit folders. It covers the dry run and digest parity with `launchd.py`, the unit files and their modes, one-shot and recurring firings, missed, overlap, stale lock, tampering, the timeout that kills the process group, `list`, `cancel`, and `--check` with and without lingering.
+`test_systemd.py`, in the same run as launchd's: offline, with a fake `systemctl` and `loginctl` and temporary job and unit folders. `test_scheduler_one_shot.py` runs once per provider: output that is not UTF-8, the one-shot limit, an error in the runner, `cancel` and `resolve` of a job left `running`. `test_systemd.py` covers the dry run and digest parity with `launchd.py`, the unit files and their modes, one-shot and recurring firings, missed, overlap, stale lock, tampering, the timeout that kills the process group, `list`, `cancel`, and `--check` with and without lingering.

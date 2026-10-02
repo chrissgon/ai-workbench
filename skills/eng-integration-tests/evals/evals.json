@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "The time-zone change in dueLabel is already implemented in invoices/ (plan in docs/engineering/plans/due-label-customer-time-zone.md). Write the integration tests.",
+      "prompt": "The time-zone change in dueLabel is already implemented in the invoices project (plan in docs/engineering/plans/due-label-customer-time-zone.md). Write the integration tests.",
       "expected_output": "Tests are written with node:test and import through src/index.js (the public API); they run the label under several server time zones by starting child processes with TZ set, and pass; the same tests are run against releases/1.2.0/src (the previous release) in a scratch copy, where the server-zone cases fail in America/Sao_Paulo and the preserved cases pass; npm test passes with the change; the plan gains an 'Integration tests' section with both runs' counts; src/ is unchanged.",
       "files": [
         "evals/files/invoices"
@@ -20,7 +20,7 @@
     },
     {
       "id": 2,
-      "prompt": "We'll implement a `locale` option for dueLabel in invoices/ next week. Write the integration tests for it now.",
+      "prompt": "We'll implement a `locale` option for dueLabel in the invoices project next week. Write the integration tests for it now.",
       "expected_output": "The option does not exist; integration tests run after implementation; the skill hands off to eng-unit-tests for tests written before the change (or asks for the expected behaviour to do so) and writes no integration test that runs against missing code.",
       "files": [
         "evals/files/invoices"

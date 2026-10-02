@@ -126,6 +126,8 @@ def test_chrome_bin_renders_without_playwright(project):
     assert len(calls) == 1
     args = calls[0]["args"]
     assert "--headless" in args and "--window-size=1200,630" in args and "--hide-scrollbars" in args
+    # The browser never touches the OS keychain: with a throwaway home the system would ask the person to create one.
+    assert "--use-mock-keychain" in args and "--password-store=basic" in args
     assert "--blink-settings=preferredColorScheme=1" in args
     assert "--force-prefers-reduced-motion" not in args and "--no-sandbox" not in args
     assert args[-1].startswith("file://") and args[-1].endswith("/card.html")

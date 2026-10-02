@@ -6,7 +6,7 @@
 - Date: 2026-09-22
 
 ## Goal
-People using tinykv (https://github.com/dana-example/tinykv-dana-example) [1].
+People using tinykv (https://code.example/dana-example/tinykv-dana-example) [1].
 
 ## Audiences
 1. Backend engineers who want fewer dependencies [1].
