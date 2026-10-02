@@ -36,6 +36,8 @@ The CLI lists the available skills to the model within a character budget, its b
 
 How it got here, in one day (2026-10-01, `docs/decisions.md`): rules that matched the text of a command denied harmless forms and made the strong model score below the floor model (809 denied commands in the runs kept on the maintainer's machine); the CLI's own sandbox fixed that on the host; then every eval moved into a container, which made both the rules and the sandbox settings unnecessary and removed them.
 
+The home a run sees is the container's own (`/home/eval`): this adapter does not replace `HOME`, while the floor model's adapter (`adapters/agents-dir/`) gives each run an empty temporary home. The two tiers' commands therefore see different homes, both inside the container and neither the home of the person who runs the evals; a case must not depend on what a home holds.
+
 The token the strong model's runs use inside the container is registered by this adapter, in the `secrets` list of `adapter.json` (the core's registry in `providers/secrets/resolver.py` names no adapter); the name passed into the runs has one home, `strong_pass_env` of `evals/eval-gate.json`, and `eval_run.py` fills it from the OS secret store when it is not exported. `python3 scripts/doctor.py` shows whether it is found, never its value.
 
 ## Stopping a run
