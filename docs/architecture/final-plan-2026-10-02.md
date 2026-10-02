@@ -1023,7 +1023,7 @@ Counts: 106 rows: 19 S, 20 T, 11 R, C1, P1, 15 PB (there is no PB9), 3 NS, 8 D, 
 | The pinned image cannot be rebuilt (a snapshot or a digest disappears) | low | the built image is stored and its digest is in every event line; the definition is kept buildable by the CI job |
 | The strong tier's credential leaves a web case through an instruction planted in a fetched page | low | grading runs without tools (B3); only the cases the gate file lists open the network (B5); open point a puts a low-limit key in place of the account's token on those cases; the sidecar of lane F7 is the full answer |
 | Web cases give different results on different days | certain | nine cases, named in the event line; limited by the runner (`web_jobs` per tier); a failing web case is read with the network in mind |
-| A contributed field file is invented, or meant to sink a skill | low | field evidence promotes nothing; a file adds at most one `failed` to the field signal and at most 20 uses to a column; its lines hold closed keys only (MB4) |
+| A contributed field file is invented, or meant to sink a skill | low | field evidence promotes nothing; one contributor's files add together at most one `failed` to the field signal and at most 20 uses to a column; its lines hold closed keys only (MB4) |
 | Text about one real case is copied back into the repository by this very audit | low | the audit folder was checked for names, paths and credentials before the commit; `validate.py` checks it at every commit |
 
 ## What a change costs now
@@ -1047,7 +1047,7 @@ This section replaces the list of what would have made a second measurement of e
 | `runs`, `timeout_seconds`, `retries`; the gate's threshold or tolerance | nothing to run: evidence is written only at the configured `runs`, so a changed number applies to later events; a changed threshold or tolerance is computed again from the lines | B5, B7b |
 | The grading template's rules, what the grader is shown, how a run is scored | **the floor is raised: every skill is `needs a full test`, and everything is tested again in full: 1,440 runs and 1,440 gradings today.** This is the one change that still costs that; phase B makes those changes once, and D4 checks them, before any evidence exists | B10 |
 | The reference model, retired or replaced | the old evidence counts as inherited; the 48 run every case with the skill on the new model, and the baseline is redone for one case per skill and, where that sample moved by more than the tolerance, for the whole skill: 624 runs and 624 gradings when no skill's sample moved | B12, B7b |
-| The grader, retired or replaced | 160 stored replies graded again (`--regrade`); when at least 95% of the verdicts agree, nothing is discarded: the old lines are inherited and each skill is `watch` until its next lab runs; otherwise it is the change two rows above. This needs the archive of phase E | B3, B10 |
+| The grader, retired or replaced | 320 stored replies graded again (`--regrade`: one run with the skill and one without it per case); when at least 95% of all verdicts and at least 95% of the verdicts the old grader failed agree, nothing is discarded: the old lines are inherited and each skill is `watch` until its next lab runs; otherwise it is the change two rows above. This needs the archive of phase E | B3, B10 |
 | The floor model, or a new model in the tables | nothing is asked: its rows are information, and it appears when it has lines | B7 |
 
 ## Estimated effort

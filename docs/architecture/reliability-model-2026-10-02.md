@@ -100,7 +100,7 @@ A run line (`"record": "run"`):
 - A partial test moves the score and not the gate. Running the cases that failed again, after a change, cannot replace their bad runs in the gate while the cases that passed keep the runs of an older version (MB3).
 - A second full test of an unchanged `X.Y` adds its runs to the first and replaces none, so a skill near the threshold is not decided by the better of two draws.
 
-One exception lets a partial test enter the gate, and it replaces no run of an unchanged case. A case that changed or was added after the newest full test has no runs the gate can count. It completes the gate with its own runs, made with `--cases <id> --baseline` on the same `X.Y`. Until then the gate cannot be computed, and the band is `needs a full test` with that cause. A deleted case leaves the gate to be computed on the cases that remain; the rule for case changes asks for the reason in the pull request, because a mean can rise that way with nothing run.
+One exception lets a partial test enter the gate, and it replaces no run of an unchanged case. A case that changed or was added after the newest full test has no runs the gate can count. It completes the gate with its own runs, made with `--cases <id> --baseline` on the same `X.Y`. Until then the gate cannot be computed, and the band is `needs a full test` with that cause. The exception serves a case once: a second change of the same case since the newest full test asks for a test event that runs every case with the skill, because editing one case again and again would discard its poor runs at each edit. A deleted case leaves the gate to be computed on the cases that remain; the rule for case changes asks for the reason in the pull request, because a mean can rise that way with nothing run.
 
 ### 3. Versions and change classes
 
@@ -120,7 +120,7 @@ One exception lets a partial test enter the gate, and it replaces no run of an u
 
 1. Every changed file is `SKILL.md` or a file under `references/`.
 2. No changed line is in the frontmatter (the description included), the inputs table, the procedure, the quality criteria, the output template, the confirmation gate or the stop rules.
-3. No changed line differs from the line it replaces in a number, a path, a code span or one of the words never, only, must, may, stop, ask.
+3. No changed line differs from the line it replaces in a number, a path, a code span or one of the words never, only, must, may, stop, ask. A line that is only added or only deleted replaces nothing: it is within Z only when it holds none of those (no number, no path, no code span, none of those words).
 4. The characters changed, added to those of the earlier Z changes since the skill's newest lab evidence, stay within the budget: 300 characters. When the budget is spent, the next change is a Y change.
 
 Anything else is Y at least. A description decides when a skill loads, so a change to it is never Z.
@@ -255,7 +255,7 @@ The effect of the block on a skill's behaviour is seen once, in the lab: one cas
 - **It can demote.** The field signal is on when three or more verdicts of `failed` exist on the current `X.Y`, in weeks at or after the week of that version's newest full test. The band is then `watch` until the cases have run again.
 - **It never promotes.** No number of good verdicts takes a skill out of `watch` or out of `needs a full test`.
 
-**Contributed files.** `export` writes one file with only the closed keys and drops the lines whose content hash is not the hash the version file gives for that version (a locally edited skill). The person opens a pull request that adds it, through `import`, as `skills/<name>/evals/evidence/field-<id>.jsonl`, `<id>` being the first 12 characters of the file's hash. Contributed files stay separate, one per contribution. Each has a maximum weight: it adds at most 20 uses and 20 verdicts per skill to the columns, and at most one `failed` to the field signal, so that no single file can sink a skill or fill a column.
+**Contributed files.** `export` writes one file with only the closed keys and drops the lines whose content hash is not the hash the version file gives for that version (a locally edited skill). The person opens a pull request that adds it, through `import`, as `skills/<name>/evals/evidence/field-<id>.jsonl`, `<id>` being the first 12 characters of the file's hash. Contributed files stay separate, one per contribution. The maximum weight is per contributor, not per file, so that splitting a contribution into several files gains nothing: the files added by one pull request author add together at most 20 uses and 20 verdicts per skill to the columns, and at most one `failed` to the field signal (`import` records the author's account name in the file's name, not in its lines). No single contributor can sink a skill or fill a column.
 
 **Why this does not break principle 8.** An evidence line holds no project, product, person or account name and no work data. It has no free-text field: every value is a skill name, a version, a hash of workbench content, a listed model id, a word of a closed list, a week or a number, and the importer refuses anything else. What it states is a property of the skill on a model, which is the workbench's own subject.
 
@@ -283,7 +283,7 @@ These are the most predictable expensive events, and version 1's sentence that n
 
 **The reference model changes.** The bands are computed on the new model, where no skill has a full test. The evidence of the old reference model counts on the new one as inherited (at most 3 runs). The 48 skills run every case with the skill on the new model. The baseline is redone by sample: one case per skill; where the sampled baseline differs from the old model's baseline of the same case by more than the tolerance (0.05), that skill's baseline is redone in full, and otherwise the old baseline stands for the cases not sampled, marked as inherited in the event line. With 160 cases that is 480 runs with the skill and 144 sampled baseline runs: 624 runs and 624 gradings, about half of a first full test of everything.
 
-**The grader changes.** A sample of stored replies, one with-skill run per case, is graded again by the new grader with an option that writes no evidence: 160 gradings. When at least 95% of the assertion verdicts agree, nothing is zeroed: the lines graded by the old grader become inherited evidence, and each skill returns from `watch` with its next lab runs. Below that, it is a grader-side change. This needs the replies to be kept, which is the archive rule of the plan's phase E.
+**The grader changes.** A sample of stored replies, one with-skill run and one without-skill run per case, is graded again by the new grader with an option that writes no evidence: 320 gradings. The without-skill runs are there because about 94% of the assertions pass in with-skill runs: a grader that approved everything would reach that agreement without being able to fail anything. Agreement is asked twice: at least 95% of all assertion verdicts, and at least 95% of the verdicts the old grader failed. When both hold, nothing is zeroed: the lines graded by the old grader become inherited evidence, and each skill returns from `watch` with its next lab runs. Below that, it is a grader-side change. This needs the replies to be kept, which is the archive rule of the plan's phase E.
 
 ### 10. The tables
 
@@ -321,7 +321,7 @@ Runs are on the reference model, for an average skill of 3.3 cases; the same num
 | The image, an adapter, the runner's prompt or tools; a hosted model changed under its id | an epoch for the skills affected: they are `watch`, and their baselines expire. Bringing all 48 back at once is 480 runs with the skill, and 480 more when their baselines are redone |
 | What the grader sees, the grading rules, the scoring | the floor is raised: every skill is `needs a full test`. A full test of everything: 1,440 runs today |
 | The reference model | 624 runs and 624 gradings (section 9) |
-| The grader | 160 gradings; with high agreement, every skill is `watch` until its next lab runs; otherwise a full test of everything |
+| The grader | 320 gradings; with high agreement, every skill is `watch` until its next lab runs; otherwise a full test of everything |
 | A new model in the table | nothing is asked; it appears when it has lines |
 
 ## Backtest
@@ -366,6 +366,8 @@ Example rows on the reference model (`n` is the number of with-skill runs in the
 1. A change always costs the band: after one Y change no skill is at 0.70, whatever its history, and after an X change none is above 0.38.
 2. The way back is short for a skill with a good mean and long for a marginal one: 3 lab runs return 37 of the 48 to `reliable`, 9 return 45, and the three that stay in `watch` have means of 0.83 to 0.86.
 3. The threshold separates by mean and by amount of evidence, which is what it is for: the six skills that start in `watch` are the ones closest to the gate, with one exception, a two-case skill at 0.92, which is there for its 6 runs.
+
+**The 42 is a ceiling, not a forecast.** The backtest uses today's records, in which the assertions that pass in every run still raise the means. After phase C replaces them, more skills will start in `watch`: without those assertions ten skills sit between 0.6 and 0.87 (independent review, FR-I3).
 
 **What the backtest cannot judge:** the Z budget of 300 characters; the field signal's count of three; the cap values 3 and 1, beyond the property that inherited evidence alone stays under 0.70; the 95% agreement asked of a new grader. There is no history of classified changes and no field evidence yet. They are reviewed once the first full test of the 48 has produced per-run lines, by the same script run on the evidence files.
 
