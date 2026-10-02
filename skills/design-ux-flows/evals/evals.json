@@ -4,26 +4,24 @@
     {
       "id": 1,
       "prompt": "Define the user flows and screens for phase P-1 from docs/product/prd.md.",
-      "expected_output": "docs/design/flows.md with an information architecture, screens with regions in priority order and states, one flow per must feature of P-1 (invoice list, overdue reminders) with numbered steps on named screens, failure branches and a keyboard path, a Coverage line per must/should feature of P-1, no colours or copy, lint ok.",
+      "expected_output": "docs/design/flows.md with an information architecture, screens with regions in priority order and states, one flow per must feature of P-1 (invoice list, overdue reminders) with numbered steps on named screens, failure branches and a keyboard path, a Coverage line per must/should feature of P-1, no colours or copy; lint ok, recorded in docs/design/flows.lint.json and quoted in the reply.",
       "files": ["evals/files/ledger"],
       "assertions": [
         "Every flow names a screen in its steps, has an End state, a Failures line and a Keyboard line",
         "Every screen lists regions in priority order and at least an empty or error state",
         "F-1 and F-2 each have a Coverage line naming a flow or screen",
-        "No colour, font or spacing value appears in the document",
-        "scripts/lint_flows.py is run with --prd and --phase P-1 and reports ok: true"
+        "docs/design/flows.lint.json exists with \"ok\": true, and the reply quotes the lint command with --prd and --phase P-1 and its output"
       ],
       "grader_files": ["docs/product/prd.md"]
     },
     {
       "id": 2,
       "prompt": "Draw the app's onboarding flow.",
-      "expected_output": "No PRD exists; the skill says so, names product-prd (and product-feature-spec) as the steps to take first and writes nothing.",
+      "expected_output": "No PRD exists; the skill says so, names product-prd (and product-feature-spec after it) as the steps to take first, writes nothing and offers no generic, assumed or example flow in its place.",
       "files": [],
       "assertions": [
-        "No flows file is written",
         "The reply names product-prd as the missing input",
-        "The reply is in English, the language of the prompt"
+        "The reply offers no generic, assumed or example flow in place of the missing PRD"
       ]
     }
   ]

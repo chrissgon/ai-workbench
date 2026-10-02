@@ -976,7 +976,32 @@ def read_text(path, limit=4000):
 FILE_LIMIT = 60000
 
 
+def binary_stub(path):
+    """What the grader is told about a file that is not text: its kind, its size and, for a PNG, its
+    dimensions. None when the file reads as text. Bytes pasted as text told the grader nothing, and a
+    few images made the grading prompt too long to pass to a harness."""
+    try:
+        with open(path, "rb") as f:
+            head = f.read(4096)
+        size = os.path.getsize(path)
+    except OSError:
+        return None
+    if head.startswith(b"\x89PNG\r\n\x1a\n") and len(head) >= 24:
+        width, height = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
+        return f"[binary file: PNG image, {width}x{height} pixels, {size} bytes; its content is not shown]"
+    kinds = ((b"\xff\xd8\xff", "JPEG image"), (b"GIF8", "GIF image"), (b"%PDF", "PDF document"), (b"PK\x03\x04", "zip archive"))
+    for magic, kind in kinds:
+        if head.startswith(magic):
+            return f"[binary file: {kind}, {size} bytes; its content is not shown]"
+    if b"\0" in head:
+        return f"[binary file, {size} bytes; its content is not shown]"
+    return None
+
+
 def shown(path):
+    stub = binary_stub(path)
+    if stub:
+        return stub
     text = read_text(path, FILE_LIMIT + 1)
     if len(text) > FILE_LIMIT:
         return text[:FILE_LIMIT] + f"\n[... truncated at {FILE_LIMIT} characters: the file continues ...]"

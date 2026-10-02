@@ -1,5 +1,5 @@
 """Tests of skills/brand-identity/scripts/render.py: the PNG header reader, the refusal of remote
-references, browser discovery, fill escaping, and the size check (with a fake browser). One test renders
+references, browser discovery, fill escaping, the size check and the sandbox retry (with a fake browser). One test renders
 with a real Chrome or Chromium and is skipped when none is installed."""
 import hashlib
 import importlib.util
@@ -44,12 +44,17 @@ def page(tmp_path, body, head=""):
     return p
 
 
-def fake_browser(tmp_path, width, height, hang=False):
-    """An executable that writes a width x height PNG to --screenshot=<path>, then optionally never exits."""
-    png = tmp_path / "fake.png"
+def fake_browser(tmp_path, width, height, hang=False, name="fake-browser", refuse=None):
+    """An executable that writes a width x height PNG to --screenshot=<path>, then optionally never exits.
+    With refuse, it appends its arguments to calls.log and, unless --no-sandbox is among them, prints
+    that message to stderr and exits 1 without a screenshot."""
+    png = tmp_path / f"{name}.png"
     png.write_bytes(tiny_png(width, height))
-    exe = tmp_path / "fake-browser"
-    exe.write_text(f"#!{sys.executable}\nimport shutil, sys, time\n"
+    exe = tmp_path / name
+    guard = "" if refuse is None else (
+        f"open({str(tmp_path / 'calls.log')!r}, 'a').write(' '.join(sys.argv[1:]) + '\\n')\n"
+        f"if '--no-sandbox' not in sys.argv:\n    sys.stderr.write({refuse!r} + '\\n')\n    sys.exit(1)\n")
+    exe.write_text(f"#!{sys.executable}\nimport shutil, sys, time\n" + guard +
                    "shot = [a.split('=', 1)[1] for a in sys.argv if a.startswith('--screenshot=')][0]\n"
                    f"shutil.copyfile({str(png)!r}, shot)\n" + ("time.sleep(600)\n" if hang else ""))
     exe.chmod(0o755)
@@ -122,6 +127,99 @@ def test_a_missing_render_browser_variable_exits_3_without_guessing(tmp_path):
     code, _, err = run("--html", str(page(tmp_path, "x")), "--width", "100", "--height", "100",
                        "--out", str(tmp_path / "o.png"), env={"RENDER_BROWSER": str(tmp_path / "nothing")})
     assert code == 3 and "RENDER_BROWSER" in err
+
+
+def clean_env(tmp_path, **extra):
+    """An environment with no browser variable and a PATH holding only tmp_path/bin."""
+    env = {k: v for k, v in os.environ.items() if k not in ("RENDER_BROWSER", "CHROME_BIN")}
+    (tmp_path / "bin").mkdir(exist_ok=True)
+    return {**env, "PATH": str(tmp_path / "bin"), **extra}
+
+
+def render_with(tmp_path, env, *args):
+    r = subprocess.run([sys.executable, str(RENDER), "--html", str(page(tmp_path, "x")), "--width", "60",
+                        "--height", "40", "--out", str(tmp_path / "o.png"), *args],
+                       capture_output=True, text=True, timeout=120, env=env)
+    return r.returncode, r.stdout, r.stderr
+
+
+def test_chrome_bin_comes_after_the_flag_and_render_browser_and_before_the_search(tmp_path):
+    flag = fake_browser(tmp_path, 60, 40, name="by-flag")
+    own = fake_browser(tmp_path, 60, 40, name="by-render-browser")
+    chrome_bin = fake_browser(tmp_path, 60, 40, name="by-chrome-bin")
+    env = clean_env(tmp_path, CHROME_BIN=str(chrome_bin))
+    # A browser the PATH search would find: CHROME_BIN must win over it.
+    on_path = fake_browser(tmp_path / "bin", 60, 40, name="chromium")
+
+    code, out, err = render_with(tmp_path, env)
+    assert code == 0, err
+    assert json.loads(out)["browser"] == str(chrome_bin)
+
+    code, out, err = render_with(tmp_path, {**env, "RENDER_BROWSER": str(own)})
+    assert code == 0, err
+    assert json.loads(out)["browser"] == str(own)
+
+    code, out, err = render_with(tmp_path, {**env, "RENDER_BROWSER": str(own)}, "--browser", str(flag))
+    assert code == 0, err
+    assert json.loads(out)["browser"] == str(flag)
+    assert on_path.exists()
+
+
+def test_chrome_bin_may_be_a_command_name_and_a_stale_one_is_reported_not_fatal(tmp_path, monkeypatch, capsys):
+    env = clean_env(tmp_path)
+    on_path = fake_browser(tmp_path / "bin", 60, 40, name="chromium")
+    for name in ("PATH", "CHROME_BIN", "RENDER_BROWSER"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("PATH", env["PATH"])
+    monkeypatch.setattr(render, "KNOWN_BROWSERS", [])
+
+    monkeypatch.setenv("CHROME_BIN", "chromium")
+    assert render.find_browser(None) == (str(on_path), None)
+
+    assert capsys.readouterr().err == ""
+
+    monkeypatch.setenv("CHROME_BIN", str(tmp_path / "gone"))
+    assert render.find_browser(None) == (str(on_path), None)
+    assert "CHROME_BIN" in capsys.readouterr().err
+
+
+def test_an_explicit_browser_never_reads_chrome_bin(tmp_path):
+    code, out, err = render_with(tmp_path, clean_env(tmp_path, CHROME_BIN=str(tmp_path / "gone")),
+                                 "--browser", str(fake_browser(tmp_path, 60, 40)))
+    assert code == 0 and "CHROME_BIN" not in err
+    assert json.loads(out)["sandbox"] is True
+
+
+# Sandbox retry, with a fake browser
+
+@pytest.mark.parametrize("message", [
+    "[1:1:FATAL:zygote_host_impl_linux.cc(128)] No usable sandbox! If you are running on Ubuntu 23.10+ ...",
+    "[1:1:ERROR:zygote_host_impl_linux.cc(101)] Running as root without --no-sandbox is not supported.",
+])
+def test_no_usable_sandbox_is_retried_once_without_it_and_said_on_stderr(tmp_path, message):
+    exe = fake_browser(tmp_path, 60, 40, refuse=message)
+    code, out, err = render_with(tmp_path, clean_env(tmp_path), "--browser", str(exe))
+    assert code == 0, err
+    assert "retrying once with --no-sandbox" in err
+    assert json.loads(out)["sandbox"] is False
+    assert render.png_size(tmp_path / "o.png") == (60, 40)
+    calls = (tmp_path / "calls.log").read_text().splitlines()
+    assert len(calls) == 2
+    assert "--no-sandbox" not in calls[0].split() and "--no-sandbox" in calls[1].split()
+
+
+def test_another_browser_failure_is_not_retried_without_the_sandbox(tmp_path):
+    exe = fake_browser(tmp_path, 60, 40, refuse="Failed to connect to the bus: no such file")
+    code, out, err = render_with(tmp_path, clean_env(tmp_path), "--browser", str(exe))
+    assert code == 1 and out == ""
+    assert "exited without a screenshot" in err and "--no-sandbox" not in err
+    assert len((tmp_path / "calls.log").read_text().splitlines()) == 1
+    assert not (tmp_path / "o.png").exists()
+
+
+def test_the_sandbox_is_on_unless_the_retry_asks(tmp_path):
+    assert "--no-sandbox" not in render.browser_command("b", "p.html", "s.png", "profile", 10, 10)
+    assert "--no-sandbox" in render.browser_command("b", "p.html", "s.png", "profile", 10, 10, sandbox=False)
 
 
 # Fill

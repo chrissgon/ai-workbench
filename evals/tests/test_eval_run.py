@@ -1036,3 +1036,18 @@ def test_an_iteration_folder_is_claimed_when_it_is_named(tmp_path):
     assert (Path(first).name, Path(second).name) == ("iteration-1", "iteration-2")
     assert Path(first).is_dir() and Path(second).is_dir()
     assert Path(er.next_iteration(str(ws), claim=False)).name == "iteration-3" and not (ws / "iteration-3").exists()
+
+
+# --- the grader is told what a binary file is, not given its bytes ---------------------------------
+
+def test_a_png_is_shown_to_the_grader_as_its_size_and_dimensions(tmp_path):
+    png = tmp_path / "cover.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + (1584).to_bytes(4, "big") + (396).to_bytes(4, "big") + b"\x08\x06" + b"\x00" * 5000)
+    assert er.shown(str(png)) == f"[binary file: PNG image, 1584x396 pixels, {png.stat().st_size} bytes; its content is not shown]"
+    other = tmp_path / "blob.bin"
+    other.write_bytes(b"ab\x00cd" * 100)
+    assert er.shown(str(other)).startswith("[binary file, 500 bytes")
+    text = tmp_path / "notes.md"
+    text.write_text("# Notes\nplain text\n")
+    assert er.shown(str(text)) == "# Notes\nplain text\n"
+

@@ -1,7 +1,12 @@
 #!/usr/bin/env python3
 """Check a design document against its specification and its ADRs.
 
-Usage: python3 check_design.py --spec <spec.md> --design <design.md> [--adr-dir <dir>] [--json]
+Usage: python3 check_design.py --spec <spec.md> --design <design.md> [--adr-dir <dir>]
+                               [--report <check.json>] [--json]
+
+--report <path> also writes the result to that file, with the command's own arguments ("spec", "design",
+"adr_dir") and the date, so a reviewer can check the check ran and what it checked. Each run overwrites
+it: the file holds the last run.
 
 Checks:
   - every REQ-n, NFR-n, EDGE-n and AC-n id in the specification appears in the design
@@ -11,8 +16,9 @@ Checks:
     Decision and Consequences
   - the verification plan has at least one row per AC (an AC id inside the Verification plan section)
 
-Prints JSON. Exit codes: 0 ok, 1 problems, 2 usage error.
+Prints JSON on one line (--json: indented). Exit codes: 0 ok, 1 problems, 2 usage error.
 """
+import datetime
 import glob
 import json
 import os
@@ -63,14 +69,18 @@ def main(argv):
     if not argv or "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0 if argv else 2
-    spec = design = adr_dir = None
+    spec = design = adr_dir = report = None
     as_json = "--json" in argv
     i = 0
     while i < len(argv):
         a = argv[i]
+        if a in ("--spec", "--design", "--adr-dir", "--report") and i + 1 >= len(argv):
+            print(f"Error: {a} needs a value.", file=sys.stderr)
+            return 2
         if a == "--spec": spec = argv[i + 1]; i += 2
         elif a == "--design": design = argv[i + 1]; i += 2
         elif a == "--adr-dir": adr_dir = argv[i + 1]; i += 2
+        elif a == "--report": report = argv[i + 1]; i += 2
         elif a == "--json": i += 1
         else:
             print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr)
@@ -113,8 +123,20 @@ def main(argv):
         if probs:
             errors.append(f"{os.path.basename(f)}: {', '.join(probs)}")
     ok = not errors
-    print(json.dumps({"ok": ok, "spec_ids": len(spec_ids), "covered": len(spec_ids) - len(missing), "adrs": adr_report,
-                      "errors": errors, "warnings": warnings}, indent=2 if as_json else None))
+    result = {"ok": ok, "spec_ids": len(spec_ids), "covered": len(spec_ids) - len(missing), "adrs": adr_report,
+              "errors": errors, "warnings": warnings}
+    if report:
+        record = {"ok": ok, "date": datetime.date.today().isoformat(), "spec": spec, "design": design,
+                  "adr_dir": adr_dir, "spec_ids": result["spec_ids"], "covered": result["covered"],
+                  "adrs": adr_report, "errors": errors, "warnings": warnings}
+        try:
+            with open(report, "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error: cannot write the report: {e}", file=sys.stderr)
+            return 2
+    print(json.dumps(result, indent=2 if as_json else None))
     return 0 if ok else 1
 
 

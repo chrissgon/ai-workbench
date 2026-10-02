@@ -20,9 +20,21 @@ Made for scheduled jobs with no person present: no prompts, no network, one outp
 - --query appends a query string to the page URL (templates that pick a variant from it, e.g. v=light).
 - --font-face FAMILY:WEIGHT:PATH (repeatable) embeds a .woff2, .woff, .ttf or .otf file as an
   @font-face rule at the top of <head>.
-- Browser: --browser, else the RENDER_BROWSER environment variable, else Google Chrome or Chromium at
-  the usual macOS paths, else google-chrome, google-chrome-stable, chromium or chromium-browser on PATH.
-  A --browser or RENDER_BROWSER that is not an executable file is not replaced by a guess.
+- Browser: --browser, else the RENDER_BROWSER environment variable, else the CHROME_BIN environment
+  variable (a path or a command name, the convention of browser test runners and container images),
+  else Google Chrome or Chromium at the usual macOS paths, else google-chrome, google-chrome-stable,
+  chromium or chromium-browser on PATH. A --browser or RENDER_BROWSER that is not an executable file is
+  not replaced by a guess; a CHROME_BIN that names nothing is reported on stderr and the search goes on,
+  because that variable is not this script's own.
+- Sandbox: the browser always starts with its sandbox first. Only when that start produced no screenshot
+  and the browser's own output says it cannot sandbox ("No usable sandbox", or "Running as root without
+  --no-sandbox is not supported": a container without user namespaces, or a root user) is it started
+  once more with --no-sandbox, and stderr says so. That is acceptable here, and only here, because of
+  what this script renders: one local file it wrote itself from HTML it has already refused for any
+  remote reference, with every host name mapped to "not found", extensions off and a throwaway profile,
+  so the page the unsandboxed renderer handles holds no content from the network, only the caller's own
+  HTML and local files. The sandbox is never turned off by a flag, a variable or in advance; a browser
+  that fails for any other reason is not retried. The JSON output says which way the render ran.
 - The browser runs in a throwaway profile folder (removed afterwards) and its own process group. Once
   the screenshot is complete (the PNG ends with its IEND chunk) it gets 2 s to exit and is then
   stopped: on some machines headless Chrome stays alive after writing the file. --timeout bounds the
@@ -30,7 +42,8 @@ Made for scheduled jobs with no person present: no prompts, no network, one outp
 - After rendering, the PNG's width and height are read from its IHDR header; the file is written to
   --out only when they equal --width and --height.
 
-Prints JSON {"out", "width", "height", "sha256", "browser"} to stdout; diagnostics go to stderr.
+Prints JSON {"out", "width", "height", "sha256", "browser", "sandbox"} to stdout ("sandbox" is false
+when the render needed the --no-sandbox retry); diagnostics go to stderr.
 Exit codes: 0 rendered; 1 the render failed, timed out or has the wrong size (nothing written);
 2 bad input (missing file, remote reference, bad fill or font); 3 no browser found (the caller
 degrades, for example to a text-only post).
@@ -49,6 +62,10 @@ Browser flags, checked on 2026-09-30:
   net/base/host_mapping_rules.h.
 - --no-first-run, --no-default-browser-check, --disable-background-networking:
   chrome/common/chrome_switches.h; --disable-extensions: extensions/common/switches.h.
+- --no-sandbox ("Disables the sandbox for all process types that are normally sandboxed"):
+  sandbox/policy/switches.cc. The two messages that trigger the retry were not read on that date: the
+  first is quoted from the browser's output in a container run on 2026-10-01, the second is the one
+  Chromium prints for a root user (both name zygote_host_impl_linux.cc in the log line).
   (Chromium sources at https://chromium.googlesource.com/chromium/src/+/main/.)
 """
 import argparse
@@ -79,6 +96,8 @@ KNOWN_BROWSERS = [
 ]
 PATH_BROWSERS = ["google-chrome", "google-chrome-stable", "chromium", "chromium-browser"]
 FONT_TYPES = {".woff2": "woff2", ".woff": "woff", ".ttf": "truetype", ".otf": "opentype"}
+
+NO_SANDBOX_MESSAGES = ("no usable sandbox", "running as root without --no-sandbox")
 
 REMOTE_URL = re.compile(r"(?i)\b(?:https?|ftps?|wss?)://")
 CSS_REF = re.compile(r"""(?i)url\(\s*['"]?\s*([^'")\s]*)|@import\s+(?:url\(\s*)?['"]?\s*([^'")\s;]*)""")
@@ -206,6 +225,15 @@ def find_browser(explicit):
             if os.path.isfile(value) and os.access(value, os.X_OK):
                 return value, None
             return None, f"{label} {value!r} is not an executable file"
+    chrome_bin = os.environ.get("CHROME_BIN")
+    if chrome_bin:
+        if os.path.isfile(chrome_bin) and os.access(chrome_bin, os.X_OK):
+            return chrome_bin, None
+        found = shutil.which(chrome_bin)
+        if found:
+            return found, None
+        print(f"render.py: CHROME_BIN {chrome_bin!r} is not an executable; looking for a browser elsewhere",
+              file=sys.stderr)
     for path in KNOWN_BROWSERS:
         if os.path.isfile(path) and os.access(path, os.X_OK):
             return path, None
@@ -268,8 +296,15 @@ def run_browser(cmd, shot, log, timeout):
         time.sleep(0.1)
 
 
-def browser_command(browser, page, shot, profile, width, height):
-    return [browser, "--headless", "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
+def sandbox_unavailable(log_text):
+    """True when the browser's output says it could not start because it cannot sandbox its processes."""
+    low = log_text.lower()
+    return any(message in low for message in NO_SANDBOX_MESSAGES)
+
+
+def browser_command(browser, page, shot, profile, width, height, sandbox=True):
+    """The command line; sandbox=False adds --no-sandbox (see "Sandbox" in the module docstring)."""
+    return [browser, "--headless", *([] if sandbox else ["--no-sandbox"]), "--disable-gpu", "--hide-scrollbars", "--force-device-scale-factor=1",
             "--force-color-profile=srgb", f"--window-size={width},{height}", f"--user-data-dir={profile}",
             "--no-first-run", "--no-default-browser-check", "--disable-extensions",
             # No OS keychain: with a throwaway home (an eval run, a scheduled job) the browser finds no keychain
@@ -342,8 +377,19 @@ def main(argv):
         url = page.as_uri() + (f"?{args.query}" if args.query else "")
         cmd = browser_command(browser, url, shot, tmp / "profile", args.width, args.height)
         log_path = tmp / "browser.log"
+        started, sandbox = time.monotonic(), True
         with open(log_path, "wb") as log:
             status = run_browser(cmd, shot, log, args.timeout)
+        left = args.timeout - (time.monotonic() - started)
+        if (not png_complete(shot) and status == "exited" and left > 0
+                and sandbox_unavailable(log_path.read_text(errors="replace"))):
+            print("render.py: the browser cannot use its sandbox here; retrying once with --no-sandbox "
+                  "(the page is a local, self-contained file and the network is blocked)", file=sys.stderr)
+            sandbox = False
+            cmd = browser_command(browser, url, shot, tmp / "profile-no-sandbox", args.width, args.height,
+                                  sandbox=False)
+            with open(log_path, "wb") as log:
+                status = run_browser(cmd, shot, log, left)
         if not png_complete(shot):
             tail = "\n".join(log_path.read_text(errors="replace").strip().splitlines()[-5:])
             what = f"did not finish in {args.timeout} s" if status == "timeout" else "exited without a screenshot"
@@ -363,7 +409,7 @@ def main(argv):
         shutil.copyfile(shot, out)
         digest = hashlib.sha256(out.read_bytes()).hexdigest()
         print(json.dumps({"out": str(out), "width": width, "height": height, "sha256": digest,
-                          "browser": browser}, indent=2))
+                          "browser": browser, "sandbox": sandbox}, indent=2))
         return 0
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

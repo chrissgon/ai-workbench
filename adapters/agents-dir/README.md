@@ -38,6 +38,7 @@ Requires `opencode` on `PATH`.
 Learned in a cloud session on 2026-09-28 (`opencode-ai@1.18.32`):
 - Behind an outbound proxy, also name it: `--pass-env HTTPS_PROXY --pass-env NO_PROXY`, since the allowlisted environment drops it.
 - Decided by the user on 2026-09-28: the OpenRouter key is for the floor model only. Claude models (the strong model and the grader) run through the claude-code adapter with the maintainer's own login (`--harness claude-code --model <claude-id> --floor-harness agents-dir --floor-model openrouter/deepseek/deepseek-v4.1-flash`); in a cloud session the CLI is already signed in, and `claude -p` works with only `PATH` and `HOME` from the allowlisted environment.
+- The runner's web search (`--allow-web`) goes through a search service that limits concurrent use: with many runs searching at once it answers 429 and the model waits until the run times out (seen 2026-10-01 on a skill whose cases research the web). Measure such a skill alone, with `--jobs 2`.
 - Three `eval_run.py` in parallel made `opencode run` fail within seconds with `UnknownError`, and those runs and their gradings were lost. The cause, found later, was a provider key that did not reach the runner, not the parallelism: runs share nothing, and several skills are evaluated at the same time within the provider's rate limits (`eval_run.py --help`, `--jobs`).
 
 ## Stopping a run

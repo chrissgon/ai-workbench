@@ -6,7 +6,8 @@ executes in a container built from evals/container/, one container per command (
 What a container sees:
   /eval          the run's folder (case/, out/, prompt.md), read-write: the only thing a run can change
   /wb/adapters   the adapters, read-only          /wb/shared   the shared references, read-only
-  /skill/<name>  the skill under test and the case's dependency skills, read-only
+  /skill/<name>  the skill under test and the case's dependency skills, read-only, with their evals/
+                 folder covered by an empty one (the cases hold the expected output and the assertions)
 Nothing else of the machine: no home folder, no other checkout, no credential store.
 
 Network, per command:
@@ -143,6 +144,10 @@ def command(cmd, root, cwd=None, env=None, skills=(), pass_names=(), network="no
     for host, inside, read_only in pairs:
         if os.path.exists(host):
             argv += ["-v", f"{os.path.realpath(host)}:{inside}" + (":ro" if read_only else "")]
+            # A skill's eval cases carry the expected output and the assertions: an empty folder covers
+            # them, so that a model that looks into /skill cannot read what it is graded on.
+            if inside.startswith("/skill/") and os.path.isdir(os.path.join(host, "evals")):
+                argv += ["--tmpfs", f"{inside}/evals:ro,size=1k"]
     for key in FORWARD:
         if env.get(key):
             argv += ["-e", f"{key}={env[key]}"]
