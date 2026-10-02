@@ -327,3 +327,28 @@ What it costs: the first full test of the 48 skills is 1,437 runs and 1,437 grad
 Left for later, on purpose: field evidence counting toward a band, once recorded uses can be compared with verdicts; the numeric decays.
 
 The model is in `docs/architecture/reliability-model-2026-10-02.md` and the work in `docs/architecture/final-plan-2026-10-02.md`: the first describes the model, the second the work, and the plan already contains the model's consequences.
+
+## 2026-10-02: Dependency alerts raised by eval fixtures: a standing rule
+
+The code host's dependency graph reads every manifest in the repository, whatever `.github/dependabot.yml` says, so an eval fixture that names real packages raises alerts on packages nothing here ever installs. It has happened twice: 30 alerts from two fixtures of `ops-ci-pipeline`, dismissed by hand on 2026-09-28 (`docs/security/dependabot-triage-2026-09-28.md`), and 21 open on 2026-10-02, all from one manifest, `skills/eng-architecture/evals/files/content-model/package.json` (read from the host's alerts API that day). New advisories keep arriving against fixtures that do not change.
+
+Bumping the fixture each time is not the answer. A fixture's manifest is part of its case, so a bump changes the case's hash, which drops that case's lab evidence and asks for a test of the skill, to silence an alert about code that never runs.
+
+The rule, item A14 of `docs/architecture/final-plan-2026-10-02.md`:
+
+1. **Invented packages wherever the case does not need the real ones.** A fixture manifest names packages that exist in no registry, under a fictional scope, as the fixture of `eng-security-review` already does: such a manifest raises no alert at all.
+2. **Where the case needs real packages** (the skill must read a real framework's version, or a real tool's configuration), the versions are current on the day the skill's row is written, and **no lockfile that lists real transitive packages is committed**: a lockfile puts hundreds of packages into the dependency graph for one case. A lockfile of invented packages is fine.
+3. **An alert a fixture raises later is dismissed**, with the reason "not used" and the comment "a test fixture, never installed". It is not fixed by a bump.
+4. **The fixture is bumped only when its skill is next changed** for another reason, in the same pull request, so that the case changes once.
+
+For case authors the rule is repeated in `evals/README.md`, which item C0.7 of the plan creates. The 21 open alerts are handled by the row of `eng-architecture` in phase C, which edits that fixture once; the row of `ops-ci-pipeline` follows point 2 for the lockfile it was going to add.
+
+Whether the host can do point 3 by itself, with an alert rule that dismisses by manifest path under `skills/*/evals/files/`, was to be tried with this change. It was not settled, and this is what is known:
+
+- The host's REST API, read with the command-line tool on 2026-10-02, has no endpoint for alert rules at the two paths tried under `dependabot/` (both answer "Not Found"), so the rule could not be created or tested from a pull request.
+- Such a rule is created in the repository's settings page. That is a change of the repository's settings, which is the maintainer's to make, so it was not made here.
+- Not verified: whether a custom rule of the host can match on a manifest path at all. If it can, the maintainer adds the rule and records it here; until then point 3 is done by hand, or through `eng-security-review`, whose dismissals sit behind a confirmation gate.
+
+One setting goes with the rule: the host's automatic security-update pull requests stay off for this repository, so that none edits a fixture manifest. Read on 2026-10-02 from the repository's settings through the API: they are disabled.
+
+Rejected: bumping fixtures as alerts arrive (each bump costs the case's evidence); removing the manifests from the fixtures (a project without a manifest is not the small real project a case needs); moving the fixtures out of the repository (the cases must ship with their skill).
