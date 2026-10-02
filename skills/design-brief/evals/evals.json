@@ -26,7 +26,7 @@
     {
       "id": 2,
       "prompt": "Make a logo for my new bakery app.",
-      "expected_output": "No design system, brand identity or name source exists; the skill does not write the brief with invented values or name: it routes to design-system (which interviews when there is no input) and asks for the exact name as it must be written, with a recommendation on what to answer.",
+      "expected_output": "No design system, brand identity or name source exists; the skill does not write the brief with invented values or name: it stops and points the user to design-system, which writes the missing visual foundation (and interviews when there is no input), and asks for the exact name as it must be written, with a recommendation on what to answer.",
       "files": [],
       "assertions": [
         "No brief file is written",

@@ -1,16 +1,16 @@
 # Tool notes
 
-One entry per tool: what it is good at, the mode this workbench can use, and how to run a pack in it. Update an entry after every run that taught something; date the lesson.
+One entry per kind of tool, named by what it does and never by product (the user says which product they use; match that product to the kind below by what it does, ask when unsure, and record the product in the result's `Tool` line): what it is good at, the mode this workbench can use, and how to run a pack in it. Update an entry after every run that taught something; date the lesson.
 
 ## Choosing
 
 | Artifact | First choice | Alternative |
 |----------|--------------|-------------|
-| screen, landing, documentation page | Claude Design (with the design system onboarded) | code prototype; Figma Make |
-| mockup | an image generator with the real screen attached | Claude Design |
-| logo | an image generator for exploration, then a vector redraw | Figma (design tool integration) for the vector |
-| presentation | Gamma | Claude Design |
-| animation | code prototype (CSS and HTML) | Claude Design |
+| screen, landing, documentation page | a generative design tool (with the design system onboarded) | code prototype; a prompt-to-prototype tool |
+| mockup | an image generator with the real screen attached | a generative design tool |
+| logo | an image generator for exploration, then a vector redraw | a design tool integration (class `integration:design-tool`) for the vector |
+| presentation | a presentation generator | a generative design tool |
+| animation | code prototype (CSS and HTML) | a generative design tool |
 | image (social card, Open Graph) | code prototype (it becomes the build template) | an image generator |
 
 Recommend the first choice unless the user already works in another tool.
@@ -22,7 +22,9 @@ Recommend the first choice unless the user already works in another tool.
 - Weak at: wide visual exploration; the agent explores fewer ideas per round than a design tool.
 - Run: see `code-prototype.md`.
 
-## Claude Design
+## Generative design tool
+
+A tool that generates screens from a prompt and keeps a design-system project per product.
 
 - Mode: assisted for generation (no generation interface for agents); its design-system projects can be written by an integration where the environment has one.
 - Good at: screens and pages with a strong visual direction; reads a code repository to build a design system; accepts reference images; hands a chosen design back to the coding agent.
@@ -30,21 +32,23 @@ Recommend the first choice unless the user already works in another tool.
 - Run: one project per direction; attach the brief file and the reference images; paste the prompt; do not attach an earlier design of the same artifact in round 1.
 - Collect: screenshots at each required width, the share link, and the exported code or the hand-off to the coding agent for the chosen direction.
 
-## Figma Make
+## Prompt-to-prototype tool
+
+A tool inside a design platform that turns a prompt into an interactive prototype with code.
 
 - Mode: assisted.
-- Good at: interactive prototypes with code in the Figma ecosystem.
-- Lessons (2026-09-23, a landing page): an attached frame triggered its design-to-code behaviour and the result was a copy of the frame; custom skills run only when invoked by their slash command in the prompt; importing a library's variables needs a paid plan and a published library and flattens variables into raw values; a Make kit can bundle an npm package and guidelines. The first result stayed "well below" the quality wanted.
-- Run: a new Make file per direction from the file browser; attach the brief, not the frame; start the prompt with the product skill's slash command if one was uploaded; link the product's stylesheet explicitly.
+- Good at: interactive prototypes with code inside the design platform's ecosystem.
+- Lessons (2026-09-23, a landing page): an attached frame triggered its design-to-code behaviour and the result was a copy of the frame; custom skills run only when invoked by their slash command in the prompt; importing a library's variables needs a paid plan and a published library and flattens variables into raw values; a kit of the tool can bundle an npm package and guidelines. The first result stayed "well below" the quality wanted.
+- Run: a new prototype file per direction from the file browser; attach the brief, not the frame; start the prompt with the product skill's slash command if one was uploaded; link the product's stylesheet explicitly.
 
-## Figma (design tool integration)
+## Design tool integration (class `integration:design-tool`)
 
 - Mode: automatic where the integration exists.
 - Good at: composing screens from the file's own variables and components with bound tokens; vectors; structural references and hand-off files.
 - Weak at: invention. A composed landing was reviewed as "not bad, but too basic" (2026-09-23); use it for documentation-like screens, hand-off frames and vector clean-up, not for exploration.
 - Run: follow the integration's own skills for writing to a file; sequential writes; one screenshot per frame; targeted fixes. Writes to the user's file pass the confirmation gate.
 
-## Gamma
+## Presentation generator
 
 - Mode: assisted.
 - Good at: presentations and simple one-page documents from text.

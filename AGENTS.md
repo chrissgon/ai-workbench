@@ -7,7 +7,7 @@ You are maintaining a repository of agents, skills and workflows that let an AI 
 1. **Harness-agnostic core.** Files under `skills/`, `agents/`, `shared/`, `contracts/`, `templates/` and `providers/` must not mention any AI tool by name, its directories (`.claude/`, `.cursor/`, `.codex/`, `.agents/`) or its tool names. Say "create the file", "run the command", "use the available issue-tracker integration; if there is none, ask the user to paste the ticket".
 2. **Open-closed adapters.** Anything specific to one AI tool lives only inside `adapters/<harness>/`. Adapters read the core; the core never reads adapters. Adding a harness never edits the core.
 3. **Write for the weakest model you will run.** See "Writing standard" below.
-4. **Artifacts over invocation.** Capabilities never invoke other skills. They read and write artifacts in the target project (see `contracts/`). Only flows invoke skills, and they do it by name.
+4. **Artifacts over invocation.** Capabilities never invoke other skills. They read and write artifacts in the target project (see `contracts/`). Only flows invoke skills, and they do it by name. One exception: `core-orchestrator` is the router, the one capability that names a skill and hands the request over to it; it does no work of the skill it routes to. Every other capability reads and writes artifacts.
 5. **Never assume; ask.** When a decision belongs to the user and is not recorded in the project state or an artifact, a skill stops and asks, with a recommended answer. It never proceeds on a guess about scope, product, audience, platform or intent. An assumption that cannot be avoided is labelled `assumed` and reported. Asking for a decision once is not re-asking for approval: see the consent rules.
 6. **English only.** Every file in this repository is written in English.
 7. **Parallel by default.** Work that does not depend on other work runs at the same time: eval runs, independent checks and test suites, research on separate questions, agents with separate scopes. A skill or script runs things one after another only when a step needs another's result, when a shared resource cannot be used concurrently (one working tree, one approval gate), or when a rate limit forces it, and it says which. Scripts that run many independent jobs take a `--jobs` option with a default above 1.
@@ -59,7 +59,7 @@ Harnesses load every installed skill's name and description into every session a
 
 ## Skill kinds
 
-- **Capability** (`<area>-<name>`): does one job. Self-contained. Never invokes another skill. May load its own `references/` and `../../shared/references/`.
+- **Capability** (`<area>-<name>`): does one job. Self-contained. Never invokes another skill (the one exception is `core-orchestrator`, the router: it names the skill and hands the request over, and does none of that skill's work). May load its own `references/` and `../../shared/references/`.
 - **Flow** (`flow-<name>`): orchestrates capabilities by name, phase by phase, with a user checkpoint at the end of each phase. Reads and updates `docs/workbench/state.md` in the target project so it can resume across sessions. Phases may be optional.
 
 An **agent** (`agents/<name>.md`) is a delegation target: a persona with a scope and a list of skills, used when a harness can run work in isolation or in parallel (review, exploration, implementation). Agents are few. Their body is harness-neutral; model, tools and permissions come from `adapters/<harness>/overrides/`.
@@ -154,7 +154,7 @@ Create `adapters/<harness>/` with `adapter.json`, `install.sh`, `README.md`, and
 - Never put a harness name, path or tool name in a core file.
 - Never store credentials in this repository. Providers read them from the environment.
 - Never commit a real project's names, people, decisions or data. Use fictional names in examples and fixtures, and keep each project's data in that project.
-- Never let a capability invoke another skill.
+- Never let a capability invoke another skill. The only exception is `core-orchestrator`, the router, which hands a request over and does none of the routed skill's work.
 - Never ship an actuator without a confirmation gate.
 - Never write a skill from generic knowledge without a real task to refine it against.
 - Never write repository content in a language other than English.

@@ -1,6 +1,6 @@
 # Prompting AI design tools
 
-Lessons from real runs (Figma Make, Claude Design, design-tool integrations), written as rules.
+Lessons from real runs (a prompt-to-prototype tool, a generative design tool with a design-system project, design-tool integrations), written as rules.
 
 ## What makes a tool produce something worth keeping
 
