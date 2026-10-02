@@ -303,3 +303,58 @@ What it costs: the first full test of the 48 skills is 1,437 runs and 1,437 grad
 Left for later, on purpose: field evidence counting toward a band, once recorded uses can be compared with verdicts; the numeric decays.
 
 The model is in `docs/architecture/reliability-model-2026-10-02.md` and the work in `docs/architecture/final-plan-2026-10-02.md`: the first describes the model, the second the work, and the plan already contains the model's consequences.
+
+## 2026-10-02: Principle 8 is separation, not masking (decision 11 of the final plan, as narrowed)
+
+Decided by the maintainer. The workbench holds no file of a project that uses it and names no such project, its people or its accounts. Real data as such is not the problem: a number, a date, a palette or a measured result that came from a real case may stay in a fixture or in a lesson.
+
+- What identifies a project is replaced: its name, a prefix or path that carries the name, people, handles, hosts, the identifiers of its files in other tools. A name that is already a replacement and names no project that uses the workbench is not replaced again.
+- Numbers, dates, schedules, palettes and the figures in a "Gotchas" section stay as they are.
+- A file copied whole from a project becomes a fixture that belongs to the test: only what the case needs, under a fictional name.
+- No eval case is removed for this.
+- One exception to the rule on names: the maintainer's own name and handle where ownership needs them (the license, the code owners file, an adapter's manifest that names its author).
+
+`AGENTS.md` says this in the three places that said numbers go: principle 8, step 7 of "Adding a skill" and the "Never" list.
+
+Rejected: rewriting every such fixture as fiction, numbers and dates included (the largest of them would take a day or more, and baselines would move for no gain: a number identifies nobody); removing the affected cases (two skills would lose their main cases); leaving the fixtures as they are (the repository is public and principle 8 would stay broken).
+
+Why: the first wording of principle 8 asked for "invented numbers", which made a lesson measured on a real case impossible to keep and turned a cleanup of names into a rewrite of whole fixtures. What the principle protects is the project and its people, and they are identified by names, never by a count.
+
+## 2026-10-02: Requirement classes all take the form `<role>:<target>` (decision 14a)
+
+Decided by the maintainer; it reverses the part "requirement classes keep their names" of the entry of 2026-10-02 on the orchestrator. Four classes were bare while the others carried a role: `mailer` becomes `sender:email`, `mailbox` becomes `reader:email`, `scheduler` becomes `scheduler:job`, `store` becomes `store:runtime`. `integration:*`, `search:web`, `generator:*` and `publisher:<platform>` keep their names.
+
+- Only the class names change: in `contracts/environment.md`, in skills' `requires`, in the orchestrator's class table, in `providers/CONTRACT.md`, in the class list of `providers/resolve.py` and in the names the runtime passes to it. The provider folders, the `<CLASS>_PROVIDER` environment variables, the keys of a project's `runtime.json` and every data name stay; the resolver keeps reading the four old names as aliases, so a job scheduled before the rename keeps running. No project migrates anything.
+- Two forms of a class: `<role>:<target>` with a fixed target, where the target is part of the class's identity, and `<role>:<parameter>`, where the part after the colon is handed to the provider. Only `publisher:<platform>` has the second form.
+- The validator refuses a bare class in a skill's `requires`: a warning first, an error once every skill is edited.
+
+Rejected: moving the provider folders to `providers/<role>/<target>/` (it would drop the provider tests from CI, break the hook's path mapping, each provider's lookup of the secret resolver and the jobs already scheduled, and a skill sees a class name, never a folder); renaming later (after the first full test a rename is a tested change of every skill that names a class).
+
+Why now: every skill is being edited once anyway, so the rename costs nothing in evidence. The work is item C0.2 of `docs/architecture/final-plan-2026-10-02.md` and the rows of the skills that name a renamed class.
+
+## 2026-10-02: Four design rules in `AGENTS.md` (decision 14b)
+
+Decided by the maintainer. The part of the SOLID principles that holds for text a model interprets, written into `AGENTS.md` as "Design rules":
+
+1. A skill names no harness (principle 1, already enforced).
+2. A skill's procedure names no social platform: it declares the class it needs and reads what is specific to a platform from that platform's reference. What a user types in a request may name a platform.
+3. Adding a platform adds a reference file, a data file where a script needs one, and a provider where something is executed; it edits no skill's procedure, and only that platform's cases are run. The rule holds for a platform whose post is text with optional media, the shape of the one platform built today. A platform of another shape is expected to edit the skills that build, write and gate a post. A parser of one platform's own format stays as code in its skill, and a table of networks inside a skill gains its rows there.
+4. One skill per job: a skill is split only when the part has its own trigger, its own requirements or side effects, or its own artifact. No skill is split before the first full test of the 48.
+
+With them, the rule on product names said once next to principle 1: a third-party product that is not an AI tool may be named where it is what a user types or what the code must recognise; AI tools and generative design tools are replaced by fictional names; a social platform's rules live in its reference and data file.
+
+Not adopted, with the reason: a formal profile contract with declared capabilities, and a validator rule that refuses platform names, wait until a second platform is built, because a contract drawn from one example describes that example. The code host is out of scope: no second host is planned.
+
+## 2026-10-02: Platform references, tested per platform (decision 14c)
+
+Decided by the maintainer.
+
+- `shared/references/platforms/<platform>.md`, one file per social platform, holds what the platform is as a medium: text limits, the media it requires, how links behave, the shape of a post's URL and of its identifiers, what can be read from outside. What belongs to one implementation (credentials, that service's errors, how to call it) stays in the provider.
+- A skill's step is literal about where the platform comes from: the `Network:` field of the calendar row or post file the step works on; when there is none, the platform the request names; when neither names one, the skill asks. It then reads that platform's reference, and stops and says the platform is not supported when there is no such file.
+- Scripts take `--platform`, and read simple machine data (URL patterns, host names, limits, media types) from `shared/references/platforms/<platform>.json` through a path given by flag (`--platform-file`), never from a table in the skill. A parser that is code for one platform stays in its skill behind `--platform`.
+- A platform's cases live in `skills/<name>/evals/platforms/<platform>.json`, outside the skill's content hash. The gate and the score are computed on the base cases only; a platform's cases run with the skill only, as a partial test, and the status shows their mean and number of runs.
+- Scope now: the first reference (the one platform built today) and the eight skills that carry its knowledge. References for other platforms are written when each has a real task, never from general knowledge.
+
+Rejected: platform knowledge in each provider (one provider may serve several platforms, and six of the eight skills that need the knowledge declare no publisher); a table of platforms inside each skill (adding a platform would edit every skill and ask for a test of each).
+
+The work is items C0.2 and C0.9 and the skills' rows of `docs/architecture/final-plan-2026-10-02.md`; the inventory of platform knowledge is `docs/architecture/audit-2026-10-02/platform-inventory.md`.
