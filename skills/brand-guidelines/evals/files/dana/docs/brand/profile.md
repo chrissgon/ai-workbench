@@ -21,6 +21,12 @@
 - Salary [2]
 - Exact location [2]
 
+### Sensitive-topics lock
+```sensitive-topics
+{"action": "never_reply_escalate_to_user", "topics": {"employer": {"keywords": ["employer", "your company", "where do you work"], "exclude": []}, "family": {"keywords": ["family", "kids", "wife", "husband"], "exclude": []}, "salary": {"keywords": ["salary", "how much do you earn"], "exclude": []}, "location": {"keywords": ["where do you live", "which city"], "exclude": []}}}
+```
+- Check: sensitive_topics.py --profile docs/brand/profile.md < text (script of brand-profile)
+
 ## Voice
 - Declared reference: "dry humour, like a tired sysadmin, never cringe" [2]
 - Samples written by Dana (confirmed by the user [2]):

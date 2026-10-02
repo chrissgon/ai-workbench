@@ -3,7 +3,7 @@
 - Project: Nuno Reis software
 - Current flow: none
 - Current phase: none
-- Updated: 2026-09-21
+- Updated: 2026-09-24
 
 ## Autonomy
 
@@ -14,6 +14,7 @@
 | Artifact | Owner skill | Status | Updated |
 |----------|-------------|--------|---------|
 | docs/business/market.md | biz-market-analysis | draft | 2026-09-21 |
+| docs/business/icp.md | biz-icp-positioning | draft | 2026-09-24 |
 
 ## Decisions
 
@@ -24,11 +25,10 @@
 - 2026-09-21: No experience or contacts in any of these segments (user). (user)
 - 2026-09-21: Keep the name "Nuno Reis software" for now (user). (user)
 - 2026-09-21: Will hold 5 customer conversations to validate (user). (user)
-- 2026-09-21: Job the automation does: leave it open, the interviews find it (user). (user)
-- 2026-09-21: If two segments come within 2 points, take the one that is cheaper to reach for someone without contacts, and say so (user). (user)
+- 2026-09-24: Primary segment: law firms with 2 to 9 staff; secondary: real estate agencies; see docs/business/icp.md (user). (user)
 
 ## Open questions
-- [ ] Which segment first? (user)
+- [ ] Which job does the automation do for law firms? The interviews decide. (biz-icp-positioning)
 
 ## Approvals
 
