@@ -38,7 +38,7 @@
    "to": [
     {
      "path": "skills/biz-icp-positioning/scripts/rank.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/biz-market-analysis/scripts/rank.py",
@@ -51,7 +51,7 @@
    "to": [
     {
      "path": "skills/biz-icp-positioning/scripts/check_refs.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/biz-market-analysis/scripts/check_refs.py",
