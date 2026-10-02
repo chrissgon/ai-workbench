@@ -115,11 +115,13 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/product/backlog.md` | eng-implement, product-backlog | - |
 | `docs/product/prd.md` | product-prd | - |
 | `docs/product/roadmap.md` | product-roadmap | - |
+| `docs/product/specs/<feature>.lint-before.json` | product-feature-spec | - |
+| `docs/product/specs/<feature>.lint.json` | product-feature-spec | - |
 | `docs/product/specs/<feature>.md` | product-feature-spec | - |
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | product-backlog |
+| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | product-backlog, product-feature-spec |
 <!-- owner-table:end -->
 
 ## Rules

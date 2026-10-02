@@ -18,5 +18,9 @@
   "skills/product-backlog/scripts/lint_backlog.py": {
     "args": ["--backlog", "backlog.md", "--spec", "spec.md", "--feature", "ab"],
     "files": {"backlog.md": "# Backlog\n\n- T-ab-1: list\n  Does: loads the list\n", "spec.md": "# Spec\n\n- REQ-1: the list loads\n"}
+  },
+  "skills/product-feature-spec/scripts/lint_spec.py": {
+    "args": ["--file", "spec.md"],
+    "files": {"spec.md": "# Feature specification: list\n\n## Functional requirements\n\n- REQ-1: the list loads\n"}
   }
 }
