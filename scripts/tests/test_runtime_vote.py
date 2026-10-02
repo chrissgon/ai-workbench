@@ -2,7 +2,9 @@
 
 The vcs provider, the agent adapter, the post checker, the renderer, the scheduler and the publisher are fakes;
 the store, vote_state.py, vote_update.py and payload.py are the real scripts, copied into a fake workbench.
-The vote files come from mkt-vote-round's eval fixture round-winner. No network, no model, no credential.
+The vote files are the tests' own fixture, scripts/tests/fixtures/vote-round-winner: a calendar and the vote data of
+an invented author, owned by these tests, so that a change to a skill's eval fixture cannot break them and a change
+they need touches no skill folder. No network, no model, no credential.
 """
 import json
 import os
@@ -15,12 +17,22 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 RUNTIME = REPO / "scripts" / "runtime.py"
-FIX = REPO / "skills" / "mkt-vote-round" / "evals" / "files" / "round-winner"
+FIX = Path(__file__).resolve().parent / "fixtures" / "vote-round-winner"
 sys.path.insert(0, str(REPO / "scripts"))
 import runtime_vote  # noqa: E402
 
 PILLARS = ["Small tools", "Database performance", "AI for databases, built in public"]
 WINNER = "Durability is a budget: what an fsync demo taught me"
+
+def test_the_fixture_is_owned_by_these_tests():
+    """No runtime test reads a file under a skill's evals/ folder: the fixture lives beside the tests."""
+    assert FIX.parent == Path(__file__).resolve().parent / "fixtures"
+    assert sorted(p.relative_to(FIX).as_posix() for p in FIX.rglob("*") if p.is_file()) == [
+        "docs/marketing/calendar.md", "profile/data/pick-queue.json", "profile/data/pick.json", "profile/data/posts.json"]
+    for name in ("test_runtime.py", "test_runtime_vote.py", "test_runtime_python39.py"):
+        source = (Path(__file__).resolve().parent / name).read_text()
+        assert '"ev' + 'als"' not in source and "ev" + "als/files" not in source, name
+
 
 FAKE_VCS = r'''
 import json, os, sys
