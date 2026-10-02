@@ -272,3 +272,32 @@ Why: under the three states any change inside a skill folder discarded all its e
 Rejected: keeping the states and making the round cheaper (the cost of every later change stays); a score with no lab requirement (the behaviours ordinary use never exercises, such as stopping before a side effect, would go unmeasured, so guard cases are always run in the container); thresholds on the score alone (a backtest on the 48 records shows they cannot separate a fresh full test from a version bump with no new evidence, so two rules stand beside the score); a decay by age (a score that moves with the calendar makes the generated table stale with no commit).
 
 The model, its backtest, its limits and its changes to the plan are in `docs/architecture/reliability-model-2026-10-02.md`, which awaits review; where it differs from `docs/architecture/final-plan-2026-10-02.md` it wins, and the plan is amended after the review.
+
+## 2026-10-02: The reliability model, simplified after its independent review: bands by rules from lab evidence only
+
+The model of the entry above was reviewed the same day by an independent reviewer (4 blockers, 14 important findings, 9 minor ones; digest in `docs/architecture/audit-2026-10-02/model-review.md`). The maintainer adopted the simpler version that review recommends, with every correction it proposes. This entry replaces the details of the entry above; its direction (evidence per model instead of three states, a full test once, small tests afterwards) stands.
+
+What is decided:
+
+- **Evidence** is one line per lab run, in one file per test event. A skill's content hash leaves out all of `evals/`; each case has its own hash, over the whole case. The 48 records of the first round stay as history and nothing is converted from them.
+- **Two kinds of lab test**: a full test (every case with the skill on one version, plus the baseline) and a partial test (named cases, with the skill only). The baseline is reused while the case, the model and the measurement are unchanged. Only a full test evaluates the gate.
+- **Change classes**: X for security and contract, Y for everything else, Z only by an allow-list with a budget in characters. The validator checks the declared class against the diff.
+- **Guards**: the tag is on the assertion; every guard assertion must pass in every run of the newest evidence on the current version; guard cases run again on every Y change; a skill with side effects has a guard for each declared effect.
+- **Bands are rules**, computed on the reference model: `needs a full test`, `watch`, `reliable`. The score is the Wilson lower bound over lab evidence, called the pessimistic score and shown with the mean and the number of runs; inherited evidence is capped (3 runs within a major version, 1 across) instead of decayed.
+- **Measurement changes** are of three kinds: grader side (lab evidence is discarded), execution side (an epoch for the skills affected), infrastructure (nothing).
+- CI fails on a change without a bump, on a class the diff contradicts and on a missing guard for a declared effect; never on a score or a band.
+
+Two points were put to the maintainer explicitly, and both were answered yes:
+
+1. **Field evidence never promotes a skill by itself.** It is recorded in the project from the first day and shown in its own columns per model, labelled self-reported; it can demote by a signal, and after a change of behaviour a skill returns to `reliable` only with lab runs: 3 to 9, the affected cases and the guard cases.
+2. **`reliable` requires a pessimistic score of 0.70 or more.** A small skill that has just passed its full test with a marginal mean therefore starts in `watch` (6 of the 48 would, on the records of the first round). "Done" for a new skill remains "its first full test passed".
+
+Why: as first written, the bands were decided by rules with four holes. A guard had to exist and to have run, never to pass; the lowest change class could not be verified and accepted changes of behaviour; any change followed by a test of the failed cases erased their bad runs from the gate; and field evidence, selected and self-reported, entered the same sum as lab evidence and could return a skill to `reliable`. The simpler version closes the four with about half the parts.
+
+Rejected: keeping the numeric decays (0.95, 0.6, 0.2 per change, 0.8 per measurement step), which the data of today cannot calibrate and which barely moved the score of a skill with much evidence; thresholds of 0.50 and 0.45, under which a skill at 0.54 read `reliable`; the conversion of the 48 old records into evidence, which would have weighed nothing, since phase C rewrites the cases and phase B changes what the grader sees; a baseline on the floor model in every full test, which no rule reads; a second grading pass.
+
+What it costs: the first full test of the 48 skills is 1,440 runs and 1,440 gradings for 160 cases, 2,400 calls on the strong model's account, about the size of the first round. A changed step costs 3 to 9 lab runs, where daily use alone would have been enough under the first version; that is the price of the first point above.
+
+Left for later, on purpose: field evidence counting toward a band, once recorded uses can be compared with verdicts; the numeric decays.
+
+The model is in `docs/architecture/reliability-model-2026-10-02.md` and the work in `docs/architecture/final-plan-2026-10-02.md`: the first describes the model, the second the work, and the plan already contains the model's consequences.
