@@ -11,10 +11,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -671,6 +674,96 @@ def load_auth():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class FakeStore:
+    def __init__(self, values=None):
+        self.values = dict(values or {})
+
+    def get_password(self, service, username):
+        return self.values.get((service, username))
+
+
+def auth_with(monkeypatch, environ, stored=None):
+    """auth.py with a resolver that reads this environment and this fake store, never the machine's."""
+    auth = load_auth()
+    resolver = auth.secret_resolver()
+    real_resolve = resolver.resolve
+    store = FakeStore({("ai-workbench", "publisher-linkedin"): stored} if stored else {})
+    monkeypatch.setattr(resolver, "resolve", lambda name, **kw: real_resolve(name, environ=environ, store=store))
+    monkeypatch.setattr(auth, "secret_resolver", lambda: resolver)
+    monkeypatch.delenv("LINKEDIN_TOKEN_EXPIRES_AT", raising=False)
+    return auth
+
+
+def test_auth_check_finds_a_token_given_through_the_environment(monkeypatch, capsys):
+    """PUB5: --check read the OS secret store directly, so a token from the environment (a cloud session,
+    CI) was reported as not stored, while the provider, which reads through the resolver, worked."""
+    auth = auth_with(monkeypatch, {"LINKEDIN_ACCESS_TOKEN": FAKE_TOKEN})
+    assert auth.main(["--provider", "linkedin", "--check"]) == 0
+    out = capsys.readouterr()
+    report = json.loads(out.out)
+    assert report["found"] is True and report["stored"] is False
+    assert report["source"] == "environment (LINKEDIN_ACCESS_TOKEN)" and report["expired"] is False
+    assert FAKE_TOKEN not in out.out + out.err
+    assert "get_password" not in AUTH_SCRIPT.read_text(encoding="utf-8")  # the store is read by the resolver only
+
+
+def test_auth_check_reads_the_stored_record_and_its_expiry(monkeypatch, capsys):
+    soon = (datetime.now(timezone.utc) + timedelta(days=30, hours=1)).isoformat()
+    record = json.dumps({"access_token": FAKE_TOKEN, "expires_at": soon, "scope": "openid"})
+    auth = auth_with(monkeypatch, {}, stored=record)
+    assert auth.main(["--provider", "linkedin", "--check"]) == 0
+    out = capsys.readouterr()
+    report = json.loads(out.out)
+    assert (report["stored"], report["source"], report["expires_in_days"]) == (True, "secret store", 30)
+    assert FAKE_TOKEN not in out.out + out.err
+
+
+def test_auth_check_exits_3_when_the_person_has_something_to_do(monkeypatch, capsys):
+    """The contract's one reading of --check: no token, an unreadable record or an expired token is 3."""
+    auth = auth_with(monkeypatch, {})
+    assert auth.main(["--provider", "linkedin", "--check"]) == 3
+    assert json.loads(capsys.readouterr().out) == {"provider": "linkedin", "found": False, "stored": False}
+    auth = auth_with(monkeypatch, {}, stored="not json")
+    assert auth.main(["--provider", "linkedin", "--check"]) == 3
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    auth = auth_with(monkeypatch, {}, stored=json.dumps({"access_token": FAKE_TOKEN, "expires_at": past}))
+    assert auth.main(["--provider", "linkedin", "--check"]) == 3
+    assert '"expired": true' in capsys.readouterr().out
+
+
+def test_a_silent_connection_does_not_block_the_callback(monkeypatch):
+    """PUB3: the listener serves one connection at a time and had no timeout, so a local connection that
+    sent nothing held it for ever: the real callback waited behind it, and so did the shutdown."""
+    auth = load_auth()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setattr(auth, "CALLBACK_HOST", "127.0.0.1")
+    monkeypatch.setattr(auth, "CALLBACK_PORT", port)
+    monkeypatch.setattr(auth, "CALLBACK_HANDLER_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(auth, "CALLBACK_TIMEOUT_SECONDS", 10)
+    got: dict = {}
+    waiter = threading.Thread(target=lambda: got.update(code=auth.wait_for_code("st")), daemon=True)
+    waiter.start()
+    silent = None
+    for _ in range(100):  # until the listener is up
+        try:
+            silent = socket.create_connection(("127.0.0.1", port), timeout=5)
+            break
+        except OSError:
+            time.sleep(0.05)
+    assert silent is not None
+    try:
+        time.sleep(0.1)  # the listener is now inside the silent connection
+        url = f"http://127.0.0.1:{port}/callback?" + urllib.parse.urlencode({"state": "st", "code": "c"})
+        with urllib.request.urlopen(url, timeout=5) as response:
+            assert response.status == 200
+        waiter.join(5)
+        assert not waiter.is_alive() and got == {"code": "c"}
+    finally:
+        silent.close()
 
 
 def test_token_exchange_refuses_a_redirect(monkeypatch):
