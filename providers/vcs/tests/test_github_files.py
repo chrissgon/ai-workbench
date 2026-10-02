@@ -673,3 +673,23 @@ def test_an_attribute_that_changes_a_file_stops_the_push(remote, out_files):
     proc = run(commit_args(out_files, "k2", "--confirmed", files=files), env)
     assert proc.returncode == 1 and "is not the file that was given" in proc.stderr
     assert remote.head() == held and ledger(env) == {}
+
+
+# --- VS5: a tag is not a branch ---------------------------------------------------------------
+
+
+@needs_tools
+def test_a_tag_is_refused_as_branch(remote, out_files):
+    # "clone --branch v1" takes a tag, and the push then created refs/heads/v1 and printed "pushed": true.
+    git(remote.env, remote.bare, "tag", "v1", "refs/heads/main")
+    env = remote.provider_env()
+    refs_before = git(remote.env, remote.bare, "for-each-ref", "--format=%(refname)")
+    args = commit_args(out_files, "k1")
+    args[args.index("--branch") + 1] = "v1"
+    for mode in ("--dry-run", "--confirmed"):
+        proc = run([*args, mode], env)
+        assert proc.returncode == 2, (mode, proc.stderr)
+        assert "is not a branch" in proc.stderr and not proc.stdout.strip()
+    assert git(remote.env, remote.bare, "for-each-ref", "--format=%(refname)") == refs_before
+    assert "refs/heads/v1" not in refs_before
+    assert ledger(env) == {} and list(work_root(env).iterdir()) == []

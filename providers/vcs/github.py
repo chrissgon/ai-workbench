@@ -1020,6 +1020,13 @@ def private_clone(repo: str, branch: str, remote: str):
                                 "--no-tags", "--", remote, str(work)], scratch, git_timeout(GIT_CLONE_TIMEOUT_SECONDS))
         if code != 0:
             raise ssh_failure(err) or ProviderError(f"git clone of {repo} branch {branch} failed: {one_line(err, 300)}")
+        # "clone --branch" also takes a tag, and leaves HEAD detached on it; the push would then create a
+        # branch with the tag's name. Only a clone that is on the branch asked for goes on.
+        code, head, _ = run_git(["symbolic-ref", "--quiet", "HEAD"], work, git_timeout(GIT_LOCAL_TIMEOUT_SECONDS))
+        if code != 0 or head.decode("utf-8", "replace").strip() != f"refs/heads/{branch}":
+            raise ProviderError(f"--branch {branch} is not a branch of {repo} (a tag of that name exists); "
+                                "commit-files commits to an existing branch only. Nothing was written",
+                                EXIT_USAGE)
         yield scratch, work
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
