@@ -143,6 +143,8 @@ verbs:
   init            create the schema or migrate it to version {SCHEMA_VERSION}; idempotent
   cursor-get      --name <n>                                  -> {{name, value|null, updated_at}}
   cursor-set      --name <n> --value <v>
+  cursor-clear    --name <n>                                  -> {{name, cleared}}; the cursor
+                  reads as absent again (value null); clearing an absent one is harmless
   event-add       --source <s> --external-id <id> --payload-file <json>
                   -> {{id, created}}; the same source and external id is one event
   event-next      --source <s> [--limit n] [--reclaim-after-minutes m]
@@ -493,6 +495,14 @@ def cmd_cursor_set(args) -> int:
     return emit({"name": name, "value": value, "updated_at": now})
 
 
+def cmd_cursor_clear(args) -> int:
+    name = text_arg(args.name, "--name", LABEL_MAX)
+    conn = open_ready(args)
+    with write(conn):
+        cleared = conn.execute("DELETE FROM cursors WHERE name = ?", (name,)).rowcount > 0
+    return emit({"name": name, "cleared": cleared})
+
+
 def cmd_event_add(args) -> int:
     source = text_arg(args.source, "--source", LABEL_MAX)
     external_id = text_arg(args.external_id, "--external-id", REF_MAX)
@@ -720,6 +730,7 @@ def cmd_export(args) -> int:
 
 VERBS = {
     "init": cmd_init, "cursor-get": cmd_cursor_get, "cursor-set": cmd_cursor_set,
+    "cursor-clear": cmd_cursor_clear,
     "event-add": cmd_event_add, "event-next": cmd_event_next, "event-done": cmd_event_done,
     "run-start": cmd_run_start, "run-end": cmd_run_end, "runs": cmd_runs,
     "inbox-add": cmd_inbox_add, "inbox-list": cmd_inbox_list, "inbox-resolve": cmd_inbox_resolve,
@@ -753,6 +764,8 @@ def build_parser() -> argparse.ArgumentParser:
     p = verb("cursor-set", "write a cursor")
     p.add_argument("--name")
     p.add_argument("--value")
+    p = verb("cursor-clear", "delete a cursor")
+    p.add_argument("--name")
     p = verb("event-add", "record a trigger once per source and external id")
     p.add_argument("--source")
     p.add_argument("--external-id")

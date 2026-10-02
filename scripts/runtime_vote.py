@@ -10,8 +10,8 @@ SCHEDULER_PROVIDER names). The optional key "vcs" here and the optional key "sch
 name an implementation explicitly and win, so a "vote" section that says "vcs": "github" keeps working.
 
 tick     vote_tick: reads the vote files (read only), runs vote_state.py, and, once per closed round without a post
-         (cursor vote:<round>), runs the agent read-only with mkt-vote-round, takes its vote-proposal block, and
-         builds in code: the content file, check_post.py, the post image (render.py; degrades to text-only), the
+         (cursor vote:<round>, written when the round's inbox item exists and cleared by reject), runs the agent
+         read-only with mkt-vote-round, takes its vote-proposal block, and builds in code: the content file, check_post.py, the post image (render.py; degrades to text-only), the
          next round's queue file (vote_update.py --queue-round), the publish job and one bundle file whose sha256
          the person approves. Everything goes to the inbox as kind "vote"; nothing is published or committed.
 approve  vote_approve: without --confirmed prints the bundle; with --confirmed --sha256 <hash> checks every file
@@ -36,7 +36,10 @@ PROPOSAL = re.compile(r"```vote-proposal\s*\n(.*?)\n```", re.S)
 REPO = re.compile(r"^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$")
 BRANCH = re.compile(r"^[A-Za-z0-9._/-]{1,100}$")
 LANG = re.compile(r"^[A-Z]{2}$")
+ROUND = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")  # a round id, as it goes into a cursor name
 QUEUE_ALLOW = ["data/pick-queue.json"]
+SYSTEM_PYTHON = "/usr/bin/python3"
+JOB_TIMEOUT_MINUTES = 30  # vote_job.py's own limits add up to 27 minutes (scripts/vote_job.py)
 MAX_POST = 3000
 
 
@@ -210,10 +213,23 @@ def state_cmd(v: dict, project: Path, folder: Path, today: str) -> list:
 
 
 def to_inbox(store, write_private, folder: Path, title: str, bundle: dict) -> dict:
+    """One inbox item for the round, and only then the round's cursor: a round counts as handled once the
+    person has an item to act on, never before (a failure before this point leaves the round for the next tick)."""
     f = write_private(folder, "vote.json", json.dumps(bundle, ensure_ascii=False, indent=1))
     item = store("inbox-add", "--kind", "vote", "--title", title[:200], "--payload-file", f,
                  "--payload-sha256", sha256_file(f))
+    store("cursor-set", "--name", f"vote:{bundle['round']}", "--value", f"inbox:{item['id']}")
     return {"inbox_id": item["id"], "sha256": sha256_file(f)}
+
+
+def vote_reject(store, item: dict) -> dict:
+    """Rejecting a vote item gives the round back to the next tick: its cursor is cleared before the item is
+    closed, so "fix it, then reject" redoes the round instead of leaving it handled for ever."""
+    rid = load_bundle(item).get("round")
+    if not isinstance(rid, str) or not ROUND.match(rid):
+        return {"round": None, "cursor_cleared": False}
+    cleared = store("cursor-clear", "--name", f"vote:{rid}").get("cleared")
+    return {"round": rid, "cursor_cleared": bool(cleared)}
 
 
 def vote_tick(cfg: dict, project: Path, store, h) -> dict:
@@ -242,26 +258,28 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
     if blockers:
         out = to_inbox(store, write_private, folder, f"vote {rid}: needs you", {"round": rid, "ready": False,
                        "problems": blockers, "state": state})
-        store("cursor-set", "--name", f"vote:{rid}", "--value", f"inbox:{out['inbox_id']}")
         return {"status": "to_inbox", "note": "; ".join(blockers), **out}
 
     run_id = store("run-start", "--agent", cfg["agent"], "--event-id", "none", "--trigger", "vote")["run_id"]
     run_dir = Path(cfg["data_dir"]) / "runs" / str(run_id)
-    task = write_private(run_dir, "task.md", task_text(project, state))
-    paths = cfg["paths"]
-    cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
-           "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),
-           "--max-cost-usd", str(cfg["max_cost_usd_per_run"]), "--timeout-seconds", str(cfg["timeout_seconds"]),
-           "--skill-dir", str(v["paths"]["skill"])]
-    code, _, err = run(cmd, timeout=int(cfg["timeout_seconds"]) + 60)
-    timing = _read_json(run_dir / "out" / "timing.json")
-    response_file = run_dir / "out" / "response.md"
-    response = response_file.read_text(encoding="utf-8") if response_file.is_file() else ""
+    try:
+        task = write_private(run_dir, "task.md", task_text(project, state))
+        paths = cfg["paths"]
+        cmd = ["bash", str(paths["run_agent"]), "--agent-file", str(paths["agent"]), "--task-file", str(task),
+               "--project", str(project), "--model", cfg["model"], "--out", str(run_dir / "out"),
+               "--max-cost-usd", str(cfg["max_cost_usd_per_run"]), "--timeout-seconds", str(cfg["timeout_seconds"]),
+               "--skill-dir", str(v["paths"]["skill"])]
+        code, _, err = run(cmd, timeout=int(cfg["timeout_seconds"]) + 60)
+        timing = _read_json(run_dir / "out" / "timing.json")
+        response_file = run_dir / "out" / "response.md"
+        response = response_file.read_text(encoding="utf-8") if response_file.is_file() else ""
+    except Exception as e:  # the run row is open: it must not stay "running"
+        h["end_failed_run"](store, run_id, run_dir, e)
+        raise
     store("run-end", "--run-id", run_id, "--status", "ok" if code == 0 else ("timeout" if code == 124 else "failed"),
           "--exit-code", code, "--cost-usd", h["nz"](timing.get("cost_usd")), "--tokens", h["nz"](timing.get("total_tokens")),
           "--duration-ms", h["nz"](timing.get("duration_ms")), "--out-dir", run_dir / "out",
           *(["--error", err.strip()[-1000:]] if code != 0 and err.strip() else []))
-    store("cursor-set", "--name", f"vote:{rid}", "--value", f"run:{run_id}")
     try:
         d = parse_proposal(response, state)
     except (ValueError, json.JSONDecodeError) as e:
@@ -330,7 +348,10 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
         problems.append(f"payload.py build exited {code}: {err.strip()[-300:]}")
         job_file = None
     else:
-        job_file = write_job(cfg, v, work, key, rid, slot, d, entry, image)
+        ledger, why = publisher_ledger(cfg, run, entry["post_file"], key)
+        if why:
+            problems.append(why)
+        job_file = write_job(cfg, v, work, key, rid, slot, d, entry, image, ledger)
 
     files = {"content": content, "post": entry.get("post_file"), "comment": entry.get("comment_file"),
              "image": image, "job": job_file}
@@ -347,11 +368,31 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
             **out}
 
 
-def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d: dict, entry: dict, image) -> Path:
+def publisher_ledger(cfg: dict, run, post_file: str, key: str):
+    """(the idempotency ledger the publisher uses in this environment or None, a problem or None).
+
+    Asked through the publisher's dry run, which reads no credential and sends nothing. The job carries the
+    path: the scheduler starts it without the variables of the shell that approved it, so a publisher left to
+    choose again at the slot could look the key up in another ledger and publish a post a second time. A
+    publisher whose dry run prints no "ledger" gets none; a dry run that fails is a problem, since the same
+    command would fail at the slot."""
+    code, out, err = run(["uv", "run", str(cfg["paths"]["publisher"]), "publish", "--platform", cfg["publisher"],
+                          "--text-file", post_file, "--idempotency-key", key, "--dry-run"])
+    if code != 0:
+        return None, f"the publisher's dry run exited {code}: {err.strip()[-300:]}"
+    ledger = _loads(out).get("ledger")
+    return (ledger if isinstance(ledger, str) and os.path.isabs(ledger) else None), None
+
+
+def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d: dict, entry: dict, image,
+              ledger=None) -> Path:
     """The scheduler command file for vote_job.py. Every file it reads is in the snapshot."""
     p = v["paths"]
     publisher = cfg["paths"]["publisher"]
-    argv = ["python3", str(p["job"]), "--key", key, "--round", rid, "--date", slot["when"][:10],
+    # The system interpreter, by its fixed path: the scheduler hashes argv[0], and that file does not change
+    # with a package upgrade between the approval and the slot (providers/CONTRACT.md, "Python version").
+    python = SYSTEM_PYTHON if Path(SYSTEM_PYTHON).exists() else sys.executable
+    argv = [python, str(p["job"]), "--key", key, "--round", rid, "--date", slot["when"][:10],
             "--lang", d["post"]["language"], "--title", d["topic"], "--repo", v["repo"], "--branch", v["branch"],
             "--platform", cfg["publisher"], "--post-file", entry["post_file"],
             "--publisher", str(publisher), "--resolver", str(p["resolver"]), "--vcs", str(p["vcs"]),
@@ -359,13 +400,25 @@ def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d:
             "--work", str(Path(cfg["data_dir"]) / "vote" / rid / "job-work")]
     snapshot = [str(p["job"]), entry["post_file"], str(publisher), str(p["resolver"]), str(p["vcs"]),
                 str(p["vote_update"]), str(p["vote_state"])]
+    for folder in cfg.get("path") or []:
+        # The scheduler runs the job on its own short PATH; these are the folders runtime.json lists so that
+        # uv resolves, and the job puts them first, as the tick does.
+        argv += ["--path", folder]
     if entry.get("comment_file"):
         argv += ["--comment-file", entry["comment_file"]]
         snapshot.append(entry["comment_file"])
     if image:
         argv += ["--image", str(image), "--image-path", f"assets/posts/{key}.png"]
         snapshot.append(str(image))
-    job = {"argv": argv, "cwd": cfg["workbench"], "snapshot": snapshot, "grace_minutes": 120}
+    # The job publishes (up to 10 minutes), reads three files, computes and commits (up to 10 more): the
+    # scheduler's default limit for a one-shot command, 10 minutes, would kill it after the post is out.
+    job = {"argv": argv, "cwd": cfg["workbench"], "snapshot": snapshot, "grace_minutes": 120,
+           "timeout_minutes": JOB_TIMEOUT_MINUTES}
+    if ledger:
+        # The ledger is state the publisher reads and writes in place: it is named in "outputs" so that the
+        # scheduler leaves the argument as it is instead of asking for a snapshot (a copy would be another ledger).
+        argv += ["--ledger", ledger]
+        job["outputs"] = [ledger]
     f = work / "job.json"
     f.write_text(json.dumps(job, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     return f

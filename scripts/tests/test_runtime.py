@@ -24,7 +24,21 @@ if sys.argv[1] == "search" and os.environ.get("FAKE_MAILBOX_FAIL"):
     sys.exit(1)
 msgs = json.loads(open(os.environ["FAKE_MESSAGES"]).read())
 if sys.argv[1] == "search":
-    print(json.dumps({"messages": msgs}))
+    args = sys.argv[2:]
+    with open(os.environ["FAKE_CALLS"] + ".mailbox", "a") as f:
+        f.write(json.dumps(args) + "\n")
+    page = os.environ.get("FAKE_MAILBOX_PAGE")  # a mailbox that answers newest first, this many at a time
+    if not page:
+        print(json.dumps({"messages": msgs}))
+        sys.exit(0)
+    before = args[args.index("--before") + 1] if "--before" in args else None
+    if before and os.environ.get("FAKE_MAILBOX_FAIL_OLDER"):
+        print("error: the network went away", file=sys.stderr)
+        sys.exit(1)
+    pool = sorted(msgs, key=lambda m: m["received_at"], reverse=True)
+    if before:
+        pool = [m for m in pool if m["received_at"] < before]
+    print(json.dumps({"messages": pool[:int(page)], "truncated": len(pool) > int(page)}))
 '''
 
 FAKE_PARSER = r'''
@@ -218,6 +232,92 @@ def test_daily_cost_cap_stops_new_runs(env, monkeypatch):
     assert out["handled"][-1] == {"stopped": "daily cost cap reached"}
 
 
+def test_a_run_of_unknown_cost_counts_as_the_per_run_maximum(env, monkeypatch):
+    # RT2: an adapter with no price for the model reports "cost_usd": null. Such runs counted as 0, so the daily
+    # cap never stopped anything and "status" printed 0.0.
+    monkeypatch.setenv("FAKE_COST", "null")
+    set_case(env, [message(1), message(2, commenter="Bruno"), message(3, commenter="Carla")], decision())
+    edit_config(env, max_events_per_tick=5, max_cost_usd_per_run=0.5, daily_cost_cap_usd=0.6)
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert len([h for h in out["handled"] if "event" in h]) == 2  # 0.5, then 1.0 >= 0.6
+    assert out["handled"][-1] == {"stopped": "daily cost cap reached"}
+    assert out["runs_without_cost_today"] == 2
+    code, status, _ = rt(env, "status")
+    assert status["spend_today_usd"] == 1.0 and status["runs_without_cost_today"] == 2
+    code, out, _ = rt(env, "tick")
+    assert out["handled"] == [] and "daily cost cap reached" in out["stopped"]
+    assert "2 runs of unknown cost" in out["stopped"]
+
+
+def mailbox_calls(env):
+    path = Path(str(env["calls"]) + ".mailbox")
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_more_notifications_than_one_page_are_all_read(env, monkeypatch):
+    # RT3: the tick took the newest page, moved the cursor to its newest message, and the older ones were
+    # never read. Here the mailbox answers two messages at a time and five wait.
+    monkeypatch.setenv("FAKE_MAILBOX_PAGE", "2")
+    names = ["Ana Lima", "Bruno", "Carla", "Davi", "Elisa"]
+    set_case(env, [message(n, commenter=names[n - 1]) for n in range(1, 6)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["messages"] == 5 and out["new_events"] == 5 and "mailbox" not in out
+    calls = mailbox_calls(env)
+    # Each further search asks for what came before the oldest message of the last page, plus one second (the
+    # mailbox's times have one-second precision), so the oldest message comes back once more and is dropped.
+    assert [c[c.index("--before") + 1] if "--before" in c else None for c in calls] == \
+        [None, "2026-09-29T10:04:01Z", "2026-09-29T10:03:01Z", "2026-09-29T10:02:01Z"]
+    assert len([h for h in out["handled"] if h.get("status") == "done"]) == 5
+    code, out, _ = rt(env, "tick")
+    assert out["new_events"] == 0
+    since = mailbox_calls(env)[-1]
+    assert since[since.index("--since") + 1] == "2026-09-29T10:05:00Z"  # the cursor moved once all were read
+
+
+def test_the_cursor_stays_when_the_older_messages_could_not_be_read(env, monkeypatch):
+    # RT3: the newest page is read and the next one fails. What was read becomes events; the cursor must not
+    # move past the messages nobody read.
+    monkeypatch.setenv("FAKE_MAILBOX_PAGE", "2")
+    monkeypatch.setenv("FAKE_MAILBOX_FAIL_OLDER", "1")
+    names = ["Ana Lima", "Bruno", "Carla", "Davi", "Elisa"]
+    set_case(env, [message(n, commenter=names[n - 1]) for n in range(1, 6)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["new_events"] == 2
+    assert out["mailbox"]["status"] == "incomplete" and "cursor stays" in out["mailbox"]["note"]
+    monkeypatch.delenv("FAKE_MAILBOX_FAIL_OLDER")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["new_events"] == 3 and "mailbox" not in out
+    again = [c for c in mailbox_calls(env) if "--before" not in c][-1]
+    assert not again[again.index("--since") + 1].startswith("2026-09-29")  # no cursor yet: the lookback again
+
+
+def test_a_dry_run_writes_nothing(env):
+    # RT9: tick --dry-run created the store and added the messages as pending events before it returned.
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick", "--dry-run")
+    assert code == 0, err
+    assert out["dry_run"] is True and out["messages"] == 1 and out["parsed"][0]["parsed"] is True
+    assert "new_events" not in out  # it adds none, so it cannot count them
+    assert not env["data"].exists()  # no store, no lock file, no run folder
+    assert publisher_calls(env) == [] and not Path(str(env["calls"]) + ".agent").exists()
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["new_events"] == 1 and out["handled"][0]["status"] == "done", err
+    # With a store in place: a dry run reads the cursor and leaves it, and adds no event.
+    set_case(env, [message(1), message(2, commenter="Bruno")], decision())
+    code, out, err = rt(env, "tick", "--dry-run")
+    assert code == 0 and out["messages"] == 2, err
+    dry = mailbox_calls(env)[-1]
+    assert dry[dry.index("--since") + 1] == "2026-09-29T10:01:00Z"
+    code, out, err = rt(env, "tick")
+    real = mailbox_calls(env)[-1]
+    assert real[real.index("--since") + 1] == "2026-09-29T10:01:00Z"  # the dry run did not move the cursor
+    assert out["new_events"] == 1 and len(publisher_calls(env)) == 2  # nor add the second message
+
+
 def test_publisher_failure_goes_to_the_inbox(env, monkeypatch):
     monkeypatch.setenv("FAKE_PUBLISHER_FAIL", "1")
     set_case(env, [message(1)], decision())
@@ -225,6 +325,41 @@ def test_publisher_failure_goes_to_the_inbox(env, monkeypatch):
     assert out["handled"][0]["status"] == "to_inbox"
     assert "publisher exited 1" in out["handled"][0]["note"]
     assert [e["action"] for e in log_entries(env)] == ["failed", "to_inbox"]
+
+
+def test_an_unexpected_error_fails_the_event_and_the_run_and_the_tick_goes_on(env):
+    # RT6: an agent file without a skills line raised IndexError after the run row was opened. The tick ended in
+    # a traceback, the two claimed events stayed claimed for an hour and the run row stayed "running".
+    (env["wb"] / "agents/social-manager.md").write_text("---\nname: social-manager\ndescription: x\n---\n# Agent\n")
+    set_case(env, [message(1), message(2, commenter="Bruno")], decision())
+    edit_config(env, daily_cost_cap_usd=5)  # a run that broke has no cost and counts as the per-run maximum (RT2)
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert [h["status"] for h in out["handled"]] == ["failed", "failed"]
+    assert all("IndexError" in h["note"] for h in out["handled"])
+    assert "Traceback" in err  # the traceback stays on stderr, for whoever reads the tick's log
+    code, status, _ = rt(env, "status")
+    assert [r["status"] for r in status["runs"]] == ["failed", "failed"]
+    assert all("IndexError" in r["error"] for r in status["runs"])
+    code, again, _ = rt(env, "tick")
+    assert again["handled"] == []  # the events ended "failed": none is left claimed for a later tick
+    assert publisher_calls(env) == []
+
+
+def test_a_malformed_mailbox_message_does_not_stop_the_tick(env, tmp_path):
+    # RT6: a message without an id raised KeyError before any event was handled.
+    shutil.copy(REPO / "skills/mkt-engage/scripts/parse_notification.py",
+                env["wb"] / "skills/mkt-engage/scripts/parse_notification.py")
+    text = tmp_path / "comment.txt"
+    text.write_text("Nice, I will try it!")
+    code, _, err = rt(env, "add-comment", "--link", REAL_LINK, "--commenter", "Rita", "--text-file", str(text))
+    assert code == 0, err
+    set_case(env, [{"received_at": "2026-09-29T10:01:00Z", "headers": {}}],
+             decision(reply="Thanks, Rita. Let me know how it goes."))
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["mailbox"]["status"] == "failed" and "KeyError" in out["mailbox"]["note"]
+    assert out["handled"][0]["status"] == "done" and len(publisher_calls(env)) == 1
 
 
 def test_approve_sends_only_the_exact_reply_shown(env):
@@ -250,6 +385,23 @@ def test_not_a_comment_is_done_without_a_run(env):
     code, out, _ = rt(env, "tick")
     assert out["handled"][0]["status"] == "done"
     assert not Path(str(env["calls"]) + ".agent").exists()
+
+
+def test_the_tick_command_the_scheduler_readme_documents_is_one_the_runtime_accepts(tmp_path):
+    # RT10: the README's command file carried "--agent social-manager", which the runtime refuses (exit 2,
+    # "unrecognized arguments"): a job scheduled from the README failed at every firing.
+    import re
+    readme = (REPO / "providers/scheduler/README.md").read_text()
+    blocks = [json.loads(b) for b in re.findall(r"```json\n(.*?)\n```", readme, re.S)]
+    ticks = [b for b in blocks if "tick" in b["argv"]]
+    assert len(ticks) == 1
+    argv = ticks[0]["argv"]
+    assert argv[0] == "/usr/bin/python3" and argv[1].endswith("scripts/runtime.py")
+    (tmp_path / "docs/workbench").mkdir(parents=True)
+    args = [str(tmp_path) if a == "/abs/project" else a for a in argv[2:]]
+    r = subprocess.run([sys.executable, str(RUNTIME), *args], capture_output=True, text=True, timeout=60)
+    assert "unrecognized arguments" not in r.stderr
+    assert r.returncode == 3 and "runtime.json" in r.stderr  # the arguments parse; only the project is not set up
 
 
 def test_missing_config_exits_3(tmp_path):

@@ -915,8 +915,36 @@ def git_timeout(default: int) -> float:
     return float(override) if override and vcs_test_mode() else default
 
 
+# The GIT_* variables git still gets from the caller: where the user's git configuration lives and how the user
+# reaches the host over SSH. Every other one is dropped, because it points git at another repository
+# (GIT_DIR, GIT_WORK_TREE, GIT_INDEX_FILE, GIT_OBJECT_DIRECTORY: set whenever the caller is itself a git hook)
+# or changes what is committed and as whom (GIT_AUTHOR_*, GIT_COMMITTER_*, GIT_CONFIG_COUNT and its keys).
+GIT_ENV_KEPT = ("GIT_CONFIG_GLOBAL", "GIT_CONFIG_SYSTEM", "GIT_CONFIG_NOSYSTEM", "GIT_SSH", "GIT_SSH_COMMAND")
+SECRET_NAMES: set | None = None
+
+
+def secret_names() -> set:
+    """The environment variables that hold a credential: every secret registered in the resolver, with its
+    aliases. git, ssh and the user's hooks need none of them: the push goes over the user's own SSH key."""
+    global SECRET_NAMES
+    if SECRET_NAMES is None:
+        names = {"VCS_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}
+        try:
+            for secret in secret_resolver().REGISTRY.values():
+                names.add(secret.name)
+                names.update(secret.aliases)
+        except (ProviderError, AttributeError):
+            pass  # no resolver next to this copy: the provider's own token names are dropped all the same
+        SECRET_NAMES = names
+    return SECRET_NAMES
+
+
 def git_env() -> dict:
-    env = dict(os.environ)
+    """The environment for git, and through it for ssh and the user's hooks: the caller's, without the GIT_*
+    variables that would redirect git and without the registered secrets."""
+    secrets = secret_names()
+    env = {k: v for k, v in os.environ.items()
+           if k not in secrets and (not k.startswith("GIT_") or k in GIT_ENV_KEPT)}
     # No terminal prompt, messages in English (they are parsed), paths taken literally (never as patterns).
     env.update({"GIT_TERMINAL_PROMPT": "0", "LC_ALL": "C", "LANGUAGE": "C", "GIT_LITERAL_PATHSPECS": "1"})
     return env
@@ -963,7 +991,9 @@ SSH_FAILURES = ("Permission denied (publickey", "Host key verification failed", 
 
 
 def ssh_failure(err: str) -> ProviderError | None:
-    """A failure to reach GitHub over SSH at all: nothing was sent."""
+    """A failure to reach GitHub over SSH, read from git's stderr. During the clone nothing was sent, and the
+    caller raises it as it is (NotPushed: the key is released); during the push the caller treats it as an
+    unknown outcome."""
     hit = next((s for s in SSH_FAILURES if s in err), None)
     if not hit:
         return None
@@ -1051,8 +1081,9 @@ def make_commit(work: Path, message_file: Path, paths: list[str]) -> tuple[str, 
 
 
 def push(work: Path, branch: str) -> None:
-    """Push HEAD to branch. Raise PushRejected (branch moved), NotPushed (refused, or GitHub never reached),
-    or ProviderError when the outcome is unknown."""
+    """Push HEAD to branch. Raise PushRejected (branch moved), NotPushed (the remote refused it), or
+    ProviderError when the outcome is unknown: a timeout, any other failure, and an SSH failure too, since
+    the connection can die after the remote took the commit."""
     ref = f"refs/heads/{branch}"
     code, out, err = run_git(["push", "--porcelain", "origin", f"HEAD:{ref}"], work,
                              git_timeout(GIT_PUSH_TIMEOUT_SECONDS))
@@ -1068,8 +1099,13 @@ def push(work: Path, branch: str) -> None:
         if summary.startswith("[rejected]"):
             raise PushRejected(f"push rejected, {branch} moved: {summary}")
         raise NotPushed(f"GitHub refused the push to {branch}: {summary}")
-    raise ssh_failure(err) or ProviderError(f"git push to {branch} failed and its outcome is unknown: "
-                                            f"{one_line(err, 300)}")
+    # The push had started, so an SSH failure here is not "nothing was sent": the connection may have died after
+    # the remote took the commit. Only the remote's own refusal above releases the key.
+    lost = ssh_failure(err)
+    if lost:
+        raise ProviderError(f"{lost}. The push to {branch} had started, so its outcome is unknown: the key stays "
+                            "pending until resolve settles it", lost.code)
+    raise ProviderError(f"git push to {branch} failed and its outcome is unknown: {one_line(err, 300)}")
 
 
 # --- commit-files ------------------------------------------------------------------

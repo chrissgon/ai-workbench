@@ -52,7 +52,10 @@ What a job guarantees (as in launchd.py):
 - The program (argv[0]) and this runner are hashed; the service runs the runner's copy.
 - The dry run prints the approval digest; the confirmed call must pass it back. Every firing
   hashes the copies, the program and the runner again and refuses on any difference.
-- A one-shot job runs at most once and a firing later than grace_minutes is recorded as missed.
+- A one-shot job runs at most once (run.lock) and a firing later than grace_minutes is recorded as missed.
+  It always ends: its command runs in its own process group for at most timeout_minutes (10 when the
+  command file gives none), its output is kept as bytes, and an error in the runner records the job as
+  failed. A job left "running" by a runner that died is settled with cancel or resolve.
 - A recurring job never overlaps (run.lock: flock plus the holder's PID), bounds each firing with
   timeout_minutes by killing the command's process group, and appends to runs.jsonl.
 - Job folders are 0700, files 0600, copies 0400; the unit files are 0600.
@@ -76,13 +79,13 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 UNIT_PREFIX = "dev.ai-workbench.scheduler."
 EARLY_TOLERANCE = timedelta(minutes=5)
 DEFAULT_GRACE_MINUTES = 120
-RUN_TIMEOUT_SECONDS = 600
 SYSTEMCTL_TIMEOUT_SECONDS = 30
 ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
 DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
@@ -92,6 +95,8 @@ PLAIN_PATH = re.compile(r"^[A-Za-z0-9/._@+,:=~-]+$")  # written into unit files 
 HISTORY = ".history"
 EVERY_MIN_MINUTES, EVERY_MAX_MINUTES = 5, 1440
 DEFAULT_TIMEOUT_MINUTES, MAX_TIMEOUT_MINUTES = 30, 240
+DEFAULT_ONE_SHOT_TIMEOUT_MINUTES = 10  # a one-shot command without timeout_minutes in its command file
+CANCEL_WAIT_SECONDS = 15  # how long cancel waits for a stopped runner to record its own outcome
 TIMEOUT_UNIT_SECONDS = 60  # seconds per timeout minute; tests shorten it in-process
 KILL_GRACE_SECONDS = 5  # between SIGTERM and SIGKILL to the command's process group
 TAIL_BYTES = 4096
@@ -110,6 +115,12 @@ verbs:
             refused, missed, cancelled). A recurring job also shows every_minutes
             and last_run (its last firing: done, failed, refused, skipped-overlap).
   cancel    Stop and remove a scheduled job's timer and service; needs --confirmed.
+            A one-shot job caught while running is stopped and recorded as
+            cancelled with "interrupted": its command may have acted.
+  resolve   Settle a one-shot job left "running" by a runner that is gone (a
+            crash, a power loss), after checking what its command did: --done
+            or --failed, and --confirmed (or --dry-run). Refused while the
+            runner still holds the job's lock.
   run       Internal: what the service runs at the set time or at each interval.
 
 command file (JSON): the same as launchd.py's.
@@ -121,7 +132,11 @@ command file (JSON): the same as launchd.py's.
     "grace_minutes": 120
   }
   With --every, "grace_minutes" is refused and "timeout_minutes" (default 30,
-  1 to 240) bounds each firing. Every argv entry after argv[0] that names an
+  1 to 240) bounds each firing. With --at, "timeout_minutes" is optional
+  (default 10, 1 to 240) and bounds the one run the same way: past it the
+  command's whole process group is killed, the job is recorded as failed with
+  reason timeout, and what the command had printed is kept in run.stdout.log
+  and run.stderr.log. Every argv entry after argv[0] that names an
   existing file, bare or as --flag=<path>, must be in "snapshot" and is replaced
   by the job's copy; "outputs" lists paths the command only writes.
 
@@ -352,7 +367,15 @@ def load_command_file(path_arg: str, recurring: bool = False) -> dict:
     grace = spec.get("grace_minutes", DEFAULT_GRACE_MINUTES)
     if not isinstance(grace, int) or grace < 0:
         raise ProviderError("grace_minutes must be a non-negative integer", EXIT_USAGE)
-    return {"argv": argv, "cwd": cwd, "snapshot": snapshot, "outputs": outputs, "grace_minutes": grace}
+    out = {"argv": argv, "cwd": cwd, "snapshot": snapshot, "outputs": outputs, "grace_minutes": grace}
+    if "timeout_minutes" in spec:
+        # Optional for --at: without it the command gets DEFAULT_ONE_SHOT_TIMEOUT_MINUTES, and the job and its
+        # digest are what they always were.
+        timeout = spec["timeout_minutes"]
+        if isinstance(timeout, bool) or not isinstance(timeout, int) or not 1 <= timeout <= MAX_TIMEOUT_MINUTES:
+            raise ProviderError(f"timeout_minutes must be an integer from 1 to {MAX_TIMEOUT_MINUTES}", EXIT_USAGE)
+        out["timeout_minutes"] = timeout
+    return out
 
 
 def resolve_program(program: str, cwd: str) -> str:
@@ -418,6 +441,8 @@ def approval_digest(job: dict) -> str:
         keys = ("id", "kind", "every_minutes", "timeout_minutes", "argv", "cwd", "outputs", "program")
     else:
         keys = ("id", "at", "grace_minutes", "argv", "cwd", "outputs", "program")
+        if "timeout_minutes" in job:  # only when the command file sets it: other one-shot digests are unchanged
+            keys += ("timeout_minutes",)
     fields = {key: job[key] for key in keys}
     fields["files"] = {source: entry["sha256"] for source, entry in job["files"].items()}
     fields["runner"] = job["runner"]["sha256"]
@@ -440,6 +465,8 @@ def plan_job(job_id: str, at: datetime | None, spec: dict, every: int | None = N
     job = {"id": job_id, "unit": unit_base(job_id)}
     if every is None:
         job.update({"at": iso(at), "at_local": at.astimezone().isoformat(), "grace_minutes": spec["grace_minutes"]})
+        if "timeout_minutes" in spec:
+            job["timeout_minutes"] = spec["timeout_minutes"]
     else:
         job.update({"kind": "recurring", "every_minutes": every, "timeout_minutes": spec["timeout_minutes"]})
     job.update({
@@ -608,8 +635,12 @@ def cmd_schedule(args) -> int:
     existing = None
     if (job_dir(job_id) / "job.json").exists():
         existing = read_job(job_id)
-        if existing["status"] in ("scheduled", "running"):
-            raise ProviderError(f"job {job_id!r} is {existing['status']}; cancel it or wait for it first", EXIT_USAGE)
+        if existing["status"] == "scheduled":
+            raise ProviderError(f"job {job_id!r} is scheduled; cancel it or wait for it first", EXIT_USAGE)
+        if existing["status"] == "running":
+            raise ProviderError(f"job {job_id!r} is running; wait for it, or, when its runner is gone (a crash, a "
+                                "power loss), check what the command did and settle it with resolve --id "
+                                f"{job_id} (--done | --failed) --confirmed, or cancel it", EXIT_USAGE)
 
     job = plan_job(job_id, at, spec, every)
     units = build_units(job)
@@ -696,6 +727,58 @@ def cmd_cancel(args) -> int:
         job["finished_at"] = iso(now())
         write_job(job)
     unload(job, stop_service=True)
+    if job["status"] == "running":
+        # A one-shot job caught mid-run. Stopping it (above) makes a live runner kill its command and record
+        # "failed" itself; a runner that is gone (a crash, a power loss) records nothing, and the job would
+        # stay "running" for ever with its id blocked. Wait for the first, then settle the second here.
+        deadline = time.monotonic() + CANCEL_WAIT_SECONDS
+        while runner_alive(job["id"]) and time.monotonic() < deadline:
+            time.sleep(0.1)
+        job = read_job(job["id"])
+        if job["status"] == "running":
+            job.update(status="cancelled", finished_at=iso(now()), interrupted=True,
+                       reason=f"cancelled while running (started at {job.get('started_at', 'an unknown time')}): "
+                              "the command may have acted and its outcome is unknown; check what it did before "
+                              "scheduling it again")
+            write_job(job)
+    print(json.dumps(job, indent=2, ensure_ascii=False))
+    return EXIT_OK
+
+
+def runner_alive(job_id: str) -> bool:
+    """Whether a runner holds the job's run.lock. The kernel drops the lock when its holder dies, so a lock
+    that can be taken means no runner of this version is running the job (a runner copied into a job folder
+    before one-shot jobs took the lock holds none)."""
+    folder = job_dir(job_id)
+    if not folder.is_dir():
+        return False
+    fd, _ = acquire_lock(folder)
+    if fd is None:
+        return True
+    release_lock(fd)
+    return False
+
+
+def cmd_resolve(args) -> int:
+    """Settle a one-shot job left "running" by a runner that is gone: the user says what the command did."""
+    job = read_job(validate_id(args.id))
+    if bool(args.done) == bool(args.failed):
+        raise ProviderError("resolve needs exactly one of --done (the command did its work) or --failed", EXIT_USAGE)
+    if job["status"] != "running":
+        raise ProviderError(f"job {job['id']!r} is {job['status']}, not running; nothing to resolve", EXIT_USAGE)
+    if not args.confirmed and not args.dry_run:
+        raise ProviderError("refusing to resolve without --confirmed; the user decides what happened "
+                            "(use --dry-run to preview)", EXIT_USAGE)
+    status = "done" if args.done else "failed"
+    if args.dry_run:
+        print(json.dumps({"dry_run": True, "would_resolve": job, "as": status}, indent=2, ensure_ascii=False))
+        return EXIT_OK
+    systemctl()
+    if runner_alive(job["id"]):
+        raise ProviderError(f"job {job['id']!r} still runs (its runner holds the lock); wait for it, or cancel it")
+    job.update(status=status, finished_at=iso(now()), resolved=True)
+    write_job(job)
+    unload(job)
     print(json.dumps(job, indent=2, ensure_ascii=False))
     return EXIT_OK
 
@@ -840,13 +923,26 @@ def kill_group(proc: subprocess.Popen) -> tuple[bytes, bytes]:
 
 
 def execute(job: dict) -> dict:
-    """Run the command in its own process group, bounded by timeout_minutes; the firing's outcome."""
-    timeout = job["timeout_minutes"] * TIMEOUT_UNIT_SECONDS
+    """One firing of a recurring job, bounded by timeout_minutes: its outcome with the output's tails."""
+    outcome, out, err = run_command(job, job["timeout_minutes"] * TIMEOUT_UNIT_SECONDS,
+                                    f"timeout_minutes ({job['timeout_minutes']})")
+    if out is None:  # the command could not be started
+        return outcome
+    return {"exit_code": outcome.pop("exit_code"), "stdout_tail": tail(out), "stderr_tail": tail(err), **outcome}
+
+
+def run_command(job: dict, timeout: float, limit: str) -> tuple[dict, bytes | None, bytes | None]:
+    """Run the command in its own process group, for at most `timeout` seconds.
+
+    Returns ({status, exit_code[, reason]}, stdout, stderr). The output is bytes, never decoded here: a command
+    may print anything. Past the limit, or when the runner is told to stop, the whole process group is killed
+    and what the command had printed is still returned. The output is (None, None) only when the command could
+    not be started. `limit` names the bound in the reason."""
     try:
         proc = subprocess.Popen(job["argv"], cwd=job["cwd"], stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                 start_new_session=True, env={**os.environ, "PATH": run_path()})
     except OSError as exc:
-        return {"status": "failed", "exit_code": None, "reason": f"{type(exc).__name__}: {exc}"}
+        return {"status": "failed", "exit_code": None, "reason": f"{type(exc).__name__}: {exc}"}, None, None
     stopping = []
 
     def on_term(_signum, _frame):
@@ -863,8 +959,7 @@ def execute(job: dict) -> dict:
         try:
             out, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            reason = (f"timeout: ran longer than timeout_minutes ({job['timeout_minutes']}); "
-                      "its process group was killed")
+            reason = f"timeout: ran longer than {limit}; its process group was killed"
             out, err = kill_group(proc)
         except Stopped:
             reason = "the runner received SIGTERM (the job was cancelled or stopped); the command's process group was killed"
@@ -872,12 +967,12 @@ def execute(job: dict) -> dict:
     finally:
         if previous is not None:
             signal.signal(signal.SIGTERM, previous)
-    result = {"exit_code": proc.returncode, "stdout_tail": tail(out), "stderr_tail": tail(err)}
+    result = {"exit_code": proc.returncode}
     if reason:
         result.update(status="failed", reason=reason)
     else:
         result["status"] = "done" if proc.returncode == 0 else "failed"
-    return result
+    return result, out, err
 
 
 def run_recurring(job: dict) -> int:
@@ -941,25 +1036,50 @@ def cmd_run(args) -> int:
     if reason:
         return finish(job, "refused", reason=reason)
 
-    job["status"] = "running"
-    job["started_at"] = iso(current)
-    write_job(job)
     folder = job_dir(job["id"])
+    fd, other = acquire_lock(folder)
+    if fd is None:
+        log(f"job {job['id']}: another runner (pid {other or 'unknown'}) holds it; nothing to run")
+        return EXIT_OK
     try:
-        done = subprocess.run(job["argv"], cwd=job["cwd"], capture_output=True, text=True,
-                              timeout=RUN_TIMEOUT_SECONDS, env={**os.environ, "PATH": run_path()})
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return finish(job, "failed", reason=f"{type(exc).__name__}: {exc}")
-    write_private(folder / "run.stdout.log", done.stdout.encode("utf-8"))
-    write_private(folder / "run.stderr.log", done.stderr.encode("utf-8"))
-    fields = {"exit_code": done.returncode}
+        job = read_job(job["id"])  # again, now that no other runner can change it
+        if job["status"] != "scheduled":
+            log(f"job {job['id']} is {job['status']}; nothing to run")
+            return EXIT_OK
+        job["status"] = "running"
+        job["started_at"] = iso(current)
+        write_job(job)
+        try:
+            status, fields = run_one_shot(job, folder)
+        except Exception as exc:  # whatever breaks from here on, the job ends: it never stays "running"
+            status, fields = "failed", {"reason": f"{type(exc).__name__}: {exc}"}
+    finally:
+        release_lock(fd)
+    return finish(job, status, **fields)
+
+
+def run_one_shot(job: dict, folder: Path) -> tuple[str, dict]:
+    """Run a one-shot job's command within its limit; (status, the fields to record). The output is kept as
+    the command wrote it, also when the limit killed it."""
+    if "timeout_minutes" in job:
+        limit = f"timeout_minutes ({job['timeout_minutes']})"
+    else:
+        limit = (f"the one-shot limit of {DEFAULT_ONE_SHOT_TIMEOUT_MINUTES} minutes (set timeout_minutes in the "
+                 "command file for a longer one)")
+    seconds = job.get("timeout_minutes", DEFAULT_ONE_SHOT_TIMEOUT_MINUTES) * TIMEOUT_UNIT_SECONDS
+    outcome, out, err = run_command(job, seconds, limit)
+    write_private(folder / "run.stdout.log", out or b"")
+    write_private(folder / "run.stderr.log", err or b"")
+    fields = {"exit_code": outcome["exit_code"]}
+    if outcome.get("reason"):
+        fields["reason"] = outcome["reason"]
     try:
-        output = json.loads(done.stdout)
+        output = json.loads((out or b"").decode("utf-8", errors="replace"))
         if isinstance(output, dict) and output.get("post_url"):
             fields["post_url"] = output["post_url"]
     except ValueError:
         pass
-    return finish(job, "done" if done.returncode == 0 else "failed", **fields)
+    return outcome["status"], fields
 
 
 def cmd_check() -> int:
@@ -1003,7 +1123,7 @@ def build_parser() -> argparse.ArgumentParser:
         epilog=HELP_EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("verb", nargs="?", choices=["schedule", "list", "cancel", "run"])
+    parser.add_argument("verb", nargs="?", choices=["schedule", "list", "cancel", "resolve", "run"])
     parser.add_argument("--check", action="store_true",
                         help="verify the user manager is reachable and lingering is on; no side effects")
     parser.add_argument("--id", help="job id: lowercase letters, digits, dots and hyphens")
@@ -1014,7 +1134,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "or timeout_minutes (--every)")
     parser.add_argument("--dry-run", action="store_true",
                         help="print the job, its approved digest and the unit files; do nothing")
-    parser.add_argument("--confirmed", action="store_true", help="required to schedule or cancel")
+    parser.add_argument("--confirmed", action="store_true", help="required to schedule, cancel or resolve")
+    parser.add_argument("--done", action="store_true", help="with resolve: the command did its work")
+    parser.add_argument("--failed", action="store_true", help="with resolve: the command did not do its work")
     parser.add_argument("--approved", help="with schedule --confirmed: the digest the dry run printed")
     return parser
 
@@ -1033,11 +1155,11 @@ def main(argv: list[str] | None = None) -> int:
             return cmd_schedule(args)
         if args.verb == "list":
             return cmd_list(args)
-        if args.verb in ("cancel", "run"):
+        if args.verb in ("cancel", "resolve", "run"):
             if not args.id:
                 raise ProviderError(f"{args.verb} needs --id", EXIT_USAGE)
-            return cmd_cancel(args) if args.verb == "cancel" else cmd_run(args)
-        raise ProviderError("give a verb (schedule, list, cancel) or --check; see --help", EXIT_USAGE)
+            return {"cancel": cmd_cancel, "resolve": cmd_resolve, "run": cmd_run}[args.verb](args)
+        raise ProviderError("give a verb (schedule, list, cancel, resolve) or --check; see --help", EXIT_USAGE)
     except ProviderError as exc:
         log(f"error: {exc}")
         return exc.code
