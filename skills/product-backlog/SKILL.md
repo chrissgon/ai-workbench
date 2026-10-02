@@ -101,7 +101,7 @@ Progress:
   ```bash
   python3 <this skill's folder>/scripts/lint_backlog.py --backlog docs/product/backlog.md --spec docs/product/specs/<feature>.md --design docs/engineering/designs/<feature>.md --feature <feature-abbr> --report docs/product/backlog.lint.json
   ```
-  It prints JSON with `ok`, `summary`, `critical_path`, `coverage` and `errors`, and writes the same `ok`, `summary` and `errors` to `docs/product/backlog.lint.json`. Fix every entry of `errors` in the backlog and rerun the same command until `ok` is true. Copy `critical_path` into the "Order" section and keep the last `summary` line for the reply. If the script cannot be run, say so in the reply; never write "lint ok" for a lint that did not run.
+  It prints JSON with `ok`, `summary`, `critical_path`, `coverage` and `errors`, and writes the record to `docs/product/backlog.lint.json`. Fix every entry of `errors` in the backlog and rerun the same command until `ok` is true. Copy `critical_path` into the "Order" section and keep the last `summary` line for the reply. If the script cannot be run, say so in the reply; never write "lint ok" for a lint that did not run.
 - [ ] Step 8: Ask only what the design left to the user (it usually left nothing). If the user also asked for tickets, follow "Creating tickets" below after this backlog is approved.
 - [ ] Step 9: Self-check against "Quality criteria": list every number, name and claim in the backlog and in the reply and where it came from; remove or label what has no origin. Fix, then re-check. The self-check comes before the reply, never after it.
 - [ ] Step 10: Register `docs/product/backlog.md` in `docs/workbench/state.md` (owner `product-backlog`, status `draft`) when the state file exists. Take the `Updated:` date from a command (`date +%F`). Reply with the template under "Output template".
@@ -180,7 +180,7 @@ The reply that asks before creating tickets: the payload of "Confirmation gate" 
 
 Approve the backlog only if all of the following hold:
 
-- `docs/product/backlog.lint.json` holds `"ok": true` from the last lint run: every cited id exists in the spec, every dependency exists, no cycles, every REQ, NFR and AC covered, every task has a Check and a milestone. The reply quotes its `summary` line and the command that wrote it.
+- `docs/product/backlog.lint.json` holds `"ok": true` from the last lint run (ids, dependencies, cycles, coverage, Checks, milestones), and the reply quotes its `summary` line and the command that wrote it.
 - Every task cites at least one REQ or AC id, and its Check is a verification-plan command with its origin (a spike: the design's "Verify by" sentence; without a design: the `Then` of an acceptance criterion), not "works" and not a test file the plan does not list.
 - One spike per assumption of the design, each numbered before its dependants, with `Depends on: none` and at least one dependant; every task the assumption affects depends on its spike, and no task depends on a spike whose assumption does not affect it.
 - Every removal depends on the tasks that replace what it removes.
