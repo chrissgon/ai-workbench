@@ -11,8 +11,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-import pytest
-
 SCRIPT = Path(__file__).resolve().parents[1] / "map_codebase.py"
 
 
@@ -96,8 +94,18 @@ def test_usage_errors_exit_two(tmp_path):
         assert r.stderr.startswith("Error:") and r.stdout == ""
 
 
-@pytest.mark.xfail(strict=True, reason="map_codebase.py reads argv[i + 1] without checking it exists: a flag given "
-                                       "last, without its value, ends in an IndexError traceback (exit 1), not exit 2")
 def test_a_flag_without_its_value_is_a_usage_error(tmp_path):
-    r = run("--root", str(tmp_path), "--top")
-    assert r.returncode == 2 and "Traceback" not in r.stderr
+    for flag in ("--root", "--focus", "--top"):
+        r = run("--root", str(tmp_path), flag)
+        assert r.returncode == 2, (flag, r.stderr)
+        assert f"{flag} needs a value" in r.stderr and "Traceback" not in r.stderr and r.stdout == ""
+
+
+def test_a_non_integer_top_is_a_usage_error(tmp_path):
+    r = run("--root", str(tmp_path), "--top", "abc")
+    assert r.returncode == 2 and "whole number" in r.stderr and "Traceback" not in r.stderr and r.stdout == ""
+
+
+def test_no_arguments_prints_the_usage_on_stderr():
+    r = run()
+    assert r.returncode == 2 and r.stdout == "" and "Usage:" in r.stderr

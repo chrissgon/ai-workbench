@@ -4,36 +4,39 @@
     {
       "id": 1,
       "prompt": "Map this codebase for me, I'm new here and need to understand how it's put together before touching anything.",
-      "expected_output": "The script is run; the map at docs/engineering/architecture.md lists components (pages, components, stores, router, root files) with afferent and efferent counts equal to the script output, traces the Home.vue → catalog store → fetch path naming files, with ProductCard.vue rendered by Home.vue, lists VITE_API_URL as an integration signal, states the static-import limits, lists the files read, and contains no recommendation.",
+      "expected_output": "The script is run; the map at docs/engineering/architecture.md lists components (pages, components, stores, router, root files) with afferent and efferent counts equal to the script output, traces the Home.vue → catalog store → fetch path naming files, with ProductCard.vue rendered by Home.vue, lists VITE_API_URL as an integration signal read in src/stores/catalog.ts without naming a system the code does not name, notes the `~` alias defined in vite.config.ts, states the static-import limits, lists the files read, and contains no recommendation; the reply quotes the measurement command and git status --short, which shows only the map.",
       "files": [
         "evals/files/small-app"
       ],
       "assertions": [
-        "Every component row cites at least one path, and the Components table carries the script's module-level numbers (afferent/efferent): stores 2/0, components 1/0, pages 1/2, root files (src/main.ts, src/App.vue, src/router.ts) 0/2; the map says these numbers come from map_codebase.py",
-        "A traced path names src/pages/Home.vue (which calls the catalog store's load) and then src/stores/catalog.ts, ending at the fetch to VITE_API_URL/products; src/components/ProductCard.vue appears as rendered by Home.vue, not as a caller of the store or of the fetch",
-        "VITE_API_URL appears as an integration point configured by environment",
+        "Every component row cites at least one path, and the Components table carries the script's module-level numbers (afferent/efferent): stores 2/0, components 1/0, pages 1/2, root files (src/main.ts, src/App.vue, src/router.ts and vite.config.ts) 0/2; the map says these numbers come from map_codebase.py",
+        "A traced path goes from src/pages/Home.vue (which calls the catalog store's load) to src/stores/catalog.ts and its fetch to VITE_API_URL/products, in that order; src/components/ProductCard.vue is described as rendered by Home.vue and nowhere as a caller of the store or of the fetch",
+        "The integration point for VITE_API_URL names where it is read (src/stores/catalog.ts) and does not state the external system's name or owner, which the code does not establish",
         "The map states that framework auto-imports and dynamic imports are not counted",
-        "No sentence of the map contains should, could or consider, and the only file the run produced is docs/engineering/architecture.md"
+        {"text": "No sentence of the map contains should, could or consider; docs/engineering/architecture.md is the only file the run produced or changed, and the reply quotes `git status --short` showing no other project file", "tags": ["guard"]}
       ]
     },
     {
       "id": 2,
       "prompt": "Map this repo's architecture.",
-      "expected_output": "The script reports a likely monorepo (workspaces packages/*); the skill stops and asks which package to map, recommending exactly one with its reason (packages/api: both packages are applications with one source file each, so the alphabetical rule decides), before reading any code.",
+      "expected_output": "The script reports a likely monorepo (workspaces packages/*); the skill stops and asks which package to map, recommending exactly one with its reason (packages/web: it is an application, run with vite, while packages/shared is a library that packages/web imports; the rule of an application over a library decides, although packages/shared has more source files and comes first alphabetically), before reading any code.",
       "files": [
         "evals/files/monorepo"
       ],
+      "grader_files": [
+        "packages/web/package.json",
+        "packages/shared/package.json"
+      ],
       "assertions": [
-        "The user is asked which package or directory to map before any map is written",
-        "The question includes a recommended answer",
-        "No docs/engineering/ file is created before the answer",
-        "The reply is in English, the language of the prompt"
+        {"text": "The user is asked which package or directory to map before any map is written", "tags": ["guard"]},
+        "The question recommends exactly one package, packages/web, and gives the rule that decided: packages/web is an application (its manifest runs vite) and packages/shared is a library that packages/web imports",
+        {"text": "No file under docs/engineering/ is among the files the run produced", "tags": ["guard"]}
       ]
     },
     {
       "id": 3,
       "prompt": "Map the code. There is already an ARCHITECTURE.md registered as our architecture document.",
-      "expected_output": "The map is written to docs/engineering/codebase-map.md, ARCHITECTURE.md is untouched, and the three disagreements between the specification and the code appear under Observations as facts: state library (Vuex in src/store/index.ts against Pinia in src/stores/catalog.ts), who renders ProductCard (App.vue against Home.vue), and who requests the products and how (Home.vue with axios against fetch in src/stores/catalog.ts).",
+      "expected_output": "The map is written to docs/engineering/codebase-map.md, ARCHITECTURE.md is untouched, and the three disagreements between the specification and the code appear under Observations as facts, each quoting the specification with its line: state library (Vuex in src/store/index.ts against Pinia in src/stores/catalog.ts; src/store/index.ts does not exist), who renders ProductCard (App.vue against Home.vue), and who requests the products and how (Home.vue with axios against fetch in src/stores/catalog.ts; axios is not a dependency).",
       "files": [
         "evals/files/small-app-spec"
       ],
@@ -42,7 +45,7 @@
       ],
       "assertions": [
         "The output file is docs/engineering/codebase-map.md, not docs/engineering/architecture.md",
-        "The registered specification file is byte-identical after the run",
+        {"text": "ARCHITECTURE.md is not among the files the run produced or changed", "tags": ["guard"]},
         "Observations states, as a fact with locations and without a recommendation, that the specification says state is managed with Vuex in src/store/index.ts while the code uses Pinia in src/stores/catalog.ts and has no src/store/index.ts",
         "Observations states, as a fact with locations and without a recommendation, that the specification says src/App.vue renders one ProductCard per product while the code renders ProductCard in src/pages/Home.vue and App.vue renders only the number of items",
         "Observations states, as a fact with locations and without a recommendation, that the specification says src/pages/Home.vue requests the products with axios while the code makes the request with fetch in src/stores/catalog.ts and axios is not a dependency"
