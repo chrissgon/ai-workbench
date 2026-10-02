@@ -11,6 +11,7 @@ Run: uv run --with pytest pytest providers/scheduler/tests/test_scheduler_parity
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 
 import pytest
@@ -63,3 +64,26 @@ def test_every_function_both_providers_define_is_classified():
 def test_the_lists_say_what_is_true_today():
     """DIFFERENT is not a place to park a function that could be shared: one that became identical moves."""
     assert [name for name in DIFFERENT if LAUNCHD_DEFS[name] == SYSTEMD_DEFS[name]] == []
+
+
+# --- SC8: what the scheduler reads of a command's output is what the contract says a publisher prints ---
+
+
+def prints_column(cls: str) -> str:
+    """The "Prints" cell of a class's row in the verbs table of providers/CONTRACT.md."""
+    contract = (HERE.parents[1] / "CONTRACT.md").read_text(encoding="utf-8")
+    table = contract.split("\n## Verbs per class\n", 1)[1].split("\n## ", 1)[0]
+    (row,) = [line for line in table.splitlines() if line.startswith(f"| `{cls}` |")]
+    return row.rstrip().rstrip("|").rsplit(" | ", 1)[1]
+
+
+@pytest.mark.parametrize("script", [LAUNCHD, SYSTEMD], ids=lambda path: path.name)
+def test_the_scheduler_reads_the_address_under_the_contracts_name(script):
+    source = script.read_text(encoding="utf-8")
+    (key,) = re.findall(r'^ADDRESS_KEY = "(\w+)"', source, flags=re.MULTILINE)
+    assert f"`{key}`" in prints_column("publisher:<platform>"), (
+        "the scheduler reads a key the contract's Prints column does not name for the publisher")
+    assert f"`{key}`" in prints_column("scheduler:job")
+    # The key is written once: no other line of the provider's code spells it.
+    code = source.split('"""', 2)[2]
+    assert [line for line in code.splitlines() if f'"{key}"' in line] == [f'ADDRESS_KEY = "{key}"']

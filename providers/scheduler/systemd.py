@@ -104,6 +104,11 @@ TAIL_BYTES = 4096
 RUNS_MAX_BYTES = 4 * 1024 * 1024  # runs.jsonl is rotated to runs.1.jsonl past this size
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
+# The one key of a command's output the scheduler reads, for the job record and the notification: the
+# address of a published post, under the name providers/CONTRACT.md gives it ("Verbs per class", the
+# "Prints" column of publisher:<platform>). The scheduler depends on the contract's name, never on what one
+# implementation happens to print; a test compares this constant with that column.
+ADDRESS_KEY = "post_url"
 
 HELP_EPILOG = """\
 verbs:
@@ -842,7 +847,7 @@ def finish(job: dict, status: str, **fields) -> int:
     job["status"] = status
     job["finished_at"] = iso(now())
     write_job(job)
-    summary = fields.get("post_url") or fields.get("reason") or f"exit {fields.get('exit_code')}"
+    summary = fields.get(ADDRESS_KEY) or fields.get("reason") or f"exit {fields.get('exit_code')}"
     notify(f"ai-workbench: {job['id']} {status}", summary)
     log(f"job {job['id']}: {status} ({summary})")
     unload(job)
@@ -1110,8 +1115,8 @@ def run_one_shot(job: dict, folder: Path) -> tuple[str, dict]:
         fields["reason"] = outcome["reason"]
     try:
         output = json.loads((out or b"").decode("utf-8", errors="replace"))
-        if isinstance(output, dict) and output.get("post_url"):
-            fields["post_url"] = output["post_url"]
+        if isinstance(output, dict) and output.get(ADDRESS_KEY):
+            fields[ADDRESS_KEY] = output[ADDRESS_KEY]
     except ValueError:
         pass
     return outcome["status"], fields
