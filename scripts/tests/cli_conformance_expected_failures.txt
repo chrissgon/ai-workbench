@@ -1,0 +1,28 @@
+# Scripts under skills/*/scripts that fail a check of scripts/tests/test_cli_conformance.py today.
+# One line per failure: <script> <check>. Sorted. The change that fixes a script removes its lines in the
+# same pull request: a listed check that passes fails the test, and so does a failing check that is not
+# listed. Never add a line for a new script: a new script conforms. The list is empty when every skill has
+# had its change.
+# Three scripts also carry a strict expected-failure test of the same defect in their own scripts/tests/
+# (task.py, map_codebase.py, lint_result.py): the change that fixes the script turns that test into a
+# plain one or removes it, since the check here covers it.
+#
+# What each check asks, and the reason of each failure:
+#   uv run --with pytest python3 scripts/tests/test_cli_conformance.py
+skills/design-brief/scripts/lint_brief.py report  # the record's shape; arguments as top-level keys
+skills/design-brief/scripts/longest_value.py unknown-flag  # an unknown flag is ignored, exit 0
+skills/design-execute/scripts/lint_result.py value-flag-last  # traceback
+skills/design-handoff/scripts/lint_handoff.py report  # the record's shape
+skills/design-system/scripts/contrast.py value-flag-last  # traceback
+skills/design-system/scripts/lint_design_system.py value-flag-last  # traceback
+skills/design-ux-flows/scripts/lint_flows.py report  # the record's shape; arguments as top-level keys
+skills/eng-architecture/scripts/check_design.py report  # the record's shape; arguments as top-level keys
+skills/eng-code-review/scripts/change_scope.py value-flag-last  # traceback
+skills/eng-codebase-map/scripts/map_codebase.py value-flag-last  # traceback
+skills/eng-implement/scripts/task.py value-flag-last  # traceback
+skills/mkt-engage/scripts/parse_notification.py help  # no --help: it reads standard input and exits 2
+skills/mkt-messaging/scripts/lint_messaging.py value-flag-last  # traceback
+skills/ops-branch-sync/scripts/sync-status.sh value-flag-last  # exit 1 with the shell's "unbound variable"
+skills/product-backlog/scripts/lint_backlog.py value-flag-last  # traceback
+skills/product-prd/scripts/lint_prd.py report  # --report is a switch
+skills/product-roadmap/scripts/lint_roadmap.py value-flag-last  # traceback
