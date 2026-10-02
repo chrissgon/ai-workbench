@@ -4,7 +4,7 @@ description: >
   __ROLE__. Delegate to this agent when __WHEN__.
 metadata:
   skills: []
-  version: "0.1"
+  version: "0.1.0"
 ---
 
 # __TITLE__

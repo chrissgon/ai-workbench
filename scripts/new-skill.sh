@@ -55,4 +55,5 @@ fi
 mkdir -p "$DEST/evals"
 sed -e "s/__NAME__/$NAME/g" -e "s/__AREA__/$AREA/g" -e "s/__TITLE__/$TITLE/g" "$ROOT/templates/$KIND.SKILL.md" > "$DEST/SKILL.md"
 printf '{\n  "skill_name": "%s",\n  "evals": []\n}\n' "$NAME" > "$DEST/evals/evals.json"
-echo "{\"created\": \"skills/$NAME/SKILL.md\", \"next\": \"fill the remaining __PLACEHOLDERS__, then run python3 scripts/validate.py\"}"
+# The next steps under the reliability model (AGENTS.md, "Adding a skill"): the cases, then the first full test.
+echo "{\"created\": \"skills/$NAME/SKILL.md\", \"next\": [\"fill the remaining __PLACEHOLDERS__ in skills/$NAME/SKILL.md\", \"add at least two cases to skills/$NAME/evals/evals.json, tag their guard assertions, and check them: python3 evals/eval_run.py --skill $NAME --check-cases\", \"python3 scripts/validate.py until it reports zero errors\", \"run the skill's first full test: python3 evals/eval_run.py --skill $NAME (the skill is done when that test has passed)\"]}"
