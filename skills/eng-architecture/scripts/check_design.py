@@ -4,9 +4,11 @@
 Usage: python3 check_design.py --spec <spec.md> --design <design.md> [--adr-dir <dir>]
                                [--report <check.json>] [--json]
 
---report <path> also writes the result to that file, with the command's own arguments ("spec", "design",
-"adr_dir") and the date, so a reviewer can check the check ran and what it checked. Each run overwrites
-it: the file holds the last run.
+--report <path> also writes the record of the run to that file, in the one shape every check script of the
+workbench writes: "script", "date", "arguments" (each flag given except --report, as typed), "ok",
+"summary" (the line a reply quotes), "errors", "warnings" and "counts" (spec_ids, covered, adrs,
+adrs_failed). Each run overwrites it: the file holds the last run. It is written on every run that reaches
+the check (exit 0 or 1), never on a usage error.
 
 Checks:
   - every REQ-n, NFR-n, EDGE-n and AC-n id in the specification appears in the design
@@ -16,7 +18,9 @@ Checks:
     Decision and Consequences
   - the verification plan has at least one row per AC (an AC id inside the Verification plan section)
 
-Prints JSON on one line (--json: indented). Exit codes: 0 ok, 1 problems, 2 usage error.
+Prints JSON on one line (--json: indented): ok, summary, spec_ids, covered, adrs (one entry per ADR file with
+its problems), errors, warnings. Usage errors go to stderr.
+Exit codes: 0 ok, 1 problems, 2 usage error.
 """
 import datetime
 import glob
@@ -66,9 +70,13 @@ def section(text, heading):
 
 
 def main(argv):
-    if not argv or "--help" in argv or "-h" in argv:
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        print("Error: no arguments. See --help.", file=sys.stderr)
+        return 2
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
+        return 0
     spec = design = adr_dir = report = None
     as_json = "--json" in argv
     i = 0
@@ -123,12 +131,25 @@ def main(argv):
         if probs:
             errors.append(f"{os.path.basename(f)}: {', '.join(probs)}")
     ok = not errors
-    result = {"ok": ok, "spec_ids": len(spec_ids), "covered": len(spec_ids) - len(missing), "adrs": adr_report,
+    covered = len(spec_ids) - len(missing)
+    adrs_failed = sum(1 for a in adr_report if not a["ok"])
+    if ok:
+        summary = f"check_design ok: {covered}/{len(spec_ids)} ids covered, {len(adr_report)} ADR(s) valid"
+    else:
+        summary = (f"check_design FAILED: {len(errors)} error(s); {covered}/{len(spec_ids)} ids covered, "
+                   f"{adrs_failed} of {len(adr_report)} ADR(s) with problems")
+    result = {"ok": ok, "summary": summary, "spec_ids": len(spec_ids), "covered": covered, "adrs": adr_report,
               "errors": errors, "warnings": warnings}
     if report:
-        record = {"ok": ok, "date": datetime.date.today().isoformat(), "spec": spec, "design": design,
-                  "adr_dir": adr_dir, "spec_ids": result["spec_ids"], "covered": result["covered"],
-                  "adrs": adr_report, "errors": errors, "warnings": warnings}
+        arguments = {"--spec": spec, "--design": design}
+        if adr_dir is not None:
+            arguments["--adr-dir"] = adr_dir
+        if as_json:
+            arguments["--json"] = True
+        record = {"script": os.path.basename(__file__), "date": datetime.date.today().isoformat(),
+                  "arguments": arguments, "ok": ok, "summary": summary, "errors": errors, "warnings": warnings,
+                  "counts": {"spec_ids": len(spec_ids), "covered": covered, "adrs": len(adr_report),
+                             "adrs_failed": adrs_failed}}
         try:
             with open(report, "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2)
