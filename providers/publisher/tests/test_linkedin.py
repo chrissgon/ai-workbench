@@ -584,11 +584,28 @@ def test_the_served_platforms_are_declared_on_one_line_the_resolver_reads_as_tex
     assert lines == ['PLATFORMS = ("linkedin",)']
 
 
-def test_check_not_ready_without_token(env, fake):
+def test_check_exits_3_when_the_person_has_something_to_do(env, fake):
+    """The contract's one reading: 3 is "not configured" (no token, an expired one, a rejected one)."""
+    fake.userinfo_status = 401  # the service rejects the token
+    proc = run(SCRIPT, ["--check"], env)
+    assert proc.returncode == 3 and "rejected the token" in proc.stderr
+    env["LINKEDIN_TOKEN_EXPIRES_AT"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    proc = run(SCRIPT, ["--check"], env)
+    assert proc.returncode == 3 and "expired" in proc.stderr
     del env["LINKEDIN_ACCESS_TOKEN"]
     proc = run(SCRIPT, ["--check"], env)
-    assert proc.returncode == 1
-    assert proc.stderr.strip()
+    assert proc.returncode == 3 and "auth.py --provider linkedin" in proc.stderr
+    assert not proc.stdout.strip()
+
+
+def test_check_exits_1_when_the_service_could_not_be_asked(env, fake):
+    """1 is "whether the provider is ready is not known": the service is down or answered something else."""
+    fake.userinfo_status = 503
+    proc = run(SCRIPT, ["--check"], env)
+    assert proc.returncode == 1 and "503" in proc.stderr
+    env["LINKEDIN_API_BASE"] = "http://127.0.0.1:1"  # nothing listens there
+    proc = run(SCRIPT, ["--check"], env)
+    assert proc.returncode == 1 and "cannot reach LinkedIn" in proc.stderr
 
 
 # --- auth.py -------------------------------------------------------------------

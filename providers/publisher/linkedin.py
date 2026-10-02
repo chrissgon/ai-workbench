@@ -1166,10 +1166,9 @@ def comment_dry_run(base: str, post_urn: str | None, parent: str | None, text: s
 
 def cmd_check() -> int:
     base, test_mode = api_base()
-    try:
-        token = load_token(test_mode)
-    except ProviderError as exc:
-        raise ProviderError(str(exc), EXIT_SERVICE)  # the contract: --check exits 1 when not ready
+    # The contract's one reading of --check: 3 when the person has something to do (no token, an expired
+    # one, a token the service rejects), 1 when the service could not be asked. load_token and http say which.
+    token = load_token(test_mode)
     info = userinfo(base, token["access_token"])
     days = days_until(token["expires_at"])
     out = {
