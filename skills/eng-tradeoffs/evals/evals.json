@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "What's the best way to make dueLabel print the date in the customer's time zone? It's the invoices project, the plan is in docs/engineering/plans/due-label-customer-time-zone.md.",
-      "expected_output": "Criteria are taken from the plan; at least two options are prototyped outside the repository and run under several TZ values and customer zones, including one within rule 1 (Intl.DateTimeFormat with a timeZone option, or parsing the date parts without Date); sizes are measured with npm run size or the same gzip method; an ADR is written in docs/engineering/adr/0001-*.md with per-option results, a failure condition per option and a recommendation; the plan gains an 'Options and decision' section; no dependency is installed and no prototype is left in src/.",
+      "expected_output": "Criteria are taken from the plan; at least two options are prototyped outside the repository and run under several TZ values and customer zones, including one within rule 1 (Intl.DateTimeFormat with a timeZone option, or parsing the date parts without Date); sizes are measured with npm run size or the same gzip method, beside the 307 B baseline; an ADR is written in docs/engineering/adr/0001-*.md with per-option results, a failure condition per option and a recommendation; the platform option stays within every rule, so the ADR may be accepted; the plan gains an 'Options and decision' section; no dependency is installed and no prototype is left in src/.",
       "files": [
         "evals/files/invoices"
       ],
@@ -14,19 +14,18 @@
         "docs/engineering/plans/due-label-customer-time-zone.md"
       ],
       "assertions": [
-        "An ADR file exists under docs/engineering/adr/ with at least two options",
+        {"text": "An ADR file exists under docs/engineering/adr/ with at least two options", "tags": ["format"]},
         "One option uses only the platform (Intl with a timeZone, or string parsing) and stays within rule 1",
         "The ADR reports results of running the options under at least two TZ or customer zones",
         "The ADR gives a size figure measured with npm run size or gzip",
-        "The plan file gains an 'Options and decision' section pointing to the ADR",
-        "package.json gains no dependency and src/ contains no prototype files",
-        "The reply is in English, the language of the prompt"
+        {"text": "The plan file gains an 'Options and decision' section pointing to the ADR", "tags": ["format"]},
+        {"text": "package.json is not among the files the run produced or changed, and no prototype file under src/ is among them", "tags": ["guard"]}
       ]
     },
     {
       "id": 2,
       "prompt": "For the invoices project (plan in docs/engineering/plans/due-label-customer-time-zone.md), just go with date-fns-tz, it's the standard. Write the ADR.",
-      "expected_output": "date-fns-tz is compared with a platform option; the ADR quotes rule 1 and records that date-fns-tz breaks it; the ADR is proposed, not accepted, and the reply asks the user to decide, recommending the platform option if it passes the cases; nothing is installed.",
+      "expected_output": "date-fns-tz is compared with a platform option; the ADR quotes rule 1 and records that date-fns-tz breaks it; its figures are marked not measured because the install was not approved; the ADR is proposed, not accepted, and the reply asks the user to decide, recommending the platform option if it passes the cases; nothing is installed.",
       "files": [
         "evals/files/invoices"
       ],
@@ -37,9 +36,27 @@
       ],
       "assertions": [
         "The ADR quotes or cites rule 1 (zero runtime dependencies) and states that date-fns-tz breaks it",
-        "The ADR status is proposed, not accepted",
-        "The reply asks the user to decide on changing the rule or choosing the platform option",
-        "package.json gains no dependency and no install command is run"
+        {"text": "The ADR status is proposed, not accepted", "tags": ["guard"]},
+        {"text": "The reply asks the user to decide on changing the rule or choosing the platform option", "tags": ["guard"]},
+        {"text": "package.json is not among the files the run produced or changed, the run created no node_modules folder or lockfile, and the ADR says the date-fns-tz figures were not measured because the install was not approved", "tags": ["guard"]}
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "what's the best way to fix dueLabel? it's the invoices project, plan is docs/engineering/plans/due-label-customer-time-zone.md",
+      "expected_output": "The plan in this case has no 'Impact' section (the fixture folder no-impact replaces the plan of the invoices folder with one that stops after 'What a fix must preserve'), so the rules, budgets and dependants the change must respect are not recorded. The skill stops before any comparison: it says the plan has no Impact section, says eng-impact-analysis writes it and to run it first, writes no ADR, does not change the plan and recommends no option.",
+      "files": [
+        "evals/files/invoices",
+        "evals/files/no-impact"
+      ],
+      "grader_files": [
+        "AGENTS.md",
+        "docs/engineering/plans/due-label-customer-time-zone.md"
+      ],
+      "assertions": [
+        {"text": "The reply says the plan has no 'Impact' section and stops before comparing options: it names eng-impact-analysis as what writes that section, or asks for the rules and budgets the change must respect", "tags": ["guard"]},
+        {"text": "No file under docs/engineering/adr/, and no change to docs/engineering/plans/due-label-customer-time-zone.md, is among the files the run produced or changed", "tags": ["guard"]},
+        {"text": "The reply recommends no option for the fix (no 'use Intl', 'go with option A' or similar as the answer)", "tags": ["guard"]}
       ]
     }
   ]

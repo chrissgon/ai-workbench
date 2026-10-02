@@ -1,6 +1,6 @@
 # Evidence when the bug resists
 
-Loaded at step 3 or step 4 of `eng-root-cause` when the reproduction is unreliable, the runtime is not reachable, or two causes fit the same observations.
+Loaded at step 3, 4, 5 or 6 of `eng-root-cause`, when the reproduction is unreliable (step 4), a runtime cannot be reached (steps 3 and 4), or two causes fit the same observations (steps 5 and 6).
 
 ## Unreliable reproduction (timing, order, load)
 
@@ -11,19 +11,19 @@ Loaded at step 3 or step 4 of `eng-root-cause` when the reproduction is unreliab
 ## No access to the runtime
 
 - Ask for the smallest thing that settles it: the exact version (`navigator.userAgent`, `node -v`), a screenshot with the developer tools showing the computed value, a log line. One question with the recommended way to collect the answer.
-- A runtime the project supports but the machine lacks (WebKit on Linux, an older Node) is often available through the test runner's browser install or a container. That is a download: name what will be installed and its version, and run it only after the user agrees.
+- A runtime the project supports but the machine lacks (WebKit on Linux, an older Node) is recorded as `not run: <runtime> (not installed)`, never as an inferred result, and it does not lower the grade. It is often available through the test runner's browser install or a container. That is a download: name what will be installed and its version, and run it only after the user agrees.
 
 ## Two causes fit
 
 - Write both predictions side by side and find the input where they differ; that input is the discriminating case. If no input separates them, the two are the same cause described twice, or the evidence needed is not observable yet: grade `unconfirmed` and say what would separate them.
-- Reverting the suspected line in a scratch copy (`scratch=$(mktemp -d)`, `git worktree add "$scratch" <commit>`, removed afterwards) and seeing the symptom disappear is evidence for the line, not for the mechanism; pair it with the specification or a trace that explains why.
+- Reverting the suspected line in a scratch copy and seeing the symptom disappear is evidence for the line, not for the mechanism; pair it with the specification or a trace that explains why. Make the copy in one chained command that prints its path, `d="$(mktemp -d)" && git worktree add --detach "$d/copy" <commit> && echo "$d/copy"`, use the literal path it printed in every later command, and remove the copy afterwards.
 
 ## Grades, not percentages
 
-Percent confidence invites invented numbers. The section uses three grades, each defined by what was observed:
+Percent confidence invites invented numbers. The section uses three grades, each defined by what the experiment observed; the table is the one of step 9 of `SKILL.md`:
 
 | Grade | Requires |
 |-------|----------|
-| confirmed | reproduced in every supported runtime where it occurs; the line found and quoted; every discriminating case matched its prediction |
+| confirmed | reproduced; the line found and quoted; every discriminating case matched its prediction in every installed supported runtime (runtimes `not run` and a rule quoted from memory do not lower it) |
 | probable | reproduced and the line found; at least one discriminating case not run (say which and why) |
 | unconfirmed | not reproduced, or two causes fit and nothing yet separates them |
