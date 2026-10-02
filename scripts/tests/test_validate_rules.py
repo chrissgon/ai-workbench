@@ -292,6 +292,92 @@ def test_packs_are_read_as_core(tree):
     assert [e["where"] for e in report.errors] == ["packs/default.txt:2"]
 
 
+def harness_errors(tree):
+    report = validate.Report()
+    validate.check_harness_names(report)
+    return {e["where"]: e["message"].split(": ", 1)[1] for e in report.errors}
+
+
+@pytest.mark.parametrize("line", [
+    "Use the Task tool to delegate, then wait.",
+    "Call TodoWrite and then WebFetch.",
+    "Ask Claude to summarise the file.",
+    "Put it in ~/.claude or in .opencode/skills",
+    "export CLAUDE_CODE_OAUTH_TOKEN",
+    "allowed-tools: Read, Grep",
+    "installed with claude-code",
+    "the claude_code runner",
+    "run it under codex",
+    "see adapters/api/run_agent.py",
+    "bash adapters/agents-dir/install.sh",
+    "glob adapters/*/adapter.json",
+    "the agents-dir layout",
+])
+def test_principle_1_holds_for_the_spellings_the_narrow_pattern_let_through(tree, line):
+    assert not validate.HARNESS_NARROW_RE.search(line)
+    write(tree, "contracts/notes.md", f"# Notes\n\n{line}\n")
+    assert list(harness_errors(tree)) == ["contracts/notes.md:3"]
+
+
+@pytest.mark.parametrize("line", [
+    "Anything specific to one tool lives in adapters/<harness>/overrides/.",
+    "The store keeps a cursor per source: cursor-get, cursor-set.",
+    "def agents_dir() -> Path:",
+    "AGENTS.md holds the project's conventions.",
+    "The mockup was drawn with Claude Design.",
+    "not any(reader.startswith((\"adapters/\", \"evals/\")))",
+    "codexes and declined offers",
+])
+def test_what_is_not_a_harness_passes(tree, line):
+    write(tree, "providers/notes.md", line + "\n")
+    assert harness_errors(tree) == {}
+
+
+def test_every_text_file_of_the_core_is_read_whatever_its_extension(tree):
+    write(tree, "skills/eng-demo/scripts/shot.mjs", "// started by claude-code\n")
+    write(tree, "templates/notes", "copilot\n")
+    (tree / "shared").mkdir()
+    (tree / "shared" / "logo.png").write_bytes(b"\x89PNG\x00claude-code")
+    write(tree, "scripts/outside_the_core.py", "# adapters/api/run_agent.py\n")
+    assert sorted(harness_errors(tree)) == ["skills/eng-demo/scripts/shot.mjs:1", "templates/notes:1"]
+
+
+def test_records_evidence_and_workbench_files_are_exempt_and_fixtures_keep_the_narrow_rule(tree):
+    brought = "adapters/agents-dir/run-prompt.sh"
+    write(tree, "skills/eng-demo/evals/result.json", {"strong_harness": "claude-code"})
+    write(tree, "skills/eng-demo/evals/evidence/lab-1.jsonl", '{"adapter": "agents-dir"}\n')
+    write(tree, "skills/eng-demo/evals/evals.json", json.dumps(
+        {"skill_name": "eng-demo", "evals": [case(1, prompt="Read adapters/api/README.md.", workbench_files=[brought])]},
+        indent=1))
+    write(tree, "skills/eng-demo/evals/platforms/chirp.json", json.dumps(
+        {"skill_name": "eng-demo", "evals": [case(2, workbench_files=[brought])]}, indent=1))
+    write(tree, "skills/eng-demo/evals/files/site/benchmark.json", '{"adapter": "agents-dir"}\n')
+    write(tree, "skills/eng-demo/evals/files/site/notes.md", "Settings are in ." + "claude/settings.json\n")
+    write(tree, "skills/eng-demo/evals/platforms/chirp/files/a/notes.md", "Opened in " + "Cursor.\n")
+    found = harness_errors(tree)
+    assert sorted(found) == ["skills/eng-demo/evals/evals.json:6", "skills/eng-demo/evals/files/site/notes.md:1",
+                             "skills/eng-demo/evals/platforms/chirp/files/a/notes.md:1"]
+    assert "adapters/a" in found["skills/eng-demo/evals/evals.json:6"]  # the prompt, never the brought path
+
+
+def test_a_path_allowed_for_harness_name_keeps_the_narrow_rule(tree):
+    write(tree, "skills/eng-demo/references/guide.md", "allowed-tools: Read\nSettings: ." + "claude/x\n")
+    write(tree, ".security-scan-allow", "skills/eng-demo/references/guide.md harness-name -- fixed in its row\n")
+    assert list(harness_errors(tree)) == ["skills/eng-demo/references/guide.md:2"]
+
+
+def test_this_repository_names_no_harness_in_its_core():
+    report = validate.Report()
+    validate.check_harness_names(report, root=str(REPO))
+    assert report.errors == []
+
+
+def test_a_skill_frontmatter_has_only_the_known_top_level_keys(tree):
+    add_skill(tree, license_line="license: MIT\nallowed-tools: Read\ncompatibility: any\n")
+    errors = [e["message"] for e in run_skill(tree).errors]
+    assert len(errors) == 1 and errors[0].startswith("unknown top-level frontmatter key(s) allowed-tools, compatibility")
+
+
 def test_flags_lists_each_rule_with_the_skills_it_names(tree):
     add_skill(tree, cases=[case(1)])
     add_skill(tree, name="eng-other", description="Does a thing. Use this skill when asked.",

@@ -9,7 +9,14 @@ Checks every skill under skills/ and every agent under agents/:
   - metadata.kind is capability or flow, and matches the flow- prefix
   - description is 1-1024 characters
   - SKILL.md is at most 500 lines
-  - core files, packs/ included, contain no harness names, paths or tool names
+  - harness-name: no text file of the core (packs/ included), whatever its extension, names a harness: its
+    name in any spelling (capitalised, lower-case, with a hyphen or an underscore), its folders, its
+    environment variables, its tool names, or a path inside an adapter. Exempt: skills/*/evals/result.json and
+    everything under skills/*/evals/evidence/ (a record and an evidence line name their adapter by design);
+    the values of `workbench_files` in a case file; the placeholder form adapters/<harness>/. The fixtures of
+    eval cases, and a file listed in .security-scan-allow with the rule harness-name, are read for the
+    harness names and folders only (the rule as it was before it was widened)
+  - a skill's frontmatter has only the top-level keys name, description, license and metadata
   - non-empty metadata.side_effects implies a "## Confirmation gate" section: the heading on a line of its
     own, outside a code fence
   - every metadata.inputs path is some skill's metadata.outputs (warning unless --strict)
@@ -107,6 +114,7 @@ KINDS = {"capability", "flow"}
 NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MAX_LINES = 500
 AGENT_KEYS = {"name", "description", "metadata"}
+SKILL_KEYS = {"name", "description", "license", "metadata"}
 
 # --- the rules reported as warnings (see the module docstring) -----------------------
 REQUIRED_META = ("inputs", "outputs", "requires", "side_effects", "version")  # area and kind are errors already
@@ -144,7 +152,23 @@ HARNESS_PATTERNS = [
     r"\bCLAUDE\.md\b", r"\$\{?CLAUDE_PLUGIN_ROOT\}?", r"\bClaude Code\b", r"\bCopilot\b",
     r"\bCursor\b", r"\bCodex\b", r"\bGemini CLI\b", r"\bOpenCode\b", r"\bCline\b",
 ]
-HARNESS_RE = re.compile("|".join(HARNESS_PATTERNS))
+# Principle 1 as written: the other spellings of a harness, its folders without a trailing slash, its
+# environment variables, a path inside an adapter (never the placeholder adapters/<harness>/) and its tool
+# names. "cursor" in lower case is a common word (the store's cursors) and is left out, as above.
+HARNESS_WIDE_PATTERNS = [
+    r"(?<![\w-])\.(?:claude|cursor|codex|agents|opencode|gemini|cline|clinerules)(?![\w-])",
+    r"\b(?:CLAUDE|CODEX|OPENCODE|GEMINI_CLI|CLINE)_[A-Z0-9_]+",
+    r"\b[Cc]laude\b(?! Design)",  # the design tool of that name is a product, not a harness: eval-product-names
+    r"(?<![A-Za-z])(?:claude_?code|gemini[-_]cli|open[-_]code|opencode|codex|copilot|cline)(?![A-Za-z])",
+    r"(?<![\w-])agents-dir(?![\w-])",
+    r"\badapters/(?!<)[\w*{.-]",
+    r"\b(?:TodoWrite|WebFetch|WebSearch|NotebookEdit|MultiEdit|AskUserQuestion|ExitPlanMode)\b",
+    r"\ballowed-tools\b",
+    r"\b(?:Task|Bash|Read|Write|Edit|Grep|Glob) tool\b",
+]
+HARNESS_NARROW_RE = re.compile("|".join(HARNESS_PATTERNS))
+HARNESS_RE = re.compile("|".join(HARNESS_PATTERNS + HARNESS_WIDE_PATTERNS))
+HARNESS_RULE = "harness-name"
 
 # english-only: diacritics that do not occur in English (a with tilde, o with tilde, c with
 # cedilla) and a few unambiguous Portuguese words, written as escapes so this file passes.
@@ -365,6 +389,10 @@ def check_skill(dirname, report, outputs_index, classes=None):
     name = fm.get("name")
     if name != dirname:
         report.error(where, f"frontmatter name {name!r} must equal folder name {dirname!r}")
+    extra = sorted(set(fm) - SKILL_KEYS)
+    if extra:
+        report.error(where, f"unknown top-level frontmatter key(s) {', '.join(extra)}; a skill has only "
+                     f"{', '.join(sorted(SKILL_KEYS))} (what belongs to one harness goes to adapters/<harness>/overrides/)")
     if not isinstance(name, str) or not NAME_RE.match(name or "") or len(name) > 64:
         report.error(where, "name must be 1-64 chars, lowercase a-z0-9 and single hyphens")
 
@@ -671,20 +699,57 @@ def check_agent(filename, report):
         report.error(where, f"harness-specific keys belong in adapters/<harness>/overrides/: {sorted(extra)}")
 
 
-def check_harness_names(report):
-    for d in CORE_DIRS:
-        base = os.path.join(ROOT, d)
-        for dirpath, _, files in os.walk(base):
-            for fn in files:
-                if not fn.endswith((".md", ".json", ".yaml", ".yml", ".py", ".sh", ".txt")):
-                    continue
-                p = os.path.join(dirpath, fn)
-                with open(p, encoding="utf-8", errors="ignore") as f:
-                    for ln, line in enumerate(f, 1):
-                        m = HARNESS_RE.search(line)
-                        if m:
-                            rel = os.path.relpath(p, ROOT)
-                            report.error(f"{rel}:{ln}", f"core file references a harness: {m.group(0)!r}")
+def harness_scope(rel):
+    """How a core file is read for harness names: None (not read), "narrow" (names and folders only: the
+    fixtures of eval cases) or "wide"."""
+    parts = rel.split("/")
+    if parts[0] == "skills" and len(parts) > 3 and parts[2] == "evals":
+        if parts[3:] == ["result.json"] or parts[3] == "evidence":
+            return None  # an old record and an evidence line name their adapter by design
+        if "files" in parts[3:-1]:
+            return "narrow"  # evals/files/... and evals/platforms/<platform>/files/...
+    return "wide"
+
+
+def workbench_file_values(text):
+    """The paths a case file brings from the repository (`workbench_files`): adapter paths, legally."""
+    try:
+        data = json.loads(text)
+    except ValueError:
+        return []
+    cases = data.get("evals") if isinstance(data, dict) else None
+    values = set()
+    for c in cases if isinstance(cases, list) else []:
+        listed = c.get("workbench_files") if isinstance(c, dict) else None
+        values.update(v for v in (listed if isinstance(listed, list) else []) if isinstance(v, str))
+    return sorted(values, key=len, reverse=True)
+
+
+def check_harness_names(report, root=None):
+    """harness-name: principle 1 (see the module docstring for what is read and what is exempt)."""
+    root = root or ROOT
+    scanner = load_scanner()
+    entries, _ = scanner.load_allow_file(root)
+    for path in sorted(scanner.list_files(root, None)):
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        if rel.split("/")[0] not in CORE_DIRS:
+            continue
+        scope = harness_scope(rel)
+        text = scanner.read_text(path) if scope else None
+        if text is None:
+            continue
+        if scope == "wide" and scanner.path_allowed(entries, rel, HARNESS_RULE):
+            scope = "narrow"
+        pattern = HARNESS_RE if scope == "wide" else HARNESS_NARROW_RE
+        exempt = []
+        if scope == "wide" and re.fullmatch(r"skills/[^/]+/evals/(?:evals|platforms/[^/]+)\.json", rel):
+            exempt = [json.dumps(v) for v in workbench_file_values(text)]
+        for ln, line in enumerate(text.splitlines(), 1):
+            for quoted in exempt:
+                line = line.replace(quoted, '""')
+            m = pattern.search(line)
+            if m:
+                report.error(f"{rel}:{ln}", f"[{HARNESS_RULE}] core file references a harness: {m.group(0)!r}")
 
 
 def load_scanner():
