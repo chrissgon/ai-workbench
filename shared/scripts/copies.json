@@ -102,7 +102,7 @@
     },
     {
      "path": "skills/mkt-engage/scripts/sensitive_topics.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/mkt-social-copy/scripts/sensitive_topics.py",
