@@ -46,7 +46,8 @@ tick     1. Reads new notification e-mails since the store's cursor (mailbox pro
          3. Stops starting runs once today's agent spend reaches daily_cost_cap_usd. A run whose cost is
             unknown (no price for the model, a timeout, a run that never ended) counts as
             max_cost_usd_per_run; the output says how many there were (runs_without_cost_today).
-         --dry-run reads the mailbox and parses, and runs nothing else.
+         --dry-run reads the mailbox and parses, and does nothing else: it writes nothing (no store is
+         created, no event is added, the cursor stays, no lock is taken), runs no agent and no vote step.
 add-comment  Queues a comment the person pasted (the link from "Copy link to comment", the name, the text) as an
          event of source "pasted"; the next tick handles it like a notification. This is also how the runtime
          works with "mailbox": "none", when no mailbox is connected.
@@ -258,10 +259,11 @@ def run_json(cmd: list, **kw) -> dict:
 
 
 class Store:
-    def __init__(self, cfg: dict):
+    def __init__(self, cfg: dict, init: bool = True):
         self.cmd = [sys.executable, str(cfg["paths"]["store"])]
         self.db = cfg["store_db"]
-        run_json(self.cmd + ["init", "--db", self.db])  # idempotent; creates the database on first use
+        if init:
+            run_json(self.cmd + ["init", "--db", self.db])  # idempotent; creates the database on first use
 
     def __call__(self, verb: str, *args) -> dict:
         return run_json(self.cmd + [verb, "--db", self.db, *[str(a) for a in args]])
@@ -544,6 +546,32 @@ def read_mailbox(cfg: dict, since: str) -> tuple[list, str | None]:
                       "until a tick reads them all: narrow notification_query, or handle the oldest by hand")
 
 
+def dry_tick(cfg: dict) -> dict:
+    """What a tick would find: reads the mailbox and parses each message. It writes nothing: no store is
+    created or migrated, no event is added, no cursor moves, and it takes no lock (it excludes nothing)."""
+    messages, mailbox, parsed = [], None, []
+    if cfg["mailbox"] != "none":
+        cursor = None
+        if Path(cfg["store_db"]).is_file():
+            try:
+                cursor = Store(cfg, init=False)("cursor-get", "--name", f"mailbox:{cfg['agent']}").get("value")
+            except Fail as e:  # a store this script cannot read yet (a tick migrates it): the lookback is used
+                log(f"dry run: the mailbox cursor could not be read ({e})")
+        since = cursor or (now() - timedelta(minutes=int(cfg["first_lookback_minutes"]))).isoformat()
+        try:
+            messages, cut = read_mailbox(cfg, since)
+            if cut:
+                mailbox = {"status": "incomplete", "note": f"mailbox: {cut}"[:1000]}
+        except Fail as e:
+            mailbox = {"status": "failed", "note": f"mailbox: {e}"[:1000]}
+    for m in messages:
+        try:
+            parsed.append(json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(m))[1] or "{}"))
+        except json.JSONDecodeError:
+            parsed.append({"parsed": False, "reason": "the parser printed no JSON"})
+    return {"dry_run": True, "messages": len(messages), "parsed": parsed, **({"mailbox": mailbox} if mailbox else {})}
+
+
 def cmd_tick(a, cfg: dict, project: Path) -> dict:
     store = Store(cfg)
     store("init")
@@ -570,10 +598,6 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             newest = max((m.get("received_at") or "" for m in messages), default="")
     except Exception as e:  # a message of an unexpected shape, or a store refusal: the cursor stays
         mailbox = {"status": "failed", "note": f"mailbox: {e if isinstance(e, Fail) else unexpected(e)}"[:1000]}
-    if a.dry_run:
-        parsed = [json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(m))[1] or "{}") for m in messages]
-        return {"dry_run": True, "messages": len(messages), "new_events": added, "parsed": parsed,
-                **({"mailbox": mailbox} if mailbox else {})}
     if newest:
         store("cursor-set", "--name", f"mailbox:{cfg['agent']}", "--value", newest)
 
@@ -694,7 +718,9 @@ def main(argv=None) -> int:
         cfg = load_config(project)
         if a.verb in ("approve", "reject") and a.id is None:
             raise Fail("--id is required", 2)
-        if a.verb == "tick":
+        if a.verb == "tick" and a.dry_run:
+            out = dry_tick(cfg)
+        elif a.verb == "tick":
             lock_path = Path(cfg["data_dir"]) / "tick.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
             with open(lock_path, "w") as lock:

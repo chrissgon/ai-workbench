@@ -295,6 +295,29 @@ def test_the_cursor_stays_when_the_older_messages_could_not_be_read(env, monkeyp
     assert not again[again.index("--since") + 1].startswith("2026-09-29")  # no cursor yet: the lookback again
 
 
+def test_a_dry_run_writes_nothing(env):
+    # RT9: tick --dry-run created the store and added the messages as pending events before it returned.
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick", "--dry-run")
+    assert code == 0, err
+    assert out["dry_run"] is True and out["messages"] == 1 and out["parsed"][0]["parsed"] is True
+    assert "new_events" not in out  # it adds none, so it cannot count them
+    assert not env["data"].exists()  # no store, no lock file, no run folder
+    assert publisher_calls(env) == [] and not Path(str(env["calls"]) + ".agent").exists()
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["new_events"] == 1 and out["handled"][0]["status"] == "done", err
+    # With a store in place: a dry run reads the cursor and leaves it, and adds no event.
+    set_case(env, [message(1), message(2, commenter="Bruno")], decision())
+    code, out, err = rt(env, "tick", "--dry-run")
+    assert code == 0 and out["messages"] == 2, err
+    dry = mailbox_calls(env)[-1]
+    assert dry[dry.index("--since") + 1] == "2026-09-29T10:01:00Z"
+    code, out, err = rt(env, "tick")
+    real = mailbox_calls(env)[-1]
+    assert real[real.index("--since") + 1] == "2026-09-29T10:01:00Z"  # the dry run did not move the cursor
+    assert out["new_events"] == 1 and len(publisher_calls(env)) == 2  # nor add the second message
+
+
 def test_publisher_failure_goes_to_the_inbox(env, monkeypatch):
     monkeypatch.setenv("FAKE_PUBLISHER_FAIL", "1")
     set_case(env, [message(1)], decision())
