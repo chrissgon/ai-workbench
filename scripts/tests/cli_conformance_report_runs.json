@@ -14,5 +14,9 @@
   "skills/eng-architecture/scripts/check_design.py": {
     "args": ["--spec", "spec.md", "--design", "design.md"],
     "files": {"spec.md": "# Spec\n\n- REQ-1: the list loads\n", "design.md": "# Design\n"}
+  },
+  "skills/mkt-messaging/scripts/lint_messaging.py": {
+    "args": ["--file", "messaging.md"],
+    "files": {"messaging.md": "# Messaging: Example\n\n## Summary\n"}
   }
 }
