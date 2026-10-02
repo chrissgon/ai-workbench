@@ -18,14 +18,24 @@ Nine read-only audits of the whole repository, made on 2026-10-02 before one fin
 
 ## Reviews of the plan
 
-The plan built from the audits was itself reviewed twice on 2026-10-02, read-only. The plan's section "Review of 2026-10-02 and what it changed" says what each finding led to.
+The plan built from the audits was itself reviewed in two rounds on 2026-10-02, read-only. The plan's section "Reviews" says where each round's findings went.
+
+First round:
 
 | File | Scope |
 |------|-------|
 | [plan-review-consistency.md](plan-review-consistency.md) | the plan against itself: counts, order, defaults and decisions that contradict each other (2 blockers, 19 should-fix, 9 nits) |
 | [plan-review-architecture.md](plan-review-architecture.md) | the plan against the code and the architecture, with 38 of its items checked in the files they name (5 blockers, 10 should-fix, 6 nits) |
 
-Both are the reports as written, except the name of the working tree one of them was made in, replaced by a description. Both cite the plan by the line numbers it had before it was amended: search for the quoted text.
+Second round, made on the plan as amended after the first (`6347292`):
+
+| File | Scope |
+|------|-------|
+| [round2-plan.md](round2-plan.md) | the plan read by its executor: whether each item can be carried out without guessing, the order between items, the freeze, the round's arithmetic (4 blockers, 19 should-fix, 10 nits) |
+| [round2-providers-runtime.md](round2-providers-runtime.md) | the providers, the contracts, the agent runtime, the doctor and the packs, read in the code and run offline (no blocker, 42 should-fix, 38 nits); the source of the plan's phase P |
+| [round2-adapters-ci.md](round2-adapters-ci.md) | the adapters and installers, the validator, the security scan, CI and the public face, with installs made in a scratch clone (no blocker, 24 should-fix, 27 nits) |
+
+All five are the reports as written, with these changes: the name of the working tree two of them were made in is replaced by a description; in the second round, one quoted probe value that the repository's secret scan rejects and three quoted phrases in another language are replaced by descriptions. They cite the plan by the line numbers it had when they were written ("L123" in `round2-plan.md`): search for the quoted text. Three ids differ between the second round's reports and the plan, which renamed them to avoid a clash with backlog ids: the reports' "R1 to R7" for the first round's resolutions are the plan's PR1 to PR7, the providers report's findings PB1 to PB16 are the plan's PUB1 to PUB16, and the plan's phase P items are HP1 to HP3.
 
 ## How it was made
 
