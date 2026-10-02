@@ -2,7 +2,7 @@
 # Eval contract: run one prompt through Claude Code non-interactively, inside the eval container.
 #
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir>
-#                      [--allow-web] [--max-cost-usd <amount>]
+#                      [--allow-web] [--max-cost-usd <amount>] [--no-tools]
 #
 # Writes <out>/response.md and <out>/timing.json. It installs nothing: the eval runner stages the
 # skill under test and a case's dependency skills in <cwd>/.claude/skills/<name> before this script
@@ -17,6 +17,9 @@
 # (--dangerously-skip-permissions), which on a person's machine would let a model do anything.
 # --allow-web leaves WebSearch and WebFetch available, for a case that must search the web; without it
 # both are disallowed.
+# --no-tools is for a grading call: the model gets no tool at all (--tools ""), and no permission is
+# skipped, since there is nothing to permit. A grader holds this tier's credential and reads text a
+# model under test wrote; it judges that text and does not act. Not combined with --allow-web.
 # --max-cost-usd becomes claude's --max-budget-usd: the run stops once it has spent that much.
 # SLASH_COMMAND_TOOL_CHAR_BUDGET is raised (200000 unless set): the CLI lists skills to the model within a
 # character budget, its own bundled skills first, and past the budget a project skill is listed by name
@@ -27,7 +30,7 @@
 # is larger than one argument may be.
 # Stopping this script (TERM, INT, HUP) stops the CLI and everything it started.
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" WEB="" MAX_COST=""
+PROMPT="" CWD="" MODEL="" OUT="" WEB="" MAX_COST="" NO_TOOLS=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --prompt-file) PROMPT="$2"; shift 2 ;;
@@ -35,14 +38,16 @@ while [[ $# -gt 0 ]]; do
     --model) MODEL="$2"; shift 2 ;;
     --out) OUT="$2"; shift 2 ;;
     --allow-web) WEB=1; shift ;;
+    --no-tools) NO_TOOLS=1; shift ;;
     --max-cost-usd)
       [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
       MAX_COST="$2"; shift 2 ;;
-    --help|-h) sed -n '2,28p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
 [[ -f "$PROMPT" && -d "$CWD" && -n "$MODEL" && -n "$OUT" ]] || { echo "Error: --prompt-file, --cwd, --model and --out are required. See --help." >&2; exit 2; }
+[[ -z "$NO_TOOLS" || -z "$WEB" ]] || { echo "Error: --no-tools and --allow-web do not go together: a call with no tools has no web tools." >&2; exit 2; }
 [[ "${WB_EVAL_CONTAINER:-}" == "1" ]] || { echo "Error: this adapter allows a model every tool, so it runs only inside the container that evals/eval_run.py starts." >&2; exit 2; }
 command -v claude >/dev/null || { echo "Error: 'claude' CLI not found on PATH." >&2; exit 1; }
 mkdir -p "$OUT"
@@ -61,8 +66,12 @@ OWN_SESSION=(python3 -c 'import os, sys; os.setsid(); os.execvp(sys.argv[1], sys
 trap 'stop_runner; exit 143' TERM INT HUP
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
 set +e
-EXTRA=(--dangerously-skip-permissions)
-[[ -n "$WEB" ]] || EXTRA+=(--disallowedTools "WebSearch,WebFetch")
+if [[ -n "$NO_TOOLS" ]]; then
+  EXTRA=(--tools "")   # checked in `claude --help`, 2.1.283: "" disables every built-in tool
+else
+  EXTRA=(--dangerously-skip-permissions)
+  [[ -n "$WEB" ]] || EXTRA+=(--disallowedTools "WebSearch,WebFetch")
+fi
 [[ -n "$MAX_COST" ]] && EXTRA+=(--max-budget-usd "$MAX_COST")
 # Connectors: https://code.claude.com/docs/en/mcp (read 2026-09-27): claude.ai connectors load when logged in
 # with a claude.ai account unless ENABLE_CLAUDEAI_MCP_SERVERS=false, and `claude -p` loads project servers

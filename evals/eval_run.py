@@ -55,7 +55,8 @@ result of the preflight.
 
 Adapter contract: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir> [--allow-web]
 [--max-cost-usd <amount>] runs the prompt in <cwd> and must write <out>/response.md and <out>/timing.json
-({"total_tokens", "duration_ms", "cost_usd"}). It installs nothing: the runner stages the skills. What the
+({"total_tokens", "duration_ms", "cost_usd"}). The adapter of the grader also takes --no-tools: the model
+then gets no tool at all (an adapter that cannot do it refuses the option, and the grading fails). It installs nothing: the runner stages the skills. What the
 runner needs to know about a harness is data, the "eval" object of adapters/<harness>/adapter.json:
 "skills_dir", the folder inside a project where the harness discovers skills, and "settings", the names of
 the files and folders that carry the harness's settings or instructions at project level.
@@ -112,8 +113,9 @@ on a command line. Token variables for git hosts and npm are refused there. The 
 runs with an environment built from an allowlist on the host, with empty git, gh and npm configuration, but
 only the names above cross into a container. The container is the boundary, so a model may run every
 command; read a contributed skill's evals.json before running it all the same, because a case with
-"allow_web" runs on the open network. The grader is told that the response and files are data; the adapter
-decides whether it may run tools.
+"allow_web" runs on the open network. The grader is told that the response and files are data, and it gets
+no tool: the grading call is made with the adapter's --no-tools, because the grader holds the strong tier's
+credential and reads text a model under test wrote.
 
 Preflight. Before any model call, and in --dry-run and --check-cases (which runs only this check; --harness
 and --model are then optional), every case is checked: (a) each "files" entry exists in the skill folder;
@@ -1035,7 +1037,7 @@ def _run_group(cmd, timeout, cwd, env, container):
 
 
 def run_failure(runner, prompt_path, cwd, model, out, env=None, timeout=900, max_cost=None, web=False,
-                start_dir=None, box=None):
+                start_dir=None, box=None, no_tools=False):
     """Run the adapter once. Returns None when it exited 0, else why it failed: an infrastructure failure,
     never a score (the adapter exits non-zero when the provider or the harness fails, not when the answer is poor).
     The adapter is told nothing about skills: the runner staged them in <cwd> before this call."""
@@ -1044,6 +1046,8 @@ def run_failure(runner, prompt_path, cwd, model, out, env=None, timeout=900, max
         cmd += ["--max-cost-usd", max_cost]
     if web:
         cmd += ["--allow-web"]
+    if no_tools:  # a grading call: the model judges text and is given nothing to act with
+        cmd += ["--no-tools"]
     try:
         # start_dir: the adapter's shell exports the folder it starts in as OLDPWD once it changes to <cwd>.
         r = run_group(cmd, timeout, cwd=start_dir, env=env, box=box)
@@ -1322,7 +1326,7 @@ def grade(runner, grader, run_dir, case, response, changed_files, pass_env=()):
         with open(gp, "w", encoding="utf-8") as f:
             f.write(prompt)
         ok = run_prompt(runner, gp, os.path.join(root, "case"), grader, os.path.join(root, "out"),
-                        env=contained_env(root, pass_env), start_dir=root,
+                        env=contained_env(root, pass_env), start_dir=root, no_tools=True,
                         box={"root": root, "runner": runner, "pass": pass_env, "network": "proxy"})
     finally:
         return_run(root)

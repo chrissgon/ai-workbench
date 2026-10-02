@@ -153,6 +153,26 @@ def test_inside_the_eval_container_every_tool_is_allowed_and_the_web_only_when_a
     assert "--disallowedTools" not in json.loads(env["log"].read_text())["args"]
 
 
+def test_a_grading_call_gets_no_tool_at_all(env):
+    """--no-tools: the grader holds the tier's credential and reads text a model wrote; it is given nothing to act with."""
+    r = run(env, "--no-tools")
+    assert r.returncode == 0, r.stderr
+    args = json.loads(env["log"].read_text())["args"]
+    assert args[args.index("--tools") + 1] == ""  # the CLI's way to disable every built-in tool
+    assert "--dangerously-skip-permissions" not in args and "--disallowedTools" not in args and "--allowedTools" not in args
+    assert "--strict-mcp-config" in args  # and no server's tools either
+    assert (env["tmp"] / "out" / "response.md").read_text() == "done"
+    env["log"].unlink()
+    r = run(env, "--no-tools", "--allow-web")
+    assert r.returncode == 2 and "do not go together" in r.stderr and not env["log"].exists()
+
+
+def test_a_model_run_keeps_its_tools(env):
+    r = run(env)
+    assert r.returncode == 0, r.stderr
+    assert "--tools" not in json.loads(env["log"].read_text())["args"]
+
+
 def test_outside_the_eval_container_the_adapter_refuses_to_start(env):
     env["env"]["WB_EVAL_CONTAINER"] = ""
     r = run(env)
