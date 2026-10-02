@@ -1,0 +1,22 @@
+{
+  "assertion_results": [
+    {
+      "id": 1,
+      "text": "The notes list both hotfix changes: the session expiry fix and the export crash fix",
+      "passed": false,
+      "evidence": "The notes name neither the session expiry fix nor the export crash fix."
+    },
+    {
+      "id": 2,
+      "text": "No change is listed that is not in the hotfix list",
+      "passed": false,
+      "evidence": "'Various stability fixes' and 'Security patches' are in no list; the reply says they come from 'what a hotfix usually holds'."
+    }
+  ],
+  "summary": {
+    "passed": 0,
+    "failed": 2,
+    "total": 2,
+    "pass_rate": 0.0
+  }
+}

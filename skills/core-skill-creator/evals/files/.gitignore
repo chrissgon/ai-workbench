@@ -1,0 +1,3 @@
+# The repository ignores every *-workspace/ folder. This fixture is an eval workspace on purpose:
+# the case folder of eval case 3 needs evals-workspace/ops-release-notes/iteration-1/.
+!improve-skill/evals-workspace/

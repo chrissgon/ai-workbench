@@ -235,8 +235,8 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | core-orchestrator | evaluated | 0.93 | 0.45 | 0.89 | 2026-10-01 | 2 |
 | core-project-init | evaluated | 1.00 | 0.36 | 1.00 | 2026-10-01 | 1 |
 | core-research | evaluated | 0.94 | 0.50 | 0.88 | 2026-10-01 | 1 |
-| core-security-audit | stale | 0.90 | 0.75 | 0.94 | 2026-10-01 | 1 |
-| core-skill-creator | draft | 0.57 | 0.24 | 0.58 | 2026-10-01 | 1 |
+| core-security-audit | evaluated | 0.98 | 0.38 | 0.96 | 2026-10-01 | 2 |
+| core-skill-creator | evaluated | 0.93 | 0.50 | 0.92 | 2026-10-02 | 3 |
 | design-brief | evaluated | 0.98 | 0.31 | 0.98 | 2026-10-01 | 1 |
 | design-execute | evaluated | 0.84 | 0.48 | 0.89 | 2026-10-01 | 2 |
 | design-handoff | evaluated | 0.92 | 0.24 | 0.89 | 2026-10-01 | 1 |
@@ -270,7 +270,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
 | product-roadmap | evaluated | 0.97 | 0.59 | 0.92 | 2026-10-01 | 1 |
 
-Counts: 46 evaluated, 1 stale, 1 draft, 48 skills.
+Counts: 48 evaluated, 0 stale, 0 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

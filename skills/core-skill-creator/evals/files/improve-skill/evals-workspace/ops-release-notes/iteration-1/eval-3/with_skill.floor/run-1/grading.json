@@ -1,0 +1,22 @@
+{
+  "assertion_results": [
+    {
+      "id": 1,
+      "text": "The notes list both hotfix changes: the session expiry fix and the export crash fix",
+      "passed": false,
+      "evidence": "No notes were written; the reply says the file was not found."
+    },
+    {
+      "id": 2,
+      "text": "No change is listed that is not in the hotfix list",
+      "passed": true,
+      "evidence": "Nothing is listed."
+    }
+  ],
+  "summary": {
+    "passed": 1,
+    "failed": 1,
+    "total": 2,
+    "pass_rate": 0.5
+  }
+}

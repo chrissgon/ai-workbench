@@ -10,9 +10,9 @@
     }
   },
   "skill": "core-skill-creator",
-  "content_sha256": "8f05c85ca9b156baf0b178ea318a230bd1ce8cb48b8edecea4aa054eb5c4c063",
-  "date": "2026-10-01",
-  "iteration": 1,
+  "content_sha256": "02ec7e35b7c94813ca65df76a77934bf0241c89c9ca83cec73da03b2ba6356f1",
+  "date": "2026-10-02",
+  "iteration": 3,
   "runs": 3,
   "cases": [
     1,
@@ -29,10 +29,10 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.574,
-    "strong_without": 0.237,
-    "floor_with": 0.585,
-    "floor_without": 0.163
+    "strong_with": 0.928,
+    "strong_without": 0.504,
+    "floor_with": 0.917,
+    "floor_without": 0.368
   },
   "complete": true,
   "infra_failures": 0,
@@ -45,9 +45,9 @@
     "image_id": "sha256:caacfddc3312c2acba007ce0957c214419681be4576028bc28f4db34e9f71a95"
   },
   "gate": {
-    "floor": false,
-    "strong": false,
+    "floor": true,
+    "strong": true,
     "strong_delta": true,
-    "passed": false
+    "passed": true
   }
 }

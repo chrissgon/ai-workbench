@@ -1,0 +1,22 @@
+{
+  "assertion_results": [
+    {
+      "id": 1,
+      "text": "The reply asks which version the release is",
+      "passed": false,
+      "evidence": "The reply asks nothing and titles the notes 'v1.0'."
+    },
+    {
+      "id": 2,
+      "text": "No notes file is written before the version is known",
+      "passed": false,
+      "evidence": "The run wrote docs/release/notes.md with an invented version."
+    }
+  ],
+  "summary": {
+    "passed": 0,
+    "failed": 2,
+    "total": 2,
+    "pass_rate": 0.0
+  }
+}
