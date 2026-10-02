@@ -114,6 +114,8 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/product/prd.md` | product-prd | - |
 | `docs/product/roadmap.md` | product-roadmap | - |
 | `docs/product/specs/<feature>.md` | product-feature-spec | - |
+| `docs/security/audit-<date>.md` | core-security-audit | - |
+| `docs/security/vetting-<skill>-<date>.md` | core-security-audit | - |
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.check.json` | core-research | - |
