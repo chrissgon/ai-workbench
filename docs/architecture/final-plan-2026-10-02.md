@@ -42,6 +42,8 @@ The terms of the reliability model are defined in that document, section "Terms"
 
 Nothing is open. The points that were put to the maintainer, all answered on 2026-10-02:
 
+- **The full test is deferred; the adjustments come first.** Decided when the work started: the skills were measured many times in the first round, the full test is the slowest part, and under the model nothing forces it. So phases A, B, C, C0 and P are carried out now; phase D keeps only what is cheap (its static checks, the smoke pass of every case once, and the guard cases of the skills that declare a side effect, run before those skills are used for real again); the pilot of D3, the reading of D4 and the whole of phase E wait for a battery of full tests that the maintainer starts later. Until then the 48 skills read `needs a test`, which is the honest label, and a skill gets its full test earlier only when the smoke pass shows a problem.
+
 - **How skills are tested.** The reliability model, in the simpler version its independent review recommends, with every correction that review proposes.
 - **Field evidence never promotes a skill by itself.** After a change of behaviour a skill returns to `reliable` only with lab runs: 3 to 9, the affected cases and the guard cases.
 - **`reliable` requires a pessimistic score of 0.70 or more.** A small skill that has just passed its full test with a marginal mean therefore starts in `watch`. "Done" for a new skill remains "its first full test passed".
@@ -507,8 +509,8 @@ How the phases fit together:
 | A | Repairs and records that touch neither a skill folder nor the measurement; the model written into the repository's rules | B, C and P | `main` green, the backlog true to the code |
 | B | The measurement, changed once; the evidence store, the version rules, the score and the bands | A, C and P (other files: `evals/`, the eval adapters) | measurement version 5 closed with its fingerprint; the status computed from evidence |
 | C | The skills, each edited once | B and P | 48 skills changed and at `1.0.0`, none tested |
-| D | Dry run | P; nothing else: it needs B and C merged | a pilot that passes, every case run once, one real full test read back, the calendar of E |
-| E | The first full test of the 48 skills | P, and F items in another working tree | every skill with a full test in its evidence and a band |
+| D | Dry run. Now: the static checks, the smoke pass and the guard cases of the skills with a side effect. Deferred with phase E: the pilot and its reading | P; nothing else: it needs B and C merged | every case run once and the guard cases run; later, a pilot that passes, one real full test read back, the calendar of E |
+| E | The first full test of the 48 skills. Deferred: started by the maintainer after the adjustments (section "Open for the maintainer") | P, and F items in another working tree | every skill with a full test in its evidence and a band |
 | F | After phase E, independent of skills; field evidence | G and P | each lane's own exit |
 | G | New skills and flows, each tested when built | F and P | each skill's first full test passed |
 | H | Waiting on the maintainer or on the world | everything | the event |
@@ -742,6 +744,8 @@ Counts: 4 S, 33 M and 11 L. Fifteen skills changed after their first-round recor
 
 ### Phase D. Dry run
 
+**Carried out now, of this phase:** D1 and D2, the smoke pass (the part of D3 that runs every case once, with the skill, and writes no evidence), and one partial test of the guard cases of each of the nine skills that declare a side effect (3 runs each, on the reference model; it is evidence). **Deferred with phase E:** the pilot and D4.
+
 Goal: catch a mistake in the harness, in a convention or in a case while it costs a pilot; run every case once before any evidence depends on it; make the first real full test and read it back through the store, the score, the bands and the tables; and measure what phase E will consume.
 
 | # | Step | What it checks | Touches | Size |
@@ -759,6 +763,8 @@ Goal: catch a mistake in the harness, in a convention or in a case while it cost
 - Exit: D1 and D2 pass; a pilot with none of the stop conditions; every failure of the smoke pass classified, and every case or skill defect it showed fixed; one real full test read back through the store, the score, the bands and the tables, and merged or discarded by D4; the comparison of the field block on record; the grader's disagreement rate and the calendar of phase E entered in the decisions log.
 
 ### Phase E. The first full test of the 48 skills
+
+**Deferred.** This phase, the pilot (D3) and its reading (D4) are not carried out with the adjustments; the maintainer starts them later as one battery. Phase F's items that say "after phase E" wait for it only where they need its evidence (F1, F4); F3, F5, F6, F8 and F9 may start once phases B and C have merged.
 
 Goal: every skill has a full test in its evidence, under measurement version 5, and a band. This phase is the first full test under the model and the last of nothing: what comes after it is in "What a change costs now".
 
