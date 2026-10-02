@@ -49,6 +49,8 @@ def value(prefix, default=None):
 
 width, height = (int(n) for n in value("--window-size=").split(","))
 scale = float(value("--force-device-scale-factor=", "1"))
+# Some real builds ignore a scale factor below 0.5: the stand-in can be told to do the same.
+scale = max(scale, float(os.environ.get("FAKE_BROWSER_MIN_SCALE", "0")))
 if "--dump-dom" in args:
     page_height = os.environ.get("FAKE_PAGE_HEIGHT", str(height))
     print('<html data-screenshot-probe="%s"><head></head><body></body></html>' % page_height)
@@ -90,12 +92,21 @@ def project(tmp_path: Path) -> Path:
     return root
 
 
+def node_only(project: Path) -> str:
+    """A folder that holds node and nothing else, for PATH: no real browser can be found on it."""
+    folder = project.parent / "node-only"
+    if not folder.exists():
+        folder.mkdir()
+        (folder / "node").symlink_to(NODE)
+    return str(folder)
+
+
 def run(project: Path, *args: str, env: dict | None = None, path: str | None = None, timeout: int = 30):
     """Run the script in the project folder with a minimal environment. Returns (process, logged calls)."""
     log = project.parent / "calls.jsonl"
     if log.exists():
         log.unlink()
-    full = {"PATH": path if path is not None else os.path.dirname(NODE), "HOME": str(project.parent / "home"),
+    full = {"PATH": path if path is not None else node_only(project), "HOME": str(project.parent / "home"),
             "TMPDIR": str(project.parent), "FAKE_BROWSER_LOG": str(log)}
     full.update(env or {})
     proc = subprocess.run([NODE, str(project.parent / "screenshot.mjs"), *args], cwd=project, env=full,
@@ -118,8 +129,8 @@ def test_chrome_bin_renders_without_playwright(project):
     proc, calls = run(project, *BASE, env={"CHROME_BIN": str(browser)})
     assert proc.returncode == 0, proc.stderr
     result = json.loads(proc.stdout)
-    assert result == {"ok": True, "out": "out/card.png", "width": 1200, "height": 630,
-                      "bytes": (project / "out/card.png").stat().st_size}
+    assert result == {"ok": True, "out": "out/card.png", "width": 1200, "height": 630, "pixel_width": 1200,
+                      "pixel_height": 630, "bytes": (project / "out/card.png").stat().st_size}
     assert png_size(project / "out/card.png") == (1200, 630)
     assert "Engine: system browser" in proc.stderr and "CHROME_BIN" in proc.stderr
     assert "install" not in proc.stderr.lower()
@@ -154,7 +165,7 @@ def test_browser_flag_wins_over_chrome_bin(project):
 def test_browser_found_on_path(project, name):
     folder = project.parent / "bin"
     stand_in(folder, name)
-    proc, calls = run(project, *BASE, path=os.pathsep.join([str(folder), os.path.dirname(NODE)]))
+    proc, calls = run(project, *BASE, path=os.pathsep.join([str(folder), node_only(project)]))
     assert proc.returncode == 0, proc.stderr
     assert {c["name"] for c in calls} == {name}
     assert "from PATH" in proc.stderr
@@ -164,7 +175,7 @@ def test_unusable_chrome_bin_falls_back_to_path(project):
     folder = project.parent / "bin"
     stand_in(folder, "chromium")
     proc, calls = run(project, *BASE, env={"CHROME_BIN": str(project.parent / "missing-browser")},
-                      path=os.pathsep.join([str(folder), os.path.dirname(NODE)]))
+                      path=os.pathsep.join([str(folder), node_only(project)]))
     assert proc.returncode == 0, proc.stderr
     assert "CHROME_BIN" in proc.stderr and "cannot be run" in proc.stderr
     assert {c["name"] for c in calls} == {"chromium"}
@@ -223,7 +234,23 @@ def test_dark_reduced_motion_scale_and_wait_become_browser_flags(project):
     assert "--force-device-scale-factor=2" in args
     assert "--virtual-time-budget=2000" in args
     assert png_size(project / "out/card.png") == (2400, 1260)
-    assert json.loads(proc.stdout)["width"] == 1200
+    result = json.loads(proc.stdout)
+    assert (result["width"], result["height"]) == (1200, 630)
+    assert (result["pixel_width"], result["pixel_height"]) == (2400, 1260)
+
+
+def test_an_image_of_another_size_than_asked_is_a_render_error(project):
+    browser = stand_in(project.parent / "bin")
+    proc, calls = run(project, *BASE, "--scale", "0.25", env={"CHROME_BIN": str(browser), "FAKE_BROWSER_MIN_SCALE": "0.5"})
+    assert len(calls) == 1 and "--force-device-scale-factor=0.25" in calls[0]["args"]
+    assert proc.returncode == 1 and proc.stdout == ""
+    assert "600 x 315 px image; 300 x 158 was asked" in proc.stderr
+    assert "render at the smaller --width and --height instead" in proc.stderr
+    assert not (project / "out/card.png").exists()
+    proc, _ = run(project, "--html", "card.html", "--out", "out/card.png", "--width", "300", "--height", "158",
+                  env={"CHROME_BIN": str(browser), "FAKE_BROWSER_MIN_SCALE": "0.5"})
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["pixel_width"] == 300 and png_size(project / "out/card.png") == (300, 158)
 
 
 def test_browser_that_never_exits_is_stopped(project):

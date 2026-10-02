@@ -3,6 +3,10 @@
     "args": ["--file", "brief.md", "--type", "screen", "--values", "inline"],
     "files": {"brief.md": "# Brief\n"}
   },
+  "skills/design-execute/scripts/lint_result.py": {
+    "args": ["--file", "results.md", "--brief", "brief.md"],
+    "files": {"results.md": "# Results\n", "brief.md": "# Brief\n"}
+  },
   "skills/design-handoff/scripts/lint_handoff.py": {
     "args": ["--file", "handoff.md", "--flows", "flows.md", "--screen", "SCREEN-1"],
     "files": {"handoff.md": "# Handoff\n", "flows.md": "# Flows\n"}
