@@ -4,7 +4,7 @@
 Usage:
   python3 tracker.py --check
   python3 tracker.py list --project <key>
-  python3 tracker.py create --project <key> --title <text> --body-file <path> [--label <text>]...
+  python3 tracker.py create --project <key> --title-file <path> --body-file <path> [--label <text>]...
                      --idempotency-key <key> [--dry-run]
 
 --check prints whether the tracker can be reached. list prints the project's open tickets as JSON.
@@ -36,7 +36,7 @@ if args[0] == "list":
     print(json.dumps({"project": value("--project"), "tickets": []}))
     sys.exit(0)
 if args[0] == "create":
-    ticket = {"project": value("--project"), "title": value("--title"),
+    ticket = {"project": value("--project"), "title": Path(value("--title-file")).read_text(encoding="utf-8").strip(),
               "body": Path(value("--body-file")).read_text(encoding="utf-8"),
               "idempotency_key": value("--idempotency-key")}
     if "--dry-run" in args:

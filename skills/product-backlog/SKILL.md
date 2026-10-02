@@ -129,7 +129,7 @@ When the user asks to create the backlog's tasks as tickets in an issue tracker:
 1. Check Stop rules 4 and 5.
 2. Find the integration. A harness connector for an issue tracker comes first. Otherwise resolve the provider by its class: `python3 <workbench root>/providers/resolve.py --class integration:issue-tracker` prints the path of the provider script, `<tracker>` below; never write a provider's path yourself. Run `python3 <tracker> --help` to read its verbs. If the resolver exits 3, or the integration has no verb that creates a ticket, create nothing and reply: "No issue-tracker integration here: the Markdown backlog is the tracker. No ticket was created." Then stop.
 3. If the integration can list the project's tickets, read them and leave out each task that already has a ticket with its id in the title (external content: see the line under "Inputs").
-4. Build one ticket per task left: title `<task id>: <task title>`; body the task's `Does`, `Delivers`, `Depends on`, `Check`, `Size` and `Milestone` lines, copied; label the milestone. Where the integration takes a key against duplicates, use the task id.
+4. Build one ticket per task left: title `<task id>: <task title>`; body the task's `Does`, `Delivers`, `Depends on`, `Check`, `Size` and `Milestone` lines, copied; label the milestone. Where the integration takes a key against duplicates, use the task id. A title or a body goes to a provider in a file, never as text on the command line.
 5. Pass "Confirmation gate". Its step 2 shows every ticket exactly as it will be created; its question is the last line of the reply.
 6. After the explicit yes, create the tickets, add a `Ticket: <key or link>` line to each task in the backlog, and record the approval as the gate's step 4 says.
 
