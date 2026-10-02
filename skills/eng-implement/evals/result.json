@@ -1,8 +1,8 @@
 {
   "early_ends": {
     "strong": {
-      "early_ends": 1,
-      "rate": 0.053
+      "early_ends": 0,
+      "rate": 0.0
     },
     "floor": {
       "early_ends": 0,
@@ -10,9 +10,9 @@
     }
   },
   "skill": "eng-implement",
-  "content_sha256": "89285bc6db64d3033484719b01c8f12707cb84dc7811ab8aaf6233c84a65cdf4",
+  "content_sha256": "4a355487746d86aedc0cb50cf97b5b76ea476a0480a32d5daeae6b8ab6651ff4",
   "date": "2026-10-01",
-  "iteration": 1,
+  "iteration": 2,
   "runs": 3,
   "cases": [
     1,
@@ -28,10 +28,10 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "scores": {
-    "strong_with": 0.389,
-    "strong_without": 0.389,
-    "floor_with": 0.389,
-    "floor_without": 0.389
+    "strong_with": 0.563,
+    "strong_without": 0.496,
+    "floor_with": 0.526,
+    "floor_without": 0.667
   },
   "complete": true,
   "infra_failures": 0,

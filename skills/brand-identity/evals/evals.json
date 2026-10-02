@@ -16,14 +16,14 @@
     {
       "id": 2,
       "prompt": "decisions for the identity are in the state file. build it",
-      "expected_output": "docs/brand/identity.md with colours taken from design/tinykv-tokens.md citing the token names, one accent, a contrast result for each pair computed with contrast.py and a usage rule for the pairs that fail (the light accent #F59E0B on white fails for text: about 2.15:1), typefaces with a licence or marked as the system font, the LinkedIn cover size with a safe area on the left for the photo, a valid brand-tokens JSON block, status draft. At least three HTML variants of the cover exist with the label from the strategy.",
+      "expected_output": "docs/brand/identity.md with colours taken from design/tinykv-tokens.md citing the token names, one accent, a contrast result for each pair computed with contrast.py and a usage rule for the pairs that fail (the light accent #F59E0B on white fails for text: about 2.15:1), typefaces with a licence or marked as the system font, the LinkedIn cover size with a safe area on the left for the photo, a valid brand-tokens JSON block, status draft. The cover exists in at least three variants (separate HTML files, or one HTML file that selects the variant) with the label from the strategy.",
       "files": ["evals/files/dana-decided"],
       "assertions": [
         "docs/brand/identity.md cites tinykv token names (for example --tk-accent) as the origin of its colours",
         "The light accent #F59E0B on white is reported with a ratio near 2.15:1 and turned into a rule that forbids it for text (or for small text)",
         "The identity contains a brand-tokens block that is valid JSON",
         "The LinkedIn cover format gives 1584x396 (4:1) and keeps an area on the left free for the profile photo",
-        "At least three HTML variants of the cover exist and carry the label 'Staff Engineer · Creator of tinykv · Databases and small tools' or its words",
+        "The cover exists in at least three variants, as separate HTML files or as one HTML file that selects the variant (for example by query string), and each variant carries the label 'Staff Engineer · Creator of tinykv · Databases and small tools' or its words",
         "The identity's status is draft, and the reply asks Dana to choose a variant"
       ]
     }

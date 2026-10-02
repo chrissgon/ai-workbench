@@ -236,7 +236,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | core-project-init | evaluated | 1.00 | 0.36 | 1.00 | 2026-10-01 | 1 |
 | core-research | draft | — | — | — | — | — |
 | core-security-audit | stale | 0.90 | 0.75 | 0.94 | 2026-10-01 | 1 |
-| core-skill-creator | draft | — | — | — | — | — |
+| core-skill-creator | draft | 0.57 | 0.24 | 0.58 | 2026-10-01 | 1 |
 | design-brief | evaluated | 0.98 | 0.31 | 0.98 | 2026-10-01 | 1 |
 | design-execute | draft | — | — | — | — | — |
 | design-handoff | evaluated | 0.92 | 0.24 | 0.89 | 2026-10-01 | 1 |
@@ -247,7 +247,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | eng-codebase-map | evaluated | 0.98 | 0.37 | 0.91 | 2026-10-01 | 2 |
 | eng-docs | evaluated | 1.00 | 0.31 | 0.98 | 2026-10-01 | 1 |
 | eng-impact-analysis | evaluated | 1.00 | 0.70 | 1.00 | 2026-10-01 | 1 |
-| eng-implement | draft | 0.39 | 0.39 | 0.39 | 2026-10-01 | 1 |
+| eng-implement | draft | 0.56 | 0.50 | 0.53 | 2026-10-01 | 2 |
 | eng-integration-tests | evaluated | 0.98 | 0.53 | 0.93 | 2026-10-01 | 1 |
 | eng-refactor | evaluated | 1.00 | 0.54 | 1.00 | 2026-10-01 | 1 |
 | eng-root-cause | evaluated | 1.00 | 0.57 | 1.00 | 2026-10-01 | 1 |
@@ -260,17 +260,17 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | mkt-messaging | evaluated | 1.00 | 0.62 | 0.96 | 2026-10-01 | 1 |
 | mkt-publish | evaluated | 0.88 | 0.54 | 1.00 | 2026-10-01 | 1 |
 | mkt-social-copy | evaluated | 1.00 | 0.65 | 1.00 | 2026-10-01 | 1 |
-| mkt-vote-round | draft | — | — | — | — | — |
+| mkt-vote-round | evaluated | 0.96 | 0.67 | 0.95 | 2026-10-01 | 2 |
 | ops-branch-sync | evaluated | 0.94 | 0.57 | 0.94 | 2026-10-01 | 1 |
-| ops-ci-pipeline | draft | — | — | — | — | — |
-| ops-pull-request | draft | — | — | — | — | — |
-| ops-repo-baseline | draft | — | — | — | — | — |
+| ops-ci-pipeline | evaluated | 1.00 | 0.66 | 0.97 | 2026-10-01 | 1 |
+| ops-pull-request | evaluated | 1.00 | 0.57 | 1.00 | 2026-10-01 | 1 |
+| ops-repo-baseline | evaluated | 0.98 | 0.55 | 1.00 | 2026-10-01 | 1 |
 | product-backlog | evaluated | 0.97 | 0.36 | 1.00 | 2026-10-01 | 1 |
 | product-feature-spec | evaluated | 0.98 | 0.11 | 1.00 | 2026-10-01 | 1 |
 | product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
 | product-roadmap | evaluated | 0.97 | 0.59 | 0.92 | 2026-10-01 | 1 |
 
-Counts: 36 evaluated, 2 stale, 10 draft, 48 skills.
+Counts: 40 evaluated, 2 stale, 6 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress

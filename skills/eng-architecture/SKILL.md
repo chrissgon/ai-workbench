@@ -15,10 +15,10 @@ metadata:
   area: engineering
   kind: capability
   inputs: [docs/product/specs/<feature>.md, docs/design/handoff/<screen>.md, docs/engineering/architecture.md, docs/workbench/state.md]
-  outputs: [docs/engineering/designs/<feature>.md, docs/engineering/adr/<NNNN>-<title>.md]
+  outputs: [docs/engineering/designs/<feature>.md, docs/engineering/designs/<feature>.check.json, docs/engineering/adr/<NNNN>-<title>.md]
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "0.3"
 ---
 
 # Architecture design
@@ -58,7 +58,7 @@ Progress:
 - [ ] Step 7: ADRs. One file per `engineering` decision with a viable alternative, from [assets/adr-template.md](assets/adr-template.md): context, at least two options with consequences, the decision, and the requirement ids it serves. Number them sequentially after the last existing ADR in `docs/engineering/adr/`.
 - [ ] Step 8: Verification plan. One row per AC: how it is checked (unit test, integration or end-to-end test, build assertion, manual inspection with the exact thing to look at) and the command or location. This table is what `eng-unit-tests` and `eng-integration-tests` implement.
 - [ ] Step 9: Write the design from [assets/design-template.md](assets/design-template.md) to `docs/engineering/designs/<feature>.md`. Keep it under 250 lines; depth goes into ADRs.
-- [ ] Step 10: Check traceability: `python3 scripts/check_design.py --spec docs/product/specs/<feature>.md --design docs/engineering/designs/<feature>.md --adr-dir docs/engineering/adr`. Every REQ, NFR, EDGE and AC id must appear in the design; every ADR must have Status, Context, Options with two or more entries, Decision and Consequences. Fix until `ok` is true.
+- [ ] Step 10: Check traceability: `python3 scripts/check_design.py --spec docs/product/specs/<feature>.md --design docs/engineering/designs/<feature>.md --adr-dir docs/engineering/adr --report docs/engineering/designs/<feature>.check.json`. Every REQ, NFR, EDGE and AC id must appear in the design; every ADR must have Status, Context, Options with two or more entries, Decision and Consequences. Run it before fixing anything, also when the task is to check a design that already exists, and keep the JSON line it prints: that is the first run. `--adr-dir` is the folder that holds only ADRs, never a folder that also holds the specification or the design. Fix the design and the ADRs and rerun until `ok` is true; keep the JSON line of the last run too. `--report` keeps the result of the last run, with its arguments, next to the design as the evidence. Never write that the check passed without having run the script; when it cannot be run, say `Check: not run` and why in the report.
 - [ ] Step 11: Register the design and the ADRs in `docs/workbench/state.md` (owner `eng-architecture`, status `draft`) when the state file exists, and report.
 - [ ] Step 12: Self-check against "Quality criteria".
 
@@ -70,7 +70,10 @@ Design and ADR layouts are in `assets/`. The report:
 ## Design: <feature> → docs/engineering/designs/<feature>.md
 
 - Components: <n>; contracts: <n>; flows: <n>; ADRs: <list of NNNN-title>
-- Traceability: <n>/<n> ids covered (check ok)
+- Traceability: <n>/<n> ids covered
+- Check, first run: `python3 scripts/check_design.py <the arguments used>` → `<the JSON line it printed, verbatim>`
+- Check, final run: `python3 scripts/check_design.py <the arguments used>` → `<the JSON line it printed, verbatim>`; recorded in docs/engineering/designs/<feature>.check.json
+- Fixed between the two runs: <one line per finding of the first run and what was changed, or "nothing: the first run was ok">
 - Decisions asked to the user: <list or "none">
 - Assumptions to verify before implementation: <list or "none">
 Next: product-backlog, or the questions above
@@ -80,7 +83,7 @@ Next: product-backlog, or the questions above
 
 Approve the design only if all of the following hold:
 
-- `check_design.py` reports `ok: true`: every REQ, NFR, EDGE and AC id from the specification appears in the design, and every ADR has the required sections with at least two options.
+- `check_design.py` reports `ok: true`: every REQ, NFR, EDGE and AC id from the specification appears in the design, and every ADR has the required sections with at least two options. The report quotes the command and the JSON output of the first and the final run, and `<feature>.check.json` sits next to the design.
 - Every framework or library API named in the design cites its documentation (URL and version) or a file in the codebase; anything uncited is listed under "Assumptions to verify".
 - Every component satisfies at least one REQ and every REQ is satisfied by at least one component.
 - Every EDGE case has a failure path or a validation rule naming the component that handles it.
@@ -92,7 +95,7 @@ Approve the design only if all of the following hold:
 
 - Size the design to the numbers in the spec. Tens of pages do not need a cache layer; a design that mentions scaling without a number from the spec is decorating.
 - Framework APIs drift between major versions. Cite the version you read; the implementer will paste your examples.
-- An ADR with one option is a note, not a decision. If no alternative was viable, do not write an ADR; say the decision followed from a requirement.
+- An ADR with one option is a note, not a decision. If no alternative was viable, do not write an ADR; say the decision followed from a requirement. For an existing single-option ADR, read its Context, the specification and the design: when they name a real alternative, add it as the second option; when they say none was viable, delete the ADR file and change its row in Decisions to `decided`, citing the requirement. Never invent an option to satisfy the check.
 - The spec's OPEN items are not yours to close. If one blocks a component, stop and ask; if it does not, design around it and say where the answer plugs in.
 - Build-time generators need failure semantics: what makes the build fail, what only warns, and what the message names. The EDGE cases usually say.
 - Removals are design too: list what is deleted and what must keep working after it is gone, with the AC that checks it.

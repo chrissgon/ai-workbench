@@ -21,6 +21,8 @@
 # only, with no description, so the model cannot tell when to use the skill under test.
 # The CLI authenticates with CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) from the environment.
 # Extra CLI flags: CLAUDE_EVAL_ARGS.
+# The prompt reaches the CLI on standard input, not as an argument: a grading prompt with long files
+# is larger than one argument may be.
 # Stopping this script (TERM, INT, HUP) stops the CLI and everything it started.
 set -euo pipefail
 PROMPT="" CWD="" MODEL="" OUT="" SKILL_DIR="" WEB="" MAX_COST=""
@@ -37,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     --max-cost-usd)
       [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
       MAX_COST="$2"; shift 2 ;;
-    --help|-h) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -85,9 +87,9 @@ EXTRA=(--dangerously-skip-permissions)
 # Connectors: https://code.claude.com/docs/en/mcp (read 2026-09-27): claude.ai connectors load when logged in
 # with a claude.ai account unless ENABLE_CLAUDEAI_MCP_SERVERS=false, and `claude -p` loads project servers
 # without asking unless --strict-mcp-config (checked in `claude --help`, 2.1.283).
-( cd "$CWD" && export ENABLE_CLAUDEAI_MCP_SERVERS=false SLASH_COMMAND_TOOL_CHAR_BUDGET="${SLASH_COMMAND_TOOL_CHAR_BUDGET:-200000}" && exec "${OWN_SESSION[@]}" claude -p "$(cat "$PROMPT")" --model "$MODEL" --output-format json \
+( cd "$CWD" && export ENABLE_CLAUDEAI_MCP_SERVERS=false SLASH_COMMAND_TOOL_CHAR_BUDGET="${SLASH_COMMAND_TOOL_CHAR_BUDGET:-200000}" && exec "${OWN_SESSION[@]}" claude -p --model "$MODEL" --output-format json \
     --setting-sources project,local --strict-mcp-config ${CLAUDE_EVAL_ARGS:-} ${EXTRA[@]+"${EXTRA[@]}"} ) \
-  < /dev/null > "$OUT/raw.json" 2> "$OUT/stderr.log" &
+  < "$PROMPT" > "$OUT/raw.json" 2> "$OUT/stderr.log" &
 RUNNER_PID=$!
 wait "$RUNNER_PID"; RC=$?
 stop_runner   # what the CLI left running (a browser, a server) stops with it

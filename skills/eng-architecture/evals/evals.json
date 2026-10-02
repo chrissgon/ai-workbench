@@ -4,10 +4,10 @@
     {
       "id": 1,
       "prompt": "Design the Markdown content model from docs/product/specs/markdown-content-model.md. The codebase map is in docs/engineering/architecture.md.",
-      "expected_output": "A design at docs/engineering/designs/markdown-content-model.md with components mapped to REQs, the content schema in the framework's own form citing its documentation and version, routes and generated artifacts as contracts, build and render flows with a failure path per EDGE, ADRs for decisions with viable alternatives, a verification plan with one row per AC, and check_design.py reporting ok; user-owned decisions asked, not assumed.",
+      "expected_output": "A design at docs/engineering/designs/markdown-content-model.md with components mapped to REQs, the content schema in the framework's own form citing its documentation and version, routes and generated artifacts as contracts, build and render flows with a failure path per EDGE, ADRs for decisions with viable alternatives, a verification plan with one row per AC, and check_design.py reporting ok, its first and final run quoted in the reply and the final one recorded in docs/engineering/designs/markdown-content-model.check.json; user-owned decisions asked, not assumed.",
       "files": ["evals/files/content-model"],
       "assertions": [
-        "Every REQ, NFR, EDGE and AC id from the specification appears in the design and check_design.py reports ok: true",
+        "Every REQ, NFR, EDGE and AC id from the specification appears in the design, the reply quotes the final run of check_design.py (its command and its JSON output) reporting \"ok\": true, and docs/engineering/designs/markdown-content-model.check.json records \"ok\": true",
         "Every framework API named in the design cites a documentation URL with version or a file in the codebase",
         "Each ADR has at least two options with consequences and names the requirement ids it serves",
         "The verification plan has one concrete check per acceptance criterion",
@@ -30,16 +30,16 @@
     },
     {
       "id": 3,
-      "prompt": "Run the traceability check on this design and fix what it flags.",
-      "expected_output": "check_design.py reports REQ-2 and AC-2 missing from the design, AC-2 without a verification row, and ADR 0001 with a single option; the fixes add a component for REQ-2, a verification row for AC-2, and either a second option to the ADR or its removal with the decision stated as following from a requirement.",
-      "files": ["evals/files/spec-tiny.md", "evals/files/design-incomplete.md", "evals/files/adr"],
+      "prompt": "Run the traceability check on the design docs/engineering/designs/expense-export.md against its specification, docs/product/specs/expense-export.md, and fix what it flags.",
+      "expected_output": "The first run of check_design.py, quoted in the reply, reports REQ-2 and AC-2 missing from the design, AC-2 without a verification row, and ADR 0001 with a single option. The fixes add a component for REQ-2 (the rows of the file: columns, two decimals, sorted by date) and a verification row for AC-2. REQ-3 and the ADR's own Context say the CSV format is fixed by the requirement and no alternative was considered, so the ADR is not a decision: docs/engineering/adr/0001-export-file-format.md is removed, the design no longer cites ADR-0001 and its Decisions row gives the format as decided by REQ-3; no second option is invented. The final run, quoted in the reply and recorded in docs/engineering/designs/expense-export.check.json, reports ok: true.",
+      "files": ["evals/files/trace-check"],
       "assertions": [
-        "The check is run before any edit and its findings are listed",
+        "The reply quotes the check's first run (its JSON output or its findings as printed), made before any fix: REQ-2 and AC-2 missing from the design, AC-2 without a verification row, and the ADR with only one option",
         "REQ-2 gets a component and AC-2 gets a verification row",
-        "The single-option ADR is completed with a second option or removed with the decision restated as following from a requirement",
-        "The check reports ok: true after the fixes"
+        "The single-option ADR is removed, not completed with an invented second option: docs/engineering/adr/0001-export-file-format.md is deleted, the design no longer cites ADR-0001, and the design states the CSV format as decided by REQ-3",
+        "The reply quotes the check's final run (its command and its JSON output) reporting \"ok\": true, and docs/engineering/designs/expense-export.check.json records \"ok\": true"
       ],
-      "grader_files": ["spec-tiny.md"]
+      "grader_files": ["docs/product/specs/expense-export.md"]
     }
   ]
 }

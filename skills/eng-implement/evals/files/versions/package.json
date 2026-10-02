@@ -1,0 +1,10 @@
+{
+  "name": "fernleaf-docs",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "test": "node --test \"tests/**/*.spec.ts\"",
+    "lint": "node scripts/lint.ts"
+  }
+}
