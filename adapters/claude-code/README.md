@@ -14,7 +14,7 @@ Skills are invoked as `/ai-workbench:<skill-name>` and trigger automatically fro
 
 ## What lives here and nowhere else
 
-- `plugin.json`: the manifest source, copied into every build.
+- `plugin.json`: the manifest source, copied into every build. It names no `agents` path: the build's `agents/` folder is the default place.
 - `overrides/<agent>.yaml`: model, tools, permissionMode per agent, merged into the generated agents.
 - `connectors.json` (when needed): which requirement classes this harness satisfies through connectors, read by `scripts/doctor.py --harness claude-code`.
 - `hooks/` (when needed): validation hooks, referenced from `plugin.json`.
@@ -22,7 +22,9 @@ Skills are invoked as `/ai-workbench:<skill-name>` and trigger automatically fro
 ## Limitations
 
 - Symlinks are created at build time, so the filesystem running the build must support them (macOS, Linux; Windows needs developer mode). Nothing symlinked is committed.
-- Whether a symlinked folder under `~/.claude/skills/` is picked up as a plugin must be confirmed on the first real install; the fallback is `claude --plugin-dir`.
+- The linked folder under `~/.claude/skills/` is picked up as the plugin `ai-workbench@skills-dir`: confirmed on 2026-10-02 with CLI 2.1.283 in a scratch home, without a model call (`claude plugin list --json` reads `enabled: true`; `claude plugin details ai-workbench@skills-dir` lists the 48 skills and the 4 agents). The manifest must not carry an `agents` key: with `"agents": "./agents"` the same CLI refused the folder ("invalid manifest file ... agents: Invalid input") and loaded nothing; the `agents/` folder of the build is found by its default place. When a later version does not pick the link up, the fallback is `claude --plugin-dir adapters/claude-code/build/<pack>`, which `install.sh` prints with the build's path.
+- The shared references are in the build, at `build/<pack>/shared/references`, so a skill's `../../shared/references/<file>` resolves by the installed path.
+- One pack is installed at a time: an install removes the builds of other packs, and `--uninstall` removes the link and every build.
 
 ## Evals
 

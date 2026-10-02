@@ -6,23 +6,28 @@
 # Options:
 #   --name    skill name; prefix must be one of biz product brand design eng ops mkt ai core asst flow
 #   --kind    capability or flow (flow- prefix requires kind flow)
-#   --area    business product brand design engineering delivery marketing ai core assistant
+#   --area    business product brand design engineering delivery marketing ai core assistant;
+#             it must be the area of the prefix (biz business, eng engineering, ops delivery,
+#             mkt marketing, asst assistant, the others their own name); a flow names any area
 #   --dry-run print what would be created and exit
 #   --help    show this text
 #
 # Examples:
 #   bash scripts/new-skill.sh --name biz-business-model --kind capability --area business
 #   bash scripts/new-skill.sh --name flow-new-product --kind flow --area core
+#
+# Exit codes: 0 created (or --dry-run), 1 the skill already exists, 2 usage error.
 set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 NAME="" KIND="" AREA="" DRY=0
+need() { [[ $# -ge 2 ]] || { echo "Error: $1 needs a value. See --help." >&2; exit 2; }; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --name) NAME="$2"; shift 2 ;;
-    --kind) KIND="$2"; shift 2 ;;
-    --area) AREA="$2"; shift 2 ;;
+    --name) need "$@"; NAME="$2"; shift 2 ;;
+    --kind) need "$@"; KIND="$2"; shift 2 ;;
+    --area) need "$@"; AREA="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
-    --help|-h) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -34,6 +39,12 @@ case "$KIND" in capability|flow) ;; *) echo "Error: --kind must be capability or
 case "$AREA" in business|product|brand|design|engineering|delivery|marketing|ai|core|assistant) ;; *) echo "Error: --area must be one of business product brand design engineering delivery marketing ai core assistant. Received: '$AREA'" >&2; exit 2 ;; esac
 [[ "$PREFIX" == "flow" && "$KIND" != "flow" ]] && { echo "Error: flow- prefix requires --kind flow." >&2; exit 2; }
 [[ "$PREFIX" != "flow" && "$KIND" == "flow" ]] && { echo "Error: --kind flow requires the flow- prefix." >&2; exit 2; }
+# The same table as PREFIX_TO_AREA of scripts/validate.py; a flow declares the area it mostly lives in.
+case "$PREFIX" in
+  biz) WANT="business" ;; eng) WANT="engineering" ;; ops) WANT="delivery" ;; mkt) WANT="marketing" ;;
+  asst) WANT="assistant" ;; flow) WANT="$AREA" ;; *) WANT="$PREFIX" ;;
+esac
+[[ "$AREA" == "$WANT" ]] || { echo "Error: prefix $PREFIX- implies --area $WANT. Received: '$AREA'" >&2; exit 2; }
 DEST="$ROOT/skills/$NAME"
 [[ -e "$DEST" ]] && { echo "Error: $DEST already exists." >&2; exit 1; }
 TITLE="$(echo "${NAME#*-}" | tr "-" " " | awk '{print toupper(substr($0,1,1)) substr($0,2)}')"
