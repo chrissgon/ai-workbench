@@ -7,6 +7,7 @@ Skills validated: 48.
 | Rule | Skills listed |
 |------|---------------|
 | `meta-keys` | 48 |
+| `requires-role` | 2 |
 | `requires-vocabulary` | 0 |
 | `side-effects-vocabulary` | 1 |
 | `description-when` | 0 |
@@ -80,6 +81,11 @@ Skills validated: 48.
 - `product-feature-spec`: missing: metadata.updates
 - `product-prd`: missing: metadata.updates
 - `product-roadmap`: missing: metadata.updates
+
+## `requires-role`
+
+- `mkt-engage`: requires mailbox (now reader:email): a class has the form <role>:<target>
+- `mkt-publish`: requires scheduler (now scheduler:job): a class has the form <role>:<target>
 
 ## `requires-vocabulary`
 

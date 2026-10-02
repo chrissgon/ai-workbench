@@ -4,21 +4,30 @@ Skills declare what they need from the environment as *classes*, never as produc
 
 ## Classes
 
-| Class | Examples of concrete providers | Used by |
-|-------|-------------------------------|---------|
+| Class | What satisfies it | Used by |
+|-------|-------------------|---------|
 | `integration:issue-tracker` | Jira, Linear, GitHub Issues | engineering flows |
 | `integration:vcs` | GitHub, GitLab | delivery |
 | `integration:design-tool` | Figma; the design-system projects of a generative design tool | design, validation |
-| `search:web` | any web search tool, including fetching the pages it returns | research, business, marketing |
+| `search:web` | read-only access to the public web: a search tool, fetching a page, reading a public registry or a public API | research, business, brand, engineering, marketing |
 | `generator:image` | any image model behind an API | design assets, marketing |
 | `generator:video` | any video model behind an API | marketing (slot reserved, not implemented) |
-| `publisher:<platform>` | LinkedIn via a scheduler API, X, blog CMS | marketing |
-| `mailer` | SMTP, a mail API | marketing, notifications |
-| `mailbox` | Gmail API, IMAP (read only: search and read messages) | marketing, engagement |
-| `scheduler` | launchd on macOS, systemd on Linux (a job runs a command once at a set time or every N minutes); or a harness routine | marketing, operations, the agent runtime's trigger |
-| `store` | SQLite (a local file); a cloud database later | the agent runtime: cursors, events, runs, approval inbox, executed actions |
+| `publisher:<platform>` | the publishing API of the platform, called directly or through a scheduling service; the platform is a parameter | marketing |
+| `sender:email` | SMTP, a mail API | marketing, notifications |
+| `reader:email` | Gmail API, IMAP (read only: search and read messages) | marketing, engagement |
+| `scheduler:job` | launchd on macOS, systemd on Linux (a job runs a command once at a set time or every N minutes); or a harness routine | marketing, operations, the agent runtime's trigger |
+| `store:runtime` | SQLite (a local file); a cloud database later | the agent runtime: cursors, events, runs, approval inbox, executed actions |
 
-Add a class when a second skill needs it; do not add classes speculatively. Class names are identifiers and are not renamed: some carry a prefix (`integration:`, `search:`, `generator:`, `publisher:`) and some are bare (`mailer`, `mailbox`, `scheduler`, `store`; the last three have a native provider under `providers/`), and a skill copies a name exactly as this table spells it.
+Add a class when a second skill needs it; do not add classes speculatively. A skill copies a name exactly as this table spells it, and every skill that uses a class declares it in `requires`, whether its procedure needs the class or only uses it when it is there: the body says what the skill does without it ("Resolution order", step 3), and `scripts/doctor.py` then reports it.
+
+**`search:web` covers any read-only use of the public web**, required or optional: searching, fetching the pages a search returns or a page the user names, and reading a public registry or a public API without credentials (a package's versions, a domain's registration, a public profile). Anything that needs an account, or that writes, is another class.
+
+**Every class has the form `<role>:<target>`**, in one of two forms:
+
+- **A fixed target.** The target is part of the class's identity, and another target would have other verbs: `integration:issue-tracker`, `integration:vcs`, `integration:design-tool`, `search:web`, `generator:image`, `generator:video`, `sender:email`, `reader:email`, `scheduler:job`, `store:runtime`. `requires` names the class exactly as written.
+- **A parameter.** `publisher:<platform>` is the one class whose part after the colon is handed to the provider, as `--platform`: one implementation may serve several platforms, and each declares the ones it serves (`providers/CONTRACT.md`, "Selection"). In `requires` it is written with the placeholder, `publisher:<platform>`, by a skill that works on whichever platform the request names, or with a value by a skill that is about one platform. This table gives no platform as an example, so that a new platform edits no copy of it.
+
+Class names are identifiers. Four of them were bare until 2026-10-02 (`mailer`, `mailbox`, `scheduler`, `store`) and are now `sender:email`, `reader:email`, `scheduler:job` and `store:runtime`. Only the names changed: the provider folders (`providers/mailbox/`, `providers/scheduler/`, `providers/store/`), the selection variables (`MAILBOX_PROVIDER`, `MAILER_PROVIDER`, `SCHEDULER_PROVIDER`, `STORE_PROVIDER`), the keys of a project's `runtime.json` and every data name (ledgers, job labels, stored credentials) are what they were, so a project that uses the workbench changes nothing. `providers/resolve.py` still reads the four old names as aliases, for the copies of the runtime that jobs scheduled earlier keep running; a skill's `requires` does not use them, and the validator reports one that does.
 
 ## Resolution order
 
@@ -33,20 +42,32 @@ A skill's body must describe its behaviour at step 3 for every class it requires
 A skill, the agent runtime and `scripts/doctor.py` reach a provider by its class, through one resolution function, `providers/resolve.py`. None of them names an implementation or builds a provider's path.
 
 - **The command:** `python3 <workbench root>/providers/resolve.py --class <class>` prints the path of the provider script for the class (`--json` adds the implementation and how it was chosen; `--list` prints every class with its implementations and the one that resolves now). Exit 0 with the path, 3 when nothing resolves (the message names the variable to set; the skill degrades), 2 on an unknown class.
-- **The order:** the environment variable of the class, `<CLASS>_<SUBCLASS>_PROVIDER` then `<CLASS>_PROVIDER` (`PUBLISHER_LINKEDIN_PROVIDER`, `SCHEDULER_PROVIDER`, `INTEGRATION_VCS_PROVIDER`); then the platform default where one exists (`scheduler`: launchd on macOS, systemd on Linux); then the only implementation, when the class ships exactly one. Details: `providers/CONTRACT.md`, "Selection".
+- **The order:** the environment variable of the class, `<ROLE>_<TARGET>_PROVIDER` then `<ROLE>_PROVIDER` (`PUBLISHER_<PLATFORM>_PROVIDER` then `PUBLISHER_PROVIDER`; `INTEGRATION_VCS_PROVIDER`; `SCHEDULER_PROVIDER` for `scheduler:job`, one of the four classes that keep the variable of their old name); then the platform default where one exists (`scheduler:job`: launchd on macOS, systemd on Linux); then the only implementation left: for `publisher:<platform>`, among the implementations that serve the platform asked. Details: `providers/CONTRACT.md`, "Selection".
 - **The workbench root:** the environment variable `WORKBENCH_ROOT`, the absolute path of the workbench checkout a project uses. Unset, the function uses the checkout it is in; a skill, which runs from the project and cannot know that path, asks the user once and records the answer as a decision in the state file.
-- **In a skill:** write "Resolve the provider by its class: `python3 <workbench root>/providers/resolve.py --class scheduler` prints the path of the provider script", then use the printed path in the commands that follow. `requires` in the frontmatter names the same class.
+- **In a skill:** write "Resolve the provider by its class: `python3 <workbench root>/providers/resolve.py --class scheduler:job` prints the path of the provider script", then use the printed path in the commands that follow. `requires` in the frontmatter names the same class.
 
 ## Credentials
 
 - Never in this repository. `.env` files are ignored by git.
-- `<CLASS>_PROVIDER` picks the implementation of a class (read by `providers/resolve.py`, see "Reaching a provider script"); it holds a name, never a credential. Provider scripts read provider-specific variables for credentials (documented in the script's `--help`).
+- `<ROLE>_PROVIDER` (or `<ROLE>_<TARGET>_PROVIDER`) picks the implementation of a class (read by `providers/resolve.py`, see "Reaching a provider script"); it holds a name, never a credential. Provider scripts read provider-specific variables for credentials (documented in the script's `--help`).
 - OAuth-based services need a one-time interactive authorization performed by the user with a dedicated script, which stores the refresh token in the OS secret store, never in a file inside a project.
 - Service-side access approval (for example, platform APIs that require an approved developer application) is outside this repository's control. Skills say so when relevant.
 
 ## Side effects and consent
 
-Any skill that publishes, sends, deploys, schedules or creates something outside the repository declares it in `metadata.side_effects` and implements a `## Confirmation gate` section.
+Any skill that changes something outside the repository declares it in `metadata.side_effects` and implements a `## Confirmation gate` section. The vocabulary is closed:
+
+| Word | The skill |
+|------|-----------|
+| `publish` | makes content public on a platform |
+| `send` | sends a message to a person: an e-mail, a direct message |
+| `schedule` | registers a job that acts later |
+| `deploy` | puts code or configuration into a running environment |
+| `create` | creates or changes a record at a remote service: a ticket, a pull request, a file in a design tool, a comment or a reply posted on a host |
+| `push` | pushes commits to a remote repository |
+| `dismiss` | closes or dismisses a record at a remote service (an alert) |
+
+Writing a file inside the project is not a side effect, and there is no word for it. A new word is added here, and to the validator's list, in the pull request of the first skill that needs it.
 
 **One explicit approval, then autonomy.** The user approves once; after that the skill proceeds without asking again, including later and unattended for scheduled work. The gate exists to make the user see exactly what will happen, not to interrupt them repeatedly.
 
@@ -70,4 +91,4 @@ Rules:
 
 ## Checking an environment
 
-`python3 scripts/doctor.py [--harness <adapter>]` lists every class the installed skills require and whether a connector (declared in `adapters/<harness>/connectors.json`) or a native provider satisfies it: the provider `providers/resolve.py` chooses for the class, when its `--check` passes. Flows run it before a phase that needs an external tool and degrade accordingly.
+`python3 scripts/doctor.py [--harness <adapter>]` lists every class the installed skills require and whether a connector (declared in `adapters/<harness>/connectors.json`) or a native provider satisfies it: the provider `providers/resolve.py` chooses for the class, when its `--check` passes (`--check --platform <p>` for `publisher:<p>`, so that a platform nobody serves is reported as missing). A class the resolution function does not know is reported as `unknown`, and counts as missing. Flows run it before a phase that needs an external tool and degrade accordingly.

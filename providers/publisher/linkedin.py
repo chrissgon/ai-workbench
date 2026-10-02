@@ -97,6 +97,9 @@ LITTLE_RESERVED = "\\|{}@[]()<>#*_~"
 HASHTAG_RE = re.compile(r"(?<!\w)#(?=[A-Za-z0-9_]*[A-Za-z])([A-Za-z0-9_]+)(?!\w)")
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
+# The platforms this implementation serves. providers/resolve.py reads this one line as text, without
+# importing the file, to choose among the implementations of publisher:<platform> (providers/CONTRACT.md).
+PLATFORMS = ("linkedin",)
 
 HELP_EPILOG = f"""\
 verbs:
@@ -170,7 +173,7 @@ LinkedIn API version pinned: {LINKEDIN_VERSION}. Access tokens last 60 days and
 there is no refresh token for self-serve apps: rerun auth.py before expiry.
 
 examples:
-  uv run providers/publisher/linkedin.py --check
+  uv run providers/publisher/linkedin.py --check [--platform linkedin]
   uv run providers/publisher/linkedin.py publish --platform linkedin \\
       --text-file post.txt --media cover.png --idempotency-key launch-2026-10 --dry-run
   uv run providers/publisher/linkedin.py publish --platform linkedin \\
@@ -571,8 +574,9 @@ def post_url(urn: str) -> str:
 
 
 def check_platform(args) -> None:
-    if args.platform != "linkedin":
-        raise ProviderError(f"--platform {args.platform!r} is not served by this provider; use linkedin", EXIT_USAGE)
+    if args.platform not in PLATFORMS:
+        raise ProviderError(f"--platform {args.platform!r} is not served by this provider; "
+                            f"use {' or '.join(PLATFORMS)}", EXIT_USAGE)
 
 
 def read_text_file(path_arg: str, flag: str) -> str:
@@ -1168,6 +1172,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         if args.check:
+            if args.platform:  # --check --platform <p>: "do you serve this one, and are you ready for it"
+                check_platform(args)
             return cmd_check()
         if args.verb == "publish":
             if not args.platform or not args.text_file:

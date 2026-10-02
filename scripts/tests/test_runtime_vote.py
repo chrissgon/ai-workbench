@@ -98,6 +98,7 @@ else:
 
 FAKE_PUBLISHER = r'''
 import json, os, sys
+PLATFORMS = ("linkedin",)
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(["publisher"] + sys.argv[1:]) + "\n")
 print(json.dumps({"post_urn": "urn:li:share:7300000000000000001",

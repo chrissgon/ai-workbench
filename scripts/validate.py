@@ -60,8 +60,11 @@ They say what a skill or its cases still have to change; none reads a skill's sc
     its own artifact is not one);
     [contract-owner-table] the contract's generated table of owning skills equals the frontmatters
     (fix: python3 scripts/owner_table.py)
-  - [requires-vocabulary] every metadata.requires value is a class of the table in contracts/environment.md
-    (a class the table writes with a placeholder, publisher:<platform>, is legal as written or with a value)
+  - [requires-role] every metadata.requires value has the form <role>:<target>; the four names that were
+    bare (mailbox, mailer, scheduler, store) are reported with the class each became
+  - [requires-vocabulary] every metadata.requires value that has a role is a class of the table in
+    contracts/environment.md (a class the table writes with a placeholder, publisher:<platform>, is legal as
+    written or with a value)
   - [side-effects-vocabulary] every metadata.side_effects value is one of publish, send, schedule, deploy,
     create, push, dismiss
   - [description-when] the description says when to use the skill (it has the word "when")
@@ -138,7 +141,11 @@ LAYOUT = "contracts/project-layout.md"
 SLOTS_HEADING = "Slots no built skill writes"
 PLACEHOLDER_RE = re.compile(r"<[^<>]*>")
 PATH_OK_RE = re.compile(r"^[A-Za-z0-9._/<>-]+$")  # no *, {}, # (a section of a file) or space
-SIDE_EFFECTS = ("publish", "send", "schedule", "deploy", "create", "push", "dismiss")
+SIDE_EFFECTS = ("publish", "send", "schedule", "deploy", "create", "push", "dismiss")  # contracts/environment.md
+# The four classes that were bare names (decision 14a). providers/resolve.py still reads the old names; a
+# skill's requires does not use them.
+RENAMED_CLASSES = {"mailer": "sender:email", "mailbox": "reader:email", "scheduler": "scheduler:job",
+                   "store": "store:runtime"}
 DESCRIPTION_WARN = 900  # characters
 TOKEN_WARN = 5000       # characters / 4
 MIN_CASES, MIN_ASSERTIONS = 2, 3
@@ -463,7 +470,12 @@ def check_skill(dirname, report, outputs_index, classes=None):
     if unknown:
         report.warn(where, f"side_effects {', '.join(unknown)}: not in the vocabulary ({', '.join(SIDE_EFFECTS)})",
                     "side-effects-vocabulary")
-    unknown = [v for v in strings("requires") if classes is not None and not known_class(v, classes)]
+    bare = [v for v in strings("requires") if ":" not in v]
+    if bare:
+        report.warn(where, "requires " + ", ".join(
+            f"{v} (now {RENAMED_CLASSES[v]})" if v in RENAMED_CLASSES else v for v in bare)
+            + ": a class has the form <role>:<target>", "requires-role")
+    unknown = [v for v in strings("requires") if ":" in v and classes is not None and not known_class(v, classes)]
     if unknown:
         report.warn(where, f"requires {', '.join(unknown)}: not a class of {CLASS_TABLE}", "requires-vocabulary")
     if desc and not re.search(r"\bwhen\b", desc, re.I):
@@ -706,7 +718,7 @@ def flags_markdown(report, skills):
     return "\n".join(lines) + "\n"
 
 
-WARNING_RULES = ("meta-keys", "requires-vocabulary", "side-effects-vocabulary", "description-when",
+WARNING_RULES = ("meta-keys", "requires-role", "requires-vocabulary", "side-effects-vocabulary", "description-when",
                  "description-length", "skill-tokens", "eval-cases-count", "eval-keys", "eval-assertions-count",
                  "eval-conditional-assertion", "eval-run-assertion", "eval-prompt-names-skill",
                  "eval-product-names", "skill-name", "routing-table", "test-file-names",

@@ -16,7 +16,7 @@ validate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validate)
 
 CLASSES = "# Environment\n\n| Class | Examples | Used by |\n|---|---|---|\n| `search:web` | any | research |\n" \
-          "| `publisher:<platform>` | a network | marketing |\n| `store` | a file | runtime |\n\nText.\n\n" \
+          "| `publisher:<platform>` | a network | marketing |\n| `store:runtime` | a file | runtime |\n\nText.\n\n" \
           "| Scope | What |\n|---|---|\n| `action` | one payload |\n"
 ASSERTIONS = ["The report lists every file", "The reply is in English", "No file is deleted"]
 
@@ -87,7 +87,8 @@ def test_every_new_rule_is_a_warning_and_never_an_error(tree):
     assert report.errors == []
     assert rules(report) == ["description-length", "description-when", "eval-assertions-count", "eval-cases-count",
                              "eval-conditional-assertion", "eval-keys", "eval-prompt-names-skill",
-                             "eval-run-assertion", "meta-keys", "requires-vocabulary", "side-effects-vocabulary",
+                             "eval-run-assertion", "meta-keys", "requires-role", "requires-vocabulary",
+                             "side-effects-vocabulary",
                              "skill-name", "skill-tokens"]
     assert all(w["message"].startswith(f"[{w['rule']}] ") for w in report.warnings)
     assert "metadata.version, license" in messages(report, "meta-keys")[0]
@@ -98,16 +99,38 @@ def test_requires_is_read_against_the_class_table_and_a_placeholder_class_is_leg
     write(tree, "contracts/environment.md", CLASSES)
     report = validate.Report()
     classes = validate.load_classes(report, str(tree))
-    assert classes == ["search:web", "publisher:<platform>", "store"] and report.notes == []
-    assert all(validate.known_class(v, classes) for v in ("search:web", "store", "publisher:<platform>", "publisher:mastodon"))
+    assert classes == ["search:web", "publisher:<platform>", "store:runtime"] and report.notes == []
+    assert all(validate.known_class(v, classes)
+               for v in ("search:web", "store:runtime", "publisher:<platform>", "publisher:mastodon"))
     assert not any(validate.known_class(v, classes) for v in ("mailbox", "search:docs", "publisher:", "action", "store:x"))
-    add_skill(tree, meta={"requires": "[search:web, mailbox, publisher:<platform>]"})
+    add_skill(tree, meta={"requires": "[search:web, reader:rss, publisher:<platform>]"})
     assert messages(run_skill(tree, classes=classes), "requires-vocabulary") == [
-        "[requires-vocabulary] requires mailbox: not a class of contracts/environment.md"]
+        "[requires-vocabulary] requires reader:rss: not a class of contracts/environment.md"]
+
+
+def test_a_class_without_a_role_is_reported_with_the_class_it_became(tree):
+    add_skill(tree, meta={"requires": "[search:web, mailbox, scheduler, store, mailer, teleporter]"})
+    report = run_skill(tree, classes=["search:web"])
+    assert report.errors == [] and rules(report) == ["requires-role"]  # one rule, and never both for one value
+    assert messages(report, "requires-role") == [
+        "[requires-role] requires mailbox (now reader:email), scheduler (now scheduler:job), store (now store:runtime), "
+        "mailer (now sender:email), teleporter: a class has the form <role>:<target>"]
+
+
+def test_the_renamed_classes_are_the_resolver_aliases_and_the_side_effect_words_are_the_contract_table():
+    spec = importlib.util.spec_from_file_location("resolve_for_validate_test", REPO / "providers" / "resolve.py")
+    resolve = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(resolve)
+    assert validate.RENAMED_CLASSES == resolve.ALIASES
+    text = (REPO / "contracts" / "environment.md").read_text(encoding="utf-8")
+    words = [row[0] for row in validate.markdown_table(text, "Word")]
+    assert tuple(words) == validate.SIDE_EFFECTS
+    report = validate.Report()
+    assert set(validate.RENAMED_CLASSES.values()) <= set(validate.load_classes(report, str(REPO)))
 
 
 def test_without_the_class_table_the_rule_is_skipped_with_a_note(tree):
-    add_skill(tree, meta={"requires": "[anything]"})
+    add_skill(tree, meta={"requires": "[any:thing]"})
     report = validate.Report()
     assert validate.load_classes(report, str(tree)) is None
     assert report.notes == ["[requires-vocabulary] skipped: contracts/environment.md is not in this tree"]

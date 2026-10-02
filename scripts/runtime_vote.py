@@ -5,7 +5,7 @@ Configuration: a "vote" section in runtime.json (no secrets):
            "pillar_aliases": {"<pillar in the vote data>": "<pillar in the calendar>"},
            "image": true, "card_html": "<project-relative HTML piece; default: brand-identity's post card>"}
 Providers come from cfg["providers"] (scripts/runtime.py, through providers/resolve.py): the vcs provider is the
-class `integration:vcs` and the scheduler the class `scheduler` (launchd on macOS, systemd on Linux, or what
+class `integration:vcs` and the scheduler the class `scheduler:job` (launchd on macOS, systemd on Linux, or what
 SCHEDULER_PROVIDER names). The optional key "vcs" here and the optional key "scheduler" at the top of runtime.json
 name an implementation explicitly and win, so a "vote" section that says "vcs": "github" keeps working.
 
@@ -84,7 +84,7 @@ def vote_config(cfg: dict, Fail) -> dict | None:
         "payload": wb / "skills" / "mkt-publish" / "scripts" / "payload.py",
         "render": wb / "skills" / "brand-identity" / "scripts" / "render.py",
         "card": wb / "skills" / "brand-identity" / "assets" / "post-card-template.html",
-        "scheduler": providers.path("scheduler", cfg.get("scheduler")),
+        "scheduler": providers.path("scheduler:job", cfg.get("scheduler")),
         "resolver": providers.secret_resolver(),
         "job": wb / "scripts" / "vote_job.py",
         "skill": wb / "skills" / "mkt-vote-round",
