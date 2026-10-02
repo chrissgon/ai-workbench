@@ -1,6 +1,6 @@
 # Final plan, 2026-10-02: everything that remains, ordered around one last measurement round
 
-**This is the plan in force.** It replaces `docs/architecture/plan-2026-10.md`, whose phases 0 to 4 are done and whose phases 5 and 6 are absorbed here. It is built from the audit of 2026-10-02 (`docs/architecture/audit-2026-10-02/`, nine reports), from the triage of every item of `docs/backlog.md`, and from two rounds of review of the plan itself (section "Reviews"). Every decision in it was taken by the maintainer on 2026-10-02. What still needs an answer is in the section "Open for the maintainer", and nowhere else.
+**This is the plan in force.** It replaces `docs/architecture/plan-2026-10.md`, whose phases 0 to 4 are done and whose phases 5 and 6 are absorbed here. It is built from the audit of 2026-10-02 (`docs/architecture/audit-2026-10-02/`, nine reports), from the triage of every item of `docs/backlog.md`, and from two rounds of review of the plan itself (section "Reviews"). Every decision in it was taken by the maintainer on 2026-10-02. Nothing in it waits for an answer (section "Open for the maintainer").
 
 ## Purpose and the one rule that orders everything
 
@@ -34,11 +34,13 @@
 
 ## Open for the maintainer
 
-Three things, each with a recommendation. Nothing else in this plan waits for an answer.
+Nothing. The three points the second review left open were answered by the maintainer on 2026-10-02:
 
-1. **The publisher's verbs speak one platform's identifiers (CT1).** `providers/CONTRACT.md` and the procedure of `mkt-engage` pass identifiers in one platform's format through flags named after that format. Recommendation: generic flags (`--post-id`, `--comment-id`, `--parent-comment-id`) whose value is opaque to the skill; the provider and the platform reference define the format, and the first implementation keeps the old flag names as aliases. It changes a skill folder, so it is done before the round: the contract side in C0.9, the skill side in row 44. If the answer is no, that part of C0.9 and of row 44 is left out and nothing else in the plan moves; a rename after the round would cost the measurement of `mkt-engage`.
-2. **Phase P does not gate the round.** Recommendation: start its first item, HP1, in the first days, beside phases A and B, because it protects a project that runs the runtime today (a vote round that is silently lost, a job stuck in `running`, notifications never read, a spend cap that does not count). HP2 and HP3 follow as time allows and may finish after the round.
-3. **Phase E's calendar is unknown until the pilot.** The plan holds no measured figure for what the round consumes of the strong model's account, on which the grader also runs. Recommendation: accept that the dates of phase E are computed at D4 from the pilot's measurement and are not promised before it; the earlier figure of 2 to 4 days is a lower bound only.
+1. **The publisher's verbs take generic identifiers (CT1).** Generic flags (`--post-id`, `--comment-id`, `--parent-comment-id`) whose value is opaque to the skill; the provider and the platform reference define the format, and the first implementation keeps the old flag names as aliases. It changes a skill folder, so it is done before the round: the contract side in C0.9, the skill side in row 44.
+2. **Phase P does not gate the round.** Its first item, HP1, starts in the first days, beside phases A and B, because it protects a project that runs the runtime today (a vote round that is silently lost, a job stuck in `running`, notifications never read, a spend cap that does not count). HP2 and HP3 follow as time allows and may finish after the round.
+3. **Phase E's calendar is computed at D4.** The plan holds no measured figure for what the round consumes of the strong model's account, on which the grader also runs; the dates of phase E come from the pilot's measurement and are not promised before it. The earlier figure of 2 to 4 days is a lower bound only.
+
+A further review of the repository, run separately by the maintainer, is pending; its findings are triaged into this plan before phase A starts.
 
 ## Reviews
 
