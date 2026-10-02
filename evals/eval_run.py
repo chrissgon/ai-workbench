@@ -5,7 +5,7 @@ Usage:
   python3 eval_run.py --skill <name>
                       [--harness <adapter>] [--model <strong-id>] [--floor-model <id>] [--floor-harness <adapter>]
                       [--grader <id>] [--case <id>]... [--threshold 0.8] [--record-anyway]
-                      [--allow-contaminated] [--only without --update-record]
+                      [--only without --update-record]
                       [--only with|without|ablated] [--tiers strong,floor] [--pass-env <VAR>]... [--floor-pass-env <VAR>]... [--ablate <text>]
                       [--runs 3] [--jobs 4] [--timeout 900] [--max-cost-usd <amount>] [--no-grade] [--no-record]
                       [--retries 2] [--early-end-rate 0.15]
@@ -205,7 +205,7 @@ No evidence while the measurement is open. While evals/eval-gate.json carries no
 fingerprint that closes a measurement version), and when the image was built for another CPU platform than
 the one evidence is made on (evals/executor.py), runs execute and benchmark.json is written, but no record
 is written or updated, whatever the options: the reason is printed.
---only without --update-record, when its run is complete and not contaminated, replaces scores.strong_without
+--only without --update-record, when its run is complete, replaces scores.strong_without
 and scores.floor_without of the existing record, recomputes its gate and adds "baseline": {"date", "iteration",
 "runs"}. It needs a valid record whose content_sha256 is the skill's current hash and whose models and
 threshold are the ones of this run and of the configuration; otherwise it changes nothing and says why. When
@@ -233,11 +233,22 @@ Refusals. When the provider declines a without-skill run on policy grounds, the 
 benchmark.json "baseline_refusals": the model alone could not do the task, which is what a baseline says. The
 same refusal of a run that has the skill is an infrastructure failure, never a score.
 
-Contamination. After each without-skill run the response and the adapter's stderr and raw output are searched
-for the repository's absolute path (which includes the path of the skill under test). A hit means the model
-reached the workbench anyway (a search from the filesystem root, a harness that loads user-level
-configuration): it is listed in benchmark.json "contaminated" ({"case", "variant", "tier", "run", "evidence"}),
-printed as a warning, and no record is written from that iteration unless --allow-contaminated.
+Contamination. A baseline is the model without the skill, so a without-skill run must not have reached it.
+Three checks, all deterministic:
+(1) By construction, and asserted in the docker tests: the container of a without-skill run holds no path
+with the skill under test or with shared/references/. The runner stages neither into its case folder, and a
+container mounts nothing else of the workbench but one adapter script.
+(2) A without-skill run whose reply, transcript (the adapter's stderr and raw output) or produced files name
+a mount path of the workbench (the folder the adapter script is mounted in, evals/executor.py) or the
+repository's path on the host looked at the harness or reached the workbench. It is not scored: it is an
+infrastructure failure with reason "contaminated", listed in benchmark.json "contaminated" ({"case",
+"variant", "tier", "run", "evidence"}), so the iteration is incomplete and no gate is evaluated on it. No
+option records it anyway.
+(3) A without-skill run whose reply or produced files share a passage of at least PASSAGE_WORDS words with
+the skill's own text (SKILL.md, references/, assets/) that is in neither the prompt nor the case folder as
+the run found it (its files, what its setup made, the dependency skills) is listed in benchmark.json
+"shared_passages", with the passage quoted, and printed as a warning. It blocks nothing: in the first round
+this found 3 runs in 846, each a stock phrase, so every hit can be read by a person.
 Baseline only. --only without --update-record measures the without-skill variant alone, on both models, and
 replaces the two baseline scores of an existing record (see Record).
 
@@ -412,7 +423,7 @@ def load_status():
 
 def parse(argv):
     opts = {"skill": None, "harness": None, "model": None, "floor": None, "floor_harness": None, "grader": None, "cases": [],
-            "threshold": None, "strong_pass_env": [], "record_anyway": False, "allow_contaminated": False, "update_record": False, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
+            "threshold": None, "strong_pass_env": [], "record_anyway": False, "update_record": False, "only": None, "tiers": None, "grade": True, "dry": False, "pass_env": [], "ablate": None, "floor_pass_env": [],
             "runs": 3, "jobs": 4, "timeout": 900, "max_cost": None, "record": True, "check_cases": False, "retries": 2,
             "early_rate": 0.15, "regrade": None}
     i = 0
@@ -442,7 +453,6 @@ def parse(argv):
         elif a == "--no-grade": opts["grade"] = False; i += 1
         elif a == "--no-record": opts["record"] = False; i += 1
         elif a == "--record-anyway": opts["record_anyway"] = True; i += 1
-        elif a == "--allow-contaminated": opts["allow_contaminated"] = True; i += 1
         elif a == "--update-record": opts["update_record"] = True; i += 1
         elif a == "--retries": opts["retries"] = val(); i += 2
         elif a == "--early-end-rate": opts["early_rate"] = val(); i += 2
@@ -891,17 +901,86 @@ def provider_refusal(out_dir):
     return None
 
 
-def contamination(out_dir):
-    """Evidence that a run reached the repository: its absolute path in the response or the adapter's output.
-    Exact path strings only; None when there is none."""
-    for name in ("response.md", "stderr.log", "raw.json"):
-        text = read_text(os.path.join(out_dir, name), 5000000)
-        for root in sorted(repo_paths(), key=len, reverse=True):
-            at = text.find(root)
-            if at != -1:
-                line = text[max(text.rfind("\n", 0, at) + 1, at - 80):at + len(root) + 120].split("\n")[0]
+def mount_patterns():
+    """What names a path of the workbench in a run's output: the folder the one adapter script is mounted in
+    inside a container (as a path of its own, not as the end of another one), and the repository's absolute
+    path on the host."""
+    folder = os.path.dirname(load_executor().RUNNER_MOUNT)  # /wb
+    patterns = [re.compile(r"(?<![A-Za-z0-9_./~-])" + re.escape(folder) + r"(?![A-Za-z0-9_.-])")]
+    return patterns + [re.compile(re.escape(root)) for root in sorted(repo_paths(), key=len, reverse=True)]
+
+
+def contamination(out_dir, cwd=None, produced=()):
+    """Evidence that a run named a mount path of the workbench or the repository: in its reply, in its transcript
+    (the adapter's stderr and raw output) or, with cwd, in a file it produced. None when there is none."""
+    texts = [(name, read_text(os.path.join(out_dir, name), 5000000)) for name in ("response.md", "stderr.log", "raw.json")]
+    texts += [(rel, read_text(os.path.join(cwd, rel), 5000000)) for rel in produced if cwd and readable(cwd, rel)]
+    for name, text in texts:
+        for pattern in mount_patterns():
+            m = pattern.search(text)
+            if m:
+                at = m.start()
+                line = text[max(text.rfind("\n", 0, at) + 1, at - 80):m.end() + 120].split("\n")[0]
                 return f"{name}: {line.strip()[:300]}"
     return None
+
+
+PASSAGE_WORDS = 10  # a passage of this many words in a row, shared with the skill's text, is worth a person's look
+WORD_RE = re.compile(r"[a-z0-9]+(?:'[a-z]+)?")
+TEXT_LIMIT = 2000000  # characters read of one file for the passage check
+
+
+def words_of(text):
+    return WORD_RE.findall(text.lower().replace("\u2019", "'"))
+
+
+def passages_of(word_list, n=PASSAGE_WORDS):
+    return {tuple(word_list[i:i + n]) for i in range(len(word_list) - n + 1)}
+
+
+def folder_text(folder, staged=()):
+    """The text of the files of a folder that the host may read (run_files()), binary files left out."""
+    parts = []
+    for rel in run_files(folder, staged):
+        path = os.path.join(folder, rel)
+        if binary_stub(path) is None:
+            parts.append(read_text(path, TEXT_LIMIT))
+    return "\n".join(parts)
+
+
+def skill_passages(skill_dir):
+    """Every passage of PASSAGE_WORDS words of the skill's own text: SKILL.md, references/ and assets/."""
+    texts = [read_text(os.path.join(skill_dir, "SKILL.md"), TEXT_LIMIT)]
+    for sub in ("references", "assets"):
+        if os.path.isdir(os.path.join(skill_dir, sub)):
+            texts.append(folder_text(os.path.join(skill_dir, sub)))
+    found = set()
+    for text in texts:  # per file group: a passage never spans two files
+        found |= passages_of(words_of(text))
+    return found
+
+
+def shared_passage(skill_grams, run_text, case_text):
+    """The longest passage of at least PASSAGE_WORDS words that a without-skill run's output shares with the
+    skill's text and that is not in the case (its prompt, its folder as the run found it); None when there is
+    none. The case is read only when something is shared at all."""
+    run_words = words_of(run_text)
+    n = PASSAGE_WORDS
+    hits = [i for i in range(len(run_words) - n + 1) if tuple(run_words[i:i + n]) in skill_grams]
+    if not hits:
+        return None
+    case_grams = passages_of(words_of(case_text))
+    hits = [i for i in hits if tuple(run_words[i:i + n]) not in case_grams]
+    best, start, prev = None, None, None
+    for i in hits + [None]:  # consecutive positions are one passage
+        if start is None:
+            start = i
+        elif i is None or i != prev + 1:
+            if best is None or prev - start > best[1] - best[0]:
+                best = (start, prev)
+            start = i
+        prev = i
+    return " ".join(run_words[best[0]:best[1] + n]) if best else None
 
 
 def contained_env(run_dir, pass_env=()):
@@ -1743,12 +1822,12 @@ def run(argv):
         run_dir = os.path.join(it_dir, f"eval-{c['id']}", name, *([f"run-{k}"] if o["runs"] > 1 else []))
         cwd, out = os.path.join(run_dir, "cwd"), os.path.join(run_dir, "outputs")
         variant_dir = {"with_skill": skill_dir, "ablated_skill": ablated_dir}.get(v)
-        count, msgs = {"attempts": 0, "early_ends": 0, "contaminated": None}, []
+        count, msgs = {"attempts": 0, "early_ends": 0, "contaminated": None, "passage": None}, []
         while True:
             count["attempts"] += 1
             # The run happens outside the repository; its folders come back to run_dir when it ends, however it ends.
             root = new_run_root(run_dir, names=(o["skill"],))
-            case_dir, changed, delta, inputs, vcs = os.path.join(root, "case"), [], None, {}, None
+            case_dir, changed, delta, inputs, vcs, case_text = os.path.join(root, "case"), [], None, {}, None, ""
             try:
                 build_tree(case_dir, sources[c["id"]], c)
                 tier_env = o["pass_env"] + (o["floor_pass_env"] if tier == "floor" else o["strong_pass_env"])
@@ -1768,6 +1847,8 @@ def run(argv):
                     # The input files the assertions check facts against, as the run finds them: the grader
                     # is shown this, even when the run changes them afterwards.
                     inputs = {p: shown_in(case_dir, p) for p in c.get("grader_files") or [] if isinstance(p, str)}
+                    if v == "without_skill":  # what the case itself holds, as the run finds it: the dependency skills too
+                        case_text = c["prompt"] + "\n" + folder_text(case_dir)
                     before = file_index(case_dir, staged)
                     why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), env,
                                       o["timeout"], o["max_cost"], web[c["id"]], start_dir=root,
@@ -1781,7 +1862,18 @@ def run(argv):
             finally:
                 return_run(root)
             if v == "without_skill":
-                count["contaminated"] = contamination(out) or count["contaminated"]
+                produced = (delta["created"] + delta["modified"]) if delta else []
+                count["contaminated"] = contamination(out, cwd, produced)
+                if count["contaminated"]:
+                    # The run looked at the harness or reached the workbench: it is no baseline. No score, and
+                    # no retry that would hide it: the iteration is incomplete until the way in is closed.
+                    return name, None, infra("contaminated", evidence=count["contaminated"]), msgs + [
+                        f"CONTAMINATED case {c['id']} {name} run {k}: {count['contaminated']}"], count
+                if not why:
+                    count["passage"] = shared_passage(skill_grams, read_text(os.path.join(out, "response.md"), 200000) + "\n"
+                                                      + "\n".join(read_text(os.path.join(cwd, p), TEXT_LIMIT) for p in produced
+                                                                  if readable(cwd, p) and binary_stub(os.path.join(cwd, p)) is None),
+                                                      case_text)
             refusal = provider_refusal(out) if why and v == "without_skill" else None
             if refusal:
                 # The model alone could not do the task: a baseline of zero, not a missing score. A refusal
@@ -1840,6 +1932,8 @@ def run(argv):
         return name, row, failed, msgs, count
 
     jobs = [(c, v, t, m, k) for c in cases for v in variants for t, m in models for k in range(1, o["runs"] + 1)]
+    # The skill's own text, as passages: what a without-skill run should not be able to quote.
+    skill_grams = skill_passages(skill_dir) if "without_skill" in variants else set()
     infra_failures = []
     results = {}
     with concurrent.futures.ThreadPoolExecutor(max_workers=o["jobs"]) as pool:
@@ -1848,7 +1942,7 @@ def run(argv):
             for msg in fut.result()[3]:
                 print(msg, file=sys.stderr)
     early_counts = {t: {"attempts": 0, "early_ends": 0, "by_case": {}, "by_variant": {}} for t, _ in models}
-    contaminated, refusals, grading_refused = [], [], 0
+    contaminated, refusals, grading_refused, shared = [], [], 0, []
     for job, fut in zip(jobs, done):  # submission order, so benchmark.json does not depend on which run finished first
         name, row, failed, _, count = fut.result()
         grading_refused += count.get("grading_refused", 0)
@@ -1860,6 +1954,8 @@ def run(argv):
         if count["contaminated"]:
             contaminated.append({"case": job[0]["id"], "variant": job[1], "tier": job[2], "run": job[4],
                                  "evidence": count["contaminated"]})
+        if count.get("passage"):
+            shared.append({"case": job[0]["id"], "variant": job[1], "tier": job[2], "run": job[4], "passage": count["passage"]})
         if count.get("refused"):
             refusals.append({"case": job[0]["id"], "variant": job[1], "tier": job[2], "run": job[4],
                              "evidence": count["refused"][:300]})
@@ -1903,6 +1999,7 @@ def run(argv):
                   "content_sha256": start_hash, "expected_runs": len(jobs), "completed_runs": completed,
                   "complete": complete, "infra_failures": infra_failures})
     bench["contaminated"] = contaminated
+    bench["shared_passages"] = shared
     bench["baseline_refusals"] = refusals
     bench["grading"] = {"template_sha256": template_hash(), "refused": grading_refused}
     bench["early_ends"] = early_end_stats(early_counts)
@@ -1915,11 +2012,14 @@ def run(argv):
     full = (o["grade"] and not o["cases"] and not o["only"] and not o["ablate"]
             and [t for t, _ in models] == ["strong", "floor"])
     if contaminated:
-        print(f"CONTAMINATED: {len(contaminated)} without-skill run(s) show the repository's path in their output "
-              "(benchmark.json contaminated): the model reached the workbench, so the baseline may be inflated. Read "
-              "the evidence, close the way in, and rerun; --allow-contaminated records anyway.", file=sys.stderr)
+        print(f"CONTAMINATED: {len(contaminated)} without-skill run(s) name a mount path of the workbench or the "
+              "repository's path (benchmark.json contaminated): they are not scored, and the iteration is incomplete. "
+              "Read the evidence, close the way in, and rerun.", file=sys.stderr)
+    for hit in shared:
+        print(f"WARNING shared passage: case {hit['case']} {hit['variant']} ({hit['tier']}) run {hit['run']} shares "
+              f"{len(hit['passage'].split())} words with the skill's own text that the case does not hold: "
+              f"\"{hit['passage']}\". Read the run: a stock phrase, or a way the baseline reached the skill.", file=sys.stderr)
     record = {"written": False, "reason": None}
-    blocked = contaminated and not o["allow_contaminated"]
     refusal = status.evidence_refusal(ROOT)
     if not refusal and environment and environment.get("image_platform") != load_executor().IMAGE_PLATFORM:
         refusal = (f"the image was built for {environment.get('image_platform')}, and evidence is made on "
@@ -1937,8 +2037,6 @@ def run(argv):
             record["reason"] = "no floor model: the baseline is measured on both models"
         elif not complete:
             record["reason"] = "incomplete iteration"
-        elif blocked:
-            record["reason"] = f"{len(contaminated)} contaminated without-skill run(s); see benchmark.json"
         elif status.content_hash(skill_dir) != start_hash:
             record["reason"] = "the skill folder changed during the run: rerun the evals on the current content"
         else:
@@ -1961,8 +2059,6 @@ def run(argv):
                             "record would read as stale; pass --record-anyway to write it")
     elif not complete:
         record["reason"] = "incomplete iteration"
-    elif blocked:
-        record["reason"] = f"{len(contaminated)} contaminated without-skill run(s); see benchmark.json"
     elif status.content_hash(skill_dir) != start_hash:
         record["reason"] = "the skill folder changed during the run: rerun the evals on the current content"
     else:
@@ -1980,6 +2076,7 @@ def run(argv):
     print(json.dumps({"iteration_dir": os.path.relpath(it_dir, ROOT), "conditions": conditions,
                       "failures": len(infra_failures), "complete": complete, "expected_runs": len(jobs),
                       "completed_runs": completed, "record": record, "contaminated": len(contaminated),
+                      "shared_passages": len(shared),
                       "early_ends": {t: {"early_ends": s["early_ends"], "attempts": s["attempts"], "rate": s["rate"]}
                                      for t, s in bench["early_ends"].items()},
                       "early_end_warning": bench["early_end_warning"]}))

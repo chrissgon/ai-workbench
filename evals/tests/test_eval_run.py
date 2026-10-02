@@ -1691,26 +1691,140 @@ def test_a_temporary_folder_that_names_the_skill_or_sits_in_a_repository_is_not_
 
 # --- contamination: a without-skill run that reached the repository ---------------------------------
 
-def test_a_repository_path_in_a_without_skill_answer_marks_it_contaminated_and_blocks_the_record(tmp_path, monkeypatch, capsys):
+def test_a_without_skill_run_that_names_the_repository_is_not_scored_and_leaves_the_iteration_incomplete(tmp_path, monkeypatch, capsys):
     skill = looks_demo(tmp_path, monkeypatch)
     (tmp_path / "adapters" / "h" / "say-repo").write_text("")
-    assert er.main(FULL) == 0
+    assert er.main(FULL) == 1  # incomplete: no gate is evaluated on a baseline that reached the workbench
     captured = capsys.readouterr()
     out, bench = json.loads(captured.out), bench_of(tmp_path)
     assert [(c["case"], c["variant"], c["tier"], c["run"]) for c in bench["contaminated"]] == [
         (1, "without_skill", "strong", 1), (1, "without_skill", "floor", 1)]
     assert bench["contaminated"][0]["evidence"].startswith("response.md: I found the capability in ")
     assert "/skills/demo" in bench["contaminated"][0]["evidence"]
-    assert out["contaminated"] == 2 and "contaminated without-skill run(s)" in out["record"]["reason"]
+    assert [(f["reason"], f["variant"]) for f in bench["infra_failures"]] == [("contaminated", "without_skill")] * 2
+    assert bench["infra_failures"][0]["evidence"] == bench["contaminated"][0]["evidence"]
+    # No score for those runs, so no baseline mean and no condition computed from one.
+    assert "without_skill" not in bench["run_summary"] and "strong_delta" not in bench["conditions"]
+    assert bench["complete"] is False and out["contaminated"] == 2 and out["record"]["reason"] == "incomplete iteration"
     assert "CONTAMINATED: 2 without-skill run(s)" in captured.err and not (skill / "evals" / "result.json").exists()
-    assert er.main(FULL + ["--allow-contaminated"]) == 0
-    assert json.loads(capsys.readouterr().out)["record"]["written"] is True
+    assert not (run_folder(tmp_path, "without_skill") / "grading.json").exists()  # not graded either
+    with pytest.raises(SystemExit) as e:  # and no option records it anyway
+        er.main(FULL + ["--allow-contaminated"])
+    assert e.value.code == 2
+
+
+@pytest.mark.parametrize("text, hit", [
+    ("I read /wb/run-prompt.sh to see how I am run.", True), ("$ ls /wb\nrun-prompt.sh", True), ("cat /wb/x; echo done", True),
+    ("the path '/wb' exists", True), ("see https://docs.example/wb/guide", False), ("src/wb/index.ts and ./wb/a", False),
+    ("/wbx and /wb-tools and /wb.txt are other names", False), ("nothing of the kind", False),
+])
+def test_a_mount_path_is_recognised_as_a_path_of_its_own(tmp_path, text, hit):
+    (tmp_path / "stderr.log").write_text(text + "\n")
+    assert (er.contamination(str(tmp_path)) is not None) is hit
+
+
+def test_a_mount_path_in_a_produced_file_counts_and_a_link_is_not_followed(tmp_path):
+    out, cwd = tmp_path / "out", tmp_path / "cwd"
+    out.mkdir()
+    cwd.mkdir()
+    (out / "response.md").write_text("Done.\n")
+    (cwd / "notes.md").write_text("The harness script is at /wb/run-prompt.sh.\n")
+    (tmp_path / "host.txt").write_text("/wb/ is named in a file of the host\n")
+    os.symlink(tmp_path / "host.txt", cwd / "link.md")
+    assert er.contamination(str(out), str(cwd), ["link.md"]) is None
+    assert er.contamination(str(out), str(cwd), ["link.md", "notes.md"]).startswith("notes.md: The harness script")
+    assert er.contamination(str(out)) is None  # without the case folder only the reply and the transcript are read
+
+
+# A fake adapter whose runs answer with the text of the file "reply.txt" beside it and write "written.md" with the
+# text of "file.txt" when that exists; with-skill and without-skill runs alike.
+SAYS = r'''
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  echo '[{"id": 1, "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
+fi
+[ -f "$here/file.txt" ] && cp "$here/file.txt" "$4/written.md"
+cat "$here/reply.txt" > "$out/response.md"
+'''
+SENTENCE = "Never publish the vote post before the weekly approval row carries a slot time"  # 14 words of the skill's own
+
+
+def says_demo(tmp_path, monkeypatch, reply, case=None):
+    skill = write_demo(tmp_path, monkeypatch, SAYS, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "assertions": ["a"],
+                                                      **(case or {})}])
+    (skill / "SKILL.md").write_text(f"# demo\n\n## Procedure\n\n1. {SENTENCE}.\n2. Report the row you read.\n")
+    (skill / "references").mkdir()
+    (skill / "references" / "guide.md").write_text("A reference: quote the approval row exactly as the state file holds it today.\n")
+    (tmp_path / "adapters" / "h" / "reply.txt").write_text(reply)
+    return skill
+
+
+def test_a_without_skill_run_that_looked_at_the_mount_is_contaminated_and_a_with_skill_run_is_not_asked(tmp_path, monkeypatch, capsys):
+    says_demo(tmp_path, monkeypatch, "I found the harness script at /wb/run-prompt.sh and read it.\n")
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1"]) == 1
+    bench = bench_of(tmp_path)
+    assert [(c["variant"], c["evidence"]) for c in bench["contaminated"]] == [
+        ("without_skill", "response.md: I found the harness script at /wb/run-prompt.sh and read it.")]
+    assert bench["run_summary"]["with_skill"]["pass_rate"]["n"] == 1 and "without_skill" not in bench["run_summary"]
+    assert "CONTAMINATED case 1 without_skill run 1" in capsys.readouterr().err
+
+
+def test_a_passage_shared_with_the_skills_text_is_a_warning_with_the_passage_quoted(tmp_path, monkeypatch, capsys):
+    skill = says_demo(tmp_path, monkeypatch, f"My advice: {SENTENCE.lower()}, as a rule.\n")
+    assert er.main(FULL) == 0  # a warning: the iteration is complete and the record is written
+    captured = capsys.readouterr()
+    bench = bench_of(tmp_path)
+    assert [(s["variant"], s["tier"]) for s in bench["shared_passages"]] == [("without_skill", "strong"), ("without_skill", "floor")]
+    assert bench["shared_passages"][0]["passage"] == SENTENCE.lower()  # the whole shared run, not only ten words of it
+    assert f'WARNING shared passage: case 1 without_skill (strong) run 1 shares 14 words' in captured.err and SENTENCE.lower() in captured.err
+    assert bench["complete"] is True and bench["contaminated"] == [] and json.loads(captured.out)["shared_passages"] == 2
+    assert (skill / "evals" / "result.json").exists()
+
+
+@pytest.mark.parametrize("where", ["prompt", "fixture", "dependency", "short", "produced-file"])
+def test_a_passage_the_case_itself_holds_or_a_shorter_one_is_no_warning(tmp_path, monkeypatch, capsys, where):
+    reply = f"My advice: {SENTENCE}.\n"
+    case = {}
+    if where == "prompt":
+        case = {"prompt": f"The team's rule is: {SENTENCE}. What should I do next"}
+    elif where == "dependency":
+        case = {"skills": ["dep"]}
+    elif where == "short":
+        reply = "My advice: " + " ".join(SENTENCE.split()[:9]) + " and then something else entirely.\n"
+    elif where == "produced-file":
+        reply = "I wrote the advice down.\n"
+    skill = says_demo(tmp_path, monkeypatch, reply, case)
+    if where == "fixture":
+        (skill / "evals" / "files" / "app" / "rules.md").write_text(f"- {SENTENCE}\n")
+    elif where == "dependency":
+        (tmp_path / "skills" / "dep").mkdir()
+        (tmp_path / "skills" / "dep" / "SKILL.md").write_text(f"# dep\n{SENTENCE}.\n")
+    elif where == "produced-file":
+        (tmp_path / "adapters" / "h" / "file.txt").write_text(f"{SENTENCE}\n")
+    assert er.main(FULL) == 0
+    shared = bench_of(tmp_path)["shared_passages"]
+    if where == "produced-file":  # a file the run wrote is read like its reply
+        assert [s["passage"] for s in shared] == [SENTENCE.lower()] * 2
+    else:
+        assert shared == [] and "WARNING shared passage" not in capsys.readouterr().err
+
+
+def test_the_longest_shared_passage_is_the_one_quoted():
+    skill_text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron. Other words follow here."
+    grams = er.passages_of(er.words_of(skill_text))
+    run = ("First: beta gamma delta epsilon zeta eta theta iota kappa lambda. "
+           "Then: alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu.")
+    assert er.shared_passage(grams, run, "") == "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu"
+    assert er.shared_passage(grams, run, "the case says: " + skill_text) is None
+    assert er.shared_passage(grams, "nothing in common with it at all, not even ten words in a row here", "") is None
+    assert er.shared_passage(set(), run, "") is None
 
 
 def test_a_clean_run_and_a_with_skill_run_are_not_contaminated(tmp_path, monkeypatch, capsys):
     looks_demo(tmp_path, monkeypatch)
     assert er.main(FULL) == 0
-    assert bench_of(tmp_path)["contaminated"] == [] and json.loads(capsys.readouterr().out)["record"]["written"] is True
+    assert bench_of(tmp_path)["contaminated"] == [] and bench_of(tmp_path)["shared_passages"] == []
+    assert json.loads(capsys.readouterr().out)["record"]["written"] is True
     out_dir = tmp_path / "o"
     out_dir.mkdir()
     (out_dir / "stderr.log").write_text(f"$ find {os.path.realpath(tmp_path)}/skills -name SKILL.md\n")
@@ -1748,7 +1862,7 @@ def test_update_record_replaces_only_the_two_baseline_scores_and_the_gate(tmp_pa
     ("edited", "another content of the skill"),
     ("other-floor", "the record's floor model is f, this run's is other"),
     ("incomplete", "incomplete iteration"),
-    ("contaminated", "contaminated without-skill run(s)"),
+    ("contaminated", "incomplete iteration"),  # a contaminated baseline run is not scored, so the run is incomplete
 ])
 def test_update_record_changes_nothing_and_says_why(tmp_path, monkeypatch, capsys, how, why):
     skill = looks_demo(tmp_path, monkeypatch)
@@ -1768,7 +1882,7 @@ def test_update_record_changes_nothing_and_says_why(tmp_path, monkeypatch, capsy
     capsys.readouterr()
     code = er.main(args)
     out = json.loads(capsys.readouterr().out)
-    assert code == (1 if how == "incomplete" else 0)
+    assert code == (1 if how in ("incomplete", "contaminated") else 0)
     assert out["record"]["written"] is False and why in out["record"]["reason"]
     assert (record.read_text() if record.exists() else None) == before
 

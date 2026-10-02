@@ -88,8 +88,8 @@ def test_a_run_sees_its_folder_and_the_one_adapter_script_and_nothing_else_of_th
     runner = REPO / "adapters" / harness / "run-prompt.sh"
     r = inside(root, "find /wb | sort; echo --; ls -d /skill /wb/adapters /wb/shared 2>&1 | grep -c 'No such file'; "
                      "echo x >> /wb/run-prompt.sh 2>&1 | tail -1; head -c 19 /wb/run-prompt.sh; echo; "
-                     "find / -xdev \\( -name AGENTS.md -o -name adapter.json -o -name SKILL.md -o -name README.md -path '*adapters*' \\) "
-                     "-not -path '/proc/*' -not -path '/opt/runners/*' -not -path '/usr/*' 2>/dev/null | head -3; echo WB=$WB_EVAL_CONTAINER",
+                     "find / \\( -name AGENTS.md -o -name adapter.json -o -name SKILL.md -o -name README.md -path '*adapters*' \\) "
+                     "-not -path '/proc/*' -not -path '/sys/*' -not -path '/dev/*' -not -path '/opt/runners/*' -not -path '/usr/*' 2>/dev/null | head -3; echo WB=$WB_EVAL_CONTAINER",
                runner=str(runner))
     assert r.returncode == 0, r.stderr
     listing, rest = r.stdout.split("--\n", 1)
@@ -234,6 +234,28 @@ def demo_workbench(tmp_path):
     return wb, skill, dep
 
 
+def test_a_without_skill_container_has_no_path_that_holds_the_skill_or_the_shared_references(environment, root, tmp_path, monkeypatch):
+    """The first of the three contamination checks: true by construction, asserted so that it stays true.
+    The case folder is staged as a without-skill run's is, dependency skill included, and the container is
+    started as a model run's is, with the one adapter script mounted."""
+    wb, skill, dep = demo_workbench(tmp_path)
+    monkeypatch.setattr(er, "ROOT", str(wb))
+    staged, _ = er.stage_run(str(root / "case"), {"skills_dir": ".tool/skills", "settings": [".tool"]}, None, [str(dep)], {"id": 1})
+    assert staged == [".tool/skills/core-dep"]
+    search = ("find / \\( -name 'core-demo' -o -path '*shared/references*' -o -name security.md -o -name check.py \\) "
+              "-not -path '/proc/*' -not -path '/sys/*' -not -path '/dev/*' -not -path '/usr/*' -not -path '/opt/*' 2>/dev/null | wc -l; "
+              "grep -r -l 'Walk ../../shared/references/security.md' /eval /wb /home /tmp 2>/dev/null | wc -l; "
+              "ls /eval/case/.tool/skills")
+    r = inside(root, search, runner=str(REPO / "adapters" / "agents-dir" / "run-prompt.sh"), network="proxy")
+    assert r.returncode == 0, r.stderr
+    assert r.stdout.split() == ["0", "0", "core-dep"]
+    # The same search finds both in the container of a with-skill run: the check can fail.
+    er.stage_run(str(root / "case"), {"skills_dir": ".tool/skills", "settings": [".tool"]}, str(skill), [str(dep)], {"id": 1})
+    r = inside(root, search, runner=str(REPO / "adapters" / "agents-dir" / "run-prompt.sh"), network="proxy")
+    found, quoted = r.stdout.split()[:2]
+    assert int(found) >= 3 and quoted == "1"
+
+
 def test_a_run_reads_the_staged_skill_and_never_its_cases_its_tests_or_an_uncited_reference(environment, root, tmp_path, monkeypatch):
     """What the runner stages (eval_run.stage_run, as a real run calls it) is all a container holds of a skill."""
     wb, skill, dep = demo_workbench(tmp_path)
@@ -241,8 +263,8 @@ def test_a_run_reads_the_staged_skill_and_never_its_cases_its_tests_or_an_uncite
     staged, manifest = er.stage_run(str(root / "case"), {"skills_dir": ".tool/skills", "settings": [".tool"]}, str(skill), [str(dep)], {"id": 1})
     assert sorted(staged) == [".tool/shared", ".tool/skills/core-demo", ".tool/skills/core-dep"]
     r = inside(root, "cat .tool/skills/core-demo/SKILL.md | head -1; cat .tool/skills/core-demo/../../shared/references/security.md; "
-                     "find / -xdev \\( -name evals.json -o -name 'test_check.py' -o -name other.md -o -name tool.py \\) "
-                     "-not -path '/proc/*' -not -path '/usr/*' -not -path '/opt/*' 2>/dev/null | wc -l; find /eval -type l | wc -l")
+                     "find / \\( -name evals.json -o -name 'test_check.py' -o -name other.md -o -name tool.py \\) "
+                     "-not -path '/proc/*' -not -path '/sys/*' -not -path '/dev/*' -not -path '/usr/*' -not -path '/opt/*' 2>/dev/null | wc -l; find /eval -type l | wc -l")
     assert r.returncode == 0, r.stderr
     assert r.stdout.split() == ["#", "demo", "security.md", "0", "0"]
 
