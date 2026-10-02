@@ -18,7 +18,7 @@
         "scripts/task.py is run for T-cm-2 before any file is created and the task is marked in-progress",
         "The reply states T-cm-1's status as read from the backlog before implementing",
         "The check is run and shown failing before the implementation and passing after",
-        "git diff --stat lists only app/versions.ts, the test file, docs/product/backlog.md (the task's status line) and nothing else",
+        "The changed files, as the reply lists them and as the case folder shows, are no others than app/versions.ts, tests/repo/versions.spec.ts and docs/product/backlog.md (the task's status line)",
         "The task is marked done with the check summary and no git commit is executed"
       ]
     },
@@ -37,9 +37,9 @@
         "tests/spike/example.spec.ts"
       ],
       "assertions": [
-        "ADR-0002 is read before coding and the task's Check is run at the end with its output quoted",
+        "The reply names ADR-0002 as read before coding, and quotes verbatim the output of the task's Check run after the implementation",
         "A failed assumption is reported as a finding and recorded in the ADR, not silently worked around",
-        "No file outside the task's Touches list is modified"
+        "No file outside the task's Touches list is modified, other than the task's status line in docs/product/backlog.md"
       ]
     },
     {

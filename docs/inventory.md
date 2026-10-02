@@ -224,7 +224,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | biz-icp-positioning | evaluated | 0.95 | 0.48 | 0.98 | 2026-10-01 | 2 |
 | biz-market-analysis | stale | 0.93 | 0.22 | 0.94 | 2026-10-01 | 1 |
 | brand-guidelines | evaluated | 0.98 | 0.54 | 1.00 | 2026-10-01 | 2 |
-| brand-identity | draft | 0.86 | 0.29 | 0.69 | 2026-10-01 | 1 |
+| brand-identity | evaluated | 1.00 | 0.18 | 0.96 | 2026-10-01 | 2 |
 | brand-name | evaluated | 1.00 | 0.50 | 1.00 | 2026-10-01 | 2 |
 | brand-profile | evaluated | 0.97 | 0.41 | 0.94 | 2026-10-01 | 2 |
 | brand-strategy | evaluated | 0.97 | 0.86 | 0.92 | 2026-10-01 | 2 |
@@ -238,16 +238,16 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | core-security-audit | stale | 0.90 | 0.75 | 0.94 | 2026-10-01 | 1 |
 | core-skill-creator | draft | 0.57 | 0.24 | 0.58 | 2026-10-01 | 1 |
 | design-brief | evaluated | 0.98 | 0.31 | 0.98 | 2026-10-01 | 1 |
-| design-execute | draft | — | — | — | — | — |
+| design-execute | evaluated | 0.84 | 0.48 | 0.89 | 2026-10-01 | 2 |
 | design-handoff | evaluated | 0.92 | 0.24 | 0.89 | 2026-10-01 | 1 |
 | design-system | evaluated | 1.00 | 0.53 | 0.97 | 2026-10-01 | 2 |
 | design-ux-flows | evaluated | 1.00 | 0.29 | 1.00 | 2026-10-01 | 2 |
-| eng-architecture | draft | 0.74 | 0.53 | 0.91 | 2026-10-01 | 2 |
+| eng-architecture | evaluated | 0.95 | 0.39 | 0.91 | 2026-10-01 | 3 |
 | eng-code-review | evaluated | 0.90 | 0.64 | 0.82 | 2026-10-01 | 2 |
 | eng-codebase-map | evaluated | 0.98 | 0.37 | 0.91 | 2026-10-01 | 2 |
 | eng-docs | evaluated | 1.00 | 0.31 | 0.98 | 2026-10-01 | 1 |
 | eng-impact-analysis | evaluated | 1.00 | 0.70 | 1.00 | 2026-10-01 | 1 |
-| eng-implement | draft | 0.56 | 0.50 | 0.53 | 2026-10-01 | 2 |
+| eng-implement | evaluated | 0.90 | 0.58 | 0.84 | 2026-10-01 | 3 |
 | eng-integration-tests | evaluated | 0.98 | 0.53 | 0.93 | 2026-10-01 | 1 |
 | eng-refactor | evaluated | 1.00 | 0.54 | 1.00 | 2026-10-01 | 1 |
 | eng-root-cause | evaluated | 1.00 | 0.57 | 1.00 | 2026-10-01 | 1 |
@@ -270,7 +270,7 @@ The table below is generated. Do not edit it: run `python3 evals/eval_status.py 
 | product-prd | evaluated | 0.99 | 0.31 | 1.00 | 2026-10-01 | 2 |
 | product-roadmap | evaluated | 0.97 | 0.59 | 0.92 | 2026-10-01 | 1 |
 
-Counts: 40 evaluated, 2 stale, 6 draft, 48 skills.
+Counts: 44 evaluated, 2 stale, 2 draft, 48 skills.
 <!-- eval-status:end -->
 
 ## Progress
