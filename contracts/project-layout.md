@@ -81,6 +81,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/brand/guidelines.md` | brand-guidelines | - |
 | `docs/brand/identity.md` | brand-identity | - |
 | `docs/brand/name.md` | brand-name | - |
+| `docs/brand/pieces/` | brand-identity | - |
 | `docs/brand/profile.md` | brand-profile | - |
 | `docs/brand/strategy.md` | brand-strategy | - |
 | `docs/brand/voice.md` | brand-voice | - |
@@ -118,7 +119,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | eng-security-review, mkt-content-plan, mkt-messaging |
+| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | brand-identity, brand-name, brand-profile, brand-strategy, eng-security-review, mkt-content-plan, mkt-messaging |
 <!-- owner-table:end -->
 
 ## Rules

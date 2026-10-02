@@ -17,7 +17,7 @@
 ## Decisions
 
 - 2026-09-20: Personal brand; artifacts and posts in English (user). (user)
-- 2026-09-20: The handle already in use is "octocat" (user). (user)
+- 2026-09-20: The handle already in use is "quorvel" (user). (user)
 
 ## Open questions
 
