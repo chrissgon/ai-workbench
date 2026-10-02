@@ -481,8 +481,8 @@ def test_resolve_a_pending_key(env, fake, text_file):
     assert run(SCRIPT, args, env).returncode == 1
     fake.post_delay = 0.0
     resolve = ["resolve", "--idempotency-key", "launch-1"]
-    assert run(SCRIPT, resolve + ["--post-urn", POST_URN], env).returncode == 2  # needs --confirmed
-    assert run(SCRIPT, resolve + ["--post-urn", POST_URN, "--confirmed"], env).returncode == 0
+    assert run(SCRIPT, resolve + ["--post-id", POST_URN], env).returncode == 2  # needs --confirmed
+    assert run(SCRIPT, resolve + ["--post-id", POST_URN, "--confirmed"], env).returncode == 0
     replay = run(SCRIPT, args, env)
     assert replay.returncode == 0 and json.loads(replay.stdout)["replayed"] is True
     assert post_count(fake) == 1
@@ -730,13 +730,57 @@ def test_publish_sends_hashtag_template(env, fake, tmp_path):
 
 def test_help_documents_comment(env):
     proc = run(SCRIPT, ["--help"], env)
-    for word in ("comment", "--first-comment-file", "--on-key", "--parent-comment", "--comment-urn",
+    for word in ("comment", "--first-comment-file", "--on-key", "--parent-comment-id", "--comment-id",
                  ".first-comment"):
         assert word in proc.stdout
 
 
+def test_help_names_the_generic_identifiers_and_their_aliases(env):
+    """The class's verbs take --post-id, --comment-id and --parent-comment-id (providers/CONTRACT.md); the
+    names in use before stay as aliases, so a command written with them keeps working."""
+    out = run(SCRIPT, ["--help"], env).stdout
+    for generic, alias in (("--post-id", "--post-urn"), ("--comment-id", "--comment-urn"),
+                           ("--parent-comment-id", "--parent-comment")):
+        assert generic in out and alias in out
+
+
+def test_the_old_flag_names_are_aliases_of_the_generic_ones(env, fake, comment_file):
+    def dry(*flags):
+        proc = run(SCRIPT, comment_args(comment_file, *flags, "--idempotency-key", "c1", "--dry-run"), env)
+        assert proc.returncode == 0, proc.stderr
+        return json.loads(proc.stdout)
+
+    generic = dry("--post-id", POST_URN, "--parent-comment-id", PARENT_URN)
+    assert generic["post_urn"] == POST_URN and generic["parent_comment"] == PARENT_URN
+    assert dry("--post-urn", POST_URN, "--parent-comment", PARENT_URN) == generic
+    assert fake.requests == []
+
+
+def test_a_reply_sent_with_the_old_flag_names_is_the_same_request(env, fake, comment_file):
+    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--parent-comment", PARENT_URN,
+                                    "--idempotency-key", "c-old", "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    assert fake.requests[1]["path"] == ("/v2/socialActions/urn%3Ali%3Acomment%3A%28urn%3Ali%3Aactivity%3A"
+                                        "7000000000000000009%2C7100000000000000000%29/comments")
+    again = run(SCRIPT, comment_args(comment_file, "--post-id", POST_URN, "--parent-comment-id", PARENT_URN,
+                                     "--idempotency-key", "c-old", "--confirmed"), env)
+    assert again.returncode == 0 and json.loads(again.stdout)["replayed"] is True, "one key, one comment"
+
+
+def test_resolve_takes_the_old_flag_names_too(env, fake, comment_file):
+    """Whatever resolve answers about a key, it answers the same under either name of the flag."""
+    for key, alias, generic, value in (("old-post", "--post-urn", "--post-id", POST_URN),
+                                       ("old-comment", "--comment-urn", "--comment-id", COMMENT_URN)):
+        answers = [run(SCRIPT, ["resolve", "--idempotency-key", key, flag, value, "--dry-run"], env)
+                   for flag in (alias, generic)]
+        assert "unrecognized arguments" not in answers[0].stderr
+        assert (answers[0].returncode, answers[0].stdout, answers[0].stderr) == \
+               (answers[1].returncode, answers[1].stdout, answers[1].stderr)
+    assert fake.requests == []
+
+
 def test_comment_sends_exact_request(env, fake, comment_file):
-    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1",
+    proc = run(SCRIPT, comment_args(comment_file, "--post-id", POST_URN, "--idempotency-key", "c1",
                                     "--confirmed"), env)
     assert proc.returncode == 0, proc.stderr
     assert fake.paths() == [("GET", "/v2/userinfo"), ("POST", POST_COMMENTS_PATH)]
@@ -757,7 +801,7 @@ def test_comment_sends_exact_request(env, fake, comment_file):
 
 
 def test_reply_targets_the_encoded_parent_comment(env, fake, comment_file):
-    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--parent-comment", PARENT_URN,
+    proc = run(SCRIPT, comment_args(comment_file, "--post-id", POST_URN, "--parent-comment-id", PARENT_URN,
                                     "--confirmed"), env)
     assert proc.returncode == 0, proc.stderr
     req = fake.requests[1]
@@ -769,7 +813,7 @@ def test_reply_targets_the_encoded_parent_comment(env, fake, comment_file):
 
 
 def test_comment_replays_its_key(env, fake, comment_file):
-    args = comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1", "--confirmed")
+    args = comment_args(comment_file, "--post-id", POST_URN, "--idempotency-key", "c1", "--confirmed")
     assert run(SCRIPT, args, env).returncode == 0
     again = run(SCRIPT, args, env)
     assert again.returncode == 0, again.stderr
@@ -777,11 +821,11 @@ def test_comment_replays_its_key(env, fake, comment_file):
     assert json.loads(again.stdout)["comment_urn"] == COMMENT_URN
     assert comment_count(fake) == 1
     # The same key on another post is a mistake, not a replay.
-    other = comment_args(comment_file, "--post-urn", "urn:li:share:1", "--idempotency-key", "c1", "--confirmed")
+    other = comment_args(comment_file, "--post-id", "urn:li:share:1", "--idempotency-key", "c1", "--confirmed")
     assert run(SCRIPT, other, env).returncode == 2
     # A post key cannot be reused for a comment, nor a comment key for a post.
     run(SCRIPT, publish_args(comment_file, "--idempotency-key", "p1", "--confirmed"), env)
-    assert run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "p1",
+    assert run(SCRIPT, comment_args(comment_file, "--post-id", POST_URN, "--idempotency-key", "p1",
                                     "--confirmed"), env).returncode == 2
     assert run(SCRIPT, publish_args(comment_file, "--idempotency-key", "c1", "--confirmed"), env).returncode == 2
     assert comment_count(fake) == 1 and post_count(fake) == 1
@@ -813,12 +857,12 @@ def test_comment_on_key_refuses_an_unpublished_post(env, fake, text_file, commen
 
 def test_comment_refuses_invalid_urns(env, fake, comment_file):
     bad = [
-        ["--post-urn", "urn:li:share:123/../../v2/me"],
-        ["--post-urn", "urn:li:person:123"],
-        ["--post-urn", "urn:li:share:12a"],
-        ["--post-urn", POST_URN, "--parent-comment", "urn:li:comment:(urn:li:activity:1,2)/x"],
-        ["--post-urn", POST_URN, "--parent-comment", "urn:li:comment:(urn:li:person:1,2)"],
-        ["--post-urn", POST_URN, "--on-key", "p1"],
+        ["--post-id", "urn:li:share:123/../../v2/me"],
+        ["--post-id", "urn:li:person:123"],
+        ["--post-id", "urn:li:share:12a"],
+        ["--post-id", POST_URN, "--parent-comment-id", "urn:li:comment:(urn:li:activity:1,2)/x"],
+        ["--post-id", POST_URN, "--parent-comment-id", "urn:li:comment:(urn:li:person:1,2)"],
+        ["--post-id", POST_URN, "--on-key", "p1"],
         [],
     ]
     for extra in bad:
@@ -830,8 +874,8 @@ def test_comment_refuses_invalid_urns(env, fake, comment_file):
 def test_comment_refuses_empty_text_and_missing_key(env, fake, tmp_path, comment_file):
     empty = tmp_path / "empty.txt"
     empty.write_text("\n  \n", encoding="utf-8")
-    assert run(SCRIPT, comment_args(empty, "--post-urn", POST_URN, "--confirmed"), env).returncode == 2
-    args = ["comment", "--platform", "linkedin", "--text-file", str(comment_file), "--post-urn", POST_URN,
+    assert run(SCRIPT, comment_args(empty, "--post-id", POST_URN, "--confirmed"), env).returncode == 2
+    args = ["comment", "--platform", "linkedin", "--text-file", str(comment_file), "--post-id", POST_URN,
             "--confirmed"]
     proc = run(SCRIPT, args, env)
     assert proc.returncode == 2 and "--idempotency-key" in proc.stderr
@@ -839,7 +883,7 @@ def test_comment_refuses_empty_text_and_missing_key(env, fake, tmp_path, comment
 
 
 def test_comment_refuses_without_confirmed(env, fake, comment_file):
-    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN), env)
+    proc = run(SCRIPT, comment_args(comment_file, "--post-id", POST_URN), env)
     assert proc.returncode == 2
     assert "--confirmed" in proc.stderr
     assert fake.requests == [] and proc.stdout == ""
@@ -848,7 +892,7 @@ def test_comment_refuses_without_confirmed(env, fake, comment_file):
 def test_comment_dry_run_reads_no_token(env, fake, comment_file):
     del env["LINKEDIN_ACCESS_TOKEN"]
     env["LINKEDIN_TOKEN_EXPIRES_AT"] = "not a date"  # reading the token would report this
-    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--parent-comment", PARENT_URN,
+    proc = run(SCRIPT, comment_args(comment_file, "--post-id", POST_URN, "--parent-comment-id", PARENT_URN,
                                     "--dry-run"), env)
     assert proc.returncode == 0, proc.stderr
     assert "token" not in proc.stderr.lower()
@@ -871,7 +915,7 @@ def test_comment_dry_run_reads_no_token(env, fake, comment_file):
 def test_comment_timeout_stays_pending_until_resolve(env, fake, comment_file):
     fake.comment_delay = 2.0
     env["LINKEDIN_HTTP_TIMEOUT"] = "0.5"
-    args = comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1", "--confirmed")
+    args = comment_args(comment_file, "--post-id", POST_URN, "--idempotency-key", "c1", "--confirmed")
     first = run(SCRIPT, args, env)
     assert first.returncode == 1 and "timed out" in first.stderr
     assert ledger(env)["c1"]["status"] == "pending"
@@ -879,12 +923,12 @@ def test_comment_timeout_stays_pending_until_resolve(env, fake, comment_file):
     fake.comment_delay = 0.0
     second = run(SCRIPT, args, env)
     assert second.returncode == 1
-    assert "pending" in second.stderr and "--comment-urn" in second.stderr
+    assert "pending" in second.stderr and "--comment-id" in second.stderr
     assert comment_count(fake) == 1
     resolve = ["resolve", "--idempotency-key", "c1", "--confirmed"]
-    assert run(SCRIPT, resolve + ["--post-urn", POST_URN], env).returncode == 2  # a comment key
-    assert run(SCRIPT, resolve + ["--comment-urn", "urn:li:comment:(bad)"], env).returncode == 2
-    done = run(SCRIPT, resolve + ["--comment-urn", COMMENT_URN], env)
+    assert run(SCRIPT, resolve + ["--post-id", POST_URN], env).returncode == 2  # a comment key
+    assert run(SCRIPT, resolve + ["--comment-id", "urn:li:comment:(bad)"], env).returncode == 2
+    done = run(SCRIPT, resolve + ["--comment-id", COMMENT_URN], env)
     assert done.returncode == 0, done.stderr
     assert json.loads(done.stdout) == {"idempotency_key": "c1", "status": "published", "comment_urn": COMMENT_URN}
     replay = run(SCRIPT, args, env)
@@ -898,9 +942,9 @@ def test_resolve_refuses_comment_urn_for_a_post_key(env, fake, text_file):
     fake.post_delay = 2.0
     env["LINKEDIN_HTTP_TIMEOUT"] = "0.5"
     assert run(SCRIPT, publish_args(text_file, "--idempotency-key", "p1", "--confirmed"), env).returncode == 1
-    proc = run(SCRIPT, ["resolve", "--idempotency-key", "p1", "--comment-urn", COMMENT_URN, "--confirmed"], env)
-    assert proc.returncode == 2 and "--post-urn" in proc.stderr
-    both = ["resolve", "--idempotency-key", "p1", "--post-urn", POST_URN, "--comment-urn", COMMENT_URN,
+    proc = run(SCRIPT, ["resolve", "--idempotency-key", "p1", "--comment-id", COMMENT_URN, "--confirmed"], env)
+    assert proc.returncode == 2 and "--post-id" in proc.stderr
+    both = ["resolve", "--idempotency-key", "p1", "--post-id", POST_URN, "--comment-id", COMMENT_URN,
             "--confirmed"]
     assert run(SCRIPT, both, env).returncode == 2
     assert ledger(env)["p1"]["status"] == "pending"
@@ -909,7 +953,7 @@ def test_resolve_refuses_comment_urn_for_a_post_key(env, fake, text_file):
 def test_comment_403_names_the_scope(env, fake, comment_file):
     fake.comment_status = 403
     fake.comment_message = "Not enough permissions to access: partnerApiSocialActions.CREATE"
-    proc = run(SCRIPT, comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1",
+    proc = run(SCRIPT, comment_args(comment_file, "--post-id", POST_URN, "--idempotency-key", "c1",
                                     "--confirmed"), env)
     assert proc.returncode == 1
     assert "403" in proc.stderr and "w_member_social" in proc.stderr
@@ -921,7 +965,7 @@ def test_comment_408_or_429_keeps_the_key_pending(env, fake, comment_file, statu
     # FR-I12: every 4xx answer deleted the pending entry, so a rerun sent the comment again. A 408 or a 429
     # does not say that the request was refused: the key stays pending until resolve settles it.
     fake.comment_status = status
-    args = comment_args(comment_file, "--post-urn", POST_URN, "--idempotency-key", "c1", "--confirmed")
+    args = comment_args(comment_file, "--post-id", POST_URN, "--idempotency-key", "c1", "--confirmed")
     proc = run(SCRIPT, args, env)
     assert proc.returncode == 1
     assert str(status) in proc.stderr and "stays pending" in proc.stderr and "resolve" in proc.stderr
@@ -950,7 +994,7 @@ def test_post_408_or_429_keeps_the_key_pending(env, fake, text_file, status):
     second = run(SCRIPT, args, env)
     assert second.returncode == 1 and "pending" in second.stderr and "resolve" in second.stderr
     assert post_count(fake) == 1  # not posted again on the rerun
-    done = run(SCRIPT, ["resolve", "--idempotency-key", "launch-1", "--post-urn", POST_URN, "--confirmed"], env)
+    done = run(SCRIPT, ["resolve", "--idempotency-key", "launch-1", "--post-id", POST_URN, "--confirmed"], env)
     assert done.returncode == 0, done.stderr
     replay = run(SCRIPT, args, env)
     assert replay.returncode == 0 and json.loads(replay.stdout)["replayed"] is True and post_count(fake) == 1
@@ -984,7 +1028,7 @@ def test_resolve_dry_run_changes_nothing(env, fake, text_file):
     blocked = run(SCRIPT, args, env)
     assert blocked.returncode == 1 and "pending" in blocked.stderr
     assert post_count(fake) == 1  # the key is still held: nothing was published again
-    shown = run(SCRIPT, ["resolve", "--idempotency-key", "launch-1", "--post-urn", POST_URN, "--dry-run"], env)
+    shown = run(SCRIPT, ["resolve", "--idempotency-key", "launch-1", "--post-id", POST_URN, "--dry-run"], env)
     assert json.loads(shown.stdout)["would_record"] == "published"
     assert run(SCRIPT, ["resolve", "--idempotency-key", "nope", "--not-published", "--dry-run"], env).returncode == 2
     assert run(SCRIPT, resolve + ["--confirmed"], env).returncode == 0
@@ -1132,8 +1176,8 @@ def test_comment_dry_run_accepts_the_short_comment_urn_of_a_copied_link(tmp_path
     text.write_text("Valeu!")
     monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
     r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
-                        "--idempotency-key", "reply-1", "--post-urn", "urn:li:activity:7400000000000000001",
-                        "--parent-comment", "urn:li:comment:(activity:7400000000000000001,7400000000000000002)",
+                        "--idempotency-key", "reply-1", "--post-id", "urn:li:activity:7400000000000000001",
+                        "--parent-comment-id", "urn:li:comment:(activity:7400000000000000001,7400000000000000002)",
                         "--dry-run"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     assert "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)" in r.stdout
@@ -1144,8 +1188,8 @@ def test_comment_legacy_v2_dry_run_targets_the_unversioned_endpoint(tmp_path, mo
     text.write_text("Thanks!")
     monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
     r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
-                        "--idempotency-key", "reply-2", "--post-urn", "urn:li:activity:7400000000000000001",
-                        "--parent-comment", "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)",
+                        "--idempotency-key", "reply-2", "--post-id", "urn:li:activity:7400000000000000001",
+                        "--parent-comment-id", "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)",
                         "--legacy-v2", "--dry-run"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     req = json.loads(r.stdout)["requests"][0]
@@ -1157,7 +1201,7 @@ def test_comments_endpoint_rest_keeps_the_versioned_path(tmp_path, monkeypatch):
     text.write_text("Thanks!")
     monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
     r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
-                        "--idempotency-key", "reply-3", "--post-urn", "urn:li:activity:7400000000000000001",
+                        "--idempotency-key", "reply-3", "--post-id", "urn:li:activity:7400000000000000001",
                         "--comments-endpoint", "rest", "--dry-run"], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
     req = json.loads(r.stdout)["requests"][0]

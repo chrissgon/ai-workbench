@@ -283,6 +283,7 @@ def write_private(folder: Path, name: str, text: str) -> Path:
 def task_text(cfg: dict, project: Path, comment: dict) -> str:
     return f"""This task comes from the agent runtime (contracts/runtime.md). Follow "Runtime mode" in the skill mkt-engage.
 
+Platform: {cfg['publisher']}
 Project folder (read only): {project}
 Read: {project}/docs/brand/voice.md (replies to comments), {project}/docs/brand/strategy.md,
 {project}/docs/brand/profile.md, {project}/docs/marketing/engagement-policy.md, and, if one matches the post,
@@ -464,7 +465,7 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
             "category": (decision or {}).get("category"), "run_id": run_id}
     if gate and gate["decision"] == "auto" and reply_file and sha256_file(reply_file) == sha:
         pcmd = ["uv", "run", str(paths["publisher"]), "comment", "--platform", cfg["publisher"],
-                "--post-urn", comment["post_urn"], "--parent-comment", comment["parent_comment_urn"],
+                "--post-id", comment["post_urn"], "--parent-comment-id", comment["parent_comment_urn"],
                 "--text-file", str(reply_file), "--idempotency-key", gate["idempotency_key"], "--confirmed"]
         code, out, err = run(pcmd)
         if code == 0:
@@ -668,7 +669,7 @@ def cmd_approve(a, cfg: dict, project: Path) -> dict:
     c = payload["comment"]
     key = payload.get("idempotency_key") or f"reply-{re.sub(r'[^0-9]', '', c['comment_urn'].rsplit(',', 1)[-1])}"
     out = run_json(["uv", "run", str(cfg["paths"]["publisher"]), "comment", "--platform", cfg["publisher"],
-                    "--post-urn", c["post_urn"], "--parent-comment", c.get("parent_comment_urn") or c["comment_urn"],
+                    "--post-id", c["post_urn"], "--parent-comment-id", c.get("parent_comment_urn") or c["comment_urn"],
                     "--text-file", reply_file,
                     "--idempotency-key", key, "--confirmed"])
     with tempfile.TemporaryDirectory() as tmp:

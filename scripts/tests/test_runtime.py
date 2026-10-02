@@ -170,10 +170,27 @@ def test_praise_is_answered_on_its_own(env):
     assert len(calls) == 1
     c = calls[0]
     assert c[:1] == ["comment"] and "--confirmed" in c
-    assert c[c.index("--parent-comment") + 1] == "urn:li:comment:(urn:li:activity:111,1)"
+    assert c[c.index("--parent-comment-id") + 1] == "urn:li:comment:(urn:li:activity:111,1)"
     assert c[c.index("--idempotency-key") + 1] == "reply-1"
     assert Path(c[c.index("--text-file") + 1]).read_text().strip() == "Thanks, Ana. Glad it helped."
     assert [e["action"] for e in log_entries(env)] == ["auto_replied"]
+
+
+def test_the_task_names_the_platform_and_the_publisher_gets_the_generic_flags(env):
+    """The task's "Platform:" line is where a skill's step takes the platform from in runtime mode, and what
+    the adapter sends the platform's reference by; the publisher's identifiers go under the class's generic
+    names (providers/CONTRACT.md), whatever the stored fields are called."""
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    (task,) = sorted((env["data"] / "runs").glob("*/task.md"))
+    head = task.read_text().split("```", 1)[0]
+    assert "\nPlatform: linkedin\n" in head, "the configured publisher, on a line of its own, above the quoted comment"
+    c = publisher_calls(env)[0]
+    assert c[c.index("--platform") + 1] == "linkedin"
+    assert c[c.index("--post-id") + 1] == "urn:li:activity:111"
+    assert c[c.index("--parent-comment-id") + 1] == "urn:li:comment:(urn:li:activity:111,1)"
+    assert "--post-urn" not in c and "--parent-comment" not in c
 
 
 def test_same_notification_twice_is_handled_once(env):
@@ -377,6 +394,8 @@ def test_approve_sends_only_the_exact_reply_shown(env):
     code, out, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", preview["sha256"])
     assert code == 0, err
     assert out["sent"] is True and len(publisher_calls(env)) == 1
+    sent = publisher_calls(env)[0]
+    assert "--post-id" in sent and "--parent-comment-id" in sent and "--post-urn" not in sent
     code, items, _ = rt(env, "inbox")
     assert items["items"] == []
 
@@ -438,8 +457,8 @@ def test_pasted_comment_without_a_mailbox_is_answered(env, tmp_path):
     assert code == 0, err
     assert out["messages"] == 0 and out["handled"][0]["status"] == "done"
     c = publisher_calls(env)[0]
-    assert c[c.index("--post-urn") + 1] == "urn:li:activity:7400000000000000001"
-    assert c[c.index("--parent-comment") + 1] == "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)"
+    assert c[c.index("--post-id") + 1] == "urn:li:activity:7400000000000000001"
+    assert c[c.index("--parent-comment-id") + 1] == "urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)"
 
 
 def test_add_comment_refuses_a_link_without_comment_ids(env, tmp_path):

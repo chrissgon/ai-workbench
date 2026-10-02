@@ -14,8 +14,15 @@ read, write, run or fetch anything: "the model has no tool that acts" holds by c
 
 The prompt
   system  the agent's body (agents/<name>.md without its frontmatter); each --skill-dir's SKILL.md,
-          whole, between delimiters (never its scripts, references or evals); a note that this run
-          has no tools and that the project files are in the user message.
+          whole, between delimiters (never its scripts, references or evals); the reference of the
+          platform the task names, whole, between delimiters; a note that this run has no tools and
+          that the project files are in the user message.
+          The platform is named by the task's line "Platform: <name>", looked for above the task's
+          first fenced block only, so that text quoted in the task (a comment, an e-mail) cannot
+          name one. The reference is shared/references/platforms/<name>.md, the file a skill's step
+          reads at ../../shared/references/platforms/<name>.md: it is looked for beside each
+          --skill-dir first, then in this adapter's own checkout. A task that names no platform, or
+          a platform without a reference, gets none, and stderr.log says which.
   user    the task file, then every file the task text names that resolves to a regular file inside
           --project (an absolute path, or one relative to --project), each once, between delimiters
           that carry a random per-run marker and say the content is data. Refused: a path that resolves
@@ -108,6 +115,9 @@ ENDPOINTS = {
 MODEL_RE = re.compile(r"^(anthropic)/([A-Za-z0-9._:-]+)$|^(openrouter)/([A-Za-z0-9._-]+/[A-Za-z0-9._:-]+)$")
 URL_RE = re.compile(r"\b[a-zA-Z][a-zA-Z0-9+.-]*://\S+")
 SPLIT_RE = re.compile(r"[\s\"'`()\[\]{}<>,;|*]+")
+# The task line that names the platform (scripts/runtime.py and scripts/runtime_vote.py write it).
+PLATFORM_LINE_RE = re.compile(r"^Platform:[ \t]*([a-z0-9]+(?:-[a-z0-9]+)*)[ \t]*$", re.M)
+PLATFORMS_REL = Path("shared") / "references" / "platforms"
 SECRET_NAME_RE = re.compile(r"(^|/)(id_rsa|id_dsa|id_ecdsa|id_ed25519|[^/]*\.(pem|key|p12|pfx|keystore|jks))$")
 
 EXIT_OK, EXIT_FAILED, EXIT_USAGE = 0, 1, 2
@@ -185,19 +195,56 @@ def strip_frontmatter(text: str) -> str:
     return text.strip() + "\n"
 
 
-def system_prompt(agent_file: str, skill_dirs: list[str]) -> str:
+def task_platform(task: str) -> str | None:
+    """The platform the task names: its first line "Platform: <name>" above the first fenced block.
+
+    What the task quotes (a comment, an e-mail, a computed state) comes in fenced blocks, after the
+    lines the runtime wrote itself, so quoted text cannot choose the reference."""
+    m = PLATFORM_LINE_RE.search(task.split("```", 1)[0])
+    return m.group(1) if m else None
+
+
+def platform_reference(platform: str, skill_dirs: list[str]) -> Path | None:
+    """shared/references/platforms/<platform>.md: beside the skills first (the path a skill's step names,
+    ../../shared/references/platforms/<platform>.md), then in this adapter's own checkout."""
+    roots = [Path(d).resolve().parent.parent for d in skill_dirs] + [WORKBENCH]
+    for root in roots:
+        folder = Path(os.path.realpath(root / PLATFORMS_REL))
+        path = Path(os.path.realpath(folder / f"{platform}.md"))
+        if path.parent == folder and path.is_file():
+            return path
+    return None
+
+
+def system_prompt(agent_file: str, skill_dirs: list[str], platform: str | None = None,
+                  reference: Path | None = None) -> str:
     parts = [strip_frontmatter(Path(agent_file).read_text(encoding="utf-8"))]
     if skill_dirs:
         parts.append("# Skills\n\nYour skills are quoted below, each SKILL.md whole. Their scripts, references "
-                     "and assets are not available in this run; follow the SKILL.md text.")
+                     "and assets are not available in this run; follow the SKILL.md text."
+                     + (" The one reference you do have is the platform reference quoted after the skills."
+                        if reference else ""))
         for d in skill_dirs:
             p = Path(d).resolve()
             parts.append(f"===== BEGIN SKILL {p.name} (SKILL.md) =====\n"
                          f"{(p / 'SKILL.md').read_text(encoding='utf-8').strip()}\n"
                          f"===== END SKILL {p.name} =====")
+    if reference:
+        name = f"shared/references/platforms/{platform}.md"
+        parts.append(f"# Platform reference\n\nThe task names the platform `{platform}`. Its reference is quoted "
+                     f"below, whole: where a skill says to read the reference of the platform "
+                     f"(`../../{name}`), this is that file.\n\n"
+                     f"===== BEGIN PLATFORM REFERENCE {platform} ({name}) =====\n"
+                     f"{reference.read_text(encoding='utf-8').strip()}\n"
+                     f"===== END PLATFORM REFERENCE {platform} =====")
+    elif platform:
+        parts.append(f"# Platform reference\n\nThe task names the platform `{platform}`, and no reference of "
+                     f"that platform exists (`../../shared/references/platforms/{platform}.md`). Where a skill "
+                     f"says to read it, say that the platform is not supported; never guess its rules.")
     parts.append("# How this run works\n\nYou have no tools in this run: you cannot read files, run commands or "
-                 "open links. Wherever your instructions say to read a skill or a project file, use the copy "
-                 "in this prompt: the skills above, and the project files the task names, inlined in the user "
+                 "open links. Wherever your instructions say to read a skill, a platform reference or a project "
+                 "file, use the copy in this prompt: the skills above, the platform reference after them when "
+                 "there is one, and the project files the task names, inlined in the user "
                  "message between DATA FILE markers. A file the task names that is not inlined is not "
                  "available to you: say so, and never guess its content. Answer in the format the task asks for.")
     return "\n\n".join(parts) + "\n"
@@ -432,8 +479,16 @@ def main(argv: list[str]) -> int:
     project = Path(os.path.realpath(opts["project"]))
     run.log(f"api adapter: endpoint {opts['provider']}, model {opts['api_model']}, no tools")
 
-    system = system_prompt(opts["agent"], opts["skills"])
     task = Path(opts["task"]).read_text(encoding="utf-8")
+    platform = task_platform(task)
+    reference = platform_reference(platform, opts["skills"]) if platform else None
+    if reference:
+        run.log(f"platform reference: {platform} ({reference.stat().st_size} bytes)")
+    elif platform:
+        run.log(f"platform reference: the task names {platform!r}, which has no reference; none sent")
+    else:
+        run.log("platform reference: the task names no platform; none sent")
+    system = system_prompt(opts["agent"], opts["skills"], platform, reference)
     head = f"# Task\n\n{task.strip()}\n"
     budget = MAX_PROMPT_CHARS - len(system) - len(head) - 1000  # 1000: the data files' header
     if budget < 0:
