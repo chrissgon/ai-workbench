@@ -1080,6 +1080,25 @@ def make_commit(work: Path, message_file: Path, paths: list[str]) -> tuple[str, 
     return sha, signature
 
 
+def check_blobs(work: Path, files: list[dict], where: str) -> None:
+    """Refuse when what git holds for a path at HEAD is not the bytes that were given.
+
+    The commit is made by the user's own git: their hooks run, and the repository's attributes apply (a
+    line-ending or filter rule in .gitattributes). Either can change a file between the bytes the person
+    approved and the blob that would be pushed, so the blobs are hashed and compared before the push."""
+    for item in files:
+        code, blob, err = run_git(["cat-file", "blob", f"HEAD:{item['path']}"], work,
+                                  git_timeout(GIT_LOCAL_TIMEOUT_SECONDS))
+        if code != 0:
+            raise ProviderError(f"cannot read {item['path']} back from {where}: {one_line(err, 200)}; "
+                                "nothing was pushed")
+        if sha256_hex(blob) != item["sha256"]:
+            raise ProviderError(
+                f"{item['path']} in {where} is not the file that was given (sha256 {sha256_hex(blob)}, given "
+                f"{item['sha256']}): a git hook or an attribute of the repository (a line-ending or filter rule "
+                "in .gitattributes) changed it. Nothing was pushed")
+
+
 def push(work: Path, branch: str) -> None:
     """Push HEAD to branch. Raise PushRejected (branch moved), NotPushed (the remote refused it), or
     ProviderError when the outcome is unknown: a timeout, any other failure, and an SSH failure too, since
@@ -1215,9 +1234,11 @@ def commit_once(spec: dict, remote: str, progress: dict) -> dict:
     with private_clone(spec["repo"], spec["branch"], remote) as (scratch, work):
         base, changed, message_file = prepare(scratch, work, spec)
         if not changed:
+            check_blobs(work, spec["files"], f"{spec['branch']} as it is")
             log(f"{spec['branch']} already holds exactly these files; nothing to commit")
             return {"commit": base, "unchanged": True, "pushed": False, "signature": None}
         sha, signature = make_commit(work, message_file, paths)
+        check_blobs(work, spec["files"], "the commit")  # before the push: what goes out is what was approved
         progress.update(pushing=True, attempted_commit=sha)
         push(work, spec["branch"])
         return {"commit": sha, "unchanged": False, "pushed": True, "signature": signature}
