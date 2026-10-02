@@ -39,14 +39,14 @@ Check these before creating or editing any file, and again before replying. They
 ## When not to use
 
 - A system or feature designed from a specification, with many decisions at once: `eng-architecture` (it writes ADRs too, inside a design).
-- Nothing to choose: one option is the only one that meets the rules and the cases; say so in one line and go to `eng-unit-tests` or `eng-implement`.
+- Nothing to choose: one option is the only one that meets the rules and the cases; say so in one line and name `eng-unit-tests` or `eng-implement` as the user's next step.
 - The cause of a bug is not confirmed: `eng-root-cause` first; options against a guessed cause compare guesses.
 
 ## Inputs
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| The change and its constraints: the plan's "What a fix must preserve" and "Impact" sections | yes | Run `eng-impact-analysis`, or ask for the behaviour that must change and the rules that apply |
+| The change and its constraints: the plan's "What a fix must preserve" and "Impact" sections | yes | The "Impact" section is what `eng-impact-analysis` writes: stop and tell the user to run it first, or ask for the behaviour that must change and the rules that apply |
 | The project's written rules and budgets | yes | Read them from `AGENTS.md` and the architecture document; say which you found |
 | `docs/engineering/adr/` | no | Create it; the first record is `0001` |
 

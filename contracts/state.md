@@ -40,7 +40,7 @@ Keep it small. It is a table of contents with status, not a journal.
 
 ## Open questions
 
-- [ ] Who owns customer support after launch? (raised by flow-new-product, phase Delivery)
+- [ ] Who owns customer support after launch? (raised by flow-fix-bug, phase 9, pull request)
 ```
 
 ## Rules

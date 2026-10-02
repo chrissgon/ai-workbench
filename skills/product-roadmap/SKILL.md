@@ -37,7 +37,7 @@ Turn the PRD's feature list into releases that each deliver something usable, in
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| `docs/product/prd.md` with features, priorities and release phases | yes | Stop and route to `product-prd`; never list features from memory of the conversation. |
+| `docs/product/prd.md` with features, priorities and release phases | yes | Stop and tell the user that `product-prd` writes it and to run it first; never list features from memory of the conversation. |
 | `docs/product/specs/<feature>.md` for the features already specified | no | Sequence from the PRD alone and say which features have no spec yet. |
 | `docs/workbench/state.md` decisions | no | Skip the contradiction check; do not register the artifact. |
 

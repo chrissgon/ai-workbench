@@ -18,14 +18,14 @@ You are maintaining a repository of agents, skills and workflows that let an AI 
 ```
 skills/<name>/SKILL.md      one folder per skill, flat; prefix encodes the area
 agents/<name>.md            agent bodies for delegation; frontmatter has only name, description, metadata
-shared/references/*.md      cross-cutting references (security, accessibility, performance, privacy, prompting)
-contracts/                  project-layout.md, state.md, environment.md, templates/ for artifacts
+shared/references/*.md      cross-cutting references; today only security.md, each other one added when a second skill needs it
+contracts/                  project-layout.md, state.md, environment.md, runtime.md, secrets.md; templates/ holds only a README (artifact templates live in each skill's assets/ or inline)
 providers/<class>/<impl>.py native providers for requirement classes; interface in providers/CONTRACT.md
 templates/                  capability.SKILL.md, flow.SKILL.md, agent.md
 packs/<name>.txt            installation subsets; default.txt excludes optional areas (see packs/README.md)
 adapters/<harness>/         adapter.json, install.sh, optional build.*, overrides/, README.md
 evals/                      the eval harness, outside the core (it reads adapters): eval_run.py (the runner), executor.py and container/ (the container every run executes in), eval_status.py (eval status per skill), eval-gate.json (the eval gate: models, adapters, threshold), grading-prompt.md, tests/
-scripts/                    validate.py, security_scan.py, test_dirs.py (the test folders CI runs), install-hooks.sh, new-skill.sh, doctor.py, select_skills.py (resolves a pack)
+scripts/                    validate.py (the conventions check), security_scan.py (secrets, hidden text, unsafe script patterns), redact.py (the credential formats the scan and skill scripts share), test_dirs.py (the test folders CI runs), install-hooks.sh (enables the versioned git hooks), new-skill.sh (scaffolds a skill), doctor.py (which requirement classes the environment satisfies), select_skills.py (resolves a pack), runtime.py (the agent runtime: tick, gate, execute or queue), runtime_vote.py (its weekly vote step), vote_job.py (publishes an approved vote post at its slot time), tests/
 docs/                       area-map.md, decisions.md, inventory.md, backlog.md (workbench tasks that are not skills)
 ```
 
@@ -49,7 +49,7 @@ Lifecycle areas form a chain: Business → Product → Brand → Design → Engi
 
 **Boundary test** when a capability could belong to two areas: would a senior practitioner of that area know how to do this without expertise from the other area? If yes, it belongs to that area. Writing landing-page copy is Marketing even when a model writes it; designing how to show model uncertainty to a user is AI, because a designer without AI background does not know how.
 
-**Transversal concerns** (security, accessibility, performance, privacy, documentation) are references in `shared/`, not areas: they constrain work, they do not produce artifacts of their own.
+**Transversal concerns** (security, accessibility, performance, privacy, documentation) are references in `shared/`, not areas: they constrain work, they do not produce artifacts of their own. Only `shared/references/security.md` exists today; a reference for another concern is added when a second skill needs it.
 
 **Optional areas** follow every rule above but are excluded from `packs/default.txt`. They are a plus, not the core. Add a skill to an optional area only for a recurring task with a real procedure; one-step actions (send this email) are done by the harness directly under the actuator protocol carried by the project's `AGENTS.md`.
 

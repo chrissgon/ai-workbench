@@ -37,7 +37,7 @@ Check these before the first command, and again before replying. They override t
 ## When not to use
 
 - The behaviour is intended and someone wants it changed: that is a feature, `product-feature-spec`.
-- The cause is known and proven (a plan already has a confirmed cause and a reproduction): go to `eng-unit-tests`.
+- The cause is known and proven (a plan already has a confirmed cause and a reproduction): the next step is `eng-unit-tests`.
 - Which files a change will touch, not why something breaks: `eng-impact-analysis`.
 - A production incident still in progress: contain it first; this skill runs after.
 

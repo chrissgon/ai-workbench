@@ -38,7 +38,7 @@ Turn a specification into a buildable design: what the parts are, what each owns
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| docs/product/specs/<feature>.md with `Ready for architecture: yes` | yes | Stop. Ask for the specification, or route to `product-feature-spec`. |
+| docs/product/specs/<feature>.md with `Ready for architecture: yes` | yes | Stop. Ask for the specification, or tell the user that `product-feature-spec` writes it and to run it first. |
 | docs/design/handoff/<screen>.md for every screen the feature renders | when the feature has a user interface | Design the structure from the spec and flows only, and list the screens as `handoff pending`; components and layout get revised when the handoff lands. |
 | docs/engineering/architecture.md (codebase map or registered specification) | no | Read the code the feature touches and list it under Sources. |
 | docs/workbench/state.md | no | Skip the decision check; do not register the artifacts. |

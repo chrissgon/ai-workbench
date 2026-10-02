@@ -9,7 +9,7 @@ description: >
   deliverables per round, evaluation criteria and a ready-to-paste prompt. Use this skill
   when someone asks to design, mock up, draw or generate any visual artifact, to brief a
   design tool, or when a request to a design tool is too thin to produce good work, even if
-  the word "brief" is never said. Run design-execute afterwards to run it in a tool. Not
+  the word "brief" is never said. design-execute then runs the brief in a tool. Not
   for tokens and components (design-system), flows and screen inventory (design-ux-flows)
   or copy (mkt-messaging).
 license: MIT
@@ -40,9 +40,9 @@ AI design tools produce work as good as what they are told. A thin request ("mak
 
 | Artifact | Required | If missing |
 |----------|----------|------------|
-| `docs/design/design-system.md` or the brand identity | yes | Route to `design-system`, which works from code, images, documents or a short interview. A brief without it lets the tool invent the product's look. |
-| `docs/design/flows.md` with the SCREEN | for a screen | Route to `design-ux-flows`. |
-| The source of every text on the artifact (`docs/marketing/messaging.md`, a spec, the user) | when the artifact shows text beyond the product name | Ask the user for the text or route to `mkt-messaging`; never write final copy. |
+| `docs/design/design-system.md` or the brand identity | yes | Stop and point the user to `design-system`, which writes it from code, images, documents or a short interview. A brief without it lets the tool invent the product's look. |
+| `docs/design/flows.md` with the SCREEN | for a screen | Stop and point the user to `design-ux-flows`, which writes it. |
+| The source of every text on the artifact (`docs/marketing/messaging.md`, a spec, the user) | when the artifact shows text beyond the product name | Ask the user for the text, or point them to `mkt-messaging`, which writes `docs/marketing/messaging.md`; never write final copy. |
 | A previous version and the user's review of it | no | Skip the diagnosis paragraph. |
 | `docs/workbench/state.md` | no | Skip the decision check; do not register the artifact. |
 

@@ -1,5 +1,5 @@
 # Artifact templates
 
-One template per artifact named in `contracts/project-layout.md`. The skill that owns an artifact copies its template into the target project and fills it. Keep templates short: headings, one-line guidance per section, no prose the model would have to delete.
+This folder holds no templates today. The template of an artifact lives with the skill that owns the artifact: a long one in `skills/<name>/assets/`, a short one inline in the skill's `SKILL.md` under "Output template". The skill fills it and writes the result to the path `contracts/project-layout.md` names.
 
-Templates are added together with the skill that owns the artifact.
+A template moves here only when a second skill writes the same artifact from it; none does yet.

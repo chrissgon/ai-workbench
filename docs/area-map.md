@@ -51,11 +51,13 @@ Assess always, build conditionally. The opportunity assessment is cheap and runs
 
 ## Transversal concerns
 
-Security, accessibility, performance, privacy and documentation are references in `shared/references/`, loaded by the skills they constrain. They are not areas because they do not produce artifacts of their own.
+Security, accessibility, performance, privacy and documentation are references in `shared/references/`, loaded by the skills they constrain. Only `security.md` exists today; each of the others is added when a second skill needs it. They are not areas because they do not produce artifacts of their own.
 
 ## Invocation shapes
 
 1. **Single capability**: "validate the business model of product X" → orchestrator → `biz-business-model`.
-2. **Flow inside one area**: "marketing strategy for launch X" → `flow-launch`, reading Brand and Business artifacts as inputs.
-3. **Flow across areas**: "build a digital product from scratch" → `flow-new-product`, one checkpoint per phase, resumable through `docs/workbench/state.md`.
-4. **Actuator**: "schedule a post about X tomorrow at 9" → `flow-social-post` → copy → asset → confirmation gate → publish → record.
+2. **Flow inside one area**: "marketing strategy for launch X" → `flow-launch` (planned, not built), reading Brand and Business artifacts as inputs. The one flow built today is `flow-fix-bug` ("fix this bug end to end").
+3. **Flow across areas**: "build a digital product from scratch" → `flow-new-product` (planned, not built), one checkpoint per phase, resumable through `docs/workbench/state.md`.
+4. **Actuator**: "schedule a post about X tomorrow at 9" → `flow-social-post` (planned, not built) → copy → asset → confirmation gate → publish → record.
+
+Until a planned flow is built, the orchestrator still names it as the route, with the status `pending`, and proposes one fallback (the closest installed skill, or direct execution with its limits stated) for the user to accept; the phases are then run one capability at a time, each asked for by the user.
