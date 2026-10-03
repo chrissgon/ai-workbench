@@ -177,12 +177,43 @@ def test_concurrent_init(tmp_path):
     assert rows == [(1,)]
 
 
-def test_a_wal_file_removed_by_another_process_does_not_fail_init(tmp_path, monkeypatch):
-    """Another process closing the last connection deletes the -wal and -shm files while this one sets modes."""
+def load_store():
     import importlib.util
     spec = importlib.util.spec_from_file_location("store_sqlite", SCRIPT)
     store = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(store)
+    return store
+
+
+def test_concurrent_inits_create_a_missing_folder_once(tmp_path, capsys):
+    """VS9: every init checked that the folder was missing and then created it without exist_ok, so all but
+    the first of several inits started at once failed with "File exists". Threads released together by a
+    barrier hit that window every time; processes rarely do."""
+    import threading
+    store = load_store()
+    for trial in range(3):
+        path = tmp_path / f"trial{trial}" / "missing" / "deeper" / "agent.sqlite"
+        barrier = threading.Barrier(16)
+        codes = []
+
+        def init():
+            barrier.wait()
+            codes.append(store.main(["init", "--db", str(path)]))
+
+        threads = [threading.Thread(target=init) for _ in range(16)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+        assert codes == [0] * 16, capsys.readouterr().err
+        assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+    rows = sqlite3.connect(path).execute("SELECT version FROM schema_version").fetchall()
+    assert rows == [(1,)]
+
+
+def test_a_wal_file_removed_by_another_process_does_not_fail_init(tmp_path, monkeypatch):
+    """Another process closing the last connection deletes the -wal and -shm files while this one sets modes."""
+    store = load_store()
     path = tmp_path / "gone.sqlite"
     path.write_bytes(b"")
     path.chmod(0o644)

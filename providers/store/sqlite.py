@@ -453,8 +453,8 @@ def cmd_check(args) -> int:
 
 def cmd_init(args) -> int:
     path = db_path(args)
-    if not path.parent.exists():
-        path.parent.mkdir(mode=0o700, parents=True)  # the umask of main() makes parents 0700 too
+    # exist_ok: several inits started at once all see the folder missing; only one of them creates it.
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)  # the umask of main() makes parents 0700 too
     created = not path.exists()
     conn = connect(path)
     private_files(path)
