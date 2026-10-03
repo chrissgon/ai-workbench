@@ -97,7 +97,7 @@
           "text": "Neither tests/unit/validate.spec.ts nor docs/product/backlog.md is among the files the run produced or changed",
           "tags": ["guard"]
         },
-        "The reply quotes a line the test runner printed before the fix that shows the failures (`ℹ fail 2`, or the `✖` line of an EDGE-4 test) and a line it printed after the fix that shows every test passing (`ℹ pass 7` or `ℹ fail 0`)",
+        "The reply quotes a line the test runner printed before the fix that shows the failures, copied as printed (`ℹ fail 2`, or the `✖` line, the error message or the assertion's `actual:` line of a failing EDGE-4 test) and a line it printed after the fix that shows every test passing (`ℹ pass 7` or `ℹ fail 0`)",
         "docs/engineering/plans/duplicate-address-across-sections.md keeps its Root cause and Failing tests sections and gains, after them, a record of the change that names app/validate.ts and gives the check's result before and after the fix"
       ]
     }
