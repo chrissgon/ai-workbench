@@ -8,6 +8,7 @@ import glob
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -454,14 +455,48 @@ def test_regrade_is_refused_with_run_options_or_without_a_graded_run(tmp_path, m
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     (tmp_path / "adapters" / "h").mkdir(parents=True)
     (tmp_path / "adapters" / "h" / "run-prompt.sh").write_text("exit 1\n")
-    (tmp_path / "empty").mkdir()
-    for argv, why in ((["--regrade", str(tmp_path / "empty"), "--skill", "demo", "--harness", "h", "--grader", "m"], "goes with --grader"),
+    empty = tmp_path / "evals-workspace" / "empty"
+    empty.mkdir(parents=True)
+    for argv, why in ((["--regrade", str(empty), "--skill", "demo", "--harness", "h", "--grader", "m"], "goes with --grader"),
                       (["--regrade", str(tmp_path / "absent"), "--harness", "h", "--grader", "m"], "is not a folder"),
-                      (["--regrade", str(tmp_path / "empty")], "needs a grader and its adapter"),
-                      (["--regrade", str(tmp_path / "empty"), "--harness", "h", "--grader", "m"], "no graded run under")):
+                      (["--regrade", str(empty)], "needs a grader and its adapter"),
+                      (["--regrade", str(empty), "--harness", "h", "--grader", "m"], "no graded run under")):
         with pytest.raises(SystemExit) as e:
             er.main(argv)
         assert e.value.code == 2 and why in capsys.readouterr().err
+
+
+def test_an_operators_relative_path_is_read_against_the_current_folder_and_another_checkout_is_refused(tmp_path, monkeypatch, capsys):
+    """A relative --regrade, --resume or --close path is read against the current folder, and nothing else; a
+    folder outside this checkout's workspace is refused, so that another checkout's old round is never regraded."""
+    grades_demo(tmp_path, monkeypatch)
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--only", "without"]) == 0
+    capsys.readouterr()
+    # Another checkout, with a graded round and an event at the same relative path.
+    other = tmp_path / "other-checkout"
+    shutil.copytree(tmp_path / "evals-workspace", other / "evals-workspace")
+    before = sorted(str(p) for p in other.rglob("*"))
+    monkeypatch.chdir(other)
+    for argv in (["--regrade", "evals-workspace/demo/iteration-1", "--harness", "h", "--grader", "m"],
+                 ["--resume", "evals-workspace/demo/iteration-1"], ["--close", "evals-workspace/demo/iteration-1"],
+                 ["--regrade", str(other / "evals-workspace" / "demo"), "--harness", "h", "--grader", "m"]):
+        with pytest.raises(SystemExit) as e:
+            er.main(argv)
+        err = capsys.readouterr().err
+        assert e.value.code == 2 and f"is {other / 'evals-workspace' / 'demo'}" in err, err
+        assert "a relative path is read against the current folder" in err and "not inside this checkout's workspace" in err
+    assert sorted(str(p) for p in other.rglob("*")) == before  # nothing read into or written under the other checkout
+    # From this checkout's root the same relative path is this checkout's round, and the command says so.
+    monkeypatch.chdir(tmp_path)
+    assert er.main(["--regrade", "evals-workspace/demo/iteration-1", "--harness", "h", "--grader", "m"]) == 0
+    captured = capsys.readouterr()
+    assert f"--regrade acts on {tmp_path / 'evals-workspace' / 'demo' / 'iteration-1'}" in captured.err
+    assert json.loads(captured.out)["gradings"] == 1
+    assert (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "without_skill" / "regrade-1").is_dir()
+    # A name that is no path from here is not looked for elsewhere (once, <skill>/iteration-<n> was tried under the workspace).
+    with pytest.raises(SystemExit) as e:
+        er.main(["--resume", "demo/iteration-1"])
+    assert e.value.code == 2 and "not inside this checkout's workspace" in capsys.readouterr().err
 
 
 def test_dry_run_lists_setup_and_runs_nothing(tmp_path, monkeypatch, capsys):
@@ -2269,11 +2304,12 @@ id="$(cat "$2")"
 echo "$id $with $6" >> "$here/calls.txt"
 env | grep -E '^(TOKEN|WEBKEY|FLOORKEY)=' | sort | tr '\n' ' ' > "$out/keys.txt"
 n=1; while ! mkdir "$here/n-$id-$with-$6.$n" 2>/dev/null; do n=$((n + 1)); done
-for kind in fail hang limit; do
+for kind in fail hang limit auth; do
   f="$here/$kind-$id-$with-$6"
   if [ -f "$f" ] && [ "$n" -le "$(cat "$f")" ]; then
     case $kind in
       fail) echo "provider: overloaded" >&2; exit 7 ;;
+      auth) echo 'error: {"name":"APIError","data":{"message":"User not found.","statusCode":401,"isRetryable":false}}' >&2; exit 1 ;;
       hang) sleep 30 ;;
       limit) echo "API Error: usage limit reached" >&2; exit 1 ;;
     esac
@@ -2342,7 +2378,11 @@ def test_an_event_with_other_values_than_the_configured_ones_writes_to_its_scrat
     assert out["evidence"]["scratch"] == str(scratch.relative_to(tmp_path))
     event, runs = event_file(tmp_path, out)
     assert event["skill"] == "demo" and event["complete"] is True and len(runs) == out["evidence"]["lines"] > 0
-    assert er.load_status().evidence_file_problems(str(scratch), str(tmp_path), "demo") == []  # and a valid one
+    # A valid file, but for its number of runs: the one value an evidence line records, which is refused when it
+    # is not the configured one, so that such a trial copied into a skill by hand fails the validator.
+    assert er.load_status().evidence_file_problems(str(scratch), str(tmp_path), "demo") == (
+        ["line 1: runs is 2, and the configured number is 1 (\"runs\" of evals/eval-gate.json): an event with another "
+         "number of runs is a trial, and writes no evidence"] if extra == ["--runs", "2"] else [])
     assert why in bench_of(tmp_path)["scratch"]
     # The configured values, and the same event is evidence.
     assert er.main(["--skill", "demo"]) == 0
@@ -2463,6 +2503,59 @@ def test_resume_refuses_a_skill_that_changed_and_goes_with_no_other_option(tmp_p
 def test_a_contaminated_baseline_and_a_failed_grading_are_never_turned_into_a_score():
     assert "contaminated" not in er.CAPPED_KINDS and "grading" not in er.CAPPED_KINDS and "settings" not in er.CAPPED_KINDS
     assert set(er.CAPPED_KINDS) == set(er.RETRY_KINDS)
+
+
+# A refused key: never retried, and the event stops.
+
+@pytest.mark.parametrize("text, found", [
+    ('error: {"name":"APIError","data":{"message":"User not found.","statusCode":401,"isRetryable":false}}', "HTTP 401"),
+    ('Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error"}}', "HTTP 401"),
+    ('{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}', "HTTP 401"),
+    ('AI_APICallError: 401 "User not found."', "HTTP 401"),
+    ("< HTTP/1.1 401 Unauthorized", "HTTP 401"),
+    ('HTTP 403: {"error": {"message": "Key is disabled"}}', "HTTP 403"),
+    ('{"status": 403, "message": "this token lacks the scope"}', "HTTP 403"),
+    ('API Error: 403 {"error":{"message":"Request not allowed in this region"}}', None),  # a 403 that names no key
+    ("provider: overloaded (HTTP 529)", None),
+    ('{"statusCode": 429, "message": "rate limited"}', None),
+    ("wrote 401 lines to report.md", None),
+])
+def test_a_refused_key_is_told_from_other_failures_by_its_status(tmp_path, text, found):
+    (tmp_path / "stderr.log").write_text(text + "\n")
+    assert er.auth_refusal(str(tmp_path)) == found
+
+
+def test_a_refused_key_is_named_by_its_variable_and_its_store_username_never_by_its_value():
+    assert er.credential_label("agents-dir", ["OPENROUTER_API_KEY"]) == "OPENROUTER_API_KEY (secret store username 'openrouter')"
+    assert er.credential_label("no-such-adapter", ["SOME_KEY"]) == "SOME_KEY"
+    assert er.credential_label("agents-dir", []) == "no variable (the harness's own login)"
+
+
+def test_a_refused_key_is_not_retried_and_stops_the_event_until_it_is_resumed(tmp_path, monkeypatch, capsys):
+    control_demo(tmp_path, monkeypatch, auth_p_with_f=9)
+    configure_gate(tmp_path, floor_pass_env=["FLOORKEY"])
+    monkeypatch.setenv("FLOORKEY", "floorkey-value")
+    assert er.main(["--skill", "demo", "--jobs", "1"]) == 1
+    captured = capsys.readouterr()
+    out, bench = json.loads(captured.out), bench_of(tmp_path)
+    # One call, never retried, and no run started after it: every later run would meet the same refusal.
+    assert calls(tmp_path) == ["p with m", "p with f"]
+    failures = sorted((f["case"], f["variant"], f["tier"], f["kind"]) for f in bench["infra_failures"])
+    assert failures == [(1, "with_skill", "floor", "auth"), (1, "without_skill", "strong", "not_run"),
+                        (2, "with_skill", "floor", "not_run"), (2, "with_skill", "strong", "not_run"),
+                        (2, "without_skill", "strong", "not_run")]
+    refused = next(f for f in bench["infra_failures"] if f["kind"] == "auth")
+    assert refused["attempts"] == 1 and refused["detail"] == "HTTP 401" and "FLOORKEY" in refused["reason"]
+    assert bench["counts"]["floor"]["with_skill"]["adapter_failures"] == 0 and bench["counts"]["floor"]["with_skill"]["retries"] == 0
+    # The message names the variable, never its value, and says how to go on.
+    assert "KEY REFUSED case 1 with_skill.floor run 1: the provider refused the key (HTTP 401) passed in FLOORKEY" in captured.err
+    assert f"--resume {out['iteration_dir']}" in captured.err and "floorkey-value" not in captured.err + captured.out
+    assert "RETRY" not in captured.err and json.loads((tmp_path / out["iteration_dir"] / "event.json").read_text())["state"] == "open"
+    # With a valid key stored, --resume runs the refused run and the runs that never started, and no other.
+    (tmp_path / "adapters" / "h" / "auth-p-with-f").unlink()
+    assert er.main(["--resume", str(tmp_path / out["iteration_dir"])]) == 0
+    assert sorted(calls(tmp_path)[2:]) == ["p with f", "p without m", "q with f", "q with m", "q without m"]
+    assert json.loads(capsys.readouterr().out)["complete"] is True
 
 
 # The account limit: the three "never" of a run that meets it.

@@ -80,7 +80,8 @@ machine; "web_jobs" [{"strong": 2, "floor": 2}], the same for runs on the open n
 "web_cases", {skill: [case ids]}, the only cases that may set "allow_web" (with a gate file and no such key,
 none may); "strong_web_pass_env", the variables a strong-model run of a web case receives in place of
 "strong_pass_env" (a low-limit API key in place of the account's token). An event made with another number of
-runs, another timeout or another number of retries than these writes no evidence (eval_run.py --help).
+runs, another timeout or another number of retries than these writes no evidence (eval_run.py --help), and
+an evidence file whose event line carries another "runs" than the configured one is not valid (`evidence`).
 
 Field evidence (the reliability model, section 7) is a use of a skill in a project, recorded there by
 scripts/evidence.py and contributed as skills/<name>/evals/evidence/field-<id>.jsonl, <id> being the first 12
@@ -933,6 +934,13 @@ def evidence_file_problems(path, root=ROOT, skill=None):
             problems.append("line 1: test differs from the file's name")
         if skill is not None and event["skill"] != skill:
             problems.append(f"line 1: skill must be the folder's name, {skill}")
+        # Evidence comes only from an event that used the configured values: an event with another number of
+        # runs is a trial, whose file belongs in its run folder's scratch tree, never in a skill. As in the
+        # runner, a tree without a gate file (a case folder that builds a skill of its own) configures nothing.
+        configured = event_config(cfg)["runs"] if cfg else event["runs"]
+        if event["runs"] != configured:
+            problems.append(f"line 1: runs is {event['runs']}, and the configured number is {configured} "
+                            f"(\"runs\" of {GATE_REL}): an event with another number of runs is a trial, and writes no evidence")
     for n, line in runs:
         problems += [f"line {n}: {p}" for p in run_line_problems(line, None if first else event, models)]
     return problems

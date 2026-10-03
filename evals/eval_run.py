@@ -106,6 +106,11 @@ variant in benchmark.json "counts" ({"attempts", "retries", "timeouts", "refusal
 "early_ends", "pauses", "resumes"}). What an attempt left is kept in the run folder (failed-<j>/,
 early-end-<j>/). A run that fails on every attempt is an infrastructure failure: it has no score and the event
 is incomplete.
+A refused key. A run whose provider refuses its credential (HTTP 401, or a 403 whose message names a key, a
+token or a credential) is never retried: every later run with that key would meet the same refusal. The
+event stops: no run starts after it, the runs in progress end, the run is listed in "infra_failures" with
+kind "auth", and the message names the variable that carried the key (with its secret store username), never
+its value. The runs not started are listed as not run; --resume runs them once a valid key is stored.
 --resume <event folder> runs again the failed runs of an event, and only them (and a run that never ended,
 when the event was stopped), with the options the event started with and on the same content of the skill
 (a skill folder that changed since is refused), and computes benchmark.json again. One run is resumed at
@@ -263,6 +268,9 @@ named with --grader, and compares the verdicts by position with the stored ones.
 "failed", "verdicts", "differ", "share", "failed_verdicts", "failed_differ", "runs"}, keeps each new result in
 <run folder>/regrade-<k>/, changes no score and writes no evidence. It measures how much two gradings of the
 same material disagree, and compares a new grader with the old one on a sample.
+The folder given to --resume, --close and --regrade, when relative, is read against the current folder and no
+other base; it must be inside this checkout's evals-workspace/, and a folder of another checkout is refused.
+Each command prints the absolute folder it acts on.
 
 Preflight. Before any model call, and in --dry-run and --check-cases (which runs only this check; --harness
 and --model are then optional), every case is checked: (a) each "files" entry exists in the skill folder;
@@ -703,7 +711,9 @@ def parse(argv):
         if opts["skill"] or opts["cases"] or opts["only"] or opts["check_cases"] or opts["dry"]:
             die("--regrade takes a run folder and goes with --grader, --harness, --jobs and --timeout only.")
         if not os.path.isdir(opts["regrade"]):
-            die(f"--regrade {opts['regrade']!r} is not a folder.")
+            die(f"--regrade {opts['regrade']!r} is not a folder (a relative path is read against the current folder, "
+                f"{os.getcwd()}).")
+        opts["regrade"] = operator_folder(opts["regrade"], "--regrade")
     alone = [a for a in argv if a.startswith("--") and a not in ("--resume", "--jobs", "--unpause", "--at", "--close")]
     if opts["resume"] is not None and (alone or opts["unpause"] or opts["close"] is not None):
         die("--resume takes an event's folder and goes with --jobs only: the event keeps the options it started with.")
@@ -1329,6 +1339,51 @@ def provider_refusal(out_dir, markers):
     return None
 
 
+# A provider that refuses the credential itself: an HTTP status 401, or 403, in the words a runner or an API
+# prints it ("HTTP 401", "statusCode":401, "API Error: 401", 401 Unauthorized, 401 "User not found.") or the
+# error type of a 401 ("authentication_error"). A 401 is always the credential; a 403 is only when the text
+# around it names a key, a token or a credential (another 403 is a policy or a region, and is retried).
+AUTH_STATUS = re.compile(
+    r"(?i)(?:\bHTTP(?:/[\d.]+)?\s+(40[13])\b"
+    r"|\bstatus(?:[ _-]?code)?\"?\s*[:=]\s*\"?(40[13])\b"
+    r"|\"api_error_status\"\s*:\s*(40[13])\b"
+    r"|\bAPI Error:?\s*(40[13])\b"
+    r"|(?<![\w.-])(40[13])\s+(?:Unauthorized|Forbidden|\"))"
+    r"|(\"authentication_error\")")
+AUTH_KEY_WORDS = re.compile(r"(?i)\b(?:api[ _-]?)?keys?\b|\btokens?\b|\bcredentials?\b")
+AUTH_WINDOW = 300  # characters on each side of a 403 in which the key must be named
+
+
+def auth_refusal(out_dir):
+    """"HTTP 401" or "HTTP 403" when what a failed run left shows the provider refusing its credential, else None.
+    Only the status is returned, never the provider's words: a provider may echo a part of the key."""
+    for name in ("error.log", "stderr.log", "raw.json", "response.md"):
+        text = read_text(os.path.join(out_dir, name), 400000)
+        for m in AUTH_STATUS.finditer(text):
+            code = next((g for g in m.groups()[:5] if g), None) or "401"  # "authentication_error" is the 401's type
+            if code == "401" or AUTH_KEY_WORDS.search(text[max(0, m.start() - AUTH_WINDOW):m.end() + AUTH_WINDOW]):
+                return f"HTTP {code}"
+    return None
+
+
+def credential_label(harness, names):
+    """The variables a refused run received its key in, by name, each with the secret store username its
+    adapter registers for it ("secrets" of adapters/<harness>/adapter.json); never a value."""
+    try:
+        with open(os.path.join(ROOT, "adapters", harness, "adapter.json"), encoding="utf-8") as f:
+            secrets = json.load(f).get("secrets") or []
+    except (OSError, ValueError, AttributeError):
+        secrets = []
+    store = {s.get("name"): s.get("store_username") for s in secrets if isinstance(s, dict)}
+    if not names:
+        return "no variable (the harness's own login)"
+    return ", ".join(name + (f" (secret store username {store[name]!r})" if store.get(name) else "") for name in names)
+
+
+class EventStopped(Exception):
+    """A run that was not started because its event stopped: it gets no ledger line, so --resume runs it."""
+
+
 def mount_patterns():
     """What names a path of the workbench in a run's output: the folder the one adapter script is mounted in
     inside a container (as a path of its own, not as the end of another one), and the repository's absolute
@@ -1939,6 +1994,7 @@ def regrade(o):
     if not os.path.isfile(runner):
         die(f"adapter {o['harness']!r} has no run-prompt.sh (see AGENTS.md, Adding an adapter).")
     base = os.path.abspath(o["regrade"])
+    print(f"--regrade acts on {base}", file=sys.stderr)
     found = []
     for dp, dns, fns in os.walk(base):
         dns.sort()
@@ -2508,12 +2564,29 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
-def find_event(value):
-    """The folder of the event --resume names: a path, or evals-workspace/<skill>/iteration-<n> given as that."""
-    for candidate in (value, os.path.join(ROOT, value), os.path.join(ROOT, "evals-workspace", value)):
-        if os.path.isfile(os.path.join(candidate, "event.json")):
-            return os.path.abspath(candidate)
-    die(f"--resume {value!r}: no event there (a folder evals-workspace/<skill>/iteration-<n> that holds event.json).")
+def operator_folder(value, flag):
+    """The absolute folder a path given to --resume, --close or --regrade names. A relative path is read against
+    one base, the current working directory, as any command line reads it, and never against another. The
+    folder must be inside this checkout's workspace, <ROOT>/evals-workspace: an event or a run folder of another
+    checkout is refused, so that a regrade or a resumption never reads, or writes into, another checkout's round."""
+    path = os.path.abspath(value)
+    workspace = os.path.realpath(os.path.join(ROOT, "evals-workspace"))
+    if os.path.commonpath([os.path.realpath(path), workspace]) != workspace:
+        die(f"{flag} {value!r} is {path} (a relative path is read against the current folder, {os.getcwd()}), which is "
+            f"not inside this checkout's workspace, {workspace}: a folder of another checkout is never read. Give a "
+            f"folder of this checkout, for example from {ROOT}: python3 evals/eval_run.py {flag} "
+            "evals-workspace/<skill>/iteration-<n>")
+    return path
+
+
+def find_event(value, flag="--resume"):
+    """The folder of the event --resume or --close names: a path to evals-workspace/<skill>/iteration-<n> of this
+    checkout (operator_folder), which holds event.json."""
+    folder = operator_folder(value, flag)
+    if not os.path.isfile(os.path.join(folder, "event.json")):
+        die(f"{flag} {value!r}: no event in {folder} (a folder evals-workspace/<skill>/iteration-<n> that holds event.json).")
+    print(f"{flag} acts on {folder}", file=sys.stderr)
+    return folder
 
 
 def scratch_reason(o, gate, environment, version=None, fingerprint=None):
@@ -2627,7 +2700,7 @@ def run(argv):
         return routing(o)
     resumed, it_dir, closing = None, None, o["close"] is not None
     if o["resume"] is not None or closing:
-        it_dir = find_event(o["close"] if closing else o["resume"])
+        it_dir = find_event(o["close"] if closing else o["resume"], "--close" if closing else "--resume")
         with open(os.path.join(it_dir, "event.json"), encoding="utf-8") as f:
             resumed = json.load(f)
         if resumed.get("written"):
@@ -2818,6 +2891,16 @@ def run(argv):
             return o["pass_env"] + o["floor_pass_env"]
         return o["pass_env"] + (web_env if web[case_id] and web_env else o["strong_pass_env"])
 
+    def key_names(tier, case_id):
+        """The variables that carry the tier's own key, which a refusal of the credential names; the caller's
+        --pass-env variables when the tier has none of its own."""
+        own = o["floor_pass_env"] if tier == "floor" else (web_env if web[case_id] and web_env else o["strong_pass_env"])
+        return own or env_names(tier, case_id)
+
+    # Set when a provider refused a run's credential: every later run would meet the same refusal, so no run of
+    # the event starts after it, and the runs not started are left for --resume once the key is stored again.
+    refused_key, refused_note = threading.Event(), []
+
     grader_env = o["pass_env"] + o["strong_pass_env"]
     all_values = load_measure().redaction_values(names)  # of every tier: a grading prompt carries none of them
     grader_account = {"key": harness_for["strong"], "markers": eval_for["strong"]["account_limit"],
@@ -2858,10 +2941,14 @@ def run(argv):
         if os.path.isdir(run_dir) and any(not item.startswith(KEPT_PREFIXES) for item in os.listdir(run_dir)):
             set_aside("before-resume")  # what an earlier pass of the event left of this run
         while True:
+            if refused_key.is_set():
+                raise EventStopped()
             wait_while_paused(account["key"], account["probe"])
             count["attempts"] += 1
             # The run happens outside the repository; its folders come back to run_dir when it ends, however it ends.
             with Slots(control, tier, web[c["id"]]):
+                if refused_key.is_set():  # refused while this run waited for its place
+                    raise EventStopped()
                 root = new_run_root(run_dir, names=(o["skill"],))
                 case_dir, changed, delta, inputs, vcs, case_text = os.path.join(root, "case"), [], None, {}, None, ""
                 carried, staged = None, []
@@ -2939,6 +3026,8 @@ def run(argv):
                 kind = "timeout"
             elif why and provider_refusal(out, eval_for[tier]["refusal_markers"]):
                 kind, detail = "refused", provider_refusal(out, eval_for[tier]["refusal_markers"])[:300]
+            elif why and auth_refusal(out):
+                kind, detail = "auth", auth_refusal(out)
             elif why:
                 kind = "adapter"
             else:
@@ -2946,6 +3035,22 @@ def run(argv):
                 kind = "early_end" if detail else None
             if kind is None:
                 break
+            if kind == "auth":
+                # The provider refused the credential: never retried, and the event stops, since every later run
+                # with it would meet the same refusal. The message names the variable, never its value.
+                refused_key.set()
+                reason = (f"the provider refused the key ({detail}) passed in "
+                          f"{credential_label(harness_for[tier], key_names(tier, c['id']))}")
+                note = (f"KEY REFUSED case {c['id']} {name} run {k}: {reason}. The event stops: every later run with that "
+                        "key would meet the same refusal, so the run is not retried and no new run starts. Store a valid "
+                        "key under that name, then run what is left with: python3 evals/eval_run.py --resume "
+                        f"{os.path.relpath(it_dir, ROOT)}")
+                if not refused_note:
+                    refused_note.append(note)
+                    print(note, file=sys.stderr)
+                return entry(None, infra(reason, "auth", detail=detail, attempts=count["attempts"]), [
+                    f"RUN FAILED  case {c['id']} {name} run {k} ({reason}; not retried): see "
+                    f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"])
             count[RETRY_KINDS[kind]] += 1
             if kind == "refused":
                 count["refused"] = detail
@@ -3007,7 +3112,10 @@ def run(argv):
         return entry(row, failed)
 
     def run_and_log(job):
-        result = one_run(*job)
+        try:
+            result = one_run(*job)
+        except EventStopped:  # not started: no ledger line, so the run is listed as not run and --resume runs it
+            return {"msgs": []}
         ledger_add(it_dir, {**{key: value for key, value in result.items() if key != "msgs"}, "date": today()})
         return result
 
@@ -3121,6 +3229,8 @@ def run(argv):
               "(benchmark.json infra_failures). Run them again, and only them, with: python3 evals/eval_run.py --resume "
               f"{os.path.relpath(it_dir, ROOT)} (a run still failing after {control['max_resumes']} resumption(s) is written "
               "as a timeout with score 0). Do not change the skill for them.", file=sys.stderr)
+    for note in refused_note:  # said again at the end, where the operator reads the outcome
+        print(note, file=sys.stderr)
     for hit in timeouts:
         print(f"TIMEOUT     case {hit['case']} {hit['variant']} ({hit['tier']}) run {hit['run']}: still incomplete after "
               f"{hit['resumes']} resumption(s) ({hit['reason']}); it scores 0", file=sys.stderr)
