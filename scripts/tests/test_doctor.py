@@ -15,20 +15,17 @@ doctor = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(doctor)
 
 
-def test_unknown_or_path_like_provider_is_not_run(monkeypatch):
+
+
+def test_a_name_from_the_environment_that_is_not_a_provider_is_not_run(monkeypatch):
     ran = []
     monkeypatch.setattr(doctor.subprocess, "run", lambda *a, **k: ran.append(a))
-    for impl in ("../../tmp/x", "/tmp/x", "auth", "LAUNCHD", "nope", ""):
-        status, detail = doctor.check_provider("scheduler:job", impl)
+    for impl in ("../../tmp/x", "/tmp/x", "auth", "LAUNCHD", "nope"):
+        monkeypatch.setenv("SCHEDULER_PROVIDER", impl)
+        status, detail = doctor.check_class("scheduler:job")
         assert status == "missing" and "is not a provider" in detail, impl
-    assert doctor.check_provider("../x:y", "launchd")[0] == "unknown"
+    assert doctor.check_class("../x:y")[0] == "unknown"
     assert ran == []
-
-
-def test_known_providers_exclude_helpers():
-    assert "linkedin" in doctor.known_providers("publisher")
-    assert "auth" not in doctor.known_providers("publisher")
-    assert doctor.known_providers("..") == []
 
 
 def test_harness_name_is_validated():
@@ -36,36 +33,57 @@ def test_harness_name_is_validated():
     assert r.returncode == 2
 
 
-def test_integration_class_maps_to_its_service_folder(monkeypatch):
+def test_integration_class_maps_to_its_service_folder():
     assert doctor.provider_folder("integration:vcs") == "vcs"
     assert doctor.provider_folder("publisher:linkedin") == "publisher"
     assert doctor.provider_folder("scheduler:job") == doctor.provider_folder("scheduler") == "scheduler"
     assert doctor.provider_folder("reader:email") == doctor.provider_folder("mailbox") == "mailbox"
     assert doctor.provider_folder("teleporter") is None and doctor.provider_folder("reader:rss") is None
-    assert "github" in doctor.known_providers(doctor.provider_folder("integration:vcs"))
+
+
+def test_the_contract_says_which_skills_the_doctor_reads_and_who_runs_it():
+    # RS6: the contract said the doctor lists the classes "the installed skills require" (it reads the checkout's
+    # own skills/) and that flows run it, which an installed skill cannot.
+    text = (Path(doctor.ROOT) / "contracts/environment.md").read_text(encoding="utf-8")
+    (paragraph,) = [p for p in text.split("\n\n") if p.startswith("`python3 scripts/doctor.py")]
+    assert "the installed skills require" not in paragraph and "Flows run it" not in paragraph
+    assert "its own `skills/` folder" in paragraph and "a skill never depends on it" in paragraph
+    assert "through `uv run`" in paragraph
+
+
+def test_only_what_the_report_uses_is_left():
+    # RS5: env_provider, known_providers and check_provider were called by nothing but these tests.
+    for name in ("env_provider", "known_providers", "check_provider"):
+        assert not hasattr(doctor, name), name
+
+
+def test_without_uv_a_provider_is_missing_and_never_run_with_the_callers_interpreter(monkeypatch):
+    # RS5: without uv the doctor ran `python3 <provider>`, against providers/CONTRACT.md ("never with the
+    # caller's interpreter"): a provider's pinned dependencies are not there.
+    ran = []
+    monkeypatch.setattr(doctor.subprocess, "run", lambda cmd, **k: ran.append(cmd))
+    monkeypatch.setattr(doctor, "_which", lambda name: False)
     for name in [n for n in list(doctor.os.environ) if n.endswith("_PROVIDER")]:
         monkeypatch.delenv(name)
-    monkeypatch.setenv("INTEGRATION_PROVIDER", "github")
-    assert doctor.env_provider("integration:vcs") == (None, None)  # no shared fallback across services
-    monkeypatch.setenv("INTEGRATION_VCS_PROVIDER", "github")
-    assert doctor.env_provider("integration:vcs") == ("INTEGRATION_VCS_PROVIDER", "github")
-    monkeypatch.setenv("INTEGRATION_ISSUE_TRACKER_PROVIDER", "jira")
-    assert doctor.env_provider("integration:issue-tracker") == ("INTEGRATION_ISSUE_TRACKER_PROVIDER", "jira")
-    monkeypatch.setenv("PUBLISHER_PROVIDER", "linkedin")
-    assert doctor.env_provider("publisher:linkedin") == ("PUBLISHER_PROVIDER", "linkedin")
+    status, detail = doctor.check_class("integration:vcs")
+    assert status == "missing" and "uv" in detail and ran == []
 
 
-def test_vcs_provider_runs_its_check(monkeypatch):
+def test_vcs_provider_runs_its_check_through_uv(monkeypatch):
     ran = []
 
     class Done:
         returncode, stdout, stderr = 0, "{}", ""
 
     monkeypatch.setattr(doctor.subprocess, "run", lambda cmd, **k: ran.append(cmd) or Done())
-    status, detail = doctor.check_provider("integration:vcs", "github")
-    assert status == "provider" and detail == "providers/vcs/github.py"
-    assert ran[0][-2:] == [str(Path(doctor.PROVIDERS) / "vcs" / "github.py"), "--check"]
-    assert doctor.check_provider("integration:vcs", "gitlab")[0] == "missing"
+    monkeypatch.setattr(doctor, "_which", lambda name: name == "uv")
+    for name in [n for n in list(doctor.os.environ) if n.endswith("_PROVIDER")]:
+        monkeypatch.delenv(name)
+    status, detail = doctor.check_class("integration:vcs")
+    assert status == "provider" and detail.endswith("providers/vcs/github.py")
+    assert ran[0] == ["uv", "run", str(Path(doctor.PROVIDERS) / "vcs" / "github.py"), "--check"]
+    monkeypatch.setenv("INTEGRATION_VCS_PROVIDER", "gitlab")
+    assert doctor.check_class("integration:vcs")[0] == "missing" and len(ran) == 1
 
 
 def test_a_class_is_checked_through_the_resolution_function(monkeypatch):

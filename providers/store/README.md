@@ -2,7 +2,7 @@
 
 Implementations of the `store:runtime` class (`store` until 2026-10-02; the folder and `STORE_PROVIDER` keep that name): the durable state of the agent runtime (backlog R2). Interface: `providers/CONTRACT.md`. Selected with `STORE_PROVIDER=sqlite`; the runtime calls the store only through its CLI, so another implementation (a cloud database) can replace it without changing the runtime.
 
-The decision behind it is in `docs/decisions.md` ("2026-09-28: An agent runtime as a new, tool-free layer; storage behind an interface"): a Markdown file does not take several agents writing at once, so state that agents write goes to a store. The first user is the `social-manager` agent (backlog PB7).
+The decision behind it is in `docs/decisions.md` ("2026-09-28: An agent runtime as a new, tool-free layer; storage behind an interface"): a Markdown file does not take several agents writing at once, so state that agents write goes to a store.
 
 ## SQLite (`sqlite.py`)
 
@@ -19,13 +19,14 @@ Standard library only (`sqlite3`); runs with `python3` or `uv run`. No credentia
 | `inbox` | what waits for the user (backlog R5): kind, title, the payload as JSON and the approval hash the caller gave (`--payload-sha256`: the SHA-256 of what the person approves, in the sense of `contracts/environment.md`; it may be the hash of a file the payload only points to, and the store does not compare it with the payload), status `open`, then `approved`, `rejected` or `done`, and who decided when | `inbox-add`, `inbox-resolve` |
 | `actions` | every outward action the runtime executed: kind, idempotency key (unique), target, payload hash, the provider's result | `action-add` |
 
-`action-count --kind reply --since <start of day>` is how a daily limit is enforced; `actions` and `export` are the audit.
+`action-count --kind reply --since <start of day>` is how a daily limit is enforced; `actions` and `export` are the audit. `runs`, `inbox-list` and `actions` stop at `--limit` and then print `"truncated": true`; `inbox-list --id <id>` reads one item whatever its status, so an item past the limit can still be reached.
 
 ### Guarantees
 
 - **Several writers.** WAL mode (readers never wait for the writer), a 10-second busy timeout, and every write in one `BEGIN IMMEDIATE` transaction: several agents and overlapping scheduler firings can write at once, and each verb's change is all or nothing. A write still blocked after 10 seconds fails with exit 1 and changes nothing.
 - **One event per notification.** `event-add` is unique on source and external id; adding the same e-mail twice returns the first event with `"created": false`.
-- **One claimant per event.** `event-next` claims inside one transaction and gives each event a fresh claim token; two overlapping ticks never receive the same event (tested with several processes). A claim older than `--reclaim-after-minutes` (default 60) returns to pending on the next `event-next` for that source, for a run that crashed. The old token is then refused by `event-done` (exit 1), so a late run cannot overwrite the new claimant's result. `event-done` with the same token and status twice is harmless (`"already": true`).
+- **One claimant per event.** `event-next` claims inside one transaction and gives each event a fresh claim token; two overlapping ticks never receive the same event (tested with several processes). A claim older than `--reclaim-after-minutes` (default 60, at least 1) returns to pending on the next `event-next` for that source, for a run that crashed; an event already claimed 5 times whose claim expired again is not handed out a sixth time: it ends `failed` with a note, and `event-next` lists its id in `failed`. The old token is then refused by `event-done` (exit 1), so a late run cannot overwrite the new claimant's result. `event-done` with the same token and status twice is harmless (`"already": true`).
+- **One open item per event and kind.** `inbox-add --event-id <id>` for an event that already has an open item of that kind returns that item with `"created": false` and adds nothing, so an event escalated twice makes one item.
 - **Forward-only inbox.** `open` becomes `approved`, `rejected` or `done`; `approved` becomes `done`; nothing else. Who approved and who marked it done are kept separately.
 - **One action per key.** `action-add` with a key already recorded returns the first action when kind, target and payload hash match, and fails with exit 1 when they differ.
 - **External text is data.** Payloads may hold text written by other people (a comment in a notification e-mail). The store keeps the file's text exactly as given, only checks that it is UTF-8 JSON under the cap, and never interprets it. Every SQL statement is a constant with parameters.
@@ -38,13 +39,13 @@ Wherever `--db` or `STORE_SQLITE_PATH` points; the provider picks no default, so
 ### Usage
 
 ```sh
-export STORE_SQLITE_PATH="$HOME/agent-state/social-manager.sqlite"
+export STORE_SQLITE_PATH="$HOME/agent-state/agent.sqlite"
 python3 providers/store/sqlite.py init
 python3 providers/store/sqlite.py --check
 python3 providers/store/sqlite.py event-add --source mailbox --external-id '<message id>' --payload-file event.json
 python3 providers/store/sqlite.py event-next --source mailbox --limit 5
 python3 providers/store/sqlite.py event-done --id 12 --token <claim token> --status done
-python3 providers/store/sqlite.py run-start --agent social-manager --event-id 12 --trigger mailbox
+python3 providers/store/sqlite.py run-start --agent example-agent --event-id 12 --trigger mailbox
 python3 providers/store/sqlite.py run-end --run-id 7 --status ok --exit-code 0 --cost-usd 0.04 \
     --tokens 12000 --duration-ms 65000 --out-dir /path/to/run
 python3 providers/store/sqlite.py action-count --kind reply --since 2026-09-29T00:00:00-03:00

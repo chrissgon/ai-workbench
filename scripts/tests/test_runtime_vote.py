@@ -83,6 +83,8 @@ sys.exit(1 if bad else 0)
 FAKE_RENDER = r'''
 import json, os, sys
 args = sys.argv[1:]
+with open(os.environ["FAKE_CALLS"], "a") as f:
+    f.write(json.dumps(["render"] + args) + "\n")
 if os.environ.get("FAKE_NO_BROWSER"):
     print("no browser", file=sys.stderr); sys.exit(3)
 out = args[args.index("--out") + 1]
@@ -165,7 +167,8 @@ def env(tmp_path, monkeypatch):
         p.write_text(text)
     for rel in ("providers/store/sqlite.py", "skills/mkt-vote-round/scripts/vote_state.py",
                 "skills/mkt-vote-round/scripts/vote_update.py", "skills/mkt-vote-round/SKILL.md",
-                "skills/mkt-publish/scripts/payload.py", "scripts/vote_job.py"):
+                "skills/mkt-publish/scripts/payload.py", "scripts/vote_job.py",
+                "shared/references/platforms/linkedin.json"):
         (wb / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / rel, wb / rel)
     profile = tmp_path / "profile"
@@ -230,6 +233,85 @@ def test_tick_builds_one_vote_item_and_acts_on_nothing(env):
     assert calls(env, "publisher") == [] and calls(env, "scheduler") == []
     assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
     assert (env["profile"] / "data/pick-queue.json").read_text() == before
+
+
+def edit_data_file(env, change):
+    path = env["wb"] / "shared/references/platforms/linkedin.json"
+    data = json.loads(path.read_text())
+    change(data)
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_the_payload_builder_gets_the_data_file_and_the_publisher(env):
+    # Row 46 made payload.py read the platform's limits from --platform-file and take the publisher's path; the
+    # runtime passed neither, so a post was checked against no limit of the platform and no job.json was written.
+    scripts = env["wb"] / "skills/mkt-publish/scripts"
+    (scripts / "payload.py").rename(scripts / "payload_real.py")
+    (scripts / "payload.py").write_text(  # records its arguments, then is the real payload.py
+        "import json, os, runpy, sys\nfrom pathlib import Path\n"
+        "with open(os.environ['FAKE_CALLS'], 'a') as f:\n    f.write(json.dumps(['payload'] + sys.argv[1:]) + '\\n')\n"
+        "runpy.run_path(str(Path(__file__).with_name('payload_real.py')), run_name='__main__')\n")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is True, b["problems"]
+    (build,) = calls(env, "payload")
+    data_file = str(env["wb"].resolve() / "shared/references/platforms/linkedin.json")
+    assert build[build.index("--platform") + 1] == "linkedin" and build[build.index("--platform-file") + 1] == data_file
+    assert build[build.index("--publisher") + 1] == str(env["wb"].resolve() / "providers/publisher/linkedin.py")
+    post = Path(b["files"]["post"]["path"])
+    job = json.loads((post.parent / "job.json").read_text())  # written by payload.py only when given --publisher
+    assert job["argv"][job["argv"].index("run") + 1] == str(env["wb"].resolve() / "providers/publisher/linkedin.py")
+
+
+def test_the_vote_job_carries_the_data_file_and_hands_it_to_the_address_check(env, tmp_path):
+    # Row 48 made vote_update.py --record-post check the post's address against the data file; the job neither
+    # carried the file nor passed it, so only a generic https address was checked at the slot.
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    data_file = job["argv"][job["argv"].index("--platform-file") + 1]
+    assert data_file == str(env["wb"].resolve() / "shared/references/platforms/linkedin.json")
+    assert data_file in job["snapshot"]
+    assert job["argv"][job["argv"].index("--platform") + 1] == "linkedin"
+    other = tmp_path / "other.json"  # the same platform, whose posts live on another host
+    data = json.loads(Path(data_file).read_text())
+    data["post"]["url"]["hosts"] = ["www.example.com"]
+    data["hosts"] = ["www.example.com"]
+    other.write_text(json.dumps(data))
+    argv = [str(other) if a == data_file else a for a in job["argv"]]
+    r = subprocess.run([sys.executable] + argv[1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    out = json.loads(r.stdout)
+    assert r.returncode == 1 and out["published"] is True and out["recorded"] is False, r.stderr
+    assert "vote_update.py exited 1" in out["error"]
+    assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
+
+
+def test_the_vote_job_has_no_default_platform_and_names_no_provider(env):
+    # Coupling row 11: --platform defaulted to one platform, and the usage named that platform's provider files.
+    rt(env, "tick")
+    job = json.loads(Path(inbox(env)[0]["payload"]["files"]["job"]["path"]).read_text())
+    i = job["argv"].index("--platform")
+    without = job["argv"][1:i] + job["argv"][i + 2:]
+    r = subprocess.run([sys.executable] + without, capture_output=True, text=True, timeout=60, cwd=job["cwd"])
+    assert r.returncode == 2 and "--platform" in r.stderr
+    assert calls(env, "publisher") == []
+    source = (REPO / "scripts/vote_job.py").read_text().lower()
+    assert "linkedin" not in source and "github" not in source
+
+
+def test_a_round_id_that_is_not_one_builds_nothing(env):
+    # RT15: the round id from the repository's vote file became a folder name (later removed with rmtree), and
+    # only the skill's vote_state.py checked it.
+    (env["wb"] / "skills/mkt-vote-round/scripts/vote_state.py").write_text(
+        "import json\nprint(json.dumps({'pending': True, 'round': {'round': '../../escaped', 'pillar': 'x'}, "
+        "'slot': None, 'rotation': {}}))\n")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "failed" and "round id" in out["vote"]["note"], out
+    assert not (env["data"].parent / "escaped").exists() and inbox(env) == []
 
 
 def test_a_round_is_handled_once(env):
@@ -337,6 +419,21 @@ def test_wrong_hash_or_edited_post_does_nothing(env):
     assert calls(env, "scheduler") == []
 
 
+def test_a_stored_bundle_changed_after_the_proposal_refuses(env):
+    # RT12: the vote item's bundle in the store was never re-hashed, so its slot was covered by the database only.
+    import sqlite3
+    rt(env, "tick")
+    item = inbox(env)[0]
+    bundle = item["payload"]
+    bundle["slot"]["when"] = "2026-10-13T09:00:00-03:00"
+    with sqlite3.connect(str(env["data"] / "store.sqlite")) as db:
+        db.execute("UPDATE inbox SET payload = ? WHERE id = ?",
+                   (json.dumps(bundle, ensure_ascii=False, indent=1), item["id"]))
+    code, _, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", item["payload_sha256"])
+    assert code == 1 and "no longer has the hash" in err
+    assert calls(env, "scheduler") == []
+
+
 def test_queue_moved_in_the_repository_refuses(env):
     rt(env, "tick")
     item = inbox(env)[0]
@@ -394,8 +491,9 @@ def test_parse_proposal_rules():
     state = {"round": {"round": "2026-10-05", "winner": None, "winner_topic": None,
                        "options": {"A": "One", "B": "Two", "C": "Three"}},
              "slot": {"language": "PT"}, "rotation": {"next_pillar": "Small tools"}}
+    limits = {"post": 3000, "first_comment": 1250}
     text = proposal(topic="Two", reason="It has material in the notes.", language="PT", pillar="Small tools")
-    assert runtime_vote.parse_proposal(text, state)["topic"] == "Two"
+    assert runtime_vote.parse_proposal(text, state, limits)["topic"] == "Two"
     for bad, message in ((proposal(topic="Two", language="PT", pillar="Small tools"), "reason"),
                          (proposal(topic="Two", reason="x", language="EN", pillar="Small tools"), "language"),
                          (proposal(topic="Two", reason="x", language="PT", pillar="Other"), "pillar"),
@@ -403,7 +501,29 @@ def test_parse_proposal_rules():
                                    options={"A": "", "B": "b", "C": "c"}), "without material"),
                          (text + text, "found 2")):
         with pytest.raises(ValueError, match=message):
-            runtime_vote.parse_proposal(bad, state)
+            runtime_vote.parse_proposal(bad, state, limits)
+    with pytest.raises(ValueError, match="at most 20 characters"):
+        runtime_vote.parse_proposal(text, state, {**limits, "post": 20})
+    with pytest.raises(ValueError, match="first_comment must have at most 0"):
+        runtime_vote.parse_proposal(text, state, {**limits, "first_comment": 0})
+
+
+def test_the_limits_and_the_image_size_come_from_the_data_file(env):
+    # CT2: the post's 3000 characters, the first comment's 1250 and the image's 1080 x 1350 were constants of the
+    # runtime; they are the platform's, and its data file holds them.
+    def change(d):
+        d["post"]["max_characters"] = 30
+        d["media"]["post_image"] = {"width": 600, "height": 400}
+    edit_data_file(env, change)
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox" and "at most 30 characters" in out["vote"]["note"], out
+    assert rt(env, "reject", "--id", str(inbox(env)[0]["id"]))[0] == 0
+    edit_data_file(env, lambda d: d["post"].update(max_characters=3000))
+    code, out, err = rt(env, "tick")
+    assert inbox(env)[0]["payload"]["ready"] is True, err
+    (render,) = calls(env, "render")
+    assert render[render.index("--width") + 1] == "600" and render[render.index("--height") + 1] == "400"
 
 
 def test_vote_job_publishes_then_records_the_post(env, tmp_path):
@@ -497,6 +617,19 @@ def test_vote_job_without_a_post_address_records_nothing(env, tmp_path):
     out = json.loads(r.stdout)
     assert r.returncode == 1 and out["published"] is False and "nothing was recorded" in out["error"]
     assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
+
+
+def test_vote_job_with_its_publisher_gone_records_nothing(env, tmp_path):
+    # Test gap of the report: vote_job.py when the publisher is not found.
+    rt(env, "tick")
+    job = json.loads(Path(inbox(env)[0]["payload"]["files"]["job"]["path"]).read_text())
+    i = job["argv"].index("--publisher")
+    argv = job["argv"][:i + 1] + [str(tmp_path / "gone.py")] + job["argv"][i + 2:]
+    r = subprocess.run([sys.executable] + argv[1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    out = json.loads(r.stdout)
+    assert r.returncode == 1 and out["published"] is False and "nothing was recorded" in out["error"]
+    assert calls(env, "publisher") == [] and not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
 
 
 def test_the_vote_job_uses_the_system_interpreter_and_carries_the_configured_folders(env, tmp_path):

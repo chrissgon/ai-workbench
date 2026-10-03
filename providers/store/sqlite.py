@@ -47,11 +47,15 @@ TITLE_MAX = 1024          # inbox titles
 REF_MAX = 512             # external ids, targets, idempotency keys
 LABEL_MAX = 128           # source, name, kind, agent, trigger, by
 PATH_MAX = 4096           # --out-dir, --db
+INT_MIN, INT_MAX = -2 ** 63, 2 ** 63 - 1  # SQLite's INTEGER; a Python int past it cannot be stored or compared
 
 LIMITS = {"event-next": (1, 1, 100), "runs": (20, 1, 1000), "inbox-list": (100, 1, 1000),
           "actions": (1000, 1, 10000)}  # verb: (default, min, max) for --limit
 RECLAIM_DEFAULT_MINUTES = 60
+RECLAIM_MIN_MINUTES = 1
 RECLAIM_MAX_MINUTES = 7 * 24 * 60
+# An event claimed this many times whose last claim expired too is not handed out again: it ends failed.
+MAX_ATTEMPTS = 5
 
 EVENT_DONE_STATUSES = ("done", "failed", "to_inbox")
 RUN_END_STATUSES = ("ok", "failed", "timeout")
@@ -150,7 +154,10 @@ verbs:
   event-next      --source <s> [--limit n] [--reclaim-after-minutes m]
                   claims up to n pending events (default 1): status claimed,
                   a claim token per event. Claims older than m minutes
-                  (default {RECLAIM_DEFAULT_MINUTES}) return to pending first.
+                  (default {RECLAIM_DEFAULT_MINUTES}, at least {RECLAIM_MIN_MINUTES}) return to pending first;
+                  an event already claimed {MAX_ATTEMPTS} times (attempts) whose claim
+                  expired again ends failed with a note instead, and its id is
+                  listed in "failed"   -> {{source, events, reclaimed, failed}}
   event-done      --id <id> --token <claim token> --status done|failed|to_inbox [--note <t>]
                   exit 1 when the claim was lost (reclaimed, or finished)
   run-start       --agent <a> --event-id <id|none> --trigger <t>  -> {{run_id}}
@@ -158,9 +165,15 @@ verbs:
                   --cost-usd <x|null> --tokens <n|null> --duration-ms <n|null>
                   --out-dir <path> [--error <text>]
   runs            [--limit n] [--agent <a>]                   newest first
+                  -> {{runs, truncated}}
   inbox-add       --kind <k> --title <t> --payload-file <json> --payload-sha256 <hex>
-                  [--event-id <id>]                           -> {{id}}
+                  [--event-id <id>]                 -> {{id, created, status}}; when the
+                  event already has an open item of this kind, that item is returned
+                  (created false) and nothing is added
   inbox-list      [--status open|approved|rejected|done|all] (default open) [--limit n]
+                  -> {{status, items, truncated}}, oldest first
+                  or --id <id>: that one item in items, whatever its status
+                  (items is empty when there is no such item)
   inbox-resolve   --id <id> --status approved|rejected|done --by <who> [--note <t>]
                   open -> approved|rejected|done, approved -> done; nothing else
   action-add      --kind <k> --idempotency-key <k> --target <urn> --payload-sha256 <hex>
@@ -169,7 +182,9 @@ verbs:
                   computed (of what the person approves, or of what was executed); it may
                   be the hash of another file than the payload, and it is stored as given,
                   never compared with the payload
-  actions         --since <ISO-8601> [--kind <k>] [--limit n]
+  actions         --since <ISO-8601> [--kind <k>] [--limit n]  -> {{since, kind, actions, truncated}}
+                  "truncated": true, in runs, inbox-list and actions, means more rows
+                  matched than --limit (defaults: runs {LIMITS["runs"][0]}, inbox-list {LIMITS["inbox-list"][0]}, actions {LIMITS["actions"][0]})
   action-count    --kind <k> --since <ISO-8601>              -> {{kind, since, count}}
   export          --format json [--since <ISO-8601>]         every table, for review
 
@@ -179,14 +194,17 @@ caps (UTF-8 bytes; above a cap: exit 2, nothing stored):
   Payload and result files must be UTF-8 JSON. They are stored exactly as given.
 
 output: JSON on stdout; diagnostics on stderr. Times are UTC, ISO-8601 with Z.
-  A --since without an offset is local time.
+  --since takes YYYY-MM-DD, optionally with THH[:MM[:SS[.fraction]]] and then an
+  offset (Z, +HH, +HHMM or +HH:MM); without an offset it is local time. The same
+  forms are read on every Python version; other ISO-8601 forms are refused.
+  Integers are at most {INT_MAX}; a larger one is a usage error (exit 2).
 
 exit codes: 0 success, 1 store error (database locked past the timeout, no
   such id, a lost claim, a conflicting key), 2 usage error, 3 not configured.
 
 examples:
-  python3 providers/store/sqlite.py init --db ~/agent-state/social.sqlite
-  export {PATH_ENV}=~/agent-state/social.sqlite
+  python3 providers/store/sqlite.py init --db ~/agent-state/agent.sqlite
+  export {PATH_ENV}=~/agent-state/agent.sqlite
   python3 providers/store/sqlite.py --check
   python3 providers/store/sqlite.py event-add --source mailbox --external-id '<id@mail>' \\
       --payload-file event.json
@@ -225,20 +243,42 @@ def iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+# The ISO-8601 forms --since takes: a date, optionally a time (hours, minutes, seconds, a fraction with any number
+# of digits after '.' or ','), and with a time an offset (Z, +HH, +HHMM, +HH:MM). datetime.fromisoformat reads
+# more of them on Python 3.11 than on 3.9, where the runtime runs, so a value is first rewritten into the one
+# form both read; anything else (a week date, the basic form without separators) is refused on both.
+SINCE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?:[Tt ](\d{2})(?::(\d{2})(?::(\d{2})(?:[.,](\d+))?)?)?"
+                      r"(?:\s*(?:([Zz])|([+-])(\d{2})(?::?(\d{2}))?))?)?")
+
+
+def normalise_iso(raw: str) -> str:
+    match = SINCE_RE.fullmatch(raw)
+    if not match:
+        raise ValueError("not an ISO-8601 date or time")
+    date, hour, minute, second, fraction, zulu, sign, off_hour, off_minute = match.groups()
+    if hour is None:
+        return date
+    text = f"{date}T{hour}:{minute or '00'}:{second or '00'}"
+    if fraction:
+        text += "." + (fraction + "000000")[:6]
+    if zulu:
+        text += "+00:00"
+    elif sign:
+        text += f"{sign}{off_hour}:{off_minute or '00'}"
+    return text
+
+
 def since_arg(value: str | None, flag: str = "--since") -> str | None:
     """Parse ISO-8601; Z means UTC; a value without offset is local time."""
     if value is None:
         return None
-    raw = value.strip()
-    if raw.endswith(("Z", "z")):
-        raw = raw[:-1] + "+00:00"
     try:
-        parsed = datetime.fromisoformat(raw)
-    except ValueError:
+        parsed = datetime.fromisoformat(normalise_iso(value.strip()))
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+        return iso(parsed)
+    except (ValueError, OverflowError):
         raise StoreError(f"{flag} is not an ISO-8601 time: {value!r}", EXIT_USAGE) from None
-    if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
-    return iso(parsed)
 
 
 # --- argument checks --------------------------------------------------------------
@@ -283,8 +323,8 @@ def id_arg(value: str, flag: str) -> int:
         number = int(value)
     except (TypeError, ValueError):
         raise StoreError(f"{flag} must be a positive integer", EXIT_USAGE) from None
-    if number < 1:
-        raise StoreError(f"{flag} must be a positive integer", EXIT_USAGE)
+    if not 1 <= number <= INT_MAX:
+        raise StoreError(f"{flag} must be a positive integer up to {INT_MAX}", EXIT_USAGE)
     return number
 
 
@@ -300,6 +340,8 @@ def nullable_number(value: str, flag: str, kind: type) -> int | float | None:
         raise StoreError(f"{flag} must be a number or null", EXIT_USAGE) from None
     if kind is float and not math.isfinite(number):
         raise StoreError(f"{flag} must be finite", EXIT_USAGE)
+    if kind is int and not INT_MIN <= number <= INT_MAX:
+        raise StoreError(f"{flag} is out of range ({INT_MIN} to {INT_MAX})", EXIT_USAGE)
     if flag != "--exit-code" and number < 0:
         raise StoreError(f"{flag} must not be negative", EXIT_USAGE)
     return number
@@ -453,8 +495,8 @@ def cmd_check(args) -> int:
 
 def cmd_init(args) -> int:
     path = db_path(args)
-    if not path.parent.exists():
-        path.parent.mkdir(mode=0o700, parents=True)  # the umask of main() makes parents 0700 too
+    # exist_ok: several inits started at once all see the folder missing; only one of them creates it.
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)  # the umask of main() makes parents 0700 too
     created = not path.exists()
     conn = connect(path)
     private_files(path)
@@ -526,16 +568,24 @@ def cmd_event_next(args) -> int:
     source = text_arg(args.source, "--source", LABEL_MAX)
     limit = limit_arg(args.limit, "event-next")
     minutes = args.reclaim_after_minutes
-    if not 0 <= minutes <= RECLAIM_MAX_MINUTES:
-        raise StoreError(f"--reclaim-after-minutes must be between 0 and {RECLAIM_MAX_MINUTES}", EXIT_USAGE)
+    if not RECLAIM_MIN_MINUTES <= minutes <= RECLAIM_MAX_MINUTES:
+        raise StoreError(f"--reclaim-after-minutes must be between {RECLAIM_MIN_MINUTES} and {RECLAIM_MAX_MINUTES}",
+                         EXIT_USAGE)
     conn = open_ready(args)
     now = utcnow()
+    expired = iso(now - timedelta(minutes=minutes))
     claimed = []
     with write(conn):
+        failed = [r["id"] for r in conn.execute(
+            "SELECT id FROM events WHERE source = ? AND status = 'claimed' AND claimed_at < ? AND attempts >= ? "
+            "ORDER BY id", (source, expired, MAX_ATTEMPTS))]
+        for event_id in failed:
+            conn.execute("UPDATE events SET status = 'failed', claim_token = NULL, finished_at = ?, note = ? "
+                         "WHERE id = ?", (iso(now), f"gave up after {MAX_ATTEMPTS} attempts: every claim expired "
+                                          "without a result (the run crashed or was stopped)", event_id))
         reclaimed = conn.execute(
             "UPDATE events SET status = 'pending', claim_token = NULL, claimed_at = NULL "
-            "WHERE source = ? AND status = 'claimed' AND claimed_at < ?",
-            (source, iso(now - timedelta(minutes=minutes)))).rowcount
+            "WHERE source = ? AND status = 'claimed' AND claimed_at < ?", (source, expired)).rowcount
         ids = [r["id"] for r in conn.execute(
             "SELECT id FROM events WHERE source = ? AND status = 'pending' ORDER BY id LIMIT ?", (source, limit))]
         for event_id in ids:
@@ -545,7 +595,7 @@ def cmd_event_next(args) -> int:
             row = conn.execute("SELECT id, source, external_id, payload, attempts, created_at, claimed_at, "
                                "claim_token FROM events WHERE id = ?", (event_id,)).fetchone()
             claimed.append(row_dict(row, ("payload",)))
-    return emit({"source": source, "events": claimed, "reclaimed": reclaimed})
+    return emit({"source": source, "events": claimed, "reclaimed": reclaimed, "failed": failed})
 
 
 def cmd_event_done(args) -> int:
@@ -613,8 +663,8 @@ def cmd_runs(args) -> int:
     limit = limit_arg(args.limit, "runs")
     conn = open_ready(args)
     rows = conn.execute("SELECT * FROM runs WHERE (? IS NULL OR agent = ?) ORDER BY id DESC LIMIT ?",
-                        (agent, agent, limit)).fetchall()
-    return emit({"runs": [row_dict(r) for r in rows]})
+                        (agent, agent, limit + 1)).fetchall()
+    return emit({"runs": [row_dict(r) for r in rows[:limit]], "truncated": len(rows) > limit})
 
 
 def cmd_inbox_add(args) -> int:
@@ -627,18 +677,36 @@ def cmd_inbox_add(args) -> int:
     now = iso(utcnow())
     with write(conn):
         event_exists(conn, event_id)
-        item_id = conn.execute(
-            "INSERT INTO inbox (kind, title, payload, payload_sha256, event_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)", (kind, title, payload, digest, event_id, now)).lastrowid
-    return emit({"id": item_id, "status": "open", "created_at": now})
+        # One open item per event and kind: an event escalated twice keeps its first item.
+        row = conn.execute("SELECT id, created_at FROM inbox WHERE event_id = ? AND kind = ? AND status = 'open' "
+                           "ORDER BY id LIMIT 1", (event_id, kind)).fetchone() if event_id is not None else None
+        if row is None:
+            item_id = conn.execute(
+                "INSERT INTO inbox (kind, title, payload, payload_sha256, event_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)", (kind, title, payload, digest, event_id, now)).lastrowid
+    if row is not None:
+        return emit({"id": row["id"], "status": "open", "created_at": row["created_at"], "created": False})
+    return emit({"id": item_id, "status": "open", "created_at": now, "created": True})
 
 
 def cmd_inbox_list(args) -> int:
     limit = limit_arg(args.limit, "inbox-list")
+    if args.id is not None:
+        # One item by id, whatever its status: a caller reaches an item the list's limit leaves out.
+        if args.status is not None:
+            raise StoreError("inbox-list takes --id or --status, not both: --id finds the item whatever its status",
+                             EXIT_USAGE)
+        item_id = id_arg(args.id, "--id")
+        conn = open_ready(args)
+        rows = conn.execute("SELECT * FROM inbox WHERE id = ?", (item_id,)).fetchall()
+        return emit({"status": "all", "id": item_id, "items": [row_dict(r, ("payload",)) for r in rows],
+                     "truncated": False})
+    status = args.status or "open"
     conn = open_ready(args)
     rows = conn.execute("SELECT * FROM inbox WHERE (? = 'all' OR status = ?) ORDER BY id LIMIT ?",
-                        (args.status, args.status, limit)).fetchall()
-    return emit({"status": args.status, "items": [row_dict(r, ("payload",)) for r in rows]})
+                        (status, status, limit + 1)).fetchall()
+    return emit({"status": status, "items": [row_dict(r, ("payload",)) for r in rows[:limit]],
+                 "truncated": len(rows) > limit})
 
 
 def cmd_inbox_resolve(args) -> int:
@@ -690,8 +758,9 @@ def cmd_actions(args) -> int:
     limit = limit_arg(args.limit, "actions")
     conn = open_ready(args)
     rows = conn.execute("SELECT * FROM actions WHERE created_at >= ? AND (? IS NULL OR kind = ?) "
-                        "ORDER BY id LIMIT ?", (since, kind, kind, limit)).fetchall()
-    return emit({"since": since, "kind": kind, "actions": [row_dict(r, ("result",)) for r in rows]})
+                        "ORDER BY id LIMIT ?", (since, kind, kind, limit + 1)).fetchall()
+    return emit({"since": since, "kind": kind, "actions": [row_dict(r, ("result",)) for r in rows[:limit]],
+                 "truncated": len(rows) > limit})
 
 
 def cmd_action_count(args) -> int:
@@ -806,8 +875,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--payload-sha256")
     p.add_argument("--event-id")
     p = verb("inbox-list", "list inbox items")
-    p.add_argument("--status", choices=(*INBOX_STATUSES, "all"), default="open")
+    p.add_argument("--status", choices=(*INBOX_STATUSES, "all"))  # default open; None tells --id it was not given
     p.add_argument("--limit", type=int)
+    p.add_argument("--id")
     p = verb("inbox-resolve", "record the user's decision on an inbox item")
     p.add_argument("--id")
     p.add_argument("--status", choices=("approved", "rejected", "done"), required=True)
@@ -846,6 +916,9 @@ def main(argv: list[str] | None = None) -> int:
     except StoreError as exc:
         log(f"error: {exc}")
         return exc.code
+    except OverflowError as exc:  # a number past what SQLite or a date can hold, that no check above caught
+        log(f"error: a value is out of range: {exc}")
+        return EXIT_USAGE
     except sqlite3.Error as exc:
         log(f"error: database: {exc}")
         return EXIT_ERROR

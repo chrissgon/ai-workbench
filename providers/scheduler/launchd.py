@@ -31,10 +31,12 @@ What a job guarantees:
   program and the runner are hashed again and the command is refused if any differs.
 - The command runs at most once: the runner takes run.lock, records the job as running, and
   removes its launchd agent afterwards. launchd fires a missed time on wake; a run later than
-  the grace period is recorded as missed and does not run.
+  the grace period is recorded as missed and does not run. A firing up to 26 hours early (the
+  system time zone changed after scheduling; the plist holds local wall time) waits for the
+  time and then runs; an earlier one is logged and leaves the job scheduled.
 - A one-shot job always ends: the command runs in its own process group for at most
   timeout_minutes (10 when the command file gives none); its output is kept as bytes, whatever
-  it printed; an error in the runner records the job as failed. A job left "running" by a
+  it printed (the last MiB of each stream); an error in the runner records the job as failed. A job left "running" by a
   runner that died is settled with cancel or resolve.
 - Job folders are 0700 and the files written in them 0600 (copies 0400).
 
@@ -43,7 +45,9 @@ What a recurring job (--every) adds:
   firing as refused, marks the job refused and unloads it, so it stops firing.
 - A firing while the previous one still runs records skipped-overlap and exits: run.lock in
   the job folder holds an flock and the holder's PID; the kernel drops the flock when the
-  holder dies, so a lock left by a dead runner is stale and taken over.
+  holder dies, so a lock left by a dead runner is stale and taken over. The command's process
+  group is kept in run.group while it runs: a command that outlived a killed runner is found
+  there, and the firing records skipped-overlap instead of starting it again.
 - Each firing appends one line to runs.jsonl (started_at, ended_at, status, exit code,
   stdout and stderr tails of at most 4 kB each).
 - The command runs in its own process group; past timeout_minutes the group is killed and
@@ -68,13 +72,19 @@ from pathlib import Path
 
 LABEL_PREFIX = "dev.ai-workbench.scheduler."
 EARLY_TOLERANCE = timedelta(minutes=5)
+# A one-shot plist holds local wall time, so a change of the system time zone between scheduling and the slot
+# fires the job early, by at most the widest gap between two time zones (UTC-12 to UTC+14): the runner waits.
+EARLY_WAIT_LIMIT = timedelta(hours=26)
+WAIT_STEP_SECONDS = 60  # the wall clock is read again after each step: a sleep may not count system sleep
 DEFAULT_GRACE_MINUTES = 120
+MAX_GRACE_MINUTES = 10080  # a week: a one-shot run may start at most this late
 LAUNCHCTL_TIMEOUT_SECONDS = 30
 NOTIFY_TIMEOUT_SECONDS = 10
-ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
-DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9.-]{0,62}")  # with fullmatch: "$" lets a final newline in
+DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 RUN_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 HISTORY = ".history"
+GROUP_FILE = "run.group"  # the running command's process-group id, beside run.lock
 EVERY_MIN_MINUTES, EVERY_MAX_MINUTES = 5, 1440
 DEFAULT_TIMEOUT_MINUTES, MAX_TIMEOUT_MINUTES = 30, 240
 DEFAULT_ONE_SHOT_TIMEOUT_MINUTES = 10  # a one-shot command without timeout_minutes in its command file
@@ -83,6 +93,8 @@ TIMEOUT_UNIT_SECONDS = 60  # seconds per timeout minute; tests shorten it in-pro
 KILL_GRACE_SECONDS = 5  # between SIGTERM and SIGKILL to the command's process group
 TAIL_BYTES = 4096
 RUNS_MAX_BYTES = 4 * 1024 * 1024  # runs.jsonl is rotated to runs.1.jsonl past this size
+OUTPUT_MAX_BYTES = 1024 * 1024  # run.stdout.log, run.stderr.log and the service logs keep their last MiB
+HISTORY_KEEP = 100  # .history/ keeps the 100 folders archived last
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
 # The one key of a command's output the scheduler reads, for the job record and the notification: the
@@ -118,6 +130,8 @@ command file (JSON):
     "outputs": ["/abs/result.json"],
     "grace_minutes": 120
   }
+  With --at, "grace_minutes" (default 120, 0 to 10080: a week) is how late the
+  run may start; a later firing is recorded as missed and runs nothing.
   With --every, "grace_minutes" is refused and "timeout_minutes" (default 30,
   1 to 240) bounds each firing: past it the command's process group is killed
   and the firing is recorded as failed with reason timeout.
@@ -184,7 +198,7 @@ def parse_iso(value: str) -> datetime:
         raw = raw[:-1] + "+00:00"
     parsed = datetime.fromisoformat(raw)
     if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
+        raise ValueError(f"{value!r} has no offset: write it as 2026-09-29T09:00:00-03:00 or with Z")
     return parsed
 
 
@@ -270,6 +284,37 @@ def write_private(path: Path, data: bytes) -> None:
     os.replace(tmp, path)
 
 
+def cut_note(cut: int) -> bytes:
+    """The first line of an output file that was cut to its last OUTPUT_MAX_BYTES."""
+    return f"[{cut} earlier bytes were cut: only the last {OUTPUT_MAX_BYTES} are kept]\n".encode("ascii")
+
+
+def keep_tail(data: bytes) -> bytes:
+    """data, or its last OUTPUT_MAX_BYTES after a line that says how much was cut."""
+    if len(data) <= OUTPUT_MAX_BYTES:
+        return data
+    return cut_note(len(data) - OUTPUT_MAX_BYTES) + data[-OUTPUT_MAX_BYTES:]
+
+
+def trim_in_place(path: Path) -> None:
+    """Cut a log the service appends to down to its last OUTPUT_MAX_BYTES.
+
+    The file is rewritten in place, not replaced: the service opened it in append mode for the running process,
+    and that descriptor goes on writing at the new end."""
+    try:
+        with path.open("r+b") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            if size <= OUTPUT_MAX_BYTES:
+                return
+            fh.seek(size - OUTPUT_MAX_BYTES)
+            kept = fh.read(OUTPUT_MAX_BYTES)
+            fh.seek(0)
+            fh.write(cut_note(size - OUTPUT_MAX_BYTES) + kept)
+            fh.truncate()
+    except OSError as exc:
+        log(f"could not cut {path}: {exc}")
+
+
 def read_job(job_id: str) -> dict:
     path = job_dir(job_id) / "job.json"
     if not path.is_file():
@@ -288,7 +333,7 @@ def python_for_launchd() -> str:
 
 
 def validate_id(job_id: str) -> str:
-    if not ID_PATTERN.match(job_id or ""):
+    if not ID_PATTERN.fullmatch(job_id or ""):
         raise ProviderError("--id must be lowercase letters, digits, dots and hyphens (at most 63)", EXIT_USAGE)
     return job_id
 
@@ -330,8 +375,8 @@ def load_command_file(path_arg: str, recurring: bool = False) -> dict:
             raise ProviderError(f"timeout_minutes must be an integer from 1 to {MAX_TIMEOUT_MINUTES}", EXIT_USAGE)
         return {"argv": argv, "cwd": cwd, "snapshot": snapshot, "outputs": outputs, "timeout_minutes": timeout}
     grace = spec.get("grace_minutes", DEFAULT_GRACE_MINUTES)
-    if not isinstance(grace, int) or grace < 0:
-        raise ProviderError("grace_minutes must be a non-negative integer", EXIT_USAGE)
+    if isinstance(grace, bool) or not isinstance(grace, int) or not 0 <= grace <= MAX_GRACE_MINUTES:
+        raise ProviderError(f"grace_minutes must be an integer from 0 to {MAX_GRACE_MINUTES} (a week)", EXIT_USAGE)
     out = {"argv": argv, "cwd": cwd, "snapshot": snapshot, "outputs": outputs, "grace_minutes": grace}
     if "timeout_minutes" in spec:
         # Optional for --at: without it the command gets DEFAULT_ONE_SHOT_TIMEOUT_MINUTES, and the job and its
@@ -504,7 +549,7 @@ def build_plist(job: dict) -> dict:
 
 
 def archive_finished(job_id: str, existing: dict) -> str:
-    """Move a finished job's folder to <home>/.history/ so the id can be scheduled again."""
+    """Move a finished job's folder to <home>/.history/ so the id can be scheduled again; keep HISTORY_KEEP there."""
     stamp = re.sub(r"[^0-9A-Za-z]", "", existing.get("finished_at") or existing.get("created_at") or iso(now()))
     target = home() / HISTORY / f"{job_id}-{stamp}"
     n = 1
@@ -513,6 +558,10 @@ def archive_finished(job_id: str, existing: dict) -> str:
         target = home() / HISTORY / f"{job_id}-{stamp}-{n}"
     private_dir(target.parent)
     os.replace(job_dir(job_id), target)
+    os.utime(target)  # the time it was archived: the newest HISTORY_KEEP folders are kept
+    folders = sorted((p for p in target.parent.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime_ns)
+    for old in folders[:-HISTORY_KEEP]:
+        shutil.rmtree(old, ignore_errors=True)
     return str(target)
 
 
@@ -538,7 +587,8 @@ def cmd_schedule(args) -> int:
         try:
             at = parse_iso(args.at)
         except (TypeError, ValueError):
-            raise ProviderError(f"--at is not ISO-8601: {args.at}", EXIT_USAGE)
+            raise ProviderError(f"--at must be an ISO-8601 time with an offset, e.g. 2026-09-29T09:00:00-03:00 "
+                                f"or 2026-09-29T12:00:00Z: {args.at}", EXIT_USAGE)
         if at <= now():
             raise ProviderError("--at is in the past", EXIT_USAGE)
         if at - now() > timedelta(days=330):
@@ -550,7 +600,7 @@ def cmd_schedule(args) -> int:
             "gate first (use --dry-run to preview)",
             EXIT_USAGE,
         )
-    if not args.dry_run and not DIGEST_PATTERN.match(args.approved or ""):
+    if not args.dry_run and not DIGEST_PATTERN.fullmatch(args.approved or ""):
         raise ProviderError("--confirmed needs --approved <digest>: the digest the dry run printed", EXIT_USAGE)
     existing = None
     if (job_dir(job_id) / "job.json").exists():
@@ -643,41 +693,34 @@ def cmd_cancel(args) -> int:
         print(json.dumps({"dry_run": True, "would_cancel": job}, indent=2, ensure_ascii=False))
         return EXIT_OK
     launchctl()
-    if job["status"] == "scheduled":
-        job["status"] = "cancelled"
-        job["finished_at"] = iso(now())
-        write_job(job)
-    unload(job["id"])
-    if job["status"] == "running":
-        # A one-shot job caught mid-run. Stopping it (above) makes a live runner kill its command and record
-        # "failed" itself; a runner that is gone (a crash, a power loss) records nothing, and the job would
-        # stay "running" for ever with its id blocked. Wait for the first, then settle the second here.
-        deadline = time.monotonic() + CANCEL_WAIT_SECONDS
-        while runner_alive(job["id"]) and time.monotonic() < deadline:
-            time.sleep(0.1)
-        job = read_job(job["id"])
-        if job["status"] == "running":
+    folder = job_dir(job["id"])
+    fd, _ = acquire_lock(folder)
+    if fd is None:
+        # A runner holds the job: it waits for its time, or runs the command. Unloading stops it: one that runs the
+        # command kills it and records "failed" before it lets go of the lock; one that waits records nothing.
+        unload(job["id"])
+        fd = wait_for_lock(folder, CANCEL_WAIT_SECONDS)
+        if fd is None:
+            raise ProviderError(f"job {job['id']!r} was unloaded, but its runner still held it {CANCEL_WAIT_SECONDS} s "
+                                "later; nothing was recorded: run cancel again")
+    try:
+        job = read_job(job["id"])  # again, now that no runner can change it
+        if job["status"] == "scheduled":
+            job.update(status="cancelled", finished_at=iso(now()))
+            write_job(job)
+        elif job["status"] == "running":
+            # A one-shot job whose runner is gone (a crash, a power loss): it recorded nothing, and the job would
+            # stay "running" for ever with its id blocked.
             job.update(status="cancelled", finished_at=iso(now()), interrupted=True,
                        reason=f"cancelled while running (started at {job.get('started_at', 'an unknown time')}): "
                               "the command may have acted and its outcome is unknown; check what it did before "
                               "scheduling it again")
             write_job(job)
+        unload(job["id"])
+    finally:
+        release_lock(fd)
     print(json.dumps(job, indent=2, ensure_ascii=False))
     return EXIT_OK
-
-
-def runner_alive(job_id: str) -> bool:
-    """Whether a runner holds the job's run.lock. The kernel drops the lock when its holder dies, so a lock
-    that can be taken means no runner of this version is running the job (a runner copied into a job folder
-    before one-shot jobs took the lock holds none)."""
-    folder = job_dir(job_id)
-    if not folder.is_dir():
-        return False
-    fd, _ = acquire_lock(folder)
-    if fd is None:
-        return True
-    release_lock(fd)
-    return False
 
 
 def cmd_resolve(args) -> int:
@@ -695,11 +738,20 @@ def cmd_resolve(args) -> int:
         print(json.dumps({"dry_run": True, "would_resolve": job, "as": status}, indent=2, ensure_ascii=False))
         return EXIT_OK
     launchctl()
-    if runner_alive(job["id"]):
+    # The kernel drops the lock when its holder dies, so a lock that can be taken means no runner of this version
+    # runs the job (a runner copied into a job folder before one-shot jobs took the lock holds none).
+    fd, _ = acquire_lock(job_dir(job["id"]))
+    if fd is None:
         raise ProviderError(f"job {job['id']!r} still runs (its runner holds the lock); wait for it, or cancel it")
-    job.update(status=status, finished_at=iso(now()), resolved=True)
-    write_job(job)
-    unload(job["id"])
+    try:
+        job = read_job(job["id"])  # again, now that no runner can change it
+        if job["status"] != "running":
+            raise ProviderError(f"job {job['id']!r} is {job['status']}, not running; nothing to resolve", EXIT_USAGE)
+        job.update(status=status, finished_at=iso(now()), resolved=True)
+        write_job(job)
+        unload(job["id"])
+    finally:
+        release_lock(fd)
     print(json.dumps(job, indent=2, ensure_ascii=False))
     return EXIT_OK
 
@@ -809,6 +861,51 @@ def release_lock(fd: int) -> None:
     os.close(fd)
 
 
+def wait_for_lock(folder: Path, seconds: float) -> int | None:
+    """Take run.lock, waiting up to `seconds` for its holder to let go: the fd, or None when it still holds it."""
+    deadline = time.monotonic() + seconds
+    while True:
+        fd, _ = acquire_lock(folder)
+        if fd is not None or time.monotonic() >= deadline:
+            return fd
+        time.sleep(0.1)
+
+
+def record_group(folder: Path, pgid: int | None) -> None:
+    """Write the running command's process-group id beside run.lock (GROUP_FILE), or remove it (None) at its end."""
+    path = folder / GROUP_FILE
+    try:
+        if pgid is None:
+            path.unlink(missing_ok=True)
+        else:
+            write_private(path, f"{pgid}\n".encode("ascii"))
+    except OSError as exc:
+        log(f"could not record the command's process group in {path}: {exc}")
+
+
+def orphan_group(folder: Path) -> str | None:
+    """The process group of a command whose runner died while it ran, when that group still lives; else None.
+
+    The kernel drops run.lock when its holder dies, but the command runs in a session of its own and outlives a
+    runner that was killed or crashed: a firing that took the free lock and started the command again would run
+    beside it. A group that is gone has its record removed."""
+    path = folder / GROUP_FILE
+    try:
+        pgid = int(path.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+    if pgid <= 1:
+        return None
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        record_group(folder, None)
+        return None
+    except PermissionError:
+        pass  # the group exists, under another user
+    return str(pgid)
+
+
 def tail(data: bytes | None) -> str:
     return (data or b"")[-TAIL_BYTES:].decode("utf-8", errors="replace")
 
@@ -856,6 +953,8 @@ def run_command(job: dict, timeout: float, limit: str) -> tuple[dict, bytes | No
                                 start_new_session=True, env={**os.environ, "PATH": RUN_PATH})
     except OSError as exc:
         return {"status": "failed", "exit_code": None, "reason": f"{type(exc).__name__}: {exc}"}, None, None
+    folder = job_dir(job["id"])
+    record_group(folder, proc.pid)  # start_new_session: the command leads a process group of its own
     stopping = []
 
     def on_term(_signum, _frame):
@@ -880,6 +979,7 @@ def run_command(job: dict, timeout: float, limit: str) -> tuple[dict, bytes | No
     finally:
         if previous is not None:
             signal.signal(signal.SIGTERM, previous)
+        record_group(folder, None)
     result = {"exit_code": proc.returncode}
     if reason:
         result.update(status="failed", reason=reason)
@@ -900,6 +1000,13 @@ def run_recurring(job: dict) -> int:
     if fd is None:
         record_firing(folder, {"started_at": started, "ended_at": iso(now()), "status": "skipped-overlap",
                                "exit_code": None, "reason": f"the previous firing (pid {other or 'unknown'}) still runs"})
+        return EXIT_OK
+    orphan = orphan_group(folder)
+    if orphan:
+        record_firing(folder, {"started_at": started, "ended_at": iso(now()), "status": "skipped-overlap",
+                               "exit_code": None, "reason": f"the command of an earlier firing (process group {orphan}) "
+                                                            "still runs; its runner is gone"})
+        release_lock(fd)
         return EXIT_OK
     previous = last_firing(folder)
     record = {"started_at": started}
@@ -933,35 +1040,43 @@ def run_recurring(job: dict) -> int:
 
 def cmd_run(args) -> int:
     job = read_job(validate_id(args.id))
+    for name in ("launchd.out.log", "launchd.err.log"):
+        trim_in_place(job_dir(job["id"]) / name)
     if job.get("kind") == "recurring":
         return run_recurring(job)
-    if job["status"] != "scheduled":
-        log(f"job {job['id']} is {job['status']}; nothing to run")
-        unload(job["id"])
-        return EXIT_OK
-    at = parse_iso(job["at"])
-    current = now()
-    if current < at - EARLY_TOLERANCE:
-        log(f"job {job['id']} fired at {iso(current)}, before its time {job['at']}; waiting")
-        return EXIT_OK
-    if current > at + timedelta(minutes=job["grace_minutes"]):
-        return finish(job, "missed", reason=f"fired at {iso(current)}, after the {job['grace_minutes']}-minute grace")
-    if "program" not in job or "runner" not in job:
-        return finish(job, "refused", reason="the job was scheduled without program and runner hashes; schedule it again")
-    reason = changed_since_approval(job)
-    if reason:
-        return finish(job, "refused", reason=reason)
-
     folder = job_dir(job["id"])
     fd, other = acquire_lock(folder)
     if fd is None:
         log(f"job {job['id']}: another runner (pid {other or 'unknown'}) holds it; nothing to run")
         return EXIT_OK
+    # From here to the recorded outcome the runner holds the lock, as cancel and resolve do: none of them writes
+    # over another. Unloading at the end may stop this process; the kernel then drops the lock.
     try:
         job = read_job(job["id"])  # again, now that no other runner can change it
         if job["status"] != "scheduled":
             log(f"job {job['id']} is {job['status']}; nothing to run")
+            unload(job["id"])
             return EXIT_OK
+        at = parse_iso(job["at"])
+        current = now()
+        if current < at - EARLY_TOLERANCE:
+            if at - current > EARLY_WAIT_LIMIT:
+                log(f"job {job['id']} fired at {iso(current)}, before its time {job['at']}; waiting")
+                return EXIT_OK
+            # launchd would fire it next a year later. Wait for the time here, still holding the job: cancel unloads
+            # the job, and launchd's SIGTERM ends this wait.
+            log(f"job {job['id']} fired at {iso(current)}, before its time {job['at']} (the time zone changed?); "
+                "waiting for it")
+            while now() < at:
+                time.sleep(min(WAIT_STEP_SECONDS, max((at - now()).total_seconds(), 0.0)))
+            current = now()
+        if current > at + timedelta(minutes=job["grace_minutes"]):
+            return finish(job, "missed", reason=f"fired at {iso(current)}, after the {job['grace_minutes']}-minute grace")
+        if "program" not in job or "runner" not in job:
+            return finish(job, "refused", reason="the job was scheduled without program and runner hashes; schedule it again")
+        reason = changed_since_approval(job)
+        if reason:
+            return finish(job, "refused", reason=reason)
         job["status"] = "running"
         job["started_at"] = iso(current)
         write_job(job)
@@ -969,9 +1084,9 @@ def cmd_run(args) -> int:
             status, fields = run_one_shot(job, folder)
         except Exception as exc:  # whatever breaks from here on, the job ends: it never stays "running"
             status, fields = "failed", {"reason": f"{type(exc).__name__}: {exc}"}
+        return finish(job, status, **fields)
     finally:
         release_lock(fd)
-    return finish(job, status, **fields)
 
 
 def run_one_shot(job: dict, folder: Path) -> tuple[str, dict]:
@@ -984,8 +1099,8 @@ def run_one_shot(job: dict, folder: Path) -> tuple[str, dict]:
                  "command file for a longer one)")
     seconds = job.get("timeout_minutes", DEFAULT_ONE_SHOT_TIMEOUT_MINUTES) * TIMEOUT_UNIT_SECONDS
     outcome, out, err = run_command(job, seconds, limit)
-    write_private(folder / "run.stdout.log", out or b"")
-    write_private(folder / "run.stderr.log", err or b"")
+    write_private(folder / "run.stdout.log", keep_tail(out or b""))
+    write_private(folder / "run.stderr.log", keep_tail(err or b""))
     fields = {"exit_code": outcome["exit_code"]}
     if outcome.get("reason"):
         fields["reason"] = outcome["reason"]
@@ -1031,7 +1146,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("verb", nargs="?", choices=["schedule", "list", "cancel", "resolve", "run"])
     parser.add_argument("--check", action="store_true", help="verify launchd is usable; no side effects")
     parser.add_argument("--id", help="job id: lowercase letters, digits, dots and hyphens")
-    parser.add_argument("--at", help="ISO-8601 time with offset, e.g. 2026-09-29T09:00:00-03:00")
+    parser.add_argument("--at", help="ISO-8601 time with an offset (required), e.g. 2026-09-29T09:00:00-03:00")
     parser.add_argument("--every", type=int, metavar="MINUTES",
                         help=f"run every MINUTES ({EVERY_MIN_MINUTES} to {EVERY_MAX_MINUTES}) instead of once at --at")
     parser.add_argument("--command-file", help="JSON file with argv, cwd, snapshot and grace_minutes (--at) "

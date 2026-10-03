@@ -33,6 +33,7 @@ ON_SYSTEM_PYTHON = [
     "shared/scripts/check_post.py", "shared/scripts/contrast.py", "shared/scripts/voice_stats.py",
     "shared/scripts/sensitive_topics.py", "shared/scripts/redact.py",
 ]
+RUNTIME = ("scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py")  # the scheduler starts these
 SYSTEM_PYTHON = (3, 9)
 REQUIRES = re.compile(r'^# requires-python = "([^"]+)"$', re.M)
 IMPORT = ("import importlib.util, sys; sys.path.insert(0, sys.argv[2]); "
@@ -94,8 +95,10 @@ def test_no_union_annotation_is_evaluated_on_python_39(rel):
 def test_header_does_not_claim_a_newer_python_than_the_scheduler_uses(rel):
     head = (REPO / rel).read_text(encoding="utf-8")[:600]
     found = REQUIRES.search(head)
-    if rel.startswith("providers/"):
+    if rel.startswith("providers/") or rel in RUNTIME:
         assert found, f"{rel}: a provider carries an inline-metadata header with requires-python"
+    if rel in RUNTIME:  # RT16: providers/CONTRACT.md, "Python version", asks it of every script of this set
+        assert '# requires-python = ">=3.9"' in head and "# dependencies = []" in head, rel
     if found:
         assert admits(found.group(1), SYSTEM_PYTHON), \
             f"{rel}: requires-python = {found.group(1)!r} excludes 3.9, the interpreter the scheduler starts it with"

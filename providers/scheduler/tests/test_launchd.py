@@ -15,8 +15,10 @@ import plistlib
 import stat
 import subprocess
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -164,11 +166,45 @@ def test_run_twice_runs_once(env, tmp_path):
     assert not marker.exists()
 
 
-def test_early_fire_waits(env, tmp_path):
-    _, _, marker = schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(hours=3))
+def test_a_firing_more_than_a_day_early_is_left_for_its_time(env, tmp_path):
+    _, _, marker = schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(hours=27))
     assert run(env, "run", "--id", "post-1").returncode == 0
     assert job(env)["status"] == "scheduled"
     assert not marker.exists()
+
+
+def load_module(monkeypatch, env, name="launchd_provider_clock"):
+    for key in ("SCHEDULER_HOME", "SCHEDULER_AGENTS_DIR", "SCHEDULER_LAUNCHCTL", "SCHEDULER_NOTIFY", "SCHEDULER_TEST"):
+        monkeypatch.setenv(key, env[key])
+    spec = importlib.util.spec_from_file_location(name, SCRIPT)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_an_early_firing_within_a_day_waits_for_its_time_then_runs(env, tmp_path, monkeypatch):
+    # SC6: the plist holds local wall time, so a change of the system time zone between scheduling and the slot
+    # fires the job early. The runner logged "waiting" and returned, and launchd would fire it next a year later:
+    # the job showed "scheduled" until it was missed. Within 26 hours (the widest gap between two time zones) the
+    # runner now waits for the time, checking the wall clock in short steps, and runs the command.
+    _, _, marker = schedule(env, tmp_path, datetime.now(timezone.utc) + timedelta(minutes=1))
+    module = load_module(monkeypatch, env)
+    at = datetime.fromisoformat(job(env)["at"].replace("Z", "+00:00"))
+    clock, slept = [at - timedelta(hours=3)], []
+
+    def sleep(seconds):
+        slept.append(seconds)
+        clock[0] += timedelta(seconds=seconds)
+
+    monkeypatch.setattr(module, "now", lambda: clock[0])
+    monkeypatch.setattr(module, "time", SimpleNamespace(sleep=sleep, monotonic=time.monotonic))
+    assert module.main(["run", "--id", "post-1"]) == 0
+    data = job(env)
+    assert data["status"] == "done" and marker.exists()
+    assert data["started_at"] >= job(env)["at"]  # it ran at its time, not when it fired
+    assert slept and max(slept) <= module.WAIT_STEP_SECONDS
+    assert abs(sum(slept) - 3 * 3600) < 1
+    assert module.EARLY_WAIT_LIMIT == timedelta(hours=26)
 
 
 def test_late_fire_after_grace_is_missed(env, tmp_path):

@@ -126,7 +126,9 @@ def split_class(cls: str) -> tuple[str, str | None]:
     if cls in FIXED:
         return parts[0], parts[1]
     head = parts[0]
-    if len(parts) > 2 or head not in ROLES:
+    if len(parts) != 2 or head not in ROLES:
+        # Every class is <role>:<target> (contracts/environment.md); a bare role is none (RS4). The four old bare
+        # names are aliases, already read by canonical() above.
         raise UnknownClass(f"unknown class {cls!r}; known: {', '.join(LISTED)}")
     sub = parts[1] if len(parts) == 2 else None
     if sub is not None and PLACEHOLDER.fullmatch(sub):

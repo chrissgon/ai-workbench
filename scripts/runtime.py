@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """Agent runtime: find new work, run an agent on it read-only, gate its proposal, execute or queue it.
 
 Usage:
@@ -14,7 +18,7 @@ Contract: contracts/runtime.md. Configuration: <project>/docs/workbench/runtime.
   {"agent": "social-manager", "harness": "claude-code", "model": "<model id>",
    "workbench": "<absolute path of the workbench checkout>", "data_dir": "<absolute folder for runs>",
    "store_db": "<absolute path of the store database>", "mailbox": "auto | none | <implementation>",
-   "publisher": "<platform, for example linkedin>",
+   "publisher": "<platform: a name with a data file, shared/references/platforms/<platform>.json>",
    "notification_query": "<mailbox search query>", "first_lookback_minutes": 1440,
    "max_events_per_tick": 5, "max_cost_usd_per_run": 0.5, "daily_cost_cap_usd": 3, "timeout_seconds": 600,
    "path": ["<absolute folders holding uv and the harness CLI>"], "notify": "none | macos"}
@@ -41,7 +45,8 @@ tick     1. Reads new notification e-mails since the store's cursor (mailbox pro
             while it says older ones were left out the tick reads on (--before), and the cursor moves only
             once all were read.
          2. Claims up to max_events_per_tick events. For each: parses it with mkt-engage's
-            parse_notification.py; runs the agent through adapters/<harness>/run-agent.sh with reading tools
+            parse_notification.py (--platform <publisher> --platform-file <the platform's data file,
+            <workbench>/shared/references/platforms/<publisher>.json>); runs the agent through adapters/<harness>/run-agent.sh with reading tools
             only; takes the engage-decision block of its answer; runs mkt-engage's policy_gate.py; on
             "auto" sends the reply with the publisher's comment verb and an idempotency key; otherwise adds
             an inbox item. A reply in which the credential formats of scripts/redact.py match is never sent
@@ -64,8 +69,9 @@ add-comment  Queues a comment the person pasted (the link from "Copy link to com
 status   Recent runs, open inbox items, today's spend (with the number of runs counted at the per-run maximum
          because their cost is unknown) and replies.
 inbox    Open inbox items, each with its reply text and its sha256.
-approve  Without --confirmed: prints the item's exact reply and its sha256. With --confirmed --sha256 <hash>:
-         sends that reply only if the stored file still has that hash, then records it. The person runs this.
+approve  Without --confirmed: prints the item's exact reply, where it goes, its key and the sha256 to approve,
+         which covers the reply, the post, the comment and the idempotency key. With --confirmed --sha256 <hash>:
+         sends that reply only if all of them still have that hash, then records it. The person runs this.
 reject   Closes an item without sending anything. On a vote item it also clears the round's cursor, so the next
          tick redoes the round (a new agent run and a new item).
 
@@ -204,6 +210,47 @@ def gate_path(workbench: Path) -> Path:
     return workbench / "skills" / "mkt-engage" / "scripts" / "policy_gate.py"
 
 
+def platform_file(workbench: Path, platform: str) -> Path:
+    """The platform's data file (shared/references/platforms/<platform>.json): the skills' scripts the runtime
+    calls take it by flag, with --platform, and never find it by a path of their own."""
+    return workbench / "shared" / "references" / "platforms" / f"{platform}.json"
+
+
+def parser_cmd(cfg: dict) -> list:
+    """mkt-engage's parse_notification.py, told the platform and given its data file."""
+    return [sys.executable, str(cfg["paths"]["parser"]), "--platform", cfg["publisher"],
+            "--platform-file", str(cfg["paths"]["platform_file"])]
+
+
+# The parser prints the identifiers under the generic names (comment_id, parent_comment_id, post_id); the runtime
+# stores them under the names its logs and inbox items already use, which an older parser also printed.
+STORED_NAMES = (("comment_urn", "comment_id"), ("parent_comment_urn", "parent_comment_id"), ("post_urn", "post_id"))
+
+
+def reply_key(comment_id: str) -> str:
+    """The idempotency key of a reply, as mkt-engage's policy_gate.py builds it: a hash of the whole identifier.
+    Used only for an inbox item that holds no key of its own (the gate did not run); an item that holds one,
+    of either form, keeps it."""
+    return "reply-" + hashlib.sha256(comment_id.encode("utf-8")).hexdigest()[:32]
+
+
+def reply_approval_hash(comment: dict, reply_sha256: str, key: str) -> str:
+    """The hash a reply item is approved by: the reply's sha256, the post, the comment it answers and the
+    idempotency key, so that a change to the target stored with the item stops approve as a changed reply does."""
+    bound = {"reply_sha256": reply_sha256, "post": comment.get("post_urn"), "comment": comment.get("comment_urn"),
+             "parent_comment": comment.get("parent_comment_urn") or comment.get("comment_urn"),
+             "idempotency_key": key}
+    return hashlib.sha256(json.dumps(bound, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def stored_names(parsed: dict) -> dict:
+    """The parser's output with each identifier under the name the runtime stores it by."""
+    out = dict(parsed)
+    for stored, generic in STORED_NAMES:
+        out[stored] = parsed.get(generic) or parsed.get(stored)
+    return out
+
+
 def pinned_files(project: Path, workbench: Path) -> dict:
     """What a pin covers: the configuration and the gate script, by path and sha256."""
     files = {"runtime_json": config_path(project), "gate": gate_path(workbench)}
@@ -283,6 +330,7 @@ def load_config(project: Path) -> dict:
         "parser": wb / "skills" / "mkt-engage" / "scripts" / "parse_notification.py",
         "gate": gate_path(wb),
         "skills": wb / "skills",
+        "platform_file": platform_file(wb, platform),
     }
     if cfg["mailbox"] == "none":
         del cfg["paths"]["mailbox"]
@@ -291,6 +339,7 @@ def load_config(project: Path) -> dict:
     missing = [str(p) for p in cfg["paths"].values() if not p.exists()]
     if missing:
         raise Fail(f"not found: {', '.join(missing)}", 3)
+    cfg["limits"] = platform_limits(cfg["paths"]["platform_file"], platform)
     runtime_vote.vote_config(cfg, Fail)
     return cfg
 
@@ -390,7 +439,27 @@ Answer with a short explanation and exactly one block:
 """
 
 
-def parse_decision(text: str) -> dict:
+def platform_limits(path: Path, platform: str) -> dict:
+    """The limits the runtime enforces, read from the platform's data file: it holds no limit of its own (CT2)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("platform") != platform:
+            raise ValueError(f"it is not the data file of {platform!r}")
+        post, image = data["post"], data["media"].get("post_image")
+        limits = {"reply": int(data["reply"]["max_characters"]), "post": int(post["max_characters"]),
+                  "first_comment": int(post["first_comment"]["max_characters"])
+                  if post["first_comment"].get("supported") else 0,
+                  "image": (int(image["width"]), int(image["height"])) if image else None,
+                  # the headers of the platform's notification e-mails the mailbox keeps (--header-prefix)
+                  "header_prefix": str((data.get("notification_email") or {}).get("header_prefix") or "")}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        raise Fail(f"{path}: not a platform data file the runtime can read ({type(e).__name__}: {e})", 3)
+    if min(limits["reply"], limits["post"]) < 1:
+        raise Fail(f"{path}: reply.max_characters and post.max_characters must be positive", 3)
+    return limits
+
+
+def parse_decision(text: str, max_reply: int) -> dict:
     blocks = DECISION.findall(text)
     if len(blocks) != 1:
         raise ValueError(f"expected one engage-decision block, found {len(blocks)}")
@@ -401,9 +470,14 @@ def parse_decision(text: str) -> dict:
         raise ValueError(f"unknown category {d['category']!r}")
     if not isinstance(d["language"], str) or not re.fullmatch(r"[A-Za-z]{2,3}", d["language"]):
         raise ValueError("language must be a 2-3 letter code")
-    if not isinstance(d["reply"], str) or len(d["reply"]) > 1500:
-        raise ValueError("reply must be text of at most 1500 characters")
+    if not isinstance(d["reply"], str) or len(d["reply"]) > max_reply:
+        raise ValueError(f"reply must be text of at most {max_reply} characters (the platform's reply limit)")
     return d
+
+
+def flat(value, limit: int) -> str:
+    """A value on one line: every run of whitespace (line breaks included) becomes one space."""
+    return " ".join(str(value or "").split())[:limit]
 
 
 def append_inbox_md(project: Path, item_id, comment: dict, decision: dict | None, reasons: list, sha: str | None) -> None:
@@ -411,15 +485,18 @@ def append_inbox_md(project: Path, item_id, comment: dict, decision: dict | None
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text("# Engagement inbox\n\nApprove with `python3 <workbench>/scripts/runtime.py approve --project <dir> --id <n>`.\n", encoding="utf-8")
-    quoted = comment.get("text", "").replace("\n", " ")[:600]
+    quoted = flat(comment.get("text"), 600)
+    # The commenter's name is external content too: on one line and quoted, so that it cannot start a heading or
+    # an entry of its own in a file mkt-engage reads.
+    who = flat(comment.get("commenter"), 120).replace('"', "'")
     reply = (decision or {}).get("reply") or ""
     with path.open("a", encoding="utf-8") as f:
-        f.write(f"\n## #{item_id} · {comment.get('received_at', '')} · {comment.get('commenter', '')}\n"
+        f.write(f"\n## #{item_id} · {flat(comment.get('received_at'), 40)} · commenter (external content): \"{who}\"\n"
                 f"- Comment (external content, quoted): \"{quoted}\"\n"
                 f"- Category: {(decision or {}).get('category', 'none')}; why it is here: {'; '.join(reasons)}\n"
                 f"- Drafted reply: " + (f"\"{reply}\"" + (f" (sha256 {sha})" if sha else " (cannot be sent)")
                                         if reply else "none") + "\n"
-                f"- Comment URN: {comment.get('comment_urn', '')}\n")
+                f"- Comment id: {comment.get('comment_urn', '')}\n")
 
 
 def gate_record(cfg: dict, project: Path, entry: dict) -> None:
@@ -473,15 +550,18 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
     """Parse, run the agent, gate, act. Returns {"status", "note"}."""
     paths = cfg["paths"]
     payload = event.get("payload") or {}
-    code, out, err = run([sys.executable, str(paths["parser"])], stdin=json.dumps(payload))
+    code, out, err = run(parser_cmd(cfg), stdin=json.dumps(payload))
     try:
         comment = json.loads(out)
     except json.JSONDecodeError:
         return {"status": "failed", "note": f"parser exited {code}: {err.strip()[-200:]}"}
+    if not isinstance(comment, dict):
+        return {"status": "failed", "note": f"parser exited {code} and printed no object"}
     if not comment.get("parsed"):
         partial = comment.get("partial")
         if not partial:
             return {"status": "done", "note": f"not a comment to handle: {comment.get('reason', 'unknown')}"}
+        partial = stored_names(partial)
         c = {"comment_urn": partial.get("comment_urn"), "post_urn": partial.get("post_urn"), "commenter": "unknown",
              "text": "", "received_at": partial.get("received_at")}
         item_file = write_private(Path(cfg["data_dir"]) / "events" / str(event["id"]), "inbox.json",
@@ -492,6 +572,7 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
         return {"status": "to_inbox", "note": comment.get("reason", "")}
     if comment.get("on_own_post") is False:
         return {"status": "done", "note": "comment on someone else's post: out of the policy's scope"}
+    comment = stored_names(comment)
     comment = {k: comment.get(k) for k in ("comment_urn", "post_urn", "parent_comment_urn", "commenter", "text", "received_at")}
     comment["parent_comment_urn"] = comment.get("parent_comment_urn") or comment["comment_urn"]
 
@@ -524,7 +605,7 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
 
     decision, reasons = None, []
     try:
-        decision = parse_decision(response)
+        decision = parse_decision(response, cfg["limits"]["reply"])
     except (ValueError, json.JSONDecodeError) as e:
         reasons.append(f"agent proposal unusable: {e}")
     comment_file = write_private(run_dir, "comment.json", json.dumps(comment, ensure_ascii=False))
@@ -572,11 +653,14 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
         reasons.append(f"publisher exited {code}: {err.strip()[-300:]}")
         gate_record(cfg, project, {**base, "action": "failed", "note": reasons[-1]})
 
+    key = (gate or {}).get("idempotency_key") or reply_key(comment["comment_urn"])
     item = {"comment": comment, "decision": decision, "reasons": reasons, "reply_file": str(reply_file) if reply_file else None,
-            "idempotency_key": (gate or {}).get("idempotency_key")}
+            "idempotency_key": key}
     item_file = write_private(run_dir, "inbox.json", json.dumps(item, ensure_ascii=False))
-    item_id = store("inbox-add", "--kind", "reply", "--title", f"{comment['commenter']}: {comment['text'][:80]}",
-                    "--payload-file", item_file, "--payload-sha256", sha or sha256_file(item_file),
+    approval = reply_approval_hash(comment, sha, key) if sha else sha256_file(item_file)
+    item_id = store("inbox-add", "--kind", "reply", "--title",
+                    f"{flat(comment['commenter'], 80)}: {flat(comment['text'], 80)}",
+                    "--payload-file", item_file, "--payload-sha256", approval,
                     "--event-id", event["id"])["id"]
     append_inbox_md(project, item_id, comment, decision, reasons, sha)
     gate_record(cfg, project, {**base, "action": "to_inbox", "inbox_id": item_id, "reasons": reasons})
@@ -609,6 +693,8 @@ def read_mailbox(cfg: dict, since: str) -> tuple[list, str | None]:
     for ever. Events are deduplicated by message id, so reading the same messages again costs nothing."""
     base = ["uv", "run", str(cfg["paths"]["mailbox"]), "search", "--query", cfg["notification_query"],
             "--since", since, "--limit", str(MAILBOX_PAGE)]
+    if cfg["limits"]["header_prefix"]:  # the mailbox provider is generic: the platform's headers are data
+        base += ["--header-prefix", cfg["limits"]["header_prefix"]]
     messages, seen, before = [], set(), None
     for _ in range(MAILBOX_MAX_PAGES):
         try:
@@ -638,6 +724,16 @@ def read_mailbox(cfg: dict, since: str) -> tuple[list, str | None]:
                       "until a tick reads them all: narrow notification_query, or handle the oldest by hand")
 
 
+def external_id(message: dict) -> str:
+    """The id an event is deduplicated by: the mailbox's message id, else the Message-ID header, else a hash of the
+    whole message, so that two messages without an id never collapse into one event (an empty id did)."""
+    headers = message.get("headers") or {}
+    found = message.get("id") or headers.get("Message-ID") or headers.get("Message-Id")
+    if found:
+        return str(found)
+    return "sha256:" + hashlib.sha256(json.dumps(message, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def dry_tick(cfg: dict) -> dict:
     """What a tick would find: reads the mailbox and parses each message. It writes nothing: no store is
     created or migrated, no event is added, no cursor moves, and it takes no lock (it excludes nothing)."""
@@ -658,7 +754,7 @@ def dry_tick(cfg: dict) -> dict:
             mailbox = {"status": "failed", "note": f"mailbox: {e}"[:1000]}
     for m in messages:
         try:
-            parsed.append(json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(m))[1] or "{}"))
+            parsed.append(json.loads(run(parser_cmd(cfg), stdin=json.dumps(m))[1] or "{}"))
         except json.JSONDecodeError:
             parsed.append({"parsed": False, "reason": "the parser printed no JSON"})
     return {"dry_run": True, "messages": len(messages), "parsed": parsed, **({"mailbox": mailbox} if mailbox else {})}
@@ -684,7 +780,7 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
         for m in messages:
             with tempfile.TemporaryDirectory() as tmp:
                 f = write_private(Path(tmp), "m.json", json.dumps(m, ensure_ascii=False))
-                added += bool(store("event-add", "--source", "mailbox", "--external-id", m["id"] or m.get("headers", {}).get("Message-ID", ""),
+                added += bool(store("event-add", "--source", "mailbox", "--external-id", external_id(m),
                                     "--payload-file", f).get("created"))
         if not mailbox:  # the cursor never moves past messages that were not read
             newest = max((m.get("received_at") or "" for m in messages), default="")
@@ -739,8 +835,9 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
 
 
 def open_item(store: Store, item_id: int) -> dict:
-    for item in store("inbox-list", "--status", "open").get("items", []):
-        if int(item["id"]) == item_id:
+    # By id, not by looking through the list of open items, which the store cuts at its limit (VS12).
+    for item in store("inbox-list", "--id", item_id).get("items", []):
+        if int(item["id"]) == item_id and item.get("status") == "open":
             return item
     raise Fail(f"inbox item {item_id} is not open", 2)
 
@@ -755,17 +852,21 @@ def cmd_approve(a, cfg: dict, project: Path) -> dict:
     if not reply_file or not Path(reply_file).is_file():
         raise Fail("this item has no drafted reply to send; answer it on the network yourself, then reject it", 2)
     sha = sha256_file(Path(reply_file))
-    preview = {"id": a.id, "comment": payload["comment"], "reply": Path(reply_file).read_text(encoding="utf-8"), "sha256": sha}
+    c = payload["comment"]
+    key = payload.get("idempotency_key") or reply_key(c["comment_urn"])
+    # What the person approves: the reply, where it goes and under which key (RT12). An item stored before this
+    # rule holds the reply's hash alone, and is checked that way.
+    approval = sha if item.get("payload_sha256") == sha else reply_approval_hash(c, sha, key)
+    preview = {"id": a.id, "comment": c, "reply": Path(reply_file).read_text(encoding="utf-8"),
+               "reply_sha256": sha, "idempotency_key": key, "sha256": approval}
     if not a.confirmed:
-        return {**preview, "next": f"to send exactly this reply: approve --id {a.id} --confirmed --sha256 {sha}"}
-    if a.sha256 != sha or sha != item.get("payload_sha256"):
-        raise Fail("the reply changed since it was drafted or shown; nothing sent", 1)
+        return {**preview, "next": f"to send exactly this reply, there: approve --id {a.id} --confirmed --sha256 {approval}"}
+    if a.sha256 != approval or approval != item.get("payload_sha256"):
+        raise Fail("the reply, its target or its key changed since it was drafted or shown; nothing sent", 1)
     held = credential_in(cfg, preview["reply"])
     if held:
         raise Fail(f"the reply holds what looks like a credential ({held}); nothing sent. Answer the comment "
                    "yourself, then reject this item", 1)
-    c = payload["comment"]
-    key = payload.get("idempotency_key") or f"reply-{re.sub(r'[^0-9]', '', c['comment_urn'].rsplit(',', 1)[-1])}"
     out = run_json(["uv", "run", str(cfg["paths"]["publisher"]), "comment", "--platform", cfg["publisher"],
                     "--post-id", c["post_urn"], "--parent-comment-id", c.get("parent_comment_urn") or c["comment_urn"],
                     "--text-file", reply_file,
@@ -785,9 +886,16 @@ def cmd_add_comment(a, cfg: dict, project: Path) -> dict:
         raise Fail("add-comment needs --link, --commenter and --text-file", 2)
     text = Path(a.text_file).read_text(encoding="utf-8").strip()
     payload = {"link": a.link, "commenter": a.commenter, "text": text, "received_at": now().isoformat(), "on_own_post": True}
-    parsed = json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(payload))[1] or "{}")
+    code, out, err = run(parser_cmd(cfg), stdin=json.dumps(payload))
+    try:
+        parsed = json.loads(out or "{}")
+    except json.JSONDecodeError:
+        parsed = {}
+    if not isinstance(parsed, dict) or not parsed.get("reason") and not parsed.get("parsed"):
+        raise Fail(f"the notification parser exited {code}: {err.strip()[-300:]}", 1)
     if not parsed.get("parsed"):
         raise Fail(f"not a usable comment: {parsed.get('reason')}", 2)
+    parsed = stored_names(parsed)
     store = Store(cfg)
     store("init")
     with tempfile.TemporaryDirectory() as tmp:
@@ -824,7 +932,10 @@ def main(argv=None) -> int:
         elif a.verb == "tick":
             lock_path = Path(cfg["data_dir"]) / "tick.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with open(lock_path, "w") as lock:
+            os.chmod(lock_path.parent, 0o700)  # the runtime's own folder: runs, payloads and the store live here
+            fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
+            os.chmod(lock_path, 0o600)
+            with os.fdopen(fd, "w") as lock:
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:

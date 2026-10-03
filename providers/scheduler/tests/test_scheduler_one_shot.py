@@ -1,5 +1,5 @@
-"""Offline tests of the one-shot path of both scheduler providers (launchd.py and systemd.py): what happens
-to a job between "running" and its end.
+"""Offline tests of both scheduler providers (launchd.py and systemd.py): the one-shot path (what happens to a
+job between "running" and its end) and the rules both share (ids, the command file, the lock, bounded files).
 
 Run: uv run --with pytest pytest providers/scheduler/tests
 
@@ -13,6 +13,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -290,3 +291,263 @@ def test_arguments_that_name_no_file_pass_as_they_are(s):
     done, planned = s.schedule(s.command_file(argv=[sys.executable, "-c", OK, *plain]))
     assert done.returncode == 0, done.stderr
     assert planned["job"]["argv"][3:] == plain
+
+
+# --- SC10: an id is checked whole --------------------------------------------------------
+
+
+def test_an_id_with_a_trailing_newline_is_refused(s):
+    # ID_PATTERN ends in "$" and was used with .match: "$" also matches before a final newline, so "post-1\n"
+    # passed and became a folder, a label and a unit name with a newline in it.
+    at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    for bad in ("post-1\n", "post-1\n\n", "Post-1", "-post"):
+        refused = s.run("schedule", "--id", bad, "--at", at, "--command-file", str(s.command_file()), "--dry-run")
+        assert refused.returncode == 2 and "--id" in refused.stderr, repr(bad)
+    assert s.schedule(s.command_file())[0].returncode == 0
+    for verb in (["cancel", "--confirmed"], ["resolve", "--done", "--confirmed"], ["run"]):
+        refused = s.run(verb[0], "--id", "post-1\n", *verb[1:])
+        assert refused.returncode == 2 and "--id" in refused.stderr, verb
+
+
+# --- SC12: grace_minutes and --at --------------------------------------------------------
+
+
+def test_grace_minutes_is_an_integer_up_to_a_week(s, monkeypatch):
+    # A bool is an int in Python, so "grace_minutes": true passed as a grace of 1 minute, and nothing bounded it.
+    assert s.module(monkeypatch).MAX_GRACE_MINUTES == 10080
+    help_text = s.run("--help").stdout
+    assert "grace_minutes" in help_text and "0 to 10080" in help_text
+    at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    for bad in (True, False, 10081, -1, 1.5, "120"):
+        refused = s.run("schedule", "--id", "post-1", "--at", at, "--command-file",
+                        str(s.command_file(grace_minutes=bad)), "--dry-run")
+        assert refused.returncode == 2 and "grace_minutes" in refused.stderr, bad
+    for good in (0, 10080):
+        shown = s.run("schedule", "--id", "post-1", "--at", at, "--command-file",
+                      str(s.command_file(grace_minutes=good)), "--dry-run")
+        assert shown.returncode == 0 and json.loads(shown.stdout)["job"]["grace_minutes"] == good, shown.stderr
+
+
+def test_a_time_without_an_offset_is_refused(s):
+    # The help says "with offset", but a naive --at was read as the machine's local time.
+    naive = (datetime.now(timezone.utc) + timedelta(hours=20)).replace(tzinfo=None, microsecond=0).isoformat()
+    refused = s.run("schedule", "--id", "post-1", "--at", naive, "--command-file", str(s.command_file()), "--dry-run")
+    assert refused.returncode == 2 and "offset" in refused.stderr
+    for aware in (naive + "+00:00", naive + "Z", naive + "-03:00"):
+        shown = s.run("schedule", "--id", "post-1", "--at", aware, "--command-file", str(s.command_file()),
+                      "--dry-run")
+        assert shown.returncode == 0, (aware, shown.stderr)
+
+
+# --- SC11: every change to a scheduled job is made under its lock -----------------------------
+
+
+def lock_held(folder: Path) -> bool:
+    """Whether some open file description holds run.lock (flock conflicts across descriptions, in one process too)."""
+    fd = os.open(folder / "run.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+def watch_writes(s, module, monkeypatch) -> list:
+    """Record, for every write of job.json, the status written and whether run.lock was held."""
+    seen, original = [], module.write_job
+
+    def write_job(job):
+        seen.append((job["status"], lock_held(s.folder(job["id"]))))
+        original(job)
+
+    monkeypatch.setattr(module, "write_job", write_job)
+    return seen
+
+
+def test_a_one_shot_run_records_its_outcome_under_the_lock(s, monkeypatch):
+    # The runner released run.lock before it wrote the outcome, so a cancel or resolve that found the lock free
+    # could read "running" and write over the outcome the runner was about to record.
+    assert s.schedule(s.command_file())[0].returncode == 0
+    module = s.module(monkeypatch)
+    seen = watch_writes(s, module, monkeypatch)
+    assert module.main(["run", "--id", "post-1"]) == 0
+    assert seen == [("running", True), ("done", True)]
+    assert not lock_held(s.folder())
+
+
+def test_a_missed_or_refused_one_shot_is_recorded_under_the_lock(s, monkeypatch):
+    assert s.schedule(s.command_file(grace_minutes=0))[0].returncode == 0
+    s.set_job(at=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat())
+    module = s.module(monkeypatch)
+    seen = watch_writes(s, module, monkeypatch)
+    assert module.main(["run", "--id", "post-1"]) == 1
+    assert seen == [("missed", True)]
+
+
+def test_cancel_and_resolve_write_under_the_lock(s, monkeypatch):
+    assert s.schedule(s.command_file())[0].returncode == 0
+    module = s.module(monkeypatch)
+    seen = watch_writes(s, module, monkeypatch)
+    assert module.main(["cancel", "--id", "post-1", "--confirmed"]) == 0
+    assert seen == [("cancelled", True)]
+    assert s.schedule(s.command_file(), job_id="post-2")[0].returncode == 0
+    s.set_job("post-2", status="running", started_at="2026-10-01T09:00:00Z")
+    seen.clear()
+    assert module.main(["resolve", "--id", "post-2", "--failed", "--confirmed"]) == 0
+    assert seen == [("failed", True)]
+    assert s.schedule(s.command_file(), job_id="post-3")[0].returncode == 0
+    s.set_job("post-3", status="running", started_at="2026-10-01T09:00:00Z")
+    seen.clear()
+    assert module.main(["cancel", "--id", "post-3", "--confirmed"]) == 0
+    assert seen == [("cancelled", True)] and s.job("post-3")["interrupted"] is True
+
+
+def test_cancel_does_not_write_over_a_runner_that_still_holds_the_job(s, monkeypatch):
+    # cancel wrote "cancelled" without the lock: a runner that had just taken the job went on to run the command
+    # of a job recorded as cancelled, then wrote its own outcome over it.
+    assert s.schedule(s.command_file())[0].returncode == 0
+    module = s.module(monkeypatch)
+    module.CANCEL_WAIT_SECONDS = 0.3
+    lock = os.open(s.folder() / "run.lock", os.O_RDWR | os.O_CREAT, 0o600)  # a runner that will not let go
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert module.main(["cancel", "--id", "post-1", "--confirmed"]) == 1
+        assert s.job()["status"] == "scheduled"  # nothing written while the runner holds the job
+        assert "bootout" in s.calls.read_text() or "stop" in s.calls.read_text()  # but it was stopped
+    finally:
+        os.close(lock)
+    assert module.main(["cancel", "--id", "post-1", "--confirmed"]) == 0
+    assert s.job()["status"] == "cancelled"
+
+
+# --- SC3: a command that outlived its runner ------------------------------------------------
+
+
+def schedule_every(s, path: Path, job_id="tick"):
+    base = ["schedule", "--id", job_id, "--every", "15", "--command-file", str(path)]
+    dry = s.run(*base, "--dry-run")
+    assert dry.returncode == 0, dry.stderr
+    return s.run(*base, "--confirmed", "--approved", json.loads(dry.stdout)["approved"])
+
+
+def firings(s, job_id="tick") -> list:
+    return [json.loads(line) for line in (s.folder(job_id) / "runs.jsonl").read_text().splitlines()]
+
+
+def test_a_firing_records_its_commands_process_group_while_it_runs(s):
+    seen = s.tmp / "seen.txt"
+    code = (f"import os; open({str(seen)!r}, 'w').write("
+            f"open({str(s.folder('tick') / 'run.group')!r}).read().strip() + ' ' + str(os.getpgrp()))")
+    assert schedule_every(s, s.command_file(code)).returncode == 0
+    assert s.run("run", "--id", "tick").returncode == 0, firings(s)
+    recorded, actual = seen.read_text().split()
+    assert recorded == actual  # the command's own process group, beside run.lock
+    assert not (s.folder("tick") / "run.group").exists()  # and gone once the command ended
+    assert firings(s)[-1]["status"] == "done"
+
+
+def test_a_command_that_outlived_its_runner_is_not_overlapped(s):
+    # The command runs in its own session. When its runner dies (SIGKILL after the service's stop timeout, a
+    # crash), the kernel drops run.lock but the command goes on: the next firing took the free lock, recorded
+    # stale_lock_pid and started the command again next to the old one.
+    marker = s.tmp / "ran.txt"
+    assert schedule_every(s, s.command_file(f"open({str(marker)!r}, 'a').write('x')")).returncode == 0
+    orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    try:
+        (s.folder("tick") / "run.group").write_text(f"{orphan.pid}\n")  # what a runner that died mid-firing leaves
+        fired = s.run("run", "--id", "tick")
+        assert fired.returncode == 0, fired.stderr
+        assert not marker.exists()
+        record = firings(s)[-1]
+        assert record["status"] == "skipped-overlap" and f"process group {orphan.pid}" in record["reason"]
+        assert s.job("tick")["status"] == "scheduled"  # the job keeps firing
+    finally:
+        orphan.kill()
+        orphan.wait()
+    assert s.run("run", "--id", "tick").returncode == 0  # the group is gone: the next firing runs
+    assert marker.read_text() == "x" and firings(s)[-1]["status"] == "done"
+    assert not (s.folder("tick") / "run.group").exists()
+
+
+# --- SC14: files that grow are bounded --------------------------------------------------------
+
+MIB = 1024 * 1024
+
+
+def test_a_one_shot_commands_output_is_kept_up_to_a_mebibyte(s, monkeypatch):
+    # run.stdout.log and run.stderr.log held whatever the command printed, however much.
+    code = ("import sys; sys.stdout.write('a' * (3 * 1024 * 1024 // 2) + 'END'); "
+            "sys.stderr.write('e' * (2 * 1024 * 1024) + 'LAST')")
+    assert s.schedule(s.command_file(code))[0].returncode == 0
+    assert s.run("run", "--id", "post-1").returncode == 0
+    for name, end in (("run.stdout.log", b"END"), ("run.stderr.log", b"LAST")):
+        path = s.folder() / name
+        data = path.read_bytes()
+        assert data.endswith(end) and data.startswith(b"[") and b"cut" in data.split(b"\n", 1)[0], name
+        assert MIB < len(data) <= MIB + 200, name
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    small = s.command_file("print('short')")
+    assert s.schedule(small, job_id="post-2")[0].returncode == 0
+    assert s.run("run", "--id", "post-2").returncode == 0
+    assert (s.folder("post-2") / "run.stdout.log").read_bytes() == b"short\n"  # under the bound: as it was
+    assert s.module(monkeypatch).OUTPUT_MAX_BYTES == MIB
+
+
+def test_the_service_logs_are_cut_to_their_last_mebibyte_at_each_run(s):
+    # launchd.err.log and systemd.err.log (and .out.log) are appended to by the service and were never pruned.
+    marker = s.tmp / "ran.txt"
+    assert schedule_every(s, s.command_file(f"open({str(marker)!r}, 'a').write('x')")).returncode == 0
+    for kind in ("out", "err"):
+        path = s.folder("tick") / f"{s.name}.{kind}.log"
+        with path.open("ab") as fh:  # as the service writes it: appended
+            fh.write(b"old line\n" * (300 * 1024) + b"TAIL\n")
+    assert s.run("run", "--id", "tick").returncode == 0
+    for kind in ("out", "err"):
+        path = s.folder("tick") / f"{s.name}.{kind}.log"
+        data = path.read_bytes()
+        assert data.endswith(b"TAIL\n") and b"cut" in data.split(b"\n", 1)[0]
+        assert len(data) <= MIB + 200
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert marker.read_text() == "x"
+
+
+def test_notifications_are_kept_up_to_a_mebibyte(s):
+    if s.name != "systemd":
+        pytest.skip("launchd.py notifies through the desktop and writes no notifications file")
+    s.env["SCHEDULER_NOTIFY"] = "1"
+    path = Path(s.env["SCHEDULER_HOME"]) / "notifications.jsonl"
+    assert s.schedule(s.command_file())[0].returncode == 0
+    old = json.dumps({"at": "2026-01-01T00:00:00Z", "title": "old", "message": "x" * 200}) + "\n"
+    path.write_text(old * (6 * 1024))  # about 1.4 MiB of earlier outcomes
+    assert s.run("run", "--id", "post-1").returncode == 0
+    data = path.read_bytes()
+    assert len(data) <= MIB
+    lines = [json.loads(line) for line in data.decode().splitlines()]  # whole lines only
+    assert lines[-1]["title"] == "ai-workbench: post-1 done" and lines[0]["title"] == "old"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_history_keeps_the_newest_hundred_folders(s):
+    # Every id scheduled again moved its finished folder to .history/, which was never pruned.
+    history = Path(s.env["SCHEDULER_HOME"]) / ".history"
+    history.mkdir(parents=True, mode=0o700)
+    for n in range(102):
+        folder = history / f"old-{n:03d}"
+        (folder / "files").mkdir(parents=True)
+        (folder / "files" / "post.txt").write_text("x")
+        (folder / "files" / "post.txt").chmod(0o400)
+        os.utime(folder, (1_700_000_000 + n, 1_700_000_000 + n))
+    path = s.command_file()
+    assert s.schedule(path)[0].returncode == 0
+    assert s.run("run", "--id", "post-1").returncode == 0
+    again, _ = s.schedule(path)  # moves the finished job to .history/
+    assert again.returncode == 0, again.stderr
+    kept = sorted(p.name for p in history.iterdir())
+    assert len(kept) == 100
+    assert "old-000" not in kept and "old-001" not in kept and "old-002" not in kept and "old-003" in kept
+    assert any(name.startswith("post-1-") for name in kept)  # the folder just archived is kept
+    assert stat.S_IMODE(history.stat().st_mode) == 0o700

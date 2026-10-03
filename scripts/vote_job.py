@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """Publish the weekly vote post at its slot time, then record it in the profile repository's vote files.
 
 Usage (built by scripts/runtime.py after the person's approval, run by the scheduler, never by hand):
   python3 vote_job.py --key <key> --round YYYY-MM-DD --date YYYY-MM-DD --lang EN --title "<topic>" \
-      --repo <owner>/<name> --branch <branch> --platform linkedin --post-file post.txt \
-      [--comment-file comment.txt] [--image post.png --image-path assets/posts/<key>.png] \
-      --publisher linkedin.py --resolver resolver.py --vcs github.py \
+      --repo <owner>/<name> --branch <branch> --platform <platform> --platform-file <platform>.json \
+      --post-file post.txt [--comment-file comment.txt] [--image post.png --image-path assets/posts/<key>.png] \
+      --publisher <publisher script> --resolver <secret resolver> --vcs <vcs provider script> \
       --vote-update vote_update.py --vote-state vote_state.py --work <folder> [--path <folder>]... \
       [--ledger <the publisher's idempotency ledger>]
 
@@ -19,7 +23,9 @@ Steps, each only when the one before it succeeded:
   2. read data/pick.json, data/pick-queue.json and data/posts.json from the repository (read only), as they
      are now: the profile's own workflow may have committed since the approval;
   3. compute the recorded files with vote_update.py --record-post (post_url on the round, the post in
-     posts.json); nothing else changes;
+     posts.json), passing --platform and --platform-file, so that the address is checked against the shape the
+     platform's data file gives; nothing else changes. A job without --platform-file (scheduled before the flag)
+     calls vote_update.py in its old form, which checks only a generic https address and says so on stderr;
   4. commit them, and the image, with the vcs provider's commit-files, key <key>-record, only to
      data/pick.json, data/posts.json and assets/posts/*.
 
@@ -72,7 +78,11 @@ def main(argv=None) -> int:
     for name in ("--key", "--round", "--date", "--lang", "--title", "--repo", "--branch", "--post-file",
                  "--publisher", "--resolver", "--vcs", "--vote-update", "--vote-state", "--work"):
         p.add_argument(name, required=True)
-    p.add_argument("--platform", default="linkedin")
+    p.add_argument("--platform", required=True, help="the platform the post goes to, as runtime.json's publisher "
+                                                      "names it; passed to the publisher")
+    p.add_argument("--platform-file", help="the platform's data file (shared/references/platforms/<platform>.json); "
+                                           "passed with --platform to vote_update.py --record-post, which checks "
+                                           "the post's address against it")
     p.add_argument("--path", action="append", default=[], metavar="FOLDER",
                    help="an absolute folder to put first on PATH, so that uv resolves under a scheduler's short "
                         "PATH (the folders of runtime.json's \"path\"); repeat for several")
@@ -139,6 +149,8 @@ def main(argv=None) -> int:
            "--date", a.date, "--lang", a.lang, "--title", a.title, "--out", new]
     if a.image_path:
         upd += ["--image", a.image_path]
+    if a.platform_file:
+        upd += ["--platform", a.platform, "--platform-file", a.platform_file]
     code, out, err = call(upd, timeout=60)
     if code != 0:
         return finish(result, f"vote_update.py exited {code}: {err}")

@@ -13,6 +13,9 @@ Pack file format (packs/<name>.txt): one pattern per line, '#' comments;
   !asst-*             exclusion, applied after inclusions
   biz-business-model  exact name
 
+A pack pattern, an --areas value or a --skills name that selects nothing is named in a warning on stderr
+(the selection is printed as it is: a pack of an area with no skill yet selects nothing on purpose).
+
 Exit codes: 0 ok, 2 usage error (unknown pack, bad option).
 """
 import fnmatch
@@ -89,6 +92,20 @@ def resolve(pack=None, areas=None, skills=None):
     return sorted(selected)
 
 
+def unmatched(pack=None, areas=None, skills=None):
+    """What selects nothing: a pack's inclusion pattern no skill matches, an area no skill has, a --skills name
+    that is no skill. Each is a likely typo; the selection itself is not changed."""
+    catalog = all_skills()
+    found = []
+    if pack:
+        inc, _ = read_pack(pack)
+        found += [f"pattern {p!r} of pack {pack!r} matches no skill" for p in inc
+                  if not any(matches(p, n, catalog[n]) for n in catalog)]
+    found += [f"no skill has the area {a!r}" for a in sorted(areas or ()) if a not in catalog.values()]
+    found += [f"no skill is named {s!r}" for s in sorted(skills or ()) if s not in catalog]
+    return found
+
+
 def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__)
@@ -119,6 +136,8 @@ def main(argv):
         pack = "default"
     try:
         names = resolve(pack, areas, skills)
+        for warning in unmatched(pack, areas, skills):
+            print(f"warning: {warning}", file=sys.stderr)
     except FileNotFoundError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 2
