@@ -647,41 +647,34 @@ def cmd_cancel(args) -> int:
         print(json.dumps({"dry_run": True, "would_cancel": job}, indent=2, ensure_ascii=False))
         return EXIT_OK
     launchctl()
-    if job["status"] == "scheduled":
-        job["status"] = "cancelled"
-        job["finished_at"] = iso(now())
-        write_job(job)
-    unload(job["id"])
-    if job["status"] == "running":
-        # A one-shot job caught mid-run. Stopping it (above) makes a live runner kill its command and record
-        # "failed" itself; a runner that is gone (a crash, a power loss) records nothing, and the job would
-        # stay "running" for ever with its id blocked. Wait for the first, then settle the second here.
-        deadline = time.monotonic() + CANCEL_WAIT_SECONDS
-        while runner_alive(job["id"]) and time.monotonic() < deadline:
-            time.sleep(0.1)
-        job = read_job(job["id"])
-        if job["status"] == "running":
+    folder = job_dir(job["id"])
+    fd, _ = acquire_lock(folder)
+    if fd is None:
+        # A runner holds the job: it waits for its time, or runs the command. Unloading stops it: one that runs the
+        # command kills it and records "failed" before it lets go of the lock; one that waits records nothing.
+        unload(job["id"])
+        fd = wait_for_lock(folder, CANCEL_WAIT_SECONDS)
+        if fd is None:
+            raise ProviderError(f"job {job['id']!r} was unloaded, but its runner still held it {CANCEL_WAIT_SECONDS} s "
+                                "later; nothing was recorded: run cancel again")
+    try:
+        job = read_job(job["id"])  # again, now that no runner can change it
+        if job["status"] == "scheduled":
+            job.update(status="cancelled", finished_at=iso(now()))
+            write_job(job)
+        elif job["status"] == "running":
+            # A one-shot job whose runner is gone (a crash, a power loss): it recorded nothing, and the job would
+            # stay "running" for ever with its id blocked.
             job.update(status="cancelled", finished_at=iso(now()), interrupted=True,
                        reason=f"cancelled while running (started at {job.get('started_at', 'an unknown time')}): "
                               "the command may have acted and its outcome is unknown; check what it did before "
                               "scheduling it again")
             write_job(job)
+        unload(job["id"])
+    finally:
+        release_lock(fd)
     print(json.dumps(job, indent=2, ensure_ascii=False))
     return EXIT_OK
-
-
-def runner_alive(job_id: str) -> bool:
-    """Whether a runner holds the job's run.lock. The kernel drops the lock when its holder dies, so a lock
-    that can be taken means no runner of this version is running the job (a runner copied into a job folder
-    before one-shot jobs took the lock holds none)."""
-    folder = job_dir(job_id)
-    if not folder.is_dir():
-        return False
-    fd, _ = acquire_lock(folder)
-    if fd is None:
-        return True
-    release_lock(fd)
-    return False
 
 
 def cmd_resolve(args) -> int:
@@ -699,11 +692,20 @@ def cmd_resolve(args) -> int:
         print(json.dumps({"dry_run": True, "would_resolve": job, "as": status}, indent=2, ensure_ascii=False))
         return EXIT_OK
     launchctl()
-    if runner_alive(job["id"]):
+    # The kernel drops the lock when its holder dies, so a lock that can be taken means no runner of this version
+    # runs the job (a runner copied into a job folder before one-shot jobs took the lock holds none).
+    fd, _ = acquire_lock(job_dir(job["id"]))
+    if fd is None:
         raise ProviderError(f"job {job['id']!r} still runs (its runner holds the lock); wait for it, or cancel it")
-    job.update(status=status, finished_at=iso(now()), resolved=True)
-    write_job(job)
-    unload(job["id"])
+    try:
+        job = read_job(job["id"])  # again, now that no runner can change it
+        if job["status"] != "running":
+            raise ProviderError(f"job {job['id']!r} is {job['status']}, not running; nothing to resolve", EXIT_USAGE)
+        job.update(status=status, finished_at=iso(now()), resolved=True)
+        write_job(job)
+        unload(job["id"])
+    finally:
+        release_lock(fd)
     print(json.dumps(job, indent=2, ensure_ascii=False))
     return EXIT_OK
 
@@ -811,6 +813,16 @@ def release_lock(fd: int) -> None:
     os.ftruncate(fd, 0)
     fcntl.flock(fd, fcntl.LOCK_UN)
     os.close(fd)
+
+
+def wait_for_lock(folder: Path, seconds: float) -> int | None:
+    """Take run.lock, waiting up to `seconds` for its holder to let go: the fd, or None when it still holds it."""
+    deadline = time.monotonic() + seconds
+    while True:
+        fd, _ = acquire_lock(folder)
+        if fd is not None or time.monotonic() >= deadline:
+            return fd
+        time.sleep(0.1)
 
 
 def tail(data: bytes | None) -> str:
@@ -939,33 +951,31 @@ def cmd_run(args) -> int:
     job = read_job(validate_id(args.id))
     if job.get("kind") == "recurring":
         return run_recurring(job)
-    if job["status"] != "scheduled":
-        log(f"job {job['id']} is {job['status']}; nothing to run")
-        unload(job["id"])
-        return EXIT_OK
-    at = parse_iso(job["at"])
-    current = now()
-    if current < at - EARLY_TOLERANCE:
-        log(f"job {job['id']} fired at {iso(current)}, before its time {job['at']}; waiting")
-        return EXIT_OK
-    if current > at + timedelta(minutes=job["grace_minutes"]):
-        return finish(job, "missed", reason=f"fired at {iso(current)}, after the {job['grace_minutes']}-minute grace")
-    if "program" not in job or "runner" not in job:
-        return finish(job, "refused", reason="the job was scheduled without program and runner hashes; schedule it again")
-    reason = changed_since_approval(job)
-    if reason:
-        return finish(job, "refused", reason=reason)
-
     folder = job_dir(job["id"])
     fd, other = acquire_lock(folder)
     if fd is None:
         log(f"job {job['id']}: another runner (pid {other or 'unknown'}) holds it; nothing to run")
         return EXIT_OK
+    # From here to the recorded outcome the runner holds the lock, as cancel and resolve do: none of them writes
+    # over another. Unloading at the end may stop this process; the kernel then drops the lock.
     try:
         job = read_job(job["id"])  # again, now that no other runner can change it
         if job["status"] != "scheduled":
             log(f"job {job['id']} is {job['status']}; nothing to run")
+            unload(job["id"])
             return EXIT_OK
+        at = parse_iso(job["at"])
+        current = now()
+        if current < at - EARLY_TOLERANCE:
+            log(f"job {job['id']} fired at {iso(current)}, before its time {job['at']}; waiting")
+            return EXIT_OK
+        if current > at + timedelta(minutes=job["grace_minutes"]):
+            return finish(job, "missed", reason=f"fired at {iso(current)}, after the {job['grace_minutes']}-minute grace")
+        if "program" not in job or "runner" not in job:
+            return finish(job, "refused", reason="the job was scheduled without program and runner hashes; schedule it again")
+        reason = changed_since_approval(job)
+        if reason:
+            return finish(job, "refused", reason=reason)
         job["status"] = "running"
         job["started_at"] = iso(current)
         write_job(job)
@@ -973,9 +983,9 @@ def cmd_run(args) -> int:
             status, fields = run_one_shot(job, folder)
         except Exception as exc:  # whatever breaks from here on, the job ends: it never stays "running"
             status, fields = "failed", {"reason": f"{type(exc).__name__}: {exc}"}
+        return finish(job, status, **fields)
     finally:
         release_lock(fd)
-    return finish(job, status, **fields)
 
 
 def run_one_shot(job: dict, folder: Path) -> tuple[str, dict]:

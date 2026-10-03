@@ -336,3 +336,88 @@ def test_a_time_without_an_offset_is_refused(s):
         shown = s.run("schedule", "--id", "post-1", "--at", aware, "--command-file", str(s.command_file()),
                       "--dry-run")
         assert shown.returncode == 0, (aware, shown.stderr)
+
+
+# --- SC11: every change to a scheduled job is made under its lock -----------------------------
+
+
+def lock_held(folder: Path) -> bool:
+    """Whether some open file description holds run.lock (flock conflicts across descriptions, in one process too)."""
+    fd = os.open(folder / "run.lock", os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        return True
+    else:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        return False
+    finally:
+        os.close(fd)
+
+
+def watch_writes(s, module, monkeypatch) -> list:
+    """Record, for every write of job.json, the status written and whether run.lock was held."""
+    seen, original = [], module.write_job
+
+    def write_job(job):
+        seen.append((job["status"], lock_held(s.folder(job["id"]))))
+        original(job)
+
+    monkeypatch.setattr(module, "write_job", write_job)
+    return seen
+
+
+def test_a_one_shot_run_records_its_outcome_under_the_lock(s, monkeypatch):
+    # The runner released run.lock before it wrote the outcome, so a cancel or resolve that found the lock free
+    # could read "running" and write over the outcome the runner was about to record.
+    assert s.schedule(s.command_file())[0].returncode == 0
+    module = s.module(monkeypatch)
+    seen = watch_writes(s, module, monkeypatch)
+    assert module.main(["run", "--id", "post-1"]) == 0
+    assert seen == [("running", True), ("done", True)]
+    assert not lock_held(s.folder())
+
+
+def test_a_missed_or_refused_one_shot_is_recorded_under_the_lock(s, monkeypatch):
+    assert s.schedule(s.command_file(grace_minutes=0))[0].returncode == 0
+    s.set_job(at=(datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat())
+    module = s.module(monkeypatch)
+    seen = watch_writes(s, module, monkeypatch)
+    assert module.main(["run", "--id", "post-1"]) == 1
+    assert seen == [("missed", True)]
+
+
+def test_cancel_and_resolve_write_under_the_lock(s, monkeypatch):
+    assert s.schedule(s.command_file())[0].returncode == 0
+    module = s.module(monkeypatch)
+    seen = watch_writes(s, module, monkeypatch)
+    assert module.main(["cancel", "--id", "post-1", "--confirmed"]) == 0
+    assert seen == [("cancelled", True)]
+    assert s.schedule(s.command_file(), job_id="post-2")[0].returncode == 0
+    s.set_job("post-2", status="running", started_at="2026-10-01T09:00:00Z")
+    seen.clear()
+    assert module.main(["resolve", "--id", "post-2", "--failed", "--confirmed"]) == 0
+    assert seen == [("failed", True)]
+    assert s.schedule(s.command_file(), job_id="post-3")[0].returncode == 0
+    s.set_job("post-3", status="running", started_at="2026-10-01T09:00:00Z")
+    seen.clear()
+    assert module.main(["cancel", "--id", "post-3", "--confirmed"]) == 0
+    assert seen == [("cancelled", True)] and s.job("post-3")["interrupted"] is True
+
+
+def test_cancel_does_not_write_over_a_runner_that_still_holds_the_job(s, monkeypatch):
+    # cancel wrote "cancelled" without the lock: a runner that had just taken the job went on to run the command
+    # of a job recorded as cancelled, then wrote its own outcome over it.
+    assert s.schedule(s.command_file())[0].returncode == 0
+    module = s.module(monkeypatch)
+    module.CANCEL_WAIT_SECONDS = 0.3
+    lock = os.open(s.folder() / "run.lock", os.O_RDWR | os.O_CREAT, 0o600)  # a runner that will not let go
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        assert module.main(["cancel", "--id", "post-1", "--confirmed"]) == 1
+        assert s.job()["status"] == "scheduled"  # nothing written while the runner holds the job
+        assert "bootout" in s.calls.read_text() or "stop" in s.calls.read_text()  # but it was stopped
+    finally:
+        os.close(lock)
+    assert module.main(["cancel", "--id", "post-1", "--confirmed"]) == 0
+    assert s.job()["status"] == "cancelled"
