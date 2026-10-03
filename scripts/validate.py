@@ -41,6 +41,17 @@ Checks every skill under skills/ and every agent under agents/:
     whose status is `stale` (the folder changed since the recorded pass) or `draft` (no passing, complete
     record) are reported as warnings, one line per status, and are errors with --strict; evals/eval-gate.json,
     the gate's configuration (models, adapters, threshold), has its fields
+  - the version rules of the reliability model's section 3 (evals/eval_status.py, version_findings), against
+    the base of the pull request: WB_BASE_REF when set (CI sets the pull request's base), else the merge base
+    of HEAD with the default branch, in the hook and in CI alike. [version-file] skills/<name>/evals/
+    versions.jsonl has lines of the closed form, is append-only against the base and gains at most one line;
+    [version-class] the class of the added line agrees with the diff (X for side_effects, an output or update
+    removed, the Confirmation gate or Stop rules section, the external-content line; Z only inside the
+    allow-list and the budget), its version is the base's raised by one step of it, and a first line has no
+    class. Without a base (a case folder) these two are skipped with a NOTE. [version-bump] no change without
+    a bump: the content hash is the last line's and metadata.version is X.Y.Z and that line's version; a
+    warning, one line per finding with the skills it lists, until the sweep that closes phase C empties
+    TRANSITIONAL_RULES, an error from it
   - measurement: when evals/eval-gate.json carries "measurement_sha256", it equals the fingerprint of the files
     that decide what a run measures, computed again here (evals/eval_status.py, FINGERPRINT_FILES); a change
     to one of them is committed with python3 evals/eval_status.py measurement --kind <kind>. A measurement
@@ -805,7 +816,7 @@ WARNING_RULES = ("meta-keys", "requires-role", "requires-vocabulary", "side-effe
                  "eval-conditional-assertion", "eval-run-assertion", "eval-prompt-names-skill",
                  "eval-product-names", "skill-name", "routing-table", "test-file-names",
                  "contract-updates", "contract-owner", "contract-inputs", "contract-overlap", "contract-placeholder",
-                 "contract-cycle", "contract-owner-table", "copy-not-adopted")
+                 "contract-cycle", "contract-owner-table", "copy-not-adopted", "version-bump")
 
 
 def artifact_key(path):
@@ -1216,6 +1227,43 @@ def check_eval_status(report, root=ROOT):
                     f"(python3 evals/eval_status.py status): {', '.join(by_status['draft'])}")
 
 
+# Rules of the reliability model that are warnings while phase C changes skills and raises no version, and errors
+# from the sweep that closes it (C0.10 of docs/architecture/final-plan-2026-10-02.md), which empties this tuple.
+TRANSITIONAL_RULES = ("version-bump",)
+
+
+def check_versions(report, root=ROOT):
+    """The version rules of the reliability model's section 3, against the base of the pull request (the merge
+    base with the default branch, or WB_BASE_REF): [version-bump] a change with no bump (one line per finding,
+    listing the skills); [version-file] a version file outside its form or not append-only; [version-class] a
+    declared class the diff contradicts. Without a base the last two are skipped and a NOTE says so."""
+    es = load_eval_status()
+    names = es.skill_names(root)
+    if not names:
+        return
+    base = es.comparison_base(root)
+    if base is None:
+        report.note("[version-file] [version-class] skipped: no comparison base (not a git checkout, or no default branch)")
+    bumps = {}
+    for name in names:
+        found = es.version_findings(root, name, base)
+        for rule in ("file", "class"):
+            for problem in found[rule]:
+                report.error(f"skills/{name}/evals/versions.jsonl", f"[version-{rule}] {problem}")
+        for problem in found["bump"]:
+            bumps.setdefault(problem, []).append(name)
+    fix = {"no version file": "python3 evals/eval_status.py bump --skill <name> writes a new skill's first line",
+           "changed without a bump": "python3 evals/eval_status.py bump --skill <name> --class x|y|z",
+           "metadata.version is not X.Y.Z": "the sweep that closes phase C sets every skill to 1.0.0 with its bump",
+           "metadata.version is not the version of the last line": "python3 evals/eval_status.py bump --skill <name> again"}
+    for problem, skills in sorted(bumps.items()):
+        message = f"{len(skills)} skill(s): {problem} ({fix.get(problem, '')}): {', '.join(skills)}"
+        if "version-bump" in TRANSITIONAL_RULES:
+            report.warn("skills", message, "version-bump")
+        else:
+            report.error("skills", f"[version-bump] {message}")
+
+
 def check_security(report):
     scanner = load_scanner()
     _, active, _ = scanner.scan(ROOT)
@@ -1275,6 +1323,7 @@ def main(argv):
     check_english(report)
     check_private_terms(report)
     check_eval_status(report)
+    check_versions(report)
     check_eval_cases(report)
     check_security(report)
     if spec:

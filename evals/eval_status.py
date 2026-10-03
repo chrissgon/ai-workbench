@@ -10,6 +10,8 @@ Usage:
   python3 evals/eval_status.py measurement --kind grader|execution|infrastructure --cause "<why>"
                                [--skills <name>,...|all] [--models <id>,...|all] [--date YYYY-MM-DD]
   python3 evals/eval_status.py measurement --close --cause "<why>" [--date YYYY-MM-DD]
+  python3 evals/eval_status.py bump --skill <name> [--class x|y|z] [--date YYYY-MM-DD]
+  python3 evals/eval_status.py migrate-versions [--date YYYY-MM-DD]
 
 The records of the first round, skills/<name>/evals/result.json, are history: nothing writes one any more
 (the runner writes evidence, below), and the status of a skill is still read from them until the bands
@@ -132,6 +134,28 @@ Commands:
              fingerprint of a measurement version that is still open, which closes it; a --kind change needs a
              closed version. Prints {"kind", "measurement_version", "measurement_floor", "measurement_sha256",
              "epoch", "decisions_entry"}: the entry is added to docs/decisions.md in the same commit.
+
+  bump       raises a skill's metadata.version by one step of the class of its change (the reliability model's
+             section 3): x, y or z raises that part of the version of the pull request's base (comparison_base:
+             WB_BASE_REF, else the merge base with the default branch) and resets the lower parts, writes it into
+             SKILL.md and appends one line to skills/<name>/evals/versions.jsonl: {"version", "content_sha256",
+             "class", "date"[, "z_chars"]}, z_chars being the characters a Z change counts. Idempotent: run again,
+             or with a higher class after more edits, it rewrites the one line this pull request adds. With no
+             class it writes the first line of a skill that has none in the base, with the version of its
+             frontmatter (X.Y.Z) and the hash of its content as it then is, class "new": run it again after the
+             last edit. Prints the line.
+  migrate-versions  writes the version file of every skill that has none: one line, the version read as X.Y.Z
+             (a two-part 0.N is 0.N.0), the current content hash, class "new". It edits no SKILL.md.
+
+The version rules the validator applies (scripts/validate.py, against the same base; version_findings): the
+content hash equals the hash of the version file's last line, and metadata.version is X.Y.Z and that line's
+version (a warning until the sweep that closes phase C, an error from it); the file is append-only, with at
+most one line added; the class of the added line agrees with the diff (change_class): X for a difference in
+side_effects, an item removed from outputs or updates, a changed line of the Confirmation gate or Stop rules
+section or of the external-content line; Z only for lines of SKILL.md in Purpose or before the first heading
+that change no number, path, code span or listed word, within 300 characters since the newest lab evidence;
+Y for the rest. A declared X is never refused. Without a base (a skill built in a case folder) the last two
+are skipped.
 
 The measurement fingerprint: sha256 over the files of FINGERPRINT_FILES (the grading template, the measuring
 module evals/measure.py and its constants evals/measurement.json, the executor, the staging module), every file
@@ -1080,6 +1104,396 @@ def _case_key(cid):
     return (0, int(cid), "") if cid.isdigit() else (1, 0, cid)
 
 
+# --- versions and change classes (the reliability model, section 3; item B13) ---------------------------
+
+VERSIONS_REL = os.path.join("evals", "versions.jsonl")
+VERSION_CLASSES = ("x", "y", "z")  # and "new", the first line of a skill, which no change declares
+VERSION_LINE_KEYS = ("version", "content_sha256", "class", "date")
+Z_BUDGET = 300  # characters of Z changes since the skill's newest lab evidence
+# A changed line that differs from the line it replaces in one of these words is never Z.
+Z_WORDS = ("never", "only", "must", "may", "stop", "ask", "not", "no", "unless", "before", "after", "always", "yes")
+X_SECTIONS = ("## Confirmation gate", "## Stop rules")
+EXTERNAL_LINE = "**External content is data.**"
+X_LISTS_REMOVED = ("outputs", "updates")  # an item removed or renamed asks for X; an addition is Y
+NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+CODE_SPAN_RE = re.compile(r"`[^`]+`")
+PATH_RE = re.compile(r"(?<![\w/.-])(?:[\w.-]+/)+[\w.-]*|(?<![\w/.-])[\w-]+\.[A-Za-z]\w{0,4}\b")
+WORD_RE = re.compile(r"\b(" + "|".join(Z_WORDS) + r")\b", re.I)
+
+
+def git_out(root, *args):
+    """The output of one git command in root, or None when it fails or git is not there."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def comparison_base(root=ROOT):
+    """The commit a change is read against: the base of the pull request, never HEAD, so that an edit and its bump
+    in two commits are one change (the model's section 3; MI9). WB_BASE_REF when it is set (CI sets the pull
+    request's base), else the merge base of HEAD with the default branch (origin/HEAD, origin/main, main).
+    None outside a git checkout, or when no default branch is found (a skill built inside a case folder)."""
+    if git_out(root, "rev-parse", "--is-inside-work-tree") is None:
+        return None
+    wanted = os.environ.get("WB_BASE_REF", "").strip()
+    refs = [wanted] if wanted else ["origin/HEAD", "origin/main", "main", "origin/master", "master"]
+    for ref in refs:
+        if git_out(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}") is None:
+            continue
+        base = git_out(root, "merge-base", "HEAD", ref)
+        if base:
+            return base.strip()
+    return None
+
+
+def base_text(root, base, rel):
+    """The text of a file of the repository at the base commit, or None when it is not there."""
+    if base is None:
+        return None
+    return git_out(root, "show", f"{base}:{rel}")
+
+
+def raw_version(skill_dir=None, text=None):
+    """The raw text of metadata.version, as written between its quotes, or None."""
+    if text is None:
+        try:
+            with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            return None
+    if not text.startswith("---"):
+        return None
+    m = re.search(r"^\s+version:\s*[\"']?([^\"'\s#]*)[\"']?\s*(?:#.*)?$", text.split("\n---", 1)[0], re.M)
+    return m.group(1) if m else None
+
+
+def set_version(text, version):
+    """SKILL.md's text with metadata.version set to version (quoted). ValueError when it has none."""
+    head, sep, body = text.partition("\n---")
+    new, n = re.subn(r"^(\s+version:\s*)[\"']?[^\"'\s#]*[\"']?", lambda m: m.group(1) + f'"{version}"', head, count=1, flags=re.M)
+    if not n:
+        raise ValueError("SKILL.md has no metadata.version line")
+    return new + sep + body
+
+
+def raise_version(version, cls):
+    """The version raised by one step of the class: X.Y.Z, the lower parts reset."""
+    x, y, z = (int(p) for p in version.split("."))
+    return {"x": f"{x + 1}.0.0", "y": f"{x}.{y + 1}.0", "z": f"{x}.{y}.{z + 1}"}[cls]
+
+
+def version_line_problems(line):
+    """Why one line of a version file is outside its form."""
+    if not isinstance(line, dict):
+        return ["must be a JSON object"]
+    allowed = set(VERSION_LINE_KEYS) | ({"z_chars"} if line.get("class") == "z" else set())
+    out = [f"unknown key {k!r}" for k in line if k not in allowed] + [f"missing key {k!r}" for k in VERSION_LINE_KEYS if k not in line]
+    if out:
+        return out
+    if not _is(VERSION_RE, line["version"]):
+        out.append("version must be X.Y.Z")
+    if not _is(HEX64_RE, line["content_sha256"]):
+        out.append("content_sha256 must be 64 hexadecimal characters")
+    if line["class"] not in VERSION_CLASSES + ("new",):
+        out.append("class must be x, y, z or new")
+    if not _date(line["date"]):
+        out.append("date must be YYYY-MM-DD")
+    if line["class"] == "z" and not _count(line.get("z_chars")):
+        out.append("a z line carries z_chars, a whole number")
+    return out
+
+
+def parse_versions(text):
+    """(lines, problems) of a version file's text."""
+    lines, problems = [], []
+    for n, raw in enumerate((text or "").splitlines(), 1):
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            problems.append(f"line {n}: not valid JSON")
+            continue
+        problems += [f"line {n}: {p}" for p in version_line_problems(line)]
+        lines.append(line)
+    return lines, problems
+
+
+def read_versions(skill_dir):
+    """(lines, problems, text) of skills/<name>/evals/versions.jsonl; text is None when there is no file."""
+    try:
+        with open(os.path.join(skill_dir, VERSIONS_REL), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return [], [], None
+    lines, problems = parse_versions(text)
+    return lines, problems, text
+
+
+def _list_of(head, key):
+    """The items of a frontmatter list (flow `[a, b]` or block `- a`), read from the frontmatter's text."""
+    m = re.search(r"^\s+" + key + r":\s*\[(.*?)\]", head, re.M | re.S)
+    if m:
+        return {x.strip().strip("\"'") for x in m.group(1).split(",") if x.strip()}
+    m = re.search(r"^(\s+)" + key + r":\s*\n((?:\1\s*-\s.*\n?)+)", head, re.M)
+    return {x.strip()[1:].strip().strip("\"'") for x in m.group(2).splitlines() if x.strip()} if m else set()
+
+
+def _sections(lines):
+    """For each line of SKILL.md: "frontmatter", None (before the first `## ` heading) or its `## ` heading."""
+    out, where, front = [], None, bool(lines) and lines[0].strip() == "---"
+    for i, line in enumerate(lines):
+        if front:
+            out.append("frontmatter")
+            if i > 0 and line.strip() == "---":
+                front = False
+            continue
+        if line.startswith("## "):
+            where = line.strip()
+        out.append(where)
+    return out
+
+
+def _features(line):
+    return (NUMBER_RE.findall(line), PATH_RE.findall(line), CODE_SPAN_RE.findall(line), [w.lower() for w in WORD_RE.findall(line)])
+
+
+def _span(a, b):
+    """The characters a replaced line changed: between the common start and the common end, on the longer side."""
+    p = 0
+    while p < min(len(a), len(b)) and a[p] == b[p]:
+        p += 1
+    s = 0
+    while s < min(len(a), len(b)) - p and a[-1 - s] == b[-1 - s]:
+        s += 1
+    return max(len(a), len(b)) - p - s
+
+
+def change_class(base_md, current_md, other_changed=()):
+    """What the change from base_md to current_md (the texts of SKILL.md) asks for, with the other files of the
+    content hash that changed: (class or None when nothing changed, [reasons], the characters a Z change counts).
+    X: a difference in side_effects; an item missing from outputs or updates; a changed line in the Confirmation
+    gate or Stop rules section, or of the external-content line. Z: only lines of SKILL.md in Purpose or before
+    the first heading, none differing in a number, a path, a code span or a listed word. Y: anything else."""
+    import difflib
+    base_lines, cur_lines = (base_md or "").split("\n"), (current_md or "").split("\n")
+    if base_md == current_md and not other_changed:
+        return None, [], 0
+    reasons = []
+    head = lambda text: (text or "").split("\n---", 1)[0]
+    if _list_of(head(base_md), "side_effects") != _list_of(head(current_md), "side_effects"):
+        reasons.append("side_effects changed")
+    for key in X_LISTS_REMOVED:
+        gone = sorted(_list_of(head(base_md), key) - _list_of(head(current_md), key))
+        if gone:
+            reasons.append(f"{key} lost {', '.join(gone)}")
+    base_sec, cur_sec = _sections(base_lines), _sections(cur_lines)
+    pairs, added, deleted = [], [], []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, base_lines, cur_lines, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        n = min(i2 - i1, j2 - j1) if op == "replace" else 0
+        pairs += [(i1 + k, j1 + k) for k in range(n)]
+        deleted += list(range(i1 + n, i2))
+        added += list(range(j1 + n, j2))
+    touched = [(base_sec[i], base_lines[i]) for i, _ in pairs] + [(cur_sec[j], cur_lines[j]) for _, j in pairs]
+    touched += [(base_sec[i], base_lines[i]) for i in deleted] + [(cur_sec[j], cur_lines[j]) for j in added]
+    for section, line in touched:
+        if section in X_SECTIONS:
+            reasons.append(f"a line of {section} changed")
+            break
+    if any(EXTERNAL_LINE in line for _, line in touched):
+        reasons.append("the external-content line changed")
+    if reasons:
+        return "x", sorted(set(reasons)), 0
+    why_not_z = []
+    if other_changed:
+        why_not_z.append(f"a file other than SKILL.md changed ({', '.join(sorted(other_changed)[:3])})")
+    if any(section not in (None, "## Purpose") for section, _ in touched):
+        why_not_z.append("a changed line is outside ## Purpose and the text before the first heading")
+    for i, j in pairs:
+        if _features(base_lines[i]) != _features(cur_lines[j]):
+            why_not_z.append(f"line {j + 1} changes a number, a path, a code span or a listed word")
+    for line in [base_lines[i] for i in deleted] + [cur_lines[j] for j in added]:
+        if any(_features(line)):
+            why_not_z.append("an added or deleted line holds a number, a path, a code span or a listed word")
+            break
+    chars = sum(_span(base_lines[i], cur_lines[j]) for i, j in pairs) + sum(len(base_lines[i]) for i in deleted)
+    chars += sum(len(cur_lines[j]) for j in added)
+    return ("y", why_not_z, chars) if why_not_z else ("z", [], chars)
+
+
+def content_changes(root, base, name):
+    """The files of a skill's content hash that differ between the base commit and the working tree (deleted,
+    changed, added or not tracked yet), relative to the skill folder."""
+    folder = f"skills/{name}"
+    found = set()
+    for args in (("diff", "--name-only", base, "--", folder), ("ls-files", "--others", "--exclude-standard", "--", folder)):
+        found.update(l.strip() for l in (git_out(root, *args) or "").splitlines() if l.strip())
+    out = set()
+    for path in found:
+        rel = path[len(folder) + 1:]
+        name_ = rel.rsplit("/", 1)[-1]
+        if (rel.startswith(EVALS_REL + "/") or rel.startswith(TESTS_REL + "/") or rel == INSTALL_MARKER
+                or name_ == ".DS_Store" or name_.endswith(".pyc") or any(p in CACHE_DIRS for p in rel.split("/"))):
+            continue
+        out.add(rel)
+    return out
+
+
+def newest_lab_version(skill_dir):
+    """The version the skill's newest lab evidence ran on, or None."""
+    events = skill_evidence(skill_dir)
+    return events[-1][0].get("version") if events else None
+
+
+def z_spent(lines, skill_dir):
+    """The characters of the Z lines since the skill's newest lab evidence: those after the last line of the
+    version that evidence ran on (all of them when there is none)."""
+    newest = newest_lab_version(skill_dir)
+    start = max((i for i, l in enumerate(lines) if l.get("version") == newest), default=-1) if newest else -1
+    return sum(l.get("z_chars") or 0 for l in lines[start + 1:] if l.get("class") == "z")
+
+
+def version_findings(root, name, base):
+    """What the validator reports on one skill's versions, against the base commit (None: no base, and the checks
+    that read it are skipped): {"file", "class", "bump"}, each a list of sentences. "file": a line outside its
+    form, a version file that is not append-only or gains more than one line. "class": a declared class the
+    diff contradicts, a version that is not the base's raised by one step of its class, a first line with a
+    class or a later line without one. "bump": the first check (a change without a bump, a version that is not
+    X.Y.Z or not the last line's), a warning until the sweep that closes phase C (scripts/validate.py,
+    TRANSITIONAL_RULES) and an error from it."""
+    skill_dir = os.path.join(root, "skills", name)
+    found = {"file": [], "class": [], "bump": []}
+    lines, problems, text = read_versions(skill_dir)
+    found["file"] += problems
+    raw = raw_version(skill_dir)
+    if text is None:
+        found["bump"].append("no version file")
+    elif lines and not problems:
+        last = lines[-1]
+        if last["content_sha256"] != content_hash(skill_dir):
+            found["bump"].append("changed without a bump")
+        if raw is None or not VERSION_RE.fullmatch(raw):
+            found["bump"].append("metadata.version is not X.Y.Z")
+        elif raw != last["version"]:
+            found["bump"].append("metadata.version is not the version of the last line")
+    if base is None or problems:
+        return found
+    base_lines_text = (base_text(root, base, f"skills/{name}/{VERSIONS_REL.replace(os.sep, '/')}") or "").splitlines()
+    current_text = (text or "").splitlines()
+    if current_text[:len(base_lines_text)] != base_lines_text:
+        found["file"].append("the version file is append-only: a line of the base was changed or removed")
+        return found
+    added = current_text[len(base_lines_text):]
+    if len(added) > 1:
+        found["file"].append(f"{len(added)} lines were added: a pull request raises a skill once, by its highest class")
+    if len(added) != 1:
+        return found
+    line = lines[-1]
+    if not base_lines_text:
+        if line["class"] != "new":
+            found["class"].append(f"the first line of a skill takes no class: python3 evals/eval_status.py bump --skill {name}")
+        return found
+    base_lines, _ = parse_versions("\n".join(base_lines_text))
+    if line["class"] == "new":
+        found["class"].append("a skill with a line in the base is raised with a class: bump --class x|y|z")
+        return found
+    previous = base_lines[-1]["version"] if base_lines else None
+    if previous and VERSION_RE.fullmatch(previous) and line["version"] != raise_version(previous, line["class"]):
+        found["class"].append(f"version {line['version']} is not the base's {previous} raised by one step of class "
+                              f"{line['class']} ({raise_version(previous, line['class'])})")
+    base_md = base_text(root, base, f"skills/{name}/SKILL.md")
+    try:
+        with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+            current_md = f.read()
+    except OSError:
+        current_md = ""
+    other = content_changes(root, base, name) - {"SKILL.md"}
+    needed, reasons, chars = change_class(base_md, _same_version(current_md, base_md) if base_md else current_md, other)
+    order = {"z": 0, "y": 1, "x": 2}
+    if needed and order[line["class"]] < order[needed]:
+        found["class"].append(f"declared class {line['class']}, and the diff asks for {needed}: "
+                              f"{'; '.join(reasons) or 'not a Z change'}")
+    elif line["class"] == "z" and chars + z_spent(lines[:-1], skill_dir) > Z_BUDGET:
+        found["class"].append(f"the Z changes since the newest lab evidence count {chars + z_spent(lines[:-1], skill_dir)} "
+                              f"characters, over the budget of {Z_BUDGET}: this change is Y")
+    return found
+
+
+def _same_version(current_md, base_md):
+    """SKILL.md's current text with the base's metadata.version: the version line a bump rewrites is not part of
+    the change it classifies."""
+    base_raw = raw_version(text=base_md)
+    try:
+        return set_version(current_md, base_raw) if base_raw is not None else current_md
+    except ValueError:
+        return current_md
+
+
+def bump(root, name, cls=None, date=None):
+    """Raise a skill's version by the class of its change (eval_status.py bump; the model's section 3). Returns
+    the line written. Idempotent: run again, or with a higher class, it rewrites the one line this pull request
+    adds to the version file. With no class, it writes the first line of a skill that has none in the base."""
+    skill_dir = os.path.join(root, "skills", name)
+    path = os.path.join(skill_dir, "SKILL.md")
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    base = comparison_base(root)
+    rel = f"skills/{name}/{VERSIONS_REL.replace(os.sep, '/')}"
+    base_lines_text = (base_text(root, base, rel) or "").splitlines() if base else []
+    base_lines, problems = parse_versions("\n".join(base_lines_text))
+    if problems:
+        raise ValueError(f"the base's version file is not valid: {'; '.join(problems)}")
+    date = date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    if cls is None:
+        if base_lines:
+            raise ValueError(f"{name} has a version line in the base: a change takes --class x, y or z")
+        version = raw_version(text=text)
+        if version is None or not VERSION_RE.fullmatch(version):
+            raise ValueError(f"metadata.version of {name} is {version!r}: a first line needs X.Y.Z (the templates start at 0.1.0)")
+        line = {"version": version, "content_sha256": content_hash(skill_dir), "class": "new", "date": date}
+    else:
+        if cls not in VERSION_CLASSES:
+            raise ValueError("--class is x, y or z")
+        if not base_lines:
+            raise ValueError(f"{name} has no version line in the base" + ("" if base else " (no comparison base: not a git "
+                             "checkout, or no default branch)") + f": write its first line with bump --skill {name}, no class")
+        version = raise_version(base_lines[-1]["version"], cls)
+        new_text = set_version(text, version)
+        if new_text != text:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(new_text)
+        line = {"version": version, "content_sha256": content_hash(skill_dir), "class": cls, "date": date}
+        if cls == "z":
+            other = content_changes(root, base, name) - {"SKILL.md"}
+            base_md = base_text(root, base, f"skills/{name}/SKILL.md") or ""
+            line["z_chars"] = change_class(base_md, _same_version(new_text, base_md), other)[2]
+    with open(os.path.join(skill_dir, VERSIONS_REL), "w", encoding="utf-8") as f:
+        f.write("".join(l + "\n" for l in base_lines_text) + json.dumps(line) + "\n")
+    return line
+
+
+def migrate_versions(root, date=None):
+    """Write the version file of every skill that has none: one line, today's version read as X.Y.Z (a two-part
+    0.N is 0.N.0), the current content hash, class "new". It edits no SKILL.md. Returns (written, skipped)."""
+    date = date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    written, skipped = [], []
+    for name in skill_names(root):
+        skill_dir = os.path.join(root, "skills", name)
+        path = os.path.join(skill_dir, VERSIONS_REL)
+        version = skill_version(skill_dir)
+        if os.path.exists(path) or version is None:
+            skipped.append(name)
+            continue
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"version": version, "content_sha256": content_hash(skill_dir), "class": "new", "date": date}) + "\n")
+        written.append(name)
+    return written, skipped
+
+
 def record_path(skill_dir):
     return os.path.join(skill_dir, RECORD_REL)
 
@@ -1268,7 +1682,7 @@ def main(argv, root=None):
         return 0
     opts, flags, i = {}, set(), 0
     while i < len(rest):
-        if rest[i] in ("--skill", "--file", "--kind", "--cause", "--skills", "--models", "--date"):
+        if rest[i] in ("--skill", "--file", "--kind", "--cause", "--skills", "--models", "--date", "--class"):
             if i + 1 >= len(rest):
                 die(f"{rest[i]} needs a value.")
             opts[rest[i][2:]] = rest[i + 1]
@@ -1282,9 +1696,28 @@ def main(argv, root=None):
     if skill is not None and (not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", skill)
                               or not os.path.isdir(os.path.join(root, "skills", skill))):
         die(f"no skill {skill!r} under skills/.")
-    measurement_opts = {"kind", "cause", "skills", "models", "date"}
+    measurement_opts = {"kind", "cause", "skills", "models"}
     if cmd != "measurement" and (set(opts) & measurement_opts or "--close" in flags):
-        die(f"--kind, --cause, --skills, --models, --date and --close go with the measurement command. See --help.")
+        die("--kind, --cause, --skills, --models and --close go with the measurement command. See --help.")
+    if "class" in opts and cmd != "bump":
+        die("--class goes with the bump command. See --help.")
+    if "date" in opts and cmd not in ("measurement", "bump", "migrate-versions"):
+        die("--date goes with measurement, bump and migrate-versions. See --help.")
+    if cmd == "bump":
+        if not skill or flags or opts.get("file"):
+            die("bump takes --skill <name> [--class x|y|z] [--date YYYY-MM-DD]. See --help.")
+        try:
+            line = bump(root, skill, opts.get("class"), opts.get("date"))
+        except ValueError as e:
+            die(str(e), 1)
+        print(json.dumps({"skill": skill, **line}, indent=2))
+        return 0
+    if cmd == "migrate-versions":
+        if skill or flags or opts.get("file"):
+            die("migrate-versions takes no option but --date. See --help.")
+        written, skipped = migrate_versions(root, opts.get("date"))
+        print(json.dumps({"written": written, "skipped": skipped}, indent=2))
+        return 0
     if cmd == "measurement":
         if skill or opts.get("file") or flags - {"--close"} or ("--close" in flags) == ("kind" in opts):
             die("measurement takes --kind <grader|execution|infrastructure> or --close, with --cause \"<why>\" "
