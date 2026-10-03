@@ -76,7 +76,7 @@ Items are numbered in the order of #83, then the items of #62, #77 and #81 that 
 | 12c | The account-limit and refusal texts of both providers, seen in a real response | **not checked:** neither provider answered with them. The 401 of the first attempt is neither: it is an authentication failure (defect 1) |
 | 12d | The floor model's upstream route | **not checked:** the event line has no `upstream` key, and nothing in the run names the route |
 | 13 | Field evidence end to end in a project | **not checked:** not now, by the authorization |
-| 14 | The first pull request after #83: the `validate` job shows no NOTE "skipped: no comparison base" | **passed** if the `validate` job of this pull request shows no such NOTE; read from its log after it opened (see the pull request) |
+| 14 | The first pull request after #83: the `validate` job shows no NOTE "skipped: no comparison base" | **passed.** In the `validate` job of this pull request (#86), the step's environment carries `WB_BASE_REF: cbe3321...`, the validator prints `{"skills": 48, "errors": 0, "warnings": 1, "ok": true}`, and no line says "skipped: no comparison base" |
 | 15 | (#62) A with-skill run of a skill that cites the security checklist opens it by its relative link | **not applicable:** `ops-branch-sync` cites no shared reference. Covered for staging by the container test that reads a cited reference |
 | 16 | (#62) The floor runner loads nothing from another tool's folder in a case that carries none | **passed.** `skills_loaded` of every floor run is exactly `["ops-branch-sync"]` |
 | 17 | (#62) The two skill scripts that test for `gh` take their signed-out branch | **passed** for `gh` itself (item 9). The replies of case 4 show the consequence (defect 3) |
@@ -85,7 +85,7 @@ Items are numbered in the order of #83, then the items of #62, #77 and #81 that 
 | 20 | (#77) The floor adapter's `--format json`: the last step's text as the reply, `step_finish` tokens, the `skill` tool's input; `OPENCODE_PERMISSION` denies the page fetch | **passed** for the first three. The denial was not exercised, since no run tried a fetch |
 | 21 | (#81) A real grading that fails a guard: the second grading's tokens and what it confirms | **passed:** item 10 |
 
-Item 14 is read from this pull request's own `validate` job. Item 20 is counted as passed, and item 15 as not applicable. That gives 17 passed, and 7 not checked or not applicable (11, 12a to 12d, 13, 15).
+Item 20 is counted as passed, and item 15 as not applicable. That gives 17 passed, and 7 not checked or not applicable (11, 12a to 12d, 13, 15).
 
 ## The skill-listing measurement (A8, C0.10, decision 9)
 
