@@ -2,6 +2,7 @@
 # Install ai-workbench into Claude Code as a plugin.
 #
 # Usage: bash adapters/claude-code/install.sh [--pack <name>] [--dry-run] [--uninstall]
+#          [--listing-budget print|write|skip] [--project <dir>] [--settings-scope project|local|user]
 #
 # Builds build/<pack>/ (a plugin folder with symlinked skills, the shared references beside them
 # and generated agents), then symlinks it to ~/.claude/skills/ai-workbench (CLAUDE_SKILLS_DIR
@@ -12,24 +13,42 @@
 # removes the link and every build. A pack that selects no skill is reported and changes nothing.
 # When the linked folder is not picked up, load the build for one session instead:
 #   claude --plugin-dir adapters/claude-code/build/<pack>
-# Exit codes: 0 ok, 1 the target exists and is not this installer's, 2 usage error.
+# The skill listing: Claude Code lists skills within a character budget, SLASH_COMMAND_TOOL_CHAR_BUDGET,
+# and lists those past it by name only. The install computes the budget the pack needs and, by
+# default (--listing-budget print), prints the line to add and the file it goes in, writing nothing.
+# --listing-budget write merges it into the settings file of --settings-scope, with a backup:
+# project (<dir>/.claude/settings.json, the default) or local (<dir>/.claude/settings.local.json),
+# both with --project <dir>; user (~/.claude/settings.json) only when named. --uninstall puts back
+# what it wrote, where the value is still the one written. See listing_budget.py --help.
+# Exit codes: 0 ok, 1 the target exists and is not this installer's, or a settings file was
+# refused, 2 usage error.
 set -euo pipefail
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
 TARGET="${CLAUDE_SKILLS_DIR:-$HOME/.claude/skills}/ai-workbench"
-PACK="default" DRY=0 UNINSTALL=0
+BUDGET="$HERE/listing_budget.py"
+PACK="default" DRY=0 UNINSTALL=0 BUDGET_MODE="print" SCOPE="project" PROJECT=""
 need() { [[ $# -ge 2 ]] || { echo "Error: $1 needs a value. See --help." >&2; exit 2; }; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --pack) need "$@"; PACK="$2"; shift 2 ;;
     --dry-run) DRY=1; shift ;;
     --uninstall) UNINSTALL=1; shift ;;
-    --help|-h) sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --listing-budget) need "$@"; BUDGET_MODE="$2"; shift 2 ;;
+    --settings-scope) need "$@"; SCOPE="$2"; shift 2 ;;
+    --project) need "$@"; PROJECT="$2"; shift 2 ;;
+    --help|-h) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
+case "$BUDGET_MODE" in print|write|skip) ;; *) echo "Error: --listing-budget takes print, write or skip. See --help." >&2; exit 2 ;; esac
+case "$SCOPE" in project|local|user) ;; *) echo "Error: --settings-scope takes project, local or user. See --help." >&2; exit 2 ;; esac
+if [[ $BUDGET_MODE == write && $SCOPE != user && -z "$PROJECT" ]]; then
+  echo "Error: --listing-budget write needs --project <dir> (or --settings-scope user). See --help." >&2; exit 2
+fi
 # One JSON line on stdout, built by a JSON writer so that a path holding a quote or a backslash
-# stays valid JSON. Arguments: key=value (a string), key:=value (a number, true, false or null).
+# stays valid JSON. Arguments: key=value (a string), key:=value (JSON: a number, true, false, null
+# or the object a helper printed).
 emit() {
   python3 - "$@" <<'PY'
 import json, sys
@@ -42,16 +61,22 @@ PY
 }
 # Only a link into this adapter's build folder is ours to replace or remove.
 ours() { [[ -L "$TARGET" && "$(readlink -- "$TARGET")" == "$HERE/build/"* ]]; }
+budget_arg=()
 if [[ $UNINSTALL -eq 1 ]]; then
-  [[ $DRY -eq 1 ]] && { emit "would_remove=$TARGET"; exit 0; }
+  # The settings values this installer wrote are put back first: they are its own whatever the link is.
+  undo_args=(undo); [[ $DRY -eq 1 ]] && undo_args+=(--dry-run)
+  undo_status=0
+  undone="$(python3 "$BUDGET" "${undo_args[@]}")" || undo_status=$?
+  [[ -n "$undone" && "$undone" != "{}" ]] && budget_arg=("listing_budget:=$undone")
+  [[ $DRY -eq 1 ]] && { emit "would_remove=$TARGET" ${budget_arg[@]+"${budget_arg[@]}"}; exit 0; }
   if ours; then
     rm -f -- "$TARGET"
     python3 "$HERE/build.py" --clean >/dev/null
-    emit "removed=$TARGET"; exit 0
+    emit "removed=$TARGET" ${budget_arg[@]+"${budget_arg[@]}"}; exit "$undo_status"
   fi
   [[ -e "$TARGET" || -L "$TARGET" ]] && { echo "Error: $TARGET was not created by this installer; left in place." >&2; exit 1; }
   python3 "$HERE/build.py" --clean >/dev/null
-  emit "removed:=null"; exit 0
+  emit "removed:=null" ${budget_arg[@]+"${budget_arg[@]}"}; exit "$undo_status"
 fi
 selected="$(python3 "$ROOT/scripts/select_skills.py" --pack "$PACK" --lines)" || exit 2
 if [[ -z "$selected" ]]; then
@@ -59,16 +84,30 @@ if [[ -z "$selected" ]]; then
   emit "pack=$PACK" "linked:=null" "skills:=0"; exit 0
 fi
 BUILD="$HERE/build/$PACK"
+# The listing budget: printed, or merged into a settings file with --listing-budget write. Its JSON
+# joins the installer's line under "listing_budget".
+budget() {
+  [[ $BUDGET_MODE == skip ]] && return 0
+  local args=(apply --pack "$PACK" --scope "$SCOPE" --mode "$BUDGET_MODE")
+  [[ -n "$PROJECT" ]] && args+=(--project "$PROJECT")
+  [[ $DRY -eq 1 ]] && args+=(--dry-run)
+  python3 "$BUDGET" "${args[@]}"
+}
 if [[ $DRY -eq 1 ]]; then
   python3 "$HERE/build.py" --pack "$PACK" --prune --dry-run
-  emit "would_link=$TARGET" "to=$BUILD"; exit 0
+  b="$(budget)" || exit $?
+  [[ -n "$b" ]] && budget_arg=("listing_budget:=$b")
+  emit "would_link=$TARGET" "to=$BUILD" ${budget_arg[@]+"${budget_arg[@]}"}; exit 0
 fi
 if [[ -e "$TARGET" || -L "$TARGET" ]] && ! ours; then
   echo "Error: $TARGET exists and was not created by this installer. Move it away or set CLAUDE_SKILLS_DIR." >&2; exit 1
 fi
+# Before the build, so that a settings file it refuses leaves everything as it was.
+b="$(budget)" || exit $?
+[[ -n "$b" ]] && budget_arg=("listing_budget:=$b")
 python3 "$HERE/build.py" --pack "$PACK" --prune >/dev/null
 mkdir -p "$(dirname "$TARGET")"
 ln -sfn "$BUILD" "$TARGET"
 emit "linked=$TARGET" "to=$BUILD" "pack=$PACK" \
   "next=restart the session; the plugin loads as ai-workbench@skills-dir" \
-  "fallback=claude --plugin-dir $BUILD"
+  "fallback=claude --plugin-dir $BUILD" ${budget_arg[@]+"${budget_arg[@]}"}

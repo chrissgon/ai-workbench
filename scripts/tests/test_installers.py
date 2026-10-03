@@ -55,7 +55,8 @@ def workbench(tmp_path):
     """A small workbench: the real installers, scaffold and selection scripts, three invented skills."""
     wb = tmp_path / "wb"
     for rel in ("adapters/agents-dir/install.sh", "adapters/claude-code/install.sh", "adapters/claude-code/build.py",
-                "adapters/claude-code/plugin.json", "scripts/select_skills.py", "scripts/validate.py",
+                "adapters/claude-code/listing_budget.py", "adapters/claude-code/plugin.json",
+                "scripts/select_skills.py", "scripts/validate.py",
                 "scripts/new-skill.sh", SECURITY):
         (wb / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(ROOT / rel, wb / rel)
@@ -296,6 +297,8 @@ def test_a_pack_that_selects_nothing_is_reported_and_exits_0(workbench, tmp_path
 USAGE = [
     ("adapters/agents-dir/install.sh", ["--pack"]), ("adapters/agents-dir/install.sh", ["--copy", "--project"]),
     ("adapters/claude-code/install.sh", ["--pack"]), ("adapters/claude-code/install.sh", ["--dry-run", "--pack"]),
+    ("adapters/claude-code/install.sh", ["--listing-budget"]), ("adapters/claude-code/install.sh", ["--project"]),
+    ("adapters/claude-code/install.sh", ["--settings-scope"]),
     ("adapters/claude-code/run-agent.sh", ["--model"]), ("adapters/claude-code/run-agent.sh", ["--out", "x", "--skill-dir"]),
     ("adapters/claude-code/run-agent.sh", ["--max-cost-usd"]), ("adapters/claude-code/run-agent.sh", ["--timeout-seconds"]),
     ("scripts/new-skill.sh", ["--name"]), ("scripts/new-skill.sh", ["--name", "biz-demo-x", "--area"]),
