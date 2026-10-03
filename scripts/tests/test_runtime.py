@@ -42,9 +42,15 @@ if sys.argv[1] == "search":
 '''
 
 FAKE_PARSER = r'''
-import json, sys
+import json, os, sys
+with open(os.environ["FAKE_CALLS"] + ".parser", "a") as f:
+    f.write(json.dumps(sys.argv[1:]) + "\n")
 m = json.loads(sys.stdin.read())
 c = m.get("fake_comment")
+if c and os.environ.get("FAKE_PARSER_GENERIC"):
+    # Only the parser's generic names, as it prints them once the runtime's stored names leave its output.
+    names = {"comment_urn": "comment_id", "parent_comment_urn": "parent_comment_id", "post_urn": "post_id"}
+    c = {names.get(k, k): v for k, v in c.items()}
 print(json.dumps({"parsed": True, **c} if c else {"parsed": False, "reason": "not a comment notification"}))
 '''
 
@@ -112,7 +118,7 @@ def env(tmp_path, monkeypatch):
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
     for rel in ("providers/store/sqlite.py", "skills/mkt-engage/scripts/policy_gate.py",
-                "skills/brand-profile/scripts/sensitive_topics.py"):
+                "skills/brand-profile/scripts/sensitive_topics.py", "shared/references/platforms/linkedin.json"):
         (wb / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / rel, wb / rel)
     proj = tmp_path / "proj"
@@ -191,6 +197,48 @@ def test_the_task_names_the_platform_and_the_publisher_gets_the_generic_flags(en
     assert c[c.index("--post-id") + 1] == "urn:li:activity:111"
     assert c[c.index("--parent-comment-id") + 1] == "urn:li:comment:(urn:li:activity:111,1)"
     assert "--post-urn" not in c and "--parent-comment" not in c
+
+
+def parser_calls(env):
+    path = Path(str(env["calls"]) + ".parser")
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def test_the_parser_is_told_the_platform_and_given_its_data_file(env, tmp_path):
+    # Row 44 made parse_notification.py take --platform and --platform-file; the runtime called it with neither,
+    # so the parser fell back to its old call form (the data file of the checkout it sits in, or values of its own).
+    set_case(env, [message(1)], decision())
+    assert rt(env, "tick", "--dry-run")[0] == 0
+    assert rt(env, "tick")[0] == 0
+    text = tmp_path / "comment.txt"
+    text.write_text("Nice, I will try it!")
+    rt(env, "add-comment", "--link", "https://www.linkedin.com/feed/", "--commenter", "Rita", "--text-file", str(text))
+    data_file = str(env["wb"].resolve() / "shared/references/platforms/linkedin.json")
+    calls = parser_calls(env)
+    assert len(calls) == 3
+    assert all(c == ["--platform", "linkedin", "--platform-file", data_file] for c in calls), calls
+
+
+def test_a_platform_without_a_data_file_is_not_configured(env):
+    (env["wb"] / "shared/references/platforms/linkedin.json").unlink()
+    code, _, err = rt(env, "status")
+    assert code == 3 and "platforms/linkedin.json" in err
+
+
+def test_the_parsers_generic_identifier_names_are_read(env):
+    # The parser prints comment_id, parent_comment_id and post_id, and the runtime's stored names only until the
+    # runtime reads the generic ones: a parser without the stored names must still be answered correctly.
+    os.environ["FAKE_PARSER_GENERIC"] = "1"
+    try:
+        set_case(env, [message(1)], decision())
+        code, out, err = rt(env, "tick")
+    finally:
+        del os.environ["FAKE_PARSER_GENERIC"]
+    assert code == 0 and out["handled"][0]["status"] == "done", (out, err)
+    c = publisher_calls(env)[0]
+    assert c[c.index("--post-id") + 1] == "urn:li:activity:111"
+    assert c[c.index("--parent-comment-id") + 1] == "urn:li:comment:(urn:li:activity:111,1)"
+    assert log_entries(env)[0]["comment_urn"] == "urn:li:comment:(urn:li:activity:111,1)"
 
 
 def test_same_notification_twice_is_handled_once(env):
@@ -553,6 +601,7 @@ def test_configured_names_keep_working_and_auto_resolves_the_class(env, monkeypa
     # The publisher key is the platform: the resolution function chooses the implementation that declares it,
     # whatever its name, and the runtime has no rule of its own (the platform's name is not an implementation's).
     edit_config(env, publisher="mastodon")
+    (env["wb"] / "shared/references/platforms/mastodon.json").write_text('{"platform": "mastodon"}\n')
     with pytest.raises(runtime.Fail) as e:
         runtime.load_config(env["proj"])
     assert e.value.code == 3 and "serves mastodon" in str(e.value)

@@ -165,7 +165,8 @@ def env(tmp_path, monkeypatch):
         p.write_text(text)
     for rel in ("providers/store/sqlite.py", "skills/mkt-vote-round/scripts/vote_state.py",
                 "skills/mkt-vote-round/scripts/vote_update.py", "skills/mkt-vote-round/SKILL.md",
-                "skills/mkt-publish/scripts/payload.py", "scripts/vote_job.py"):
+                "skills/mkt-publish/scripts/payload.py", "scripts/vote_job.py",
+                "shared/references/platforms/linkedin.json"):
         (wb / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(REPO / rel, wb / rel)
     profile = tmp_path / "profile"
@@ -230,6 +231,56 @@ def test_tick_builds_one_vote_item_and_acts_on_nothing(env):
     assert calls(env, "publisher") == [] and calls(env, "scheduler") == []
     assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
     assert (env["profile"] / "data/pick-queue.json").read_text() == before
+
+
+def edit_data_file(env, change):
+    path = env["wb"] / "shared/references/platforms/linkedin.json"
+    data = json.loads(path.read_text())
+    change(data)
+    path.write_text(json.dumps(data))
+    return path
+
+
+def test_the_payload_builder_gets_the_data_file_and_the_publisher(env):
+    # Row 46 made payload.py read the platform's limits from --platform-file and take the publisher's path; the
+    # runtime passed neither, so a post was checked against no limit of the platform and no job.json was written.
+    edit_data_file(env, lambda d: d["post"].update(max_characters=20))
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is False and any("payload.py build" in p and "20" in p for p in b["problems"]), b["problems"]
+    edit_data_file(env, lambda d: d["post"].update(max_characters=3000))
+    assert rt(env, "reject", "--id", str(inbox(env)[0]["id"]))[0] == 0
+    code, out, err = rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    assert b["ready"] is True, b["problems"]
+    post = Path(b["files"]["post"]["path"])
+    job = json.loads((post.parent / "job.json").read_text())  # written by payload.py only when given --publisher
+    assert job["argv"][job["argv"].index("run") + 1] == str(env["wb"].resolve() / "providers/publisher/linkedin.py")
+
+
+def test_the_vote_job_carries_the_data_file_and_hands_it_to_the_address_check(env, tmp_path):
+    # Row 48 made vote_update.py --record-post check the post's address against the data file; the job neither
+    # carried the file nor passed it, so only a generic https address was checked at the slot.
+    rt(env, "tick")
+    b = inbox(env)[0]["payload"]
+    job = json.loads(Path(b["files"]["job"]["path"]).read_text())
+    data_file = job["argv"][job["argv"].index("--platform-file") + 1]
+    assert data_file == str(env["wb"].resolve() / "shared/references/platforms/linkedin.json")
+    assert data_file in job["snapshot"]
+    assert job["argv"][job["argv"].index("--platform") + 1] == "linkedin"
+    other = tmp_path / "other.json"  # the same platform, whose posts live on another host
+    data = json.loads(Path(data_file).read_text())
+    data["post"]["url"]["hosts"] = ["www.example.com"]
+    data["hosts"] = ["www.example.com"]
+    other.write_text(json.dumps(data))
+    argv = [str(other) if a == data_file else a for a in job["argv"]]
+    r = subprocess.run([sys.executable] + argv[1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    out = json.loads(r.stdout)
+    assert r.returncode == 1 and out["published"] is True and out["recorded"] is False, r.stderr
+    assert "vote_update.py exited 1" in out["error"]
+    assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
 
 
 def test_a_round_is_handled_once(env):

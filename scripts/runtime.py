@@ -41,7 +41,8 @@ tick     1. Reads new notification e-mails since the store's cursor (mailbox pro
             while it says older ones were left out the tick reads on (--before), and the cursor moves only
             once all were read.
          2. Claims up to max_events_per_tick events. For each: parses it with mkt-engage's
-            parse_notification.py; runs the agent through adapters/<harness>/run-agent.sh with reading tools
+            parse_notification.py (--platform <publisher> --platform-file <the platform's data file,
+            <workbench>/shared/references/platforms/<publisher>.json>); runs the agent through adapters/<harness>/run-agent.sh with reading tools
             only; takes the engage-decision block of its answer; runs mkt-engage's policy_gate.py; on
             "auto" sends the reply with the publisher's comment verb and an idempotency key; otherwise adds
             an inbox item. A reply in which the credential formats of scripts/redact.py match is never sent
@@ -204,6 +205,31 @@ def gate_path(workbench: Path) -> Path:
     return workbench / "skills" / "mkt-engage" / "scripts" / "policy_gate.py"
 
 
+def platform_file(workbench: Path, platform: str) -> Path:
+    """The platform's data file (shared/references/platforms/<platform>.json): the skills' scripts the runtime
+    calls take it by flag, with --platform, and never find it by a path of their own."""
+    return workbench / "shared" / "references" / "platforms" / f"{platform}.json"
+
+
+def parser_cmd(cfg: dict) -> list:
+    """mkt-engage's parse_notification.py, told the platform and given its data file."""
+    return [sys.executable, str(cfg["paths"]["parser"]), "--platform", cfg["publisher"],
+            "--platform-file", str(cfg["paths"]["platform_file"])]
+
+
+# The parser prints the identifiers under the generic names (comment_id, parent_comment_id, post_id); the runtime
+# stores them under the names its logs and inbox items already use, which an older parser also printed.
+STORED_NAMES = (("comment_urn", "comment_id"), ("parent_comment_urn", "parent_comment_id"), ("post_urn", "post_id"))
+
+
+def stored_names(parsed: dict) -> dict:
+    """The parser's output with each identifier under the name the runtime stores it by."""
+    out = dict(parsed)
+    for stored, generic in STORED_NAMES:
+        out[stored] = parsed.get(generic) or parsed.get(stored)
+    return out
+
+
 def pinned_files(project: Path, workbench: Path) -> dict:
     """What a pin covers: the configuration and the gate script, by path and sha256."""
     files = {"runtime_json": config_path(project), "gate": gate_path(workbench)}
@@ -283,6 +309,7 @@ def load_config(project: Path) -> dict:
         "parser": wb / "skills" / "mkt-engage" / "scripts" / "parse_notification.py",
         "gate": gate_path(wb),
         "skills": wb / "skills",
+        "platform_file": platform_file(wb, platform),
     }
     if cfg["mailbox"] == "none":
         del cfg["paths"]["mailbox"]
@@ -473,15 +500,18 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
     """Parse, run the agent, gate, act. Returns {"status", "note"}."""
     paths = cfg["paths"]
     payload = event.get("payload") or {}
-    code, out, err = run([sys.executable, str(paths["parser"])], stdin=json.dumps(payload))
+    code, out, err = run(parser_cmd(cfg), stdin=json.dumps(payload))
     try:
         comment = json.loads(out)
     except json.JSONDecodeError:
         return {"status": "failed", "note": f"parser exited {code}: {err.strip()[-200:]}"}
+    if not isinstance(comment, dict):
+        return {"status": "failed", "note": f"parser exited {code} and printed no object"}
     if not comment.get("parsed"):
         partial = comment.get("partial")
         if not partial:
             return {"status": "done", "note": f"not a comment to handle: {comment.get('reason', 'unknown')}"}
+        partial = stored_names(partial)
         c = {"comment_urn": partial.get("comment_urn"), "post_urn": partial.get("post_urn"), "commenter": "unknown",
              "text": "", "received_at": partial.get("received_at")}
         item_file = write_private(Path(cfg["data_dir"]) / "events" / str(event["id"]), "inbox.json",
@@ -492,6 +522,7 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
         return {"status": "to_inbox", "note": comment.get("reason", "")}
     if comment.get("on_own_post") is False:
         return {"status": "done", "note": "comment on someone else's post: out of the policy's scope"}
+    comment = stored_names(comment)
     comment = {k: comment.get(k) for k in ("comment_urn", "post_urn", "parent_comment_urn", "commenter", "text", "received_at")}
     comment["parent_comment_urn"] = comment.get("parent_comment_urn") or comment["comment_urn"]
 
@@ -658,7 +689,7 @@ def dry_tick(cfg: dict) -> dict:
             mailbox = {"status": "failed", "note": f"mailbox: {e}"[:1000]}
     for m in messages:
         try:
-            parsed.append(json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(m))[1] or "{}"))
+            parsed.append(json.loads(run(parser_cmd(cfg), stdin=json.dumps(m))[1] or "{}"))
         except json.JSONDecodeError:
             parsed.append({"parsed": False, "reason": "the parser printed no JSON"})
     return {"dry_run": True, "messages": len(messages), "parsed": parsed, **({"mailbox": mailbox} if mailbox else {})}
@@ -785,9 +816,16 @@ def cmd_add_comment(a, cfg: dict, project: Path) -> dict:
         raise Fail("add-comment needs --link, --commenter and --text-file", 2)
     text = Path(a.text_file).read_text(encoding="utf-8").strip()
     payload = {"link": a.link, "commenter": a.commenter, "text": text, "received_at": now().isoformat(), "on_own_post": True}
-    parsed = json.loads(run([sys.executable, str(cfg["paths"]["parser"])], stdin=json.dumps(payload))[1] or "{}")
+    code, out, err = run(parser_cmd(cfg), stdin=json.dumps(payload))
+    try:
+        parsed = json.loads(out or "{}")
+    except json.JSONDecodeError:
+        parsed = {}
+    if not isinstance(parsed, dict) or not parsed.get("reason") and not parsed.get("parsed"):
+        raise Fail(f"the notification parser exited {code}: {err.strip()[-300:]}", 1)
     if not parsed.get("parsed"):
         raise Fail(f"not a usable comment: {parsed.get('reason')}", 2)
+    parsed = stored_names(parsed)
     store = Store(cfg)
     store("init")
     with tempfile.TemporaryDirectory() as tmp:

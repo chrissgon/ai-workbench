@@ -351,7 +351,9 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
     pay = work / "payload"
     pay.mkdir(mode=0o700)
     code, out, err = run([sys.executable, str(v["paths"]["payload"]), "build", "--content", str(content),
-                          "--out", str(pay), "--workbench", cfg["workbench"], "--platform", cfg["publisher"]])
+                          "--out", str(pay), "--workbench", cfg["workbench"], "--platform", cfg["publisher"],
+                          "--platform-file", str(cfg["paths"]["platform_file"]),
+                          "--publisher", str(cfg["paths"]["publisher"])])
     built = _loads(out)
     entry = (built.get("posts") or [{}])[0]
     if code != 0 or not entry.get("post_file"):
@@ -419,12 +421,15 @@ def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d:
     python = SYSTEM_PYTHON if Path(SYSTEM_PYTHON).exists() else sys.executable
     argv = [python, str(p["job"]), "--key", key, "--round", rid, "--date", slot["when"][:10],
             "--lang", d["post"]["language"], "--title", d["topic"], "--repo", v["repo"], "--branch", v["branch"],
-            "--platform", cfg["publisher"], "--post-file", entry["post_file"],
+            "--platform", cfg["publisher"], "--platform-file", str(cfg["paths"]["platform_file"]),
+            "--post-file", entry["post_file"],
             "--publisher", str(publisher), "--resolver", str(p["resolver"]), "--vcs", str(p["vcs"]),
             "--vote-update", str(p["vote_update"]), "--vote-state", str(p["vote_state"]),
             "--work", str(Path(cfg["data_dir"]) / "vote" / rid / "job-work")]
+    # The platform's data file is a file argument like the others: the job runs its verified copy, so the
+    # address check at the slot is the one the person approved.
     snapshot = [str(p["job"]), entry["post_file"], str(publisher), str(p["resolver"]), str(p["vcs"]),
-                str(p["vote_update"]), str(p["vote_state"])]
+                str(p["vote_update"]), str(p["vote_state"]), str(cfg["paths"]["platform_file"])]
     for folder in cfg.get("path") or []:
         # The scheduler runs the job on its own short PATH; these are the folders runtime.json lists so that
         # uv resolves, and the job puts them first, as the tick does.
