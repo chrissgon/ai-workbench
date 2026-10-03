@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "I want the documentation screen designed in Draftloom, our generative design tool. It already has our design system loaded as the project \"Plinth UI site\". Use the Button page as the example.",
+      "prompt": "I want the documentation screen designed in Draftloom, our generative design tool. It already has our design system loaded as the project \"Plinth UI site\". Use the Button page as the example, and call the brief documentation-page.",
       "expected_output": "docs/design/briefs/documentation-page.md of type screen in loaded mode (the user named the tool and says it holds the design system): regions and states of SCREEN-2 from the flows named in Content, the Button page copy quoted from content/v1/components/button.md, three named directions, the brand colour restated as hex, at least five CRIT lines, attachments that exclude any earlier mockup, a prompt with a Direction slot; documentation-page.lint.json with ok true, quoted in the reply; the brief registered in the state file as a draft; the reply names design-execute as the next step.",
       "files": ["evals/files/docs-site"],
       "assertions": [
@@ -35,7 +35,7 @@
     },
     {
       "id": 3,
-      "prompt": "Write the brief for the site's share images (og:image) for the landing and every docs page.",
+      "prompt": "Write the brief for the site's share images (og:image) for the landing and every docs page. Call it og-image.",
       "expected_output": "docs/design/briefs/og-image.md of type image in inline mode (no tool is named, so the design tool section of the design system does not make it loaded): Size, Format and Text parts in Content, the landing card's texts quoted from the Share images part of messaging.md, the variable fields of the documentation template with their longest real values taken from the page list in the flows (page title \"Migrating from 0.19\", 19 characters; section \"Getting started\", 15 characters, as longest_value.py prints them), colours and type written out with their token names, at least five CRIT lines including a thumbnail legibility check; og-image.lint.json with ok true, quoted in the reply.",
       "files": ["evals/files/docs-site"],
       "assertions": [
