@@ -31,7 +31,7 @@
 - 2026-09-22: Pillars: small tools (tinykv), database performance, AI for databases built in public (user). (user)
 - 2026-09-22: No numeric targets yet; measure four weeks first (user). (user)
 - 2026-09-20: Voice reference: "dry humour, like a tired sysadmin, never cringe" (user). (user)
-- 2026-09-24: Voice limits: no emojis at all, at most 2 hashtags, end posts with a question (user). (user)
+- 2026-09-24: Voice limits: no emojis at all, no exclamation marks, at most 2 hashtags, end posts with a question (user). (user)
 - 2026-09-23: Voice direction: "keep the dry jokes, lose the ALL CAPS shouting and the rocket emojis" (user). (user)
 
 ## Open questions
