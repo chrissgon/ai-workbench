@@ -108,6 +108,8 @@ REF_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
 COMMIT_SHA_RE = re.compile(r"^[0-9a-f]{40}([0-9a-f]{24})?$")
 PATH_MAX_CHARS = 1024
 MAX_FILE_BYTES = 5 * 1024 * 1024
+READ_FILE_MAX_BYTES = 1024 * 1024  # read-file: the file itself; the contents API returns no more inline
+READ_FILE_MAX_RESPONSE = 4 * 1024 * 1024  # read-file: the whole answer (base64 and JSON around the file)
 MAX_FILES = 50
 MESSAGE_MAX_BYTES = 64 * 1024
 DIFF_MAX_BYTES = 20 * 1024
@@ -133,7 +135,8 @@ verbs:
                  --repo <owner>/<name> --path <path> [--ref <branch|tag|sha>] (default:
                  the default branch). Prints {{path, sha, size, content, ref}}; content is
                  UTF-8 text; a binary file, a directory, a symlink or a submodule exits 2;
-                 a file over 1 MB is not supported (exit 1). The token is used when one
+                 a file over {READ_FILE_MAX_BYTES // (1024 * 1024)} MiB, or an answer over {READ_FILE_MAX_RESPONSE // (1024 * 1024)} MiB, is refused
+                 (exit 1): that is read-file's size cap. The token is used when one
                  resolves; without one the request is anonymous (public repositories only).
   commit-files   Side effect. Commit files to a branch with git and push it:
                  --repo <owner>/<name> --branch <b> --message-file <f>
@@ -200,6 +203,7 @@ other environment variables:
   VCS_GIT_REMOTE         tests only (with VCS_TEST=1): an absolute path to a local bare
                          repository that replaces the SSH remote of commit-files.
   VCS_GIT_TIMEOUT        tests only (with VCS_TEST=1): seconds before any git call times out.
+                         Both timeouts are positive numbers; anything else exits 2.
   commit-files clones into a private folder (0700) under
   $XDG_CACHE_HOME/ai-workbench/vcs-github-work/ (or ~/.cache/...) and removes it afterwards.
 
@@ -264,7 +268,20 @@ def api_base() -> tuple[str, bool]:
             "VCS_GITHUB_API_BASE is for tests only and must be a loopback URL such as http://127.0.0.1:8080",
             EXIT_USAGE,
         )
+    http_timeout()  # a malformed timeout stops the verb before anything is sent
     return override.rstrip("/"), True
+
+
+def positive_seconds(name: str, value: str) -> float:
+    """A timeout from the environment: a finite number above zero, or a usage error naming the variable."""
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = float("nan")
+    if not (seconds > 0 and seconds != float("inf")):
+        raise ProviderError(f"{name} must be a positive number of seconds, not {one_line(repr(value), 40)}",
+                            EXIT_USAGE)
+    return seconds
 
 
 def secret_resolver():
@@ -372,7 +389,13 @@ def ledger_read() -> dict:
         data = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
         raise ProviderError(f"the idempotency ledger at {path} is not valid JSON", EXIT_SERVICE)
-    data.setdefault("entries", {})
+    if isinstance(data, dict):
+        data.setdefault("entries", {})
+    entries = data.get("entries") if isinstance(data, dict) else None
+    if not isinstance(entries, dict) or not all(isinstance(e, dict) for e in entries.values()):
+        raise ProviderError(f"the idempotency ledger at {path} is not a JSON object whose \"entries\" is an object "
+                            "of objects; nothing was sent. Move it aside only after checking what it records",
+                            EXIT_SERVICE)
     return data
 
 
@@ -480,16 +503,21 @@ OPENER = urllib.request.build_opener(RefuseRedirect)
 def http_timeout() -> float:
     override = os.environ.get("VCS_GITHUB_HTTP_TIMEOUT")
     if override and os.environ.get("VCS_GITHUB_API_BASE"):  # test mode only; api_base() checked it
-        return float(override)
+        return positive_seconds("VCS_GITHUB_HTTP_TIMEOUT", override)
     return HTTP_TIMEOUT_SECONDS
 
 
-def http(method: str, url: str, hdrs: dict, body: bytes | None = None) -> tuple[int, dict, bytes]:
+def http(method: str, url: str, hdrs: dict, body: bytes | None = None,
+         max_bytes: int | None = None) -> tuple[int, dict, bytes]:
     request = urllib.request.Request(url, data=body, method=method, headers=hdrs)
     path = urllib.parse.urlparse(url).path
     try:
         with OPENER.open(request, timeout=http_timeout()) as response:
-            return response.status, {k.lower(): v for k, v in response.headers.items()}, response.read()
+            data = response.read() if max_bytes is None else response.read(max_bytes + 1)
+            if max_bytes is not None and len(data) > max_bytes:
+                raise ProviderError(f"the answer to {method} {path} is over the cap of {max_bytes} bytes; "
+                                    "nothing was read", EXIT_SERVICE)
+            return response.status, {k.lower(): v for k, v in response.headers.items()}, data
     except urllib.error.HTTPError as exc:
         payload = exc.read()
         message = ""
@@ -690,10 +718,8 @@ def cmd_dismiss(args) -> int:
         print(json.dumps(out, indent=2, ensure_ascii=False))
         return EXIT_OK
 
-    token, _ = load_token(test_mode)
-    target = {"repo": repo, "number": number, "reason": args.reason}
-    existing = ledger_claim(key, target)
-    if existing:
+    def settled(existing: dict) -> int:
+        """The key is already in the ledger: replay a dismissal of this alert, refuse anything else."""
         if existing.get("kind") == "commit":
             raise ProviderError(f"idempotency key {key!r} was used for a commit; use a new key for this alert",
                                 EXIT_USAGE)
@@ -705,6 +731,16 @@ def cmd_dismiss(args) -> int:
             print(json.dumps(dismissed_result(key, existing, True), indent=2))
             return EXIT_OK
         raise ProviderError(pending_message(key, existing), EXIT_SERVICE)
+
+    # The ledger first: a replay sends nothing, so it needs no token.
+    existing = ledger_read()["entries"].get(key)
+    if existing:
+        return settled(existing)
+    token, _ = load_token(test_mode)
+    target = {"repo": repo, "number": number, "reason": args.reason}
+    existing = ledger_claim(key, target)  # under the lock: another run may have claimed it meanwhile
+    if existing:
+        return settled(existing)
 
     try:
         status, _, raw = http("PATCH", url, headers(token, json_body=True), json.dumps(body).encode())
@@ -853,7 +889,7 @@ def cmd_read_file(args) -> int:
     if ref:
         url += "?" + urllib.parse.urlencode({"ref": ref})
     try:
-        _, _, body = http("GET", url, headers(token or None))
+        _, _, body = http("GET", url, headers(token or None), max_bytes=READ_FILE_MAX_RESPONSE)
     except ProviderError as exc:
         if exc.status == 404 and not token:
             raise ProviderError(f"{exc} (no token was sent; a private repository answers 404)", exc.code, exc.status)
@@ -874,6 +910,8 @@ def cmd_read_file(args) -> int:
         raw = base64.b64decode("".join(str(data.get("content") or "").split()), validate=True)
     except ValueError:
         raise ProviderError("unexpected contents response: content is not base64")
+    if len(raw) > READ_FILE_MAX_BYTES:
+        raise ProviderError(f"{path} is {len(raw)} bytes, over read-file's cap of {READ_FILE_MAX_BYTES} bytes")
     size = data.get("size")
     if isinstance(size, int) and size != len(raw):
         raise ProviderError(f"unexpected contents response: size {size} but {len(raw)} bytes of content")
@@ -928,6 +966,8 @@ def check_git_overrides() -> None:
     for name in ("VCS_GIT_REMOTE", "VCS_GIT_TIMEOUT"):
         if os.environ.get(name) and not vcs_test_mode():
             raise ProviderError(f"{name} is for tests only and needs VCS_TEST=1", EXIT_USAGE)
+    if os.environ.get("VCS_GIT_TIMEOUT"):
+        positive_seconds("VCS_GIT_TIMEOUT", os.environ["VCS_GIT_TIMEOUT"])
 
 
 def git_remote(repo: str) -> str:
@@ -942,7 +982,7 @@ def git_remote(repo: str) -> str:
 
 def git_timeout(default: int) -> float:
     override = os.environ.get("VCS_GIT_TIMEOUT")
-    return float(override) if override and vcs_test_mode() else default
+    return positive_seconds("VCS_GIT_TIMEOUT", override) if override and vcs_test_mode() else default
 
 
 # The GIT_* variables git still gets from the caller: where the user's git configuration lives and how the user
@@ -1452,6 +1492,9 @@ def main(argv: list[str] | None = None) -> int:
     except ProviderError as exc:
         log(f"error: {exc}")
         return exc.code
+    except OSError as exc:  # a file or folder the provider needs (the ledger, the work folder) is not usable
+        log(f"error: {one_line(exc.strerror or type(exc).__name__)}: {one_line(exc.filename or '')}".rstrip(": "))
+        return EXIT_SERVICE
     except Stopped as stop:
         log(f"error: stopped by signal {stop.signum}: git was stopped and the clone removed. A push that had "
             "started is pending in the ledger with the commit it attempted; settle it with resolve")

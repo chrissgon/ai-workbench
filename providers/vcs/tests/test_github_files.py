@@ -171,6 +171,21 @@ def test_read_file_large_missing_and_redirect(api_env, contents):
     assert len(contents.requests) == 3
 
 
+def test_read_file_has_a_size_cap(api_env, contents):
+    """VS15: read-file read whatever the service answered, of any size."""
+    cap = 1024 * 1024
+    contents.files["data/at-cap.txt"] = b"a" * cap
+    contents.files["data/over-cap.txt"] = b"a" * (cap + 1)
+    contents.files["data/huge-answer.txt"] = {"type": "file", "encoding": "base64", "size": 2, "path": "x",
+                                              "content": "aGk=", "sha": "c" * 40, "noise": "n" * (5 * cap)}
+    at_cap = run(["read-file", "--repo", REPO, "--path", "data/at-cap.txt"], api_env)
+    assert at_cap.returncode == 0 and json.loads(at_cap.stdout)["size"] == cap
+    for path in ("data/over-cap.txt", "data/huge-answer.txt"):
+        proc = run(["read-file", "--repo", REPO, "--path", path], api_env)
+        assert proc.returncode == 1 and "cap" in proc.stderr and proc.stdout == "", (path, proc.stderr)
+    assert "1 MiB" in run(["--help"], api_env).stdout
+
+
 def test_read_file_validates_path_and_ref_before_any_request(api_env, contents):
     bad_paths = ["../etc/passwd", "/abs.json", "a//b", "data/", ".git/config", "a/.git/x", "a b.json",
                  "data/../x", ".", "-rf", "a?b", "a%2e", "x\n"]

@@ -682,3 +682,52 @@ def test_the_contract_states_the_dry_run_of_commit_files_resolves_flag_and_the_t
     assert "Contents: Read-only" in permission and "Dependabot alerts: Read-only" in permission
     assert permission in (root / "contracts" / "secrets.md").read_text(encoding="utf-8")
     assert '"Contents: Read-only"' in module.HELP_EPILOG
+
+
+# --- VS15: errors that are not ProviderError, and a replay without a token --------------------------
+
+
+def assert_clean_failure(proc, code, words):
+    assert proc.returncode == code, (proc.returncode, proc.stderr)
+    assert "Traceback" not in proc.stderr and proc.stderr.startswith("error: "), proc.stderr
+    assert len(proc.stderr.strip().splitlines()) == 1 and words in proc.stderr, proc.stderr
+
+
+def test_malformed_timeouts_are_usage_errors(env, fake, tmp_path):
+    """A VCS_GIT_TIMEOUT or VCS_GITHUB_HTTP_TIMEOUT that is not a number ended in a ValueError traceback."""
+    local = tmp_path / "queue.json"
+    local.write_text("[]\n")
+    message = tmp_path / "message.txt"
+    message.write_text("chore: update\n")
+    commit = ["commit-files", "--repo", REPO, "--branch", "main", "--message-file", str(message),
+              "--file", f"data/queue.json={local}", "--allow", "data/*", "--idempotency-key", "k1", "--dry-run"]
+    for value in ("soon", "0", "-1", "nan", "inf"):
+        e = {**env, "VCS_TEST": "1", "VCS_GIT_REMOTE": str(tmp_path), "VCS_GIT_TIMEOUT": value}
+        assert_clean_failure(run(commit, e), 2, "VCS_GIT_TIMEOUT")
+    for value in ("soon", "0", "nan"):
+        e = {**env, "VCS_GITHUB_HTTP_TIMEOUT": value}
+        assert_clean_failure(run(["read-file", "--repo", REPO, "--path", "README.md"], e), 2,
+                             "VCS_GITHUB_HTTP_TIMEOUT")
+    assert fake.requests == []
+
+
+def test_a_ledger_that_is_not_a_json_object_stops_the_run_with_one_line(env, fake, comment_file):
+    path = Path(env["VCS_GITHUB_LEDGER"])
+    path.parent.mkdir(parents=True)
+    for content in ("[]", '"text"', '{"version": 1, "entries": []}', '{"version": 1, "entries": {"k": 3}}'):
+        path.write_text(content)
+        assert_clean_failure(run(dismiss_args(comment_file, "--confirmed"), env), 1, "ledger")
+        assert_clean_failure(run(dismiss_args(comment_file, "--dry-run"), env), 1, "ledger")
+    assert fake.patches() == []
+
+
+def test_replaying_a_dismissed_key_needs_no_token(env, fake, comment_file):
+    """The token was read before the ledger, so a replay, which sends nothing, failed without one."""
+    assert run(dismiss_args(comment_file, "--confirmed"), env).returncode == 0
+    no_token = {k: v for k, v in env.items() if k not in ("GITHUB_TOKEN", "VCS_GITHUB_TOKEN")}
+    again = run(dismiss_args(comment_file, "--confirmed"), no_token)
+    assert again.returncode == 0, again.stderr
+    assert json.loads(again.stdout)["replayed"] is True and len(fake.patches()) == 1
+    # A key that is not dismissed yet still needs the token, and claims nothing without it.
+    fresh = run(dismiss_args(comment_file, "--confirmed", key="web-4", number="4"), no_token)
+    assert fresh.returncode == 3 and "web-4" not in ledger(env)
