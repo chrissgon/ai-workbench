@@ -825,7 +825,8 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
 
 def cmd_publish(args) -> int:
     global LEGACY_V2
-    LEGACY_V2 = args.comments_endpoint != "rest"
+    # The first comment goes where the comment verb would send it: --legacy-v2 is honoured here too.
+    LEGACY_V2 = args.comments_endpoint != "rest" or bool(args.legacy_v2)
     text, image, first_comment = validate_publish_args(args)
     # A setting the first comment needs is read before anything is sent: found malformed only after the
     # post was public, it left a post without its comment for a mistake no request could have caused.
@@ -1317,8 +1318,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="comments: v2 (default; works with a member's w_member_social token, checked "
                              "2026-09-30) or rest (the versioned endpoint; needs LinkedIn partner access)")
     parser.add_argument("--legacy-v2", action="store_true",
-                        help="with comment: use the unversioned /v2/socialActions endpoint (a trial: the versioned "
-                             "endpoint needs partner access for member comments)")
+                        help="with comment, or publish's first comment: use the unversioned /v2/socialActions "
+                             "endpoint (the default; an alias kept from its trial, and it wins over "
+                             "--comments-endpoint rest)")
     parser.add_argument("--comment-id", "--comment-urn", dest="comment_urn",
                         help="with resolve: the pending comment was published as this id (a comment URN). "
                              "Alias: --comment-urn")

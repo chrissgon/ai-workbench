@@ -1598,3 +1598,35 @@ def test_the_provider_s_own_ledger_folder_is_tightened_and_a_given_one_is_left_a
     assert run(SCRIPT, publish_args(text_file, "--confirmed"), given).returncode == 0
     assert oct(shared.stat().st_mode & 0o777) == "0o755"  # not ours: a folder the user chose
     assert oct((shared / "ledger.json").stat().st_mode & 0o777) == "0o600"
+
+
+# --- publish honours --legacy-v2 for its first comment; the contract states the platform's flags and media count ---
+
+
+def test_publish_legacy_v2_sends_the_first_comment_to_the_unversioned_endpoint(env, fake, text_file, comment_file):
+    proc = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--comments-endpoint", "rest",
+                                    "--legacy-v2", "--dry-run"), env)
+    assert proc.returncode == 0, proc.stderr
+    comment = json.loads(proc.stdout)["requests"][-1]
+    assert "/v2/socialActions/" in comment["url"] and "LinkedIn-Version" not in comment["headers"]
+    rest = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--comments-endpoint", "rest",
+                                    "--dry-run"), env)
+    assert "/rest/socialActions/" in json.loads(rest.stdout)["requests"][-1]["url"]
+
+
+def test_media_must_exist_and_be_an_image(env, fake, text_file, tmp_path):
+    other = tmp_path / "notes.txt"
+    other.write_text("x")
+    for media, said in ((tmp_path / "none.png", "not found"), (other, "JPG, PNG or GIF")):
+        proc = run(SCRIPT, publish_args(text_file, "--media", str(media), "--confirmed"), env)
+        assert proc.returncode == 2 and said in proc.stderr
+    assert fake.requests == []
+
+
+def test_the_contract_row_states_own_flags_and_the_platform_s_media_count():
+    contract = (HERE.parents[1] / "CONTRACT.md").read_text(encoding="utf-8")
+    row = next(line for line in contract.splitlines() if line.startswith("| `publisher:<platform>` | `--check"))
+    assert "flags of its own" in row and "portable caller does not pass" in row and "`--comments-endpoint`" in row
+    assert "`media.max_count`" in row and "[--media <path>...]" in row
+    data = json.loads((HERE.parents[2] / "shared" / "references" / "platforms" / "linkedin.json").read_text())
+    assert data["media"]["max_count"] == 1  # this implementation refuses a second --media (test_rejects_two_images)
