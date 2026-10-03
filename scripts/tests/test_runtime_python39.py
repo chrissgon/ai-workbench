@@ -32,6 +32,9 @@ ON_SYSTEM_PYTHON = [
     # from its source, so the source runs on the system interpreter too.
     "shared/scripts/check_post.py", "shared/scripts/contrast.py", "shared/scripts/voice_stats.py",
     "shared/scripts/sensitive_topics.py", "shared/scripts/redact.py",
+    # The field recorder: the runtime calls `record --start` before it starts an agent (the reliability model,
+    # section 7), and it loads the status script for the form of a field line and the content hash.
+    "scripts/evidence.py", "evals/eval_status.py",
 ]
 RUNTIME = ("scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py")  # the scheduler starts these
 SYSTEM_PYTHON = (3, 9)
