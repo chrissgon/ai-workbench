@@ -3352,3 +3352,25 @@ def test_the_routing_mode_refuses_a_skill_outside_the_pack(tmp_path, monkeypatch
 def test_the_pack_is_resolved_by_the_repositorys_own_resolver():
     names = er.pack_skills("default")
     assert "ops-branch-sync" in names and len(names) >= 40
+
+
+def test_a_command_passed_the_held_key_starts_the_key_proxy_first_and_fails_as_infrastructure_without_it(tmp_path, monkeypatch):
+    executor = er.load_executor()
+    secret, key = executor.route()["secret"], "fake-floor-key-for-the-runner-tests-0004"
+    started, ran = [], []
+    monkeypatch.setattr(er, "EXECUTOR", "container")
+    monkeypatch.setattr(executor, "keyproxy", lambda env=None: started.append(env[secret]))
+    monkeypatch.setattr(executor, "remove", lambda name, env=None: None)
+    monkeypatch.setattr(er, "_run_group", lambda cmd, timeout, cwd, env, container: ran.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
+    box = {"root": str(tmp_path), "pass": [secret], "network": "proxy"}
+    er.run_group(["true"], 10, env={secret: key}, box=box)
+    assert started == [key] and len(ran) == 1 and key not in " ".join(ran[0])
+    er.run_group(["true"], 10, env={secret: key}, box={**box, "network": "none"})  # no network: no proxy to start
+    er.run_group(["true"], 10, env={"OTHER": "v"}, box={**box, "pass": ["OTHER"]})  # another tier's run
+    assert started == [key] and len(ran) == 3
+
+    def down(env=None):
+        raise executor.ExecutorError("the key proxy did not start: cannot start")
+    monkeypatch.setattr(executor, "keyproxy", down)
+    r = er.run_group(["true"], 10, env={secret: key}, box=box)
+    assert r.returncode == 1 and "key proxy did not start" in r.stderr and len(ran) == 3  # no container ran

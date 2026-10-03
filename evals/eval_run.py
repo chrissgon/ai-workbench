@@ -211,12 +211,16 @@ store through providers/secrets/resolver.py; values travel in the environment of
 on a command line. Token variables for git hosts and npm are refused there. The docker client itself still
 runs with an environment built from an allowlist on the host, with empty git, gh and npm configuration, but
 only the names above cross into a container.
-Secrets in what a run leaves. The credential of a run's tier is therefore in the environment of every command
+One credential never enters a run: the floor model's provider key, which the key proxy holds
+(evals/container/keyproxy/keyproxy.json names it; evals/executor.py starts the proxy before a command that is
+passed it). Such a run gets a placeholder in the variable and the proxy's base URL in OPENROUTER_BASE_URL; the
+floor adapter points its runner there, and the proxy adds the key to each call to the provider's API.
+Secrets in what a run leaves. The credential of the strong tier's run is in the environment of every command
 the model runs, by necessity: the runner inside the container needs it. A model that prints its environment
 puts the value in its reply, in a transcript or in a file. So after each run, before anything is read, stored
 in the workspace or sent to the grader, the value of every variable passed into the run is replaced by a
 marker, "[redacted:<NAME>]", in the reply, the adapter's other output (the transcript, the raw output) and the
-files of the case folder; the version-control facts and the grading prompt are passed through the same
+files of the case folder (the floor key's value is looked for too, should it reach a run another way); the version-control facts and the grading prompt are passed through the same
 replacement, and so is what a grading call left. The replacements are counted, per run ("redactions" in its
 row) and in benchmark.json "redactions". The replacement is by exact value, in one function (replace_values)
 that applies no pattern of what a credential looks like: scripts/redact.py, which matches credential formats,
@@ -1606,10 +1610,17 @@ def run_group(cmd, timeout, cwd=None, env=None, box=None):
     box = {"root", "runner", "pass", "network"} runs the command in a container (evals/executor.py): root is
     the run's folder, the only thing it can change; runner is the one run-prompt.sh the command starts, the
     only file of the workbench the container sees. The container is removed by name when the command
-    returns, times out or the script is stopped, since ending the docker client does not end it."""
+    returns, times out or the script is stopped, since ending the docker client does not end it. A command
+    passed the variable the key proxy holds starts the key proxy first (executor.holds(), keyproxy()); when
+    it cannot start, the command fails as an infrastructure failure, before any container runs."""
     container = None
     if box is not None and EXECUTOR == "container":
         executor = load_executor()
+        if executor.holds(box.get("pass") or (), env, box.get("network") or "none"):
+            try:  # the key stays there; the run gets a placeholder and the proxy's address
+                executor.keyproxy(env=env)
+            except executor.ExecutorError as e:  # an infrastructure failure of this command, never a score
+                return subprocess.CompletedProcess(cmd, 1, "", f"Error: {e}\n")
         cmd, container = executor.command(cmd, box["root"], cwd=cwd, env=env, runner=box.get("runner"),
                                           pass_names=box.get("pass") or (), network=box.get("network") or "none")
         cwd = None

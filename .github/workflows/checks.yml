@@ -93,4 +93,4 @@ jobs:
           version: "0.12.19"
           python-version: "3.11"
       - name: The eval container, built and exercised (no model call)
-        run: WB_EVAL_DOCKER_TESTS=1 uv run --with pytest==9.1.1 pytest -q evals/tests/test_executor_docker.py
+        run: WB_EVAL_DOCKER_TESTS=1 uv run --with pytest==9.1.1 pytest -q evals/tests/test_executor_docker.py evals/tests/test_keyproxy_docker.py

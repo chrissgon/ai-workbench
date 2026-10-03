@@ -35,8 +35,9 @@ BEFORE = {
     "GMAIL_REFRESH_TOKEN": ((), "mailbox-gmail", ("providers/mailbox/gmail.py", "providers/mailbox/auth.py")),
     "GMAIL_CLIENT_ID": ((), "gmail-client-id", ("providers/mailbox/auth.py", "providers/mailbox/gmail.py")),
     "GMAIL_CLIENT_SECRET": ((), "gmail-client-secret", ("providers/mailbox/auth.py", "providers/mailbox/gmail.py")),
+    # The key proxy of the eval network became a reader of the floor key on 2026-10-03: it holds the value of an eval run.
     "OPENROUTER_API_KEY": ((), "openrouter", ("evals/eval_run.py --pass-env", "adapters/agents-dir/run-prompt.sh",
-                                              "adapters/api/run_agent.py")),
+                                              "evals/container/keyproxy/keyproxy.py", "adapters/api/run_agent.py")),
     "CLAUDE_CODE_OAUTH_TOKEN": ((), "claude-code-oauth", ("evals/eval_run.py strong_pass_env",
                                                           "adapters/claude-code/run-prompt.sh")),
     "DEEPSEEK_API_KEY": ((), "deepseek", ("evals/eval_run.py --floor-pass-env", "adapters/agents-dir/run-prompt.sh")),

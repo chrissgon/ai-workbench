@@ -44,8 +44,10 @@
       "permission": "a key used only for evals and the runtime; a credit limit on it is recommended",
       "readers": [
         "evals/eval_run.py --pass-env",
-        "adapters/agents-dir/run-prompt.sh"
+        "adapters/agents-dir/run-prompt.sh",
+        "evals/container/keyproxy/keyproxy.py"
       ],
+      "note": "in an eval run the value never enters the run container: the key proxy (evals/container/keyproxy/) holds it and adds it to each call, and the run gets a placeholder and the proxy's base URL in OPENROUTER_BASE_URL",
       "store_username": "openrouter"
     },
     {

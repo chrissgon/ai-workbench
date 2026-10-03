@@ -40,7 +40,8 @@ def test_the_definition_hash_follows_the_files_and_names_everything(tmp_path):
     second = ex.definition_hash(str(tmp_path))
     assert second != first
     n = ex.names(str(tmp_path))
-    assert all(second[:12] in value for value in n.values()) and set(n) == {"image", "proxy_image", "network", "proxy"}
+    assert all(second[:12] in value for value in n.values())
+    assert set(n) == {"image", "proxy_image", "network", "proxy", "keys_image", "keys", "open_network"}
 
 
 def test_a_command_sees_the_run_folder_and_the_one_adapter_script_and_nothing_else(tmp_path):
@@ -138,7 +139,7 @@ def test_everything_the_image_installs_is_pinned():
     import json
     import re
     folder = Path(ex.DEFINITION)
-    for dockerfile in (folder / "Dockerfile", folder / "proxy" / "Dockerfile"):
+    for dockerfile in (folder / "Dockerfile", folder / "proxy" / "Dockerfile", folder / "keyproxy" / "Dockerfile"):
         froms = [l for l in dockerfile.read_text().splitlines() if l.startswith("FROM ")]
         assert froms and all(re.search(r"@sha256:[0-9a-f]{64}( AS \w+)?$", l) for l in froms), froms
     text = (folder / "Dockerfile").read_text()
@@ -198,4 +199,109 @@ def test_a_setup_command_sees_only_the_run_folder_and_a_missing_script_is_refuse
     assert [m.split(":")[1] for m in mounted(argv)] == ["/eval"]
     with pytest.raises(ex.ExecutorError):
         ex.command(["true"], str(root), runner=str(tmp_path / "no-such" / "run-prompt.sh"))
+
+
+FLOOR_KEY = "fake-floor-key-for-the-executor-tests-0003"
+
+
+def env_pairs(argv):
+    return [argv[i + 1] for i, a in enumerate(argv) if a == "-e"]
+
+
+@pytest.mark.parametrize("network", ["proxy", "open", "none"])
+def test_the_key_the_key_proxy_holds_never_enters_a_run(tmp_path, network):
+    root, _ = run_folder(tmp_path)
+    r, n = ex.route(), ex.names()
+    env = {r["secret"]: FLOOR_KEY, "MODEL_KEY": "another-value"}
+    argv, _ = ex.command(["true"], str(root), env=env, pass_names=[r["secret"], "MODEL_KEY"], network=network)
+    given = env_pairs(argv)
+    assert FLOOR_KEY not in " ".join(argv)
+    assert f"{r['secret']}={r['placeholder']}" in given and r["secret"] not in given  # never by name, so never its value
+    assert "MODEL_KEY" in given  # any other passed variable travels as before
+    url = f"{r['base_url_env']}={ex.keyproxy_url()}"
+    if network == "none":
+        assert url not in given and argv[argv.index("--network") + 1] == "none"
+        return
+    assert url in given and ex.keyproxy_url() == f"http://{n['keys']}:{r['port']}/api/v1"
+    if network == "proxy":
+        assert argv[argv.index("--network") + 1] == n["network"]
+        assert f"NO_PROXY=localhost,127.0.0.1,{n['keys']}" in given  # reached directly, not through the egress proxy
+    else:
+        assert argv[argv.index("--network") + 1] == n["open_network"]  # the open network the key proxy also listens on
+
+
+def test_a_run_without_the_held_key_is_as_it_was(tmp_path):
+    root, _ = run_folder(tmp_path)
+    r = ex.route()
+    argv, _ = ex.command(["true"], str(root), env={"MODEL_KEY": "v"}, pass_names=["MODEL_KEY", r["secret"]], network="proxy")
+    given = env_pairs(argv)
+    assert not any(e.startswith(r["secret"]) or e.startswith(r["base_url_env"]) for e in given)
+    assert "NO_PROXY=localhost,127.0.0.1" in given
+    argv, _ = ex.command(["true"], str(root), env={"MODEL_KEY": "v"}, pass_names=["MODEL_KEY"], network="open")
+    assert "--network" not in argv  # a web case of the strong tier stays on the default network
+    held = {r["secret"]: FLOOR_KEY}
+    assert ex.holds([r["secret"]], held, "proxy") and ex.holds([r["secret"]], held, "open")
+    assert not ex.holds([r["secret"]], held, "none") and not ex.holds([r["secret"]], {}, "proxy")
+    assert not ex.holds(["MODEL_KEY"], {"MODEL_KEY": "v", **held}, "proxy")
+
+
+class FakeDocker:
+    """docker as the key proxy's start sees it: a container that runs with a label, or none."""
+
+    def __init__(self):
+        self.calls, self.envs, self.running_label = [], [], None
+
+    def __call__(self, *args, env=None, check=True, timeout=1800):
+        import subprocess
+        self.calls.append(args)
+        self.envs.append(dict(env or {}))
+        out, err, code = "", "", 0
+        if args[0] == "inspect":
+            if self.running_label is None:
+                code, err = 1, "No such object"
+            else:
+                out = f"true {self.running_label}\n"
+        elif args[0] == "run":
+            self.running_label = next(a.split("=", 1)[1] for a in args if a.startswith(ex.KEYPROXY_LABEL + "="))
+        elif args[0] == "logs":
+            err = "keyproxy: listening on port 8890, forwarding /api/v1/ to https://openrouter.ai through the egress proxy\n"
+        return subprocess.CompletedProcess(["docker", *args], code, out, err)
+
+
+def test_the_key_proxy_gets_the_key_by_name_and_is_reused_until_the_key_changes(monkeypatch):
+    r, n = ex.route(), ex.names()
+    docker = FakeDocker()
+    monkeypatch.setattr(ex, "docker", docker)
+    env = {r["secret"]: FLOOR_KEY, "PATH": "/usr/bin"}
+    assert ex.keyproxy(env=env) == n["keys"]
+    run = next(c for c in docker.calls if c[0] == "run")
+    assert all(FLOOR_KEY not in a for c in docker.calls for a in c)  # never on a command line, the label included
+    assert ["-e", r["secret"]] in pairs(list(run)) and docker.envs[docker.calls.index(run)][r["secret"]] == FLOOR_KEY
+    assert ["--network", n["network"]] in pairs(list(run)) and f"HTTPS_PROXY=http://{n['proxy']}:{ex.PROXY_PORT}" in run
+    assert ["--cap-drop", "ALL"] in pairs(list(run)) and "--rm" in run and "--restart" not in run
+    assert not any(a in ("-p", "--publish", "--network=host") for a in run)  # nothing published on the host
+    assert run[run.index(n["keys_image"]) + 1:] == ()  # the provider of the route: no upstream given
+    assert ("network", "connect", n["open_network"], n["keys"]) in docker.calls
+    started = len(docker.calls)
+    assert ex.keyproxy(env=env) == n["keys"]  # running with that key: reused
+    assert [c[0] for c in docker.calls[started:]] == ["inspect"]
+    ex.keyproxy(env={**env, r["secret"]: FLOOR_KEY + "-stored-again"})  # a key stored again replaces it
+    assert [c[:2] for c in docker.calls[started + 1:started + 4]] == [("inspect", "--format"), ("rm", "-f"), ("run", "-d")]
+    with pytest.raises(ex.ExecutorError):
+        ex.keyproxy(env={"PATH": "/usr/bin"})
+
+
+def test_a_key_proxy_that_does_not_start_is_an_error_that_names_no_key(monkeypatch):
+    docker = FakeDocker()
+
+    def silent(*args, env=None, check=True, timeout=1800):
+        r = docker(*args, env=env, check=check, timeout=timeout)
+        if args[0] == "logs":
+            r.stderr = "keyproxy: cannot start: OSError: address in use\n"
+        return r
+    monkeypatch.setattr(ex, "docker", silent)
+    monkeypatch.setattr(ex, "KEYPROXY_READY_SECONDS", 0)
+    with pytest.raises(ex.ExecutorError) as e:
+        ex.keyproxy(env={ex.route()["secret"]: FLOOR_KEY})
+    assert "did not start" in str(e.value) and FLOOR_KEY not in str(e.value)
 
