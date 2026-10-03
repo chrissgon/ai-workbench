@@ -1352,22 +1352,34 @@ def test_default_ledger_is_in_the_data_folder_not_the_cache(env, fake, text_file
     assert json.loads(second.stdout)["replayed"] is True and post_count(fake) == 1
 
 
-def test_old_ledger_is_copied_on_first_use_and_its_post_is_not_published_again(env, fake, text_file, tmp_path):
+def test_old_ledger_is_read_by_a_dry_run_and_copied_by_the_first_real_verb(env, fake, text_file, tmp_path):
     e, new, old = default_ledger_env(env, tmp_path)
     # The post went out before the move: the provider of that time recorded it in the cache folder.
     first = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed"),
                 {**env, "PUBLISHER_LINKEDIN_LEDGER": str(old)})
     assert first.returncode == 0 and post_count(fake) == 1 and not new.exists()
     before = old.read_bytes()
+    # A dry run reads the old ledger where the new one does not exist yet, and writes nothing: no copy, no folder.
     dry = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--dry-run"), e)
     assert json.loads(dry.stdout)["existing_post_urn"] == POST_URN  # found on the very first read
-    assert "ledger moved" in dry.stderr and str(old) in dry.stderr and str(new) in dry.stderr
-    assert new.read_bytes() == before and oct(new.stat().st_mode & 0o777) == "0o600"
+    assert "ledger moved" not in dry.stderr and not new.exists() and not new.parent.exists()
+    comment = tmp_path / "c.txt"
+    comment.write_text("Thanks!")
+    on_key = run(SCRIPT, ["comment", "--platform", "linkedin", "--text-file", str(comment), "--idempotency-key", "c-1",
+                          "--on-key", "launch-1", "--dry-run"], e)
+    assert json.loads(on_key.stdout)["post_urn"] == POST_URN and "ledger moved" not in on_key.stderr
+    resolve = run(SCRIPT, ["resolve", "--idempotency-key", "launch-1", "--not-published", "--dry-run"], e)
+    assert resolve.returncode == 2 and "ledger moved" not in resolve.stderr  # the key is published: nothing to do
+    assert not new.parent.exists()
+    # The first real verb copies it, and finds the key there.
     proc = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed"), e)
     assert proc.returncode == 0, proc.stderr
+    assert "ledger moved" in proc.stderr and str(old) in proc.stderr and str(new) in proc.stderr
+    assert new.read_bytes() == before and oct(new.stat().st_mode & 0o777) == "0o600"
     assert json.loads(proc.stdout)["replayed"] is True and json.loads(proc.stdout)["post_urn"] == POST_URN
     assert post_count(fake) == 1  # not published twice
-    assert "ledger moved" not in proc.stderr  # copied once
+    again = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed"), e)
+    assert again.returncode == 0 and "ledger moved" not in again.stderr  # copied once
     assert old.read_bytes() == before  # never edited, never deleted
     # After the copy the new ledger is the only one read and written.
     assert run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-2", "--confirmed"), e).returncode == 0
@@ -1429,3 +1441,15 @@ def test_ledger_override_reads_no_old_ledger(env, fake, text_file, tmp_path):
     old.write_text(json.dumps({"version": 2, "entries": {"launch-1": {"status": "published", "post_urn": POST_URN}}}))
     dry = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--dry-run"), env)
     assert json.loads(dry.stdout)["existing_post_urn"] is None and "ledger moved" not in dry.stderr
+
+
+def test_a_corrupt_ledger_stops_every_verb_before_anything_is_sent(env, fake, text_file, comment_file):
+    path = Path(env["PUBLISHER_LINKEDIN_LEDGER"])
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json")
+    for args in (publish_args(text_file, "--confirmed"), publish_args(text_file, "--dry-run"),
+                 comment_args(comment_file, "--post-id", POST_URN, "--confirmed"),
+                 ["resolve", "--idempotency-key", "k", "--not-published", "--confirmed"]):
+        proc = run(SCRIPT, args, env)
+        assert proc.returncode == 1 and "not valid JSON" in proc.stderr, args
+    assert fake.requests == [] and path.read_text() == "{not json"
