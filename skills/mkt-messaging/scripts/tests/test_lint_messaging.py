@@ -30,12 +30,12 @@ LINT_MSG = "skills/mkt-messaging/scripts/lint_messaging.py"
 
 
 MSG_PROOF = ("The stylesheet is 8 kB gzipped. Evidence: size of the built file. "
-             "Method: `gzip -c dist/plinth.css | wc -c`. Date: 2026-03-14. Source: build output.")
+             "Method: `gzip -c dist/lintel.css | wc -c`. Date: 2026-03-14. Source: build output.")
 
 
 def messaging(proof: str = MSG_PROOF, headline: str = "Small enough to read", body: str = "The whole stylesheet is 8 kB.",
               demo: str = "the file size next to the built file", tagline: str = "Styles you can read") -> str:
-    return f"""# Messaging: Plinth
+    return f"""# Messaging: Lintel
 
 ## Summary
 
@@ -66,6 +66,10 @@ def messaging(proof: str = MSG_PROOF, headline: str = "Small enough to read", bo
 - Avoid: blazing
 
 ## Open questions
+
+## Assumptions
+
+none
 
 ## Readiness
 """
@@ -115,3 +119,50 @@ def test_lint_messaging_needs_a_demo_on_every_later_section(tmp_path):
     # a call to action does not replace the demo of a later section
     text = messaging().replace("Demo: the file size next to the built file.", "CTA: Install → /install.")
     assert lint(LINT_MSG, tmp_path / "messaging.md", text)[1]["errors"] == [message]
+
+
+def test_lint_messaging_needs_an_assumptions_section(tmp_path):
+    text = messaging().replace("## Assumptions\n\nnone\n\n", "")
+    assert lint(LINT_MSG, tmp_path / "messaging.md", text)[1]["errors"] == ["missing section '## Assumptions'"]
+
+
+def test_lint_messaging_prints_a_summary_and_writes_the_report_on_request(tmp_path):
+    doc = tmp_path / "messaging.md"
+    doc.write_text(messaging(), encoding="utf-8")
+    report = tmp_path / "messaging.lint.json"
+    r = run(LINT_MSG, "--file", str(doc), "--report", str(report))
+    assert r.returncode == 0, r.stderr
+    printed = json.loads(r.stdout)
+    assert printed["summary"] == "lint_messaging ok: 0 errors, 1 proofs, 2 sections"
+    record = json.loads(report.read_text(encoding="utf-8"))
+    assert record["script"] == "lint_messaging.py"
+    assert record["arguments"] == {"--file": str(doc)}
+    assert record["ok"] is True and record["errors"] == []
+    assert record["summary"] == printed["summary"]
+    assert record["counts"] == {"proofs": 1, "sections": 2}
+    # a failing run writes the report too, with ok false and its errors
+    doc.write_text(messaging(headline="Three kilobytes, no more"), encoding="utf-8")
+    r = run(LINT_MSG, "--file", str(doc), "--report", str(report))
+    assert r.returncode == 1
+    record = json.loads(report.read_text(encoding="utf-8"))
+    assert record["ok"] is False and record["errors"] == ["SECTION-2: number Three in the copy is not in any PROOF"]
+    assert record["summary"].startswith("lint_messaging FAILED: 1 errors")
+
+
+def test_lint_messaging_usage_errors_exit_2_without_a_traceback(tmp_path):
+    for args in (["--file"], [], ["--file", "x.md", "--strict"], ["--file", "x.md", "--report"]):
+        r = run(LINT_MSG, *args, cwd=tmp_path)
+        assert r.returncode == 2, args
+        assert "Traceback" not in r.stderr and r.stderr.strip(), args
+        assert r.stdout == "", args
+    r = run(LINT_MSG, "--file", str(tmp_path / "missing.md"))
+    assert r.returncode == 2 and "cannot read" in r.stderr
+
+
+def test_lint_messaging_json_only_indents(tmp_path):
+    doc = tmp_path / "messaging.md"
+    doc.write_text(messaging(), encoding="utf-8")
+    plain = run(LINT_MSG, "--file", str(doc)).stdout
+    pretty = run(LINT_MSG, "--file", str(doc), "--json").stdout
+    assert json.loads(plain) == json.loads(pretty)
+    assert plain.count("\n") == 1 and pretty.count("\n") > 1

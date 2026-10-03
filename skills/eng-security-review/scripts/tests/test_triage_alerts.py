@@ -59,3 +59,25 @@ def test_triage_never_reads_a_manifest_outside_the_repo(tmp_path):
     assert out.returncode == 0, out.stderr
     for group in json.loads(out.stdout)["groups"]:
         assert group["manifest_found"] is False and group["declared"] is None
+
+
+def test_triage_usage_errors_exit_2_with_a_message(tmp_path):
+    for args in (["--alerts"], ["--alerts", "a.json", "--repo"], ["--repo", str(tmp_path)],
+                 ["--alerts", "a.json"], ["--alerts", "a.json", "--repo", str(tmp_path / "missing")],
+                 ["--unknown"]):
+        out = run(TRIAGE, *args, cwd=tmp_path)
+        assert out.returncode == 2, (args, out.returncode, out.stderr)
+        assert out.stderr.strip() and out.stdout == "", args
+
+
+def test_triage_unreadable_alerts_exit_1(tmp_path):
+    out = run(TRIAGE, "--alerts", str(tmp_path / "none.json"), "--repo", str(tmp_path))
+    assert out.returncode == 1 and "cannot read alerts" in out.stderr and out.stdout == ""
+    (tmp_path / "bad.json").write_text("{not json")
+    out = run(TRIAGE, "--alerts", str(tmp_path / "bad.json"), "--repo", str(tmp_path))
+    assert out.returncode == 1 and out.stdout == ""
+
+
+def test_triage_help_exits_0():
+    out = run(TRIAGE, "--help")
+    assert out.returncode == 0 and "Usage:" in out.stdout

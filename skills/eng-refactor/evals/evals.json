@@ -4,43 +4,59 @@
     {
       "id": 1,
       "prompt": "Refactor src/due.js in the invoices project: remove the duplicated validation and whatever is dead, without changing behaviour.",
-      "expected_output": "The duplicated date validation becomes one helper and the unused legacyLabel is removed, with the reason it cannot change behaviour (not exported, not called); npm test and npm run size run before and after, with the same test results and the size numbers in a table; the RangeError behaviour is kept; the diff touches only src/due.js; the plan gains a Refactor section.",
+      "expected_output": "The duplicated date validation becomes one helper and the unused legacyLabel is removed, with the reason it cannot change behaviour (not exported, not called); npm test and npm run size run before and after, with the same test results (3 passing) and the size lines (src/ 452 B gzip before) quoted in a table; the RangeError behaviour is kept; the change touches only src/due.js and the plan; the plan gains a Refactor section.",
       "files": [
         "evals/files/invoices"
       ],
+      "grader_files": [
+        "src/due.js",
+        "package.json",
+        "AGENTS.md"
+      ],
       "assertions": [
-        "npm test is run before and after the change and both runs pass",
-        "npm run size (or scripts/size.mjs) is run before and after and both numbers are reported",
+        "The plan or the reply quotes the summary `npm test` printed before the change and after it, and both show 3 tests passing and none failing",
+        "The plan or the reply quotes the line `npm run size` printed before the change (src/ 452 B gzip) and the line it printed after it",
         "legacyLabel is removed with a reason tied to it being neither exported nor called",
         "dueLabel and daysLeft still throw RangeError for an invalid date",
-        "Only src/due.js changes among the source and test files",
-        "A plan under docs/engineering/plans/ contains a 'Refactor' section with a before and after table",
-        "The reply is in English, the language of the prompt"
+        {"text": "No file under src/ other than src/due.js, and no file under test/, is among the files the run produced or changed", "tags": ["guard"]},
+        {"text": "A plan under docs/engineering/plans/ contains a 'Refactor' section with a before and after table", "tags": ["format"]}
       ]
     },
     {
       "id": 2,
       "prompt": "What's worth refactoring in the invoices project?",
-      "expected_output": "The skill reads the code, proposes one or two targets with the smell quoted, the reason each keeps behaviour and the expected gain, and asks which to do; no source file changes.",
+      "expected_output": "The skill reads the code and proposes behaviour-preserving targets (legacyLabel, which is neither exported nor called; the invalid-date check repeated in dueLabel and daysLeft), each with its lines quoted, the reason it keeps behaviour and the expected gain; the time-zone behaviour of dueLabel, if named at all, is a behaviour change for a separate task, not a refactoring target; the reply recommends one target and ends by asking which to do; nothing is changed and no plan is written.",
       "files": [
         "evals/files/invoices"
       ],
+      "grader_files": [
+        "src/due.js",
+        "src/index.js",
+        "AGENTS.md"
+      ],
       "assertions": [
-        "At least one target is proposed with the code it concerns quoted or named (for example legacyLabel or the duplicated validation)",
-        "The reply asks the user to choose or confirm before changing code",
-        "No file under src/ or test/ is modified"
+        "No proposed refactoring target changes behaviour: the time-zone handling of dueLabel is not offered as a refactoring target (the reply may name it only as a behaviour change for a separate task)",
+        "For each proposed target the reply quotes or names the lines (file and line), says why removing or merging them cannot change behaviour (for legacyLabel: it is not exported by src/due.js or src/index.js and nothing calls it), and states the expected gain",
+        {"text": "The reply ends by asking which target to do, and names the target it recommends", "tags": ["guard"]},
+        {"text": "No file under src/ or test/, and no plan under docs/, is among the files the run produced or changed", "tags": ["guard"]}
       ]
     },
     {
       "id": 3,
       "prompt": "Refactor due.js in the invoices project and while you're at it fix the time-zone bug in dueLabel.",
-      "expected_output": "The skill separates the two: the time-zone fix changes behaviour and belongs to eng-root-cause and eng-implement, not to the refactor; it does the refactor alone (or asks which first) and does not change the label's behaviour inside the refactor.",
+      "expected_output": "The skill separates the two: the time-zone fix changes behaviour and is a separate change (eng-root-cause, then eng-unit-tests); the refactor leaves the label's behaviour exactly as it is, bug included. The request names the file but not the smell, so the skill proposes the behaviour-preserving targets (legacyLabel, the repeated invalid-date check) with their lines and the reason each keeps behaviour, recommends one and asks before changing code.",
       "files": [
         "evals/files/invoices"
       ],
+      "grader_files": [
+        "src/due.js",
+        "package.json",
+        "AGENTS.md"
+      ],
       "assertions": [
         "The reply says the time-zone fix is a behaviour change handled separately from the refactor",
-        "dueLabel's output for 2026-09-25 under TZ=America/Sao_Paulo is unchanged by any edit made (the refactor does not include the fix)"
+        {"text": "src/due.js still builds the date with `new Date(isoDate)` and formats it with `toLocaleDateString` (no split of the date parts, no `timeZone` option, no UTC getter was introduced), or src/due.js is not among the files the run produced or changed", "tags": ["guard"]},
+        "The reply quotes the lines of src/due.js it proposes or changes as the refactoring target (legacyLabel or the invalid-date check repeated in dueLabel and daysLeft) and says why changing them keeps behaviour"
       ]
     }
   ]

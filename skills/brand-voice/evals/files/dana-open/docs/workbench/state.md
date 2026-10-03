@@ -13,7 +13,7 @@
 
 | Artifact | Owner skill | Status | Updated |
 |----------|-------------|--------|---------|
-| docs/brand/profile.md | brand-profile | confirmed | 2026-09-21 |
+| docs/brand/profile.md | brand-profile | approved | 2026-09-21 |
 | docs/brand/strategy.md | brand-strategy | approved | 2026-09-22 |
 
 ## Decisions
