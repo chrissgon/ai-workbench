@@ -261,3 +261,38 @@ The exit of phase D (the plan, "Phase D. Dry run") asks for the following:
 4. **The 9 web cases.** They still wait for the low-limit web key.
 
 D1 and D2 passed earlier. The guard evidence written here is the first evidence under measurement version 6.
+
+## Leftovers fixed
+
+The nine cases above were classified again from their stored runs, fixed at the cause, and re-checked on the branch `fix/rerun-leftovers`. Each re-check is a trial run the same way as this step's: `eval_run.py --skill <name> --cases <ids> --runs 1 --jobs 4`, with the skill only, on both models of the gate file, graded once, with the lines in the event's scratch tree and no evidence written. `core-orchestrator` 7 and 8 ran in three trials, since their failure was systematic; case 5 ran once beside them to check that the new description does not route a one-step request. `ops-ci-pipeline` ran three times, because the first two trials showed defects in the fix itself (below).
+
+Scores are written strong / floor.
+
+| Skill | Case | Class | Fix | Bump | Trial |
+|-------|------|-------|-----|------|-------|
+| `core-orchestrator` | 7, 8 | skill: the description | The trigger for "which skill would handle this" was the last clause of a long sentence. The strong runs answered from the skill list and treated loading any skill as starting work. The description now leads with it, says to load the router even when the answer looks obvious or the user says not to start yet, and says that loading it starts nothing. 896 characters. Both prompts steer away from loading any skill ("Before anything starts", "don't run it yet"); they are unchanged | Y, 2.1.0 | **Fixed.** The router loaded in 12 of 12 runs. Case 8: 1.00 / 1.00 in all three trials. Case 7: strong 1.00 three times, floor 0.80, 1.00 and 0.80. The floor's A1 fails on the word "installed": the reply says `ready` and "has everything it needs". This is the assertion's wording against the skill's own status word, and it is left for the maintainer. Case 5: 1.00 / 1.00. The floor loaded the router and answered directly, as the skill says to |
+| `core-skill-creator` | 2 (strong) | skill: stop rules | The preamble held back every file for every stop rule. So stop rule 3, which belongs to step 9, and stop rule 4, read against a side effect that the skill's inventory entry already records, stopped the scaffold. Now only rules 1, 2 and 4 stop the writing, rule 3 stops only the test, and rule 4 covers what neither the request nor the inventory entry names. A question no rule names becomes an `OPEN-<n>` | X, 3.0.0 | **Fixed** (0.83 / 1.00): the strong run scaffolded, validated, wrote 4 cases and bumped. A2 still fails: the reply did not quote the scaffold command and its JSON line, although the run ran `new-skill.sh`. This is the template not followed, so model variance |
+| `core-skill-creator` | 3 (floor) | model variance | None. Step 11 already forbids, in plain words, the changes the floor run made: an `outputs` rename and a rewritten self-check. The strong run passes A2 | (the X above) | **Still failing on the floor** (1.00 / 0.80), on A2, for the same cause |
+| `eng-architecture` | 4 | skill: step 12 done by eye | `check_design.py` now fails on an assumption that does not say how to verify it. It also warns with the code identifiers (dotted names, camelCase names, calls, and calls and methods in code blocks) that neither the Assumptions section, the Sources section nor a URL cites. On the two designs of this step's trial, it reports exactly the gaps the grader found. Step 12 works through that list; the template's assumption line ends with `Verify:`. Three offline tests | Y, 1.2.0 | **Fixed**, 1.00 / 1.00 |
+| `ops-ci-pipeline` | 1 (A8) and 4 (floor 4.4) | skill: template and stop rule 4 | The `Push:` line and the closing question are now copied word for word. When the local run could not happen, the reply ends with a literal question asking the user to run it, and says the push waits for that run and for an explicit yes. The gate says that nothing is committed, pushed or deployed before the yes. Stop rule 4 names the three decisions of the inputs table. When one is missing, even one with a recommendation, no file is written, and who builds what is deployed is asked alongside. Two defects of this fix were found by its own trials and corrected in the same pull request. First, listing "who builds" as a fourth required decision made the strong run stop on case 1 (0.00). Second, leaving it out made the floor run drop that question on case 4 | X, 2.0.0 | **Fixed** on the third trial: case 1 1.00 / 1.00 (A8 passes on both tiers), case 4 1.00 / 1.00 |
+| `brand-voice` | 2 (strong) | case: fixture | The strong run applied stop rule 2 correctly: sample 2's "!!!" is part of the shouting the user dropped, and the state file decided no exclamation limit, while the prompt says the limits are in the state file. The fixture's 2026-09-24 decision now includes "no exclamation marks", and the expected output names `max_exclamations 0`. No assertion changed | none (case only) | **Fixed**, 1.00 / 1.00 |
+| `core-critique` | 2 | skill: step 4 | Step 3 takes the domain's set and "Any proposal", and the assertion follows it. But step 4 did not say where a category comes from. Step 4 now takes it from those two sets only, spelled as the table spells it, and files a failure that seems to need another category under the closest one | Y, 2.1.0 | **Fixed**, 1.00 / 1.00 |
+| `brand-strategy` | 2 (floor) | skill: template | The template line for profile proposals gave nothing to copy. Step 7 and the template now ask for the current text quoted and the new text written out (or the removal), never a description | Y, 1.1.0 | **Fixed on the floor** (1.00). The strong run scored 0.89 on A5, a row not seen before: its risk for the AI pillar "settles when a first artifact exists". The grader read that as no date or measure; the same wording passed in this step's trial. Grader or model variance; nothing changed for it |
+
+**Model calls: 77**, all through the eval runner in the container, on the gate file's models:
+
+- 19 strong runs and 19 floor runs;
+- 38 gradings and 1 second grading, of `ops-ci-pipeline` 1 A8 in its first trial.
+
+**Tokens: 13.4 million**:
+
+- 5.3 million on strong runs;
+- 7.5 million on floor runs;
+- 0.6 million on gradings.
+
+**Reported cost:**
+
+- $3.59 for strong runs and $1.39 for gradings, both notional, on the account;
+- $0.21 for floor runs, through the OpenRouter key.
+
+There were no infrastructure failures, timeouts or contaminated runs. No evidence file was written.
