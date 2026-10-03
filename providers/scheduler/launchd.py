@@ -36,7 +36,7 @@ What a job guarantees:
   time and then runs; an earlier one is logged and leaves the job scheduled.
 - A one-shot job always ends: the command runs in its own process group for at most
   timeout_minutes (10 when the command file gives none); its output is kept as bytes, whatever
-  it printed; an error in the runner records the job as failed. A job left "running" by a
+  it printed (the last MiB of each stream); an error in the runner records the job as failed. A job left "running" by a
   runner that died is settled with cancel or resolve.
 - Job folders are 0700 and the files written in them 0600 (copies 0400).
 
@@ -93,6 +93,8 @@ TIMEOUT_UNIT_SECONDS = 60  # seconds per timeout minute; tests shorten it in-pro
 KILL_GRACE_SECONDS = 5  # between SIGTERM and SIGKILL to the command's process group
 TAIL_BYTES = 4096
 RUNS_MAX_BYTES = 4 * 1024 * 1024  # runs.jsonl is rotated to runs.1.jsonl past this size
+OUTPUT_MAX_BYTES = 1024 * 1024  # run.stdout.log, run.stderr.log and the service logs keep their last MiB
+HISTORY_KEEP = 100  # .history/ keeps the 100 folders archived last
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
 # The one key of a command's output the scheduler reads, for the job record and the notification: the
@@ -280,6 +282,37 @@ def write_private(path: Path, data: bytes) -> None:
         fh.write(data)
     os.chmod(tmp, 0o600)
     os.replace(tmp, path)
+
+
+def cut_note(cut: int) -> bytes:
+    """The first line of an output file that was cut to its last OUTPUT_MAX_BYTES."""
+    return f"[{cut} earlier bytes were cut: only the last {OUTPUT_MAX_BYTES} are kept]\n".encode("ascii")
+
+
+def keep_tail(data: bytes) -> bytes:
+    """data, or its last OUTPUT_MAX_BYTES after a line that says how much was cut."""
+    if len(data) <= OUTPUT_MAX_BYTES:
+        return data
+    return cut_note(len(data) - OUTPUT_MAX_BYTES) + data[-OUTPUT_MAX_BYTES:]
+
+
+def trim_in_place(path: Path) -> None:
+    """Cut a log the service appends to down to its last OUTPUT_MAX_BYTES.
+
+    The file is rewritten in place, not replaced: the service opened it in append mode for the running process,
+    and that descriptor goes on writing at the new end."""
+    try:
+        with path.open("r+b") as fh:
+            size = fh.seek(0, os.SEEK_END)
+            if size <= OUTPUT_MAX_BYTES:
+                return
+            fh.seek(size - OUTPUT_MAX_BYTES)
+            kept = fh.read(OUTPUT_MAX_BYTES)
+            fh.seek(0)
+            fh.write(cut_note(size - OUTPUT_MAX_BYTES) + kept)
+            fh.truncate()
+    except OSError as exc:
+        log(f"could not cut {path}: {exc}")
 
 
 def read_job(job_id: str) -> dict:
@@ -516,7 +549,7 @@ def build_plist(job: dict) -> dict:
 
 
 def archive_finished(job_id: str, existing: dict) -> str:
-    """Move a finished job's folder to <home>/.history/ so the id can be scheduled again."""
+    """Move a finished job's folder to <home>/.history/ so the id can be scheduled again; keep HISTORY_KEEP there."""
     stamp = re.sub(r"[^0-9A-Za-z]", "", existing.get("finished_at") or existing.get("created_at") or iso(now()))
     target = home() / HISTORY / f"{job_id}-{stamp}"
     n = 1
@@ -525,6 +558,10 @@ def archive_finished(job_id: str, existing: dict) -> str:
         target = home() / HISTORY / f"{job_id}-{stamp}-{n}"
     private_dir(target.parent)
     os.replace(job_dir(job_id), target)
+    os.utime(target)  # the time it was archived: the newest HISTORY_KEEP folders are kept
+    folders = sorted((p for p in target.parent.iterdir() if p.is_dir()), key=lambda p: p.stat().st_mtime_ns)
+    for old in folders[:-HISTORY_KEEP]:
+        shutil.rmtree(old, ignore_errors=True)
     return str(target)
 
 
@@ -1003,6 +1040,8 @@ def run_recurring(job: dict) -> int:
 
 def cmd_run(args) -> int:
     job = read_job(validate_id(args.id))
+    for name in ("launchd.out.log", "launchd.err.log"):
+        trim_in_place(job_dir(job["id"]) / name)
     if job.get("kind") == "recurring":
         return run_recurring(job)
     folder = job_dir(job["id"])
@@ -1060,8 +1099,8 @@ def run_one_shot(job: dict, folder: Path) -> tuple[str, dict]:
                  "command file for a longer one)")
     seconds = job.get("timeout_minutes", DEFAULT_ONE_SHOT_TIMEOUT_MINUTES) * TIMEOUT_UNIT_SECONDS
     outcome, out, err = run_command(job, seconds, limit)
-    write_private(folder / "run.stdout.log", out or b"")
-    write_private(folder / "run.stderr.log", err or b"")
+    write_private(folder / "run.stdout.log", keep_tail(out or b""))
+    write_private(folder / "run.stderr.log", keep_tail(err or b""))
     fields = {"exit_code": outcome["exit_code"]}
     if outcome.get("reason"):
         fields["reason"] = outcome["reason"]

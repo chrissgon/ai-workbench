@@ -13,6 +13,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import stat
 import subprocess
 import sys
 import time
@@ -470,3 +471,83 @@ def test_a_command_that_outlived_its_runner_is_not_overlapped(s):
     assert s.run("run", "--id", "tick").returncode == 0  # the group is gone: the next firing runs
     assert marker.read_text() == "x" and firings(s)[-1]["status"] == "done"
     assert not (s.folder("tick") / "run.group").exists()
+
+
+# --- SC14: files that grow are bounded --------------------------------------------------------
+
+MIB = 1024 * 1024
+
+
+def test_a_one_shot_commands_output_is_kept_up_to_a_mebibyte(s, monkeypatch):
+    # run.stdout.log and run.stderr.log held whatever the command printed, however much.
+    code = ("import sys; sys.stdout.write('a' * (3 * 1024 * 1024 // 2) + 'END'); "
+            "sys.stderr.write('e' * (2 * 1024 * 1024) + 'LAST')")
+    assert s.schedule(s.command_file(code))[0].returncode == 0
+    assert s.run("run", "--id", "post-1").returncode == 0
+    for name, end in (("run.stdout.log", b"END"), ("run.stderr.log", b"LAST")):
+        path = s.folder() / name
+        data = path.read_bytes()
+        assert data.endswith(end) and data.startswith(b"[") and b"cut" in data.split(b"\n", 1)[0], name
+        assert MIB < len(data) <= MIB + 200, name
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    small = s.command_file("print('short')")
+    assert s.schedule(small, job_id="post-2")[0].returncode == 0
+    assert s.run("run", "--id", "post-2").returncode == 0
+    assert (s.folder("post-2") / "run.stdout.log").read_bytes() == b"short\n"  # under the bound: as it was
+    assert s.module(monkeypatch).OUTPUT_MAX_BYTES == MIB
+
+
+def test_the_service_logs_are_cut_to_their_last_mebibyte_at_each_run(s):
+    # launchd.err.log and systemd.err.log (and .out.log) are appended to by the service and were never pruned.
+    marker = s.tmp / "ran.txt"
+    assert schedule_every(s, s.command_file(f"open({str(marker)!r}, 'a').write('x')")).returncode == 0
+    for kind in ("out", "err"):
+        path = s.folder("tick") / f"{s.name}.{kind}.log"
+        with path.open("ab") as fh:  # as the service writes it: appended
+            fh.write(b"old line\n" * (300 * 1024) + b"TAIL\n")
+    assert s.run("run", "--id", "tick").returncode == 0
+    for kind in ("out", "err"):
+        path = s.folder("tick") / f"{s.name}.{kind}.log"
+        data = path.read_bytes()
+        assert data.endswith(b"TAIL\n") and b"cut" in data.split(b"\n", 1)[0]
+        assert len(data) <= MIB + 200
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert marker.read_text() == "x"
+
+
+def test_notifications_are_kept_up_to_a_mebibyte(s):
+    if s.name != "systemd":
+        pytest.skip("launchd.py notifies through the desktop and writes no notifications file")
+    s.env["SCHEDULER_NOTIFY"] = "1"
+    path = Path(s.env["SCHEDULER_HOME"]) / "notifications.jsonl"
+    assert s.schedule(s.command_file())[0].returncode == 0
+    old = json.dumps({"at": "2026-01-01T00:00:00Z", "title": "old", "message": "x" * 200}) + "\n"
+    path.write_text(old * (6 * 1024))  # about 1.4 MiB of earlier outcomes
+    assert s.run("run", "--id", "post-1").returncode == 0
+    data = path.read_bytes()
+    assert len(data) <= MIB
+    lines = [json.loads(line) for line in data.decode().splitlines()]  # whole lines only
+    assert lines[-1]["title"] == "ai-workbench: post-1 done" and lines[0]["title"] == "old"
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+
+
+def test_history_keeps_the_newest_hundred_folders(s):
+    # Every id scheduled again moved its finished folder to .history/, which was never pruned.
+    history = Path(s.env["SCHEDULER_HOME"]) / ".history"
+    history.mkdir(parents=True, mode=0o700)
+    for n in range(102):
+        folder = history / f"old-{n:03d}"
+        (folder / "files").mkdir(parents=True)
+        (folder / "files" / "post.txt").write_text("x")
+        (folder / "files" / "post.txt").chmod(0o400)
+        os.utime(folder, (1_700_000_000 + n, 1_700_000_000 + n))
+    path = s.command_file()
+    assert s.schedule(path)[0].returncode == 0
+    assert s.run("run", "--id", "post-1").returncode == 0
+    again, _ = s.schedule(path)  # moves the finished job to .history/
+    assert again.returncode == 0, again.stderr
+    kept = sorted(p.name for p in history.iterdir())
+    assert len(kept) == 100
+    assert "old-000" not in kept and "old-001" not in kept and "old-002" not in kept and "old-003" in kept
+    assert any(name.startswith("post-1-") for name in kept)  # the folder just archived is kept
+    assert stat.S_IMODE(history.stat().st_mode) == 0o700

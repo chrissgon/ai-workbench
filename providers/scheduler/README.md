@@ -22,7 +22,8 @@ Runs a command as a launchd user agent, once at a set time (`--at`) or every N m
 - **A job left `running` can be settled.** When the runner died mid-run (a crash, a power loss), `job.json` stays `running` and the id is refused by `schedule`. `cancel --id <id> --confirmed` stops whatever still runs and waits up to 15 seconds for a live runner to record its own outcome and let go of the lock (if it still holds the job then, cancel exits 1 and records nothing: run it again); a job still `running` once the lock is free is recorded `cancelled` with `"interrupted": true`: the command may have acted, so check before scheduling it again. `resolve --id <id> (--done | --failed) --confirmed` records what the user found instead; it is refused while a runner still holds the lock. A runner copied into a job folder before this rule holds no lock, so for such a job `resolve` cannot tell and takes the user's word.
 - **Late means missed.** launchd fires a time missed during sleep on wake. Within `grace_minutes` (default 120; an integer from 0 to 10080, a week) the command runs; after it, the job is recorded as `missed`. `--at` must carry an offset (`-03:00` or `Z`); a time without one is refused (exit 2), never read as the machine's local time. The plist holds local wall time, so a change of the system time zone after scheduling fires the job early: a firing up to 26 hours early (the widest gap between two time zones) waits in the runner for the time, reading the wall clock every minute, and then runs; `cancel` ends the wait. A firing earlier than that cannot come from a time zone; it is logged and the job stays `scheduled`.
 - **A notification** reports every outcome (the post URL when the command prints one), and the job folder keeps `job.json` and the command's output.
-- **Private files.** Job folders are 0700, `job.json`, logs and the plist 0600, the copies 0400. Scheduling an id whose job has finished moves the old folder to `.history/` in the jobs folder.
+- **Private files.** Job folders are 0700, `job.json`, logs and the plist 0600, the copies 0400. Scheduling an id whose job has finished moves the old folder to `.history/` in the jobs folder, which keeps the 100 folders archived last and deletes older ones.
+- **Bounded files.** `run.stdout.log` and `run.stderr.log` keep at most the last MiB of what the command printed (the full output is still read for `post_url`), and `launchd.out.log` and `launchd.err.log` are cut to their last MiB at each firing, in place; a file that was cut starts with a line saying how many bytes were dropped. `runs.jsonl` moves to `runs.1.jsonl` past 4 MB.
 - **Bounded waits.** Every `launchctl` call times out after 30 seconds; a bootstrap that times out records the job as `failed`.
 
 ### Recurring jobs (`--every`)
@@ -103,7 +104,7 @@ Schedule a job two minutes ahead whose command has no side effect (for the Linke
 
 ## Linux systemd (`systemd.py`)
 
-The same verbs, command file and guarantees as `launchd.py`, on the user's systemd service manager: the snapshot and its hashes, the approval digest (same fields, same computation; a test checks that `launchd.py` computes the same digest for a job planned here), re-verification at every firing, at most once, late means missed, the one-shot limit with its kept output and `cancel` and `resolve` of a job left `running` for `--at`, no overlap, `timeout_minutes` and `runs.jsonl` for `--every`, files 0600 and folders 0700. Standard library only; the service runs the runner's copy with `/usr/bin/python3`.
+The same verbs, command file and guarantees as `launchd.py`, on the user's systemd service manager: the snapshot and its hashes, the approval digest (same fields, same computation; a test checks that `launchd.py` computes the same digest for a job planned here), re-verification at every firing, at most once, late means missed, the one-shot limit with its kept output and `cancel` and `resolve` of a job left `running` for `--at`, the bounded files (`systemd.out.log` and `systemd.err.log` are cut as launchd's logs are), no overlap, `timeout_minutes` and `runs.jsonl` for `--every`, files 0600 and folders 0700. Standard library only; the service runs the runner's copy with `/usr/bin/python3`.
 
 ### What it writes
 
@@ -128,7 +129,7 @@ From `systemd.timer(5)`, `systemd.time(7)` and the timer code (`src/core/timer.c
 
 User timers run only while the user's service manager runs, which by default is while the user is logged in. On a server, turn on lingering once: `loginctl enable-linger <user>` (it needs the polkit action `org.freedesktop.login1.set-user-linger`, usually granted to root). `--check` reads `loginctl show-user <user> --property=Linger --value`; it exits 3 with the command to run when lingering is off, and when the user manager cannot be reached (`systemctl --user list-timers` fails).
 
-A server has no desktop: outcomes that launchd.py shows as a macOS notification are appended to `notifications.jsonl` in the jobs folder (0600) for a notification channel to send; that channel (e-mail) is not built yet. `SCHEDULER_NOTIFY=0` turns it off.
+A server has no desktop: outcomes that launchd.py shows as a macOS notification are appended to `notifications.jsonl` in the jobs folder (0600, its newest whole lines up to 1 MiB) for a notification channel to send; that channel (e-mail) is not built yet. `SCHEDULER_NOTIFY=0` turns it off.
 
 ### Usage
 
