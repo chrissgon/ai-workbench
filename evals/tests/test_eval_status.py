@@ -631,8 +631,12 @@ def test_the_hash_command_prints_the_content_hash_the_version_and_the_case_hashe
 
 def test_the_48_old_records_stay_as_history_and_no_evidence_is_converted_from_them():
     records = sorted(REPO.glob("skills/*/evals/result.json"))
-    assert len(records) >= 48 and not list(REPO.glob("skills/*/evals/evidence/*"))
-    assert es.evidence_problems(str(REPO)) == ({}, 0)
+    assert len(records) >= 48
+    # Evidence exists only as files the runner wrote for a test event (lab-<UTC start>-<hex>.jsonl), never as a
+    # conversion of an old record, and every committed file is valid.
+    evidence = list(REPO.glob("skills/*/evals/evidence/*"))
+    assert all(p.name.startswith("lab-") and p.suffix == ".jsonl" for p in evidence), evidence
+    assert es.evidence_problems(str(REPO))[0] == {}
     gate = es.load_gate(str(REPO))
     assert set(gate["models"]) >= {gate["strong_model"], gate["floor_model"], gate["grader"]}
     assert es.model_id(gate, "deepseek/deepseek-v4.1-flash") == gate["floor_model"]  # the same model without the router's prefix
