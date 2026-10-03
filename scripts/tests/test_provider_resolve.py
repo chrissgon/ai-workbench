@@ -271,3 +271,17 @@ def test_every_class_of_the_environment_contract_is_listed():
     classes = [line.split("|")[1].strip().strip("`") for line in table.splitlines()
                if line.startswith("| `")]
     assert classes and sorted(classes) == sorted(resolve.LISTED)
+
+
+def test_a_verbs_row_says_when_no_implementation_ships():
+    # CT6: the verbs table listed verbs for classes that no provider implements, as if one answered them.
+    contract = (REPO / "providers" / "CONTRACT.md").read_text(encoding="utf-8")
+    table = contract.split("## Verbs per class", 1)[1].split("\n### ", 1)[0]
+    rows = [line for line in table.splitlines() if line.startswith("| `")]
+    assert rows
+    for row in rows:
+        cls = row.split("|")[1].strip().strip("`")
+        shipped = bool(resolve.implementations_in(resolve.folder(cls), root=REPO))
+        reserved = row.split("|")[2].strip().startswith("No implementation ships.")
+        assert shipped != reserved, cls
+    assert 'A row that starts "No implementation ships" is a reserved shape' in contract
