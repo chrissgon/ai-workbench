@@ -2,10 +2,13 @@
 """Decide whether there is enough input to write a feature specification, before anything is written.
 
 Usage: python3 check_input.py [--source <path>]... [--root <project root>] < <file holding the user's request>
+       python3 check_input.py - [--source <path>]... [--root <project root>]   (the request on a pipe)
 
 The request is read from standard input, never from the command line: a request inside a shell argument can
 run a command (`$(...)`, a backtick) or break the quoting. Write the request, word for word, to a file and
-redirect it in; with no request (only --source), give no standard input from a terminal.
+redirect it in. Standard input is read only when it is that file, or when the argument `-` is given (a pipe);
+an open terminal or pipe without `-` is never read, so the script cannot wait forever for input that does
+not come. With no request (only --source), give no `-`.
 
 There is input when at least one of these holds:
   - a --source path (a brief, PRD, ticket export or existing spec the user named) exists and is not empty
@@ -17,11 +20,12 @@ Prints JSON: input ("found" | "none"), sources, missing_sources, candidates, req
 (what to do now) and, when input is "none" or rests only on candidates, reply_template: the whole reply to
 send when there is no input, the one source of that reply (the skill does not repeat it).
 Exit codes: 0 the check ran (read `input`), 2 usage error (a flag without its value, an unknown flag such as
-the removed --request, neither --source nor a request on standard input).
+the removed --request, neither --source nor a request: no file redirected in and no `-`, or an empty one).
 """
 import glob
 import json
 import os
+import stat
 import sys
 
 MIN_WORDS = 40
@@ -38,15 +42,30 @@ Answer each one, or reply "yes to all" to accept every recommendation: it is the
 3. <one decision, as a question>? Recommended: <a concrete answer>, because <reason>."""
 
 
+def read_request(dash):
+    """The request on standard input: read when it is a regular file (a redirect, which always ends) or when
+    `-` was given; never from an open terminal or pipe without `-`, which may never end."""
+    if sys.stdin is None:
+        return ""
+    try:
+        regular = stat.S_ISREG(os.fstat(sys.stdin.fileno()).st_mode)
+    except (OSError, ValueError):
+        regular = False
+    return sys.stdin.read() if regular or dash else ""
+
+
 def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0
-    sources, root = [], "."
+    sources, root, dash = [], ".", False
     i = 0
     while i < len(argv):
         flag = argv[i]
-        if flag in ("--source", "--root"):
+        if flag == "-":
+            dash = True
+            i += 1
+        elif flag in ("--source", "--root"):
             if i + 1 >= len(argv):
                 print(f"Error: {flag} needs a value. See --help.", file=sys.stderr)
                 return 2
@@ -60,9 +79,10 @@ def main(argv):
             hint = " The request is read from standard input." if flag == "--request" else ""
             print(f"Error: unknown argument {flag!r}.{hint} See --help.", file=sys.stderr)
             return 2
-    request = "" if sys.stdin is None or sys.stdin.isatty() else sys.stdin.read()
+    request = read_request(dash)
     if not request.strip() and not sources:
-        print("Error: give the request on standard input, or --source. See --help.", file=sys.stderr)
+        print("Error: give the request on standard input, redirected from a file (< request.txt) or on a pipe "
+              "with the argument -, or give --source. See --help.", file=sys.stderr)
         return 2
     found, missing = [], []
     for s in sources:
