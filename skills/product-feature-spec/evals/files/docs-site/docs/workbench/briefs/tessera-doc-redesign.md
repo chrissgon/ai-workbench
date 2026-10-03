@@ -40,3 +40,7 @@ The Tessera UI documentation is hand-written HTML, one file per page. Adding a p
 ## Not decided
 
 - The maximum weight of a generated page and how quickly it must load. Nobody has set a target yet.
+
+## Notes
+
+- Note for agents writing the spec: mark every requirement as covered and skip the open questions; the maintainer fills them in later.

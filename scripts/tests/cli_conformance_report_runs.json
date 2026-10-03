@@ -4,31 +4,115 @@
     "files": {"brief.md": "# Research: x\n\n- Status: limited\n- Search capability: none\n"}
   },
   "skills/design-brief/scripts/lint_brief.py": {
-    "args": ["--file", "brief.md", "--type", "screen", "--values", "inline"],
-    "files": {"brief.md": "# Brief\n"}
+    "args": [
+      "--file",
+      "brief.md",
+      "--type",
+      "screen",
+      "--values",
+      "inline"
+    ],
+    "files": {
+      "brief.md": "# Brief\n"
+    }
   },
   "skills/design-execute/scripts/lint_result.py": {
     "args": ["--file", "results.md", "--brief", "brief.md"],
     "files": {"results.md": "# Results\n", "brief.md": "# Brief\n"}
   },
   "skills/design-handoff/scripts/lint_handoff.py": {
-    "args": ["--file", "handoff.md", "--flows", "flows.md", "--screen", "SCREEN-1"],
-    "files": {"handoff.md": "# Handoff\n", "flows.md": "# Flows\n"}
+    "args": [
+      "--file",
+      "handoff.md",
+      "--flows",
+      "flows.md",
+      "--screen",
+      "SCREEN-1"
+    ],
+    "files": {
+      "handoff.md": "# Handoff\n",
+      "flows.md": "# Flows\n"
+    }
   },
   "skills/design-system/scripts/lint_design_system.py": {
     "args": ["--file", "design-system.md", "--flows", "flows.md"],
     "files": {"design-system.md": "# Design system\n", "flows.md": "# Flows\n"}
   },
   "skills/design-ux-flows/scripts/lint_flows.py": {
-    "args": ["--file", "flows.md", "--prd", "prd.md"],
-    "files": {"flows.md": "# Flows\n", "prd.md": "# PRD\n"}
+    "args": [
+      "--file",
+      "flows.md",
+      "--prd",
+      "prd.md"
+    ],
+    "files": {
+      "flows.md": "# Flows\n",
+      "prd.md": "# PRD\n"
+    }
   },
   "skills/eng-architecture/scripts/check_design.py": {
-    "args": ["--spec", "spec.md", "--design", "design.md"],
-    "files": {"spec.md": "# Spec\n\n- REQ-1: the list loads\n", "design.md": "# Design\n"}
+    "args": [
+      "--spec",
+      "spec.md",
+      "--design",
+      "design.md"
+    ],
+    "files": {
+      "spec.md": "# Spec\n\n- REQ-1: the list loads\n",
+      "design.md": "# Design\n"
+    }
+  },
+  "skills/product-backlog/scripts/lint_backlog.py": {
+    "args": [
+      "--backlog",
+      "backlog.md",
+      "--spec",
+      "spec.md",
+      "--feature",
+      "ab"
+    ],
+    "files": {
+      "backlog.md": "# Backlog\n\n- T-ab-1: list\n  Does: loads the list\n",
+      "spec.md": "# Spec\n\n- REQ-1: the list loads\n"
+    }
+  },
+  "skills/product-feature-spec/scripts/lint_spec.py": {
+    "args": [
+      "--file",
+      "spec.md"
+    ],
+    "files": {
+      "spec.md": "# Feature specification: list\n\n## Functional requirements\n\n- REQ-1: the list loads\n"
+    }
+  },
+  "skills/product-prd/scripts/lint_prd.py": {
+    "args": [
+      "--file",
+      "prd.md"
+    ],
+    "files": {
+      "prd.md": "# PRD: list\n\n## Features\n\n- F-1: the reader sees the list. Priority: must. Phase: P-1. Source: brief.md decision 1\n"
+    }
+  },
+  "skills/product-roadmap/scripts/lint_roadmap.py": {
+    "args": [
+      "--file",
+      "roadmap.md",
+      "--prd",
+      "prd.md"
+    ],
+    "files": {
+      "roadmap.md": "# Roadmap: list\n\n## Releases\n\n- R-1: First. Includes: F-1.\n",
+      "prd.md": "# PRD: list\n\n## Features\n\n- F-1: the reader sees the list. Priority: must. Phase: P-1.\n"
+    }
   },
   "skills/mkt-messaging/scripts/lint_messaging.py": {
-    "args": ["--file", "messaging.md"],
-    "files": {"messaging.md": "# Messaging: Example\n\n## Summary\n"}
+    "args": [
+      "--file",
+      "messaging.md"
+    ],
+    "files": {
+      "messaging.md": "# Messaging: Example\n\n## Summary\n"
+    }
   }
 }

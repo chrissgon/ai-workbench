@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """Lint a product requirements document written from assets/prd-template.md.
 
-Usage: python3 lint_prd.py --file <prd.md> [--report] [--json] [--source <file>]...
+Usage: python3 lint_prd.py --file <prd.md> [--table] [--report <path>] [--json] [--source <file>]...
 
-  --report   print a findings table (finding, how to fix it) and a last line with the result, instead of JSON
-  --json     indent the JSON
-  --source   a source file for the number check, repeatable; added to the files the PRD itself names
+  --table           print a findings table (finding, how to fix it) and a last line, the summary, instead of JSON
+  --report <path>   write the record of the run to <path>: one JSON object with script, date, arguments, ok,
+                    summary, errors, warnings and counts, on every run that reaches the check, never on a usage error
+  --json            indent the JSON
+  --source <file>   a source file for the number check, repeatable; added to the files the PRD itself names
 
 Checks:
   - required sections are present
@@ -27,9 +29,12 @@ Checks:
   - TBD / TODO / ??? inside id blocks
   - REQ-/NFR-/AC- definitions or Given/When/Then, which belong to feature specs (error); citing a spec's ids as a source is fine
 
-Prints JSON: ok, counts, errors, warnings, how_to_fix (one entry per error, same order), sources_read.
-Exit codes: 0 ok, 1 problems found, 2 usage error.
+Prints JSON on stdout: ok, summary (the line to quote in the reply, also the last line of --table), counts,
+errors, warnings, how_to_fix (one entry per error, same order), sources_read. A usage error goes to stderr.
+Exit codes: 0 ok, 1 problems found, 2 usage error (a flag without its value, an unknown flag, a file that
+cannot be read or written).
 """
+import datetime
 import json
 import os
 import re
@@ -140,15 +145,40 @@ def read_sources(prd_path, text, extra):
     return read, "\n".join(texts)
 
 
+def parse_args(argv):
+    """(values, None), or (None, a usage error). values maps a value flag to its value, --source to the list of its
+    values and a switch to True: the shape of the record's `arguments`."""
+    values, i = {}, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--file", "--report", "--source"):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+                return None, f"Error: {a} needs a value. See --help."
+            if a == "--source":
+                values.setdefault(a, []).append(argv[i + 1])
+            else:
+                values[a] = argv[i + 1]
+            i += 2
+        elif a in ("--table", "--json"):
+            values[a] = True
+            i += 1
+        else:
+            return None, f"Error: unknown option {a!r}. See --help."
+    return values, None
+
+
 def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
-    path, as_json = None, "--json" in argv
-    if "--file" in argv:
-        i = argv.index("--file")
-        path = argv[i + 1] if i + 1 < len(argv) else None
-    extra = [argv[i + 1] for i, a in enumerate(argv) if a == "--source" and i + 1 < len(argv)]
+        return 0
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    values, problem = parse_args(argv)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    path, as_json, extra = values.get("--file"), "--json" in values, values.get("--source", [])
     if not path:
         print("Error: --file <prd.md> is required. See --help.", file=sys.stderr)
         return 2
@@ -262,10 +292,11 @@ def main(argv):
             if pm and i not in phased:
                 errors.append(f"{i} is {pm.group(1)} but appears in no P- phase")
     ok = not errors
-    result = {"ok": ok, "counts": {k: sum(1 for i in blocks if i.startswith(k + "-")) for k in ("U", "F", "M", "R", "P", "ASSUMPTION", "OPEN")},
-              "errors": errors, "warnings": warnings, "how_to_fix": [how_to_fix(e) for e in errors],
-              "sources_read": sources_read}
-    if "--report" in argv:
+    summary = f'lint_prd result: "ok": {str(ok).lower()} ({len(errors)} errors, {len(warnings)} warnings)'
+    counts = {k: sum(1 for i in blocks if i.startswith(k + "-")) for k in ("U", "F", "M", "R", "P", "ASSUMPTION", "OPEN")}
+    result = {"ok": ok, "summary": summary, "counts": counts, "errors": errors, "warnings": warnings,
+              "how_to_fix": [how_to_fix(e) for e in errors], "sources_read": sources_read}
+    if "--table" in values:
         print(f"## Lint findings: {path}\n")
         used_open_rule = False
 
@@ -289,9 +320,20 @@ def main(argv):
         print("\nSources read for the number check: " + (", ".join(sources_read) or "none"))
         if not ok:
             print("Next: fix every error as its row says, then run this command again.")
-        print(f'lint_prd result: "ok": {str(ok).lower()} ({len(errors)} errors, {len(warnings)} warnings)')
+        print(summary)
     else:
         print(json.dumps(result, indent=2 if as_json else None))
+    if "--report" in values:
+        record = {"script": "lint_prd.py", "date": datetime.date.today().isoformat(),
+                  "arguments": {k: v for k, v in values.items() if k != "--report"}, "ok": ok, "summary": summary,
+                  "errors": errors, "warnings": warnings, "counts": counts}
+        try:
+            with open(values["--report"], "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error: cannot write the report {values['--report']}: {e}", file=sys.stderr)
+            return 2
     return 0 if ok else 1
 
 

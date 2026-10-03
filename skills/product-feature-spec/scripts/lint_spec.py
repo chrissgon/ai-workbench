@@ -1,7 +1,14 @@
 #!/usr/bin/env python3
 """Lint a feature specification written from assets/spec-template.md.
 
-Usage: python3 lint_spec.py --file <spec.md> [--json]
+Usage: python3 lint_spec.py --file <spec.md> [--report <path>] [--heading "<English heading>=<heading in the spec>"]... [--json]
+
+--report <path> writes the record of the run to <path>: one JSON object with script, date, arguments, ok,
+  summary, errors, warnings and counts, on every run that reaches the check, never on a usage error.
+--heading maps one of the template's section headings to the heading a spec written in another language
+  uses, without "## " (for example --heading "Functional requirements=Requisitos funcionais"); repeat it per
+  heading. The field labels (Source:, Covers:, Given, When, Then, Blocks:, Recommended:) stay as the template
+  writes them.
 
 Checks:
   - required sections are present
@@ -16,8 +23,12 @@ Checks:
   - TBD / TODO / ??? inside requirements
   - every bullet in an id section is written `- <ID>-n: ...` (no empty `-` bullet, no bullet without its id)
 
-Prints JSON: ok, counts, errors, warnings, `report` (the line to paste into the reply) and `next` (what to do now). Exit codes: 0 ok, 1 problems found, 2 usage error.
+Prints JSON on stdout: ok, summary (the line to quote in the reply), counts, errors, warnings and next (what to
+do now); a usage error goes to stderr.
+Exit codes: 0 ok, 1 problems found, 2 usage error (a flag without its value, an unknown flag or heading, a file
+that cannot be read or written).
 """
+import datetime
 import json
 import re
 import sys
@@ -32,19 +43,60 @@ ID_SECTIONS = {"## Functional requirements": "REQ", "## Non-functional requireme
 ID_RE = re.compile(r"^\s*-\s*((?:REQ|NFR|EDGE|AC|ASSUMPTION|OPEN)-\d+)\s*:", re.M)
 
 
+def parse_args(argv):
+    """(values, None), or (None, a usage error). values maps a value flag to its value, --heading to the list of
+    its values and a switch to True: the shape of the record's `arguments`."""
+    values, i = {}, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--file", "--report", "--heading"):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+                return None, f"Error: {a} needs a value. See --help."
+            if a == "--heading":
+                values.setdefault(a, []).append(argv[i + 1])
+            else:
+                values[a] = argv[i + 1]
+            i += 2
+        elif a == "--json":
+            values[a] = True
+            i += 1
+        else:
+            return None, f"Error: unknown option {a!r}. See --help."
+    return values, None
+
+
+def translate(text, headings):
+    """The text with each translated `## ` heading written as the template's English one."""
+    for pair in headings:
+        english, _, translated = pair.partition("=")
+        text = re.sub(r"^## " + re.escape(translated.strip()) + r"[ \t]*$", "## " + english.strip(), text, flags=re.M)
+    return text
+
+
 def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
-    path, as_json = None, "--json" in argv
-    if "--file" in argv:
-        i = argv.index("--file")
-        path = argv[i + 1] if i + 1 < len(argv) else None
+        return 0
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    values, problem = parse_args(argv)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    path, as_json = values.get("--file"), "--json" in values
     if not path:
         print("Error: --file <spec.md> is required. See --help.", file=sys.stderr)
         return 2
+    headings = values.get("--heading", [])
+    known = [s[3:] for s in SECTIONS]
+    bad = [h for h in headings if h.partition("=")[0].strip() not in known or not h.partition("=")[2].strip()]
+    if bad:
+        print(f"Error: --heading {bad[0]!r} is not '<English heading>=<translated heading>' with one of: "
+              + ", ".join(known) + ". See --help.", file=sys.stderr)
+        return 2
     try:
-        text = open(path, encoding="utf-8").read()
+        text = translate(open(path, encoding="utf-8").read(), headings)
     except OSError as e:
         print(f"Error: cannot read {path}: {e}", file=sys.stderr)
         return 2
@@ -139,16 +191,28 @@ def main(argv):
                 errors.append(f"{i} states no number: give the sourced figure, or move it to an OPEN with a Recommended value")
     ok = not errors
     counts = {k: sum(1 for i in blocks if i.startswith(k + "-")) for k in ("REQ", "NFR", "EDGE", "AC", "ASSUMPTION", "OPEN")}
-    report = (f"lint_spec.py --file {path}: ok: {'true' if ok else 'false'}, {len(errors)} errors, {len(warnings)} warnings ("
-              + ", ".join(f"{v} {k}" for k, v in counts.items()) + ")")
+    summary = (f"lint_spec.py --file {path}: ok: {'true' if ok else 'false'}, {len(errors)} errors, {len(warnings)} warnings ("
+               + ", ".join(f"{v} {k}" for k, v in counts.items()) + ")")
     if errors or warnings:
         nxt = ("Not done. 1) If you have not edited the file yet, copy every error and warning above into your reply first. "
                "2) Fix each one from a source, or move the item to an OPEN with Blocks: and Recommended:. Never invent a number or a source. "
                "3) Run this command again.")
     else:
-        nxt = "Lint passed. Paste the `report` line into your reply as the `- Lint:` line, then go to the next step."
-    result = {"ok": ok, "counts": counts, "errors": errors, "warnings": warnings, "report": report, "next": nxt}
+        nxt = ("Lint passed. Quote the command and this `summary` line in the reply's `- Check:` line, then go to the next "
+               "step.")
+    result = {"ok": ok, "summary": summary, "counts": counts, "errors": errors, "warnings": warnings, "next": nxt}
     print(json.dumps(result, indent=2 if as_json else None))
+    if "--report" in values:
+        record = {"script": "lint_spec.py", "date": datetime.date.today().isoformat(),
+                  "arguments": {k: v for k, v in values.items() if k != "--report"}, "ok": ok, "summary": summary,
+                  "errors": errors, "warnings": warnings, "counts": counts}
+        try:
+            with open(values["--report"], "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error: cannot write the report {values['--report']}: {e}", file=sys.stderr)
+            return 2
     return 0 if ok else 1
 
 
