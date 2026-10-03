@@ -38,8 +38,9 @@ Checks every skill under skills/ and every agent under agents/:
   - eval-status (through evals/eval_status.py): evals/eval-gate.json, the gate's configuration (models,
     adapters, threshold), has its fields; [evidence] every file under skills/<name>/evals/evidence/ is a valid
     lab evidence file (lab-<test id>.jsonl) or contributed field evidence file (field-<id>.jsonl), every line
-    of its closed form (python3 evals/eval_status.py evidence); the generated block between the eval-status
-    markers in docs/inventory.md is up to date (fix: python3 evals/eval_status.py inventory --write); [band]
+    of its closed form (python3 evals/eval_status.py evidence); [snapshot] the two tables between the
+    eval-status markers in docs/inventory.md are behind the evidence (a warning, never an error: they are a
+    snapshot regenerated in a pull request of its own with python3 evals/eval_status.py inventory --write); [band]
     the skills in `needs a test` and in `watch` (the reliability model, section 5), one warning line per band
     with each skill's cause, never an error (they are errors only with --strict). The records of the first
     round, result.json, are history and are not read
@@ -1237,9 +1238,9 @@ def check_eval_cases(report, root=ROOT):
 
 def check_eval_status(report, root=ROOT):
     """eval-status: the gate file is valid and its fingerprint is this checkout's, every evidence file and line is
-    valid (errors); the inventory block is current (an error until the snapshot tables replace it); the skills of
-    each band other than `reliable` are listed, one warning line per band, with their causes. A score or a band
-    is never an error (the reliability model, section 5)."""
+    valid (errors); the snapshot tables of docs/inventory.md are not behind the evidence, and the skills of each
+    band other than `reliable` are listed, one warning line per band, with their causes (warnings). A score, a
+    band or a snapshot behind is never an error (the reliability model, sections 5 and 10)."""
     es = load_eval_status()
     problems = es.gate_problems(root)
     if problems:
@@ -1251,10 +1252,11 @@ def check_eval_status(report, root=ROOT):
         report.error(path, f"[evidence] {'; '.join(problems[:5])}" + (f"; and {len(problems) - 5} more" if len(problems) > 5 else ""))
     try:
         if not es.inventory_current(root):
-            report.error("docs/inventory.md", "[eval-status] the generated eval-status block is out of date: "
-                         "run python3 evals/eval_status.py inventory --write")
+            report.warn("docs/inventory.md", "[snapshot] the snapshot tables are behind the evidence: they are regenerated "
+                        "in a pull request of their own, never required in one that adds evidence (python3 evals/"
+                        "eval_status.py inventory --write)")
     except ValueError as e:
-        report.error("docs/inventory.md", f"[eval-status] {e}")
+        report.warn("docs/inventory.md", f"[snapshot] {e}")
     data = es.all_status(root)
     for band, verb in (("needs a test", "need a test"), ("watch", "are in watch")):
         rows = [r for r in data["skills"] if r["band"] == band]

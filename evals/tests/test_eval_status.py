@@ -1,5 +1,6 @@
-"""Offline tests of evals/eval_status.py (content hash, record, status, inventory block) and of the
-eval-status check in scripts/validate.py. No model is called: benchmarks are written by hand here."""
+"""Offline tests of evals/eval_status.py (content hash, case hashes, evidence, gate, snapshot tables, measurement)
+and of the eval-status check in scripts/validate.py. No model is called: evidence is written by hand here. The
+score and the bands are tested in test_bands.py."""
 import importlib.util
 import json
 from pathlib import Path
@@ -37,22 +38,6 @@ def root(tmp_path):
     (tmp_path / "docs").mkdir()
     (tmp_path / "docs" / "inventory.md").write_text(INVENTORY)
     return tmp_path
-
-
-def record(root, skill="core-demo", strong=(1.0, 0.5), floor=(0.9, 0.3), cases=(1, 2), runs=1, complete=True, infra=0):
-    """Write a record of the first round, as the runner wrote them then: nothing writes one any more, and the
-    status still reads them until the bands replace it."""
-    scores = {"strong_with": strong[0], "strong_without": strong[1], "floor_with": floor[0], "floor_without": floor[1]}
-    rec = {"skill": skill, "content_sha256": es.content_hash(str(root / "skills" / skill)), "date": "2030-01-02", "iteration": 3,
-           "runs": runs, "cases": list(cases), "harness": "h", "floor_harness": "fh", "models": {"strong": "s-model", "floor": "f-model"},
-           "grader": "s-model", "threshold": 0.8, "scores": scores, "complete": complete, "infra_failures": infra,
-           "measurement_version": 2, "tolerance": 0, "gate": es.gate(scores, 0.8, 0, 2)}
-    (root / "skills" / skill / "evals" / "result.json").write_text(json.dumps(rec, indent=2) + "\n")
-    return 0
-
-
-def status(root, skill="core-demo"):
-    return es.skill_status(str(root / "skills" / skill))["status"]
 
 
 def test_the_hash_is_stable_and_ignores_the_record_and_caches(root):
@@ -138,62 +123,59 @@ def test_only_the_tests_folder_directly_under_scripts_is_left_out(root):
     assert len({first, second, es.content_hash(str(skill))}) == 3
 
 
-def test_status_is_draft_then_evaluated_then_stale(root, capsys):
-    assert status(root) == "draft"
-    assert record(root) == 0
-    rec = json.loads((root / "skills" / "core-demo" / "evals" / "result.json").read_text())
-    assert rec["skill"] == "core-demo" and rec["iteration"] == 3 and rec["date"] == "2030-01-02"
-    assert rec["cases"] == [1, 2] and rec["complete"] is True and rec["infra_failures"] == 0
-    assert rec["scores"] == {"strong_with": 1.0, "strong_without": 0.5, "floor_with": 0.9, "floor_without": 0.3}
-    assert rec["gate"] == {"floor": True, "strong": True, "strong_delta": True, "passed": True}
-    assert rec["measurement_version"] == 2 and rec["tolerance"] == 0
-    assert rec["content_sha256"] == es.content_hash(str(root / "skills" / "core-demo"))
-    assert status(root) == "evaluated"
-    (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
-    assert status(root) == "stale"
-    out = es.record_statuses(str(root))  # the old states, for the generated block only until B16
-    assert out["counts"] == {"evaluated": 0, "stale": 1, "draft": 1}
-    assert [r["skill"] for r in out["skills"]] == ["core-demo", "eng-other"]
-
-
-@pytest.mark.parametrize("kwargs", [{"floor": (0.79, 0.3)}, {"strong": (0.6, 0.7)}])
-def test_a_record_whose_gate_failed_is_draft(root, kwargs):
-    assert record(root, **kwargs) == 0
-    row = es.skill_status(str(root / "skills" / "core-demo"))
-    assert row["status"] == "draft" and "gate did not pass" in row["reason"]
-
-
-def test_a_record_of_an_incomplete_run_is_draft(root):
-    record(root, runs=2, complete=False, infra=1)
-    rec = json.loads((root / "skills" / "core-demo" / "evals" / "result.json").read_text())
-    assert rec["complete"] is False and rec["infra_failures"] == 1 and rec["gate"]["passed"] is True
-    assert status(root) == "draft"
-
-
-def test_nothing_writes_a_record_any_more(root, capsys):
-    """The runner writes evidence; the command that built a record from a benchmark on disk is gone (default 27)."""
+def test_nothing_writes_or_reads_a_record_any_more(root, capsys):
+    """The runner writes evidence; the command that built a record is gone (default 27), and since the snapshot
+    tables replaced the generated block (B16) nothing reads one: the 48 old records are history."""
     with pytest.raises(SystemExit) as e:
         es.main(["record", "--skill", "core-demo", "--benchmark", "b.json"], root=str(root))
     assert e.value.code == 2
-    assert not hasattr(es, "build_record") and not hasattr(es, "update_baseline") and not hasattr(es, "write_record")
+    for name in ("build_record", "update_baseline", "write_record", "load_record", "record_problems", "skill_status",
+                 "record_statuses", "RECORD_REL", "STATUSES"):
+        assert not hasattr(es, name), name
+    assert "result.json" not in Path(es.__file__).read_text().split("def ", 1)[1]  # no code after the help names it
+    (root / "skills" / "core-demo" / "evals" / "result.json").write_text("{not even json")
+    configure(root, measurement_sha256=None)
+    assert es.main(["inventory", "--write"], root=str(root)) == 0 and check(root)[0] == []
 
 
-def test_inventory_write_then_check_and_check_fails_after_a_status_change(root, capsys):
+def test_inventory_writes_the_two_tables_and_check_ignores_the_commit_line(root, capsys):
+    configure(root)
     assert es.main(["inventory", "--check"], root=str(root)) == 1
+    assert "behind the evidence" in capsys.readouterr().err
     assert es.main(["inventory", "--write"], root=str(root)) == 0
+    assert json.loads(capsys.readouterr().out) == {"written": True, "counts": {"needs a test": 2, "watch": 0, "reliable": 0}}
     text = (root / "docs" / "inventory.md").read_text()
     assert "Intro kept by hand." in text and "\nold\n" not in text and text.endswith("## Progress\n")
-    assert "| core-demo | draft | — | — | — | — | — |" in text
-    assert "Counts: 0 evaluated, 0 stale, 2 draft, 2 skills." in text
+    assert "Generated at commit `none` by `python3 evals/eval_status.py inventory --write`." in text  # not a git checkout
+    assert ("| Skill | Version | Band | Cause | Score | Mean | Runs (N) | Last full test | "
+            "Field: uses, judged, mean (self-reported) |") in text
+    assert "| `core-demo` | n/a | needs a test | metadata.version is missing" not in text
+    assert "| `core-demo` | n/a | needs a test |" in text and "Counts: 2 needs a test, 0 watch, 0 reliable; 2 skills." in text
+    assert "Model table: no skill has lab or field evidence yet." in text
     assert es.main(["inventory", "--check"], root=str(root)) == 0
-    record(root)
-    assert es.main(["inventory", "--check"], root=str(root)) == 1
+    (root / "docs" / "inventory.md").write_text(text.replace("commit `none`", "commit `0123456789ab`"))
+    assert es.main(["inventory", "--check"], root=str(root)) == 0  # another commit, the same tables
+    assert es.main(["inventory", "--write"], root=str(root)) == 0
+    assert es.inventory_current(str(root))
+
+
+def test_the_model_table_has_a_row_per_skill_and_model_with_evidence(root, capsys):
+    configure(root, measurement_sha256=None)
+    skill_dir, _ = gate_tree(root, [(T1, "full", "1.2.0", "2030-01-01", True, FULL_LINES("2030-01-01"))])
+    hashes = platform_cases(root)
+    evidence(root, [event_line(test=T2, kind="partial", version="1.2.0", gate=DROP, cases={"7": hashes["7"]},
+                               baseline={"7": "none"}, web_cases=[]),
+                    run_line(test=T2, kind="partial", version="1.2.0", case=7, case_sha256=hashes["7"], platform="chirp",
+                             score=1.0, results=[1, 1])], name=f"lab-{T2}.jsonl")
     es.main(["inventory", "--write"], root=str(root))
-    assert "| core-demo | evaluated | 1.00 | 0.50 | 0.90 | 2030-01-02 | 3 |" in (root / "docs" / "inventory.md").read_text()
-    (root / "skills" / "core-demo" / "SKILL.md").write_text("# core-demo, edited\n")
-    capsys.readouterr()
-    assert es.main(["inventory", "--check"], root=str(root)) == 1  # evaluated became stale
-    assert "inventory --write" in capsys.readouterr().err
+    text = (root / "docs" / "inventory.md").read_text()
+    assert "| `core-demo` | 1.2.0 | watch | the pessimistic score 0.55 is under 0.70 | 0.55 | 1.00 | 2 | 2030-01-01, passed | 0, 0, n/a |" in text
+    assert "| `core-demo` | `s-model` | 0.55 | 1.00 | 2 | 0, 0, n/a | `chirp`: 1.00 (1) |" in text
+    assert "Model table: no skill" not in text
+    # A skill that changed with no new evidence puts the snapshot behind, and that is a warning, never an error.
+    (root / "skills" / "core-demo" / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "2.0.0"\n---\n')
+    errors, warnings = check(root)
+    assert errors == [] and any(w.startswith("[snapshot] the snapshot tables are behind the evidence") for w in warnings)
 
 
 def test_inventory_without_markers_is_an_error(root):
@@ -218,61 +200,6 @@ def check(root):
     return [f"{e['where']}: {e['message']}" for e in report.errors], [w["message"] for w in report.warnings]
 
 
-def test_validate_passes_on_a_current_inventory_and_lists_the_bands_never_the_old_states(root):
-    record(root)
-    (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
-    es.main(["inventory", "--write"], root=str(root))
-    errors, warnings = check(root)
-    assert errors == [] and len(warnings) == 1
-    assert warnings[0].startswith("[band] 2 skill(s) need a test") and "core-demo, eng-other" in warnings[0]
-    assert "stale" not in warnings[0] and "draft" not in warnings[0]
-
-
-def test_validate_fails_on_a_stale_inventory_block(root):
-    errors, _ = check(root)
-    assert len(errors) == 1 and "python3 evals/eval_status.py inventory --write" in errors[0]
-
-
-@pytest.mark.parametrize("content, why", [
-    ("{not json", "not valid JSON"),
-    ('{"skill": "core-demo"}', "missing field"),
-    (None, "must equal the folder name"),
-    ("hand-edited", "gate does not follow"),
-])
-def test_the_validator_reads_no_old_record(root, content, why):
-    """The records of the first round are history: an invalid one is no error, and the band does not read it."""
-    record(root)
-    path = root / "skills" / "core-demo" / "evals" / "result.json"
-    rec = json.loads(path.read_text())
-    if content is None:
-        rec["skill"] = "eng-other"
-        content = json.dumps(rec)
-    elif content == "hand-edited":
-        rec["scores"]["floor_with"] = 0.2
-        content = json.dumps(rec)
-    path.write_text(content)
-    es.main(["inventory", "--write"], root=str(root))
-    errors, _ = check(root)
-    assert errors == []
-    assert why in es.skill_status(str(root / "skills" / "core-demo"))["reason"]
-    assert es.all_status(str(root))["skills"][0]["band"] == "needs a test"
-
-
-def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(root):
-    record(root)
-    record_file = root / "skills" / "core-demo" / "evals" / "result.json"
-    rec = json.loads(record_file.read_text())
-    rec["early_ends"] = {"strong": {"early_ends": 0, "rate": 0.0}, "floor": {"early_ends": 1, "rate": 0.2}}
-    record_file.write_text(json.dumps(rec))
-    assert status(root) == "evaluated"
-    del rec["early_ends"]
-    record_file.write_text(json.dumps(rec))
-    assert status(root) == "evaluated"
-    rec["early_ends"] = {"floor": 3}
-    record_file.write_text(json.dumps(rec))
-    assert "early_ends must map" in es.skill_status(str(root / "skills" / "core-demo"))["reason"]
-
-
 # --- the eval gate configuration (evals/eval-gate.json) -----------------------------------------
 
 def configure(root, **changes):
@@ -284,38 +211,6 @@ def configure(root, **changes):
     (root / "evals" / "eval-gate.json").write_text(json.dumps(config))
 
 
-def test_a_record_on_the_configured_floor_model_is_evaluated_and_status_names_the_gate(root):
-    configure(root)
-    record(root)
-    assert es.record_statuses(str(root))["skills"][0]["status"] == "evaluated"
-    assert es.all_status(str(root))["gate"] == {"floor_model": "f-model", "threshold": 0.8, "strong_model": "s-model",
-                                                "grader": "s-model", "strong_tolerance": 0, "measurement_version": 2,
-                                                "measurement_floor": 2}
-
-
-def test_a_record_on_another_floor_model_is_stale(root):
-    record(root)
-    assert status(root) == "evaluated"  # no configuration: any floor model
-    configure(root, floor_model="new-floor")
-    row = es.skill_status(str(root / "skills" / "core-demo"))
-    assert row["status"] == "stale" and row["reason"] == "evaluated on another floor model (f-model); rerun the evals"
-    assert es.record_statuses(str(root))["counts"] == {"evaluated": 0, "stale": 1, "draft": 1}
-    es.main(["inventory", "--write"], root=str(root))
-    assert "| core-demo | stale | 1.00 | 0.50 | 0.90 |" in (root / "docs" / "inventory.md").read_text()
-
-
-def test_a_record_is_judged_against_the_configured_threshold(root):
-    record(root)  # floor 0.9 on a threshold of 0.8
-    configure(root, threshold=0.95)
-    row = es.skill_status(str(root / "skills" / "core-demo"))
-    assert row["status"] == "draft" and "floor 0.9 is below 0.95" in row["reason"]
-    errors, _ = check(root)  # the record itself stays valid: its gate follows from the threshold it ran under
-    assert not [e for e in errors if "result.json" in e]
-    record(root, floor=(0.7, 0.3))
-    configure(root, threshold=0.6)
-    assert status(root) == "evaluated"
-
-
 @pytest.mark.parametrize("content, why", [
     ("{not json", "not valid JSON"),
     ('{"floor_model": "f"}', "missing field 'strong_model'"),
@@ -325,7 +220,6 @@ def test_validate_fails_on_an_invalid_gate_configuration(root, content, why):
     configure(root, threshold=3)
     if content is not None:
         (root / "evals" / "eval-gate.json").write_text(content)
-    es.main(["inventory", "--write"], root=str(root))
     errors, _ = check(root)
     assert len(errors) == 1 and errors[0].startswith("evals/eval-gate.json") and why in errors[0]
     assert es.load_gate(str(root)) == {}
@@ -336,46 +230,6 @@ def test_the_repository_gate_configuration_is_valid():
 
 
 # --- the gate asks the threshold of both models; a record says how it was measured ----------------
-
-def test_the_strong_model_below_the_threshold_fails_the_gate(root):
-    record(root, strong=(0.78, 0.4), floor=(0.9, 0.3))
-    row = es.skill_status(str(root / "skills" / "core-demo"))
-    assert row["status"] == "draft" and "strong 0.78 is below 0.8" in row["reason"]
-
-
-def test_the_tolerance_forgives_a_small_loss_to_the_baseline_and_no_more(root):
-    assert es.gate({"strong_with": 0.95, "strong_without": 0.96, "floor_with": 0.9, "floor_without": 0.2}, 0.8)["passed"] is False
-    scores = {"strong_with": 0.95, "strong_without": 0.96, "floor_with": 0.9, "floor_without": 0.2}
-    assert es.gate(scores, 0.8, 0.02)["passed"] is True
-    assert es.gate({**scores, "strong_without": 0.99}, 0.8, 0.02)["passed"] is False
-
-
-@pytest.mark.parametrize("change, why", [
-    ({"measurement_version": 3}, "measured under version 2 of the measurement, the configured one is 3"),
-    ({"strong_model": "new-strong"}, "evaluated on another strong model (s-model)"),
-    ({"grader": "new-grader"}, "graded by another model (s-model)"),
-])
-def test_a_record_of_another_measurement_strong_model_or_grader_is_stale(root, change, why):
-    configure(root)
-    record(root)
-    assert status(root) == "evaluated"
-    configure(root, **change)
-    row = es.skill_status(str(root / "skills" / "core-demo"))
-    assert row["status"] == "stale" and why in row["reason"]
-
-
-def test_a_record_written_under_the_earlier_rule_is_valid_and_stale(root):
-    record(root)
-    path = root / "skills" / "core-demo" / "evals" / "result.json"
-    rec = json.loads(path.read_text())
-    del rec["measurement_version"], rec["tolerance"], rec["gate"]["strong"]
-    path.write_text(json.dumps(rec))
-    configure(root)
-    errors, _ = check(root)
-    assert not [e for e in errors if "result.json" in e]
-    row = es.skill_status(str(root / "skills" / "core-demo"))
-    assert row["status"] == "stale" and "version 1" in row["reason"]
-
 
 def test_a_configuration_needs_a_measurement_version_above_the_earlier_rule(root):
     configure(root, measurement_version=1)
@@ -411,18 +265,6 @@ def test_the_repository_measurement_is_at_version_5_with_its_floor(root):
     """Phase B changes what the grader is shown, so nothing measured before it counts: version 5, floor 5."""
     gate = es.load_gate(str(REPO))
     assert gate["measurement_version"] >= 5 and gate["measurement_floor"] >= 5
-
-
-def test_a_record_of_the_container_era_names_its_environment(root):
-    record(root)
-    path = root / "skills" / "core-demo" / "evals" / "result.json"
-    rec = json.loads(path.read_text())
-    rec["measurement_version"] = 3
-    rec["gate"] = es.gate(rec["scores"], rec["threshold"], rec["tolerance"], 3)
-    assert any("names the container it ran in" in e for e in es.record_problems(rec, "core-demo"))
-    rec["environment"] = {"kind": "container", "definition_sha256": "0" * 64, "image": "img:tag", "image_id": "sha256:1"}
-    assert es.record_problems(rec, "core-demo") == []
-
 
 
 # --- the keys that control a test event ------------------------------------------------------------
@@ -645,8 +487,8 @@ def test_a_well_formed_evidence_file_is_valid_and_changes_no_status(root, capsys
     assert json.loads(capsys.readouterr().out) == {"files": 1, "problems": {}}
     assert es.main(["evidence", "--skill", "eng-other"], root=str(root)) == 0
     assert [str(p) for p in map(Path, es.evidence_files(str(root / "skills" / "core-demo")))] == [str(path)]
-    # The old path is intact: the status still reads result.json, and evidence does not make a skill stale.
-    assert status(root) == "draft"
+    # An evidence file of version 1.0.0 is no evidence for a skill with no version: it still needs a test.
+    assert es.all_status(str(root))["skills"][0]["band"] == "needs a test"
 
 
 @pytest.mark.parametrize("change, why", [

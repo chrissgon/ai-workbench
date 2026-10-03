@@ -14,28 +14,8 @@ Usage:
   python3 evals/eval_status.py bump --skill <name> [--class x|y|z] [--date YYYY-MM-DD]
   python3 evals/eval_status.py migrate-versions [--date YYYY-MM-DD]
 
-The records of the first round, skills/<name>/evals/result.json, are history: nothing writes one any more
-(the runner writes evidence, below) and the status reads none (the reliability model, section 1). Only the
-generated block of docs/inventory.md still reads them, until the snapshot tables replace it. A record was
-written by tooling, never by hand:
-
-  {"skill", "content_sha256", "date", "iteration", "runs", "cases": [ids], "harness", "floor_harness",
-   "models": {"strong", "floor"}, "grader", "threshold",
-   "scores": {"strong_with", "strong_without", "floor_with", "floor_without"},
-   "complete": true|false, "infra_failures": <n>,
-   "gate": {"floor": bool, "strong": bool, "strong_delta": bool, "passed": bool},
-   "measurement_version": <n>, "tolerance": <number>,   (optional: a record without them is of version 1)
-   "environment": {"kind": "container", "definition_sha256", "image", "image_id"},   (required from version 3:
-                                                 the container the runs executed in, written by the runner)
-   "early_ends": {"<tier>": {"early_ends": <n>, "rate": <float>}},   (optional: records written before it lack it)
-   "baseline": {"date", "iteration", "runs"}}   (optional: the without-skill scores were measured again, alone)
-
-"early_ends" counts the attempts in which a model ended its turn early with no error; the runner retried them,
-so they are not in the scores (see eval_run.py --help).
-
-Gate: floor_with >= threshold, strong_with >= threshold, and strong_with >= strong_without - tolerance.
-A record of measurement version 1 was written under the earlier rule (floor_with >= threshold and
-strong_with >= strong_without) and its "gate" has no "strong" key; it is valid as a record and always stale.
+The records of the first round, skills/<name>/evals/result.json, are history (the reliability model, section 1):
+nothing writes one any more, nothing reads one, and no evidence is converted from them.
 
 Content hash: sha256 over the files of the skill folder (sorted relative paths and their bytes), leaving out
 all of evals/ (the cases, the evidence, the version file, the old record), everything under scripts/tests/,
@@ -50,7 +30,7 @@ Evidence. The eval runner writes one file per test event, skills/<name>/evals/ev
 (the reliability model, section 1): a first line that describes the event and one line per run. Both have
 closed keys: `evidence` below validates every file, and an unknown key or a value outside its form is an
 error. A committed evidence file is written by tooling and never edited. The old records, result.json, stay
-as the history of the first round, and nothing below reads them.
+as the history of the first round, and nothing reads them.
 
   The event line: {"record": "test", "skill", "test", "kind": "full"|"partial", "version", "content_sha256",
    "date", "models": {tier: model id}, "adapters": {tier: adapter}, "adapter_sha256": {adapter: sha256 of its
@@ -79,19 +59,17 @@ The eval gate is configured in evals/eval-gate.json, committed: {"strong_model",
 "floor_model", "floor_harness", "floor_pass_env": [variables], "strong_pass_env": [variables], "grader",
 "threshold", "strong_tolerance", "measurement_version", "measurement_floor"}, once a measurement version is
 closed "measurement_sha256", the optional "models" ({model id: [aliases]}, the ids an evidence line may
-carry) and the optional keys that control a test event (below). It names the models, the adapters and the grader a gate run uses (eval_run.py takes
-them as defaults) and what a record is judged against. "measurement_version" is a number raised by hand, in
-the same commit, when a change alters what a run measures (the gate's rule, the environment runs execute in,
-the grading template, what a model under test may do): every record of another version then reads stale. The
-runner's own text is not hashed, so a change that measures the same thing stales nothing. The file sits
-outside skills/, so changing it changes no content hash; the status below reacts instead. Without the file, a
-record is judged on its own threshold, tolerance and version, and any model.
+carry) and the optional keys that control a test event (below). It names the models, the adapters and the grader a test uses (eval_run.py takes
+them as defaults) and what the gate and the bands are computed against. "measurement_version" is a number raised when a change alters what a run measures (the
+`measurement` command below says how, by kind). The file sits outside skills/, so changing it changes no
+content hash; the status reacts instead. Without the file there is no model list, no threshold of its own
+(0.8 and a tolerance of 0 are taken) and no floor (1).
 
 "measurement_floor" is the version below which lab evidence weighs nothing (the reliability model, section 8):
 a whole number from 1 to the measurement version. "measurement_sha256" is the fingerprint of the files that
 decide what a run measures, 64 hexadecimal characters. A gate file without it describes a measurement version
 that is still open: files that decide what a run measures are still changing under that number, so nothing
-measured meanwhile is written as evidence (evidence_refusal below; the runner and `record` both ask it).
+measured meanwhile is written as evidence (evidence_refusal below; the runner asks it).
 
 Control of a test event, all optional keys of the gate file (a key it lacks takes the default in brackets):
 "runs" [3], the runs of every case; "timeout_seconds" [900], the limit of one model run; "retries" [2], how
@@ -160,8 +138,12 @@ Commands:
   gate       prints the gate of one skill computed from its lab evidence (the model's section 2, below):
              {"computed", "passed", "with", "baseline", "threshold", "tolerance", "version", "test", "cases",
              "pending", "note", "cause"}.
-  inventory  regenerates the block between <!-- eval-status:begin --> and <!-- eval-status:end --> in
-             docs/inventory.md (--write), or exits 1 when the block differs from what would be generated (--check).
+  inventory  writes the two snapshot tables of the reliability model's section 10 between <!-- eval-status:begin -->
+             and <!-- eval-status:end --> in docs/inventory.md (--write): the band table, one row per skill on the
+             reference model, and the model table, one row per skill and model that has any evidence, marked with
+             the commit they were generated at. --check exits 1 when the tables differ from what would be generated
+             now, the commit line aside. They are a published snapshot: no pull request has to regenerate them, and
+             the validator reports tables behind the evidence as a warning, never as an error.
   measurement  commits a change of a file the measurement fingerprint covers as one of the three kinds of the
              reliability model's section 8, and rewrites the gate file: --kind grader raises the measurement
              version and the floor; --kind execution raises the version and appends an epoch dated --date (today,
@@ -221,7 +203,7 @@ models and skills are lists or "all"), and the measurement (its version at or ab
 version does not age it: a run without the skill never saw the skill.
 
 Data goes to stdout as JSON, diagnostics to stderr. Standard library only.
-Exit codes: 0 ok, 1 the inventory block is out of date (--check) or an evidence file is not valid, 2 usage error.
+Exit codes: 0 ok, 1 the snapshot tables are behind (--check) or an evidence file is not valid, 2 usage error.
 A band never makes a command fail.
 """
 import datetime
@@ -232,7 +214,6 @@ import re
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-RECORD_REL = os.path.join("evals", "result.json")
 TESTS_REL = "scripts/tests"  # the tests of a skill's scripts: outside the content hash and outside eval runs
 EVALS_REL = "evals"  # the cases, the evidence, the version file and the old record: outside the content hash
 EVIDENCE_REL = os.path.join("evals", "evidence")
@@ -256,15 +237,7 @@ EVENT_DEFAULTS = {"runs": 3, "timeout_seconds": 900, "retries": 2, "max_resumes"
                   "web_jobs": {"strong": 2, "floor": 2}}
 EVENT_RANGES = {"runs": (1, 10), "timeout_seconds": (30, 86400), "retries": (0, 5), "max_resumes": (0, 10), "total_jobs": (1, 64)}
 TIERS = ("strong", "floor")
-CONTAINER_VERSION = 3  # from this version on every run executes in the eval container, and a record names it
-LEGACY_VERSION = 1  # a record with no "measurement_version": the gate had no threshold for the strong model
-STATUSES = ("evaluated", "stale", "draft")
-VARIANTS = {"strong_with": "with_skill", "strong_without": "without_skill",
-            "floor_with": "with_skill.floor", "floor_without": "without_skill.floor"}
-# Field name -> accepted types, for a record read from disk.
-FIELDS = {"skill": str, "content_sha256": str, "date": str, "iteration": int, "runs": int, "cases": list,
-          "harness": str, "floor_harness": str, "models": dict, "grader": str, "threshold": (int, float),
-          "scores": dict, "complete": bool, "infra_failures": int, "gate": dict}
+LEGACY_VERSION = 1  # the measurement of the first records, whose gate had no threshold for the strong model
 
 
 def die(msg, code=2):
@@ -2015,160 +1988,71 @@ def all_status(root=ROOT, only=None):
                                                 "measurement_version", "measurement_floor")}}
 
 
-def record_path(skill_dir):
-    return os.path.join(skill_dir, RECORD_REL)
+STAMP_RE = re.compile(r"^Generated at commit `[^`]*` by `python3 evals/eval_status\.py inventory --write`\.$", re.M)
 
 
-def record_problems(rec, skill):
-    """Why a parsed result.json is not a valid record for the skill; an empty list when it is."""
-    if not isinstance(rec, dict):
-        return ["the record must be a JSON object"]
-    out = []
-    for key, kind in FIELDS.items():
-        if key not in rec:
-            out.append(f"missing field {key!r}")
-        elif not isinstance(rec[key], kind) or (kind is int and isinstance(rec[key], bool)):
-            out.append(f"field {key!r} has the wrong type")
-    if out:
-        return out
-    if rec["skill"] != skill:
-        out.append(f"skill {rec['skill']!r} must equal the folder name {skill!r}")
-    base = rec.get("baseline")
-    if base is not None and not (isinstance(base, dict) and isinstance(base.get("date"), str)
-                                 and re.fullmatch(r"\d{4}-\d{2}-\d{2}", base["date"])
-                                 and all(isinstance(base.get(k), int) and not isinstance(base.get(k), bool)
-                                         for k in ("iteration", "runs"))):
-        out.append("baseline must be {\"date\": YYYY-MM-DD, \"iteration\": <n>, \"runs\": <n>}")
-    early = rec.get("early_ends", {})
-    if not isinstance(early, dict) or not all(
-            isinstance(v, dict) and isinstance(v.get("early_ends"), int) and isinstance(v.get("rate"), (int, float))
-            for v in early.values()):
-        out.append("early_ends must map a tier to {\"early_ends\": <n>, \"rate\": <number>}")
-    if not re.fullmatch(r"[0-9a-f]{64}", rec["content_sha256"]):
-        out.append("content_sha256 must be 64 hexadecimal characters")
-    try:
-        datetime.date.fromisoformat(rec["date"])
-    except ValueError:
-        out.append("date must be YYYY-MM-DD")
-    for key in ("strong", "floor"):
-        if not isinstance(rec["models"].get(key), str):
-            out.append(f"models.{key} must be a model id")
-    for key in VARIANTS:
-        if not isinstance(rec["scores"].get(key), (int, float)) or isinstance(rec["scores"].get(key), bool):
-            out.append(f"scores.{key} must be a number")
-    version, tolerance = rec.get("measurement_version", LEGACY_VERSION), rec.get("tolerance", 0)
-    if not isinstance(version, int) or isinstance(version, bool) or version < LEGACY_VERSION:
-        out.append("measurement_version must be a whole number, 1 or more")
-    if not isinstance(tolerance, (int, float)) or isinstance(tolerance, bool):
-        out.append("tolerance must be a number")
-    if "environment" in rec and not isinstance(rec["environment"], dict):
-        out.append("environment must be an object")
-    elif isinstance(version, int) and version >= CONTAINER_VERSION and (rec.get("environment") or {}).get("kind") != "container":
-        out.append(f"a record of measurement version {CONTAINER_VERSION} or above names the container it ran in (environment)")
-    if out:
-        return out
-    for key in ("floor", "strong_delta", "passed") + (("strong",) if version > LEGACY_VERSION else ()):
-        if not isinstance(rec["gate"].get(key), bool):
-            out.append(f"gate.{key} must be true or false")
-    if not out and rec["gate"] != gate(rec["scores"], rec["threshold"], tolerance, version):
-        out.append("gate does not follow from scores and threshold (the record is written by tooling, never by hand)")
-    return out
+def _num(value):
+    return "n/a" if value is None else f"{value:.2f}"
 
 
-def load_record(skill_dir):
-    """Return (record, problems). (None, []) when the skill has no record."""
-    path = record_path(skill_dir)
-    if not os.path.isfile(path):
-        return None, []
-    try:
-        with open(path, encoding="utf-8") as f:
-            rec = json.load(f)
-    except (OSError, ValueError) as e:
-        return None, [f"not valid JSON: {e}"]
-    problems = record_problems(rec, os.path.basename(os.path.normpath(skill_dir)))
-    return (None, problems) if problems else (rec, [])
+def _cell(text):
+    return str(text).replace("|", "\\|").replace("\n", " ")
 
 
-def gate(scores, threshold, tolerance=0, version=LEGACY_VERSION + 1):
-    """Both models at the threshold with the skill, and the skill does not lower the strong model by more
-    than the tolerance. version 1 is the earlier rule, kept to read the records written under it."""
-    floor = scores["floor_with"] >= threshold
-    delta = scores["strong_with"] >= scores["strong_without"] - tolerance
-    if version <= LEGACY_VERSION:
-        return {"floor": floor, "strong_delta": delta, "passed": floor and delta}
-    strong = scores["strong_with"] >= threshold
-    return {"floor": floor, "strong": strong, "strong_delta": delta, "passed": floor and strong and delta}
+def _field_cell(field):
+    if field is None:
+        return "not computed"
+    mean = field.get("mean")
+    return f"{field['uses']}, {field['judged']}, {_num(mean)}"
 
 
-def skill_status(skill_dir, config=None):
-    """{"skill", "status", "date", "scores", "iteration", "reason"} for one skill folder.
-
-    config is the eval gate configuration; by default the one of the repository the skill folder is in."""
-    skill = os.path.basename(os.path.normpath(skill_dir))
-    if config is None:
-        config = load_gate(os.path.dirname(os.path.dirname(os.path.normpath(os.path.abspath(skill_dir)))))
-    rec, problems = load_record(skill_dir)
-    row = {"skill": skill, "status": "draft", "date": None, "scores": None, "iteration": None, "reason": "no eval record"}
-    if problems:
-        row["reason"] = "invalid record: " + "; ".join(problems)
-        return row
-    if rec is None:
-        return row
-    row.update(date=rec["date"], scores=rec["scores"], iteration=rec["iteration"])
-    # The record is judged against the configured gate, not the one it was run under.
-    threshold = config.get("threshold", rec["threshold"])
-    tolerance = config.get("strong_tolerance", rec.get("tolerance", 0))
-    version = rec.get("measurement_version", LEGACY_VERSION)
-    s, g = rec["scores"], gate(rec["scores"], threshold, tolerance)
-    if not rec["complete"]:
-        row["reason"] = f"the recorded run is incomplete ({rec['infra_failures']} infrastructure failure(s)): rerun the evals"
-    elif not g["passed"]:
-        parts = ([] if g["floor"] else [f"floor {s['floor_with']} is below {threshold}"]) + \
-                ([] if g["strong"] else [f"strong {s['strong_with']} is below {threshold}"]) + \
-                ([] if g["strong_delta"] else [f"strong with the skill {s['strong_with']} is below without it {s['strong_without']}"
-                                               + (f" by more than {tolerance}" if tolerance else "")])
-        row["reason"] = "the gate did not pass: " + "; ".join(parts)
-    elif config.get("measurement_version") and version != config["measurement_version"]:
-        row.update(status="stale", reason=f"measured under version {version} of the measurement, the configured one is "
-                                          f"{config['measurement_version']}; rerun the evals")
-    elif config.get("strong_model") and rec["models"]["strong"] != config["strong_model"]:
-        row.update(status="stale", reason=f"evaluated on another strong model ({rec['models']['strong']}); rerun the evals")
-    elif config.get("grader") and rec["grader"] != config["grader"]:
-        row.update(status="stale", reason=f"graded by another model ({rec['grader']}); rerun the evals")
-    elif config.get("floor_model") and rec["models"]["floor"] != config["floor_model"]:
-        row.update(status="stale", reason=f"evaluated on another floor model ({rec['models']['floor']}); rerun the evals")
-    elif rec["content_sha256"] != content_hash(skill_dir):
-        row.update(status="stale", reason="the skill folder changed since the recorded run: rerun the evals")
-    else:
-        row.update(status="evaluated", reason="the gate passed on the current content")
-    return row
-
-
-def record_statuses(root=ROOT):
-    """The three old states read from the records of the first round, for the generated block of
-    docs/inventory.md only, until the snapshot tables replace it (item B16 of the plan). The status reads none."""
-    config = load_gate(root)
-    rows = [skill_status(os.path.join(root, "skills", n), config) for n in skill_names(root)]
-    return {"skills": rows, "counts": {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}}
+def _sum_field(models):
+    found = [m["field"] for m in models.values() if "field" in m]
+    uses, judged = sum(f["uses"] for f in found), sum(f["judged"] for f in found)
+    means = [(f["mean"], f["judged"]) for f in found if f["mean"] is not None]
+    mean = sum(m * n for m, n in means) / judged if judged else None
+    return {"uses": uses, "judged": judged, "mean": mean}
 
 
 def inventory_block(root=ROOT):
-    """The generated lines that go between the markers."""
-    data = record_statuses(root)
-    num = lambda v: "—" if v is None else f"{v:.2f}"
-    lines = ["| Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |",
-             "|-------|--------|-------------|----------------|------------|------|-----------|"]
+    """The two snapshot tables of the reliability model's section 10, with the commit they were generated at:
+    the band table (one row per skill, on the reference model; its field column sums every model) and the
+    model table (one row per skill and model that has any evidence)."""
+    data = all_status(root)
+    head = git_out(root, "rev-parse", "--short=12", "HEAD")
+    lines = [f"Generated at commit `{head.strip() if head else 'none'}` by `python3 evals/eval_status.py inventory --write`.", "",
+             "| Skill | Version | Band | Cause | Score | Mean | Runs (N) | Last full test | Field: uses, judged, mean (self-reported) |",
+             "|-------|---------|------|-------|-------|------|----------|----------------|-------------------------------------------|"]
     for r in data["skills"]:
-        s = r["scores"] or {}
-        lines.append(f"| {r['skill']} | {r['status']} | {num(s.get('strong_with'))} | {num(s.get('strong_without'))} | "
-                     f"{num(s.get('floor_with'))} | {r['date'] or '—'} | {r['iteration'] if r['iteration'] is not None else '—'} |")
+        cause = r["cause"] or ""
+        if r["pending"]:
+            cause = (cause + "; " if cause else "") + "pending: " + ", ".join(r["pending"])
+        last = r["last_full_test"]
+        full_cell = "none" if not last else f"{last['date']}, " + (
+            "passed" if last["passed"] else "failed" if last["passed"] is False else "incomplete")
+        field = _sum_field(r["models"]) if r["field"]["computed"] else None
+        lines.append(f"| `{r['skill']}` | {r['version'] or 'n/a'} | {r['band']} | {_cell(cause) or '-'} | {_num(r['score'])} | "
+                     f"{_num(r['mean'])} | {r['runs']:g} | {full_cell} | {_field_cell(field)} |")
     c = data["counts"]
-    lines += ["", f"Counts: {c['evaluated']} evaluated, {c['stale']} stale, {c['draft']} draft, {len(data['skills'])} skills."]
+    lines += ["", f"Counts: {c['needs a test']} needs a test, {c['watch']} watch, {c['reliable']} reliable; "
+              f"{len(data['skills'])} skills.", ""]
+    rows = []
+    for r in data["skills"]:
+        for model, m in r["models"].items():
+            platforms = ", ".join(f"`{name}`: {_num(p['mean'])} ({p['runs']})" for name, p in sorted((m.get("platforms") or {}).items()))
+            field = m.get("field", {"uses": 0, "judged": 0, "mean": None}) if r["field"]["computed"] else None
+            rows.append(f"| `{r['skill']}` | `{model}` | {_num(m['score'])} | {_num(m['mean'])} | {m['runs']:g} | "
+                        f"{_field_cell(field)} | {platforms or '-'} |")
+    if rows:
+        lines += ["| Skill | Model | Score | Mean | Lab runs (N) | Field: uses, judged, mean (self-reported) | Platforms: mean (runs) |",
+                  "|-------|-------|-------|------|--------------|-------------------------------------------|------------------------|"] + rows
+    else:
+        lines.append("Model table: no skill has lab or field evidence yet.")
     return "\n".join(lines)
 
 
 def inventory_text(root=ROOT):
-    """Return (current text, text with the block regenerated). Raises ValueError when the markers are missing."""
+    """Return (current text, text with the tables regenerated). Raises ValueError when the markers are missing."""
     path = os.path.join(root, INVENTORY_REL)
     try:
         with open(path, encoding="utf-8") as f:
@@ -2182,8 +2066,9 @@ def inventory_text(root=ROOT):
 
 
 def inventory_current(root=ROOT):
+    """True when the snapshot tables are what would be generated now, the commit line aside."""
     text, new = inventory_text(root)
-    return text == new
+    return STAMP_RE.sub("", text) == STAMP_RE.sub("", new)
 
 
 def main(argv, root=None):
@@ -2285,16 +2170,17 @@ def main(argv, root=None):
             text, new = inventory_text(root)
         except ValueError as e:
             die(str(e), 1)
+        current = STAMP_RE.sub("", text) == STAMP_RE.sub("", new)
         if "--check" in flags:
-            if text != new:
-                print(f"{INVENTORY_REL}: the eval-status block is out of date; run python3 evals/eval_status.py inventory --write",
-                      file=sys.stderr)
-            print(json.dumps({"current": text == new}))
-            return 0 if text == new else 1
+            if not current:
+                print(f"{INVENTORY_REL}: the snapshot tables are behind the evidence; a pull request of their own "
+                      "regenerates them: python3 evals/eval_status.py inventory --write", file=sys.stderr)
+            print(json.dumps({"current": current}))
+            return 0 if current else 1
         if text != new:
             with open(os.path.join(root, INVENTORY_REL), "w", encoding="utf-8") as f:
                 f.write(new)
-        print(json.dumps({"written": text != new, "counts": record_statuses(root)["counts"]}))
+        print(json.dumps({"written": text != new, "counts": all_status(root)["counts"]}))
         return 0
     die(f"unknown command {cmd!r}. See --help.")
 
