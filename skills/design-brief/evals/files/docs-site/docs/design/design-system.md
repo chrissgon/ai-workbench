@@ -12,7 +12,7 @@ The library's own token specification governs every colour, size and component t
 ## Sources
 
 - `DESIGN-SYSTEM.md` of the plinthui repository (generated from the shipped 1.0 stylesheet, read 2026-09-23): §1 foundations, §2 colour roles, §3 styles, §4 components, §5 interaction states, §6 building this in the design tool
-- `node_modules/@plinthkit/plinthui/dist/plinthui.css` 1.0.0-beta.0: `:root` custom properties `--plu-bg`, `--plu-bg-muted`, `--plu-bg-emphasis`, `--plu-text`, `--plu-text-muted`, `--plu-border`, `--plu-theme`, `--plu-success`, `--plu-warn`, `--plu-error`, `--plu-radius` (0.375rem), `--plu-space` (0.25rem), `--plu-border-width` (1px)
+- `node_modules/@plinthkit/plinthui/dist/plinthui.css` 1.0.0-beta.0: `:root` custom properties `--bg`, `--bg-muted`, `--bg-emphasis`, `--text`, `--text-muted`, `--border`, `--theme`, `--success`, `--warn`, `--error`, `--radius` (0.375rem), `--space` (0.25rem), `--border-width` (1px)
 - `docs/design/flows.md`: SCREEN-1 to SCREEN-3 and their regions and states
 - `docs/workbench/state.md` decisions of 2026-09-23: no brand phase, logo and default theme colour kept; typography Inter and Fira Code (user)
 - Contrast ratios computed with `contrast.py` of the design-system skill (WCAG 2.x relative luminance), 2026-09-23
@@ -27,21 +27,21 @@ The library's own token specification governs every colour, size and component t
 
 | Token | Light | Dark | Role | Source |
 |-------|-------|------|------|--------|
-| `--plu-bg` (page/bg) | #FFFFFF | #000000 | page background, label on a solid fill | DESIGN-SYSTEM §1.1 |
-| `--plu-bg-muted` (page/bg-muted) | #F3F4F6 | #111827 | card headers, table footers, addons, stripes, hover rows | DESIGN-SYSTEM §1.1 |
-| `--plu-bg-emphasis` (page/bg-emphasis) | #E5E7EB | #1F2937 | third level; the site uses it for the code block background | DESIGN-SYSTEM §1.1; site rule below |
-| `--plu-text` (page/text) | #000000 | #FFFFFF | body text | DESIGN-SYSTEM §1.1 |
-| `--plu-text-muted` (page/text-muted) | #6B7280 | #9CA3AF | secondary text | DESIGN-SYSTEM §1.1 |
-| `--plu-border` (page/border) | #D1D5DB | #374151 | every border without a role colour | DESIGN-SYSTEM §1.1 |
-| `--plu-theme` (theme/fill) | #0092CD | #07B6F0 | brand colour; also the site's link and focus-ring colour | DESIGN-SYSTEM §1.1; state decision (theme colour kept) |
+| `--bg` (page/bg) | #FFFFFF | #000000 | page background, label on a solid fill | DESIGN-SYSTEM §1.1 |
+| `--bg-muted` (page/bg-muted) | #F3F4F6 | #111827 | card headers, table footers, addons, stripes, hover rows | DESIGN-SYSTEM §1.1 |
+| `--bg-emphasis` (page/bg-emphasis) | #E5E7EB | #1F2937 | third level; the site uses it for the code block background | DESIGN-SYSTEM §1.1; site rule below |
+| `--text` (page/text) | #000000 | #FFFFFF | body text | DESIGN-SYSTEM §1.1 |
+| `--text-muted` (page/text-muted) | #6B7280 | #9CA3AF | secondary text | DESIGN-SYSTEM §1.1 |
+| `--border` (page/border) | #D1D5DB | #374151 | every border without a role colour | DESIGN-SYSTEM §1.1 |
+| `--theme` (theme/fill) | #0092CD | #07B6F0 | brand colour; also the site's link and focus-ring colour | DESIGN-SYSTEM §1.1; state decision (theme colour kept) |
 | theme/on-fill | #FFFFFF | #000000 | label on a solid theme fill | DESIGN-SYSTEM §6.1 |
 | theme/fill-hover | #007AAD | #48BFF2 | solid theme fill under the pointer | DESIGN-SYSTEM §6.1 |
 | theme/ink | #00628B | #6BC9F5 | theme text for soft, outline and link | DESIGN-SYSTEM §6.1 |
-| `--plu-success` (success/fill) | #16A34A | #22C55E | positive state; the "Added in" badge | DESIGN-SYSTEM §1.1 |
+| `--success` (success/fill) | #16A34A | #22C55E | positive state; the "Added in" badge | DESIGN-SYSTEM §1.1 |
 | success/ink | #0B6E2F | #71D588 | text | DESIGN-SYSTEM §6.1 |
-| `--plu-warn` (warn/fill) | #D97706 | #F59E0B | caution state; the "Changed in" badge | DESIGN-SYSTEM §1.1 |
+| `--warn` (warn/fill) | #D97706 | #F59E0B | caution state; the "Changed in" badge | DESIGN-SYSTEM §1.1 |
 | warn/ink | #934F03 | #F9B867 | text | DESIGN-SYSTEM §6.1 |
-| `--plu-error` (error/fill) | #DC2626 | #EF4444 | destructive state, invalid fields | DESIGN-SYSTEM §1.1 |
+| `--error` (error/fill) | #DC2626 | #EF4444 | destructive state, invalid fields | DESIGN-SYSTEM §1.1 |
 
 Site rules for using these tokens (this document): body prose uses `page/text` on `page/bg`; secondary prose uses `page/text-muted` on `page/bg` only, never on `page/bg-muted` (4.39:1, below AA); links and the focus ring use `theme/ink` for text and `theme/fill` for the ring; site-only components never use a solid `theme`, `success` or `warn` fill under text smaller than 19 px bold or 24 px regular, because those labels sit at 3.2 to 3.5:1 in light mode (library trade-off); the code block uses `page/bg-emphasis` as background with `page/text` as foreground.
 
@@ -80,14 +80,14 @@ Site rules for using these tokens (this document): body prose uses `page/text` o
 
 | Token | Value | Role | Source |
 |-------|-------|------|--------|
-| space/4 (`--plu-space`) | 4 px | unit; gap inside a button | DESIGN-SYSTEM §1.2, §1.3 |
+| space/4 (`--space`) | 4 px | unit; gap inside a button | DESIGN-SYSTEM §1.2, §1.3 |
 | space/8 | 8 px | button, list item, table cell, card header vertical padding | DESIGN-SYSTEM §1.3 |
 | space/12 | 12 px | input horizontal padding, addon padding, card content gap | DESIGN-SYSTEM §1.3 |
 | space/16 | 16 px | button and card header horizontal padding; card content padding | DESIGN-SYSTEM §1.3 |
 | space/24 | 24 px | site section gap on narrow screens | this document |
-| radius/6 (`--plu-radius`) | 6 px | buttons, badges, inputs, list items, dropdowns, tooltips | DESIGN-SYSTEM §1.5 |
+| radius/6 (`--radius`) | 6 px | buttons, badges, inputs, list items, dropdowns, tooltips | DESIGN-SYSTEM §1.5 |
 | radius/9 | 9 px | cards; site: code block and example block | DESIGN-SYSTEM §1.5; this document |
-| border/1 (`--plu-border-width`) | 1 px | every border and group overlap | DESIGN-SYSTEM §1.2 |
+| border/1 (`--border-width`) | 1 px | every border and group overlap | DESIGN-SYSTEM §1.2 |
 | elevation | none | the library uses no shadows; the site uses none either | DESIGN-SYSTEM §4; this document |
 
 ## Layout
@@ -108,10 +108,10 @@ Site rules for using these tokens (this document): body prose uses `page/text` o
 
 | Component | Owner | Variants | States | Screens | Source |
 |-----------|-------|----------|--------|---------|--------|
-| Button (`plu-btn`) | library | style × colour (4 × 7), rounded | default, hover, focus, disabled | SCREEN-1, SCREEN-3 | DESIGN-SYSTEM §4.1, §5 |
-| Badge (`plu-badge`) | library | style × colour | default | SCREEN-2 (since and changed badges) | DESIGN-SYSTEM §4.3; content-model spec REQ-7 |
-| Card (`plu-card`, header, content) | library | none | default | SCREEN-1 (showcase), SCREEN-2 (examples) | DESIGN-SYSTEM §4.4 |
-| Input group (`plu-input-group`, addon) | library | none | default, focus | SCREEN-1 (install command with copy control) | DESIGN-SYSTEM §4.13 |
+| Button (`btn`) | library | style × colour (4 × 7), rounded | default, hover, focus, disabled | SCREEN-1, SCREEN-3 | DESIGN-SYSTEM §4.1, §5 |
+| Badge (`badge`) | library | style × colour | default | SCREEN-2 (since and changed badges) | DESIGN-SYSTEM §4.3; content-model spec REQ-7 |
+| Card (`card`, header, content) | library | none | default | SCREEN-1 (showcase), SCREEN-2 (examples) | DESIGN-SYSTEM §4.4 |
+| Input group (`input-group`, addon) | library | none | default, focus | SCREEN-1 (install command with copy control) | DESIGN-SYSTEM §4.13 |
 | Navigation item | site | level 1 section, level 2 page | default, hover, current, focus | SCREEN-2 | flows SCREEN-2 regions |
 | On-page heading link | site | level 2, level 3 | default, current, focus | SCREEN-2 | flows SCREEN-2 regions |
 | Code block | site | with language label, with copy control | default, copied, focus | SCREEN-2 | content-model spec REQ-10 |
@@ -120,11 +120,11 @@ Site rules for using these tokens (this document): body prose uses `page/text` o
 
 ## Design tool
 
-- The tokens are mirrored as the design tool's variables (collection `plu`, modes `light` and `dark`), with the library's text styles and the components Button, Badge and Card; values verified against the document on 2026-09-23.
+- The tokens are mirrored as the design tool's variables (collection `library`, modes `light` and `dark`), with the library's text styles and the components Button, Badge and Card; values verified against the document on 2026-09-23.
 
 ## Assumptions
 
-- ASSUMPTION-1: The library's `light-dark()` values are the light and dark mode values of the design tool's variables; the site sets `data-plu-mode` so both modes exist. Safe because: `plinthui.css` `:root` declares every colour with `light-dark()` and `color-scheme: light dark`.
+- ASSUMPTION-1: The library's `light-dark()` values are the light and dark mode values of the design tool's variables; the site sets `data-mode` so both modes exist. Safe because: `plinthui.css` `:root` declares every colour with `light-dark()` and `color-scheme: light dark`.
 
 ## Open questions
 

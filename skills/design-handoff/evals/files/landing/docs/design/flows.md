@@ -16,7 +16,7 @@ Two screens and one flow for the launch: an evaluator lands, understands the lib
 ## Screens
 
 - SCREEN-1: Landing. Purpose: let an evaluator understand Plinth UI, trust its size, install it and enter the documentation in one screen. Regions: value proposition (headline and one paragraph), install command with copy control, primary call to action to `/docs`, size block with version and method, components showcase (at least 4 live examples), footer. States: default; copied (copy control feedback for at least 1 second); no JavaScript (copy control absent, command still readable); reduced motion (no animation, everything visible at once). Breakpoints: on a 360 px wide screen the value proposition, the install command and the primary call to action stay inside the first viewport and the showcase stacks in one column; from 768 px the showcase has two columns; from 1280 px it has four. Source: landing spec REQ-1 to REQ-7.
-- SCREEN-2: Site shell. Purpose: give every page the same header and footer. Regions: header (logo with version label, docs link, mode toggle, repository link), footer (license, repository link). States: default; light and dark (from `data-plu-mode`). Breakpoints: below 768 px the header keeps the logo and the mode toggle and moves the rest behind a menu control. Source: landing spec REQ-7.
+- SCREEN-2: Site shell. Purpose: give every page the same header and footer. Regions: header (logo with version label, docs link, mode toggle, repository link), footer (license, repository link). States: default; light and dark (from `data-ui-mode`). Breakpoints: below 768 px the header keeps the logo and the mode toggle and moves the rest behind a menu control. Source: landing spec REQ-7.
 
 ## Flows
 
