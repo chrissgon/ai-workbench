@@ -701,6 +701,14 @@ def test_the_vcs_documents_name_no_caller_and_no_real_account():
     assert "octo-org" not in source and "octo/" not in source
 
 
+def test_the_vcs_row_names_every_field_read_file_prints_and_its_cap():
+    """VS17: read-file prints repo, which the row's list of fields left out."""
+    contract = (HERE.parents[2] / "providers" / "CONTRACT.md").read_text(encoding="utf-8")
+    (row,) = [line for line in contract.splitlines() if line.startswith("| `integration:vcs` |")]
+    assert "`{repo, path, ref, sha, size, content}`" in row
+    assert "at most 1 MiB" in row
+
+
 # --- VS15: errors that are not ProviderError, and a replay without a token --------------------------
 
 

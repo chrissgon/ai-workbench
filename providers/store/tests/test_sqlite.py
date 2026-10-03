@@ -461,6 +461,14 @@ def test_the_store_documents_name_no_caller():
             assert word not in text.lower(), (name, word)
 
 
+def test_the_store_row_names_what_event_add_prints(db, payload):
+    """VS17: event-add prints status, which the row left out (--limit of inbox-list and actions: VS12)."""
+    out = ok("event-add", "--source", "s", "--external-id", "e", "--payload-file", payload, db=db)
+    assert set(out) == {"id", "created", "status"} and out["status"] == "pending"
+    assert "`event-add`: `id`, `created` (false when the source and external id were already there), `status`" \
+        in store_row()
+
+
 def store_row() -> str:
     root = Path(__file__).resolve().parents[3]
     return [line for line in (root / "providers" / "CONTRACT.md").read_text(encoding="utf-8").splitlines()
