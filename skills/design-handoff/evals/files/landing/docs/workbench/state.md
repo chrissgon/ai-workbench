@@ -21,7 +21,7 @@
 
 ## Decisions
 
-- 2026-03-02: The site ships the library stylesheet `library/plinthui.css` (Plinth UI 1.0.0); component classes have the prefix `plu`. (user)
+- 2026-03-02: The site ships the library stylesheet `library/plinthui.css` (Plinth UI 1.0.0); component classes have the prefix `ui`. (user)
 
 ## Open questions
 
