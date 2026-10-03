@@ -1072,8 +1072,10 @@ def cmd_resolve(args) -> int:
     if sum(bool(x) for x in (args.post_urn, args.comment_urn, args.not_published)) != 1:
         raise ProviderError("resolve needs exactly one of --post-id <urn> (a post), --comment-id <urn> "
                             "(a comment) or --not-published", EXIT_USAGE)
-    if args.post_urn and not args.post_urn.startswith("urn:li:"):
-        raise ProviderError("--post-id must be a LinkedIn URN such as urn:li:share:<id>", EXIT_USAGE)
+    # The same full-value patterns as comment: the value is recorded, and a later --on-key puts it in a URL path.
+    if args.post_urn and not POST_URN_RE.fullmatch(args.post_urn):
+        raise ProviderError("--post-id must look like urn:li:share:<digits>, urn:li:ugcPost:<digits> or "
+                            "urn:li:activity:<digits>", EXIT_USAGE)
     match = COMMENT_URN_RE.fullmatch(args.comment_urn) if args.comment_urn else None
     if args.comment_urn and not match:
         raise ProviderError("--comment-id must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",

@@ -1544,3 +1544,18 @@ def test_a_flag_of_another_verb_is_refused(env, fake, text_file, comment_file):
         proc = run(SCRIPT, args, env)
         assert proc.returncode == 2 and flag in proc.stderr and args[0] in proc.stderr, (args, proc.stderr)
     assert fake.requests == [] and ledger(env) == {}
+
+
+def test_resolve_checks_the_post_id_as_strictly_as_comment(env, fake):
+    path = Path(env["PUBLISHER_LINKEDIN_LEDGER"])
+    path.parent.mkdir(parents=True)
+    pending = {"version": 2, "entries": {"k": {"status": "pending", "started_at": "2026-10-01T00:00:00Z"}}}
+    path.write_text(json.dumps(pending))
+    for bad in ("urn:li:share:12/../../v2/me", "urn:li:person:abc", "urn:li:share:", "urn:li:share:12 "):
+        for mode in ("--dry-run", "--confirmed"):
+            proc = run(SCRIPT, ["resolve", "--idempotency-key", "k", "--post-id", bad, mode], env)
+            assert proc.returncode == 2 and "--post-id" in proc.stderr, (bad, mode)
+    assert json.loads(path.read_text()) == pending
+    ok = run(SCRIPT, ["resolve", "--idempotency-key", "k", "--post-id", "urn:li:activity:7000000000000000009",
+                      "--confirmed"], env)
+    assert ok.returncode == 0, ok.stderr
