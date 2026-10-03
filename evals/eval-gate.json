@@ -8,8 +8,8 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "strong_tolerance": 0.05,
-  "measurement_version": 5,
-  "measurement_floor": 5,
+  "measurement_version": 6,
+  "measurement_floor": 6,
   "runs": 3,
   "timeout_seconds": 900,
   "retries": 2,
@@ -32,5 +32,5 @@
     "openrouter/deepseek/deepseek-v4.1-flash": ["deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash"]
   },
   "epochs": [],
-  "measurement_sha256": "965d9daceaf76c445084882edab65909d6d5dea0c75bdc88853d46bf740bdbde"
+  "measurement_sha256": "03c1199923074eb689e8d10366e76b421464dac7fe1632601e2db794f448e6bf"
 }
