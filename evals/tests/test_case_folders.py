@@ -128,11 +128,12 @@ def test_the_tools_run_in_the_folder_the_case_builds(tmp_path, skill, case):
     assert r.returncode == 0 and json.loads(r.stdout) == {"current": True}
     r = python(folder, "evals/eval_status.py", "status")
     assert r.returncode == 0, r.stderr
-    statuses = {s["skill"]: s["status"] for s in json.loads(r.stdout)["skills"]}
-    assert statuses[CAPABILITY] == "draft" and statuses[FLOW] == "draft" and set(statuses) == set(shipped) | {CAPABILITY, FLOW}
+    bands = {s["skill"]: s["band"] for s in json.loads(r.stdout)["skills"]}
+    assert bands[CAPABILITY] == bands[FLOW] == "needs a test" and set(bands) == set(shipped) | {CAPABILITY, FLOW}
     for name in (CAPABILITY, FLOW):
         r = python(folder, "evals/eval_status.py", "status", "--skill", name)
-        assert r.returncode in (0, 1) and "draft" in r.stdout, r.stderr
+        row = json.loads(r.stdout)["skills"][0]
+        assert r.returncode == 0 and row["band"] == "needs a test" and row["command"].endswith(f"--skill {name}"), r.stderr
 
     # The validator: zero errors on what was made, in a tree with no other skill (or only the fixture's).
     assert python(folder, "scripts/validate.py", "--help").returncode == 0

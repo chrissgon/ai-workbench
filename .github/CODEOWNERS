@@ -6,3 +6,23 @@
 /.githooks/                @chrissgon
 /.github/                  @chrissgon
 /providers/CONTRACT.md     @chrissgon
+
+# What decides what a run measures, and what moves a skill's standing (the reliability model, section 8):
+# a change that weakens a check, moves the measurement or adds evidence is seen by the owner. Lab evidence on
+# the reference model comes from tests the owner runs; nothing else proves a line was written by the runner.
+/evals/                        @chrissgon
+/adapters/claude-code/run-prompt.sh   @chrissgon
+/adapters/claude-code/adapter.json    @chrissgon
+/adapters/agents-dir/run-prompt.sh    @chrissgon
+/adapters/agents-dir/adapter.json     @chrissgon
+/adapters/*/install.sh         @chrissgon
+/adapters/claude-code/build.py @chrissgon
+/scripts/stage_skills.py       @chrissgon
+/scripts/redact.py             @chrissgon
+/scripts/test_dirs.py          @chrissgon
+/scripts/evidence.py           @chrissgon
+/.security-scan-allow          @chrissgon
+/shared/                       @chrissgon
+/skills/*/evals/evidence/      @chrissgon
+/skills/*/evals/versions.jsonl @chrissgon
+/skills/*/evals/result.json    @chrissgon

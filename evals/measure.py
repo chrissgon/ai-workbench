@@ -303,15 +303,21 @@ def grading_summary(results):
     return {"passed": passed, "failed": len(results) - passed, "total": len(results), "pass_rate": score(results)}
 
 
+# What a sum of floating-point scores loses, and nothing more: six runs at 0.8 average 0.7999999999999999, which
+# is 0.8. Far below any difference a score can make (a run of 100 assertions moves a mean of 1,000 runs by 1e-5).
+FLOAT_SLACK = 1e-9
+
+
 def at_threshold(mean, threshold):
-    """The first condition of the gate, unrounded: a mean of 0.7996 is below a threshold of 0.8."""
-    return mean >= threshold
+    """The first condition of the gate, unrounded: a mean of 0.7996 is below a threshold of 0.8, and a mean that
+    is the threshold but for the arithmetic of floats (FLOAT_SLACK) is at it."""
+    return mean >= threshold - FLOAT_SLACK
 
 
 def within_tolerance(with_mean, baseline_mean, tolerance):
     """The second condition of the gate, unrounded: the mean with the skill is not below the baseline's mean by
-    more than the tolerance. True when there is no baseline mean."""
-    return baseline_mean is None or with_mean >= baseline_mean - tolerance
+    more than the tolerance (FLOAT_SLACK aside). True when there is no baseline mean."""
+    return baseline_mean is None or with_mean >= baseline_mean - tolerance - FLOAT_SLACK
 
 
 def gate_passes(with_mean, baseline_mean, threshold, tolerance):
