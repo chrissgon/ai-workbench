@@ -24,7 +24,7 @@ Walk the branches in order; later branches depend on earlier ones. Mark each ite
 - Dependencies on other teams, systems or decisions not yet made.
 
 ## 5. Approach
-- Which options were considered; why this one. (If none were, that is a `must ask` or a `core-critique` candidate.)
+- Which options were considered; why this one. (If none were, that is a `must ask`; a plan whose approach was never compared is a candidate for an adversarial review, which `core-critique` writes.)
 - What would make us change the approach.
 
 ## 6. Risks and failure

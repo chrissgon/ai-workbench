@@ -3,16 +3,18 @@
 
 Usage:
   python3 init_project.py --root <dir> --detect
-  python3 init_project.py --root <dir> --apply --autonomy <mode> [--input <file>] [--name <name>] [--register <path>=<slot>]... [--dry-run]
-  python3 init_project.py --root <dir> [--set-autonomy <mode>] [--input <file>] [--register <path>=<slot>]... [--dry-run]
+  python3 init_project.py --root <dir> --apply --autonomy <mode> [--docs <docs>] [--input <file>] [--name <name>] [--register <path>=<slot>]... [--dry-run]
+  python3 init_project.py --root <dir> [--set-autonomy <mode>] [--docs <docs>] [--input <file>] [--register <path>=<slot>]... [--dry-run]
 
 --detect   prints JSON: is_project_root, name_guess, state_exists, autonomy (the current mode, or null),
            agents_md (exists, has_section), root_docs (specification-like *.md at the root),
            proposed_registrations (file, slot and the ready --register value, matched by file name),
            unmatched_root_docs (open them to pick a slot), excluded, docs_dir (count, names),
-           not_registered (file and reason), next ("init" or "update") and summary: one line to quote.
+           not_registered (file and reason), docs_in_git (the recorded docs/ decision, or null),
+           next ("init" or "update") and summary: one line to quote.
 --apply    creates docs/workbench/state.md and the workbench section in AGENTS.md. Refuses if state exists.
-Update     (no --apply) changes the autonomy mode and/or adds registrations to an existing state.
+Update     (no --apply) changes the autonomy mode or the docs/ decision, and/or adds registrations to an
+           existing state.
            --apply and update print JSON with "report": the lines of the reply's report, filled in.
 --register <path>=<slot>  registers an existing document as the artifact <slot> (docs/<area>/...), in place.
                           The path must stay inside --root.
@@ -25,10 +27,16 @@ Update     (no --apply) changes the autonomy mode and/or adds registrations to a
 --name <name>             the project name, when it is only letters, digits, spaces, '.', '_' or '-';
                           any other name goes in --input.
 --autonomy / --set-autonomy  one of: every-phase, milestones, end.
+--docs <docs>  which workbench folders under docs/ go into git: all, code (only docs/product/, docs/design/,
+               docs/engineering/, docs/ai/ and docs/delivery/; the rest is work data) or none. Recorded as the
+               state line "- Docs in git: <docs>" and in the AGENTS.md section; for code and none the folders
+               kept out are written to .gitignore between "# workbench:start" and "# workbench:end". Left out
+               with --apply, the decision is recorded as undecided with an open question, and nothing is
+               written to .gitignore.
 --dry-run  prints the plan, writes nothing.
 
-Never moves, renames or edits registered documents. Never edits AGENTS.md outside the markers.
-Exit codes: 0 ok, 1 refused (state exists with --apply, missing path, bad slot), 2 usage error.
+Never moves, renames or edits registered documents. Never edits AGENTS.md or .gitignore outside the markers.
+Exit codes: 0 ok, 1 refused (state exists with --apply, missing path, bad slot), 2 usage error (on stderr).
 """
 import datetime as dt
 import json
@@ -37,6 +45,18 @@ import re
 import sys
 
 MODES = ("every-phase", "milestones", "end")
+DOCS_CHOICES = ("all", "code", "none")
+UNDECIDED = "undecided"
+# The workbench folders under docs/ (contracts/project-layout.md), by kind: what describes the code and the
+# product, and the work data around it. End-user documentation elsewhere under docs/ is never touched.
+CODE_DOCS = ("docs/product/", "docs/design/", "docs/engineering/", "docs/ai/", "docs/delivery/")
+WORK_DOCS = ("docs/workbench/", "docs/business/", "docs/brand/", "docs/marketing/", "docs/security/")
+LOCAL_FOLDERS = {"all": (), "code": WORK_DOCS, "none": WORK_DOCS + CODE_DOCS, UNDECIDED: ()}
+IGNORE_START = "# workbench:start (folders under docs/ kept out of git; written by core-project-init)"
+IGNORE_END = "# workbench:end"
+DOCS_QUESTION = ("Which workbench folders under docs/ go into git: all, code (only docs/product/, docs/design/, "
+                 "docs/engineering/, docs/ai/ and docs/delivery/) or none? Recommended: code. "
+                 "(raised by core-project-init)")
 START, END = "<!-- workbench:start -->", "<!-- workbench:end -->"
 EXCLUDED_STEMS = {"README", "LICENSE", "CHANGELOG", "CONTRIBUTING", "CODE_OF_CONDUCT", "SECURITY", "AGENTS"}
 MANIFESTS = ("package.json", "pyproject.toml", "go.mod", "Cargo.toml", "composer.json", "pom.xml", "build.gradle", "Gemfile")
@@ -49,6 +69,7 @@ STATE_TEMPLATE = """# Workbench state
 - Current flow: none
 - Current phase: none
 - Updated: {date}
+- Docs in git: {docs}
 
 ## Autonomy
 
@@ -115,6 +136,16 @@ def current_autonomy(root):
     try:
         with open(os.path.join(root, "docs", "workbench", "state.md"), encoding="utf-8") as f:
             m = re.search(r"^- Checkpoints: *([a-z-]+)", f.read(), re.M)
+    except OSError:
+        return None
+    return m.group(1) if m else None
+
+
+def current_docs(root):
+    """The recorded docs/ decision of a state file, or None when the state or the line is missing."""
+    try:
+        with open(os.path.join(root, "docs", "workbench", "state.md"), encoding="utf-8") as f:
+            m = re.search(r"^- Docs in git: *([a-z]+)", f.read(), re.M)
     except OSError:
         return None
     return m.group(1) if m else None
@@ -195,6 +226,7 @@ def detect(root):
         {"file": p, "reason": "end-user documentation under docs/; registered only when the user asks"}
         for p in sorted(docs_files)[:50] if f"(at {p})" not in registered]
     autonomy = current_autonomy(root) if state_exists else None
+    docs_in_git = current_docs(root) if state_exists else None
     name = name_guess(root)
     agents_exists = os.path.isfile(agents)
     summary = "Detected: {root}; name guess `{name}`; state file {state}; AGENTS.md {agents}; root specifications: {specs}.".format(
@@ -217,16 +249,28 @@ def detect(root):
         "excluded": excluded,
         "docs_dir": {"count": len(docs_files), "files": sorted(docs_files)[:50]},
         "not_registered": not_registered,
+        "docs_in_git": docs_in_git,
         "next": "update" if state_exists else "init",
         "summary": summary,
     }
 
 
-def report_lines(root, name, state_action, autonomy, agents_action, rows, not_registered):
+def docs_line(docs, ignore_action):
+    if docs == UNDECIDED:
+        return "- Documents in git: undecided (an open question in the state file; .gitignore untouched)"
+    kept = LOCAL_FOLDERS[docs]
+    where = ("every workbench folder under docs/ is committed" if not kept
+             else "kept out of git: " + ", ".join(kept))
+    return f"- Documents in git: {docs}; {where} (.gitignore {ignore_action})"
+
+
+def report_lines(root, name, state_action, autonomy, agents_action, rows, not_registered, docs=UNDECIDED,
+                 ignore_action="untouched"):
     """The reply's report, filled in from what the script did; `rows` are (slot, path) of every registration."""
     lines = [f"## Project initialized: {name}" if state_action == "created" else f"## Project updated: {name}", "",
              f"- State: docs/workbench/state.md ({state_action}), autonomy {autonomy}",
-             f"- Instructions: AGENTS.md ({agents_action}); other content untouched"]
+             f"- Instructions: AGENTS.md ({agents_action}); other content untouched",
+             docs_line(docs, ignore_action)]
     if rows:
         lines += ["- Registered as existing artifacts (in place, owner `existing`; nothing moved, renamed or edited):",
                   "  | Slot | At | Owner | Status |", "  |------|----|-------|--------|"]
@@ -268,9 +312,42 @@ def row(slot, path, date):
     return f"| {slot} (at {path}) | existing | approved | {date} |"
 
 
-def section_text(autonomy):
+def section_text(autonomy, docs=UNDECIDED):
     with open(SECTION_TEMPLATE, encoding="utf-8") as f:
-        return f.read().replace("{autonomy}", autonomy).rstrip("\n") + "\n"
+        return f.read().replace("{autonomy}", autonomy).replace("{docs}", docs).rstrip("\n") + "\n"
+
+
+def ignore_block(docs):
+    folders = LOCAL_FOLDERS[docs]
+    if not folders:
+        return ""
+    return "\n".join([IGNORE_START, *("/" + f for f in folders), IGNORE_END]) + "\n"
+
+
+def apply_gitignore(root, docs, dry):
+    """Write, refresh or remove the block of folders kept out of git; nothing else in .gitignore changes.
+    Returns what happened: untouched, created, block added, block updated, block removed or unchanged."""
+    path = os.path.join(root, ".gitignore")
+    block = ignore_block(docs)
+    content = ""
+    if os.path.isfile(path):
+        with open(path, encoding="utf-8") as f:
+            content = f.read()
+    has = IGNORE_START in content and IGNORE_END in content
+    if not block and not has:
+        return "untouched"
+    if has:
+        pre = content[: content.index(IGNORE_START)]
+        post = content[content.index(IGNORE_END) + len(IGNORE_END):].lstrip("\n")
+        new = pre + block + post if block else (pre.rstrip("\n") + "\n" + post if pre.strip() else post)
+        action = "unchanged" if new == content else ("block updated" if block else "block removed")
+    else:
+        sep = "" if not content or content.endswith("\n\n") else ("\n" if content.endswith("\n") else "\n\n")
+        new = content + sep + block
+        action = "block added" if content else "created"
+    if new != content:
+        write(path, new, dry)
+    return action
 
 
 def upsert_section(content, section):
@@ -290,17 +367,20 @@ def write(path, content, dry):
         f.write(content)
 
 
-def apply(root, name, autonomy, regs, dry, decisions=(), questions=()):
+def apply(root, name, autonomy, regs, dry, decisions=(), questions=(), docs=UNDECIDED):
     date = dt.date.today().isoformat()
     state_path = os.path.join(root, "docs", "workbench", "state.md")
     if os.path.isfile(state_path):
-        return refuse("docs/workbench/state.md already exists; use --set-autonomy or --register to update.")
+        return refuse("docs/workbench/state.md already exists; use --set-autonomy, --docs or --register to update.")
     rows = "".join(row(s, p, date) + "\n" for p, s in regs)
-    dec = "".join(f"- {date}: {d} (user)\n" for d in decisions)
-    que = "".join(f"- [ ] {q}\n" for q in questions)
-    write(state_path, STATE_TEMPLATE.format(name=name, date=date, autonomy=autonomy, rows=rows, decisions=dec, questions=que), dry)
+    decided = [] if docs == UNDECIDED else [f"Workbench folders under docs/ in git: {docs}."]
+    dec = "".join(f"- {date}: {d} (user)\n" for d in [*decided, *decisions])
+    open_items = ([DOCS_QUESTION] if docs == UNDECIDED else []) + list(questions)
+    que = "".join(f"- [ ] {q}\n" for q in open_items)
+    write(state_path, STATE_TEMPLATE.format(name=name, date=date, autonomy=autonomy, docs=docs, rows=rows,
+                                            decisions=dec, questions=que), dry)
     agents = os.path.join(root, "AGENTS.md")
-    section = section_text(autonomy)
+    section = section_text(autonomy, docs)
     if os.path.isfile(agents):
         with open(agents, encoding="utf-8") as f:
             content, action = upsert_section(f.read(), section)
@@ -308,17 +388,19 @@ def apply(root, name, autonomy, regs, dry, decisions=(), questions=()):
         content, action = f"# {name}\n\n" + section, "created"
     skipped = detect(root)["not_registered"]
     write(agents, content, dry)
+    ignore_action = apply_gitignore(root, docs, dry)
     print(json.dumps({
-        "dry_run": dry, "action": "apply", "name": name, "autonomy": autonomy,
-        "state": "created", "agents_md": action,
+        "dry_run": dry, "action": "apply", "name": name, "autonomy": autonomy, "docs_in_git": docs,
+        "state": "created", "agents_md": action, "gitignore": ignore_action,
         "registered": [{"slot": s, "at": p} for p, s in regs],
         "decisions": len(decisions), "open_questions": len(questions),
-        "report": report_lines(root, name, "created", autonomy, action, [(s, p) for p, s in regs], skipped),
+        "report": report_lines(root, name, "created", autonomy, action, [(s, p) for p, s in regs], skipped,
+                               docs, ignore_action),
     }, indent=1))
     return 0
 
 
-def update(root, set_autonomy, regs, dry, decisions=(), questions=()):
+def update(root, set_autonomy, regs, dry, decisions=(), questions=(), set_docs=None):
     date = dt.date.today().isoformat()
     state_path = os.path.join(root, "docs", "workbench", "state.md")
     if not os.path.isfile(state_path):
@@ -328,14 +410,32 @@ def update(root, set_autonomy, regs, dry, decisions=(), questions=()):
     changes = []
     agents_action = "unchanged"
     before = re.search(r"^- Checkpoints: *([a-z-]+)", state, re.M)
+    docs_m = re.search(r"^- Docs in git: *([a-z]+)", state, re.M)
+    docs = docs_m.group(1) if docs_m else UNDECIDED
+    ignore_action = "untouched"
     if set_autonomy:
         new = re.sub(r"^- Checkpoints: .*$", f"- Checkpoints: {set_autonomy}", state, count=1, flags=re.M)
         if new != state:
             state, changes = new, changes + [f"autonomy -> {set_autonomy}"]
+    if set_docs:
+        if docs_m:
+            new = re.sub(r"^- Docs in git: .*$", f"- Docs in git: {set_docs}", state, count=1, flags=re.M)
+        else:
+            new = re.sub(r"^(- Updated: .*)$", rf"\1\n- Docs in git: {set_docs}", state, count=1, flags=re.M)
+        new = new.replace(f"- [ ] {DOCS_QUESTION}", f"- [x] {DOCS_QUESTION}")
+        if new != state:
+            state, changes = new, changes + [f"docs in git -> {set_docs}"]
+            line = f"- {date}: Workbench folders under docs/ in git: {set_docs}. (user)"
+            if "\n## Open questions" in state:
+                state = state.replace("\n## Open questions", f"{line}\n\n## Open questions", 1)
+        docs = set_docs
+        ignore_action = apply_gitignore(root, docs, dry)
+    if set_autonomy or set_docs:
+        mode_now = re.search(r"^- Checkpoints: *([a-z-]+)", state, re.M)
         agents = os.path.join(root, "AGENTS.md")
-        if os.path.isfile(agents):
+        if os.path.isfile(agents) and mode_now:
             with open(agents, encoding="utf-8") as f:
-                content, agents_action = upsert_section(f.read(), section_text(set_autonomy))
+                content, agents_action = upsert_section(f.read(), section_text(mode_now.group(1), docs))
             write(agents, content, dry)
             changes.append("AGENTS.md section refreshed")
     added = []
@@ -368,7 +468,9 @@ def update(root, set_autonomy, regs, dry, decisions=(), questions=()):
                       "report": report_lines(root, m.group(1).strip() if m else "unknown",
                                              "updated" if changes or added else "unchanged",
                                              mode_text, agents_action,
-                                             registered_rows(state), detect(root)["not_registered"])}, indent=1))
+                                             registered_rows(state), detect(root)["not_registered"],
+                                             docs if docs in LOCAL_FOLDERS else UNDECIDED,
+                                             ignore_action)}, indent=1))
     return 0
 
 
@@ -406,17 +508,20 @@ def consume(input_src, dry, code):
 
 
 def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
-    root, mode, name, autonomy, set_autonomy, regs, dry = ".", None, None, None, None, [], False
+        return 0
+    root, mode, name, autonomy, set_autonomy, regs, dry, docs = ".", None, None, None, None, [], False, None
     decisions, questions, input_src = [], [], None
     i = 0
     while i < len(argv):
         a = argv[i]
         if a in ("--decision", "--open-question"):
             return usage_error(f"{a} was replaced by --input <file>: free text never goes on the command line.")
-        if a in ("--root", "--name", "--autonomy", "--set-autonomy", "--register", "--input"):
+        if a in ("--root", "--name", "--autonomy", "--set-autonomy", "--register", "--input", "--docs"):
             if i + 1 >= len(argv):
                 return usage_error(f"{a} needs a value.")
             v = argv[i + 1]
@@ -433,6 +538,10 @@ def main(argv):
                 set_autonomy = v
             elif a == "--input":
                 input_src = v
+            elif a == "--docs":
+                if v not in DOCS_CHOICES:
+                    return usage_error(f"--docs must be one of {DOCS_CHOICES}, got {v!r}.")
+                docs = v
             else:
                 regs.append(v)
             i += 2
@@ -467,12 +576,13 @@ def main(argv):
             return usage_error("--apply requires a name (--name, or \"name\" in --input) and --autonomy.")
         if autonomy not in MODES:
             return usage_error(f"--autonomy must be one of {MODES}.")
-        return consume(input_src, dry, apply(root, name, autonomy, parsed, dry, decisions, questions))
+        return consume(input_src, dry, apply(root, name, autonomy, parsed, dry, decisions, questions,
+                                             docs or UNDECIDED))
     if set_autonomy and set_autonomy not in MODES:
         return usage_error(f"--set-autonomy must be one of {MODES}.")
-    if not set_autonomy and not parsed and not decisions and not questions:
-        return usage_error("nothing to do: pass --detect, --apply, --set-autonomy, --register or --input.")
-    return consume(input_src, dry, update(root, set_autonomy, parsed, dry, decisions, questions))
+    if not set_autonomy and not parsed and not decisions and not questions and not docs:
+        return usage_error("nothing to do: pass --detect, --apply, --set-autonomy, --docs, --register or --input.")
+    return consume(input_src, dry, update(root, set_autonomy, parsed, dry, decisions, questions, docs))
 
 
 if __name__ == "__main__":
