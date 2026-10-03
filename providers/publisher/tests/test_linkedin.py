@@ -1292,7 +1292,7 @@ def test_first_comment_file_must_exist_and_have_text(env, fake, text_file, tmp_p
 
 def test_comment_dry_run_accepts_the_short_comment_urn_of_a_copied_link(tmp_path, monkeypatch):
     text = tmp_path / "reply.txt"
-    text.write_text("Valeu!")
+    text.write_text("Thanks!")
     monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
     r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
                         "--idempotency-key", "reply-1", "--post-id", "urn:li:activity:7400000000000000001",
