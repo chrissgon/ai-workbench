@@ -327,7 +327,8 @@ def test_reclaim_after_timeout(db, tmp_path):
     [event_id] = add_events(db, tmp_path, 1)
     first = ok("event-next", "--source", "mailbox", db=db)["events"][0]
     # Within the timeout nothing comes back.
-    assert ok("event-next", "--source", "mailbox", db=db) == {"source": "mailbox", "events": [], "reclaimed": 0}
+    assert ok("event-next", "--source", "mailbox", db=db) == {"source": "mailbox", "events": [], "reclaimed": 0,
+                                                         "failed": []}
     # Age the claim past the default 60 minutes.
     conn = sqlite3.connect(db)
     conn.execute("UPDATE events SET claimed_at = ? WHERE id = ?",
@@ -343,15 +344,83 @@ def test_reclaim_after_timeout(db, tmp_path):
     assert r.returncode == 1
     ok("event-done", "--id", str(event_id), "--token", second["events"][0]["claim_token"], "--status", "done", db=db)
     # A finished event is never reclaimed.
-    assert ok("event-next", "--source", "mailbox", "--reclaim-after-minutes", "0", db=db)["events"] == []
+    age_claim(db, event_id, 61)
+    assert ok("event-next", "--source", "mailbox", "--reclaim-after-minutes", "1", db=db)["events"] == []
+
+
+def age_claim(db, event_id, minutes):
+    conn = sqlite3.connect(db)
+    conn.execute("UPDATE events SET claimed_at = ? WHERE id = ?",
+                 (iso(datetime.now(timezone.utc) - timedelta(minutes=minutes)), event_id))
+    conn.commit()
+    conn.close()
 
 
 def test_reclaim_minutes_flag(db, tmp_path):
-    add_events(db, tmp_path, 1)
+    [event_id] = add_events(db, tmp_path, 1)
     ok("event-next", "--source", "mailbox", db=db)
-    got = ok("event-next", "--source", "mailbox", "--reclaim-after-minutes", "0", db=db)
+    age_claim(db, event_id, 2)
+    got = ok("event-next", "--source", "mailbox", "--reclaim-after-minutes", "1", db=db)
     assert got["reclaimed"] == 1 and len(got["events"]) == 1
     assert run("event-next", "--source", "mailbox", "--reclaim-after-minutes", "-1", db=db).returncode == 2
+
+
+def test_reclaim_after_zero_minutes_is_refused(db, tmp_path):
+    """VS10: 0 took every live claim, so a second tick stole the event a running agent was working on."""
+    add_events(db, tmp_path, 1)
+    claimed = ok("event-next", "--source", "mailbox", db=db)["events"][0]
+    r = run("event-next", "--source", "mailbox", "--reclaim-after-minutes", "0", db=db)
+    assert r.returncode == 2 and "--reclaim-after-minutes" in r.stderr
+    ok("event-done", "--id", str(claimed["id"]), "--token", claimed["claim_token"], "--status", "done", db=db)
+
+
+def test_an_event_whose_runs_keep_crashing_ends_failed_after_the_maximum_attempts(db, tmp_path):
+    """VS10: a claim left by a crashed run was reclaimed for ever; after the stated maximum of attempts the
+    event ends failed with a note instead of being handed out again."""
+    [event_id, other_id] = add_events(db, tmp_path, 2)
+    maximum = 5
+    for attempt in range(1, maximum + 1):
+        got = ok("event-next", "--source", "mailbox", db=db)
+        assert [e["id"] for e in got["events"]] == [event_id] and got["events"][0]["attempts"] == attempt
+        age_claim(db, event_id, 61)  # the run crashed: its claim expires
+    got = ok("event-next", "--source", "mailbox", db=db)
+    assert got["failed"] == [event_id] and got["reclaimed"] == 0
+    assert [e["id"] for e in got["events"]] == [other_id]
+    row = sqlite3.connect(db).execute("SELECT status, note, attempts, claim_token, finished_at FROM events "
+                                      "WHERE id = ?", (event_id,)).fetchone()
+    assert row[0] == "failed" and str(maximum) in row[1] and row[2] == maximum and row[3] is None and row[4]
+    assert "attempts" in run("--help").stdout and str(maximum) in run("--help").stdout
+
+
+def test_inbox_add_for_an_event_with_an_open_item_of_that_kind_returns_it(db, payload, tmp_path):
+    """VS10: an event escalated twice made two inbox items."""
+    [event_id] = add_events(db, tmp_path, 1)
+    first = ok("inbox-add", "--kind", "escalation", "--title", "t", "--payload-file", payload,
+               "--payload-sha256", SHA_A, "--event-id", str(event_id), db=db)
+    again = ok("inbox-add", "--kind", "escalation", "--title", "t2", "--payload-file", payload,
+               "--payload-sha256", SHA_B, "--event-id", str(event_id), db=db)
+    assert first["created"] is True and again["created"] is False and again["id"] == first["id"]
+    assert again["status"] == "open"
+    other_kind = ok("inbox-add", "--kind", "reply", "--title", "t", "--payload-file", payload,
+                    "--payload-sha256", SHA_A, "--event-id", str(event_id), db=db)
+    no_event = [ok("inbox-add", "--kind", "escalation", "--title", "t", "--payload-file", payload,
+                   "--payload-sha256", SHA_A, db=db) for _ in range(2)]
+    assert other_kind["created"] is True and all(item["created"] for item in no_event)
+    assert len({first["id"], other_kind["id"], *(item["id"] for item in no_event)}) == 4
+    # Once the item is no longer open, the event may be escalated again.
+    ok("inbox-resolve", "--id", str(first["id"]), "--status", "rejected", "--by", "user", db=db)
+    third = ok("inbox-add", "--kind", "escalation", "--title", "t3", "--payload-file", payload,
+               "--payload-sha256", SHA_A, "--event-id", str(event_id), db=db)
+    assert third["created"] is True and third["id"] != first["id"]
+    row = store_row()
+    assert "`inbox-add`: `id`, `created`" in row and "`failed`, the ids that ended `failed`" in row
+    assert "`<m>` is at least 1" in row
+
+
+def store_row() -> str:
+    root = Path(__file__).resolve().parents[3]
+    return [line for line in (root / "providers" / "CONTRACT.md").read_text(encoding="utf-8").splitlines()
+            if line.startswith("| `store:runtime` |")][-1]
 
 
 def test_external_text_is_stored_verbatim(db, tmp_path):

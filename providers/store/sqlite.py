@@ -51,7 +51,10 @@ PATH_MAX = 4096           # --out-dir, --db
 LIMITS = {"event-next": (1, 1, 100), "runs": (20, 1, 1000), "inbox-list": (100, 1, 1000),
           "actions": (1000, 1, 10000)}  # verb: (default, min, max) for --limit
 RECLAIM_DEFAULT_MINUTES = 60
+RECLAIM_MIN_MINUTES = 1
 RECLAIM_MAX_MINUTES = 7 * 24 * 60
+# An event claimed this many times whose last claim expired too is not handed out again: it ends failed.
+MAX_ATTEMPTS = 5
 
 EVENT_DONE_STATUSES = ("done", "failed", "to_inbox")
 RUN_END_STATUSES = ("ok", "failed", "timeout")
@@ -150,7 +153,10 @@ verbs:
   event-next      --source <s> [--limit n] [--reclaim-after-minutes m]
                   claims up to n pending events (default 1): status claimed,
                   a claim token per event. Claims older than m minutes
-                  (default {RECLAIM_DEFAULT_MINUTES}) return to pending first.
+                  (default {RECLAIM_DEFAULT_MINUTES}, at least {RECLAIM_MIN_MINUTES}) return to pending first;
+                  an event already claimed {MAX_ATTEMPTS} times (attempts) whose claim
+                  expired again ends failed with a note instead, and its id is
+                  listed in "failed"   -> {{source, events, reclaimed, failed}}
   event-done      --id <id> --token <claim token> --status done|failed|to_inbox [--note <t>]
                   exit 1 when the claim was lost (reclaimed, or finished)
   run-start       --agent <a> --event-id <id|none> --trigger <t>  -> {{run_id}}
@@ -159,7 +165,9 @@ verbs:
                   --out-dir <path> [--error <text>]
   runs            [--limit n] [--agent <a>]                   newest first
   inbox-add       --kind <k> --title <t> --payload-file <json> --payload-sha256 <hex>
-                  [--event-id <id>]                           -> {{id}}
+                  [--event-id <id>]                 -> {{id, created, status}}; when the
+                  event already has an open item of this kind, that item is returned
+                  (created false) and nothing is added
   inbox-list      [--status open|approved|rejected|done|all] (default open) [--limit n]
   inbox-resolve   --id <id> --status approved|rejected|done --by <who> [--note <t>]
                   open -> approved|rejected|done, approved -> done; nothing else
@@ -526,16 +534,24 @@ def cmd_event_next(args) -> int:
     source = text_arg(args.source, "--source", LABEL_MAX)
     limit = limit_arg(args.limit, "event-next")
     minutes = args.reclaim_after_minutes
-    if not 0 <= minutes <= RECLAIM_MAX_MINUTES:
-        raise StoreError(f"--reclaim-after-minutes must be between 0 and {RECLAIM_MAX_MINUTES}", EXIT_USAGE)
+    if not RECLAIM_MIN_MINUTES <= minutes <= RECLAIM_MAX_MINUTES:
+        raise StoreError(f"--reclaim-after-minutes must be between {RECLAIM_MIN_MINUTES} and {RECLAIM_MAX_MINUTES}",
+                         EXIT_USAGE)
     conn = open_ready(args)
     now = utcnow()
+    expired = iso(now - timedelta(minutes=minutes))
     claimed = []
     with write(conn):
+        failed = [r["id"] for r in conn.execute(
+            "SELECT id FROM events WHERE source = ? AND status = 'claimed' AND claimed_at < ? AND attempts >= ? "
+            "ORDER BY id", (source, expired, MAX_ATTEMPTS))]
+        for event_id in failed:
+            conn.execute("UPDATE events SET status = 'failed', claim_token = NULL, finished_at = ?, note = ? "
+                         "WHERE id = ?", (iso(now), f"gave up after {MAX_ATTEMPTS} attempts: every claim expired "
+                                          "without a result (the run crashed or was stopped)", event_id))
         reclaimed = conn.execute(
             "UPDATE events SET status = 'pending', claim_token = NULL, claimed_at = NULL "
-            "WHERE source = ? AND status = 'claimed' AND claimed_at < ?",
-            (source, iso(now - timedelta(minutes=minutes)))).rowcount
+            "WHERE source = ? AND status = 'claimed' AND claimed_at < ?", (source, expired)).rowcount
         ids = [r["id"] for r in conn.execute(
             "SELECT id FROM events WHERE source = ? AND status = 'pending' ORDER BY id LIMIT ?", (source, limit))]
         for event_id in ids:
@@ -545,7 +561,7 @@ def cmd_event_next(args) -> int:
             row = conn.execute("SELECT id, source, external_id, payload, attempts, created_at, claimed_at, "
                                "claim_token FROM events WHERE id = ?", (event_id,)).fetchone()
             claimed.append(row_dict(row, ("payload",)))
-    return emit({"source": source, "events": claimed, "reclaimed": reclaimed})
+    return emit({"source": source, "events": claimed, "reclaimed": reclaimed, "failed": failed})
 
 
 def cmd_event_done(args) -> int:
@@ -627,10 +643,16 @@ def cmd_inbox_add(args) -> int:
     now = iso(utcnow())
     with write(conn):
         event_exists(conn, event_id)
-        item_id = conn.execute(
-            "INSERT INTO inbox (kind, title, payload, payload_sha256, event_id, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?)", (kind, title, payload, digest, event_id, now)).lastrowid
-    return emit({"id": item_id, "status": "open", "created_at": now})
+        # One open item per event and kind: an event escalated twice keeps its first item.
+        row = conn.execute("SELECT id, created_at FROM inbox WHERE event_id = ? AND kind = ? AND status = 'open' "
+                           "ORDER BY id LIMIT 1", (event_id, kind)).fetchone() if event_id is not None else None
+        if row is None:
+            item_id = conn.execute(
+                "INSERT INTO inbox (kind, title, payload, payload_sha256, event_id, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)", (kind, title, payload, digest, event_id, now)).lastrowid
+    if row is not None:
+        return emit({"id": row["id"], "status": "open", "created_at": row["created_at"], "created": False})
+    return emit({"id": item_id, "status": "open", "created_at": now, "created": True})
 
 
 def cmd_inbox_list(args) -> int:
