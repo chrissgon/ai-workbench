@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [search:web]
   side_effects: []
-  version: "0.2"
+  version: "1.0.0"
 ---
 
 # Brand strategy

@@ -18,7 +18,7 @@ metadata:
   updates: [docs/engineering/plans/<task>.md]
   requires: []
   side_effects: []
-  version: "0.4"
+  version: "1.0.0"
 ---
 
 # Refactor

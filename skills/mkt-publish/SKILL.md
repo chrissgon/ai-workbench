@@ -19,7 +19,7 @@ metadata:
   updates: [docs/workbench/state.md, docs/marketing/calendar.md]
   requires: [publisher:<platform>, scheduler:job]
   side_effects: [publish, schedule]
-  version: "0.2"
+  version: "1.0.0"
 ---
 
 # Publish

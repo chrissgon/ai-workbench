@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: []
   side_effects: []
-  version: "0.1"
+  version: "1.0.0"
 ---
 
 # Critique

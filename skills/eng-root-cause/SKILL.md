@@ -17,7 +17,7 @@ metadata:
   updates: []
   requires: [search:web]
   side_effects: []
-  version: "0.5"
+  version: "1.0.0"
 ---
 
 # Root cause

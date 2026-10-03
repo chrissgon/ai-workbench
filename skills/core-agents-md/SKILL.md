@@ -19,7 +19,7 @@ metadata:
   updates: []
   requires: []
   side_effects: []
-  version: "0.3"
+  version: "1.0.0"
 ---
 
 # Project instructions (AGENTS.md)

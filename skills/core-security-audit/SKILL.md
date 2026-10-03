@@ -18,7 +18,7 @@ metadata:
   updates: []
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "1.0.0"
 ---
 
 # Security audit

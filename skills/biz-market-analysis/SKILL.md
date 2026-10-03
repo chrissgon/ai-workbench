@@ -20,7 +20,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [search:web]
   side_effects: []
-  version: "0.4"
+  version: "1.0.0"
 ---
 
 # Market analysis

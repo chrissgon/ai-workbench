@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [integration:vcs]
   side_effects: [push]
-  version: "0.2"
+  version: "1.0.0"
 ---
 
 # Branch sync

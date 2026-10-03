@@ -20,7 +20,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [publisher:<platform>]
   side_effects: [publish]
-  version: "0.1"
+  version: "1.0.0"
 ---
 
 # Engage
