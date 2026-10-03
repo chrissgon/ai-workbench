@@ -24,7 +24,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "github.py"
 FAKE_TOKEN = "FAKE-test-github-token-3c2b1a0f9e8d-never-print-me"
-REPO = "octo-org/web"
+REPO = "example-org/web"
 ALERTS_PATH = f"/repos/{REPO}/dependabot/alerts"
 API_VERSION = "2026-03-10"
 
@@ -256,9 +256,9 @@ def test_next_link_parsing():
 
 def test_repo_validation():
     module = load_module()
-    for good in ("octo-org/web", "a_b/c.d-e", "O/R"):
+    for good in ("example-org/web", "a_b/c.d-e", "O/R"):
         assert module.check_repo(good) == good
-    for bad in ("octo-org", "a/b/c", "../x", "a/..", "a b/c", "a/c?x=1", "", None, "a/c\n"):
+    for bad in ("example-org", "a/b/c", "../x", "a/..", "a b/c", "a/c?x=1", "", None, "a/c\n"):
         with pytest.raises(module.ProviderError):
             module.check_repo(bad)
 
@@ -682,6 +682,23 @@ def test_the_contract_states_the_dry_run_of_commit_files_resolves_flag_and_the_t
     assert "Contents: Read-only" in permission and "Dependabot alerts: Read-only" in permission
     assert permission in (root / "contracts" / "secrets.md").read_text(encoding="utf-8")
     assert '"Contents: Read-only"' in module.HELP_EPILOG
+
+
+# --- VS16: the provider's documents know no caller ----------------------------------------------------
+
+
+def test_the_vcs_documents_name_no_caller_and_no_real_account():
+    """The README and --help named the weekly vote, its data files and a real account of the code host in
+    their examples; the provider's logic knows none of them."""
+    root = HERE.parents[2]
+    texts = {"README.md": (HERE.parent / "README.md").read_text(encoding="utf-8"),
+             "--help": load_module().HELP_EPILOG}
+    for name, text in texts.items():
+        for word in ("octo-org", "octo/", "pick.json", "pick-queue", "weekly", "vote", "profile repository"):
+            assert word not in text.lower(), (name, word)
+        assert "example-org/" in text, name
+    source = (root / "providers" / "vcs" / "github.py").read_text(encoding="utf-8")
+    assert "octo-org" not in source and "octo/" not in source
 
 
 # --- VS15: errors that are not ProviderError, and a replay without a token --------------------------

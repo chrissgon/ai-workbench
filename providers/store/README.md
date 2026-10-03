@@ -2,7 +2,7 @@
 
 Implementations of the `store:runtime` class (`store` until 2026-10-02; the folder and `STORE_PROVIDER` keep that name): the durable state of the agent runtime (backlog R2). Interface: `providers/CONTRACT.md`. Selected with `STORE_PROVIDER=sqlite`; the runtime calls the store only through its CLI, so another implementation (a cloud database) can replace it without changing the runtime.
 
-The decision behind it is in `docs/decisions.md` ("2026-09-28: An agent runtime as a new, tool-free layer; storage behind an interface"): a Markdown file does not take several agents writing at once, so state that agents write goes to a store. The first user is the `social-manager` agent (backlog PB7).
+The decision behind it is in `docs/decisions.md` ("2026-09-28: An agent runtime as a new, tool-free layer; storage behind an interface"): a Markdown file does not take several agents writing at once, so state that agents write goes to a store.
 
 ## SQLite (`sqlite.py`)
 
@@ -39,13 +39,13 @@ Wherever `--db` or `STORE_SQLITE_PATH` points; the provider picks no default, so
 ### Usage
 
 ```sh
-export STORE_SQLITE_PATH="$HOME/agent-state/social-manager.sqlite"
+export STORE_SQLITE_PATH="$HOME/agent-state/agent.sqlite"
 python3 providers/store/sqlite.py init
 python3 providers/store/sqlite.py --check
 python3 providers/store/sqlite.py event-add --source mailbox --external-id '<message id>' --payload-file event.json
 python3 providers/store/sqlite.py event-next --source mailbox --limit 5
 python3 providers/store/sqlite.py event-done --id 12 --token <claim token> --status done
-python3 providers/store/sqlite.py run-start --agent social-manager --event-id 12 --trigger mailbox
+python3 providers/store/sqlite.py run-start --agent example-agent --event-id 12 --trigger mailbox
 python3 providers/store/sqlite.py run-end --run-id 7 --status ok --exit-code 0 --cost-usd 0.04 \
     --tokens 12000 --duration-ms 65000 --out-dir /path/to/run
 python3 providers/store/sqlite.py action-count --kind reply --since 2026-09-29T00:00:00-03:00

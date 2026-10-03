@@ -61,7 +61,7 @@ def db(tmp_path):
 
 @pytest.fixture
 def payload(tmp_path):
-    return write_json(tmp_path / "payload.json", {"comment": "hello", "post": "urn:li:activity:1"})
+    return write_json(tmp_path / "payload.json", {"comment": "hello", "post": "post-1"})
 
 
 def add_events(db, tmp_path, n, source="mailbox"):
@@ -452,6 +452,15 @@ def test_inbox_list_by_id_reaches_an_item_past_the_limit_whatever_its_status(db,
     assert "`truncated`" in row and "`actions --since <ISO-8601> [--kind <k>] [--limit <n>]`" in row
 
 
+def test_the_store_documents_name_no_caller():
+    """VS16: the README and --help named one agent of one caller; the store knows no caller."""
+    root = Path(__file__).resolve().parents[3]
+    for name, text in (("README.md", (root / "providers" / "store" / "README.md").read_text(encoding="utf-8")),
+                       ("sqlite.py", SCRIPT.read_text(encoding="utf-8"))):
+        for word in ("social", "urn:li", "vote"):
+            assert word not in text.lower(), (name, word)
+
+
 def store_row() -> str:
     root = Path(__file__).resolve().parents[3]
     return [line for line in (root / "providers" / "CONTRACT.md").read_text(encoding="utf-8").splitlines()
@@ -477,7 +486,7 @@ def test_external_text_is_stored_verbatim(db, tmp_path):
 
 def test_run_lifecycle(db, tmp_path):
     [event_id] = add_events(db, tmp_path, 1)
-    started = ok("run-start", "--agent", "social-manager", "--event-id", str(event_id), "--trigger", "mailbox",
+    started = ok("run-start", "--agent", "agent-a", "--event-id", str(event_id), "--trigger", "mailbox",
                  db=db)
     other = ok("run-start", "--agent", "other", "--event-id", "none", "--trigger", "schedule", db=db)
     assert other["event_id"] is None
@@ -493,7 +502,7 @@ def test_run_lifecycle(db, tmp_path):
     assert [x["id"] for x in runs] == [other["run_id"], started["run_id"]]
     assert runs[1]["cost_usd"] == 0.042 and runs[1]["tokens"] == 12345 and runs[1]["status"] == "ok"
     assert runs[0]["cost_usd"] is None and runs[0]["error"].startswith("stopped")
-    mine = ok("runs", "--agent", "social-manager", db=db)["runs"]
+    mine = ok("runs", "--agent", "agent-a", db=db)["runs"]
     assert [x["id"] for x in mine] == [started["run_id"]]
     assert run("run-start", "--agent", "a", "--event-id", "999", "--trigger", "t", db=db).returncode == 1
     assert run("run-end", "--run-id", "999", "--status", "ok", "--exit-code", "0", "--cost-usd", "0", "--tokens",
@@ -547,9 +556,9 @@ def age_action(db, action_id, hours):
 
 
 def test_actions_and_counts_by_window(db, tmp_path):
-    result = write_json(tmp_path / "result.json", {"comment_urn": "urn:li:comment:(urn:li:activity:1,2)"})
+    result = write_json(tmp_path / "result.json", {"comment_id": "comment-2"})
 
-    def add(key, kind="reply", target="urn:li:activity:1", sha=SHA_A):
+    def add(key, kind="reply", target="post-1", sha=SHA_A):
         return run("action-add", "--kind", kind, "--idempotency-key", key, "--target", target,
                    "--payload-sha256", sha, "--result-file", result, db=db)
 
@@ -574,14 +583,14 @@ def test_actions_and_counts_by_window(db, tmp_path):
 
     listed = ok("actions", "--since", since_day, db=db)["actions"]
     assert [a["id"] for a in listed] == [ids["r2"], ids["r3"], ids["p1"]]
-    assert listed[0]["result"]["comment_urn"].startswith("urn:li:comment")
+    assert listed[0]["result"]["comment_id"] == "comment-2"
     assert [a["id"] for a in ok("actions", "--since", since_day, "--kind", "post", db=db)["actions"]] == [ids["p1"]]
 
     # The same key is one action; the same key for something else is a conflict.
     again = add("r3")
     assert again.returncode == 0 and json.loads(again.stdout) ["created"] is False
     assert add("r3", sha=SHA_B).returncode == 1
-    assert add("r3", target="urn:li:activity:2").returncode == 1
+    assert add("r3", target="post-2").returncode == 1
     assert run("action-count", "--kind", "reply", "--since", "yesterday", db=db).returncode == 2
 
 

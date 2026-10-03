@@ -28,7 +28,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "github.py"
 FAKE_TOKEN = "FAKE-test-github-token-7d6e5f4a3b2c-never-print-me"
-REPO = "octo/octo"
+REPO = "example-org/site"
 ALLOW = ["--allow", "data/pick.json", "--allow", "data/pick-queue.json", "--allow", "data/posts.json",
          "--allow", "assets/posts/*"]
 
@@ -223,7 +223,7 @@ def git(env, cwd, *args):
 
 
 class Remote:
-    """A bare repository standing in for the profile repository, and a git setup around it."""
+    """A bare repository standing in for the repository on the host, and a git setup around it."""
 
     def __init__(self, tmp: Path):
         self.tmp = tmp
@@ -300,7 +300,7 @@ def out_files(tmp_path):
     image = out / "post.png"
     image.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
     message = out / "message.txt"
-    message.write_text("chore(vote): queue the round after 12\n\nApproved in the weekly gate.\n")
+    message.write_text("chore(data): queue item 12\n\nApproved at the gate.\n")
     return {"queue": queue, "image": image, "message": message}
 
 
@@ -344,7 +344,7 @@ def test_dry_run_prints_the_diff_and_pushes_nothing(remote, out_files):
          "bytes": out_files["image"].stat().st_size}]
     assert "data/pick-queue.json" in out["diff_stat"] and "assets/posts/vote-12.png" in out["diff_stat"]
     assert '+[{"pillar": "Engineering"' in out["diff"] and out["diff_truncated"] is False
-    assert out["message"].startswith("chore(vote): queue the round after 12")
+    assert out["message"].startswith("chore(data): queue item 12")
     assert remote.head() == before
     assert ledger(env) == {}
     assert list(work_root(env).iterdir()) == []  # the private clone is removed
@@ -377,7 +377,7 @@ def test_confirmed_pushes_one_signed_commit_with_exactly_the_files(remote, out_f
     assert remote.changed() == ["assets/posts/vote-12.png", "data/pick-queue.json"]
     raw = git(remote.env, remote.bare, "cat-file", "commit", "refs/heads/main")
     assert "BEGIN SSH SIGNATURE" in raw
-    assert "chore(vote): queue the round after 12" in raw
+    assert "chore(data): queue item 12" in raw
     assert git(remote.env, remote.bare, "show", "refs/heads/main:data/pick-queue.json") == out_files["queue"].read_text()
     assert ledger(env)["k1"]["status"] == "committed" and ledger(env)["k1"]["commit"] == out["commit"]
     assert list(work_root(env).iterdir()) == []
@@ -388,7 +388,7 @@ def test_confirmed_pushes_one_signed_commit_with_exactly_the_files(remote, out_f
 def test_paths_outside_allow_are_refused_before_cloning(remote, out_files):
     env = remote.provider_env()
     before = remote.head()
-    for repo_path in (".github/workflows/weekly.yml", "README.md", "assets/posts/sub/x.png", "data/pick.json.bak",
+    for repo_path in (".github/workflows/ci.yml", "README.md", "assets/posts/sub/x.png", "data/pick.json.bak",
                       "assets/link/x.png", "../x"):
         proc = run(commit_args(out_files, "k1", "--confirmed", files=[f"{repo_path}={out_files['queue']}"]), env)
         assert proc.returncode == 2, repo_path

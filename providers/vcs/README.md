@@ -6,7 +6,7 @@ Implementations of the `integration:vcs` class. Interface: `providers/CONTRACT.m
 
 Reads a repository's Dependabot alerts and dismisses one, through the GitHub REST API (`X-GitHub-Api-Version: 2026-03-10`). It is the native layer for the security review of a project's dependencies (backlog S8).
 
-It also reads one file (`read-file`, REST contents API) and commits files to a branch (`commit-files`, git over SSH). Those two serve the weekly vote (`docs/architecture/weekly-vote.md`): the runtime reads the vote data of a profile repository and, after the person's approval, commits the new data files to it.
+It also reads one file (`read-file`, REST contents API) and commits files to a branch (`commit-files`, git over SSH). A caller reads a file of a repository with the first and, after the person's approval, commits new files to it with the second.
 
 ### Setup (once)
 
@@ -25,10 +25,10 @@ Dismissing needs **Dependabot alerts: Read and write**. Keep that permission in 
 ### Usage
 
 ```sh
-uv run providers/vcs/github.py alerts --repo octo-org/web [--state open] [--severity high,critical] [--ecosystem npm]
-uv run providers/vcs/github.py dismiss-alert --repo octo-org/web --number 42 --reason not_used \
+uv run providers/vcs/github.py alerts --repo example-org/web [--state open] [--severity high,critical] [--ecosystem npm]
+uv run providers/vcs/github.py dismiss-alert --repo example-org/web --number 42 --reason not_used \
     --comment-file why.txt --idempotency-key web-42 --dry-run
-uv run providers/vcs/github.py dismiss-alert --repo octo-org/web --number 42 --reason not_used \
+uv run providers/vcs/github.py dismiss-alert --repo example-org/web --number 42 --reason not_used \
     --comment-file why.txt --idempotency-key web-42 --confirmed
 uv run providers/vcs/github.py resolve --idempotency-key web-42 --dismissed --confirmed
 ```
@@ -42,7 +42,7 @@ uv run providers/vcs/github.py resolve --idempotency-key web-42 --dismissed --co
 ### Reading a file
 
 ```sh
-uv run providers/vcs/github.py read-file --repo octo/octo --path data/pick.json [--ref master]
+uv run providers/vcs/github.py read-file --repo example-org/site --path data/state.json [--ref main]
 ```
 
 - One `GET /repos/{owner}/{repo}/contents/{path}` (source: [Get repository content](https://docs.github.com/en/rest/repos/contents?apiVersion=2026-03-10#get-repository-content), read 2026-09-30). Prints `{repo, path, ref, sha, size, content}`; `ref` is null when the default branch was read.
@@ -54,11 +54,11 @@ uv run providers/vcs/github.py read-file --repo octo/octo --path data/pick.json 
 ### Committing files
 
 ```sh
-uv run providers/vcs/github.py commit-files --repo octo/octo --branch master --message-file msg.txt \
-    --file data/pick-queue.json=out/pick-queue.json --file assets/posts/vote-12.png=out/vote-12.png \
-    --allow data/pick.json --allow data/pick-queue.json --allow data/posts.json --allow 'assets/posts/*' \
-    --idempotency-key vote-12-queue --dry-run          # then the same with --confirmed after the gate
-uv run providers/vcs/github.py resolve --idempotency-key vote-12-queue --not-committed --confirmed
+uv run providers/vcs/github.py commit-files --repo example-org/site --branch main --message-file msg.txt \
+    --file data/queue.json=out/queue.json --file assets/images/item-12.png=out/item-12.png \
+    --allow data/state.json --allow data/queue.json --allow 'assets/images/*' \
+    --idempotency-key site-12-queue --dry-run          # then the same with --confirmed after the gate
+uv run providers/vcs/github.py resolve --idempotency-key site-12-queue --not-committed --confirmed
 ```
 
 - It uses git, not the API, so the commit is made and signed by your own git configuration (`user.name`, `user.email`, `commit.gpgsign true`, `gpg.format ssh`, `user.signingkey`), exactly like your own commits. It reads no token. An unsigned commit is never pushed (exit 3). Your git hooks run and the repository's attributes apply (a line-ending or filter rule in `.gitattributes`), and either can change a file on its way into the commit: before the push the provider hashes the blob of every path in the commit and compares it with the sha256 of the file it was given, the one a dry run prints. A difference exits 1, pushes nothing and releases the key; the same check refuses to report `unchanged` for a branch that holds other bytes.

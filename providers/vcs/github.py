@@ -216,18 +216,18 @@ exit codes: 0 success, 1 provider or service error, 2 usage error, 3 not configu
 GitHub REST API version pinned: {GITHUB_API_VERSION} (header X-GitHub-Api-Version).
 
 examples:
-  uv run providers/vcs/github.py --check --repo octo-org/web
-  uv run providers/vcs/github.py alerts --repo octo-org/web --state open --severity high,critical
-  uv run providers/vcs/github.py dismiss-alert --repo octo-org/web --number 42 \\
+  uv run providers/vcs/github.py --check --repo example-org/web
+  uv run providers/vcs/github.py alerts --repo example-org/web --state open --severity high,critical
+  uv run providers/vcs/github.py dismiss-alert --repo example-org/web --number 42 \\
       --reason not_used --comment-file why.txt --idempotency-key web-42 --dry-run
-  uv run providers/vcs/github.py dismiss-alert --repo octo-org/web --number 42 \\
+  uv run providers/vcs/github.py dismiss-alert --repo example-org/web --number 42 \\
       --reason not_used --comment-file why.txt --idempotency-key web-42 --confirmed
   uv run providers/vcs/github.py resolve --idempotency-key web-42 --not-dismissed --confirmed
-  uv run providers/vcs/github.py read-file --repo octo/octo --path data/pick.json --ref master
-  uv run providers/vcs/github.py commit-files --repo octo/octo --branch master \\
-      --message-file msg.txt --file data/pick-queue.json=out/pick-queue.json \\
-      --allow data/pick-queue.json --allow 'assets/posts/*' --idempotency-key vote-12-queue --dry-run
-  uv run providers/vcs/github.py resolve --idempotency-key vote-12-queue --not-committed --confirmed
+  uv run providers/vcs/github.py read-file --repo example-org/site --path data/state.json --ref main
+  uv run providers/vcs/github.py commit-files --repo example-org/site --branch main \\
+      --message-file msg.txt --file data/queue.json=out/queue.json \\
+      --allow data/queue.json --allow 'assets/images/*' --idempotency-key site-12-queue --dry-run
+  uv run providers/vcs/github.py resolve --idempotency-key site-12-queue --not-committed --confirmed
 """
 
 

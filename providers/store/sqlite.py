@@ -203,8 +203,8 @@ exit codes: 0 success, 1 store error (database locked past the timeout, no
   such id, a lost claim, a conflicting key), 2 usage error, 3 not configured.
 
 examples:
-  python3 providers/store/sqlite.py init --db ~/agent-state/social.sqlite
-  export {PATH_ENV}=~/agent-state/social.sqlite
+  python3 providers/store/sqlite.py init --db ~/agent-state/agent.sqlite
+  export {PATH_ENV}=~/agent-state/agent.sqlite
   python3 providers/store/sqlite.py --check
   python3 providers/store/sqlite.py event-add --source mailbox --external-id '<id@mail>' \\
       --payload-file event.json
