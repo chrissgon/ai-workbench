@@ -165,7 +165,7 @@
         "core-critique"
       ],
       "assertions": [
-        "The reply names core-critique as the skill that would handle the request and says it is installed and can run now",
+        "The reply names core-critique as the skill that would handle the request and says it can run now: in words (installed, available, can start now) or by the status `ready` in its routing block, which the skill defines as installed with what it needs",
         {
           "text": "The `Route:` line reads `Route: core-critique (capability, ready)`",
           "tags": [
