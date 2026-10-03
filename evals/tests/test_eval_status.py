@@ -575,6 +575,21 @@ def test_an_event_line_with_an_unknown_key_or_a_value_outside_its_form_is_an_err
     assert problems and problems[0].startswith("line 1: ") and why in problems[0], problems
 
 
+def test_an_event_with_another_number_of_runs_than_the_configured_one_is_no_evidence(root, capsys):
+    """A trial of 2 runs per case, copied into a skill by hand, is refused: evidence comes only from an event
+    that used the configured values, and its score and gate would otherwise be computed from it."""
+    configure(root)  # no "runs" key: the default, 3
+    path = evidence(root, [event_line(runs=2), run_line()])
+    assert es.evidence_file_problems(str(path), str(root)) == [
+        'line 1: runs is 2, and the configured number is 3 ("runs" of evals/eval-gate.json): an event with another '
+        "number of runs is a trial, and writes no evidence"]
+    assert es.main(["evidence"], root=str(root)) == 1 and "runs is 2, and the configured number is 3" in capsys.readouterr().err
+    configure(root, runs=2)  # the number the gate file configures is the one an event line must carry
+    assert es.evidence_file_problems(str(path), str(root)) == []
+    path = evidence(root, [event_line(), run_line()])
+    assert "runs is 3, and the configured number is 2" in es.evidence_file_problems(str(path), str(root))[0]
+
+
 def test_the_forms_that_are_optional_or_depend_on_the_kind(root):
     configure(root)
     for line in (event_line(kind="partial", gate=DROP), event_line(complete=False, gate=DROP),  # an abandoned full test

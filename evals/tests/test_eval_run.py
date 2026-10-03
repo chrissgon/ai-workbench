@@ -2343,7 +2343,11 @@ def test_an_event_with_other_values_than_the_configured_ones_writes_to_its_scrat
     assert out["evidence"]["scratch"] == str(scratch.relative_to(tmp_path))
     event, runs = event_file(tmp_path, out)
     assert event["skill"] == "demo" and event["complete"] is True and len(runs) == out["evidence"]["lines"] > 0
-    assert er.load_status().evidence_file_problems(str(scratch), str(tmp_path), "demo") == []  # and a valid one
+    # A valid file, but for its number of runs: the one value an evidence line records, which is refused when it
+    # is not the configured one, so that such a trial copied into a skill by hand fails the validator.
+    assert er.load_status().evidence_file_problems(str(scratch), str(tmp_path), "demo") == (
+        ["line 1: runs is 2, and the configured number is 1 (\"runs\" of evals/eval-gate.json): an event with another "
+         "number of runs is a trial, and writes no evidence"] if extra == ["--runs", "2"] else [])
     assert why in bench_of(tmp_path)["scratch"]
     # The configured values, and the same event is evidence.
     assert er.main(["--skill", "demo"]) == 0
