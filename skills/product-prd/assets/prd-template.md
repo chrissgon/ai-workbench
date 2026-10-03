@@ -26,7 +26,9 @@
 
 ## Sources
 
-- {document, decision id, research citation, file path, user answer date}
+- {document, decision id, research citation, file path}
+- User answer {YYYY-MM-DD}: "{the user's words}"
+- User answer (accepted recommendation, {YYYY-MM-DD}): "{the recommended answer the user accepted with one word}"
 
 ## Features
 

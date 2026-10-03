@@ -9,14 +9,3 @@
 #
 # What each check asks, and the reason of each failure:
 #   uv run --with pytest python3 scripts/tests/test_cli_conformance.py
-skills/design-brief/scripts/lint_brief.py report  # the record's shape; arguments as top-level keys
-skills/design-brief/scripts/longest_value.py unknown-flag  # an unknown flag is ignored, exit 0
-skills/design-execute/scripts/lint_result.py value-flag-last  # traceback
-skills/design-handoff/scripts/lint_handoff.py report  # the record's shape
-skills/design-system/scripts/contrast.py value-flag-last  # traceback
-skills/design-system/scripts/lint_design_system.py value-flag-last  # traceback
-skills/design-ux-flows/scripts/lint_flows.py report  # the record's shape; arguments as top-level keys
-skills/mkt-engage/scripts/parse_notification.py help  # no --help: it reads standard input and exits 2
-skills/product-backlog/scripts/lint_backlog.py value-flag-last  # traceback
-skills/product-prd/scripts/lint_prd.py report  # --report is a switch
-skills/product-roadmap/scripts/lint_roadmap.py value-flag-last  # traceback

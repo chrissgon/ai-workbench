@@ -80,13 +80,13 @@ def test_lint_brief_reports_a_state_missing_from_content(tmp_path):
 
 def test_lint_brief_eval_fixture_screens_keep_their_items():
     split = load(LINT_BRIEF, "lint_brief").split_list
-    flows = (ROOT / "skills/design-brief/evals/files/flows.md").read_text(encoding="utf-8")
+    flows = (ROOT / "skills/design-brief/evals/files/docs-site/docs/design/flows.md").read_text(encoding="utf-8")
     states = re.search(r"SCREEN-3:.*?States:\s*(.*?)\.\s*Breakpoints:", flows).group(1)
-    assert split(states) == ["default", "light and dark (from `data-pui-mode`)", "theme colour applied",
+    assert split(states) == ["default", "light and dark (from `data-plu-mode`)", "theme colour applied",
                              "search entry point absent when the build has no search"]
 
 
-# ---------- design-brief/lint_brief.py: --report ----------
+# ---------- design-brief/lint_brief.py: --report and the command line ----------
 
 def test_lint_brief_report_records_the_arguments_date_and_result(tmp_path):
     flows = tmp_path / "flows.md"
@@ -95,13 +95,32 @@ def test_lint_brief_report_records_the_arguments_date_and_result(tmp_path):
     brief.write_text("# Brief\n\n## Content\n\n- Regions: hero, project list, footer\n- States: default\n", encoding="utf-8")
     report = tmp_path / "lint.json"
     r = run(LINT_BRIEF, "--file", str(brief), "--type", "screen", "--values", "inline",
-            "--flows", str(flows), "--screen", "SCREEN-1", "--report", str(report))
-    printed, saved = json.loads(r.stdout), json.loads(report.read_text(encoding="utf-8"))
-    assert r.returncode == 1 and printed["ok"] is False
+            "--flows", str(flows), "--screen", "SCREEN-1", "--report", str(report), "--json")
+    text = report.read_text(encoding="utf-8")
+    printed, saved = json.loads(r.stdout), json.loads(text)
+    assert r.returncode == 1 and printed["ok"] is False and text.endswith("\n")
     assert re.fullmatch(r"\d{4}-\d{2}-\d{2}", saved.pop("date"))
-    assert saved == {"ok": False, "file": str(brief), "type": "screen", "values": "inline", "screen": "SCREEN-1",
-                     "flows": str(flows), "messaging": None, "counts": printed["counts"], "errors": printed["errors"]}
+    assert saved == {"script": "lint_brief.py",
+                     "arguments": {"--file": str(brief), "--type": "screen", "--values": "inline",
+                                   "--flows": str(flows), "--screen": "SCREEN-1", "--json": True},
+                     "ok": False, "summary": printed["summary"], "errors": printed["errors"],
+                     "counts": printed["counts"]}
+    assert printed["summary"].startswith(f"lint_brief FAILED: {len(printed['errors'])} errors; ")
     assert any("reduced motion" in e for e in saved["errors"])
+
+
+def test_lint_brief_refuses_unknown_flags_and_prints_usage_errors_on_stderr(tmp_path):
+    brief = tmp_path / "brief.md"
+    brief.write_text("# Brief\n", encoding="utf-8")
+    base = (LINT_BRIEF, "--file", str(brief), "--type", "screen", "--values", "inline")
+    for args in (("--reprot", str(tmp_path / "x.json")), ("--strict",)):
+        r = run(*base, *args)
+        assert r.returncode == 2 and "unknown argument" in r.stderr and r.stdout == ""
+    assert not (tmp_path / "x.json").exists()
+    r = run(LINT_BRIEF)
+    assert r.returncode == 2 and r.stdout == "" and "--file" in r.stderr
+    r = run(LINT_BRIEF, "--help")
+    assert r.returncode == 0 and "--report" in r.stdout
 
 
 def test_lint_brief_report_needs_a_writable_path(tmp_path):

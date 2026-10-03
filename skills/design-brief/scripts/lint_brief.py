@@ -5,8 +5,10 @@ Usage: python3 lint_brief.py --file <brief.md> --type <screen|mockup|logo|presen
                              --values <inline|loaded> [--messaging <messaging.md>]
                              [--flows <flows.md> --screen SCREEN-n] [--report <lint.json>] [--json]
 
---report <path> also writes the result to that file, with the command's own arguments ("file", "type",
-"values", "screen", "messaging") and the date, so a reviewer can check the lint ran and what it checked.
+Prints JSON on stdout: ok, summary (the line a reply quotes), counts, errors. --report <path> also writes
+the record of the evidence convention to that file (script, date, arguments, ok, summary, errors, counts),
+so a reviewer can check the lint ran and what it checked. Usage errors, an unknown flag among them, go to
+stderr with exit 2 and write no report.
 
 Checks:
   - required sections are present
@@ -25,7 +27,7 @@ Checks:
   - no TBD, TODO, lorem or {template placeholder} remains
   - every OPEN has Blocks: and Recommended:
 
-Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
+Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
 import datetime
 import json
@@ -71,18 +73,37 @@ def split_list(s):
     return [it.strip() for it in re.split(sep + outside, s) if it.strip()]
 
 
+VALUE_FLAGS = ("--file", "--type", "--values", "--messaging", "--flows", "--screen", "--report")
+SWITCHES = ("--json",)
+
+
+def parse(argv):
+    """The flags given, as {flag: value or True}, and None; or None and the message of a usage error."""
+    args, i = {}, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in VALUE_FLAGS:
+            if i + 1 >= len(argv):
+                return None, f"{a} needs a value"
+            args[a] = argv[i + 1]
+            i += 2
+        elif a in SWITCHES:
+            args[a] = True
+            i += 1
+        else:
+            return None, f"unknown argument {a!r}"
+    return args, None
+
+
 def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
-    as_json = "--json" in argv
-    args = {}
-    for flag in ("--file", "--type", "--values", "--messaging", "--flows", "--screen", "--report"):
-        if flag in argv:
-            if argv.index(flag) + 1 >= len(argv):
-                print(f"Error: {flag} needs a value.", file=sys.stderr)
-                return 2
-            args[flag] = argv[argv.index(flag) + 1]
+        return 0
+    args, problem = parse(argv)
+    if problem:
+        print(f"Error: {problem}. See --help.", file=sys.stderr)
+        return 2
+    as_json = bool(args.get("--json"))
     if "--file" not in args or args.get("--type") not in PROFILE or args.get("--values") not in ("inline", "loaded"):
         print("Error: --file, --type <" + "|".join(PROFILE) + "> and --values <inline|loaded> are required.",
               file=sys.stderr)
@@ -177,13 +198,14 @@ def main(argv):
         if "Blocks:" not in rest or "Recommended:" not in rest:
             errors.append(f"{oid} lacks Blocks: or Recommended:")
     ok = not errors
-    result = {"ok": ok, "counts": {"hex_colours": len(hexes), "directions": len(set(directions)),
-              "criteria": len(crits)}, "errors": errors}
+    counts = {"hex_colours": len(hexes), "directions": len(set(directions)), "criteria": len(crits)}
+    summary = (f"lint_brief {'ok' if ok else 'FAILED'}: {len(errors)} errors; {counts['hex_colours']} hex colours, "
+               f"{counts['directions']} directions, {counts['criteria']} criteria")
+    result = {"ok": ok, "summary": summary, "counts": counts, "errors": errors}
     if "--report" in args:
-        record = {"ok": ok, "date": datetime.date.today().isoformat(), "file": args["--file"],
-                  "type": args["--type"], "values": args["--values"], "screen": args.get("--screen"),
-                  "flows": args.get("--flows"), "messaging": args.get("--messaging"),
-                  "counts": result["counts"], "errors": errors}
+        record = {"script": "lint_brief.py", "date": datetime.date.today().isoformat(),
+                  "arguments": {k: v for k, v in args.items() if k != "--report"},
+                  "ok": ok, "summary": summary, "errors": errors, "counts": counts}
         try:
             with open(args["--report"], "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2)

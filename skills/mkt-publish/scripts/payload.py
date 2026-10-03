@@ -2,46 +2,64 @@
 """Build the payload of a batch of posts for one approval, and verify it before executing.
 
 Usage:
-  python3 payload.py build --content docs/marketing/content/2026-10-05-a.md [--content ...] \
-      --workbench <path of the workbench checkout> [--platform linkedin] [--grace-minutes 120] [--out <folder>]
-  python3 payload.py verify --manifest <out>/manifest.json --hash <plan hash> --workbench <workbench>
-  python3 payload.py jobs --manifest <out>/manifest.json --workbench <workbench>
+  python3 payload.py build --content docs/marketing/content/2027-10-11-a.md [--content ...] \
+      --platform <platform> --platform-file <path of the platform's data file> \
+      --publisher <path resolve.py printed> --workbench <path of the workbench checkout> \
+      [--grace-minutes 120] [--out <folder>]
+  python3 payload.py verify --manifest <out>/manifest.json --hash <plan hash> --publisher <path> --workbench <path>
+  python3 payload.py jobs --manifest <out>/manifest.json --publisher <path> --workbench <path>
   python3 payload.py approval --state docs/workbench/state.md --hash <plan hash>
 
 build   For each content file (written by mkt-social-copy): reads the slot time (the first ISO-8601
         date-time with offset in the header, before the first fenced block), the approval scope (a header
         line ending in ": plan" or ": action") and the exact text of the ```post and ```first-comment
-        blocks, and an optional image named on a header line "- Image: <path>" (JPG, PNG or GIF, relative to
-        the working directory). Writes <out>/<key>/post.txt, <out>/<key>/comment.txt (when there is a first comment),
-        <out>/<key>/image.<ext> (a copy of the image, when there is one) and
-        <out>/<key>/job.json, the scheduler command file that publishes the post and its first comment
-        with the idempotency key <key> (the content file name without .md). Writes <out>/manifest.json
-        (every post with its time, scope and the SHA-256 of each file) and prints the manifest's own
-        SHA-256 as "plan_hash": the value recorded in the approval.
+        blocks, and an optional image named on a header line "- Image: <path>" (relative to the working
+        directory). Writes <out>/<key>/post.txt, <out>/<key>/comment.txt (when there is a first comment),
+        <out>/<key>/image.<ext> (a copy of the image, when there is one) and <out>/<key>/job.json, the
+        scheduler command file that runs the publisher with the idempotency key <key> (the content file name
+        without .md). Writes <out>/manifest.json (every post with its time, scope and the SHA-256 of each
+        file) and prints the manifest's own SHA-256 as "plan_hash": the value recorded in the approval.
         <out> is a durable folder, because the approval is verified again days later: without --out it is
         .workbench-local/payloads/<first slot date>/ under the working directory ("-2", "-3" ... when that
         folder already holds a payload), created with mode 0700 and printed as "out". Inside a git
         repository the folder must be git-ignored (checked with `git check-ignore`); build refuses, exit 2,
-        when it is not. --out <folder> names another folder (missing or empty), for a preview that is
-        thrown away (a folder from mktemp -d) or a caller with its own durable store.
+        when it is not, and when git cannot answer. --out <folder> names another folder (missing or empty),
+        for a preview that is thrown away (a folder from mktemp -d) or a caller with its own durable store.
+
+The platform. --platform is the platform's name; it is lower-cased, so that two spellings of one platform give
+one plan_hash. --platform-file is that platform's data file (shared/references/platforms/<platform>.json): its
+"platform" must be the same name. From it, build reads whether a post needs text, the most characters a post and
+a first comment may have, whether a first comment is supported, and the media a post may carry (types told by
+their first bytes, size, count). This script holds no limit of a platform. Without --platform-file (the call of a
+caller written before the flag) a post must have text and may carry no image, and a line on stderr says so.
+
+The publisher. --publisher is the path of the publisher provider that `providers/resolve.py --class
+publisher:<platform>` printed; this script never builds a provider's path. The job runs it with `uv run`, from
+--workbench, and its snapshot holds the publisher and the secret resolver the publisher reads beside its own
+folder (<publisher's folder>/../secrets/resolver.py). Without --publisher, build writes no job.json
+("jobs_written": false): for a caller that writes its own job; `jobs` writes them later.
+
 verify  Recomputes the manifest hash and every file hash listed in it, and checks that each job.json is the
-        job the manifest describes at the folder's current place and --workbench. Exit 0 only when all match.
-jobs    Writes each job.json again for where the payload folder and the workbench are now (after either
-        was moved). The manifest and the plan_hash do not change. Prints the posts like build.
+        job the manifest describes at the folder's current place, for --publisher and --workbench. Exit 0 only
+        when all match; a manifest that is not JSON is a problem (exit 1).
+jobs    Writes each job.json again for where the payload folder, the publisher and the workbench are now (after
+        one was moved). The manifest and the plan_hash do not change. Prints the posts like build.
 approval  Looks in the state file's "Approvals" table for a plan or action row whose Payload hash equals
         --hash. Prints {"match": true|false, "row": ..., "other_rows": [...]}: other_rows are plan or action rows
         with a different hash, which never cover this payload. Exit 0 when a row matches, 1 when none does.
 
-The plan_hash does not depend on where the payload folder or the workbench lives: the manifest
-("version": 2) holds paths relative to its own folder, and job.json, which the scheduler needs with
-absolute paths, is derived from the manifest and not hashed into it. The same content files, platform
-and grace minutes built again from the same working directory give the same plan_hash. A manifest
-without "version" (written before this definition, with absolute paths and a job hash) is verified the
-old way, and only while its folder is where it was built.
+The plan_hash does not depend on where the payload folder, the publisher or the workbench lives: the manifest
+("version": 2) holds paths relative to its own folder, and job.json, which the scheduler needs with absolute
+paths, is derived from the manifest and not hashed into it. The same content files, platform and grace minutes
+built again from the same working directory give the same plan_hash. A manifest without "version" (written
+before this definition, with absolute paths and a job hash) is verified the old way, and only while its folder
+is where it was built.
 
 Prints JSON on stdout; diagnostics on stderr. Exit 0 ok, 1 verification failed, 2 usage or input error.
 Standard library only; no network; it never publishes or schedules anything.
 """
+from __future__ import annotations
+
 import argparse
 import hashlib
 import json
@@ -56,12 +74,13 @@ ISO = re.compile(r"\b\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:\d{2}|
 SCOPE = re.compile(r":\s*(plan|action)\s*$")
 KEY = re.compile(r"^[a-z0-9][a-z0-9.-]{0,79}$")
 IMAGE_LINE = re.compile(r"^\s*-\s*Image:\s*(\S+)\s*$")
-IMAGE_MAGIC = {".png": [b"\x89PNG\r\n\x1a\n"], ".jpg": [b"\xff\xd8\xff"], ".jpeg": [b"\xff\xd8\xff"],
-               ".gif": [b"GIF87a", b"GIF89a"]}
-MAX_IMAGE_BYTES = 8 * 1024 * 1024
+PLATFORM_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 MANIFEST_VERSION = 2
 DEFAULT_ROOT = Path(".workbench-local") / "payloads"
 FILES = (("post_file", "post_sha256"), ("comment_file", "comment_sha256"), ("image_file", "image_sha256"))
+# Without a data file: text required, no media, no limit this script could know.
+NO_DATA = {"requires_text": True, "max_characters": None, "first_comment": True, "first_comment_max": None,
+           "max_count": 0, "max_bytes": 0, "types": []}
 
 
 def fail(message: str, code: int = 2):
@@ -71,6 +90,38 @@ def fail(message: str, code: int = 2):
 
 def sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def platform_name(value: str) -> str:
+    name = value.strip().lower()
+    if not PLATFORM_NAME.match(name):
+        fail(f"--platform {value!r} is not a platform name (lowercase letters, digits and hyphens)")
+    return name
+
+
+def platform_rules(name: str, platform_file) -> dict:
+    """What a post may hold on this platform, from its data file."""
+    if not platform_file:
+        print(f"warning: no --platform-file: a post needs text and may carry no image; pass the data file of "
+              f"{name!r} to apply its rules", file=sys.stderr)
+        return dict(NO_DATA)
+    try:
+        data = json.loads(Path(platform_file).read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("not a JSON object")
+        if data.get("platform") != name:
+            fail(f"--platform-file {platform_file} is the data file of {data.get('platform')!r}, not of {name!r}")
+        post, media = data["post"], data["media"]
+        types = [{"name": t["name"], "extensions": [e.lower() for e in t["extensions"]],
+                  "magic": [bytes.fromhex(m) for m in t["magic_hex"]]} for t in media["types"]]
+        return {"requires_text": bool(post["requires_text"]), "max_characters": int(post["max_characters"]),
+                "first_comment": bool(post["first_comment"]["supported"]),
+                "first_comment_max": int(post["first_comment"]["max_characters"]),
+                "max_count": int(media["max_count"]), "max_bytes": int(media["max_bytes"]), "types": types}
+    except OSError as e:
+        fail(f"--platform-file: {e}")
+    except (ValueError, KeyError, TypeError) as e:
+        fail(f"--platform-file {platform_file}: not a platform data file ({type(e).__name__}: {e})")
 
 
 def parse(path: Path) -> dict:
@@ -94,8 +145,6 @@ def parse(path: Path) -> dict:
             buf.append(line)
     if name is not None:
         raise ValueError(f"```{name} block is not closed")
-    if not found.get("post"):
-        raise ValueError("no ```post block")
     times = ISO.findall("\n".join(header))
     if len(set(times)) != 1:
         raise ValueError(f"expected one slot time with offset in the header, found {times or 'none'}")
@@ -105,42 +154,68 @@ def parse(path: Path) -> dict:
     if len(scopes) != 1:
         raise ValueError(f"expected one approval line ending in ': plan' or ': action', found {scopes or 'none'}")
     images = [m.group(1) for line in header for m in [IMAGE_LINE.match(line)] if m]
-    if len(images) > 1:
-        raise ValueError(f"at most one '- Image:' line, found {len(images)}")
-    return {"at": at, "scope": scopes[0], "post": found["post"], "comment": found.get("first-comment") or None,
-            "image": images[0] if images else None}
+    return {"at": at, "scope": scopes[0], "post": found.get("post") or "",
+            "comment": found.get("first-comment") or None, "images": images}
 
 
-def check_image(path: Path) -> str:
-    """Return the image's extension after checking that it is a JPG, PNG or GIF by its bytes; raise otherwise."""
+def check_post(p: dict, rules: dict):
+    """Raise when the post breaks a rule of the platform."""
+    if not p["post"] and (rules["requires_text"] or not p["images"]):
+        raise ValueError("no ```post block, or an empty one: a post on this platform needs text")
+    if rules["max_characters"] is not None and len(p["post"]) > rules["max_characters"]:
+        raise ValueError(f"the post has {len(p['post'])} characters, more than {rules['max_characters']}")
+    if p["comment"]:
+        if not rules["first_comment"]:
+            raise ValueError("this platform takes no first comment")
+        if rules["first_comment_max"] is not None and len(p["comment"]) > rules["first_comment_max"]:
+            raise ValueError(f"the first comment has {len(p['comment'])} characters, more than "
+                             f"{rules['first_comment_max']}")
+    if len(p["images"]) > 1:
+        raise ValueError(f"at most one '- Image:' line, found {len(p['images'])}")
+    if p["images"] and rules["max_count"] < 1:
+        raise ValueError("this platform takes no image here" if rules["types"] else
+                         "an image needs --platform-file: the media a platform takes are read from its data file")
+
+
+def check_image(path: Path, rules: dict) -> str:
+    """Return the image's extension after checking its type, by its bytes, and its size; raise otherwise."""
     ext = path.suffix.lower()
-    if ext not in IMAGE_MAGIC:
-        raise ValueError(f"image {path}: only .png, .jpg, .jpeg or .gif")
+    kind = next((t for t in rules["types"] if ext in t["extensions"]), None)
+    if kind is None:
+        allowed = ", ".join(e for t in rules["types"] for e in t["extensions"])
+        raise ValueError(f"image {path}: only {allowed}")
     if not path.is_file():
         raise ValueError(f"image {path} not found")
     data = path.read_bytes()
-    if len(data) > MAX_IMAGE_BYTES:
-        raise ValueError(f"image {path}: {len(data)} bytes, more than {MAX_IMAGE_BYTES}")
-    if not any(data.startswith(m) for m in IMAGE_MAGIC[ext]):
-        raise ValueError(f"image {path}: the bytes are not a {ext[1:].upper()} file")
-    return ".jpg" if ext == ".jpeg" else ext
+    if len(data) > rules["max_bytes"]:
+        raise ValueError(f"image {path}: {len(data)} bytes, more than {rules['max_bytes']}")
+    if not any(data.startswith(m) for m in kind["magic"]):
+        raise ValueError(f"image {path}: the bytes are not a {kind['name'].upper()} file")
+    return kind["extensions"][0]
 
 
 def git_ignored(folder: Path):
-    """True or False when the folder is inside a git work tree (ignored or not); None when it is in none."""
+    """True or False when the folder is inside a git work tree (ignored or not); None when it is in none.
+    A check that git cannot answer is a refusal (exit 2), never read as "not a repository"."""
     inside = folder
     while not inside.is_dir():
         inside = inside.parent
     try:
         top = subprocess.run(["git", "-C", str(inside), "rev-parse", "--show-toplevel"],
                              capture_output=True, text=True, timeout=30)
-        if top.returncode != 0:
-            return None
-        check = subprocess.run(["git", "-C", str(inside), "check-ignore", "-q", "--", str(folder / "manifest.json")],
-                               capture_output=True, text=True, timeout=30)
     except (OSError, subprocess.TimeoutExpired):
         return None
-    return {0: True, 1: False}.get(check.returncode)
+    if top.returncode != 0:
+        return None
+    try:
+        check = subprocess.run(["git", "-C", str(inside), "check-ignore", "-q", "--", str(folder / "manifest.json")],
+                               capture_output=True, text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as e:
+        fail(f"git check-ignore could not run for {folder}: {e}; nothing was written")
+    if check.returncode not in (0, 1):
+        fail(f"git check-ignore exited {check.returncode} for {folder} ({check.stderr.strip()[:200]}): whether "
+             "the folder is ignored is not known; nothing was written")
+    return check.returncode == 0
 
 
 def default_out(first_date: str) -> Path:
@@ -163,14 +238,22 @@ def make_private(folder: Path):
         d.chmod(0o700)
 
 
-def job_for(entry: dict, platform: str, grace_minutes: int, folder: Path, wb: Path) -> dict:
-    """The scheduler command file of one post: derived from the manifest, absolute for this folder and workbench."""
-    provider = wb / "providers" / "publisher" / f"{platform}.py"
-    resolver = wb / "providers" / "secrets" / "resolver.py"
+def publisher_path(value) -> Path:
+    path = Path(value).resolve()
+    if not path.is_file():
+        fail(f"--publisher {value}: no such file; pass the path `providers/resolve.py --class publisher:<platform>` "
+             "printed")
+    return path
+
+
+def job_for(entry: dict, platform: str, grace_minutes: int, folder: Path, publisher: Path, wb: Path) -> dict:
+    """The scheduler command file of one post: derived from the manifest, absolute for this folder, publisher and
+    workbench."""
+    resolver = publisher.parent.parent / "secrets" / "resolver.py"
     post_file = str(folder / entry["post_file"])
-    argv = ["uv", "run", str(provider), "publish", "--platform", platform,
+    argv = ["uv", "run", str(publisher), "publish", "--platform", platform,
             "--text-file", post_file, "--idempotency-key", entry["key"]]
-    snapshot = [str(provider), str(resolver), post_file]
+    snapshot = [str(publisher), str(resolver), post_file]
     for name, flag in (("comment_file", "--first-comment-file"), ("image_file", "--media")):
         if name in entry:
             argv += [flag, str(folder / entry[name])]
@@ -179,9 +262,9 @@ def job_for(entry: dict, platform: str, grace_minutes: int, folder: Path, wb: Pa
     return {"argv": argv, "cwd": str(wb), "snapshot": snapshot, "grace_minutes": grace_minutes}
 
 
-def write_jobs(data: dict, folder: Path, wb: Path):
+def write_jobs(data: dict, folder: Path, publisher: Path, wb: Path):
     for e in data["posts"]:
-        job = job_for(e, data["platform"], data["grace_minutes"], folder, wb)
+        job = job_for(e, data["platform"], data["grace_minutes"], folder, publisher, wb)
         (folder / e["job_file"]).write_text(json.dumps(job, indent=1) + "\n", encoding="utf-8")
 
 
@@ -199,9 +282,13 @@ def relative_to_cwd(path: str) -> str:
 
 
 def build(a) -> int:
+    platform = platform_name(a.platform)
+    rules = platform_rules(platform, a.platform_file)
     wb = Path(a.workbench).resolve()
-    missing = [str(p) for p in (wb / "providers" / "publisher" / f"{a.platform}.py",
-                                wb / "providers" / "secrets" / "resolver.py") if not p.is_file()]
+    publisher = publisher_path(a.publisher) if a.publisher else None
+    missing = []
+    if publisher and not (publisher.parent.parent / "secrets" / "resolver.py").is_file():
+        missing.append(str(publisher.parent.parent / "secrets" / "resolver.py"))
     parsed, keys = [], set()
     for c in a.content:
         path = Path(c)
@@ -213,7 +300,9 @@ def build(a) -> int:
         keys.add(key)
         try:
             p = parse(path)
-            p["ext"] = check_image(Path(p["image"])) if p["image"] else None
+            check_post(p, rules)
+            p["image"] = p["images"][0] if p["images"] else None
+            p["ext"] = check_image(Path(p["image"]), rules) if p["image"] else None
         except (OSError, ValueError) as e:
             fail(f"{c}: {e}")
         parsed.append((datetime.fromisoformat(p["at"].replace("Z", "+00:00")), c, key, p))
@@ -249,16 +338,21 @@ def build(a) -> int:
                          image_sha256=sha256(image_file))
         entry["job_file"] = f"{key}/job.json"
         posts.append(entry)
-    data = {"version": MANIFEST_VERSION, "platform": a.platform, "grace_minutes": a.grace_minutes, "posts": posts}
-    write_jobs(data, out, wb)
+    data = {"version": MANIFEST_VERSION, "platform": platform, "grace_minutes": a.grace_minutes, "posts": posts}
+    if publisher:
+        write_jobs(data, out, publisher, wb)
     manifest = out / "manifest.json"
     manifest.write_text(json.dumps(data, ensure_ascii=False, indent=1) + "\n", encoding="utf-8")
     result = {"out": str(out), "git_ignored": ignored, "manifest": str(manifest), "plan_hash": sha256(manifest),
-              "posts": absolute(data, out), "missing_providers": missing}
+              "platform": platform, "jobs_written": publisher is not None, "posts": absolute(data, out),
+              "missing_providers": missing}
     json.dump(result, sys.stdout, ensure_ascii=False, indent=1)
     print()
+    if not publisher:
+        print("warning: no --publisher: no job.json was written; run `payload.py jobs` with the path resolve.py "
+              "printed before scheduling", file=sys.stderr)
     if missing:
-        print(f"warning: not found: {', '.join(missing)}; the jobs cannot run until the workbench path is right",
+        print(f"warning: not found: {', '.join(missing)}; the jobs cannot run until the publisher's path is right",
               file=sys.stderr)
     return 0
 
@@ -284,16 +378,25 @@ def verify(a) -> int:
     problems = []
     if sha256(manifest) != a.hash.strip().lower():
         problems.append("manifest hash differs from the approval")
-    data = json.loads(manifest.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(manifest.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or not isinstance(data.get("posts", []), list):
+            raise ValueError("not a manifest object")
+    except (OSError, ValueError) as e:
+        problems.append(f"{manifest} is not a readable manifest: {e}")
+        print(json.dumps({"ok": False, "manifest_version": None, "payload": str(folder), "problems": problems},
+                         indent=1))
+        return 1
     version = data.get("version", 1)
     if version == 1:
         verify_legacy(data, problems)
     elif version != MANIFEST_VERSION:
         problems.append(f"manifest version {version} is not known to this script")
     else:
-        if not a.workbench:
-            fail("verify needs --workbench <path of the workbench checkout> for this manifest")
-        wb = Path(a.workbench).resolve()
+        if not a.workbench or not a.publisher:
+            fail("verify needs --publisher <path resolve.py printed> and --workbench <path of the workbench "
+                 "checkout> for this manifest")
+        wb, publisher = Path(a.workbench).resolve(), Path(a.publisher).resolve()
         for e in data["posts"]:
             for f, h in FILES:
                 if f in e:
@@ -307,8 +410,8 @@ def verify(a) -> int:
                 job = json.loads(job_file.read_text(encoding="utf-8"))
             except (OSError, ValueError):
                 job = None
-            if job != job_for(e, data["platform"], data["grace_minutes"], folder, wb):
-                problems.append(f"{e['key']}: job.json is not the job of this manifest for this folder and "
+            if job != job_for(e, data["platform"], data["grace_minutes"], folder, publisher, wb):
+                problems.append(f"{e['key']}: job.json is not the job of this manifest for this folder, publisher and "
                                 "workbench (after a move, run: payload.py jobs)")
     print(json.dumps({"ok": not problems, "manifest_version": version, "payload": str(folder),
                       "problems": problems}, indent=1))
@@ -321,11 +424,11 @@ def jobs(a) -> int:
         data = json.loads(manifest.read_text(encoding="utf-8"))
     except (OSError, ValueError) as e:
         fail(f"--manifest: {e}")
-    if data.get("version") != MANIFEST_VERSION:
+    if not isinstance(data, dict) or data.get("version") != MANIFEST_VERSION:
         fail(f"{manifest} is not a version {MANIFEST_VERSION} manifest: its hash covers the jobs' absolute paths, "
              "so its jobs cannot be written again; build a new payload")
     folder = manifest.resolve().parent
-    write_jobs(data, folder, Path(a.workbench).resolve())
+    write_jobs(data, folder, publisher_path(a.publisher), Path(a.workbench).resolve())
     json.dump({"out": str(folder), "manifest": str(manifest.resolve()), "plan_hash": sha256(manifest),
                "posts": absolute(data, folder)}, sys.stdout, ensure_ascii=False, indent=1)
     print()
@@ -359,15 +462,19 @@ def main(argv=None) -> int:
     b.add_argument("--content", action="append", required=True)
     b.add_argument("--out", help="payload folder, missing or empty (default: a new folder under "
                    ".workbench-local/payloads/ in the working directory)")
-    b.add_argument("--workbench", required=True)
-    b.add_argument("--platform", default="linkedin")
+    b.add_argument("--platform", required=True, help="the platform's name; lower-cased")
+    b.add_argument("--platform-file", help="the platform's data file, shared/references/platforms/<platform>.json")
+    b.add_argument("--publisher", help="the publisher's path, as providers/resolve.py printed it")
+    b.add_argument("--workbench", required=True, help="the workbench checkout the jobs run from")
     b.add_argument("--grace-minutes", type=int, default=120)
     v = sub.add_parser("verify")
     v.add_argument("--manifest", required=True)
     v.add_argument("--hash", required=True)
+    v.add_argument("--publisher")
     v.add_argument("--workbench")
     j = sub.add_parser("jobs")
     j.add_argument("--manifest", required=True)
+    j.add_argument("--publisher", required=True)
     j.add_argument("--workbench", required=True)
     ap = sub.add_parser("approval")
     ap.add_argument("--state", default="docs/workbench/state.md")

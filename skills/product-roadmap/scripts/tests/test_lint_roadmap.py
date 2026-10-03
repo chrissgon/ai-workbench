@@ -86,7 +86,7 @@ def lint(tmp_path: Path, roadmap: str, prd: str = PRD) -> tuple[int, dict]:
 def test_clean_roadmap_passes_and_gives_a_line_to_quote(tmp_path):
     code, out = lint(tmp_path, ROADMAP)
     assert code == 0 and out["ok"] is True
-    assert out["result_line"] == "lint_roadmap.py --file roadmap.md --prd prd.md: ok: true, 0 errors, 0 warnings"
+    assert out["summary"] == "lint_roadmap.py --file roadmap.md --prd prd.md: ok: true, 0 errors, 0 warnings"
 
 
 def test_header_date_is_not_a_delivery_date(tmp_path):
@@ -94,11 +94,11 @@ def test_header_date_is_not_a_delivery_date(tmp_path):
     assert code == 0 and out["warnings"] == []
 
 
-def test_result_line_counts_errors(tmp_path):
+def test_summary_counts_errors(tmp_path):
     code, out = lint(tmp_path, ROADMAP.replace("Includes: F-1, F-2.", "Includes: F-1."))
     assert code == 1 and out["ok"] is False
     assert any("F-2 (should) is in 0 releases" in e for e in out["errors"])
-    assert out["result_line"].endswith(f"ok: false, {len(out['errors'])} errors, 0 warnings")
+    assert out["summary"].endswith(f"ok: false, {len(out['errors'])} errors, 0 warnings")
 
 
 def test_blocking_open_question_needs_readiness_no(tmp_path):
@@ -126,3 +126,33 @@ def test_missing_prd_flag_is_a_usage_error(tmp_path):
     p = subprocess.run([sys.executable, str(LINT), "--file", "roadmap.md"], cwd=tmp_path,
                        capture_output=True, text=True, check=False)
     assert p.returncode == 2 and "--prd" in p.stderr
+
+
+def run(tmp_path: Path, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(LINT), *args], cwd=tmp_path, capture_output=True, text=True, check=False)
+
+
+def test_a_value_flag_given_last_and_an_unknown_flag_are_usage_errors(tmp_path):
+    for flag in ("--file", "--prd", "--report"):
+        p = run(tmp_path, "--file", "roadmap.md", "--prd", "prd.md", flag)
+        assert p.returncode == 2 and p.stdout == "" and f"{flag} needs a value" in p.stderr, flag
+        assert "Traceback" not in p.stderr
+    p = run(tmp_path, "--file", "roadmap.md", "--prd", "prd.md", "--reprot", "x.json")
+    assert p.returncode == 2 and p.stdout == "" and "unknown option '--reprot'" in p.stderr
+    p = run(tmp_path)
+    assert p.returncode == 2 and p.stdout == "" and "Usage" in p.stderr
+
+
+def test_report_writes_the_record_of_the_run(tmp_path):
+    lint(tmp_path, ROADMAP.replace("Includes: F-1, F-2.", "Includes: F-1."))
+    p = run(tmp_path, "--file", "roadmap.md", "--prd", "prd.md", "--report", "roadmap.lint.json")
+    printed, record = json.loads(p.stdout), json.loads((tmp_path / "roadmap.lint.json").read_text(encoding="utf-8"))
+    assert p.returncode == 1
+    assert set(record) == {"script", "date", "arguments", "ok", "summary", "errors", "warnings", "counts"}
+    assert record["script"] == "lint_roadmap.py" and record["arguments"] == {"--file": "roadmap.md", "--prd": "prd.md"}
+    assert record["ok"] is False and record["summary"] == printed["summary"] and record["errors"] == printed["errors"]
+    assert record["counts"] == {"releases": 2, "features": 3, "placed": 2, "unplaced": 1}
+    lint(tmp_path, ROADMAP)
+    p = run(tmp_path, "--file", "roadmap.md", "--prd", "prd.md", "--report", "roadmap.lint.json")
+    record = json.loads((tmp_path / "roadmap.lint.json").read_text(encoding="utf-8"))
+    assert p.returncode == 0 and record["ok"] is True and record["errors"] == []

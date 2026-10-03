@@ -37,6 +37,12 @@
   Size: S, because {reason}
   Milestone: M3
 
+Without a design, a task's Check is the `Then` of an acceptance criterion it delivers:
+
+  Check: {the Then of AC-n} (acceptance criterion: AC-n)
+
+and, when the user chose to plan before the design, `Touches:` names only what the specification names and the origin reads `(acceptance criterion: AC-n; design pending)`. After its tickets are created, each task gains one line: `Ticket: {key or link}`.
+
 ### Order
 
 - Spikes: T-{abbr}-1 (assumption 1) gates T-{abbr}-2
@@ -54,6 +60,10 @@
 |----|--------------|
 | REQ-1 | T-{abbr}-2 |
 
+### Assumptions
+
+- Assumption: {a dependency or a fact the design does not state, and the task it affects}; else "none"
+
 ### Open questions
 
-- {only what the user must decide; else "none"}
+- OPEN-1: {question only the user can answer}. Blocks: {T-id}. Recommended: {answer and why}; else "none"

@@ -3,8 +3,10 @@
 
 Usage: python3 lint_flows.py --file <flows.md> --prd <prd.md> [--phase P-n] [--report <lint.json>] [--json]
 
---report <path> also writes the result to that file, with the command's own arguments ("file", "prd",
-"phase") and the date, so a reviewer can check the lint ran and what it checked.
+Prints JSON on stdout: ok, summary (the line a reply quotes), counts, errors. --report <path> also writes
+the record of the evidence convention to that file (script, date, arguments, ok, summary, errors, counts),
+so a reviewer can check the lint ran and what it checked. Usage errors, an unknown flag among them, go to
+stderr with exit 2 and write no report.
 
 Checks:
   - required sections are present; ids (IA, SCREEN, FLOW, ASSUMPTION, OPEN) are unique
@@ -19,7 +21,7 @@ Checks:
   - every Coverage line names FLOW-/SCREEN- ids that exist, or "no screen:" with a reason
   - every OPEN has Blocks: and Recommended:
 
-Prints JSON. Exit codes: 0 ok, 1 problems found, 2 usage error.
+Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
 import datetime
 import json
@@ -55,22 +57,38 @@ def section(text, title):
     return rest[: n.start()] if n else rest
 
 
+VALUE_FLAGS = ("--file", "--prd", "--phase", "--report")
+SWITCHES = ("--json",)
+
+
+def parse(argv):
+    """The flags given, as {flag: value or True}, and None; or None and the message of a usage error."""
+    args, i = {}, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in VALUE_FLAGS:
+            if i + 1 >= len(argv):
+                return None, f"{a} needs a value"
+            args[a] = argv[i + 1]
+            i += 2
+        elif a in SWITCHES:
+            args[a] = True
+            i += 1
+        else:
+            return None, f"unknown argument {a!r}"
+    return args, None
+
+
 def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
-    as_json = "--json" in argv
-    path = prd = phase = report = None
-    for flag in ("--file", "--prd", "--phase", "--report"):
-        if flag in argv:
-            if argv.index(flag) + 1 >= len(argv):
-                print(f"Error: {flag} needs a value.", file=sys.stderr)
-                return 2
-            val = argv[argv.index(flag) + 1]
-            if flag == "--file": path = val
-            elif flag == "--prd": prd = val
-            elif flag == "--phase": phase = val
-            else: report = val
+        return 0
+    args, problem = parse(argv)
+    if problem:
+        print(f"Error: {problem}. See --help.", file=sys.stderr)
+        return 2
+    as_json = bool(args.get("--json"))
+    path, prd, phase, report = args.get("--file"), args.get("--prd"), args.get("--phase"), args.get("--report")
     if not path or not prd:
         print("Error: --file <flows.md> and --prd <prd.md> are required. See --help.", file=sys.stderr)
         return 2
@@ -144,11 +162,15 @@ def main(argv):
             if part not in b:
                 errors.append(f"{i} lacks {part}")
     ok = not errors
-    result = {"ok": ok, "counts": {"IA": len(ia), "SCREEN": len(screens), "FLOW": len(flows),
-              "covered": len(coverage)}, "errors": errors}
+    counts = {"IA": len(ia), "SCREEN": len(screens), "FLOW": len(flows), "covered": len(coverage)}
+    summary = (f"lint_flows {'ok' if ok else 'FAILED'}: {len(errors)} errors; {counts['IA']} IA nodes, "
+               f"{counts['SCREEN']} screens, {counts['FLOW']} flows, {counts['covered']} features covered"
+               + (f"; phase {phase}" if phase else "; every phase"))
+    result = {"ok": ok, "summary": summary, "counts": counts, "errors": errors}
     if report:
-        record = {"ok": ok, "date": datetime.date.today().isoformat(), "file": path, "prd": prd, "phase": phase,
-                  "counts": result["counts"], "errors": errors}
+        record = {"script": "lint_flows.py", "date": datetime.date.today().isoformat(),
+                  "arguments": {k: v for k, v in args.items() if k != "--report"},
+                  "ok": ok, "summary": summary, "errors": errors, "counts": counts}
         try:
             with open(report, "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2)

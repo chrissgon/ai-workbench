@@ -2,7 +2,9 @@
 """Unpack a single-file HTML export of an AI design tool into readable source.
 
 Usage: python3 unpack_export.py --file <export.html> --out <dir> [--class-prefix <prefix>]
-                                [--library <stylesheet.css>]
+                                [--library <stylesheet.css>] [--max-bytes <n>]
+
+Usage errors (a flag without its value, an unknown flag, a missing --file or --out) go to stderr with exit 2.
 
 Handles the bundled format that stores the page as a JSON-encoded template
 (<script type="__bundler/template">) and its resources in a manifest of base64
@@ -136,15 +138,35 @@ def to_cover(inv, lib):
     return {"custom_properties": props, "fixed_colours": [c for c in inv["fixed_colours"] if c not in lib.lower()]}
 
 
+VALUE_FLAGS = ("--file", "--out", "--max-bytes", "--class-prefix", "--library")
+
+
+def parse(argv):
+    """The flags given, as {flag: value}, and None; or None and the message of a usage error."""
+    args, i = {}, 0
+    while i < len(argv):
+        a = argv[i]
+        if a not in VALUE_FLAGS:
+            return None, f"unknown argument {a!r}"
+        if i + 1 >= len(argv):
+            return None, f"{a} needs a value"
+        args[a] = argv[i + 1]
+        i += 2
+    return args, None
+
+
 def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
+        return 0
+    args, problem = parse(argv)
+    if problem:
+        print(f"Error: {problem}. See --help.", file=sys.stderr)
+        return 2
     try:
-        args = {f: argv[argv.index(f) + 1] for f in ("--file", "--out", "--max-bytes", "--class-prefix", "--library") if f in argv}
         limit = int(args.get("--max-bytes", MAX_BYTES))
-    except (IndexError, ValueError):
-        print("Error: --file, --out, --max-bytes, --class-prefix and --library need a value. See --help.", file=sys.stderr)
+    except ValueError:
+        print("Error: --max-bytes needs a whole number of bytes. See --help.", file=sys.stderr)
         return 2
     prefix = args.get("--class-prefix", "").rstrip("-")
     if prefix and not re.fullmatch(r"[a-z][a-z0-9]*", prefix):

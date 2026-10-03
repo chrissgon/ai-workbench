@@ -581,3 +581,139 @@ def test_a_runtime_copy_that_still_asks_for_the_old_class_names_keeps_running(en
     with pytest.raises(runtime.Fail) as e:
         providers.path("scheduler")
     assert "scheduler:job" in str(e.value) and "SCHEDULER_PROVIDER" in str(e.value)
+
+
+# --- RT7: nothing that looks like a credential is published ------------------------------------------
+
+# Built at run time so that no credential-shaped literal sits in the repository (the security scan reads it).
+FAKE_GITHUB_TOKEN = "ghp" + "_" + "Z9" * 18
+
+
+def test_a_reply_holding_a_credential_is_never_sent_and_is_masked_in_the_inbox(env):
+    # The model reads files and a comment can ask it to quote one; the gate checked links, topics and length,
+    # and the text went out in public.
+    reply = f"Thanks, Ana. The token is {FAKE_GITHUB_TOKEN}."
+    set_case(env, [message(1)], decision(reply=reply))
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "to_inbox"
+    assert "looks like a credential (GitHub token)" in out["handled"][0]["note"]
+    assert publisher_calls(env) == []
+    inbox_md = (env["proj"] / "docs/marketing/engagement-inbox.md").read_text()
+    assert FAKE_GITHUB_TOKEN not in inbox_md and "<redacted GitHub token>" in inbox_md
+    assert "(cannot be sent)" in inbox_md
+    code, items, err = rt(env, "inbox")
+    assert code == 0 and FAKE_GITHUB_TOKEN not in json.dumps(items)
+    (item,) = items["items"]
+    assert item["payload"]["reply_file"] is None
+    code, _, err = rt(env, "approve", "--id", str(item["id"]))
+    assert code == 2 and "no drafted reply" in err
+    leftovers = [f for f in env["data"].rglob("*") if f.is_file() and FAKE_GITHUB_TOKEN.encode() in f.read_bytes()]
+    # The agent's own answer stays where the adapter wrote it (the run's record, 0600); nothing derived from it
+    # holds the value.
+    assert all(f.name == "response.md" for f in leftovers), leftovers
+
+
+def test_approve_refuses_a_reply_that_holds_a_credential(env):
+    # An item written before this check, or by hand: approve checks the text it is about to send as well.
+    set_case(env, [], decision())
+    assert rt(env, "status")[0] == 0  # creates the store
+    folder = env["data"] / "manual"
+    folder.mkdir(parents=True)
+    reply = folder / "reply.txt"
+    reply.write_text(f"Here you go: Bearer {'k' * 32}\n")
+    sha = hashlib.sha256(reply.read_bytes()).hexdigest()
+    comment = message(7)["fake_comment"]
+    item = folder / "item.json"
+    item.write_text(json.dumps({"comment": comment, "decision": None, "reasons": [], "reply_file": str(reply),
+                                "idempotency_key": "reply-7"}))
+    store = [sys.executable, str(env["wb"] / "providers/store/sqlite.py")]
+    added = subprocess.run(store + ["inbox-add", "--db", str(env["data"] / "store.sqlite"), "--kind", "reply",
+                                    "--title", "t", "--payload-file", str(item), "--payload-sha256", sha],
+                           capture_output=True, text=True, check=True)
+    item_id = json.loads(added.stdout)["id"]
+    code, _, err = rt(env, "approve", "--id", str(item_id), "--confirmed", "--sha256", sha)
+    assert code == 1 and "looks like a credential (bearer token)" in err and "nothing sent" in err
+    assert publisher_calls(env) == []
+
+
+# --- RT5: a scheduled tick runs only on the configuration and the gate it was approved with ----------------
+
+
+def test_a_pinned_tick_refuses_when_the_configuration_or_the_gate_changed(env):
+    # The approval of the recurring job covered three scripts; runtime.json (which names the workbench every
+    # other script comes from) and the gate were read live at every firing, so an edit changed what the
+    # unattended job ran with the publishing credential, with no new approval and no refused firing.
+    set_case(env, [message(1)], decision())
+    code, pin, err = rt(env, "pin")
+    assert code == 0, err
+    pin_file = Path(pin["pin"])
+    assert pin_file.stat().st_mode & 0o777 == 0o600
+    recorded = json.loads(pin_file.read_text())
+    config = env["proj"] / "docs/workbench/runtime.json"
+    gate = env["wb"] / "skills/mkt-engage/scripts/policy_gate.py"
+    assert recorded["runtime_json"] == {"path": str(config), "sha256": hashlib.sha256(config.read_bytes()).hexdigest()}
+    assert recorded["gate"] == {"path": str(gate), "sha256": hashlib.sha256(gate.read_bytes()).hexdigest()}
+    code, out, err = rt(env, "tick", "--pin", str(pin_file))
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "done" and len(publisher_calls(env)) == 1
+
+    original = config.read_text()
+    config.write_text(original.replace('"daily_cost_cap_usd": 1', '"daily_cost_cap_usd": 100'))
+    set_case(env, [message(1), message(2)], decision())
+    code, out, err = rt(env, "tick", "--pin", str(pin_file))
+    assert code == 3 and out is None
+    assert "changed since the tick was approved" in err and str(config) in err and "nothing ran" in err
+    assert len(publisher_calls(env)) == 1 and len(env["calls"].with_suffix(".jsonl.agent").read_text().splitlines()) == 1
+
+    config.write_text(original)
+    gate.write_text(gate.read_text() + "\n# changed\n")
+    code, _, err = rt(env, "tick", "--pin", str(pin_file))
+    assert code == 3 and str(gate) in err and str(config) not in err
+    assert len(publisher_calls(env)) == 1
+
+    # The person reviews the change and pins again: the tick runs (the scheduler needs a new approval too).
+    code, pin, err = rt(env, "pin")
+    assert code == 0, err
+    code, out, err = rt(env, "tick", "--pin", pin["pin"])
+    assert code == 0, err
+    # The tick ran: message 2, which the refused ticks left waiting, is handled (to the inbox: one auto reply
+    # per person and post).
+    assert [h["event"] for h in out["handled"]] and len(env["calls"].with_suffix(".jsonl.agent").read_text().splitlines()) == 2
+
+
+def test_a_pin_that_cannot_be_read_stops_the_tick_and_pin_goes_with_tick_only(env, tmp_path):
+    set_case(env, [message(1)], decision())
+    code, _, err = rt(env, "tick", "--pin", str(tmp_path / "missing.json"))
+    assert code == 3 and "nothing ran" in err
+    (tmp_path / "bad.json").write_text("{}")
+    code, _, err = rt(env, "tick", "--pin", str(tmp_path / "bad.json"))
+    assert code == 3 and "nothing ran" in err
+    assert publisher_calls(env) == [] and not env["data"].joinpath("store.sqlite").exists()
+    code, _, err = rt(env, "status", "--pin", str(tmp_path / "bad.json"))
+    assert code == 2 and "--pin goes with tick" in err
+
+
+# --- CT4, CT5: the contracts promise what the code does --------------------------------------------------
+
+
+def test_the_runtime_contract_promises_only_what_the_code_does():
+    contract = (REPO / "contracts/runtime.md").read_text(encoding="utf-8")
+    # CT5: the gate was "bound by hash to what the person approved"; only the policy file was, and the gate
+    # script is bound only for a pinned tick (RT5).
+    assert "the gate is code, bound by hash" not in contract
+    assert "the gate script is bound only for a scheduled tick that carries `--pin`" in contract
+    # CT5: "read access to the project folder" is the adapter's doing, not the runtime's.
+    assert "read access to the project folder" not in contract and "gives the model read access" not in contract
+    assert "The runtime itself confines nothing" in contract
+    # CT5: the daily cap is checked before each run and counts a run of unknown cost (RT2, HP1).
+    assert "checked before each run from the store" in contract and "runs_without_cost_today" in contract
+
+
+def test_the_environment_contract_says_where_each_approval_is_recorded():
+    # CT4: the contract named only the state file; the runtime records its approvals in the store's inbox.
+    contract = (REPO / "contracts/environment.md").read_text(encoding="utf-8")
+    (paragraph,) = [p for p in contract.split("\n\n") if p.startswith("**Two records of approvals.**")]
+    for words in ("docs/workbench/state.md", "inbox item", "action row", "writes nothing to the state file",
+                  "policy:<sha256>", "never executed on the strength of the other"):
+        assert words in paragraph, words

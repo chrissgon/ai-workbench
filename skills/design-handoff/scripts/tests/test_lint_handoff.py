@@ -121,8 +121,8 @@ x
 """
 
 
-def run(script: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(script), *args], capture_output=True, text=True, timeout=60)
+def run(script: Path, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+    return subprocess.run([sys.executable, str(script), *args], capture_output=True, text=True, timeout=60, cwd=cwd)
 
 
 def unpack(tmp_path: Path, *extra: str) -> tuple[dict, dict]:
@@ -186,7 +186,7 @@ def test_unpack_unreadable_library_is_a_usage_error(tmp_path):
 
 
 def test_unpack_reads_the_eval_fixture(tmp_path):
-    r = run(UNPACK, "--file", str(EXPORT), "--out", str(tmp_path / "out"), "--class-prefix", "pui", "--library", str(LIBRARY))
+    r = run(UNPACK, "--file", str(EXPORT), "--out", str(tmp_path / "out"), "--class-prefix", "plu", "--library", str(LIBRARY))
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["to_cover"] == {"custom_properties": ["--ds-accent-ink", "--ds-font-display", "--ds-space-section", "--hero-glow"],
@@ -247,15 +247,22 @@ def test_lint_report_records_the_last_result_with_its_arguments(tmp_path):
     code, out = lint(tmp_path, SPEC.replace("## Assets", "## Files"), "--report", str(report))
     assert code == 1
     rec = json.loads(report.read_text())
+    assert sorted(rec) == ["arguments", "counts", "date", "errors", "ok", "script", "summary"]
+    assert rec["script"] == "lint_handoff.py" and rec["summary"] == out["summary"]
     assert rec["ok"] is False and rec["errors"] == out["errors"] == ["missing section '## Assets'"]
     assert rec["arguments"]["--screen"] == "SCREEN-1" and "--report" not in rec["arguments"] and len(rec["date"]) == 10
-    code, out = lint(tmp_path, SPEC, "--report", str(report))
-    assert code == 0 and json.loads(report.read_text())["ok"] is True
+    code, out = lint(tmp_path, SPEC, "--report", str(report), "--json")
+    rec = json.loads(report.read_text())
+    assert code == 0 and rec["ok"] is True and rec["arguments"]["--json"] is True
 
 
 def test_lint_usage_errors(tmp_path):
-    assert run(LINT, "--file").returncode == 2
-    assert run(LINT, "--file", "a.md", "--flows", "b.md", "--screen", "SCREEN-1", "--inventory", "i.json").returncode == 2
+    for args in (["--file"], ["--file", "a.md", "--flows", "b.md", "--screen", "SCREEN-1", "--inventory", "i.json"],
+                 ["--file", "a.md", "--flows", "b.md", "--screen", "SCREEN-1", "--reprot", "r.json"], []):
+        r = run(LINT, *args, cwd=tmp_path)
+        assert r.returncode == 2 and r.stdout == "" and r.stderr.startswith("Error:"), args
+    assert "unknown argument '--reprot'" in run(LINT, "--file", "a.md", "--reprot", "r.json").stderr
+    assert not (tmp_path / "r.json").exists()
 
 
 def test_lint_finds_the_fixture_screen(tmp_path):

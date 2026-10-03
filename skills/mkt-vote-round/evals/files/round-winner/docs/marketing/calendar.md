@@ -27,7 +27,7 @@
 | # | When | Pillar | Language | Topic | Serves | Material and source | Approval | Content | Status |
 |---|------|--------|----------|-------|--------|---------------------|----------|---------|--------|
 | 7 | 2026-10-19T09:00:00-03:00 | Small tools | EN | tinykv's README went from 200 lines to 60 | backend engineers | docs/notes/2026-10.md, Small tools [4] | plan | — | proposed |
-| 8 | 2026-10-21T09:00:00-03:00 | Database performance | PT | What Alex Petrov's Database Internals taught me about page splits | database people | docs/notes/2026-10.md, Database performance [4] | plan | — | proposed |
+| 8 | 2026-10-21T09:00:00-03:00 | Database performance | PT | What Noor Haddad's Pages and Logs taught me about page splits | database people | docs/notes/2026-10.md, Database performance [4] | plan | — | proposed |
 | 9 | 2026-10-23T09:00:00-03:00 | AI for databases, built in public | EN | Schema in the prompt: invented columns in 4 of 10 answers without it | backend engineers | docs/notes/2026-10.md, AI for databases [4] | plan | — | proposed |
 
 ## Sources

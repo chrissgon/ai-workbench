@@ -17,7 +17,7 @@ The runtime starts agents without a person at the keyboard: a scheduler fires, t
 
 ## An agent run
 
-- **Input:** the agent definition (`agents/<name>.md`), a task file the runtime writes (what to do, and the trigger's data marked as external content), the skills the agent lists, read access to the project folder.
+- **Input:** the agent definition (`agents/<name>.md`), a task file the runtime writes (what to do, and the trigger's data marked as external content), the skills the agent lists, and the project folder, which the runtime passes to the adapter as `--project`. The runtime itself confines nothing: what the model can read, inside the project and outside it, is what the adapter and its harness allow (each adapter's README says how far that goes; containing a runtime agent beyond its tool list is backlog N15).
 - **Tools:** read only. The model reads files and answers; it cannot write files, run commands or call a network service. Everything it proposes comes back as a fenced JSON block in its answer, whose shape the task names.
 - **Budget:** a spend limit per run (`max_cost_usd`) and a time limit (`timeout_seconds`); a daily spend cap across runs (`daily_cost_cap_usd`), checked before each run from the store. A run whose cost is unknown (the adapter has no price for the model, the run timed out, or it never ended) counts as `max_cost_usd_per_run`, and the tick's output says how many such runs the day has (`runs_without_cost_today`).
 - **Output:** `<out>/response.md`, `<out>/timing.json` (`total_tokens`, `duration_ms`, `cost_usd`, `exit_code`), `<out>/raw.json` and `<out>/stderr.log`. The runtime keeps `<out>` under the run's folder and records the run in the store.
@@ -29,15 +29,26 @@ run-agent.sh --agent-file <agents/name.md> --task-file <f> --project <dir> --mod
              [--skill-dir <dir>]... [--max-cost-usd <amount>] [--timeout-seconds <n>]
 ```
 
-It copies the skills (never links them) into a fresh working folder for the run, gives the model read access to `--project`, allows only reading tools, loads no connectors and no user-level settings, and writes the files above. It exits 0 when the model answered, 1 otherwise.
+It copies the skills (never links them) into a fresh working folder for the run, names `--project` to the harness as a folder to read, allows only reading tools (how far they reach outside `--project` is the harness's doing, and the adapter's README says it), loads no connectors and no user-level settings, and writes the files above. It exits 0 when the model answered, 1 otherwise.
 
 ## Why the model never acts
 
 The trigger's data is written by strangers (comments, e-mails). A model that could run the publisher could be talked into publishing. So the model proposes; code decides and executes:
 
 1. The model returns a proposal (a category, a language, a reply text).
-2. The runtime writes the proposal's text to a file and runs the gate script with the approved policy; the gate is code, bound by hash to what the person approved.
+2. The runtime writes the proposal's text to a file and runs the gate script with the approved policy. The policy file is bound by hash to what the person approved (its `policy:<sha256>` in the state file's standing approval); the gate script is bound only for a scheduled tick that carries `--pin` (below).
 3. Only a gate result of `auto` makes the runtime call the actuator, with the file the gate checked and an idempotency key. Anything else goes to the inbox with the gate's reasons.
+
+## What the approval of a recurring tick covers
+
+The person approves the tick once, when it is scheduled (`scheduler:job`, `--every`), and it then runs unattended with the publishing credential. That approval covers:
+
+- what the scheduler hashes: the command's arguments, the program, the scheduler's runner, and the files in the command file's snapshot (`runtime.py`, `runtime_vote.py`, `redact.py`, `providers/resolve.py`, the pin file). The job runs its own copies of them, and a firing whose hashes differ is refused;
+- with `--pin <file>`: `docs/workbench/runtime.json` and the gate script (`mkt-engage/scripts/policy_gate.py` of the workbench `runtime.json` names), by the sha256 that `runtime.py pin` recorded in the pin file. Before anything else, every firing hashes both again and refuses (exit 3, nothing runs) when either differs. A tick without `--pin`, run by hand, checks nothing.
+
+It does not cover the rest of what a firing loads from the workbench checkout that `runtime.json` names: the notification parser, the adapter's `run-agent.sh`, the agent file and its skills, the providers (the publisher included), the vote step's scripts, and the folders of `path`. A change to them (a pull in that checkout) takes effect at the next firing, without a new approval. Keep that checkout on a reviewed revision; to bind one of those files, add it to the pin first.
+
+A change to `runtime.json` or to the gate script stops the tick until the person reviews it, runs `runtime.py pin` again and schedules the tick again with the new pin file: that is the new approval.
 
 ## Records
 
@@ -59,6 +70,7 @@ When `runtime.json` has a `vote` section (`repo`, `branch`, `pillars`, optional 
 ## Safety rules
 
 - The runtime never publishes without a gate result of `auto` under an active approval, or an inbox item the person approved with a matching hash.
+- The runtime never publishes a text in which the shared credential formats (`scripts/redact.py`) match: the model that drafted it can read files, and a comment can ask it to quote one. A reply with such a match is not sent, by the tick or by `approve`; it goes to the inbox with the value masked and no reply file, and the person answers by hand. A vote proposal with one is masked in everything built from it, and its item cannot be approved.
 - A proposal block that is missing, malformed or has fields outside the task's shape sends the event to the inbox; the runtime never repairs a proposal.
 - A mailbox that cannot be read (an expired authorization, the network) does not stop the tick: pasted comments and the vote step still run, the mailbox cursor stays where it was, the tick's output carries `mailbox: {status: failed, note}`, and the person is notified at most once a day.
 - The mailbox cursor never moves past a message that was not read. The mailbox answers newest first and says when older messages were left out; the tick reads on until none is, and when it cannot (a later search fails, or more wait than a tick reads) it keeps what it read as events, leaves the cursor where it was and says `mailbox: {status: incomplete, note}`.

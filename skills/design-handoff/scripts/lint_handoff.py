@@ -21,9 +21,10 @@ Checks:
   - Acceptance names at least one width in px and a mode (light or dark)
   - no TBD or TODO; every OPEN has Blocks: and Recommended:
 
-Prints JSON: ok, summary (the line the report quotes), counts, errors. --report also writes that result,
-with the command's arguments and the date, to the given file, kept next to the spec as the evidence of the
-last run. Exit codes: 0 ok, 1 problems found, 2 usage error.
+Prints JSON: ok, summary (the line the reply quotes), counts, errors. --report <path> also writes the record
+of the evidence convention (script, date, arguments, ok, summary, errors, counts) to the given file, kept
+next to the spec as the evidence of the last run. Usage errors, an unknown flag among them, go to stderr and
+write no report. Exit codes: 0 ok, 1 problems found, 2 usage error.
 """
 import datetime
 import fnmatch
@@ -52,17 +53,37 @@ def rows(sec):
     return out
 
 
+VALUE_FLAGS = ("--file", "--flows", "--screen", "--inventory", "--library", "--report")
+SWITCHES = ("--json",)
+
+
+def parse(argv):
+    """The flags given, as {flag: value or True}, and None; or None and the message of a usage error."""
+    args, i = {}, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in VALUE_FLAGS:
+            if i + 1 >= len(argv):
+                return None, f"{a} needs a value"
+            args[a] = argv[i + 1]
+            i += 2
+        elif a in SWITCHES:
+            args[a] = True
+            i += 1
+        else:
+            return None, f"unknown argument {a!r}"
+    return args, None
+
+
 def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
-    as_json = "--json" in argv
-    try:
-        args = {f: argv[argv.index(f) + 1] for f in
-                ("--file", "--flows", "--screen", "--inventory", "--library", "--report") if f in argv}
-    except IndexError:
-        print("Error: every option needs a value. See --help.", file=sys.stderr)
+        return 0
+    args, problem = parse(argv)
+    if problem:
+        print(f"Error: {problem}. See --help.", file=sys.stderr)
         return 2
+    as_json = bool(args.get("--json"))
     if not all(k in args for k in ("--file", "--flows", "--screen")) or (("--inventory" in args) != ("--library" in args)):
         print("Error: --file, --flows and --screen are required; --inventory and --library go together.", file=sys.stderr)
         return 2
@@ -140,8 +161,9 @@ def main(argv):
                f"{counts['tokens']} tokens, {counts['motion']} motion rows, {counts['deviations']} deviations; {checked}")
     result = {"ok": ok, "summary": summary, "counts": counts, "errors": errors}
     if "--report" in args:
-        record = {"date": datetime.date.today().isoformat(),
-                  "arguments": {k: v for k, v in args.items() if k != "--report"}, **result}
+        record = {"script": "lint_handoff.py", "date": datetime.date.today().isoformat(),
+                  "arguments": {k: v for k, v in args.items() if k != "--report"},
+                  "ok": ok, "summary": summary, "errors": errors, "counts": counts}
         try:
             with open(args["--report"], "w", encoding="utf-8") as f:
                 json.dump(record, f, indent=2)

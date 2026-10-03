@@ -4,63 +4,109 @@
 - Status: approved
 - Date: 2026-03-02
 - Flows: docs/design/flows.md
+- Lint: ok (2026-03-02)
 
 ## Summary
 
-The Plinth UI library's own tokens govern every colour, size and component the site shows; the site adds only the tokens a documentation site needs.
+The Plinth UI library's own tokens govern every colour, size and component the site shows; the site adds only the tokens a documentation site needs. 11 library tokens, 4 site tokens and 8 components for the two screens of the flows.
 
 ## Sources
 
-- `library/plinthui.css` (Plinth UI 1.0.0, the stylesheet the site ships): every `--pui-*` custom property; component classes with the prefix `pui`
+- `library/plinthui.css` (Plinth UI 1.0.0, the stylesheet the site ships): every `--plu-*` custom property; component classes with the prefix `plu`
 - docs/design/flows.md: SCREEN-1 and SCREEN-2
+- Contrast ratios computed with `contrast.py` of the design-system skill, 2026-03-02
+- User answer, 2026-03-02: typography Inter and Fira Code, self-hosted
 
 ## Ownership
 
-- Colours, spacing unit, radius, border and component anatomy: the library. The site never redefines or copies a `--pui-*` value; it loads the installed package's stylesheet.
+- Colours, spacing unit, radius, border and component anatomy: the library. The site never redefines or copies a `--plu-*` value; it loads the installed package's stylesheet.
 - Type roles, layout and site-only components: this document. A token that is in neither list does not exist: it is a finding for design-system, never added in code.
 
-## Library tokens (mirror of `library/plinthui.css`)
+## Colour
 
-| Token | Light | Dark | Role |
-|-------|-------|------|------|
-| `--pui-bg` | #FFFFFF | #000000 | page background |
-| `--pui-bg-muted` | #F3F4F6 | #111827 | card headers, addons |
-| `--pui-text` | #000000 | #FFFFFF | body text |
-| `--pui-text-muted` | #6B7280 | #9CA3AF | secondary text |
-| `--pui-border` | #D1D5DB | #374151 | every border |
-| `--pui-theme` | #0092CD | #07B6F0 | brand colour, links, focus ring, the only accent |
-| `--pui-success` | #16A34A | #22C55E | positive state (the "Copied" feedback) |
-| `--pui-radius` | 0.375rem | same | corner radius |
-| `--pui-space` | 0.25rem | same | spacing unit; every gap is a multiple of it |
-| `--pui-font-size` | 0.875rem | same | component text |
+| Token | Light | Dark | Role | Source |
+|-------|-------|------|------|--------|
+| `--plu-bg` | #FFFFFF | #000000 | page background, label on a solid fill | library/plinthui.css |
+| `--plu-bg-muted` | #F3F4F6 | #111827 | card headers, addons | library/plinthui.css |
+| `--plu-text` | #000000 | #FFFFFF | body text | library/plinthui.css |
+| `--plu-text-muted` | #6B7280 | #9CA3AF | secondary text | library/plinthui.css |
+| `--plu-border` | #D1D5DB | #374151 | every border | library/plinthui.css |
+| `--plu-theme` | #0092CD | #07B6F0 | brand colour, links, focus ring, the only accent | library/plinthui.css |
+| `--plu-success` | #16A34A | #22C55E | positive state (the "Copied" feedback) | library/plinthui.css |
 
-## Site tokens
+## Contrast
 
-| Token | Value | Role |
-|-------|-------|------|
-| `--site-font-text` | Inter, weights 400 and 600, self-hosted from `public/fonts/` | every text |
-| `--site-font-code` | Fira Code, weight 400, self-hosted from `public/fonts/` | code and the install command |
-| `--site-section-gap` | calc(var(--pui-space) * 24), 96 px | vertical gap between landing sections |
-| `--site-content-width` | 72rem | maximum content width |
+Ratios come from `contrast.py`, never from memory.
+
+| Text token | On background | Light ratio | Dark ratio | AA |
+|------------|---------------|-------------|------------|----|
+| `--plu-text` | `--plu-bg` | 21.00:1 | 21.00:1 | pass (needs 4.5:1); used on SCREEN-1 value proposition |
+| `--plu-text-muted` | `--plu-bg` | 4.83:1 | 8.27:1 | pass (needs 4.5:1); used on SCREEN-1 size block method |
+| `--plu-text` | `--plu-bg-muted` | 19.08:1 | 17.74:1 | pass (needs 4.5:1); used on SCREEN-1 card headers |
+| `--plu-bg` | `--plu-theme` | 3.50:1 | 8.96:1 | fail in light for text under 24 px (needs 4.5:1); the primary call to action is 24 px or larger |
+
+## Type
+
+- Typeface: Inter for text, Fira Code for code and the install command, self-hosted from `public/fonts/`. Source: user answer 2026-03-02
+- Reading width: 72rem of content (`--site-content-width`). Source: this document
+
+| Role | Size | Line height | Weight | Source |
+|------|------|-------------|--------|--------|
+| display (value proposition) | 48 px | 56 px | 600 | this document |
+| body | 16 px | 24 px | 400 | this document |
+| component text (`--plu-font-size`) | 0.875rem | 1.25 | 400 | library/plinthui.css |
+| code | 14 px | 20 px | 400 | this document |
+
+## Space, radii, borders, elevation
+
+| Token | Value | Role | Source |
+|-------|-------|------|--------|
+| `--plu-space` | 0.25rem | spacing unit; every gap is a multiple of it | library/plinthui.css |
+| `--plu-radius` | 0.375rem | corner radius | library/plinthui.css |
+| `--plu-border-width` | 1px | every border | library/plinthui.css |
+| `--site-section-gap` | calc(var(--plu-space) * 24), 96 px | vertical gap between landing sections | this document |
+| elevation | none | the library uses no shadows | library/plinthui.css |
+
+## Layout
+
+| Token | Value | Role | Source |
+|-------|-------|------|--------|
+| `--site-content-width` | 72rem | maximum content width | this document |
+| `--site-font-text` | Inter, weights 400 and 600, self-hosted from `public/fonts/` | every text | user answer 2026-03-02 |
+| `--site-font-code` | Fira Code, weight 400, self-hosted from `public/fonts/` | code and the install command | user answer 2026-03-02 |
+| breakpoints | 360 px, 768 px, 1280 px | the widths of the flows | docs/design/flows.md SCREEN-1 |
+| motion | entrance animations on the landing only: at most 600 ms, opacity and transform only, none under `prefers-reduced-motion: reduce` | transitions | this document |
 
 ## Components
 
-| Component | Kind | States | Used in |
-|-----------|------|--------|---------|
-| Button (`pui-btn`, `pui-solid`) | library | default, hover, focus | SCREEN-1 primary call to action |
-| Card (`pui-card`, `pui-card-header`, `pui-card-content`) | library | default | SCREEN-1 showcase |
-| Input group (`pui-input-group`, `pui-input-group-addon`) | library | default, focus | SCREEN-1 install command |
-| Badge (`pui-badge`) | library | default | SCREEN-1 size block version |
-| InstallCommand | site | default, copied, no JavaScript | SCREEN-1 |
-| SizeBlock | site | default | SCREEN-1 |
-| ExampleBlock | site | default | SCREEN-1 showcase, documentation pages |
-| SiteHeader, SiteFooter | site | default, light, dark | SCREEN-2 |
+| Component | Owner | Variants | States | Screens | Source |
+|-----------|-------|----------|--------|---------|--------|
+| Button (`plu-btn`, `plu-solid`) | library | solid | default, hover, focus | SCREEN-1 (primary call to action) | library/plinthui.css |
+| Card (`plu-card`, `plu-card-header`, `plu-card-content`) | library | none | default | SCREEN-1 (showcase) | library/plinthui.css |
+| Input group (`plu-input-group`, `plu-input-group-addon`) | library | none | default, focus | SCREEN-1 (install command) | library/plinthui.css |
+| Badge (`plu-badge`) | library | none | default | SCREEN-1 (size block version) | library/plinthui.css |
+| InstallCommand | site | none | default, copied, no JavaScript | SCREEN-1 | flows SCREEN-1 regions |
+| SizeBlock | site | none | default | SCREEN-1 | flows SCREEN-1 regions |
+| ExampleBlock | site | none | default | SCREEN-1 (showcase) | flows SCREEN-1 regions |
+| SiteHeader, SiteFooter | site | none | default, light, dark | SCREEN-2 | flows SCREEN-2 regions |
 
-## Motion
+## Design tool
 
-- Entrance animations are allowed on the landing only: at most 600 ms, opacity and transform only, and none under `prefers-reduced-motion: reduce`.
+- File: the design system is loaded in the design tool as the project "Plinth UI site"; values verified against this document on 2026-03-02.
 
 ## Assets
 
 - Logo: `library/logo.svg` (the three bars), used at 32 px in the header.
 - Icons: none in this release; controls are text.
+
+## Assumptions
+
+- none
+
+## Open questions
+
+- none
+
+## Readiness
+
+- Ready for design-brief: yes

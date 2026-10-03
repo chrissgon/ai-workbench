@@ -2,7 +2,7 @@
 
 - Owner: design-handoff
 - Status: draft
-- Date: {YYYY-MM-DD}
+- Date: {YYYY-MM-DD, from `date +%F`}
 - Screen: {SCREEN-n of the flows}
 - Approved design: {results document and run}
 - Export: {file}, unpacked to {folder}

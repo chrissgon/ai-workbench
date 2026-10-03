@@ -150,18 +150,65 @@ def test_lint_spec_refuses_a_requirement_bullet_without_its_id(tmp_path):
         assert (code, out["errors"], out["counts"]["REQ"]) == (0, [], 0), none
 
 
-def test_lint_spec_prints_the_report_line_and_what_to_do_next(tmp_path):
+def test_lint_spec_prints_the_summary_line_and_what_to_do_next(tmp_path):
     doc = tmp_path / "spec.md"
     code, out = lint(LINT_SPEC, doc, spec())
     assert code == 0 and out["ok"] is True
-    assert out["report"] == f"lint_spec.py --file {doc}: ok: true, 0 errors, 0 warnings {SPEC_COUNTS}"
+    assert out["summary"] == f"lint_spec.py --file {doc}: ok: true, 0 errors, 0 warnings {SPEC_COUNTS}"
     assert out["next"].startswith("Lint passed.")
     code, out = lint(LINT_SPEC, doc, spec().replace(SPEC_REQ_LINE, SPEC_REQ_LINE + "-\n"))
     assert code == 1 and out["ok"] is False
-    assert out["report"] == f"lint_spec.py --file {doc}: ok: false, 1 errors, 0 warnings {SPEC_COUNTS}"
+    assert out["summary"] == f"lint_spec.py --file {doc}: ok: false, 1 errors, 0 warnings {SPEC_COUNTS}"
     assert out["next"].startswith("Not done")
     # a warning alone keeps the exit code at 0 and still says the work is not done
     code, out = lint(LINT_SPEC, doc, spec().replace("Show matching pages", "Show matching pages in a simple list"))
     assert code == 0 and len(out["warnings"]) == 1
-    assert out["report"] == f"lint_spec.py --file {doc}: ok: true, 0 errors, 1 warnings {SPEC_COUNTS}"
+    assert out["summary"] == f"lint_spec.py --file {doc}: ok: true, 0 errors, 1 warnings {SPEC_COUNTS}"
     assert out["next"].startswith("Not done")
+
+
+# ---------- product-feature-spec/lint_spec.py: the command line, the record, translated headings ----------
+
+def test_lint_spec_usage_errors_go_to_stderr_with_exit_2(tmp_path):
+    r = run(LINT_SPEC)
+    assert r.returncode == 2 and r.stdout == "" and "Usage" in r.stderr
+    for flag in ("--file", "--report", "--heading"):
+        r = run(LINT_SPEC, "--file", "spec.md", flag)
+        assert r.returncode == 2 and r.stdout == "" and f"{flag} needs a value" in r.stderr, flag
+    (tmp_path / "spec.md").write_text(spec(), encoding="utf-8")
+    r = run(LINT_SPEC, "--file", str(tmp_path / "spec.md"), "--reprot", str(tmp_path / "x.json"))
+    assert r.returncode == 2 and r.stdout == "" and "unknown option '--reprot'" in r.stderr
+    assert not (tmp_path / "x.json").exists()
+    r = run(LINT_SPEC, "--file", str(tmp_path / "spec.md"), "--heading", "Scope")
+    assert r.returncode == 2 and "is not '<English heading>=<translated heading>'" in r.stderr
+
+
+def test_lint_spec_report_writes_the_record_of_the_run(tmp_path):
+    doc, report = tmp_path / "spec.md", tmp_path / "spec.lint-before.json"
+    doc.write_text(spec(nfr="Results appear soon"), encoding="utf-8")
+    r = run(LINT_SPEC, "--file", str(doc), "--report", str(report), "--json")
+    printed, record = json.loads(r.stdout), json.loads(report.read_text(encoding="utf-8"))
+    assert r.returncode == 1 and report.read_text(encoding="utf-8").endswith("\n")
+    assert set(record) == {"script", "date", "arguments", "ok", "summary", "errors", "warnings", "counts"}
+    assert record["script"] == "lint_spec.py" and record["arguments"] == {"--file": str(doc), "--json": True}
+    assert record["ok"] is False and record["summary"] == printed["summary"] and record["errors"] == printed["errors"]
+    assert record["counts"] == printed["counts"]
+    doc.write_text(spec(), encoding="utf-8")
+    r = run(LINT_SPEC, "--file", str(doc), "--report", str(tmp_path / "spec.lint.json"))
+    record = json.loads((tmp_path / "spec.lint.json").read_text(encoding="utf-8"))
+    assert r.returncode == 0 and record["ok"] is True and record["errors"] == []
+
+
+def test_lint_spec_reads_translated_headings(tmp_path):
+    names = {"Functional requirements": "Requisitos funcionais", "Acceptance criteria": "Criterios de aceite"}
+    text = spec()
+    for english, translated in names.items():
+        text = text.replace("## " + english + "\n", "## " + translated + "\n")
+    (tmp_path / "spec.md").write_text(text, encoding="utf-8")
+    r = run(LINT_SPEC, "--file", str(tmp_path / "spec.md"))
+    assert r.returncode == 1 and "missing section '## Functional requirements'" in json.loads(r.stdout)["errors"]
+    args = [a for e, t in names.items() for a in ("--heading", f"{e}={t}")]
+    r = run(LINT_SPEC, "--file", str(tmp_path / "spec.md"), *args, "--report", str(tmp_path / "r.json"))
+    assert r.returncode == 0, r.stdout
+    assert json.loads((tmp_path / "r.json").read_text(encoding="utf-8"))["arguments"]["--heading"] == [
+        "Functional requirements=Requisitos funcionais", "Acceptance criteria=Criterios de aceite"]

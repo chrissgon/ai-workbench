@@ -2,8 +2,9 @@
 
 - Owner: design-system
 - Status: draft
-- Date: {YYYY-MM-DD}
+- Date: {YYYY-MM-DD, from `date +%F`}
 - Flows: docs/design/flows.md
+- Lint: {ok (YYYY-MM-DD) | failed | not run}
 
 ## Summary
 
@@ -25,7 +26,7 @@
 
 ## Contrast
 
-Ratios come from `scripts/contrast.py`, never from memory.
+Ratios come from `contrast.py`, never from memory; the lint recomputes them from the Colour table.
 
 | Text token | On background | Light ratio | Dark ratio | AA |
 |------------|---------------|-------------|------------|----|
@@ -58,7 +59,7 @@ Ratios come from `scripts/contrast.py`, never from memory.
 
 ## Design tool
 
-- File: {name and key | none available}
+- File: {name and key | none available: nothing was built in a design file}
 - Collections: {…}
 - Styles: {…}
 - Components: {…}

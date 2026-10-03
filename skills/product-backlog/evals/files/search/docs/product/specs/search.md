@@ -69,6 +69,11 @@ A visitor of the documentation site finds a page or a heading by typing in a sea
   When the build runs
   Then the index weighs under 50 kB gzip
   Covers: NFR-1
+- AC-5:
+  Given the index already loaded
+  When the visitor types one more character of a query
+  Then the results update within 100 ms
+  Covers: NFR-2
 
 ## Assumptions
 

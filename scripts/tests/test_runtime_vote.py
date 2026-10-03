@@ -585,3 +585,24 @@ def test_a_second_vcs_provider_needs_a_choice_and_the_configured_name_still_work
     code, out, err = rt(env, "tick")
     assert code == 0 and out["vote"]["status"] == "to_inbox", err
     assert all(c[0] == "read-file" for c in calls(env, "vcs")) and calls(env, "vcs")
+
+
+# --- RT7: nothing that looks like a credential is published ------------------------------------------
+
+FAKE_TOKEN = "ghp" + "_" + "Q7" * 18  # built at run time: no credential-shaped literal in the repository
+
+
+def test_a_proposal_holding_a_credential_is_masked_and_cannot_be_approved(env):
+    text = proposal().replace("https://example.com/priya-fsync-slides", f"the key is {FAKE_TOKEN}")
+    env["resp"].write_text(text)
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    (item,) = inbox(env)
+    b = item["payload"]
+    assert b["ready"] is False and any("looks like a credential (GitHub token)" in p for p in b["problems"])
+    assert FAKE_TOKEN not in json.dumps(b) and "<redacted GitHub token>" in b["post"]["first_comment"]
+    for f in b["files"].values():
+        assert FAKE_TOKEN.encode() not in Path(f["path"]).read_bytes(), f["path"]
+    code, _, err = rt(env, "approve", "--id", str(item["id"]))
+    assert code == 2 and "not ready" in err
+    assert calls(env, "scheduler") == [] and calls(env, "publisher") == []

@@ -86,9 +86,28 @@ def parse_round(text):
     return questions
 
 
+HOLDS_RE = re.compile(r"^which one holds\b", re.I)
+
+
+def contradictions_listed(text):
+    """True when the round's "### Contradictions" section holds a line other than "none"."""
+    inside = False
+    for line in text.splitlines():
+        if re.match(r"^\s*#{1,6}\s", line):
+            inside = bool(re.match(r"^\s*#{1,6}\s*Contradictions\s*$", line, re.I))
+            continue
+        if inside and line.strip() and not re.fullmatch(r"\W*none\W*", line.strip(), re.I):
+            return True
+    return False
+
+
 def check_round(text):
     errors, warnings = [], []
     qs = parse_round(text)
+    listed = contradictions_listed(text)
+    if listed and qs and not HOLDS_RE.match(qs[0]["title"]):
+        errors.append('Q1: a contradiction is listed, so Q1 asks "Which one holds: <what the request says>, or '
+                      '<what the file says>?"')
     if not qs:
         errors.append('no question found: write each one as "**Q1. <question>?**" on its own line')
     if len(qs) > MAX_QUESTIONS:
@@ -101,7 +120,8 @@ def check_round(text):
             errors.append(f"{tag}: the title is not a question (no question mark)")
         if marks > 1:
             errors.append(f"{tag}: {marks} question marks in the title: one question asks one thing; split it")
-        if re.search(r"\band\b|;|, (?:or|plus|also)\b", q["title"], re.I):
+        holds = q is qs[0] and listed and HOLDS_RE.match(q["title"])
+        if not holds and re.search(r"\band\b|;|, (?:or|plus|also)\b", q["title"], re.I):
             errors.append(f'{tag}: the title joins two things ("and", ";"): ask one decision, and move the '
                           "other to its own question or to the next round")
         asked_after = [e for e in q["extra"] if "?" in e]

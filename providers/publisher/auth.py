@@ -40,6 +40,9 @@ LINKEDIN_SCOPES = "openid profile w_member_social"
 CALLBACK_HOST, CALLBACK_PORT, CALLBACK_PATH = "localhost", 8765, "/callback"
 REDIRECT_URI = f"http://{CALLBACK_HOST}:{CALLBACK_PORT}{CALLBACK_PATH}"
 CALLBACK_TIMEOUT_SECONDS = 300
+# One connection is served at a time. A connection that sends nothing (a browser opens spare ones) is
+# dropped after this long, so that it cannot hold the listener while the real callback waits.
+CALLBACK_HANDLER_TIMEOUT_SECONDS = 5
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
 
 HELP_EPILOG = f"""\
@@ -122,29 +125,40 @@ def keyring_module():
 
 
 def linkedin_check() -> int:
-    keyring = keyring_module()
-    try:
-        stored = keyring.get_password(KEYRING_SERVICE, LINKEDIN_KEYRING_USERNAME)
-    except Exception as exc:
-        raise AuthError(f"cannot read the OS secret store: {type(exc).__name__}")
-    if not stored:
-        print(json.dumps({"provider": "linkedin", "stored": False}, indent=2))
-        log("not ready: no LinkedIn token stored; run auth.py --provider linkedin")
-        return EXIT_SERVICE
-    try:
-        data = json.loads(stored)
-    except ValueError:
-        raise AuthError("the stored LinkedIn credential is unreadable; rerun auth.py --provider linkedin")
-    expires_at = data.get("expires_at")
+    """Whether a token is there and when it expires, read the way the provider reads it: through the secret
+    resolver (the environment, then the OS secret store; contracts/secrets.md). No network. Exit 3 when the
+    person has something to do (no token, an unreadable record, an expired token)."""
+    found = secret_resolver().resolve("LINKEDIN_ACCESS_TOKEN")
+    if not found:
+        print(json.dumps({"provider": "linkedin", "found": False, "stored": False}, indent=2))
+        log("not configured: no LinkedIn token in the environment or the OS secret store; "
+            "run auth.py --provider linkedin")
+        return EXIT_NOT_CONFIGURED
+    value, source = found
+    stored = source == "secret store"
+    if stored:  # the JSON record this script wrote
+        try:
+            data = json.loads(value)
+            expires_at = data.get("expires_at")
+        except (ValueError, AttributeError):
+            raise AuthError("the stored LinkedIn credential is unreadable; rerun auth.py --provider linkedin",
+                            EXIT_NOT_CONFIGURED)
+    else:  # a bare token from the environment; its expiry, when known, is in a variable beside it
+        data, expires_at = {}, os.environ.get("LINKEDIN_TOKEN_EXPIRES_AT") or None
     days = None
     expired = False
     if expires_at:
-        delta = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) - now_utc()
+        try:
+            delta = datetime.fromisoformat(expires_at.replace("Z", "+00:00")) - now_utc()
+        except (ValueError, TypeError):
+            raise AuthError("the token's expiry is not ISO-8601", EXIT_NOT_CONFIGURED)
         days = int(delta.total_seconds() // 86400)
         expired = delta.total_seconds() <= 0
     out = {
         "provider": "linkedin",
-        "stored": True,
+        "found": True,
+        "source": source,
+        "stored": stored,
         "expires_at": expires_at,
         "expires_in_days": days,
         "expired": expired,
@@ -153,8 +167,8 @@ def linkedin_check() -> int:
     }
     print(json.dumps(out, indent=2))
     if expired:
-        log("not ready: the stored LinkedIn token has expired; rerun auth.py --provider linkedin")
-        return EXIT_SERVICE
+        log("not configured: the LinkedIn token has expired; rerun auth.py --provider linkedin")
+        return EXIT_NOT_CONFIGURED
     if days is not None and days < 7:
         log(f"warning: the LinkedIn token expires in {days} days; rerun auth.py --provider linkedin")
     return EXIT_OK
@@ -166,6 +180,8 @@ def wait_for_code(expected_state: str) -> str:
     done = threading.Event()
 
     class Handler(BaseHTTPRequestHandler):
+        timeout = CALLBACK_HANDLER_TIMEOUT_SECONDS  # a silent connection is dropped, never waited on for ever
+
         def do_GET(self):  # noqa: N802 (http.server naming)
             parsed = urllib.parse.urlparse(self.path)
             if parsed.path != CALLBACK_PATH:
@@ -328,7 +344,9 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--provider", required=True, choices=["linkedin"], help="the provider to authorize")
-    parser.add_argument("--check", action="store_true", help="report whether a token is stored and when it expires")
+    parser.add_argument("--check", action="store_true",
+                        help="report whether a token is found (environment, then the OS secret store) and "
+                             "when it expires; no network")
     parser.add_argument("--no-browser", action="store_true", help="print the authorization URL without opening a browser")
     args = parser.parse_args(argv)
     try:

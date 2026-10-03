@@ -154,3 +154,72 @@ def test_lint_design_system_refuses_a_changed_library_value(tmp_path):
 def test_lint_design_system_refuses_an_empty_components_table(tmp_path):
     code, out = lint_ds(tmp_path, design_system(component=""))
     assert code == 1 and out["errors"] == ["Components table has no rows"] and out["counts"]["components"] == 0
+
+
+# ---------- design-system/lint_design_system.py: contrast rows recomputed from the Colour table ----------
+
+CONTRAST_ROWS = """| `--ui-ink` | `--ui-bg` | {light}:1 | 21.00:1 | pass |
+| page/ink on a tint | `--ui-bg` with #F3F4F6 / #111827 | 19.08:1 | 17.74:1 | pass |
+| brand/on-fill | brand/fill | 3.50:1 | 9.00:1 | fail in light |"""
+
+
+def with_contrast(light: str = "21.00") -> str:
+    text = design_system().replace(
+        "| `--ui-bg` | #FFFFFF | #000000 | page background | lib.md |",
+        "| `--ui-bg` | #FFFFFF | #000000 | page background | lib.md |\n"
+        "| `--ui-ink` (page/ink) | #000000 | #FFFFFF | body text | lib.md |\n"
+        "| brand/fill | #0092CD | rgba(0, 146, 205, 1) | brand | lib.md |\n"
+        "| brand/on-fill | #FFFFFF | #000000 | label on brand | lib.md |")
+    return text.replace("|------------|---------------|-------------|------------|----|\n",
+                        "|------------|---------------|-------------|------------|----|\n"
+                        + CONTRAST_ROWS.format(light=light) + "\n")
+
+
+def test_lint_design_system_recomputes_every_contrast_row_it_can(tmp_path):
+    code, out = lint_ds(tmp_path, with_contrast())
+    assert (code, out["errors"]) == (0, []), out
+    assert out["warnings"] == ["contrast row brand/on-fill: dark ratio not recomputed, a value is not hex"]
+    assert out["counts"]["contrast_recomputed"] == 3
+    code, out = lint_ds(tmp_path, with_contrast(light="7.00"))
+    assert code == 1
+    assert out["errors"] == ["contrast row `--ui-ink`: light ratio is 7.00:1 in the document; "
+                             "#000000 on #FFFFFF gives 21.00:1"]
+
+
+def test_lint_design_system_warns_on_a_contrast_row_whose_colours_it_cannot_find(tmp_path):
+    text = with_contrast().replace("| brand/on-fill | brand/fill |", "| label | an image |")
+    code, out = lint_ds(tmp_path, text)
+    assert code == 0
+    assert "contrast row label: not recomputed, its colours are not in the Colour table" in out["warnings"]
+
+
+# ---------- design-system/lint_design_system.py: --report and the command line ----------
+
+def test_lint_design_system_report_writes_the_record_of_the_evidence_convention(tmp_path):
+    (tmp_path / "flows.md").write_text(DS_FLOWS, encoding="utf-8")
+    (tmp_path / "lib.md").write_text(DS_LIBRARY, encoding="utf-8")
+    (tmp_path / "ds.md").write_text(design_system(), encoding="utf-8")
+    r = run(LINT_DS, "--file", "ds.md", "--flows", "flows.md", "--library", "lib.md", "--report", "ds.lint.json",
+            cwd=tmp_path)
+    assert r.returncode == 0, r.stderr
+    printed = json.loads(r.stdout)
+    text = (tmp_path / "ds.lint.json").read_text(encoding="utf-8")
+    record = json.loads(text)
+    assert text.endswith("\n") and record.pop("date")
+    assert record == {"script": "lint_design_system.py",
+                      "arguments": {"--file": "ds.md", "--flows": "flows.md", "--library": "lib.md"},
+                      "ok": True, "summary": printed["summary"], "errors": [], "warnings": [],
+                      "counts": printed["counts"]}
+    assert printed["summary"].startswith("lint_design_system ok: 0 errors")
+    assert "library prefix --ui-" in printed["summary"]
+
+
+def test_lint_design_system_usage_errors_exit_two_on_stderr(tmp_path):
+    (tmp_path / "ds.md").write_text(design_system(), encoding="utf-8")
+    for args in (["--file"], ["--file", "ds.md", "--library"], ["--file", "ds.md", "--flows"],
+                 ["--file", "ds.md", "--prefix"], ["--file", "ds.md", "--report"],
+                 ["--file", "ds.md", "--reprot", "x.json"], []):
+        r = run(LINT_DS, *args, cwd=tmp_path)
+        assert r.returncode == 2, (args, r.stderr)
+        assert r.stderr.startswith("Error:") and "Traceback" not in r.stderr and r.stdout == ""
+    assert not (tmp_path / "x.json").exists()

@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Lint a roadmap written from assets/roadmap-template.md against its PRD.
 
-Usage: python3 lint_roadmap.py --file <roadmap.md> --prd <prd.md> [--json]
+Usage: python3 lint_roadmap.py --file <roadmap.md> --prd <prd.md> [--report <path>] [--json]
+
+--report <path> writes the record of the run to <path>: one JSON object with script, date, arguments, ok,
+  summary, errors, warnings and counts, on every run that reaches the check, never on a usage error.
 
 Checks:
   - required sections are present; the Method section has a "Method:" line
@@ -16,10 +19,13 @@ Checks:
 
   - an OPEN that blocks an R- or F- id while the Readiness section does not say "no" (error)
 
-Prints JSON. The "result_line" field is one line to quote in the report, for example
+Prints JSON on stdout. The "summary" field is one line to quote in the reply, for example
 "lint_roadmap.py --file docs/product/roadmap.md --prd docs/product/prd.md: ok: true, 0 errors, 0 warnings".
-Exit codes: 0 ok, 1 problems found, 2 usage error.
+A usage error goes to stderr.
+Exit codes: 0 ok, 1 problems found, 2 usage error (a flag without its value, an unknown flag, a file that
+cannot be read or written).
 """
+import datetime
 import json
 import re
 import sys
@@ -54,16 +60,36 @@ def section(text, title):
     return rest[: n.start()] if n else rest
 
 
+def parse_args(argv):
+    """(values, None), or (None, a usage error). values maps each flag given to its value, a switch to True."""
+    values, i = {}, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--file", "--prd", "--report"):
+            if i + 1 >= len(argv) or argv[i + 1].startswith("--"):
+                return None, f"Error: {a} needs a value. See --help."
+            values[a] = argv[i + 1]
+            i += 2
+        elif a == "--json":
+            values[a] = True
+            i += 1
+        else:
+            return None, f"Error: unknown option {a!r}. See --help."
+    return values, None
+
+
 def main(argv):
-    if "--help" in argv or "-h" in argv or not argv:
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
-    as_json = "--json" in argv
-    path = prd = None
-    if "--file" in argv:
-        path = argv[argv.index("--file") + 1]
-    if "--prd" in argv:
-        prd = argv[argv.index("--prd") + 1]
+        return 0
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    values, problem = parse_args(argv)
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
+    as_json, path, prd = "--json" in values, values.get("--file"), values.get("--prd")
     if not path or not prd:
         print("Error: --file <roadmap.md> and --prd <prd.md> are required. See --help.", file=sys.stderr)
         return 2
@@ -132,11 +158,25 @@ def main(argv):
         if bm and re.search(r"\b[RF]-\d+\b", bm.group(1)) and not re.search(r":\s*no\b", readiness):
             errors.append(f"{oid} blocks {bm.group(1).strip()} but the Readiness section does not say 'no, because {oid} blocks ...'")
     ok = not errors
-    result_line = (f"lint_roadmap.py --file {path} --prd {prd}: ok: {'true' if ok else 'false'}, "
-                   f"{len(errors)} errors, {len(warnings)} warnings")
-    print(json.dumps({"ok": ok, "result_line": result_line, "releases": order, "features": {k: v for k, v in placed.items()},
-                      "unplaced": sorted(f for f in prd_feats if f not in placed), "errors": errors, "warnings": warnings},
+    summary = (f"lint_roadmap.py --file {path} --prd {prd}: ok: {'true' if ok else 'false'}, "
+               f"{len(errors)} errors, {len(warnings)} warnings")
+    unplaced = sorted(f for f in prd_feats if f not in placed)
+    print(json.dumps({"ok": ok, "summary": summary, "releases": order, "features": {k: v for k, v in placed.items()},
+                      "unplaced": unplaced, "errors": errors, "warnings": warnings},
                      indent=2 if as_json else None))
+    if "--report" in values:
+        record = {"script": "lint_roadmap.py", "date": datetime.date.today().isoformat(),
+                  "arguments": {k: v for k, v in values.items() if k != "--report"}, "ok": ok, "summary": summary,
+                  "errors": errors, "warnings": warnings,
+                  "counts": {"releases": len(order), "features": len(prd_feats), "placed": len(placed),
+                             "unplaced": len(unplaced)}}
+        try:
+            with open(values["--report"], "w", encoding="utf-8") as f:
+                json.dump(record, f, indent=2)
+                f.write("\n")
+        except OSError as e:
+            print(f"Error: cannot write the report {values['--report']}: {e}", file=sys.stderr)
+            return 2
     return 0 if ok else 1
 
 
