@@ -364,6 +364,15 @@ def test_more_notifications_than_one_page_are_all_read(env, monkeypatch):
     assert since[since.index("--since") + 1] == "2026-09-29T10:05:00Z"  # the cursor moved once all were read
 
 
+def test_the_mailbox_is_given_the_platforms_header_prefix(env):
+    # Coupling row 13: the generic mailbox provider held one platform's header prefix as a constant; the prefix is
+    # the platform's data (notification_email.header_prefix), passed by the runtime.
+    set_case(env, [message(1)], decision())
+    assert rt(env, "tick")[0] == 0
+    (search,) = mailbox_calls(env)
+    assert search[search.index("--header-prefix") + 1] == "x-linkedin-"
+
+
 def test_the_cursor_stays_when_the_older_messages_could_not_be_read(env, monkeypatch):
     # RT3: the newest page is read and the next one fails. What was read becomes events; the cursor must not
     # move past the messages nobody read.

@@ -439,7 +439,9 @@ def platform_limits(path: Path, platform: str) -> dict:
         limits = {"reply": int(data["reply"]["max_characters"]), "post": int(post["max_characters"]),
                   "first_comment": int(post["first_comment"]["max_characters"])
                   if post["first_comment"].get("supported") else 0,
-                  "image": (int(image["width"]), int(image["height"])) if image else None}
+                  "image": (int(image["width"]), int(image["height"])) if image else None,
+                  # the headers of the platform's notification e-mails the mailbox keeps (--header-prefix)
+                  "header_prefix": str((data.get("notification_email") or {}).get("header_prefix") or "")}
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
         raise Fail(f"{path}: not a platform data file the runtime can read ({type(e).__name__}: {e})", 3)
     if min(limits["reply"], limits["post"]) < 1:
@@ -679,6 +681,8 @@ def read_mailbox(cfg: dict, since: str) -> tuple[list, str | None]:
     for ever. Events are deduplicated by message id, so reading the same messages again costs nothing."""
     base = ["uv", "run", str(cfg["paths"]["mailbox"]), "search", "--query", cfg["notification_query"],
             "--since", since, "--limit", str(MAILBOX_PAGE)]
+    if cfg["limits"]["header_prefix"]:  # the mailbox provider is generic: the platform's headers are data
+        base += ["--header-prefix", cfg["limits"]["header_prefix"]]
     messages, seen, before = [], set(), None
     for _ in range(MAILBOX_MAX_PAGES):
         try:
