@@ -2304,6 +2304,13 @@ def pause_path(key):
     return os.path.join(lock_dir(), "pause-" + re.sub(r"[^A-Za-z0-9_.-]", "_", key) + ".json")
 
 
+# The clock and the wait of a pause. Every look at a pause reads the time through PAUSE_CLOCK and waits through
+# PAUSE_SLEEP, so that a test drives a pause step by step, with no real waiting and no dependence on the time
+# of day.
+PAUSE_CLOCK = time.time
+PAUSE_SLEEP = time.sleep
+
+
 def read_pause(path):
     try:
         with open(path, encoding="utf-8") as f:
@@ -2320,6 +2327,18 @@ def write_pause(path, state):
     os.replace(tmp, path)
 
 
+def last_probe(path, state):
+    """When the paused account was last tried: the newest of the pause's start and the time in its probe file.
+    The probe time lives in a file of its own (<pause file>.probed), so that a process that records a probe
+    never rewrites the pause file: the time an operator gives with --unpause --at cannot be lost under it."""
+    try:
+        with open(path + ".probed", encoding="utf-8") as f:
+            probed = float(f.read().strip() or 0)
+    except (OSError, ValueError):
+        probed = 0
+    return max(state.get("since") or 0, probed)
+
+
 def clock(ts):
     return datetime.datetime.fromtimestamp(ts).astimezone().isoformat(timespec="seconds")
 
@@ -2333,9 +2352,9 @@ def start_pause(key, what):
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         return False
-    now = time.time()
+    now = PAUSE_CLOCK()
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump({"key": key, "since": now, "probed": now, "until": None, "what": what}, f)
+        json.dump({"key": key, "since": now, "until": None, "what": what}, f)
     print(f"PAUSED {clock(now)}: the account of {key} is exhausted ({what}). Every run and grading on it waits; "
           f"nothing is retried into the limit. It resumes when a probe call succeeds (one every {PROBE_SECONDS}s) or at "
           "the time given with: python3 evals/eval_run.py --unpause [--at <HH:MM or YYYY-MM-DDTHH:MM>]", file=sys.stderr)
@@ -2345,14 +2364,15 @@ def start_pause(key, what):
 def wait_while_paused(key, probe=None):
     """Block while the account `key` is paused. It ends at the time the operator gave (--unpause --at), when
     the operator removed the pause (--unpause), or when a probe call succeeds: probe() makes one small model
-    call, by one process at a time, at most once every PROBE_SECONDS. Returns True when it waited."""
+    call, by one process at a time, at most once every PROBE_SECONDS, and never once a time is given. Returns
+    True when it waited. Only start_pause and --unpause write the pause file; a probe writes its own file."""
     import fcntl
     path, waited = pause_path(key), False
     while os.path.exists(path):
         if STOPPING.is_set():
             raise RuntimeError("stopping: no new run is started")
         waited = True
-        state, now = read_pause(path), time.time()
+        state, now = read_pause(path), PAUSE_CLOCK()
         until = state.get("until")
         if isinstance(until, (int, float)):
             if now >= until:
@@ -2362,7 +2382,7 @@ def wait_while_paused(key, probe=None):
                     pass
                 print(f"RESUMED {clock(now)}: the time given for the account of {key} has come", file=sys.stderr)
                 break
-        elif probe and now - (state.get("probed") or 0) >= PROBE_SECONDS:
+        elif probe and now - last_probe(path, state) >= PROBE_SECONDS:
             fd = os.open(path + ".probe", os.O_CREAT | os.O_RDWR, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -2371,18 +2391,19 @@ def wait_while_paused(key, probe=None):
             else:
                 try:
                     state = read_pause(path)
-                    if state and not state.get("until") and time.time() - (state.get("probed") or 0) >= PROBE_SECONDS:
-                        write_pause(path, {**state, "probed": time.time()})
+                    if state and not state.get("until") and PAUSE_CLOCK() - last_probe(path, state) >= PROBE_SECONDS:
+                        with open(path + ".probed", "w", encoding="utf-8") as f:
+                            f.write(repr(PAUSE_CLOCK()))
                         if probe():
                             try:
                                 os.remove(path)
                             except OSError:
                                 pass
-                            print(f"RESUMED {clock(time.time())}: a probe call on the account of {key} succeeded", file=sys.stderr)
+                            print(f"RESUMED {clock(PAUSE_CLOCK())}: a probe call on the account of {key} succeeded", file=sys.stderr)
                             break
                 finally:
                     os.close(fd)
-        time.sleep(PAUSE_POLL)
+        PAUSE_SLEEP(PAUSE_POLL)
     return waited
 
 

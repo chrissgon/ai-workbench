@@ -2353,31 +2353,48 @@ def test_a_grading_call_that_meets_the_account_limit_pauses_and_is_made_again(tm
 
 
 def test_a_pause_holds_every_call_on_the_account_until_the_time_the_operator_gives(tmp_path, monkeypatch, capsys):
-    import threading
-    import time
+    # Driven step by step in one thread: the pause's clock is a counter and its wait a step of the scenario
+    # below, so nothing sleeps and nothing depends on the time of day or on how busy the machine is.
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
-    fast_pause(monkeypatch)
+    monkeypatch.setattr(er, "PROBE_SECONDS", 60)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(er, "PAUSE_CLOCK", lambda: clock["now"])
     assert er.start_pause("h", "case 1 with_skill run 1") is True and er.start_pause("h", "another run") is False
     assert er.wait_while_paused("other-account") is False  # another account is not held
-    probes, done = [], []
-    waiter = threading.Thread(target=lambda: done.append(er.wait_while_paused("h", lambda: probes.append(1) or False)))
-    waiter.start()
-    time.sleep(0.3)
-    assert waiter.is_alive() and probes  # held, and probing
-    assert er.main(["--unpause", "--at", "2999-01-01T00:00"]) == 0
-    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["pauses"] == ["h"]
-    time.sleep(0.2)
-    seen = len(probes)
-    time.sleep(0.3)
-    assert waiter.is_alive() and len(probes) == seen  # a time was given: it waits for it and probes no more
-    assert er.main(["--unpause"]) == 0  # the operator ends it now
-    waiter.join(timeout=5)
-    assert not waiter.is_alive() and done == [True]
-    # A time already past ends the pause for whoever looks next.
+    probes, steps = [], []
+
+    def step(seconds):
+        """One wait of the pause: 30 seconds pass, and the operator acts at the steps the scenario names."""
+        steps.append(len(probes))
+        clock["now"] += 30
+        if len(steps) == 5:  # a time is given: the pause waits for it and probes no more
+            assert er.main(["--unpause", "--at", "2999-01-01T00:00"]) == 0
+            assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["pauses"] == ["h"]
+        if len(steps) == 9:
+            assert er.main(["--unpause"]) == 0  # the operator ends it now
+        assert len(steps) < 20, "the pause never ended"
+    monkeypatch.setattr(er, "PAUSE_SLEEP", step)
+    assert er.wait_while_paused("h", lambda: probes.append(clock["now"]) or False) is True
+    # Probed once every PROBE_SECONDS while no time was given (at 1060 and 1120, never at the start), never
+    # again once the operator gave a time, and ended by the operator's --unpause after the ninth wait.
+    assert probes == [1060.0, 1120.0] and steps == [0, 0, 1, 1, 2, 2, 2, 2, 2]
+    assert not os.path.exists(er.pause_path("h"))
+    # A probe never rewrites the pause file, so a time the operator gives while a probe runs is kept.
     er.start_pause("h", "again")
     path = er.pause_path("h")
-    er.write_pause(path, {**er.read_pause(path), "until": time.time() - 1})
-    assert er.wait_while_paused("h") is True and not os.path.exists(path)
+
+    def operator_acts_during_the_probe():
+        er.write_pause(path, {**er.read_pause(path), "until": clock["now"] + 30})
+        return False
+    steps.clear()
+    clock["now"] += 120
+    assert er.wait_while_paused("h", operator_acts_during_the_probe) is True
+    assert len(steps) == 1 and not os.path.exists(path)  # the time given came after one more wait
+    # A time already past ends the pause for whoever looks next, with no wait.
+    er.start_pause("h", "again")
+    er.write_pause(path, {**er.read_pause(path), "until": clock["now"] - 1})
+    steps.clear()
+    assert er.wait_while_paused("h") is True and not os.path.exists(path) and steps == []
     for args in (["--unpause", "--at", "soon"], ["--at", "15:00"], ["--unpause", "--skill", "demo"]):
         with pytest.raises(SystemExit) as e:
             er.main(args)
