@@ -282,9 +282,9 @@ that skill; (j) a case that sets "allow_web" is one of the gate file's "web_case
 token with a "/" and a file extension, or one ending in .md .json .yml .yaml .toml .css .js .ts .py .html;
 URLs, absolute paths, globs and placeholders are ignored, and a path matches a fixture when it is that
 fixture's path or the end of it. Errors are printed one per line and stop the run before it spends anything.
-Rules (h) and (i) are TRANSITIONAL: cases written before them break them, and the rows of phase C fix those
-cases. Until then --check-cases, which the validator runs, lists their findings as "warnings" and exits 0; a
-real run refuses them like any error. --check-cases --with-setup also runs the cases' setup commands, in the
+Rules (h) and (i) were TRANSITIONAL while the rows of phase C fixed the cases written before them, and
+--check-cases listed their findings as "warnings"; since the close of phase C (C0.10) TRANSITIONAL is empty and
+they are errors like the others, for --check-cases and a real run alike. --check-cases --with-setup also runs the cases' setup commands, in the
 eval container (the container job of CI runs it for every skill that has one).
 
 Infrastructure failures are not scores. A run whose adapter exits non-zero (a missing runner, a provider
@@ -1029,11 +1029,11 @@ def prompt_folders(prompt):
 
 
 ROUTER = "core-orchestrator"
-# Rules of the preflight that cases written before them still break, and that the rows of phase C fix
-# (docs/architecture/final-plan-2026-10-02.md): `--check-cases`, which the validator runs on every skill, lists
-# their findings as warnings, so that the validator stays at zero errors while those rows are open; a real run
-# refuses them like any error. The sweep that closes phase C (C0.10) empties this tuple.
-TRANSITIONAL = ("skills", "folder")
+# Rules of the preflight that `--check-cases`, which the validator runs on every skill, lists as warnings instead
+# of errors, while a real run refuses them like any error. "skills" and "folder" were here while the rows of phase C
+# fixed the cases written before them (docs/architecture/final-plan-2026-10-02.md); the sweep that closed phase C
+# (C0.10) emptied this tuple, and a rule added later that cases written before it break starts here the same way.
+TRANSITIONAL = ()
 
 
 def skill_text(skill_dir):

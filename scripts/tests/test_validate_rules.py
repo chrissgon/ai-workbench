@@ -63,11 +63,12 @@ def run_skill(root, name="eng-demo", classes=None):
 
 
 def rules(report):
-    return sorted(w.get("rule") or "-" for w in report.warnings)
+    """The named rules a report lists, warnings and the rules of ERROR_RULES, which are errors since phase C closed."""
+    return sorted(w.get("rule") or "-" for w in report.warnings + [e for e in report.errors if e.get("rule")])
 
 
 def messages(report, rule):
-    return [w["message"] for w in report.warnings if w.get("rule") == rule]
+    return [w["message"] for w in report.warnings + report.errors if w.get("rule") == rule]
 
 
 def test_a_complete_skill_with_two_good_cases_gets_no_warning_and_no_error(tree):
@@ -76,7 +77,7 @@ def test_a_complete_skill_with_two_good_cases_gets_no_warning_and_no_error(tree)
     assert report.errors == [] and report.warnings == []
 
 
-def test_every_new_rule_is_a_warning_and_never_an_error(tree):
+def test_every_new_rule_is_a_warning_and_the_vocabulary_rules_are_errors_since_phase_c_closed(tree):
     add_skill(tree, description="Does a thing." + " More." * 160,
               meta={"version": None, "requires": "[mailbox, publisher:<platform>, publisher:mastodon]",
                     "side_effects": "[write]"},
@@ -84,15 +85,25 @@ def test_every_new_rule_is_a_warning_and_never_an_error(tree):
               cases=[case(1, prompt="Run eng-demo on this.", assertions=["If a file exists, it is listed", "npm test is run"],
                           surprise=True)])
     report = run_skill(tree, classes=validate.load_classes(report := validate.Report(), str(tree)) or ["search:web"])
-    assert report.errors == []
+    assert sorted(e["rule"] for e in report.errors) == ["requires-role", "requires-vocabulary", "side-effects-vocabulary"]
     assert rules(report) == ["description-length", "description-when", "eval-assertions-count", "eval-cases-count",
                              "eval-conditional-assertion", "eval-keys", "eval-prompt-names-skill",
                              "eval-run-assertion", "meta-keys", "requires-role", "requires-vocabulary",
                              "side-effects-vocabulary",
                              "skill-name", "skill-tokens"]
-    assert all(w["message"].startswith(f"[{w['rule']}] ") for w in report.warnings)
+    assert all(w["message"].startswith(f"[{w['rule']}] ") for w in report.warnings + report.errors)
     assert "metadata.version, license" in messages(report, "meta-keys")[0]
     assert "side_effects write" in messages(report, "side-effects-vocabulary")[0]
+
+
+def test_a_prompt_that_copies_a_runtime_task_may_name_its_skill(tree):
+    runtime = 'This task comes from the agent runtime (contracts/runtime.md). Follow "Runtime mode" in the skill eng-demo.'
+    add_skill(tree, cases=[case(1, prompt=runtime + "\n\nPlatform: example"), case(2, prompt="Use eng-demo. " + runtime)])
+    assert messages(run_skill(tree), "eval-prompt-names-skill") == [
+        "[eval-prompt-names-skill] the prompt names the skill under test, which the run without the skill cannot "
+        "follow: case 2"]  # the runtime's line counts only as the first line of the prompt
+    for script in ("scripts/runtime.py", "scripts/runtime_vote.py"):  # the line the runtime writes
+        assert validate.RUNTIME_TASK_RE.pattern.replace("\\", "") in (REPO / script).read_text(encoding="utf-8")
 
 
 def test_requires_is_read_against_the_class_table_and_a_placeholder_class_is_legal(tree):
@@ -111,7 +122,7 @@ def test_requires_is_read_against_the_class_table_and_a_placeholder_class_is_leg
 def test_a_class_without_a_role_is_reported_with_the_class_it_became(tree):
     add_skill(tree, meta={"requires": "[search:web, mailbox, scheduler, store, mailer, teleporter]"})
     report = run_skill(tree, classes=["search:web"])
-    assert report.errors == [] and rules(report) == ["requires-role"]  # one rule, and never both for one value
+    assert report.warnings == [] and rules(report) == ["requires-role"]  # one rule, and never both for one value
     assert messages(report, "requires-role") == [
         "[requires-role] requires mailbox (now reader:email), scheduler (now scheduler:job), store (now store:runtime), "
         "mailer (now sender:email), teleporter: a class has the form <role>:<target>"]
@@ -467,16 +478,17 @@ def guards(tree, monkeypatch, gate=None):
 GATE_BODY = "# Demo\n\nText.\n\n## Confirmation gate\n\nAsk first.\n"
 
 
-def test_each_declared_effect_needs_a_guard_a_warning_until_the_sweep(tree, monkeypatch):
+def test_each_declared_effect_needs_a_guard_an_error_since_the_sweep(tree, monkeypatch):
     add_skill(tree, meta={"side_effects": "[publish, schedule]"}, body=GATE_BODY,
               cases=[case(1, assertions=ASSERTIONS + [{"text": "The reply asks before it publishes", "tags": ["guard:publish"]}]),
                      case(2)])
-    report, _ = guards(tree, monkeypatch)
-    assert [w["rule"] for w in report.warnings] == ["guard-effect"] and "schedule" in report.warnings[0]["message"]
-    assert "publish," not in report.warnings[0]["message"] and not report.errors
-    monkeypatch.setattr(validate, "TRANSITIONAL_RULES", ())  # from the sweep that closes phase C: an error
+    assert validate.TRANSITIONAL_RULES == ()  # emptied by the sweep that closed phase C (C0.10)
     report, _ = guards(tree, monkeypatch)
     assert [e["message"][:14] for e in report.errors] == ["[guard-effect]"] and not report.warnings
+    assert "schedule" in report.errors[0]["message"] and "publish," not in report.errors[0]["message"]
+    monkeypatch.setattr(validate, "TRANSITIONAL_RULES", ("guard-effect",))  # as it was while phase C was open
+    report, _ = guards(tree, monkeypatch)
+    assert [w["rule"] for w in report.warnings] == ["guard-effect"] and not report.errors
 
 
 @pytest.mark.parametrize("body", [GATE_BODY, "# Demo\n\n## Stop rules\n\n1. Stop.\n",

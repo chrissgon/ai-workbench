@@ -3004,7 +3004,7 @@ def test_a_folder_the_prompt_names_must_be_a_folder_of_the_case(tmp_path, monkey
     warnings = []
     case = {"id": 1, "prompt": "Audit app/.", "files": ["evals/files/app"], "assertions": ["a"]}
     errors, _ = er.preflight(str(skill), [case], {1: er.case_files(str(skill), case)}, warnings=warnings)
-    assert errors == [] and len(warnings) == 1  # --check-cases lists it as a warning while the rows of phase C are open
+    assert len(errors) == 1 and warnings == []  # an error for --check-cases too, since the close of phase C
     for ok in ({"absent_on_purpose": ["app/"]}, {"expected_output": "a report in app/"}, {"prompt": "Audit nested/."}):
         assert preflight_of(tmp_path, monkeypatch, {"files": ["evals/files/app"], "prompt": "Audit app/.", **ok})[0] == []
 
@@ -3045,7 +3045,17 @@ def test_a_scripts_own_tests_do_not_count_as_a_call_of_another_skill(tmp_path, m
     assert dependency_case(tmp_path, monkeypatch, "mkt-copy", "# copy\n", ["brand-profile"]) == []
 
 
+def test_since_the_close_of_phase_c_no_rule_is_transitional_and_check_cases_refuses_it(tmp_path, monkeypatch, capsys):
+    assert er.TRANSITIONAL == ()  # emptied by the sweep that closed phase C (C0.10)
+    write_demo(tmp_path, monkeypatch, FAKE, [{"id": 1, "prompt": "p", "assertions": ["a"], "skills": ["dep"]}])
+    (tmp_path / "skills" / "dep").mkdir()
+    (tmp_path / "skills" / "dep" / "SKILL.md").write_text("# dep\n")
+    assert er.main(["--skill", "demo", "--check-cases"]) == 2
+    assert json.loads(capsys.readouterr().out)["errors"][0].startswith("case 1: skills lists dep: none of the three uses")
+
+
 def test_check_cases_lists_a_transitional_rule_as_a_warning_and_a_real_run_refuses_it(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(er, "TRANSITIONAL", ("skills",))  # the mechanism, for a rule added later
     write_demo(tmp_path, monkeypatch, FAKE, [{"id": 1, "prompt": "p", "assertions": ["a"], "skills": ["dep"]}])
     (tmp_path / "skills" / "dep").mkdir()
     (tmp_path / "skills" / "dep" / "SKILL.md").write_text("# dep\n")
@@ -3056,7 +3066,6 @@ def test_check_cases_lists_a_transitional_rule_as_a_warning_and_a_real_run_refus
     with pytest.raises(SystemExit) as e:
         er.main(FULL)
     assert e.value.code == 2 and not list((tmp_path / "evals-workspace").rglob("eval-*"))
-    assert set(er.TRANSITIONAL) == {"skills", "folder"}
 
 
 def test_check_cases_refuses_a_web_case_the_gate_file_does_not_list(tmp_path, monkeypatch, capsys):
