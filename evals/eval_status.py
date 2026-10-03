@@ -7,6 +7,9 @@ Usage:
   python3 evals/eval_status.py evidence [--skill <name> | --file <path>]
   python3 evals/eval_status.py gate --skill <name>
   python3 evals/eval_status.py inventory --write | --check
+  python3 evals/eval_status.py measurement --kind grader|execution|infrastructure --cause "<why>"
+                               [--skills <name>,...|all] [--models <id>,...|all] [--date YYYY-MM-DD]
+  python3 evals/eval_status.py measurement --close --cause "<why>" [--date YYYY-MM-DD]
 
 The records of the first round, skills/<name>/evals/result.json, are history: nothing writes one any more
 (the runner writes evidence, below), and the status of a skill is still read from them until the bands
@@ -119,6 +122,22 @@ Commands:
              "pending", "note", "cause"}.
   inventory  regenerates the block between <!-- eval-status:begin --> and <!-- eval-status:end --> in
              docs/inventory.md (--write), or exits 1 when the block differs from what would be generated (--check).
+  measurement  commits a change of a file the measurement fingerprint covers as one of the three kinds of the
+             reliability model's section 8, and rewrites the gate file: --kind grader raises the measurement
+             version and the floor; --kind execution raises the version and appends an epoch dated --date (today,
+             UTC, by default) for the skills of --skills and the models of --models ("all" by default, the listed
+             ids otherwise; a hosted model that changed under its id is entered this way, with --models <its id>);
+             --kind infrastructure writes the new fingerprint alone, and refuses when it is unchanged. Each writes
+             the fingerprint this checkout computes. No kind multiplies old evidence by a factor. --close writes the
+             fingerprint of a measurement version that is still open, which closes it; a --kind change needs a
+             closed version. Prints {"kind", "measurement_version", "measurement_floor", "measurement_sha256",
+             "epoch", "decisions_entry"}: the entry is added to docs/decisions.md in the same commit.
+
+The measurement fingerprint: sha256 over the files of FINGERPRINT_FILES (the grading template, the measuring
+module evals/measure.py and its constants evals/measurement.json, the executor, the staging module), every file
+of evals/container/, and the run-prompt.sh and adapter.json of each eval adapter. scripts/validate.py fails when
+it differs from a committed "measurement_sha256"; the runner computes it when an event starts, writes it into
+every evidence line and writes no evidence when it differs.
 
 The gate (the reliability model, section 2). Only a full test evaluates it, and the runner writes its result
 into the event line when the test ends; `gate` computes it again from the lines. It is computed over the run
@@ -165,7 +184,8 @@ GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "
 GATE_OPTIONAL = {"measurement_sha256": str,  # absent while a measurement version is open
                  # Control of a test event (event_config below): absent keys take the defaults of EVENT_DEFAULTS.
                  "runs": int, "timeout_seconds": int, "retries": int, "max_resumes": int, "total_jobs": int,
-                 "web_jobs": dict, "web_cases": dict, "strong_web_pass_env": list, "models": dict}
+                 "web_jobs": dict, "web_cases": dict, "strong_web_pass_env": list, "models": dict,
+                 "epochs": list}  # [{"date", "models", "skills", "cause"}]: the model's section 8
 # What an event uses when the gate file does not say: 3 runs per case (the plan's decision 1), 900 seconds per
 # run, 2 retries inside the event, 3 resumptions of one run before it is written as a timeout, 10 runs at a
 # time over every runner process of the machine, 2 runs on the open network at a time per tier.
@@ -246,6 +266,9 @@ def event_problems(cfg):
     if "strong_web_pass_env" in cfg and not (isinstance(names, list) and all(
             isinstance(v, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v) for v in names)):
         out.append("strong_web_pass_env must list variable names")
+    if "epochs" in cfg:
+        out += [f"epochs[{i}] {why}" for i, entry in enumerate(cfg["epochs"] if isinstance(cfg["epochs"], list) else [None])
+                for why in epoch_problems(entry)]
     models = cfg.get("models")
     if "models" in cfg:
         names = [n for k, v in models.items() for n in [k] + (v if isinstance(v, list) else [])] if isinstance(models, dict) else []
@@ -454,11 +477,30 @@ def model_id(cfg, name):
     return "unknown"
 
 
-# The files that decide what a run measures, as far as they exist today: the grading template, the image's
-# definition, the executor, the staging module, the eval adapters' run-prompt.sh and adapter.json. The plan's
-# item B10 completes the list (evals/measure.py, evals/measurement.json) and makes the validator compare the
-# result with the committed "measurement_sha256".
-FINGERPRINT_FILES = ("evals/grading-prompt.md", "evals/executor.py", "scripts/stage_skills.py")
+# The files that decide what a run measures (item B10 of the plan): the grading template, the measuring module
+# and its constants, the executor, the staging module; with them every file of the image's definition
+# (evals/container/) and the run-prompt.sh and adapter.json of each eval adapter (an adapter with a
+# run-prompt.sh). Not in it: scripts/redact.py and shared/references/ (FR-I4), the rest of the runner
+# (infrastructure), the gate file itself. scripts/validate.py compares the result with the committed
+# "measurement_sha256", and the runner refuses to write evidence when they differ.
+FINGERPRINT_FILES = ("evals/grading-prompt.md", "evals/measure.py", "evals/measurement.json", "evals/executor.py",
+                     "scripts/stage_skills.py")
+MEASURE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "measure.py")
+
+
+def load_measure():
+    """evals/measure.py as a module, loaded on first use: the gate's comparison lives there. A command that
+    compares nothing (status, hash, evidence, inventory) runs without it."""
+    import importlib.util
+    name = "workbench_eval_measure"
+    if name not in sys.modules:
+        if not os.path.isfile(MEASURE_SCRIPT):
+            die("evals/measure.py is missing: run this script from a checkout of the workbench.")
+        spec = importlib.util.spec_from_file_location(name, MEASURE_SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules[name] = module
+    return sys.modules[name]
 
 
 def measurement_fingerprint(root=ROOT):
@@ -478,6 +520,118 @@ def measurement_fingerprint(root=ROOT):
             data = f.read()
         h.update(os.path.relpath(path, root).replace(os.sep, "/").encode("utf-8") + b"\0" + str(len(data)).encode() + b"\0" + data)
     return h.hexdigest()
+
+
+def fingerprint_problem(root=ROOT):
+    """Why the committed measurement fingerprint is not the one of this checkout, or None when they agree or when
+    there is none to compare (no gate file, or a measurement version still open)."""
+    cfg = load_gate(root)
+    committed = cfg.get("measurement_sha256")
+    if not committed:
+        return None
+    current = measurement_fingerprint(root)
+    if current == committed:
+        return None
+    return (f"the measurement fingerprint of this checkout ({current[:12]}...) differs from the committed one "
+            f"({committed[:12]}...) in {GATE_REL}: a file that decides what a run measures changed. Commit the change "
+            "as one of the three kinds of the reliability model's section 8: python3 evals/eval_status.py measurement "
+            "--kind grader|execution|infrastructure --cause \"<why>\"")
+
+
+MEASUREMENT_KINDS = ("grader", "execution", "infrastructure")
+KIND_TEXT = {
+    "grader": "grader side: what the grader is shown, the grading rules or the scoring changed. The measurement "
+              "version and the floor are raised: every lab line below the floor weighs nothing, and every skill needs "
+              "a full test",
+    "execution": "execution side: the image, an adapter, the runner's prompt or tools, the executor, the staging, or a "
+                 "hosted model under its id changed. The measurement version is raised and an epoch is entered: for "
+                 "the skills and models it reaches, earlier lab lines are inherited evidence and the baselines expire",
+    "infrastructure": "infrastructure: locks, resumption, retries, pacing or reports changed in a file the "
+                      "fingerprint covers. No version is raised; the new fingerprint is committed with the reason",
+}
+
+
+def format_gate(cfg):
+    """The gate file's text: two spaces of indentation, a list of plain values on one line, an object or a list of
+    objects over several lines."""
+    def value(v, indent):
+        pad = " " * indent
+        if isinstance(v, dict) and v:
+            return "{\n" + ",\n".join(f"{pad}  {json.dumps(k)}: {value(x, indent + 2)}" for k, x in v.items()) + "\n" + pad + "}"
+        if isinstance(v, list) and any(isinstance(x, (dict, list)) for x in v):
+            return "[\n" + ",\n".join(f"{pad}  {value(x, indent + 2)}" for x in v) + "\n" + pad + "]"
+        return json.dumps(v, ensure_ascii=False)
+    return value(cfg, 0) + "\n"
+
+
+def measurement_change(root, kind=None, cause=None, skills="all", models="all", date=None, close=False):
+    """Commit a change of a file the fingerprint covers as one of the three kinds of the model's section 8, or
+    (close=True) close an open measurement version by writing its fingerprint. Returns (the new gate
+    configuration, what to print). Raises ValueError with the reason when it cannot."""
+    path = os.path.join(root, GATE_REL)
+    if not os.path.isfile(path):
+        raise ValueError(f"{GATE_REL} does not exist")
+    problems = gate_problems(root)
+    if problems:
+        raise ValueError(f"{GATE_REL} is not valid: {'; '.join(problems)}")
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    date = date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    if not _date(date):
+        raise ValueError("--date must be YYYY-MM-DD")
+    if not (isinstance(cause, str) and cause.strip() and "\n" not in cause):
+        raise ValueError("--cause takes one line that says what changed and why")
+    current, old = measurement_fingerprint(root), cfg["measurement_version"]
+    new = dict(cfg)
+    if close:
+        if cfg.get("measurement_sha256"):
+            raise ValueError(f"measurement version {old} is closed already: a later change is committed with --kind")
+        new["measurement_sha256"] = current
+        title = f"measurement version {old} closed"
+        lines = [f"- Measurement version {old}, floor {cfg['measurement_floor']}: nothing measured while it was open is evidence; "
+                 "from this commit on the runner writes evidence under it."]
+        epoch = None
+    else:
+        if kind not in MEASUREMENT_KINDS:
+            raise ValueError("--kind is grader, execution or infrastructure")
+        if not cfg.get("measurement_sha256"):
+            raise ValueError(f"measurement version {old} is open (no measurement_sha256): a change made while it is open "
+                             "belongs to it. Close it with --close when its last change is in")
+        if kind == "infrastructure" and current == cfg["measurement_sha256"]:
+            raise ValueError("the fingerprint is unchanged: no file that decides what a run measures changed")
+        epoch = None
+        if kind == "grader":
+            new.update(measurement_version=old + 1, measurement_floor=old + 1)
+        elif kind == "execution":
+            names = skill_names(root)
+            if skills != "all":
+                unknown = [s for s in skills if s not in names]
+                if unknown or not skills:
+                    raise ValueError(f"--skills names no skill of this tree: {', '.join(unknown) or '(none)'}")
+            if models != "all":
+                ids = [model_id(cfg, m) for m in models]
+                if not models or "unknown" in ids:
+                    raise ValueError("--models names a model the gate file does not list (models)")
+                models = sorted(set(ids))
+            epoch = {"date": date, "models": models, "skills": sorted(set(skills)) if skills != "all" else "all", "cause": cause}
+            new.update(measurement_version=old + 1, epochs=list(cfg.get("epochs") or []) + [epoch])
+        new["measurement_sha256"] = current
+        title = f"measurement change, {kind}" + (f" (measurement version {old} to {new['measurement_version']})"
+                                                  if new["measurement_version"] != old else "")
+        lines = [f"- Kind: {KIND_TEXT[kind]}."]
+        if kind == "grader":
+            lines.append(f"- Measurement version and floor: {new['measurement_version']}.")
+        if epoch:
+            lines.append(f"- Epoch {epoch['date']}: skills {epoch['skills'] if epoch['skills'] == 'all' else ', '.join(epoch['skills'])}; "
+                         f"models {epoch['models'] if epoch['models'] == 'all' else ', '.join(epoch['models'])}.")
+    lines += [f"- Fingerprint: `{current}`.",
+              "- Written by `python3 evals/eval_status.py measurement "
+              + ("--close" if close else f"--kind {kind}") + "`."]
+    entry = f"## {date}: {title}\n\n{cause.strip()}\n\n" + "\n".join(lines) + "\n"
+    out = {"kind": "close" if close else kind, "measurement_version": new["measurement_version"],
+           "measurement_floor": new["measurement_floor"], "measurement_sha256": current, "epoch": epoch,
+           "decisions_entry": entry}
+    return new, out
 
 
 def new_test_id(now=None):
@@ -811,6 +965,21 @@ def platform_results(skill_dir, cfg, events=None):
             for name, by in sorted(scores.items())}
 
 
+def epoch_problems(entry):
+    """Why one entry of the gate file's "epochs" is outside its form: {"date": YYYY-MM-DD, "models": "all" or a
+    list of model ids, "skills": "all" or a list of skill names, "cause": a sentence}."""
+    if not isinstance(entry, dict) or set(entry) != {"date", "models", "skills", "cause"}:
+        return ["must be {\"date\", \"models\", \"skills\", \"cause\"}"]
+    out = [] if _date(entry["date"]) else ["date must be YYYY-MM-DD"]
+    for key, pattern in (("models", MODEL_RE), ("skills", NAME_RE)):
+        value = entry[key]
+        if not (value == "all" or (isinstance(value, list) and value and all(_is(pattern, v) for v in value))):
+            out.append(f"{key} must be \"all\" or a list of names")
+    if not (isinstance(entry["cause"], str) and entry["cause"].strip() and "\n" not in entry["cause"]):
+        out.append("cause must be one line of text")
+    return out
+
+
 def epochs(cfg):
     """The epochs of a gate configuration: [{"date", "models", "skills", "cause"}]; models and skills are lists or
     "all". The key is optional: without it there is none."""
@@ -903,7 +1072,7 @@ def gate_of(skill_dir, cfg, extra=()):
     with_mean = sum(l["score"] for l in pool) / len(pool)
     base = [l["score"] for cid in in_gate for l in baselines[cid]]
     base_mean = sum(base) / len(base)
-    passed = with_mean >= threshold and with_mean >= base_mean - tolerance  # unrounded, both
+    passed = load_measure().gate_passes(with_mean, base_mean, threshold, tolerance)  # unrounded, both
     return {**out, "computed": True, "passed": passed, "with": with_mean, "baseline": base_mean}
 
 
@@ -1099,12 +1268,12 @@ def main(argv, root=None):
         return 0
     opts, flags, i = {}, set(), 0
     while i < len(rest):
-        if rest[i] in ("--skill", "--file"):
+        if rest[i] in ("--skill", "--file", "--kind", "--cause", "--skills", "--models", "--date"):
             if i + 1 >= len(rest):
                 die(f"{rest[i]} needs a value.")
             opts[rest[i][2:]] = rest[i + 1]
             i += 2
-        elif rest[i] in ("--write", "--check"):
+        elif rest[i] in ("--write", "--check", "--close"):
             flags.add(rest[i])
             i += 1
         else:
@@ -1113,6 +1282,26 @@ def main(argv, root=None):
     if skill is not None and (not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", skill)
                               or not os.path.isdir(os.path.join(root, "skills", skill))):
         die(f"no skill {skill!r} under skills/.")
+    measurement_opts = {"kind", "cause", "skills", "models", "date"}
+    if cmd != "measurement" and (set(opts) & measurement_opts or "--close" in flags):
+        die(f"--kind, --cause, --skills, --models, --date and --close go with the measurement command. See --help.")
+    if cmd == "measurement":
+        if skill or opts.get("file") or flags - {"--close"} or ("--close" in flags) == ("kind" in opts):
+            die("measurement takes --kind <grader|execution|infrastructure> or --close, with --cause \"<why>\" "
+                "[--skills <a,b>|all] [--models <id,...>|all] [--date YYYY-MM-DD]. See --help.")
+        if ("skills" in opts or "models" in opts) and opts.get("kind") != "execution":
+            die("--skills and --models name what an epoch reaches: they go with --kind execution.")
+        split = lambda v: "all" if v in (None, "all") else [x.strip() for x in v.split(",") if x.strip()]
+        try:
+            new, out = measurement_change(root, opts.get("kind"), opts.get("cause"), split(opts.get("skills")),
+                                          split(opts.get("models")), opts.get("date"), close="--close" in flags)
+        except ValueError as e:
+            die(str(e), 1)
+        with open(os.path.join(root, GATE_REL), "w", encoding="utf-8") as f:
+            f.write(format_gate(new))
+        print(f"{GATE_REL} written. Add the entry below to docs/decisions.md, in the same commit as the change.", file=sys.stderr)
+        print(json.dumps(out, indent=2))
+        return 0
     if cmd == "status":
         print(json.dumps(all_status(root, skill), indent=2))
         return 0

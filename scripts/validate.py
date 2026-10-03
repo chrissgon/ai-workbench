@@ -41,6 +41,10 @@ Checks every skill under skills/ and every agent under agents/:
     whose status is `stale` (the folder changed since the recorded pass) or `draft` (no passing, complete
     record) are reported as warnings, one line per status, and are errors with --strict; evals/eval-gate.json,
     the gate's configuration (models, adapters, threshold), has its fields
+  - measurement: when evals/eval-gate.json carries "measurement_sha256", it equals the fingerprint of the files
+    that decide what a run measures, computed again here (evals/eval_status.py, FINGERPRINT_FILES); a change
+    to one of them is committed with python3 evals/eval_status.py measurement --kind <kind>. A measurement
+    version still open carries no fingerprint, and nothing is compared
   - eval-cases: every skill's cases, those of evals/evals.json and those of each platform's case file
     (evals/platforms/<platform>.json, whose platform must have its reference), pass the runner's preflight
     (python3 evals/eval_run.py --skill <name> --check-cases; no model call)
@@ -1188,6 +1192,8 @@ def check_eval_status(report, root=ROOT):
     problems = es.gate_problems(root)
     if problems:
         report.error("evals/eval-gate.json", f"[eval-status] {'; '.join(problems)}")
+    elif es.fingerprint_problem(root):
+        report.error("evals/eval-gate.json", f"[measurement] {es.fingerprint_problem(root)}")
     for name in es.skill_names(root):
         skill_dir = os.path.join(root, "skills", name)
         _, problems = es.load_record(skill_dir)
