@@ -154,7 +154,7 @@
    "to": [
     {
      "path": "skills/core-orchestrator/references/requirement-classes.md",
-     "adopted": false
+     "adopted": true
     }
    ]
   },
@@ -168,7 +168,7 @@
    "to": [
     {
      "path": "skills/core-orchestrator/references/owners.md",
-     "adopted": false
+     "adopted": true
     }
    ]
   }
