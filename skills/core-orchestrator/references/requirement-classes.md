@@ -1,19 +1,15 @@
-# Requirement classes (copy names verbatim)
+# Requirement classes
 
-These are the only class names. A skill's `requires` uses them; the routing block's Requirements line uses them. Never compose a new one (there is no `integration:social-media`; a social network is `publisher:<platform>`).
-
-| Class | Meaning |
-|-------|---------|
-| `integration:issue-tracker` | ticket systems (Jira, Linear, GitHub Issues) |
-| `integration:vcs` | GitHub, GitLab and similar |
-| `integration:design-tool` | design tools whose files, variables and components an integration can read or write |
-| `search:web` | web search including fetching pages |
-| `generator:image` | image generation |
-| `generator:video` | video generation (reserved) |
-| `publisher:<platform>` | publishing to a platform: `publisher:linkedin`, `publisher:x`, `publisher:blog` |
-| `mailer` | sending email |
-| `mailbox` | reading email, read only: search and read messages |
-| `scheduler` | scheduling an action for later |
-| `store` | the agent runtime's storage: cursors, events, runs, approval inbox, executed actions |
-
-Status words: `satisfied by <connector or provider>` or `missing → <what the skill does without it>`.
+| Class | What satisfies it | Used by |
+|-------|-------------------|---------|
+| `integration:issue-tracker` | Jira, Linear, GitHub Issues | engineering flows |
+| `integration:vcs` | GitHub, GitLab | delivery |
+| `integration:design-tool` | Figma; the design-system projects of a generative design tool | design, validation |
+| `search:web` | read-only access to the public web: a search tool, fetching a page, reading a public registry or a public API | research, business, brand, engineering, marketing |
+| `generator:image` | any image model behind an API | design assets, marketing |
+| `generator:video` | any video model behind an API | marketing (slot reserved, not implemented) |
+| `publisher:<platform>` | the publishing API of the platform, called directly or through a scheduling service; the platform is a parameter | marketing |
+| `sender:email` | SMTP, a mail API | marketing, notifications |
+| `reader:email` | Gmail API, IMAP (read only: search and read messages) | marketing, engagement |
+| `scheduler:job` | launchd on macOS, systemd on Linux (a job runs a command once at a set time or every N minutes); or a harness routine | marketing, operations, the agent runtime's trigger |
+| `store:runtime` | SQLite (a local file); a cloud database later | the agent runtime: cursors, events, runs, approval inbox, executed actions |

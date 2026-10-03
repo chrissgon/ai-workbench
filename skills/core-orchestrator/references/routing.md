@@ -1,6 +1,6 @@
 # Routing table: intent → area → skill
 
-Match the intent column, not the example words. Skills marked (planned) are not built yet, capabilities and flows alike: route to one by its name (the mark is not part of the name) with the status `pending`, say that it is not built, and propose the fallback of SKILL.md step 4. Of the flows, only `flow-fix-bug` is built; every other flow below is planned. Keep this table in sync with `docs/inventory.md` in the workbench.
+Match the intent column, not the example words. Skills marked (planned) are not built yet, capabilities and flows alike: route to one by its name (the mark is not part of the name) with the status `pending`, say that it is not built, and propose the fallback of SKILL.md Stop rule 2. Of the flows, only `flow-fix-bug` is built; every other flow below is planned. Every built skill has a row, and a name without the mark is built.
 
 ## Business (`biz-`)
 
@@ -33,6 +33,8 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Logo direction, color, typography, imagery, brand tokens | brand-identity |
 | How the brand speaks; tone; messaging pillars | brand-voice |
 | The brand book that compiles it all | brand-guidelines |
+| Find or check a name, a handle or a domain: is it free, who else uses it, is it the same everywhere | brand-name |
+| The profile a personal brand stands on: who the person is, the proof, the goal, the audiences, the themes | brand-profile |
 | Create a brand from nothing | flow-brand (planned) |
 
 ## Design (`design-`)
@@ -63,6 +65,7 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Integration and end-to-end tests after implementation | eng-integration-tests |
 | Improve code without changing behaviour | eng-refactor |
 | Review a diff; security, edge cases, regressions, performance | eng-code-review |
+| Triage dependency security alerts (advisories, vulnerable packages): update or dismiss, with evidence | eng-security-review |
 | Update documentation for a change | eng-docs |
 | Fix a bug end to end | flow-fix-bug |
 | Build a feature end to end | flow-build-feature (planned) |
@@ -77,6 +80,7 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Open a pull request | ops-pull-request |
 | Update my branch with its base; resolve conflicts | ops-branch-sync |
 | Set up or change the CI pipeline | ops-ci-pipeline |
+| Secure a repository before it is published: secret scan, pinned checks, branch rules, signed commits, security policy | ops-repo-baseline |
 | Cut a release; release notes; versioning | ops-release (planned) |
 | Notes for QA about a change | ops-qa-handover (planned) |
 
@@ -89,6 +93,8 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Content calendar | mkt-content-plan |
 | Write a social post (text only, nothing published) | mkt-social-copy |
 | Publish or schedule a post that is already written and illustrated | mkt-publish |
+| Reply to comments on the person's own posts; write an engagement policy or set up automatic replies | mkt-engage |
+| An audience vote closed: write the post on the winning topic and propose the next round | mkt-vote-round |
 | Landing page structure and copy | mkt-landing-page (planned) |
 | SEO plan | mkt-seo (planned) |
 | Email campaign or sequence | mkt-email (planned) |
@@ -115,8 +121,9 @@ Match the intent column, not the example words. Skills marked (planned) are not 
 | Create or update the project's instruction file | core-agents-md |
 | Interrogate me about a plan until we agree | core-clarify |
 | Research a question with sources | core-research |
-| Find what's wrong with this plan or artifact | core-critique |
+| Find what's wrong with this plan or artifact; stress-test it; a second opinion before building | core-critique |
 | Create or improve a skill of the workbench | core-skill-creator |
+| Security audit of the workbench itself; vet a skill from outside before it is installed ("is this skill safe?") | core-security-audit |
 
 ## Cross-area
 
