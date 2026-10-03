@@ -17,6 +17,13 @@ Checks:
   - every ADR file in --adr-dir has Status, Context, Options with at least two "### Option" entries,
     Decision and Consequences
   - the verification plan has at least one row per AC (an AC id inside the Verification plan section)
+  - every item under "## Assumptions to verify before implementation" says how to verify it (a "Verify"
+    part), unless the section holds only "none"
+  - a warning lists the code identifiers the design and the ADRs name (a dotted name such as `Astro.props`,
+    a camelCase name such as `getStaticPaths`, a call such as `glob()`, and in code blocks every call and
+    method such as `z.object` or `.int`) that appear neither in the Assumptions section nor in the Sources
+    section nor on a line with a URL; names the design itself defines (const, let, var, function, class,
+    interface, type) are left out. It is a list to review, not a verdict: a name may be the project's own.
 
 Prints JSON on one line (--json: indented): ok, summary, spec_ids, covered, adrs (one entry per ADR file with
 its problems), errors, warnings. Usage errors go to stderr.
@@ -53,6 +60,88 @@ def defined_ids(spec_text):
             ids.discard(m.group(1))
     return ids
 
+
+
+ASSUMPTIONS = "## Assumptions to verify before implementation"
+FILE_EXT = {"md", "astro", "ts", "tsx", "js", "jsx", "mjs", "cjs", "json", "css", "scss", "html", "yaml", "yml", "py",
+            "toml", "txt", "lock", "sh", "svg", "png", "jpg", "webp", "pdf", "csv", "xml", "vue", "svelte", "go", "rs", "rb",
+            "java", "kt", "sql", "env", "config"}
+KEYWORDS = {"if", "for", "while", "switch", "return", "function", "catch", "typeof", "await", "new", "import", "export",
+            "async", "with", "super", "this", "case", "do", "else", "try", "throw", "yield", "delete", "void", "in", "of"}
+FENCE_RE = re.compile(r"^```[^\n]*\n(.*?)^```", re.M | re.S)
+SPAN_RE = re.compile(r"`([^`\n]+)`")
+NAME_RE = re.compile(r"^\.?[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*(?:\(\))?$")
+CALL_RE = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\(")
+METHOD_RE = re.compile(r"[\)\]]\s*\.([A-Za-z_$][\w$]*)\s*\(")
+DEFINED_RE = re.compile(r"\b(?:const|let|var|function|class|interface|type)\s+([A-Za-z_$][\w$]*)")
+
+
+def is_code_name(span):
+    """An inline code span that names code: dotted (not a file name), camelCase, or a call `name()`."""
+    s = span.strip()
+    if not NAME_RE.match(s):
+        return False
+    bare = s.lstrip(".").removesuffix("()")
+    parts = bare.split(".")
+    if len(parts) > 1:
+        return parts[-1].lower() not in FILE_EXT
+    return s.endswith("()") or bool(re.search(r"[a-z][A-Z]", bare))
+
+
+def code_names(text):
+    """{name: line} of the code identifiers a document names, outside fences and inside them."""
+    names = {}
+    fenced = FENCE_RE.findall(text)
+    defined = set()
+    for block in fenced:
+        defined.update(DEFINED_RE.findall(block))
+    prose = FENCE_RE.sub("", text)
+    for line in prose.splitlines():
+        for span in SPAN_RE.findall(line):
+            if is_code_name(span):
+                names.setdefault(span.strip().lstrip(".").removesuffix("()"), line)
+    for block in fenced:
+        for line in block.splitlines():
+            for name in CALL_RE.findall(line):
+                if name in KEYWORDS:
+                    continue
+                if name.split(".")[0] in defined:
+                    if "." in name:
+                        names.setdefault("." + name.split(".", 1)[1], line)
+                    continue
+                names.setdefault(name, line)
+            for method in METHOD_RE.findall(line):
+                names.setdefault("." + method, line)
+    for name in list(names):
+        if name.split(".")[0] in defined and "." not in name:
+            del names[name]
+    return names
+
+
+def is_cited(name, where):
+    """A name counts as cited when it, a dotted prefix of two or more parts, or (for a method) its bare name
+    appears as a whole word in `where`."""
+    bare = name.lstrip(".")
+    parts = bare.split(".")
+    candidates = {bare} | {".".join(parts[:i]) for i in range(2, len(parts))}
+    if len(parts) == 1 or name.startswith("."):
+        candidates.add(parts[-1])
+    return any(re.search(r"(?<![\w$])" + re.escape(c) + r"(?![\w$])", where) for c in candidates)
+
+
+def assumption_items(text):
+    """The bullet items of the Assumptions section, each joined into one line."""
+    items, cur = [], None
+    for line in section(text, ASSUMPTIONS).splitlines():
+        if re.match(r"^\s*[-*]\s+", line):
+            if cur is not None:
+                items.append(cur)
+            cur = re.sub(r"^\s*[-*]\s+", "", line).strip()
+        elif cur is not None and line.strip():
+            cur += " " + line.strip()
+    if cur is not None:
+        items.append(cur)
+    return items
 
 
 def read(p):
@@ -130,6 +219,20 @@ def main(argv):
         adr_report.append({"file": os.path.basename(f), "ok": not probs, "problems": probs})
         if probs:
             errors.append(f"{os.path.basename(f)}: {', '.join(probs)}")
+    items = [i for i in assumption_items(d) if i.strip(" .").lower() != "none"]
+    unverified = [i[:60] for i in items if not re.search(r"\bverif(y|ied|ication)\b", i, re.I)]
+    if unverified:
+        errors.append(f"assumptions that do not say how to verify them (a \"Verify:\" part): {unverified}")
+    cited = section(d, ASSUMPTIONS) + "\n" + section(d, "## Sources")
+    names = code_names(d)
+    for f in adr_files:
+        for name, line in code_names(read(f)).items():
+            names.setdefault(name, line)
+    unlisted = sorted(n for n, line in names.items()
+                      if not is_cited(n, cited) and not re.search(r"https?://", line))
+    if unlisted:
+        warnings.append("code identifiers named in the design or the ADRs that neither the Assumptions section, "
+                        f"the Sources section nor a URL on their line cites: {unlisted}")
     ok = not errors
     covered = len(spec_ids) - len(missing)
     adrs_failed = sum(1 for a in adr_report if not a["ok"])
