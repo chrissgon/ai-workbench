@@ -1,4 +1,8 @@
 {
+  "skills/core-research/scripts/check_brief.py": {
+    "args": ["--file", "brief.md", "--today", "2026-10-02"],
+    "files": {"brief.md": "# Research: x\n\n- Status: limited\n- Search capability: none\n"}
+  },
   "skills/design-brief/scripts/lint_brief.py": {
     "args": ["--file", "brief.md", "--type", "screen", "--values", "inline"],
     "files": {"brief.md": "# Brief\n"}

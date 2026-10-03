@@ -1,0 +1,14 @@
+{
+  "https://rdap.org/domain/google.dev": {"status": 200},
+  "https://rdap.org/domain/quorvel.dev": {"status": 404},
+  "https://rdap.org/domain/google.com": {"status": 200},
+  "https://rdap.org/domain/quorvel.com": {"status": 200},
+  "https://rdap.org/domain/google.io": {"status": null},
+  "https://rdap.org/domain/quorvel.io": {"status": 404},
+  "https://rdap.registro.br/domain/google.com.br": {"status": 200},
+  "https://rdap.registro.br/domain/quorvel.com.br": {"status": 404},
+  "https://api.github.com/users/quorvel": {"status": 200},
+  "https://registry.npmjs.org/-/user/quorvel/package": {"status": 404},
+  "https://dev.to/api/users/by_username?url=quorvel": {"status": 404},
+  "https://www.youtube.com/@quorvel": {"status": 200}
+}

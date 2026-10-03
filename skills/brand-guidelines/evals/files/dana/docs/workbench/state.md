@@ -13,9 +13,9 @@
 
 | Artifact | Owner skill | Status | Updated |
 |----------|-------------|--------|---------|
-| docs/brand/profile.md | brand-profile | confirmed | 2026-09-21 |
+| docs/brand/profile.md | brand-profile | approved | 2026-09-21 |
 | docs/brand/strategy.md | brand-strategy | approved | 2026-09-22 |
-| docs/brand/voice.md | brand-voice | confirmed | 2026-09-25 |
+| docs/brand/voice.md | brand-voice | approved | 2026-09-25 |
 | docs/brand/identity.md | brand-identity | approved | 2026-09-27 |
 
 ## Decisions
@@ -35,6 +35,8 @@
 - 2026-09-20: Voice reference: "dry humour, like a tired sysadmin, never cringe" (user). (user)
 - 2026-09-24: Voice limits: no emojis at all, at most 2 hashtags, end posts with a question (user). (user)
 - 2026-09-23: Voice direction: "keep the dry jokes, lose the ALL CAPS shouting and the rocket emojis" (user). (user)
+- 2026-09-25: Voice rewrites approved; voice.md confirmed (user). (user)
+- 2026-09-27: Identity: tinykv's tokens, dark first, one warm accent; profile cover variant B (user). (user)
 
 ## Open questions
 

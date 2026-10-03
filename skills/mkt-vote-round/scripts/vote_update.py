@@ -3,7 +3,8 @@
 
 Usage:
   python3 vote_update.py --pick data/pick.json --queue data/pick-queue.json --posts data/posts.json \
-      --record-post --round 2026-10-05 --post-url https://www.linkedin.com/feed/update/urn:li:share:<id>/ \
+      --record-post --round 2026-10-05 --post-url <the address the publisher printed> \
+      --platform <platform> --platform-file <path of the platform's data file> \
       --date 2026-10-14 --lang EN --title "<post title>" [--image assets/posts/<slug>.png] --out <dir>
 
   python3 vote_update.py --pick ... --queue ... --posts ... \
@@ -11,8 +12,12 @@ Usage:
       --calendar docs/marketing/calendar.md [--pillars "<p1>|<p2>|<p3>"] --out <dir>
 
 --record-post sets post_url on that closed round in pick.json and adds {date, lang, title, url, image} at the
-end of posts.json (nothing is added twice). It refuses a URL that is not a LinkedIn post, a round that is not in
-the history, and a round that already has another post_url.
+end of posts.json (nothing is added twice). It refuses a URL that is not the address of a post on the platform, a
+round that is not in the history, and a round that already has another post_url. The shape of a post's address
+(scheme, hosts compared exactly, path pattern, whether a query or a fragment may follow) is read from the
+platform's data file, --platform-file (shared/references/platforms/<platform>.json), whose "platform" must be
+--platform; this script holds no platform's address. Called with neither flag (a caller written before them),
+it checks only that the URL is https with a host and no query, fragment, user or port, and says so on stderr.
 --queue-round adds {pillar, options} at the end of pick-queue.json. It refuses a missing or empty option, two
 options that are the same topic, an option longer than 80 characters (the profile's pick card draws it on one
 line), and any option already used: in the calendar's topic column, the queue, the history, the open round or
@@ -40,7 +45,7 @@ import vote_state  # noqa: E402  (the same folder)
 MAX_OPTION = 80
 IMAGE_RE = re.compile(r"^assets/posts/[a-z0-9][a-z0-9-]*\.(png|webp|jpg|jpeg)$")
 LANG_RE = re.compile(r"^[A-Z]{2}(/[A-Z]{2})*$")
-LINKEDIN_PATH_RE = re.compile(r"^/(feed/update/urn:li:(share|activity|ugcPost):\d+|posts/[A-Za-z0-9_%-]+)/?$")
+PLATFORM_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 class Refused(Exception):
@@ -56,18 +61,51 @@ def dump(obj) -> str:
     return json.dumps(obj, indent=1, ensure_ascii=False) + "\n"
 
 
-def linkedin_post(url: str) -> bool:
+def post_address(platform, platform_file):
+    """The shape of a post's address on the platform, from its data file; None for the old call form."""
+    if platform is None and platform_file is None:
+        print("warning: no --platform: only the generic shape of a post address is checked; pass --platform and "
+              "--platform-file", file=sys.stderr)
+        return None
+    if platform is None or platform_file is None:
+        fail("--platform and --platform-file go together")
+    name = platform.strip().lower()
+    if not PLATFORM_NAME.match(name):
+        fail(f"--platform {platform!r} is not a platform name")
+    try:
+        data = json.loads(Path(platform_file).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        fail(f"--platform-file {platform_file}: {e}")
+    if not isinstance(data, dict) or data.get("platform") != name:
+        fail(f"--platform-file {platform_file} is not the data file of {name!r}")
+    try:
+        url = data["post"]["url"]
+        return {"platform": name, "scheme": url["scheme"], "hosts": list(url["hosts"]),
+                "path": re.compile(url["path_pattern"]), "query": bool(url["allows_query"]),
+                "fragment": bool(url["allows_fragment"]), "template": url.get("template", "")}
+    except (KeyError, TypeError, re.error) as e:
+        fail(f"--platform-file {platform_file}: not a platform data file ({type(e).__name__}: {e})")
+
+
+def is_post_address(url: str, shape) -> bool:
     try:
         u = urlsplit(url)
+        port = u.port
     except ValueError:
         return False
-    return (u.scheme == "https" and u.hostname in ("www.linkedin.com", "linkedin.com") and not u.query
-            and not u.fragment and u.username is None and u.port is None and bool(LINKEDIN_PATH_RE.match(u.path)))
+    if u.username is not None or u.password is not None or port is not None or not u.hostname:
+        return False
+    if shape is None:
+        return u.scheme == "https" and not u.query and not u.fragment
+    return (u.scheme == shape["scheme"] and u.hostname in shape["hosts"] and (shape["query"] or not u.query)
+            and (shape["fragment"] or not u.fragment) and bool(shape["path"].match(u.path)))
 
 
 def record_post(a, v: dict, posts: list):
-    if not linkedin_post(a.post_url):
-        raise Refused(f"{a.post_url!r} is not a LinkedIn post URL (https://www.linkedin.com/feed/update/urn:li:...)")
+    shape = post_address(a.platform, a.platform_file)
+    if not is_post_address(a.post_url, shape):
+        where = f"a post address of {shape['platform']} ({shape['template']})" if shape else "an https address"
+        raise Refused(f"{a.post_url!r} is not {where}")
     try:
         date.fromisoformat(a.date)
     except (TypeError, ValueError):
@@ -143,7 +181,10 @@ def parse_args(argv):
     mode.add_argument("--record-post", action="store_true", help="record a published post on its round")
     mode.add_argument("--queue-round", action="store_true", help="add a round at the end of the queue")
     p.add_argument("--round", help="--record-post: the closed round, YYYY-MM-DD")
-    p.add_argument("--post-url", help="--record-post: the published post's LinkedIn URL")
+    p.add_argument("--post-url", help="--record-post: the published post's address, as the publisher printed it")
+    p.add_argument("--platform", help="--record-post: the platform the post was published on")
+    p.add_argument("--platform-file", help="--record-post: the platform's data file, "
+                   "shared/references/platforms/<platform>.json")
     p.add_argument("--date", help="--record-post: the publication date, YYYY-MM-DD")
     p.add_argument("--lang", help="--record-post: EN, PT or EN/PT")
     p.add_argument("--title", help="--record-post: the title shown on the profile")

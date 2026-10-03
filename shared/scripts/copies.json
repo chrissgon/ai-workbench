@@ -38,11 +38,11 @@
    "to": [
     {
      "path": "skills/biz-icp-positioning/scripts/rank.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/biz-market-analysis/scripts/rank.py",
-     "adopted": false
+     "adopted": true
     }
    ]
   },
@@ -51,11 +51,11 @@
    "to": [
     {
      "path": "skills/biz-icp-positioning/scripts/check_refs.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/biz-market-analysis/scripts/check_refs.py",
-     "adopted": false
+     "adopted": true
     }
    ]
   },
@@ -68,7 +68,7 @@
     },
     {
      "path": "skills/eng-code-review/scripts/redact.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/ops-repo-baseline/scripts/redact.py",
@@ -81,7 +81,7 @@
    "to": [
     {
      "path": "skills/brand-identity/scripts/contrast.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/design-system/scripts/contrast.py",
@@ -102,7 +102,7 @@
     },
     {
      "path": "skills/mkt-engage/scripts/sensitive_topics.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/mkt-social-copy/scripts/sensitive_topics.py",
@@ -110,7 +110,7 @@
     },
     {
      "path": "skills/mkt-vote-round/scripts/sensitive_topics.py",
-     "adopted": false
+     "adopted": true
     }
    ]
   },
@@ -119,7 +119,7 @@
    "to": [
     {
      "path": "skills/brand-voice/scripts/voice_stats.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/mkt-social-copy/scripts/voice_stats.py",
@@ -127,7 +127,7 @@
     },
     {
      "path": "skills/mkt-vote-round/scripts/voice_stats.py",
-     "adopted": false
+     "adopted": true
     }
    ]
   },
@@ -140,7 +140,7 @@
     },
     {
      "path": "skills/mkt-vote-round/scripts/check_post.py",
-     "adopted": false
+     "adopted": true
     }
    ]
   },

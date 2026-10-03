@@ -12,7 +12,12 @@
         "The reply says what was found in the project before it asks: that the project has no workbench state yet (not initialized) and the detected name `lumen-notes`. Evidence that counts: the reply states both; the command itself need not be shown",
         "The reply asks for the project name with `lumen-notes` as the recommended answer, and for the autonomy mode with `every-phase` as the recommended answer",
         "At most three questions are asked, each with a recommended answer",
-        "Nothing is initialized on a guess: no docs/workbench/state.md and no AGENTS.md is among the files produced, and the reply does not say the project was initialized"
+        {
+          "text": "Nothing is initialized on a guess: no docs/workbench/state.md and no AGENTS.md is among the files produced, and the reply does not say the project was initialized",
+          "tags": [
+            "guard"
+          ]
+        }
       ]
     },
     {
@@ -58,8 +63,32 @@
       "assertions": [
         "The Checkpoints line in docs/workbench/state.md reads `- Checkpoints: milestones`",
         "The project was updated, not initialized again: state.md still has `- Project: widgets` and both registered rows (docs/engineering/architecture.md at ARCHITECTURE.md, docs/design/design-system.md at DESIGN-SYSTEM.md), each exactly once",
-        "The workbench block in AGENTS.md states `milestones`, does not state `every-phase`, and appears exactly once; aGENTS.md still starts with its original content, unchanged: the heading `# Widgets` and the line \"Project conventions. Run `npm test` before pushing.\"",
+        "The workbench block in AGENTS.md states `milestones`, does not state `every-phase`, and appears exactly once; AGENTS.md still starts with its original content, unchanged: the heading `# Widgets` and the line \"Project conventions. Run `npm test` before pushing.\"",
         "The reply asks no question about the name or the registrations and reports the change as done: it says the autonomy mode is milestones after the update (a report line such as \"state updated, autonomy milestones\" counts; a plan or an offer to switch does not)"
+      ]
+    },
+    {
+      "id": 5,
+      "prompt": "Set this repo up for the workbench. Call it Lumen Notes, checkpoints at milestones.",
+      "expected_output": "The name and the mode are stated and there is nothing to register, so the project is initialized without a question about them. Which of the workbench's folders under docs/ go into git is the user's decision and the request does not state it: it does not block initialization, so the state file records it as undecided with an open question, the AGENTS.md block says it is undecided, no .gitignore is written, and the reply ends with that question, recommending that only the code-related documents are committed.",
+      "files": [
+        "evals/files/new-project"
+      ],
+      "assertions": [
+        "docs/workbench/state.md is produced with the line `- Project: Lumen Notes` and the line `- Checkpoints: milestones`, and the reply does not ask for the name or the mode",
+        {
+          "text": "docs/workbench/state.md records the docs/ decision as not taken: the line `- Docs in git: undecided` and an unchecked open question about which folders under docs/ go into git",
+          "tags": [
+            "format"
+          ]
+        },
+        "The reply ends with a question: which of the documents the workbench writes under docs/ go into git (all of them, only the code-related ones, or none), with a recommended answer and its reason",
+        {
+          "text": "Nothing is kept out of git on a guess: no .gitignore is among the files produced, and the workbench block of the produced AGENTS.md says the decision about docs/ in git is not taken yet",
+          "tags": [
+            "guard"
+          ]
+        }
       ]
     }
   ]

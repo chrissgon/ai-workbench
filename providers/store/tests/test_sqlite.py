@@ -526,3 +526,23 @@ def test_export(db, tmp_path, payload):
     assert recent["actions"] == [] and len(recent["events"]) == 1
     future = ok("export", "--format", "json", "--since", iso(datetime.now(timezone.utc) + timedelta(hours=1)), db=db)
     assert all(future[k] == [] for k in ("cursors", "events", "runs", "inbox", "actions"))
+
+
+# --- VS8: what --payload-sha256 is -----------------------------------------------------------------
+
+
+def test_payload_sha256_is_the_callers_approval_hash_and_the_documents_say_so(db, payload):
+    """The store keeps the hash the caller gives and compares it with nothing: the runtime passes the hash
+    of the reply's text, another file than the stored payload. The README called it the payload's SHA-256."""
+    other = "c" * 64  # not the hash of the payload file
+    item = ok("inbox-add", "--kind", "reply", "--title", "t", "--payload-file", payload,
+              "--payload-sha256", other, db=db)
+    (listed,) = [i for i in ok("inbox-list", db=db)["items"] if i["id"] == item["id"]]
+    assert listed["payload_sha256"] == other
+    root = Path(__file__).resolve().parents[3]
+    row = [line for line in (root / "providers" / "CONTRACT.md").read_text(encoding="utf-8").splitlines()
+           if line.startswith("| `store:runtime` |")][-1]
+    assert "is the approval hash" in row and "compares it with nothing" in row
+    readme = (root / "providers" / "store" / "README.md").read_text(encoding="utf-8")
+    assert "does not compare it with the payload" in readme and "the payload as JSON and its SHA-256" not in readme
+    assert "never compared with the payload" in run("--help").stdout

@@ -27,10 +27,12 @@ SENTINEL = "zz-not-a-real-value-57"
 # name: (aliases, store username, readers), as the one registry held them before the adapters took theirs.
 BEFORE = {
     "VCS_GITHUB_TOKEN": (("GITHUB_TOKEN",), "github", ("providers/vcs/github.py", ".github/workflows/dependabot-alerts.yml")),
-    "LINKEDIN_ACCESS_TOKEN": ((), "publisher-linkedin", ("providers/publisher/linkedin.py",)),
+    # The two tokens gained auth.py as a reader when its --check began to read through the resolver.
+    "LINKEDIN_ACCESS_TOKEN": ((), "publisher-linkedin", ("providers/publisher/linkedin.py",
+                                                         "providers/publisher/auth.py")),
     "LINKEDIN_CLIENT_ID": ((), "linkedin-client-id", ("providers/publisher/auth.py",)),
     "LINKEDIN_CLIENT_SECRET": ((), "linkedin-client-secret", ("providers/publisher/auth.py",)),
-    "GMAIL_REFRESH_TOKEN": ((), "mailbox-gmail", ("providers/mailbox/gmail.py",)),
+    "GMAIL_REFRESH_TOKEN": ((), "mailbox-gmail", ("providers/mailbox/gmail.py", "providers/mailbox/auth.py")),
     "GMAIL_CLIENT_ID": ((), "gmail-client-id", ("providers/mailbox/auth.py", "providers/mailbox/gmail.py")),
     "GMAIL_CLIENT_SECRET": ((), "gmail-client-secret", ("providers/mailbox/auth.py", "providers/mailbox/gmail.py")),
     "OPENROUTER_API_KEY": ((), "openrouter", ("evals/eval_run.py --pass-env", "adapters/agents-dir/run-prompt.sh",
@@ -39,8 +41,12 @@ BEFORE = {
                                                           "adapters/claude-code/run-prompt.sh")),
     "DEEPSEEK_API_KEY": ((), "deepseek", ("evals/eval_run.py --floor-pass-env", "adapters/agents-dir/run-prompt.sh")),
     "ANTHROPIC_API_KEY": ((), "anthropic", ("adapters/api/run_agent.py",)),
+    # Added since: the low-limit key of the eval cases that use the open network.
+    "CLAUDE_CODE_WEB_API_KEY": ((), "claude-code-web-evals", ("evals/eval_run.py strong_web_pass_env",
+                                                              "adapters/claude-code/run-prompt.sh")),
 }
-ADAPTER_SECRETS = {"OPENROUTER_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"}
+ADAPTER_SECRETS = {"OPENROUTER_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+                   "CLAUDE_CODE_WEB_API_KEY"}
 
 
 class FakeStore:
@@ -108,7 +114,7 @@ def test_the_names_passed_into_eval_runs_are_registered_by_the_adapter_of_their_
     for tier in ("floor", "strong"):
         manifest = json.loads((ROOT / "adapters" / gate[f"{tier}_harness"] / "adapter.json").read_text(encoding="utf-8"))
         registered = {entry["name"] for entry in manifest.get("secrets", [])}
-        for name in gate[f"{tier}_pass_env"]:
+        for name in gate[f"{tier}_pass_env"] + (gate.get("strong_web_pass_env", []) if tier == "strong" else []):
             assert name in registered, f"{name} is passed to the {tier} runs and its adapter does not register it"
             assert any(r.startswith("evals/eval_run.py") for r in merged.REGISTRY[name].readers)
     for manifest in MANIFESTS:

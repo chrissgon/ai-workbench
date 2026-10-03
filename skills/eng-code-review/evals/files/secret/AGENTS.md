@@ -14,3 +14,4 @@ Command-line tool that totals accounting statements.
 - Every bug fix adds a regression test in `tests/` that fails without the fix.
 - Credentials come from environment variables (`PAYMENTS_API_KEY`); never in source, tests or fixtures.
 - Do not print from library code; the CLI entry point is the only place that writes to stdout.
+- A code review is written to `docs/engineering/reviews/<task id>.md`, with the sections Findings, Checked with no finding, Scope and Verdict.

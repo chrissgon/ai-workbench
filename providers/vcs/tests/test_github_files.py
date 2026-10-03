@@ -14,9 +14,11 @@ import hashlib
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
+import time
 import urllib.parse
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -624,3 +626,138 @@ def test_an_unknown_push_outcome_stays_pending_until_resolved(remote, out_files)
     assert again.returncode == 0, again.stderr
     assert remote.head() == json.loads(again.stdout)["commit"]
     assert run(resolve + ["--not-committed", "--confirmed"], env).returncode == 2  # only pending keys
+
+
+# --- VS2: what is pushed is what was given -----------------------------------------------
+
+
+@needs_tools
+def test_a_hook_that_changes_a_file_stops_the_push(remote, out_files):
+    # The commit runs the user's hooks, and only path names were checked afterwards: a pre-commit hook changed
+    # a file's content and the provider printed the original sha256 with "pushed": true.
+    hook = remote.tmp / "template" / "hooks" / "pre-commit"
+    hook.write_text('#!/bin/sh\necho "added by a hook" >> data/pick-queue.json\ngit add data/pick-queue.json\n')
+    hook.chmod(0o755)
+    env = remote.provider_env()
+    before = remote.head()
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 1
+    assert "data/pick-queue.json in the commit is not the file that was given" in proc.stderr
+    assert sha256(out_files["queue"]) in proc.stderr and "Nothing was pushed" in proc.stderr
+    assert remote.head() == before and not proc.stdout.strip()
+    assert ledger(env) == {}  # nothing left the machine: the key is free
+    assert list(work_root(env).iterdir()) == []
+    hook.unlink()
+    again = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert again.returncode == 0, again.stderr
+
+
+@needs_tools
+def test_an_attribute_that_changes_a_file_stops_the_push(remote, out_files):
+    # A line-ending rule of the repository gives a blob with another hash than the one the person approved.
+    (remote.mover / ".gitattributes").write_text("*.json text eol=lf\n")
+    git(remote.env, remote.mover, "add", ".gitattributes")
+    git(remote.env, remote.mover, "commit", "-q", "-m", "normalise line endings")
+    git(remote.env, remote.mover, "push", "-q", "origin", "HEAD:refs/heads/main")
+    out_files["queue"].write_bytes(b'[{"pillar": "Engineering"}]\r\n')
+    env = remote.provider_env()
+    before = remote.head()
+    files = [f"data/pick-queue.json={out_files['queue']}"]
+    proc = run(commit_args(out_files, "k1", "--confirmed", files=files), env)
+    assert proc.returncode == 1 and "is not the file that was given" in proc.stderr
+    assert remote.head() == before and ledger(env) == {}
+    # The same bytes, once the branch already holds their normalised form: not "unchanged", refused.
+    (remote.mover / "data" / "pick-queue.json").write_bytes(b'[{"pillar": "Engineering"}]\n')
+    git(remote.env, remote.mover, "add", "data/pick-queue.json")
+    git(remote.env, remote.mover, "commit", "-q", "-m", "the queue, with unix line endings")
+    git(remote.env, remote.mover, "push", "-q", "origin", "HEAD:refs/heads/main")
+    held = remote.head()
+    proc = run(commit_args(out_files, "k2", "--confirmed", files=files), env)
+    assert proc.returncode == 1 and "is not the file that was given" in proc.stderr
+    assert remote.head() == held and ledger(env) == {}
+
+
+# --- VS5: a tag is not a branch ---------------------------------------------------------------
+
+
+@needs_tools
+def test_a_tag_is_refused_as_branch(remote, out_files):
+    # "clone --branch v1" takes a tag, and the push then created refs/heads/v1 and printed "pushed": true.
+    git(remote.env, remote.bare, "tag", "v1", "refs/heads/main")
+    env = remote.provider_env()
+    refs_before = git(remote.env, remote.bare, "for-each-ref", "--format=%(refname)")
+    args = commit_args(out_files, "k1")
+    args[args.index("--branch") + 1] = "v1"
+    for mode in ("--dry-run", "--confirmed"):
+        proc = run([*args, mode], env)
+        assert proc.returncode == 2, (mode, proc.stderr)
+        assert "is not a branch" in proc.stderr and not proc.stdout.strip()
+    assert git(remote.env, remote.bare, "for-each-ref", "--format=%(refname)") == refs_before
+    assert "refs/heads/v1" not in refs_before
+    assert ledger(env) == {} and list(work_root(env).iterdir()) == []
+
+
+# --- VS6: a signal cleans up and stops git -----------------------------------------------------
+
+
+@needs_tools
+def test_sigterm_stops_git_removes_the_clone_and_keeps_the_key_pending(remote, out_files, tmp_path):
+    # git runs in its own session and the provider had no signal handler: SIGTERM (what a scheduler sends a
+    # job at its limit) killed the provider at once, left the clone behind, and the push landed after it died.
+    started, finished = tmp_path / "receive-started", tmp_path / "receive-finished"
+    hook = remote.bare / "hooks" / "pre-receive"
+    hook.write_text(f'#!/bin/sh\ntouch "{started}"\nsleep 4\ntouch "{finished}"\n')
+    hook.chmod(0o755)
+    env = remote.provider_env()
+    before = remote.head()
+    proc = subprocess.Popen([sys.executable, str(SCRIPT), *commit_args(out_files, "k1", "--confirmed")], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(300):  # until the remote is receiving the push
+            if started.exists():
+                break
+            time.sleep(0.1)
+        assert started.exists(), "the push never started"
+        proc.send_signal(signal.SIGTERM)
+        out, err = proc.communicate(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert proc.returncode == 128 + signal.SIGTERM, err
+    assert "stopped by signal" in err and "Traceback" not in err and not out.strip()
+    assert list(work_root(env).iterdir()) == []  # the clone is gone
+    entry = ledger(env)["k1"]
+    assert entry["status"] == "pending" and len(entry["attempted_commit"]) == 40 and entry["error"] == "interrupted"
+    time.sleep(5)  # longer than the remote's hook would have needed
+    assert not finished.exists(), "git went on after the provider was stopped"
+    assert remote.head() == before
+    again = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert again.returncode == 1 and "pending" in again.stderr
+
+
+@needs_tools
+def test_sigterm_during_the_clone_releases_the_key(remote, out_files, tmp_path):
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    marker = tmp_path / "clone-started"
+    wrapper = bin_dir / "git"
+    wrapper.write_text(f'#!/bin/sh\nif [ "$1" = clone ]; then touch "{marker}"; sleep 30; fi\nexec "$REAL_GIT" "$@"\n')
+    wrapper.chmod(0o755)
+    env = remote.provider_env()
+    env.update({"REAL_GIT": shutil.which("git"), "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}"})
+    proc = subprocess.Popen([sys.executable, str(SCRIPT), *commit_args(out_files, "k1", "--confirmed")], env=env,
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        for _ in range(300):
+            if marker.exists():
+                break
+            time.sleep(0.1)
+        assert marker.exists()
+        proc.send_signal(signal.SIGTERM)
+        _, err = proc.communicate(timeout=30)
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+    assert proc.returncode == 128 + signal.SIGTERM, err
+    assert list(work_root(env).iterdir()) == []
+    assert ledger(env) == {}  # nothing was sent: the key is free
