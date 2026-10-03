@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [search:web]
   side_effects: []
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Brand strategy
@@ -97,7 +97,7 @@ Progress:
   After the answers, record each in the state file as a dated decision, quoting the user.
 - [ ] Step 5: Write the positioning statement: `For <audiences>, <name> is <category> who <what they do>, proven by <proof>. Unlike <alternative>, <what only they show>.` Every noun in it traces to the proof table or the ICP, and the proof named is proof the profile marks citable.
 - [ ] Step 6: Write the claim rules: what may be cited and how (self-reported numbers as the person's experience, never as measured by others; without employer names when those are never exposed); what may not be claimed, one line per wanted theme with a gap; and the never-expose list, by reference to the profile.
-- [ ] Step 7: Profile proposals. Compare the chosen label and goal with the person's public profile texts (headline, about, code-host README). Where they contradict the strategy (a job-search summary when employment is a silent goal, an old title or employer), write a proposed replacement in the post language(s), in the direction of the voice the profile records. No skill edits a public profile: each proposal says the user applies it by hand.
+- [ ] Step 7: Profile proposals. Compare the chosen label and goal with the person's public profile texts (headline, about, code-host README). Where they contradict the strategy (a job-search summary when employment is a silent goal, an old title or employer), write the proposed replacement out in full, in the post language(s), in the direction of the voice the profile records: the current text quoted and the new text itself (or the removal of that text), never a description of the kind of text to write. No skill edits a public profile: each proposal says the user applies it by hand.
 - [ ] Step 8: Risks: at least one per pillar that depends on something not yet done, and one for every decision taken on weak evidence, each with the date or measure that settles it.
 - [ ] Step 9: Write `docs/brand/strategy.md` from the template, with the date from `date +%F`. Where the strategy records a command, write the script's name and its arguments, never its path. Register it in the state file's Artifacts table as `brand-strategy`, status `draft` (only the user approves), and add the open questions there.
 - [ ] Step 10: Self-check against "Quality criteria": list every number, name and claim in the strategy and where it came from; remove or label what has none. Fix, then re-check.
@@ -141,7 +141,7 @@ Progress:
 - May not: <...>
 
 ## Proposals for public profiles
-<numbered; each says it is applied by hand>
+1. <profile and field>: replace "<the current text, quoted>" with "<the new text, written out>" | remove "<the current text, quoted>". Applied by hand.
 
 ## Risks
 - <risk>: <what settles it and when>
