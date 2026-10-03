@@ -18,6 +18,7 @@
 
 ## Decisions
 
+- 2026-09-20: Targets: 80% of invoices paid within their term; 1,000 weekly active freelancers. (user)
 - 2026-09-23: The PRD of Ledger is approved as written; OPEN-1 stays open. (user)
 
 ## Open questions

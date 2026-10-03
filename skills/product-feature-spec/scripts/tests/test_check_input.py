@@ -8,6 +8,8 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -21,8 +23,12 @@ def load(rel: str, name: str):
 
 
 def run(rel: str, *args: str, cwd: Path | None = None, stdin: str = "") -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(ROOT / rel), *args], capture_output=True, text=True,
-                          cwd=cwd, input=stdin, timeout=60)
+    """Run the script with `stdin` redirected in from a file, the way the skill calls it (`< request.txt`)."""
+    with tempfile.TemporaryFile("w+", encoding="utf-8") as f:
+        f.write(stdin)
+        f.seek(0)
+        return subprocess.run([sys.executable, str(ROOT / rel), *args], capture_output=True, text=True,
+                              cwd=cwd, stdin=f, timeout=60)
 
 
 # ---------- product-feature-spec/check_input.py: is there enough input to write a specification ----------
@@ -116,3 +122,50 @@ def test_the_request_never_comes_from_the_command_line(tmp_path):
     request = 'Add search $(touch pwned) `touch pwned2` "quoted"'
     out = check_input(tmp_path, stdin=request)
     assert out["request_words"] == len(request.split()) and list(tmp_path.iterdir()) == []
+
+
+def start_with_an_open_stdin(tmp_path: Path, *args: str) -> tuple[subprocess.Popen, float]:
+    """Start the script with a pipe on standard input that nobody writes to or closes, as a shell loop or a
+    scheduler can leave it, and wait for it to end; returns the process and the seconds it took."""
+    out, err = (tmp_path / "out.txt").open("w"), (tmp_path / "err.txt").open("w")
+    p = subprocess.Popen([sys.executable, str(ROOT / CHECK_INPUT), *args], stdin=subprocess.PIPE,
+                         stdout=out, stderr=err, text=True)
+    start = time.monotonic()
+    try:
+        p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+    finally:
+        took = time.monotonic() - start
+        p.stdin.close()
+        out.close()
+        err.close()
+    return p, took
+
+
+def test_an_open_stdin_with_no_input_ends_at_once_with_a_usage_error(tmp_path):
+    """A pipe left open and no flag: the script must not wait for it (it once waited for 20 hours)."""
+    p, took = start_with_an_open_stdin(tmp_path)
+    assert took < 5 and p.returncode == 2, (took, p.returncode)
+    assert (tmp_path / "out.txt").read_text() == ""
+    assert "standard input" in (tmp_path / "err.txt").read_text()
+
+
+def test_an_open_stdin_beside_a_source_is_not_read(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / "docs").mkdir(parents=True)
+    (proj / "docs" / "brief.md").write_text("# Search brief\n", encoding="utf-8")
+    p, took = start_with_an_open_stdin(tmp_path, "--source", "docs/brief.md", "--root", str(proj))
+    assert took < 5 and p.returncode == 0, (took, p.returncode)
+    out = json.loads((tmp_path / "out.txt").read_text())
+    assert (out["input"], out["sources"], out["request_words"]) == ("found", ["docs/brief.md"], 0)
+
+
+def test_a_dash_reads_the_request_from_a_pipe_and_a_pipe_without_it_is_ignored(tmp_path):
+    cmd = [sys.executable, str(ROOT / CHECK_INPUT), "--root", str(tmp_path)]
+    r = subprocess.run([*cmd, "-"], input=words(41), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert (json.loads(r.stdout)["input"], json.loads(r.stdout)["request_words"]) == ("found", 41)
+    r = subprocess.run(cmd, input=words(41), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2 and r.stdout == "" and "argument -" in r.stderr
