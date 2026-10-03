@@ -942,6 +942,9 @@ def test_the_runtime_contract_promises_only_what_the_code_does():
     assert "The runtime itself confines nothing" in contract
     # CT5: the daily cap is checked before each run and counts a run of unknown cost (RT2, HP1).
     assert "checked before each run from the store" in contract and "runs_without_cost_today" in contract
+    # CT2: the tick reads the platform's data file live; the approval of a recurring tick does not bind it.
+    covered = contract.split("It does not cover", 1)[1].split("\n", 1)[0]
+    assert "the platform's data file" in covered
 
 
 def test_the_rule_of_the_payload_hash_is_a_numbered_list():
