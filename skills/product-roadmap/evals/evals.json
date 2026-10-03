@@ -4,36 +4,57 @@
     {
       "id": 1,
       "prompt": "Build the roadmap from docs/product/prd.md.",
-      "expected_output": "docs/product/roadmap.md with releases R-1 (F-1, F-2) and R-2 (F-3) from the PRD phases, a stated method, dependencies with reasons, exit criteria taken from the PRD, a now-next-later view, PRD risk R-1 assigned to R-1, no dates, lint ok.",
+      "expected_output": "docs/product/roadmap.md with releases R-1 (F-1, F-2) and R-2 (F-3) from the PRD phases, a stated method, dependencies with reasons (F-2 depends on F-1 because the reminders read the invoice status the list computes, from docs/product/specs/invoice-list.md), exit criteria taken from the PRD, a now-next-later view, PRD risk R-1 assigned to R-1 with its mitigation, no dates, Readiness no because the PRD's OPEN-1 blocks F-2; the reply says F-2 and F-3 have no spec yet; the lint writes docs/product/roadmap.lint.json with ok true and the reply quotes the command and its summary line; the roadmap is registered in the state file as draft.",
       "files": ["evals/files/ledger"],
-      "grader_files": ["docs/product/prd.md"],
+      "grader_files": ["docs/product/prd.md", "docs/product/specs/invoice-list.md", "docs/workbench/state.md"],
       "assertions": [
-        "Every must and should feature of the PRD is in exactly one release and the later feature F-3 is placed or listed as not planned",
-        "The Method section states the ordering method before the releases",
-        "No release or feature carries a delivery date, a duration (weeks, days) or a story-point figure; the header's Date line, the dates of cited sources and figures quoted from the PRD's own outcomes or risk mitigations (such as a 24-hour retry window) are not delivery dates or durations",
-        "scripts/lint_roadmap.py is run with --prd and reports ok: true"
+        "The roadmap states F-2's dependency on F-1 with a reason taken from docs/product/specs/invoice-list.md (the overdue reminders read the invoice status the list computes) and assigns the PRD's risk R-1 (email provider outage) to the release that ships F-2, with what mitigates it",
+        {
+          "text": "The Method section states the ordering method before the releases",
+          "tags": ["format"]
+        },
+        {
+          "text": "No release or feature carries a delivery date, a duration (weeks, days) or a story-point figure; the header's Date line, the dates of cited sources and figures quoted from the PRD's own outcomes or risk mitigations (such as a 24-hour retry window) are not delivery dates or durations",
+          "tags": ["guard"]
+        },
+        {
+          "text": "docs/product/roadmap.lint.json is among the files the run produced, its \"ok\" is true and its \"arguments\" include --prd docs/product/prd.md, and the reply quotes the lint command and its \"summary\" line",
+          "tags": ["format"]
+        },
+        "The reply or the roadmap says that F-2 and F-3 have no spec yet",
+        "docs/workbench/state.md lists docs/product/roadmap.md with owner product-roadmap and status draft"
       ]
     },
     {
       "id": 2,
       "prompt": "Make the roadmap with delivery dates for each release, my boss wants to see when it'll be ready.",
-      "expected_output": "The roadmap is written from the PRD without dates; the reply explains that no source gives dates or capacity and asks, with a recommended answer, whether the user has a launch date or capacity to plan against, instead of inventing a timeline.",
+      "expected_output": "The roadmap is written from the PRD without dates (its Method says Dates: none) and records an OPEN asking for the launch date or team capacity with Blocks and Recommended; the reply explains that no source gives dates or capacity and asks, with a recommended answer, whether the user has a launch date or capacity to plan against, instead of inventing a timeline.",
       "files": ["evals/files/ledger"],
       "grader_files": ["docs/product/prd.md"],
       "assertions": [
-        "No release carries an invented date",
+        {
+          "text": "No release carries an invented date",
+          "tags": ["guard"]
+        },
         "The reply asks for the launch date or capacity with a recommended answer rather than guessing",
-        "The reply is in English, the language of the prompt"
+        "docs/product/roadmap.md is among the files the run produced, carries no delivery date, and records the launch date or team capacity as an open question with what it blocks and a recommended answer"
       ]
     },
     {
       "id": 3,
       "prompt": "What should we ship first?",
-      "expected_output": "No PRD exists in the working directory; the skill says so and routes to product-prd instead of listing features from the conversation.",
+      "expected_output": "No PRD exists in the working directory; the skill replies with its no-PRD template: nothing written, no feature listed from the conversation, product-prd named as the skill to run first.",
       "files": [],
       "assertions": [
-        "No roadmap file is written",
-        "The reply names product-prd as the step to take first"
+        {
+          "text": "docs/product/roadmap.md is not among the files the run produced",
+          "tags": ["guard"]
+        },
+        "The reply names product-prd as the step to take first",
+        {
+          "text": "The reply lists no feature, release or order of its own and offers no roadmap built from the conversation",
+          "tags": ["guard"]
+        }
       ]
     }
   ]

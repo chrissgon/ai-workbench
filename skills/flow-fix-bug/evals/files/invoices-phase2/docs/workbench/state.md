@@ -1,8 +1,8 @@
 # Workbench state
 
 - Project: invoices
-- Current flow: flow-fix-bug on "the due date comes out one day early for customers in Brazil" (user, 2026-09-25); phase 1 root cause approved (user, 2026-09-25), next: phase 2 failing tests
-- Current phase: none
+- Current flow: flow-fix-bug on "the due date comes out one day early for customers in Brazil" (user, 2026-09-25)
+- Current phase: 1 root cause: approved (user, 2026-09-25)
 - Updated: 2026-09-25
 
 ## Autonomy
@@ -17,9 +17,11 @@
 
 ## Decisions
 
+- 2026-09-25: Phase 1 root cause approved: "yes, the cause is right, go on to the tests". (user)
+
 ## Approvals
 
-| Scope | What | Approved | Expires | Status |
-|-------|------|----------|---------|--------|
+| Scope | What | Payload hash | Approved | Expires | Status |
+|-------|------|--------------|----------|---------|--------|
 
 ## Open questions

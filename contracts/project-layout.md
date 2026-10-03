@@ -12,15 +12,15 @@ Skills never keep state inside this repository. Everything they produce for a pr
     │   ├── runtime.json          # the agent runtime's configuration, written by the person who sets it up (schema: runtime.md)
     │   ├── briefs/<topic>.md     # shared-understanding briefs written by core-clarify
     │   ├── critiques/<topic>.md  # adversarial reviews written by core-critique
-    │   └── research/<topic>.md   # sourced research briefs written by core-research
+    │   └── research/<topic>.md   # sourced research briefs written by core-research (with <topic>.check.json)
     ├── business/                 # idea-validation.md, market.md, icp.md, positioning.md, business-model.md, pricing.md, gtm.md, business-plan.md
-    ├── product/                  # discovery.md, prd.md, specs/<feature>.md, roadmap.md, backlog.md, metrics.md
-    ├── brand/                    # profile.md, name.md, strategy.md, identity.md, voice.md, guidelines.md
-    ├── design/                   # research.md, flows.md (with flows.lint.json), wireframes/, screens/ (an existing screen-by-screen specification, registered), design-system.md, briefs/<artifact>.md (with <artifact>.lint.json), results/<artifact>.md, results/<artifact>/ (the run folders of that artifact), handoff/<screen>.md (with <screen>.lint.json), handoff/<screen>/export/ (the unpacked export of that screen)
+    ├── product/                  # discovery.md, prd.md, specs/<feature>.md, roadmap.md, backlog.md, metrics.md; the lint records beside them: prd.lint.json and prd.lint-before.json, specs/<feature>.lint.json and specs/<feature>.lint-before.json, roadmap.lint.json, backlog.lint.json and backlog.lint-before.json
+    ├── brand/                    # profile.md, name.md, strategy.md, identity.md, voice.md, guidelines.md, pieces/ (the brand pieces and their renders, written by brand-identity)
+    ├── design/                   # research.md, flows.md (with flows.lint.json), wireframes/, screens/ (an existing screen-by-screen specification, registered), design-system.md (with design-system.lint.json), briefs/<artifact>.md (with <artifact>.lint.json), results/<artifact>.md (with <artifact>.lint.json), results/<artifact>/ (the run folders of that artifact), handoff/<screen>.md (with <screen>.lint.json), handoff/<screen>/export/ (the unpacked export of that screen)
     ├── engineering/              # architecture.md (or codebase-map.md beside a registered spec), designs/<feature>.md, adr/<NNNN>-<title>.md, designs/<feature>.check.json, plans/<task>.md (and handoff.md, migration.md when an existing document is registered there), reviews/<change>.md, security-reviews/<date>.md
     ├── ai/                       # opportunity.md, requirements.md, evals/, governance.md
     ├── delivery/                 # repo-baseline.md, runbooks/, releases/, incidents/
-    ├── marketing/                # messaging.md, launch-plan.md, calendar.md, content/<post>.md, campaigns/, engagement-policy.md, engagement-inbox.md, engagement-log.jsonl
+    ├── marketing/                # messaging.md (with messaging.lint.json), launch-plan.md, calendar.md, content/<post>.md, campaigns/, engagement-policy.md, engagement-inbox.md, engagement-log.jsonl
     └── security/                 # audit-<date>.md, vetting-<skill>-<date>.md: the records of core-security-audit, in the workbench or in a project that vets a skill
 ```
 
@@ -106,7 +106,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/engineering/codebase-map.md` | eng-codebase-map | - |
 | `docs/engineering/designs/<feature>.check.json` | eng-architecture | - |
 | `docs/engineering/designs/<feature>.md` | eng-architecture | - |
-| `docs/engineering/plans/<task>.md` | eng-root-cause, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests |
+| `docs/engineering/plans/<task>.md` | eng-root-cause | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests, ops-ci-pipeline |
 | `docs/engineering/reviews/<change>.md` | eng-code-review | - |
 | `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
 | `docs/marketing/calendar.md` | mkt-content-plan | mkt-publish, mkt-social-copy, mkt-vote-round |
@@ -116,9 +116,16 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/marketing/engagement-policy.md` | mkt-engage | - |
 | `docs/marketing/messaging.lint.json` | mkt-messaging | - |
 | `docs/marketing/messaging.md` | mkt-messaging | - |
+| `docs/product/backlog.lint-before.json` | product-backlog | - |
+| `docs/product/backlog.lint.json` | product-backlog | - |
 | `docs/product/backlog.md` | product-backlog | eng-implement |
+| `docs/product/prd.lint-before.json` | product-prd | - |
+| `docs/product/prd.lint.json` | product-prd | - |
 | `docs/product/prd.md` | product-prd | - |
+| `docs/product/roadmap.lint.json` | product-roadmap | - |
 | `docs/product/roadmap.md` | product-roadmap | - |
+| `docs/product/specs/<feature>.lint-before.json` | product-feature-spec | - |
+| `docs/product/specs/<feature>.lint.json` | product-feature-spec | - |
 | `docs/product/specs/<feature>.md` | product-feature-spec | - |
 | `docs/security/audit-<date>.md` | core-security-audit | - |
 | `docs/security/vetting-<skill>-<date>.md` | core-security-audit | - |
@@ -126,7 +133,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.check.json` | core-research | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-project-init, flow-fix-bug, ops-branch-sync | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-research, design-brief, design-execute, design-handoff, design-system, design-ux-flows, eng-architecture, eng-codebase-map, eng-security-review, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish |
+| `docs/workbench/state.md` | core-project-init | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-research, design-brief, design-execute, design-handoff, design-system, design-ux-flows, eng-architecture, eng-codebase-map, eng-security-review, flow-fix-bug, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish, ops-branch-sync, ops-ci-pipeline, ops-pull-request, ops-repo-baseline, product-backlog, product-feature-spec, product-prd, product-roadmap |
 <!-- owner-table:end -->
 
 ## Rules

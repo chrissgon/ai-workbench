@@ -141,7 +141,10 @@ def main(argv):
     root, history, as_json, i = ".", False, False, 0
     while i < len(argv):
         a = argv[i]
-        if a == "--root" and i + 1 < len(argv):
+        if a == "--root":
+            if i + 1 >= len(argv):
+                print("error: --root needs a value; see --help", file=sys.stderr)
+                return 2
             root, i = argv[i + 1], i + 2
             continue
         if a == "--history":

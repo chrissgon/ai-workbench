@@ -13,7 +13,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
 LINT = ROOT / "skills/product-backlog/scripts/lint_backlog.py"
-FILES = ROOT / "skills/product-backlog/evals/files"
+FIX = ROOT / "skills/product-backlog/evals/files/fix/docs/product"
+TICKETS = ROOT / "skills/product-backlog/evals/files/tickets/docs/product"
 
 SPEC = """# Feature specification: lantern
 
@@ -135,21 +136,106 @@ def test_feature_is_required_when_the_backlog_has_two(tmp_path):
     assert "--feature is required" in r.stderr and "oar" in r.stderr
 
 
+def run(*args, cwd=None):
+    return subprocess.run([sys.executable, str(LINT), *args], capture_output=True, text=True, timeout=60, cwd=cwd)
+
+
 def test_help_and_usage_errors():
-    r = subprocess.run([sys.executable, str(LINT), "--help"], capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0 and "--design" in r.stdout
-    r = subprocess.run([sys.executable, str(LINT), "--backlog", "x.md"], capture_output=True, text=True, timeout=60)
+    r = run("--help")
+    assert r.returncode == 0 and "--design" in r.stdout and "--report <path>" in r.stdout
+    r = run("--backlog", "x.md")
     assert r.returncode == 2 and "required" in r.stderr
+    r = run()
+    assert r.returncode == 2 and r.stdout == "" and "Usage" in r.stderr
+
+
+def test_a_value_flag_given_last_is_a_usage_error_with_no_traceback():
+    for flag in ("--backlog", "--spec", "--feature", "--design", "--report", "--components-heading",
+                 "--assumptions-heading", "--plan-heading"):
+        r = run("--backlog", "b.md", "--spec", "s.md", flag)
+        assert r.returncode == 2, flag
+        assert f"{flag} needs a value" in r.stderr and "Traceback" not in r.stderr and r.stdout == "", flag
+
+
+def test_an_unknown_flag_is_a_usage_error():
+    r = run("--backlog", "b.md", "--spec", "s.md", "--reprot", "x.json")
+    assert r.returncode == 2 and "unknown option '--reprot'" in r.stderr and r.stdout == ""
 
 
 def test_the_bad_fixture_reports_its_six_findings():
-    r = subprocess.run([sys.executable, str(LINT), "--backlog", str(FILES / "backlog-bad.md"),
-                        "--spec", str(FILES / "spec-tiny.md")], capture_output=True, text=True, timeout=60)
+    r = run("--backlog", str(FIX / "backlog.md"), "--spec", str(FIX / "specs/reading-time.md"))
     out = json.loads(r.stdout)
     assert r.returncode == 1 and out["ok"] is False
     assert out["summary"] == "lint_backlog: ok: false; errors: 6; tasks: 2; coverage: 1/5 (REQ 1/2, NFR 0/1, AC 0/2)"
     for text in ("dependency cycle", "REQ-9", "Check 'works'", "'big'", "'M3'", "delivered by no task"):
         assert errors_with(out, text), text
+
+
+def test_the_tickets_fixture_is_a_valid_backlog():
+    r = run("--backlog", str(TICKETS / "backlog.md"), "--spec", str(TICKETS / "specs/reading-time.md"))
+    assert r.returncode == 0, r.stdout
+
+
+def test_report_writes_the_record_of_the_run(tmp_path):
+    report = tmp_path / "backlog.lint-before.json"
+    r = run("--backlog", str(FIX / "backlog.md"), "--spec", str(FIX / "specs/reading-time.md"), "--json",
+            "--report", str(report))
+    printed = json.loads(r.stdout)
+    record = json.loads(report.read_text(encoding="utf-8"))
+    assert r.returncode == 1 and report.read_text(encoding="utf-8").endswith("\n")
+    assert set(record) == {"script", "date", "arguments", "ok", "summary", "errors", "warnings", "counts"}
+    assert record["script"] == "lint_backlog.py" and len(record["date"]) == 10
+    assert record["arguments"] == {"--backlog": str(FIX / "backlog.md"), "--spec": str(FIX / "specs/reading-time.md"),
+                                   "--json": True}
+    assert record["ok"] is False and record["summary"] == printed["summary"] and record["errors"] == printed["errors"]
+    assert record["counts"] == {"tasks": 2, "milestones": 1, "spikes": 0, "critical_path": 2, "required": 5,
+                                "covered": 1}
+
+
+def test_report_on_a_passing_run_and_none_on_a_usage_error(tmp_path):
+    r, out = lint(tmp_path, GOOD, "--report", str(tmp_path / "lint.json"))
+    record = json.loads((tmp_path / "lint.json").read_text(encoding="utf-8"))
+    assert r.returncode == 0 and record["ok"] is True and record["errors"] == [] and record["summary"] == out["summary"]
+    r = run("--backlog", str(tmp_path / "absent.md"), "--spec", str(tmp_path / "spec.md"), "--report",
+            str(tmp_path / "usage.json"))
+    assert r.returncode == 2 and not (tmp_path / "usage.json").exists()
+
+
+def test_translated_design_headings(tmp_path):
+    translated = (DESIGN.replace("## Components", "## Componentes").replace("| Component |", "| Componente |")
+                  .replace("## Verification plan", "## Plano de verificacao")
+                  .replace("## Assumptions to verify before implementation", "## Suposicoes a verificar"))
+    (tmp_path / "design.md").write_text(translated, encoding="utf-8")
+    (tmp_path / "backlog.md").write_text(GOOD, encoding="utf-8")
+    (tmp_path / "spec.md").write_text(SPEC, encoding="utf-8")
+    base = ["--backlog", str(tmp_path / "backlog.md"), "--spec", str(tmp_path / "spec.md"),
+            "--design", str(tmp_path / "design.md")]
+    out = json.loads(run(*base).stdout)
+    assert errors_with(out, "has no row in the design's verification plan")
+    r = run(*base, "--components-heading", "componentes", "--plan-heading", "Plano de verificacao",
+            "--assumptions-heading", "Suposicoes")
+    assert r.returncode == 0, r.stdout
+
+
+def test_the_header_row_of_the_components_table_is_not_a_component(tmp_path):
+    """A header in another language ("Title" here, which assumption 1 happens to contain) is no component."""
+    design = DESIGN.replace("| Component | Responsibility", "| Title | Responsibility")
+    (tmp_path / "d.md").write_text(design, encoding="utf-8")
+    (tmp_path / "spec.md").write_text(SPEC, encoding="utf-8")
+    extra = GOOD.replace("### Milestones", """- T-lan-4: Title bar
+  Does: writes the title bar
+  Delivers: REQ-1
+  Touches: Title bar
+  Depends on: none
+  Check: `node --test test/build.test.mjs`; pages exist (verification plan: AC-1)
+  Size: S, because one file
+  Milestone: M1
+
+### Milestones""")
+    (tmp_path / "backlog.md").write_text(extra, encoding="utf-8")
+    r = run("--backlog", str(tmp_path / "backlog.md"), "--spec", str(tmp_path / "spec.md"), "--design",
+            str(tmp_path / "d.md"))
+    assert r.returncode == 0, r.stdout
 
 
 def test_vague_check_is_an_error_and_a_concrete_one_is_not(tmp_path):

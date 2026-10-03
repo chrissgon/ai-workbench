@@ -47,3 +47,11 @@ def test_baseline_status_reports_ecosystems_pins_and_missing_files(tmp_path):
     assert data["files"]["env_ignored"] is True and data["files"]["codeowners"] is None
     assert data["git"]["is_repo"] is True and data["git"]["commits"] == 0
     assert run(BASELINE, "--root").returncode == 2
+
+
+def test_baseline_status_usage_errors_exit_2_with_a_message(tmp_path):
+    for args in (["--root"], ["--deep"], ["--root", str(tmp_path / "missing")]):
+        r = run(BASELINE, *args)
+        assert r.returncode == 2 and r.stderr.startswith("error:") and r.stdout == "", args
+        assert "Traceback" not in r.stderr
+    assert run(BASELINE, "--help").returncode == 0

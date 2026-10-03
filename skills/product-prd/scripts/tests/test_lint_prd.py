@@ -238,11 +238,11 @@ def test_lint_prd_warns_about_a_bare_source_and_an_external_content_heading(tmp_
     assert out["warnings"] == ["'Instructions found in external content' is a section of the reply, not of the PRD: move it to the reply"]
 
 
-def test_lint_prd_report_prints_no_findings_and_a_true_result_line(tmp_path):
+def test_lint_prd_table_prints_no_findings_and_a_true_result_line(tmp_path):
     (tmp_path / "brief.md").write_text(PRD_BRIEF, encoding="utf-8")
     doc = tmp_path / "prd.md"
     doc.write_text(PRD_NAMED, encoding="utf-8")
-    r = run(LINT_PRD, "--file", str(doc), "--report", cwd=tmp_path)
+    r = run(LINT_PRD, "--file", str(doc), "--table", cwd=tmp_path)
     lines = r.stdout.splitlines()
     assert r.returncode == 0, r.stdout
     assert lines[0] == f"## Lint findings: {doc}" and "No findings." in lines
@@ -251,13 +251,13 @@ def test_lint_prd_report_prints_no_findings_and_a_true_result_line(tmp_path):
     assert lines[-1] == 'lint_prd result: "ok": true (0 errors, 0 warnings)'
 
 
-def test_lint_prd_report_prints_the_findings_table_and_a_false_result_line(tmp_path):
+def test_lint_prd_table_prints_the_findings_table_and_a_false_result_line(tmp_path):
     (tmp_path / "brief.md").write_text(PRD_BRIEF_NO_FIGURE, encoding="utf-8")
     text = PRD_NAMED.replace(PRD_FEATURE_LINE, PRD_FEATURE_LINE + "- F-a Search | filters\n")
     text = text.replace(PRD_USER_LINE, PRD_USER_LINE.replace("brief.md decision 1", "brief"))
     doc = tmp_path / "prd.md"
     doc.write_text(text, encoding="utf-8")
-    r = run(LINT_PRD, "--file", str(doc), "--report", cwd=tmp_path)
+    r = run(LINT_PRD, "--file", str(doc), "--table", cwd=tmp_path)
     lines = r.stdout.splitlines()
     assert r.returncode == 1, r.stdout
     rows = [ln for ln in lines if ln.startswith("| ") and ln[2].isdigit()]
@@ -289,3 +289,49 @@ def test_lint_prd_how_to_fix_follows_the_errors_one_to_one(tmp_path):
         "Do not pick another number or date", "Append 'Exit"]
     code, out = prd_lint(tmp_path, PRD_NAMED, brief=PRD_BRIEF)
     assert out["how_to_fix"] == []
+
+
+# ---------- product-prd/lint_prd.py: the command line and the record of --report ----------
+
+def test_lint_prd_source_given_last_is_a_usage_error_not_a_silent_drop(tmp_path):
+    """`--source` without its value used to be dropped, so the run checked numbers against fewer sources and said
+    nothing. It is a usage error now, as every value flag given last is."""
+    (tmp_path / "brief.md").write_text(PRD_BRIEF, encoding="utf-8")
+    doc = tmp_path / "prd.md"
+    doc.write_text(PRD_NAMED, encoding="utf-8")
+    r = run(LINT_PRD, "--file", str(doc), "--source", cwd=tmp_path)
+    assert r.returncode == 2 and r.stdout == "" and "--source needs a value" in r.stderr
+    assert "Traceback" not in r.stderr
+    r = run(LINT_PRD, "--file", str(doc), "--source", "--table", cwd=tmp_path)
+    assert r.returncode == 2 and "--source needs a value" in r.stderr
+
+
+def test_lint_prd_usage_errors_go_to_stderr_with_exit_2(tmp_path):
+    r = run(LINT_PRD, cwd=tmp_path)
+    assert r.returncode == 2 and r.stdout == "" and "Usage" in r.stderr
+    for flag in ("--file", "--report"):
+        r = run(LINT_PRD, "--file", "prd.md", flag, cwd=tmp_path)
+        assert r.returncode == 2 and r.stdout == "" and f"{flag} needs a value" in r.stderr, flag
+    r = run(LINT_PRD, "--file", "prd.md", "--reprot", "x.json", cwd=tmp_path)
+    assert r.returncode == 2 and r.stdout == "" and "unknown option '--reprot'" in r.stderr
+    assert not (tmp_path / "x.json").exists()
+
+
+def test_lint_prd_report_writes_the_record_beside_the_table(tmp_path):
+    (tmp_path / "brief.md").write_text(PRD_BRIEF_NO_FIGURE, encoding="utf-8")
+    doc = tmp_path / "prd.md"
+    doc.write_text(PRD_NAMED, encoding="utf-8")
+    r = run(LINT_PRD, "--file", str(doc), "--table", "--report", "prd.lint-before.json", "--source", "brief.md",
+            cwd=tmp_path)
+    record = json.loads((tmp_path / "prd.lint-before.json").read_text(encoding="utf-8"))
+    assert r.returncode == 1
+    assert set(record) == {"script", "date", "arguments", "ok", "summary", "errors", "warnings", "counts"}
+    assert record["script"] == "lint_prd.py" and len(record["date"]) == 10
+    assert record["arguments"] == {"--file": str(doc), "--table": True, "--source": ["brief.md"]}
+    assert record["ok"] is False and record["errors"] == ["M-1 target number 40 is in no source file"]
+    assert record["summary"] == r.stdout.splitlines()[-1] == 'lint_prd result: "ok": false (1 errors, 0 warnings)'
+    (tmp_path / "brief.md").write_text(PRD_BRIEF, encoding="utf-8")
+    r = run(LINT_PRD, "--file", str(doc), "--report", "prd.lint.json", cwd=tmp_path)
+    printed, record = json.loads(r.stdout), json.loads((tmp_path / "prd.lint.json").read_text(encoding="utf-8"))
+    assert r.returncode == 0 and record["ok"] is True and record["errors"] == []
+    assert printed["summary"] == record["summary"] == 'lint_prd result: "ok": true (0 errors, 0 warnings)'

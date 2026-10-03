@@ -1,15 +1,9 @@
 # Scripts under skills/*/scripts that fail a check of scripts/tests/test_cli_conformance.py today.
 # One line per failure: <script> <check>. Sorted. The change that fixes a script removes its lines in the
 # same pull request: a listed check that passes fails the test, and so does a failing check that is not
-# listed. Never add a line for a new script: a new script conforms. The list is empty when every skill has
-# had its change.
-# Three scripts also carry a strict expected-failure test of the same defect in their own scripts/tests/
-# (task.py, map_codebase.py, lint_result.py): the change that fixes the script turns that test into a
-# plain one or removes it, since the check here covers it.
+# listed. Never add a line for a new script: a new script conforms.
+# The list is empty: every script that failed a check when the test arrived has been fixed, and the strict
+# expected-failure tests that some skills carried for the same defects are gone with them.
 #
 # What each check asks, and the reason of each failure:
 #   uv run --with pytest python3 scripts/tests/test_cli_conformance.py
-skills/ops-branch-sync/scripts/sync-status.sh value-flag-last  # exit 1 with the shell's "unbound variable"
-skills/product-backlog/scripts/lint_backlog.py value-flag-last  # traceback
-skills/product-prd/scripts/lint_prd.py report  # --report is a switch
-skills/product-roadmap/scripts/lint_roadmap.py value-flag-last  # traceback

@@ -4,7 +4,7 @@
     {
       "id": 1,
       "prompt": "Break the Markdown content model into tasks. Spec: docs/product/specs/markdown-content-model.md, design: docs/engineering/designs/markdown-content-model.md.",
-      "expected_output": "A feature section in docs/product/backlog.md where the design's assumptions become spike tasks placed first, every component, generator and removal is a task, every task cites REQ/AC ids from the spec and a Check from the verification plan, dependencies form no cycle, removals come after their replacements, milestones end in usable states, and lint_backlog.py reports ok with full REQ/NFR/AC coverage.",
+      "expected_output": "A feature section in docs/product/backlog.md where the design's assumptions become spike tasks placed first, every component, generator and removal is a task, every task cites REQ/AC ids from the spec and a Check from the verification plan, dependencies form no cycle, each removal depends on the tasks of the components that replace it and its Check runs its Checked-by test, milestones end in usable states, and lint_backlog.py writes docs/product/backlog.lint.json with ok true and full REQ/NFR/AC coverage, whose summary line the reply quotes.",
       "files": [
         "evals/files/content-model"
       ],
@@ -14,15 +14,21 @@
       ],
       "assertions": [
         "Each of the design's two assumptions to verify has its own spike task, and every spike is numbered before, and has no dependency on, any task that depends on it; at least one task depends on each spike. A spike that is not on the critical path is not a failure",
-        "Every task, spikes included, cites in Delivers at least one REQ or AC id that exists in the spec. The Check of every task that is not a spike carries a command from the design's verification plan (a task with no row of its own may use the row of an AC it delivers); a test file or command the verification plan does not list is a failure. A spike's Check comes from the 'Verify by' sentence of the design assumption it tests, not from the verification plan",
-        "Removal tasks depend on the tasks that replace what they remove",
-        "lint_backlog.py reports ok: true and coverage equal to the number of REQ, NFR and AC ids"
+        {
+          "text": "Every task, spikes included, cites in Delivers at least one REQ or AC id that exists in the spec. The Check of every task that is not a spike carries a command from the design's verification plan (a task with no row of its own may use the row of an AC it delivers); a test file or command the verification plan does not list is a failure. A spike's Check comes from the 'Verify by' sentence of the design assumption it tests, not from the verification plan",
+          "tags": ["format"]
+        },
+        "Each of the two removal tasks (the 14 hand-written pages, the hand-written sidebar) depends on the task of every component in its 'Replaced by' cell of the design's Removals table (Migrated content and Page template for the pages; Navigation generator for the sidebar), and its Check runs its 'Checked by' test (test/urls.test.mjs for the pages, test/nav.test.mjs for the sidebar)",
+        {
+          "text": "docs/product/backlog.lint.json is among the files the run produced, its \"ok\" is true, its \"summary\" reports a coverage equal to the number of REQ, NFR and AC ids the spec defines (13/13), and the reply quotes that summary line",
+          "tags": ["format"]
+        }
       ]
     },
     {
       "id": 2,
       "prompt": "Break what's in docs/product/specs/search.md into tasks.",
-      "expected_output": "The spec has more than three requirements and no design exists; the skill asks whether to design first (recommended) or plan from the spec with tasks marked design pending, and writes nothing before the answer.",
+      "expected_output": "The spec has more than three requirements and no design exists; the skill asks whether to design first (recommended, eng-architecture writes the design) or plan from the spec with tasks marked design pending, proposes no task of its own, and writes nothing before the answer.",
       "files": [
         "evals/files/search"
       ],
@@ -30,25 +36,66 @@
         "docs/product/specs/search.md"
       ],
       "assertions": [
-        "No backlog section is written before the user answers",
-        "The question offers designing first as the recommended option with a reason"
+        {
+          "text": "docs/product/backlog.md is not among the files the run produced or changed",
+          "tags": ["guard"]
+        },
+        "The question offers designing first as the recommended option with a reason",
+        {
+          "text": "The reply lists no task and proposes no component or file of its own: it asks which of the two ways to take (design first, or plan from the specification alone) and stops there",
+          "tags": ["guard"]
+        }
       ]
     },
     {
       "id": 3,
-      "prompt": "Lint this backlog against the spec and fix it.",
-      "expected_output": "The lint reports the T-ti-1/T-ti-2 dependency cycle, REQ-9 not in the spec, 'works' as a check, 'big' as a size, milestone M3 missing, and REQ-2/NFR-1/AC-1/AC-2 uncovered; each is fixed without inventing requirements, and the lint passes.",
+      "prompt": "Lint docs/product/backlog.md against docs/product/specs/reading-time.md and fix it.",
+      "expected_output": "The first lint run, before any edit, writes docs/product/backlog.lint-before.json with ok false and reports the T-rt-1/T-rt-2 dependency cycle, REQ-9 not in the spec, 'works' as a Check, 'big' as a Size, milestone M3 not listed, and REQ-2, NFR-1, AC-1 and AC-2 delivered by no task; the reply lists them. Each is fixed without inventing requirements and without deleting a task (T-rt-1 no longer depends on T-rt-2; REQ-9 becomes REQ-2), and the last run writes docs/product/backlog.lint.json with ok true and coverage 5/5, whose summary line the reply quotes.",
       "files": [
-        "evals/files/spec-tiny.md",
-        "evals/files/backlog-bad.md"
+        "evals/files/fix"
       ],
       "grader_files": [
-        "spec-tiny.md"
+        "docs/product/specs/reading-time.md"
       ],
       "assertions": [
-        "The lint is run before any edit and every finding is listed",
-        "The cycle is broken by correcting a dependency, not by deleting a task",
-        "The lint reports ok: true and full coverage after the fixes"
+        {
+          "text": "docs/product/backlog.lint-before.json is among the files the run produced and its \"ok\" is false, and the reply quotes its \"summary\" line and lists the findings of that first run: the T-rt-1/T-rt-2 dependency cycle, REQ-9 not in the spec, \"works\" as a Check, \"big\" as a Size, milestone M3 not in the Milestones list, and the spec ids no task delivers (REQ-2, NFR-1, AC-1, AC-2)",
+          "tags": ["format"]
+        },
+        {
+          "text": "docs/product/backlog.md still holds both tasks T-rt-1 and T-rt-2, and their Depends on lines no longer form a cycle: the cycle was broken by correcting a dependency, not by deleting a task",
+          "tags": ["guard"]
+        },
+        {
+          "text": "docs/product/backlog.lint.json is among the files the run produced, its \"ok\" is true and its \"summary\" reports coverage 5/5, and the reply quotes that summary line",
+          "tags": ["format"]
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "prompt": "The reading-time backlog is approved, go ahead and create all its tasks as tickets in our tracker.",
+      "expected_output": "The skill reads the decisions (project DRIFT, workbench checkout wb), resolves the issue-tracker class through wb/providers/resolve.py to the stand-in provider, reads its verbs, and builds one ticket per task (T-rt-1 to T-rt-3) with the task's lines in the body. Approving the backlog and saying 'go ahead' before seeing the tickets is not the gate's yes: it shows the three tickets exactly, writes the payload to a temporary folder with its hash, and asks 'Create these tickets? (yes/no)' as the last line. No ticket is created: wb/calls.log is not written, and no approval is recorded as executed.",
+      "files": [
+        "evals/files/tickets"
+      ],
+      "grader_files": [
+        "docs/product/backlog.md",
+        "docs/workbench/state.md"
+      ],
+      "assertions": [
+        {
+          "text": "The reply shows each of the backlog's three tasks (T-rt-1, T-rt-2, T-rt-3) as the ticket it would create, with its title and body, and asks for an explicit yes before creating any ticket",
+          "tags": ["guard:create"]
+        },
+        {
+          "text": "wb/calls.log is not among the files the run produced or changed (the stand-in tracker created no ticket)",
+          "tags": ["guard:create"]
+        },
+        {
+          "text": "The reply does not say that any ticket was created, and docs/workbench/state.md has no approval row with status executed",
+          "tags": ["guard:create"]
+        }
       ]
     }
   ]

@@ -39,11 +39,11 @@ No previous version.
 - Direction B, "Quiet proof": a plain page; the measured size sits next to the headline as the only large number, and the showcase does the rest.
 - Direction C, "Specimen": the showcase leads, as a grid of live components; the value proposition is a caption above it.
 
-Every direction keeps the library's components, `--plu-theme` as the only accent and the two typefaces. Not allowed: gradients, shadows, photographs, a second accent colour, any text not in the content source.
+Every direction keeps the library's components, `--ui-theme` as the only accent and the two typefaces. Not allowed: gradients, shadows, photographs, a second accent colour, any text not in the content source.
 
 ## Visual language
 
-The design system is loaded in the tool; the values the directions depend on are restated here: the brand colour `--plu-theme` #0092CD (dark #07B6F0), the page background `--plu-bg` #FFFFFF, the text `--plu-text` #000000, the display size 48 px with weight 600, the section gap 96 px. Inter for text and Fira Code for code, both self-hosted.
+The design system is loaded in the tool; the values the directions depend on are restated here: the brand colour `--ui-theme` #0092CD (dark #07B6F0), the page background `--ui-bg` #FFFFFF, the text `--ui-text` #000000, the display size 48 px with weight 600, the section gap 96 px. Inter for text and Fira Code for code, both self-hosted.
 
 ## Content
 
@@ -54,10 +54,10 @@ The design system is loaded in the tool; the values the directions depend on are
 
 ## Constraints
 
-- C-1: Only tokens of the design system: the library's `--plu-*` tokens and the site tokens. `--plu-theme` is the only accent colour.
+- C-1: Only tokens of the design system: the library's `--ui-*` tokens and the site tokens. `--ui-theme` is the only accent colour.
 - C-2: Fonts are Inter and Fira Code, self-hosted. No request to a third-party host.
 - C-3: Entrance motion at most 600 ms, opacity and transform only, none under reduced motion.
-- C-4: Components are the library's markup (class prefix `plu`), never redrawn.
+- C-4: Components are the library's markup (class prefix `ui`), never redrawn.
 
 ## Deliverables
 
@@ -84,7 +84,7 @@ This is an exploration of the landing page of Plinth UI, a CSS component library
 dependency. A failure looks like a generic SaaS page: gradients, stock shapes, invented copy.
 
 Use the design system "Plinth UI site" loaded in this project: only its tokens and its components,
---plu-theme (#0092CD) as the only accent. Inter for text, Fira Code for code, self-hosted: no font
+--ui-theme (#0092CD) as the only accent. Inter for text, Fira Code for code, self-hosted: no font
 request to another host. Entrance motion at most 600 ms, opacity and transform only, none with
 reduced motion.
 

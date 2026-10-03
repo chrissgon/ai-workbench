@@ -8,6 +8,8 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
+import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
@@ -20,9 +22,13 @@ def load(rel: str, name: str):
     return mod
 
 
-def run(rel: str, *args: str, cwd: Path | None = None, stdin: str | None = None) -> subprocess.CompletedProcess:
-    return subprocess.run([sys.executable, str(ROOT / rel), *args], capture_output=True, text=True,
-                          cwd=cwd, input=stdin, timeout=60)
+def run(rel: str, *args: str, cwd: Path | None = None, stdin: str = "") -> subprocess.CompletedProcess:
+    """Run the script with `stdin` redirected in from a file, the way the skill calls it (`< request.txt`)."""
+    with tempfile.TemporaryFile("w+", encoding="utf-8") as f:
+        f.write(stdin)
+        f.seek(0)
+        return subprocess.run([sys.executable, str(ROOT / rel), *args], capture_output=True, text=True,
+                              cwd=cwd, stdin=f, timeout=60)
 
 
 # ---------- product-feature-spec/check_input.py: is there enough input to write a specification ----------
@@ -30,7 +36,7 @@ def run(rel: str, *args: str, cwd: Path | None = None, stdin: str | None = None)
 CHECK_INPUT = "skills/product-feature-spec/scripts/check_input.py"
 
 
-def check_input(root: Path, *args: str, stdin: str | None = None) -> dict:
+def check_input(root: Path, *args: str, stdin: str = "") -> dict:
     r = run(CHECK_INPUT, *args, "--root", str(root), stdin=stdin)
     assert r.returncode == 0, r.stderr
     return json.loads(r.stdout)
@@ -41,22 +47,23 @@ def words(count: int) -> str:
 
 
 def test_check_input_reports_none_for_a_short_request_in_an_empty_project(tmp_path):
-    out = check_input(tmp_path, "--request", "Add search to the docs site")
+    out = check_input(tmp_path, stdin="Add search to the docs site")
     assert (out["input"], out["sources"], out["missing_sources"], out["candidates"]) == ("none", [], [], [])
     assert out["request_words"] == 6 and out["next"].startswith("STOP. There is no input.")
     assert out["reply_template"] == load(CHECK_INPUT, "check_input").REPLY
-    assert out["reply_template"].startswith("I cannot write this specification yet")
+    assert out["reply_template"].startswith("Nothing was written: there is no brief, PRD or ticket")
+    assert out["reply_template"].rstrip().splitlines()[-1].endswith("because <reason>."), "a question is the last line"
     assert list(tmp_path.iterdir()) == [], "the check writes nothing"
 
 
 def test_check_input_finds_a_named_source_and_lists_a_missing_or_empty_one(tmp_path):
     (tmp_path / "ticket.md").write_text("Search must match page titles.\n", encoding="utf-8")
     (tmp_path / "empty.md").write_text("", encoding="utf-8")
-    out = check_input(tmp_path, "--request", "Add search", "--source", "ticket.md", "--source", "gone.md",
-                      "--source", "empty.md")
+    out = check_input(tmp_path, "--source", "ticket.md", "--source", "gone.md", "--source", "empty.md",
+                      stdin="Add search")
     assert (out["input"], out["sources"], out["missing_sources"]) == ("found", ["ticket.md"], ["gone.md", "empty.md"])
     assert "reply_template" not in out and out["next"] == "Input found. Go to step 1 and read: ticket.md."
-    out = check_input(tmp_path, "--request", "Add search", "--source", "gone.md")
+    out = check_input(tmp_path, "--source", "gone.md", stdin="Add search")
     assert (out["input"], out["sources"], out["missing_sources"]) == ("none", [], ["gone.md"])
     assert "reply_template" in out
     out = check_input(tmp_path / "elsewhere", "--source", str(tmp_path / "ticket.md"))
@@ -64,10 +71,10 @@ def test_check_input_finds_a_named_source_and_lists_a_missing_or_empty_one(tmp_p
 
 
 def test_check_input_takes_a_request_of_forty_words_as_input(tmp_path):
-    out = check_input(tmp_path, "--request", words(40))
+    out = check_input(tmp_path, stdin=words(40))
     assert (out["input"], out["request_words"]) == ("found", 40)
     assert out["next"] == "Input found. Go to step 1 and read: the user's request." and "reply_template" not in out
-    out = check_input(tmp_path, "--request", words(39))
+    out = check_input(tmp_path, stdin=words(39))
     assert (out["input"], out["request_words"]) == ("none", 39)
 
 
@@ -76,12 +83,12 @@ def test_check_input_lists_an_unnamed_brief_or_prd_as_a_candidate(tmp_path):
     (tmp_path / "docs" / "product").mkdir()
     (tmp_path / "docs" / "workbench" / "briefs" / "search.md").write_text("# Brief: search\n", encoding="utf-8")
     brief = str(Path("docs", "workbench", "briefs", "search.md"))
-    out = check_input(tmp_path, "--request", "Add search")
+    out = check_input(tmp_path, stdin="Add search")
     assert (out["input"], out["sources"], out["candidates"]) == ("found", [], [brief])
     assert out["next"].startswith(f"The user named no document, but the project has: {brief}. Read them now.")
-    assert "reply_template" not in out
+    assert out["reply_template"] == load(CHECK_INPUT, "check_input").REPLY, "for the case where no candidate fits"
     (tmp_path / "docs" / "product" / "prd.md").write_text("# PRD: Plinth\n", encoding="utf-8")
-    out = check_input(tmp_path, "--request", "Add search", "--source", brief)
+    out = check_input(tmp_path, "--source", brief, stdin="Add search")
     assert (out["sources"], out["candidates"]) == ([brief], [str(Path("docs", "product", "prd.md"))])
     assert out["next"] == (f"Input found. Go to step 1 and read: {brief}. Also read these and cite them if they are "
                            "about this feature: " + str(Path("docs", "product", "prd.md")) + ".")
@@ -95,12 +102,70 @@ def test_check_input_reads_the_request_from_stdin(tmp_path):
 
 
 def test_check_input_refuses_an_unknown_flag_and_a_flag_without_a_value(tmp_path):
-    r = run(CHECK_INPUT, "--request", "Add search", "--verbose")
+    r = run(CHECK_INPUT, "--verbose", stdin="Add search")
     assert r.returncode == 2 and r.stdout == "" and "unknown argument '--verbose'" in r.stderr
     r = run(CHECK_INPUT, "Add search")
     assert r.returncode == 2 and "unknown argument 'Add search'" in r.stderr
-    for flag in ("--request", "--source", "--root"):
+    for flag in ("--source", "--root"):
         r = run(CHECK_INPUT, flag)
         assert r.returncode == 2 and r.stdout == "" and f"{flag} needs a value" in r.stderr, flag
     r = run(CHECK_INPUT, "--help")
     assert r.returncode == 0 and r.stdout.startswith("Decide whether there is enough input") and "Usage:" in r.stdout
+
+
+def test_the_request_never_comes_from_the_command_line(tmp_path):
+    """A request in a shell argument can run a command; --request is gone, and its use says where the request goes."""
+    r = run(CHECK_INPUT, "--request", "Add search", "--root", str(tmp_path))
+    assert r.returncode == 2 and r.stdout == "" and "read from standard input" in r.stderr
+    r = run(CHECK_INPUT, "--root", str(tmp_path), stdin="")
+    assert r.returncode == 2 and "standard input" in r.stderr
+    request = 'Add search $(touch pwned) `touch pwned2` "quoted"'
+    out = check_input(tmp_path, stdin=request)
+    assert out["request_words"] == len(request.split()) and list(tmp_path.iterdir()) == []
+
+
+def start_with_an_open_stdin(tmp_path: Path, *args: str) -> tuple[subprocess.Popen, float]:
+    """Start the script with a pipe on standard input that nobody writes to or closes, as a shell loop or a
+    scheduler can leave it, and wait for it to end; returns the process and the seconds it took."""
+    out, err = (tmp_path / "out.txt").open("w"), (tmp_path / "err.txt").open("w")
+    p = subprocess.Popen([sys.executable, str(ROOT / CHECK_INPUT), *args], stdin=subprocess.PIPE,
+                         stdout=out, stderr=err, text=True)
+    start = time.monotonic()
+    try:
+        p.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        p.kill()
+        p.wait()
+    finally:
+        took = time.monotonic() - start
+        p.stdin.close()
+        out.close()
+        err.close()
+    return p, took
+
+
+def test_an_open_stdin_with_no_input_ends_at_once_with_a_usage_error(tmp_path):
+    """A pipe left open and no flag: the script must not wait for it (it once waited for 20 hours)."""
+    p, took = start_with_an_open_stdin(tmp_path)
+    assert took < 5 and p.returncode == 2, (took, p.returncode)
+    assert (tmp_path / "out.txt").read_text() == ""
+    assert "standard input" in (tmp_path / "err.txt").read_text()
+
+
+def test_an_open_stdin_beside_a_source_is_not_read(tmp_path):
+    proj = tmp_path / "proj"
+    (proj / "docs").mkdir(parents=True)
+    (proj / "docs" / "brief.md").write_text("# Search brief\n", encoding="utf-8")
+    p, took = start_with_an_open_stdin(tmp_path, "--source", "docs/brief.md", "--root", str(proj))
+    assert took < 5 and p.returncode == 0, (took, p.returncode)
+    out = json.loads((tmp_path / "out.txt").read_text())
+    assert (out["input"], out["sources"], out["request_words"]) == ("found", ["docs/brief.md"], 0)
+
+
+def test_a_dash_reads_the_request_from_a_pipe_and_a_pipe_without_it_is_ignored(tmp_path):
+    cmd = [sys.executable, str(ROOT / CHECK_INPUT), "--root", str(tmp_path)]
+    r = subprocess.run([*cmd, "-"], input=words(41), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    assert (json.loads(r.stdout)["input"], json.loads(r.stdout)["request_words"]) == ("found", 41)
+    r = subprocess.run(cmd, input=words(41), capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2 and r.stdout == "" and "argument -" in r.stderr

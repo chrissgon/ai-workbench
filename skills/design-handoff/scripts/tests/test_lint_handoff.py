@@ -186,7 +186,7 @@ def test_unpack_unreadable_library_is_a_usage_error(tmp_path):
 
 
 def test_unpack_reads_the_eval_fixture(tmp_path):
-    r = run(UNPACK, "--file", str(EXPORT), "--out", str(tmp_path / "out"), "--class-prefix", "plu", "--library", str(LIBRARY))
+    r = run(UNPACK, "--file", str(EXPORT), "--out", str(tmp_path / "out"), "--class-prefix", "ui", "--library", str(LIBRARY))
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["to_cover"] == {"custom_properties": ["--ds-accent-ink", "--ds-font-display", "--ds-space-section", "--hero-glow"],

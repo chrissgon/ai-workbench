@@ -1,0 +1,9 @@
+{
+  "name": "shop",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lint": "node --check src/price.js",
+    "test": "node --test"
+  }
+}
