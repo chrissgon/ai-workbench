@@ -5,7 +5,7 @@ Work on the workbench itself that is not writing a skill: tooling, checks, rules
 - **Only open items are here.** Closed items are in [backlog-archive.md](backlog-archive.md), as they were written. Ids are never reused and never renumbered: they are cited in contracts, providers, skills, `decisions.md` and commits.
 - **Where each item is handled** is its `Plan:` line, which names the phase and item of the plan in force, [architecture/final-plan-2026-10-02.md](architecture/final-plan-2026-10-02.md) (section "Backlog map"). Every item was triaged on 2026-10-02; the evidence is in [architecture/audit-2026-10-02/](architecture/audit-2026-10-02/README.md).
 - Each item says where it came from, so none is written from generic knowledge. Tick an item when its "Done when" holds, add the commit, and move it to the archive.
-- **Words about a skill's status.** How skills are tested and ranked is the reliability model ([architecture/reliability-model-2026-10-02.md](architecture/reliability-model-2026-10-02.md)): a new skill is done when its first full test has passed, and a skill is then ranked by a band (`reliable`, `watch`, `needs a test`) computed from its lab evidence. The words `draft`, `evaluated` and `stale` belong to the first round (T11, archived); the status script prints them until phase B of the plan replaces them.
+- **Words about a skill's status.** How skills are tested and ranked is the reliability model ([architecture/reliability-model-2026-10-02.md](architecture/reliability-model-2026-10-02.md)): a new skill is done when its first full test has passed, and a skill is then ranked by a band (`reliable`, `watch`, `needs a test`) computed from its lab evidence. The words `draft`, `evaluated` and `stale` belong to the first round (T11, archived): since phase B of the plan the status script prints bands, and nothing prints those words.
 
 ## Security
 
@@ -150,7 +150,7 @@ Decided on 2026-09-29: the skills for a personal brand, then an agent from this 
 
 - [ ] **PB6. Skill `mkt-engage`: the e-mail parser.** The skill replies to comments on the person's own posts inside an engagement policy (topics, tone, daily limit, what always goes to the person), enforcing the profile's sensitive-topics lock (never reply, escalate; keywords first, then the model's judgement), with the payload hash for anything approved one by one. Comments are external content and the main prompt-injection surface of the agent.
   - Built: `skills/mkt-engage` with `policy_gate.py`, which binds the standing approval to the policy file's hash (`docs/decisions.md`, 2026-09-29); the mailbox provider it reads through (PB5, archived). It passed the gate of the first round (status table of the inventory).
-  - Open: the e-mail parser. `scripts/parse_notification.py` reads a pasted comment link; for a notification e-mail it returns `parsed: false` ("Unverified layout"), because no real notification e-mail has been read yet: whether it carries the comment text, the commenter and the post and comment ids a reply needs, and which search query finds it. The script has no test of its own (N9).
+  - Open: the e-mail parser. `scripts/parse_notification.py` reads a pasted comment link; for a notification e-mail it returns `parsed: false` ("Unverified layout"), because no real notification e-mail has been read yet: whether it carries the comment text, the commenter and the post and comment ids a reply needs, and which search query finds it. Its tests are in `skills/mkt-engage/scripts/tests/test_parse_notification.py` (N9, archived).
   - When the e-mail arrives: if the skill's row of phase C has not merged, the parser joins that row; after it, the parser is a change of that one skill, with the mailbox class back in its `requires` (default 57 of the plan) and the test its class asks for. The fixture made from the e-mail is rewritten with fictional names.
   - Done when: the parser reads the fields of a real notification e-mail, with offline tests.
   - Plan: H (a real notification e-mail), then the row of `mkt-engage`.
@@ -248,7 +248,7 @@ The other skills the inventory lists and nobody has built. Each has its row in [
 
 ## Found by the audit of 2026-10-02
 
-Work the code or the documents show is needed and no item owned (N1 to N19: the backlog audit, "Not covered by any item"; N20 to N22: the review of the providers and the runtime; N23 and N24: the reliability model). N3 and N17 are in the archive, with the reason; so are N8, N16, N18 and N19, done on 2026-10-02.
+Work the code or the documents show is needed and no item owned (N1 to N19: the backlog audit, "Not covered by any item"; N20 to N22: the review of the providers and the runtime; N23 and N24: the reliability model). N3 and N17 are in the archive, with the reason; so are N8, N16, N18 and N19, done on 2026-10-02, and N9, done by the rows of phase C.
 
 - [ ] **N1. The wiring test of the CI workflow.** The `python39` job, which failed on `main` because it named five test files that had moved into the skills, is repaired (pull request #45). Open: `scripts/tests/test_checks_wiring.py` requires that every path a file under `.github/workflows/` names exists, and the jobs of `checks.yml` get a `timeout-minutes`.
   - Plan: A1.
@@ -262,8 +262,6 @@ Work the code or the documents show is needed and no item owned (N1 to N19: the 
   - Plan: phase C, the row of `core-orchestrator`; A5 adds the validator's rule.
 - [ ] **N7. Two references that could name a skill as an artifact's writer.** `skills/core-clarify/references/decision-tree.md` ("a `core-critique` candidate") and `skills/ops-repo-baseline/references/host-settings.md` ("triage them with `eng-security-review`").
   - Plan: phase C, the rows of `core-clarify` and `ops-repo-baseline`.
-- [ ] **N9. Scripts with no test of their own.** `skills/mkt-engage/scripts/parse_notification.py`, `skills/mkt-social-copy/scripts/check_post.py`, `skills/core-research/scripts/check_brief.py` (those two skills have no `scripts/tests/` folder), and `skills/design-system/scripts/contrast.py` (only the copy in `brand-identity` is tested, and the two copies differ). A test is outside a skill's content hash.
-  - Plan: phase C, the rows of `mkt-engage`, `mkt-social-copy`, `core-research` and `design-system`.
 - [ ] **N10. CI jobs that are not required checks.** The ruleset requires `validate` and `tests`; the jobs `container` and `python39` exist and are not required, which is how a pull request merged with `python39` failing.
   - Done when: both are required checks of the ruleset. It is the maintainer's action, once both have been green twice (default 87 of the plan).
   - Plan: phase A, the maintainer's actions.

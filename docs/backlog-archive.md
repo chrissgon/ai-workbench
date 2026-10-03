@@ -243,6 +243,10 @@ The ids stay valid. A citation of one of these ids anywhere in the repository (a
   - Plan: A9 (the ids), phase G (the building).
   - Done 2026-10-02 (item A9 of the plan): the flows are NS4 to NS11, the `explorer` agent NS12, the next version of `design-system` NS13, `biz-validate-idea` NS14, and the other skills that are not built NS15 to NS39; `flow-brand` already was PB14 and `flow-launch` NS3. The inventory names each id on its row.
 
+- [x] **N9. Scripts with no test of their own.** `skills/mkt-engage/scripts/parse_notification.py`, `skills/mkt-social-copy/scripts/check_post.py`, `skills/core-research/scripts/check_brief.py` (those two skills have no `scripts/tests/` folder), and `skills/design-system/scripts/contrast.py` (only the copy in `brand-identity` is tested, and the two copies differ). A test is outside a skill's content hash.
+  - Plan: phase C, the rows of `mkt-engage`, `mkt-social-copy`, `core-research` and `design-system`.
+  - Done by the rows of phase C and C0.3, closed 2026-10-03 (C0.10 of the plan): `parse_notification.py` is tested in `skills/mkt-engage/scripts/tests/test_parse_notification.py` and `check_brief.py` in `skills/core-research/scripts/tests/test_check_brief.py`; `check_post.py` and `contrast.py` are generated copies of `shared/scripts/`, tested at the source (`shared/scripts/tests/test_shared_check_post.py`, `shared/scripts/tests/test_shared_contrast.py`), and every copy is identical to its source (`scripts/sync_copies.py --check`).
+
 ## Dropped, or not tracked here
 
 - **S15. Optional copy of the approved payload.** Dropped on 2026-10-02 (default 85 of the plan). Since 2026-10-01 a payload that is executed later is kept on disk in `.workbench-local/payloads/<date>/` (`contracts/environment.md`), which is what showing a changed payload as a diff needs; a copy under `docs/` would break "the table stores the hash, never the payload" (`contracts/state.md`), would need a rule for payloads with personal data first, and would change every actuator. As it was written:

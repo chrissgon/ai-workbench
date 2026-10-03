@@ -2,8 +2,9 @@
 # One line per failure: <script> <check>. Sorted. The change that fixes a script removes its lines in the
 # same pull request: a listed check that passes fails the test, and so does a failing check that is not
 # listed. Never add a line for a new script: a new script conforms.
-# The list is empty: every script that failed a check when the test arrived has been fixed, and the strict
-# expected-failure tests that some skills carried for the same defects are gone with them.
+# The list is empty since the close of phase C (C0.10 of the plan in force) and stays empty: every script that
+# failed a check when the test arrived was fixed in its skill's row, and the strict expected-failure tests that
+# some skills carried for the same defects are gone with them.
 #
 # What each check asks, and the reason of each failure:
 #   uv run --with pytest python3 scripts/tests/test_cli_conformance.py
