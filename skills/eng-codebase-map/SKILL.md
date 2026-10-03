@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: []
   side_effects: []
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Codebase map
@@ -91,7 +91,7 @@ Ask before opening any package's source code: to prepare the question, list the 
 
 ```markdown
 This repository holds several packages: <dir>, <dir>, ...
-Which one do I map? Recommended: `<dir>`, because <the rule that decided, in one phrase, with the manifest fact that shows it>.
+Which one do I map? Recommended: `<dir>`, because <the rule that decided, in one phrase, with the manifest facts that show it; for rule 2, both: the script that runs or deploys the application, and the dependency in its manifest through which it imports the library>.
 ```
 
 ## Output template

@@ -20,7 +20,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [search:web]
   side_effects: []
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Architecture design
@@ -81,7 +81,7 @@ Progress:
 - [ ] Step 9: Write the design from [assets/design-template.md](assets/design-template.md) to `docs/engineering/designs/<feature>.md`, with the date from `date +%F`. Keep it under 250 lines; depth goes into ADRs.
 - [ ] Step 10: Check traceability: `python3 <this skill's folder>/scripts/check_design.py --spec docs/product/specs/<feature>.md --design docs/engineering/designs/<feature>.md --adr-dir docs/engineering/adr --report docs/engineering/designs/<feature>.check.json`. Every REQ, NFR, EDGE and AC id must appear in the design; every ADR must have Status, Context, Options with two or more entries, Decision and Consequences. Run it before fixing anything, also when the task is to check a design that already exists, and keep the whole JSON line it prints: that is the first run. `--adr-dir` is the folder that holds only ADRs, never a folder that also holds the specification or the design. Fix the design and the ADRs and rerun until `ok` is true; keep the whole JSON line of the last run too. `--report` keeps the record of the last run next to the design as the evidence. Never write `same command`, `same output` or `...` in place of a command or of its output: a run that is not quoted did not happen for the reader. Never write that the check passed without having run the script; when it cannot be run, say `Check: not run` and why in the report.
 - [ ] Step 11: Register the design and the ADRs in `docs/workbench/state.md` (owner `eng-architecture`, status `draft`) when the state file exists. Then run `git status --short` in the project root and keep what it printed: a deleted ADR shows there as ` D` or `D `.
-- [ ] Step 12: Self-check against "Quality criteria": list every number, name, version and API in the design and the report and where it came from (the specification, a file, a documentation page with its URL, the manifest, a command output); move what has no origin to "Assumptions to verify before implementation". Fix, then re-check.
+- [ ] Step 12: Self-check against "Quality criteria": list every number, name, version and API in the design and the report and where it came from (the specification, a file, a documentation page with its URL, the manifest, a command output); move what has no origin to "Assumptions to verify before implementation". For the APIs: search the design and the ADRs for every framework or library identifier they name (a function, module, export, global or config key), and check that each one cites a documentation page or a codebase file, or has its own Assumptions line with how to verify it; an identifier with neither is a failure, also when it appears only in a flow, a failure path or an ADR. Fix, then re-check.
 - [ ] Step 13: Report with the template below. The self-check comes before the report, never after it.
 
 ## Output template

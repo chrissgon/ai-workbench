@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md, docs/engineering/plans/<task>.md]
   requires: [integration:vcs, search:web]
   side_effects: [push, deploy]
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # CI pipeline
@@ -101,6 +101,7 @@ Credential: not written anywhere; store it as the repository secret `<NAME>` (<m
 
 Written: <each file, with what it does>
 - Local run: `<command exactly as run>` → `<the line it printed, copied>` | not run: <command> (<reason>); run it before the first push
+- Push: not pushed. Its run deploys a preview to <host>, so I push only after the local run has passed and you give an explicit yes to the payload (<shown below | shown once the local run passes>).
 - Files changed: <the lines `git status --short` printed, copied>
 
 <the settings checklist>

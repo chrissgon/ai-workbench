@@ -11,12 +11,13 @@
       "grader_files": [
         "src/due.js",
         "src/index.js",
+        "package.json",
         "releases/1.2.0/src/due.js",
         "AGENTS.md",
         "docs/engineering/plans/due-label-customer-time-zone.md"
       ],
       "assertions": [
-        "New test files import dueLabel through src/index.js and use node:test",
+        "New test files use node:test and import dueLabel through the public entry src/index.js, either by its path or by the package's own name, which package.json maps to ./src/index.js; a test that imports src/due.js directly fails this",
         "Each time-zone test starts a separate process with TZ set (a child process or `TZ=<zone> <command>`), in at least two zones, and no test assigns `process.env.TZ` inside the test process",
         "The reply or the plan quotes the command run against releases/1.2.0/src with the runner's count lines, and names the tests that fail there",
         "The reply or the plan quotes `npm test` with its count lines for the change",
