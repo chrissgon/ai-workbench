@@ -222,6 +222,13 @@ def parser_cmd(cfg: dict) -> list:
 STORED_NAMES = (("comment_urn", "comment_id"), ("parent_comment_urn", "parent_comment_id"), ("post_urn", "post_id"))
 
 
+def reply_key(comment_id: str) -> str:
+    """The idempotency key of a reply, as mkt-engage's policy_gate.py builds it: a hash of the whole identifier.
+    Used only for an inbox item that holds no key of its own (the gate did not run); an item that holds one,
+    of either form, keeps it."""
+    return "reply-" + hashlib.sha256(comment_id.encode("utf-8")).hexdigest()[:32]
+
+
 def stored_names(parsed: dict) -> dict:
     """The parser's output with each identifier under the name the runtime stores it by."""
     out = dict(parsed)
@@ -796,7 +803,7 @@ def cmd_approve(a, cfg: dict, project: Path) -> dict:
         raise Fail(f"the reply holds what looks like a credential ({held}); nothing sent. Answer the comment "
                    "yourself, then reject this item", 1)
     c = payload["comment"]
-    key = payload.get("idempotency_key") or f"reply-{re.sub(r'[^0-9]', '', c['comment_urn'].rsplit(',', 1)[-1])}"
+    key = payload.get("idempotency_key") or reply_key(c["comment_urn"])
     out = run_json(["uv", "run", str(cfg["paths"]["publisher"]), "comment", "--platform", cfg["publisher"],
                     "--post-id", c["post_urn"], "--parent-comment-id", c.get("parent_comment_urn") or c["comment_urn"],
                     "--text-file", reply_file,

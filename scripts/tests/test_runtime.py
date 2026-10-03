@@ -92,6 +92,10 @@ PROFILE = """# Profile
 """
 
 
+def reply_key(identifier: str) -> str:
+    return "reply-" + hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:32]
+
+
 def decision(category="thanks_or_praise", reply="Thanks, Ana. Glad it helped.", lang="EN", extra=""):
     block = json.dumps({"category": category, "language": lang, "reply": reply, "sources": [], "notes": ""})
     return f"Done.\n\n```engage-decision\n{block}\n```\n{extra}"
@@ -177,7 +181,8 @@ def test_praise_is_answered_on_its_own(env):
     c = calls[0]
     assert c[:1] == ["comment"] and "--confirmed" in c
     assert c[c.index("--parent-comment-id") + 1] == "urn:li:comment:(urn:li:activity:111,1)"
-    assert c[c.index("--idempotency-key") + 1] == "reply-1"
+    # FR-I9: a hash of the whole identifier (it was "reply-1", the digits after the identifier's last comma)
+    assert c[c.index("--idempotency-key") + 1] == reply_key("urn:li:comment:(urn:li:activity:111,1)")
     assert Path(c[c.index("--text-file") + 1]).read_text().strip() == "Thanks, Ana. Glad it helped."
     assert [e["action"] for e in log_entries(env)] == ["auto_replied"]
 
@@ -683,6 +688,51 @@ def test_approve_refuses_a_reply_that_holds_a_credential(env):
     item_id = json.loads(added.stdout)["id"]
     code, _, err = rt(env, "approve", "--id", str(item_id), "--confirmed", "--sha256", sha)
     assert code == 1 and "looks like a credential (bearer token)" in err and "nothing sent" in err
+    assert publisher_calls(env) == []
+
+
+# --- FR-I9: the reply's idempotency key is a hash of the whole identifier --------------------------------------
+
+
+def manual_item(env, key=None):
+    """An inbox reply item as an earlier runtime, or a run whose gate failed, left it."""
+    assert rt(env, "status")[0] == 0  # creates the store
+    folder = env["data"] / "manual"
+    folder.mkdir(parents=True, exist_ok=True)
+    reply = folder / "reply.txt"
+    reply.write_text("Thanks, Ana.\n")
+    sha = hashlib.sha256(reply.read_bytes()).hexdigest()
+    item = folder / "item.json"
+    item.write_text(json.dumps({"comment": message(7)["fake_comment"], "decision": None, "reasons": [],
+                                "reply_file": str(reply), "idempotency_key": key}))
+    store = [sys.executable, str(env["wb"] / "providers/store/sqlite.py")]
+    added = subprocess.run(store + ["inbox-add", "--db", str(env["data"] / "store.sqlite"), "--kind", "reply",
+                                    "--title", "t", "--payload-file", str(item), "--payload-sha256", sha],
+                           capture_output=True, text=True, check=True)
+    return json.loads(added.stdout)["id"], sha
+
+
+def test_approve_without_a_stored_key_uses_the_gates_key_and_an_old_key_is_kept(env):
+    set_case(env, [], decision())
+    item_id, sha = manual_item(env)
+    code, out, err = rt(env, "approve", "--id", str(item_id), "--confirmed", "--sha256", sha)
+    assert code == 0, err
+    assert out["idempotency_key"] == reply_key("urn:li:comment:(urn:li:activity:111,7)")
+    item_id, sha = manual_item(env, key="reply-7")  # an item written before: its key, of the old form, stays
+    code, out, err = rt(env, "approve", "--id", str(item_id), "--confirmed", "--sha256", sha)
+    assert code == 0 and out["idempotency_key"] == "reply-7", err
+
+
+def test_a_comment_logged_under_the_old_key_form_gets_no_second_reply(env):
+    # A project's log written before holds "reply-1" for the comment; the new key differs, and the publisher's
+    # ledger, keyed by the key, would not see the reply already sent.
+    log = env["proj"] / "docs/marketing/engagement-log.jsonl"
+    log.write_text(json.dumps({"action": "auto_replied", "idempotency_key": "reply-1", "commenter": "Ana Lima",
+                               "logged_at": "2026-01-01T00:00:00+00:00"}) + "\n")
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "to_inbox" and "already answered" in out["handled"][0]["note"]
     assert publisher_calls(env) == []
 
 

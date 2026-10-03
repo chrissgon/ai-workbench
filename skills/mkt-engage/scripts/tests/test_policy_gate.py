@@ -176,3 +176,36 @@ def test_the_link_pattern_is_the_one_of_check_post():
     post_src = (REPO / "shared/scripts/check_post.py").read_text()
     pattern = lambda src: src[src.index("LINK = re.compile("):].split(", re.I)", 1)[0]
     assert pattern(gate_src) == pattern(post_src)
+
+
+def reply_key(identifier: str) -> str:
+    return "reply-" + hashlib.sha256(identifier.encode("utf-8")).hexdigest()[:32]
+
+
+def praise_on(proj, identifier: str) -> dict:
+    (proj / "comment.json").write_text(json.dumps({"comment_id": identifier, "post_id": "p-1", "commenter": "Sam",
+                                                   "text": "Nice post"}))
+    return decide(proj, category="thanks_or_praise", reply="Thanks, Sam.")
+
+
+@pytest.mark.parametrize("identifier", ["urn:li:comment:(urn:li:activity:1,2)", "c-7f3a9", "post/42#reply=a,b"])
+def test_the_idempotency_key_is_a_hash_of_the_whole_identifier(proj, identifier):
+    # FR-I9: the key kept the digits after the identifier's last comma, so identifiers of another shape (no comma,
+    # letters, the same trailing digits) shared one key, and the second reply was taken for a replay of the first.
+    assert praise_on(proj, identifier)["idempotency_key"] == reply_key(identifier)
+
+
+def test_identifiers_with_the_same_trailing_digits_get_different_keys(proj):
+    assert len({praise_on(proj, identifier)["idempotency_key"] for identifier in ("c-a12", "c-b12", "12")}) == 3
+
+
+def test_a_reply_logged_under_the_old_key_form_is_not_sent_again(proj):
+    # A project's log holds keys of the old form (reply-<digits after the last comma>). A comment answered under
+    # such a key, even by an entry that does not name the comment, gets no second reply under the new key.
+    (proj / "docs/marketing/engagement-log.jsonl").write_text(json.dumps(
+        {"action": "auto_replied", "idempotency_key": "reply-2", "commenter": "Someone else",
+         "logged_at": "2026-01-01T00:00:00+00:00"}) + "\n")
+    out = decide(proj, category="thanks_or_praise", reply="Thanks, Sam.")
+    assert out["decision"] == "inbox" and "this comment was already answered" in out["reasons"]
+    assert out["idempotency_key"] == reply_key("urn:li:comment:(urn:li:activity:1,2)")
+    assert out["earlier_idempotency_key"] == "reply-2"
