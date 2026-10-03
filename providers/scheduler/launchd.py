@@ -31,7 +31,9 @@ What a job guarantees:
   program and the runner are hashed again and the command is refused if any differs.
 - The command runs at most once: the runner takes run.lock, records the job as running, and
   removes its launchd agent afterwards. launchd fires a missed time on wake; a run later than
-  the grace period is recorded as missed and does not run.
+  the grace period is recorded as missed and does not run. A firing up to 26 hours early (the
+  system time zone changed after scheduling; the plist holds local wall time) waits for the
+  time and then runs; an earlier one is logged and leaves the job scheduled.
 - A one-shot job always ends: the command runs in its own process group for at most
   timeout_minutes (10 when the command file gives none); its output is kept as bytes, whatever
   it printed; an error in the runner records the job as failed. A job left "running" by a
@@ -68,6 +70,10 @@ from pathlib import Path
 
 LABEL_PREFIX = "dev.ai-workbench.scheduler."
 EARLY_TOLERANCE = timedelta(minutes=5)
+# A one-shot plist holds local wall time, so a change of the system time zone between scheduling and the slot
+# fires the job early, by at most the widest gap between two time zones (UTC-12 to UTC+14): the runner waits.
+EARLY_WAIT_LIMIT = timedelta(hours=26)
+WAIT_STEP_SECONDS = 60  # the wall clock is read again after each step: a sleep may not count system sleep
 DEFAULT_GRACE_MINUTES = 120
 MAX_GRACE_MINUTES = 10080  # a week: a one-shot run may start at most this late
 LAUNCHCTL_TIMEOUT_SECONDS = 30
@@ -967,8 +973,16 @@ def cmd_run(args) -> int:
         at = parse_iso(job["at"])
         current = now()
         if current < at - EARLY_TOLERANCE:
-            log(f"job {job['id']} fired at {iso(current)}, before its time {job['at']}; waiting")
-            return EXIT_OK
+            if at - current > EARLY_WAIT_LIMIT:
+                log(f"job {job['id']} fired at {iso(current)}, before its time {job['at']}; waiting")
+                return EXIT_OK
+            # launchd would fire it next a year later. Wait for the time here, still holding the job: cancel unloads
+            # the job, and launchd's SIGTERM ends this wait.
+            log(f"job {job['id']} fired at {iso(current)}, before its time {job['at']} (the time zone changed?); "
+                "waiting for it")
+            while now() < at:
+                time.sleep(min(WAIT_STEP_SECONDS, max((at - now()).total_seconds(), 0.0)))
+            current = now()
         if current > at + timedelta(minutes=job["grace_minutes"]):
             return finish(job, "missed", reason=f"fired at {iso(current)}, after the {job['grace_minutes']}-minute grace")
         if "program" not in job or "runner" not in job:
