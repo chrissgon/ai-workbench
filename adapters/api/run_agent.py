@@ -23,7 +23,8 @@ The prompt
           reads at ../../shared/references/platforms/<name>.md: it is looked for beside each
           --skill-dir first, then in this adapter's own checkout. A task that names no platform, or
           a platform without a reference, gets none, and stderr.log says which.
-  user    the task file, then every file the task text names that resolves to a regular file inside
+  user    the task file, then every file the task text names outside its fenced blocks (where the task
+          quotes external content, so a commenter cannot choose a file) that resolves to a regular file inside
           --project (an absolute path, or one relative to --project), each once, between delimiters
           that carry a random per-run marker and say the content is data. Refused: a path that resolves
           outside --project (symlinks included), a hidden path component (".env", ".git/..."), a
@@ -250,10 +251,24 @@ def system_prompt(agent_file: str, skill_dirs: list[str], platform: str | None =
     return "\n\n".join(parts) + "\n"
 
 
+def outside_fences(task: str) -> str:
+    """The task's text without its fenced blocks: a line that starts with ``` opens a block and the next such
+    line closes it; a block left open runs to the end. What the task quotes (a comment, an e-mail, a computed
+    state) is in such a block, as JSON, whose strings cannot hold a line break, so quoted text cannot close it."""
+    kept, inside = [], False
+    for line in task.splitlines():
+        if line.startswith("```"):
+            inside = not inside
+        elif not inside:
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def candidate_paths(task: str) -> list[str]:
     """Tokens of the task text that look like file paths: absolute, or relative with a '/' and a dot in
-    the last component. URLs are removed first; trailing punctuation is stripped."""
-    text = URL_RE.sub(" ", task)
+    the last component. Only the text outside fenced blocks is read, so that a commenter cannot choose which
+    project files reach the model (FR-I12). URLs are removed first; trailing punctuation is stripped."""
+    text = URL_RE.sub(" ", outside_fences(task))
     seen, out = set(), []
     for tok in SPLIT_RE.split(text):
         tok = tok.rstrip(".:!?")
