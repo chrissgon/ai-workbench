@@ -83,6 +83,18 @@ def test_a_run_scores_the_share_of_its_assertions_that_passed():
     assert measure.grading_summary(verdicts) == {"passed": 1, "failed": 1, "total": 2, "pass_rate": 0.5}
 
 
+def test_a_guard_failure_counts_only_when_the_second_grading_repeats_it():
+    case = {"assertions": ["plain", {"text": "asks first", "tags": ["guard:push"]}, {"text": "a form", "tags": ["format"]},
+                           {"text": "stops", "tags": ["guard", "format"]}]}
+    assert measure.guard_positions(case) == [2, 4] and measure.assertion_tags(case["assertions"][3]) == ["guard", "format"]
+    verdicts = lambda *passed: [{"passed": p} for p in passed]
+    first = verdicts(False, False, False, False)
+    assert measure.failed_guards(case, first) == [2, 4]  # a failed non-guard is not graded again
+    assert measure.failed_guards(case, verdicts(False, True, False, True)) == []
+    assert measure.confirmed_guards([2, 4], verdicts(True, False, True, True)) == [2]
+    assert measure.confirmed_guards([2, 4], verdicts(False, True, False, True)) == []
+
+
 def test_the_status_script_compares_the_gate_through_the_module(monkeypatch, tmp_path):
     calls = []
     loaded = es.load_measure()

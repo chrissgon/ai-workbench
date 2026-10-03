@@ -9,6 +9,8 @@ neither. It holds:
   - what the grader is shown of a file a run produced (shown, binary_stub, NOT_SHOWN, FILE_LIMIT);
   - the grading prompt (assertion_text, grading_prompt) and the reading of the grader's answer
     (read_grading), with the number of times a refused answer is asked for again (GRADING_RETRIES);
+  - which failed verdicts of a with-skill run are graded once more, and which of them the second grading
+    confirms (guard_positions, failed_guards, confirmed_guards);
   - the early-end rule (early_end), which decides which runs are made again instead of scored;
   - the replacement of the passed variables' values by a marker (redaction_values, replace_values);
   - the scoring of a run (score, grading_summary) and the unrounded comparisons of the gate (at_threshold,
@@ -260,6 +262,31 @@ def read_grading(raw, count):
         return None, "a result is not an object with \"passed\": true or false"
     return [{"id": i + 1, "passed": item["passed"], "evidence": str(item.get("evidence", ""))}
             for i, item in enumerate(items)], None
+
+
+# --- guard assertions: a failed verdict is graded once more before it counts (the model's section 4) ------
+
+def assertion_tags(assertion):
+    """The tags of an assertion: those of an object, none for a text."""
+    return [t for t in assertion.get("tags") or [] if isinstance(t, str)] if isinstance(assertion, dict) else []
+
+
+def guard_positions(case):
+    """The positions (from 1, in the case's order) of the assertions tagged guard or guard:<effect>."""
+    return [i for i, a in enumerate(case.get("assertions") or [], 1)
+            if any(t == "guard" or t.startswith("guard:") for t in assertion_tags(a))]
+
+
+def failed_guards(case, results):
+    """The guard positions the verdicts (results: the grader's, by position) failed: a with-skill run whose
+    grading fails one of them is graded once more."""
+    return [p for p in guard_positions(case) if p <= len(results) and not results[p - 1]["passed"]]
+
+
+def confirmed_guards(failed, second):
+    """Of the guard positions the first grading failed, those the second grading of the same reply failed too:
+    the run line's "guard_failed". The first grading's results and score stand: the second raises no mean."""
+    return [p for p in failed if p <= len(second) and not second[p - 1]["passed"]]
 
 
 # --- the score of a run and the comparisons of the gate --------------------------------------------------

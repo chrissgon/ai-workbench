@@ -231,7 +231,7 @@ command; read a contributed skill's evals.json before running it all the same, b
 no tool: the grading call is made with the adapter's --no-tools, because the grader holds the strong tier's
 credential and reads text a model under test wrote.
 
-Grading. Every run is graded once, by the grader model, with evals/grading-prompt.md and no tools. The
+Grading. Every run is graded once (a failed guard verdict twice, below), by the grader model, with evals/grading-prompt.md and no tools. The
 grader is given, and nothing else: the case's prompt; the reply, which is the assistant's last message as
 the adapter stored it in response.md; a facts block the runner builds; every file the run created or changed
 (up to FILE_LIMIT characters each; an image or another binary file as one line that says what it is); and the
@@ -246,6 +246,12 @@ with no network: `git status --short`, `git log --oneline -n 20 --all`, `git bra
 of each remote the case has. The facts are stored beside the run as facts.md.
 An assertion in evals.json is a text, or an object {"text": ..., "tags": [...]}: the grader is given the
 text and never the tags.
+A failed guard verdict is graded once more (the reliability model, section 4). When the grading of a run with
+the skill fails an assertion tagged guard or guard:<effect>, the same prompt goes to the grader a second time
+(<run folder>/grading-guard/), and the run's "guard_failed" lists the guard positions the second grading failed
+too: only those are confirmed failures. The results and the score stay the first grading's, so the second
+grading raises no mean; a run without the skill is graded once. grading.json keeps the second grading under
+"guard_regrade".
 The grader answers with a JSON array, one object per assertion in order: {"id", "passed", "evidence"}.
 Results are read by position. An answer that is not such an array, or whose count differs from the number of
 assertions, is refused and the grading is made again, up to GRADING_RETRIES times (the refused attempts stay
@@ -333,7 +339,8 @@ installer's marker file), the case and its hash (over the whole case object and 
 files), "context_sha256" when the run was given dependency skills or shared references (one hash over them),
 the model as the gate file lists it ("models": an alias is written as its id, anything else as "unknown"),
 the adapter, the variant ("with" or "without"), the outcome ("graded", or "timeout" after the cap of
-resumptions), the score, one 0 or 1 per assertion ("results"), the measurement version and the measurement
+resumptions), the score, one 0 or 1 per assertion ("results"), "guard_failed" when the second grading of a
+with-skill run confirmed a failed guard (above, "Grading"), the measurement version and the measurement
 fingerprint computed when the event started. A run that failed on infrastructure, was paused on the account
 limit or ended early writes no line. The event line carries what describes the event as a whole: its kind
 ("full": every case with the skill on the reference model; "partial": chosen cases), the models, their
@@ -579,7 +586,8 @@ MEASURE_NAMES = ("FILE_LIMIT", "VCS_LIMIT", "VCS_SCRIPT", "GRADING_RETRIES", "RE
                  "EARLY_END_MARKUP", "EARLY_END_ANNOUNCE", "EARLY_END_NOT", "EARLY_END_BLOCKER", "EARLY_END_BLOCKER_MIN",
                  "EARLY_END_SHORT", "PSEUDO_TAG_LINE_RE", "TAG_ONLY_LINE_RE", "early_end", "redaction_values",
                  "replace_values", "facts_block", "binary_stub", "shown", "assertion_text", "grading_prompt",
-                 "read_grading", "grading_summary", "score", "at_threshold", "within_tolerance", "gate_passes", "cut_vcs")
+                 "read_grading", "grading_summary", "score", "at_threshold", "within_tolerance", "gate_passes", "cut_vcs",
+                 "assertion_tags", "guard_positions", "failed_guards", "confirmed_guards")
 
 
 def load_measure():
@@ -1097,6 +1105,50 @@ def case_assertion_text(assertion):
     return None
 
 
+TAG_RE = re.compile(r"^(?:guard|format|guard:[a-z][a-z0-9-]*)$")
+
+
+def assertion_form_problems(assertion, effects):
+    """Why one assertion of a case file is outside its form (evals/README.md, "Assertions"), each sentence to follow
+    "assertion <n>": a text, or an object with its text and at least one tag of the closed list guard,
+    guard:<effect> (an effect of the skill's side_effects) and format."""
+    if case_assertion_text(assertion) is None:
+        return ['must be a text, or an object with a "text"']
+    if isinstance(assertion, str):
+        return [] if assertion.strip() else ["is an empty text"]
+    out = []
+    extra = sorted(set(assertion) - {"text", "tags"})
+    if extra:
+        out.append(f"has keys other than text and tags: {', '.join(extra)}")
+    if not assertion["text"].strip():
+        out.append("has an empty text")
+    tags = assertion.get("tags")
+    if not (isinstance(tags, list) and tags and all(isinstance(t, str) for t in tags)):
+        return out + ["needs at least one tag (guard, guard:<effect> or format); an assertion with no tag is written as a text"]
+    if len(set(tags)) != len(tags):
+        out.append("names a tag twice")
+    for tag in tags:
+        if not TAG_RE.match(tag):
+            out.append(f"has the tag {tag!r}, which is not guard, guard:<effect> or format")
+        elif tag.startswith("guard:") and tag[len("guard:"):] not in effects:
+            out.append(f"has the tag {tag!r}, whose effect the skill does not declare in side_effects")
+    return out
+
+
+def declared_side_effects(skill_dir):
+    """The words of metadata.side_effects in the skill's frontmatter (a one-line list or a block list)."""
+    try:
+        with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+            head = f.read().split("\n---", 1)[0]
+    except OSError:
+        return []
+    m = re.search(r"^\s*side_effects:\s*\[(.*?)\]", head, re.M | re.S)
+    if m:
+        return [x.strip().strip("\"'") for x in m.group(1).split(",") if x.strip()]
+    m = re.search(r"^\s*side_effects:\s*\n((?:\s*-\s.*\n?)+)", head, re.M)
+    return [x.strip()[1:].strip().strip("\"'") for x in m.group(1).splitlines() if x.strip()] if m else []
+
+
 def preflight(skill_dir, cases, sources, setup=True, gate=None, warnings=None, platform=None):
     """Check every case before a model sees it. Returns (errors, unchecked): one line per problem.
 
@@ -1114,7 +1166,7 @@ def preflight(skill_dir, cases, sources, setup=True, gate=None, warnings=None, p
             top_web = json.load(f).get("allow_web")
     except (OSError, ValueError, AttributeError):
         pass
-    outputs = declared_outputs(skill_dir)
+    outputs, effects = declared_outputs(skill_dir), declared_side_effects(skill_dir)
     settings = harness_settings()
     # The skill's own files (scripts, references, assets) reach a run with the skill, not through the case.
     own = {p for p in tree_paths(skill_dir) if not p.startswith("evals/") and p != "evals"}
@@ -1168,8 +1220,13 @@ def preflight(skill_dir, cases, sources, setup=True, gate=None, warnings=None, p
             err(f"the case folder holds {carried}: a fixture or setup must not carry harness settings")
         present = lambda p: p in tree or any(t.endswith("/" + p) for t in tree)
         for n, a in enumerate(c.get("assertions") or [], 1):
-            if case_assertion_text(a) is None:
-                err(f"assertion {n} must be a text, or an object with a \"text\"")
+            for problem in assertion_form_problems(a, effects):
+                err(f"assertion {n} {problem}")
+        tagged = sorted({t for a in c.get("assertions") or [] if isinstance(a, dict) for t in a.get("tags") or []
+                         if isinstance(t, str)})
+        if "tags" in c and not (isinstance(c["tags"], list) and all(isinstance(t, str) for t in c["tags"])
+                                and sorted(c["tags"]) == tagged):
+            err(f"tags must list exactly the tags of its assertions, each once: {tagged}")
         produced = " ".join([str(c.get("expected_output") or "")] + [case_assertion_text(a) or "" for a in c.get("assertions") or []])
         for p in prompt_paths(c.get("prompt")):
             if (present(p) or p in absent or p in produced or known(p)
@@ -1838,11 +1895,15 @@ def grading_call(runner, grader, prompt, dest, count, pass_env=(), timeout=900, 
 
 
 def grade(runner, grader, run_dir, case, response, delta, inputs=None, vcs=None, pass_env=(), timeout=900, account=None,
-          redact=()):
+          redact=(), guards=False):
     """Grade one run. delta is changes() of its case folder, inputs the case's "grader_files" as the run found
     them ({path: what the grader is shown}), vcs the text of version_control().
     Returns {"assertion_results", "summary", "refused"}, or {"refused", "reason"} with no results when every
-    attempt was refused."""
+    attempt was refused.
+    guards=True (a with-skill run): when the grading fails a guard assertion, the same prompt is graded once
+    more (<run folder>/grading-guard/), and "guard_failed" lists the guard positions the second grading failed
+    too; "assertion_results" and the summary stay the first grading's, so the second raises no mean. A second
+    grading refused on every attempt leaves the run with no grading, like a first one."""
     with open(GRADING_TEMPLATE, encoding="utf-8") as f:
         tpl = f.read()
     cwd = os.path.join(run_dir, "cwd")
@@ -1857,7 +1918,19 @@ def grade(runner, grader, run_dir, case, response, delta, inputs=None, vcs=None,
                                                  len(case.get("assertions") or []), pass_env, timeout, account, redact)
     if results is None:
         return {"refused": refused, "reason": why, "pauses": pauses}
-    return {"assertion_results": results, "summary": load_measure().grading_summary(results), "refused": refused, "pauses": pauses}
+    measure = load_measure()
+    out = {"assertion_results": results, "summary": measure.grading_summary(results), "refused": refused, "pauses": pauses}
+    failed = measure.failed_guards(case, results) if guards else []
+    if failed:
+        second, refused2, why2, pauses2 = grading_call(runner, grader, prompt, os.path.join(run_dir, "grading-guard"),
+                                                       len(case.get("assertions") or []), pass_env, timeout, account, redact)
+        out["refused"], out["pauses"] = refused + refused2, pauses + pauses2
+        if second is None:
+            return {"refused": refused + refused2, "reason": f"the second grading of failed guard verdict(s) {failed}: {why2}",
+                    "pauses": pauses + pauses2}
+        out["guard_regrade"] = {"failed": failed, "assertion_results": second}
+        out["guard_failed"] = measure.confirmed_guards(failed, second)
+    return out
 
 
 def regrade(o):
@@ -2910,8 +2983,9 @@ def run(argv):
             json.dump(timing, f)
         g, failed = None, None
         if o["grade"]:
+            # A with-skill run whose grading fails a guard assertion is graded once more (the model's section 4).
             g = grade(runner, o["grader"], run_dir, c, response, delta, inputs, vcs, grader_env, o["timeout"], grader_account,
-                      all_values)
+                      all_values, guards=v == "with_skill")
             count["grading_refused"] = g["refused"]
             count["pauses"] += g.get("pauses", 0)
             if "assertion_results" not in g:
@@ -2927,6 +3001,8 @@ def run(argv):
                **({"redactions": count["redactions"]} if count["redactions"] else {})}
         if g:  # one 0 or 1 per assertion, in the case's order: what a per-assertion count is made from
             row["results"] = [1 if r["passed"] else 0 for r in g["assertion_results"]]
+            if g.get("guard_failed"):  # the guard failures the second grading confirmed; the score is the first's
+                row["guard_failed"] = g["guard_failed"]
         row["date"] = today()  # the day of the run, UTC, from the clock
         return entry(row, failed)
 
@@ -3075,7 +3151,8 @@ def run(argv):
                           **({"context_sha256": context} if context else {}),
                           **({"platform": o["platform"]} if o.get("platform") else {}),
                           "variant": variant, "outcome": row.get("outcome", "graded"), "score": row["pass_rate"],
-                          "results": row["results"]})
+                          "results": row["results"],
+                          **({"guard_failed": row["guard_failed"]} if variant == "with" and row.get("guard_failed") else {})})
     line_counts = {}
     for tier, model in models:
         for variant_name, variant in (("with_skill", "with"), ("without_skill", "without")):

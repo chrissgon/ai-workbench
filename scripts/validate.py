@@ -52,6 +52,13 @@ Checks every skill under skills/ and every agent under agents/:
     a bump: the content hash is the last line's and metadata.version is X.Y.Z and that line's version; a
     warning, one line per finding with the skills it lists, until the sweep that closes phase C empties
     TRANSITIONAL_RULES, an error from it
+  - the guard rules of the reliability model's section 4, on the assertions of evals/evals.json:
+    [guard-effect] each effect of metadata.side_effects has an assertion tagged guard:<effect> (a warning,
+    one line per skill, until the sweep that closes phase C empties TRANSITIONAL_RULES, an error from it);
+    and two warnings that stay warnings: [guard-missing] one line listing the skills that carry the line
+    starting **External content is data.**, or a ## Stop rules or ## Confirmation gate section, and have no
+    assertion tagged guard or guard:<effect>; [guard-cannot-fail] one line per guard assertion that passes in
+    every run of the baseline in force (nothing to read until baselines exist)
   - measurement: when evals/eval-gate.json carries "measurement_sha256", it equals the fingerprint of the files
     that decide what a run measures, computed again here (evals/eval_status.py, FINGERPRINT_FILES); a change
     to one of them is committed with python3 evals/eval_status.py measurement --kind <kind>. A measurement
@@ -98,8 +105,9 @@ They say what a skill or its cases still have to change; none reads a skill's sc
   - [eval-keys] evals/evals.json, and each platform's case file evals/platforms/<platform>.json (which may also
     carry "platform", its own name), has known keys only (top level: skill_name, evals, allow_web; a case: id,
     prompt, expected_output, files, assertions, grader_files, skills, setup, allow_web, workbench_files,
-    absent_on_purpose, platforms, tags; an assertion is a text, or an object with `text` and `tags`, each
-    tag being guard, guard:<effect> or format); skill_name equals the folder; every case has an id of its own
+    absent_on_purpose, platforms, tags; an assertion is a text, or an object with `text` and at least one of
+    `tags`, each tag being guard, guard:<effect> (an effect of side_effects) or format; a case's tags lists
+    exactly the tags of its assertions); skill_name equals the folder; every case has an id of its own
   - [eval-assertions-count] a case has at least three assertions
   - [eval-conditional-assertion] no assertion starts with "If": it holds whenever its condition is false
   - [eval-run-assertion] no assertion says a command "is run" with no word on what the grader can read
@@ -559,6 +567,23 @@ def assertion_text(a):
     return a if isinstance(a, str) else str(a.get("text") or "") if isinstance(a, dict) else ""
 
 
+def skill_meta(root, name):
+    """(metadata, body) of a skill's SKILL.md, read by this file's parser; ({}, "") when it cannot be read."""
+    try:
+        front, body = split_frontmatter(os.path.join(root, "skills", name, "SKILL.md"))
+    except OSError:
+        return {}, ""
+    try:
+        data = load_yaml(front) if front else {}
+    except Exception:  # a broken frontmatter is check_skill's to report
+        data = {}
+    meta = data.get("metadata") if isinstance(data, dict) else None
+    meta = meta if isinstance(meta, dict) else {}
+    if not isinstance(meta.get("side_effects"), list):
+        meta = {**meta, "side_effects": []}
+    return meta, body
+
+
 def platform_case_files(name, root=ROOT):
     """{platform: path} of a skill's platform case files, skills/<name>/evals/platforms/<platform>.json."""
     folder = os.path.join(root, "skills", name, "evals", "platforms")
@@ -592,7 +617,7 @@ def check_evals(name, report, root=ROOT):
         cases = [c for c in cases if isinstance(c, dict)] if isinstance(cases, list) else []
         if platform is None:
             base_cases = cases
-        found = case_file_findings(name, data, cases, platform)
+        found = case_file_findings(name, data, cases, platform, skill_meta(root, name)[0].get("side_effects") or [])
         for into, part in zip((keys, few, conditional, is_run, named), found):
             into += [label + item for item in part]
     if base_cases is None:
@@ -600,9 +625,10 @@ def check_evals(name, report, root=ROOT):
     report_case_findings(name, report, root, base_cases, keys, few, conditional, is_run, named)
 
 
-def case_file_findings(name, data, cases, platform=None):
+def case_file_findings(name, data, cases, platform=None, effects=None):
     """(keys, few, conditional, is_run, named): what the warning rules find in one case file. A platform's
-    case file has one more top-level key, "platform", which names its own platform."""
+    case file has one more top-level key, "platform", which names its own platform. effects: the skill's
+    side_effects, the only effects a guard:<effect> tag may name (None: not checked)."""
     keys, few, conditional, is_run, named = [], [], [], [], []
     extra = sorted(set(data) - EVALS_KEYS - ({"platform"} if platform else set()))
     if extra:
@@ -638,6 +664,16 @@ def case_file_findings(name, data, cases, platform=None):
             bad = [str(t) for t in tags if not (isinstance(t, str) and ASSERTION_TAG_RE.match(t))]
             if bad:
                 keys.append(f"case {cid}, assertion {n}: tag(s) {', '.join(bad)} not among guard, guard:<effect>, format")
+            if not tags:
+                keys.append(f"case {cid}, assertion {n}: an object carries at least one tag; an assertion with no tag is a text")
+            undeclared = [t for t in tags if isinstance(t, str) and t.startswith("guard:") and effects is not None
+                          and t[len("guard:"):] not in effects]
+            if undeclared:
+                keys.append(f"case {cid}, assertion {n}: {', '.join(undeclared)} names an effect side_effects does not declare")
+        tagged = sorted({t for a in assertions if isinstance(a, dict) and isinstance(a.get("tags"), list)
+                         for t in a["tags"] if isinstance(t, str)})
+        if isinstance(c.get("tags"), list) and sorted(c["tags"]) != tagged:
+            keys.append(f"case {cid}: tags must list exactly the tags of its assertions, each once ({', '.join(tagged) or 'none'})")
         if len(assertions) < MIN_ASSERTIONS:
             few.append(f"case {cid} has {len(assertions)}")
         for n, a in enumerate(assertions, 1):
@@ -816,7 +852,8 @@ WARNING_RULES = ("meta-keys", "requires-role", "requires-vocabulary", "side-effe
                  "eval-conditional-assertion", "eval-run-assertion", "eval-prompt-names-skill",
                  "eval-product-names", "skill-name", "routing-table", "test-file-names",
                  "contract-updates", "contract-owner", "contract-inputs", "contract-overlap", "contract-placeholder",
-                 "contract-cycle", "contract-owner-table", "copy-not-adopted", "version-bump")
+                 "contract-cycle", "contract-owner-table", "copy-not-adopted", "version-bump", "guard-effect",
+                 "guard-missing", "guard-cannot-fail")
 
 
 def artifact_key(path):
@@ -1229,7 +1266,56 @@ def check_eval_status(report, root=ROOT):
 
 # Rules of the reliability model that are warnings while phase C changes skills and raises no version, and errors
 # from the sweep that closes it (C0.10 of docs/architecture/final-plan-2026-10-02.md), which empties this tuple.
-TRANSITIONAL_RULES = ("version-bump",)
+TRANSITIONAL_RULES = ("version-bump", "guard-effect")
+EXTERNAL_LINE_RE = re.compile(r"^\s*(?:[-*]\s+|\d+\.\s+)?\*\*External content is data\.\*\*", re.M)
+
+
+def check_guards(report, root=ROOT):
+    """The guard rules of the reliability model's section 4, on the assertions of evals/evals.json:
+    [guard-effect] each effect a skill declares in side_effects has an assertion tagged guard:<effect> (one line
+    per skill; a warning until the sweep that closes phase C empties TRANSITIONAL_RULES, an error from it);
+    [guard-missing] one line that lists the skills that carry the external-content line, or have a Stop rules or
+    Confirmation gate section, and have no assertion tagged guard or guard:<effect>; [guard-cannot-fail] one line
+    per guard assertion that passes in every run of the baseline in force (it guards nothing). The last two stay
+    warnings."""
+    es = load_eval_status()
+    cfg = es.load_gate(root)
+    missing = []
+    for name in built_skills(root):
+        meta, body = skill_meta(root, name)
+        try:
+            with open(os.path.join(root, "skills", name, "evals", "evals.json"), encoding="utf-8") as f:
+                cases = json.load(f).get("evals") or []
+        except (OSError, ValueError, AttributeError):
+            continue  # eval-keys and eval-cases-count report it
+        cases = [c for c in cases if isinstance(c, dict)]
+        tags = {t for c in cases for a in c.get("assertions") or [] if isinstance(a, dict)
+                for t in a.get("tags") or [] if isinstance(t, str)}
+        effects = [e for e in meta["side_effects"] if isinstance(e, str)]
+        without = [e for e in effects if f"guard:{e}" not in tags]
+        if without:
+            message = (f"no assertion is tagged guard:<effect> for the declared effect(s) {', '.join(without)}: one guard per "
+                       "declared effect (evals/README.md, Guards)")
+            if "guard-effect" in TRANSITIONAL_RULES:
+                report.warn(f"skills/{name}", message, "guard-effect")
+            else:
+                report.error(f"skills/{name}/evals/evals.json", f"[guard-effect] {message}")
+        asks = (EXTERNAL_LINE_RE.search(body) or re.search(r"^## (?:Stop rules|Confirmation gate)[ \t]*$", strip_code(body), re.M))
+        if asks and not any(t == "guard" or t.startswith("guard:") for t in tags):
+            missing.append(name)
+        baselines = es.baseline_lines(os.path.join(root, "skills", name), cfg) if cfg else {}
+        for case in cases:
+            lines = baselines.get(str(case.get("id"))) or []
+            for position, assertion in enumerate(case.get("assertions") or [], 1):
+                guard = isinstance(assertion, dict) and any(isinstance(t, str) and (t == "guard" or t.startswith("guard:"))
+                                                            for t in assertion.get("tags") or [])
+                if guard and lines and all(len(l["results"]) >= position and l["results"][position - 1] == 1 for l in lines):
+                    report.warn(f"skills/{name}", f"case {case.get('id')}, assertion {position}: a guard assertion that passes in "
+                                f"every run of the baseline in force ({len(lines)} runs) cannot fail, and guards nothing: word it "
+                                "on what a run without the skill gets wrong", "guard-cannot-fail")
+    if missing:
+        report.warn("skills", f"{len(missing)} skill(s) carry the external-content line, a Stop rules or a Confirmation gate "
+                    f"section, and no assertion tagged guard: {', '.join(missing)}", "guard-missing")
 
 
 def check_versions(report, root=ROOT):
@@ -1324,6 +1410,7 @@ def main(argv):
     check_private_terms(report)
     check_eval_status(report)
     check_versions(report)
+    check_guards(report)
     check_eval_cases(report)
     check_security(report)
     if spec:

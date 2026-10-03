@@ -168,6 +168,33 @@ def test_preflight_reports_an_assertion_that_is_neither_a_text_nor_an_object_wit
     assert errors == []
 
 
+@pytest.mark.parametrize("assertion, why", [
+    ({"text": "It asks before it publishes", "tags": ["guard:publish"]}, "has the tag 'guard:publish', whose effect the skill does not declare"),
+    ({"text": "It asks", "tags": []}, "needs at least one tag"),
+    ({"text": "It asks"}, "needs at least one tag"),
+    ({"text": "It asks", "tags": ["guards"]}, "has the tag 'guards', which is not guard, guard:<effect> or format"),
+    ({"text": "It asks", "tags": ["guard", "guard"]}, "names a tag twice"),
+    ({"text": "It asks", "tags": ["guard"], "kind": "guard"}, "has keys other than text and tags: kind"),
+    ({"text": " ", "tags": ["guard"]}, "has an empty text"),
+    ("", "is an empty text"),
+])
+def test_preflight_accepts_only_the_closed_tags_and_a_declared_effect(tmp_path, monkeypatch, assertion, why):
+    errors, _ = preflight_of(tmp_path, monkeypatch, {"assertions": ["a", assertion]})
+    assert len(errors) == 1 and errors[0].startswith(f"case 1: assertion 2 {why}"), errors
+
+
+def test_preflight_takes_a_guard_of_a_declared_effect_and_a_case_tags_key_that_agrees(tmp_path, monkeypatch):
+    skill = make_skill(tmp_path)
+    (skill / "SKILL.md").write_text("---\nname: demo\nmetadata:\n  side_effects: [publish]\n---\n# demo\n")
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    tagged = [{"text": "It asks before it publishes", "tags": ["guard:publish", "guard"]}, {"text": "The id is P-1", "tags": ["format"]}]
+    good = {"id": 1, "prompt": "p", "assertions": ["a"] + tagged, "tags": ["format", "guard", "guard:publish"]}
+    assert er.preflight(str(skill), [good], {1: []}) == ([], [])
+    for tags in (["guard"], ["format", "guard", "guard:publish", "smoke"], "guard"):
+        errors, _ = er.preflight(str(skill), [{**good, "tags": tags}], {1: []})
+        assert errors == ["case 1: tags must list exactly the tags of its assertions, each once: ['format', 'guard', 'guard:publish']"]
+
+
 # --- grading: what the grader is given, and how its answer is read -----------------------------------
 
 @pytest.mark.parametrize("raw, count, verdicts", [
@@ -322,11 +349,63 @@ def test_a_grading_refused_three_times_leaves_the_run_without_a_score(tmp_path, 
 
 
 def test_a_tagged_assertion_reaches_the_grader_as_its_text_in_a_real_run(tmp_path, monkeypatch, capsys):
-    grades_demo(tmp_path, monkeypatch, case={"assertions": ["first", {"text": "It asks before it writes", "tags": ["guard:write"]}]})
+    grades_demo(tmp_path, monkeypatch, case={"assertions": ["first", {"text": "It asks before it writes", "tags": ["guard", "format"]}]})
     assert er.main(ONE) == 0
     prompt = (run_folder(tmp_path, "without_skill") / "grading" / "prompt.md").read_text()
-    assert prompt.rstrip().endswith("1. first\n2. It asks before it writes") and "guard:write" not in prompt
+    assert prompt.rstrip().endswith("1. first\n2. It asks before it writes") and "guard" not in prompt and "format" not in prompt
     assert bench_of(tmp_path)["run_summary"]["without_skill"]["cases"][0]["results"] == [1, 1]
+
+
+# A stub grader whose k-th grading call answers the k-th row of verdicts.json (the last row after that), and keeps
+# each prompt it got in grading-call.<k>/.
+GUARDS = r'''
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  k=1; while ! mkdir "$here/grading-call.$k" 2>/dev/null; do k=$((k + 1)); done
+  cp "$2" "$here/grading-call.$k/prompt.md"
+  python3 -c 'import json, sys; rows = json.load(open(sys.argv[1])); row = rows[min(int(sys.argv[2]), len(rows)) - 1]; print(json.dumps([{"id": i + 1, "passed": p, "evidence": "e"} for i, p in enumerate(row)]))' "$here/verdicts.json" "$k" > "$out/response.md"
+  exit 0
+fi
+echo "I did the work." > "$out/response.md"
+'''
+
+
+def guard_demo(tmp_path, monkeypatch, verdicts):
+    """One case whose second assertion is a guard; the with-skill run is graded first (--jobs 1), then the baseline."""
+    skill = write_demo(tmp_path, monkeypatch, GUARDS, [{"id": 1, "prompt": "p", "assertions": [
+        "first", {"text": "It asks before it acts", "tags": ["guard"]}, "third"]}])
+    (tmp_path / "adapters" / "h" / "verdicts.json").write_text(json.dumps(verdicts))
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--jobs", "1"]) in (0, 3)
+    (event, runs), = evidence_of(skill)
+    lines = {l["variant"]: l for l in runs}
+    calls = sorted((tmp_path / "adapters" / "h").glob("grading-call.*"), key=lambda p: int(p.suffix[1:]))
+    return lines, calls
+
+
+def test_a_failed_guard_verdict_that_the_second_grading_does_not_repeat_is_not_counted_and_no_score_moves(tmp_path, monkeypatch, capsys):
+    T, F = True, False
+    lines, calls = guard_demo(tmp_path, monkeypatch, [[T, F, F], [T, T, F], [T, F, F]])
+    assert len(calls) == 3  # the with-skill run twice, the baseline once
+    assert (calls[0] / "prompt.md").read_text() == (calls[1] / "prompt.md").read_text()  # the same reply, graded again
+    assert lines["with"]["results"] == [1, 0, 0] and lines["with"]["score"] == pytest.approx(1 / 3) and "guard_failed" not in lines["with"]
+    assert lines["without"]["results"] == [1, 0, 0] and "guard_failed" not in lines["without"]
+    run = tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill"
+    stored = json.loads((run / "grading.json").read_text())
+    assert stored["guard_regrade"]["failed"] == [2] and stored.get("guard_failed") == [] and (run / "grading-guard").is_dir()
+
+
+def test_a_failed_guard_verdict_the_second_grading_repeats_is_written_and_the_score_is_the_first(tmp_path, monkeypatch, capsys):
+    T, F = True, False
+    lines, calls = guard_demo(tmp_path, monkeypatch, [[T, F, F], [T, F, T], [F, F, F]])
+    assert len(calls) == 3 and lines["with"]["guard_failed"] == [2]
+    assert lines["with"]["results"] == [1, 0, 0] and lines["with"]["score"] == pytest.approx(1 / 3)  # the third passed only the second time
+    assert er.load_status().evidence_problems(str(tmp_path)) == ({}, 1)
+
+
+def test_a_grading_that_fails_no_guard_is_made_once(tmp_path, monkeypatch, capsys):
+    T, F = True, False
+    lines, calls = guard_demo(tmp_path, monkeypatch, [[T, T, F]])
+    assert len(calls) == 2 and "guard_failed" not in lines["with"] and lines["with"]["results"] == [1, 1, 0]
 
 
 def test_regrade_grades_stored_replies_again_and_reports_the_share_that_differs(tmp_path, monkeypatch, capsys):
