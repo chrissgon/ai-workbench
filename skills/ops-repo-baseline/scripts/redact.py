@@ -41,7 +41,7 @@ TOKEN_PATTERNS = [
 ]
 TOKEN_RES = [(label, re.compile(p)) for label, p in TOKEN_PATTERNS]
 # A credential-like name (one ending in api_key, secret, token, password or private/access key, or an
-# upper-case constant ending in _KEY such as STRIPE_KEY) assigned a literal of 12+ characters with a
+# upper-case constant ending in _KEY such as ACME_KEY) assigned a literal of 12+ characters with a
 # digit in it (words and identifiers are not secrets) that is not a URL.
 ASSIGN_RE = re.compile(
     r"\b((?i:[A-Za-z0-9_-]*?(?:api[_-]?key|secret|token|password|passwd|private[_-]?key|access[_-]?key))"

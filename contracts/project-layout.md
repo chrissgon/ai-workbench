@@ -12,15 +12,15 @@ Skills never keep state inside this repository. Everything they produce for a pr
     │   ├── runtime.json          # the agent runtime's configuration, written by the person who sets it up (schema: runtime.md)
     │   ├── briefs/<topic>.md     # shared-understanding briefs written by core-clarify
     │   ├── critiques/<topic>.md  # adversarial reviews written by core-critique
-    │   └── research/<topic>.md   # sourced research briefs written by core-research
+    │   └── research/<topic>.md   # sourced research briefs written by core-research (with <topic>.check.json)
     ├── business/                 # idea-validation.md, market.md, icp.md, positioning.md, business-model.md, pricing.md, gtm.md, business-plan.md
-    ├── product/                  # discovery.md, prd.md, specs/<feature>.md, roadmap.md, backlog.md, metrics.md
-    ├── brand/                    # profile.md, name.md, strategy.md, identity.md, voice.md, guidelines.md
-    ├── design/                   # research.md, flows.md (with flows.lint.json), wireframes/, screens/ (an existing screen-by-screen specification, registered), design-system.md, briefs/<artifact>.md (with <artifact>.lint.json), results/<artifact>.md, results/<artifact>/ (the run folders of that artifact), handoff/<screen>.md (with <screen>.lint.json), handoff/<screen>/export/ (the unpacked export of that screen)
+    ├── product/                  # discovery.md, prd.md, specs/<feature>.md, roadmap.md, backlog.md, metrics.md; the lint records beside them: prd.lint.json and prd.lint-before.json, specs/<feature>.lint.json and specs/<feature>.lint-before.json, roadmap.lint.json, backlog.lint.json and backlog.lint-before.json
+    ├── brand/                    # profile.md, name.md, strategy.md, identity.md, voice.md, guidelines.md, pieces/ (the brand pieces and their renders, written by brand-identity)
+    ├── design/                   # research.md, flows.md (with flows.lint.json), wireframes/, screens/ (an existing screen-by-screen specification, registered), design-system.md (with design-system.lint.json), briefs/<artifact>.md (with <artifact>.lint.json), results/<artifact>.md (with <artifact>.lint.json), results/<artifact>/ (the run folders of that artifact), handoff/<screen>.md (with <screen>.lint.json), handoff/<screen>/export/ (the unpacked export of that screen)
     ├── engineering/              # architecture.md (or codebase-map.md beside a registered spec), designs/<feature>.md, adr/<NNNN>-<title>.md, designs/<feature>.check.json, plans/<task>.md (and handoff.md, migration.md when an existing document is registered there), reviews/<change>.md, security-reviews/<date>.md
     ├── ai/                       # opportunity.md, requirements.md, evals/, governance.md
     ├── delivery/                 # repo-baseline.md, runbooks/, releases/, incidents/
-    ├── marketing/                # messaging.md, launch-plan.md, calendar.md, content/<post>.md, campaigns/, engagement-policy.md, engagement-inbox.md, engagement-log.jsonl
+    ├── marketing/                # messaging.md (with messaging.lint.json), launch-plan.md, calendar.md, content/<post>.md, campaigns/, engagement-policy.md, engagement-inbox.md, engagement-log.jsonl
     └── security/                 # audit-<date>.md, vetting-<skill>-<date>.md: the records of core-security-audit, in the workbench or in a project that vets a skill
 ```
 

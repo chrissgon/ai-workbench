@@ -6,87 +6,40 @@ Skills validated: 48.
 
 | Rule | Skills listed |
 |------|---------------|
-| `meta-keys` | 48 |
-| `requires-role` | 2 |
+| `meta-keys` | 2 |
+| `requires-role` | 0 |
 | `requires-vocabulary` | 0 |
-| `side-effects-vocabulary` | 1 |
+| `side-effects-vocabulary` | 0 |
 | `description-when` | 0 |
-| `description-length` | 9 |
+| `description-length` | 0 |
 | `skill-tokens` | 1 |
 | `eval-cases-count` | 0 |
 | `eval-keys` | 0 |
-| `eval-assertions-count` | 8 |
-| `eval-conditional-assertion` | 7 |
-| `eval-run-assertion` | 14 |
+| `eval-assertions-count` | 0 |
+| `eval-conditional-assertion` | 1 |
+| `eval-run-assertion` | 0 |
 | `eval-prompt-names-skill` | 2 |
-| `eval-product-names` | 4 |
-| `skill-name` | 10 |
+| `eval-product-names` | 0 |
+| `skill-name` | 0 |
 | `routing-table` | 1 |
 | `test-file-names` | 0 |
 | `contract-updates` | 0 |
-| `contract-owner` | 22 |
+| `contract-owner` | 0 |
 | `contract-inputs` | 0 |
 | `contract-overlap` | 0 |
 | `contract-placeholder` | 0 |
-| `contract-cycle` | 1 |
+| `contract-cycle` | 0 |
 | `contract-owner-table` | 0 |
-| `copy-not-adopted` | 12 |
+| `copy-not-adopted` | 1 |
 
 ## `meta-keys`
 
-- `biz-icp-positioning`: missing: metadata.updates
-- `biz-market-analysis`: missing: metadata.updates
-- `brand-guidelines`: missing: metadata.updates
-- `brand-identity`: missing: metadata.updates
-- `brand-name`: missing: metadata.updates
-- `brand-profile`: missing: metadata.updates
-- `brand-strategy`: missing: metadata.updates
-- `brand-voice`: missing: metadata.updates
-- `core-agents-md`: missing: metadata.updates
-- `core-clarify`: missing: metadata.updates
-- `core-critique`: missing: metadata.updates
 - `core-orchestrator`: missing: metadata.updates
-- `core-project-init`: missing: metadata.updates
-- `core-research`: missing: metadata.updates
-- `core-security-audit`: missing: metadata.updates
 - `core-skill-creator`: missing: metadata.updates
-- `design-brief`: missing: metadata.updates
-- `design-execute`: missing: metadata.updates
-- `design-handoff`: missing: metadata.updates
-- `design-system`: missing: metadata.updates
-- `design-ux-flows`: missing: metadata.updates
-- `eng-architecture`: missing: metadata.updates
-- `eng-code-review`: missing: metadata.updates
-- `eng-codebase-map`: missing: metadata.updates
-- `eng-docs`: missing: metadata.updates
-- `eng-impact-analysis`: missing: metadata.updates
-- `eng-implement`: missing: metadata.updates
-- `eng-integration-tests`: missing: metadata.updates
-- `eng-refactor`: missing: metadata.updates
-- `eng-root-cause`: missing: metadata.updates
-- `eng-security-review`: missing: metadata.updates
-- `eng-tradeoffs`: missing: metadata.updates
-- `eng-unit-tests`: missing: metadata.updates
-- `flow-fix-bug`: missing: metadata.updates
-- `mkt-content-plan`: missing: metadata.updates
-- `mkt-engage`: missing: metadata.updates
-- `mkt-messaging`: missing: metadata.updates
-- `mkt-publish`: missing: metadata.updates
-- `mkt-social-copy`: missing: metadata.updates
-- `mkt-vote-round`: missing: metadata.updates
-- `ops-branch-sync`: missing: metadata.updates
-- `ops-ci-pipeline`: missing: metadata.updates
-- `ops-pull-request`: missing: metadata.updates
-- `ops-repo-baseline`: missing: metadata.updates
-- `product-backlog`: missing: metadata.updates
-- `product-feature-spec`: missing: metadata.updates
-- `product-prd`: missing: metadata.updates
-- `product-roadmap`: missing: metadata.updates
 
 ## `requires-role`
 
-- `mkt-engage`: requires mailbox (now reader:email): a class has the form <role>:<target>
-- `mkt-publish`: requires scheduler (now scheduler:job): a class has the form <role>:<target>
+Nothing listed.
 
 ## `requires-vocabulary`
 
@@ -94,7 +47,7 @@ Nothing listed.
 
 ## `side-effects-vocabulary`
 
-- `design-system`: side_effects write: not in the vocabulary (publish, send, schedule, deploy, create, push, dismiss)
+Nothing listed.
 
 ## `description-when`
 
@@ -102,15 +55,7 @@ Nothing listed.
 
 ## `description-length`
 
-- `biz-icp-positioning`: the description has 901 characters, over 900
-- `design-execute`: the description has 919 characters, over 900
-- `design-handoff`: the description has 920 characters, over 900
-- `design-system`: the description has 912 characters, over 900
-- `design-ux-flows`: the description has 947 characters, over 900
-- `eng-code-review`: the description has 1009 characters, over 900
-- `eng-implement`: the description has 924 characters, over 900
-- `mkt-vote-round`: the description has 973 characters, over 900
-- `product-prd`: the description has 940 characters, over 900
+Nothing listed.
 
 ## `skill-tokens`
 
@@ -126,41 +71,15 @@ Nothing listed.
 
 ## `eval-assertions-count`
 
-- `brand-guidelines`: fewer than 3 assertions: case 2 has 2
-- `core-clarify`: fewer than 3 assertions: case 2 has 2
-- `design-ux-flows`: fewer than 3 assertions: case 2 has 2
-- `eng-docs`: fewer than 3 assertions: case 2 has 2
-- `eng-refactor`: fewer than 3 assertions: case 3 has 2
-- `product-backlog`: fewer than 3 assertions: case 2 has 2
-- `product-feature-spec`: fewer than 3 assertions: case 2 has 2
-- `product-roadmap`: fewer than 3 assertions: case 3 has 2
+Nothing listed.
 
 ## `eval-conditional-assertion`
 
-- `biz-icp-positioning`: an assertion that starts with "If" holds whenever its condition is false; state what the output shows: case 1, assertion 3; case 1, assertion 4; case 1, assertion 5
-- `brand-name`: an assertion that starts with "If" holds whenever its condition is false; state what the output shows: case 2, assertion 6
-- `brand-voice`: an assertion that starts with "If" holds whenever its condition is false; state what the output shows: case 1, assertion 5
-- `core-critique`: an assertion that starts with "If" holds whenever its condition is false; state what the output shows: case 4, assertion 2
 - `core-orchestrator`: an assertion that starts with "If" holds whenever its condition is false; state what the output shows: case 2, assertion 3
-- `core-research`: an assertion that starts with "If" holds whenever its condition is false; state what the output shows: case 4, assertion 3
-- `mkt-social-copy`: an assertion that starts with "If" holds whenever its condition is false; state what the output shows: case 2, assertion 4
 
 ## `eval-run-assertion`
 
-- `biz-icp-positioning`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 2, assertion 1
-- `biz-market-analysis`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 2, assertion 1
-- `core-research`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 2, assertion 1
-- `core-security-audit`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 2, assertion 2
-- `eng-impact-analysis`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 1, assertion 2; case 2, assertion 2
-- `eng-implement`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 1, assertion 1; case 1, assertion 3
-- `eng-refactor`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 1, assertion 1
-- `eng-tradeoffs`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 2, assertion 4
-- `eng-unit-tests`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 2, assertion 1
-- `ops-branch-sync`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 2, assertion 3
-- `ops-repo-baseline`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 1, assertion 6; case 2, assertion 4
-- `product-backlog`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 3, assertion 1
-- `product-feature-spec`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 3, assertion 1
-- `product-prd`: the grader reads the reply and the files, not the commands; say what output is quoted or reported: case 3, assertion 1
+Nothing listed.
 
 ## `eval-prompt-names-skill`
 
@@ -169,23 +88,11 @@ Nothing listed.
 
 ## `eval-product-names`
 
-- `design-brief`: an eval case or fixture names an AI product or a design tool; name the class of tool: evals/evals.json (Claude Design); evals/files/design-system.md (Figma); evals/files/flows.md (Figma)
-- `design-execute`: an eval case or fixture names an AI product or a design tool; name the class of tool: evals/evals.json (Claude Design, Figma Make)
-- `design-handoff`: an eval case or fixture names an AI product or a design tool; name the class of tool: evals/evals.json (Claude Design); evals/files/landing/docs/design/results/landing-page.md (Claude Design)
-- `mkt-messaging`: an eval case or fixture names an AI product or a design tool; name the class of tool: evals/files/plinth-landing/docs/product/prd.md (Figma); evals/files/plinth-landing/docs/workbench/research/css-library-alternatives.md (Figma); evals/files/plinth-landing/library/README.md (Figma)
+Nothing listed.
 
 ## `skill-name`
 
-- `biz-icp-positioning`: cites a skill that is not built, with no "planned" on the line: biz-business-model (SKILL.md:30); biz-gtm (SKILL.md:30); biz-business-model (SKILL.md:35); biz-gtm (SKILL.md:35); biz-business-model (SKILL.md:81)
-- `biz-market-analysis`: cites a skill that is not built, with no "planned" on the line: biz-business-model (SKILL.md:29); biz-gtm (SKILL.md:29); biz-validate-idea (SKILL.md:34); biz-business-model (SKILL.md:36); biz-gtm (SKILL.md:36)
-- `design-execute`: cites a skill that is not built, with no "planned" on the line: design-implementation-validation (SKILL.md:36)
-- `design-handoff`: cites a skill that is not built, with no "planned" on the line: design-implementation-validation (SKILL.md:70)
-- `eng-docs`: cites a skill that is not built, with no "planned" on the line: ops-release (SKILL.md:42)
-- `mkt-content-plan`: cites a skill that is not built, with no "planned" on the line: mkt-launch-plan (SKILL.md:36)
-- `mkt-messaging`: cites a skill that is not built, with no "planned" on the line: mkt-launch-plan (SKILL.md:28); mkt-content (SKILL.md:28); mkt-content (SKILL.md:34)
-- `ops-ci-pipeline`: cites a skill that is not built, with no "planned" on the line: ops-release (SKILL.md:42); ops-infra (SKILL.md:43)
-- `ops-pull-request`: cites a skill that is not built, with no "planned" on the line: ops-qa-handover (SKILL.md:42)
-- `product-prd`: cites a skill that is not built, with no "planned" on the line: biz-validate-idea (SKILL.md:35)
+Nothing listed.
 
 ## `routing-table`
 
@@ -201,28 +108,7 @@ Nothing listed.
 
 ## `contract-owner`
 
-- `core-agents-md`: outputs AGENTS.md (also core-project-init): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `core-clarify`: outputs docs/workbench/state.md (also core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `core-project-init`: outputs docs/workbench/state.md (also core-clarify, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync); AGENTS.md (also core-agents-md): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-architecture`: outputs docs/engineering/adr/<NNNN>-<title>.md (also eng-tradeoffs): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-docs`: outputs docs/engineering/plans/<task>.md (also eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-impact-analysis`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-implement`: outputs docs/product/backlog.md (also product-backlog): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-integration-tests`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-refactor`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-root-cause`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-tradeoffs`: outputs docs/engineering/adr/<NNNN>-<title>.md (also eng-architecture); docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-unit-tests, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `eng-unit-tests`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, flow-fix-bug, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `flow-fix-bug`: outputs docs/workbench/state.md (also core-clarify, core-project-init, mkt-engage, mkt-publish, ops-branch-sync); docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, ops-ci-pipeline, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `mkt-content-plan`: outputs docs/marketing/calendar.md (also mkt-publish, mkt-social-copy): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `mkt-engage`: outputs docs/workbench/state.md (also core-clarify, core-project-init, flow-fix-bug, mkt-publish, ops-branch-sync): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `mkt-publish`: outputs docs/marketing/calendar.md (also mkt-content-plan, mkt-social-copy); docs/workbench/state.md (also core-clarify, core-project-init, flow-fix-bug, mkt-engage, ops-branch-sync): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `mkt-social-copy`: outputs docs/marketing/content/<post>.md (also mkt-vote-round); docs/marketing/calendar.md (also mkt-content-plan, mkt-publish): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `mkt-vote-round`: outputs docs/marketing/content/<post>.md (also mkt-social-copy): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `ops-branch-sync`: outputs docs/workbench/state.md (also core-clarify, core-project-init, flow-fix-bug, mkt-engage, mkt-publish): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `ops-ci-pipeline`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-pull-request): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `ops-pull-request`: outputs docs/engineering/plans/<task>.md (also eng-docs, eng-impact-analysis, eng-integration-tests, eng-refactor, eng-root-cause, eng-tradeoffs, eng-unit-tests, flow-fix-bug, ops-ci-pipeline): an artifact has one owner, and every other skill that writes into it lists it in updates
-- `product-backlog`: outputs docs/product/backlog.md (also eng-implement): an artifact has one owner, and every other skill that writes into it lists it in updates
+Nothing listed.
 
 ## `contract-inputs`
 
@@ -238,8 +124,7 @@ Nothing listed.
 
 ## `contract-cycle`
 
-- `skills`: the graph "owner of a path -> skill that reads it" has a cycle of 22 skills, so it gives no order: biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-agents-md, core-clarify, core-research, eng-codebase-map, flow-fix-bug, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish, mkt-social-copy, mkt-vote-round, ops-branch-sync, product-feature-spec, product-prd
-- `skills`: the graph "owner of a path -> skill that reads it" has a cycle of 8 skills, so it gives no order: eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-root-cause, eng-tradeoffs, eng-unit-tests, ops-pull-request
+Nothing listed.
 
 ## `contract-owner-table`
 
@@ -247,15 +132,4 @@ Nothing listed.
 
 ## `copy-not-adopted`
 
-- `biz-icp-positioning`: not yet generated from the shared source: scripts/rank.py (differs; source shared/scripts/rank.py); scripts/check_refs.py (differs; source shared/scripts/check_refs.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `biz-market-analysis`: not yet generated from the shared source: scripts/rank.py (differs; source shared/scripts/rank.py); scripts/check_refs.py (differs; source shared/scripts/check_refs.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `brand-identity`: not yet generated from the shared source: scripts/contrast.py (differs; source shared/scripts/contrast.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `brand-voice`: not yet generated from the shared source: scripts/voice_stats.py (differs; source shared/scripts/voice_stats.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
 - `core-orchestrator`: not yet generated from the shared source: references/requirement-classes.md (differs; source contracts/environment.md); references/owners.md (missing; source contracts/project-layout.md); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `design-system`: not yet generated from the shared source: scripts/contrast.py (differs; source shared/scripts/contrast.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `eng-code-review`: not yet generated from the shared source: scripts/redact.py (differs; source shared/scripts/redact.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `mkt-content-plan`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `mkt-engage`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `mkt-social-copy`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); scripts/voice_stats.py (missing; source shared/scripts/voice_stats.py); scripts/check_post.py (differs; source shared/scripts/check_post.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `mkt-vote-round`: not yet generated from the shared source: scripts/sensitive_topics.py (missing; source shared/scripts/sensitive_topics.py); scripts/voice_stats.py (missing; source shared/scripts/voice_stats.py); scripts/check_post.py (missing; source shared/scripts/check_post.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
-- `ops-repo-baseline`: not yet generated from the shared source: scripts/redact.py (differs; source shared/scripts/redact.py); adopt each with python3 scripts/sync_copies.py --adopt <copy>
