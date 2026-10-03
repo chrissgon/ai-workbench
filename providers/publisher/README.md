@@ -41,6 +41,8 @@ uv run providers/publisher/linkedin.py resolve --idempotency-key <k> \
 
 `--post-id`, `--comment-id` and `--parent-comment-id` are the generic names of the publisher class (`providers/CONTRACT.md`, "Identifiers of a class with a parameter"): a caller passes the value it was given and never builds one. On this platform a post id is a post URN and a comment id is a comment URN; their shapes are below and in `shared/references/platforms/linkedin.md`. The names in use before 2026-10-02, `--post-urn`, `--comment-urn` and `--parent-comment`, are accepted as aliases.
 
+Each verb takes only its own flags: a flag the verb does not read (`--media` with `comment`, `--on-key` with `publish`, `--text-file` with `resolve`) is a usage error (exit 2), and so is `--check` with a verb.
+
 The dry run reads no token and sends nothing, so the author URN is shown as a placeholder (`/v2/userinfo` is only called when publishing).
 
 ### The first comment

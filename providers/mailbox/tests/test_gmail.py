@@ -667,3 +667,25 @@ def test_stored_record_is_read_by_the_provider(env, fake, monkeypatch):
     creds = module.load_credentials(test_mode=False)
     assert creds["refresh_token"] == FAKE_REFRESH and creds["source"] == "secret store"
     assert creds["account"] == ACCOUNT
+
+
+# --- a verb takes its own flags; --check takes no verb ---------------------------------------------------
+
+
+def test_check_with_a_verb_or_a_verb_flag_is_a_usage_error(env, fake):
+    for args in (["--check", "search", "--query", "x"], ["--check", "get", "--id", "m1"], ["--check", "--id", "m1"],
+                 ["--check", "--query", "x"]):
+        proc = run(SCRIPT, args, env)
+        assert proc.returncode == 2 and "--check" in proc.stderr, args
+        assert proc.stdout == ""
+    assert fake.requests == []
+
+
+def test_a_flag_of_another_verb_is_refused(env, fake):
+    cases = [(["get", "--id", "m1", "--query", "x"], "--query"), (["get", "--id", "m1", "--jobs", "2"], "--jobs"),
+             (["search", "--query", "x", "--id", "m1"], "--id"), (["search", "--query", "x", "--file", "a.eml"], "--file"),
+             (["read-eml", "--file", str(FIXTURE), "--limit", "3"], "--limit")]
+    for args, flag in cases:
+        proc = run(SCRIPT, args, env)
+        assert proc.returncode == 2 and flag in proc.stderr and args[0] in proc.stderr, (args, proc.stderr)
+    assert fake.requests == []

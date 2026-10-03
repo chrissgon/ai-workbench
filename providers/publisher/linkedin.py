@@ -191,7 +191,9 @@ output:
   token_expires_at, token_expires_in_days.
   Diagnostics on stderr. Tokens are never printed.
 
-exit codes: 0 success, 1 provider or service error, 2 usage error, 3 not configured.
+exit codes: 0 success, 1 provider or service error, 2 usage error (also --check
+with a verb, and a flag the verb does not read: --media with comment, --on-key
+with publish), 3 not configured.
 
 LinkedIn API version pinned: {LINKEDIN_VERSION}. Access tokens last 60 days and
 there is no refresh token for self-serve apps: rerun auth.py before expiry.
@@ -807,7 +809,7 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
 
 def cmd_publish(args) -> int:
     global LEGACY_V2
-    LEGACY_V2 = getattr(args, "comments_endpoint", "v2") != "rest"
+    LEGACY_V2 = args.comments_endpoint != "rest"
     text, image, first_comment = validate_publish_args(args)
     # A setting the first comment needs is read before anything is sent: found malformed only after the
     # post was public, it left a post without its comment for a mistake no request could have caused.
@@ -1037,7 +1039,7 @@ def post_urn_of_key(on_key: str, required: bool) -> str | None:
 
 def cmd_comment(args) -> int:
     global LEGACY_V2
-    LEGACY_V2 = getattr(args, "comments_endpoint", "v2") != "rest" or bool(getattr(args, "legacy_v2", False))
+    LEGACY_V2 = args.comments_endpoint != "rest" or bool(args.legacy_v2)
     text, post_urn, parent = validate_comment_args(args)
     if not args.dry_run and not args.confirmed:
         raise ProviderError(
@@ -1235,6 +1237,38 @@ def cmd_check() -> int:
 # --- entry point ---------------------------------------------------------------
 
 
+# Each flag by its destination, and the verbs that read it. A flag given to a verb that does not read it is a usage
+# error, so a caller learns that it was ignored; --check takes no verb and no flag but --platform.
+FLAG_NAMES = {
+    "platform": "--platform", "text_file": "--text-file", "first_comment_file": "--first-comment-file",
+    "media": "--media", "at": "--at", "idempotency_key": "--idempotency-key", "post_urn": "--post-id",
+    "on_key": "--on-key", "parent_comment": "--parent-comment-id", "comments_endpoint": "--comments-endpoint",
+    "legacy_v2": "--legacy-v2", "comment_urn": "--comment-id", "not_published": "--not-published",
+    "ledger": "--ledger", "dry_run": "--dry-run", "confirmed": "--confirmed",
+}
+VERB_FLAGS = {
+    "publish": {"platform", "text_file", "first_comment_file", "media", "at", "idempotency_key", "comments_endpoint",
+                "legacy_v2", "ledger", "dry_run", "confirmed"},
+    "comment": {"platform", "text_file", "idempotency_key", "post_urn", "on_key", "parent_comment",
+                "comments_endpoint", "legacy_v2", "ledger", "dry_run", "confirmed"},
+    "resolve": {"platform", "idempotency_key", "post_urn", "comment_urn", "not_published", "ledger", "dry_run",
+                "confirmed"},
+    None: {"platform"},  # --check
+}
+
+
+def check_flags(args) -> None:
+    if args.check and args.verb:
+        raise ProviderError(f"--check takes no verb: run --check alone, or {args.verb} without --check", EXIT_USAGE)
+    if not args.check and not args.verb:
+        return
+    given = [dest for dest in FLAG_NAMES if getattr(args, dest) not in (None, False)]
+    extra = [FLAG_NAMES[dest] for dest in given if dest not in VERB_FLAGS[args.verb]]
+    if extra:
+        raise ProviderError(f"{', '.join(extra)}: not a flag of {args.verb or '--check'}; nothing was done "
+                            "(see --help)", EXIT_USAGE)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="linkedin.py",
@@ -1261,7 +1295,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--parent-comment-id", "--parent-comment", dest="parent_comment",
                         help="with comment: reply to the comment with this id (a comment URN). "
                              "Alias: --parent-comment")
-    parser.add_argument("--comments-endpoint", choices=["v2", "rest"], default="v2",
+    parser.add_argument("--comments-endpoint", choices=["v2", "rest"],
                         help="comments: v2 (default; works with a member's w_member_social token, checked "
                              "2026-09-30) or rest (the versioned endpoint; needs LinkedIn partner access)")
     parser.add_argument("--legacy-v2", action="store_true",
@@ -1287,6 +1321,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     global PINNED_LEDGER
     try:
+        check_flags(args)
         if args.ledger is not None:
             if not os.path.isabs(args.ledger):
                 raise ProviderError("--ledger must be an absolute path", EXIT_USAGE)

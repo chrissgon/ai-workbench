@@ -1512,3 +1512,35 @@ def test_resolve_keeps_the_hash_of_what_was_sent(env, fake, text_file, tmp_path)
     other = tmp_path / "other.txt"
     other.write_text("A different post.\n")
     assert run(SCRIPT, publish_args(other, "--idempotency-key", "k", "--confirmed"), env).returncode == 1
+
+
+# --- a verb takes its own flags; --check takes no verb ---------------------------------------------------
+
+
+def test_check_with_a_verb_is_a_usage_error(env, fake, text_file):
+    for args in (["--check", *publish_args(text_file, "--confirmed")], ["--check", "resolve", "--idempotency-key", "k"],
+                 ["--check", "--text-file", str(text_file)], ["--check", "--idempotency-key", "k"]):
+        proc = run(SCRIPT, args, env)
+        assert proc.returncode == 2 and "--check" in proc.stderr, args
+        assert proc.stdout == ""
+    assert fake.requests == [] and ledger(env) == {}
+
+
+def test_a_flag_of_another_verb_is_refused(env, fake, text_file, comment_file):
+    cases = [
+        (publish_args(text_file, "--on-key", "k", "--confirmed"), "--on-key"),
+        (publish_args(text_file, "--post-id", POST_URN, "--confirmed"), "--post-id"),
+        (publish_args(text_file, "--not-published", "--confirmed"), "--not-published"),
+        (comment_args(comment_file, "--post-id", POST_URN, "--media", str(text_file), "--confirmed"), "--media"),
+        (comment_args(comment_file, "--post-id", POST_URN, "--first-comment-file", str(comment_file), "--confirmed"),
+         "--first-comment-file"),
+        (comment_args(comment_file, "--post-id", POST_URN, "--at", "2026-01-01T00:00:00Z", "--confirmed"), "--at"),
+        (["resolve", "--idempotency-key", "k", "--not-published", "--text-file", str(text_file), "--confirmed"],
+         "--text-file"),
+        (["resolve", "--idempotency-key", "k", "--not-published", "--parent-comment-id", PARENT_URN, "--confirmed"],
+         "--parent-comment-id"),
+    ]
+    for args, flag in cases:
+        proc = run(SCRIPT, args, env)
+        assert proc.returncode == 2 and flag in proc.stderr and args[0] in proc.stderr, (args, proc.stderr)
+    assert fake.requests == [] and ledger(env) == {}

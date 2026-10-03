@@ -137,7 +137,8 @@ other environment variables (tests only):
   GMAIL_HTTP_TIMEOUT     with the two above: seconds before a request times out
                          (default {HTTP_TIMEOUT_SECONDS}).
 
-exit codes: 0 success, 1 provider or service error, 2 usage error, 3 not
+exit codes: 0 success, 1 provider or service error, 2 usage error (also --check
+with a verb, and a flag the verb does not read: --query with get), 3 not
 configured (no authorization, or it expired or was revoked: invalid_grant).
 
 examples:
@@ -619,7 +620,8 @@ def cmd_search(args) -> int:
     limit = DEFAULT_LIMIT if args.limit is None else args.limit
     if not 1 <= limit <= MAX_LIMIT:
         raise ProviderError(f"--limit must be between 1 and {MAX_LIMIT}", EXIT_USAGE)
-    if not 1 <= args.jobs <= MAX_JOBS:
+    jobs = DEFAULT_JOBS if args.jobs is None else args.jobs
+    if not 1 <= jobs <= MAX_JOBS:
         raise ProviderError(f"--jobs must be between 1 and {MAX_JOBS}", EXIT_USAGE)
     since = None
     if args.since:
@@ -638,7 +640,7 @@ def cmd_search(args) -> int:
     client, _, _ = connect()
     ids, truncated = client.list_ids(query, limit)
     if ids:
-        with ThreadPoolExecutor(max_workers=min(args.jobs, len(ids))) as pool:
+        with ThreadPoolExecutor(max_workers=min(jobs, len(ids))) as pool:
             messages = list(pool.map(client.message, ids))
     else:
         messages = []
@@ -673,6 +675,25 @@ def cmd_read_eml(args) -> int:
     return EXIT_OK
 
 
+# The verbs that read each flag. A flag given to a verb that does not read it is a usage error, so a caller learns
+# that it was ignored; --check takes no verb and no flag.
+FLAG_NAMES = {"query": "--query", "since": "--since", "before": "--before", "limit": "--limit", "jobs": "--jobs",
+              "id": "--id", "file": "--file"}
+VERB_FLAGS = {"search": {"query", "since", "before", "limit", "jobs"}, "get": {"id"}, "read-eml": {"file"},
+              None: set()}
+
+
+def check_flags(args) -> None:
+    if args.check and args.verb:
+        raise ProviderError(f"--check takes no verb: run --check alone, or {args.verb} without --check", EXIT_USAGE)
+    if not args.check and not args.verb:
+        return
+    extra = [flag for dest, flag in FLAG_NAMES.items()
+             if getattr(args, dest) not in (None, [], False) and dest not in VERB_FLAGS[args.verb]]
+    if extra:
+        raise ProviderError(f"{', '.join(extra)}: not a flag of {args.verb or '--check'} (see --help)", EXIT_USAGE)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="gmail.py",
@@ -687,7 +708,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--since", help="with search: ISO-8601; keep messages received at or after it")
     parser.add_argument("--before", help="with search: ISO-8601; keep messages received before it")
     parser.add_argument("--limit", type=int, help=f"with search: 1 to {MAX_LIMIT} messages (default {DEFAULT_LIMIT})")
-    parser.add_argument("--jobs", type=int, default=DEFAULT_JOBS,
+    parser.add_argument("--jobs", type=int,
                         help=f"with search: messages fetched at the same time, 1 to {MAX_JOBS} (default {DEFAULT_JOBS})")
     parser.add_argument("--id", help="with get: the Gmail message id")
     parser.add_argument("--file", help="with read-eml: the RFC 822 file to parse")
@@ -699,6 +720,7 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.reconfigure(encoding="utf-8")
     args = build_parser().parse_args(argv)
     try:
+        check_flags(args)
         if args.check:
             return cmd_check()
         if args.verb == "search":

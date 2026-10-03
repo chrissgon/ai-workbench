@@ -70,7 +70,7 @@ Every verb prints normalized messages:
 |------|------|
 | 0 | success |
 | 1 | a Google error (a 403 when the Gmail API is not enabled, a 404, a timeout, a refused redirect) |
-| 2 | usage: a bad flag, `--limit` out of bounds, a malformed message id, a missing `.eml` file |
+| 2 | usage: a bad flag, a flag the verb does not read (`--query` with `get`), `--check` with a verb, `--limit` out of bounds, a malformed message id, a missing `.eml` file |
 | 3 | not configured: no authorization, a missing client id or secret, a rejected client, a token without `gmail.readonly`, or `invalid_grant` |
 
 `invalid_grant` on a refresh means the authorization expired or was revoked. The likely cause is a project still in "Testing" (seven days); others are access removed in the Google Account, a password change (the token carries a Gmail scope) or six months without use. Rerun `auth.py`.
