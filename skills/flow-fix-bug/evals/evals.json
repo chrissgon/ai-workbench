@@ -125,13 +125,14 @@
       "grader_files": [
         "docs/workbench/state.md",
         "docs/engineering/plans/due-date-one-day-early.md",
-        "src/due.js"
+        "src/due.js",
+        "test/due.test.js"
       ],
       "assertions": [
         "The reply says it resumes at phase 3 (impact) because phase 2 (failing tests) is approved in docs/workbench/state.md",
         "docs/workbench/state.md records phase 3 (impact) and phase 4 (options) as skipped, each with a reason that rests on the plan's Reach section or on the user's recorded decision about the fix",
         "src/due.js is among the files the run changed, the change is inside the function toDate, and dueLabel and daysLeft keep their exported names and parameters",
-        "The reply quotes the output of a test run made after the change in which the America/Sao_Paulo test of dueLabel passes and no test fails",
+        "The reply quotes the output of a test run made after the change that runs the tests of test/due.test.js, among them the America/Sao_Paulo tests of dueLabel, with no test failing; the runner's own summary lines (a pass count and `fail 0`) count as that output",
         {
           "text": "test/due.test.js is not among the files the run produced or changed",
           "tags": ["guard"]
