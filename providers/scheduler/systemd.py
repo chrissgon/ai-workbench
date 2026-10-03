@@ -87,6 +87,7 @@ from pathlib import Path
 UNIT_PREFIX = "dev.ai-workbench.scheduler."
 EARLY_TOLERANCE = timedelta(minutes=5)
 DEFAULT_GRACE_MINUTES = 120
+MAX_GRACE_MINUTES = 10080  # a week: a one-shot run may start at most this late
 SYSTEMCTL_TIMEOUT_SECONDS = 30
 ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9.-]{0,62}")  # with fullmatch: "$" lets a final newline in
 DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
@@ -137,6 +138,8 @@ command file (JSON): the same as launchd.py's.
     "outputs": ["/abs/result.json"],
     "grace_minutes": 120
   }
+  With --at, "grace_minutes" (default 120, 0 to 10080: a week) is how late the
+  run may start; a later firing is recorded as missed and runs nothing.
   With --every, "grace_minutes" is refused and "timeout_minutes" (default 30,
   1 to 240) bounds each firing. With --at, "timeout_minutes" is optional
   (default 10, 1 to 240) and bounds the one run the same way: past it the
@@ -196,7 +199,7 @@ def parse_iso(value: str) -> datetime:
         raw = raw[:-1] + "+00:00"
     parsed = datetime.fromisoformat(raw)
     if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
+        raise ValueError(f"{value!r} has no offset: write it as 2026-09-29T09:00:00-03:00 or with Z")
     return parsed
 
 
@@ -371,8 +374,8 @@ def load_command_file(path_arg: str, recurring: bool = False) -> dict:
             raise ProviderError(f"timeout_minutes must be an integer from 1 to {MAX_TIMEOUT_MINUTES}", EXIT_USAGE)
         return {"argv": argv, "cwd": cwd, "snapshot": snapshot, "outputs": outputs, "timeout_minutes": timeout}
     grace = spec.get("grace_minutes", DEFAULT_GRACE_MINUTES)
-    if not isinstance(grace, int) or grace < 0:
-        raise ProviderError("grace_minutes must be a non-negative integer", EXIT_USAGE)
+    if isinstance(grace, bool) or not isinstance(grace, int) or not 0 <= grace <= MAX_GRACE_MINUTES:
+        raise ProviderError(f"grace_minutes must be an integer from 0 to {MAX_GRACE_MINUTES} (a week)", EXIT_USAGE)
     out = {"argv": argv, "cwd": cwd, "snapshot": snapshot, "outputs": outputs, "grace_minutes": grace}
     if "timeout_minutes" in spec:
         # Optional for --at: without it the command gets DEFAULT_ONE_SHOT_TIMEOUT_MINUTES, and the job and its
@@ -657,7 +660,8 @@ def cmd_schedule(args) -> int:
         try:
             at = parse_iso(args.at)
         except (TypeError, ValueError):
-            raise ProviderError(f"--at is not ISO-8601: {args.at}", EXIT_USAGE)
+            raise ProviderError(f"--at must be an ISO-8601 time with an offset, e.g. 2026-09-29T09:00:00-03:00 "
+                                f"or 2026-09-29T12:00:00Z: {args.at}", EXIT_USAGE)
         if at <= now():
             raise ProviderError("--at is in the past", EXIT_USAGE)
         if at - now() > timedelta(days=330):
@@ -1167,7 +1171,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check", action="store_true",
                         help="verify the user manager is reachable and lingering is on; no side effects")
     parser.add_argument("--id", help="job id: lowercase letters, digits, dots and hyphens")
-    parser.add_argument("--at", help="ISO-8601 time with offset, e.g. 2026-09-29T09:00:00-03:00")
+    parser.add_argument("--at", help="ISO-8601 time with an offset (required), e.g. 2026-09-29T09:00:00-03:00")
     parser.add_argument("--every", type=int, metavar="MINUTES",
                         help=f"run every MINUTES ({EVERY_MIN_MINUTES} to {EVERY_MAX_MINUTES}) instead of once at --at")
     parser.add_argument("--command-file", help="JSON file with argv, cwd, snapshot and grace_minutes (--at) "

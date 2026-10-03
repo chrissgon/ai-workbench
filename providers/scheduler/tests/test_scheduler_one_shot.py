@@ -306,3 +306,33 @@ def test_an_id_with_a_trailing_newline_is_refused(s):
     for verb in (["cancel", "--confirmed"], ["resolve", "--done", "--confirmed"], ["run"]):
         refused = s.run(verb[0], "--id", "post-1\n", *verb[1:])
         assert refused.returncode == 2 and "--id" in refused.stderr, verb
+
+
+# --- SC12: grace_minutes and --at --------------------------------------------------------
+
+
+def test_grace_minutes_is_an_integer_up_to_a_week(s, monkeypatch):
+    # A bool is an int in Python, so "grace_minutes": true passed as a grace of 1 minute, and nothing bounded it.
+    assert s.module(monkeypatch).MAX_GRACE_MINUTES == 10080
+    help_text = s.run("--help").stdout
+    assert "grace_minutes" in help_text and "0 to 10080" in help_text
+    at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    for bad in (True, False, 10081, -1, 1.5, "120"):
+        refused = s.run("schedule", "--id", "post-1", "--at", at, "--command-file",
+                        str(s.command_file(grace_minutes=bad)), "--dry-run")
+        assert refused.returncode == 2 and "grace_minutes" in refused.stderr, bad
+    for good in (0, 10080):
+        shown = s.run("schedule", "--id", "post-1", "--at", at, "--command-file",
+                      str(s.command_file(grace_minutes=good)), "--dry-run")
+        assert shown.returncode == 0 and json.loads(shown.stdout)["job"]["grace_minutes"] == good, shown.stderr
+
+
+def test_a_time_without_an_offset_is_refused(s):
+    # The help says "with offset", but a naive --at was read as the machine's local time.
+    naive = (datetime.now(timezone.utc) + timedelta(hours=20)).replace(tzinfo=None, microsecond=0).isoformat()
+    refused = s.run("schedule", "--id", "post-1", "--at", naive, "--command-file", str(s.command_file()), "--dry-run")
+    assert refused.returncode == 2 and "offset" in refused.stderr
+    for aware in (naive + "+00:00", naive + "Z", naive + "-03:00"):
+        shown = s.run("schedule", "--id", "post-1", "--at", aware, "--command-file", str(s.command_file()),
+                      "--dry-run")
+        assert shown.returncode == 0, (aware, shown.stderr)
