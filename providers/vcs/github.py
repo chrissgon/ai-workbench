@@ -1154,7 +1154,12 @@ def push(work: Path, branch: str) -> None:
         summary = one_line(status[1], 200)
         if summary.startswith("[rejected]"):
             raise PushRejected(f"push rejected, {branch} moved: {summary}")
-        raise NotPushed(f"GitHub refused the push to {branch}: {summary}")
+        if summary.startswith("[remote rejected]"):
+            raise NotPushed(f"GitHub refused the push to {branch}: {summary}")
+        # git prints '!' for other outcomes too, such as "[remote failure] (remote failed to report status)":
+        # the remote may hold the commit, so only the two definite refusals above release the key.
+        raise ProviderError(f"git push to {branch} failed and its outcome is unknown: {summary}; the key stays "
+                            "pending until resolve settles it")
     # The push had started, so an SSH failure here is not "nothing was sent": the connection may have died after
     # the remote took the commit. Only the remote's own refusal above releases the key.
     lost = ssh_failure(err)

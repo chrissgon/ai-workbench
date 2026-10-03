@@ -785,3 +785,47 @@ def test_a_wildcard_does_not_admit_a_dotfile(remote, out_files):
     assert proc.returncode == 0, proc.stderr
     assert json.loads(proc.stdout)["files"][0]["path"] == ".gitattributes"
     assert "leading '.'" in run(["--help"], env).stdout
+
+
+# --- VS14: only a definite refusal releases the key ----------------------------------------------
+
+GIT_WHOSE_REMOTE_DID_NOT_REPORT = """#!/bin/sh
+if [ "$1" = push ]; then
+  "$REAL_GIT" "$@" >/dev/null 2>&1
+  printf 'To %s\\n!\\tHEAD:refs/heads/main\\t[remote failure] (remote failed to report status)\\nDone\\n' "$VCS_GIT_REMOTE"
+  echo "error: failed to push some refs" >&2
+  exit 1
+fi
+exec "$REAL_GIT" "$@"
+"""
+
+
+@needs_tools
+def test_a_push_whose_remote_did_not_report_keeps_the_key_pending(remote, out_files, tmp_path):
+    # Every '!' line of the push report other than [rejected] released the key; git also prints '!' for a remote
+    # that did not report its status, after which the commit may well be on the branch.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    wrapper = bin_dir / "git"
+    wrapper.write_text(GIT_WHOSE_REMOTE_DID_NOT_REPORT)
+    wrapper.chmod(0o755)
+    env = remote.provider_env()
+    env.update({"REAL_GIT": shutil.which("git"), "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}"})
+    before = remote.head()
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 1 and "outcome is unknown" in proc.stderr, proc.stderr
+    assert remote.head() != before  # the remote took it
+    entry = ledger(env)["k1"]
+    assert entry["status"] == "pending" and entry["attempted_commit"] == remote.head()
+
+
+@needs_tools
+def test_a_push_the_remote_refused_releases_the_key(remote, out_files):
+    hook = remote.bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'declined by policy' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    env = remote.provider_env()
+    before = remote.head()
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 1 and "[remote rejected]" in proc.stderr, proc.stderr
+    assert remote.head() == before and ledger(env) == {}  # a definite refusal: the key is free
