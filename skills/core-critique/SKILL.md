@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: []
   side_effects: []
-  version: "2.0.0"
+  version: "2.1.0"
 ---
 
 # Critique
@@ -69,7 +69,7 @@ Progress:
 - [ ] Step 1: Gate. Find two things: (a) the proposal's text: a file, an artifact, or the words of the user's message; (b) the goal it must achieve, or the problem it says it fixes, stated in the proposal, a brief, a root-cause document or the state file. If (a) is missing: Stop rule 1. If (b) is missing: Stop rule 2. Do not guess the goal; do not pick the most likely reading and proceed.
 - [ ] Step 2: Ground. Read the proposal in full, the artifacts it builds on, the recorded decisions in the state file, and, for anything that touches code, the code it changes and the code that consumes it. Restate the proposal in at most five lines, then list every assumption it rests on as `Assumes: ...`, each marked `stated` or `unstated`. Unstated assumptions are the first place failures hide.
 - [ ] Step 3: Pick the lenses. Open [references/lenses.md](references/lenses.md) and take the lens set for the proposal's domain (engineering, business, product, design, marketing, AI). Add the "Any proposal" set, always.
-- [ ] Step 4: For each lens category, ask "how does this fail?" and write down only failures with a concrete trigger (an input, a state, an event, an actor) and an observable impact. Name the lens category of each finding as `<set>: <category>` (`Business: Distribution`). A worry without a trigger is not a finding; drop it or turn it into a question for the user.
+- [ ] Step 4: For each lens category, ask "how does this fail?" and write down only failures with a concrete trigger (an input, a state, an event, an actor) and an observable impact. Name the lens category of each finding as `<set>: <category>` (`Business: Distribution`), taken from the two sets of step 3 only and spelled as the table spells it; a failure that seems to need another set or category goes under the closest category of these two sets. A worry without a trigger is not a finding; drop it or turn it into a question for the user.
 - [ ] Step 5: Check alignment. Does the proposal address the stated goal or root cause, or a symptom of it? Cite the goal and the part of the proposal that addresses it. Missing alignment is a blocking finding.
 - [ ] Step 6: Check contradictions with recorded decisions, registered artifacts and the codebase. Each one is a finding that names both sides.
 - [ ] Step 7: Rate each finding with the scale below: severity and likelihood. Then give it a mitigation or a test that would reveal it, actionable by the owner skill.

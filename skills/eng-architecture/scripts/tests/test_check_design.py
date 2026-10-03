@@ -167,3 +167,50 @@ def test_usage_error_writes_no_report(tmp_path):
     root = project(tmp_path)
     code, _, _ = run(root, "--report", REPORT, "--no-such-flag")
     assert code == 2 and not (root / REPORT).exists()
+
+
+ASSUMPTIONS_NONE = "## Assumptions to verify before implementation\n\n- none\n"
+
+
+def set_assumptions(root, items, before=""):
+    """Replace the fixture's empty Assumptions section with `items`, and put `before` above it."""
+    design = root / DESIGN
+    t = design.read_text(encoding="utf-8")
+    assert ASSUMPTIONS_NONE in t
+    design.write_text(t.replace(ASSUMPTIONS_NONE, before + "## Assumptions to verify before implementation\n\n" + items),
+                      encoding="utf-8")
+
+
+def test_an_assumption_without_a_way_to_verify_it_is_an_error(tmp_path):
+    root = project(tmp_path)
+    fix(root)
+    set_assumptions(root, "- A1: `defineRoute` accepts a path. Verify: build the route once.\n"
+                          "- A2: the queue keeps the order of the\n  rows it receives.\n")
+    code, out, _ = run(root)
+    result = json.loads(out)
+    assert code == 1 and result["ok"] is False
+    assert result["errors"] == ["assumptions that do not say how to verify them (a \"Verify:\" part): "
+                                "['A2: the queue keeps the order of the rows it receives.']"]
+
+
+def test_an_assumptions_section_that_says_none_passes(tmp_path):
+    root = project(tmp_path)
+    fix(root)
+    code, out, _ = run(root)
+    assert code == 0 and json.loads(out)["errors"] == []
+
+
+def test_code_identifiers_not_cited_are_listed_as_a_warning(tmp_path):
+    root = project(tmp_path)
+    fix(root)
+    set_assumptions(root, "- A1: `schema.object` and `schema.number` exist. Verify: import them in a test.\n",
+                    before="The route reads `Ledger.props.month` and calls `listExpenses()`; it writes `report.csv`.\n"
+                           "The loader is `parseRows`, see https://docs.example/loader.\n\n"
+                           "```ts\nconst base = schema.object({ amount: schema.number().min(0) });\n"
+                           "function sortRows(rows) { return rows; }\nconst out = base.extend({});\nsortRows([]);\n```\n\n")
+    code, out, _ = run(root)
+    result = json.loads(out)
+    assert code == 0 and result["ok"] is True
+    assert result["warnings"] == ["code identifiers named in the design or the ADRs that neither the Assumptions "
+                                  "section, the Sources section nor a URL on their line cites: "
+                                  "['.extend', '.min', 'Ledger.props.month', 'listExpenses']"]

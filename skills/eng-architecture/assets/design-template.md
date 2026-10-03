@@ -71,7 +71,7 @@
 
 ## Assumptions to verify before implementation
 
-- {API or behaviour not cited, and how to verify it}
+- {API or behaviour not cited, named in code}. Verify: {how, one concrete check}
 
 ## Open questions
 

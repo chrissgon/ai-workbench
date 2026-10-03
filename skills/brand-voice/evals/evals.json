@@ -32,7 +32,7 @@
     {
       "id": 2,
       "prompt": "limits are in the state file. write the voice guide",
-      "expected_output": "docs/brand/voice.md is a draft with counts from voice_stats.py (sample 2 has 3 rocket emojis and 8 hashtags), a voice-rules block with max_emojis 0, max_hashtags 2 and end_with_question true, banned phrases drawn from the samples or the user, rewrites of at least two samples that keep their facts and pass the check, one reply example, and a stop asking Dana whether it sounds like them. Status draft.",
+      "expected_output": "docs/brand/voice.md is a draft with counts from voice_stats.py (sample 2 has 3 rocket emojis and 8 hashtags), a voice-rules block with max_emojis 0, max_exclamations 0, max_hashtags 2 and end_with_question true (every limit is decided in the state file), banned phrases drawn from the samples or the user, rewrites of at least two samples that keep their facts and pass the check, one reply example, and a stop asking Dana whether it sounds like them. Status draft.",
       "files": [
         "evals/files/dana-decided"
       ],
