@@ -4,7 +4,11 @@
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir>
 #                      [--allow-web] [--max-cost-usd <amount>] [--no-tools]
 #
-# Writes <out>/response.md and <out>/timing.json. It installs nothing: the eval runner stages the
+# Writes <out>/response.md, the assistant's last message (the reply the grader is given), <out>/timing.json,
+# <out>/stream.jsonl, the CLI's whole event stream (kept beside the reply, never shown to the grader), and
+# <out>/raw.json, the stream's result event. timing.json also names "skills_loaded": the skills of the case
+# folder the stream shows the model loading (the skill tool, or a read of a skill's SKILL.md), which the
+# runner reads as whether the skill under test was invoked. It installs nothing: the eval runner stages the
 # skill under test and a case's dependency skills in <cwd>/.claude/skills/<name> before this script
 # starts (the "eval" object of adapter.json names that folder; scripts/stage_skills.py copies them),
 # so they are discoverable at project scope. Settings are limited to the project scope; the runner
@@ -25,24 +29,32 @@
 # character budget, its own bundled skills first, and past the budget a project skill is listed by name
 # only, with no description, so the model cannot tell when to use the skill under test.
 # The CLI authenticates with CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) from the environment.
+# CLAUDE_CODE_WEB_API_KEY, when set, is used in place of both: the runner passes it, and not the account's
+# token, to a run of a case on the open network (strong_web_pass_env of evals/eval-gate.json), so that a
+# leak there costs at most that key's limit. It reaches the CLI as ANTHROPIC_API_KEY.
 # Extra CLI flags: CLAUDE_EVAL_ARGS.
 # The prompt reaches the CLI on standard input, not as an argument: a grading prompt with long files
 # is larger than one argument may be.
 # Stopping this script (TERM, INT, HUP) stops the CLI and everything it started.
+# Exit codes: 0 the run ended normally; 1 it did not (the CLI failed, whatever code it gave); 2 a usage error
+# of this script.
 set -euo pipefail
 PROMPT="" CWD="" MODEL="" OUT="" WEB="" MAX_COST="" NO_TOOLS=""
+# A flag that takes a value and is given last, or followed by another flag, is a usage error (exit 2).
+need() { [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { echo "Error: $1 needs a value. See --help." >&2; exit 2; }; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --prompt-file) PROMPT="$2"; shift 2 ;;
-    --cwd) CWD="$2"; shift 2 ;;
-    --model) MODEL="$2"; shift 2 ;;
-    --out) OUT="$2"; shift 2 ;;
+    --prompt-file) need "$@"; PROMPT="$2"; shift 2 ;;
+    --cwd) need "$@"; CWD="$2"; shift 2 ;;
+    --model) need "$@"; MODEL="$2"; shift 2 ;;
+    --out) need "$@"; OUT="$2"; shift 2 ;;
     --allow-web) WEB=1; shift ;;
     --no-tools) NO_TOOLS=1; shift ;;
     --max-cost-usd)
+      need "$@"
       [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
       MAX_COST="$2"; shift 2 ;;
-    --help|-h) sed -n '2,31p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -50,6 +62,10 @@ done
 [[ -z "$NO_TOOLS" || -z "$WEB" ]] || { echo "Error: --no-tools and --allow-web do not go together: a call with no tools has no web tools." >&2; exit 2; }
 [[ "${WB_EVAL_CONTAINER:-}" == "1" ]] || { echo "Error: this adapter allows a model every tool, so it runs only inside the container that evals/eval_run.py starts." >&2; exit 2; }
 command -v claude >/dev/null || { echo "Error: 'claude' CLI not found on PATH." >&2; exit 1; }
+if [[ -n "${CLAUDE_CODE_WEB_API_KEY:-}" ]]; then
+  export ANTHROPIC_API_KEY="$CLAUDE_CODE_WEB_API_KEY"
+  unset CLAUDE_CODE_OAUTH_TOKEN CLAUDE_CODE_WEB_API_KEY
+fi
 mkdir -p "$OUT"
 # The runner gets its own session, so everything it starts (model sessions, browsers) is one process group
 # that can be stopped as a whole: when it exits, and when this script gets TERM, INT or HUP (a timeout or a
@@ -76,32 +92,56 @@ fi
 # Connectors: https://code.claude.com/docs/en/mcp (read 2026-09-27): claude.ai connectors load when logged in
 # with a claude.ai account unless ENABLE_CLAUDEAI_MCP_SERVERS=false, and `claude -p` loads project servers
 # without asking unless --strict-mcp-config (checked in `claude --help`, 2.1.283).
-( cd "$CWD" && export ENABLE_CLAUDEAI_MCP_SERVERS=false SLASH_COMMAND_TOOL_CHAR_BUDGET="${SLASH_COMMAND_TOOL_CHAR_BUDGET:-200000}" && exec "${OWN_SESSION[@]}" claude -p --model "$MODEL" --output-format json \
-    --setting-sources project,local --strict-mcp-config ${CLAUDE_EVAL_ARGS:-} ${EXTRA[@]+"${EXTRA[@]}"} ) \
-  < "$PROMPT" > "$OUT/raw.json" 2> "$OUT/stderr.log" &
+( cd "$CWD" && export ENABLE_CLAUDEAI_MCP_SERVERS=false SLASH_COMMAND_TOOL_CHAR_BUDGET="${SLASH_COMMAND_TOOL_CHAR_BUDGET:-200000}" && exec "${OWN_SESSION[@]}" claude -p --model "$MODEL" \
+    --setting-sources project,local --strict-mcp-config --output-format stream-json --verbose ${CLAUDE_EVAL_ARGS:-} ${EXTRA[@]+"${EXTRA[@]}"} ) \
+  < "$PROMPT" > "$OUT/stream.jsonl" 2> "$OUT/stderr.log" &
 RUNNER_PID=$!
 wait "$RUNNER_PID"; RC=$?
 stop_runner   # what the CLI left running (a browser, a server) stops with it
 set -e
 END=$(python3 -c 'import time; print(int(time.time()*1000))')
 python3 - "$OUT" "$START" "$END" "$RC" <<'PY'
-import json, sys, os
+import json, os, re, sys
 out, start, end, rc = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
-raw = open(os.path.join(out, "raw.json"), encoding="utf-8", errors="ignore").read()
+raw = open(os.path.join(out, "stream.jsonl"), encoding="utf-8", errors="ignore").read()
+events = []
+for line in raw.splitlines():
+    try:
+        item = json.loads(line)
+    except ValueError:
+        continue
+    events.append(item) if isinstance(item, dict) else events.extend(x for x in item if isinstance(x, dict)) if isinstance(item, list) else None
+# The result event carries the reply (the assistant's last message), the usage and the cost.
+result = next((e for e in reversed(events) if e.get("type") == "result" or ("result" in e and "type" not in e)), None)
 text, tokens, cost, dur = raw, None, None, end - start
-try:
-    d = json.loads(raw)
-    if isinstance(d, list):
-        d = next((x for x in d if x.get("type") == "result"), d[-1] if d else {})
-    text = d.get("result") or text
-    u = d.get("usage") or {}
+if result is not None:
+    text = result.get("result") if result.get("result") is not None else ""
+    u = result.get("usage") or {}
     if u:
         tokens = sum(int(u.get(k) or 0) for k in ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
-    cost = d.get("total_cost_usd")
-    dur = d.get("duration_ms") or dur
-except ValueError:
-    pass
+    cost = result.get("total_cost_usd")
+    dur = result.get("duration_ms") or dur
+    json.dump(result, open(os.path.join(out, "raw.json"), "w"))
+else:
+    open(os.path.join(out, "raw.json"), "w", encoding="utf-8").write(raw)
+# The skills the model loaded: the skill tool's input, or a read of <skills folder>/<name>/SKILL.md.
+loaded = []
+for e in events:
+    content = (e.get("message") or {}).get("content") if e.get("type") == "assistant" else None
+    for block in content if isinstance(content, list) else []:
+        if not isinstance(block, dict) or block.get("type") != "tool_use":
+            continue
+        args = block.get("input") or {}
+        name = None
+        if block.get("name") == "Skill":
+            name = args.get("skill") or args.get("command") or args.get("name")
+        elif block.get("name") == "Read":
+            m = re.search(r"\.claude/skills/([^/]+)/SKILL\.md$", str(args.get("file_path") or ""))
+            name = m.group(1) if m else None
+        if isinstance(name, str) and name.strip("/") and name.strip("/") not in loaded:
+            loaded.append(name.strip("/"))
 open(os.path.join(out, "response.md"), "w", encoding="utf-8").write(text if isinstance(text, str) else json.dumps(text))
-json.dump({"total_tokens": tokens, "duration_ms": dur, "cost_usd": cost, "exit_code": rc}, open(os.path.join(out, "timing.json"), "w"))
+json.dump({"total_tokens": tokens, "duration_ms": dur, "cost_usd": cost, "exit_code": rc,
+           **({"skills_loaded": loaded} if events else {})}, open(os.path.join(out, "timing.json"), "w"))
 sys.exit(0 if rc == 0 else 1)
 PY
