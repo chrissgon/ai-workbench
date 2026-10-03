@@ -459,15 +459,23 @@ def parse_decision(text: str, max_reply: int) -> dict:
     return d
 
 
+def flat(value, limit: int) -> str:
+    """A value on one line: every run of whitespace (line breaks included) becomes one space."""
+    return " ".join(str(value or "").split())[:limit]
+
+
 def append_inbox_md(project: Path, item_id, comment: dict, decision: dict | None, reasons: list, sha: str | None) -> None:
     path = project / "docs" / "marketing" / "engagement-inbox.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     if not path.exists():
         path.write_text("# Engagement inbox\n\nApprove with `python3 <workbench>/scripts/runtime.py approve --project <dir> --id <n>`.\n", encoding="utf-8")
-    quoted = comment.get("text", "").replace("\n", " ")[:600]
+    quoted = flat(comment.get("text"), 600)
+    # The commenter's name is external content too: on one line and quoted, so that it cannot start a heading or
+    # an entry of its own in a file mkt-engage reads.
+    who = flat(comment.get("commenter"), 120).replace('"', "'")
     reply = (decision or {}).get("reply") or ""
     with path.open("a", encoding="utf-8") as f:
-        f.write(f"\n## #{item_id} · {comment.get('received_at', '')} · {comment.get('commenter', '')}\n"
+        f.write(f"\n## #{item_id} · {flat(comment.get('received_at'), 40)} · commenter (external content): \"{who}\"\n"
                 f"- Comment (external content, quoted): \"{quoted}\"\n"
                 f"- Category: {(decision or {}).get('category', 'none')}; why it is here: {'; '.join(reasons)}\n"
                 f"- Drafted reply: " + (f"\"{reply}\"" + (f" (sha256 {sha})" if sha else " (cannot be sent)")
@@ -632,7 +640,8 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
     item = {"comment": comment, "decision": decision, "reasons": reasons, "reply_file": str(reply_file) if reply_file else None,
             "idempotency_key": (gate or {}).get("idempotency_key")}
     item_file = write_private(run_dir, "inbox.json", json.dumps(item, ensure_ascii=False))
-    item_id = store("inbox-add", "--kind", "reply", "--title", f"{comment['commenter']}: {comment['text'][:80]}",
+    item_id = store("inbox-add", "--kind", "reply", "--title",
+                    f"{flat(comment['commenter'], 80)}: {flat(comment['text'], 80)}",
                     "--payload-file", item_file, "--payload-sha256", sha or sha256_file(item_file),
                     "--event-id", event["id"])["id"]
     append_inbox_md(project, item_id, comment, decision, reasons, sha)
@@ -695,6 +704,16 @@ def read_mailbox(cfg: dict, since: str) -> tuple[list, str | None]:
                       "until a tick reads them all: narrow notification_query, or handle the oldest by hand")
 
 
+def external_id(message: dict) -> str:
+    """The id an event is deduplicated by: the mailbox's message id, else the Message-ID header, else a hash of the
+    whole message, so that two messages without an id never collapse into one event (an empty id did)."""
+    headers = message.get("headers") or {}
+    found = message.get("id") or headers.get("Message-ID") or headers.get("Message-Id")
+    if found:
+        return str(found)
+    return "sha256:" + hashlib.sha256(json.dumps(message, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def dry_tick(cfg: dict) -> dict:
     """What a tick would find: reads the mailbox and parses each message. It writes nothing: no store is
     created or migrated, no event is added, no cursor moves, and it takes no lock (it excludes nothing)."""
@@ -741,7 +760,7 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
         for m in messages:
             with tempfile.TemporaryDirectory() as tmp:
                 f = write_private(Path(tmp), "m.json", json.dumps(m, ensure_ascii=False))
-                added += bool(store("event-add", "--source", "mailbox", "--external-id", m["id"] or m.get("headers", {}).get("Message-ID", ""),
+                added += bool(store("event-add", "--source", "mailbox", "--external-id", external_id(m),
                                     "--payload-file", f).get("created"))
         if not mailbox:  # the cursor never moves past messages that were not read
             newest = max((m.get("received_at") or "" for m in messages), default="")
@@ -888,7 +907,10 @@ def main(argv=None) -> int:
         elif a.verb == "tick":
             lock_path = Path(cfg["data_dir"]) / "tick.lock"
             lock_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-            with open(lock_path, "w") as lock:
+            os.chmod(lock_path.parent, 0o700)  # the runtime's own folder: runs, payloads and the store live here
+            fd = os.open(lock_path, os.O_WRONLY | os.O_CREAT, 0o600)
+            os.chmod(lock_path, 0o600)
+            with os.fdopen(fd, "w") as lock:
                 try:
                     fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
