@@ -61,3 +61,45 @@ def test_pr_context_refuses_option_like_base(tmp_path):
     assert r.returncode == 0, r.stderr
     out = json.loads(r.stdout)
     assert out["compared_with"] == "main" and len(out["commits"]) == 1
+
+
+def run_pr_context(repo: Path, env: dict, *args: str) -> subprocess.CompletedProcess:
+    return subprocess.run([BASH, str(PR_CONTEXT), *args], cwd=repo, env=env,
+                          capture_output=True, text=True, timeout=60)
+
+
+def test_pr_context_help_exits_0_and_prints_usage(tmp_path):
+    repo = repo_with_change(tmp_path, "")
+    r = run_pr_context(repo, only_tools(tmp_path, "git", "python3", "sed", "dirname"), "--help")
+    assert r.returncode == 0
+    assert "Usage: bash pr-context.sh" in r.stdout and r.stderr == ""
+
+
+def test_pr_context_usage_errors_exit_2_with_a_message_on_stderr(tmp_path):
+    repo = repo_with_change(tmp_path, "")
+    env = only_tools(tmp_path, "git", "python3", "sed", "dirname")
+    r = run_pr_context(repo, env, "--base")
+    assert r.returncode == 2 and "--base needs a value" in r.stderr and r.stdout == ""
+    r = run_pr_context(repo, env, "--head", "feature")
+    assert r.returncode == 2 and "unknown option '--head'" in r.stderr and r.stdout == ""
+    assert "Traceback" not in r.stderr
+
+
+def test_pr_context_finds_the_template_and_works_without_a_remote_or_host_tool(tmp_path):
+    repo = repo_with_change(tmp_path, "y = 2\n")
+    git(repo, "branch", "-q", "-M", "main")
+    (repo / ".github").mkdir()
+    (repo / ".github" / "pull_request_template.md").write_text("## Summary\n", encoding="utf-8")
+    (repo / "AGENTS.md").write_text("- Merges are squash merges.\n- Unrelated line.\n", encoding="utf-8")
+    git(repo, "add", ".github", "AGENTS.md")
+    git(repo, "commit", "-q", "-m", "docs: template")
+    git(repo, "switch", "-q", "-c", "feature")
+    git(repo, "commit", "-q", "-am", "feature work")
+    r = run_pr_context(repo, only_tools(tmp_path, "git", "python3", "sed", "dirname"))
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["base"] == "main" and out["compared_with"] == "main"
+    assert out["template"] == {"path": ".github/pull_request_template.md", "content": "## Summary\n"}
+    assert out["pushed"] is False and out["open_pull_request"] is None
+    assert out["merge_rules"] == ["AGENTS.md: - Merges are squash merges."]
+    assert out["commits"][0].endswith("feature work") and out["files"] == ["M\tapp.py"]

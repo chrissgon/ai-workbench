@@ -68,3 +68,28 @@ def test_secret_scan_flags_credential_files_but_not_examples(tmp_path):
     kinds = {f["path"]: f["kind"] for f in json.loads(run(SECRET_SCAN, "--root", str(repo), "--json").stdout)["findings"]}
     assert kinds == {".env": "real", "tests/fake.py": "planted?"}
     assert run(SECRET_SCAN, "--root", str(tmp_path / "missing")).returncode == 2
+
+
+def test_secret_scan_usage_errors_exit_2_with_a_message(tmp_path):
+    r = run(SECRET_SCAN, "--root")
+    assert r.returncode == 2 and "--root needs a value" in r.stderr and r.stdout == ""
+    r = run(SECRET_SCAN, "--deep")
+    assert r.returncode == 2 and "unknown option '--deep'" in r.stderr and r.stdout == ""
+    r = run(SECRET_SCAN, "--root", str(tmp_path))
+    assert r.returncode == 2 and "not a git repository" in r.stderr
+    assert "Traceback" not in r.stderr
+    r = run(SECRET_SCAN, "--help")
+    assert r.returncode == 0 and "--history" in r.stdout
+
+
+def test_secret_scan_uses_its_redact_copy_for_bearer_tokens(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    git(repo, "init", "-q")
+    token = "Bearer " + "q7Lm2Xc9Vb4Nz8Kp3Rt6Wy1"
+    (repo / "client.js").write_text(f'const API_KEY = "{FAKE}"; // {token}\n')
+    r = run(SECRET_SCAN, "--root", str(repo), "--json")
+    out = json.loads(r.stdout)
+    assert r.returncode == 1 and out["findings"]
+    text = r.stdout + r.stderr
+    assert FAKE not in text and "q7Lm2Xc9Vb4Nz8Kp3Rt6Wy1" not in text

@@ -8,8 +8,8 @@
 # list the base's own commits as the branch's), the commits the branch adds, the files it
 # changes, whether it is pushed, the pull request template (path and content, first found in the
 # usual places), the last base commits (to read the commit convention), the lines of AGENTS.md or
-# CONTRIBUTING.md about merging, and an open pull request for the branch when the GitHub CLI can
-# tell.
+# CONTRIBUTING.md about merging, and an open pull request for the branch when the code host's
+# command-line tool, when present, can tell.
 #
 # A --base that is not a valid branch name (git check-ref-format --branch), or that starts with
 # "-", is refused with exit 2 before any git call uses it, so it cannot be read as an option.

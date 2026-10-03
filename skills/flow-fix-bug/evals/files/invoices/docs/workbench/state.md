@@ -18,7 +18,7 @@
 
 ## Approvals
 
-| Scope | What | Approved | Expires | Status |
-|-------|------|----------|---------|--------|
+| Scope | What | Payload hash | Approved | Expires | Status |
+|-------|------|--------------|----------|---------|--------|
 
 ## Open questions

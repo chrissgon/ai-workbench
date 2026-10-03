@@ -106,7 +106,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/engineering/codebase-map.md` | eng-codebase-map | - |
 | `docs/engineering/designs/<feature>.check.json` | eng-architecture | - |
 | `docs/engineering/designs/<feature>.md` | eng-architecture | - |
-| `docs/engineering/plans/<task>.md` | eng-root-cause, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests |
+| `docs/engineering/plans/<task>.md` | eng-root-cause | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests, ops-ci-pipeline |
 | `docs/engineering/reviews/<change>.md` | eng-code-review | - |
 | `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
 | `docs/marketing/calendar.md` | mkt-content-plan | mkt-publish, mkt-social-copy, mkt-vote-round |
@@ -133,7 +133,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.check.json` | core-research | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-project-init, flow-fix-bug, ops-branch-sync | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-research, design-brief, design-execute, design-handoff, design-system, design-ux-flows, eng-architecture, eng-codebase-map, eng-security-review, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish, product-backlog, product-feature-spec, product-prd, product-roadmap |
+| `docs/workbench/state.md` | core-project-init | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-research, design-brief, design-execute, design-handoff, design-system, design-ux-flows, eng-architecture, eng-codebase-map, eng-security-review, flow-fix-bug, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish, ops-branch-sync, ops-ci-pipeline, ops-pull-request, ops-repo-baseline, product-backlog, product-feature-spec, product-prd, product-roadmap |
 <!-- owner-table:end -->
 
 ## Rules
