@@ -417,6 +417,41 @@ def test_inbox_add_for_an_event_with_an_open_item_of_that_kind_returns_it(db, pa
     assert "`<m>` is at least 1" in row
 
 
+def test_lists_say_when_they_were_cut(db, payload, tmp_path):
+    """VS12: actions, inbox-list and runs stopped at --limit without saying that more rows existed."""
+    result = write_json(tmp_path / "result.json", {"ok": True})
+    for n in range(3):
+        ok("inbox-add", "--kind", "reply", "--title", f"t{n}", "--payload-file", payload, "--payload-sha256", SHA_A,
+           db=db)
+        ok("action-add", "--kind", "reply", "--idempotency-key", f"k{n}", "--target", "target-1",
+           "--payload-sha256", SHA_A, "--result-file", result, db=db)
+        ok("run-start", "--agent", "agent-a", "--event-id", "none", "--trigger", "t", db=db)
+    since = "2000-01-01T00:00:00Z"
+    for verb, key, extra in (("inbox-list", "items", ()), ("actions", "actions", ("--since", since)),
+                             ("runs", "runs", ())):
+        cut = ok(verb, *extra, "--limit", "2", db=db)
+        assert len(cut[key]) == 2 and cut["truncated"] is True, verb
+        whole = ok(verb, *extra, "--limit", "3", db=db)
+        assert len(whole[key]) == 3 and whole["truncated"] is False, verb
+
+
+def test_inbox_list_by_id_reaches_an_item_past_the_limit_whatever_its_status(db, payload):
+    """VS12: a caller looking for one item in inbox-list could not see it past the list's limit."""
+    ids = [ok("inbox-add", "--kind", "reply", "--title", f"t{n}", "--payload-file", payload, "--payload-sha256",
+              SHA_A, db=db)["id"] for n in range(3)]
+    ok("inbox-resolve", "--id", str(ids[2]), "--status", "done", "--by", "user", db=db)
+    assert ids[2] not in [i["id"] for i in ok("inbox-list", "--limit", "1", db=db)["items"]]
+    got = ok("inbox-list", "--id", str(ids[2]), db=db)
+    assert [i["id"] for i in got["items"]] == [ids[2]] and got["items"][0]["status"] == "done"
+    assert got["truncated"] is False and got["items"][0]["payload"]["comment"] == "hello"
+    assert ok("inbox-list", "--id", "999", db=db)["items"] == []
+    for bad in (["--id", "0"], ["--id", "x"], ["--id", str(ids[0]), "--status", "open"]):
+        assert run("inbox-list", *bad, db=db).returncode == 2, bad
+    row = store_row()
+    assert "`inbox-list [--status <s>\\|all] [--limit <n>] [--id <id>]`" in row
+    assert "`truncated`" in row and "`actions --since <ISO-8601> [--kind <k>] [--limit <n>]`" in row
+
+
 def store_row() -> str:
     root = Path(__file__).resolve().parents[3]
     return [line for line in (root / "providers" / "CONTRACT.md").read_text(encoding="utf-8").splitlines()

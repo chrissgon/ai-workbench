@@ -165,11 +165,15 @@ verbs:
                   --cost-usd <x|null> --tokens <n|null> --duration-ms <n|null>
                   --out-dir <path> [--error <text>]
   runs            [--limit n] [--agent <a>]                   newest first
+                  -> {{runs, truncated}}
   inbox-add       --kind <k> --title <t> --payload-file <json> --payload-sha256 <hex>
                   [--event-id <id>]                 -> {{id, created, status}}; when the
                   event already has an open item of this kind, that item is returned
                   (created false) and nothing is added
   inbox-list      [--status open|approved|rejected|done|all] (default open) [--limit n]
+                  -> {{status, items, truncated}}, oldest first
+                  or --id <id>: that one item in items, whatever its status
+                  (items is empty when there is no such item)
   inbox-resolve   --id <id> --status approved|rejected|done --by <who> [--note <t>]
                   open -> approved|rejected|done, approved -> done; nothing else
   action-add      --kind <k> --idempotency-key <k> --target <urn> --payload-sha256 <hex>
@@ -178,7 +182,9 @@ verbs:
                   computed (of what the person approves, or of what was executed); it may
                   be the hash of another file than the payload, and it is stored as given,
                   never compared with the payload
-  actions         --since <ISO-8601> [--kind <k>] [--limit n]
+  actions         --since <ISO-8601> [--kind <k>] [--limit n]  -> {{since, kind, actions, truncated}}
+                  "truncated": true, in runs, inbox-list and actions, means more rows
+                  matched than --limit (defaults: runs {LIMITS["runs"][0]}, inbox-list {LIMITS["inbox-list"][0]}, actions {LIMITS["actions"][0]})
   action-count    --kind <k> --since <ISO-8601>              -> {{kind, since, count}}
   export          --format json [--since <ISO-8601>]         every table, for review
 
@@ -657,8 +663,8 @@ def cmd_runs(args) -> int:
     limit = limit_arg(args.limit, "runs")
     conn = open_ready(args)
     rows = conn.execute("SELECT * FROM runs WHERE (? IS NULL OR agent = ?) ORDER BY id DESC LIMIT ?",
-                        (agent, agent, limit)).fetchall()
-    return emit({"runs": [row_dict(r) for r in rows]})
+                        (agent, agent, limit + 1)).fetchall()
+    return emit({"runs": [row_dict(r) for r in rows[:limit]], "truncated": len(rows) > limit})
 
 
 def cmd_inbox_add(args) -> int:
@@ -685,10 +691,22 @@ def cmd_inbox_add(args) -> int:
 
 def cmd_inbox_list(args) -> int:
     limit = limit_arg(args.limit, "inbox-list")
+    if args.id is not None:
+        # One item by id, whatever its status: a caller reaches an item the list's limit leaves out.
+        if args.status is not None:
+            raise StoreError("inbox-list takes --id or --status, not both: --id finds the item whatever its status",
+                             EXIT_USAGE)
+        item_id = id_arg(args.id, "--id")
+        conn = open_ready(args)
+        rows = conn.execute("SELECT * FROM inbox WHERE id = ?", (item_id,)).fetchall()
+        return emit({"status": "all", "id": item_id, "items": [row_dict(r, ("payload",)) for r in rows],
+                     "truncated": False})
+    status = args.status or "open"
     conn = open_ready(args)
     rows = conn.execute("SELECT * FROM inbox WHERE (? = 'all' OR status = ?) ORDER BY id LIMIT ?",
-                        (args.status, args.status, limit)).fetchall()
-    return emit({"status": args.status, "items": [row_dict(r, ("payload",)) for r in rows]})
+                        (status, status, limit + 1)).fetchall()
+    return emit({"status": status, "items": [row_dict(r, ("payload",)) for r in rows[:limit]],
+                 "truncated": len(rows) > limit})
 
 
 def cmd_inbox_resolve(args) -> int:
@@ -740,8 +758,9 @@ def cmd_actions(args) -> int:
     limit = limit_arg(args.limit, "actions")
     conn = open_ready(args)
     rows = conn.execute("SELECT * FROM actions WHERE created_at >= ? AND (? IS NULL OR kind = ?) "
-                        "ORDER BY id LIMIT ?", (since, kind, kind, limit)).fetchall()
-    return emit({"since": since, "kind": kind, "actions": [row_dict(r, ("result",)) for r in rows]})
+                        "ORDER BY id LIMIT ?", (since, kind, kind, limit + 1)).fetchall()
+    return emit({"since": since, "kind": kind, "actions": [row_dict(r, ("result",)) for r in rows[:limit]],
+                 "truncated": len(rows) > limit})
 
 
 def cmd_action_count(args) -> int:
@@ -856,8 +875,9 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--payload-sha256")
     p.add_argument("--event-id")
     p = verb("inbox-list", "list inbox items")
-    p.add_argument("--status", choices=(*INBOX_STATUSES, "all"), default="open")
+    p.add_argument("--status", choices=(*INBOX_STATUSES, "all"))  # default open; None tells --id it was not given
     p.add_argument("--limit", type=int)
+    p.add_argument("--id")
     p = verb("inbox-resolve", "record the user's decision on an inbox item")
     p.add_argument("--id")
     p.add_argument("--status", choices=("approved", "rejected", "done"), required=True)

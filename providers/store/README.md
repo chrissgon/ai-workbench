@@ -19,7 +19,7 @@ Standard library only (`sqlite3`); runs with `python3` or `uv run`. No credentia
 | `inbox` | what waits for the user (backlog R5): kind, title, the payload as JSON and the approval hash the caller gave (`--payload-sha256`: the SHA-256 of what the person approves, in the sense of `contracts/environment.md`; it may be the hash of a file the payload only points to, and the store does not compare it with the payload), status `open`, then `approved`, `rejected` or `done`, and who decided when | `inbox-add`, `inbox-resolve` |
 | `actions` | every outward action the runtime executed: kind, idempotency key (unique), target, payload hash, the provider's result | `action-add` |
 
-`action-count --kind reply --since <start of day>` is how a daily limit is enforced; `actions` and `export` are the audit.
+`action-count --kind reply --since <start of day>` is how a daily limit is enforced; `actions` and `export` are the audit. `runs`, `inbox-list` and `actions` stop at `--limit` and then print `"truncated": true`; `inbox-list --id <id>` reads one item whatever its status, so an item past the limit can still be reached.
 
 ### Guarantees
 
