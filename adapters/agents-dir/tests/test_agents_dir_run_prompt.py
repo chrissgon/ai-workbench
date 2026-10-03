@@ -171,3 +171,116 @@ def test_a_stopped_adapter_stops_the_runner_and_its_children(case):
     proc.send_signal(signal.SIGTERM)
     assert proc.wait(timeout=15) == 143
     assert gone(child) and gone(runner)
+
+
+def test_the_manifest_names_what_an_exhausted_account_answers():
+    manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
+    assert manifest["eval"]["account_limit"] and all(isinstance(m, str) and m for m in manifest["eval"]["account_limit"])
+
+
+
+# The events `opencode run --format json` prints (opencode 1.18.32: type, timestamp, sessionID, part), with a
+# model that narrates between its tool calls.
+EVENTS = [
+    {"type": "step_start", "part": {"type": "step-start"}},
+    {"type": "text", "part": {"type": "text", "text": "I will load the skill first."}},
+    {"type": "tool_use", "part": {"type": "tool", "tool": "skill", "state": {"status": "completed", "input": {"name": "demo"}}}},
+    {"type": "step_finish", "part": {"type": "step-finish", "tokens": {"input": 100, "output": 10, "reasoning": 5,
+                                                                       "cache": {"read": 50, "write": 0}}, "cost": 0.002}},
+    {"type": "step_start", "part": {"type": "step-start"}},
+    {"type": "text", "part": {"type": "text", "text": "Now reading the dependency."}},
+    {"type": "tool_use", "part": {"type": "tool", "tool": "read", "state": {"status": "completed",
+                                                                           "input": {"filePath": "/eval/case/.agents/skills/dep/SKILL.md"}}}},
+    {"type": "step_finish", "part": {"type": "step-finish", "tokens": {"input": 200, "output": 20, "reasoning": 0,
+                                                                       "cache": {"read": 0, "write": 0}}, "cost": 0.003}},
+    {"type": "step_start", "part": {"type": "step-start"}},
+    {"type": "text", "part": {"type": "text", "text": "The final answer."}},
+    {"type": "text", "part": {"type": "text", "text": "Its second paragraph."}},
+    {"type": "step_finish", "part": {"type": "step-finish", "tokens": {"input": 300, "output": 30, "reasoning": 0,
+                                                                       "cache": {"read": 0, "write": 0}}, "cost": 0.005}},
+]
+
+
+def fake_runner(t, body):
+    bindir = t / "bin"
+    bindir.mkdir(exist_ok=True)
+    fake = bindir / "opencode"
+    fake.write_text("#!/usr/bin/env bash\n" + body)
+    fake.chmod(0o755)
+    return {"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(t), "WB_EVAL_CONTAINER": "1"}
+
+
+def run_fake(t, env, *extra):
+    return subprocess.run(["bash", str(SCRIPT), "--prompt-file", str(t / "prompt.md"), "--cwd", str(t / "cwd"), "--model", "m",
+                           "--out", str(t / "out"), *extra], capture_output=True, text=True, env=env)
+
+
+def test_the_reply_is_the_last_message_and_the_stream_is_kept_beside_it(case):
+    lines = "\n".join(json.dumps(e) for e in EVENTS)
+    env = fake_runner(case, f'echo "$@" > {case}/args.txt\n' f"cat <<'EOF'\n{lines}\nEOF\n")
+    r = run_fake(case, env)
+    assert r.returncode == 0, r.stderr
+    out = case / "out"
+    assert (out / "response.md").read_text() == "The final answer.\n\nIts second paragraph.\n"
+    assert "I will load the skill first." in (out / "stream.jsonl").read_text()
+    timing = json.loads((out / "timing.json").read_text())
+    assert timing["total_tokens"] == 165 + 220 + 330 and timing["cost_usd"] == 0.01  # the floor tier's tokens, recorded
+    assert timing["skills_loaded"] == ["demo", "dep"]
+    assert "--format json" in (case / "args.txt").read_text()
+
+
+def test_without_the_web_the_page_fetch_tool_is_denied_and_with_it_search_is_on(case):
+    env = fake_runner(case, f'echo "$OPENCODE_PERMISSION|${{OPENCODE_ENABLE_EXA:-}}" > {case}/seen.txt\n')
+    assert run_fake(case, env).returncode == 0
+    assert json.loads((case / "seen.txt").read_text().split("|")[0]) == {"webfetch": "deny"}
+    assert run_fake(case, env, "--allow-web").returncode == 0
+    assert (case / "seen.txt").read_text().strip() == "|1"
+
+
+def test_an_error_event_is_kept_where_the_eval_runner_looks_and_the_run_fails(case):
+    events = [{"type": "step_start", "part": {}}, {"type": "error", "error": {"name": "APIError", "data": {"message": "Insufficient credits"}}}]
+    lines = "\n".join(json.dumps(e) for e in events)
+    env = fake_runner(case, f"cat <<'EOF'\n{lines}\nEOF\nexit 1\n")
+    r = run_fake(case, env)
+    assert r.returncode == 1
+    assert "Insufficient credits" in (case / "out" / "stderr.log").read_text()
+    assert (case / "out" / "response.md").read_text() == "" and json.loads((case / "out" / "timing.json").read_text())["skills_loaded"] == []
+
+
+def test_a_custom_runner_prints_text_and_that_text_is_the_reply(case):
+    r = run(case)
+    assert r.returncode == 0, r.stderr
+    assert (case / "out" / "response.md").read_text() == "hello\nm\n"
+    assert json.loads((case / "out" / "timing.json").read_text())["total_tokens"] is None
+
+
+# --- the two eval adapters agree with each other and with the contract ------------------------------
+
+@pytest.mark.parametrize("flag", ["--prompt-file", "--cwd", "--model", "--out", "--max-cost-usd"])
+def test_a_flag_given_last_without_its_value_is_a_usage_error(case, flag):
+    r = subprocess.run(["bash", str(SCRIPT), flag], capture_output=True, text=True, env={"PATH": os.environ["PATH"], "HOME": str(case), "WB_EVAL_CONTAINER": "1"})
+    assert r.returncode == 2 and f"{flag} needs a value" in r.stderr and "unbound" not in r.stderr
+
+
+def test_a_flag_followed_by_another_flag_is_a_usage_error(case):
+    r = subprocess.run(["bash", str(SCRIPT), "--model", "--out", "x"], capture_output=True, text=True, env={"PATH": os.environ["PATH"], "HOME": str(case), "WB_EVAL_CONTAINER": "1"})
+    assert r.returncode == 2 and "--model needs a value" in r.stderr
+
+
+@pytest.mark.parametrize("value", ["", "abc", "1;rm", "-1", "1.", ".5"])
+def test_max_cost_must_be_a_number(case, value):
+    r = run(case, "m", "--max-cost-usd", value)
+    assert r.returncode == 2 and ("needs a number" in r.stderr or "needs a value" in r.stderr)
+
+
+@pytest.mark.parametrize("code", [1, 2, 3, 7, 127])
+def test_a_failed_runner_is_exit_1_whatever_its_own_code_and_2_is_kept_for_usage(case, code):
+    r = run(case, cmd=f"echo partial; exit {code}")
+    assert r.returncode == 1 and json.loads((case / "out" / "timing.json").read_text())["exit_code"] == code
+
+
+def test_allow_web_reaches_a_custom_runner(case):
+    r = run(case, "m", "--allow-web", cmd="echo web=$RUN_PROMPT_ALLOW_WEB")
+    assert r.returncode == 0 and (case / "out" / "response.md").read_text() == "web=1\n"
+    r = run(case, cmd="echo web=$RUN_PROMPT_ALLOW_WEB")
+    assert r.returncode == 0 and (case / "out" / "response.md").read_text() == "web=0\n"
