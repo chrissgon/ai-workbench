@@ -420,3 +420,22 @@ Phase B of the final plan is complete: what a run sees, how it is graded and sco
 - Written by `python3 evals/eval_status.py measurement --close`.
 
 Not yet run, and listed in the pull request that closed the version as the proof run of phase B: the one skill run through the new harness on both tiers with a model, which the plan places before this close. Anything it finds is a change of one of the three kinds, committed with the command above.
+
+## 2026-10-03: The proof run of phase B; the skill-listing measurement taken again; the grading's tokens
+
+The first part of phase D ran on `main` at `cbe3321`: D1, D2, the proof run of phase B on `ops-branch-sync` (a trial of 2 runs per case, no evidence) and the listing measurement of A8 and C0.10. The full record is `docs/architecture/phase-d-proof-2026-10-03.md`. No fingerprinted file changed: measurement version 5 stands, with the same fingerprint.
+
+- **The strong model id.** The pinned CLI accepts `claude-sonnet-5-5`, names it as the model of every run, and gives it a 200,000-token context and 32,000 output tokens. The gate file stays as it is.
+- **One grading without tools: 11,622 tokens** on average over 24 gradings (11,013 to 12,032), against 29.6 thousand in the first round. A guard's second grading cost 11,987 tokens.
+- **The grader's disagreement on this run:** `--regrade` of the 24 replies changed 2 of 96 verdicts (2.1%), and 1 of the 31 verdicts the first grading failed. This is one skill and one run of the instrument, not D4's measurement on the pilot.
+- **The skill-listing measurement, default pack (48 skills, 37,718 characters of descriptions).** Installed by each harness's installer into a scratch home and asked once for its skill list:
+  - `claude-code`: 28 of 48 descriptions reached the model, and 20 skills by name only.
+  - `agents-dir` (opencode 1.18.32): 48 of 48.
+
+  By decision 9 the harness that cuts the list has a budget setting, so the answer is the installer writing that budget when the person agrees (lane F3), and no description is shortened. Eval runs are not affected, since the strong eval adapter raises the budget (entry of 2026-10-01).
+- **An operator error, resolved.** The floor tier's first attempt failed with `401 "User not found."` because the new OpenRouter key had been stored under another name than the store username the floor adapter reads (`openrouter`). Once it was stored under that name, `--resume` ran the 8 floor runs. This was no defect of the instrument. The runner did retry the 401 as an adapter failure, and that is listed with the other defects.
+- **Defects found,** each with its smallest fix in the record; none in a fingerprinted file:
+  - an authentication failure retried as an adapter failure (`evals/eval_run.py`);
+  - `eval_status.py evidence` accepting an event whose `runs` differs from the configured number;
+  - `ops-branch-sync` case 4, whose standing approval cannot be reached with `gh` signed out (a case defect, for the smoke pass);
+  - `--regrade` and `--resume` resolving a relative path against the caller's folder before the repository.
