@@ -761,3 +761,27 @@ def test_sigterm_during_the_clone_releases_the_key(remote, out_files, tmp_path):
     assert proc.returncode == 128 + signal.SIGTERM, err
     assert list(work_root(env).iterdir()) == []
     assert ledger(env) == {}  # nothing was sent: the key is free
+
+
+# --- VS13: a wildcard does not match a dotfile -------------------------------------------------
+
+
+@needs_tools
+def test_a_wildcard_does_not_admit_a_dotfile(remote, out_files):
+    # fnmatch lets '*' and '?' match a leading '.', so --allow '*' admitted .gitattributes, a file that changes
+    # how git treats every other path.
+    env = remote.provider_env()
+    q = out_files["queue"]
+    for allow, path in (("*", ".gitattributes"), ("?gitattributes", ".gitattributes"), ("data/*", "data/.env"),
+                        ("*/x.json", ".github/x.json"), ("[.]env", ".env")):
+        args = commit_args(out_files, "k1", "--dry-run", files=[f"{path}={q}"])
+        args = [a for a in args if a not in ALLOW] + ["--allow", allow]
+        proc = run(args, env)
+        assert proc.returncode == 2 and "outside the allowed paths" in proc.stderr, (allow, path, proc.stderr)
+    assert not work_root(env).exists()  # refused before cloning
+    # A pattern whose part starts with '.' names dotfiles on purpose.
+    args = [a for a in commit_args(out_files, "k1", "--dry-run", files=[f".gitattributes={q}"]) if a not in ALLOW]
+    proc = run([*args, "--allow", ".*"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["files"][0]["path"] == ".gitattributes"
+    assert "leading '.'" in run(["--help"], env).stdout

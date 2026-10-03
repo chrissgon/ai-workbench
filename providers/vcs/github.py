@@ -139,7 +139,9 @@ verbs:
                  --repo <owner>/<name> --branch <b> --message-file <f>
                  --file <repo-path>=<local-file> (repeat; at most {MAX_FILES} files,
                  {MAX_FILE_BYTES // (1024 * 1024)} MB each) --allow <glob> (repeat; every repo path must
-                 match one; '*' never crosses '/') --idempotency-key <k>, and --confirmed
+                 match one; '*' never crosses '/', and '*', '?' and '[...]' never match a
+                 leading '.' of a part: name a dotfile with a part that starts with '.')
+                 --idempotency-key <k>, and --confirmed
                  (or --dry-run). It clones the branch shallowly over SSH
                  ({SSH_REMOTE.format(repo="<owner>/<name>")}) into a private folder, writes the files,
                  stages them by name, commits with the message file, and pushes to the
@@ -818,12 +820,20 @@ def check_glob(glob: str) -> str:
     return glob
 
 
+def part_matches(part: str, glob: str) -> bool:
+    """One path part against one glob part. As in a shell, a part with a leading '.' is matched only by a glob
+    part that starts with '.' too: '*', '?' and '[.]' never match it (fnmatch alone lets them)."""
+    if part.startswith(".") and not glob.startswith("."):
+        return False
+    return fnmatch.fnmatchcase(part, glob)
+
+
 def path_allowed(path: str, globs: list[str]) -> bool:
-    """True when path matches one glob part by part, so '*' never crosses a '/'."""
+    """True when path matches one glob part by part, so '*' never crosses a '/' nor matches a dotfile."""
     parts = path.split("/")
     for glob in globs:
         gparts = glob.split("/")
-        if len(gparts) == len(parts) and all(fnmatch.fnmatchcase(p, g) for p, g in zip(parts, gparts)):
+        if len(gparts) == len(parts) and all(part_matches(p, g) for p, g in zip(parts, gparts)):
             return True
     return False
 
