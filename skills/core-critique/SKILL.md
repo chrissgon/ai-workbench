@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: []
   side_effects: []
-  version: "1.0.0"
+  version: "2.0.0"
 ---
 
 # Critique
@@ -50,7 +50,7 @@ A proposal written in the user's message is the text: critique it as written, an
 Check these before creating or editing any file, and again before replying. They override the procedure.
 
 1. **No proposal text.** If the user refers to a text you cannot see (a file that does not exist, "the plan we discussed"), write no file and give no finding: ask for the file path or the text, with the template below, and stop until the user answers.
-2. **No stated goal.** If neither the proposal nor a brief, a root-cause document or the state file states what the proposal must achieve, stop: the reply is the template below and nothing else. Write no finding, no assumption list, no "early caution", no "provisional concern", no list of things you would check, and no file. A "go", "proceed" or "use your judgement" is not an answer to a question and does not accept the recommendation: ask again. "Yes" to the question accepts the recommended goal.
+2. **No stated goal.** A problem the proposal says it fixes is its goal: "the dashboard is slow, so we'll cache it" states the goal of a fast dashboard. If neither the proposal nor a brief, a root-cause document or the state file states what the proposal must achieve or the problem it fixes, stop: the reply is the template below and nothing else. Write no finding, no assumption list, no "early caution", no "provisional concern", no list of things you would check, and no file. A "go", "proceed" or "use your judgement" is not an answer to a question and does not accept the recommendation: ask again. "Yes" to the question accepts the recommended goal.
 
 The reply that asks:
 
@@ -66,7 +66,7 @@ Q1. <What must this proposal achieve? | Where is the text of the proposal?> Reco
 ## Procedure
 
 Progress:
-- [ ] Step 1: Gate. Find two things: (a) the proposal's text: a file, an artifact, or the words of the user's message; (b) the goal it must achieve, stated in the proposal, a brief, a root-cause document or the state file. If (a) is missing: Stop rule 1. If (b) is missing: Stop rule 2. Do not guess the goal; do not pick the most likely reading and proceed.
+- [ ] Step 1: Gate. Find two things: (a) the proposal's text: a file, an artifact, or the words of the user's message; (b) the goal it must achieve, or the problem it says it fixes, stated in the proposal, a brief, a root-cause document or the state file. If (a) is missing: Stop rule 1. If (b) is missing: Stop rule 2. Do not guess the goal; do not pick the most likely reading and proceed.
 - [ ] Step 2: Ground. Read the proposal in full, the artifacts it builds on, the recorded decisions in the state file, and, for anything that touches code, the code it changes and the code that consumes it. Restate the proposal in at most five lines, then list every assumption it rests on as `Assumes: ...`, each marked `stated` or `unstated`. Unstated assumptions are the first place failures hide.
 - [ ] Step 3: Pick the lenses. Open [references/lenses.md](references/lenses.md) and take the lens set for the proposal's domain (engineering, business, product, design, marketing, AI). Add the "Any proposal" set, always.
 - [ ] Step 4: For each lens category, ask "how does this fail?" and write down only failures with a concrete trigger (an input, a state, an event, an actor) and an observable impact. Name the lens category of each finding as `<set>: <category>` (`Business: Distribution`). A worry without a trigger is not a finding; drop it or turn it into a question for the user.
