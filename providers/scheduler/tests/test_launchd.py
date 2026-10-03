@@ -399,3 +399,27 @@ def test_launchctl_timeout_marks_the_job_failed(env, tmp_path, monkeypatch, caps
     assert module.main([*base, "--confirmed", "--approved", digest]) == 1
     data = job(env)
     assert data["status"] == "failed" and "timed out" in data["error"]
+
+
+# --- check: the contract's one reading of its exit codes -------------------------------------
+
+
+def test_check_probes_the_users_domain(env):
+    result = run(env, "--check")
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["ready"] is True
+    assert Path(env["_calls"]).read_text().splitlines() == [f"print gui/{os.getuid()}"]
+
+
+def test_check_exits_3_without_a_user_domain(env):
+    env["FAKE_LAUNCHCTL_EXIT"] = "113"  # what launchctl answers for a domain that does not exist
+    result = run(env, "--check")
+    assert result.returncode == 3 and "launchd domain is not reachable" in result.stderr
+    assert not result.stdout.strip()
+
+
+def test_check_exits_3_when_launchctl_cannot_be_started(env):
+    Path(env["SCHEDULER_LAUNCHCTL"]).chmod(0o644)  # there, and not executable: an OSError, not a traceback
+    result = run(env, "--check")
+    assert result.returncode == 3 and "Traceback" not in result.stderr
+    assert "could not be started" in result.stderr

@@ -4,7 +4,11 @@
 # Usage: run-prompt.sh --prompt-file <f> --cwd <dir> --model <id> --out <dir>
 #                      [--allow-web] [--max-cost-usd <amount>]
 #
-# Writes <out>/response.md and <out>/timing.json (tokens unknown: null). It installs nothing: the eval
+# Writes <out>/response.md, the assistant's last message (the reply the grader is given), <out>/timing.json
+# (the tokens and the cost the runner's step events report; "skills_loaded", the skills of the case folder
+# the events show the model loading) and <out>/stream.jsonl, the runner's whole event stream (`run --format
+# json`), kept beside the reply and never shown to the grader. A custom runner (RUN_PROMPT_CMD) prints text:
+# that text is the reply, and its tokens are unknown (null). It installs nothing: the eval
 # runner stages the skill under test and a case's dependency skills in <cwd>/.agents/skills/<name>
 # before this script starts (the "eval" object of adapter.json names that folder). The runner refuses
 # a case folder that carries a name of adapter.json's "eval.settings": .agents/, .opencode/ and
@@ -13,29 +17,39 @@
 # checked in the binary of opencode 1.18.32. AGENTS.md is not in the list: it is the project's own
 # instruction file, which fixtures ship and this runner reads.
 # Override the command with RUN_PROMPT_CMD, a template with {prompt_file}, {model} and {cwd}, each
-# replaced by a shell-quoted value, e.g. RUN_PROMPT_CMD='mytool --model {model} < {prompt_file}'.
+# replaced by a shell-quoted value, e.g. RUN_PROMPT_CMD='mytool --model {model} < {prompt_file}'. The command
+# gets RUN_PROMPT_ALLOW_WEB=1 in its environment with --allow-web, 0 without, so that it can search or not.
 # Flags verified against opencode 1.18.32 (run --help); re-check after upgrades.
 # It runs only inside the eval container (evals/executor.py; the image sets WB_EVAL_CONTAINER=1) and
 # refuses to start anywhere else: the default runner approves every tool (--auto), and the container is
 # the boundary. --allow-web turns on the default runner's web search (OPENCODE_ENABLE_EXA=1, verified with
-# opencode 1.18.32: without it the model can only fetch URLs it guesses); page fetch is always on.
+# opencode 1.18.32: without it the model can only fetch URLs it guesses). Without --allow-web the page-fetch tool
+# is denied (OPENCODE_PERMISSION, read by opencode 1.18.32: --auto approves only what is not denied), so both
+# tiers have the same tools on a case without the web.
 # A model id "ollama/<name>" runs a local model served by Ollama (http://127.0.0.1:11434, or
 # RUN_PROMPT_OLLAMA_URL): the provider entry is written into the throwaway HOME, never into the case
 # folder. Give the model a context that fits the runner's own prompt and the skill (see README.md).
 # Stopping this script (TERM, INT, HUP) stops the runner and everything it started.
 # Connectors and MCP servers: the throwaway HOME below hides the user's configuration and
 # project configuration is refused, so none load; RUN_PROMPT_KEEP_HOME=1 loses that guarantee.
+# Exit codes: 0 the run ended normally; 1 it did not (the runner failed, whatever code it gave); 2 a usage
+# error of this script.
 set -euo pipefail
-PROMPT="" CWD="" MODEL="" OUT="" WEB=0 CAPPED=0
+PROMPT="" CWD="" MODEL="" OUT="" WEB=0 CAPPED=0 STRUCTURED=0
+# A flag that takes a value and is given last, or followed by another flag, is a usage error (exit 2).
+need() { [[ $# -ge 2 && -n "$2" && "$2" != --* ]] || { echo "Error: $1 needs a value. See --help." >&2; exit 2; }; }
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --prompt-file) PROMPT="$2"; shift 2 ;;
-    --cwd) CWD="$2"; shift 2 ;;
-    --model) MODEL="$2"; shift 2 ;;
-    --out) OUT="$2"; shift 2 ;;
+    --prompt-file) need "$@"; PROMPT="$2"; shift 2 ;;
+    --cwd) need "$@"; CWD="$2"; shift 2 ;;
+    --model) need "$@"; MODEL="$2"; shift 2 ;;
+    --out) need "$@"; OUT="$2"; shift 2 ;;
     --allow-web) WEB=1; shift ;;
-    --max-cost-usd) CAPPED=1; shift 2 ;;
-    --help|-h) sed -n '2,27p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --max-cost-usd)
+      need "$@"
+      [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
+      CAPPED=1; shift 2 ;;
+    --help|-h) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -49,11 +63,13 @@ if [[ -n "${RUN_PROMPT_CMD:-}" ]]; then
   CMD="${CMD//\{model\}/$(printf '%q' "$MODEL")}"
   CMD="${CMD//\{cwd\}/$(printf '%q' "$CWD")}"
   RUN=(bash -c "$CMD")  # security-scan: allow shell-string -- the template is the operator's own RUN_PROMPT_CMD; every value put in it is shell-quoted above
+  export RUN_PROMPT_ALLOW_WEB="$WEB"
 elif command -v opencode >/dev/null; then
   # --pure: no external plugins; --auto: approve tool permissions inside the sandboxed cwd (override with OPENCODE_EVAL_ARGS)
   read -r -a ARGS <<< "${OPENCODE_EVAL_ARGS:---pure --auto}"
-  RUN=(opencode run ${ARGS[@]+"${ARGS[@]}"} -m "$MODEL" "$(cat "$PROMPT")")
-  [[ $WEB -eq 1 ]] && export OPENCODE_ENABLE_EXA=1
+  RUN=(opencode run ${ARGS[@]+"${ARGS[@]}"} --format json -m "$MODEL" "$(cat "$PROMPT")")
+  STRUCTURED=1
+  if [[ $WEB -eq 1 ]]; then export OPENCODE_ENABLE_EXA=1; else export OPENCODE_PERMISSION='{"webfetch": "deny"}'; fi
 else
   echo "Error: no runner. Install opencode or set RUN_PROMPT_CMD (see --help)." >&2; exit 1
 fi
@@ -92,11 +108,77 @@ PY
 fi
 # stdin closed: the runner otherwise waits on an inherited pipe that never ends
 set +e
-( cd "$CWD" && exec "${OWN_SESSION[@]}" "${RUN[@]}" ) < /dev/null > "$OUT/response.md" 2> "$OUT/stderr.log" &
+( cd "$CWD" && exec "${OWN_SESSION[@]}" "${RUN[@]}" ) < /dev/null > "$OUT/stream.jsonl" 2> "$OUT/stderr.log" &
 RUNNER_PID=$!
 wait "$RUNNER_PID"; RC=$?
 set -e
 cleanup   # what the runner left running (a browser, a server) stops with it; the keychain goes with the home
 END=$(python3 -c 'import time; print(int(time.time()*1000))')
-printf '{"total_tokens": null, "duration_ms": %d, "cost_usd": null, "exit_code": %d}\n' "$((END-START))" "$RC" > "$OUT/timing.json"
-exit $RC
+python3 - "$OUT" "$((END-START))" "$RC" "$STRUCTURED" <<'PY'
+import json, os, re, sys
+out, dur, rc, structured = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), sys.argv[4] == "1"
+raw = open(os.path.join(out, "stream.jsonl"), encoding="utf-8", errors="ignore").read()
+KINDS = ("text", "step_start", "step_finish", "tool_use", "reasoning", "error")
+events = []
+for line in raw.splitlines() if structured else []:
+    try:
+        item = json.loads(line)
+    except ValueError:
+        continue
+    if isinstance(item, dict) and item.get("type") in KINDS:
+        events.append(item)
+timing = {"total_tokens": None, "duration_ms": dur, "cost_usd": None, "exit_code": rc}
+if not events:  # a custom runner, or output that is not the runner's events: the text is the reply
+    open(os.path.join(out, "response.md"), "w", encoding="utf-8").write(raw)
+    json.dump(timing, open(os.path.join(out, "timing.json"), "w"))
+    sys.exit(0 if rc == 0 else 1)
+# The reply is the assistant's last message: the text of the last step that has text. Narration of the steps
+# before it (a model that writes between its tool calls) is in the stream, never in the reply.
+steps, step = [], []
+for e in events:
+    if e["type"] == "step_start":
+        if step:
+            steps.append(step)
+        step = []
+    elif e["type"] == "text":
+        text = ((e.get("part") or {}).get("text") or "").strip()
+        if text:
+            step.append(text)
+if step:
+    steps.append(step)
+reply = "\n\n".join(steps[-1]) + "\n" if steps else ""
+open(os.path.join(out, "response.md"), "w", encoding="utf-8").write(reply)
+tokens, cost, seen = 0, 0.0, False
+for e in events:
+    part = e.get("part") or {}
+    if e["type"] == "step_finish" and isinstance(part.get("tokens"), dict):
+        t, seen = part["tokens"], True
+        cache = t.get("cache") if isinstance(t.get("cache"), dict) else {}
+        tokens += t["total"] if isinstance(t.get("total"), int) else sum(
+            int(v or 0) for v in (t.get("input"), t.get("output"), t.get("reasoning"), cache.get("read"), cache.get("write")))
+        cost += float(part.get("cost") or 0)
+if seen:
+    timing.update(total_tokens=tokens, cost_usd=round(cost, 6))
+loaded = []
+for e in events:
+    part = e.get("part") or {}
+    if e["type"] != "tool_use":
+        continue
+    args = (part.get("state") or {}).get("input") or {}
+    name = None
+    if part.get("tool") == "skill":
+        name = args.get("name")
+    elif part.get("tool") == "read":
+        m = re.search(r"\.agents/skills/([^/]+)/SKILL\.md$", str(args.get("filePath") or args.get("file_path") or ""))
+        name = m.group(1) if m else None
+    if isinstance(name, str) and name and name not in loaded:
+        loaded.append(name)
+timing["skills_loaded"] = loaded
+errors = [e.get("error") for e in events if e["type"] == "error"]
+if errors:  # an error the runner reported as an event: beside its own diagnostics, where the harness looks
+    with open(os.path.join(out, "stderr.log"), "a", encoding="utf-8") as f:
+        for err in errors:
+            f.write("error: " + json.dumps(err) + "\n")
+json.dump(timing, open(os.path.join(out, "timing.json"), "w"))
+sys.exit(0 if rc == 0 else 1)
+PY

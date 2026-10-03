@@ -202,16 +202,29 @@ def analyze(root, focus, top):
 
 
 def main(argv):
-    if not argv or "--help" in argv or "-h" in argv:
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        print("Error: no arguments. See --help.", file=sys.stderr)
+        return 2
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
+        return 0
     root, focus, top = ".", None, 15
     i = 0
     while i < len(argv):
         a = argv[i]
+        if a in ("--root", "--focus", "--top") and i + 1 >= len(argv):
+            print(f"Error: {a} needs a value. See --help.", file=sys.stderr)
+            return 2
         if a == "--root": root = argv[i + 1]; i += 2
         elif a == "--focus": focus = argv[i + 1]; i += 2
-        elif a == "--top": top = int(argv[i + 1]); i += 2
+        elif a == "--top":
+            try:
+                top = int(argv[i + 1])
+            except ValueError:
+                print(f"Error: --top needs a whole number, got {argv[i + 1]!r}. See --help.", file=sys.stderr)
+                return 2
+            i += 2
         else:
             print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr)
             return 2

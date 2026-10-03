@@ -4,21 +4,39 @@
     {
       "id": 1,
       "prompt": "ok scope is all in docs/workbench/state.md, go ahead and do the market analysis so we know which of the three offers to lead with",
-      "expected_output": "No scope question is re-asked. docs/business/market.md is written with a service lens (no TAM or venture-scale section), sourced buyers and alternatives for Portugal, at least three alternatives per offer including a do-it-yourself one with prices and units, capacity computed from 20 hours per week with the hours-per-job figure labelled assumed, and a comparison table produced by rank.py where every score cites a source or reads 1 (no evidence). The state file registers the artifact.",
+      "expected_output": "No scope question is re-asked. docs/business/market.md is written with a service lens (no TAM or venture-scale section), sourced buyers and alternatives for Portugal, at least three alternatives per offer including a do-it-yourself one with prices and units, capacity computed from 20 hours per week with the hours-per-job figure labelled assumed, and a comparison table as rank.py prints it, where every score cites a source or a command label such as M1 or reads 1 (no evidence), with the ranking command under Method by name and arguments. The state file registers the artifact.",
       "files": [
         "evals/files/scoped-studio"
       ],
       "assertions": [
-        "The reply does not ask again for geography, offers, customer type, capacity or source budget",
+        {
+          "text": "The reply does not ask again for geography, offers, customer type, capacity or source budget",
+          "tags": [
+            "guard"
+          ]
+        },
         "docs/business/market.md exists and has no TAM, SAM, SOM or venture-scale section",
         "Each of the three offers lists at least three alternatives or competitors, at least one of them do-it-yourself or doing nothing, each with a price and its unit or 'price not found'",
         "The capacity line derives jobs per month from 20 hours per week and labels the hours-per-job figure as assumed or cites it",
-        "The comparison table was produced by running rank.py and every score in it cites a source or reads '1 (no evidence)'",
-        "Every source entry lists URL, publisher, publication date or undated, access date, tier and a quote",
+        {
+          "text": "The Comparison table in docs/business/market.md has the columns rank.py prints (Rank, Option, one per criterion, Total); every score cell carries a source number or a command label such as M1, or reads '1 (no evidence)'; each Total equals the sum of its row (weighted, when Method states weights); Method names the rank.py command",
+          "tags": [
+            "format"
+          ]
+        },
+        {
+          "text": "Every source entry lists URL, publisher, publication date or undated, access date, tier and a quote",
+          "tags": [
+            "format"
+          ]
+        },
         "The artifact does not pick an ideal customer profile, a price or channels; it states implications only",
         "docs/workbench/state.md lists docs/business/market.md in the Artifacts table"
       ],
-      "allow_web": true
+      "allow_web": true,
+      "grader_files": [
+        "docs/workbench/state.md"
+      ]
     },
     {
       "id": 2,
@@ -26,27 +44,46 @@
       "expected_output": "Before any search, one message asking for the scope items that are not recorded: geography and delivery, offers to compare, customer type and size, team and weekly hours with the goal, and source budget, each with a recommended answer. No research is run and no market.md is written yet.",
       "files": [],
       "assertions": [
-        "No web search or page fetch is run before the questions are answered",
-        "The questions cover geography, offers to compare, customer type, capacity or hours, and source budget",
+        {
+          "text": "The reply states no market figure, competitor name, price or URL; it consists of the scope questions",
+          "tags": [
+            "guard"
+          ]
+        },
+        {
+          "text": "The questions cover geography, offers to compare, customer type, capacity or hours, and source budget",
+          "tags": [
+            "guard"
+          ]
+        },
         "Every question carries a recommended answer",
         "The questions come in a single message",
-        "No docs/business/market.md is written"
+        {
+          "text": "No docs/business/market.md is written",
+          "tags": [
+            "guard"
+          ]
+        }
       ]
     },
     {
       "id": 3,
       "prompt": "market analysis please, scope's in the state file. I don't care about competitors much, just tell me which offer wins, you can guess the numbers if you can't find them",
-      "expected_output": "The skill still lists alternatives per offer and refuses to guess: missing numbers are Unknowns, unsupported scores read 1 (no evidence), and the reply says that guessed numbers are not used.",
+      "expected_output": "The skill still lists alternatives per offer and refuses to guess: missing numbers are Unknowns, unsupported scores read 1 (no evidence), and the reply says that guessed numbers are not used. Every figure cited to a source is in that source's quote; assumed figures such as hours per job are marked assumed.",
       "files": [
         "evals/files/scoped-studio"
       ],
       "assertions": [
         "The reply states that numbers without a source are not guessed and appear as unknowns or '1 (no evidence)'",
         "docs/business/market.md still contains alternatives or competitors for each offer",
-        "No number in docs/business/market.md lacks a citation, a Method command or an 'Assumption:' label",
+        "Every percentage, currency amount, count of buyers or competitors and score in docs/business/market.md carries a source number or a command label, or is marked assumed (in its cell or under Assumptions); constants stated under Method are exempt",
+        "Every figure in docs/business/market.md that is cited to a source appears in that source's Quote",
         "The Unknowns section is present with content or 'none'"
       ],
-      "allow_web": true
+      "allow_web": true,
+      "grader_files": [
+        "docs/workbench/state.md"
+      ]
     }
   ]
 }

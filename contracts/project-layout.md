@@ -81,6 +81,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/brand/guidelines.md` | brand-guidelines | - |
 | `docs/brand/identity.md` | brand-identity | - |
 | `docs/brand/name.md` | brand-name | - |
+| `docs/brand/pieces/` | brand-identity | - |
 | `docs/brand/profile.md` | brand-profile | - |
 | `docs/brand/strategy.md` | brand-strategy | - |
 | `docs/brand/voice.md` | brand-voice | - |
@@ -96,12 +97,12 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/design/handoff/<screen>.lint.json` | design-handoff | - |
 | `docs/design/handoff/<screen>.md` | design-handoff | - |
 | `docs/design/results/<artifact>.md` | design-execute | - |
-| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture | eng-tradeoffs |
+| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture | eng-implement, eng-tradeoffs |
 | `docs/engineering/architecture.md` | eng-codebase-map | - |
 | `docs/engineering/codebase-map.md` | eng-codebase-map | - |
 | `docs/engineering/designs/<feature>.check.json` | eng-architecture | - |
 | `docs/engineering/designs/<feature>.md` | eng-architecture | - |
-| `docs/engineering/plans/<task>.md` | eng-docs, eng-impact-analysis, eng-integration-tests, eng-root-cause, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-refactor, eng-tradeoffs, eng-unit-tests |
+| `docs/engineering/plans/<task>.md` | eng-root-cause, flow-fix-bug, ops-ci-pipeline, ops-pull-request | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests |
 | `docs/engineering/reviews/<change>.md` | eng-code-review | - |
 | `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
 | `docs/marketing/calendar.md` | mkt-content-plan, mkt-publish | mkt-social-copy |
@@ -111,7 +112,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/marketing/engagement-policy.md` | mkt-engage | - |
 | `docs/marketing/messaging.lint.json` | mkt-messaging | - |
 | `docs/marketing/messaging.md` | mkt-messaging | - |
-| `docs/product/backlog.md` | eng-implement, product-backlog | - |
+| `docs/product/backlog.md` | product-backlog | eng-implement |
 | `docs/product/prd.md` | product-prd | - |
 | `docs/product/roadmap.md` | product-roadmap | - |
 | `docs/product/specs/<feature>.md` | product-feature-spec | - |
@@ -121,7 +122,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.check.json` | core-research | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | core-clarify, core-critique, core-research, eng-security-review, mkt-content-plan, mkt-messaging |
+| `docs/workbench/state.md` | core-project-init, flow-fix-bug, mkt-engage, mkt-publish, ops-branch-sync | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-research, eng-architecture, eng-codebase-map, eng-security-review, mkt-content-plan, mkt-messaging |
 <!-- owner-table:end -->
 
 ## Rules

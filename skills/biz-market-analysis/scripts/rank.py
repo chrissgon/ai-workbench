@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rank market options on scored criteria, refusing any score without a source.
+"""Rank options on scored criteria, refusing any score without a source.
 
 Usage:
   python3 rank.py --input options.json
@@ -19,7 +19,9 @@ Every option must score every criterion with an integer from 1 to 5. A score abo
 least one source reference: a source number ("3", "2b") or a command label ("M1"), nothing else; a score of 1 with no source is reported as "1 (no evidence)".
 --no-evidence-label sets the text shown for an unsupported score (default "no evidence").
 Prints JSON to stdout: the ranked options with weighted totals, the gap between the top two,
-and a Markdown table under "table". Diagnostics go to stderr. Exit 1 on invalid input.
+and a Markdown table under "table". Diagnostics go to stderr.
+Exit codes: 0 ok; 1 when the input is read and its content is refused (a score without a source,
+a criterion not scored); 2 on a bad argument, or an input that cannot be read or is not JSON.
 """
 import argparse
 import json
@@ -29,9 +31,9 @@ import sys
 REF = re.compile(r"^(\d+[a-z]?|M\d+)$")
 
 
-def fail(msg):
+def fail(msg, code=1):
     print(f"rank.py: {msg}", file=sys.stderr)
-    sys.exit(1)
+    sys.exit(code)
 
 
 def load(args):
@@ -132,8 +134,8 @@ def main():
     args = ap.parse_args()
     try:
         data = load(args)
-    except (OSError, json.JSONDecodeError) as exc:
-        fail(f"cannot read input: {exc}")
+    except (OSError, ValueError) as exc:  # a missing file, a folder, bytes that are not UTF-8, text that is not JSON
+        fail(f"cannot read input: {exc}", 2)
     if not isinstance(data, dict):
         fail("input must be a JSON object")
     crits, opts = validate(data)

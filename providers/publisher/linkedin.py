@@ -779,6 +779,9 @@ def cmd_publish(args) -> int:
     global LEGACY_V2
     LEGACY_V2 = getattr(args, "comments_endpoint", "v2") != "rest"
     text, image, first_comment = validate_publish_args(args)
+    # A setting the first comment needs is read before anything is sent: found malformed only after the
+    # post was public, it left a post without its comment for a mistake no request could have caused.
+    delays = first_comment_delays() if first_comment is not None else None
     if not args.dry_run and not args.confirmed:
         raise ProviderError(
             "refusing to publish without --confirmed; the calling skill must pass its confirmation gate "
@@ -801,7 +804,7 @@ def cmd_publish(args) -> int:
         try:
             if not POST_URN_RE.fullmatch(urn):
                 raise ProviderError(f"the post URN {urn!r} has an unexpected shape; not commenting on it")
-            done = first_comment_with_retries(base, token, member_urn, urn, first_comment, comment_key)
+            done = first_comment_with_retries(base, token, member_urn, urn, first_comment, comment_key, delays)
         except ProviderError as exc:
             # The post is out; only its first comment failed. Rerunning the same command replays the
             # post (its key is published) and retries only the comment.
@@ -836,12 +839,12 @@ def first_comment_delays() -> list:
     return delays
 
 
-def first_comment_with_retries(base: str, token: dict, member_urn, post_urn: str, text: str, key: str) -> dict:
+def first_comment_with_retries(base: str, token: dict, member_urn, post_urn: str, text: str, key: str,
+                               delays: list) -> dict:
     """The first comment of a post published a moment ago. LinkedIn answers 404 ("Unable to obtain activity")
     for a few seconds after a post is created, longer when it carries an image, so a 404 is retried after each
     delay. A refused comment leaves no ledger entry, so each retry is a fresh attempt under the same key; any
-    other answer is raised at once."""
-    delays = first_comment_delays()
+    other answer is raised at once. The delays were read and checked before the post was sent."""
     for attempt in range(len(delays) + 1):
         try:
             return create_comment(base, token, member_urn, post_urn, None, text, key)
@@ -1173,10 +1176,9 @@ def comment_dry_run(base: str, post_urn: str | None, parent: str | None, text: s
 
 def cmd_check() -> int:
     base, test_mode = api_base()
-    try:
-        token = load_token(test_mode)
-    except ProviderError as exc:
-        raise ProviderError(str(exc), EXIT_SERVICE)  # the contract: --check exits 1 when not ready
+    # The contract's one reading of --check: 3 when the person has something to do (no token, an expired
+    # one, a token the service rejects), 1 when the service could not be asked. load_token and http say which.
+    token = load_token(test_mode)
     info = userinfo(base, token["access_token"])
     days = days_until(token["expires_at"])
     out = {

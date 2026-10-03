@@ -2,9 +2,9 @@
 
 - Owner: eng-architecture
 - Status: draft
-- Date: {YYYY-MM-DD}
+- Date: {YYYY-MM-DD, from `date +%F`}
 - Specification: docs/product/specs/{feature}.md
-- Frameworks and versions relied on: {name version (docs URL, accessed date)}
+- Frameworks and versions relied on: {name version (docs URL, accessed date) | name version (from package.json or the lockfile; documentation not opened)}
 
 ## Summary
 

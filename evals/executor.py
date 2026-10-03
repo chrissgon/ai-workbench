@@ -18,7 +18,12 @@ Network, per command:
   open    the default network (a case with "allow_web": true)
 
 Secrets reach a container as environment variables named by the caller; their values travel in the
-environment of the docker client, never on a command line.
+environment of the docker client, never on a command line. A run's environment therefore holds the
+credential of its tier, and every command the model runs can read it: that is a property of a run,
+by necessity, and it is why the runner replaces the passed values in everything a run leaves
+(evals/eval_run.py, "Secrets in what a run leaves"). The proxy filters by host name only, and the
+hosts it lets through serve many accounts: a run reaches no other host, but could still hand data
+to another account of the same provider. The proxy is not a guarantee that nothing leaves.
 
 Environment. The clock (TZ=UTC), the locale, the user name and the git identity of a run are the
 image's own: nothing of the caller's machine sets them. From the caller come only the two variables
