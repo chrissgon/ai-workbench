@@ -24,6 +24,8 @@
 - 2026-09-21: No experience or contacts in any of these segments (user). (user)
 - 2026-09-21: Keep the name "Nuno Reis software" for now (user). (user)
 - 2026-09-21: Will hold 5 customer conversations to validate (user). (user)
+- 2026-09-21: Job the automation does: leave it open, the interviews find it (user). (user)
+- 2026-09-21: If two segments come within 2 points, take the one that is cheaper to reach for someone without contacts, and say so (user). (user)
 
 ## Open questions
 - [ ] Which segment first? (user)

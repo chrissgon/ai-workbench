@@ -16,7 +16,9 @@ FAKE = """#!/usr/bin/env bash
 python3 - "$@" <<'PY'
 import json, os, sys
 json.dump({"args": sys.argv[1:], "mcp": os.environ.get("ENABLE_CLAUDEAI_MCP_SERVERS"),
-           "budget": os.environ.get("SLASH_COMMAND_TOOL_CHAR_BUDGET")}, open(os.environ["FAKE_LOG"], "w"))
+           "budget": os.environ.get("SLASH_COMMAND_TOOL_CHAR_BUDGET"),
+           "credentials": {k: os.environ[k] for k in ("CLAUDE_CODE_OAUTH_TOKEN", "ANTHROPIC_API_KEY", "CLAUDE_CODE_WEB_API_KEY")
+                           if k in os.environ}}, open(os.environ["FAKE_LOG"], "w"))
 PY
 echo '{"result": "done"}'
 """
@@ -189,3 +191,91 @@ def test_the_skill_listing_budget_is_raised_so_the_skill_keeps_its_description(e
     assert r.returncode == 0, r.stderr
     assert int(json.loads(env["log"].read_text())["budget"]) >= 100000
 
+
+
+def test_the_low_limit_key_of_a_web_case_replaces_the_accounts_token(env):
+    """The runner passes CLAUDE_CODE_WEB_API_KEY, and not the token, to a run on the open network."""
+    token, key = "value-of-the-token", "value-of-the-low-limit-key"
+    env["env"]["CLAUDE_CODE_OAUTH_TOKEN"] = token
+    r = run(env)
+    assert r.returncode == 0, r.stderr
+    assert json.loads(env["log"].read_text())["credentials"] == {"CLAUDE_CODE_OAUTH_TOKEN": token}
+    env["env"]["CLAUDE_CODE_WEB_API_KEY"] = key
+    r = run(env, "--allow-web")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(env["log"].read_text())["credentials"] == {"ANTHROPIC_API_KEY": key}  # and no token
+
+
+def test_the_manifest_names_what_an_exhausted_account_answers():
+    manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
+    assert manifest["eval"]["account_limit"] and all(isinstance(m, str) and m for m in manifest["eval"]["account_limit"])
+
+
+
+STREAM = [
+    {"type": "system", "subtype": "init", "model": "m"},
+    {"type": "assistant", "message": {"content": [{"type": "text", "text": "Let me look at the brief first."},
+                                                  {"type": "tool_use", "name": "Skill", "input": {"skill": "demo"}}]}},
+    {"type": "user", "message": {"content": [{"type": "tool_result", "content": "the skill's text"}]}},
+    {"type": "assistant", "message": {"content": [{"type": "text", "text": "Now I read the other one."},
+                                                  {"type": "tool_use", "name": "Read",
+                                                   "input": {"file_path": "/eval/case/.claude/skills/dep/SKILL.md"}},
+                                                  {"type": "tool_use", "name": "Read", "input": {"file_path": "/eval/case/notes.md"}}]}},
+    {"type": "assistant", "message": {"content": [{"type": "text", "text": "The final answer, with its two parts."}]}},
+    {"type": "result", "subtype": "success", "result": "The final answer, with its two parts.", "num_turns": 4,
+     "usage": {"input_tokens": 10, "output_tokens": 5, "cache_read_input_tokens": 100, "cache_creation_input_tokens": 1},
+     "total_cost_usd": 0.01, "duration_ms": 1234},
+]
+
+
+def test_the_reply_is_the_last_message_and_the_stream_is_kept_beside_it(env):
+    """Narration between turns stays in the stream; the reply the grader gets is the assistant's last message."""
+    lines = "\n".join(json.dumps(e) for e in STREAM)
+    stand_in(env, f"cat > /dev/null\ncat <<'EOF'\n{lines}\nEOF\n")
+    r = run(env)
+    assert r.returncode == 0, r.stderr
+    out = env["tmp"] / "out"
+    assert (out / "response.md").read_text() == "The final answer, with its two parts."
+    assert "Let me look at the brief first." in (out / "stream.jsonl").read_text()
+    assert json.loads((out / "raw.json").read_text())["num_turns"] == 4  # the result event, which the runner reads
+    timing = json.loads((out / "timing.json").read_text())
+    assert (timing["total_tokens"], timing["cost_usd"], timing["duration_ms"]) == (116, 0.01, 1234)
+    assert timing["skills_loaded"] == ["demo", "dep"]  # the skill tool, and a read of a skill's SKILL.md
+
+
+def test_the_cli_is_asked_for_its_stream(env):
+    r = run(env)
+    assert r.returncode == 0, r.stderr
+    args = json.loads(env["log"].read_text())["args"]
+    assert args[args.index("--output-format") + 1] == "stream-json" and "--verbose" in args
+
+
+def test_the_manifest_names_the_providers_refusal(env):
+    manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
+    assert manifest["eval"]["refusal_markers"] == ["safeguards flagged this message"]
+
+
+# --- the two eval adapters agree with each other and with the contract ------------------------------
+
+@pytest.mark.parametrize("flag", ["--prompt-file", "--cwd", "--model", "--out", "--max-cost-usd"])
+def test_a_flag_given_last_without_its_value_is_a_usage_error(env, flag):
+    r = subprocess.run(["bash", str(SCRIPT), flag], capture_output=True, text=True, env=env["env"])
+    assert r.returncode == 2 and f"{flag} needs a value" in r.stderr and "unbound" not in r.stderr
+
+
+def test_a_flag_followed_by_another_flag_is_a_usage_error(env):
+    r = subprocess.run(["bash", str(SCRIPT), "--model", "--out", "x"], capture_output=True, text=True, env=env["env"])
+    assert r.returncode == 2 and "--model needs a value" in r.stderr
+
+
+@pytest.mark.parametrize("value", ["", "abc", "1;rm", "-1", "1.", ".5"])
+def test_max_cost_must_be_a_number(env, value):
+    r = run(env, "--max-cost-usd", value)
+    assert r.returncode == 2 and ("needs a number" in r.stderr or "needs a value" in r.stderr)
+
+
+@pytest.mark.parametrize("code", [1, 3, 7, 127])
+def test_a_failed_cli_is_exit_1_whatever_its_own_code_and_2_is_kept_for_usage(env, code):
+    stand_in(env, f"echo '{{\"result\": \"failed\"}}'\nexit {code}\n")
+    r = run(env)
+    assert r.returncode == 1 and json.loads((env["tmp"] / "out" / "timing.json").read_text())["exit_code"] == code

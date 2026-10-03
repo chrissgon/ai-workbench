@@ -1,7 +1,7 @@
 # Workbench state
 
 - Project: fernleaf-docs
-- Current flow: flow-new-feature
+- Current flow: none
 - Current phase: Engineering
 - Updated: 2026-06-02
 

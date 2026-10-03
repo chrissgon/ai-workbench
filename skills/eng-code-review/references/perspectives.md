@@ -73,3 +73,14 @@ A finding states the input, the line that mishandles it and what happens.
 - Do the tests depend on order, real time, the network or the developer's machine (absolute paths, a running service)?
 - A test that passes before the change is not a regression test; for a bug fix, see the bug-fix checklist.
 - Test count from step 3 versus test files touched: did a runner report `0 tests` or "no tests found"?
+
+## Severity
+
+Used at step 6 of `eng-code-review` to rate each finding, and at step 7 for the verdict.
+
+| Severity | Give it when |
+|----------|--------------|
+| blocking | the task's check fails; the change does something other than the stated intent; a consumer breaks; data can be lost or corrupted; a security hole (injection, missing authorization, a secret in the diff); a test was weakened, skipped or focused; a generated file was hand-edited |
+| high | a common input fails; an error is swallowed or unhandled at a boundary; input at a trust boundary is not validated; new behaviour has no test in a project that has tests; a change outside the task alters behaviour; a check could not be run here |
+| medium | a recoverable edge-case failure; duplication or complexity that will cost the next change; debug leftovers, suppressed lint rules or TODOs without a backlog item; a stub or transitional setting without a backlog item; a dependency nothing imports; documentation the conventions require was not updated |
+| low | a change outside the task that does not alter behaviour and is not recorded in the report; a registered document that now describes removed code; naming, comments, ordering, style the linter does not cover |

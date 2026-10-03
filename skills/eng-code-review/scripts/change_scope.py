@@ -354,23 +354,38 @@ def added_removed_lines(path, patch_text):
     return {"added": added, "removed": removed}
 
 
+VALUE_FLAGS = ("--repo", "--range", "--patch", "--touches", "--max-files", "--max-lines")
+
+
 def main(argv):
-    if not argv or "--help" in argv or "-h" in argv:
+    if not argv:
+        err(__doc__)
+        err("Error: no arguments. See --help.")
+        return 2
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
+        return 0
     repo, mode, rng, patch, touches = ".", None, None, None, []
     max_files, max_lines = 20, 800
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a == "--repo": repo = argv[i + 1]; i += 2
+        if a in VALUE_FLAGS and i + 1 >= len(argv):
+            err(f"Error: {a} needs a value. See --help."); return 2
+        if a in ("--max-files", "--max-lines"):
+            try:
+                n = int(argv[i + 1])
+            except ValueError:
+                err(f"Error: {a} needs a whole number, got {argv[i + 1]!r}. See --help."); return 2
+            if a == "--max-files": max_files = n
+            else: max_lines = n
+            i += 2
+        elif a == "--repo": repo = argv[i + 1]; i += 2
         elif a == "--range": mode, rng = "range", argv[i + 1]; i += 2
         elif a == "--worktree": mode = "worktree"; i += 1
         elif a == "--staged": mode = "staged"; i += 1
         elif a == "--patch": mode, patch = "patch", argv[i + 1]; i += 2
         elif a == "--touches": touches = [t.strip().lower() for t in argv[i + 1].split(",") if t.strip()]; i += 2
-        elif a == "--max-files": max_files = int(argv[i + 1]); i += 2
-        elif a == "--max-lines": max_lines = int(argv[i + 1]); i += 2
         else:
             err(f"Error: unknown option '{a}'. See --help."); return 2
     if mode is None:

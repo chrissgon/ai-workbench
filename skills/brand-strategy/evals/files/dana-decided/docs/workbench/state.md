@@ -22,7 +22,7 @@
 - 2026-09-20: Audiences: backend engineers and database people (user). (user)
 - 2026-09-20: Themes: "AI for databases expert" and "small, boring tools" (user). (user)
 - 2026-09-20: May cite in public: tinykv and anything in my LinkedIn export (user). (user)
-- 2026-09-20: Never expose: employer names, family, salary, exact location (user). (user)
+- 2026-09-20: Never expose: employer names, family, salary, exact location, leadership and people management (user). (user)
 - 2026-09-20: The tinykv launch post in inputs/posts was drafted by the AI in an earlier session; I only pressed publish (user). (user)
 - 2026-09-21: Rhythm: 2 posts per week, English only (user). (user)
 - 2026-09-21: Products to grow: npm package tinykv-dana-example and repository dana-example/tinykv-dana-example (user). (user)

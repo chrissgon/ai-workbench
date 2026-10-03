@@ -1,0 +1,11 @@
+{
+  "https://api.npmjs.org/downloads/point/last-week/tinykv-dana-example": {
+    "status": 200,
+    "body": {"downloads": 212, "start": "2026-09-13", "end": "2026-09-19", "package": "tinykv-dana-example"}
+  },
+  "https://api.npmjs.org/downloads/point/last-month/tinykv-dana-example": {
+    "status": 200,
+    "body": {"downloads": 1405, "start": "2026-08-21", "end": "2026-09-19", "package": "tinykv-dana-example"}
+  },
+  "https://api.github.com/repos/dana-example/tinykv-dana-example": {"status": null}
+}
