@@ -601,6 +601,55 @@ def test_usage_errors(db, tmp_path, payload):
     assert run("init", db=":memory:").returncode == 2
 
 
+def test_out_of_range_integers_are_usage_errors(db, tmp_path):
+    """VS11: an integer past SQLite's 64-bit range ended in an OverflowError traceback (exit 1)."""
+    huge = str(2 ** 63)
+    [event_id] = add_events(db, tmp_path, 1)
+    run_id = ok("run-start", "--agent", "a", "--event-id", "none", "--trigger", "t", db=db)["run_id"]
+    for args in (["event-done", "--id", huge, "--token", "t", "--status", "done"],
+                 ["inbox-resolve", "--id", huge, "--status", "done", "--by", "user"],
+                 ["run-start", "--agent", "a", "--event-id", huge, "--trigger", "t"],
+                 ["run-end", "--run-id", huge, "--status", "ok", "--exit-code", "0", "--cost-usd", "0",
+                  "--tokens", "0", "--duration-ms", "0", "--out-dir", "x"],
+                 ["run-end", "--run-id", str(run_id), "--status", "ok", "--exit-code", "0", "--cost-usd", "0",
+                  "--tokens", huge, "--duration-ms", "0", "--out-dir", "x"],
+                 ["run-end", "--run-id", str(run_id), "--status", "ok", "--exit-code", "-" + huge + "0",
+                  "--cost-usd", "0", "--tokens", "0", "--duration-ms", "0", "--out-dir", "x"],
+                 ["event-next", "--source", "mailbox", "--reclaim-after-minutes", huge],
+                 ["actions", "--since", "9999-12-31T23:00:00-05:00"]):
+        r = run(*args, db=db)
+        assert r.returncode == 2, (args, r.returncode, r.stderr)
+        assert "Traceback" not in r.stderr and r.stderr.startswith("error: "), r.stderr
+    assert ok("event-next", "--source", "mailbox", db=db)["events"][0]["id"] == event_id
+
+
+SINCE_FORMS = {
+    # given -> the UTC time it means
+    "2026-10-01T10:00:00-0300": "2026-10-01T13:00:00.000000Z",
+    "2026-10-01T10:00:00-03": "2026-10-01T13:00:00.000000Z",
+    "2026-10-01T10:00:00.5Z": "2026-10-01T10:00:00.500000Z",
+    "2026-10-01T10:00:00.123456789Z": "2026-10-01T10:00:00.123456Z",
+    "2026-10-01T10:00:00,25+00:00": "2026-10-01T10:00:00.250000Z",
+    "2026-10-01T10:00Z": "2026-10-01T10:00:00.000000Z",
+    "2026-10-01 10:00:00+0530": "2026-10-01T04:30:00.000000Z",
+    "2026-10-01T10:00:00.123z": "2026-10-01T10:00:00.123000Z",
+}
+
+
+def test_since_forms_parse_the_same_on_every_python(db):
+    """VS11: -0300 offsets and fractional seconds other than 3 or 6 digits were refused on Python 3.9, which
+    the runtime runs on, and accepted on 3.11. They are normalised before parsing, so both read them alike;
+    forms neither should guess at (week dates, the basic format without separators) are refused on both."""
+    for given, utc in SINCE_FORMS.items():
+        assert ok("action-count", "--kind", "k", "--since", given, db=db)["since"] == utc, given
+    for bad in ("20261001T100000", "2026-W40-1", "yesterday", "2026-10-01T10:00:00+05:30:15", "2026-10-01Z",
+                "2026-13-01T00:00:00Z", "2026-10-01T25:00:00Z"):
+        r = run("action-count", "--kind", "k", "--since", bad, db=db)
+        assert r.returncode == 2 and "ISO-8601" in r.stderr, (bad, r.stderr)
+    local = ok("action-count", "--kind", "k", "--since", "2026-10-01", db=db)["since"]
+    assert local == datetime(2026, 10, 1).astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
 # --- export -----------------------------------------------------------------------------
 
 

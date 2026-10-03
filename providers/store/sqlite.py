@@ -47,6 +47,7 @@ TITLE_MAX = 1024          # inbox titles
 REF_MAX = 512             # external ids, targets, idempotency keys
 LABEL_MAX = 128           # source, name, kind, agent, trigger, by
 PATH_MAX = 4096           # --out-dir, --db
+INT_MIN, INT_MAX = -2 ** 63, 2 ** 63 - 1  # SQLite's INTEGER; a Python int past it cannot be stored or compared
 
 LIMITS = {"event-next": (1, 1, 100), "runs": (20, 1, 1000), "inbox-list": (100, 1, 1000),
           "actions": (1000, 1, 10000)}  # verb: (default, min, max) for --limit
@@ -187,7 +188,10 @@ caps (UTF-8 bytes; above a cap: exit 2, nothing stored):
   Payload and result files must be UTF-8 JSON. They are stored exactly as given.
 
 output: JSON on stdout; diagnostics on stderr. Times are UTC, ISO-8601 with Z.
-  A --since without an offset is local time.
+  --since takes YYYY-MM-DD, optionally with THH[:MM[:SS[.fraction]]] and then an
+  offset (Z, +HH, +HHMM or +HH:MM); without an offset it is local time. The same
+  forms are read on every Python version; other ISO-8601 forms are refused.
+  Integers are at most {INT_MAX}; a larger one is a usage error (exit 2).
 
 exit codes: 0 success, 1 store error (database locked past the timeout, no
   such id, a lost claim, a conflicting key), 2 usage error, 3 not configured.
@@ -233,20 +237,42 @@ def iso(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
 
 
+# The ISO-8601 forms --since takes: a date, optionally a time (hours, minutes, seconds, a fraction with any number
+# of digits after '.' or ','), and with a time an offset (Z, +HH, +HHMM, +HH:MM). datetime.fromisoformat reads
+# more of them on Python 3.11 than on 3.9, where the runtime runs, so a value is first rewritten into the one
+# form both read; anything else (a week date, the basic form without separators) is refused on both.
+SINCE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})(?:[Tt ](\d{2})(?::(\d{2})(?::(\d{2})(?:[.,](\d+))?)?)?"
+                      r"(?:\s*(?:([Zz])|([+-])(\d{2})(?::?(\d{2}))?))?)?")
+
+
+def normalise_iso(raw: str) -> str:
+    match = SINCE_RE.fullmatch(raw)
+    if not match:
+        raise ValueError("not an ISO-8601 date or time")
+    date, hour, minute, second, fraction, zulu, sign, off_hour, off_minute = match.groups()
+    if hour is None:
+        return date
+    text = f"{date}T{hour}:{minute or '00'}:{second or '00'}"
+    if fraction:
+        text += "." + (fraction + "000000")[:6]
+    if zulu:
+        text += "+00:00"
+    elif sign:
+        text += f"{sign}{off_hour}:{off_minute or '00'}"
+    return text
+
+
 def since_arg(value: str | None, flag: str = "--since") -> str | None:
     """Parse ISO-8601; Z means UTC; a value without offset is local time."""
     if value is None:
         return None
-    raw = value.strip()
-    if raw.endswith(("Z", "z")):
-        raw = raw[:-1] + "+00:00"
     try:
-        parsed = datetime.fromisoformat(raw)
-    except ValueError:
+        parsed = datetime.fromisoformat(normalise_iso(value.strip()))
+        if parsed.tzinfo is None:
+            parsed = parsed.astimezone()
+        return iso(parsed)
+    except (ValueError, OverflowError):
         raise StoreError(f"{flag} is not an ISO-8601 time: {value!r}", EXIT_USAGE) from None
-    if parsed.tzinfo is None:
-        parsed = parsed.astimezone()
-    return iso(parsed)
 
 
 # --- argument checks --------------------------------------------------------------
@@ -291,8 +317,8 @@ def id_arg(value: str, flag: str) -> int:
         number = int(value)
     except (TypeError, ValueError):
         raise StoreError(f"{flag} must be a positive integer", EXIT_USAGE) from None
-    if number < 1:
-        raise StoreError(f"{flag} must be a positive integer", EXIT_USAGE)
+    if not 1 <= number <= INT_MAX:
+        raise StoreError(f"{flag} must be a positive integer up to {INT_MAX}", EXIT_USAGE)
     return number
 
 
@@ -308,6 +334,8 @@ def nullable_number(value: str, flag: str, kind: type) -> int | float | None:
         raise StoreError(f"{flag} must be a number or null", EXIT_USAGE) from None
     if kind is float and not math.isfinite(number):
         raise StoreError(f"{flag} must be finite", EXIT_USAGE)
+    if kind is int and not INT_MIN <= number <= INT_MAX:
+        raise StoreError(f"{flag} is out of range ({INT_MIN} to {INT_MAX})", EXIT_USAGE)
     if flag != "--exit-code" and number < 0:
         raise StoreError(f"{flag} must not be negative", EXIT_USAGE)
     return number
@@ -868,6 +896,9 @@ def main(argv: list[str] | None = None) -> int:
     except StoreError as exc:
         log(f"error: {exc}")
         return exc.code
+    except OverflowError as exc:  # a number past what SQLite or a date can hold, that no check above caught
+        log(f"error: a value is out of range: {exc}")
+        return EXIT_USAGE
     except sqlite3.Error as exc:
         log(f"error: database: {exc}")
         return EXIT_ERROR
