@@ -835,8 +835,9 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
 
 
 def open_item(store: Store, item_id: int) -> dict:
-    for item in store("inbox-list", "--status", "open").get("items", []):
-        if int(item["id"]) == item_id:
+    # By id, not by looking through the list of open items, which the store cuts at its limit (VS12).
+    for item in store("inbox-list", "--id", item_id).get("items", []):
+        if int(item["id"]) == item_id and item.get("status") == "open":
             return item
     raise Fail(f"inbox item {item_id} is not open", 2)
 

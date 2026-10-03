@@ -536,6 +536,23 @@ def test_the_approval_hash_covers_the_target_and_the_key(env):
     assert publisher_calls(env) == []
 
 
+def test_an_item_past_the_inbox_lists_limit_can_be_rejected(env, tmp_path):
+    # VS12: approve and reject looked an item up in "inbox-list --status open", which the store cuts at 100 items,
+    # so the 101st open item could be neither approved nor rejected.
+    assert rt(env, "status")[0] == 0
+    payload = tmp_path / "item.json"
+    payload.write_text("{}")
+    store = [sys.executable, str(env["wb"] / "providers/store/sqlite.py")]
+    db = str(env["data"] / "store.sqlite")
+    for n in range(101):
+        subprocess.run(store + ["inbox-add", "--db", db, "--kind", "note", "--title", f"item {n}", "--payload-file",
+                                str(payload), "--payload-sha256", "0" * 64], capture_output=True, check=True)
+    code, out, err = rt(env, "reject", "--id", "101")
+    assert code == 0 and out["status"] == "rejected", err
+    code, _, err = rt(env, "reject", "--id", "101")
+    assert code == 2 and "is not open" in err
+
+
 def test_not_a_comment_is_done_without_a_run(env):
     set_case(env, [{"id": "m9", "received_at": "2026-09-29T10:09:00Z", "headers": {}}], decision())
     code, out, _ = rt(env, "tick")
