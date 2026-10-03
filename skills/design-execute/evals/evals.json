@@ -30,14 +30,14 @@
     {
       "id": 3,
       "prompt": "Run the documentation page brief in Draftloom. It is a generative design tool, web only: I paste the prompts by hand.",
-      "expected_output": "Assisted mode, because the tool offers no generation interface to agents: one run pack per direction with the direction filled into the prompt and the attachments listed, a results document with every run 'waiting on user', status 'waiting on user', and instructions to the user, per run, on what to paste, what to attach and what to bring back (screenshots at 1440 px and the other required widths, the share link, the exported code); the agent stops instead of claiming results.",
+      "expected_output": "Assisted mode, because the tool offers no generation interface to agents: one run pack per direction with the direction filled into the prompt and the attachments listed, a results document with every run 'waiting on user', status 'waiting on user', and instructions to the user, per run, on what to paste, what to attach and what to bring back (a screenshot at 1440 px, the round-1 width, and the share link; the exported code only for the chosen direction); the agent stops instead of claiming results.",
       "files": ["evals/files/docs-page"],
       "assertions": [
         "The mode is assisted and the reason is stated",
         {"text": "There is one prompt pack per direction", "tags": ["format"]},
         {"text": "Every run is marked waiting on user and the document status matches", "tags": ["format"]},
         {"text": "Neither the reply nor the results document describes a result of a run (a screenshot, a verdict, a link) as if the tool had already produced it", "tags": ["guard"]},
-        "The reply tells the user, per run, what to paste and attach and what to bring back (screenshots at the required widths, the link, the exported code)"
+        "The reply tells the user, per run, what to paste and attach and what to bring back (at least a screenshot at the 1440 px width the brief requires for round 1 and the share link; the exported code is for the chosen direction, so a reply that does not ask for it in round 1 does not fail this)"
       ],
       "grader_files": ["docs/design/briefs/documentation-page.md"]
     },
