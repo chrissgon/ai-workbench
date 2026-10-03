@@ -164,6 +164,22 @@ def test_an_unknown_key_a_wrong_tag_and_a_wrong_assertion_shape_are_listed(tree)
     assert found[0].count("an assertion is a text") == 3
 
 
+def test_a_platforms_case_file_is_read_by_the_same_rules_and_may_name_its_platform(tree):
+    add_skill(tree)
+    write(tree, "skills/eng-demo/evals/platforms/chirp.json", {"skill_name": "eng-demo", "platform": "chirp", "evals": [case(7)]})
+    assert run_skill(tree).warnings == []
+    write(tree, "skills/eng-demo/evals/platforms/toot.json",
+          {"skill_name": "eng-demo", "platform": "chirp", "note": 1, "evals": [case(7, alow_web=True, assertions=["If x, y", "a", "b"])]})
+    report = run_skill(tree)
+    keys, = messages(report, "eval-keys")
+    for part in ("platforms/toot.json unknown top-level key(s) note", "platforms/toot.json platform 'chirp' is not the file's platform 'toot'",
+                 "platforms/toot.json case 7: unknown key(s) alow_web"):
+        assert part in keys
+    assert messages(report, "eval-conditional-assertion")[0].endswith(": platforms/toot.json case 7, assertion 1")
+    write(tree, "skills/eng-demo/evals/evals.json", {"skill_name": "eng-demo", "platform": "chirp", "evals": [case(1), case(2)]})
+    assert "unknown top-level key(s) platform" in messages(run_skill(tree), "eval-keys")[0]  # only a platform's file names one
+
+
 def test_a_missing_or_broken_case_file_is_a_warning(tree):
     write(tree, "skills/eng-demo/SKILL.md", skill_md())
     assert rules(run_skill(tree)) == ["eval-cases-count"]

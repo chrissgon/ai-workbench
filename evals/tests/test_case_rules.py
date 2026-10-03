@@ -106,6 +106,22 @@ def test_every_assertion_of_the_repository_has_the_form_the_rules_give(path):
     assert found == []
 
 
+PLATFORM_CASE_FILES = sorted(REPO.glob("skills/*/evals/platforms/*.json"))
+
+
+@pytest.mark.parametrize("path", PLATFORM_CASE_FILES, ids=lambda p: f"{p.parts[-4]}-{p.stem}")
+def test_every_assertion_of_a_platforms_case_file_has_the_form_the_rules_give(path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    effects = declared_side_effects(path.parents[2])
+    assert data.get("platform", path.stem) == path.stem and (PLATFORMS / f"{path.stem}.md").is_file()
+    found = []
+    for case in data["evals"]:
+        found += [f"case {case.get('id')}: key {k}" for k in sorted(set(case) - set(CASE_KEYS))]
+        for i, assertion in enumerate(case.get("assertions") or [], 1):
+            found += [f"case {case.get('id')}, assertion {i}: {p}" for p in assertion_problems(assertion, effects)]
+    assert found == []
+
+
 @pytest.mark.parametrize("path", CASE_FILES, ids=lambda p: p.parts[-3])
 def test_a_case_names_only_platforms_that_have_a_reference(path):
     found = []

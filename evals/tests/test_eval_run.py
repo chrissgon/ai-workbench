@@ -953,6 +953,82 @@ def test_a_case_gets_the_references_of_the_platforms_it_names_and_only_with_the_
     assert not [f for f in seen(tmp_path, "without_skill") if "/shared/" in f]
 
 
+def platform_file(skill, name="chirp", cases=None, **top):
+    """A platform's case file of the skill, with one case and its fixture under evals/platforms/<platform>/files/."""
+    files = skill / "evals" / "platforms" / name / "files" / "post"
+    files.mkdir(parents=True)
+    (files / "draft.md").write_text("the post\n")
+    data = {"skill_name": skill.name, "platform": name, **top,
+            "evals": cases or [{"id": 7, "prompt": "Publish draft.md.", "files": [f"evals/platforms/{name}/files/post"],
+                                "assertions": ["a"]}]}
+    (skill / "evals" / "platforms" / f"{name}.json").write_text(json.dumps(data))
+
+
+PLATFORM = ["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1", "--platform", "chirp"]
+
+
+def test_a_platform_test_runs_its_cases_with_the_skill_only_and_its_lines_carry_the_platform(tmp_path, monkeypatch, capsys):
+    skill = sees_demo(tmp_path, monkeypatch)
+    (skill / "SKILL.md").write_text('---\nname: demo\nmetadata:\n  version: "0.3"\n---\n' + (skill / "SKILL.md").read_text())
+    platform_file(skill)
+    assert er.main(PLATFORM) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["evidence"]["written"] is True and out["evidence"]["kind"] == "partial" and out["evidence"]["gate"] is None
+    (event, runs), = evidence_of(skill)
+    assert event["kind"] == "partial" and set(event["cases"]) == {"7"} and event["baseline"] == {"7": "none"} and "gate" not in event
+    assert sorted((l["case"], l["variant"], l["model"], l["platform"], l["kind"]) for l in runs) == [
+        (7, "with", "f", "chirp", "partial"), (7, "with", "m", "chirp", "partial")]
+    assert event["cases"]["7"] == er.load_status().case_hashes(str(skill), "chirp")["7"]
+    # With the skill only: no run without it, and the base cases did not run.
+    assert sorted(p.name for p in (tmp_path / "evals-workspace" / "demo" / "iteration-1").glob("eval-*")) == ["eval-7"]
+    assert sorted(p.name for p in (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-7").iterdir()) == [
+        "with_skill", "with_skill.floor"]
+    # The platform's reference and data file are staged as if the case named the platform.
+    run = tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-7" / "with_skill"
+    assert [f for f in (run / "outputs" / "files.txt").read_text().split("\n") if "/shared/" in f] == [
+        "./.h/shared/references/platforms/chirp.json", "./.h/shared/references/platforms/chirp.md",
+        "./.h/shared/references/security.md"]
+    status = er.load_status()
+    assert status.evidence_problems(str(tmp_path)) == ({}, 1)
+    assert status.platform_results(str(skill), {}) == {"chirp": {"f": {"mean": 1.0, "runs": 1}, "m": {"mean": 1.0, "runs": 1}}}
+    assert status.gate_of(str(skill), {})["cause"] == "no full test of the current major version"  # the gate never reads them
+
+
+def test_a_platform_test_is_refused_with_a_baseline_and_needs_its_file_and_its_reference(tmp_path, monkeypatch, capsys):
+    skill = sees_demo(tmp_path, monkeypatch)
+    for extra in (["--baseline"], ["--baseline-on", "f"], ["--only", "without"], ["--ablate", "x"]):
+        with pytest.raises(SystemExit) as e:
+            er.main(PLATFORM + extra)
+        assert e.value.code == 2
+    with pytest.raises(SystemExit) as e:
+        er.main(PLATFORM)  # no case file for that platform
+    assert e.value.code == 2 and "no evals at skills/demo/evals/platforms/chirp.json" in capsys.readouterr().err
+    platform_file(skill, "other", platform="chirp")  # a file that names another platform than its own
+    with pytest.raises(SystemExit) as e:
+        er.main(PLATFORM[:-1] + ["other"])
+    assert e.value.code == 2 and "names the platform 'chirp'" in capsys.readouterr().err
+    platform_file(skill, "toot")  # a platform with no reference
+    with pytest.raises(SystemExit) as e:
+        er.main(PLATFORM[:-1] + ["toot"])
+    assert e.value.code == 2 and "shared/references/platforms/toot.md does not exist" in capsys.readouterr().err
+    assert not (tmp_path / "evals-workspace").exists()
+
+
+def test_check_cases_checks_every_platforms_case_file_too(tmp_path, monkeypatch, capsys):
+    skill = sees_demo(tmp_path, monkeypatch)
+    platform_file(skill)
+    assert er.main(["--skill", "demo", "--check-cases"]) == 0
+    assert json.loads(capsys.readouterr().out)["platforms"] == ["chirp"]
+    platform_file(skill, "toot", cases=[{"id": 1, "prompt": "Read notes/missing.md.", "assertions": ["a"]}])
+    assert er.main(["--skill", "demo", "--check-cases"]) == 2
+    errors = json.loads(capsys.readouterr().out)["errors"]
+    assert errors == ["platforms/toot.json the platform 'toot' has no reference: shared/references/platforms/toot.md does not exist",
+                      "platforms/toot.json case 1: the prompt cites 'notes/missing.md', which is not in the case folder: ship it "
+                      "under \"files\" at that path, or list it in \"absent_on_purpose\" when the case tests a missing input"]
+    assert er.main(["--skill", "demo", "--check-cases", "--platform", "chirp"]) == 0  # one platform's file alone
+    assert json.loads(capsys.readouterr().out) == {"skill": "demo", "cases": 1, "errors": [], "unchecked": [], "platforms": ["chirp"]}
+
+
 def test_preflight_reports_a_platform_without_a_reference(tmp_path, monkeypatch):
     errors, _ = preflight_of(tmp_path, monkeypatch, {"platforms": ["chirp"]})
     assert errors == ["case 1: platforms entry 'chirp' has no reference: shared/references/platforms/chirp.md does not exist"]

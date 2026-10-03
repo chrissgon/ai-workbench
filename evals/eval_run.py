@@ -9,6 +9,7 @@ Usage:
                       [--runs <n>] [--jobs 4] [--timeout <seconds>] [--max-cost-usd <amount>] [--no-grade]
                       [--retries <n>] [--early-end-rate 0.15] [--scratch]
                       [--dry-run] [--check-cases [--with-setup]]
+  python3 eval_run.py --skill <name> --platform <platform> [--cases <id>,...] [the model, run and check options above]
   python3 eval_run.py --resume <event folder> [--jobs 4]
   python3 eval_run.py --close <event folder>
   python3 eval_run.py --routing --pack <name> (--skill <name> | --prompts <file>) [--tier strong|floor] [--jobs 4]
@@ -44,6 +45,17 @@ An interrupted event is resumed (--resume). A full test that is abandoned instea
 that version, where the next full test adds its own. While an event of a skill that may write evidence is
 open (neither complete nor closed), the runner starts no new such event of that skill: a test that is going
 badly cannot be interrupted, dropped and drawn again. A trial (below) is never open in that sense.
+
+Tests per platform (--platform <platform>; the plan's decision 14c). The cases of one social platform live in
+skills/<name>/evals/platforms/<platform>.json (its top-level "platform", when present, names the same
+platform), their fixtures under skills/<name>/evals/platforms/<platform>/files/. `--platform <platform>` runs
+that file's cases (all, or those --cases names) as a partial test, with the skill only, on every model the
+event runs: no baseline, and nothing is refused for want of a full test or of a base result. Each case's run
+gets the platform's reference and data file staged beside the skill, as if the case named the platform in
+"platforms". Its run lines carry "platform": <platform>; the gate and the score never read them, and
+`eval_status.py status` shows their mean and number of runs per platform and model, and no score.
+--check-cases checks evals/evals.json and every platform's case file of the skill (with --platform, that file
+only), and a platform's file whose reference shared/references/platforms/<platform>.md is missing.
 
 The routing mode (--routing). A description decides when a skill loads, and a skill is never alone once a
 pack is installed. --routing --pack <name> installs the whole pack into each run's folder, as an installer
@@ -512,13 +524,20 @@ def settings_in(cwd, names):
     return None
 
 
-def stage_run(case_dir, eval_cfg, variant_dir, deps, case):
+def case_platforms(case, platform=None):
+    """The platforms whose reference a run of the case is given: the case's own "platforms" and, for a case of a
+    platform's case file (--platform), that platform."""
+    names = [n for n in case.get("platforms") or [] if isinstance(n, str)]
+    return sorted(set(names) | ({platform} if platform else set()))
+
+
+def stage_run(case_dir, eval_cfg, variant_dir, deps, case, platform=None):
     """Stage what one run sees of the skills, into its case folder. Returns the paths staged, relative to the
     case folder, and the manifest of scripts/stage_skills.py.
 
     The skill under test only when the variant has it (variant_dir); the dependency skills always. The shared
-    references the skill under test cites, and the references of the platforms the case names, only with the
-    skill: a run without it gets no shared reference, even one that brings dependency skills."""
+    references the skill under test cites, and the references of the platforms the case names (case_platforms),
+    only with the skill: a run without it gets no shared reference, even one that brings dependency skills."""
     skills = ([variant_dir] if variant_dir else []) + list(deps)
     if not skills:
         return [], None
@@ -526,7 +545,7 @@ def stage_run(case_dir, eval_cfg, variant_dir, deps, case):
     skills_dir = os.path.join(case_dir, *eval_cfg["skills_dir"].split("/"))
     manifest = stage.stage(skills, skills_dir, root=ROOT, references="cited" if variant_dir else "none",
                            cite_from=[variant_dir] if variant_dir else [],
-                           platforms=(case.get("platforms") or []) if variant_dir else [])
+                           platforms=case_platforms(case, platform) if variant_dir else [])
     staged = [os.path.relpath(os.path.join(skills_dir, name), case_dir) for name in manifest["skills"]]
     if manifest["shared_dir"]:
         staged.append(os.path.relpath(manifest["shared_dir"], case_dir))
@@ -567,7 +586,7 @@ def parse(argv):
             "runs": None, "jobs": 4, "timeout": None, "max_cost": None, "check_cases": False, "retries": None,
             "early_rate": 0.15, "regrade": None, "scratch": False, "resume": None, "unpause": False, "at": None,
             "baseline": False, "baseline_on": [], "close": None, "with_setup": False,
-            "routing": False, "pack": None, "prompts": None, "tier": "strong"}
+            "routing": False, "pack": None, "prompts": None, "tier": "strong", "platform": None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -585,6 +604,7 @@ def parse(argv):
         elif a == "--cases": opts["cases"] += [c.strip() for c in val().split(",") if c.strip()]; i += 2
         elif a == "--baseline": opts["baseline"] = True; i += 1
         elif a == "--baseline-on": opts["baseline_on"].append(val()); i += 2
+        elif a == "--platform": opts["platform"] = val(); i += 2
         elif a == "--close": opts["close"] = val(); i += 2
         elif a == "--threshold": opts["threshold"] = float(val()); i += 2
         elif a == "--only": opts["only"] = val(); i += 2
@@ -664,6 +684,13 @@ def parse(argv):
             die("--tier is strong or floor (and floor needs a floor model).")
     elif opts["pack"] or opts["prompts"] or opts["tier"] != "strong":
         die("--pack, --prompts and --tier go with --routing.")
+    if opts["platform"] is not None:
+        if not PLATFORM_NAME_RE.match(opts["platform"]):
+            die(f"--platform {opts['platform']!r} is not a platform name (lowercase, hyphens).")
+        if opts["routing"] or opts["regrade"] is not None:
+            die("--platform goes with --skill: it runs the cases of one platform's case file.")
+        if opts["baseline"] or opts["baseline_on"] or opts["only"] in ("without", "ablated") or opts["ablate"]:
+            die("--platform runs a platform's cases with the skill only, as a partial test: no baseline, no ablation.")
     if opts["with_setup"] and not opts["check_cases"]:
         die("--with-setup goes with --check-cases: it runs the cases' setup commands in the eval container.")
     if opts["at"] is not None and not opts["unpause"]:
@@ -754,12 +781,37 @@ def resolve_pass_env(names):
     return filled
 
 
-def load_evals(skill):
-    p = os.path.join(ROOT, "skills", skill, "evals", "evals.json")
+PLATFORM_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def platform_case_names(skill):
+    """The platforms that have a case file for the skill: skills/<skill>/evals/platforms/<platform>.json."""
+    folder = os.path.join(ROOT, "skills", skill, "evals", "platforms")
+    if not os.path.isdir(folder):
+        return []
+    return sorted(n[:-len(".json")] for n in os.listdir(folder)
+                  if n.endswith(".json") and os.path.isfile(os.path.join(folder, n)))
+
+
+def load_evals(skill, platform=None):
+    """The skill's case file: evals/evals.json, or, with platform, that platform's case file,
+    evals/platforms/<platform>.json, whose top-level "platform", when it has one, names the same platform."""
+    rel = ("platforms", platform + ".json") if platform else ("evals.json",)
+    p = os.path.join(ROOT, "skills", skill, "evals", *rel)
     if not os.path.isfile(p):
         die(f"no evals at {os.path.relpath(p, ROOT)}", 2)
     with open(p, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if platform and isinstance(data, dict) and data.get("platform", platform) != platform:
+        die(f"{os.path.relpath(p, ROOT)} names the platform {data.get('platform')!r}: a platform's case file names its own.", 2)
+    return data
+
+
+def platform_problems(platform):
+    """Why a platform's case file cannot run: its reference is missing. [] when it has one."""
+    if not os.path.isfile(os.path.join(ROOT, "shared", "references", "platforms", platform + ".md")):
+        return [f"the platform {platform!r} has no reference: shared/references/platforms/{platform}.md does not exist"]
+    return []
 
 
 # Credentials in the environment would sign gh, npm or git hosts back in.
@@ -1000,18 +1052,20 @@ def declared_outputs(skill_dir):
     return [x.strip()[1:].strip().strip("\"'") for x in m.group(1).splitlines() if x.strip()] if m else []
 
 
-def preflight(skill_dir, cases, sources, setup=True, gate=None, warnings=None):
+def preflight(skill_dir, cases, sources, setup=True, gate=None, warnings=None, platform=None):
     """Check every case before a model sees it. Returns (errors, unchecked): one line per problem.
 
     setup=False (--dry-run) runs no setup command, so cases that have one are not checked against their folder.
     gate is the loaded gate configuration: a case that sets "allow_web" must be among its "web_cases". warnings,
-    a list, receives the problems of TRANSITIONAL rules instead of errors (see TRANSITIONAL)."""
+    a list, receives the problems of TRANSITIONAL rules instead of errors (see TRANSITIONAL). platform names the
+    platform whose case file the cases come from (None: evals/evals.json)."""
     errors, unchecked = [], []
     skill = os.path.basename(os.path.normpath(skill_dir))
     status = load_status()
     top_web = None
     try:
-        with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
+        with open(os.path.join(skill_dir, "evals", *(("platforms", platform + ".json") if platform else ("evals.json",))),
+                  encoding="utf-8") as f:
             top_web = json.load(f).get("allow_web")
     except (OSError, ValueError, AttributeError):
         pass
@@ -2167,25 +2221,39 @@ def routing(o):
 
 
 def check_cases_only(o):
-    """--check-cases: the preflight alone. Prints {"skill", "cases", "errors", "unchecked"}; exit 2 on errors."""
+    """--check-cases: the preflight alone, on evals/evals.json and on every platform's case file of the skill
+    (with --platform, on that platform's file only). Prints {"skill", "cases", "errors", "unchecked"[,
+    "platforms"][, "warnings"]}: the problems of a platform's file start with platforms/<name>.json. Exit 2 on
+    errors. --cases filters the file the command names (evals/evals.json, or the --platform file)."""
     skill_dir = os.path.join(ROOT, "skills", o["skill"])
-    cases = load_evals(o["skill"]).get("evals") or []
-    if o["cases"]:
-        cases = [c for c in cases if str(c.get("id")) in o["cases"]]
-    if not cases:
-        die("no matching eval cases.")
-    refuse_allow_commands(load_evals(o["skill"]), cases)
-    # A case's setup commands run only in the eval container, which a real run starts; this static check
-    # needs no container, so such a case is listed as unchecked here and checked before the first model call.
-    warnings = []
-    errors, unchecked = preflight(skill_dir, cases, {c["id"]: case_files(skill_dir, c) for c in cases}, setup=o["with_setup"],
-                                  gate=load_status().load_gate(ROOT), warnings=warnings)
+    gate = load_status().load_gate(ROOT)
+    files = [o["platform"]] if o["platform"] else [None] + platform_case_names(o["skill"])
+    errors, unchecked, warnings, total = [], [], [], 0
+    for platform in files:
+        data = load_evals(o["skill"], platform)
+        cases = data.get("evals") or []
+        if platform == files[0] and o["cases"]:
+            cases = [c for c in cases if str(c.get("id")) in o["cases"]]
+        if not cases and platform == files[0]:
+            die("no matching eval cases.")
+        refuse_allow_commands(data, cases)
+        label = f"platforms/{platform}.json " if platform else ""
+        # A case's setup commands run only in the eval container, which a real run starts; this static check
+        # needs no container, so such a case is listed as unchecked here and checked before the first model call.
+        found = []
+        errs, uncheck = preflight(skill_dir, cases, {c["id"]: case_files(skill_dir, c) for c in cases}, setup=o["with_setup"],
+                                  gate=gate, warnings=found, platform=platform)
+        errors += [label + line for line in (platform_problems(platform) if platform else []) + errs]
+        unchecked += [label + line for line in uncheck]
+        warnings += [label + line for line in found]
+        total += len(cases)
     for line in errors:
         print(f"PREFLIGHT {o['skill']} {line}", file=sys.stderr)
     for line in warnings:
         print(f"PREFLIGHT WARNING {o['skill']} {line} (a real run refuses it)", file=sys.stderr)
-    print(json.dumps({"skill": o["skill"], "cases": len(cases), "errors": errors, "unchecked": unchecked,
-                      **({"warnings": warnings} if warnings else {})}, indent=2))
+    platforms = [p for p in files if p]
+    print(json.dumps({"skill": o["skill"], "cases": total, "errors": errors, "unchecked": unchecked,
+                      **({"platforms": platforms} if platforms else {}), **({"warnings": warnings} if warnings else {})}, indent=2))
     return 2 if errors else 0
 
 
@@ -2665,7 +2733,7 @@ def run(argv):
     gate = status.load_gate(ROOT)
     control = status.event_config(gate)
     skill_dir = os.path.join(ROOT, "skills", o["skill"])
-    evals = load_evals(o["skill"])
+    evals = load_evals(o["skill"], o.get("platform"))
     cases = evals.get("evals") or []
     if o["cases"]:
         cases = [c for c in cases if str(c.get("id")) in o["cases"]]
@@ -2717,7 +2785,10 @@ def run(argv):
     settings = set() if o["dry"] else harness_settings()
     sources = {c["id"]: case_files(skill_dir, c) for c in cases}
     # Before anything is spent or written: a case that cites a file it does not ship measures nothing.
-    problems, unchecked = preflight(skill_dir, cases, sources, setup=not o["dry"], gate=gate) if resumed is None else ([], [])
+    problems, unchecked = (preflight(skill_dir, cases, sources, setup=not o["dry"], gate=gate, platform=o.get("platform"))
+                           if resumed is None else ([], []))
+    if o.get("platform") and resumed is None:
+        problems = platform_problems(o["platform"]) + problems
     for line in problems:
         print(f"PREFLIGHT {o['skill']} {line}", file=sys.stderr)
     if problems and not o["dry"]:
@@ -2749,7 +2820,9 @@ def run(argv):
     def baseline_tiers(case):
         """Where the case runs without the skill in this event: on the reference model when its baseline is not in
         force in a full test, or when --baseline asks; on another model only with --baseline-on (and --only
-        without, a trial, runs it on every model of the event)."""
+        without, a trial, runs it on every model of the event). A platform's cases run with the skill only."""
+        if o.get("platform"):
+            return []
         if o["only"]:
             return tier_names if o["only"] == "without" else []
         wanted = o["baseline"] or (not o["cases"] and in_force.get(str(case["id"]), 0) < o["runs"])
@@ -2780,9 +2853,10 @@ def run(argv):
     all_cases = evals.get("evals") or []
     hashes = {str(c["id"]): status.case_hash(skill_dir, c, evals.get("allow_web") is True) for c in cases}
     # An event is a full test when it runs every current case with the skill on the reference model, graded:
-    # `--skill <name>` without --cases. --cases makes a partial test, even of every case.
-    kind = ("full" if not o["cases"] and len(cases) == len(all_cases) and "with_skill" in with_variants
-            and "strong" in tier_names and o["grade"] else "partial")
+    # `--skill <name>` without --cases. --cases makes a partial test, even of every case; so does --platform, whose
+    # cases never enter the gate or the score.
+    kind = ("full" if not o["cases"] and not o.get("platform") and len(cases) == len(all_cases)
+            and "with_skill" in with_variants and "strong" in tier_names and o["grade"] else "partial")
     if resumed is None and not scratch:
         # No new event of a skill while one of its events that may write evidence is open.
         for other in sorted(glob.glob(os.path.join(ROOT, "evals-workspace", o["skill"], "iteration-*", "event.json"))):
@@ -2823,7 +2897,7 @@ def run(argv):
         references = []
         if with_skill:
             stage = load_stage()
-            rels = set(stage.cited_references(skill_dir, ROOT)) | set(stage.platform_references(case.get("platforms") or [], ROOT))
+            rels = set(stage.cited_references(skill_dir, ROOT)) | set(stage.platform_references(case_platforms(case, o.get("platform")), ROOT))
             references = [(rel, os.path.join(ROOT, "shared", "references", *rel.split("/"))) for rel in sorted(rels)]
         return status.context_hash(deps[case["id"]], references)
     contexts = {(c["id"], with_skill): context_of(c, with_skill) for c in cases for with_skill in (True, False)}
@@ -2894,7 +2968,7 @@ def run(argv):
                     why = (f"the case folder holds {carried}: a fixture or setup must not carry harness settings"
                            if carried else None)
                     if not why:
-                        staged, _ = stage_run(case_dir, eval_for[tier], variant_dir, deps[c["id"]], c)
+                        staged, _ = stage_run(case_dir, eval_for[tier], variant_dir, deps[c["id"]], c, o.get("platform"))
                         pp = os.path.join(root, "prompt.md")
                         with open(pp, "w", encoding="utf-8") as f:
                             f.write(c["prompt"])
@@ -3164,6 +3238,7 @@ def run(argv):
                           "date": row.get("date") or bench["date"], "measurement_version": measurement_version,
                           "measurement_sha256": fingerprint, "case": job[0]["id"], "case_sha256": hashes[str(job[0]["id"])],
                           **({"context_sha256": context} if context else {}),
+                          **({"platform": o["platform"]} if o.get("platform") else {}),
                           "variant": variant, "outcome": row.get("outcome", "graded"), "score": row["pass_rate"],
                           "results": row["results"]})
     line_counts = {}

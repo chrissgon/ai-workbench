@@ -58,6 +58,12 @@ as the history of the first round; the status below still reads them until the b
    "outcome": "graded"|"timeout", "score", "results": [0|1, ...][, "context_sha256"][, "platform"]
    [, "guard_failed": [positions]]}
 
+A run line with "platform" is a run of a case of that platform's case file, skills/<name>/evals/platforms/
+<platform>.json (eval_run.py --platform; the plan's decision 14c): it belongs to a partial test and to a run
+with the skill. Such lines never enter the gate or a score: `status` shows, per platform and model, their mean
+and their number of runs ("platforms" in a skill's row), counting the lines whose case is still in that file
+with the same hash, at or above the measurement floor, of the current major version.
+
 A model id in a line is an id of the gate file's "models" ({id: [aliases]}): an alias is written as its id,
 anything else as "unknown", so that one model never falls into two rows and a private model name never enters
 the repository. Without that key the known ids are the configured strong model, floor model and grader.
@@ -99,10 +105,12 @@ Status of a skill:
              or floor model than the configured ones, or the skill folder changed since
 
 Commands:
-  status     prints {"skills": [{"skill", "status", "date", "scores", "reason"}], "counts",
+  status     prints {"skills": [{"skill", "status", "date", "scores", "reason"[, "platforms": {platform: {model id:
+             {"mean", "runs"}}}]}], "counts",
              "gate": {"floor_model", "threshold", "strong_model", "grader", "strong_tolerance", "measurement_version"}}
              (the configured gate; null values without the file).
-  hash       prints the content hash of one skill, its version and the hash of each of its cases.
+  hash       prints the content hash of one skill, its version and the hash of each of its cases (and of each case of
+             its platforms' case files, "platform_cases").
   evidence   validates the evidence files: every skill's, one skill's (--skill) or one file (--file <path>,
              which may be in a run folder's scratch tree). Prints {"files", "problems": {path: [...]}};
              exit 1 when a file is not valid.
@@ -376,16 +384,26 @@ def case_hash(skill_dir, case, top_allow_web=False):
     return h.hexdigest()
 
 
-def case_hashes(skill_dir):
-    """{case id as text: hash} of the skill's current cases; {} when it has no readable case file."""
+def case_hashes(skill_dir, platform=None):
+    """{case id as text: hash} of the skill's current cases, those of evals/evals.json or, with platform, those of
+    that platform's case file (evals/platforms/<platform>.json); {} when there is no readable case file."""
+    rel = ("platforms", platform + ".json") if platform else ("evals.json",)
     try:
-        with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
+        with open(os.path.join(skill_dir, "evals", *rel), encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return {}
     cases = data.get("evals") if isinstance(data, dict) else None
     return {str(c.get("id")): case_hash(skill_dir, c, data.get("allow_web") is True)
             for c in cases or [] if isinstance(c, dict)}
+
+
+def platform_names(skill_dir):
+    """The platforms that have a case file for the skill (evals/platforms/<platform>.json): the plan's decision 14c."""
+    folder = os.path.join(skill_dir, "evals", "platforms")
+    if not os.path.isdir(folder):
+        return []
+    return sorted(n[:-len(".json")] for n in os.listdir(folder) if n.endswith(".json") and NAME_RE.fullmatch(n[:-len(".json")]))
 
 
 def context_hash(dependency_dirs, references):
@@ -656,6 +674,8 @@ def run_line_problems(line, event=None, models=None):
         out.append("a timeout has score 0 and results all 0")
     if "platform" in line and not _is(NAME_RE, line["platform"]):
         bad("platform", "a platform name")
+    elif "platform" in line and (line["kind"] != "partial" or line["variant"] != "with"):
+        out.append("a line of a platform's case runs in a partial test, with the skill only")
     if "guard_failed" in line:
         failed = line["guard_failed"]
         if not (isinstance(failed, list) and failed and all(_count(v, 1) for v in failed) and len(set(failed)) == len(failed)
@@ -765,6 +785,32 @@ def skill_evidence(skill_dir):
     return found
 
 
+def base_lines(runs):
+    """The run lines of the cases of evals/evals.json: a line of a platform's case ("platform") enters neither the
+    gate nor the score (the plan's decision 14c)."""
+    return [line for line in runs if "platform" not in line]
+
+
+def platform_results(skill_dir, cfg, events=None):
+    """{platform: {model id: {"mean", "runs"}}} of the lines of the platforms' cases with the skill: a mean and a
+    number of runs, never a score (decision 14c). A line counts when its case is still in that platform's case
+    file with the same hash, its measurement version is at or above the floor and its major version is the
+    skill's current one."""
+    floor, version = cfg.get("measurement_floor", 1), skill_version(skill_dir)
+    major = version.split(".")[0] if version else None
+    hashes = {name: case_hashes(skill_dir, name) for name in platform_names(skill_dir)}
+    scores = {}
+    for _, runs in skill_evidence(skill_dir) if events is None else events:
+        for line in runs:
+            name = line.get("platform")
+            if (name is None or line["variant"] != "with" or hashes.get(name, {}).get(str(line["case"])) != line["case_sha256"]
+                    or line["measurement_version"] < floor or str(line["version"]).split(".")[0] != major):
+                continue
+            scores.setdefault(name, {}).setdefault(line["model"], []).append(line["score"])
+    return {name: {model: {"mean": sum(v) / len(v), "runs": len(v)} for model, v in sorted(by.items())}
+            for name, by in sorted(scores.items())}
+
+
 def epochs(cfg):
     """The epochs of a gate configuration: [{"date", "models", "skills", "cause"}]; models and skills are lists or
     "all". The key is optional: without it there is none."""
@@ -793,7 +839,7 @@ def baseline_lines(skill_dir, cfg, events=None):
     current, ref, floor = case_hashes(skill_dir), reference_model(cfg), cfg.get("measurement_floor", 1)
     found = {}
     for _, runs in skill_evidence(skill_dir) if events is None else events:
-        for line in runs:
+        for line in base_lines(runs):
             cid = str(line["case"])
             if (line["variant"] == "without" and (ref is None or line["model"] == ref) and current.get(cid) == line["case_sha256"]
                     and line["measurement_version"] >= floor and not epoch_after(cfg, skill, line["model"], line["date"])):
@@ -805,7 +851,7 @@ def gate_of(skill_dir, cfg, extra=()):
     """The gate of a skill from its lab evidence and the events in extra (the event the runner is ending, whose
     file is not in the skill yet), by the rule of the model's section 2 (see the module's help)."""
     skill = os.path.basename(os.path.normpath(skill_dir))
-    events = sorted(skill_evidence(skill_dir) + list(extra), key=lambda e: e[0]["test"])
+    events = sorted(((e, base_lines(runs)) for e, runs in skill_evidence(skill_dir) + list(extra)), key=lambda e: e[0]["test"])
     current, version = case_hashes(skill_dir), skill_version(skill_dir)
     ref, floor = reference_model(cfg), cfg.get("measurement_floor", 1)
     threshold, tolerance = cfg.get("threshold", 0.8), cfg.get("strong_tolerance", 0)
@@ -998,6 +1044,10 @@ def all_status(root=ROOT, only=None):
     names = [only] if only else skill_names(root)
     config = load_gate(root)
     rows = [skill_status(os.path.join(root, "skills", n), config) for n in names]
+    for row in rows:  # the platforms' cases: a mean and a number of runs per platform and model, never a score
+        found = platform_results(os.path.join(root, "skills", row["skill"]), config)
+        if found:
+            row["platforms"] = found
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}
     return {"skills": rows, "counts": counts,
             "gate": {k: config.get(k) for k in ("floor_model", "threshold", "strong_model", "grader", "strong_tolerance",
@@ -1070,8 +1120,9 @@ def main(argv, root=None):
         if not skill:
             die("hash needs --skill <name>.")
         skill_dir = os.path.join(root, "skills", skill)
+        platforms = {name: case_hashes(skill_dir, name) for name in platform_names(skill_dir)}
         print(json.dumps({"skill": skill, "content_sha256": content_hash(skill_dir), "version": skill_version(skill_dir),
-                          "cases": case_hashes(skill_dir)}, indent=2))
+                          "cases": case_hashes(skill_dir), **({"platform_cases": platforms} if platforms else {})}, indent=2))
         return 0
     if cmd == "evidence":
         if opts.get("file"):

@@ -41,6 +41,9 @@ Checks every skill under skills/ and every agent under agents/:
     whose status is `stale` (the folder changed since the recorded pass) or `draft` (no passing, complete
     record) are reported as warnings, one line per status, and are errors with --strict; evals/eval-gate.json,
     the gate's configuration (models, adapters, threshold), has its fields
+  - eval-cases: every skill's cases, those of evals/evals.json and those of each platform's case file
+    (evals/platforms/<platform>.json, whose platform must have its reference), pass the runner's preflight
+    (python3 evals/eval_run.py --skill <name> --check-cases; no model call)
   - scripts/security_scan.py finds no secret, hidden text or unsafe script pattern (its errors
     and warnings are reported here as they are there)
 
@@ -77,7 +80,8 @@ They say what a skill or its cases still have to change; none reads a skill's sc
   - [description-length] the description has at most 900 characters (every session loads every description)
   - [skill-tokens] SKILL.md has at most about 5,000 tokens (characters divided by 4)
   - [eval-cases-count] evals/evals.json holds at least two cases
-  - [eval-keys] evals/evals.json has known keys only (top level: skill_name, evals, allow_web; a case: id,
+  - [eval-keys] evals/evals.json, and each platform's case file evals/platforms/<platform>.json (which may also
+    carry "platform", its own name), has known keys only (top level: skill_name, evals, allow_web; a case: id,
     prompt, expected_output, files, assertions, grader_files, skills, setup, allow_web, workbench_files,
     absent_on_purpose, platforms, tags; an assertion is a text, or an object with `text` and `tags`, each
     tag being guard, guard:<effect> or format); skill_name equals the folder; every case has an id of its own
@@ -540,28 +544,56 @@ def assertion_text(a):
     return a if isinstance(a, str) else str(a.get("text") or "") if isinstance(a, dict) else ""
 
 
+def platform_case_files(name, root=ROOT):
+    """{platform: path} of a skill's platform case files, skills/<name>/evals/platforms/<platform>.json."""
+    folder = os.path.join(root, "skills", name, "evals", "platforms")
+    found = sorted(f for f in os.listdir(folder) if f.endswith(".json")) if os.path.isdir(folder) else []
+    return {f[:-len(".json")]: os.path.join(folder, f) for f in found}
+
+
 def check_evals(name, report, root=ROOT):
-    """The warning rules on skills/<name>/evals/evals.json and on the case fixtures beside it."""
+    """The warning rules on skills/<name>/evals/evals.json, on each platform's case file of the skill
+    (evals/platforms/<platform>.json, whose findings start with its file name) and on the case fixtures."""
     where = f"skills/{name}"
     path = os.path.join(root, "skills", name, "evals", "evals.json")
     if not os.path.isfile(path):
         report.warn(where, f"no evals/evals.json; a skill has at least {MIN_CASES} cases", "eval-cases-count")
         return
-    try:
-        with open(path, encoding="utf-8") as f:
-            data = json.load(f)
-    except (OSError, ValueError) as e:
-        report.warn(where, f"evals/evals.json is not valid JSON: {e}", "eval-keys")
-        return
-    if not isinstance(data, dict):
-        report.warn(where, "evals/evals.json must be an object with skill_name and evals", "eval-keys")
-        return
-    cases = data.get("evals")
-    cases = [c for c in cases if isinstance(c, dict)] if isinstance(cases, list) else []
     keys, few, conditional, is_run, named = [], [], [], [], []
-    extra = sorted(set(data) - EVALS_KEYS)
+    base_cases = None
+    for platform, file_path in [(None, path)] + sorted(platform_case_files(name, root).items()):
+        rel = f"evals/platforms/{platform}.json" if platform else "evals/evals.json"
+        label = f"platforms/{platform}.json " if platform else ""
+        try:
+            with open(file_path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as e:
+            report.warn(where, f"{rel} is not valid JSON: {e}", "eval-keys")
+            continue
+        if not isinstance(data, dict):
+            report.warn(where, f"{rel} must be an object with skill_name and evals", "eval-keys")
+            continue
+        cases = data.get("evals")
+        cases = [c for c in cases if isinstance(c, dict)] if isinstance(cases, list) else []
+        if platform is None:
+            base_cases = cases
+        found = case_file_findings(name, data, cases, platform)
+        for into, part in zip((keys, few, conditional, is_run, named), found):
+            into += [label + item for item in part]
+    if base_cases is None:
+        return
+    report_case_findings(name, report, root, base_cases, keys, few, conditional, is_run, named)
+
+
+def case_file_findings(name, data, cases, platform=None):
+    """(keys, few, conditional, is_run, named): what the warning rules find in one case file. A platform's
+    case file has one more top-level key, "platform", which names its own platform."""
+    keys, few, conditional, is_run, named = [], [], [], [], []
+    extra = sorted(set(data) - EVALS_KEYS - ({"platform"} if platform else set()))
     if extra:
         keys.append(f"unknown top-level key(s) {', '.join(extra)}")
+    if platform and data.get("platform", platform) != platform:
+        keys.append(f"platform {data.get('platform')!r} is not the file's platform {platform!r}")
     if data.get("skill_name") != name:
         keys.append(f"skill_name {data.get('skill_name')!r} is not the folder name")
     if not isinstance(data.get("evals"), list) or len(cases) != len(data["evals"]):
@@ -601,10 +633,18 @@ def check_evals(name, report, root=ROOT):
                 is_run.append(f"case {cid}, assertion {n}")
         if isinstance(c.get("prompt"), str) and re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", c["prompt"]):
             named.append(f"case {cid}")
+    return keys, few, conditional, is_run, named
+
+
+def report_case_findings(name, report, root, cases, keys, few, conditional, is_run, named):
+    """Report what the warning rules found in a skill's case files (cases: those of evals/evals.json), and look
+    for AI products and design tools in its cases and fixtures."""
+    where = f"skills/{name}"
+    path = os.path.join(root, "skills", name, "evals", "evals.json")
     if len(cases) < MIN_CASES:
         report.warn(where, f"{len(cases)} case(s) in evals/evals.json; a skill has at least {MIN_CASES}", "eval-cases-count")
     for found, rule, text in (
-            (keys, "eval-keys", "evals/evals.json: {}"),
+            (keys, "eval-keys", "case files (evals/evals.json, evals/platforms/<platform>.json): {}"),
             (few, "eval-assertions-count", "fewer than %d assertions: {}" % MIN_ASSERTIONS),
             (conditional, "eval-conditional-assertion", "an assertion that starts with \"If\" holds whenever its "
              "condition is false; state what the output shows: {}"),

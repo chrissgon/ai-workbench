@@ -632,7 +632,7 @@ def test_a_well_formed_evidence_file_is_valid_and_changes_no_status(root, capsys
     path = evidence(root, [event_line(), run_line(), run_line(variant="without", score=0.0, results=[0, 0]),
                            run_line(model="f-model", adapter="fh", case=2, case_sha256=H["b"], context_sha256=H["c"], score=1.0, results=[1, 1]),
                            run_line(outcome="timeout", score=0, results=[0, 0]),
-                           run_line(guard_failed=[2], platform="chirp")])
+                           run_line(guard_failed=[2])])
     assert es.evidence_file_problems(str(path), str(root)) == []
     assert es.evidence_problems(str(root)) == ({}, 1) and es.main(["evidence"], root=str(root)) == 0
     assert json.loads(capsys.readouterr().out) == {"files": 1, "problems": {}}
@@ -862,3 +862,49 @@ def test_the_gate_command_prints_it(root, capsys):
     with pytest.raises(SystemExit) as e:
         es.main(["gate"], root=str(root))
     assert e.value.code == 2
+
+
+# --- the platforms' cases (the plan's decision 14c, item B7a) ------------------------------------------
+
+def platform_cases(root, name="chirp", cases=None):
+    folder = root / "skills" / "core-demo" / "evals" / "platforms"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name}.json").write_text(json.dumps({"skill_name": "core-demo", "platform": name,
+                                                     "evals": cases or [{"id": 7, "prompt": "post it", "assertions": ["a", "b"]}]}))
+    return es.case_hashes(str(root / "skills" / "core-demo"), name)
+
+
+def test_a_line_of_a_platforms_case_belongs_to_a_partial_test_with_the_skill(root):
+    configure(root)
+    assert es.run_line_problems(run_line(kind="partial", platform="chirp")) == []
+    assert "a line of a platform's case runs in a partial test" in es.run_line_problems(run_line(platform="chirp"))[0]
+    assert "a line of a platform's case runs in a partial test" in es.run_line_problems(
+        run_line(kind="partial", variant="without", platform="chirp"))[0]
+    assert "platform must be a platform name" in es.run_line_problems(run_line(kind="partial", platform="Chirp"))[0]
+    path = evidence(root, [event_line(kind="partial", gate=DROP), run_line(kind="partial", platform="chirp")])
+    assert es.evidence_file_problems(str(path), str(root)) == []
+
+
+def test_status_shows_a_mean_and_runs_per_platform_and_model_and_the_gate_never_reads_them(root, capsys):
+    skill = root / "skills" / "core-demo"
+    skill_dir, cfg = gate_tree(root, [(T1, "full", "1.2.0", "2030-01-01", True, FULL_LINES("2030-01-01"))])
+    before = es.gate_of(skill_dir, cfg)
+    hashes = platform_cases(root)
+    lines = [run_line(test=T2, kind="partial", version="1.2.0", case=7, case_sha256=hashes["7"], platform="chirp", score=s,
+                      results=r, model=m) for s, r, m in ((1.0, [1, 1], "s-model"), (0.5, [1, 0], "s-model"), (0.0, [0, 0], "f-model"))]
+    lines.append(run_line(test=T2, kind="partial", version="1.2.0", case=7, case_sha256=H["f"], platform="chirp", score=1.0,
+                          results=[1, 1]))  # a case changed since: weight 0
+    evidence(root, [event_line(test=T2, kind="partial", version="1.2.0", gate=DROP, cases={"7": hashes["7"]},
+                               baseline={"7": "none"}, web_cases=[])] + lines, name=f"lab-{T2}.jsonl")
+    assert es.platform_results(skill_dir, cfg) == {"chirp": {"f-model": {"mean": 0.0, "runs": 1}, "s-model": {"mean": 0.75, "runs": 2}}}
+    assert es.gate_of(skill_dir, cfg) == before  # a platform's lines change neither the gate nor its pool
+    assert es.platform_results(skill_dir, {**cfg, "measurement_floor": 6}) == {}
+    (skill / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "2.0.0"\n---\n')
+    assert es.platform_results(skill_dir, cfg) == {}  # nothing is carried across a major version
+    (skill / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "1.2.0"\n---\n')
+    configure(root)
+    rows = {r["skill"]: r for r in es.all_status(str(root))["skills"]}
+    assert set(rows["core-demo"]["platforms"]["chirp"]) == {"s-model", "f-model"} and "platforms" not in rows["eng-other"]
+    assert "score" not in json.dumps(rows["core-demo"]["platforms"])
+    assert es.main(["hash", "--skill", "core-demo"], root=str(root)) == 0
+    assert json.loads(capsys.readouterr().out)["platform_cases"] == {"chirp": hashes}
