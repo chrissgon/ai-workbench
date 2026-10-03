@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """Agent runtime: find new work, run an agent on it read-only, gate its proposal, execute or queue it.
 
 Usage:

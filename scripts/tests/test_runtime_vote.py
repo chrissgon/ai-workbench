@@ -302,6 +302,18 @@ def test_the_vote_job_has_no_default_platform_and_names_no_provider(env):
     assert "linkedin" not in source and "github" not in source
 
 
+def test_a_round_id_that_is_not_one_builds_nothing(env):
+    # RT15: the round id from the repository's vote file became a folder name (later removed with rmtree), and
+    # only the skill's vote_state.py checked it.
+    (env["wb"] / "skills/mkt-vote-round/scripts/vote_state.py").write_text(
+        "import json\nprint(json.dumps({'pending': True, 'round': {'round': '../../escaped', 'pillar': 'x'}, "
+        "'slot': None, 'rotation': {}}))\n")
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "failed" and "round id" in out["vote"]["note"], out
+    assert not (env["data"].parent / "escaped").exists() and inbox(env) == []
+
+
 def test_a_round_is_handled_once(env):
     rt(env, "tick")
     code, out, _ = rt(env, "tick")

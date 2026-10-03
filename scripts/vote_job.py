@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """Publish the weekly vote post at its slot time, then record it in the profile repository's vote files.
 
 Usage (built by scripts/runtime.py after the person's approval, run by the scheduler, never by hand):

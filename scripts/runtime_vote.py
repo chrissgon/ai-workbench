@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """The runtime's weekly vote step (docs/architecture/weekly-vote.md), imported by scripts/runtime.py.
 
 Configuration: a "vote" section in runtime.json (no secrets):
@@ -255,7 +259,11 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
     if not state.get("pending"):
         open_round = (state.get("open_round") or {}).get("round")
         return {"status": "none", "note": f"no closed round waiting for a post (open round: {open_round})"}
-    rid = state["round"]["round"]
+    rid = (state.get("round") or {}).get("round")
+    if not isinstance(rid, str) or not ROUND.match(rid):
+        # The round id comes from the repository's vote file and becomes a folder name the runtime later deletes
+        # (shutil.rmtree); it is checked here, not left to the skill script that computed the state.
+        raise Fail(f"the vote state names a round id that is not one ({str(rid)[:80]!r}); nothing was built")
     if store("cursor-get", "--name", f"vote:{rid}").get("value"):
         return {"status": "none", "note": f"round {rid} already handled"}
     folder = base / rid
