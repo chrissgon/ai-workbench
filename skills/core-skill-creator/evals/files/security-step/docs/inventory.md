@@ -10,7 +10,7 @@ What the workbench should contain, per area. This is a plan, not a promise: a sk
 
 | Skill | Produces | Reads | State | Wave |
 |-------|----------|-------|-------|------|
-| ops-release-notes | release notes for one version | the list of changes of that version | create | 1 |
+| ops-status-post | the weekly delivery status, posted to the team's channel | the tickets closed and blocked this week | create; requires `integration:issue-tracker` and `publisher:<platform>` | 1 |
 
 ## Evaluation status
 
@@ -29,7 +29,7 @@ Generated at commit `none` by `python3 evals/eval_status.py inventory --write`.
 
 | Skill | Version | Band | Cause | Score | Mean | Runs (N) | Last full test | Field: uses, judged, mean (self-reported) |
 |-------|---------|------|-------|-------|------|----------|----------------|-------------------------------------------|
-| `ops-release-notes` | 0.1.0 | needs a test | no full test of version 0.x | 0.00 | n/a | 0 | none | 0, 0, n/a |
+| `ops-status-post` | 0.1.0 | needs a test | no full test of version 0.x | 0.00 | n/a | 0 | none | 0, 0, n/a |
 
 Counts: 1 needs a test, 0 watch, 0 reliable; 1 skills.
 
@@ -41,4 +41,4 @@ Model table: no skill has lab or field evidence yet.
 A tick means the skill is built. Whether it passed its tests is in the band table above, not in the tick.
 
 Wave 1:
-- [x] ops-release-notes
+- [ ] ops-status-post
