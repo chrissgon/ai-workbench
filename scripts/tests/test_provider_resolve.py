@@ -83,7 +83,9 @@ def test_an_old_name_resolves_to_the_same_script_and_reports_the_new_class(tmp_p
 
 
 @pytest.mark.parametrize("cls", ["nope", "../x:y", "integration", "publisher:Chirp Net", "a:b:c", "", "scheduler/../x",
-                                 "scheduler:foo", "store:x", "mailbox:x", "reader:rss", "reader", "sender", "mailbox:email"])
+                                 "scheduler:foo", "store:x", "mailbox:x", "reader:rss", "reader", "sender", "mailbox:email",
+                                 # RS4: a bare role is not a class; every class is <role>:<target>
+                                 "publisher", "search", "generator", "publisher:"])
 def test_unknown_class_is_refused(cls):
     with pytest.raises(resolve.UnknownClass):
         resolve.resolve(cls, env={})

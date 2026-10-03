@@ -81,14 +81,6 @@ resolution = _load("workbench_provider_resolve", os.path.join(PROVIDERS, "resolv
 NAME_RE = re.compile(r"[a-z0-9-]+")
 
 
-def env_provider(cls):
-    """(variable, value) of the environment variable that selects the class's provider, or (None, None)."""
-    try:
-        return resolution.from_environment(cls)
-    except resolution.UnknownClass:
-        return None, None
-
-
 def provider_folder(cls):
     """providers/<folder>/ for a class, as providers/resolve.py maps it; None for a name that is not a class."""
     try:
@@ -97,14 +89,12 @@ def provider_folder(cls):
         return None
 
 
-def known_providers(kind):
-    """Provider names shipped in providers/<kind>/, helpers excluded."""
-    return resolution.implementations_in(kind, root=ROOT)
-
-
 def run_check(script, platform=None):
-    """Run the provider's --check; for a class with a parameter, --check --platform <p>."""
-    runner = ["uv", "run", script] if _which("uv") else ["python3", script]
+    """Run the provider's --check through its declared runner, uv (providers/CONTRACT.md: never with the
+    caller's interpreter); for a class with a parameter, --check --platform <p>."""
+    if not _which("uv"):
+        return "missing", "uv is not on PATH: a provider runs only through `uv run` (providers/CONTRACT.md)"
+    runner = ["uv", "run", script]
     check = ["--check"] + (["--platform", platform] if platform else [])
     try:
         r = subprocess.run(runner + check, capture_output=True, text=True, timeout=60)
@@ -113,18 +103,6 @@ def run_check(script, platform=None):
     if r.returncode == 0:
         return "provider", os.path.relpath(script, os.path.realpath(ROOT))
     return "missing", f"--check exit {r.returncode}: {(r.stderr or r.stdout).strip()[:200]}"
-
-
-def check_provider(cls, impl):
-    # The name comes from outside and becomes a script path that is executed: the resolution
-    # function accepts only a provider shipped under the class's folder, never a path.
-    try:
-        got = resolution.resolve(cls, root=ROOT, implementation=impl)
-    except resolution.UnknownClass as e:
-        return "unknown", str(e)
-    except resolution.Unresolved as e:
-        return "missing", str(e)
-    return run_check(got["path"], resolution.platform_of(cls))
 
 
 def check_class(cls):
