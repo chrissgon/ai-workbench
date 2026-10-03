@@ -72,6 +72,9 @@ def test_the_comparisons_of_the_gate_are_unrounded():
     assert measure.at_threshold(0.8, 0.8) and not measure.at_threshold(0.7996, 0.8)
     assert measure.within_tolerance(0.75, 0.8, 0.05) and not measure.within_tolerance(0.7499, 0.8, 0.05)
     assert measure.within_tolerance(0.1, None, 0.05)  # no baseline mean: nothing to compare with
+    # A mean that is the threshold but for float arithmetic is at it: six runs at 0.8 sum to less than 4.8.
+    six = sum([0.8] * 6) / 6
+    assert six < 0.8 and measure.at_threshold(six, 0.8) and measure.gate_passes(six, six + 0.05, 0.8, 0.05)
     assert measure.gate_passes(0.8, 0.85, 0.8, 0.05) and not measure.gate_passes(0.8, 0.86, 0.8, 0.05)
     assert not measure.gate_passes(0.79, None, 0.8, 0.05)
 

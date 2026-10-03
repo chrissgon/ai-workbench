@@ -151,7 +151,7 @@ def test_status_is_draft_then_evaluated_then_stale(root, capsys):
     assert status(root) == "evaluated"
     (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
     assert status(root) == "stale"
-    out = es.all_status(str(root))
+    out = es.record_statuses(str(root))  # the old states, for the generated block only until B16
     assert out["counts"] == {"evaluated": 0, "stale": 1, "draft": 1}
     assert [r["skill"] for r in out["skills"]] == ["core-demo", "eng-other"]
 
@@ -218,14 +218,14 @@ def check(root):
     return [f"{e['where']}: {e['message']}" for e in report.errors], [w["message"] for w in report.warnings]
 
 
-def test_validate_passes_on_a_current_inventory_and_warns_once_per_status(root):
+def test_validate_passes_on_a_current_inventory_and_lists_the_bands_never_the_old_states(root):
     record(root)
     (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
     es.main(["inventory", "--write"], root=str(root))
     errors, warnings = check(root)
-    assert errors == [] and len(warnings) == 2
-    assert "1 skill(s) are stale" in warnings[0] and "core-demo" in warnings[0]
-    assert "1 skill(s) are draft" in warnings[1] and "eng-other" in warnings[1]
+    assert errors == [] and len(warnings) == 1
+    assert warnings[0].startswith("[band] 2 skill(s) need a test") and "core-demo, eng-other" in warnings[0]
+    assert "stale" not in warnings[0] and "draft" not in warnings[0]
 
 
 def test_validate_fails_on_a_stale_inventory_block(root):
@@ -239,7 +239,8 @@ def test_validate_fails_on_a_stale_inventory_block(root):
     (None, "must equal the folder name"),
     ("hand-edited", "gate does not follow"),
 ])
-def test_validate_fails_on_an_invalid_record(root, content, why):
+def test_the_validator_reads_no_old_record(root, content, why):
+    """The records of the first round are history: an invalid one is no error, and the band does not read it."""
     record(root)
     path = root / "skills" / "core-demo" / "evals" / "result.json"
     rec = json.loads(path.read_text())
@@ -252,8 +253,9 @@ def test_validate_fails_on_an_invalid_record(root, content, why):
     path.write_text(content)
     es.main(["inventory", "--write"], root=str(root))
     errors, _ = check(root)
-    assert len(errors) == 1 and errors[0].startswith("skills/core-demo/evals/result.json") and why in errors[0]
-    assert es.skill_status(str(root / "skills" / "core-demo"))["status"] == "draft"
+    assert errors == []
+    assert why in es.skill_status(str(root / "skills" / "core-demo"))["reason"]
+    assert es.all_status(str(root))["skills"][0]["band"] == "needs a test"
 
 
 def test_a_record_carries_early_ends_and_older_records_without_them_stay_valid(root):
@@ -285,10 +287,10 @@ def configure(root, **changes):
 def test_a_record_on_the_configured_floor_model_is_evaluated_and_status_names_the_gate(root):
     configure(root)
     record(root)
-    out = es.all_status(str(root))
-    assert out["skills"][0]["status"] == "evaluated"
-    assert out["gate"] == {"floor_model": "f-model", "threshold": 0.8, "strong_model": "s-model", "grader": "s-model",
-                           "strong_tolerance": 0, "measurement_version": 2}
+    assert es.record_statuses(str(root))["skills"][0]["status"] == "evaluated"
+    assert es.all_status(str(root))["gate"] == {"floor_model": "f-model", "threshold": 0.8, "strong_model": "s-model",
+                                                "grader": "s-model", "strong_tolerance": 0, "measurement_version": 2,
+                                                "measurement_floor": 2}
 
 
 def test_a_record_on_another_floor_model_is_stale(root):
@@ -297,7 +299,7 @@ def test_a_record_on_another_floor_model_is_stale(root):
     configure(root, floor_model="new-floor")
     row = es.skill_status(str(root / "skills" / "core-demo"))
     assert row["status"] == "stale" and row["reason"] == "evaluated on another floor model (f-model); rerun the evals"
-    assert es.all_status(str(root))["counts"] == {"evaluated": 0, "stale": 1, "draft": 1}
+    assert es.record_statuses(str(root))["counts"] == {"evaluated": 0, "stale": 1, "draft": 1}
     es.main(["inventory", "--write"], root=str(root))
     assert "| core-demo | stale | 1.00 | 0.50 | 0.90 |" in (root / "docs" / "inventory.md").read_text()
 
@@ -417,13 +419,9 @@ def test_a_record_of_the_container_era_names_its_environment(root):
     rec = json.loads(path.read_text())
     rec["measurement_version"] = 3
     rec["gate"] = es.gate(rec["scores"], rec["threshold"], rec["tolerance"], 3)
-    path.write_text(json.dumps(rec))
-    errors, _ = check(root)
-    assert any("names the container it ran in" in e for e in errors)
+    assert any("names the container it ran in" in e for e in es.record_problems(rec, "core-demo"))
     rec["environment"] = {"kind": "container", "definition_sha256": "0" * 64, "image": "img:tag", "image_id": "sha256:1"}
-    path.write_text(json.dumps(rec))
-    errors, _ = check(root)
-    assert not [e for e in errors if "result.json" in e]
+    assert es.record_problems(rec, "core-demo") == []
 
 
 
@@ -754,10 +752,12 @@ def test_a_file_that_is_no_evidence_file_is_an_error(root, capsys):
     path.write_text("{not json\n" + json.dumps(run_line()) + "\n[1]\n")
     problems = es.evidence_file_problems(str(path), str(root))
     assert problems[:2] == ["line 1: not valid JSON", "line 3: must be a JSON object"] and "unknown key" in problems[2]
-    # A contributed field file is another item's to validate; anything else in the folder is flagged.
+    # A contributed field file is validated by its own form; anything else in the folder is flagged.
     path.unlink()
-    evidence(root, [{"record": "use"}], "field-0123456789ab.jsonl")
-    assert es.evidence_problems(str(root)) == ({}, 0)
+    field = evidence(root, [{"record": "use"}], "field-0123456789ab.jsonl")
+    found, checked = es.evidence_problems(str(root))
+    assert checked == 1 and "first 12 characters of the file's sha256" in found[str(field.relative_to(root))][0]
+    field.unlink()
     evidence(root, [event_line()], "lab-notes.txt")
     found, checked = es.evidence_problems(str(root))
     assert checked == 1 and list(found) == [str(Path("skills") / "core-demo" / "evals" / "evidence" / "lab-notes.txt")]
@@ -913,8 +913,10 @@ def test_status_shows_a_mean_and_runs_per_platform_and_model_and_the_gate_never_
     (skill / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "1.2.0"\n---\n')
     configure(root)
     rows = {r["skill"]: r for r in es.all_status(str(root))["skills"]}
-    assert set(rows["core-demo"]["platforms"]["chirp"]) == {"s-model", "f-model"} and "platforms" not in rows["eng-other"]
-    assert "score" not in json.dumps(rows["core-demo"]["platforms"])
+    models = rows["core-demo"]["models"]
+    assert models["s-model"]["platforms"] == {"chirp": {"mean": 0.75, "runs": 2}}
+    assert models["f-model"]["platforms"] == {"chirp": {"mean": 0.0, "runs": 1}} and rows["eng-other"]["models"] == {}
+    assert "score" not in json.dumps(models["f-model"]["platforms"])
     assert es.main(["hash", "--skill", "core-demo"], root=str(root)) == 0
     assert json.loads(capsys.readouterr().out)["platform_cases"] == {"chirp": hashes}
 

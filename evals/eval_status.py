@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Eval status of every skill, computed from a committed record and the skill folder's content hash.
+"""The standing of every skill, computed from its evidence: the pessimistic score and the band (the reliability
+model, docs/architecture/reliability-model-2026-10-02.md), the gate, the version rules and the measurement.
 
 Usage:
   python3 evals/eval_status.py status [--skill <name>]
@@ -14,8 +15,9 @@ Usage:
   python3 evals/eval_status.py migrate-versions [--date YYYY-MM-DD]
 
 The records of the first round, skills/<name>/evals/result.json, are history: nothing writes one any more
-(the runner writes evidence, below), and the status of a skill is still read from them until the bands
-replace it. A record was written by tooling, never by hand:
+(the runner writes evidence, below) and the status reads none (the reliability model, section 1). Only the
+generated block of docs/inventory.md still reads them, until the snapshot tables replace it. A record was
+written by tooling, never by hand:
 
   {"skill", "content_sha256", "date", "iteration", "runs", "cases": [ids], "harness", "floor_harness",
    "models": {"strong", "floor"}, "grader", "threshold",
@@ -48,7 +50,7 @@ Evidence. The eval runner writes one file per test event, skills/<name>/evals/ev
 (the reliability model, section 1): a first line that describes the event and one line per run. Both have
 closed keys: `evidence` below validates every file, and an unknown key or a value outside its form is an
 error. A committed evidence file is written by tooling and never edited. The old records, result.json, stay
-as the history of the first round; the status below still reads them until the bands replace it.
+as the history of the first round, and nothing below reads them.
 
   The event line: {"record": "test", "skill", "test", "kind": "full"|"partial", "version", "content_sha256",
    "date", "models": {tier: model id}, "adapters": {tier: adapter}, "adapter_sha256": {adapter: sha256 of its
@@ -102,18 +104,54 @@ none may); "strong_web_pass_env", the variables a strong-model run of a web case
 "strong_pass_env" (a low-limit API key in place of the account's token). An event made with another number of
 runs, another timeout or another number of retries than these writes no evidence (eval_run.py --help).
 
-Status of a skill:
-  draft      no record, or a record whose gate did not pass (on the configured threshold) or that is not complete
-  evaluated  the record passed, is complete, is of the configured measurement version, strong model, grader
-             and floor model, and its content_sha256 equals the current hash
-  stale      the record passed and is complete, but under another measurement version, strong model, grader
-             or floor model than the configured ones, or the skill folder changed since
+Field evidence (the reliability model, section 7) is a use of a skill in a project, recorded there by
+scripts/evidence.py and contributed as skills/<name>/evals/evidence/field-<id>.jsonl, <id> being the first 12
+characters of the file's sha256. Its lines have closed keys and no free text:
+  {"record": "use"|"verdict", "skill", "version", "content_sha256", "model" (a listed id or "unknown"), "adapter"
+   (an adapter's folder name or "unknown"), "use" (8 hex), "week" (YYYY-Www)[, "score": 1|0.5|0 and "judge":
+   "user"|"check", for a verdict]}
+Every line carries the content hash the skill's version file gives for its version. `evidence` validates these
+files too.
+
+The score and the band of a skill (the reliability model, sections 4 to 6). A with-skill lab line of a case of
+evals/evals.json weighs above zero when its case exists with the same hash, its measurement version is at or
+above the floor and its major version is the current one (nothing is carried across a major version). On one
+model, the current set holds the lines of the current X.Y with the current context hash, graded by the
+configured grader and dated after the newest epoch that reaches the skill; each counts as one run. Everything
+else that weighs is inherited (an earlier X.Y; the current X.Y before an epoch or with another context; an
+earlier grader; on the reference model, the earlier reference model's lines) and counts, all together, as at
+most 3 runs: each line weighs min(1, 3 / their number). With S the weighted sum of scores, N the weighted
+number of runs, p = S / N and z = 1.2816, the pessimistic score is the lower bound of the Wilson interval,
+(p + z^2/2N - z sqrt(p(1-p)/N + z^2/4N^2)) / (1 + z^2/N), 0 when N is 0: a penalty for little evidence, never a
+confidence bound, always printed with the mean and N.
+
+The band, on the reference model (strong_model), the first that applies:
+  needs a test  (a) no full test of the current major version passes the gate (none at or above the
+                measurement floor, or the gate cannot be computed); (b) a guard assertion (tagged guard or
+                guard:<effect>) has no with-skill run in the current set, or a confirmed failure there
+                ("guard_failed"); (c) the newest full test fails the gate, or a case changed after it
+  watch         no with-skill lab line in the current set; or the current set holds runs of guard-only cases
+                alone; or the pessimistic score is under 0.70; or three or more Y changes (the version file)
+                since the version the newest complete full test ran on; or the field signal is on
+  reliable      otherwise
+The field signal: three or more `failed` verdicts on the current X.Y, on the reference model, in the weeks after
+the newest lab event of that X.Y (all of them when it has none), at most one per contributor except the
+repository's owner. The contributor of a field file is the author of the commit that added it, read from git
+and stored nowhere; the owner is the author of the commits that added lab evidence. One contributor adds at
+most 20 uses and 20 verdicts to the field columns of one skill. Field evidence never raises a band. Without git
+history the field columns are not computed and the signal is off.
 
 Commands:
-  status     prints {"skills": [{"skill", "status", "date", "scores", "reason"[, "platforms": {platform: {model id:
-             {"mean", "runs"}}}]}], "counts",
-             "gate": {"floor_model", "threshold", "strong_model", "grader", "strong_tolerance", "measurement_version"}}
-             (the configured gate; null values without the file).
+  status     prints {"skills": [row], "counts": {band: n}, "causes": {kind: n}, "gate": {the configured gate}}.
+             A row: {"skill", "version", "band", "cause", "kind", "command" (what clears it), "causes": [{"kind",
+             "cause", "command"}], "pending": [case ids added and not run yet; "pending_command"], "score",
+             "mean", "runs" (N), "current_runs", "inherited_runs", "gate", "last_full_test", "guards": [{"case",
+             "assertion", "state": "passed"|"failed"|"not run"}], "field": {"computed", "signal", "on"},
+             "models": {model id: {"score", "mean", "runs", "current_runs", "inherited_runs"[, "field": {"uses",
+             "judged", "mean"}][, "platforms": {platform: {"mean", "runs"}}]}}[, "assertions": [{"case",
+             "assertion", "tags", "with": [passes, runs], "without": [passes, runs]}], "difference_not_format"]}.
+             The kinds of a cause: "no passing full test", "guard", "gate failed" (needs a test); "no current run",
+             "guard cases only", "score", "y changes", "field signal" (watch). Exit 0.
   hash       prints the content hash of one skill, its version and the hash of each of its cases (and of each case of
              its platforms' case files, "platform_cases").
   evidence   validates the evidence files: every skill's, one skill's (--skill) or one file (--file <path>,
@@ -184,6 +222,7 @@ version does not age it: a run without the skill never saw the skill.
 
 Data goes to stdout as JSON, diagnostics to stderr. Standard library only.
 Exit codes: 0 ok, 1 the inventory block is out of date (--check) or an evidence file is not valid, 2 usage error.
+A band never makes a command fail.
 """
 import datetime
 import hashlib
@@ -942,10 +981,11 @@ def evidence_problems(root=ROOT, only=None):
         folder = os.path.join(root, "skills", name, EVIDENCE_REL)
         for entry in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
             rel = os.path.relpath(os.path.join(folder, entry), root)
-            if re.fullmatch(r"field-[0-9a-f]{12}\.jsonl", entry):
-                continue  # contributed field evidence: its own importer validates it
             checked += 1
-            problems = evidence_file_problems(os.path.join(folder, entry), root, name)
+            if entry.startswith("field-"):  # contributed field evidence (scripts/evidence.py import)
+                problems = field_file_problems(os.path.join(folder, entry), root, name)
+            else:
+                problems = evidence_file_problems(os.path.join(folder, entry), root, name)
             if problems:
                 found[rel] = problems
     return found, checked
@@ -1494,6 +1534,487 @@ def migrate_versions(root, date=None):
     return written, skipped
 
 
+# --- field evidence: the closed form of a line (the reliability model, section 7) ------------------------
+
+FIELD_RECORDS = ("use", "verdict")
+FIELD_USE_KEYS = ("record", "skill", "version", "content_sha256", "model", "adapter", "use", "week")
+FIELD_VERDICT_KEYS = FIELD_USE_KEYS + ("score", "judge")
+FIELD_JUDGES = ("user", "check")
+FIELD_SCORES = {"worked": 1, "corrected": 0.5, "failed": 0}  # the verdict words a person answers with
+USE_ID_RE = re.compile(r"[0-9a-f]{8}")
+WEEK_RE = re.compile(r"\d{4}-W(?:0[1-9]|[1-4]\d|5[0-3])")
+FIELD_FILE_RE = re.compile(r"field-([0-9a-f]{12})\.jsonl")
+
+
+def week_of(date):
+    """The ISO week of a date (a datetime.date or YYYY-MM-DD) as YYYY-Www: what a field line keeps instead of the day."""
+    if isinstance(date, str):
+        date = datetime.date.fromisoformat(date)
+    year, week, _ = date.isocalendar()
+    return f"{year}-W{week:02d}"
+
+
+def field_line_problems(line, models=None):
+    """Why a field line is outside its closed form: no free text, no count, a week and never a day. models is the
+    set of known model ids, None when there is no list."""
+    if not isinstance(line, dict):
+        return ["must be a JSON object"]
+    record = line.get("record")
+    if record not in FIELD_RECORDS:
+        return ["record must be use or verdict"]
+    keys = FIELD_USE_KEYS if record == "use" else FIELD_VERDICT_KEYS
+    out = _keys(line, keys, ())
+    if out:
+        return out
+    bad = lambda key, form: out.append(f"{key} must be {form}")
+    if not _is(NAME_RE, line["skill"]):
+        bad("skill", "a skill name")
+    if not _is(VERSION_RE, line["version"]):
+        bad("version", "X.Y.Z")
+    if not _is(HEX64_RE, line["content_sha256"]):
+        bad("content_sha256", "64 hexadecimal characters")
+    if not _model(line["model"], models):
+        bad("model", "an id of the gate file's model list, or \"unknown\"")
+    if not (line["adapter"] == "unknown" or _is(NAME_RE, line["adapter"])):
+        bad("adapter", "an adapter's folder name, or \"unknown\"")
+    if not _is(USE_ID_RE, line["use"]):
+        bad("use", "8 hexadecimal characters")
+    if not _is(WEEK_RE, line["week"]):
+        bad("week", "YYYY-Www")
+    if record == "verdict":
+        if line["judge"] not in FIELD_JUDGES:
+            bad("judge", "user or check")
+        if isinstance(line["score"], bool) or line["score"] not in ((1, 0.5, 0) if line["judge"] == "user" else (1, 0)):
+            bad("score", "1, 0.5 or 0 for a person's verdict, 1 or 0 for a check's")
+    return out
+
+
+def field_file_problems(path, root=ROOT, skill=None):
+    """Why one contributed field evidence file is not valid: its name is field-<the first 12 characters of the
+    sha256 of its bytes>.jsonl, every line has the closed form, names the folder's skill and carries the content
+    hash the skill's version file gives for that version (a locally edited skill is not evidence)."""
+    name = os.path.basename(path)
+    parts = os.path.normpath(os.path.abspath(path)).split(os.sep)
+    if skill is None and len(parts) >= 5 and parts[-3:-1] == ["evals", "evidence"] and parts[-5] == "skills":
+        skill = parts[-4]
+    m = FIELD_FILE_RE.fullmatch(name)
+    if not m:
+        return [f"the name must be field-<12 hexadecimal characters>.jsonl, not {name}"]
+    try:
+        with open(path, "rb") as f:
+            data = f.read()
+        text = data.decode("utf-8")
+    except (OSError, UnicodeDecodeError) as e:
+        return [f"cannot be read: {e}"]
+    problems = []
+    if hashlib.sha256(data).hexdigest()[:12] != m.group(1):
+        problems.append("the name is not the first 12 characters of the file's sha256: a contributed file is never edited")
+    cfg = load_gate(root)
+    models = set(known_models(cfg)) if cfg else None
+    hashes = {}
+    if skill is not None:
+        lines, _, _ = read_versions(os.path.join(root, "skills", skill))
+        hashes = {l.get("version"): l.get("content_sha256") for l in lines}
+    raw = text.split("\n")
+    if raw and raw[-1] == "":
+        raw.pop()
+    if not raw:
+        problems.append("the file is empty")
+    for n, item in enumerate(raw, 1):
+        try:
+            line = json.loads(item)
+        except ValueError:
+            problems.append(f"line {n}: not valid JSON")
+            continue
+        found = field_line_problems(line, models)
+        if not found and skill is not None and line["skill"] != skill:
+            found = [f"skill must be the folder's name, {skill}"]
+        if not found and skill is not None and hashes.get(line["version"]) != line["content_sha256"]:
+            found = [f"content_sha256 is not the hash the version file gives for {line['version']}: a locally edited skill"]
+        problems += [f"line {n}: {p}" for p in found]
+    return problems
+
+
+def field_files(skill_dir):
+    folder = os.path.join(skill_dir, EVIDENCE_REL)
+    if not os.path.isdir(folder):
+        return []
+    return [os.path.join(folder, n) for n in sorted(os.listdir(folder)) if FIELD_FILE_RE.fullmatch(n)]
+
+
+def evidence_authors(root=ROOT):
+    """{path of an evidence file relative to root: who added it}, read from git: the author of the commit that
+    added the file (the repository merges by squash, so the author of the pull request). Kept in memory and
+    never written anywhere or printed. None when there is no history to read (not a git checkout)."""
+    out = git_out(root, "log", "--no-renames", "--diff-filter=A", "--format=%x00%ae", "--name-only", "--",
+                  "skills/*/evals/evidence/*")
+    if out is None:
+        return None
+    found, who = {}, None
+    for line in out.split("\n"):
+        if line.startswith("\0"):
+            who = line[1:].strip().lower()
+        elif line.strip() and who is not None:
+            found[line.strip()] = who  # git log runs newest first: the oldest commit that added the path wins
+    return found
+
+
+# --- the score and the bands (the reliability model, sections 4 to 7; item B7b) --------------------------
+
+SCORE_Z = 1.2816  # the pessimistic score: the lower bound of the Wilson interval at this z
+RELIABLE_AT = 0.70  # a pessimistic score under it is `watch`
+INHERITED_CAP = 3  # everything inherited counts as at most this many runs, together
+Y_CHANGES_FOR_FULL = 3  # Y changes since the newest full test from which the band is `watch`
+FIELD_SIGNAL_AT = 3  # `failed` verdicts on the current X.Y, on the reference model, that turn the field signal on
+FIELD_CAP = 20  # uses, and verdicts, one contributor adds to the field columns of one skill
+BANDS = ("needs a test", "watch", "reliable")
+CAUSE_KINDS = ("no passing full test", "guard", "gate failed", "no current run", "guard cases only", "score",
+               "y changes", "field signal")
+STAGE_SCRIPT = os.path.join(ROOT, "scripts", "stage_skills.py")
+
+
+def pessimistic_score(s, n):
+    """The lower bound of the Wilson interval at z = SCORE_Z for a weighted sum of scores s over n weighted runs:
+    a penalty for little evidence, never a confidence bound. 0 when n is 0."""
+    import math
+    if n <= 0:
+        return 0.0
+    p, z2 = s / n, SCORE_Z ** 2
+    margin = SCORE_Z * math.sqrt(max(0.0, p * (1 - p) / n + z2 / (4 * n * n)))
+    return max(0.0, (p + z2 / (2 * n) - margin) / (1 + z2 / n))
+
+
+def _xy(version):
+    return ".".join(str(version).split(".")[:2])
+
+
+def _major(version):
+    return str(version).split(".")[0]
+
+
+def _vkey(version):
+    try:
+        return tuple(int(p) for p in str(version).split("."))
+    except ValueError:
+        return ()
+
+
+def load_stage():
+    """scripts/stage_skills.py as a module, or None when this tree does not carry it (a case folder): the
+    references a with-skill run is given are read from it."""
+    import importlib.util
+    name = "workbench_stage_skills"
+    if name not in sys.modules:
+        if not os.path.isfile(STAGE_SCRIPT):
+            return None
+        spec = importlib.util.spec_from_file_location(name, STAGE_SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules[name] = module
+    return sys.modules[name]
+
+
+UNKNOWN_CONTEXT = object()  # what case_context answers when this tree cannot compute it
+
+
+def case_context(root, skill_dir, case, with_skill, platform=None):
+    """The context hash of a run of the case (context_hash): its dependency skills (the case's "skills"), and, with
+    the skill, the shared references the skill cites and the references of the platforms the case names (and of
+    platform, for a case of that platform's file). The runner writes it into a run line; the score compares it
+    with the current one. UNKNOWN_CONTEXT when the staging module is not in this tree."""
+    deps = [os.path.join(root, "skills", n) for n in case.get("skills") or []
+            if isinstance(n, str) and NAME_RE.fullmatch(n) and os.path.isdir(os.path.join(root, "skills", n))]
+    references = []
+    if with_skill:
+        stage = load_stage()
+        if stage is None:
+            return UNKNOWN_CONTEXT
+        platforms = sorted({n for n in case.get("platforms") or [] if isinstance(n, str)} | ({platform} if platform else set()))
+        try:
+            rels = set(stage.cited_references(skill_dir, root)) | set(stage.platform_references(platforms, root))
+        except Exception:  # a platform with no reference: the preflight refuses the case
+            return UNKNOWN_CONTEXT
+        references = [(rel, os.path.join(root, "shared", "references", *rel.split("/"))) for rel in sorted(rels)]
+    return context_hash(deps, references)
+
+
+def skill_cases(skill_dir):
+    """{case id as text: case} of evals/evals.json."""
+    try:
+        with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    cases = data.get("evals") if isinstance(data, dict) else None
+    return {str(c.get("id")): c for c in cases or [] if isinstance(c, dict)}
+
+
+def _tags(assertion):
+    return [t for t in assertion.get("tags") or [] if isinstance(t, str)] if isinstance(assertion, dict) else []
+
+
+def _is_guard(assertion):
+    return any(t == "guard" or t.startswith("guard:") for t in _tags(assertion))
+
+
+def guards_of(case):
+    """The positions (from 1) of a case's guard assertions; evals/measure.py has the same rule for the runner,
+    repeated here so that the status runs where the measuring module is not (a case folder)."""
+    return [i for i, a in enumerate(case.get("assertions") or [], 1) if _is_guard(a)]
+
+
+def guard_only(case):
+    """A case all of whose assertions are guards: its runs alone never return a skill to `reliable`."""
+    assertions = case.get("assertions") or []
+    return bool(assertions) and all(_is_guard(a) for a in assertions)
+
+
+def lab_view(root, skill_dir, cfg, events=None):
+    """What the score, the bands and the tables read from a skill's lab evidence: per model the current set and the
+    inherited lines (the model's section 6), and the reference model's id.
+
+    A with-skill line of a case of evals/evals.json weighs above zero when its case exists with the same hash, its
+    measurement version is at or above the floor and its major version is the current one. Of those, the current
+    set on a model holds the lines of the current X.Y, with the current context hash, graded by the configured
+    grader and dated after the newest epoch that reaches the skill on that model. The rest is inherited: lines
+    of an earlier X.Y, lines of the current X.Y before an epoch or with another context, lines graded by an earlier
+    grader (a grader that did not agree would have raised the floor), and, on the reference model, the lines of
+    the earlier reference model (the model an event ran on its strong tier, when it is not the reference now)."""
+    skill = os.path.basename(os.path.normpath(skill_dir))
+    version = skill_version(skill_dir)
+    hashes, cases = case_hashes(skill_dir), skill_cases(skill_dir)
+    floor = cfg.get("measurement_floor", 1)
+    ref = reference_model(cfg)
+    grader = model_id(cfg, cfg["grader"]) if cfg.get("grader") else None
+    contexts = {}
+
+    def context_ok(line):
+        cid = str(line["case"])
+        if cid not in contexts:
+            contexts[cid] = case_context(root, skill_dir, cases.get(cid, {}), True)
+        current = contexts[cid]
+        return current is UNKNOWN_CONTEXT or line.get("context_sha256") == current
+
+    pools = {}
+    for event, runs in skill_evidence(skill_dir) if events is None else events:
+        for line in base_lines(runs):
+            if (line["variant"] != "with" or version is None or hashes.get(str(line["case"])) != line["case_sha256"]
+                    or line["measurement_version"] < floor or _major(line["version"]) != _major(version)):
+                continue
+            model = line["model"]
+            current = (_xy(line["version"]) == _xy(version) and (grader is None or model_id(cfg, event.get("grader", "")) == grader)
+                       and not epoch_after(cfg, skill, model, line["date"]) and context_ok(line))
+            pools.setdefault(model, {"current": [], "inherited": []})["current" if current else "inherited"].append(line)
+            strong = (event.get("models") or {}).get("strong")
+            if ref is not None and model != ref and strong == model:
+                pools.setdefault(ref, {"current": [], "inherited": []})["inherited"].append(line)
+    return {"version": version, "reference": ref, "pools": pools}
+
+
+def pool_score(pool):
+    """{"score", "mean", "runs", "current_runs", "inherited_runs"} of one model's pool: the current set at full
+    weight, everything inherited capped at INHERITED_CAP runs together."""
+    current, inherited = pool.get("current") or [], pool.get("inherited") or []
+    w = min(1.0, INHERITED_CAP / len(inherited)) if inherited else 0.0
+    s = sum(l["score"] for l in current) + w * sum(l["score"] for l in inherited)
+    n = len(current) + w * len(inherited)
+    return {"score": round(pessimistic_score(s, n), 4), "mean": round(s / n, 4) if n else None, "runs": round(n, 4),
+            "current_runs": len(current), "inherited_runs": len(inherited)}
+
+
+def y_changes_since(skill_dir, version):
+    """The Y lines of the version file above the version the newest full test ran on (all of them when the
+    version file does not reach back to it)."""
+    lines, _, _ = read_versions(skill_dir)
+    start = _vkey(version)
+    return sum(1 for l in lines if l.get("class") == "y" and _vkey(l.get("version")) > start)
+
+
+def field_view(root, skill_dir, cfg, authors, lab_events, version):
+    """The field columns and the field signal of one skill (the model's section 7), from its contributed files.
+
+    Columns, per model, over the lines of the current major version: uses, judged uses and the mean of their
+    verdicts (a person's verdict over a check's for one use). One contributor, the author of the commit that added
+    a file (authors), adds at most FIELD_CAP uses and FIELD_CAP verdicts, the newest. The signal counts the
+    `failed` verdicts on the current X.Y, on the reference model, in the weeks after the newest lab event of that
+    X.Y (all of them when it has none): at most one per contributor, except the repository's owner, the author
+    of the commits that added lab evidence. Without history (authors None) nothing is computed."""
+    files = field_files(skill_dir)
+    if not files:
+        return {"computed": True, "models": {}, "signal": 0, "on": False}
+    if authors is None or version is None:
+        return {"computed": False, "models": {}, "signal": 0, "on": False}
+    owners = {who for path, who in authors.items() if os.path.basename(path).startswith("lab-")}
+    by_contributor = {}
+    for path in files:
+        if field_file_problems(path, root):
+            continue  # the validator reports it; an invalid file is not evidence
+        rel = os.path.relpath(path, root).replace(os.sep, "/")
+        who = authors.get(rel, "(not committed)")
+        with open(path, encoding="utf-8") as f:
+            by_contributor.setdefault(who, []).extend(json.loads(l) for l in f.read().splitlines() if l.strip())
+    ref, xy, major = reference_model(cfg), _xy(version), _major(version)
+    since = max((week_of(e["date"]) for e, _ in lab_events if _xy(e.get("version", "")) == xy and _date(e.get("date"))),
+                default=None)
+    columns, signal = {}, 0
+    for who, lines in sorted(by_contributor.items()):
+        uses, verdicts = {}, {}
+        for line in lines:
+            if _major(line["version"]) != major:
+                continue
+            if line["record"] == "use":
+                uses[line["use"]] = line
+            elif line["judge"] == "user" or verdicts.get(line["use"], {}).get("judge") != "user":
+                verdicts[line["use"]] = line  # a person's verdict over a check's; the last one of each judge
+        newest = lambda found: sorted(found.values(), key=lambda l: (l["week"], l["use"]))[-FIELD_CAP:]
+        for line in newest(uses):
+            columns.setdefault(line["model"], {"uses": 0, "verdicts": []})["uses"] += 1
+        for line in newest(verdicts):
+            columns.setdefault(line["model"], {"uses": 0, "verdicts": []})["verdicts"].append(line["score"])
+        failed = sum(1 for l in verdicts.values() if l["score"] == 0 and _xy(l["version"]) == xy and l["model"] == ref
+                     and (since is None or l["week"] > since))
+        signal += failed if who in owners else min(failed, 1)
+    models = {m: {"uses": c["uses"], "judged": len(c["verdicts"]),
+                  "mean": round(sum(c["verdicts"]) / len(c["verdicts"]), 4) if c["verdicts"] else None}
+              for m, c in sorted(columns.items())}
+    return {"computed": True, "models": models, "signal": signal, "on": signal >= FIELD_SIGNAL_AT}
+
+
+def assertion_counts(cases, ref_current, baselines):
+    """The pass count of each assertion with the skill (the reference model's current set) and without it (the
+    baselines in force), and the difference of the two rates over the assertions that are not `format`."""
+    rows, diffs = [], []
+    for cid, case in cases.items():
+        with_lines = [l for l in ref_current if str(l["case"]) == cid]
+        without = baselines.get(cid) or []
+        if not with_lines and not without:
+            continue
+        for pos, assertion in enumerate(case.get("assertions") or [], 1):
+            count = lambda lines: [sum(1 for l in lines if len(l["results"]) >= pos and l["results"][pos - 1] == 1),
+                                   sum(1 for l in lines if len(l["results"]) >= pos)]
+            w, wo = count(with_lines), count(without)
+            rows.append({"case": cid, "assertion": pos, "tags": _tags(assertion), "with": w, "without": wo})
+            if "format" not in _tags(assertion) and w[1] and wo[1]:
+                diffs.append(w[0] / w[1] - wo[0] / wo[1])
+    return rows, (round(sum(diffs) / len(diffs), 4) if diffs else None)
+
+
+def skill_band(root, skill_dir, cfg, authors=None):
+    """The band of one skill on the reference model, with its cause and the command that clears it, the score,
+    the gate, the guards, the field columns and a row per model (the model's sections 4 to 7; see --help)."""
+    skill = os.path.basename(os.path.normpath(skill_dir))
+    events = skill_evidence(skill_dir)
+    view = lab_view(root, skill_dir, cfg, events)
+    version, ref, pools = view["version"], view["reference"], view["pools"]
+    cases = skill_cases(skill_dir)
+    ref_pool = pools.get(ref) or {"current": [], "inherited": []} if ref is not None else {"current": [], "inherited": []}
+    ref_score = pool_score(ref_pool)
+    gate = gate_of(skill_dir, cfg) if version else {"computed": False, "passed": None, "pending": [], "note": None,
+                                                    "cause": "metadata.version is missing", "cases": []}
+    floor = cfg.get("measurement_floor", 1)
+    major, xy = (_major(version), _xy(version)) if version else (None, None)
+    fulls = [e for e, _ in events if e.get("kind") == "full" and _major(e.get("version", "")) == major]
+    measured_fulls = [e for e in fulls if isinstance(e.get("measurement_version"), int) and e["measurement_version"] >= floor]
+    complete_fulls = [e for e in measured_fulls if e.get("complete") is True]
+    last_full = fulls[-1] if fulls else None
+    run_full = f"python3 evals/eval_run.py --skill {skill}"
+    causes = []  # (kind, text, command), in the order of the model's section 5
+
+    # needs a test (a) and (c): the gate of the newest full test of the current major version.
+    if not measured_fulls:
+        why = (f"no full test of version {major}.x at or above the measurement floor {floor}" if fulls
+               else f"no full test of version {major}.x")
+        causes.append(("no passing full test", why, run_full))
+    elif gate.get("computed") and not gate["passed"]:
+        causes.append(("gate failed", f"the newest full test of {gate['version']} fails the gate (with the skill "
+                       f"{gate['with']:.3f}, baseline {gate['baseline']:.3f})", f"after the fix: {run_full}"))
+    elif not gate.get("computed") and gate.get("note") == "baseline expired":
+        if not gate.get("passed"):
+            causes.append(("gate failed", f"the newest full test of {gate['version']} failed the gate (baseline expired)",
+                           f"after the fix: {run_full}"))
+    elif not gate.get("computed"):
+        kind = "gate failed" if "changed after the newest full test" in (gate.get("cause") or "") else "no passing full test"
+        causes.append((kind, gate.get("cause") or "the gate cannot be computed", run_full))
+
+    # needs a test (b): every guard assertion has a with-skill run in the current set, and no confirmed failure.
+    ref_current = ref_pool["current"]
+    guards, not_run, failed = [], [], []
+    for cid, case in cases.items():
+        lines = [l for l in ref_current if str(l["case"]) == cid]
+        for pos in guards_of(case):
+            state = "not run" if not lines else ("failed" if any(pos in (l.get("guard_failed") or []) for l in lines) else "passed")
+            guards.append({"case": cid, "assertion": pos, "state": state})
+            (failed if state == "failed" else not_run if state == "not run" else []).append(f"{cid}.{pos}")
+    if failed or not_run:
+        guard_cases = sorted({g.split(".")[0] for g in failed + not_run}, key=_case_key)
+        text = "; ".join(([f"guard assertion(s) {', '.join(failed)} failed in the current set"] if failed else [])
+                         + ([f"guard assertion(s) {', '.join(not_run)} have no run in the current set"] if not_run else []))
+        command = f"python3 evals/eval_run.py --skill {skill} --cases {','.join(guard_cases)}"
+        causes.insert(1 if causes and causes[0][0] == "no passing full test" else 0,
+                      ("guard", text, ("after the fix and its bump: " if failed else "") + command))
+
+    watch = []
+    if not causes:
+        non_guard = sorted((c for c, case in cases.items() if not guard_only(case)), key=_case_key)
+        partial = f"python3 evals/eval_run.py --skill {skill} --cases {','.join(non_guard or sorted(cases, key=_case_key))}"
+        if not ref_current:
+            watch.append(("no current run", f"no lab run with the skill in the current set of {xy}", partial))
+        elif all(guard_only(cases.get(str(l["case"]), {})) for l in ref_current):
+            watch.append(("guard cases only", f"only guard cases have run in the current set of {xy}", partial))
+        if ref_score["score"] < RELIABLE_AT:
+            watch.append(("score", f"the pessimistic score {ref_score['score']:.2f} is under {RELIABLE_AT:.2f}", partial))
+        newest_full = complete_fulls[-1] if complete_fulls else None
+        y = y_changes_since(skill_dir, newest_full["version"]) if newest_full else 0
+        if y >= Y_CHANGES_FOR_FULL:
+            watch.append(("y changes", f"{y} Y changes since the newest full test", run_full))
+    field = field_view(root, skill_dir, cfg, authors, events, version)
+    if not causes and field["on"]:
+        watch.append(("field signal", f"{field['signal']} `failed` verdicts on {xy} since its newest lab test",
+                      f"a lab test of {xy}: {run_full}, or a partial test"))
+    band = "needs a test" if causes else "watch" if watch else "reliable"
+    first = (causes or watch or [(None, None, None)])[0]
+
+    models = {}
+    for model, pool in sorted(pools.items()):
+        models[model] = pool_score(pool)
+    for model, figures in field["models"].items():
+        models.setdefault(model, {"score": None, "mean": None, "runs": 0, "current_runs": 0, "inherited_runs": 0})["field"] = figures
+    for name, by in platform_results(skill_dir, cfg, events).items():
+        for model, figures in by.items():
+            models.setdefault(model, {"score": None, "mean": None, "runs": 0, "current_runs": 0,
+                                      "inherited_runs": 0}).setdefault("platforms", {})[name] = figures
+    counts, difference = assertion_counts(cases, ref_current, baseline_lines(skill_dir, cfg, events) if ref_current else {})
+    row = {"skill": skill, "version": version, "band": band, "cause": first[1], "kind": first[0], "command": first[2],
+           "causes": [{"kind": k, "cause": t, "command": c} for k, t, c in causes + watch],
+           "pending": gate.get("pending") or [], "score": ref_score["score"], "mean": ref_score["mean"],
+           "runs": ref_score["runs"], "current_runs": ref_score["current_runs"], "inherited_runs": ref_score["inherited_runs"],
+           "gate": {k: gate.get(k) for k in ("computed", "passed", "with", "baseline", "version", "test", "note", "cause")},
+           "last_full_test": ({"test": last_full["test"], "date": last_full.get("date"), "version": last_full.get("version"),
+                               "complete": last_full.get("complete"),
+                               "passed": (last_full.get("gate") or {}).get("passed")} if last_full else None),
+           "guards": guards, "field": {"computed": field["computed"], "signal": field["signal"], "on": field["on"]},
+           "models": models}
+    if gate.get("pending"):
+        row["pending_command"] = f"python3 evals/eval_run.py --skill {skill} --cases {','.join(gate['pending'])} --baseline"
+    if counts:
+        row["assertions"], row["difference_not_format"] = counts, difference
+    return row
+
+
+def all_status(root=ROOT, only=None):
+    """{"skills": [one row of skill_band per skill], "counts": {band: n}, "causes": {kind: n}, "gate": the
+    configured gate}: everything computed from the evidence files, live."""
+    names = [only] if only else skill_names(root)
+    config = load_gate(root)
+    authors = evidence_authors(root)
+    rows = [skill_band(root, os.path.join(root, "skills", n), config, authors) for n in names]
+    counts = {b: sum(1 for r in rows if r["band"] == b) for b in BANDS}
+    causes = {k: sum(1 for r in rows if any(c["kind"] == k for c in r["causes"])) for k in CAUSE_KINDS}
+    return {"skills": rows, "counts": counts, "causes": {k: v for k, v in causes.items() if v},
+            "gate": {k: config.get(k) for k in ("strong_model", "floor_model", "grader", "threshold", "strong_tolerance",
+                                                "measurement_version", "measurement_floor")}}
+
+
 def record_path(skill_dir):
     return os.path.join(skill_dir, RECORD_REL)
 
@@ -1623,23 +2144,17 @@ def skill_status(skill_dir, config=None):
     return row
 
 
-def all_status(root=ROOT, only=None):
-    names = [only] if only else skill_names(root)
+def record_statuses(root=ROOT):
+    """The three old states read from the records of the first round, for the generated block of
+    docs/inventory.md only, until the snapshot tables replace it (item B16 of the plan). The status reads none."""
     config = load_gate(root)
-    rows = [skill_status(os.path.join(root, "skills", n), config) for n in names]
-    for row in rows:  # the platforms' cases: a mean and a number of runs per platform and model, never a score
-        found = platform_results(os.path.join(root, "skills", row["skill"]), config)
-        if found:
-            row["platforms"] = found
-    counts = {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}
-    return {"skills": rows, "counts": counts,
-            "gate": {k: config.get(k) for k in ("floor_model", "threshold", "strong_model", "grader", "strong_tolerance",
-                                                "measurement_version")}}
+    rows = [skill_status(os.path.join(root, "skills", n), config) for n in skill_names(root)]
+    return {"skills": rows, "counts": {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}}
 
 
 def inventory_block(root=ROOT):
     """The generated lines that go between the markers."""
-    data = all_status(root)
+    data = record_statuses(root)
     num = lambda v: "—" if v is None else f"{v:.2f}"
     lines = ["| Skill | Status | Strong with | Strong without | Floor with | Date | Iteration |",
              "|-------|--------|-------------|----------------|------------|------|-----------|"]
@@ -1748,7 +2263,8 @@ def main(argv, root=None):
         return 0
     if cmd == "evidence":
         if opts.get("file"):
-            problems = evidence_file_problems(opts["file"], root, skill)
+            check = field_file_problems if os.path.basename(opts["file"]).startswith("field-") else evidence_file_problems
+            problems = check(opts["file"], root, skill)
             found, checked = ({opts["file"]: problems} if problems else {}), 1
         else:
             found, checked = evidence_problems(root, skill)
@@ -1778,7 +2294,7 @@ def main(argv, root=None):
         if text != new:
             with open(os.path.join(root, INVENTORY_REL), "w", encoding="utf-8") as f:
                 f.write(new)
-        print(json.dumps({"written": text != new, "counts": all_status(root)["counts"]}))
+        print(json.dumps({"written": text != new, "counts": record_statuses(root)["counts"]}))
         return 0
     die(f"unknown command {cmd!r}. See --help.")
 

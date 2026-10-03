@@ -2801,13 +2801,13 @@ def run(argv):
 
     def context_of(case, with_skill):
         """The hash of what a run of the case is given besides the skill under test: its dependency skills, and,
-        with the skill, the shared references the skill cites and the references of the platforms the case names."""
-        references = []
-        if with_skill:
-            stage = load_stage()
-            rels = set(stage.cited_references(skill_dir, ROOT)) | set(stage.platform_references(case_platforms(case, o.get("platform")), ROOT))
-            references = [(rel, os.path.join(ROOT, "shared", "references", *rel.split("/"))) for rel in sorted(rels)]
-        return status.context_hash(deps[case["id"]], references)
+        with the skill, the shared references the skill cites and the references of the platforms the case names.
+        One function computes it for the runner and for the score (eval_status.py, case_context)."""
+        load_stage()  # the staging module is in this checkout, or the runner stops here
+        context = status.case_context(ROOT, skill_dir, case, with_skill, o.get("platform"))
+        if context is status.UNKNOWN_CONTEXT:
+            die(f"case {case.get('id')}: a platform it names has no reference under shared/references/platforms/.", 2)
+        return context
     contexts = {(c["id"], with_skill): context_of(c, with_skill) for c in cases for with_skill in (True, False)}
     today = lambda: datetime.datetime.now(datetime.timezone.utc).date().isoformat()
 

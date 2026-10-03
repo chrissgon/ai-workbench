@@ -35,12 +35,14 @@ Checks every skill under skills/ and every agent under agents/:
     carrying `validate: allow private-term -- <reason>` or in a path the file excludes. The file lists one
     term per line (case-insensitive; `re:<regex>` for a pattern; `!<path glob>` to exclude a path; `#`
     comments). It keeps a maintainer's own names, projects and accounts out of this shared repository.
-  - eval-status (through evals/eval_status.py): a skills/<name>/evals/result.json that exists is valid JSON
-    with the record's fields and `skill` equal to the folder name; the generated block between the eval-status
-    markers in docs/inventory.md is up to date (fix: python3 evals/eval_status.py inventory --write); skills
-    whose status is `stale` (the folder changed since the recorded pass) or `draft` (no passing, complete
-    record) are reported as warnings, one line per status, and are errors with --strict; evals/eval-gate.json,
-    the gate's configuration (models, adapters, threshold), has its fields
+  - eval-status (through evals/eval_status.py): evals/eval-gate.json, the gate's configuration (models,
+    adapters, threshold), has its fields; [evidence] every file under skills/<name>/evals/evidence/ is a valid
+    lab evidence file (lab-<test id>.jsonl) or contributed field evidence file (field-<id>.jsonl), every line
+    of its closed form (python3 evals/eval_status.py evidence); the generated block between the eval-status
+    markers in docs/inventory.md is up to date (fix: python3 evals/eval_status.py inventory --write); [band]
+    the skills in `needs a test` and in `watch` (the reliability model, section 5), one warning line per band
+    with each skill's cause, never an error (they are errors only with --strict). The records of the first
+    round, result.json, are history and are not read
   - the version rules of the reliability model's section 3 (evals/eval_status.py, version_findings), against
     the base of the pull request: WB_BASE_REF when set (CI sets the pull request's base), else the merge base
     of HEAD with the default branch, in the hook and in CI alike. [version-file] skills/<name>/evals/
@@ -1234,34 +1236,39 @@ def check_eval_cases(report, root=ROOT):
 
 
 def check_eval_status(report, root=ROOT):
-    """eval-status: records are valid, the inventory block is current, stale and draft skills are warned about."""
+    """eval-status: the gate file is valid and its fingerprint is this checkout's, every evidence file and line is
+    valid (errors); the inventory block is current (an error until the snapshot tables replace it); the skills of
+    each band other than `reliable` are listed, one warning line per band, with their causes. A score or a band
+    is never an error (the reliability model, section 5)."""
     es = load_eval_status()
-    by_status = {"stale": [], "draft": []}
     problems = es.gate_problems(root)
     if problems:
         report.error("evals/eval-gate.json", f"[eval-status] {'; '.join(problems)}")
     elif es.fingerprint_problem(root):
         report.error("evals/eval-gate.json", f"[measurement] {es.fingerprint_problem(root)}")
-    for name in es.skill_names(root):
-        skill_dir = os.path.join(root, "skills", name)
-        _, problems = es.load_record(skill_dir)
-        if problems:
-            report.error(f"skills/{name}/evals/result.json", f"[eval-status] {'; '.join(problems)}")
-        status = es.skill_status(skill_dir)["status"]
-        if status in by_status:
-            by_status[status].append(name)
+    found, _ = es.evidence_problems(root)
+    for path, problems in sorted(found.items()):
+        report.error(path, f"[evidence] {'; '.join(problems[:5])}" + (f"; and {len(problems) - 5} more" if len(problems) > 5 else ""))
     try:
         if not es.inventory_current(root):
             report.error("docs/inventory.md", "[eval-status] the generated eval-status block is out of date: "
                          "run python3 evals/eval_status.py inventory --write")
     except ValueError as e:
         report.error("docs/inventory.md", f"[eval-status] {e}")
-    if by_status["stale"]:
-        report.warn("skills", f"[eval-status] {len(by_status['stale'])} skill(s) are stale, changed since their recorded "
-                    f"eval pass; rerun their evals: {', '.join(by_status['stale'])}")
-    if by_status["draft"]:
-        report.warn("skills", f"[eval-status] {len(by_status['draft'])} skill(s) are draft, with no passing eval record "
-                    f"(python3 evals/eval_status.py status): {', '.join(by_status['draft'])}")
+    data = es.all_status(root)
+    for band, verb in (("needs a test", "need a test"), ("watch", "are in watch")):
+        rows = [r for r in data["skills"] if r["band"] == band]
+        if not rows:
+            continue
+        by_kind = {}
+        for r in rows:
+            by_kind.setdefault(r["kind"], []).append(r["skill"])
+        parts = [f"{kind} ({len(names)}): {', '.join(names)}" for kind, names in sorted(by_kind.items())]
+        guarded = [r["skill"] for r in rows if any(c["kind"] == "guard" and "failed" in c["cause"] for c in r["causes"])]
+        if guarded:
+            parts.append(f"a guard assertion failed in the current set: {', '.join(guarded)}")
+        report.warn("skills", f"[band] {len(rows)} skill(s) {verb} (python3 evals/eval_status.py status, which prints each "
+                    f"one's cause and the command that clears it): " + "; ".join(parts))
 
 
 # Rules of the reliability model that are warnings while phase C changes skills and raises no version, and errors
