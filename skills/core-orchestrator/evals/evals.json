@@ -14,7 +14,7 @@
           ]
         },
         "The shape is identified as a cross-area flow",
-        "The output states that docs/workbench/state.md is missing and that the flow will create it",
+        "The output states that docs/workbench/state.md is missing and names core-project-init as the skill that writes it",
         {
           "text": "No business, product or design work is performed in the output",
           "tags": [
@@ -129,7 +129,7 @@
           ]
         },
         "src/stats.ts no longer contains usrCnt and contains userCount in the declaration and in the returned object",
-        "The case folder contains no source file other than src/stats.ts."
+        "No file other than src/stats.ts is among the files the run produced or changed"
       ]
     },
     {
