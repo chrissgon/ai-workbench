@@ -5,9 +5,9 @@
 <meta name="fill-max" content="title=64,subtitle=38">
 <title>Post card</title>
 <!--
-  Post image, 1080 x 1350 (4:5): twice the 540 x 675 post image the profile card shows at 280 x 350,
-  and a portrait image for a LinkedIn post. Rendered by scripts/render.py:
-    python3 skills/brand-identity/scripts/render.py --html skills/brand-identity/assets/post-card-template.html \
+  Post image, 1080 x 1350 (4:5): twice the 540 x 675 post image the profile card shows at 280 x 350.
+  The size a platform takes for a post image is in that platform's reference. Rendered by render.py:
+    python3 <this skill's folder>/scripts/render.py --html <this skill's folder>/assets/post-card-template.html \
       --width 1080 --height 1350 --out post.png --fill title="..." --fill subtitle="..." \
       [--font-face "Inter:800:<path>.woff2" --font-face "Inter:400:<path>.woff2"]
   Self-contained on purpose: no remote fonts or images. Without --font-face the system fallbacks render.

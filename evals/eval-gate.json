@@ -13,5 +13,28 @@
   "threshold": 0.8,
   "strong_tolerance": 0.05,
   "measurement_version": 5,
-  "measurement_floor": 5
+  "measurement_floor": 5,
+  "runs": 3,
+  "timeout_seconds": 900,
+  "retries": 2,
+  "max_resumes": 3,
+  "total_jobs": 10,
+  "web_jobs": {
+    "strong": 2,
+    "floor": 2
+  },
+  "web_cases": {
+    "biz-icp-positioning": [1, 3],
+    "biz-market-analysis": [1, 3],
+    "brand-name": [2],
+    "core-research": [1, 4, 5],
+    "eng-architecture": [1]
+  },
+  "strong_web_pass_env": [
+    "CLAUDE_CODE_WEB_API_KEY"
+  ],
+  "models": {
+    "claude-sonnet-5-5": [],
+    "openrouter/deepseek/deepseek-v4.1-flash": ["deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash"]
+  }
 }

@@ -9,6 +9,7 @@ import importlib.util
 import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -20,8 +21,18 @@ spec.loader.exec_module(er)
 er.EXECUTOR = "host"  # these tests drive stand-in adapters; the container executor has its own tests
 REPO = Path(er.ROOT)
 # The stand-in harness "h" discovers skills in .h/skills and keeps its settings in .h/ and h-settings.json.
+# An exhausted account answers "usage limit reached" there.
 ADAPTER_JSON = json.dumps({"harness": "h", "eval_runner": "run-prompt.sh",
-                           "eval": {"skills_dir": ".h/skills", "settings": [".h", "h-settings.json"]}})
+                           "eval": {"skills_dir": ".h/skills", "settings": [".h", "h-settings.json"],
+                                    "account_limit": ["usage limit reached"],
+                                    "refusal_markers": ["safeguards flagged this message"]}})
+
+
+@pytest.fixture(autouse=True)
+def own_lock_folder(tmp_path, monkeypatch):
+    """The lock the runner processes of a machine share is each test's own, and nothing waits before a retry."""
+    monkeypatch.setattr(er, "LOCK_DIR", str(tmp_path / "locks"))
+    monkeypatch.setattr(er, "RETRY_PAUSE", 0)
 
 
 def test_no_evals_file_in_the_repository_lists_commands():
@@ -324,14 +335,14 @@ def test_regrade_grades_stored_replies_again_and_reports_the_share_that_differs(
     assert er.main(full) == 0
     capsys.readouterr()
     iteration = tmp_path / "evals-workspace" / "demo" / "iteration-1"
-    record = (skill / "evals" / "result.json").read_text()
+    tree = {p: p.read_bytes() for p in skill.rglob("*") if p.is_file()}
     stored = {p: p.read_text() for p in iteration.rglob("grading.json")}
     bench = (iteration / "benchmark.json").read_text()
-    assert len(stored) == 4
+    assert len(stored) == 3  # with the skill on both models, and the baseline on the reference model
     # The same grader, the same material: nothing differs.
     assert er.main(["--regrade", str(iteration), "--harness", "h", "--grader", "m"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert (out["gradings"], out["failed"], out["verdicts"], out["differ"], out["share"]) == (4, 0, 8, 0, 0.0)
+    assert (out["gradings"], out["failed"], out["verdicts"], out["differ"], out["share"]) == (3, 0, 6, 0, 0.0)
     # Another grader, named for the comparison, that fails everything: every verdict differs.
     (tmp_path / "adapters" / "h" / "verdict").write_text("false")
     assert er.main(["--regrade", str(iteration / "eval-1" / "with_skill"), "--harness", "h", "--grader", "other-grader"]) == 0
@@ -342,10 +353,10 @@ def test_regrade_grades_stored_replies_again_and_reports_the_share_that_differs(
     assert again["grader"] == "other-grader" and again["summary"]["pass_rate"] == 0.0
     args = sorted((tmp_path / "adapters" / "h").glob("grading-call.*"))[-1] / "args.txt"
     assert "--model other-grader" in args.read_text() and args.read_text().split()[-1] == "--no-tools"
-    # No score moved and no evidence was written: the stored gradings, the benchmark and the record are as they were.
+    # No score moved and no evidence was written: the stored gradings, the benchmark and the skill's folder,
+    # with the one evidence file of the event, are as they were.
     assert {p: p.read_text() for p in stored} == stored and (iteration / "benchmark.json").read_text() == bench
-    assert (skill / "evals" / "result.json").read_text() == record
-    assert sorted(p.name for p in (skill / "evals").iterdir()) == ["evals.json", "files", "result.json"]
+    assert {p: p.read_bytes() for p in skill.rglob("*") if p.is_file()} == tree and len(evidence_of(skill)) == 1
 
 
 def test_regrade_counts_how_many_failed_verdicts_a_new_grader_passes(tmp_path, monkeypatch, capsys):
@@ -570,7 +581,8 @@ def test_floor_pass_env_reaches_only_the_floor_runs(tmp_path, monkeypatch, capsy
                     "--only", "with", "--no-grade", "--floor-pass-env", "FLOOR_ONLY_KEY"]) == 0
     strong = (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill" / "outputs" / "env.txt").read_text()
     floor = (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill.floor" / "outputs" / "env.txt").read_text()
-    assert "FLOOR_ONLY_KEY" not in strong and "FLOOR_ONLY_KEY=floor-secret" in floor
+    # The floor run had the variable; what it printed of it is stored as the marker, never as the value.
+    assert "FLOOR_ONLY_KEY" not in strong and "FLOOR_ONLY_KEY=[redacted:FLOOR_ONLY_KEY]" in floor and "floor-secret" not in floor
     with pytest.raises(SystemExit):
         er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--floor-pass-env", "GITHUB_TOKEN"])
 
@@ -663,8 +675,8 @@ def test_preflight_accepts_a_path_absent_on_purpose_or_named_as_an_output(tmp_pa
 def test_preflight_reports_a_grader_file_and_a_dependency_that_do_not_exist(tmp_path, monkeypatch):
     errors, _ = preflight_of(tmp_path, monkeypatch, {"files": ["evals/files/app"], "grader_files": ["a.txt", "docs/voice.md"],
                                                     "skills": ["no-such-skill"]})
-    assert len(errors) == 2
-    assert "skills entry 'no-such-skill'" in errors[0] and "grader_files entry 'docs/voice.md'" in errors[1]
+    assert len(errors) == 3  # a dependency that does not exist is also none of the uses a case may make of one
+    assert "skills entry 'no-such-skill'" in errors[1] and "grader_files entry 'docs/voice.md'" in errors[2]
 
 
 def test_preflight_sees_what_setup_creates_and_dry_run_leaves_such_cases_unchecked(tmp_path, monkeypatch):
@@ -674,10 +686,43 @@ def test_preflight_sees_what_setup_creates_and_dry_run_leaves_such_cases_uncheck
     assert errors == [] and len(unchecked) == 1 and "setup" in unchecked[0]
 
 
-def write_demo(tmp_path, monkeypatch, runner, cases=None):
+def as_in_the_container(monkeypatch):
+    """Make the runner take the stand-in adapters for real runners: it believes it runs in the eval container
+    (the image and its platform are the executor's own), and its commands still execute here. Without this an
+    event of these tests is what it is, a trial with a stand-in, and writes to its scratch tree only."""
+    executor = er.load_executor()
+    monkeypatch.setattr(er, "EXECUTOR", "container")
+    monkeypatch.setattr(executor, "ensure", lambda: {"kind": "container", "image": "wb-eval:test", "image_id": "sha256:" + "1" * 64,
+                                                     "image_digest": "sha256:" + "1" * 64, "image_platform": executor.IMAGE_PLATFORM})
+    monkeypatch.setattr(er, "run_group", lambda cmd, timeout, cwd=None, env=None, box=None: er._run_group(cmd, timeout, cwd, env, None))
+    monkeypatch.setattr(er, "tool_versions", lambda: {"git": "git version 2.0-test"})
+
+
+def evidence_of(skill):
+    """The lab evidence files in a skill's folder, oldest first: [(event line, run lines)]."""
+    folder = skill / "evals" / "evidence"
+    found = []
+    for path in sorted(folder.glob("lab-*.jsonl")) if folder.is_dir() else []:
+        lines = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
+        found.append((lines[0], lines[1:]))
+    return found
+
+
+def event_file(tmp_path, out):
+    """The event line and the run lines of the file an event left in its run folder."""
+    lines = [json.loads(line) for line in (tmp_path / out["evidence"]["scratch"]).read_text(encoding="utf-8").splitlines()]
+    return lines[0], lines[1:]
+
+
+SKILL_MD = '---\nname: demo\nmetadata:\n  version: "0.3"\n---\n# demo\n'
+
+
+def write_demo(tmp_path, monkeypatch, runner, cases=None, real=True):
     """A skill with two cases and a fake adapter; ROOT points at the temporary tree."""
+    if real:
+        as_in_the_container(monkeypatch)
     skill = make_skill(tmp_path)
-    (skill / "SKILL.md").write_text("# demo\n")
+    (skill / "SKILL.md").write_text(SKILL_MD)
     cases = cases or [{"id": 1, "prompt": "p", "assertions": ["a"]}, {"id": 2, "prompt": "q", "assertions": ["a"]}]
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": cases}))
     adapter = tmp_path / "adapters" / "h"
@@ -708,7 +753,8 @@ def sees_demo(tmp_path, monkeypatch, case=None):
     """The skill "demo" cites one shared reference and has cases, tests and a cache; "dep" is a dependency skill."""
     skill = write_demo(tmp_path, monkeypatch, SEES, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "skills": ["dep"],
                                                       "assertions": ["a"], **(case or {})}])
-    (skill / "SKILL.md").write_text("# demo\nWalk ../../shared/references/security.md before you finish.\n")
+    (skill / "SKILL.md").write_text("# demo\nWalk ../../shared/references/security.md before you finish.\n"
+                                    "Check the result with ../dep/scripts/check_dep.py.\n")
     (skill / "references").mkdir()
     (skill / "references" / "guide.md").write_text("See also shared/references/missing.md and shared/references/.\n")
     (skill / "scripts" / "tests").mkdir(parents=True)
@@ -873,19 +919,20 @@ def test_run_files_is_the_one_list_of_what_the_host_touches_after_a_run(tmp_path
     assert er.host_may_touch(str(case), str(case / "docs")) and not er.host_may_touch(str(case), str(case / "link-to-folder"))
 
 
-def test_a_run_that_passes_an_extra_variable_names_it_and_writes_no_record(tmp_path, monkeypatch, capsys):
+def test_an_event_that_passes_an_extra_variable_names_it_and_is_a_trial(tmp_path, monkeypatch, capsys):
     skill = write_demo(tmp_path, monkeypatch, FAKE)
     configure_gate(tmp_path, floor_pass_env=["FLOOR_KEY"])
     monkeypatch.setenv("FLOOR_KEY", "k")
     monkeypatch.setenv("SOME_ADAPTER_SWITCH", "1")
-    assert er.main(["--skill", "demo", "--runs", "1", "--pass-env", "SOME_ADAPTER_SWITCH"]) == 0
+    assert er.main(["--skill", "demo", "--pass-env", "SOME_ADAPTER_SWITCH"]) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["record"]["written"] is False and "SOME_ADAPTER_SWITCH" in out["record"]["reason"]
-    assert bench_of(tmp_path)["extra_pass_env"] == ["SOME_ADAPTER_SWITCH"] and not (skill / "evals" / "result.json").exists()
-    # The gate file's own variable is not extra: the configured run records.
-    assert er.main(["--skill", "demo", "--runs", "1"]) == 0
-    assert json.loads(capsys.readouterr().out)["record"]["written"] is True
-    assert json.loads((tmp_path / "evals-workspace" / "demo" / "iteration-2" / "benchmark.json").read_text())["extra_pass_env"] == []
+    assert out["evidence"]["written"] is False and "SOME_ADAPTER_SWITCH" in out["evidence"]["reason"]
+    assert bench_of(tmp_path)["extra_pass_env"] == ["SOME_ADAPTER_SWITCH"] and evidence_of(skill) == []
+    assert event_file(tmp_path, out)[0]["extra_pass_env"] == ["SOME_ADAPTER_SWITCH"]  # the event line names it
+    # The gate file's own variable is not extra: the configured event is evidence.
+    assert er.main(["--skill", "demo"]) == 0
+    assert json.loads(capsys.readouterr().out)["evidence"]["written"] is True
+    assert evidence_of(skill)[0][0]["extra_pass_env"] == []
     assert er.parse(["--skill", "demo", "--floor-pass-env", "OTHER_KEY"])["extra_pass_env"] == ["OTHER_KEY"]
 
 
@@ -1002,7 +1049,9 @@ fi
 [ -f "$here/edit-skill" ] && echo "edited" >> "$here/../../skills/demo/SKILL.md"
 echo ok > "$out/response.md"
 '''
-FULL = ["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1"]
+# Every case, with the skill and without it, on both models: a full test with the floor model's baseline too
+# (--baseline-on), so that each test below sees the four variants. The default runs no baseline on the floor model.
+FULL = ["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1", "--baseline-on", "f"]
 
 
 def test_check_cases_and_a_real_run_stop_on_a_preflight_error_before_any_run(tmp_path, monkeypatch, capsys):
@@ -1018,30 +1067,68 @@ def test_check_cases_and_a_real_run_stop_on_a_preflight_error_before_any_run(tmp
     assert json.loads(capsys.readouterr().out)["preflight"]["errors"]
 
 
-def test_a_complete_full_run_writes_the_record(tmp_path, monkeypatch, capsys):
+def test_a_complete_full_test_writes_its_evidence_file_into_the_skill(tmp_path, monkeypatch, capsys):
     skill = write_demo(tmp_path, monkeypatch, FAKE)
+    status = er.load_status()
+    before = status.content_hash(str(skill))
     assert er.main(FULL) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["complete"] is True and out["expected_runs"] == out["completed_runs"] == 8
-    assert out["record"] == {"written": True, "path": os.path.join("skills", "demo", "evals", "result.json"), "status": "evaluated"}
     bench = json.loads((tmp_path / "evals-workspace" / "demo" / "iteration-1" / "benchmark.json").read_text())
     assert bench["complete"] is True and bench["infra_failures"] == [] and bench["cases"] == [1, 2]
-    rec = json.loads((skill / "evals" / "result.json").read_text())
-    assert rec["content_sha256"] == bench["content_sha256"] and rec["iteration"] == 1 and rec["cases"] == [1, 2]
-    assert rec["scores"] == {"strong_with": 1.0, "strong_without": 1.0, "floor_with": 1.0, "floor_without": 1.0}
-    assert rec["gate"]["passed"] is True and rec["complete"] is True and rec["models"] == {"strong": "m", "floor": "f"}
-    # A second iteration records again: the record itself is not part of the content hash.
+    (event, runs), = evidence_of(skill)
+    test = event["test"]
+    assert out["evidence"] == {"written": True, "path": f"skills/demo/evals/evidence/lab-{test}.jsonl",
+                               "scratch": f"evals-workspace/demo/iteration-1/scratch/skills/demo/evals/evidence/lab-{test}.jsonl",
+                               "reason": None, "test": test, "kind": "full", "lines": 8, "gate": event["gate"]}
+    # The event line: what describes the event as a whole.
+    assert (event["record"], event["skill"], event["kind"], event["complete"], event["version"]) == ("test", "demo", "full", True, "0.3.0")
+    assert event["content_sha256"] == bench["content_sha256"] == before == status.content_hash(str(skill))  # evidence changes no hash
+    assert event["models"] == {"strong": "m", "floor": "f"} and event["adapters"] == {"strong": "h", "floor": "h"}
+    assert event["adapter_sha256"] == {"h": status.file_sha256(str(tmp_path / "adapters" / "h" / "run-prompt.sh"))}
+    assert (event["grader"], event["runs"], event["timeout_seconds"], event["retries"]) == ("m", 1, 900, 2)
+    assert event["gate"] == {"passed": True, "with": 1.0, "baseline": 1.0, "threshold": 0.8, "tolerance": 0}
+    assert event["cases"] == status.case_hashes(str(skill)) and event["baseline"] == {"1": "run", "2": "run"}
+    assert event["measurement_sha256"] == status.measurement_fingerprint(str(tmp_path)) and event["grading_template_sha256"] == er.template_hash()
+    assert event["image_digest"] == "sha256:" + "1" * 64 and event["tools"] == {"git": "git version 2.0-test"}
+    assert event["counts"] == {model: {variant: {"retries": 0, "refusals": 0, "timeouts": 0, "pauses": 0, "early_ends": 0, "resumes": 0}
+                                       for variant in ("with", "without")} for model in ("m", "f")}
+    # One line per run: 2 cases, with and without, on both models.
+    assert sorted((l["case"], l["variant"], l["model"]) for l in runs) == sorted(
+        (c, v, m) for c in (1, 2) for v in ("with", "without") for m in ("m", "f"))
+    for line in runs:
+        assert (line["record"], line["kind"], line["test"], line["version"], line["adapter"]) == ("run", "full", test, "0.3.0", "h")
+        assert (line["outcome"], line["score"], line["results"]) == ("graded", 1.0, [1])
+        assert line["case_sha256"] == event["cases"][str(line["case"])] and line["content_sha256"] == before
+        assert line["measurement_sha256"] == event["measurement_sha256"] and "context_sha256" not in line
+        assert set(line) == set(status.RUN_REQUIRED)
+    assert status.evidence_problems(str(tmp_path)) == ({}, 1)  # the file the runner wrote is a valid one
+    # A second full test of the same content adds its file and replaces none; the old record is not written.
     assert er.main(FULL) == 0
-    assert json.loads((skill / "evals" / "result.json").read_text())["iteration"] == 2
+    assert len(evidence_of(skill)) == 2 and test in {e["test"] for e, _ in evidence_of(skill)}
+    assert not (skill / "evals" / "result.json").exists() and status.content_hash(str(skill)) == before
 
 
-@pytest.mark.parametrize("extra", [["--case", "1"], ["--only", "with"], ["--tiers", "strong"], ["--no-grade"], ["--no-record"],
-                                   ["--ablate", "demo"]])
-def test_a_partial_run_never_writes_the_record(tmp_path, monkeypatch, capsys, extra):
+@pytest.mark.parametrize("extra, why", [(["--only", "with"], "--only"), (["--tiers", "strong"], "--tiers"), (["--no-grade"], "--no-grade"),
+                                        (["--scratch"], "--scratch"), (["--ablate", "demo"], "--ablate")])
+def test_a_trial_never_writes_into_the_skill(tmp_path, monkeypatch, capsys, extra, why):
     skill = write_demo(tmp_path, monkeypatch, FAKE)
+    before = skill_tree(skill)
     assert er.main(FULL + extra) == 0
-    assert json.loads(capsys.readouterr().out)["record"]["written"] is False
-    assert not (skill / "evals" / "result.json").exists()
+    out = json.loads(capsys.readouterr().out)
+    assert out["evidence"]["written"] is False and why in out["evidence"]["reason"]
+    assert skill_tree(skill) == before and bench_of(tmp_path)["scratch"] == out["evidence"]["reason"]
+
+
+def test_an_event_on_chosen_cases_is_a_partial_test_and_evaluates_no_gate(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    assert er.main(FULL + ["--case", "1"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    (event, runs), = evidence_of(skill)
+    assert out["evidence"]["written"] is True and out["evidence"]["gate"] is None
+    assert event["kind"] == "partial" and "gate" not in event and set(event["cases"]) == {"1"}
+    assert {l["case"] for l in runs} == {1} and {l["kind"] for l in runs} == {"partial"}
+    assert er.load_status().evidence_problems(str(tmp_path)) == ({}, 1)
 
 
 def test_an_infrastructure_failure_is_listed_left_out_of_the_mean_and_exits_1(tmp_path, monkeypatch, capsys):
@@ -1059,16 +1146,23 @@ def test_an_infrastructure_failure_is_listed_left_out_of_the_mean_and_exits_1(tm
     assert bench["infra_failures"][0]["reason"] == "adapter exit 7: provider: out of credits"
     floor = bench["run_summary"]["with_skill.floor"]
     assert floor["pass_rate"] == {"mean": 1.0, "stddev": 0.0, "n": 2} and [r["case"] for r in floor["cases"]] == [1, 1]
-    assert out["record"]["reason"] == "incomplete iteration" and not (skill / "evals" / "result.json").exists()
+    # The failed runs are the floor model's: the event is complete by the reference model, and its evidence is
+    # written, without them. The exit code says that runs are missing.
+    (event, runs), = evidence_of(skill)
+    assert out["evidence"]["written"] is True and event["complete"] is True and event["gate"]["passed"] is True
+    assert len(runs) == 14 and not [l for l in runs if l["case"] == 2 and l["model"] == "f" and l["variant"] == "with"]
 
 
-def test_a_gate_that_fails_on_a_complete_run_exits_3_and_records_a_draft(tmp_path, monkeypatch, capsys):
+def test_a_gate_that_fails_on_a_complete_full_test_exits_3_and_is_written_as_failed(tmp_path, monkeypatch, capsys):
     failing = FAKE.replace('"passed": true', '"passed": false')
     skill = write_demo(tmp_path, monkeypatch, failing)
     assert er.main(FULL) == 3
-    out = json.loads(capsys.readouterr().out)
-    assert out["complete"] is True and out["record"]["status"] == "draft"
-    assert json.loads((skill / "evals" / "result.json").read_text())["gate"]["floor"] is False
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    (event, runs), = evidence_of(skill)  # a failed gate is evidence too: it is what the band will read
+    assert out["complete"] is True and out["evidence"]["written"] is True and "gate failed" in captured.err
+    assert event["gate"] == {"passed": False, "with": 0.0, "baseline": 0.0, "threshold": 0.8, "tolerance": 0}
+    assert {l["score"] for l in runs} == {0.0} and {tuple(l["results"]) for l in runs} == {(0,)}
 
 
 def test_a_run_that_says_and_writes_nothing_is_an_infrastructure_failure(tmp_path, monkeypatch, capsys):
@@ -1086,13 +1180,13 @@ def test_a_timeout_is_an_infrastructure_failure_with_its_reason(tmp_path):
     assert er.run_failure(str(runner), "p", str(tmp_path), "m", str(tmp_path / "out"), None, timeout=1) == "timeout: stopped after 1s"
 
 
-def test_a_skill_changed_during_the_run_is_not_recorded(tmp_path, monkeypatch, capsys):
+def test_a_skill_changed_during_the_event_writes_no_evidence(tmp_path, monkeypatch, capsys):
     skill = write_demo(tmp_path, monkeypatch, FAKE)
     (tmp_path / "adapters" / "h" / "edit-skill").write_text("")
     assert er.main(FULL) == 0
     captured = capsys.readouterr()
-    assert "changed during the run" in json.loads(captured.out)["record"]["reason"]
-    assert "RECORD demo: not written" in captured.err and not (skill / "evals" / "result.json").exists()
+    assert "changed during the event" in json.loads(captured.out)["evidence"]["reason"]
+    assert "EVIDENCE demo: nothing written into the skill" in captured.err and evidence_of(skill) == []
 
 
 def test_the_grader_sees_a_long_file_whole_up_to_the_limit(tmp_path):
@@ -1308,18 +1402,19 @@ def test_an_early_end_is_retried_and_the_second_attempt_is_scored(tmp_path, monk
     assert (run / "early-end-1" / "outputs" / "response.md").read_text() == "Let me just read the template first.\n"
     assert (run / "early-end-1" / "cwd").is_dir() and not (run / "early-end-2").exists()
     assert "EARLY END   case 1 with_skill.floor run 1 attempt 1" in captured.err
-    rec = json.loads((skill / "evals" / "result.json").read_text())
-    assert rec["early_ends"] == {"strong": {"early_ends": 0, "rate": 0.0}, "floor": {"early_ends": 1, "rate": 0.2}}
-    assert rec["gate"]["passed"] is True and out["record"]["status"] == "evaluated"
+    (event, _), = evidence_of(skill)  # the event line counts them per model and variant
+    assert (event["counts"]["f"]["with"]["early_ends"], event["counts"]["f"]["with"]["retries"]) == (1, 1)
+    assert event["counts"]["f"]["without"]["early_ends"] == 0 and event["counts"]["m"]["with"]["early_ends"] == 0
+    assert event["gate"]["passed"] is True and out["evidence"]["written"] is True
 
 
 def test_a_run_that_ends_early_on_every_attempt_is_an_infrastructure_failure(tmp_path, monkeypatch, capsys):
     skill = early_demo(tmp_path, monkeypatch, times=9)
     assert er.main(FULL) == 1
     out, bench = json.loads(capsys.readouterr().out), bench_of(tmp_path)
-    assert out["complete"] is False and not (skill / "evals" / "result.json").exists()
+    assert out["complete"] is False and evidence_of(skill)[0][0]["complete"] is True  # a floor run is missing: information
     assert bench["infra_failures"] == [{"case": 1, "variant": "with_skill", "tier": "floor", "run": 1, "reason": "early_end",
-                                        "detail": "the reply ends by announcing a next action, no question was asked and no file written",
+                                        "kind": "early_end", "detail": "the reply ends by announcing a next action, no question was asked and no file written",
                                         "attempts": 3}]
     assert bench["early_ends"]["floor"]["early_ends"] == 3 and bench["early_ends"]["floor"]["attempts"] == 6
     assert [r["case"] for r in bench["run_summary"]["with_skill.floor"]["cases"]] == [2]
@@ -1382,7 +1477,8 @@ def test_retries_and_the_rate_are_checked(args):
 def configure_gate(tmp_path, **changes):
     config = {"strong_model": "m", "strong_harness": "h", "floor_model": "f", "floor_harness": "h",
               "floor_pass_env": [], "strong_pass_env": [], "grader": "m", "threshold": 0.8, "strong_tolerance": 0, "measurement_version": 2,
-              "measurement_floor": 2, "measurement_sha256": "0" * 64, **changes}
+              "measurement_floor": 2, "measurement_sha256": er.load_status().measurement_fingerprint(str(tmp_path)),
+              "runs": 1, **changes}
     config = {k: v for k, v in config.items() if v is not None}  # None leaves a key out
     (tmp_path / "evals").mkdir(exist_ok=True)
     (tmp_path / "evals" / "eval-gate.json").write_text(json.dumps(config))
@@ -1416,52 +1512,96 @@ def test_without_a_configuration_harness_and_model_are_required_and_there_is_no_
     assert er.parse(["--skill", "demo", "--check-cases"])["check_cases"] is True
 
 
-def test_skill_alone_runs_the_configured_gate_and_records(tmp_path, monkeypatch, capsys):
+def test_skill_alone_runs_the_configured_gate_and_writes_evidence(tmp_path, monkeypatch, capsys):
     skill = write_demo(tmp_path, monkeypatch, FAKE)
-    configure_gate(tmp_path)
-    assert er.main(["--skill", "demo", "--runs", "1"]) == 0
-    assert json.loads(capsys.readouterr().out)["record"]["status"] == "evaluated"
-    assert json.loads((skill / "evals" / "result.json").read_text())["models"] == {"strong": "m", "floor": "f"}
+    configure_gate(tmp_path, measurement_version=7, strong_tolerance=0.05)
+    assert er.main(["--skill", "demo"]) == 0
+    assert json.loads(capsys.readouterr().out)["evidence"]["written"] is True
+    (event, runs), = evidence_of(skill)
+    assert event["models"] == {"strong": "m", "floor": "f"} and event["measurement_version"] == 7
+    assert event["gate"]["tolerance"] == 0.05 and {l["measurement_version"] for l in runs} == {7}
 
 
-def test_while_the_gate_file_carries_no_fingerprint_a_complete_run_writes_no_record(tmp_path, monkeypatch, capsys):
+def test_while_the_gate_file_carries_no_fingerprint_a_complete_event_writes_no_evidence(tmp_path, monkeypatch, capsys):
     skill = write_demo(tmp_path, monkeypatch, FAKE)
     configure_gate(tmp_path, measurement_sha256=None)
-    for extra in ([], ["--record-anyway"], ["--only", "without", "--update-record"]):
-        assert er.main(["--skill", "demo", "--runs", "1"] + extra) == 0
+    for extra in ([], ["--case", "1"]):
+        assert er.main(["--skill", "demo"] + extra) == 0
         captured = capsys.readouterr()
         out = json.loads(captured.out)
-        assert out["complete"] is True and out["record"]["written"] is False
-        assert "carries no measurement_sha256: measurement version 2 is open" in out["record"]["reason"]
-        assert "RECORD demo: not written" in captured.err and not (skill / "evals" / "result.json").exists()
-    assert bench_of(tmp_path)["complete"] is True  # the runs happened and are on disk; only the record is withheld
+        assert out["complete"] is True and out["evidence"]["written"] is False
+        assert "carries no measurement_sha256: measurement version 2 is open" in out["evidence"]["reason"]
+        assert "EVIDENCE demo: nothing written into the skill" in captured.err and evidence_of(skill) == []
+    assert bench_of(tmp_path)["complete"] is True  # the runs happened and are on disk; only the evidence is withheld
 
 
-def test_an_image_of_another_platform_writes_no_record(tmp_path, monkeypatch, capsys):
+def test_a_fingerprint_that_differs_from_the_committed_one_writes_no_evidence(tmp_path, monkeypatch, capsys):
+    """A checkout in which a file that decides what a run measures was altered cannot write evidence unnoticed."""
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    configure_gate(tmp_path)
+    runner = tmp_path / "adapters" / "h" / "run-prompt.sh"
+    runner.write_text(runner.read_text() + "# altered after the fingerprint was committed\n")
+    assert er.main(["--skill", "demo"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["evidence"]["written"] is False and "measurement fingerprint of this checkout differs" in out["evidence"]["reason"]
+    assert evidence_of(skill) == [] and event_file(tmp_path, out)[0]["measurement_sha256"] != json.loads(
+        (tmp_path / "evals" / "eval-gate.json").read_text())["measurement_sha256"]
+
+
+def test_an_image_of_another_platform_writes_no_evidence(tmp_path, monkeypatch, capsys):
     """The CI job builds the image for its own architecture to test the definition; evidence is made on one platform."""
     skill = write_demo(tmp_path, monkeypatch, FAKE)
     executor = er.load_executor()
-    monkeypatch.setattr(er, "EXECUTOR", "container")
-    monkeypatch.setattr(executor, "ensure", lambda: {"kind": "container", "image_platform": "linux/amd64"})
-    monkeypatch.setattr(er, "run_group", lambda cmd, timeout, cwd=None, env=None, box=None: er._run_group(cmd, timeout, cwd, env, None))
+    monkeypatch.setattr(executor, "ensure", lambda: {"kind": "container", "image_digest": "sha256:" + "2" * 64, "image_platform": "linux/amd64"})
     assert er.main(FULL) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["record"]["written"] is False and "built for linux/amd64" in out["record"]["reason"]
-    assert not (skill / "evals" / "result.json").exists()
+    assert out["evidence"]["written"] is False and "built for linux/amd64" in out["evidence"]["reason"]
+    assert evidence_of(skill) == [] and event_file(tmp_path, out)[0]["image_platform"] == "linux/amd64"
 
 
-def test_a_full_run_on_another_floor_model_is_not_recorded_unless_asked(tmp_path, monkeypatch, capsys):
+@pytest.mark.parametrize("extra, why", [
+    (["--floor-model", "local/x"], "the floor model of the event is local/x, and the configured one is f"),
+    (["--model", "other"], "the strong model of the event is other, and the configured one is m"),
+    (["--grader", "another"], "the grader of the event is another, and the configured one is m"),
+])
+def test_an_event_on_another_model_or_grader_than_the_configured_ones_is_a_trial(tmp_path, monkeypatch, capsys, extra, why):
     skill = write_demo(tmp_path, monkeypatch, FAKE)
     configure_gate(tmp_path)
-    assert er.main(["--skill", "demo", "--runs", "1", "--floor-model", "local/x"]) == 0
+    assert er.main(["--skill", "demo"] + extra) == 0
     captured = capsys.readouterr()
-    reason = json.loads(captured.out)["record"]["reason"]
-    assert "local/x is not the configured one (f)" in reason and "--record-anyway" in reason
-    assert "RECORD demo: not written" in captured.err and not (skill / "evals" / "result.json").exists()
-    assert er.main(["--skill", "demo", "--runs", "1", "--floor-model", "local/x", "--record-anyway"]) == 0
+    out = json.loads(captured.out)
+    assert out["evidence"]["written"] is False and why in out["evidence"]["reason"]
+    assert "EVIDENCE demo: nothing written into the skill" in captured.err and evidence_of(skill) == []
+    # A model that is not a known one is written as "unknown", also in the trial's own file.
+    event, runs = event_file(tmp_path, out)
+    assert set(event["models"].values()) | {event["grader"]} <= {"m", "f", "unknown"} and "unknown" in list(event["models"].values()) + [event["grader"]]
+
+
+def test_a_skill_without_a_version_writes_no_evidence(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    (skill / "SKILL.md").write_text("# demo\n")
+    assert er.main(FULL) == 0
     out = json.loads(capsys.readouterr().out)
-    assert out["record"]["written"] is True and out["record"]["status"] == "stale"
-    assert json.loads((skill / "evals" / "result.json").read_text())["models"]["floor"] == "local/x"
+    assert out["evidence"]["written"] is False and "no metadata.version" in out["evidence"]["reason"] and evidence_of(skill) == []
+
+
+def test_a_line_carries_the_hash_of_the_dependencies_and_references_the_run_was_given(tmp_path, monkeypatch, capsys):
+    skill = sees_demo(tmp_path, monkeypatch, {"platforms": ["chirp"]})
+    (skill / "SKILL.md").write_text(SKILL_MD + "Walk ../../shared/references/security.md before you finish.\n"
+                                    "Check the result with ../dep/scripts/check_dep.py.\n")
+    status = er.load_status()
+    assert er.main(FULL) == 0
+    (event, runs), = evidence_of(skill)
+    refs = tmp_path / "shared" / "references"
+    dep = [str(tmp_path / "skills" / "dep")]
+    with_skill = status.context_hash(dep, [(rel, str(refs / rel)) for rel in ("platforms/chirp.json", "platforms/chirp.md", "security.md")])
+    assert {l["context_sha256"] for l in runs if l["variant"] == "with"} == {with_skill}
+    assert {l["context_sha256"] for l in runs if l["variant"] == "without"} == {status.context_hash(dep, [])}  # the dependency alone
+    assert with_skill != status.context_hash(dep, []) and status.evidence_problems(str(tmp_path)) == ({}, 1)
+    # An edit of a reference or of a dependency skill changes the hash a later line would carry, and no other one.
+    (refs / "security.md").write_text("edited\n")
+    assert status.context_hash(dep, [(rel, str(refs / rel)) for rel in ("platforms/chirp.json", "platforms/chirp.md", "security.md")]) != with_skill
+    assert status.content_hash(str(skill)) == event["content_sha256"] and status.case_hashes(str(skill)) == event["cases"]
 
 
 # --- stopping: nothing a run started outlives it --------------------------------------------------
@@ -1621,8 +1761,9 @@ def test_the_environment_of_a_run_carries_no_path_into_the_repository(tmp_path, 
         env = dict(line.split("=", 1) for line in (run_folder(tmp_path, variant) / "outputs" / "env.txt").read_text().splitlines()
                    if "=" in line)
         leaks = {k: v for k, v in env.items() if str(tmp_path) in v or os.path.realpath(tmp_path) in v}
-        # The one exception: a variable the caller named with --pass-env is passed as it is.
-        assert set(leaks) == {"CHOSEN_BY_THE_CALLER"}
+        # The one exception: a variable the caller named with --pass-env is passed as it is. The run had its
+        # value; what the run printed of it is stored as the marker.
+        assert leaks == {} and env["CHOSEN_BY_THE_CALLER"] == "[redacted:CHOSEN_BY_THE_CALLER]"
         assert inside not in env["PATH"].split(os.pathsep) and "/usr/bin" in env["PATH"].split(os.pathsep)
         assert env["PWD"].endswith("/case") and "VIRTUAL_ENV" not in env and "SSL_CERT_FILE" not in env
         assert os.path.isdir(env["TMPDIR"]) and "HOME" in env
@@ -1705,8 +1846,9 @@ def test_a_without_skill_run_that_names_the_repository_is_not_scored_and_leaves_
     assert bench["infra_failures"][0]["evidence"] == bench["contaminated"][0]["evidence"]
     # No score for those runs, so no baseline mean and no condition computed from one.
     assert "without_skill" not in bench["run_summary"] and "strong_delta" not in bench["conditions"]
-    assert bench["complete"] is False and out["contaminated"] == 2 and out["record"]["reason"] == "incomplete iteration"
-    assert "CONTAMINATED: 2 without-skill run(s)" in captured.err and not (skill / "evals" / "result.json").exists()
+    assert bench["complete"] is False and out["contaminated"] == 2 and "the event is incomplete" in out["evidence"]["reason"]
+    assert "CONTAMINATED: 2 without-skill run(s)" in captured.err and evidence_of(skill) == []
+    assert not [l for l in event_file(tmp_path, out)[1] if l["variant"] == "without"]  # no line for a contaminated run
     assert not (run_folder(tmp_path, "without_skill") / "grading.json").exists()  # not graded either
     with pytest.raises(SystemExit) as e:  # and no option records it anyway
         er.main(FULL + ["--allow-contaminated"])
@@ -1771,14 +1913,14 @@ def test_a_without_skill_run_that_looked_at_the_mount_is_contaminated_and_a_with
 
 def test_a_passage_shared_with_the_skills_text_is_a_warning_with_the_passage_quoted(tmp_path, monkeypatch, capsys):
     skill = says_demo(tmp_path, monkeypatch, f"My advice: {SENTENCE.lower()}, as a rule.\n")
-    assert er.main(FULL) == 0  # a warning: the iteration is complete and the record is written
+    assert er.main(FULL) == 0  # a warning: the event is complete
     captured = capsys.readouterr()
     bench = bench_of(tmp_path)
     assert [(s["variant"], s["tier"]) for s in bench["shared_passages"]] == [("without_skill", "strong"), ("without_skill", "floor")]
     assert bench["shared_passages"][0]["passage"] == SENTENCE.lower()  # the whole shared run, not only ten words of it
     assert f'WARNING shared passage: case 1 without_skill (strong) run 1 shares 14 words' in captured.err and SENTENCE.lower() in captured.err
     assert bench["complete"] is True and bench["contaminated"] == [] and json.loads(captured.out)["shared_passages"] == 2
-    assert (skill / "evals" / "result.json").exists()
+    assert bench["evidence"]["gate"]["passed"] is True  # it blocks nothing: the gate was evaluated
 
 
 @pytest.mark.parametrize("where", ["prompt", "fixture", "dependency", "short", "produced-file"])
@@ -1799,6 +1941,7 @@ def test_a_passage_the_case_itself_holds_or_a_shorter_one_is_no_warning(tmp_path
     elif where == "dependency":
         (tmp_path / "skills" / "dep").mkdir()
         (tmp_path / "skills" / "dep" / "SKILL.md").write_text(f"# dep\n{SENTENCE}.\n")
+        (skill / "SKILL.md").write_text((skill / "SKILL.md").read_text() + "3. Check the slot with ../dep/scripts/slot.py.\n")
     elif where == "produced-file":
         (tmp_path / "adapters" / "h" / "file.txt").write_text(f"{SENTENCE}\n")
     assert er.main(FULL) == 0
@@ -1824,76 +1967,13 @@ def test_a_clean_run_and_a_with_skill_run_are_not_contaminated(tmp_path, monkeyp
     looks_demo(tmp_path, monkeypatch)
     assert er.main(FULL) == 0
     assert bench_of(tmp_path)["contaminated"] == [] and bench_of(tmp_path)["shared_passages"] == []
-    assert json.loads(capsys.readouterr().out)["record"]["written"] is True
+    assert json.loads(capsys.readouterr().out)["evidence"]["written"] is True
     out_dir = tmp_path / "o"
     out_dir.mkdir()
     (out_dir / "stderr.log").write_text(f"$ find {os.path.realpath(tmp_path)}/skills -name SKILL.md\n")
     assert er.contamination(str(out_dir)).startswith("stderr.log: $ find ")
     (out_dir / "stderr.log").write_text("$ find /somewhere/else\n")
     assert er.contamination(str(out_dir)) is None
-
-
-# --- the baseline alone: --only without --update-record ---------------------------------------------
-
-BASELINE = ["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1", "--only", "without", "--update-record"]
-
-
-def test_update_record_replaces_only_the_two_baseline_scores_and_the_gate(tmp_path, monkeypatch, capsys):
-    skill = looks_demo(tmp_path, monkeypatch)
-    assert er.main(FULL) == 0
-    before = json.loads((skill / "evals" / "result.json").read_text())
-    assert before["scores"]["strong_without"] == 1.0 and "baseline" not in before
-    (tmp_path / "adapters" / "h" / "grade-fail").write_text("")  # the cleaner baseline scores nothing
-    capsys.readouterr()
-    assert er.main(BASELINE) == 0
-    out = json.loads(capsys.readouterr().out)
-    after = json.loads((skill / "evals" / "result.json").read_text())
-    assert out["record"]["written"] is True and out["record"]["updated"] == "baseline" and out["record"]["status"] == "evaluated"
-    assert after["scores"] == {"strong_with": 1.0, "strong_without": 0.0, "floor_with": 1.0, "floor_without": 0.0}
-    assert after["gate"] == {"floor": True, "strong": True, "strong_delta": True, "passed": True}
-    assert after["baseline"] == {"date": after["date"], "iteration": 2, "runs": 1}
-    for key in ("content_sha256", "iteration", "date", "runs", "cases", "models", "threshold", "complete", "infra_failures"):
-        assert after[key] == before[key]
-    assert not list(run_folder(tmp_path, "with_skill", 2).parent.glob("with_skill*"))  # only the without-skill variant ran
-
-
-@pytest.mark.parametrize("how, why", [
-    ("no-record", "no record to update"),
-    ("edited", "another content of the skill"),
-    ("other-floor", "the record's floor model is f, this run's is other"),
-    ("incomplete", "incomplete iteration"),
-    ("contaminated", "incomplete iteration"),  # a contaminated baseline run is not scored, so the run is incomplete
-])
-def test_update_record_changes_nothing_and_says_why(tmp_path, monkeypatch, capsys, how, why):
-    skill = looks_demo(tmp_path, monkeypatch)
-    record = skill / "evals" / "result.json"
-    if how != "no-record":
-        assert er.main(FULL) == 0
-    before = record.read_text() if record.exists() else None
-    args = list(BASELINE)
-    if how == "edited":
-        (skill / "SKILL.md").write_text("# demo, edited\n")
-    elif how == "other-floor":
-        args[args.index("f")] = "other"
-    elif how == "incomplete":
-        (tmp_path / "adapters" / "h" / "fail-without").write_text("")
-    elif how == "contaminated":
-        (tmp_path / "adapters" / "h" / "say-repo").write_text("")
-    capsys.readouterr()
-    code = er.main(args)
-    out = json.loads(capsys.readouterr().out)
-    assert code == (1 if how in ("incomplete", "contaminated") else 0)
-    assert out["record"]["written"] is False and why in out["record"]["reason"]
-    assert (record.read_text() if record.exists() else None) == before
-
-
-@pytest.mark.parametrize("args", [["--update-record"], ["--only", "with", "--update-record"],
-                                  ["--only", "without", "--update-record", "--case", "1"],
-                                  ["--only", "without", "--update-record", "--no-grade"]])
-def test_update_record_needs_the_whole_without_skill_variant(args):
-    with pytest.raises(SystemExit) as e:
-        er.parse(["--skill", "s", "--harness", "h", "--model", "m", *args])
-    assert e.value.code == 2
 
 
 # --- two runs of one skill never share an iteration folder ----------------------------------------
@@ -1950,9 +2030,14 @@ def test_workbench_files_refuses_what_must_not_enter_a_case(tmp_path, monkeypatc
 
 def test_a_provider_refusal_is_recognised_in_what_the_adapter_left(tmp_path):
     (tmp_path / "raw.json").write_text(json.dumps({"is_error": True, "result": "API Error: the model's safeguards flagged this message. Details: [policy]"}))
-    assert "safeguards flagged this message" in er.provider_refusal(str(tmp_path))
+    assert "safeguards flagged this message" in er.provider_refusal(str(tmp_path), ["safeguards flagged this message"])
+    assert er.provider_refusal(str(tmp_path), []) is None  # the words are the adapter's data, not the runner's
     (tmp_path / "raw.json").write_text(json.dumps({"is_error": True, "result": "API Error: overloaded"}))
-    assert er.provider_refusal(str(tmp_path)) is None
+    assert er.provider_refusal(str(tmp_path), ["safeguards flagged this message"]) is None
+    assert "safeguards" not in open(SCRIPT, encoding="utf-8").read().split('"""', 2)[2]  # no marker left in the runner's code
+    for harness in ("claude-code", "agents-dir"):
+        assert isinstance(er.adapter_eval(harness)["refusal_markers"], list)
+    assert er.adapter_eval("claude-code")["refusal_markers"] == ["safeguards flagged this message"]
 
 
 
@@ -1970,22 +2055,965 @@ echo ok > "$out/response.md"
 '''
 
 
-def test_a_refused_baseline_run_scores_zero_and_the_run_is_complete(tmp_path, monkeypatch, capsys):
-    skill = write_demo(tmp_path, monkeypatch, REFUSING)
-    assert er.main(FULL) == 0
+def test_a_refused_run_is_made_again_and_then_fails_with_the_skill_and_without_it_alike(tmp_path, monkeypatch, capsys):
+    """A refusal is retried inside the event and counted, in both variants: neither is scored at once."""
+    write_demo(tmp_path, monkeypatch, REFUSING)
+    assert er.main(FULL) == 1
     captured = capsys.readouterr()
     out = json.loads(captured.out)
-    assert out["complete"] is True and out["failures"] == 0 and "REFUSED     case 2 without_skill run 1" in captured.err
+    assert out["complete"] is False and out["failures"] == 1 and out["evidence"]["written"] is False
     bench = json.loads((tmp_path / out["iteration_dir"] / "benchmark.json").read_text())
-    assert [(r["case"], r["tier"], r["variant"]) for r in bench["baseline_refusals"]] == [(2, "strong", "without_skill")]
-    rows = {r["case"]: r for r in bench["run_summary"]["without_skill"]["cases"]}
-    assert rows[2]["pass_rate"] == 0.0 and rows[2]["refused"] is True and rows[1]["pass_rate"] == 1.0
-    assert json.loads((skill / "evals" / "result.json").read_text())["scores"]["strong_without"] == 0.5
-
-
-def test_a_refused_run_that_has_the_skill_is_an_infrastructure_failure(tmp_path, monkeypatch, capsys):
-    write_demo(tmp_path, monkeypatch, REFUSING)
+    assert [(f["case"], f["tier"], f["variant"], f["kind"], f["attempts"]) for f in bench["infra_failures"]] == [
+        (2, "strong", "without_skill", "refused", 3)]
+    assert bench["counts"]["strong"]["without_skill"] == {"attempts": 4, "retries": 2, "timeouts": 0, "refusals": 3,
+                                                          "adapter_failures": 0, "early_ends": 0, "pauses": 0, "resumes": 0}
+    assert [(r["case"], r["tier"], r["variant"]) for r in bench["refusals"]] == [(2, "strong", "without_skill")]
+    assert [r["case"] for r in bench["run_summary"]["without_skill"]["cases"]] == [1]  # no score for the refused run
+    run = tmp_path / out["iteration_dir"] / "eval-2" / "without_skill"
+    assert (run / "failed-1" / "outputs" / "raw.json").is_file() and (run / "failed-2").is_dir() and not (run / "failed-3").exists()
+    assert "RETRY       case 2 without_skill run 1 attempt 1" in captured.err
+    # The event is open: no new event of the skill starts until it is resumed or closed.
+    with pytest.raises(SystemExit) as e:
+        er.main(FULL)
+    assert e.value.code == 2 and "is open: resume it" in capsys.readouterr().err
+    assert er.main(["--close", str(tmp_path / out["iteration_dir"])]) == 0
+    capsys.readouterr()
+    # The same refusal of a run that has the skill: the same path, one more failed run.
     (tmp_path / "adapters" / "h" / "refuse-with-skill").write_text("")
-    assert er.main(FULL) == 1  # an incomplete iteration
+    assert er.main(FULL) == 1
     out = json.loads(capsys.readouterr().out)
-    assert out["complete"] is False and out["failures"] == 1 and out["record"]["written"] is False
+    bench = json.loads((tmp_path / out["iteration_dir"] / "benchmark.json").read_text())
+    assert sorted((f["variant"], f["kind"]) for f in bench["infra_failures"]) == [("with_skill", "refused"), ("without_skill", "refused")]
+
+
+# --- control of a test event: configured values, retries, --resume, the shared lock, the account limit ----
+
+# A stand-in adapter told what to do by marker files beside it. A model run is named by its prompt ("p" is
+# case 1, "q" case 2), by whether the skill was staged and by its model id: the file <kind>-<prompt>-<with or
+# without>-<model> holds a number n, and the first n calls of that run fail (exit 7), hang, or answer as an
+# exhausted account. Every call is listed in calls.txt. "limit-grading" makes the first grading call answer
+# as an exhausted account; a probe call is listed in probes.txt and fails while "probes-fail" holds a number
+# of probes not yet made.
+CONTROL = r"""
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  if [ -f "$here/limit-grading" ] && mkdir "$here/limit-grading.done" 2>/dev/null; then
+    echo "API Error: usage limit reached" >&2; exit 1
+  fi
+  echo '[{"id": 1, "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
+fi
+if grep -q "Reply with the single word" "$2"; then
+  echo probe >> "$here/probes.txt"
+  if [ -f "$here/probes-fail" ] && [ "$(wc -l < "$here/probes.txt")" -le "$(cat "$here/probes-fail")" ]; then
+    echo "API Error: usage limit reached" >&2; exit 1
+  fi
+  echo ok > "$out/response.md"; exit 0
+fi
+with=without; [ -d "$4/.h/skills/demo" ] && with=with
+id="$(cat "$2")"
+echo "$id $with $6" >> "$here/calls.txt"
+env | grep -E '^(TOKEN|WEBKEY|FLOORKEY)=' | sort | tr '\n' ' ' > "$out/keys.txt"
+n=1; while ! mkdir "$here/n-$id-$with-$6.$n" 2>/dev/null; do n=$((n + 1)); done
+for kind in fail hang limit; do
+  f="$here/$kind-$id-$with-$6"
+  if [ -f "$f" ] && [ "$n" -le "$(cat "$f")" ]; then
+    case $kind in
+      fail) echo "provider: overloaded" >&2; exit 7 ;;
+      hang) sleep 30 ;;
+      limit) echo "API Error: usage limit reached" >&2; exit 1 ;;
+    esac
+  fi
+done
+echo ok > "$out/response.md"
+"""
+
+
+def control_demo(tmp_path, monkeypatch, real=True, **markers):
+    skill = write_demo(tmp_path, monkeypatch, CONTROL, real=real)
+    for name, value in markers.items():
+        (tmp_path / "adapters" / "h" / name.replace("_", "-")).write_text(f"{value}\n")
+    return skill
+
+
+def calls(tmp_path, name="calls.txt"):
+    path = tmp_path / "adapters" / "h" / name
+    return path.read_text().splitlines() if path.exists() else []
+
+
+def skill_tree(skill):
+    return sorted(str(p.relative_to(skill)) for p in skill.rglob("*"))
+
+
+def test_the_runs_the_timeout_and_the_retries_come_from_the_gate_file(tmp_path, monkeypatch):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    o = er.parse(["--skill", "demo", "--harness", "h", "--model", "m"])
+    assert (o["runs"], o["timeout"], o["retries"]) == (3, 900, 2)  # no gate file: the defaults
+    configure_gate(tmp_path, runs=5, timeout_seconds=600, retries=1)
+    o = er.parse(["--skill", "demo"])
+    assert (o["runs"], o["timeout"], o["retries"]) == (5, 600, 1)
+    o = er.parse(["--skill", "demo", "--runs", "2", "--timeout", "60", "--retries", "0"])
+    assert (o["runs"], o["timeout"], o["retries"]) == (2, 60, 0)  # a flag wins, for a trial
+
+
+def test_the_repository_gate_file_holds_the_control_of_an_event_and_names_the_nine_web_cases():
+    gate = json.loads((REPO / "evals" / "eval-gate.json").read_text(encoding="utf-8"))
+    assert (gate["runs"], gate["retries"], gate["max_resumes"], gate["total_jobs"]) == (3, 2, 3, 10)
+    assert gate["web_jobs"] == {"strong": 2, "floor": 2} and gate["timeout_seconds"] >= 30
+    listed = {(skill, str(i)) for skill, ids in gate["web_cases"].items() for i in ids}
+    declared = set()
+    for path in glob.glob(str(REPO / "skills" / "*" / "evals" / "evals.json")):
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        declared |= {(Path(path).parents[1].name, str(c["id"])) for c in data.get("evals") or [] if er.allow_web(data, c)}
+    assert listed == declared  # no case opens the network unlisted, and the list names no case that does not
+    assert gate["strong_web_pass_env"] and not set(gate["strong_web_pass_env"]) & set(gate["strong_pass_env"])
+
+
+@pytest.mark.parametrize("extra, why", [
+    (["--runs", "2"], "the event ran with runs 2, and the configured value is 1"),
+    (["--timeout", "60"], "the event ran with timeout 60, and the configured value is 900"),
+    (["--retries", "0"], "the event ran with retries 0, and the configured value is 2"),
+    (["--scratch"], "--scratch"),
+])
+def test_an_event_with_other_values_than_the_configured_ones_writes_to_its_scratch_tree(tmp_path, monkeypatch, capsys, extra, why):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    configure_gate(tmp_path)
+    before = skill_tree(skill)
+    assert er.main(["--skill", "demo"] + extra) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["complete"] is True and out["evidence"]["written"] is False and why in out["evidence"]["reason"]
+    assert skill_tree(skill) == before  # nothing in the skill's folder
+    # The same file, in the scratch tree of the run folder.
+    scratch = tmp_path / out["iteration_dir"] / "scratch" / "skills" / "demo" / "evals" / "evidence" / f"lab-{out['evidence']['test']}.jsonl"
+    assert out["evidence"]["scratch"] == str(scratch.relative_to(tmp_path))
+    event, runs = event_file(tmp_path, out)
+    assert event["skill"] == "demo" and event["complete"] is True and len(runs) == out["evidence"]["lines"] > 0
+    assert er.load_status().evidence_file_problems(str(scratch), str(tmp_path), "demo") == []  # and a valid one
+    assert why in bench_of(tmp_path)["scratch"]
+    # The configured values, and the same event is evidence.
+    assert er.main(["--skill", "demo"]) == 0
+    assert json.loads(capsys.readouterr().out)["evidence"]["written"] is True and len(evidence_of(skill)) == 1
+
+
+def test_a_stand_in_runner_leaves_no_file_under_skills(tmp_path, monkeypatch, capsys):
+    """Outside the eval container the runners are stand-ins: the event is a trial, whatever its values."""
+    skill = write_demo(tmp_path, monkeypatch, FAKE, real=False)
+    configure_gate(tmp_path)
+    before = skill_tree(skill)
+    assert er.main(["--skill", "demo"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["complete"] is True and out["evidence"]["written"] is False and "stand-in runner" in out["evidence"]["reason"]
+    assert skill_tree(skill) == before and (tmp_path / out["evidence"]["scratch"]).is_file()
+
+
+def test_a_failed_attempt_is_made_again_inside_the_event_and_counted_in_both_variants(tmp_path, monkeypatch, capsys):
+    control_demo(tmp_path, monkeypatch, fail_q_with_f=1, fail_q_without_m=2)
+    assert er.main(FULL) == 0
+    captured = capsys.readouterr()
+    out, bench = json.loads(captured.out), bench_of(tmp_path)
+    assert out["complete"] is True and bench["infra_failures"] == []
+    assert bench["counts"]["floor"]["with_skill"] == {"attempts": 3, "retries": 1, "timeouts": 0, "refusals": 0,
+                                                      "adapter_failures": 1, "early_ends": 0, "pauses": 0, "resumes": 0}
+    assert bench["counts"]["strong"]["without_skill"]["adapter_failures"] == 2 and bench["counts"]["strong"]["without_skill"]["retries"] == 2
+    assert calls(tmp_path).count("q with f") == 2 and calls(tmp_path).count("q without m") == 3
+    run = tmp_path / out["iteration_dir"] / "eval-2" / "with_skill.floor"
+    assert "overloaded" in (run / "failed-1" / "outputs" / "error.log").read_text() and (run / "grading.json").is_file()
+    assert "RETRY       case 2 with_skill.floor run 1 attempt 1 (adapter exit 7: provider: overloaded)" in captured.err
+
+
+def test_a_timeout_is_made_again_too_and_counted(tmp_path, monkeypatch, capsys):
+    control_demo(tmp_path, monkeypatch, hang_p_with_m=1)
+    parse = er.parse
+    monkeypatch.setattr(er, "parse", lambda argv: {**parse(argv), "timeout": 2})
+    assert er.main(FULL + ["--case", "1", "--only", "with", "--tiers", "strong"]) == 0
+    bench = bench_of(tmp_path)
+    assert bench["counts"]["strong"]["with_skill"]["timeouts"] == 1 and bench["counts"]["strong"]["with_skill"]["retries"] == 1
+    assert bench["infra_failures"] == [] and bench["timeouts"] == []  # a retried timeout is no result
+
+
+def test_resume_runs_only_the_failed_runs_and_completes_the_event(tmp_path, monkeypatch, capsys):
+    skill = control_demo(tmp_path, monkeypatch, fail_q_with_f=9, fail_p_without_m=9)
+    assert er.main(FULL) == 1
+    out = json.loads(capsys.readouterr().out)
+    event = tmp_path / out["iteration_dir"]
+    assert out["failures"] == 2 and json.loads((event / "event.json").read_text())["state"] == "open"
+    assert evidence_of(skill) == [] and out["evidence"]["test"]  # nothing in the skill while the event is open
+    assert sorted((f["case"], f["variant"], f["tier"], f["kind"]) for f in bench_of(tmp_path)["infra_failures"]) == [
+        (1, "without_skill", "strong", "adapter"), (2, "with_skill", "floor", "adapter")]
+    first = len(calls(tmp_path))
+    for name in ("fail-q-with-f", "fail-p-without-m"):
+        (tmp_path / "adapters" / "h" / name).unlink()
+    assert er.main(["--resume", str(event)]) == 0
+    captured = capsys.readouterr()
+    out, bench = json.loads(captured.out), bench_of(tmp_path)
+    assert sorted(calls(tmp_path)[first:]) == ["p without m", "q with f"]  # the two failed runs, and no other
+    assert out["complete"] is True and bench["passes"] == 2 and bench["infra_failures"] == [] and bench["timeouts"] == []
+    assert bench["counts"]["floor"]["with_skill"]["resumes"] == 1 and bench["counts"]["strong"]["with_skill"]["resumes"] == 0
+    assert bench["run_summary"]["with_skill.floor"]["pass_rate"] == {"mean": 1.0, "stddev": 0.0, "n": 2}
+    (line, runs), = evidence_of(skill)  # one file for the event, written when it was complete, under the id it started with
+    assert out["evidence"]["written"] is True and line["complete"] is True and len(runs) == 8
+    assert line["test"] == json.loads((event / "event.json").read_text())["test"] and line["counts"]["f"]["with"]["resumes"] == 1
+    assert json.loads((event / "event.json").read_text())["state"] == "complete"
+    # What the first pass left of the run is kept beside the new attempt.
+    assert (event / "eval-2" / "with_skill.floor" / "before-resume-1" / "outputs" / "error.log").is_file()
+    # An event whose evidence is in the skill is never resumed: that file is never edited.
+    with pytest.raises(SystemExit) as e:
+        er.main(["--resume", str(event)])
+    assert e.value.code == 2 and "never edited" in capsys.readouterr().err and len(calls(tmp_path)) == first + 2
+
+
+def test_a_run_still_failing_after_the_cap_of_resumptions_is_a_timeout_with_score_0_in_both_variants(tmp_path, monkeypatch, capsys):
+    control_demo(tmp_path, monkeypatch, fail_q_with_m=99, fail_q_without_m=99)
+    configure_gate(tmp_path, max_resumes=2, retries=0)
+    assert er.main(["--skill", "demo"]) == 1
+    event = tmp_path / json.loads(capsys.readouterr().out)["iteration_dir"]
+    assert er.main(["--resume", str(event)]) == 1  # the first resumption: still failures, not yet results
+    out = json.loads(capsys.readouterr().out)
+    assert out["failures"] == 2 and out["timeouts"] == 0
+    assert er.main(["--resume", str(event)]) == 3  # the second: the cap. Complete, and the gate fails on the zeros
+    captured = capsys.readouterr()
+    out, bench = json.loads(captured.out), bench_of(tmp_path)
+    assert out["complete"] is True and out["failures"] == 0 and out["timeouts"] == 2
+    assert sorted((t["variant"], t["resumes"]) for t in bench["timeouts"]) == [("with_skill", 2), ("without_skill", 2)]
+    for name in ("with_skill", "without_skill"):  # the same line with the skill and without it
+        row = [r for r in bench["run_summary"][name]["cases"] if r["case"] == 2][0]
+        assert (row["pass_rate"], row["outcome"], row["results"]) == (0.0, "timeout", [0])
+        assert bench["run_summary"][name]["pass_rate"]["mean"] == 0.5
+    assert "TIMEOUT     case 2 with_skill (strong) run 1: still incomplete after 2 resumption(s)" in captured.err
+    # In the evidence file: a line with outcome timeout and score 0, the same with the skill and without it.
+    (line, runs), = evidence_of(tmp_path / "skills" / "demo")
+    assert sorted((l["variant"], l["outcome"], l["score"], l["results"]) for l in runs if l["case"] == 2 and l["model"] == "m") == [
+        ("with", "timeout", 0.0, [0]), ("without", "timeout", 0.0, [0])]
+    assert line["gate"]["passed"] is False and line["gate"]["with"] == 0.5 and line["counts"]["m"]["with"]["resumes"] == 2
+    assert er.load_status().evidence_problems(str(tmp_path)) == ({}, 1)
+    assert calls(tmp_path).count("q with m") == 3  # the event, and two resumptions: never a fourth
+    with pytest.raises(SystemExit):
+        er.main(["--resume", str(event)])
+    assert calls(tmp_path).count("q with m") == 3
+
+
+def test_resume_refuses_a_skill_that_changed_and_goes_with_no_other_option(tmp_path, monkeypatch, capsys):
+    skill = control_demo(tmp_path, monkeypatch, fail_q_with_m=9)
+    assert er.main(FULL) == 1
+    event = tmp_path / json.loads(capsys.readouterr().out)["iteration_dir"]
+    for args in (["--resume", str(event), "--runs", "2"], ["--resume", str(event), "--skill", "demo"], ["--resume", str(tmp_path)]):
+        with pytest.raises(SystemExit) as e:
+            er.main(args)
+        assert e.value.code == 2
+    (skill / "SKILL.md").write_text("# demo, edited\n")
+    with pytest.raises(SystemExit) as e:
+        er.main(["--resume", str(event)])
+    assert e.value.code == 2 and "changed since the event" in capsys.readouterr().err
+
+
+def test_a_contaminated_baseline_and_a_failed_grading_are_never_turned_into_a_score():
+    assert "contaminated" not in er.CAPPED_KINDS and "grading" not in er.CAPPED_KINDS and "settings" not in er.CAPPED_KINDS
+    assert set(er.CAPPED_KINDS) == set(er.RETRY_KINDS)
+
+
+# The account limit: the three "never" of a run that meets it.
+
+def fast_pause(monkeypatch):
+    monkeypatch.setattr(er, "PAUSE_POLL", 0.05)
+    monkeypatch.setattr(er, "PROBE_SECONDS", 0)
+
+
+def test_a_run_that_meets_the_account_limit_pauses_and_is_never_retried_never_a_timeout_never_scored(tmp_path, monkeypatch, capsys):
+    control_demo(tmp_path, monkeypatch, limit_q_with_m=1, probes_fail=2)
+    configure_gate(tmp_path, max_resumes=0, retries=0)  # one more failure of any kind would be a result at once
+    fast_pause(monkeypatch)
+    assert er.main(["--skill", "demo"]) == 0
+    captured = capsys.readouterr()
+    out, bench = json.loads(captured.out), bench_of(tmp_path)
+    assert "PAUSED 20" in captured.err and "the account of h is exhausted (case 2 with_skill run 1)" in captured.err
+    assert "RESUMED" in captured.err and "a probe call on the account of h succeeded" in captured.err
+    # Never retried into the limit: while the account was exhausted the run was not made again; three probes
+    # were (two met the limit), and then the run, once, from its start.
+    assert calls(tmp_path).count("q with m") == 2 and len(calls(tmp_path, "probes.txt")) == 3
+    count = bench["counts"]["strong"]["with_skill"]
+    assert (count["pauses"], count["retries"], count["timeouts"], count["adapter_failures"]) == (1, 0, 0, 0)
+    # Never written as a timeout, although the cap is 0 and no retry is left.
+    assert bench["timeouts"] == [] and bench["infra_failures"] == [] and out["complete"] is True
+    # Never scored: the attempt that met the limit has no row; the one row of the run is the run made again.
+    rows = [r for r in bench["run_summary"]["with_skill"]["cases"] if r["case"] == 2]
+    assert len(rows) == 1 and rows[0]["pass_rate"] == 1.0 and "outcome" not in rows[0]
+    run = tmp_path / out["iteration_dir"] / "eval-2" / "with_skill"
+    assert "usage limit reached" in (run / "paused-1" / "outputs" / "error.log").read_text() and not (run / "paused-1" / "grading.json").exists()
+    assert not list((tmp_path / "locks").glob("pause-*.json"))  # the pause is over
+
+
+def test_a_grading_call_that_meets_the_account_limit_pauses_and_is_made_again(tmp_path, monkeypatch, capsys):
+    control_demo(tmp_path, monkeypatch, limit_grading=1)
+    fast_pause(monkeypatch)
+    assert er.main(FULL + ["--case", "1", "--only", "with", "--tiers", "strong"]) == 0
+    captured = capsys.readouterr()
+    bench = bench_of(tmp_path)
+    assert "the account of h is exhausted (a grading call)" in captured.err
+    assert bench["grading"]["refused"] == 0 and bench["counts"]["strong"]["with_skill"]["pauses"] == 1
+    assert bench["run_summary"]["with_skill"]["pass_rate"]["mean"] == 1.0 and calls(tmp_path) == ["p with m"]
+
+
+def test_a_pause_holds_every_call_on_the_account_until_the_time_the_operator_gives(tmp_path, monkeypatch, capsys):
+    import threading
+    import time
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    fast_pause(monkeypatch)
+    assert er.start_pause("h", "case 1 with_skill run 1") is True and er.start_pause("h", "another run") is False
+    assert er.wait_while_paused("other-account") is False  # another account is not held
+    probes, done = [], []
+    waiter = threading.Thread(target=lambda: done.append(er.wait_while_paused("h", lambda: probes.append(1) or False)))
+    waiter.start()
+    time.sleep(0.3)
+    assert waiter.is_alive() and probes  # held, and probing
+    assert er.main(["--unpause", "--at", "2999-01-01T00:00"]) == 0
+    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["pauses"] == ["h"]
+    time.sleep(0.2)
+    seen = len(probes)
+    time.sleep(0.3)
+    assert waiter.is_alive() and len(probes) == seen  # a time was given: it waits for it and probes no more
+    assert er.main(["--unpause"]) == 0  # the operator ends it now
+    waiter.join(timeout=5)
+    assert not waiter.is_alive() and done == [True]
+    # A time already past ends the pause for whoever looks next.
+    er.start_pause("h", "again")
+    path = er.pause_path("h")
+    er.write_pause(path, {**er.read_pause(path), "until": time.time() - 1})
+    assert er.wait_while_paused("h") is True and not os.path.exists(path)
+    for args in (["--unpause", "--at", "soon"], ["--at", "15:00"], ["--unpause", "--skill", "demo"]):
+        with pytest.raises(SystemExit) as e:
+            er.main(args)
+        assert e.value.code == 2
+
+
+def test_the_account_limit_is_read_only_from_the_adapters_own_words(tmp_path):
+    (tmp_path / "error.log").write_text("\nAPI Error: usage limit reached\n")
+    assert er.account_limit(str(tmp_path), ["usage limit reached"]) == "usage limit reached"
+    assert er.account_limit(str(tmp_path), []) is None and er.account_limit(str(tmp_path), ["out of credits"]) is None
+    for harness in ("claude-code", "agents-dir"):
+        assert er.adapter_eval(harness)["account_limit"]  # each eval adapter names its tier's response
+
+
+# The shared lock.
+
+def test_a_second_runner_process_waits_on_the_shared_lock(tmp_path, monkeypatch):
+    import sys
+    import time
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    driver = ("import importlib.util, sys\n"
+              f"spec = importlib.util.spec_from_file_location('eval_run', {str(SCRIPT)!r})\n"
+              "er = importlib.util.module_from_spec(spec); spec.loader.exec_module(er)\n"
+              f"er.LOCK_DIR = {str(tmp_path / 'locks')!r}\n"
+              "with er.Slot('total', 1):\n"
+              f"    open({str(tmp_path / 'second-got-it')!r}, 'w').close()\n")
+    with er.Slot("total", 1):
+        proc = subprocess.Popen([sys.executable, "-c", driver])
+        time.sleep(1.0)
+        assert proc.poll() is None and not (tmp_path / "second-got-it").exists()  # it waits while the place is taken
+    assert proc.wait(timeout=20) == 0 and (tmp_path / "second-got-it").exists()
+    with er.Slot("total", 2), er.Slot("total", 2):  # two places: two holders at once
+        pass
+
+
+def test_the_total_of_the_gate_file_bounds_the_runs_whatever_jobs_says(tmp_path, monkeypatch, capsys):
+    busy = 'here="$(dirname "$0")"\nmkdir "$here/busy" 2>/dev/null || echo overlap >> "$here/overlap.txt"\nsleep 0.3\nrmdir "$here/busy" 2>/dev/null\necho ok > "$8/response.md"\n'
+    write_demo(tmp_path, monkeypatch, busy)
+    configure_gate(tmp_path, total_jobs=1)
+    assert er.main(["--skill", "demo", "--jobs", "4", "--no-grade"]) == 0
+    assert not (tmp_path / "adapters" / "h" / "overlap.txt").exists()
+    (tmp_path / "adapters" / "h" / "busy").mkdir(exist_ok=True)
+    (tmp_path / "adapters" / "h" / "busy").rmdir()
+    configure_gate(tmp_path, total_jobs=4)
+    assert er.main(["--skill", "demo", "--jobs", "4", "--no-grade"]) == 0
+    assert (tmp_path / "adapters" / "h" / "overlap.txt").exists()  # the same runs do overlap when the total allows it
+
+
+def test_a_web_run_takes_a_place_of_its_tiers_web_lock_before_a_place_of_the_total():
+    control = {"total_jobs": 10, "web_jobs": {"strong": 2, "floor": 1}}
+    assert [(s.kind, s.n) for s in er.Slots(control, "floor", web=True).slots] == [("web-floor", 1), ("total", 10)]
+    assert [(s.kind, s.n) for s in er.Slots(control, "strong").slots] == [("total", 10)]
+
+
+# Web cases.
+
+def test_the_network_is_opened_only_for_a_case_the_gate_file_lists(tmp_path, monkeypatch, capsys):
+    cases = [{"id": 1, "prompt": "p", "assertions": ["a"], "allow_web": True}, {"id": 2, "prompt": "q", "assertions": ["a"]}]
+    write_demo(tmp_path, monkeypatch, CONTROL, cases)
+    configure_gate(tmp_path)  # a gate file with no list: no case may
+    with pytest.raises(SystemExit) as e:
+        er.main(["--skill", "demo"])
+    assert e.value.code == 2 and 'case(s) 1 of demo set "allow_web" and are not in "web_cases"' in capsys.readouterr().err
+    assert not (tmp_path / "evals-workspace").exists() and calls(tmp_path) == []
+    configure_gate(tmp_path, web_cases={"demo": [1]})
+    assert er.main(["--skill", "demo"]) == 0
+    assert bench_of(tmp_path)["web_cases"] == [1]
+
+
+def test_on_a_web_case_the_strong_tier_runs_with_the_low_limit_key_in_place_of_the_token(tmp_path, monkeypatch, capsys):
+    cases = [{"id": 1, "prompt": "p", "assertions": ["a"], "allow_web": True}, {"id": 2, "prompt": "q", "assertions": ["a"]}]
+    write_demo(tmp_path, monkeypatch, CONTROL, cases)
+    configure_gate(tmp_path, web_cases={"demo": [1]}, strong_pass_env=["TOKEN"], strong_web_pass_env=["WEBKEY"], floor_pass_env=["FLOORKEY"])
+    for name in ("TOKEN", "WEBKEY", "FLOORKEY"):
+        monkeypatch.setenv(name, name.lower() + "-value")
+    assert er.main(["--skill", "demo"]) == 0
+    event = tmp_path / json.loads(capsys.readouterr().out)["iteration_dir"]
+    keys = lambda case, name: (event / f"eval-{case}" / name / "outputs" / "keys.txt").read_text().split()
+    # Which variables each run had: the stored output names them, with the marker in place of each value.
+    assert keys(1, "with_skill") == ["WEBKEY=[redacted:WEBKEY]"] and keys(1, "without_skill") == ["WEBKEY=[redacted:WEBKEY]"]
+    assert keys(2, "with_skill") == ["TOKEN=[redacted:TOKEN]"]  # a case without the web keeps the account's token
+    assert keys(1, "with_skill.floor") == ["FLOORKEY=[redacted:FLOORKEY]"] and keys(2, "with_skill.floor") == ["FLOORKEY=[redacted:FLOORKEY]"]
+    # Without a web case in the event the key is not asked for.
+    monkeypatch.delenv("WEBKEY")
+    assert er.main(["--skill", "demo", "--case", "2"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as e:
+        er.main(["--skill", "demo"])
+    assert e.value.code == 2 and "WEBKEY is not set" in capsys.readouterr().err
+
+
+# The comparison.
+
+def test_the_gate_compares_unrounded_means_and_rounds_only_to_show_them():
+    conditions = er.conditions_of({"with_skill": 0.7996, "without_skill": 0.8504, "with_skill.floor": 0.79951}, 0.8, 0.05)
+    assert conditions["strong_pass_rate"] == 0.8 and conditions["strong_ok"] is False  # shown as 0.8, and below it
+    assert conditions["floor_pass_rate"] == 0.8 and conditions["floor_ok"] is False
+    assert conditions["strong_delta"] == -0.051 and conditions["strong_delta_ok"] is False
+    conditions = er.conditions_of({"with_skill": 0.8, "without_skill": 0.85, "with_skill.floor": 0.8}, 0.8, 0.05)
+    assert conditions["strong_ok"] and conditions["floor_ok"] and conditions["strong_delta_ok"]
+
+
+def test_the_deviation_of_the_runs_is_the_sample_one():
+    rows = [{"pass_rate": 1.0}, {"pass_rate": 0.5}, {"pass_rate": None}]
+    assert er.agg(rows, "pass_rate") == {"mean": 0.75, "stddev": 0.354, "n": 2}  # the population one would be 0.25
+    assert er.agg(rows[:1], "pass_rate") == {"mean": 1.0, "stddev": 0.0, "n": 1} and er.agg([], "pass_rate") is None
+    assert er.exact_mean([{"pass_rate": 0.7996}, {"pass_rate": 0.7996}]) == pytest.approx(0.7996)
+
+
+# --- secrets in what a run leaves: the passed values are replaced, by exact value ---------------------
+
+# A model that prints its environment: into its reply, its transcript, its raw output and a file of the case
+# folder. It also repeats the fake secret the fixture plants, and leaves a link to a file of the host that
+# holds the key. A grading call keeps its prompt and answers with what it was given.
+LEAKS = r"""
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  cp "$2" "$here/grading-prompt.md"
+  echo "the grader's key is ${TIER_KEY:-none}" > "$out/stderr.log"
+  echo '[{"id": 1, "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
+fi
+cd "$4"
+echo "My environment holds TIER_KEY=$TIER_KEY and SWITCH=$SWITCH. The config says $(cat config.env)." > "$out/response.md"
+env > "$out/stderr.log"
+printf '{"result": "key %s"}' "$TIER_KEY" > "$out/raw.json"
+mkdir -p notes && echo "key: $TIER_KEY (twice: $TIER_KEY)" > notes/env.txt
+printf 'bin\0%s\0' "$TIER_KEY" > notes/blob.bin
+ln -s "$here/host-file.txt" link-to-host
+git add notes && git commit -q -m "notes with $TIER_KEY" 2>/dev/null
+[ -f "$here/fail" ] && { echo "provider down, key $TIER_KEY" >&2; exit 7; }
+exit 0
+"""
+KEY = "live-key-0123456789abcdef"
+PLANTED = "sk-test-51FAKEfakeFAKEfakeFAKEfake"
+
+
+def leaks_demo(tmp_path, monkeypatch):
+    skill = write_demo(tmp_path, monkeypatch, LEAKS, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "assertions": ["a"]}])
+    (skill / "evals" / "files" / "app" / "config.env").write_text(f"API_KEY={PLANTED}\n")
+    (tmp_path / "adapters" / "h" / "host-file.txt").write_text(f"a file of the host with {KEY}\n")
+    monkeypatch.setenv("TIER_KEY", KEY)
+    monkeypatch.setenv("SWITCH", "1")
+    return ["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--only", "without", "--pass-env", "TIER_KEY",
+            "--pass-env", "SWITCH"]
+
+
+def test_the_value_of_a_passed_variable_is_replaced_in_everything_a_run_leaves_and_before_grading(tmp_path, monkeypatch, capsys):
+    args = leaks_demo(tmp_path, monkeypatch)
+    assert er.main(args) == 0
+    captured = capsys.readouterr()
+    run, bench = run_folder(tmp_path, "without_skill"), bench_of(tmp_path)
+    stored = [p for p in run.rglob("*") if p.is_file() and not p.is_symlink() and ".git" not in p.parts]
+    assert stored and not [str(p) for p in stored if KEY.encode() in p.read_bytes()]  # nowhere in the workspace
+    marker = "[redacted:TIER_KEY]"
+    assert f"TIER_KEY={marker} and SWITCH=1" in (run / "outputs" / "response.md").read_text()
+    assert f"TIER_KEY={marker}" in (run / "outputs" / "stderr.log").read_text() and marker in (run / "outputs" / "raw.json").read_text()
+    assert (run / "cwd" / "notes" / "env.txt").read_text() == f"key: {marker} (twice: {marker})\n"
+    assert (run / "cwd" / "notes" / "blob.bin").read_bytes() == b"bin\0" + marker.encode() + b"\0"
+    # Before grading: the prompt the grader's provider received holds the marker and never the value, in the
+    # reply, in the file and in the commit message of the version-control facts.
+    prompt = (tmp_path / "adapters" / "h" / "grading-prompt.md").read_text()
+    assert KEY not in prompt and prompt.count(marker) >= 4 and f"notes with {marker}" in prompt
+    assert KEY not in (run / "grading" / "out" / "stderr.log").read_text()  # nor in what the grading call left
+    # Counted: reply, transcript, raw output, the file (2), the binary file, the commit message.
+    row = bench["run_summary"]["without_skill"]["cases"][0]
+    assert row["redactions"] == bench["redactions"] == 7 and "REDACTED: " in captured.err
+    # A switch is not a credential: a one-character value is not replaced anywhere.
+    assert "SWITCH=1" in (run / "outputs" / "stderr.log").read_text() and "[redacted:SWITCH]" not in prompt
+
+
+def test_a_planted_fake_secret_is_not_masked_so_the_assertion_about_it_still_measures_the_reply(tmp_path, monkeypatch, capsys):
+    """By exact value and never by pattern (FR-I4): a pattern would hide a leak of the fixture's fake secret."""
+    args = leaks_demo(tmp_path, monkeypatch)
+    assert er.main(args) == 0
+    run = run_folder(tmp_path, "without_skill")
+    assert PLANTED in (run / "outputs" / "response.md").read_text()
+    assert PLANTED in (tmp_path / "adapters" / "h" / "grading-prompt.md").read_text()  # the grader sees the leak
+    assert (run / "cwd" / "config.env").read_text() == f"API_KEY={PLANTED}\n"
+    data, count = er.replace_values(f"{PLANTED} and {KEY} and {KEY[:-1]}", er.redaction_values(["TIER_KEY"]))
+    assert count == 1 and data == f"{PLANTED} and [redacted:TIER_KEY] and {KEY[:-1]}"
+
+
+def test_the_replacement_writes_only_where_the_host_may_write(tmp_path, monkeypatch, capsys):
+    args = leaks_demo(tmp_path, monkeypatch)
+    assert er.main(args) == 0
+    # The link a run left to a file of the host is neither followed nor rewritten.
+    assert (tmp_path / "adapters" / "h" / "host-file.txt").read_text() == f"a file of the host with {KEY}\n"
+    assert os.path.islink(run_folder(tmp_path, "without_skill") / "cwd" / "link-to-host")
+    case = tmp_path / "case"
+    (case / "sub").mkdir(parents=True)
+    (case / "node_modules").mkdir()
+    (tmp_path / "outside").mkdir()
+    for path in (case / "sub" / "a.txt", case / "node_modules" / "b.txt", tmp_path / "outside" / "c.txt", case / "staged.txt"):
+        path.write_text(f"v={KEY}\n")
+    os.symlink(tmp_path / "outside", case / "linked")
+    assert er.redact_folder(str(case), er.redaction_values(["TIER_KEY"]), staged=["staged.txt"]) == 1
+    assert (case / "sub" / "a.txt").read_text() == "v=[redacted:TIER_KEY]\n"
+    for untouched in (case / "node_modules" / "b.txt", tmp_path / "outside" / "c.txt", case / "staged.txt"):
+        assert KEY in untouched.read_text()
+    assert er.redact_folder(str(tmp_path / "missing"), er.redaction_values(["TIER_KEY"])) == 0
+
+
+def test_a_failed_run_leaves_no_value_either(tmp_path, monkeypatch, capsys):
+    args = leaks_demo(tmp_path, monkeypatch)
+    (tmp_path / "adapters" / "h" / "fail").write_text("")
+    assert er.main(args + ["--retries", "0"]) == 1
+    run = run_folder(tmp_path, "without_skill")
+    assert "key [redacted:TIER_KEY]" in (run / "outputs" / "error.log").read_text()
+    assert not [p for p in run.rglob("*") if p.is_file() and not p.is_symlink() and ".git" not in p.parts and KEY.encode() in p.read_bytes()]
+    assert bench_of(tmp_path)["redactions"] >= 6
+
+
+def test_the_values_to_replace_are_the_passed_ones_longest_first_and_never_a_short_one():
+    env = {"A": "0123456789", "B": "0123456789abcdef", "C": "short", "D": "", "E": "0123456789"}
+    values = er.redaction_values(["A", "B", "C", "D", "E", "MISSING", "A"], env)
+    assert values == [("0123456789abcdef", "[redacted:B]"), ("0123456789", "[redacted:A]")]
+    # The longer value first: the shorter one, a prefix of it, does not cut it in two.
+    assert er.replace_values("x 0123456789abcdef y 0123456789 z", values) == ("x [redacted:B] y [redacted:A] z", 2)
+    assert er.replace_values(b"k=0123456789\n", values) == (b"k=[redacted:A]\n", 1)
+    assert er.replace_values("nothing here", values) == ("nothing here", 0) and er.replace_values("0123456789", []) == ("0123456789", 0)
+    assert "redact.py" not in open(SCRIPT, encoding="utf-8").read().split('"""', 2)[2]  # the credential formats are not used
+
+
+# --- full and partial tests: the baseline reused, the gate over every full test of a version ---------
+
+# A stand-in whose runs answer "ran with the skill" or "ran without the skill", and whose grader fails every
+# assertion of a run named by a marker: fail-<prompt>-<with or without>. down-<prompt>-<with or without>-<model>
+# makes that run fail in its adapter. Every model run is listed in calls.txt.
+SCORES = r"""
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  task="$(sed -n '/^## Task prompt given to the assistant/{n;n;p;}' "$2")"
+  variant=with; grep -q "ran without the skill" "$2" && variant=without
+  n="$(sed -n '/^## Assertions/,$p' "$2" | grep -c -E '^[0-9]+\. ')"
+  verdict=true; [ -f "$here/fail-$task-$variant" ] && verdict=false
+  python3 -c 'import json, sys; print(json.dumps([{"id": i + 1, "passed": sys.argv[2] == "true", "evidence": "e"} for i in range(int(sys.argv[1]))]))' "$n" "$verdict" > "$out/response.md"
+  exit 0
+fi
+with=without; [ -d "$4/.h/skills/demo" ] && with=with
+task="$(cat "$2")"
+echo "$task $with $6" >> "$here/calls.txt"
+[ -f "$here/down-$task-$with-$6" ] && { echo "provider: down" >&2; exit 7; }
+echo "ran $with the skill" > "$out/response.md"
+"""
+
+
+def scores_demo(tmp_path, monkeypatch, prompts=("p", "q")):
+    cases = [{"id": i, "prompt": prompt, "assertions": ["a"]} for i, prompt in enumerate(prompts, 1)]
+    skill = write_demo(tmp_path, monkeypatch, SCORES, cases)
+    configure_gate(tmp_path, strong_tolerance=0.05)
+    return skill
+
+
+def mark(tmp_path, *names, on=True):
+    for name in names:
+        path = tmp_path / "adapters" / "h" / name
+        path.write_text("") if on else path.unlink()
+
+
+def set_cases(skill, cases):
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": cases}))
+
+
+def gate_now(tmp_path):
+    status = er.load_status()
+    return status.gate_of(str(tmp_path / "skills" / "demo"), status.load_gate(str(tmp_path)))
+
+
+def test_a_full_test_runs_every_case_with_the_skill_everywhere_and_the_baseline_on_the_reference_model_only(tmp_path, monkeypatch, capsys):
+    skill = scores_demo(tmp_path, monkeypatch)
+    assert er.main(["--skill", "demo"]) == 0
+    (event, runs), = evidence_of(skill)
+    assert sorted((l["case"], l["variant"], l["model"]) for l in runs) == [
+        (1, "with", "f"), (1, "with", "m"), (1, "without", "m"), (2, "with", "f"), (2, "with", "m"), (2, "without", "m")]
+    assert event["kind"] == "full" and event["baseline"] == {"1": "run", "2": "run"} and set(event["counts"]["f"]) == {"with"}
+    assert not [c for c in calls(tmp_path) if c.endswith("without f")]  # no rule reads a baseline on the floor model
+    # --baseline-on the floor model adds that column; it is information.
+    assert er.main(["--skill", "demo", "--baseline-on", "f"]) == 0
+    runs = [r for e, r in evidence_of(skill) if e["test"] != event["test"]][0]
+    assert {(l["case"], l["variant"], l["model"]) for l in runs if l["variant"] == "without"} == {(1, "without", "f"), (2, "without", "f")}
+    with pytest.raises(SystemExit) as e:
+        er.parse(["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--baseline-on", "elsewhere"])
+    assert e.value.code == 2
+
+
+def test_a_second_full_test_reuses_the_baseline_in_force_and_adds_its_runs_to_the_gate(tmp_path, monkeypatch, capsys):
+    skill = scores_demo(tmp_path, monkeypatch)
+    mark(tmp_path, "fail-p-without", "fail-q-without")  # the model alone does nothing of it
+    assert er.main(["--skill", "demo"]) == 0
+    first = evidence_of(skill)[0][0]
+    assert first["gate"] == {"passed": True, "with": 1.0, "baseline": 0.0, "threshold": 0.8, "tolerance": 0.05}
+    before = len(calls(tmp_path))
+    mark(tmp_path, "fail-p-with")  # the same content, a worse draw on case 1
+    assert er.main(["--skill", "demo"]) == 3  # complete, and the gate fails
+    capsys.readouterr()
+    second = [e for e, _ in evidence_of(skill) if e["test"] != first["test"]][0]
+    assert not [c for c in calls(tmp_path)[before:] if " without " in c]  # the baselines were in force: not run again
+    assert second["baseline"] == {"1": "reused", "2": "reused"}
+    # The gate of the second test reads the runs of both: 1, 1 from the first, 0, 1 from this one. It replaces none.
+    assert second["gate"] == {"passed": False, "with": 0.75, "baseline": 0.0, "threshold": 0.8, "tolerance": 0.05}
+    assert gate_now(tmp_path)["with"] == 0.75 and gate_now(tmp_path)["passed"] is False
+
+
+def test_a_partial_test_runs_the_named_cases_with_the_skill_only_and_never_moves_the_gate(tmp_path, monkeypatch, capsys):
+    skill = scores_demo(tmp_path, monkeypatch)
+    assert er.main(["--skill", "demo"]) == 0
+    gate = gate_now(tmp_path)
+    assert gate["computed"] and gate["passed"] and gate["with"] == 1.0
+    before = len(calls(tmp_path))
+    mark(tmp_path, "fail-p-with")
+    assert er.main(["--skill", "demo", "--cases", "1"]) == 3  # exit 3 reports its own runs below the threshold
+    capsys.readouterr()
+    assert sorted(calls(tmp_path)[before:]) == ["p with f", "p with m"]  # case 1, with the skill only
+    partial = [e for e, _ in evidence_of(skill) if e["kind"] == "partial"][0]
+    assert "gate" not in partial and partial["baseline"] == {"1": "none"}
+    assert gate_now(tmp_path) == gate  # its zeros move the score, never the gate
+
+
+def test_an_added_case_is_pending_until_it_runs_with_its_baseline_and_then_enters_the_gate(tmp_path, monkeypatch, capsys):
+    skill = scores_demo(tmp_path, monkeypatch)
+    assert er.main(["--skill", "demo"]) == 0
+    set_cases(skill, [{"id": 1, "prompt": "p", "assertions": ["a"]}, {"id": 2, "prompt": "q", "assertions": ["a"]},
+                      {"id": 3, "prompt": "r", "assertions": ["a"]}])
+    gate = gate_now(tmp_path)
+    assert gate["pending"] == ["3"] and gate["cases"] == ["1", "2"] and gate["computed"] and gate["passed"]  # it demotes nothing
+    mark(tmp_path, "fail-r-with")
+    assert er.main(["--skill", "demo", "--cases", "3"]) == 3  # with the skill only: still no baseline, still pending
+    assert gate_now(tmp_path)["pending"] == ["3"]
+    assert er.main(["--skill", "demo", "--cases", "3", "--baseline"]) == 3
+    capsys.readouterr()
+    gate = gate_now(tmp_path)
+    assert gate["pending"] == [] and gate["cases"] == ["1", "2", "3"]
+    # Its runs enter the gate (the two partial events' runs of it: 0 and 0), which now reads every current case.
+    assert gate["with"] == pytest.approx(0.5) and gate["passed"] is False
+
+
+def test_a_changed_case_makes_the_gate_wait_for_a_full_test_that_runs_its_baseline_and_reuses_the_others(tmp_path, monkeypatch, capsys):
+    skill = scores_demo(tmp_path, monkeypatch)
+    assert er.main(["--skill", "demo"]) == 0
+    set_cases(skill, [{"id": 1, "prompt": "p", "assertions": ["a"]}, {"id": 2, "prompt": "s", "assertions": ["a"]}])
+    gate = gate_now(tmp_path)
+    assert gate["computed"] is False and "case(s) 2 changed after the newest full test" in gate["cause"]
+    assert er.main(["--skill", "demo", "--cases", "2", "--baseline"]) == 0  # its own runs never complete the gate
+    assert gate_now(tmp_path)["computed"] is False
+    before = len(calls(tmp_path))
+    assert er.main(["--skill", "demo"]) == 0
+    capsys.readouterr()
+    newest = [e for e, _ in evidence_of(skill) if e["kind"] == "full"][-1]
+    # The baseline of the changed case is in force from the partial test above; the other one was never aged.
+    assert newest["baseline"] == {"1": "reused", "2": "reused"} and not [c for c in calls(tmp_path)[before:] if " without " in c]
+    assert gate_now(tmp_path)["computed"] is True
+
+
+def test_an_abandoned_full_test_is_closed_and_its_runs_stay_in_the_gate_of_its_version(tmp_path, monkeypatch, capsys):
+    skill = scores_demo(tmp_path, monkeypatch)
+    mark(tmp_path, "fail-p-with", "down-q-with-m")  # a test that goes badly: case 1 fails, case 2 does not complete
+    assert er.main(["--skill", "demo"]) == 1
+    event = tmp_path / json.loads(capsys.readouterr().out)["iteration_dir"]
+    assert evidence_of(skill) == [] and json.loads((event / "event.json").read_text())["state"] == "open"
+    # It cannot be dropped and drawn again: no new event of the skill starts while it is open.
+    mark(tmp_path, "fail-p-with", "down-q-with-m", on=False)
+    with pytest.raises(SystemExit) as e:
+        er.main(["--skill", "demo"])
+    assert e.value.code == 2 and f"--close {event.relative_to(tmp_path)}" in capsys.readouterr().err
+    assert er.main(["--skill", "demo", "--scratch"]) == 0  # a trial writes nothing: it may run meanwhile
+    capsys.readouterr()
+    # Given up: closed. Its file goes into the skill as an incomplete full event, with no gate.
+    assert er.main(["--close", str(event)]) == 0
+    captured = capsys.readouterr()
+    (closed, runs), = evidence_of(skill)
+    assert closed["kind"] == "full" and closed["complete"] is False and "gate" not in closed
+    assert "an incomplete full test" in captured.err and json.loads((event / "event.json").read_text())["state"] == "closed"
+    assert er.load_status().evidence_problems(str(tmp_path)) == ({}, 1)
+    with pytest.raises(SystemExit):
+        er.main(["--close", str(event)])  # closed once
+    # The next full test adds its runs to the closed one's: case 1 scored 0 there and 1 here.
+    assert er.main(["--skill", "demo"]) == 3
+    newest = [e for e, _ in evidence_of(skill) if e["complete"]][0]
+    assert newest["gate"]["with"] == pytest.approx(2 / 3) and newest["gate"]["passed"] is False
+
+
+def test_the_two_options_that_rewrote_a_record_are_gone():
+    for args in (["--update-record"], ["--record-anyway"], ["--no-record"]):
+        with pytest.raises(SystemExit) as e:
+            er.parse(["--skill", "s", "--harness", "h", "--model", "m", *args])
+        assert e.value.code == 2
+
+
+# --- what a run did: invoked, reported and never scored ---------------------------------------------
+
+# A stand-in whose with-skill runs on the model "m" load the skill (the timing names it) and on "f" do not; the
+# grader passes everything.
+INVOKES = r"""
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  echo '[{"id": 1, "passed": true, "evidence": "ok"}]' > "$out/response.md"; exit 0
+fi
+loaded='[]'
+[ -d "$4/.h/skills/demo" ] && [ "$6" = m ] && loaded='["demo", "other"]'
+[ -d "$4/.h/skills/demo" ] && [ "$6" = f ] && loaded='["other"]'
+echo "{\"total_tokens\": 7, \"duration_ms\": 1, \"cost_usd\": null, \"skills_loaded\": $loaded}" > "$out/timing.json"
+echo ok > "$out/response.md"
+"""
+
+
+def test_invoked_is_kept_per_run_and_counted_per_model_and_never_scored(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, INVOKES)
+    assert er.main(FULL) == 0
+    captured = capsys.readouterr()
+    bench = bench_of(tmp_path)
+    rows = {name: [r.get("invoked") for r in bench["run_summary"][name]["cases"]] for name in bench["run_summary"]}
+    assert rows["with_skill"] == [True, True] and rows["with_skill.floor"] == [False, False]
+    assert rows["without_skill"] == [None, None]  # a run without the skill has nothing to invoke
+    # Never scored: the runs that did not load the skill score like the others.
+    assert bench["run_summary"]["with_skill.floor"]["pass_rate"]["mean"] == 1.0
+    run = tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill.floor"
+    assert json.loads((run / "timing.json").read_text())["invoked"] is False  # kept in the run folder
+    (event, _), = evidence_of(skill)
+    assert event["counts"]["m"]["with"]["invoked"] == 2 and event["counts"]["f"]["with"]["invoked"] == 0
+    assert "invoked" not in event["counts"]["m"]["without"]
+    assert "INVOKED     the floor model loaded the skill in 0 of 2 with-skill run(s)" in captured.err
+    assert er.load_status().evidence_problems(str(tmp_path)) == ({}, 1)
+
+
+def test_an_adapter_that_does_not_report_what_was_loaded_leaves_invoked_out(tmp_path, monkeypatch, capsys):
+    skill = write_demo(tmp_path, monkeypatch, FAKE)
+    assert er.main(FULL) == 0
+    (event, _), = evidence_of(skill)
+    assert "invoked" not in event["counts"]["m"]["with"] and "INVOKED" not in capsys.readouterr().err
+
+
+
+# --- checks that need no model: the preflight's new rules ----------------------------------------------
+
+@pytest.mark.parametrize("prompt, folders", [
+    ("Audit web-summarizer/ and tell me.", ["web-summarizer"]),
+    ("Look under src/app/ and ./docs/ please", ["src/app", "docs"]),
+    ("See https://site.example/docs/ and ~/notes/ and /etc/ and <name>/ and www.x.example/", []),
+    ("No folder here, only src/app.py", []),
+])
+def test_a_prompt_token_that_ends_in_a_slash_names_a_folder(prompt, folders):
+    assert er.prompt_folders(prompt) == folders
+
+
+def test_a_folder_the_prompt_names_must_be_a_folder_of_the_case(tmp_path, monkeypatch):
+    # The fixture folder evals/files/app is copied by content: "app/" is not in the case, "nested/" is.
+    skill = make_skill(tmp_path)
+    (skill / "evals" / "files" / "app" / "nested").mkdir()
+    (skill / "evals" / "files" / "app" / "nested" / "x.md").write_text("x\n")
+    errors, _ = preflight_of(tmp_path, monkeypatch, {"files": ["evals/files/app"], "prompt": "Audit app/ and nested/."})
+    assert len(errors) == 1 and "names the folder 'app/', which is not a folder of the case" in errors[0]
+    warnings = []
+    case = {"id": 1, "prompt": "Audit app/.", "files": ["evals/files/app"], "assertions": ["a"]}
+    errors, _ = er.preflight(str(skill), [case], {1: er.case_files(str(skill), case)}, warnings=warnings)
+    assert errors == [] and len(warnings) == 1  # --check-cases lists it as a warning while the rows of phase C are open
+    for ok in ({"absent_on_purpose": ["app/"]}, {"expected_output": "a report in app/"}, {"prompt": "Audit nested/."}):
+        assert preflight_of(tmp_path, monkeypatch, {"files": ["evals/files/app"], "prompt": "Audit app/.", **ok})[0] == []
+
+
+def dependency_case(tmp_path, monkeypatch, skill_name, text, deps):
+    skill = tmp_path / "skills" / skill_name
+    (skill / "evals").mkdir(parents=True, exist_ok=True)
+    (skill / "SKILL.md").write_text(text)
+    for name in deps:
+        (tmp_path / "skills" / name).mkdir(parents=True, exist_ok=True)
+        (tmp_path / "skills" / name / "SKILL.md").write_text(f"# {name}\n")
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    return er.dependency_problems(skill_name, str(skill), {"id": 1, "skills": deps})
+
+
+@pytest.mark.parametrize("skill, text, deps, why", [
+    ("flow-fix", "Phases: `eng-root-cause`, then `eng-unit-tests`.", ["eng-root-cause", "eng-unit-tests"], None),
+    ("flow-fix", "Phases: `eng-root-cause`.", ["eng-root-cause", "core-orchestrator"], "core-orchestrator, which is not one of a flow's phases"),
+    ("flow-fix", "Phases: `eng-root-cause`.", ["eng-root-cause", "eng-docs"], "eng-docs, which the flow does not name as a phase"),
+    ("flow-fix", "Phases: `eng-root-cause-two`.", ["eng-root-cause"], "eng-root-cause, which the flow does not name"),
+    ("core-orchestrator", "Routes.", ["eng-docs"], None),
+    ("core-orchestrator", "Routes.", ["eng-docs", "eng-refactor"], "lists one leaf skill"),
+    ("core-orchestrator", "Routes.", ["flow-fix"], "lists one leaf skill"),
+    ("mkt-copy", "Check it with ../brand-profile/scripts/topics.py.", ["brand-profile"], None),
+    ("mkt-copy", "Read docs/brand/profile.md, written by brand-profile.", ["brand-profile"], "none of the three uses"),
+])
+def test_skills_in_a_case_has_three_allowed_uses(tmp_path, monkeypatch, skill, text, deps, why):
+    problems = dependency_case(tmp_path, monkeypatch, skill, text, deps)
+    assert (problems == []) if why is None else (len(problems) == 1 and why in problems[0]), problems
+
+
+def test_a_scripts_own_tests_do_not_count_as_a_call_of_another_skill(tmp_path, monkeypatch):
+    skill = tmp_path / "skills" / "mkt-copy"
+    (skill / "scripts" / "tests").mkdir(parents=True)
+    (skill / "scripts" / "tests" / "test_x.py").write_text("# ../brand-profile/scripts/topics.py\n")
+    assert dependency_case(tmp_path, monkeypatch, "mkt-copy", "# copy\n", ["brand-profile"])
+    (skill / "scripts" / "run.py").write_text("PATH = '../brand-profile/scripts/topics.py'\n")
+    assert dependency_case(tmp_path, monkeypatch, "mkt-copy", "# copy\n", ["brand-profile"]) == []
+
+
+def test_check_cases_lists_a_transitional_rule_as_a_warning_and_a_real_run_refuses_it(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, FAKE, [{"id": 1, "prompt": "p", "assertions": ["a"], "skills": ["dep"]}])
+    (tmp_path / "skills" / "dep").mkdir()
+    (tmp_path / "skills" / "dep" / "SKILL.md").write_text("# dep\n")
+    assert er.main(["--skill", "demo", "--check-cases"]) == 0
+    captured = capsys.readouterr()
+    assert json.loads(captured.out)["warnings"][0].startswith("case 1: skills lists dep: none of the three uses")
+    assert "PREFLIGHT WARNING demo case 1: skills lists dep" in captured.err and "(a real run refuses it)" in captured.err
+    with pytest.raises(SystemExit) as e:
+        er.main(FULL)
+    assert e.value.code == 2 and not list((tmp_path / "evals-workspace").rglob("eval-*"))
+    assert set(er.TRANSITIONAL) == {"skills", "folder"}
+
+
+def test_check_cases_refuses_a_web_case_the_gate_file_does_not_list(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, FAKE, [{"id": 1, "prompt": "p", "assertions": ["a"], "allow_web": True}])
+    assert er.main(["--skill", "demo", "--check-cases"]) == 0  # no gate file: no list
+    configure_gate(tmp_path)
+    capsys.readouterr()
+    assert er.main(["--skill", "demo", "--check-cases"]) == 2
+    assert 'sets "allow_web" and is not in "web_cases"' in json.loads(capsys.readouterr().out)["errors"][0]
+    configure_gate(tmp_path, web_cases={"demo": [1]})
+    assert er.main(["--skill", "demo", "--check-cases"]) == 0
+
+
+def test_with_setup_goes_with_check_cases_only():
+    with pytest.raises(SystemExit) as e:
+        er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--with-setup"])
+    assert e.value.code == 2
+    assert er.parse(["--skill", "s", "--check-cases", "--with-setup"])["with_setup"] is True
+
+
+def test_every_case_of_the_repository_passes_the_preflight_without_its_setup():
+    """What the validator's eval-cases rule runs; the container job runs the same with the setups."""
+    names = sorted(p.parents[1].name for p in REPO.glob("skills/*/evals/evals.json"))
+    for name in names:
+        r = subprocess.run([sys.executable, str(SCRIPT), "--skill", name, "--check-cases"], capture_output=True, text=True,
+                           cwd=REPO, timeout=300)
+        assert r.returncode == 0, (name, r.stderr[-2000:])
+
+
+def test_a_new_event_takes_an_id_after_the_newest_of_the_skill(tmp_path, monkeypatch):
+    """The newest full test is read from the order of the ids: two events never share their second."""
+    import time
+    skill = make_skill(tmp_path)
+    status = er.load_status()
+    now = status.new_test_id()
+    (skill / "evals" / "evidence").mkdir()
+    (skill / "evals" / "evidence" / f"lab-{now[:16]}-ffffffff.jsonl").write_text("{}\n")
+    test = er.later_test_id(status, str(skill))
+    assert test[:16] > now[:16]
+    (skill / "evals" / "evidence" / "lab-29990101T000000Z-00000000.jsonl").write_text("{}\n")
+    start = time.monotonic()
+    assert er.later_test_id(status, str(skill)) and time.monotonic() - start < 10  # a clock set wrong is not waited for
+
+
+
+# --- the routing mode: which skill loads, among a whole pack -------------------------------------------
+
+# A stand-in that loads "other" when the prompt says so and "demo" otherwise, and lists what was staged.
+ROUTES = r"""
+here="$(dirname "$0")"; out="$8"
+(cd "$4" && find .h -maxdepth 3 | sort) > "$out/staged.txt"
+(cd "$4" && ls) > "$out/case.txt"
+if grep -q "other" "$2"; then loaded='["other"]'; else loaded='["demo"]'; fi
+[ -f "$here/silent" ] || echo "{\"total_tokens\": 1, \"duration_ms\": 1, \"cost_usd\": null, \"skills_loaded\": $loaded}" > "$out/timing.json"
+echo ok > "$out/response.md"
+"""
+
+
+def routing_demo(tmp_path, monkeypatch):
+    skill = write_demo(tmp_path, monkeypatch, ROUTES, [
+        {"id": 1, "prompt": "Write the brief.", "files": ["evals/files/app"], "assertions": ["a"]},
+        {"id": 2, "prompt": "Write the other thing.", "assertions": ["a"]}])
+    other = tmp_path / "skills" / "other"
+    (other / "evals").mkdir(parents=True)
+    (other / "SKILL.md").write_text("# other\n")
+    (other / "evals" / "evals.json").write_text("{}")
+    (tmp_path / "shared" / "references").mkdir(parents=True)
+    (tmp_path / "shared" / "references" / "security.md").write_text("s\n")
+    monkeypatch.setattr(er, "pack_skills", lambda pack: ["demo", "other"])
+    return skill
+
+
+def test_the_routing_mode_lists_the_cases_in_which_another_skill_loaded(tmp_path, monkeypatch, capsys):
+    skill = routing_demo(tmp_path, monkeypatch)
+    before = skill_tree(skill)
+    assert er.main(["--routing", "--pack", "all", "--skill", "demo", "--harness", "h", "--model", "m"]) == 0
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    assert out["loaded_another"] == [2] and out["not_reported"] == 0 and (out["tier"], out["model"]) == ("strong", "m")
+    assert out["prompts"] == [{"case": 1, "loaded": ["demo"], "invoked": True, "others": []},
+                              {"case": 2, "loaded": ["other"], "invoked": False, "others": ["other"]}]
+    assert "in case(s) 2 another skill loaded" in captured.err
+    run = tmp_path / out["folder"] / "prompt-1" / "outputs"
+    staged = (run / "staged.txt").read_text().split()
+    # The whole pack, as an installer stages it: each skill without its cases, every shared reference.
+    assert ".h/skills/demo" in staged and ".h/skills/other" in staged and ".h/shared/references/security.md" in staged
+    assert not [p for p in staged if p.endswith("/evals")]
+    assert "a.txt" in (run / "case.txt").read_text()  # the case's files, as a run builds its folder
+    # No score, no evidence, no event: only the routing folder.
+    assert skill_tree(skill) == before and not (tmp_path / "evals-workspace" / "demo").exists()
+    assert out["folder"] == "evals-workspace/routing/all-1" and (tmp_path / out["folder"] / "routing.json").is_file()
+
+
+def test_the_routing_mode_runs_given_prompts_and_says_when_the_adapter_does_not_report(tmp_path, monkeypatch, capsys):
+    routing_demo(tmp_path, monkeypatch)
+    prompts = tmp_path / "prompts.json"
+    prompts.write_text(json.dumps(["Plan the launch.", "Do the other one."]))
+    assert er.main(["--routing", "--pack", "all", "--prompts", str(prompts), "--harness", "h", "--model", "m"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert [r["loaded"] for r in out["prompts"]] == [["demo"], ["other"]] and out["skill"] is None
+    (tmp_path / "adapters" / "h" / "silent").write_text("")
+    assert er.main(["--routing", "--pack", "all", "--prompts", str(prompts), "--harness", "h", "--model", "m"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["not_reported"] == 2 and [r["loaded"] for r in out["prompts"]] == [None, None]
+
+
+@pytest.mark.parametrize("args, why", [
+    (["--routing", "--skill", "demo"], "needs --pack"),
+    (["--routing", "--pack", "all"], "one of them"),
+    (["--routing", "--pack", "all", "--skill", "demo", "--prompts", "p.json"], "one of them"),
+    (["--routing", "--pack", "all", "--skill", "demo", "--cases", "1"], "not --cases"),
+    (["--routing", "--pack", "all", "--skill", "demo", "--tier", "floor"], "floor needs a floor model"),
+    (["--skill", "demo", "--pack", "all"], "go with --routing"),
+])
+def test_the_routing_mode_takes_its_own_options(tmp_path, monkeypatch, capsys, args, why):
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    with pytest.raises(SystemExit) as e:
+        er.parse(args + ["--harness", "h", "--model", "m"])
+    assert e.value.code == 2 and why in capsys.readouterr().err
+
+
+def test_the_routing_mode_refuses_a_skill_outside_the_pack(tmp_path, monkeypatch, capsys):
+    routing_demo(tmp_path, monkeypatch)
+    monkeypatch.setattr(er, "pack_skills", lambda pack: ["other"])
+    with pytest.raises(SystemExit) as e:
+        er.main(["--routing", "--pack", "all", "--skill", "demo", "--harness", "h", "--model", "m"])
+    assert e.value.code == 2 and "is not in the pack all" in capsys.readouterr().err
+
+
+def test_the_pack_is_resolved_by_the_repositorys_own_resolver():
+    names = er.pack_skills("default")
+    assert "ops-branch-sync" in names and len(names) >= 40

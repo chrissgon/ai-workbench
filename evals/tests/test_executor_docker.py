@@ -11,8 +11,10 @@ instead (WB_EVAL_IMAGE_PLATFORM, set below): they test the definition, and no ev
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -268,3 +270,127 @@ def test_a_run_reads_the_staged_skill_and_never_its_cases_its_tests_or_an_uncite
     assert r.returncode == 0, r.stderr
     assert r.stdout.split() == ["#", "demo", "security.md", "0", "0"]
 
+
+
+
+# --- checks that need no model, run where the runs run (the plan's item B9) ------------------------------
+
+def test_a_name_outside_the_proxys_list_does_not_resolve_on_the_internal_network(environment, root):
+    """A resolver that forwards would be a narrow channel out: on the internal network only the proxy's name resolves."""
+    r = inside(root, f"getent hosts example.com; echo rc=$?; getent hosts openrouter.ai; echo rc=$?; "
+                     f"getent hosts {ex.names()['proxy']} >/dev/null; echo rc=$?", network="proxy")
+    assert [line for line in r.stdout.splitlines() if line.startswith("rc=")] == ["rc=2", "rc=2", "rc=0"], r.stdout
+
+
+def skills_with_setup():
+    import json
+    found = []
+    for path in sorted((REPO / "skills").glob("*/evals/evals.json")):
+        cases = json.loads(path.read_text(encoding="utf-8")).get("evals") or []
+        if any(c.get("setup") for c in cases):
+            found.append(path.parents[1].name)
+    return found
+
+
+@pytest.mark.parametrize("skill", skills_with_setup())
+def test_the_preflight_of_every_skill_runs_with_its_setup_in_the_container(environment, skill):
+    """--check-cases leaves a case with setup commands unchecked; here they run, as a real run makes them."""
+    r = subprocess.run([sys.executable, str(REPO / "evals" / "eval_run.py"), "--skill", skill, "--check-cases", "--with-setup"],
+                       capture_output=True, text=True, timeout=900, env=os.environ)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    assert out["errors"] == [] and out["unchecked"] == [], out
+
+
+STUB_CLAUDE = """#!/usr/bin/env bash
+cat > /dev/null
+sleep 300 &
+echo $! > /eval/stub-child.pid
+cat <<'EOF'
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "Reading first."}, {"type": "tool_use", "name": "Skill", "input": {"skill": "core-demo"}}]}}
+{"type": "assistant", "message": {"content": [{"type": "text", "text": "The answer."}]}}
+{"type": "result", "result": "The answer.", "num_turns": 2, "usage": {"input_tokens": 3, "output_tokens": 2}, "total_cost_usd": 0.0}
+EOF
+"""
+STUB_OPENCODE = """#!/usr/bin/env bash
+sleep 300 &
+echo $! > /eval/stub-child.pid
+echo "$OPENCODE_PERMISSION" > /eval/permission.txt
+cat <<'EOF'
+{"type": "step_start", "part": {}}
+{"type": "text", "part": {"text": "Reading first."}}
+{"type": "tool_use", "part": {"tool": "skill", "state": {"input": {"name": "core-demo"}}}}
+{"type": "step_finish", "part": {"tokens": {"input": 3, "output": 2, "reasoning": 0, "cache": {"read": 0, "write": 0}}, "cost": 0}}
+{"type": "step_start", "part": {}}
+{"type": "text", "part": {"text": "The answer."}}
+{"type": "step_finish", "part": {"tokens": {"input": 4, "output": 1, "reasoning": 0, "cache": {"read": 0, "write": 0}}, "cost": 0}}
+EOF
+"""
+
+
+@pytest.mark.parametrize("harness, stub, name", [("claude-code", STUB_CLAUDE, "claude"), ("agents-dir", STUB_OPENCODE, "opencode")])
+def test_each_run_prompt_sh_runs_in_the_image_with_a_stub_runner(environment, root, harness, stub, name):
+    """The adapter's real shell, find, process groups and output files, in the image; the runner is a stub."""
+    import json
+    (root / "bin").mkdir()
+    (root / "bin" / name).write_text(stub)
+    (root / "bin" / name).chmod(0o755)
+    (root / "prompt.md").write_text("Do the task.\n")
+    runner = REPO / "adapters" / harness / "run-prompt.sh"
+    r = inside(root, "export PATH=/eval/bin:$PATH; bash /wb/run-prompt.sh --prompt-file /eval/prompt.md --cwd /eval/case "
+                     "--model m --out /eval/out; echo rc=$?; sleep 1; kill -0 $(cat /eval/stub-child.pid) 2>/dev/null "
+                     "&& echo left-running || echo stopped", runner=str(runner), network="proxy")
+    assert "rc=0" in r.stdout and r.stdout.strip().endswith("stopped"), r.stdout + r.stderr  # nothing it started outlives it
+    out = root / "out"
+    assert (out / "response.md").read_text().strip() == "The answer."  # the last message, not the narration
+    assert "Reading first." in (out / "stream.jsonl").read_text()
+    timing = json.loads((out / "timing.json").read_text())
+    assert timing["skills_loaded"] == ["core-demo"] and timing["total_tokens"] in (5, 10) and timing["exit_code"] == 0
+    if harness == "agents-dir":
+        assert json.loads((root / "permission.txt").read_text()) == {"webfetch": "deny"}
+
+
+STUB_ADAPTER = r"""
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  n="$(sed -n '/^## Assertions/,$p' "$2" | grep -c -E '^[0-9]+\. ')"
+  python3 -c 'import json, sys; print(json.dumps([{"id": i + 1, "passed": True, "evidence": "e"} for i in range(int(sys.argv[1]))]))' "$n" > "$out/response.md"
+  exit 0
+fi
+cd "$4" && echo made > made.md
+echo "{\"total_tokens\": 1, \"duration_ms\": 1, \"cost_usd\": null, \"skills_loaded\": [\"core-demo\"]}" > "$out/timing.json"
+echo "I did it." > "$out/response.md"
+"""
+
+
+def test_the_grading_path_with_a_stub_grader_runs_in_the_container_and_a_stub_run_leaves_no_file_under_skills(environment, tmp_path, monkeypatch, capsys):
+    """A whole event, run as a real one is (the container, the staging, the facts, the grading call), with a
+    stub adapter as runner and grader: it writes into its run folder's scratch tree and nothing under skills/."""
+    import json
+    wb, skill, dep = demo_workbench(tmp_path)
+    (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "Write made.md.", "assertions": ["made.md exists", "b"]}]}))
+    (skill / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "0.1"\n---\n# demo\n')
+    adapter = wb / "adapters" / "stub"
+    adapter.mkdir(parents=True)
+    (adapter / "adapter.json").write_text(json.dumps({"harness": "stub", "eval": {"skills_dir": ".stub/skills", "settings": [".stub"]}}))
+    (adapter / "run-prompt.sh").write_text(STUB_ADAPTER)
+    (wb / "evals").mkdir()
+    (wb / "evals" / "grading-prompt.md").write_text((REPO / "evals" / "grading-prompt.md").read_text())
+    (wb / "evals" / "eval-gate.json").write_text(json.dumps({  # the measurement is open: a stub run is a trial
+        "strong_model": "m", "strong_harness": "stub", "floor_model": "f", "floor_harness": "stub", "floor_pass_env": [],
+        "strong_pass_env": [], "grader": "m", "threshold": 0.8, "strong_tolerance": 0.05, "measurement_version": 5,
+        "measurement_floor": 5, "runs": 1}))
+    monkeypatch.setattr(er, "ROOT", str(wb))
+    monkeypatch.setattr(er, "GRADING_TEMPLATE", str(wb / "evals" / "grading-prompt.md"))
+    monkeypatch.setattr(er, "LOCK_DIR", str(tmp_path / "locks"))
+    before = sorted(str(p) for p in (wb / "skills").rglob("*"))
+    assert er.main(["--skill", "core-demo"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["complete"] is True and out["evidence"]["written"] is False and out["evidence"]["lines"] == 3
+    assert sorted(str(p) for p in (wb / "skills").rglob("*")) == before  # nothing under skills/
+    assert (wb / out["evidence"]["scratch"]).is_file() and "/scratch/skills/core-demo/" in out["evidence"]["scratch"]
+    run = wb / out["iteration_dir"] / "eval-1" / "with_skill"
+    facts = (run / "facts.md").read_text()
+    assert "created:\n- made.md" in facts and "fixture" in facts  # the facts block, read in a container with no network
+    assert json.loads((run / "grading.json").read_text())["summary"]["pass_rate"] == 1.0
+    assert json.loads((run / "timing.json").read_text())["invoked"] is True

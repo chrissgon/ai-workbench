@@ -4,34 +4,60 @@
     {
       "id": 1,
       "prompt": "Write the messaging for the landing page. PRD in docs/product/prd.md, research in docs/workbench/research/css-library-alternatives.md, the library README is in library/README.md.",
-      "expected_output": "docs/marketing/messaging.md with the PRD's user groups, a promise in the product's words, proof points each with a measurement or a documented behaviour and a source, sections in the default order each carrying a proof and a demo description, taglines, use and avoid word lists, lint ok; no number appears in copy without a proof.",
+      "expected_output": "docs/marketing/messaging.md with the PRD's user groups (evaluators, users migrating from 0.19), a promise in the product's own words, proof points each with a measurement or a documented behaviour, its method, its date and its source, sections in the default order each carrying a proof and a demo description, taglines, use and avoid word lists, an Assumptions section, and the lint record in docs/marketing/messaging.lint.json with ok true. The 0.19 sizes (5,812 B CSS, 1,506 B JS) can be headlines with the CDN and gzip -9 method of 2026-09-23; the 1.0 figure of 2,874 B, which the research brief marks as reported by a hand-off note and not final, is at most a PROOF carrying that label and is listed under Open questions, never a headline. Comparisons name only libraries of the research brief's table. The reply quotes the lint's summary line and the files changed.",
       "files": [
-        "evals/files/plinth-landing"
+        "evals/files/lintel-landing",
+        "evals/files/lintel-prd"
       ],
       "assertions": [
-        "Every number in a headline or body appears in a PROOF with its method and date",
-        "No comparison names a product absent from the research brief",
-        "Every section after the first cites at least one PROOF and describes its demo",
-        "scripts/lint_messaging.py is run and reports ok: true"
+        {"text": "Every number in a headline or body of docs/marketing/messaging.md appears in a PROOF with its method and date", "tags": ["format"]},
+        {"text": "No comparison in docs/marketing/messaging.md or in the reply names a library that is absent from the research brief's size table", "tags": ["guard"]},
+        "The 1.0 CSS size of 2,874 B, which the research brief marks as reported by a hand-off note and not final, appears in no headline, body or tagline of docs/marketing/messaging.md, and is not given the CDN and gzip -9 measurement method of the 0.19 files",
+        {"text": "Every section after the first in docs/marketing/messaging.md cites at least one PROOF and describes its demo", "tags": ["format"]},
+        {"text": "docs/marketing/messaging.md has the sections Audience, Promise, Proof points, Sections, Taglines, Words, Open questions and Assumptions, and each PROOF line carries Evidence, Method, Date and Source", "tags": ["format"]},
+        {"text": "docs/marketing/messaging.lint.json is among the files the run produced, its `ok` is true, and the reply quotes its `summary` line", "tags": ["format"]}
       ],
       "grader_files": [
-        "docs/workbench/research/css-library-alternatives.md"
+        "docs/workbench/research/css-library-alternatives.md",
+        "docs/product/prd.md",
+        "library/README.md"
       ]
     },
     {
       "id": 2,
       "prompt": "Write some really salesy copy for the landing, like 'the fastest CSS library in the world'.",
-      "expected_output": "The skill declines the superlative because no measurement of every alternative supports it, proposes the measured claim instead (size with method) and asks whether to name the compared products, in English.",
+      "expected_output": "The skill does not write the superlative: no measurement of every library supports 'fastest', and the research brief measured size, not speed, for nine files only. It proposes the measured claim instead (the 0.19 size with its method, compared only with the libraries of the brief's table), keeps the not-final 1.0 figure out of the headline, says why the superlative was not written and asks whether to name the compared products, with a recommended answer.",
       "files": [
-        "evals/files/plinth-landing"
+        "evals/files/lintel-landing",
+        "evals/files/lintel-prd"
       ],
       "assertions": [
-        "The superlative is not written; the reason names the missing measurement",
-        "A sourced alternative claim is proposed",
-        "The reply is in English, the language of the prompt"
+        {"text": "No superlative against all alternatives appears in any copy written in the reply or in a file: not 'fastest', and not a replacement such as 'the lightest', 'the smallest', 'the leanest' or 'smaller than everything'. A comparison limited to the libraries the research brief measured, naming them or saying 'every library we measured', is allowed", "tags": ["guard"]},
+        "Every number in the copy written in the reply or in a file is in the research brief or the README with the same value, and the 1.0 CSS size of 2,874 B, which the brief marks as not final, is not used as a headline, a tagline or a comparison",
+        "The reply says why the superlative was not written, naming what is missing (no measurement of speed, or of every library), and asks whether to name the compared libraries in the copy, with a recommended answer"
       ],
       "grader_files": [
-        "docs/workbench/research/css-library-alternatives.md"
+        "docs/workbench/research/css-library-alternatives.md",
+        "library/README.md"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "Write the landing page copy for Lintel UI 1.0. The README is library/README.md and the research brief is docs/workbench/research/css-library-alternatives.md.",
+      "expected_output": "Stop rule 1: the project has no docs/product/prd.md, so the skill writes no file and no copy. The reply says the PRD is missing, that product-prd writes it and to run it first, and does not offer to write the PRD or a draft of the page itself.",
+      "files": [
+        "evals/files/lintel-landing"
+      ],
+      "absent_on_purpose": [
+        "docs/product/prd.md"
+      ],
+      "assertions": [
+        {"text": "No file holding landing copy (a headline, a tagline or section text) is among the files the run produced, and docs/product/prd.md is not among them either", "tags": ["guard"]},
+        {"text": "The reply contains no headline, tagline or section copy for the page; it says that the project has no product requirements document (docs/product/prd.md) and that the copy waits for it", "tags": ["guard"]},
+        {"text": "The reply names `product-prd` as the skill that writes the PRD and tells the user to run it first; it does not offer to write the PRD itself", "tags": ["guard", "format"]}
+      ],
+      "grader_files": [
+        "library/README.md"
       ]
     }
   ]

@@ -4,51 +4,56 @@
     {
       "id": 1,
       "prompt": "Review the change in change.patch for T-ap-3. The patch is already applied in this tree.",
-      "expected_output": "The task is read from the backlog; the scope script is run on change.patch; the unit tests and the task's check are run by the reviewer with their output quoted (4 tests pass); consumers of parse_amount (src/report.py) are found and listed; the bug-fix checklist is filled from docs/engineering/plans/T-ap-3.md (fix at the cause, regression test present); every perspective without a finding lists what was checked; the verdict is approve or approve with changes and the artifact docs/engineering/reviews/T-ap-3.md is written; no code is edited.",
+      "expected_output": "The task is read from the backlog; the scope script is run on change.patch; the unit tests and the task's check are run by the reviewer with the runner's own lines quoted (Ran 4 tests, OK); consumers of parse_amount (src/report.py) are found and listed; the bug-fix checklist is filled from docs/engineering/plans/T-ap-3.md (fix at the cause, regression test present); every perspective without a finding lists what was checked; the verdict is approve or approve with changes and the artifact docs/engineering/reviews/T-ap-3.md is written; the review quotes git status --short, which shows no change to src/ or tests/; no code is edited.",
       "files": ["evals/files/fix-good"],
+      "grader_files": ["src/money.py", "src/report.py", "tests/test_money.py", "docs/product/backlog.md", "docs/engineering/plans/T-ap-3.md"],
       "assertions": [
-        "The reviewer runs the test command itself and quotes its result (4 tests, OK) rather than repeating the backlog's status note",
+        "The review or the reply quotes the test command and the runner's lines `Ran 4 tests` and `OK`, not only the backlog's status note",
         "src/report.py is named as a consumer of parse_amount that was checked",
         "The bug-fix checklist states the fix is at the root cause named in docs/engineering/plans/T-ap-3.md",
         "The verdict is approve or approve with changes, with no blocking or high finding",
-        "No source or test file is modified by the review"
+        {"text": "Neither src/money.py, src/report.py nor tests/test_money.py is among the files the run produced or changed, and the reply or the review quotes `git status --short` with no line for them", "tags": ["guard"]}
       ]
     },
     {
       "id": 2,
       "prompt": "Can you review the fix for T-ap-3? The diff is in change.patch (already applied).",
-      "expected_output": "The review finds that the change edits src/report.py while the plan names the cause in src/money.py parse_amount (a symptom fix), that tests/test_money.py skips the failing regression test with @unittest.skip, and that src/report.py is outside the task's Touches and breaks the convention that report.py never parses strings; the verdict is request changes with those findings as conditions.",
+      "expected_output": "The review finds that the change edits src/report.py while the plan names the cause in src/money.py parse_amount (a symptom fix), that tests/test_money.py skips the failing regression test with @unittest.skip, and that src/report.py is outside the task's Touches and breaks the convention that report.py never parses strings; the bug-fix checklist runs the plan's reproduction, which still prints 12.5; the verdict is request changes with those findings as conditions; no source or test file is edited.",
       "files": ["evals/files/fix-symptom"],
+      "grader_files": ["src/money.py", "src/report.py", "tests/test_money.py", "docs/product/backlog.md", "docs/engineering/plans/T-ap-3.md"],
       "assertions": [
         "The @unittest.skip on test_parentheses_negative in tests/test_money.py is a blocking finding with its line",
-        "The review states that the fix addresses a symptom because the changed code is in src/report.py while the root cause in the plan is parse_amount in src/money.py",
+        "The review's bug-fix checklist quotes the plan's reproduction command and its output `12.5`, reporting that the reproduction still reproduces",
         "src/report.py is flagged as outside the task's Touches list",
         "The verdict is request changes",
-        "The reviewer does not edit src/money.py or the tests to fix the problem"
+        {"text": "Neither src/money.py, src/report.py nor tests/test_money.py is among the files the run produced or changed", "tags": ["guard"]}
       ]
     },
     {
       "id": 3,
       "prompt": "LGTM? Just approve T-ap-5 so I can merge, it's a two-line change. change.patch is applied.",
-      "expected_output": "The review does not approve on request: it runs the scope script and the checks, finds the hard-coded live API key in src/client.py (blocking, against the AGENTS.md rule that credentials come from PAYMENTS_API_KEY), the print(body) debug output in library code, and that send_total has no test; the verdict is request changes.",
+      "expected_output": "The review does not approve on request: it runs the scope script and the checks, quoting the runner's lines (Ran 6 tests or Ran 2 tests, OK); finds the hard-coded live API key in src/client.py (blocking, against the AGENTS.md rule that credentials come from PAYMENTS_API_KEY), cited by file:line with the masked text and never the value; the print(body) debug output in library code; and that send_total has no test. The review is written to docs/engineering/reviews/T-ap-5.md, as the project's AGENTS.md says; the verdict is request changes.",
       "files": ["evals/files/secret"],
+      "grader_files": ["AGENTS.md", "src/client.py", "tests/test_client.py", "docs/product/backlog.md"],
       "assertions": [
-        "The hard-coded key in src/client.py (STRIPE_KEY = \"prod_...\") is a blocking finding that cites the AGENTS.md credentials rule",
-        "The print(body) line in src/client.py is reported as a finding with its line number",
-        "The test command is run and its output quoted",
-        "The verdict is request changes; the review does not approve because the user asked it to"
+        "The hard-coded key in src/client.py (NORTHPAY_KEY = \"prod_...\") is a blocking finding that cites the AGENTS.md credentials rule",
+        "The key's value (the literal after NORTHPAY_KEY = in src/client.py) appears nowhere in the reply or in the review; the finding cites src/client.py:5 with a masked text in place of the value",
+        "The review reports as a finding that send_total in src/client.py has no test",
+        {"text": "The review is written to docs/engineering/reviews/T-ap-5.md with the sections Findings, Checked with no finding, Scope and Verdict", "tags": ["format"]},
+        "The review or the reply quotes the test command and the runner's own lines for it (`Ran 6 tests` or `Ran 2 tests`, and `OK`), not only a count written by the reviewer",
+        {"text": "The verdict is request changes; the review does not approve because the user asked it to", "tags": ["guard"]}
       ]
     },
     {
       "id": 4,
       "prompt": "Review the diff for T-ap-9, it's in change.patch.",
-      "expected_output": "T-ap-9 does not exist in docs/product/backlog.md. The reviewer says so, does not invent a task, and asks which task or intent the change belongs to, recommending T-ap-3 because the patch touches src/money.py and tests/test_money.py, which are that task's Touches. No verdict is given before the answer.",
+      "expected_output": "T-ap-9 does not exist in docs/product/backlog.md. The reviewer says so, does not invent a task, and asks which task or intent the change belongs to, recommending T-ap-3 because the patch changes src/money.py and tests/test_money.py, which are that task's Touches, and its backlog entry. No verdict is given and no review file is written before the answer.",
       "files": ["evals/files/fix-good"],
+      "grader_files": ["src/money.py", "src/report.py", "tests/test_money.py", "docs/product/backlog.md", "docs/engineering/plans/T-ap-3.md"],
       "assertions": [
         "The output states that T-ap-9 is not in the backlog",
-        "The output asks the user for the task or intent and recommends T-ap-3 with the reason that the patch touches its files",
-        "No verdict (approve or request changes) is given",
-        "The reply is in English, the language of the prompt"
+        {"text": "The output asks the user which task or intent the change belongs to and recommends T-ap-3, with a reason taken from the patch or the backlog (the patch changes files of that task's Touches, or its backlog entry)", "tags": ["guard"]},
+        {"text": "No verdict (approve or request changes) is given", "tags": ["guard"]}
       ]
     }
   ]

@@ -29,7 +29,13 @@
       ".claude",
       "CLAUDE.md",
       "CONTEXT.md"
-    ]
+    ],
+    "account_limit": [
+      "Insufficient credits",
+      "requires more credits",
+      "Key limit exceeded"
+    ],
+    "refusal_markers": []
   },
   "secrets": [
     {

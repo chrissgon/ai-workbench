@@ -4,26 +4,68 @@
     {
       "id": 1,
       "prompt": "put all my brand stuff into one guide an agent can follow",
-      "expected_output": "docs/brand/guidelines.md consolidates profile, strategy, identity and voice, each line pointing to its file. The label is copied exactly. The never-expose list, the claim rule against calling Dana an AI-for-databases expert and the voice limits (no emojis, at most 2 hashtags, end with a question) appear. Do and don't examples are exact quotes from Dana's samples or the AI-written launch post, not invented. Colours match identity.md (#FBBF24, #F59E0B) and the light accent is not allowed for text. A pre-publish checklist names commands. check_guide.py is run. name.md does not exist and the guide says the name section is not defined yet or points to brand-name.",
-      "files": ["evals/files/dana"],
+      "expected_output": "docs/brand/guidelines.md consolidates profile, strategy, identity and voice, each rule line ending with the brand file it comes from as [file.md]. The label is copied exactly. Do cells are exact lines of the calibration rewrites in voice.md; Don't cells are exact quotes of Dana's old samples or of the AI-written launch post. Colours are only those in identity.md and the light accent is not allowed for text. Section 9 copies the Check lines of voice.md (voice_stats.py) and profile.md (sensitive_topics.py) by script name and arguments, with no path. name.md does not exist and the guide says the name is not defined yet and points to brand-name. The state file registers the guide as draft, and the reply quotes the check_guide.py command with its \"ok\": true line.",
+      "files": [
+        "evals/files/dana"
+      ],
       "assertions": [
         "docs/brand/guidelines.md exists and cites the brand files it draws from (profile, strategy, identity, voice)",
-        "The label 'Staff Engineer · Creator of tinykv · Databases and small tools' appears exactly",
-        "The guide forbids calling Dana an expert in AI for databases",
-        "The voice limits appear: no emojis, at most 2 hashtags, posts end with a question",
-        "Every 'don't' example is an exact quote from Dana's samples or the AI-written launch post (for example 'NEW BLOG POST!!!' or 'Excited to announce tinykv'), not an invented sentence",
-        "Colours in the guide are only those in identity.md, and the light accent #F59E0B is not allowed for text",
+        "Every Do cell of the do-and-don't table is an exact quote of a calibration rewrite in docs/brand/voice.md, and every Don't cell an exact quote of one of Dana's samples or of the launch post in docs/brand/profile.md",
+        {
+          "text": "Every rule line in the guide ends with the brand file it comes from in the form [file.md]",
+          "tags": [
+            "format"
+          ]
+        },
+        "The section on what to do before publishing names the voice check and the sensitive-topics check as the Check lines of docs/brand/voice.md and docs/brand/profile.md record them (voice_stats.py and sensitive_topics.py with their arguments), with no path to a script",
+        "The reply quotes the check_guide.py command and its output with \"ok\": true, and docs/workbench/state.md registers docs/brand/guidelines.md as draft",
+        {
+          "text": "The guide contains no colour code that docs/brand/identity.md lacks",
+          "tags": [
+            "guard"
+          ]
+        },
         "The guide says the name is not defined yet or points to brand-name, since name.md does not exist"
+      ],
+      "grader_files": [
+        "docs/brand/profile.md",
+        "docs/brand/strategy.md",
+        "docs/brand/voice.md",
+        "docs/brand/identity.md"
+      ],
+      "absent_on_purpose": [
+        "docs/brand/name.md"
       ]
     },
     {
       "id": 2,
       "prompt": "make the brand guide",
-      "expected_output": "Without a strategy and a voice file the skill stops: it names the missing files and the skills that write them (brand-strategy, brand-voice, brand-profile) and writes no guide.",
+      "expected_output": "Without a strategy and a voice file the skill stops: it names the missing files and the skills that write them (brand-strategy, brand-voice, brand-profile), tells the user to run them first without offering to run them, and writes no guide.",
       "files": [],
       "assertions": [
-        "No docs/brand/guidelines.md is written",
-        "The reply names brand-strategy and brand-voice (or brand-profile) as the skills to run first"
+        {
+          "text": "No docs/brand/guidelines.md is written",
+          "tags": [
+            "guard"
+          ]
+        },
+        {
+          "text": "The reply names brand-strategy and brand-voice (or brand-profile) as the skills to run first",
+          "tags": [
+            "guard"
+          ]
+        },
+        {
+          "text": "The reply tells the user to run those skills first and does not offer to run them itself",
+          "tags": [
+            "guard"
+          ]
+        }
+      ],
+      "absent_on_purpose": [
+        "docs/brand/strategy.md",
+        "docs/brand/voice.md",
+        "docs/brand/profile.md"
       ]
     }
   ]

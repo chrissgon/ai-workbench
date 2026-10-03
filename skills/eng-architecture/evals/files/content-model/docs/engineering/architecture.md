@@ -32,7 +32,6 @@ src/
 | framework | Astro 5.13.2, static output | `package.json` dependencies.astro; `astro.config.mjs` output |
 | UI | @plinthkit/plinthui 1.0.0 (CSS classes) | `package.json`; import in `src/layouts/Docs.astro` |
 | build | `astro build` | `package.json` scripts.build |
-| type check | `astro check` with @astrojs/check 0.9.4 | `package.json` scripts.check |
 | tests | Vitest 3.2.4, no test file yet | `package.json` scripts.test |
 | deploy | static files from `dist/` | `astro.config.mjs` output: "static" |
 

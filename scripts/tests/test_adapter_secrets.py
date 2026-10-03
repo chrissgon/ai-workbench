@@ -41,8 +41,12 @@ BEFORE = {
                                                           "adapters/claude-code/run-prompt.sh")),
     "DEEPSEEK_API_KEY": ((), "deepseek", ("evals/eval_run.py --floor-pass-env", "adapters/agents-dir/run-prompt.sh")),
     "ANTHROPIC_API_KEY": ((), "anthropic", ("adapters/api/run_agent.py",)),
+    # Added since: the low-limit key of the eval cases that use the open network.
+    "CLAUDE_CODE_WEB_API_KEY": ((), "claude-code-web-evals", ("evals/eval_run.py strong_web_pass_env",
+                                                              "adapters/claude-code/run-prompt.sh")),
 }
-ADAPTER_SECRETS = {"OPENROUTER_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY"}
+ADAPTER_SECRETS = {"OPENROUTER_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN", "DEEPSEEK_API_KEY", "ANTHROPIC_API_KEY",
+                   "CLAUDE_CODE_WEB_API_KEY"}
 
 
 class FakeStore:
@@ -110,7 +114,7 @@ def test_the_names_passed_into_eval_runs_are_registered_by_the_adapter_of_their_
     for tier in ("floor", "strong"):
         manifest = json.loads((ROOT / "adapters" / gate[f"{tier}_harness"] / "adapter.json").read_text(encoding="utf-8"))
         registered = {entry["name"] for entry in manifest.get("secrets", [])}
-        for name in gate[f"{tier}_pass_env"]:
+        for name in gate[f"{tier}_pass_env"] + (gate.get("strong_web_pass_env", []) if tier == "strong" else []):
             assert name in registered, f"{name} is passed to the {tier} runs and its adapter does not register it"
             assert any(r.startswith("evals/eval_run.py") for r in merged.REGISTRY[name].readers)
     for manifest in MANIFESTS:
