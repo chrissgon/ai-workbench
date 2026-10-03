@@ -496,6 +496,11 @@ def vote_approve(cfg: dict, project: Path, store, item: dict, a, h) -> dict:
     if not v:
         raise Fail("runtime.json has no vote section", 3)
     b = load_bundle(item)
+    # The bundle in the store is what the item's hash was computed over (to_inbox): re-hashed here, so that the
+    # slot, the key and the files it names are covered by the hash and not only by the database (RT12).
+    if sha256_bytes(json.dumps(b, ensure_ascii=False, indent=1).encode("utf-8")) != item.get("payload_sha256"):
+        raise Fail("this vote item's stored bundle no longer has the hash it was proposed with; nothing done. "
+                   "Reject it so the next tick redoes the round", 1)
     shown = preview(item)
     if not b.get("ready"):
         raise Fail("this vote item is not ready: " + "; ".join(b.get("problems") or []) +

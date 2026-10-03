@@ -69,8 +69,9 @@ add-comment  Queues a comment the person pasted (the link from "Copy link to com
 status   Recent runs, open inbox items, today's spend (with the number of runs counted at the per-run maximum
          because their cost is unknown) and replies.
 inbox    Open inbox items, each with its reply text and its sha256.
-approve  Without --confirmed: prints the item's exact reply and its sha256. With --confirmed --sha256 <hash>:
-         sends that reply only if the stored file still has that hash, then records it. The person runs this.
+approve  Without --confirmed: prints the item's exact reply, where it goes, its key and the sha256 to approve,
+         which covers the reply, the post, the comment and the idempotency key. With --confirmed --sha256 <hash>:
+         sends that reply only if all of them still have that hash, then records it. The person runs this.
 reject   Closes an item without sending anything. On a vote item it also clears the round's cursor, so the next
          tick redoes the round (a new agent run and a new item).
 
@@ -231,6 +232,15 @@ def reply_key(comment_id: str) -> str:
     Used only for an inbox item that holds no key of its own (the gate did not run); an item that holds one,
     of either form, keeps it."""
     return "reply-" + hashlib.sha256(comment_id.encode("utf-8")).hexdigest()[:32]
+
+
+def reply_approval_hash(comment: dict, reply_sha256: str, key: str) -> str:
+    """The hash a reply item is approved by: the reply's sha256, the post, the comment it answers and the
+    idempotency key, so that a change to the target stored with the item stops approve as a changed reply does."""
+    bound = {"reply_sha256": reply_sha256, "post": comment.get("post_urn"), "comment": comment.get("comment_urn"),
+             "parent_comment": comment.get("parent_comment_urn") or comment.get("comment_urn"),
+             "idempotency_key": key}
+    return hashlib.sha256(json.dumps(bound, sort_keys=True).encode("utf-8")).hexdigest()
 
 
 def stored_names(parsed: dict) -> dict:
@@ -643,12 +653,14 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
         reasons.append(f"publisher exited {code}: {err.strip()[-300:]}")
         gate_record(cfg, project, {**base, "action": "failed", "note": reasons[-1]})
 
+    key = (gate or {}).get("idempotency_key") or reply_key(comment["comment_urn"])
     item = {"comment": comment, "decision": decision, "reasons": reasons, "reply_file": str(reply_file) if reply_file else None,
-            "idempotency_key": (gate or {}).get("idempotency_key")}
+            "idempotency_key": key}
     item_file = write_private(run_dir, "inbox.json", json.dumps(item, ensure_ascii=False))
+    approval = reply_approval_hash(comment, sha, key) if sha else sha256_file(item_file)
     item_id = store("inbox-add", "--kind", "reply", "--title",
                     f"{flat(comment['commenter'], 80)}: {flat(comment['text'], 80)}",
-                    "--payload-file", item_file, "--payload-sha256", sha or sha256_file(item_file),
+                    "--payload-file", item_file, "--payload-sha256", approval,
                     "--event-id", event["id"])["id"]
     append_inbox_md(project, item_id, comment, decision, reasons, sha)
     gate_record(cfg, project, {**base, "action": "to_inbox", "inbox_id": item_id, "reasons": reasons})
@@ -839,17 +851,21 @@ def cmd_approve(a, cfg: dict, project: Path) -> dict:
     if not reply_file or not Path(reply_file).is_file():
         raise Fail("this item has no drafted reply to send; answer it on the network yourself, then reject it", 2)
     sha = sha256_file(Path(reply_file))
-    preview = {"id": a.id, "comment": payload["comment"], "reply": Path(reply_file).read_text(encoding="utf-8"), "sha256": sha}
+    c = payload["comment"]
+    key = payload.get("idempotency_key") or reply_key(c["comment_urn"])
+    # What the person approves: the reply, where it goes and under which key (RT12). An item stored before this
+    # rule holds the reply's hash alone, and is checked that way.
+    approval = sha if item.get("payload_sha256") == sha else reply_approval_hash(c, sha, key)
+    preview = {"id": a.id, "comment": c, "reply": Path(reply_file).read_text(encoding="utf-8"),
+               "reply_sha256": sha, "idempotency_key": key, "sha256": approval}
     if not a.confirmed:
-        return {**preview, "next": f"to send exactly this reply: approve --id {a.id} --confirmed --sha256 {sha}"}
-    if a.sha256 != sha or sha != item.get("payload_sha256"):
-        raise Fail("the reply changed since it was drafted or shown; nothing sent", 1)
+        return {**preview, "next": f"to send exactly this reply, there: approve --id {a.id} --confirmed --sha256 {approval}"}
+    if a.sha256 != approval or approval != item.get("payload_sha256"):
+        raise Fail("the reply, its target or its key changed since it was drafted or shown; nothing sent", 1)
     held = credential_in(cfg, preview["reply"])
     if held:
         raise Fail(f"the reply holds what looks like a credential ({held}); nothing sent. Answer the comment "
                    "yourself, then reject this item", 1)
-    c = payload["comment"]
-    key = payload.get("idempotency_key") or reply_key(c["comment_urn"])
     out = run_json(["uv", "run", str(cfg["paths"]["publisher"]), "comment", "--platform", cfg["publisher"],
                     "--post-id", c["post_urn"], "--parent-comment-id", c.get("parent_comment_urn") or c["comment_urn"],
                     "--text-file", reply_file,

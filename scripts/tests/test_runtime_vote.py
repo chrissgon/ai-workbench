@@ -419,6 +419,21 @@ def test_wrong_hash_or_edited_post_does_nothing(env):
     assert calls(env, "scheduler") == []
 
 
+def test_a_stored_bundle_changed_after_the_proposal_refuses(env):
+    # RT12: the vote item's bundle in the store was never re-hashed, so its slot was covered by the database only.
+    import sqlite3
+    rt(env, "tick")
+    item = inbox(env)[0]
+    bundle = item["payload"]
+    bundle["slot"]["when"] = "2026-10-13T09:00:00-03:00"
+    with sqlite3.connect(str(env["data"] / "store.sqlite")) as db:
+        db.execute("UPDATE inbox SET payload = ? WHERE id = ?",
+                   (json.dumps(bundle, ensure_ascii=False, indent=1), item["id"]))
+    code, _, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", item["payload_sha256"])
+    assert code == 1 and "no longer has the hash" in err
+    assert calls(env, "scheduler") == []
+
+
 def test_queue_moved_in_the_repository_refuses(env):
     rt(env, "tick")
     item = inbox(env)[0]

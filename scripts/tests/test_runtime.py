@@ -516,6 +516,26 @@ def test_approve_sends_only_the_exact_reply_shown(env):
     assert items["items"] == []
 
 
+def test_the_approval_hash_covers_the_target_and_the_key(env):
+    # RT12: the hash a reply item was approved by was the reply's alone; the post, the comment and the key came
+    # from the store's payload, which nothing hashed, so a changed target was sent under the old approval.
+    import sqlite3
+    set_case(env, [message(1, text="I disagree")], decision(category="criticism_or_disagreement", reply="Fair point."))
+    rt(env, "tick")
+    code, items, _ = rt(env, "inbox")
+    item = items["items"][0]
+    code, shown, err = rt(env, "approve", "--id", str(item["id"]))
+    assert code == 0 and shown["sha256"] == item["payload_sha256"], err
+    assert shown["sha256"] != shown["reply_sha256"] and shown["idempotency_key"].startswith("reply-")
+    payload = item["payload"]
+    payload["comment"]["post_urn"] = "urn:li:activity:999"
+    with sqlite3.connect(str(env["data"] / "store.sqlite")) as db:
+        db.execute("UPDATE inbox SET payload = ? WHERE id = ?", (json.dumps(payload), item["id"]))
+    code, _, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", shown["sha256"])
+    assert code == 1 and "target or its key changed" in err
+    assert publisher_calls(env) == []
+
+
 def test_not_a_comment_is_done_without_a_run(env):
     set_case(env, [{"id": "m9", "received_at": "2026-09-29T10:09:00Z", "headers": {}}], decision())
     code, out, _ = rt(env, "tick")
