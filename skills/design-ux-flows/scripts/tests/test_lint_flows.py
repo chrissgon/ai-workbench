@@ -84,18 +84,32 @@ def test_a_complete_document_is_ok(tmp_path):
     proc, _, _ = run(tmp_path)
     out = json.loads(proc.stdout)
     assert proc.returncode == 0, proc.stdout
-    assert out == {"ok": True, "counts": {"IA": 1, "SCREEN": 2, "FLOW": 2, "covered": 2}, "errors": []}
+    assert out == {"ok": True, "counts": {"IA": 1, "SCREEN": 2, "FLOW": 2, "covered": 2}, "errors": [],
+                   "summary": "lint_flows ok: 0 errors; 1 IA nodes, 2 screens, 2 flows, 2 features covered; phase P-1"}
 
 
-def test_report_writes_the_result_with_its_arguments(tmp_path):
+def test_report_writes_the_record_of_the_evidence_convention(tmp_path):
     report = tmp_path / "flows.lint.json"
-    proc, flows, prd = run(tmp_path, extra=("--report", str(report)))
+    proc, flows, prd = run(tmp_path, extra=("--report", str(report), "--json"))
     assert proc.returncode == 0, proc.stdout
-    record = json.loads(report.read_text(encoding="utf-8"))
-    assert record == {"ok": True, "date": datetime.date.today().isoformat(), "file": str(flows), "prd": str(prd),
-                      "phase": "P-1", "counts": {"IA": 1, "SCREEN": 2, "FLOW": 2, "covered": 2}, "errors": []}
+    text = report.read_text(encoding="utf-8")
+    record = json.loads(text)
+    printed = json.loads(proc.stdout)
+    assert text.endswith("\n")
+    assert record == {"script": "lint_flows.py", "date": datetime.date.today().isoformat(),
+                      "arguments": {"--file": str(flows), "--prd": str(prd), "--phase": "P-1", "--json": True},
+                      "ok": True, "summary": printed["summary"], "errors": [],
+                      "counts": {"IA": 1, "SCREEN": 2, "FLOW": 2, "covered": 2}}
     # stdout keeps its shape: the report adds a file, it does not change what is printed
-    assert json.loads(proc.stdout) == {"ok": True, "counts": record["counts"], "errors": []}
+    assert printed == {"ok": True, "summary": record["summary"], "counts": record["counts"], "errors": []}
+
+
+def test_unknown_flags_and_usage_errors_go_to_stderr(tmp_path):
+    proc, _, _ = run(tmp_path, extra=("--reprot", str(tmp_path / "x.json")))
+    assert proc.returncode == 2 and proc.stdout == "" and "unknown argument '--reprot'" in proc.stderr
+    assert not (tmp_path / "x.json").exists()
+    proc = subprocess.run([sys.executable, str(LINT)], capture_output=True, text=True)
+    assert proc.returncode == 2 and proc.stdout == "" and "--file" in proc.stderr
 
 
 def test_report_records_a_failing_run(tmp_path):

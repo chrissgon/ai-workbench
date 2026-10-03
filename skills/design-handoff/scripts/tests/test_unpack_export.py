@@ -80,6 +80,19 @@ def test_unpack_refuses_symlinked_resources_dir(tmp_path):
     assert list(outside.iterdir()) == []
 
 
+def test_unpack_usage_errors_exit_two_on_stderr_and_write_nothing(tmp_path):
+    src = tmp_path / "export.html"
+    src.write_text(export_html({"a": res(b"x")}), encoding="utf-8")
+    base = ("--file", str(src), "--out", str(tmp_path / "out"))
+    for args in (base + ("--max-bytes",), base + ("--class-prefix",), base + ("--library",), ("--file",),
+                 base + ("--max-bytes", "many"), base + ("--max-byte", "100"), ()):
+        r = run(UNPACK, *args)
+        assert r.returncode == 2, (args, r.stderr)
+        assert r.stderr.startswith("Error:") and "Traceback" not in r.stderr and r.stdout == ""
+    assert "unknown argument '--max-byte'" in run(UNPACK, *base, "--max-byte", "100").stderr
+    assert not (tmp_path / "out").exists()
+
+
 def test_unpack_caps_decompression(tmp_path):
     src = tmp_path / "export.html"
     src.write_text(export_html({"bomb": res(b"\0" * 200_000, compressed=True)}), encoding="utf-8")

@@ -1,6 +1,6 @@
 # Tool notes
 
-One entry per kind of tool, named by what it does and never by product (the user says which product they use; match that product to the kind below by what it does, ask when unsure, and record the product in the result's `Tool` line): what it is good at, the mode this workbench can use, and how to run a pack in it. Update an entry after every run that taught something; date the lesson.
+One entry per kind of tool, named by what it does and never by product (the user says which product they use; match that product to the kind below by what it does, ask when unsure, and record the product in the result's `Tool` line): what it is good at, the mode this workbench can use, and how to run a pack in it. A lesson learned on a project is recorded in that project's results document (Findings); a general lesson is proposed to the workbench maintainer, written without the project it came from.
 
 ## Choosing
 
@@ -38,15 +38,16 @@ A tool inside a design platform that turns a prompt into an interactive prototyp
 
 - Mode: assisted.
 - Good at: interactive prototypes with code inside the design platform's ecosystem.
-- Lessons (2026-09-23, a landing page): an attached frame triggered its design-to-code behaviour and the result was a copy of the frame; custom skills run only when invoked by their slash command in the prompt; importing a library's variables needs a paid plan and a published library and flattens variables into raw values; a kit of the tool can bundle an npm package and guidelines. The first result stayed "well below" the quality wanted.
+- Lessons (2026-09-23): an attached frame triggered its design-to-code behaviour and the result was a copy of the frame; custom skills run only when invoked by their slash command in the prompt; importing a library's variables needs a paid plan and a published library and flattens variables into raw values; a kit of the tool can bundle an npm package and guidelines. A first result of a landing page stayed well below the quality wanted.
 - Run: a new prototype file per direction from the file browser; attach the brief, not the frame; start the prompt with the product skill's slash command if one was uploaded; link the product's stylesheet explicitly.
 
 ## Design tool integration (class `integration:design-tool`)
 
 - Mode: automatic where the integration exists.
 - Good at: composing screens from the file's own variables and components with bound tokens; vectors; structural references and hand-off files.
-- Weak at: invention. A composed landing was reviewed as "not bad, but too basic" (2026-09-23); use it for documentation-like screens, hand-off frames and vector clean-up, not for exploration.
+- Weak at: invention. A composed landing was judged correct but too basic (2026-09-23); use it for documentation-like screens, hand-off frames and vector clean-up, not for exploration.
 - Run: follow the integration's own skills for writing to a file; sequential writes; one screenshot per frame; targeted fixes. Writes to the user's file pass the confirmation gate.
+- Without a connector or a provider for the class: assisted mode; the user makes the frames and brings back screenshots and links.
 
 ## Presentation generator
 
@@ -56,7 +57,7 @@ A tool inside a design platform that turns a prompt into an interactive prototyp
 
 ## Image generator (class `generator:image`)
 
-- Mode: automatic when a provider for the class is configured (`providers/generator/<impl>.py generate --prompt-file … --size WxH --out …`), assisted otherwise (the user pastes the prompt in their image tool).
+- Mode: automatic when the environment has a connector for the class `generator:image`, or a provider the workbench resolves for the class and whose `--check` exits 0 (step 2 of the procedure: the skill runs the path the resolver prints, with the verb `generate --prompt-file <f> --size <W>x<H> --out <path>`); assisted otherwise (the user pastes the prompt in their image tool).
 - Good at: mockup scenes, illustration, logo exploration.
 - Weak at: exact text and exact brand colours; never trust it for final text or vectors.
 - Run: one prompt per direction; generation spends credits, so automatic runs pass the confirmation gate.

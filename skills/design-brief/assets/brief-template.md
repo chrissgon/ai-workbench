@@ -2,7 +2,7 @@
 
 - Owner: design-brief
 - Status: draft
-- Date: {YYYY-MM-DD}
+- Date: {YYYY-MM-DD, from `date +%F`}
 - Type: {screen | mockup | logo | presentation | animation | image}
 - For: {where the artifact is used; for a screen, the SCREEN id in the flows}
 - Values: {inline | loaded: <design system as named in the tool>}
@@ -73,6 +73,10 @@ loaded: the design system's name in the tool, its rules, and the values the dire
 ```text
 {the prompt, with a "Direction:" slot filled per run}
 ```
+
+## Assumptions
+
+- {Assumption: … (one line each, every fact that has no source) | none}
 
 ## Open questions
 

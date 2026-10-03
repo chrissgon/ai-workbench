@@ -35,3 +35,10 @@ def test_longest_value_reads_stdin_and_refuses_no_value():
     assert out["count"] == 2 and out["longest"] == "Größenübersicht" and out["characters"] == 15  # characters, not bytes
     r = run(LONGEST, stdin="\n  \n")
     assert r.returncode == 2 and "give the values" in r.stderr and r.stdout == ""
+
+
+def test_longest_value_refuses_an_unknown_flag_and_takes_dashes_after_a_lone_separator():
+    r = run(LONGEST, "Button", "--reprot", "x")
+    assert r.returncode == 2 and "unknown argument '--reprot'" in r.stderr and r.stdout == ""
+    out = json.loads(run(LONGEST, "--", "--ds-ink", "Tabs").stdout)
+    assert out["longest"] == "--ds-ink" and out["count"] == 2

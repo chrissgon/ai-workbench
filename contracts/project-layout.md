@@ -91,12 +91,16 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/delivery/repo-baseline.md` | ops-repo-baseline | - |
 | `docs/design/briefs/<artifact>.lint.json` | design-brief | - |
 | `docs/design/briefs/<artifact>.md` | design-brief | - |
+| `docs/design/design-system.lint.json` | design-system | - |
 | `docs/design/design-system.md` | design-system | - |
 | `docs/design/flows.lint.json` | design-ux-flows | - |
 | `docs/design/flows.md` | design-ux-flows | - |
 | `docs/design/handoff/<screen>.lint.json` | design-handoff | - |
 | `docs/design/handoff/<screen>.md` | design-handoff | - |
+| `docs/design/handoff/<screen>/export/` | design-handoff | - |
+| `docs/design/results/<artifact>.lint.json` | design-execute | - |
 | `docs/design/results/<artifact>.md` | design-execute | - |
+| `docs/design/results/<artifact>/` | design-execute | - |
 | `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture | eng-implement, eng-tradeoffs |
 | `docs/engineering/architecture.md` | eng-codebase-map | - |
 | `docs/engineering/codebase-map.md` | eng-codebase-map | - |
@@ -122,7 +126,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.check.json` | core-research | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-project-init, flow-fix-bug, ops-branch-sync | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-research, eng-architecture, eng-codebase-map, eng-security-review, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish |
+| `docs/workbench/state.md` | core-project-init, flow-fix-bug, ops-branch-sync | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-research, design-brief, design-execute, design-handoff, design-system, design-ux-flows, eng-architecture, eng-codebase-map, eng-security-review, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish |
 <!-- owner-table:end -->
 
 ## Rules

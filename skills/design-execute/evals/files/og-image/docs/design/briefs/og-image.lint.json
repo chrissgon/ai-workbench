@@ -1,0 +1,17 @@
+{
+  "script": "lint_brief.py",
+  "date": "2026-03-04",
+  "arguments": {
+    "--file": "docs/design/briefs/og-image.md",
+    "--type": "image",
+    "--values": "inline"
+  },
+  "ok": true,
+  "summary": "lint_brief ok: 0 errors; 6 hex colours, 3 directions, 7 criteria",
+  "errors": [],
+  "counts": {
+    "hex_colours": 6,
+    "directions": 3,
+    "criteria": 7
+  }
+}

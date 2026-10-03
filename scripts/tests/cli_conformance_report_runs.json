@@ -7,9 +7,17 @@
     "args": ["--file", "brief.md", "--type", "screen", "--values", "inline"],
     "files": {"brief.md": "# Brief\n"}
   },
+  "skills/design-execute/scripts/lint_result.py": {
+    "args": ["--file", "results.md", "--brief", "brief.md"],
+    "files": {"results.md": "# Results\n", "brief.md": "# Brief\n"}
+  },
   "skills/design-handoff/scripts/lint_handoff.py": {
     "args": ["--file", "handoff.md", "--flows", "flows.md", "--screen", "SCREEN-1"],
     "files": {"handoff.md": "# Handoff\n", "flows.md": "# Flows\n"}
+  },
+  "skills/design-system/scripts/lint_design_system.py": {
+    "args": ["--file", "design-system.md", "--flows", "flows.md"],
+    "files": {"design-system.md": "# Design system\n", "flows.md": "# Flows\n"}
   },
   "skills/design-ux-flows/scripts/lint_flows.py": {
     "args": ["--file", "flows.md", "--prd", "prd.md"],

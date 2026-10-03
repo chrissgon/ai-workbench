@@ -58,7 +58,7 @@ Colours, light mode only:
 | Border | #D1D5DB |
 | Brand (the only accent) | #0092CD |
 
-Type: Helvetica Neue for text, falling back to Arial and then to the generic sans-serif; Menlo for code, falling back to the generic monospace. Both are system typefaces: no font file is downloaded. Title weight 700, every other text weight 400 or 500.
+Type: Sans Serif for text (the generic `sans-serif` family of the system) and Monospace for code (the generic `monospace` family). Both are system typefaces: no font file is downloaded. Title weight 700, every other text weight 400 or 500.
 
 Sizes: title between 72 px and 120 px; section label 32 px; tagline 40 px; site address 32 px, set in the code typeface. No text below 32 px, and the title and the tagline never below 40 px.
 
@@ -131,7 +131,7 @@ Colours: background #FFFFFF, muted background #F3F4F6, text #000000, muted text 
 border #D1D5DB, brand #0092CD as the only accent. Never use the brand colour for text smaller than
 the title. White text on a brand band only at 40 px bold or larger.
 
-Type: Helvetica Neue for text (fallback Arial, sans-serif); Menlo for code (fallback monospace).
+Type: the generic sans-serif family for text and the generic monospace family for code.
 System typefaces only, no font download.
 
 Mark: three stacked bars, each wider than the one above, in the brand colour; use the attached SVG.

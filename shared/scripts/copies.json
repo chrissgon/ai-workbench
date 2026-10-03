@@ -85,7 +85,7 @@
     },
     {
      "path": "skills/design-system/scripts/contrast.py",
-     "adopted": false
+     "adopted": true
     }
    ]
   },

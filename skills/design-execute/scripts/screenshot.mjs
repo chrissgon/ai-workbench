@@ -33,7 +33,11 @@
 // --height in some builds; the layout that is captured uses the full --width x --height.
 //
 // --out must be a .png inside the working directory.
-// Prints JSON {ok, out, width, height, bytes} on stdout; diagnostics go to stderr.
+// Prints JSON {ok, out, width, height, pixel_width, pixel_height, bytes} on stdout: width and height are the
+// CSS size asked, pixel_width and pixel_height the size of the PNG as written, read from the file (with
+// --scale 2 they are twice the CSS size). A system browser that writes an image of another size than
+// asked (some builds ignore a --scale below 0.5) is a render error: nothing is written, exit 1; to check
+// a thumbnail, render at the thumbnail's own --width and --height instead. Diagnostics go to stderr.
 // Exit codes: 0 ok, 1 render error, 2 usage error or no engine.
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
@@ -63,8 +67,10 @@ const USAGE =
   "Renders the local HTML file to a PNG inside the working directory. Uses the playwright package when it\n" +
   "is resolvable; otherwise a browser already on the machine (--browser, then CHROME_BIN, then PATH:\n" +
   `${BROWSER_NAMES.join(", ")}, then the macOS application paths) through its headless command line.\n` +
-  "--browser forces that browser. Installs nothing. Prints JSON {ok, out, width, height, bytes}; the engine\n" +
-  "used and warnings go to stderr. Exit codes: 0 ok, 1 render error, 2 usage error or no engine.";
+  "--browser forces that browser. Installs nothing. Prints JSON {ok, out, width, height, pixel_width,\n" +
+  "pixel_height, bytes}: the CSS size asked and the real size of the PNG written; an image of another size\n" +
+  "than asked is a render error. The engine used and warnings go to stderr.\n" +
+  "Exit codes: 0 ok, 1 render error, 2 usage error or no engine.";
 
 const argv = process.argv.slice(2);
 if (argv.includes("--help") || argv.length === 0) {
@@ -316,7 +322,10 @@ async function renderWithSystemBrowser(bin) {
     const got = pngSize(png);
     const want = { w: Math.round(width * scale), h: Math.round(target * scale) };
     if (got.w !== want.w || got.h !== want.h) {
-      console.error(`Warning: the image is ${got.w} x ${got.h} px; ${want.w} x ${want.h} was expected.`);
+      throw new Error(
+        `the browser wrote a ${got.w} x ${got.h} px image; ${want.w} x ${want.h} was asked, so nothing was written` +
+          (scale < 0.5 ? ". This browser does not apply a --scale below 0.5: render at the smaller --width and --height instead" : ""),
+      );
     }
     writeFileSync(resolve(out), png);
   } finally {
@@ -365,7 +374,10 @@ try {
     console.error(`Engine: system browser ${found.path} (from ${found.source}), headless command line`);
     await renderWithSystemBrowser(found.path);
   }
-  console.log(JSON.stringify({ ok: true, out, width, height, bytes: statSync(out).size }));
+  const written = pngSize(readFileSync(resolve(out)));
+  console.log(JSON.stringify({
+    ok: true, out, width, height, pixel_width: written.w, pixel_height: written.h, bytes: statSync(out).size,
+  }));
 } catch (e) {
   console.error(`Error: render failed: ${e.message}`);
   process.exit(1);
