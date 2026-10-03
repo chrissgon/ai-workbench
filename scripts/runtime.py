@@ -14,7 +14,7 @@ Contract: contracts/runtime.md. Configuration: <project>/docs/workbench/runtime.
   {"agent": "social-manager", "harness": "claude-code", "model": "<model id>",
    "workbench": "<absolute path of the workbench checkout>", "data_dir": "<absolute folder for runs>",
    "store_db": "<absolute path of the store database>", "mailbox": "auto | none | <implementation>",
-   "publisher": "<platform, for example linkedin>",
+   "publisher": "<platform: a name with a data file, shared/references/platforms/<platform>.json>",
    "notification_query": "<mailbox search query>", "first_lookback_minutes": 1440,
    "max_events_per_tick": 5, "max_cost_usd_per_run": 0.5, "daily_cost_cap_usd": 3, "timeout_seconds": 600,
    "path": ["<absolute folders holding uv and the harness CLI>"], "notify": "none | macos"}
@@ -472,7 +472,7 @@ def append_inbox_md(project: Path, item_id, comment: dict, decision: dict | None
                 f"- Category: {(decision or {}).get('category', 'none')}; why it is here: {'; '.join(reasons)}\n"
                 f"- Drafted reply: " + (f"\"{reply}\"" + (f" (sha256 {sha})" if sha else " (cannot be sent)")
                                         if reply else "none") + "\n"
-                f"- Comment URN: {comment.get('comment_urn', '')}\n")
+                f"- Comment id: {comment.get('comment_urn', '')}\n")
 
 
 def gate_record(cfg: dict, project: Path, entry: dict) -> None:

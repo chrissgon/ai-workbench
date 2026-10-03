@@ -289,6 +289,19 @@ def test_the_vote_job_carries_the_data_file_and_hands_it_to_the_address_check(en
     assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
 
 
+def test_the_vote_job_has_no_default_platform_and_names_no_provider(env):
+    # Coupling row 11: --platform defaulted to one platform, and the usage named that platform's provider files.
+    rt(env, "tick")
+    job = json.loads(Path(inbox(env)[0]["payload"]["files"]["job"]["path"]).read_text())
+    i = job["argv"].index("--platform")
+    without = job["argv"][1:i] + job["argv"][i + 2:]
+    r = subprocess.run([sys.executable] + without, capture_output=True, text=True, timeout=60, cwd=job["cwd"])
+    assert r.returncode == 2 and "--platform" in r.stderr
+    assert calls(env, "publisher") == []
+    source = (REPO / "scripts/vote_job.py").read_text().lower()
+    assert "linkedin" not in source and "github" not in source
+
+
 def test_a_round_is_handled_once(env):
     rt(env, "tick")
     code, out, _ = rt(env, "tick")

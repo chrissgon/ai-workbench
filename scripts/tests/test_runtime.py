@@ -7,6 +7,7 @@ model, no credential.
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -706,6 +707,16 @@ def test_approve_refuses_a_reply_that_holds_a_credential(env):
     code, _, err = rt(env, "approve", "--id", str(item_id), "--confirmed", "--sha256", sha)
     assert code == 1 and "looks like a credential (bearer token)" in err and "nothing sent" in err
     assert publisher_calls(env) == []
+
+
+def test_the_runtime_agent_speaks_no_platforms_vocabulary():
+    # Coupling row 17: the agent said "one social network" and labelled a source by one platform's identifier
+    # ("comment URN"); the platform is the task's `Platform:` line, and an identifier is opaque.
+    text = (REPO / "agents/social-manager.md").read_text(encoding="utf-8")
+    assert not re.search(r"\burn\b", text, re.I) and "one social network" not in text
+    assert "`Platform:` line" in text and "the comment's identifier" in text
+    source = (REPO / "scripts/runtime.py").read_text(encoding="utf-8")
+    assert "Comment URN" not in source and "- Comment id: " in source  # the inbox line mkt-engage's template has
 
 
 # --- FR-I9: the reply's idempotency key is a hash of the whole identifier --------------------------------------

@@ -3,9 +3,9 @@
 
 Usage (built by scripts/runtime.py after the person's approval, run by the scheduler, never by hand):
   python3 vote_job.py --key <key> --round YYYY-MM-DD --date YYYY-MM-DD --lang EN --title "<topic>" \
-      --repo <owner>/<name> --branch <branch> --platform linkedin --platform-file linkedin.json \
+      --repo <owner>/<name> --branch <branch> --platform <platform> --platform-file <platform>.json \
       --post-file post.txt [--comment-file comment.txt] [--image post.png --image-path assets/posts/<key>.png] \
-      --publisher linkedin.py --resolver resolver.py --vcs github.py \
+      --publisher <publisher script> --resolver <secret resolver> --vcs <vcs provider script> \
       --vote-update vote_update.py --vote-state vote_state.py --work <folder> [--path <folder>]... \
       [--ledger <the publisher's idempotency ledger>]
 
@@ -74,7 +74,8 @@ def main(argv=None) -> int:
     for name in ("--key", "--round", "--date", "--lang", "--title", "--repo", "--branch", "--post-file",
                  "--publisher", "--resolver", "--vcs", "--vote-update", "--vote-state", "--work"):
         p.add_argument(name, required=True)
-    p.add_argument("--platform", default="linkedin")
+    p.add_argument("--platform", required=True, help="the platform the post goes to, as runtime.json's publisher "
+                                                      "names it; passed to the publisher")
     p.add_argument("--platform-file", help="the platform's data file (shared/references/platforms/<platform>.json); "
                                            "passed with --platform to vote_update.py --record-post, which checks "
                                            "the post's address against it")
