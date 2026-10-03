@@ -29,6 +29,8 @@
 # A model id "ollama/<name>" runs a local model served by Ollama (http://127.0.0.1:11434, or
 # RUN_PROMPT_OLLAMA_URL): the provider entry is written into the throwaway HOME, never into the case
 # folder. Give the model a context that fits the runner's own prompt and the skill (see README.md).
+# A model id "openrouter/<vendor>/<model>" with OPENROUTER_BASE_URL set (the eval container's key proxy) sends
+# its calls to that base URL; the key is the proxy's, and OPENROUTER_API_KEY in the run holds a placeholder.
 # Stopping this script (TERM, INT, HUP) stops the runner and everything it started.
 # Connectors and MCP servers: the throwaway HOME below hides the user's configuration and
 # project configuration is refused, so none load; RUN_PROMPT_KEEP_HOME=1 loses that guarantee.
@@ -49,7 +51,7 @@ while [[ $# -gt 0 ]]; do
       need "$@"
       [[ "$2" =~ ^[0-9]+(\.[0-9]+)?$ ]] || { echo "Error: --max-cost-usd needs a number, e.g. 0.50." >&2; exit 2; }
       CAPPED=1; shift 2 ;;
-    --help|-h) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,38p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -104,6 +106,19 @@ name, url = sys.argv[1], sys.argv[2]
 print(json.dumps({"$schema": "https://opencode.ai/config.json", "provider": {"ollama": {
     "npm": "@ai-sdk/openai-compatible", "name": "Ollama (local)", "options": {"baseURL": url},
     "models": {name: {"name": name}}}}}))
+PY
+fi
+# The eval container's key proxy holds the OpenRouter key: the run has a placeholder in OPENROUTER_API_KEY and
+# the proxy's base URL in OPENROUTER_BASE_URL (evals/executor.py). The runner's OpenRouter provider takes the
+# base URL from its configuration (provider.openrouter.options.baseURL, read by opencode 1.18.32 and passed to
+# its OpenRouter SDK, which calls <baseURL>/chat/completions), written into the throwaway HOME like a local model's.
+if [[ "$MODEL" == openrouter/* && -z "${RUN_PROMPT_CMD:-}" && -n "${OPENROUTER_BASE_URL:-}" ]]; then
+  [[ "$OPENROUTER_BASE_URL" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9._/-]*)?$ ]] || { echo "Error: OPENROUTER_BASE_URL is not a plain http(s) URL." >&2; exit 2; }
+  [[ -n "$ISO_HOME" ]] || { echo "Error: a base URL for OpenRouter needs the throwaway HOME (unset RUN_PROMPT_KEEP_HOME)." >&2; exit 2; }
+  mkdir -p "$XDG_CONFIG_HOME/opencode"
+  python3 - "$OPENROUTER_BASE_URL" > "$XDG_CONFIG_HOME/opencode/opencode.json" <<'PY'
+import json, sys
+print(json.dumps({"$schema": "https://opencode.ai/config.json", "provider": {"openrouter": {"options": {"baseURL": sys.argv[1]}}}}))
 PY
 fi
 # stdin closed: the runner otherwise waits on an inherited pipe that never ends

@@ -79,14 +79,14 @@ def test_max_cost_is_accepted_and_said_to_be_unenforced(case):
     assert "--max-cost-usd is not enforced" in r.stderr
 
 
-def run_local(t, model, keep_home=False):
+def run_local(t, model, keep_home=False, **more):
     """Run with a fake `opencode` on PATH that prints the configuration it was given."""
     bindir = t / "bin"
     bindir.mkdir(exist_ok=True)
     fake = bindir / "opencode"
     fake.write_text('#!/usr/bin/env bash\ncat "$XDG_CONFIG_HOME/opencode/opencode.json" 2>/dev/null || echo "no config"\n')
     fake.chmod(0o755)
-    env = {"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(t), "WB_EVAL_CONTAINER": "1"}
+    env = {"PATH": f"{bindir}:{os.environ['PATH']}", "HOME": str(t), "WB_EVAL_CONTAINER": "1", **more}
     if keep_home:
         env["RUN_PROMPT_KEEP_HOME"] = "1"
     return subprocess.run(["bash", str(SCRIPT), "--prompt-file", str(t / "prompt.md"), "--cwd", str(t / "cwd"),
@@ -113,6 +113,29 @@ def test_a_hosted_model_gets_no_local_provider(case):
 def test_a_malformed_local_model_id_is_refused(case, model):
     r = run_local(case, model)
     assert r.returncode == 2 and "local model id" in r.stderr
+
+
+KEY_PROXY = "http://wb-eval-keys-0123456789ab:8890/api/v1"
+
+
+def test_an_openrouter_model_is_pointed_at_the_key_proxy_in_the_throwaway_home(case):
+    r = run_local(case, "openrouter/vendor/some-model", OPENROUTER_BASE_URL=KEY_PROXY)
+    assert r.returncode == 0, r.stderr
+    cfg = json.loads((case / "out" / "response.md").read_text())
+    assert cfg["provider"] == {"openrouter": {"options": {"baseURL": KEY_PROXY}}}  # the base URL alone: no key in it
+    assert not list((case / "cwd").rglob("opencode.json"))  # nothing is written into the case folder
+
+
+@pytest.mark.parametrize("model, base", [("openrouter/vendor/some-model", ""), ("vendor/some-model", KEY_PROXY)])
+def test_without_a_key_proxy_or_for_another_provider_no_base_url_is_written(case, model, base):
+    r = run_local(case, model, OPENROUTER_BASE_URL=base)
+    assert r.returncode == 0 and "no config" in (case / "out" / "response.md").read_text()
+
+
+@pytest.mark.parametrize("base", ["file:///etc/passwd", "http://host/x y", 'http://host/"; id', "http://host/$(id)"])
+def test_a_base_url_that_is_not_a_plain_url_is_refused(case, base):
+    r = run_local(case, "openrouter/vendor/some-model", OPENROUTER_BASE_URL=base)
+    assert r.returncode == 2 and "OPENROUTER_BASE_URL" in r.stderr
 
 
 def test_a_local_model_needs_the_throwaway_home(case):
