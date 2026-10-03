@@ -268,6 +268,9 @@ named with --grader, and compares the verdicts by position with the stored ones.
 "failed", "verdicts", "differ", "share", "failed_verdicts", "failed_differ", "runs"}, keeps each new result in
 <run folder>/regrade-<k>/, changes no score and writes no evidence. It measures how much two gradings of the
 same material disagree, and compares a new grader with the old one on a sample.
+The folder given to --resume, --close and --regrade, when relative, is read against the current folder and no
+other base; it must be inside this checkout's evals-workspace/, and a folder of another checkout is refused.
+Each command prints the absolute folder it acts on.
 
 Preflight. Before any model call, and in --dry-run and --check-cases (which runs only this check; --harness
 and --model are then optional), every case is checked: (a) each "files" entry exists in the skill folder;
@@ -708,7 +711,9 @@ def parse(argv):
         if opts["skill"] or opts["cases"] or opts["only"] or opts["check_cases"] or opts["dry"]:
             die("--regrade takes a run folder and goes with --grader, --harness, --jobs and --timeout only.")
         if not os.path.isdir(opts["regrade"]):
-            die(f"--regrade {opts['regrade']!r} is not a folder.")
+            die(f"--regrade {opts['regrade']!r} is not a folder (a relative path is read against the current folder, "
+                f"{os.getcwd()}).")
+        opts["regrade"] = operator_folder(opts["regrade"], "--regrade")
     alone = [a for a in argv if a.startswith("--") and a not in ("--resume", "--jobs", "--unpause", "--at", "--close")]
     if opts["resume"] is not None and (alone or opts["unpause"] or opts["close"] is not None):
         die("--resume takes an event's folder and goes with --jobs only: the event keeps the options it started with.")
@@ -1989,6 +1994,7 @@ def regrade(o):
     if not os.path.isfile(runner):
         die(f"adapter {o['harness']!r} has no run-prompt.sh (see AGENTS.md, Adding an adapter).")
     base = os.path.abspath(o["regrade"])
+    print(f"--regrade acts on {base}", file=sys.stderr)
     found = []
     for dp, dns, fns in os.walk(base):
         dns.sort()
@@ -2558,12 +2564,29 @@ def write_json(path, data):
     os.replace(tmp, path)
 
 
-def find_event(value):
-    """The folder of the event --resume names: a path, or evals-workspace/<skill>/iteration-<n> given as that."""
-    for candidate in (value, os.path.join(ROOT, value), os.path.join(ROOT, "evals-workspace", value)):
-        if os.path.isfile(os.path.join(candidate, "event.json")):
-            return os.path.abspath(candidate)
-    die(f"--resume {value!r}: no event there (a folder evals-workspace/<skill>/iteration-<n> that holds event.json).")
+def operator_folder(value, flag):
+    """The absolute folder a path given to --resume, --close or --regrade names. A relative path is read against
+    one base, the current working directory, as any command line reads it, and never against another. The
+    folder must be inside this checkout's workspace, <ROOT>/evals-workspace: an event or a run folder of another
+    checkout is refused, so that a regrade or a resumption never reads, or writes into, another checkout's round."""
+    path = os.path.abspath(value)
+    workspace = os.path.realpath(os.path.join(ROOT, "evals-workspace"))
+    if os.path.commonpath([os.path.realpath(path), workspace]) != workspace:
+        die(f"{flag} {value!r} is {path} (a relative path is read against the current folder, {os.getcwd()}), which is "
+            f"not inside this checkout's workspace, {workspace}: a folder of another checkout is never read. Give a "
+            f"folder of this checkout, for example from {ROOT}: python3 evals/eval_run.py {flag} "
+            "evals-workspace/<skill>/iteration-<n>")
+    return path
+
+
+def find_event(value, flag="--resume"):
+    """The folder of the event --resume or --close names: a path to evals-workspace/<skill>/iteration-<n> of this
+    checkout (operator_folder), which holds event.json."""
+    folder = operator_folder(value, flag)
+    if not os.path.isfile(os.path.join(folder, "event.json")):
+        die(f"{flag} {value!r}: no event in {folder} (a folder evals-workspace/<skill>/iteration-<n> that holds event.json).")
+    print(f"{flag} acts on {folder}", file=sys.stderr)
+    return folder
 
 
 def scratch_reason(o, gate, environment, version=None, fingerprint=None):
@@ -2677,7 +2700,7 @@ def run(argv):
         return routing(o)
     resumed, it_dir, closing = None, None, o["close"] is not None
     if o["resume"] is not None or closing:
-        it_dir = find_event(o["close"] if closing else o["resume"])
+        it_dir = find_event(o["close"] if closing else o["resume"], "--close" if closing else "--resume")
         with open(os.path.join(it_dir, "event.json"), encoding="utf-8") as f:
             resumed = json.load(f)
         if resumed.get("written"):

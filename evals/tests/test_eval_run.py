@@ -8,6 +8,7 @@ import glob
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -454,14 +455,48 @@ def test_regrade_is_refused_with_run_options_or_without_a_graded_run(tmp_path, m
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     (tmp_path / "adapters" / "h").mkdir(parents=True)
     (tmp_path / "adapters" / "h" / "run-prompt.sh").write_text("exit 1\n")
-    (tmp_path / "empty").mkdir()
-    for argv, why in ((["--regrade", str(tmp_path / "empty"), "--skill", "demo", "--harness", "h", "--grader", "m"], "goes with --grader"),
+    empty = tmp_path / "evals-workspace" / "empty"
+    empty.mkdir(parents=True)
+    for argv, why in ((["--regrade", str(empty), "--skill", "demo", "--harness", "h", "--grader", "m"], "goes with --grader"),
                       (["--regrade", str(tmp_path / "absent"), "--harness", "h", "--grader", "m"], "is not a folder"),
-                      (["--regrade", str(tmp_path / "empty")], "needs a grader and its adapter"),
-                      (["--regrade", str(tmp_path / "empty"), "--harness", "h", "--grader", "m"], "no graded run under")):
+                      (["--regrade", str(empty)], "needs a grader and its adapter"),
+                      (["--regrade", str(empty), "--harness", "h", "--grader", "m"], "no graded run under")):
         with pytest.raises(SystemExit) as e:
             er.main(argv)
         assert e.value.code == 2 and why in capsys.readouterr().err
+
+
+def test_an_operators_relative_path_is_read_against_the_current_folder_and_another_checkout_is_refused(tmp_path, monkeypatch, capsys):
+    """A relative --regrade, --resume or --close path is read against the current folder, and nothing else; a
+    folder outside this checkout's workspace is refused, so that another checkout's old round is never regraded."""
+    grades_demo(tmp_path, monkeypatch)
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--only", "without"]) == 0
+    capsys.readouterr()
+    # Another checkout, with a graded round and an event at the same relative path.
+    other = tmp_path / "other-checkout"
+    shutil.copytree(tmp_path / "evals-workspace", other / "evals-workspace")
+    before = sorted(str(p) for p in other.rglob("*"))
+    monkeypatch.chdir(other)
+    for argv in (["--regrade", "evals-workspace/demo/iteration-1", "--harness", "h", "--grader", "m"],
+                 ["--resume", "evals-workspace/demo/iteration-1"], ["--close", "evals-workspace/demo/iteration-1"],
+                 ["--regrade", str(other / "evals-workspace" / "demo"), "--harness", "h", "--grader", "m"]):
+        with pytest.raises(SystemExit) as e:
+            er.main(argv)
+        err = capsys.readouterr().err
+        assert e.value.code == 2 and f"is {other / 'evals-workspace' / 'demo'}" in err, err
+        assert "a relative path is read against the current folder" in err and "not inside this checkout's workspace" in err
+    assert sorted(str(p) for p in other.rglob("*")) == before  # nothing read into or written under the other checkout
+    # From this checkout's root the same relative path is this checkout's round, and the command says so.
+    monkeypatch.chdir(tmp_path)
+    assert er.main(["--regrade", "evals-workspace/demo/iteration-1", "--harness", "h", "--grader", "m"]) == 0
+    captured = capsys.readouterr()
+    assert f"--regrade acts on {tmp_path / 'evals-workspace' / 'demo' / 'iteration-1'}" in captured.err
+    assert json.loads(captured.out)["gradings"] == 1
+    assert (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "without_skill" / "regrade-1").is_dir()
+    # A name that is no path from here is not looked for elsewhere (once, <skill>/iteration-<n> was tried under the workspace).
+    with pytest.raises(SystemExit) as e:
+        er.main(["--resume", "demo/iteration-1"])
+    assert e.value.code == 2 and "not inside this checkout's workspace" in capsys.readouterr().err
 
 
 def test_dry_run_lists_setup_and_runs_nothing(tmp_path, monkeypatch, capsys):
