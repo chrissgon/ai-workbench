@@ -71,8 +71,8 @@ EARLY_TOLERANCE = timedelta(minutes=5)
 DEFAULT_GRACE_MINUTES = 120
 LAUNCHCTL_TIMEOUT_SECONDS = 30
 NOTIFY_TIMEOUT_SECONDS = 10
-ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
-DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9.-]{0,62}")  # with fullmatch: "$" lets a final newline in
+DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 RUN_PATH = "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 HISTORY = ".history"
 EVERY_MIN_MINUTES, EVERY_MAX_MINUTES = 5, 1440
@@ -288,7 +288,7 @@ def python_for_launchd() -> str:
 
 
 def validate_id(job_id: str) -> str:
-    if not ID_PATTERN.match(job_id or ""):
+    if not ID_PATTERN.fullmatch(job_id or ""):
         raise ProviderError("--id must be lowercase letters, digits, dots and hyphens (at most 63)", EXIT_USAGE)
     return job_id
 
@@ -550,7 +550,7 @@ def cmd_schedule(args) -> int:
             "gate first (use --dry-run to preview)",
             EXIT_USAGE,
         )
-    if not args.dry_run and not DIGEST_PATTERN.match(args.approved or ""):
+    if not args.dry_run and not DIGEST_PATTERN.fullmatch(args.approved or ""):
         raise ProviderError("--confirmed needs --approved <digest>: the digest the dry run printed", EXIT_USAGE)
     existing = None
     if (job_dir(job_id) / "job.json").exists():

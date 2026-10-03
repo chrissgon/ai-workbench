@@ -88,8 +88,8 @@ UNIT_PREFIX = "dev.ai-workbench.scheduler."
 EARLY_TOLERANCE = timedelta(minutes=5)
 DEFAULT_GRACE_MINUTES = 120
 SYSTEMCTL_TIMEOUT_SECONDS = 30
-ID_PATTERN = re.compile(r"^[a-z0-9][a-z0-9.-]{0,62}$")
-DIGEST_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+ID_PATTERN = re.compile(r"[a-z0-9][a-z0-9.-]{0,62}")  # with fullmatch: "$" lets a final newline in
+DIGEST_PATTERN = re.compile(r"[0-9a-f]{64}")
 SYSTEM_BIN_PATH = "/usr/bin:/bin"  # where systemctl and loginctl are looked up; never the caller's PATH
 BASE_RUN_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 PLAIN_PATH = re.compile(r"^[A-Za-z0-9/._@+,:=~-]+$")  # written into unit files without quoting
@@ -329,7 +329,7 @@ def python_for_systemd() -> str:
 
 
 def validate_id(job_id: str) -> str:
-    if not ID_PATTERN.match(job_id or ""):
+    if not ID_PATTERN.fullmatch(job_id or ""):
         raise ProviderError("--id must be lowercase letters, digits, dots and hyphens (at most 63)", EXIT_USAGE)
     return job_id
 
@@ -670,7 +670,7 @@ def cmd_schedule(args) -> int:
             "gate first (use --dry-run to preview)",
             EXIT_USAGE,
         )
-    if not args.dry_run and not DIGEST_PATTERN.match(args.approved or ""):
+    if not args.dry_run and not DIGEST_PATTERN.fullmatch(args.approved or ""):
         raise ProviderError("--confirmed needs --approved <digest>: the digest the dry run printed", EXIT_USAGE)
     existing = None
     if (job_dir(job_id) / "job.json").exists():

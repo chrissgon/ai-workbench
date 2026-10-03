@@ -1,5 +1,5 @@
-"""Offline tests of the one-shot path of both scheduler providers (launchd.py and systemd.py): what happens
-to a job between "running" and its end.
+"""Offline tests of both scheduler providers (launchd.py and systemd.py): the one-shot path (what happens to a
+job between "running" and its end) and the rules both share (ids, the command file, the lock, bounded files).
 
 Run: uv run --with pytest pytest providers/scheduler/tests
 
@@ -290,3 +290,19 @@ def test_arguments_that_name_no_file_pass_as_they_are(s):
     done, planned = s.schedule(s.command_file(argv=[sys.executable, "-c", OK, *plain]))
     assert done.returncode == 0, done.stderr
     assert planned["job"]["argv"][3:] == plain
+
+
+# --- SC10: an id is checked whole --------------------------------------------------------
+
+
+def test_an_id_with_a_trailing_newline_is_refused(s):
+    # ID_PATTERN ends in "$" and was used with .match: "$" also matches before a final newline, so "post-1\n"
+    # passed and became a folder, a label and a unit name with a newline in it.
+    at = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+    for bad in ("post-1\n", "post-1\n\n", "Post-1", "-post"):
+        refused = s.run("schedule", "--id", bad, "--at", at, "--command-file", str(s.command_file()), "--dry-run")
+        assert refused.returncode == 2 and "--id" in refused.stderr, repr(bad)
+    assert s.schedule(s.command_file())[0].returncode == 0
+    for verb in (["cancel", "--confirmed"], ["resolve", "--done", "--confirmed"], ["run"]):
+        refused = s.run(verb[0], "--id", "post-1\n", *verb[1:])
+        assert refused.returncode == 2 and "--id" in refused.stderr, verb
