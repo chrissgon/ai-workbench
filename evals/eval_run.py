@@ -257,9 +257,10 @@ the skill fails an assertion tagged guard or guard:<effect>, the same prompt goe
 too: only those are confirmed failures. The results and the score stay the first grading's, so the second
 grading raises no mean; a run without the skill is graded once. grading.json keeps the second grading under
 "guard_regrade".
-The grader answers with a JSON array, one object per assertion in order: {"id", "passed", "evidence"}.
-Results are read by position. An answer that is not such an array, or whose count differs from the number of
-assertions, is refused and the grading is made again, up to GRADING_RETRIES times (the refused attempts stay
+The grader answers with a JSON array, one object per assertion in order: {"id", "evidence", "passed"}, the
+evidence before the verdict and ending on "Passes." or "Fails: ...". Results are read by position. An answer
+that is not such an array, whose count differs from the number of assertions, or in which a verdict disagrees
+with what its own evidence concludes (measure.conclusion), is refused and the grading is made again, up to GRADING_RETRIES times (the refused attempts stay
 in <run folder>/grading-refused-<k>/); after that the run has no score and the iteration is incomplete.
 benchmark.json carries "grading": {"template_sha256", "refused"}.
 --regrade <run folder> grades stored replies again: for every graded run under the folder (an iteration, a

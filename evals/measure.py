@@ -8,7 +8,8 @@ neither. It holds:
     (VCS_SCRIPT) and the length they are cut at (VCS_LIMIT);
   - what the grader is shown of a file a run produced (shown, binary_stub, NOT_SHOWN, FILE_LIMIT);
   - the grading prompt (assertion_text, grading_prompt) and the reading of the grader's answer
-    (read_grading), with the number of times a refused answer is asked for again (GRADING_RETRIES);
+    (read_grading, which refuses a verdict that disagrees with what its own evidence concludes: conclusion),
+    with the number of times a refused answer is asked for again (GRADING_RETRIES);
   - which failed verdicts of a with-skill run are graded once more, and which of them the second grading
     confirms (guard_positions, failed_guards, confirmed_guards);
   - the early-end rule (early_end), which decides which runs are made again instead of scored;
@@ -243,12 +244,66 @@ def grading_prompt(tpl, case, response, facts="(none)", files_blob="(none)", inp
     return re.sub(r"\{(prompt|response|facts|files|inputs|assertions|marker)\}", lambda m: values[m.group(1)], tpl)
 
 
+# --- a verdict that disagrees with its own evidence ----------------------------------------------------
+# In the smoke pass of phase D (docs/architecture/phase-d-smoke-2026-10-03.md) the grader wrote "passed" before
+# its evidence, reasoned inside the evidence, and in six gradings ended it on the other verdict ("..., so this
+# should pass", "..., so this part holds") while "passed" stayed false; in three more it wrote a correction after
+# the array, which was refused. The template now asks for the evidence first and a last sentence that is
+# "Passes." or "Fails: ...". conclusion() reads what the evidence concludes, and read_grading() refuses an answer
+# in which a verdict disagrees with it, so that the grading is made again.
+#
+# Only the grader's own words are read: quoted passages (the output it cites) are removed first, and only the
+# final clause of the last sentence counts, with a subject that is the assertion or a part of it, so "the file
+# still holds conflict markers" or "the first part holds, but the second does not" conclude nothing.
+QUOTED_RE = re.compile(r"\"[^\"]*\"|“[^”]*”|‘[^’]*’|`[^`]*`|(?<!\w)'[^']*'(?!\w)")
+SENTENCE_END_RE = re.compile(r"(?<=[.!?])\s+")
+CLAUSE_BREAK_RE = re.compile(r"[,;:()]|\s[-–—]\s|\b(?:but|however|yet|although|though|except|whereas)\b", re.I)
+CONCLUSION_SUBJECT = (r"(?:this|it|the (?:compound |whole )?assertion"
+                      r"|(?:this|that|the first|the second|the third|the last|each|every|either) part|both parts"
+                      r"|all (?:two |three |four )?parts)")
+# Between the subject and the verb, at most one adverb of this list ("the assertion therefore fails").
+CONCLUSION_ADVERB = r"(?:(?:also|therefore|thus|still|clearly|literally|then|so|indeed|now|again|only)\s+)?"
+# "passes" and "fails" may be followed by a few words ("..., so the assertion fails on its literal wording");
+# "holds", "is met" and the like end the clause, since "it holds the table" is about the output.
+CLAUSE_END = r"[\s.!?]*$"
+CONCLUSION_FAIL_RE = re.compile(
+    rf"\b{CONCLUSION_SUBJECT}\s+{CONCLUSION_ADVERB}(?:(?:fails|failed|is failed|(?:should|would|does|must|will) fail"
+    r"|(?:does not|doesn't|cannot|can't|should not|shouldn't|would not|wouldn't|will not|won't) pass)\b"
+    rf"|(?:(?:does not|doesn't|cannot|can't|should not|would not) hold|is not (?:met|satisfied|shown)){CLAUSE_END})", re.I)
+CONCLUSION_PASS_RE = re.compile(
+    rf"\b{CONCLUSION_SUBJECT}\s+{CONCLUSION_ADVERB}(?:(?:passes|(?:should|would|does|must|will|can) pass)\b"
+    rf"|(?:holds|is met|is satisfied|(?:should|would|does|must|will|can) hold){CLAUSE_END})", re.I)
+CONCLUSION_WORD_RE = re.compile(r"^(passes|fails)\b", re.I)
+
+
+def conclusion(evidence):
+    """What a verdict's evidence concludes in the grader's own words: "pass", "fail", or None when its last
+    sentence states no conclusion. The template's form is a last sentence "Passes." or "Fails: <why>."; an
+    evidence that ends "..., so this should pass" or "..., so the assertion fails" concludes as well."""
+    text = QUOTED_RE.sub(" ", str(evidence or "")).strip()
+    sentences = [s.strip() for s in SENTENCE_END_RE.split(text) if s.strip()]
+    if not sentences:
+        return None
+    last = sentences[-1].strip(" *_-")
+    word = CONCLUSION_WORD_RE.match(last)
+    if word:
+        return "pass" if word.group(1).lower() == "passes" else "fail"
+    clauses = [c.strip() for c in CLAUSE_BREAK_RE.split(last) if c and c.strip(" .!?")]
+    final = clauses[-1] if clauses else ""
+    if CONCLUSION_FAIL_RE.search(final):
+        return "fail"
+    if CONCLUSION_PASS_RE.search(final):
+        return "pass"
+    return None
+
+
 def read_grading(raw, count):
     """The grader's verdicts, read by position: (results, None), or (None, why the answer is refused).
 
     Refused: no JSON array, an array whose length is not the number of assertions (one grading of the first
     round returned 6 results for 5 assertions and was scored over 6), an item that is not an object with a
-    true or false "passed". The assertion's text is not asked for and not read."""
+    true or false "passed", and an item whose evidence concludes the other verdict (conclusion()). The
+    assertion's text is not asked for and not read."""
     m = re.search(r"\[\s*\{.*\}\s*\]", raw, re.S)
     if not m:
         return None, "no JSON array in the answer"
@@ -260,6 +315,11 @@ def read_grading(raw, count):
         return None, f"{len(items) if isinstance(items, list) else 'no'} results for {count} assertions"
     if not all(isinstance(item, dict) and isinstance(item.get("passed"), bool) for item in items):
         return None, "a result is not an object with \"passed\": true or false"
+    for i, item in enumerate(items, 1):
+        said = conclusion(item.get("evidence"))
+        if said is not None and said != ("pass" if item["passed"] else "fail"):
+            return None, (f"result {i} is \"passed\": {'true' if item['passed'] else 'false'}, "
+                          f"but its evidence concludes that the assertion {'passes' if said == 'pass' else 'fails'}")
     return [{"id": i + 1, "passed": item["passed"], "evidence": str(item.get("evidence", ""))}
             for i, item in enumerate(items)], None
 

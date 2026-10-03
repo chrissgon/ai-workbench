@@ -439,3 +439,22 @@ The first part of phase D ran on `main` at `cbe3321`: D1, D2, the proof run of p
   - `eval_status.py evidence` accepting an event whose `runs` differs from the configured number;
   - `ops-branch-sync` case 4, whose standing approval cannot be reached with `gh` signed out (a case defect, for the smoke pass);
   - `--regrade` and `--resume` resolving a relative path against the caller's folder before the repository.
+
+## 2026-10-03: measurement change, grader (measurement version 5 to 6)
+
+The grader writes its evidence before its verdict, ends it on Passes. or Fails:, and fails an absence or a strict reading only on what the assertion states; an answer whose verdict contradicts its own evidence is refused and graded again (the smoke pass of phase D: six verdicts contradicted their evidence and three answers appended a correction).
+
+- Kind: grader side: what the grader is shown, the grading rules or the scoring changed. The measurement version and the floor are raised: every lab line below the floor weighs nothing, and every skill needs a full test.
+- Measurement version and floor: 6.
+- Fingerprint: `03c1199923074eb689e8d10366e76b421464dac7fe1632601e2db794f448e6bf`.
+- Written by `python3 evals/eval_status.py measurement --kind grader`.
+
+The maintainer decided on 2026-10-03 to fix the grader now, knowing that it is a grader-side change. The cause was read in the stored run folders of the smoke pass (`docs/architecture/phase-d-smoke-2026-10-03.md`): the nine grader verdicts it classed as harness defects, the three answers it refused for their form, and all 2,562 verdicts of the 557 stored gradings.
+
+- **The common cause: the verdict came before the evidence.** The template's answer form was `{"id", "passed", "evidence"}`, so the grader committed to a verdict and then reasoned inside the evidence. Where that reasoning turned, the verdict could not follow it:
+  - 6 verdicts of `false` whose evidence ends on a pass: "..., so this should pass" (4), "..., so on a literal reading this should pass", "..., so this part holds". Four are those the report names (`brand-voice` 2, `core-skill-creator` 2 twice, `core-project-init` 2); two more were found in the scan (a guard run of `eng-security-review` 2 and a second grading of `ops-ci-pipeline` 1).
+  - The 3 answers refused for their form are the same event: each wrote a "Correction" after its array ("I wrote contradictory evidence above"), which made the JSON unreadable.
+- **A second cause, in the rules: the doubt of rule 2 applied to requirements the assertion does not state.** "No benefit of the doubt" was read as "fail under a strict reading": whether a quoted line was really copied (`core-skill-creator` 2), whether a label is tied to the skill's sets (`core-critique` 2), whether more than `ok` is shown (`mkt-social-copy` 1), whether the reason an ADR gives is consistent (`eng-tradeoffs` 2). And an assertion stated as an absence was failed on what is near the thing it rules out: a recommendation followed by a fresh yes/no read as an approval (`eng-security-review` 4), the facts given as the reason for a recommendation read as an impact analysis (`eng-impact-analysis` 3).
+- **The fix, in the grading template:** rule 12, the evidence first and a last sentence "Passes." or "Fails: <the part that is not shown>.", with the verdict that follows it and no correction after the array; rule 13, the answer's form with the evidence before the verdict; rule 6, an assertion stated as an absence fails only on a passage that is the thing in the assertion's own words; rules 2, 3 and 4, the doubt that fails an assertion is about what it states, a strict reading that adds a requirement is not a reason to fail, and whether a quoted line was copied is not judged. The other rules keep their words; rules 6 to 11 are renumbered 7 to 12.
+- **The fix, in the reading of the answer (`evals/measure.py`):** `conclusion()` reads what an evidence concludes in the grader's own words (the closing sentence, or a final clause such as "so this should pass" or "so the assertion fails", quoted output removed), and `read_grading()` refuses an answer in which a verdict disagrees with it, so that it is graded again, up to the retries a refused answer already had. Over the 2,562 stored verdicts it flags the 6 contradictions above and nothing else.
+- **What it costs:** the floor is 6, so the guard evidence the smoke pass committed (9 files) weighs nothing, as the maintainer accepted; every skill needs a full test, which none had passed.
