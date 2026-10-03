@@ -920,6 +920,19 @@ def test_the_runtime_contract_promises_only_what_the_code_does():
     assert "checked before each run from the store" in contract and "runs_without_cost_today" in contract
 
 
+def test_the_rule_of_the_payload_hash_is_a_numbered_list():
+    # CT8: the rule was one block of about 300 words holding seven rules, against the writing standard
+    # (checklists for anything with more than three steps), and a floor model must follow it.
+    contract = (REPO / "contracts/environment.md").read_text(encoding="utf-8")
+    block = contract.split("- **The approval binds a hash of the payload.**", 1)[1].split("\n- **", 1)[0]
+    steps = [line for line in block.splitlines() if re.match(r"  \d\. ", line)]
+    assert len(steps) == 7 and all(len(s.split()) < 90 for s in steps)
+    for words in ("mktemp -d", ".workbench-local/payloads/<date>/", "relative to the payload folder",
+                  "never a payload written again", "hashes the file again", "keep their recorded hash",
+                  "policy:<sha256 of that file>"):
+        assert words in block, words
+
+
 def test_the_environment_contract_says_where_each_approval_is_recorded():
     # CT4: the contract named only the state file; the runtime records its approvals in the store's inbox.
     contract = (REPO / "contracts/environment.md").read_text(encoding="utf-8")
