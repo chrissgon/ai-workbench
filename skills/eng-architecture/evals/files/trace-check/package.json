@@ -1,0 +1,18 @@
+{
+  "name": "fennel-books",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "fennel dev",
+    "build": "fennel build",
+    "test": "fennel test"
+  },
+  "dependencies": {
+    "@fennelkit/server": "1.4.0",
+    "@fennelkit/sqlite": "0.8.0",
+    "@fennelkit/web": "2.1.0"
+  },
+  "devDependencies": {
+    "@fennelkit/cli": "2.1.0"
+  }
+}

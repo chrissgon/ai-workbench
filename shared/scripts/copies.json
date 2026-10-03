@@ -68,7 +68,7 @@
     },
     {
      "path": "skills/eng-code-review/scripts/redact.py",
-     "adopted": false
+     "adopted": true
     },
     {
      "path": "skills/ops-repo-baseline/scripts/redact.py",
