@@ -553,6 +553,30 @@ def test_an_item_past_the_inbox_lists_limit_can_be_rejected(env, tmp_path):
     assert code == 2 and "is not open" in err
 
 
+def test_a_second_tick_while_one_runs_does_nothing(env):
+    # Test gap of the report: "another tick is running" appeared in no test.
+    import fcntl
+    set_case(env, [message(1)], decision())
+    env["data"].mkdir(parents=True, exist_ok=True)
+    with open(env["data"] / "tick.lock", "w") as held:
+        fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        code, out, err = rt(env, "tick")
+    assert code == 1 and "another tick is running" in err and out is None
+    assert publisher_calls(env) == [] and not (env["data"] / "store.sqlite").exists()
+
+
+def test_approving_the_same_item_twice_sends_once(env):
+    # Test gap of the report: approving an item a second time.
+    set_case(env, [message(1, text="I disagree")], decision(category="criticism_or_disagreement", reply="Fair point."))
+    rt(env, "tick")
+    item = rt(env, "inbox")[1]["items"][0]
+    shown = rt(env, "approve", "--id", str(item["id"]))[1]
+    assert rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", shown["sha256"])[0] == 0
+    code, _, err = rt(env, "approve", "--id", str(item["id"]), "--confirmed", "--sha256", shown["sha256"])
+    assert code == 2 and "is not open" in err
+    assert len(publisher_calls(env)) == 1
+
+
 def test_not_a_comment_is_done_without_a_run(env):
     set_case(env, [{"id": "m9", "received_at": "2026-09-29T10:09:00Z", "headers": {}}], decision())
     code, out, _ = rt(env, "tick")

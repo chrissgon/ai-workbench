@@ -619,6 +619,19 @@ def test_vote_job_without_a_post_address_records_nothing(env, tmp_path):
     assert not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
 
 
+def test_vote_job_with_its_publisher_gone_records_nothing(env, tmp_path):
+    # Test gap of the report: vote_job.py when the publisher is not found.
+    rt(env, "tick")
+    job = json.loads(Path(inbox(env)[0]["payload"]["files"]["job"]["path"]).read_text())
+    i = job["argv"].index("--publisher")
+    argv = job["argv"][:i + 1] + [str(tmp_path / "gone.py")] + job["argv"][i + 2:]
+    r = subprocess.run([sys.executable] + argv[1:], capture_output=True, text=True, timeout=120,
+                       env=os.environ.copy(), cwd=job["cwd"])
+    out = json.loads(r.stdout)
+    assert r.returncode == 1 and out["published"] is False and "nothing was recorded" in out["error"]
+    assert calls(env, "publisher") == [] and not [c for c in calls(env, "vcs") if c[0] == "commit-files"]
+
+
 def test_the_vote_job_uses_the_system_interpreter_and_carries_the_configured_folders(env, tmp_path):
     # RT4: the job was scheduled as a bare "python3" (hashed wherever the approver's PATH found it, so an
     # interpreter upgrade before the slot refused the job) and called "uv" by name on the scheduler's fixed
