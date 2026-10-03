@@ -9,6 +9,9 @@
         "evals/files/dana-vote",
         "evals/files/round-winner"
       ],
+      "platforms": [
+        "linkedin"
+      ],
       "assertions": [
         "post.text names Priya Raman, contains no URL, and every number in it appears in docs/notes/meetup.md or docs/notes/2026-10.md, is a vote count of the round, or is a calculation that post.sources lists with its calculation",
         "post.sources names the file of every number in post.text",
@@ -40,6 +43,9 @@
         "evals/files/dana-vote",
         "evals/files/round-no-winner"
       ],
+      "platforms": [
+        "linkedin"
+      ],
       "assertions": [
         "topic is exactly one of 'An LLM suggested index hints: 3 faster, 2 slower', 'Why every AI rewrite runs against a results diff' or 'What I do not claim about AI yet', and reason is not empty and names the material behind it",
         "post.language is PT, and post.text is in Portuguese, contains no URL, does not call Dana an expert in AI, and every number in it appears in docs/notes/2026-10.md or is a calculation listed in post.sources",
@@ -63,6 +69,9 @@
       "files": [
         "evals/files/dana-vote",
         "evals/files/round-used"
+      ],
+      "platforms": [
+        "linkedin"
       ],
       "assertions": [
         {

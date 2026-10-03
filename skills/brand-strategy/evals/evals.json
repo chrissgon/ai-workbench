@@ -6,6 +6,7 @@
       "prompt": "profile's done. what should I post about on linkedin and what should my headline be?",
       "expected_output": "The skill reads the confirmed profile and the state file, tries baselines.py for the recorded package and repository (with no network both come back not measured), and asks one message with options for the label and for the pillars, each pillar option a set of three, each option with a reason and one recommended. No recommended label calls Dana an expert in AI for databases, and none uses a beginner word; leadership never appears as a pillar or example. Rhythm and language are recorded (2 per week, English) and not asked again. No strategy file is written before the answers.",
       "files": ["evals/files/dana-open"],
+      "platforms": ["linkedin"],
       "grader_files": ["docs/workbench/state.md", "docs/brand/profile.md"],
       "assertions": [
         "The reply offers label options with one marked recommended, and the recommended label does not use 'expert', 'specialist' or an equivalent for AI or databases-with-AI",
@@ -20,6 +21,7 @@
       "prompt": "label and pillars are decided in the state file. the registry answers i recorded are in baseline-responses.json, use them instead of the live network. write the strategy for my linkedin",
       "expected_output": "docs/brand/strategy.md is written with the recorded label and pillars. baselines.py is run with --responses baseline-responses.json: the npm package tinykv-dana-example has 212 downloads in the last week (2026-09-13 to 2026-09-19) and 1405 in the last month (2026-08-21 to 2026-09-19), each cited with its period and source; the repository dana-example/tinykv-dana-example has no answer and is written as not measured, never as 0 or as not found, with an open question asking Dana for the number. The positioning statement cites only citable proof. The AI pillar is framed as built in public with a claim rule that no post calls Dana an expert in it, and a risk for that pillar says what settles it. Claim rules cite self-reported numbers as Dana's experience without the employer. Followers and impressions are open questions. The README that still names Beta Labs gets a replacement proposal applied by hand; no targets are set. The state file registers the strategy as draft.",
       "files": ["evals/files/dana-decided", "evals/files/baseline-responses.json"],
+      "platforms": ["linkedin"],
       "grader_files": ["docs/workbench/state.md", "docs/brand/profile.md", "baseline-responses.json"],
       "assertions": [
         "docs/brand/strategy.md gives the npm downloads of tinykv-dana-example as 212 in the last week and 1405 in the last month, each with its period",

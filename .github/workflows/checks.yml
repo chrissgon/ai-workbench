@@ -22,13 +22,17 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0 # the history scan reads every commit
+          fetch-depth: 0 # the history scan reads every commit; the version rules read the pull request's base
           persist-credentials: false
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.11"
       - name: Conventions and security scan
         run: python3 scripts/validate.py
+        env:
+          # The version rules read a change against the pull request's base, as the hook does with the merge
+          # base of the default branch; on a push to main it is empty and the validator takes that merge base.
+          WB_BASE_REF: ${{ github.event.pull_request.base.sha }}
       - name: Security scan, warnings included
         run: python3 scripts/security_scan.py --strict
       - name: Secrets in history

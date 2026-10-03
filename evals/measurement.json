@@ -1,0 +1,18 @@
+{
+  "file_limit": 60000,
+  "vcs_limit": 12000,
+  "grading_retries": 2,
+  "redact_min": 8,
+  "early_end": {
+    "markup": ["<skill_tool", "<tool_call", "<function_calls", "<invoke", "<system-reminder", "<|tool", "<｜tool"],
+    "announce": ["let me", "now i", "now let me", "now, let me", "first, i", "first, let me", "first let me",
+                 "next, i", "next, let me", "i'm going to", "i am going to",
+                 "i'll start", "i'll begin", "i'll now", "i'll first", "i will now", "i will start", "i will first"],
+    "not": ["let me know", "wait", "if you", "once you", "when you", "after you", "unless you", "once i have"],
+    "blocker": ["can't", "cannot", "couldn't", "could not", "unable", "don't have", "do not have", "no access",
+                "not installed", "need", "paste", "tell me", "provide", "please", "either", "which",
+                "let me know", "wait", "if you", "once you", "when you", "after you", "unless you", "once i have"],
+    "blocker_min": 280,
+    "short": 600
+  }
+}

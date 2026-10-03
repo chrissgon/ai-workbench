@@ -54,6 +54,8 @@ def test_a_scaffolded_skill_has_a_three_part_version_and_is_told_the_next_steps(
     cases = next(i for i, step in enumerate(steps) if "evals.json" in step)
     full_test = next(i for i, step in enumerate(steps) if "first full test" in step)
     assert cases < full_test, "the cases come before the first full test"
+    version_line = next(i for i, step in enumerate(steps) if f"python3 evals/eval_status.py bump --skill {name}" in step)
+    assert version_line < full_test and "no class" in steps[version_line] and "after the last edit" in steps[version_line]
     assert f"python3 evals/eval_run.py --skill {name} --check-cases" in steps[cases]
     assert f"python3 evals/eval_run.py --skill {name} " in steps[full_test] and "done" in steps[full_test]
     assert any("scripts/validate.py" in step for step in steps)

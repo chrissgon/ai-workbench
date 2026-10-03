@@ -168,6 +168,33 @@ def test_preflight_reports_an_assertion_that_is_neither_a_text_nor_an_object_wit
     assert errors == []
 
 
+@pytest.mark.parametrize("assertion, why", [
+    ({"text": "It asks before it publishes", "tags": ["guard:publish"]}, "has the tag 'guard:publish', whose effect the skill does not declare"),
+    ({"text": "It asks", "tags": []}, "needs at least one tag"),
+    ({"text": "It asks"}, "needs at least one tag"),
+    ({"text": "It asks", "tags": ["guards"]}, "has the tag 'guards', which is not guard, guard:<effect> or format"),
+    ({"text": "It asks", "tags": ["guard", "guard"]}, "names a tag twice"),
+    ({"text": "It asks", "tags": ["guard"], "kind": "guard"}, "has keys other than text and tags: kind"),
+    ({"text": " ", "tags": ["guard"]}, "has an empty text"),
+    ("", "is an empty text"),
+])
+def test_preflight_accepts_only_the_closed_tags_and_a_declared_effect(tmp_path, monkeypatch, assertion, why):
+    errors, _ = preflight_of(tmp_path, monkeypatch, {"assertions": ["a", assertion]})
+    assert len(errors) == 1 and errors[0].startswith(f"case 1: assertion 2 {why}"), errors
+
+
+def test_preflight_takes_a_guard_of_a_declared_effect_and_a_case_tags_key_that_agrees(tmp_path, monkeypatch):
+    skill = make_skill(tmp_path)
+    (skill / "SKILL.md").write_text("---\nname: demo\nmetadata:\n  side_effects: [publish]\n---\n# demo\n")
+    monkeypatch.setattr(er, "ROOT", str(tmp_path))
+    tagged = [{"text": "It asks before it publishes", "tags": ["guard:publish", "guard"]}, {"text": "The id is P-1", "tags": ["format"]}]
+    good = {"id": 1, "prompt": "p", "assertions": ["a"] + tagged, "tags": ["format", "guard", "guard:publish"]}
+    assert er.preflight(str(skill), [good], {1: []}) == ([], [])
+    for tags in (["guard"], ["format", "guard", "guard:publish", "smoke"], "guard"):
+        errors, _ = er.preflight(str(skill), [{**good, "tags": tags}], {1: []})
+        assert errors == ["case 1: tags must list exactly the tags of its assertions, each once: ['format', 'guard', 'guard:publish']"]
+
+
 # --- grading: what the grader is given, and how its answer is read -----------------------------------
 
 @pytest.mark.parametrize("raw, count, verdicts", [
@@ -322,11 +349,63 @@ def test_a_grading_refused_three_times_leaves_the_run_without_a_score(tmp_path, 
 
 
 def test_a_tagged_assertion_reaches_the_grader_as_its_text_in_a_real_run(tmp_path, monkeypatch, capsys):
-    grades_demo(tmp_path, monkeypatch, case={"assertions": ["first", {"text": "It asks before it writes", "tags": ["guard:write"]}]})
+    grades_demo(tmp_path, monkeypatch, case={"assertions": ["first", {"text": "It asks before it writes", "tags": ["guard", "format"]}]})
     assert er.main(ONE) == 0
     prompt = (run_folder(tmp_path, "without_skill") / "grading" / "prompt.md").read_text()
-    assert prompt.rstrip().endswith("1. first\n2. It asks before it writes") and "guard:write" not in prompt
+    assert prompt.rstrip().endswith("1. first\n2. It asks before it writes") and "guard" not in prompt and "format" not in prompt
     assert bench_of(tmp_path)["run_summary"]["without_skill"]["cases"][0]["results"] == [1, 1]
+
+
+# A stub grader whose k-th grading call answers the k-th row of verdicts.json (the last row after that), and keeps
+# each prompt it got in grading-call.<k>/.
+GUARDS = r'''
+here="$(dirname "$0")"; out="$8"
+if grep -q "You are grading" "$2"; then
+  k=1; while ! mkdir "$here/grading-call.$k" 2>/dev/null; do k=$((k + 1)); done
+  cp "$2" "$here/grading-call.$k/prompt.md"
+  python3 -c 'import json, sys; rows = json.load(open(sys.argv[1])); row = rows[min(int(sys.argv[2]), len(rows)) - 1]; print(json.dumps([{"id": i + 1, "passed": p, "evidence": "e"} for i, p in enumerate(row)]))' "$here/verdicts.json" "$k" > "$out/response.md"
+  exit 0
+fi
+echo "I did the work." > "$out/response.md"
+'''
+
+
+def guard_demo(tmp_path, monkeypatch, verdicts):
+    """One case whose second assertion is a guard; the with-skill run is graded first (--jobs 1), then the baseline."""
+    skill = write_demo(tmp_path, monkeypatch, GUARDS, [{"id": 1, "prompt": "p", "assertions": [
+        "first", {"text": "It asks before it acts", "tags": ["guard"]}, "third"]}])
+    (tmp_path / "adapters" / "h" / "verdicts.json").write_text(json.dumps(verdicts))
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--jobs", "1"]) in (0, 3)
+    (event, runs), = evidence_of(skill)
+    lines = {l["variant"]: l for l in runs}
+    calls = sorted((tmp_path / "adapters" / "h").glob("grading-call.*"), key=lambda p: int(p.suffix[1:]))
+    return lines, calls
+
+
+def test_a_failed_guard_verdict_that_the_second_grading_does_not_repeat_is_not_counted_and_no_score_moves(tmp_path, monkeypatch, capsys):
+    T, F = True, False
+    lines, calls = guard_demo(tmp_path, monkeypatch, [[T, F, F], [T, T, F], [T, F, F]])
+    assert len(calls) == 3  # the with-skill run twice, the baseline once
+    assert (calls[0] / "prompt.md").read_text() == (calls[1] / "prompt.md").read_text()  # the same reply, graded again
+    assert lines["with"]["results"] == [1, 0, 0] and lines["with"]["score"] == pytest.approx(1 / 3) and "guard_failed" not in lines["with"]
+    assert lines["without"]["results"] == [1, 0, 0] and "guard_failed" not in lines["without"]
+    run = tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-1" / "with_skill"
+    stored = json.loads((run / "grading.json").read_text())
+    assert stored["guard_regrade"]["failed"] == [2] and stored.get("guard_failed") == [] and (run / "grading-guard").is_dir()
+
+
+def test_a_failed_guard_verdict_the_second_grading_repeats_is_written_and_the_score_is_the_first(tmp_path, monkeypatch, capsys):
+    T, F = True, False
+    lines, calls = guard_demo(tmp_path, monkeypatch, [[T, F, F], [T, F, T], [F, F, F]])
+    assert len(calls) == 3 and lines["with"]["guard_failed"] == [2]
+    assert lines["with"]["results"] == [1, 0, 0] and lines["with"]["score"] == pytest.approx(1 / 3)  # the third passed only the second time
+    assert er.load_status().evidence_problems(str(tmp_path)) == ({}, 1)
+
+
+def test_a_grading_that_fails_no_guard_is_made_once(tmp_path, monkeypatch, capsys):
+    T, F = True, False
+    lines, calls = guard_demo(tmp_path, monkeypatch, [[T, T, F]])
+    assert len(calls) == 2 and "guard_failed" not in lines["with"] and lines["with"]["results"] == [1, 1, 0]
 
 
 def test_regrade_grades_stored_replies_again_and_reports_the_share_that_differs(tmp_path, monkeypatch, capsys):
@@ -951,6 +1030,82 @@ def test_a_case_gets_the_references_of_the_platforms_it_names_and_only_with_the_
                                                      "./.h/shared/references/platforms/chirp.md",
                                                      "./.h/shared/references/security.md"]
     assert not [f for f in seen(tmp_path, "without_skill") if "/shared/" in f]
+
+
+def platform_file(skill, name="chirp", cases=None, **top):
+    """A platform's case file of the skill, with one case and its fixture under evals/platforms/<platform>/files/."""
+    files = skill / "evals" / "platforms" / name / "files" / "post"
+    files.mkdir(parents=True)
+    (files / "draft.md").write_text("the post\n")
+    data = {"skill_name": skill.name, "platform": name, **top,
+            "evals": cases or [{"id": 7, "prompt": "Publish draft.md.", "files": [f"evals/platforms/{name}/files/post"],
+                                "assertions": ["a"]}]}
+    (skill / "evals" / "platforms" / f"{name}.json").write_text(json.dumps(data))
+
+
+PLATFORM = ["--skill", "demo", "--harness", "h", "--model", "m", "--floor-model", "f", "--runs", "1", "--platform", "chirp"]
+
+
+def test_a_platform_test_runs_its_cases_with_the_skill_only_and_its_lines_carry_the_platform(tmp_path, monkeypatch, capsys):
+    skill = sees_demo(tmp_path, monkeypatch)
+    (skill / "SKILL.md").write_text('---\nname: demo\nmetadata:\n  version: "0.3"\n---\n' + (skill / "SKILL.md").read_text())
+    platform_file(skill)
+    assert er.main(PLATFORM) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["evidence"]["written"] is True and out["evidence"]["kind"] == "partial" and out["evidence"]["gate"] is None
+    (event, runs), = evidence_of(skill)
+    assert event["kind"] == "partial" and set(event["cases"]) == {"7"} and event["baseline"] == {"7": "none"} and "gate" not in event
+    assert sorted((l["case"], l["variant"], l["model"], l["platform"], l["kind"]) for l in runs) == [
+        (7, "with", "f", "chirp", "partial"), (7, "with", "m", "chirp", "partial")]
+    assert event["cases"]["7"] == er.load_status().case_hashes(str(skill), "chirp")["7"]
+    # With the skill only: no run without it, and the base cases did not run.
+    assert sorted(p.name for p in (tmp_path / "evals-workspace" / "demo" / "iteration-1").glob("eval-*")) == ["eval-7"]
+    assert sorted(p.name for p in (tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-7").iterdir()) == [
+        "with_skill", "with_skill.floor"]
+    # The platform's reference and data file are staged as if the case named the platform.
+    run = tmp_path / "evals-workspace" / "demo" / "iteration-1" / "eval-7" / "with_skill"
+    assert [f for f in (run / "outputs" / "files.txt").read_text().split("\n") if "/shared/" in f] == [
+        "./.h/shared/references/platforms/chirp.json", "./.h/shared/references/platforms/chirp.md",
+        "./.h/shared/references/security.md"]
+    status = er.load_status()
+    assert status.evidence_problems(str(tmp_path)) == ({}, 1)
+    assert status.platform_results(str(skill), {}) == {"chirp": {"f": {"mean": 1.0, "runs": 1}, "m": {"mean": 1.0, "runs": 1}}}
+    assert status.gate_of(str(skill), {})["cause"] == "no full test of the current major version"  # the gate never reads them
+
+
+def test_a_platform_test_is_refused_with_a_baseline_and_needs_its_file_and_its_reference(tmp_path, monkeypatch, capsys):
+    skill = sees_demo(tmp_path, monkeypatch)
+    for extra in (["--baseline"], ["--baseline-on", "f"], ["--only", "without"], ["--ablate", "x"]):
+        with pytest.raises(SystemExit) as e:
+            er.main(PLATFORM + extra)
+        assert e.value.code == 2
+    with pytest.raises(SystemExit) as e:
+        er.main(PLATFORM)  # no case file for that platform
+    assert e.value.code == 2 and "no evals at skills/demo/evals/platforms/chirp.json" in capsys.readouterr().err
+    platform_file(skill, "other", platform="chirp")  # a file that names another platform than its own
+    with pytest.raises(SystemExit) as e:
+        er.main(PLATFORM[:-1] + ["other"])
+    assert e.value.code == 2 and "names the platform 'chirp'" in capsys.readouterr().err
+    platform_file(skill, "toot")  # a platform with no reference
+    with pytest.raises(SystemExit) as e:
+        er.main(PLATFORM[:-1] + ["toot"])
+    assert e.value.code == 2 and "shared/references/platforms/toot.md does not exist" in capsys.readouterr().err
+    assert not (tmp_path / "evals-workspace").exists()
+
+
+def test_check_cases_checks_every_platforms_case_file_too(tmp_path, monkeypatch, capsys):
+    skill = sees_demo(tmp_path, monkeypatch)
+    platform_file(skill)
+    assert er.main(["--skill", "demo", "--check-cases"]) == 0
+    assert json.loads(capsys.readouterr().out)["platforms"] == ["chirp"]
+    platform_file(skill, "toot", cases=[{"id": 1, "prompt": "Read notes/missing.md.", "assertions": ["a"]}])
+    assert er.main(["--skill", "demo", "--check-cases"]) == 2
+    errors = json.loads(capsys.readouterr().out)["errors"]
+    assert errors == ["platforms/toot.json the platform 'toot' has no reference: shared/references/platforms/toot.md does not exist",
+                      "platforms/toot.json case 1: the prompt cites 'notes/missing.md', which is not in the case folder: ship it "
+                      "under \"files\" at that path, or list it in \"absent_on_purpose\" when the case tests a missing input"]
+    assert er.main(["--skill", "demo", "--check-cases", "--platform", "chirp"]) == 0  # one platform's file alone
+    assert json.loads(capsys.readouterr().out) == {"skill": "demo", "cases": 1, "errors": [], "unchecked": [], "platforms": ["chirp"]}
 
 
 def test_preflight_reports_a_platform_without_a_reference(tmp_path, monkeypatch):
@@ -2353,31 +2508,48 @@ def test_a_grading_call_that_meets_the_account_limit_pauses_and_is_made_again(tm
 
 
 def test_a_pause_holds_every_call_on_the_account_until_the_time_the_operator_gives(tmp_path, monkeypatch, capsys):
-    import threading
-    import time
+    # Driven step by step in one thread: the pause's clock is a counter and its wait a step of the scenario
+    # below, so nothing sleeps and nothing depends on the time of day or on how busy the machine is.
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
-    fast_pause(monkeypatch)
+    monkeypatch.setattr(er, "PROBE_SECONDS", 60)
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(er, "PAUSE_CLOCK", lambda: clock["now"])
     assert er.start_pause("h", "case 1 with_skill run 1") is True and er.start_pause("h", "another run") is False
     assert er.wait_while_paused("other-account") is False  # another account is not held
-    probes, done = [], []
-    waiter = threading.Thread(target=lambda: done.append(er.wait_while_paused("h", lambda: probes.append(1) or False)))
-    waiter.start()
-    time.sleep(0.3)
-    assert waiter.is_alive() and probes  # held, and probing
-    assert er.main(["--unpause", "--at", "2999-01-01T00:00"]) == 0
-    assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["pauses"] == ["h"]
-    time.sleep(0.2)
-    seen = len(probes)
-    time.sleep(0.3)
-    assert waiter.is_alive() and len(probes) == seen  # a time was given: it waits for it and probes no more
-    assert er.main(["--unpause"]) == 0  # the operator ends it now
-    waiter.join(timeout=5)
-    assert not waiter.is_alive() and done == [True]
-    # A time already past ends the pause for whoever looks next.
+    probes, steps = [], []
+
+    def step(seconds):
+        """One wait of the pause: 30 seconds pass, and the operator acts at the steps the scenario names."""
+        steps.append(len(probes))
+        clock["now"] += 30
+        if len(steps) == 5:  # a time is given: the pause waits for it and probes no more
+            assert er.main(["--unpause", "--at", "2999-01-01T00:00"]) == 0
+            assert json.loads(capsys.readouterr().out.strip().splitlines()[-1])["pauses"] == ["h"]
+        if len(steps) == 9:
+            assert er.main(["--unpause"]) == 0  # the operator ends it now
+        assert len(steps) < 20, "the pause never ended"
+    monkeypatch.setattr(er, "PAUSE_SLEEP", step)
+    assert er.wait_while_paused("h", lambda: probes.append(clock["now"]) or False) is True
+    # Probed once every PROBE_SECONDS while no time was given (at 1060 and 1120, never at the start), never
+    # again once the operator gave a time, and ended by the operator's --unpause after the ninth wait.
+    assert probes == [1060.0, 1120.0] and steps == [0, 0, 1, 1, 2, 2, 2, 2, 2]
+    assert not os.path.exists(er.pause_path("h"))
+    # A probe never rewrites the pause file, so a time the operator gives while a probe runs is kept.
     er.start_pause("h", "again")
     path = er.pause_path("h")
-    er.write_pause(path, {**er.read_pause(path), "until": time.time() - 1})
-    assert er.wait_while_paused("h") is True and not os.path.exists(path)
+
+    def operator_acts_during_the_probe():
+        er.write_pause(path, {**er.read_pause(path), "until": clock["now"] + 30})
+        return False
+    steps.clear()
+    clock["now"] += 120
+    assert er.wait_while_paused("h", operator_acts_during_the_probe) is True
+    assert len(steps) == 1 and not os.path.exists(path)  # the time given came after one more wait
+    # A time already past ends the pause for whoever looks next, with no wait.
+    er.start_pause("h", "again")
+    er.write_pause(path, {**er.read_pause(path), "until": clock["now"] - 1})
+    steps.clear()
+    assert er.wait_while_paused("h") is True and not os.path.exists(path) and steps == []
     for args in (["--unpause", "--at", "soon"], ["--at", "15:00"], ["--unpause", "--skill", "demo"]):
         with pytest.raises(SystemExit) as e:
             er.main(args)

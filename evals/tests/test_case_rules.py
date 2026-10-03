@@ -20,7 +20,10 @@ REPO = Path(__file__).resolve().parents[2]
 README = REPO / "evals" / "README.md"
 PLAIN_TAGS = ("guard", "format")
 CASE_KEYS = ("id", "prompt", "expected_output", "files", "setup", "grader_files", "absent_on_purpose", "skills",
-             "allow_web", "workbench_files", "assertions", "tags")
+             "platforms", "allow_web", "workbench_files", "assertions", "tags")
+PLATFORMS = REPO / "shared" / "references" / "platforms"
+# The step a skill follows to find its platform and read that platform's reference (decision 14c of the plan).
+PLATFORM_STEP = "Find the platform: the `Network:` field"
 
 
 def assertion_text(assertion):
@@ -101,6 +104,45 @@ def test_every_assertion_of_the_repository_has_the_form_the_rules_give(path):
             if sorted(case["tags"]) != own:
                 found.append(f"case {case.get('id')}: its tags key is not the tags of its assertions")
     assert found == []
+
+
+PLATFORM_CASE_FILES = sorted(REPO.glob("skills/*/evals/platforms/*.json"))
+
+
+@pytest.mark.parametrize("path", PLATFORM_CASE_FILES, ids=lambda p: f"{p.parts[-4]}-{p.stem}")
+def test_every_assertion_of_a_platforms_case_file_has_the_form_the_rules_give(path):
+    data = json.loads(path.read_text(encoding="utf-8"))
+    effects = declared_side_effects(path.parents[2])
+    assert data.get("platform", path.stem) == path.stem and (PLATFORMS / f"{path.stem}.md").is_file()
+    found = []
+    for case in data["evals"]:
+        found += [f"case {case.get('id')}: key {k}" for k in sorted(set(case) - set(CASE_KEYS))]
+        for i, assertion in enumerate(case.get("assertions") or [], 1):
+            found += [f"case {case.get('id')}, assertion {i}: {p}" for p in assertion_problems(assertion, effects)]
+    assert found == []
+
+
+@pytest.mark.parametrize("path", CASE_FILES, ids=lambda p: p.parts[-3])
+def test_a_case_names_only_platforms_that_have_a_reference(path):
+    found = []
+    for case in json.loads(path.read_text(encoding="utf-8"))["evals"]:
+        names = case.get("platforms", [])
+        if not (isinstance(names, list) and names and all(isinstance(n, str) for n in names)) and "platforms" in case:
+            found.append(f"case {case.get('id')}: platforms is not a list of names")
+            continue
+        found += [f"case {case.get('id')}: no reference shared/references/platforms/{n}.md" for n in names
+                  if not (PLATFORMS / f"{n}.md").is_file()]
+    assert found == []
+
+
+def test_a_skill_with_the_platform_step_has_cases_that_name_the_platform():
+    # A run that reaches the step reads the platform's reference, which the runner stages only for a case that
+    # names the platform: without the key, the with-skill run would look for a file that is not there.
+    with_step = sorted(p.parts[-3] for p in CASE_FILES if PLATFORM_STEP in (p.parents[1] / "SKILL.md").read_text(encoding="utf-8"))
+    assert len(with_step) >= 7
+    for name in with_step:
+        cases = json.loads((REPO / "skills" / name / "evals" / "evals.json").read_text(encoding="utf-8"))["evals"]
+        assert [c["id"] for c in cases if c.get("platforms")], f"{name} has the platform step and no case names a platform"
 
 
 def test_the_side_effects_of_a_skill_are_read_from_its_frontmatter(tmp_path):

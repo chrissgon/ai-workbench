@@ -9,6 +9,7 @@ Usage:
                       [--runs <n>] [--jobs 4] [--timeout <seconds>] [--max-cost-usd <amount>] [--no-grade]
                       [--retries <n>] [--early-end-rate 0.15] [--scratch]
                       [--dry-run] [--check-cases [--with-setup]]
+  python3 eval_run.py --skill <name> --platform <platform> [--cases <id>,...] [the model, run and check options above]
   python3 eval_run.py --resume <event folder> [--jobs 4]
   python3 eval_run.py --close <event folder>
   python3 eval_run.py --routing --pack <name> (--skill <name> | --prompts <file>) [--tier strong|floor] [--jobs 4]
@@ -44,6 +45,17 @@ An interrupted event is resumed (--resume). A full test that is abandoned instea
 that version, where the next full test adds its own. While an event of a skill that may write evidence is
 open (neither complete nor closed), the runner starts no new such event of that skill: a test that is going
 badly cannot be interrupted, dropped and drawn again. A trial (below) is never open in that sense.
+
+Tests per platform (--platform <platform>; the plan's decision 14c). The cases of one social platform live in
+skills/<name>/evals/platforms/<platform>.json (its top-level "platform", when present, names the same
+platform), their fixtures under skills/<name>/evals/platforms/<platform>/files/. `--platform <platform>` runs
+that file's cases (all, or those --cases names) as a partial test, with the skill only, on every model the
+event runs: no baseline, and nothing is refused for want of a full test or of a base result. Each case's run
+gets the platform's reference and data file staged beside the skill, as if the case named the platform in
+"platforms". Its run lines carry "platform": <platform>; the gate and the score never read them, and
+`eval_status.py status` shows their mean and number of runs per platform and model, and no score.
+--check-cases checks evals/evals.json and every platform's case file of the skill (with --platform, that file
+only), and a platform's file whose reference shared/references/platforms/<platform>.md is missing.
 
 The routing mode (--routing). A description decides when a skill loads, and a skill is never alone once a
 pack is installed. --routing --pack <name> installs the whole pack into each run's folder, as an installer
@@ -219,7 +231,7 @@ command; read a contributed skill's evals.json before running it all the same, b
 no tool: the grading call is made with the adapter's --no-tools, because the grader holds the strong tier's
 credential and reads text a model under test wrote.
 
-Grading. Every run is graded once, by the grader model, with evals/grading-prompt.md and no tools. The
+Grading. Every run is graded once (a failed guard verdict twice, below), by the grader model, with evals/grading-prompt.md and no tools. The
 grader is given, and nothing else: the case's prompt; the reply, which is the assistant's last message as
 the adapter stored it in response.md; a facts block the runner builds; every file the run created or changed
 (up to FILE_LIMIT characters each; an image or another binary file as one line that says what it is); and the
@@ -234,6 +246,12 @@ with no network: `git status --short`, `git log --oneline -n 20 --all`, `git bra
 of each remote the case has. The facts are stored beside the run as facts.md.
 An assertion in evals.json is a text, or an object {"text": ..., "tags": [...]}: the grader is given the
 text and never the tags.
+A failed guard verdict is graded once more (the reliability model, section 4). When the grading of a run with
+the skill fails an assertion tagged guard or guard:<effect>, the same prompt goes to the grader a second time
+(<run folder>/grading-guard/), and the run's "guard_failed" lists the guard positions the second grading failed
+too: only those are confirmed failures. The results and the score stay the first grading's, so the second
+grading raises no mean; a run without the skill is graded once. grading.json keeps the second grading under
+"guard_regrade".
 The grader answers with a JSON array, one object per assertion in order: {"id", "passed", "evidence"}.
 Results are read by position. An answer that is not such an array, or whose count differs from the number of
 assertions, is refused and the grading is made again, up to GRADING_RETRIES times (the refused attempts stay
@@ -321,7 +339,8 @@ installer's marker file), the case and its hash (over the whole case object and 
 files), "context_sha256" when the run was given dependency skills or shared references (one hash over them),
 the model as the gate file lists it ("models": an alias is written as its id, anything else as "unknown"),
 the adapter, the variant ("with" or "without"), the outcome ("graded", or "timeout" after the cap of
-resumptions), the score, one 0 or 1 per assertion ("results"), the measurement version and the measurement
+resumptions), the score, one 0 or 1 per assertion ("results"), "guard_failed" when the second grading of a
+with-skill run confirmed a failed guard (above, "Grading"), the measurement version and the measurement
 fingerprint computed when the event started. A run that failed on infrastructure, was paused on the account
 limit or ended early writes no line. The event line carries what describes the event as a whole: its kind
 ("full": every case with the skill on the reference model; "partial": chosen cases), the models, their
@@ -512,13 +531,20 @@ def settings_in(cwd, names):
     return None
 
 
-def stage_run(case_dir, eval_cfg, variant_dir, deps, case):
+def case_platforms(case, platform=None):
+    """The platforms whose reference a run of the case is given: the case's own "platforms" and, for a case of a
+    platform's case file (--platform), that platform."""
+    names = [n for n in case.get("platforms") or [] if isinstance(n, str)]
+    return sorted(set(names) | ({platform} if platform else set()))
+
+
+def stage_run(case_dir, eval_cfg, variant_dir, deps, case, platform=None):
     """Stage what one run sees of the skills, into its case folder. Returns the paths staged, relative to the
     case folder, and the manifest of scripts/stage_skills.py.
 
     The skill under test only when the variant has it (variant_dir); the dependency skills always. The shared
-    references the skill under test cites, and the references of the platforms the case names, only with the
-    skill: a run without it gets no shared reference, even one that brings dependency skills."""
+    references the skill under test cites, and the references of the platforms the case names (case_platforms),
+    only with the skill: a run without it gets no shared reference, even one that brings dependency skills."""
     skills = ([variant_dir] if variant_dir else []) + list(deps)
     if not skills:
         return [], None
@@ -526,7 +552,7 @@ def stage_run(case_dir, eval_cfg, variant_dir, deps, case):
     skills_dir = os.path.join(case_dir, *eval_cfg["skills_dir"].split("/"))
     manifest = stage.stage(skills, skills_dir, root=ROOT, references="cited" if variant_dir else "none",
                            cite_from=[variant_dir] if variant_dir else [],
-                           platforms=(case.get("platforms") or []) if variant_dir else [])
+                           platforms=case_platforms(case, platform) if variant_dir else [])
     staged = [os.path.relpath(os.path.join(skills_dir, name), case_dir) for name in manifest["skills"]]
     if manifest["shared_dir"]:
         staged.append(os.path.relpath(manifest["shared_dir"], case_dir))
@@ -550,6 +576,41 @@ def exclude_from_git(case_dir, staged):
         f.writelines(f"/{rel.replace(os.sep, '/')}/\n" for rel in staged)
 
 
+MEASURE_SCRIPT = os.path.join(HERE, "measure.py")
+MEASURE_LOCK = threading.Lock()
+# The names this module reads from evals/measure.py, the one module that decides what a run measures (item
+# B10): the facts block, what the grader is shown of a file, the grading prompt and the reading of its answer,
+# the early-end rule, the replacement of passed values, the score and the gate's comparisons. They are not
+# copied here; `eval_run.<name>` still reads them, through the module's __getattr__ below.
+MEASURE_NAMES = ("FILE_LIMIT", "VCS_LIMIT", "VCS_SCRIPT", "GRADING_RETRIES", "REDACT_MIN", "NOT_SHOWN",
+                 "EARLY_END_MARKUP", "EARLY_END_ANNOUNCE", "EARLY_END_NOT", "EARLY_END_BLOCKER", "EARLY_END_BLOCKER_MIN",
+                 "EARLY_END_SHORT", "PSEUDO_TAG_LINE_RE", "TAG_ONLY_LINE_RE", "early_end", "redaction_values",
+                 "replace_values", "facts_block", "binary_stub", "shown", "assertion_text", "grading_prompt",
+                 "read_grading", "grading_summary", "score", "at_threshold", "within_tolerance", "gate_passes", "cut_vcs",
+                 "assertion_tags", "guard_positions", "failed_guards", "confirmed_guards")
+
+
+def load_measure():
+    """evals/measure.py as a module, loaded once and on first use: a command that measures nothing (the case
+    preflight, a plan) runs without it, as in a case folder that brings this script alone."""
+    name = "workbench_eval_measure"
+    with MEASURE_LOCK:
+        if name not in sys.modules:
+            if not os.path.isfile(MEASURE_SCRIPT):
+                die("evals/measure.py is missing: run this script from a checkout of the workbench.")
+            spec = importlib.util.spec_from_file_location(name, MEASURE_SCRIPT)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            sys.modules[name] = module
+    return sys.modules[name]
+
+
+def __getattr__(name):
+    if name in MEASURE_NAMES:
+        return getattr(load_measure(), name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 def load_status():
     """evals/eval_status.py as a module: the content hash, the case hash and the forms of an evidence line are
     defined there, once."""
@@ -567,7 +628,7 @@ def parse(argv):
             "runs": None, "jobs": 4, "timeout": None, "max_cost": None, "check_cases": False, "retries": None,
             "early_rate": 0.15, "regrade": None, "scratch": False, "resume": None, "unpause": False, "at": None,
             "baseline": False, "baseline_on": [], "close": None, "with_setup": False,
-            "routing": False, "pack": None, "prompts": None, "tier": "strong"}
+            "routing": False, "pack": None, "prompts": None, "tier": "strong", "platform": None}
     i = 0
     while i < len(argv):
         a = argv[i]
@@ -585,6 +646,7 @@ def parse(argv):
         elif a == "--cases": opts["cases"] += [c.strip() for c in val().split(",") if c.strip()]; i += 2
         elif a == "--baseline": opts["baseline"] = True; i += 1
         elif a == "--baseline-on": opts["baseline_on"].append(val()); i += 2
+        elif a == "--platform": opts["platform"] = val(); i += 2
         elif a == "--close": opts["close"] = val(); i += 2
         elif a == "--threshold": opts["threshold"] = float(val()); i += 2
         elif a == "--only": opts["only"] = val(); i += 2
@@ -664,6 +726,13 @@ def parse(argv):
             die("--tier is strong or floor (and floor needs a floor model).")
     elif opts["pack"] or opts["prompts"] or opts["tier"] != "strong":
         die("--pack, --prompts and --tier go with --routing.")
+    if opts["platform"] is not None:
+        if not PLATFORM_NAME_RE.match(opts["platform"]):
+            die(f"--platform {opts['platform']!r} is not a platform name (lowercase, hyphens).")
+        if opts["routing"] or opts["regrade"] is not None:
+            die("--platform goes with --skill: it runs the cases of one platform's case file.")
+        if opts["baseline"] or opts["baseline_on"] or opts["only"] in ("without", "ablated") or opts["ablate"]:
+            die("--platform runs a platform's cases with the skill only, as a partial test: no baseline, no ablation.")
     if opts["with_setup"] and not opts["check_cases"]:
         die("--with-setup goes with --check-cases: it runs the cases' setup commands in the eval container.")
     if opts["at"] is not None and not opts["unpause"]:
@@ -754,12 +823,37 @@ def resolve_pass_env(names):
     return filled
 
 
-def load_evals(skill):
-    p = os.path.join(ROOT, "skills", skill, "evals", "evals.json")
+PLATFORM_NAME_RE = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def platform_case_names(skill):
+    """The platforms that have a case file for the skill: skills/<skill>/evals/platforms/<platform>.json."""
+    folder = os.path.join(ROOT, "skills", skill, "evals", "platforms")
+    if not os.path.isdir(folder):
+        return []
+    return sorted(n[:-len(".json")] for n in os.listdir(folder)
+                  if n.endswith(".json") and os.path.isfile(os.path.join(folder, n)))
+
+
+def load_evals(skill, platform=None):
+    """The skill's case file: evals/evals.json, or, with platform, that platform's case file,
+    evals/platforms/<platform>.json, whose top-level "platform", when it has one, names the same platform."""
+    rel = ("platforms", platform + ".json") if platform else ("evals.json",)
+    p = os.path.join(ROOT, "skills", skill, "evals", *rel)
     if not os.path.isfile(p):
         die(f"no evals at {os.path.relpath(p, ROOT)}", 2)
     with open(p, encoding="utf-8") as f:
-        return json.load(f)
+        data = json.load(f)
+    if platform and isinstance(data, dict) and data.get("platform", platform) != platform:
+        die(f"{os.path.relpath(p, ROOT)} names the platform {data.get('platform')!r}: a platform's case file names its own.", 2)
+    return data
+
+
+def platform_problems(platform):
+    """Why a platform's case file cannot run: its reference is missing. [] when it has one."""
+    if not os.path.isfile(os.path.join(ROOT, "shared", "references", "platforms", platform + ".md")):
+        return [f"the platform {platform!r} has no reference: shared/references/platforms/{platform}.md does not exist"]
+    return []
 
 
 # Credentials in the environment would sign gh, npm or git hosts back in.
@@ -1000,22 +1094,79 @@ def declared_outputs(skill_dir):
     return [x.strip()[1:].strip().strip("\"'") for x in m.group(1).splitlines() if x.strip()] if m else []
 
 
-def preflight(skill_dir, cases, sources, setup=True, gate=None, warnings=None):
+def case_assertion_text(assertion):
+    """The text of an assertion as the preflight reads the case file: the assertion itself, or the "text" of an
+    object; None when it is neither. It checks the case file's form and decides nothing the grader sees: the
+    grading prompt takes the text from evals/measure.py (assertion_text), which the preflight does not need."""
+    if isinstance(assertion, str):
+        return assertion
+    if isinstance(assertion, dict) and isinstance(assertion.get("text"), str):
+        return assertion["text"]
+    return None
+
+
+TAG_RE = re.compile(r"^(?:guard|format|guard:[a-z][a-z0-9-]*)$")
+
+
+def assertion_form_problems(assertion, effects):
+    """Why one assertion of a case file is outside its form (evals/README.md, "Assertions"), each sentence to follow
+    "assertion <n>": a text, or an object with its text and at least one tag of the closed list guard,
+    guard:<effect> (an effect of the skill's side_effects) and format."""
+    if case_assertion_text(assertion) is None:
+        return ['must be a text, or an object with a "text"']
+    if isinstance(assertion, str):
+        return [] if assertion.strip() else ["is an empty text"]
+    out = []
+    extra = sorted(set(assertion) - {"text", "tags"})
+    if extra:
+        out.append(f"has keys other than text and tags: {', '.join(extra)}")
+    if not assertion["text"].strip():
+        out.append("has an empty text")
+    tags = assertion.get("tags")
+    if not (isinstance(tags, list) and tags and all(isinstance(t, str) for t in tags)):
+        return out + ["needs at least one tag (guard, guard:<effect> or format); an assertion with no tag is written as a text"]
+    if len(set(tags)) != len(tags):
+        out.append("names a tag twice")
+    for tag in tags:
+        if not TAG_RE.match(tag):
+            out.append(f"has the tag {tag!r}, which is not guard, guard:<effect> or format")
+        elif tag.startswith("guard:") and tag[len("guard:"):] not in effects:
+            out.append(f"has the tag {tag!r}, whose effect the skill does not declare in side_effects")
+    return out
+
+
+def declared_side_effects(skill_dir):
+    """The words of metadata.side_effects in the skill's frontmatter (a one-line list or a block list)."""
+    try:
+        with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+            head = f.read().split("\n---", 1)[0]
+    except OSError:
+        return []
+    m = re.search(r"^\s*side_effects:\s*\[(.*?)\]", head, re.M | re.S)
+    if m:
+        return [x.strip().strip("\"'") for x in m.group(1).split(",") if x.strip()]
+    m = re.search(r"^\s*side_effects:\s*\n((?:\s*-\s.*\n?)+)", head, re.M)
+    return [x.strip()[1:].strip().strip("\"'") for x in m.group(1).splitlines() if x.strip()] if m else []
+
+
+def preflight(skill_dir, cases, sources, setup=True, gate=None, warnings=None, platform=None):
     """Check every case before a model sees it. Returns (errors, unchecked): one line per problem.
 
     setup=False (--dry-run) runs no setup command, so cases that have one are not checked against their folder.
     gate is the loaded gate configuration: a case that sets "allow_web" must be among its "web_cases". warnings,
-    a list, receives the problems of TRANSITIONAL rules instead of errors (see TRANSITIONAL)."""
+    a list, receives the problems of TRANSITIONAL rules instead of errors (see TRANSITIONAL). platform names the
+    platform whose case file the cases come from (None: evals/evals.json)."""
     errors, unchecked = [], []
     skill = os.path.basename(os.path.normpath(skill_dir))
     status = load_status()
     top_web = None
     try:
-        with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
+        with open(os.path.join(skill_dir, "evals", *(("platforms", platform + ".json") if platform else ("evals.json",))),
+                  encoding="utf-8") as f:
             top_web = json.load(f).get("allow_web")
     except (OSError, ValueError, AttributeError):
         pass
-    outputs = declared_outputs(skill_dir)
+    outputs, effects = declared_outputs(skill_dir), declared_side_effects(skill_dir)
     settings = harness_settings()
     # The skill's own files (scripts, references, assets) reach a run with the skill, not through the case.
     own = {p for p in tree_paths(skill_dir) if not p.startswith("evals/") and p != "evals"}
@@ -1069,9 +1220,14 @@ def preflight(skill_dir, cases, sources, setup=True, gate=None, warnings=None):
             err(f"the case folder holds {carried}: a fixture or setup must not carry harness settings")
         present = lambda p: p in tree or any(t.endswith("/" + p) for t in tree)
         for n, a in enumerate(c.get("assertions") or [], 1):
-            if assertion_text(a) is None:
-                err(f"assertion {n} must be a text, or an object with a \"text\"")
-        produced = " ".join([str(c.get("expected_output") or "")] + [assertion_text(a) or "" for a in c.get("assertions") or []])
+            for problem in assertion_form_problems(a, effects):
+                err(f"assertion {n} {problem}")
+        tagged = sorted({t for a in c.get("assertions") or [] if isinstance(a, dict) for t in a.get("tags") or []
+                         if isinstance(t, str)})
+        if "tags" in c and not (isinstance(c["tags"], list) and all(isinstance(t, str) for t in c["tags"])
+                                and sorted(c["tags"]) == tagged):
+            err(f"tags must list exactly the tags of its assertions, each once: {tagged}")
+        produced = " ".join([str(c.get("expected_output") or "")] + [case_assertion_text(a) or "" for a in c.get("assertions") or []])
         for p in prompt_paths(c.get("prompt")):
             if (present(p) or p in absent or p in produced or known(p)
                     or any(o == p or o.endswith("/" + p) for o in outputs)):
@@ -1215,7 +1371,7 @@ def folder_text(folder, staged=()):
     parts = []
     for rel in run_files(folder, staged):
         path = os.path.join(folder, rel)
-        if binary_stub(path) is None:
+        if load_measure().binary_stub(path) is None:
             parts.append(read_text(path, TEXT_LIMIT))
     return "\n".join(parts)
 
@@ -1475,65 +1631,6 @@ def staged_file(rel, staged):
     return any(rel == s or rel.startswith(s + os.sep) for s in staged)
 
 
-# An early end: the model ended its turn before doing the work, with no error (see the module docstring).
-# Markup of a tool call or a control block printed as text; it counts only at the start of a line, so a reply
-# that quotes such markup inline to the user is left alone. Seen from a floor model: <skill_tool>, and loops
-# of <system-reminder> blocks it wrote itself. "<\uff5ctool" is the model's own tool-call token.
-EARLY_END_MARKUP = ("<skill_tool", "<tool_call", "<function_calls", "<invoke", "<system-reminder", "<|tool", "<\uff5ctool")
-# How a last line announces a next action instead of ending the turn's work. Matched, in lower case, at the
-# start of a sentence of the last line ("Let me update the file:", "Now I'll write the spec:").
-# Not a bare "i'll": "I'll also need to know where the code should go" ends a reply that states a blocker.
-EARLY_END_ANNOUNCE = ("let me", "now i", "now let me", "now, let me", "first, i", "first, let me", "first let me",
-                      "next, i", "next, let me", "i'm going to", "i am going to",
-                      "i'll start", "i'll begin", "i'll now", "i'll first", "i will now", "i will start", "i will first")
-# A last line with one of these waits for the user ("Let me know which you prefer", "I'll wait for the brief",
-# "If you approve it, I'll run it"): never an early end.
-EARLY_END_NOT = ("let me know", "wait", "if you", "once you", "when you", "after you", "unless you", "once i have")
-# A reply longer than EARLY_END_BLOCKER_MIN characters that holds one of these states a blocker or asks for an
-# input in the imperative ("I can't read the ticket ... paste it"): a stop, never an early end. The length
-# keeps a one-line "Now I need the format. Let me update the file:" an early end.
-EARLY_END_BLOCKER = ("can't", "cannot", "couldn't", "could not", "unable", "don't have", "do not have", "no access",
-                     "not installed", "need", "paste", "tell me", "provide", "please", "either", "which",
-                     "let me know", "wait", "if you", "once you", "when you", "after you", "unless you", "once i have")
-EARLY_END_BLOCKER_MIN = 280
-# An announcement is an early end in a short reply, or when the last line ends as one that was cut (":", "...").
-EARLY_END_SHORT = 600
-PSEUDO_TAG_LINE_RE = re.compile(r"^<([A-Za-z_-]+)>.*</\1>$")
-# A trailing line that is only a tag, such as a tool call the model printed as text and never ran
-# (<read filePath="...">, </read>): skipped to reach the last line of prose.
-TAG_ONLY_LINE_RE = re.compile(r"^</?[A-Za-z_][\w-]*(\s[^<>]*)?/?>$")
-
-
-def early_end(response, changed):
-    """Why a run that exited 0 is an early end, or None. Conservative: a run that wrote a file, a reply that
-    asks the user a question and a reply that states a blocker are never one."""
-    if changed:
-        return None
-    lines = [line.strip() for line in response.splitlines() if line.strip()]
-    if not lines:
-        return "empty response and no file written"
-    for line in lines:
-        hit = next((m for m in EARLY_END_MARKUP if line.lower().startswith(m)), None)
-        if hit:
-            return f"tool or control markup printed as text ({hit}) and no file written"
-    if "?" in response:
-        return None
-    while len(lines) > 1 and (PSEUDO_TAG_LINE_RE.match(lines[-1]) or TAG_ONLY_LINE_RE.match(lines[-1])):
-        lines.pop()  # a trailing note the model wrapped in a tag of its own
-    low = response.lower().replace("\u2019", "'")
-    if len(response) > EARLY_END_BLOCKER_MIN and any(phrase in low for phrase in EARLY_END_BLOCKER):
-        return None  # states a blocker or asks for an input
-    last = lines[-1].lower().replace("\u2019", "'")
-    if any(phrase in last for phrase in EARLY_END_NOT):
-        return None
-    # The FINAL sentence of the last line, not any sentence of it: "I'll fetch it myself. I'll also need to
-    # know which project it belongs to." ends on a request.
-    final = re.split(r"(?<=[.!:;])\s+", last)[-1].lstrip("-*>#_`0123456789.) ")
-    if final.startswith(EARLY_END_ANNOUNCE) and (len(response) <= EARLY_END_SHORT or lines[-1].endswith((":", "...", "\u2026"))):
-        return "the reply ends by announcing a next action, no question was asked and no file written"
-    return None
-
-
 def run_ending(out_dir):
     """How the runner says a run ended, read from the adapter's raw output when it is JSON that names it:
     {"stop_reason", "num_turns", "terminal_reason"}, the keys that are there. Kept beside the reply: an early
@@ -1580,7 +1677,6 @@ def early_end_warning(stats, max_rate):
 # Folders of a case folder the host never looks into after a run: version control, dependencies, caches.
 # Whole folder names: ".git" as a substring would also skip ".github".
 SKIP_DIRS = {".git", "node_modules", "__pycache__", ".pytest_cache", ".venv"}
-NOT_SHOWN = "[not shown: a symbolic link, a special file or a path outside the case folder; the harness does not read it]"
 
 
 def host_may_touch(cwd, path):
@@ -1626,39 +1722,6 @@ def readable(cwd, rel):
     return all(not os.path.islink(p) for p in on_the_way) and host_may_touch(cwd, path) and os.path.isfile(path)
 
 
-# A passed variable whose value is shorter than this is not replaced: it is a switch, not a credential, and
-# replacing "1" or "true" wherever it occurs would rewrite what a run produced.
-REDACT_MIN = 8
-REDACT_LIMIT = 50000000  # bytes: a larger file of a run is left as it is
-
-
-def redaction_values(names, env=None):
-    """[(value, marker)] for the variables passed into a run, longest value first: what replace_values() looks
-    for. The marker names the variable, never its value."""
-    env = os.environ if env is None else env
-    found = {}
-    for name in dict.fromkeys(names):
-        value = env.get(name) or ""
-        if len(value) >= REDACT_MIN:
-            found.setdefault(value, f"[redacted:{name}]")
-    return sorted(found.items(), key=lambda pair: len(pair[0]), reverse=True)
-
-
-def replace_values(data, values):
-    """Replace each exact value in data (bytes or text) by its marker. Returns (the new data, the number of
-    replacements). Exact values only, no pattern of what a credential looks like: a planted fake secret in a
-    fixture is not one of the passed values and stays, so an assertion that a reply does not repeat it still
-    measures the reply."""
-    count = 0
-    for value, marker in values:
-        if isinstance(data, bytes):
-            value, marker = value.encode("utf-8"), marker.encode("utf-8")
-        hits = data.count(value)
-        if hits:
-            data, count = data.replace(value, marker), count + hits
-    return data, count
-
-
 def redact_folder(folder, values, staged=()):
     """Replace the passed variables' values in the files of a folder a run wrote to, in place. Only the paths
     run_files() allows are read or written: never a symbolic link, never a path that leaves the folder, never
@@ -1671,7 +1734,7 @@ def redact_folder(folder, values, staged=()):
                 continue
             with open(path, "rb") as f:
                 data = f.read()
-            new, count = replace_values(data, values)
+            new, count = load_measure().replace_values(data, values)
             if count:
                 with open(path, "wb") as f:
                     f.write(new)
@@ -1742,19 +1805,9 @@ def file_index(cwd, staged=()):
     return idx
 
 
-# What the harness asks the case's repository after a run, in the case folder, in a container with no
-# network. One literal script: nothing of a case or of a run is put into it.
-VCS_SCRIPT = """
-if ! git rev-parse --git-dir >/dev/null 2>&1; then echo "(the case folder is not a repository)"; exit 0; fi
-echo '$ git status --short'; git status --short 2>&1 | head -n 200
-echo '$ git log --oneline -n 20 --all'; git log --oneline -n 20 --all 2>&1
-echo '$ git branch -a'; git branch -a 2>&1 | head -n 100
-for remote in $(git remote 2>/dev/null); do
-  echo "\\$ git ls-remote --heads $remote"; git ls-remote --heads "$remote" 2>&1 | head -n 50
-done
-"""
 VCS_TIMEOUT = 120  # seconds
-VCS_LIMIT = 12000  # characters of the version-control facts shown to the grader
+# What a run leaves is read up to this size; a larger file is left as it is.
+REDACT_LIMIT = 50000000  # bytes
 
 
 def version_control(case_dir, env, box=None):
@@ -1762,26 +1815,13 @@ def version_control(case_dir, env, box=None):
     commits of every branch, the branches, and the branch heads of each remote the case has (a local bare
     repository; another protocol is refused by GIT_ALLOW_PROTOCOL=file). Commits, branches and pushes live
     under .git, which the file lists leave out: without this an assertion about a push rests on the reply."""
+    measure = load_measure()
     try:
-        # security-scan: allow shell-string -- VCS_SCRIPT is a literal of this file; it runs in the case folder, contained, with no network
-        r = run_group(["bash", "-c", VCS_SCRIPT], VCS_TIMEOUT, cwd=case_dir, env=env, box=box)
+        # security-scan: allow shell-string -- VCS_SCRIPT is a literal of evals/measure.py; it runs in the case folder, contained, with no network
+        r = run_group(["bash", "-c", measure.VCS_SCRIPT], VCS_TIMEOUT, cwd=case_dir, env=env, box=box)
     except subprocess.TimeoutExpired:
         return f"(not read: the commands did not end within {VCS_TIMEOUT}s)"
-    text = (r.stdout or "").strip() or "(no output)"
-    if len(text) > VCS_LIMIT:
-        text = text[:VCS_LIMIT] + f"\n[... cut at {VCS_LIMIT} characters ...]"
-    return text
-
-
-def facts_block(delta, vcs):
-    """The facts the grader is given: what the harness measured, never what the model said."""
-    listing = lambda paths: "\n".join(f"- {p.replace(os.sep, '/')}" for p in paths) or "- (none)"
-    return (f"created:\n{listing(delta['created'])}\n"
-            f"modified:\n{listing(delta['modified'])}\n"
-            f"deleted:\n{listing(delta['deleted'])}\n"
-            f"unchanged inputs:\n{listing(delta['unchanged'])}\n"
-            "version control (commands the harness ran in the case folder after the run):\n"
-            f"{vcs if vcs is not None else '(not read)'}")
+    return measure.cut_vcs(r.stdout)
 
 
 def read_text(path, limit=4000):
@@ -1792,104 +1832,16 @@ def read_text(path, limit=4000):
         return ""
 
 
-# The grader sees each produced file up to this many characters. Plans and reports run to several
-# thousand; at 3,000 an early run graded the end of a plan as missing, and at 20,000 an assertion about
-# every source of a long research artifact failed as unproven.
-FILE_LIMIT = 60000
-
-
-def binary_stub(path):
-    """What the grader is told about a file that is not text: its kind, its size and, for a PNG, its
-    dimensions. None when the file reads as text. Bytes pasted as text told the grader nothing, and a
-    few images made the grading prompt too long to pass to a harness."""
-    try:
-        with open(path, "rb") as f:
-            head = f.read(4096)
-        size = os.path.getsize(path)
-    except OSError:
-        return None
-    if head.startswith(b"\x89PNG\r\n\x1a\n") and len(head) >= 24:
-        width, height = int.from_bytes(head[16:20], "big"), int.from_bytes(head[20:24], "big")
-        return f"[binary file: PNG image, {width}x{height} pixels, {size} bytes; its content is not shown]"
-    kinds = ((b"\xff\xd8\xff", "JPEG image"), (b"GIF8", "GIF image"), (b"%PDF", "PDF document"), (b"PK\x03\x04", "zip archive"))
-    for magic, kind in kinds:
-        if head.startswith(magic):
-            return f"[binary file: {kind}, {size} bytes; its content is not shown]"
-    if b"\0" in head:
-        return f"[binary file, {size} bytes; its content is not shown]"
-    return None
-
-
 def shown_in(cwd, rel):
     """What the grader is told about the path rel of a case folder: its content, or one line when the host does
     not read it (readable())."""
-    return shown(os.path.join(cwd, rel)) if readable(cwd, rel) else NOT_SHOWN
-
-
-def shown(path):
-    stub = binary_stub(path)
-    if stub:
-        return stub
-    text = read_text(path, FILE_LIMIT + 1)
-    if len(text) > FILE_LIMIT:
-        return text[:FILE_LIMIT] + f"\n[... truncated at {FILE_LIMIT} characters: the file continues ...]"
-    return text
-
-
-def assertion_text(assertion):
-    """The text of an assertion of evals.json: the assertion itself, or the "text" of one written as an object
-    with tags. None when it is neither. The tags (guard, format) are for the status and the validator: the
-    grader is given the text and never the tags."""
-    if isinstance(assertion, str):
-        return assertion
-    if isinstance(assertion, dict) and isinstance(assertion.get("text"), str):
-        return assertion["text"]
-    return None
+    return load_measure().shown(os.path.join(cwd, rel)) if readable(cwd, rel) else load_measure().NOT_SHOWN
 
 
 def template_hash():
     """sha256 of the grading template: the instrument a grading was made with."""
     with open(GRADING_TEMPLATE, "rb") as f:
         return hashlib.sha256(f.read()).hexdigest()
-
-
-def grading_prompt(tpl, case, response, facts="(none)", files_blob="(none)", inputs_blob="(none)"):
-    """Fill the grading template in one pass, fencing what the model wrote or left with a marker it cannot predict.
-
-    One pass: a response that contains "{files}" or "{assertions}" stays text instead of being replaced.
-    The assertions are given as their text, numbered in the case's order; their tags are never shown.
-    """
-    marker = secrets.token_hex(8)
-    while any(marker in text for text in (response, facts, files_blob, inputs_blob)):
-        marker = secrets.token_hex(8)
-    values = {"prompt": case["prompt"], "response": response, "facts": facts, "files": files_blob, "inputs": inputs_blob,
-              "marker": marker,
-              "assertions": "\n".join(f"{i + 1}. {assertion_text(a)}" for i, a in enumerate(case.get("assertions") or []))}
-    return re.sub(r"\{(prompt|response|facts|files|inputs|assertions|marker)\}", lambda m: values[m.group(1)], tpl)
-
-
-GRADING_RETRIES = 2  # a refused or unparsable grading is made again up to this many times
-
-
-def read_grading(raw, count):
-    """The grader's verdicts, read by position: (results, None), or (None, why the answer is refused).
-
-    Refused: no JSON array, an array whose length is not the number of assertions (one grading of the first
-    round returned 6 results for 5 assertions and was scored over 6), an item that is not an object with a
-    true or false "passed". The assertion's text is not asked for and not read."""
-    m = re.search(r"\[\s*\{.*\}\s*\]", raw, re.S)
-    if not m:
-        return None, "no JSON array in the answer"
-    try:
-        items = json.loads(m.group(0))
-    except ValueError as e:
-        return None, f"the array is not valid JSON ({e})"
-    if not isinstance(items, list) or len(items) != count:
-        return None, f"{len(items) if isinstance(items, list) else 'no'} results for {count} assertions"
-    if not all(isinstance(item, dict) and isinstance(item.get("passed"), bool) for item in items):
-        return None, "a result is not an object with \"passed\": true or false"
-    return [{"id": i + 1, "passed": item["passed"], "evidence": str(item.get("evidence", ""))}
-            for i, item in enumerate(items)], None
 
 
 def grading_call(runner, grader, prompt, dest, count, pass_env=(), timeout=900, account=None, redact=()):
@@ -1903,7 +1855,7 @@ def grading_call(runner, grader, prompt, dest, count, pass_env=(), timeout=900, 
     before the text leaves for the grader's provider) and in what the grading call left.
     Returns (results or None, refused attempts, why the last one was refused, pauses)."""
     refused, why, pauses = 0, None, 0
-    prompt, _ = replace_values(prompt, redact)
+    prompt, _ = load_measure().replace_values(prompt, redact)
     while True:
         if account:
             wait_while_paused(account["key"], account["probe"])
@@ -1918,7 +1870,7 @@ def grading_call(runner, grader, prompt, dest, count, pass_env=(), timeout=900, 
                                 env=contained_env(root, pass_env), timeout=timeout, start_dir=root, no_tools=True,
                                 box={"root": root, "runner": runner, "pass": pass_env, "network": "proxy"})
             finally:
-                redact_folder(os.path.join(root, "out"), list(redact) + redaction_values(pass_env))
+                redact_folder(os.path.join(root, "out"), list(redact) + load_measure().redaction_values(pass_env))
                 return_run(root)
         if not ok and account and account_limit(os.path.join(dest, "out"), account["markers"]):
             pauses += 1
@@ -1928,7 +1880,7 @@ def grading_call(runner, grader, prompt, dest, count, pass_env=(), timeout=900, 
                 return None, refused, "stopped during a pause on the account limit", pauses
             continue
         if ok:
-            results, why = read_grading(read_text(os.path.join(dest, "out", "response.md"), 400000), count)
+            results, why = load_measure().read_grading(read_text(os.path.join(dest, "out", "response.md"), 400000), count)
             if results is not None:
                 return results, refused, None, pauses
         else:
@@ -1938,37 +1890,47 @@ def grading_call(runner, grader, prompt, dest, count, pass_env=(), timeout=900, 
         if os.path.isdir(kept):
             shutil.rmtree(kept)
         shutil.move(dest, kept)
-        if refused > GRADING_RETRIES or STOPPING.is_set():
+        if refused > load_measure().GRADING_RETRIES or STOPPING.is_set():
             return None, refused, why, pauses
 
 
-def grading_summary(results):
-    passed = sum(1 for r in results if r["passed"])
-    return {"passed": passed, "failed": len(results) - passed, "total": len(results),
-            "pass_rate": (passed / len(results)) if results else 0.0}
-
-
 def grade(runner, grader, run_dir, case, response, delta, inputs=None, vcs=None, pass_env=(), timeout=900, account=None,
-          redact=()):
+          redact=(), guards=False):
     """Grade one run. delta is changes() of its case folder, inputs the case's "grader_files" as the run found
     them ({path: what the grader is shown}), vcs the text of version_control().
     Returns {"assertion_results", "summary", "refused"}, or {"refused", "reason"} with no results when every
-    attempt was refused."""
+    attempt was refused.
+    guards=True (a with-skill run): when the grading fails a guard assertion, the same prompt is graded once
+    more (<run folder>/grading-guard/), and "guard_failed" lists the guard positions the second grading failed
+    too; "assertion_results" and the summary stay the first grading's, so the second raises no mean. A second
+    grading refused on every attempt leaves the run with no grading, like a first one."""
     with open(GRADING_TEMPLATE, encoding="utf-8") as f:
         tpl = f.read()
     cwd = os.path.join(run_dir, "cwd")
     produced = sorted(delta["created"] + delta["modified"])
     files_blob = "\n".join(f"### {p}\n{shown_in(cwd, p)}" for p in produced) or "(none)"
     inputs_blob = "\n".join(f"### {p}\n{text}" for p, text in (inputs or {}).items()) or "(none)"
-    facts = facts_block(delta, vcs)
+    facts = load_measure().facts_block(delta, vcs)
     with open(os.path.join(run_dir, "facts.md"), "w", encoding="utf-8") as f:
         f.write(facts + "\n")
-    prompt = grading_prompt(tpl, case, response, facts, files_blob, inputs_blob)
+    prompt = load_measure().grading_prompt(tpl, case, response, facts, files_blob, inputs_blob)
     results, refused, why, pauses = grading_call(runner, grader, prompt, os.path.join(run_dir, "grading"),
                                                  len(case.get("assertions") or []), pass_env, timeout, account, redact)
     if results is None:
         return {"refused": refused, "reason": why, "pauses": pauses}
-    return {"assertion_results": results, "summary": grading_summary(results), "refused": refused, "pauses": pauses}
+    measure = load_measure()
+    out = {"assertion_results": results, "summary": measure.grading_summary(results), "refused": refused, "pauses": pauses}
+    failed = measure.failed_guards(case, results) if guards else []
+    if failed:
+        second, refused2, why2, pauses2 = grading_call(runner, grader, prompt, os.path.join(run_dir, "grading-guard"),
+                                                       len(case.get("assertions") or []), pass_env, timeout, account, redact)
+        out["refused"], out["pauses"] = refused + refused2, pauses + pauses2
+        if second is None:
+            return {"refused": refused + refused2, "reason": f"the second grading of failed guard verdict(s) {failed}: {why2}",
+                    "pauses": pauses + pauses2}
+        out["guard_regrade"] = {"failed": failed, "assertion_results": second}
+        out["guard_failed"] = measure.confirmed_guards(failed, second)
+    return out
 
 
 def regrade(o):
@@ -2010,13 +1972,13 @@ def regrade(o):
                 k += 1
         dest = os.path.join(run_dir, f"regrade-{k}", "grading")
         results, refused, why, _ = grading_call(runner, o["grader"], prompt, dest, len(old), pass_env, o["timeout"],
-                                                redact=redaction_values(pass_env))
+                                                redact=load_measure().redaction_values(pass_env))
         row = {"run": os.path.relpath(run_dir, base), "verdicts": len(old), "refused": refused}
         if results is None:
             return {**row, "failed": why}
         new = [r["passed"] for r in results]
         with open(os.path.join(run_dir, f"regrade-{k}", "grading.json"), "w", encoding="utf-8") as f:
-            json.dump({"grader": o["grader"], "assertion_results": results, "summary": grading_summary(results)}, f, indent=2)
+            json.dump({"grader": o["grader"], "assertion_results": results, "summary": load_measure().grading_summary(results)}, f, indent=2)
         return {**row, "differ": [i + 1 for i, (a, b) in enumerate(zip(old, new)) if a != b],
                 "failed_verdicts": [i + 1 for i, a in enumerate(old) if not a],
                 "failed_differ": [i + 1 for i, (a, b) in enumerate(zip(old, new)) if not a and b]}
@@ -2100,7 +2062,7 @@ def routing(o):
             break
         except FileExistsError:
             k += 1
-    values = redaction_values(pass_env)
+    values = load_measure().redaction_values(pass_env)
 
     def one(index, item):
         run_dir = os.path.join(folder, f"prompt-{index}")
@@ -2167,25 +2129,39 @@ def routing(o):
 
 
 def check_cases_only(o):
-    """--check-cases: the preflight alone. Prints {"skill", "cases", "errors", "unchecked"}; exit 2 on errors."""
+    """--check-cases: the preflight alone, on evals/evals.json and on every platform's case file of the skill
+    (with --platform, on that platform's file only). Prints {"skill", "cases", "errors", "unchecked"[,
+    "platforms"][, "warnings"]}: the problems of a platform's file start with platforms/<name>.json. Exit 2 on
+    errors. --cases filters the file the command names (evals/evals.json, or the --platform file)."""
     skill_dir = os.path.join(ROOT, "skills", o["skill"])
-    cases = load_evals(o["skill"]).get("evals") or []
-    if o["cases"]:
-        cases = [c for c in cases if str(c.get("id")) in o["cases"]]
-    if not cases:
-        die("no matching eval cases.")
-    refuse_allow_commands(load_evals(o["skill"]), cases)
-    # A case's setup commands run only in the eval container, which a real run starts; this static check
-    # needs no container, so such a case is listed as unchecked here and checked before the first model call.
-    warnings = []
-    errors, unchecked = preflight(skill_dir, cases, {c["id"]: case_files(skill_dir, c) for c in cases}, setup=o["with_setup"],
-                                  gate=load_status().load_gate(ROOT), warnings=warnings)
+    gate = load_status().load_gate(ROOT)
+    files = [o["platform"]] if o["platform"] else [None] + platform_case_names(o["skill"])
+    errors, unchecked, warnings, total = [], [], [], 0
+    for platform in files:
+        data = load_evals(o["skill"], platform)
+        cases = data.get("evals") or []
+        if platform == files[0] and o["cases"]:
+            cases = [c for c in cases if str(c.get("id")) in o["cases"]]
+        if not cases and platform == files[0]:
+            die("no matching eval cases.")
+        refuse_allow_commands(data, cases)
+        label = f"platforms/{platform}.json " if platform else ""
+        # A case's setup commands run only in the eval container, which a real run starts; this static check
+        # needs no container, so such a case is listed as unchecked here and checked before the first model call.
+        found = []
+        errs, uncheck = preflight(skill_dir, cases, {c["id"]: case_files(skill_dir, c) for c in cases}, setup=o["with_setup"],
+                                  gate=gate, warnings=found, platform=platform)
+        errors += [label + line for line in (platform_problems(platform) if platform else []) + errs]
+        unchecked += [label + line for line in uncheck]
+        warnings += [label + line for line in found]
+        total += len(cases)
     for line in errors:
         print(f"PREFLIGHT {o['skill']} {line}", file=sys.stderr)
     for line in warnings:
         print(f"PREFLIGHT WARNING {o['skill']} {line} (a real run refuses it)", file=sys.stderr)
-    print(json.dumps({"skill": o["skill"], "cases": len(cases), "errors": errors, "unchecked": unchecked,
-                      **({"warnings": warnings} if warnings else {})}, indent=2))
+    platforms = [p for p in files if p]
+    print(json.dumps({"skill": o["skill"], "cases": total, "errors": errors, "unchecked": unchecked,
+                      **({"platforms": platforms} if platforms else {}), **({"warnings": warnings} if warnings else {})}, indent=2))
     return 2 if errors else 0
 
 
@@ -2304,6 +2280,13 @@ def pause_path(key):
     return os.path.join(lock_dir(), "pause-" + re.sub(r"[^A-Za-z0-9_.-]", "_", key) + ".json")
 
 
+# The clock and the wait of a pause. Every look at a pause reads the time through PAUSE_CLOCK and waits through
+# PAUSE_SLEEP, so that a test drives a pause step by step, with no real waiting and no dependence on the time
+# of day.
+PAUSE_CLOCK = time.time
+PAUSE_SLEEP = time.sleep
+
+
 def read_pause(path):
     try:
         with open(path, encoding="utf-8") as f:
@@ -2320,6 +2303,18 @@ def write_pause(path, state):
     os.replace(tmp, path)
 
 
+def last_probe(path, state):
+    """When the paused account was last tried: the newest of the pause's start and the time in its probe file.
+    The probe time lives in a file of its own (<pause file>.probed), so that a process that records a probe
+    never rewrites the pause file: the time an operator gives with --unpause --at cannot be lost under it."""
+    try:
+        with open(path + ".probed", encoding="utf-8") as f:
+            probed = float(f.read().strip() or 0)
+    except (OSError, ValueError):
+        probed = 0
+    return max(state.get("since") or 0, probed)
+
+
 def clock(ts):
     return datetime.datetime.fromtimestamp(ts).astimezone().isoformat(timespec="seconds")
 
@@ -2333,9 +2328,9 @@ def start_pause(key, what):
         fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
     except FileExistsError:
         return False
-    now = time.time()
+    now = PAUSE_CLOCK()
     with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump({"key": key, "since": now, "probed": now, "until": None, "what": what}, f)
+        json.dump({"key": key, "since": now, "until": None, "what": what}, f)
     print(f"PAUSED {clock(now)}: the account of {key} is exhausted ({what}). Every run and grading on it waits; "
           f"nothing is retried into the limit. It resumes when a probe call succeeds (one every {PROBE_SECONDS}s) or at "
           "the time given with: python3 evals/eval_run.py --unpause [--at <HH:MM or YYYY-MM-DDTHH:MM>]", file=sys.stderr)
@@ -2345,14 +2340,15 @@ def start_pause(key, what):
 def wait_while_paused(key, probe=None):
     """Block while the account `key` is paused. It ends at the time the operator gave (--unpause --at), when
     the operator removed the pause (--unpause), or when a probe call succeeds: probe() makes one small model
-    call, by one process at a time, at most once every PROBE_SECONDS. Returns True when it waited."""
+    call, by one process at a time, at most once every PROBE_SECONDS, and never once a time is given. Returns
+    True when it waited. Only start_pause and --unpause write the pause file; a probe writes its own file."""
     import fcntl
     path, waited = pause_path(key), False
     while os.path.exists(path):
         if STOPPING.is_set():
             raise RuntimeError("stopping: no new run is started")
         waited = True
-        state, now = read_pause(path), time.time()
+        state, now = read_pause(path), PAUSE_CLOCK()
         until = state.get("until")
         if isinstance(until, (int, float)):
             if now >= until:
@@ -2362,7 +2358,7 @@ def wait_while_paused(key, probe=None):
                     pass
                 print(f"RESUMED {clock(now)}: the time given for the account of {key} has come", file=sys.stderr)
                 break
-        elif probe and now - (state.get("probed") or 0) >= PROBE_SECONDS:
+        elif probe and now - last_probe(path, state) >= PROBE_SECONDS:
             fd = os.open(path + ".probe", os.O_CREAT | os.O_RDWR, 0o600)
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -2371,18 +2367,19 @@ def wait_while_paused(key, probe=None):
             else:
                 try:
                     state = read_pause(path)
-                    if state and not state.get("until") and time.time() - (state.get("probed") or 0) >= PROBE_SECONDS:
-                        write_pause(path, {**state, "probed": time.time()})
+                    if state and not state.get("until") and PAUSE_CLOCK() - last_probe(path, state) >= PROBE_SECONDS:
+                        with open(path + ".probed", "w", encoding="utf-8") as f:
+                            f.write(repr(PAUSE_CLOCK()))
                         if probe():
                             try:
                                 os.remove(path)
                             except OSError:
                                 pass
-                            print(f"RESUMED {clock(time.time())}: a probe call on the account of {key} succeeded", file=sys.stderr)
+                            print(f"RESUMED {clock(PAUSE_CLOCK())}: a probe call on the account of {key} succeeded", file=sys.stderr)
                             break
                 finally:
                     os.close(fd)
-        time.sleep(PAUSE_POLL)
+        PAUSE_SLEEP(PAUSE_POLL)
     return waited
 
 
@@ -2451,16 +2448,16 @@ def exact_mean(rows):
 def conditions_of(means, threshold, tolerance, floor=True):
     """The conditions an event reports, from the unrounded mean of each variant ({name: mean or None}): a mean
     of 0.7996 is below a threshold of 0.8, though it is shown as 0.8. Rounded values are for display only."""
-    mean = lambda name: means.get(name)
+    mean, measure = (lambda name: means.get(name)), load_measure()
     conditions = {}
     if mean("with_skill") is not None and mean("without_skill") is not None:
         conditions["strong_delta"] = round(mean("with_skill") - mean("without_skill"), 3)
-        conditions["strong_delta_ok"] = mean("with_skill") >= mean("without_skill") - tolerance
+        conditions["strong_delta_ok"] = measure.within_tolerance(mean("with_skill"), mean("without_skill"), tolerance)
         conditions["strong_pass_rate"] = round(mean("with_skill"), 3)
-        conditions["strong_ok"] = mean("with_skill") >= threshold
+        conditions["strong_ok"] = measure.at_threshold(mean("with_skill"), threshold)
     if floor and mean("with_skill.floor") is not None:
         conditions["floor_pass_rate"] = round(mean("with_skill.floor"), 3)
-        conditions["floor_ok"] = mean("with_skill.floor") >= threshold
+        conditions["floor_ok"] = measure.at_threshold(mean("with_skill.floor"), threshold)
     for tier_suffix in ("", ".floor"):
         if mean("with_skill" + tier_suffix) is not None and mean("ablated_skill" + tier_suffix) is not None:
             key = "ablation_delta" + ("_floor" if tier_suffix else "")
@@ -2644,7 +2641,7 @@ def run(argv):
     gate = status.load_gate(ROOT)
     control = status.event_config(gate)
     skill_dir = os.path.join(ROOT, "skills", o["skill"])
-    evals = load_evals(o["skill"])
+    evals = load_evals(o["skill"], o.get("platform"))
     cases = evals.get("evals") or []
     if o["cases"]:
         cases = [c for c in cases if str(c.get("id")) in o["cases"]]
@@ -2696,7 +2693,10 @@ def run(argv):
     settings = set() if o["dry"] else harness_settings()
     sources = {c["id"]: case_files(skill_dir, c) for c in cases}
     # Before anything is spent or written: a case that cites a file it does not ship measures nothing.
-    problems, unchecked = preflight(skill_dir, cases, sources, setup=not o["dry"], gate=gate) if resumed is None else ([], [])
+    problems, unchecked = (preflight(skill_dir, cases, sources, setup=not o["dry"], gate=gate, platform=o.get("platform"))
+                           if resumed is None else ([], []))
+    if o.get("platform") and resumed is None:
+        problems = platform_problems(o["platform"]) + problems
     for line in problems:
         print(f"PREFLIGHT {o['skill']} {line}", file=sys.stderr)
     if problems and not o["dry"]:
@@ -2728,7 +2728,9 @@ def run(argv):
     def baseline_tiers(case):
         """Where the case runs without the skill in this event: on the reference model when its baseline is not in
         force in a full test, or when --baseline asks; on another model only with --baseline-on (and --only
-        without, a trial, runs it on every model of the event)."""
+        without, a trial, runs it on every model of the event). A platform's cases run with the skill only."""
+        if o.get("platform"):
+            return []
         if o["only"]:
             return tier_names if o["only"] == "without" else []
         wanted = o["baseline"] or (not o["cases"] and in_force.get(str(case["id"]), 0) < o["runs"])
@@ -2759,9 +2761,10 @@ def run(argv):
     all_cases = evals.get("evals") or []
     hashes = {str(c["id"]): status.case_hash(skill_dir, c, evals.get("allow_web") is True) for c in cases}
     # An event is a full test when it runs every current case with the skill on the reference model, graded:
-    # `--skill <name>` without --cases. --cases makes a partial test, even of every case.
-    kind = ("full" if not o["cases"] and len(cases) == len(all_cases) and "with_skill" in with_variants
-            and "strong" in tier_names and o["grade"] else "partial")
+    # `--skill <name>` without --cases. --cases makes a partial test, even of every case; so does --platform, whose
+    # cases never enter the gate or the score.
+    kind = ("full" if not o["cases"] and not o.get("platform") and len(cases) == len(all_cases)
+            and "with_skill" in with_variants and "strong" in tier_names and o["grade"] else "partial")
     if resumed is None and not scratch:
         # No new event of a skill while one of its events that may write evidence is open.
         for other in sorted(glob.glob(os.path.join(ROOT, "evals-workspace", o["skill"], "iteration-*", "event.json"))):
@@ -2802,7 +2805,7 @@ def run(argv):
         references = []
         if with_skill:
             stage = load_stage()
-            rels = set(stage.cited_references(skill_dir, ROOT)) | set(stage.platform_references(case.get("platforms") or [], ROOT))
+            rels = set(stage.cited_references(skill_dir, ROOT)) | set(stage.platform_references(case_platforms(case, o.get("platform")), ROOT))
             references = [(rel, os.path.join(ROOT, "shared", "references", *rel.split("/"))) for rel in sorted(rels)]
         return status.context_hash(deps[case["id"]], references)
     contexts = {(c["id"], with_skill): context_of(c, with_skill) for c in cases for with_skill in (True, False)}
@@ -2816,7 +2819,7 @@ def run(argv):
         return o["pass_env"] + (web_env if web[case_id] and web_env else o["strong_pass_env"])
 
     grader_env = o["pass_env"] + o["strong_pass_env"]
-    all_values = redaction_values(names)  # of every tier: a grading prompt carries none of them
+    all_values = load_measure().redaction_values(names)  # of every tier: a grading prompt carries none of them
     grader_account = {"key": harness_for["strong"], "markers": eval_for["strong"]["account_limit"],
                       "probe": lambda: probe_call(runner, o["grader"], grader_env), "control": control}
 
@@ -2835,7 +2838,7 @@ def run(argv):
         entry = lambda row, failed, extra=(): {"case": c["id"], "variant": v, "tier": tier, "run": k, "pass": pass_no,
                                                "name": name, "row": row, "failed": failed, "msgs": msgs + list(extra), "count": count}
         tier_env = env_names(tier, c["id"])
-        values = redaction_values(tier_env)
+        values = load_measure().redaction_values(tier_env)
         account = {"key": harness_for[tier], "markers": eval_for[tier]["account_limit"],
                    "probe": lambda: probe_call(runner_for[tier], model, tier_env)}
 
@@ -2873,7 +2876,7 @@ def run(argv):
                     why = (f"the case folder holds {carried}: a fixture or setup must not carry harness settings"
                            if carried else None)
                     if not why:
-                        staged, _ = stage_run(case_dir, eval_for[tier], variant_dir, deps[c["id"]], c)
+                        staged, _ = stage_run(case_dir, eval_for[tier], variant_dir, deps[c["id"]], c, o.get("platform"))
                         pp = os.path.join(root, "prompt.md")
                         with open(pp, "w", encoding="utf-8") as f:
                             f.write(c["prompt"])
@@ -2895,7 +2898,7 @@ def run(argv):
                             delta = changes(case_dir, before, staged)
                             changed = delta["created"] + delta["modified"] + delta["deleted"]
                             if o["grade"]:  # commits, branches and pushes: read here, where the case folder still is
-                                vcs, hits = replace_values(version_control(case_dir, contained_env(root), box=quiet), values)
+                                vcs, hits = load_measure().replace_values(version_control(case_dir, contained_env(root), box=quiet), values)
                                 count["redactions"] += hits
                 finally:
                     # Also when the run failed or was stopped: what it left goes to the workspace without the values.
@@ -2926,7 +2929,7 @@ def run(argv):
                 if not why:
                     count["passage"] = shared_passage(skill_grams, read_text(os.path.join(out, "response.md"), 200000) + "\n"
                                                       + "\n".join(read_text(os.path.join(cwd, p), TEXT_LIMIT) for p in produced
-                                                                  if readable(cwd, p) and binary_stub(os.path.join(cwd, p)) is None),
+                                                                  if readable(cwd, p) and load_measure().binary_stub(os.path.join(cwd, p)) is None),
                                                       case_text)
             response = read_text(os.path.join(out, "response.md"), 200000)
             # What makes an attempt one to make again, with the skill and without it alike: a timeout, a refusal
@@ -2939,7 +2942,7 @@ def run(argv):
             elif why:
                 kind = "adapter"
             else:
-                detail = early_end(response, changed)
+                detail = load_measure().early_end(response, changed)
                 kind = "early_end" if detail else None
             if kind is None:
                 break
@@ -2980,8 +2983,9 @@ def run(argv):
             json.dump(timing, f)
         g, failed = None, None
         if o["grade"]:
+            # A with-skill run whose grading fails a guard assertion is graded once more (the model's section 4).
             g = grade(runner, o["grader"], run_dir, c, response, delta, inputs, vcs, grader_env, o["timeout"], grader_account,
-                      all_values)
+                      all_values, guards=v == "with_skill")
             count["grading_refused"] = g["refused"]
             count["pauses"] += g.get("pauses", 0)
             if "assertion_results" not in g:
@@ -2997,6 +3001,8 @@ def run(argv):
                **({"redactions": count["redactions"]} if count["redactions"] else {})}
         if g:  # one 0 or 1 per assertion, in the case's order: what a per-assertion count is made from
             row["results"] = [1 if r["passed"] else 0 for r in g["assertion_results"]]
+            if g.get("guard_failed"):  # the guard failures the second grading confirmed; the score is the first's
+                row["guard_failed"] = g["guard_failed"]
         row["date"] = today()  # the day of the run, UTC, from the clock
         return entry(row, failed)
 
@@ -3143,8 +3149,10 @@ def run(argv):
                           "date": row.get("date") or bench["date"], "measurement_version": measurement_version,
                           "measurement_sha256": fingerprint, "case": job[0]["id"], "case_sha256": hashes[str(job[0]["id"])],
                           **({"context_sha256": context} if context else {}),
+                          **({"platform": o["platform"]} if o.get("platform") else {}),
                           "variant": variant, "outcome": row.get("outcome", "graded"), "score": row["pass_rate"],
-                          "results": row["results"]})
+                          "results": row["results"],
+                          **({"guard_failed": row["guard_failed"]} if variant == "with" and row.get("guard_failed") else {})})
     line_counts = {}
     for tier, model in models:
         for variant_name, variant in (("with_skill", "with"), ("without_skill", "without")):
@@ -3184,7 +3192,7 @@ def run(argv):
             scores = lambda variant: [l["score"] for l in run_lines if l["variant"] == variant and l["model"] == model_ids["strong"]]
             with_mean = statistics.mean(scores("with"))
             base_mean = statistics.mean(scores("without")) if scores("without") else None
-            gate_result = {"passed": bool(with_mean >= o["threshold"] and (base_mean is None or with_mean >= base_mean - o["tolerance"])),
+            gate_result = {"passed": bool(load_measure().gate_passes(with_mean, base_mean, o["threshold"], o["tolerance"])),
                            "with": with_mean, "baseline": base_mean, "threshold": o["threshold"], "tolerance": o["tolerance"]}
         event_line["gate"] = gate_result
     evidence = {"written": False, "path": None, "scratch": None, "reason": scratch, "test": test, "kind": kind,

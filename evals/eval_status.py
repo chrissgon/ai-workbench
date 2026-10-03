@@ -7,6 +7,11 @@ Usage:
   python3 evals/eval_status.py evidence [--skill <name> | --file <path>]
   python3 evals/eval_status.py gate --skill <name>
   python3 evals/eval_status.py inventory --write | --check
+  python3 evals/eval_status.py measurement --kind grader|execution|infrastructure --cause "<why>"
+                               [--skills <name>,...|all] [--models <id>,...|all] [--date YYYY-MM-DD]
+  python3 evals/eval_status.py measurement --close --cause "<why>" [--date YYYY-MM-DD]
+  python3 evals/eval_status.py bump --skill <name> [--class x|y|z] [--date YYYY-MM-DD]
+  python3 evals/eval_status.py migrate-versions [--date YYYY-MM-DD]
 
 The records of the first round, skills/<name>/evals/result.json, are history: nothing writes one any more
 (the runner writes evidence, below), and the status of a skill is still read from them until the bands
@@ -58,6 +63,12 @@ as the history of the first round; the status below still reads them until the b
    "outcome": "graded"|"timeout", "score", "results": [0|1, ...][, "context_sha256"][, "platform"]
    [, "guard_failed": [positions]]}
 
+A run line with "platform" is a run of a case of that platform's case file, skills/<name>/evals/platforms/
+<platform>.json (eval_run.py --platform; the plan's decision 14c): it belongs to a partial test and to a run
+with the skill. Such lines never enter the gate or a score: `status` shows, per platform and model, their mean
+and their number of runs ("platforms" in a skill's row), counting the lines whose case is still in that file
+with the same hash, at or above the measurement floor, of the current major version.
+
 A model id in a line is an id of the gate file's "models" ({id: [aliases]}): an alias is written as its id,
 anything else as "unknown", so that one model never falls into two rows and a private model name never enters
 the repository. Without that key the known ids are the configured strong model, floor model and grader.
@@ -99,10 +110,12 @@ Status of a skill:
              or floor model than the configured ones, or the skill folder changed since
 
 Commands:
-  status     prints {"skills": [{"skill", "status", "date", "scores", "reason"}], "counts",
+  status     prints {"skills": [{"skill", "status", "date", "scores", "reason"[, "platforms": {platform: {model id:
+             {"mean", "runs"}}}]}], "counts",
              "gate": {"floor_model", "threshold", "strong_model", "grader", "strong_tolerance", "measurement_version"}}
              (the configured gate; null values without the file).
-  hash       prints the content hash of one skill, its version and the hash of each of its cases.
+  hash       prints the content hash of one skill, its version and the hash of each of its cases (and of each case of
+             its platforms' case files, "platform_cases").
   evidence   validates the evidence files: every skill's, one skill's (--skill) or one file (--file <path>,
              which may be in a run folder's scratch tree). Prints {"files", "problems": {path: [...]}};
              exit 1 when a file is not valid.
@@ -111,6 +124,44 @@ Commands:
              "pending", "note", "cause"}.
   inventory  regenerates the block between <!-- eval-status:begin --> and <!-- eval-status:end --> in
              docs/inventory.md (--write), or exits 1 when the block differs from what would be generated (--check).
+  measurement  commits a change of a file the measurement fingerprint covers as one of the three kinds of the
+             reliability model's section 8, and rewrites the gate file: --kind grader raises the measurement
+             version and the floor; --kind execution raises the version and appends an epoch dated --date (today,
+             UTC, by default) for the skills of --skills and the models of --models ("all" by default, the listed
+             ids otherwise; a hosted model that changed under its id is entered this way, with --models <its id>);
+             --kind infrastructure writes the new fingerprint alone, and refuses when it is unchanged. Each writes
+             the fingerprint this checkout computes. No kind multiplies old evidence by a factor. --close writes the
+             fingerprint of a measurement version that is still open, which closes it; a --kind change needs a
+             closed version. Prints {"kind", "measurement_version", "measurement_floor", "measurement_sha256",
+             "epoch", "decisions_entry"}: the entry is added to docs/decisions.md in the same commit.
+
+  bump       raises a skill's metadata.version by one step of the class of its change (the reliability model's
+             section 3): x, y or z raises that part of the version of the pull request's base (comparison_base:
+             WB_BASE_REF, else the merge base with the default branch) and resets the lower parts, writes it into
+             SKILL.md and appends one line to skills/<name>/evals/versions.jsonl: {"version", "content_sha256",
+             "class", "date"[, "z_chars"]}, z_chars being the characters a Z change counts. Idempotent: run again,
+             or with a higher class after more edits, it rewrites the one line this pull request adds. With no
+             class it writes the first line of a skill that has none in the base, with the version of its
+             frontmatter (X.Y.Z) and the hash of its content as it then is, class "new": run it again after the
+             last edit. Prints the line.
+  migrate-versions  writes the version file of every skill that has none: one line, the version read as X.Y.Z
+             (a two-part 0.N is 0.N.0), the current content hash, class "new". It edits no SKILL.md.
+
+The version rules the validator applies (scripts/validate.py, against the same base; version_findings): the
+content hash equals the hash of the version file's last line, and metadata.version is X.Y.Z and that line's
+version (a warning until the sweep that closes phase C, an error from it); the file is append-only, with at
+most one line added; the class of the added line agrees with the diff (change_class): X for a difference in
+side_effects, an item removed from outputs or updates, a changed line of the Confirmation gate or Stop rules
+section or of the external-content line; Z only for lines of SKILL.md in Purpose or before the first heading
+that change no number, path, code span or listed word, within 300 characters since the newest lab evidence;
+Y for the rest. A declared X is never refused. Without a base (a skill built in a case folder) the last two
+are skipped.
+
+The measurement fingerprint: sha256 over the files of FINGERPRINT_FILES (the grading template, the measuring
+module evals/measure.py and its constants evals/measurement.json, the executor, the staging module), every file
+of evals/container/, and the run-prompt.sh and adapter.json of each eval adapter. scripts/validate.py fails when
+it differs from a committed "measurement_sha256"; the runner computes it when an event starts, writes it into
+every evidence line and writes no evidence when it differs.
 
 The gate (the reliability model, section 2). Only a full test evaluates it, and the runner writes its result
 into the event line when the test ends; `gate` computes it again from the lines. It is computed over the run
@@ -157,7 +208,8 @@ GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "
 GATE_OPTIONAL = {"measurement_sha256": str,  # absent while a measurement version is open
                  # Control of a test event (event_config below): absent keys take the defaults of EVENT_DEFAULTS.
                  "runs": int, "timeout_seconds": int, "retries": int, "max_resumes": int, "total_jobs": int,
-                 "web_jobs": dict, "web_cases": dict, "strong_web_pass_env": list, "models": dict}
+                 "web_jobs": dict, "web_cases": dict, "strong_web_pass_env": list, "models": dict,
+                 "epochs": list}  # [{"date", "models", "skills", "cause"}]: the model's section 8
 # What an event uses when the gate file does not say: 3 runs per case (the plan's decision 1), 900 seconds per
 # run, 2 retries inside the event, 3 resumptions of one run before it is written as a timeout, 10 runs at a
 # time over every runner process of the machine, 2 runs on the open network at a time per tier.
@@ -238,6 +290,9 @@ def event_problems(cfg):
     if "strong_web_pass_env" in cfg and not (isinstance(names, list) and all(
             isinstance(v, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v) for v in names)):
         out.append("strong_web_pass_env must list variable names")
+    if "epochs" in cfg:
+        out += [f"epochs[{i}] {why}" for i, entry in enumerate(cfg["epochs"] if isinstance(cfg["epochs"], list) else [None])
+                for why in epoch_problems(entry)]
     models = cfg.get("models")
     if "models" in cfg:
         names = [n for k, v in models.items() for n in [k] + (v if isinstance(v, list) else [])] if isinstance(models, dict) else []
@@ -376,16 +431,26 @@ def case_hash(skill_dir, case, top_allow_web=False):
     return h.hexdigest()
 
 
-def case_hashes(skill_dir):
-    """{case id as text: hash} of the skill's current cases; {} when it has no readable case file."""
+def case_hashes(skill_dir, platform=None):
+    """{case id as text: hash} of the skill's current cases, those of evals/evals.json or, with platform, those of
+    that platform's case file (evals/platforms/<platform>.json); {} when there is no readable case file."""
+    rel = ("platforms", platform + ".json") if platform else ("evals.json",)
     try:
-        with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
+        with open(os.path.join(skill_dir, "evals", *rel), encoding="utf-8") as f:
             data = json.load(f)
     except (OSError, ValueError):
         return {}
     cases = data.get("evals") if isinstance(data, dict) else None
     return {str(c.get("id")): case_hash(skill_dir, c, data.get("allow_web") is True)
             for c in cases or [] if isinstance(c, dict)}
+
+
+def platform_names(skill_dir):
+    """The platforms that have a case file for the skill (evals/platforms/<platform>.json): the plan's decision 14c."""
+    folder = os.path.join(skill_dir, "evals", "platforms")
+    if not os.path.isdir(folder):
+        return []
+    return sorted(n[:-len(".json")] for n in os.listdir(folder) if n.endswith(".json") and NAME_RE.fullmatch(n[:-len(".json")]))
 
 
 def context_hash(dependency_dirs, references):
@@ -436,11 +501,30 @@ def model_id(cfg, name):
     return "unknown"
 
 
-# The files that decide what a run measures, as far as they exist today: the grading template, the image's
-# definition, the executor, the staging module, the eval adapters' run-prompt.sh and adapter.json. The plan's
-# item B10 completes the list (evals/measure.py, evals/measurement.json) and makes the validator compare the
-# result with the committed "measurement_sha256".
-FINGERPRINT_FILES = ("evals/grading-prompt.md", "evals/executor.py", "scripts/stage_skills.py")
+# The files that decide what a run measures (item B10 of the plan): the grading template, the measuring module
+# and its constants, the executor, the staging module; with them every file of the image's definition
+# (evals/container/) and the run-prompt.sh and adapter.json of each eval adapter (an adapter with a
+# run-prompt.sh). Not in it: scripts/redact.py and shared/references/ (FR-I4), the rest of the runner
+# (infrastructure), the gate file itself. scripts/validate.py compares the result with the committed
+# "measurement_sha256", and the runner refuses to write evidence when they differ.
+FINGERPRINT_FILES = ("evals/grading-prompt.md", "evals/measure.py", "evals/measurement.json", "evals/executor.py",
+                     "scripts/stage_skills.py")
+MEASURE_SCRIPT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "measure.py")
+
+
+def load_measure():
+    """evals/measure.py as a module, loaded on first use: the gate's comparison lives there. A command that
+    compares nothing (status, hash, evidence, inventory) runs without it."""
+    import importlib.util
+    name = "workbench_eval_measure"
+    if name not in sys.modules:
+        if not os.path.isfile(MEASURE_SCRIPT):
+            die("evals/measure.py is missing: run this script from a checkout of the workbench.")
+        spec = importlib.util.spec_from_file_location(name, MEASURE_SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        sys.modules[name] = module
+    return sys.modules[name]
 
 
 def measurement_fingerprint(root=ROOT):
@@ -460,6 +544,118 @@ def measurement_fingerprint(root=ROOT):
             data = f.read()
         h.update(os.path.relpath(path, root).replace(os.sep, "/").encode("utf-8") + b"\0" + str(len(data)).encode() + b"\0" + data)
     return h.hexdigest()
+
+
+def fingerprint_problem(root=ROOT):
+    """Why the committed measurement fingerprint is not the one of this checkout, or None when they agree or when
+    there is none to compare (no gate file, or a measurement version still open)."""
+    cfg = load_gate(root)
+    committed = cfg.get("measurement_sha256")
+    if not committed:
+        return None
+    current = measurement_fingerprint(root)
+    if current == committed:
+        return None
+    return (f"the measurement fingerprint of this checkout ({current[:12]}...) differs from the committed one "
+            f"({committed[:12]}...) in {GATE_REL}: a file that decides what a run measures changed. Commit the change "
+            "as one of the three kinds of the reliability model's section 8: python3 evals/eval_status.py measurement "
+            "--kind grader|execution|infrastructure --cause \"<why>\"")
+
+
+MEASUREMENT_KINDS = ("grader", "execution", "infrastructure")
+KIND_TEXT = {
+    "grader": "grader side: what the grader is shown, the grading rules or the scoring changed. The measurement "
+              "version and the floor are raised: every lab line below the floor weighs nothing, and every skill needs "
+              "a full test",
+    "execution": "execution side: the image, an adapter, the runner's prompt or tools, the executor, the staging, or a "
+                 "hosted model under its id changed. The measurement version is raised and an epoch is entered: for "
+                 "the skills and models it reaches, earlier lab lines are inherited evidence and the baselines expire",
+    "infrastructure": "infrastructure: locks, resumption, retries, pacing or reports changed in a file the "
+                      "fingerprint covers. No version is raised; the new fingerprint is committed with the reason",
+}
+
+
+def format_gate(cfg):
+    """The gate file's text: two spaces of indentation, a list of plain values on one line, an object or a list of
+    objects over several lines."""
+    def value(v, indent):
+        pad = " " * indent
+        if isinstance(v, dict) and v:
+            return "{\n" + ",\n".join(f"{pad}  {json.dumps(k)}: {value(x, indent + 2)}" for k, x in v.items()) + "\n" + pad + "}"
+        if isinstance(v, list) and any(isinstance(x, (dict, list)) for x in v):
+            return "[\n" + ",\n".join(f"{pad}  {value(x, indent + 2)}" for x in v) + "\n" + pad + "]"
+        return json.dumps(v, ensure_ascii=False)
+    return value(cfg, 0) + "\n"
+
+
+def measurement_change(root, kind=None, cause=None, skills="all", models="all", date=None, close=False):
+    """Commit a change of a file the fingerprint covers as one of the three kinds of the model's section 8, or
+    (close=True) close an open measurement version by writing its fingerprint. Returns (the new gate
+    configuration, what to print). Raises ValueError with the reason when it cannot."""
+    path = os.path.join(root, GATE_REL)
+    if not os.path.isfile(path):
+        raise ValueError(f"{GATE_REL} does not exist")
+    problems = gate_problems(root)
+    if problems:
+        raise ValueError(f"{GATE_REL} is not valid: {'; '.join(problems)}")
+    with open(path, encoding="utf-8") as f:
+        cfg = json.load(f)
+    date = date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    if not _date(date):
+        raise ValueError("--date must be YYYY-MM-DD")
+    if not (isinstance(cause, str) and cause.strip() and "\n" not in cause):
+        raise ValueError("--cause takes one line that says what changed and why")
+    current, old = measurement_fingerprint(root), cfg["measurement_version"]
+    new = dict(cfg)
+    if close:
+        if cfg.get("measurement_sha256"):
+            raise ValueError(f"measurement version {old} is closed already: a later change is committed with --kind")
+        new["measurement_sha256"] = current
+        title = f"measurement version {old} closed"
+        lines = [f"- Measurement version {old}, floor {cfg['measurement_floor']}: nothing measured while it was open is evidence; "
+                 "from this commit on the runner writes evidence under it."]
+        epoch = None
+    else:
+        if kind not in MEASUREMENT_KINDS:
+            raise ValueError("--kind is grader, execution or infrastructure")
+        if not cfg.get("measurement_sha256"):
+            raise ValueError(f"measurement version {old} is open (no measurement_sha256): a change made while it is open "
+                             "belongs to it. Close it with --close when its last change is in")
+        if kind == "infrastructure" and current == cfg["measurement_sha256"]:
+            raise ValueError("the fingerprint is unchanged: no file that decides what a run measures changed")
+        epoch = None
+        if kind == "grader":
+            new.update(measurement_version=old + 1, measurement_floor=old + 1)
+        elif kind == "execution":
+            names = skill_names(root)
+            if skills != "all":
+                unknown = [s for s in skills if s not in names]
+                if unknown or not skills:
+                    raise ValueError(f"--skills names no skill of this tree: {', '.join(unknown) or '(none)'}")
+            if models != "all":
+                ids = [model_id(cfg, m) for m in models]
+                if not models or "unknown" in ids:
+                    raise ValueError("--models names a model the gate file does not list (models)")
+                models = sorted(set(ids))
+            epoch = {"date": date, "models": models, "skills": sorted(set(skills)) if skills != "all" else "all", "cause": cause}
+            new.update(measurement_version=old + 1, epochs=list(cfg.get("epochs") or []) + [epoch])
+        new["measurement_sha256"] = current
+        title = f"measurement change, {kind}" + (f" (measurement version {old} to {new['measurement_version']})"
+                                                  if new["measurement_version"] != old else "")
+        lines = [f"- Kind: {KIND_TEXT[kind]}."]
+        if kind == "grader":
+            lines.append(f"- Measurement version and floor: {new['measurement_version']}.")
+        if epoch:
+            lines.append(f"- Epoch {epoch['date']}: skills {epoch['skills'] if epoch['skills'] == 'all' else ', '.join(epoch['skills'])}; "
+                         f"models {epoch['models'] if epoch['models'] == 'all' else ', '.join(epoch['models'])}.")
+    lines += [f"- Fingerprint: `{current}`.",
+              "- Written by `python3 evals/eval_status.py measurement "
+              + ("--close" if close else f"--kind {kind}") + "`."]
+    entry = f"## {date}: {title}\n\n{cause.strip()}\n\n" + "\n".join(lines) + "\n"
+    out = {"kind": "close" if close else kind, "measurement_version": new["measurement_version"],
+           "measurement_floor": new["measurement_floor"], "measurement_sha256": current, "epoch": epoch,
+           "decisions_entry": entry}
+    return new, out
 
 
 def new_test_id(now=None):
@@ -656,6 +852,8 @@ def run_line_problems(line, event=None, models=None):
         out.append("a timeout has score 0 and results all 0")
     if "platform" in line and not _is(NAME_RE, line["platform"]):
         bad("platform", "a platform name")
+    elif "platform" in line and (line["kind"] != "partial" or line["variant"] != "with"):
+        out.append("a line of a platform's case runs in a partial test, with the skill only")
     if "guard_failed" in line:
         failed = line["guard_failed"]
         if not (isinstance(failed, list) and failed and all(_count(v, 1) for v in failed) and len(set(failed)) == len(failed)
@@ -765,6 +963,47 @@ def skill_evidence(skill_dir):
     return found
 
 
+def base_lines(runs):
+    """The run lines of the cases of evals/evals.json: a line of a platform's case ("platform") enters neither the
+    gate nor the score (the plan's decision 14c)."""
+    return [line for line in runs if "platform" not in line]
+
+
+def platform_results(skill_dir, cfg, events=None):
+    """{platform: {model id: {"mean", "runs"}}} of the lines of the platforms' cases with the skill: a mean and a
+    number of runs, never a score (decision 14c). A line counts when its case is still in that platform's case
+    file with the same hash, its measurement version is at or above the floor and its major version is the
+    skill's current one."""
+    floor, version = cfg.get("measurement_floor", 1), skill_version(skill_dir)
+    major = version.split(".")[0] if version else None
+    hashes = {name: case_hashes(skill_dir, name) for name in platform_names(skill_dir)}
+    scores = {}
+    for _, runs in skill_evidence(skill_dir) if events is None else events:
+        for line in runs:
+            name = line.get("platform")
+            if (name is None or line["variant"] != "with" or hashes.get(name, {}).get(str(line["case"])) != line["case_sha256"]
+                    or line["measurement_version"] < floor or str(line["version"]).split(".")[0] != major):
+                continue
+            scores.setdefault(name, {}).setdefault(line["model"], []).append(line["score"])
+    return {name: {model: {"mean": sum(v) / len(v), "runs": len(v)} for model, v in sorted(by.items())}
+            for name, by in sorted(scores.items())}
+
+
+def epoch_problems(entry):
+    """Why one entry of the gate file's "epochs" is outside its form: {"date": YYYY-MM-DD, "models": "all" or a
+    list of model ids, "skills": "all" or a list of skill names, "cause": a sentence}."""
+    if not isinstance(entry, dict) or set(entry) != {"date", "models", "skills", "cause"}:
+        return ["must be {\"date\", \"models\", \"skills\", \"cause\"}"]
+    out = [] if _date(entry["date"]) else ["date must be YYYY-MM-DD"]
+    for key, pattern in (("models", MODEL_RE), ("skills", NAME_RE)):
+        value = entry[key]
+        if not (value == "all" or (isinstance(value, list) and value and all(_is(pattern, v) for v in value))):
+            out.append(f"{key} must be \"all\" or a list of names")
+    if not (isinstance(entry["cause"], str) and entry["cause"].strip() and "\n" not in entry["cause"]):
+        out.append("cause must be one line of text")
+    return out
+
+
 def epochs(cfg):
     """The epochs of a gate configuration: [{"date", "models", "skills", "cause"}]; models and skills are lists or
     "all". The key is optional: without it there is none."""
@@ -793,7 +1032,7 @@ def baseline_lines(skill_dir, cfg, events=None):
     current, ref, floor = case_hashes(skill_dir), reference_model(cfg), cfg.get("measurement_floor", 1)
     found = {}
     for _, runs in skill_evidence(skill_dir) if events is None else events:
-        for line in runs:
+        for line in base_lines(runs):
             cid = str(line["case"])
             if (line["variant"] == "without" and (ref is None or line["model"] == ref) and current.get(cid) == line["case_sha256"]
                     and line["measurement_version"] >= floor and not epoch_after(cfg, skill, line["model"], line["date"])):
@@ -805,7 +1044,7 @@ def gate_of(skill_dir, cfg, extra=()):
     """The gate of a skill from its lab evidence and the events in extra (the event the runner is ending, whose
     file is not in the skill yet), by the rule of the model's section 2 (see the module's help)."""
     skill = os.path.basename(os.path.normpath(skill_dir))
-    events = sorted(skill_evidence(skill_dir) + list(extra), key=lambda e: e[0]["test"])
+    events = sorted(((e, base_lines(runs)) for e, runs in skill_evidence(skill_dir) + list(extra)), key=lambda e: e[0]["test"])
     current, version = case_hashes(skill_dir), skill_version(skill_dir)
     ref, floor = reference_model(cfg), cfg.get("measurement_floor", 1)
     threshold, tolerance = cfg.get("threshold", 0.8), cfg.get("strong_tolerance", 0)
@@ -857,12 +1096,402 @@ def gate_of(skill_dir, cfg, extra=()):
     with_mean = sum(l["score"] for l in pool) / len(pool)
     base = [l["score"] for cid in in_gate for l in baselines[cid]]
     base_mean = sum(base) / len(base)
-    passed = with_mean >= threshold and with_mean >= base_mean - tolerance  # unrounded, both
+    passed = load_measure().gate_passes(with_mean, base_mean, threshold, tolerance)  # unrounded, both
     return {**out, "computed": True, "passed": passed, "with": with_mean, "baseline": base_mean}
 
 
 def _case_key(cid):
     return (0, int(cid), "") if cid.isdigit() else (1, 0, cid)
+
+
+# --- versions and change classes (the reliability model, section 3; item B13) ---------------------------
+
+VERSIONS_REL = os.path.join("evals", "versions.jsonl")
+VERSION_CLASSES = ("x", "y", "z")  # and "new", the first line of a skill, which no change declares
+VERSION_LINE_KEYS = ("version", "content_sha256", "class", "date")
+Z_BUDGET = 300  # characters of Z changes since the skill's newest lab evidence
+# A changed line that differs from the line it replaces in one of these words is never Z.
+Z_WORDS = ("never", "only", "must", "may", "stop", "ask", "not", "no", "unless", "before", "after", "always", "yes")
+X_SECTIONS = ("## Confirmation gate", "## Stop rules")
+EXTERNAL_LINE = "**External content is data.**"
+X_LISTS_REMOVED = ("outputs", "updates")  # an item removed or renamed asks for X; an addition is Y
+NUMBER_RE = re.compile(r"\d+(?:[.,]\d+)*")
+CODE_SPAN_RE = re.compile(r"`[^`]+`")
+PATH_RE = re.compile(r"(?<![\w/.-])(?:[\w.-]+/)+[\w.-]*|(?<![\w/.-])[\w-]+\.[A-Za-z]\w{0,4}\b")
+WORD_RE = re.compile(r"\b(" + "|".join(Z_WORDS) + r")\b", re.I)
+
+
+def git_out(root, *args):
+    """The output of one git command in root, or None when it fails or git is not there."""
+    import subprocess
+    try:
+        r = subprocess.run(["git", "-C", root, *args], capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def comparison_base(root=ROOT):
+    """The commit a change is read against: the base of the pull request, never HEAD, so that an edit and its bump
+    in two commits are one change (the model's section 3; MI9). WB_BASE_REF when it is set (CI sets the pull
+    request's base), else the merge base of HEAD with the default branch (origin/HEAD, origin/main, main).
+    None outside a git checkout, or when no default branch is found (a skill built inside a case folder)."""
+    if git_out(root, "rev-parse", "--is-inside-work-tree") is None:
+        return None
+    wanted = os.environ.get("WB_BASE_REF", "").strip()
+    refs = [wanted] if wanted else ["origin/HEAD", "origin/main", "main", "origin/master", "master"]
+    for ref in refs:
+        if git_out(root, "rev-parse", "--verify", "--quiet", ref + "^{commit}") is None:
+            continue
+        base = git_out(root, "merge-base", "HEAD", ref)
+        if base:
+            return base.strip()
+    return None
+
+
+def base_text(root, base, rel):
+    """The text of a file of the repository at the base commit, or None when it is not there."""
+    if base is None:
+        return None
+    return git_out(root, "show", f"{base}:{rel}")
+
+
+def raw_version(skill_dir=None, text=None):
+    """The raw text of metadata.version, as written between its quotes, or None."""
+    if text is None:
+        try:
+            with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            return None
+    if not text.startswith("---"):
+        return None
+    m = re.search(r"^\s+version:\s*[\"']?([^\"'\s#]*)[\"']?\s*(?:#.*)?$", text.split("\n---", 1)[0], re.M)
+    return m.group(1) if m else None
+
+
+def set_version(text, version):
+    """SKILL.md's text with metadata.version set to version (quoted). ValueError when it has none."""
+    head, sep, body = text.partition("\n---")
+    new, n = re.subn(r"^(\s+version:\s*)[\"']?[^\"'\s#]*[\"']?", lambda m: m.group(1) + f'"{version}"', head, count=1, flags=re.M)
+    if not n:
+        raise ValueError("SKILL.md has no metadata.version line")
+    return new + sep + body
+
+
+def raise_version(version, cls):
+    """The version raised by one step of the class: X.Y.Z, the lower parts reset."""
+    x, y, z = (int(p) for p in version.split("."))
+    return {"x": f"{x + 1}.0.0", "y": f"{x}.{y + 1}.0", "z": f"{x}.{y}.{z + 1}"}[cls]
+
+
+def version_line_problems(line):
+    """Why one line of a version file is outside its form."""
+    if not isinstance(line, dict):
+        return ["must be a JSON object"]
+    allowed = set(VERSION_LINE_KEYS) | ({"z_chars"} if line.get("class") == "z" else set())
+    out = [f"unknown key {k!r}" for k in line if k not in allowed] + [f"missing key {k!r}" for k in VERSION_LINE_KEYS if k not in line]
+    if out:
+        return out
+    if not _is(VERSION_RE, line["version"]):
+        out.append("version must be X.Y.Z")
+    if not _is(HEX64_RE, line["content_sha256"]):
+        out.append("content_sha256 must be 64 hexadecimal characters")
+    if line["class"] not in VERSION_CLASSES + ("new",):
+        out.append("class must be x, y, z or new")
+    if not _date(line["date"]):
+        out.append("date must be YYYY-MM-DD")
+    if line["class"] == "z" and not _count(line.get("z_chars")):
+        out.append("a z line carries z_chars, a whole number")
+    return out
+
+
+def parse_versions(text):
+    """(lines, problems) of a version file's text."""
+    lines, problems = [], []
+    for n, raw in enumerate((text or "").splitlines(), 1):
+        try:
+            line = json.loads(raw)
+        except ValueError:
+            problems.append(f"line {n}: not valid JSON")
+            continue
+        problems += [f"line {n}: {p}" for p in version_line_problems(line)]
+        lines.append(line)
+    return lines, problems
+
+
+def read_versions(skill_dir):
+    """(lines, problems, text) of skills/<name>/evals/versions.jsonl; text is None when there is no file."""
+    try:
+        with open(os.path.join(skill_dir, VERSIONS_REL), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return [], [], None
+    lines, problems = parse_versions(text)
+    return lines, problems, text
+
+
+def _list_of(head, key):
+    """The items of a frontmatter list (flow `[a, b]` or block `- a`), read from the frontmatter's text."""
+    m = re.search(r"^\s+" + key + r":\s*\[(.*?)\]", head, re.M | re.S)
+    if m:
+        return {x.strip().strip("\"'") for x in m.group(1).split(",") if x.strip()}
+    m = re.search(r"^(\s+)" + key + r":\s*\n((?:\1\s*-\s.*\n?)+)", head, re.M)
+    return {x.strip()[1:].strip().strip("\"'") for x in m.group(2).splitlines() if x.strip()} if m else set()
+
+
+def _sections(lines):
+    """For each line of SKILL.md: "frontmatter", None (before the first `## ` heading) or its `## ` heading."""
+    out, where, front = [], None, bool(lines) and lines[0].strip() == "---"
+    for i, line in enumerate(lines):
+        if front:
+            out.append("frontmatter")
+            if i > 0 and line.strip() == "---":
+                front = False
+            continue
+        if line.startswith("## "):
+            where = line.strip()
+        out.append(where)
+    return out
+
+
+def _features(line):
+    return (NUMBER_RE.findall(line), PATH_RE.findall(line), CODE_SPAN_RE.findall(line), [w.lower() for w in WORD_RE.findall(line)])
+
+
+def _span(a, b):
+    """The characters a replaced line changed: between the common start and the common end, on the longer side."""
+    p = 0
+    while p < min(len(a), len(b)) and a[p] == b[p]:
+        p += 1
+    s = 0
+    while s < min(len(a), len(b)) - p and a[-1 - s] == b[-1 - s]:
+        s += 1
+    return max(len(a), len(b)) - p - s
+
+
+def change_class(base_md, current_md, other_changed=()):
+    """What the change from base_md to current_md (the texts of SKILL.md) asks for, with the other files of the
+    content hash that changed: (class or None when nothing changed, [reasons], the characters a Z change counts).
+    X: a difference in side_effects; an item missing from outputs or updates; a changed line in the Confirmation
+    gate or Stop rules section, or of the external-content line. Z: only lines of SKILL.md in Purpose or before
+    the first heading, none differing in a number, a path, a code span or a listed word. Y: anything else."""
+    import difflib
+    base_lines, cur_lines = (base_md or "").split("\n"), (current_md or "").split("\n")
+    if base_md == current_md and not other_changed:
+        return None, [], 0
+    reasons = []
+    head = lambda text: (text or "").split("\n---", 1)[0]
+    if _list_of(head(base_md), "side_effects") != _list_of(head(current_md), "side_effects"):
+        reasons.append("side_effects changed")
+    for key in X_LISTS_REMOVED:
+        gone = sorted(_list_of(head(base_md), key) - _list_of(head(current_md), key))
+        if gone:
+            reasons.append(f"{key} lost {', '.join(gone)}")
+    base_sec, cur_sec = _sections(base_lines), _sections(cur_lines)
+    pairs, added, deleted = [], [], []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, base_lines, cur_lines, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        n = min(i2 - i1, j2 - j1) if op == "replace" else 0
+        pairs += [(i1 + k, j1 + k) for k in range(n)]
+        deleted += list(range(i1 + n, i2))
+        added += list(range(j1 + n, j2))
+    touched = [(base_sec[i], base_lines[i]) for i, _ in pairs] + [(cur_sec[j], cur_lines[j]) for _, j in pairs]
+    touched += [(base_sec[i], base_lines[i]) for i in deleted] + [(cur_sec[j], cur_lines[j]) for j in added]
+    for section, line in touched:
+        if section in X_SECTIONS:
+            reasons.append(f"a line of {section} changed")
+            break
+    if any(EXTERNAL_LINE in line for _, line in touched):
+        reasons.append("the external-content line changed")
+    if reasons:
+        return "x", sorted(set(reasons)), 0
+    why_not_z = []
+    if other_changed:
+        why_not_z.append(f"a file other than SKILL.md changed ({', '.join(sorted(other_changed)[:3])})")
+    if any(section not in (None, "## Purpose") for section, _ in touched):
+        why_not_z.append("a changed line is outside ## Purpose and the text before the first heading")
+    for i, j in pairs:
+        if _features(base_lines[i]) != _features(cur_lines[j]):
+            why_not_z.append(f"line {j + 1} changes a number, a path, a code span or a listed word")
+    for line in [base_lines[i] for i in deleted] + [cur_lines[j] for j in added]:
+        if any(_features(line)):
+            why_not_z.append("an added or deleted line holds a number, a path, a code span or a listed word")
+            break
+    chars = sum(_span(base_lines[i], cur_lines[j]) for i, j in pairs) + sum(len(base_lines[i]) for i in deleted)
+    chars += sum(len(cur_lines[j]) for j in added)
+    return ("y", why_not_z, chars) if why_not_z else ("z", [], chars)
+
+
+def content_changes(root, base, name):
+    """The files of a skill's content hash that differ between the base commit and the working tree (deleted,
+    changed, added or not tracked yet), relative to the skill folder."""
+    folder = f"skills/{name}"
+    found = set()
+    for args in (("diff", "--name-only", base, "--", folder), ("ls-files", "--others", "--exclude-standard", "--", folder)):
+        found.update(l.strip() for l in (git_out(root, *args) or "").splitlines() if l.strip())
+    out = set()
+    for path in found:
+        rel = path[len(folder) + 1:]
+        name_ = rel.rsplit("/", 1)[-1]
+        if (rel.startswith(EVALS_REL + "/") or rel.startswith(TESTS_REL + "/") or rel == INSTALL_MARKER
+                or name_ == ".DS_Store" or name_.endswith(".pyc") or any(p in CACHE_DIRS for p in rel.split("/"))):
+            continue
+        out.add(rel)
+    return out
+
+
+def newest_lab_version(skill_dir):
+    """The version the skill's newest lab evidence ran on, or None."""
+    events = skill_evidence(skill_dir)
+    return events[-1][0].get("version") if events else None
+
+
+def z_spent(lines, skill_dir):
+    """The characters of the Z lines since the skill's newest lab evidence: those after the last line of the
+    version that evidence ran on (all of them when there is none)."""
+    newest = newest_lab_version(skill_dir)
+    start = max((i for i, l in enumerate(lines) if l.get("version") == newest), default=-1) if newest else -1
+    return sum(l.get("z_chars") or 0 for l in lines[start + 1:] if l.get("class") == "z")
+
+
+def version_findings(root, name, base):
+    """What the validator reports on one skill's versions, against the base commit (None: no base, and the checks
+    that read it are skipped): {"file", "class", "bump"}, each a list of sentences. "file": a line outside its
+    form, a version file that is not append-only or gains more than one line. "class": a declared class the
+    diff contradicts, a version that is not the base's raised by one step of its class, a first line with a
+    class or a later line without one. "bump": the first check (a change without a bump, a version that is not
+    X.Y.Z or not the last line's), a warning until the sweep that closes phase C (scripts/validate.py,
+    TRANSITIONAL_RULES) and an error from it."""
+    skill_dir = os.path.join(root, "skills", name)
+    found = {"file": [], "class": [], "bump": []}
+    lines, problems, text = read_versions(skill_dir)
+    found["file"] += problems
+    raw = raw_version(skill_dir)
+    if text is None:
+        found["bump"].append("no version file")
+    elif lines and not problems:
+        last = lines[-1]
+        if last["content_sha256"] != content_hash(skill_dir):
+            found["bump"].append("changed without a bump")
+        if raw is None or not VERSION_RE.fullmatch(raw):
+            found["bump"].append("metadata.version is not X.Y.Z")
+        elif raw != last["version"]:
+            found["bump"].append("metadata.version is not the version of the last line")
+    if base is None or problems:
+        return found
+    base_lines_text = (base_text(root, base, f"skills/{name}/{VERSIONS_REL.replace(os.sep, '/')}") or "").splitlines()
+    current_text = (text or "").splitlines()
+    if current_text[:len(base_lines_text)] != base_lines_text:
+        found["file"].append("the version file is append-only: a line of the base was changed or removed")
+        return found
+    added = current_text[len(base_lines_text):]
+    if len(added) > 1:
+        found["file"].append(f"{len(added)} lines were added: a pull request raises a skill once, by its highest class")
+    if len(added) != 1:
+        return found
+    line = lines[-1]
+    if not base_lines_text:
+        if line["class"] != "new":
+            found["class"].append(f"the first line of a skill takes no class: python3 evals/eval_status.py bump --skill {name}")
+        return found
+    base_lines, _ = parse_versions("\n".join(base_lines_text))
+    if line["class"] == "new":
+        found["class"].append("a skill with a line in the base is raised with a class: bump --class x|y|z")
+        return found
+    previous = base_lines[-1]["version"] if base_lines else None
+    if previous and VERSION_RE.fullmatch(previous) and line["version"] != raise_version(previous, line["class"]):
+        found["class"].append(f"version {line['version']} is not the base's {previous} raised by one step of class "
+                              f"{line['class']} ({raise_version(previous, line['class'])})")
+    base_md = base_text(root, base, f"skills/{name}/SKILL.md")
+    try:
+        with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+            current_md = f.read()
+    except OSError:
+        current_md = ""
+    other = content_changes(root, base, name) - {"SKILL.md"}
+    needed, reasons, chars = change_class(base_md, _same_version(current_md, base_md) if base_md else current_md, other)
+    order = {"z": 0, "y": 1, "x": 2}
+    if needed and order[line["class"]] < order[needed]:
+        found["class"].append(f"declared class {line['class']}, and the diff asks for {needed}: "
+                              f"{'; '.join(reasons) or 'not a Z change'}")
+    elif line["class"] == "z" and chars + z_spent(lines[:-1], skill_dir) > Z_BUDGET:
+        found["class"].append(f"the Z changes since the newest lab evidence count {chars + z_spent(lines[:-1], skill_dir)} "
+                              f"characters, over the budget of {Z_BUDGET}: this change is Y")
+    return found
+
+
+def _same_version(current_md, base_md):
+    """SKILL.md's current text with the base's metadata.version: the version line a bump rewrites is not part of
+    the change it classifies."""
+    base_raw = raw_version(text=base_md)
+    try:
+        return set_version(current_md, base_raw) if base_raw is not None else current_md
+    except ValueError:
+        return current_md
+
+
+def bump(root, name, cls=None, date=None):
+    """Raise a skill's version by the class of its change (eval_status.py bump; the model's section 3). Returns
+    the line written. Idempotent: run again, or with a higher class, it rewrites the one line this pull request
+    adds to the version file. With no class, it writes the first line of a skill that has none in the base."""
+    skill_dir = os.path.join(root, "skills", name)
+    path = os.path.join(skill_dir, "SKILL.md")
+    with open(path, encoding="utf-8") as f:
+        text = f.read()
+    base = comparison_base(root)
+    rel = f"skills/{name}/{VERSIONS_REL.replace(os.sep, '/')}"
+    base_lines_text = (base_text(root, base, rel) or "").splitlines() if base else []
+    base_lines, problems = parse_versions("\n".join(base_lines_text))
+    if problems:
+        raise ValueError(f"the base's version file is not valid: {'; '.join(problems)}")
+    date = date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    if cls is None:
+        if base_lines:
+            raise ValueError(f"{name} has a version line in the base: a change takes --class x, y or z")
+        version = raw_version(text=text)
+        if version is None or not VERSION_RE.fullmatch(version):
+            raise ValueError(f"metadata.version of {name} is {version!r}: a first line needs X.Y.Z (the templates start at 0.1.0)")
+        line = {"version": version, "content_sha256": content_hash(skill_dir), "class": "new", "date": date}
+    else:
+        if cls not in VERSION_CLASSES:
+            raise ValueError("--class is x, y or z")
+        if not base_lines:
+            raise ValueError(f"{name} has no version line in the base" + ("" if base else " (no comparison base: not a git "
+                             "checkout, or no default branch)") + f": write its first line with bump --skill {name}, no class")
+        version = raise_version(base_lines[-1]["version"], cls)
+        new_text = set_version(text, version)
+        if new_text != text:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(new_text)
+        line = {"version": version, "content_sha256": content_hash(skill_dir), "class": cls, "date": date}
+        if cls == "z":
+            other = content_changes(root, base, name) - {"SKILL.md"}
+            base_md = base_text(root, base, f"skills/{name}/SKILL.md") or ""
+            line["z_chars"] = change_class(base_md, _same_version(new_text, base_md), other)[2]
+    with open(os.path.join(skill_dir, VERSIONS_REL), "w", encoding="utf-8") as f:
+        f.write("".join(l + "\n" for l in base_lines_text) + json.dumps(line) + "\n")
+    return line
+
+
+def migrate_versions(root, date=None):
+    """Write the version file of every skill that has none: one line, today's version read as X.Y.Z (a two-part
+    0.N is 0.N.0), the current content hash, class "new". It edits no SKILL.md. Returns (written, skipped)."""
+    date = date or datetime.datetime.now(datetime.timezone.utc).date().isoformat()
+    written, skipped = [], []
+    for name in skill_names(root):
+        skill_dir = os.path.join(root, "skills", name)
+        path = os.path.join(skill_dir, VERSIONS_REL)
+        version = skill_version(skill_dir)
+        if os.path.exists(path) or version is None:
+            skipped.append(name)
+            continue
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"version": version, "content_sha256": content_hash(skill_dir), "class": "new", "date": date}) + "\n")
+        written.append(name)
+    return written, skipped
 
 
 def record_path(skill_dir):
@@ -998,6 +1627,10 @@ def all_status(root=ROOT, only=None):
     names = [only] if only else skill_names(root)
     config = load_gate(root)
     rows = [skill_status(os.path.join(root, "skills", n), config) for n in names]
+    for row in rows:  # the platforms' cases: a mean and a number of runs per platform and model, never a score
+        found = platform_results(os.path.join(root, "skills", row["skill"]), config)
+        if found:
+            row["platforms"] = found
     counts = {s: sum(1 for r in rows if r["status"] == s) for s in STATUSES}
     return {"skills": rows, "counts": counts,
             "gate": {k: config.get(k) for k in ("floor_model", "threshold", "strong_model", "grader", "strong_tolerance",
@@ -1049,12 +1682,12 @@ def main(argv, root=None):
         return 0
     opts, flags, i = {}, set(), 0
     while i < len(rest):
-        if rest[i] in ("--skill", "--file"):
+        if rest[i] in ("--skill", "--file", "--kind", "--cause", "--skills", "--models", "--date", "--class"):
             if i + 1 >= len(rest):
                 die(f"{rest[i]} needs a value.")
             opts[rest[i][2:]] = rest[i + 1]
             i += 2
-        elif rest[i] in ("--write", "--check"):
+        elif rest[i] in ("--write", "--check", "--close"):
             flags.add(rest[i])
             i += 1
         else:
@@ -1063,6 +1696,45 @@ def main(argv, root=None):
     if skill is not None and (not re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", skill)
                               or not os.path.isdir(os.path.join(root, "skills", skill))):
         die(f"no skill {skill!r} under skills/.")
+    measurement_opts = {"kind", "cause", "skills", "models"}
+    if cmd != "measurement" and (set(opts) & measurement_opts or "--close" in flags):
+        die("--kind, --cause, --skills, --models and --close go with the measurement command. See --help.")
+    if "class" in opts and cmd != "bump":
+        die("--class goes with the bump command. See --help.")
+    if "date" in opts and cmd not in ("measurement", "bump", "migrate-versions"):
+        die("--date goes with measurement, bump and migrate-versions. See --help.")
+    if cmd == "bump":
+        if not skill or flags or opts.get("file"):
+            die("bump takes --skill <name> [--class x|y|z] [--date YYYY-MM-DD]. See --help.")
+        try:
+            line = bump(root, skill, opts.get("class"), opts.get("date"))
+        except ValueError as e:
+            die(str(e), 1)
+        print(json.dumps({"skill": skill, **line}, indent=2))
+        return 0
+    if cmd == "migrate-versions":
+        if skill or flags or opts.get("file"):
+            die("migrate-versions takes no option but --date. See --help.")
+        written, skipped = migrate_versions(root, opts.get("date"))
+        print(json.dumps({"written": written, "skipped": skipped}, indent=2))
+        return 0
+    if cmd == "measurement":
+        if skill or opts.get("file") or flags - {"--close"} or ("--close" in flags) == ("kind" in opts):
+            die("measurement takes --kind <grader|execution|infrastructure> or --close, with --cause \"<why>\" "
+                "[--skills <a,b>|all] [--models <id,...>|all] [--date YYYY-MM-DD]. See --help.")
+        if ("skills" in opts or "models" in opts) and opts.get("kind") != "execution":
+            die("--skills and --models name what an epoch reaches: they go with --kind execution.")
+        split = lambda v: "all" if v in (None, "all") else [x.strip() for x in v.split(",") if x.strip()]
+        try:
+            new, out = measurement_change(root, opts.get("kind"), opts.get("cause"), split(opts.get("skills")),
+                                          split(opts.get("models")), opts.get("date"), close="--close" in flags)
+        except ValueError as e:
+            die(str(e), 1)
+        with open(os.path.join(root, GATE_REL), "w", encoding="utf-8") as f:
+            f.write(format_gate(new))
+        print(f"{GATE_REL} written. Add the entry below to docs/decisions.md, in the same commit as the change.", file=sys.stderr)
+        print(json.dumps(out, indent=2))
+        return 0
     if cmd == "status":
         print(json.dumps(all_status(root, skill), indent=2))
         return 0
@@ -1070,8 +1742,9 @@ def main(argv, root=None):
         if not skill:
             die("hash needs --skill <name>.")
         skill_dir = os.path.join(root, "skills", skill)
+        platforms = {name: case_hashes(skill_dir, name) for name in platform_names(skill_dir)}
         print(json.dumps({"skill": skill, "content_sha256": content_hash(skill_dir), "version": skill_version(skill_dir),
-                          "cases": case_hashes(skill_dir)}, indent=2))
+                          "cases": case_hashes(skill_dir), **({"platform_cases": platforms} if platforms else {})}, indent=2))
         return 0
     if cmd == "evidence":
         if opts.get("file"):

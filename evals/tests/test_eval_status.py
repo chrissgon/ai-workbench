@@ -573,14 +573,23 @@ def test_the_fingerprint_follows_the_files_that_decide_what_a_run_measures(root)
     assert len(first) == 64 and es.measurement_fingerprint(str(root)) == first
     seen = {first}
     for rel, text in (("evals/grading-prompt.md", "another template\n"), ("evals/container/Dockerfile", "FROM y\n"),
-                      ("adapters/one/run-prompt.sh", "echo changed\n"), ("adapters/one/adapter.json", '{"eval": {}}')):
+                      ("adapters/one/run-prompt.sh", "echo changed\n"), ("adapters/one/adapter.json", '{"eval": {}}'),
+                      ("evals/measure.py", "# the measuring module\n"), ("evals/measurement.json", '{"file_limit": 1}'),
+                      ("evals/executor.py", "# the executor\n"), ("scripts/stage_skills.py", "# the staging\n")):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text)
         seen.add(es.measurement_fingerprint(str(root)))
-    assert len(seen) == 5
+    assert len(seen) == 9
+    # What decides nothing either: the rest of the runner, the gate file, a shared reference, redact.py.
+    for rel in ("evals/eval_run.py", "evals/eval-gate.json", "shared/references/security.md", "scripts/redact.py"):
+        (root / rel).parent.mkdir(parents=True, exist_ok=True)
+        (root / rel).write_text("anything\n")
+    assert es.measurement_fingerprint(str(root)) in seen
+    seen = {es.measurement_fingerprint(str(root))}
     # What decides nothing: a skill, a document, the manifest of an adapter that runs no eval.
     (root / "adapters" / "two" / "adapter.json").write_text('{"changed": true}')
     (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
-    assert es.measurement_fingerprint(str(root)) in seen and len(seen) == 5
+    assert es.measurement_fingerprint(str(root)) in seen and len(seen) == 1
 
 
 def test_a_test_id_is_its_utc_time_and_eight_random_characters():
@@ -632,7 +641,7 @@ def test_a_well_formed_evidence_file_is_valid_and_changes_no_status(root, capsys
     path = evidence(root, [event_line(), run_line(), run_line(variant="without", score=0.0, results=[0, 0]),
                            run_line(model="f-model", adapter="fh", case=2, case_sha256=H["b"], context_sha256=H["c"], score=1.0, results=[1, 1]),
                            run_line(outcome="timeout", score=0, results=[0, 0]),
-                           run_line(guard_failed=[2], platform="chirp")])
+                           run_line(guard_failed=[2])])
     assert es.evidence_file_problems(str(path), str(root)) == []
     assert es.evidence_problems(str(root)) == ({}, 1) and es.main(["evidence"], root=str(root)) == 0
     assert json.loads(capsys.readouterr().out) == {"files": 1, "problems": {}}
@@ -862,3 +871,175 @@ def test_the_gate_command_prints_it(root, capsys):
     with pytest.raises(SystemExit) as e:
         es.main(["gate"], root=str(root))
     assert e.value.code == 2
+
+
+# --- the platforms' cases (the plan's decision 14c, item B7a) ------------------------------------------
+
+def platform_cases(root, name="chirp", cases=None):
+    folder = root / "skills" / "core-demo" / "evals" / "platforms"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / f"{name}.json").write_text(json.dumps({"skill_name": "core-demo", "platform": name,
+                                                     "evals": cases or [{"id": 7, "prompt": "post it", "assertions": ["a", "b"]}]}))
+    return es.case_hashes(str(root / "skills" / "core-demo"), name)
+
+
+def test_a_line_of_a_platforms_case_belongs_to_a_partial_test_with_the_skill(root):
+    configure(root)
+    assert es.run_line_problems(run_line(kind="partial", platform="chirp")) == []
+    assert "a line of a platform's case runs in a partial test" in es.run_line_problems(run_line(platform="chirp"))[0]
+    assert "a line of a platform's case runs in a partial test" in es.run_line_problems(
+        run_line(kind="partial", variant="without", platform="chirp"))[0]
+    assert "platform must be a platform name" in es.run_line_problems(run_line(kind="partial", platform="Chirp"))[0]
+    path = evidence(root, [event_line(kind="partial", gate=DROP), run_line(kind="partial", platform="chirp")])
+    assert es.evidence_file_problems(str(path), str(root)) == []
+
+
+def test_status_shows_a_mean_and_runs_per_platform_and_model_and_the_gate_never_reads_them(root, capsys):
+    skill = root / "skills" / "core-demo"
+    skill_dir, cfg = gate_tree(root, [(T1, "full", "1.2.0", "2030-01-01", True, FULL_LINES("2030-01-01"))])
+    before = es.gate_of(skill_dir, cfg)
+    hashes = platform_cases(root)
+    lines = [run_line(test=T2, kind="partial", version="1.2.0", case=7, case_sha256=hashes["7"], platform="chirp", score=s,
+                      results=r, model=m) for s, r, m in ((1.0, [1, 1], "s-model"), (0.5, [1, 0], "s-model"), (0.0, [0, 0], "f-model"))]
+    lines.append(run_line(test=T2, kind="partial", version="1.2.0", case=7, case_sha256=H["f"], platform="chirp", score=1.0,
+                          results=[1, 1]))  # a case changed since: weight 0
+    evidence(root, [event_line(test=T2, kind="partial", version="1.2.0", gate=DROP, cases={"7": hashes["7"]},
+                               baseline={"7": "none"}, web_cases=[])] + lines, name=f"lab-{T2}.jsonl")
+    assert es.platform_results(skill_dir, cfg) == {"chirp": {"f-model": {"mean": 0.0, "runs": 1}, "s-model": {"mean": 0.75, "runs": 2}}}
+    assert es.gate_of(skill_dir, cfg) == before  # a platform's lines change neither the gate nor its pool
+    assert es.platform_results(skill_dir, {**cfg, "measurement_floor": 6}) == {}
+    (skill / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "2.0.0"\n---\n')
+    assert es.platform_results(skill_dir, cfg) == {}  # nothing is carried across a major version
+    (skill / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "1.2.0"\n---\n')
+    configure(root)
+    rows = {r["skill"]: r for r in es.all_status(str(root))["skills"]}
+    assert set(rows["core-demo"]["platforms"]["chirp"]) == {"s-model", "f-model"} and "platforms" not in rows["eng-other"]
+    assert "score" not in json.dumps(rows["core-demo"]["platforms"])
+    assert es.main(["hash", "--skill", "core-demo"], root=str(root)) == 0
+    assert json.loads(capsys.readouterr().out)["platform_cases"] == {"chirp": hashes}
+
+
+# --- the fingerprint and the three kinds of measurement change (item B10) --------------------------------
+
+def measured(root, **changes):
+    """A tree whose gate file carries the fingerprint its files compute: a closed measurement version 5."""
+    (root / "evals").mkdir(exist_ok=True)
+    (root / "evals" / "grading-prompt.md").write_text("template\n")
+    (root / "evals" / "measure.py").write_text("# measures\n")
+    configure(root, measurement_version=5, measurement_floor=5, models={"s-model": ["provider/s-model"], "f-model": []},
+              measurement_sha256=es.measurement_fingerprint(str(root)), **changes)
+
+
+def gate_file(root):
+    return json.loads((root / "evals" / "eval-gate.json").read_text())
+
+
+def measurement(root, capsys, *args):
+    code = es.main(["measurement", *args], root=str(root))
+    return code, json.loads(capsys.readouterr().out)
+
+
+def test_the_validator_fails_when_the_fingerprint_differs_from_the_committed_one(root):
+    es.main(["inventory", "--write"], root=str(root))
+    measured(root)
+    assert check(root)[0] == []
+    (root / "evals" / "measure.py").write_text("# measures otherwise\n")
+    errors, _ = check(root)
+    assert len(errors) == 1 and errors[0].startswith("evals/eval-gate.json: [measurement] the measurement fingerprint")
+    assert "measurement --kind grader|execution|infrastructure" in errors[0]
+    configure(root, measurement_version=5, measurement_floor=5, measurement_sha256=None)  # an open version: nothing compared
+    assert check(root)[0] == [] and es.fingerprint_problem(str(root)) is None
+
+
+def test_a_grader_side_change_raises_the_version_and_the_floor(root, capsys):
+    measured(root)
+    (root / "evals" / "grading-prompt.md").write_text("the grader is shown more\n")
+    code, out = measurement(root, capsys, "--kind", "grader", "--cause", "The facts block lists the pushed branches.",
+                            "--date", "2030-05-06")
+    cfg = gate_file(root)
+    assert code == 0 and (cfg["measurement_version"], cfg["measurement_floor"]) == (6, 6) and "epochs" not in cfg
+    assert cfg["measurement_sha256"] == es.measurement_fingerprint(str(root)) == out["measurement_sha256"]
+    assert es.gate_problems(str(root)) == [] and es.fingerprint_problem(str(root)) is None
+    assert out["decisions_entry"].startswith("## 2030-05-06: measurement change, grader (measurement version 5 to 6)\n\n"
+                                             "The facts block lists the pushed branches.\n")
+    assert "Measurement version and floor: 6." in out["decisions_entry"]
+
+
+def test_an_execution_side_change_raises_the_version_and_enters_an_epoch(root, capsys):
+    measured(root)
+    code, out = measurement(root, capsys, "--kind", "execution", "--cause", "gh 2.103 in the image.", "--date", "2030-05-06",
+                            "--skills", "eng-other,core-demo")
+    cfg = gate_file(root)
+    assert code == 0 and (cfg["measurement_version"], cfg["measurement_floor"]) == (6, 5)
+    assert cfg["epochs"] == [{"date": "2030-05-06", "models": "all", "skills": ["core-demo", "eng-other"], "cause": "gh 2.103 in the image."}]
+    assert out["epoch"] == cfg["epochs"][0] and "Epoch 2030-05-06: skills core-demo, eng-other; models all." in out["decisions_entry"]
+    # A hosted model that changed under its id: the same command, an epoch of that model; an alias is written as its id.
+    code, _ = measurement(root, capsys, "--kind", "execution", "--cause", "The provider changed the model.", "--date", "2030-06-01",
+                          "--models", "provider/s-model")
+    cfg = gate_file(root)
+    assert code == 0 and cfg["measurement_version"] == 7
+    assert cfg["epochs"][1] == {"date": "2030-06-01", "models": ["s-model"], "skills": "all", "cause": "The provider changed the model."}
+    assert es.gate_problems(str(root)) == [] and es.epoch_after(cfg, "core-demo", "s-model", "2030-05-31")
+    assert not es.epoch_after(cfg, "core-demo", "f-model", "2030-05-31")
+    for bad in (["--skills", "no-such-skill"], ["--models", "a-private-model"]):
+        with pytest.raises(SystemExit) as e:
+            es.main(["measurement", "--kind", "execution", "--cause", "x", *bad], root=str(root))
+        assert e.value.code == 1
+
+
+def test_an_infrastructure_change_writes_the_new_fingerprint_alone(root, capsys):
+    measured(root)
+    before = gate_file(root)
+    with pytest.raises(SystemExit) as e:  # nothing changed: nothing to commit
+        es.main(["measurement", "--kind", "infrastructure", "--cause", "x"], root=str(root))
+    assert e.value.code == 1
+    (root / "evals" / "measure.py").write_text("# measures, with a comment\n")
+    code, out = measurement(root, capsys, "--kind", "infrastructure", "--cause", "A comment.", "--date", "2030-05-06")
+    after = gate_file(root)
+    unchanged = lambda cfg: {k: v for k, v in cfg.items() if k != "measurement_sha256"}
+    assert code == 0 and unchanged(after) == unchanged(before)
+    assert after["measurement_sha256"] == es.measurement_fingerprint(str(root)) != before["measurement_sha256"]
+    assert out["decisions_entry"].startswith("## 2030-05-06: measurement change, infrastructure\n")
+
+
+def test_an_open_version_is_closed_once_and_takes_no_change_of_a_kind(root, capsys):
+    configure(root, measurement_version=5, measurement_floor=5, measurement_sha256=None)
+    with pytest.raises(SystemExit) as e:
+        es.main(["measurement", "--kind", "grader", "--cause", "x"], root=str(root))
+    assert e.value.code == 1
+    code, out = measurement(root, capsys, "--close", "--cause", "The last item of phase B.", "--date", "2030-05-06")
+    assert code == 0 and gate_file(root)["measurement_sha256"] == es.measurement_fingerprint(str(root))
+    assert out["decisions_entry"].startswith("## 2030-05-06: measurement version 5 closed\n") and es.evidence_refusal(str(root)) is None
+    with pytest.raises(SystemExit) as e:
+        es.main(["measurement", "--close", "--cause", "again"], root=str(root))
+    assert e.value.code == 1
+
+
+@pytest.mark.parametrize("args", [["measurement"], ["measurement", "--kind", "grader"], ["measurement", "--kind", "other", "--cause", "x"],
+                                  ["measurement", "--close", "--kind", "grader", "--cause", "x"],
+                                  ["measurement", "--kind", "grader", "--cause", "x", "--skills", "core-demo"],
+                                  ["status", "--kind", "grader"], ["inventory", "--close"]])
+def test_the_measurement_command_refuses_what_does_not_fit(root, args):
+    measured(root)
+    with pytest.raises(SystemExit) as e:
+        es.main(args, root=str(root))
+    assert e.value.code in (1, 2)
+
+
+@pytest.mark.parametrize("epochs, why", [
+    ("all", "epochs[0] must be"), ([{"date": "2030-01-01"}], "must be"),
+    ([{"date": "soon", "models": "all", "skills": "all", "cause": "x"}], "date must be"),
+    ([{"date": "2030-01-01", "models": [], "skills": "all", "cause": "x"}], "models must be"),
+    ([{"date": "2030-01-01", "models": "all", "skills": ["Not A Name"], "cause": "x"}], "skills must be"),
+    ([{"date": "2030-01-01", "models": "all", "skills": "all", "cause": "two\nlines"}], "cause must be"),
+])
+def test_an_epoch_outside_its_form_makes_the_gate_file_invalid(root, epochs, why):
+    configure(root, epochs=epochs)
+    assert any(why in p for p in es.gate_problems(str(root))), es.gate_problems(str(root))
+
+
+def test_the_gate_file_is_written_in_its_own_layout_and_reads_back_the_same():
+    cfg = json.loads((REPO / "evals" / "eval-gate.json").read_text())
+    text = es.format_gate({**cfg, "epochs": [{"date": "2030-01-01", "models": "all", "skills": ["core-demo"], "cause": "x"}]})
+    assert json.loads(text)["epochs"][0]["skills"] == ["core-demo"] and json.loads(text)["models"] == cfg["models"]
+    assert '"web_cases": {\n    "biz-icp-positioning": [1, 3],' in text and '"epochs": [\n    {\n' in text

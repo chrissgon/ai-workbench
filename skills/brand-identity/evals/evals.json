@@ -19,6 +19,7 @@
       "prompt": "decisions for the identity are in the state file. build the linkedin cover",
       "expected_output": "docs/brand/identity.md with colours taken from design/tinykv-tokens.md citing the token names, one accent, a contrast result for each pair computed with contrast.py and a usage rule for the pairs that fail (the light accent #F59E0B on white fails for text: about 2.15:1), typefaces with a licence or marked as the system font, the cover size from the platform's reference (1584 x 396 with the left kept free for the profile photo) labelled as not checked or unverified, since the run has no web, a valid brand-tokens JSON block, status draft. The cover exists in at least three variants under docs/brand/pieces/ with the label from the strategy, rendered to 1584 x 396 PNG files with render.py. The reply asks Dana to choose a variant and picks none.",
       "files": ["evals/files/dana-decided"],
+      "platforms": ["linkedin"],
       "grader_files": ["design/tinykv-tokens.md", "docs/brand/strategy.md", "docs/workbench/state.md"],
       "assertions": [
         "docs/brand/identity.md cites tinykv token names (for example --tk-accent) as the origin of its colours",

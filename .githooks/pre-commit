@@ -2,7 +2,9 @@
 # Pre-commit checks for the workbench. Enable them once per clone: bash scripts/install-hooks.sh
 #
 # 1. scripts/validate.py: conventions and the security scan. It reads the working tree, not only
-#    what is staged, so a file with a finding blocks the commit even if it is not part of it.
+#    what is staged, so a file with a finding blocks the commit even if it is not part of it. Its version
+#    rules read a change against the merge base of HEAD with the default branch, the same base CI passes
+#    (WB_BASE_REF), never against HEAD: an edit and its bump in two commits are read as one change.
 # 2. scripts/security_scan.py --strict: a security warning (hidden text, a shell run on a built string,
 #    an unguarded recursive delete, an unpinned dependency...) blocks the commit like an error does.
 # 3. The tests of providers/<class>/, scripts/, evals/, shared/, an adapter or a skill's scripts/ (its
