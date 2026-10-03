@@ -1,16 +1,16 @@
 ---
 name: core-orchestrator
 description: >
-  Route a request to the one skill or flow that should handle it, across business, product,
-  brand, design, engineering, delivery, marketing, AI and the workbench itself. Use this skill
-  first for any request to build, implement, fix, design, plan, write, publish, schedule or send
-  something, including one that names an external system (a ticket, a post): before checking
-  whether a tool for that system exists, and even when no other skill is installed. Use it too
-  when a request spans more than one area, continues a previous multi-phase effort, or when it
-  is unclear whether a skill applies at all; when the user asks "where are we", "what's next"
-  or "what can you do here"; and when asked which skill would handle a request without
-  starting it, even when that skill is installed. Do not use it for a one-step request that
-  needs no specialized knowledge and has no side effects; answer that directly.
+  Name the skill or flow that should handle a request, and hand over. Load it before answering
+  whenever the user asks which skill or workflow would handle something, or whether it has what it
+  needs, even when the answer looks obvious from the skill list or the user says not to start yet:
+  loading it starts nothing; it reports the route and what is found or missing, then stops. Use it
+  first, too, for any request to build, implement, fix, design, plan, write, publish, schedule or
+  send something, including one naming an external system (a ticket, a post), before checking for
+  a tool for that system and even when no other skill is installed; for a request spanning areas,
+  continuing a multi-phase effort, or that may need no skill; and for "where are we", "what's
+  next" or "what can you do here". Not for a one-step request with no specialized knowledge and no
+  side effects: answer that directly.
 license: MIT
 metadata:
   area: core
@@ -20,7 +20,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: []
   side_effects: []
-  version: "2.0.0"
+  version: "2.1.0"
 ---
 
 # Orchestrator
