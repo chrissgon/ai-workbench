@@ -106,6 +106,11 @@ variant in benchmark.json "counts" ({"attempts", "retries", "timeouts", "refusal
 "early_ends", "pauses", "resumes"}). What an attempt left is kept in the run folder (failed-<j>/,
 early-end-<j>/). A run that fails on every attempt is an infrastructure failure: it has no score and the event
 is incomplete.
+A refused key. A run whose provider refuses its credential (HTTP 401, or a 403 whose message names a key, a
+token or a credential) is never retried: every later run with that key would meet the same refusal. The
+event stops: no run starts after it, the runs in progress end, the run is listed in "infra_failures" with
+kind "auth", and the message names the variable that carried the key (with its secret store username), never
+its value. The runs not started are listed as not run; --resume runs them once a valid key is stored.
 --resume <event folder> runs again the failed runs of an event, and only them (and a run that never ended,
 when the event was stopped), with the options the event started with and on the same content of the skill
 (a skill folder that changed since is refused), and computes benchmark.json again. One run is resumed at
@@ -1327,6 +1332,51 @@ def provider_refusal(out_dir, markers):
             if at != -1:
                 return text[max(0, at - 80):at + 160].replace("\n", " ").strip()
     return None
+
+
+# A provider that refuses the credential itself: an HTTP status 401, or 403, in the words a runner or an API
+# prints it ("HTTP 401", "statusCode":401, "API Error: 401", 401 Unauthorized, 401 "User not found.") or the
+# error type of a 401 ("authentication_error"). A 401 is always the credential; a 403 is only when the text
+# around it names a key, a token or a credential (another 403 is a policy or a region, and is retried).
+AUTH_STATUS = re.compile(
+    r"(?i)(?:\bHTTP(?:/[\d.]+)?\s+(40[13])\b"
+    r"|\bstatus(?:[ _-]?code)?\"?\s*[:=]\s*\"?(40[13])\b"
+    r"|\"api_error_status\"\s*:\s*(40[13])\b"
+    r"|\bAPI Error:?\s*(40[13])\b"
+    r"|(?<![\w.-])(40[13])\s+(?:Unauthorized|Forbidden|\"))"
+    r"|(\"authentication_error\")")
+AUTH_KEY_WORDS = re.compile(r"(?i)\b(?:api[ _-]?)?keys?\b|\btokens?\b|\bcredentials?\b")
+AUTH_WINDOW = 300  # characters on each side of a 403 in which the key must be named
+
+
+def auth_refusal(out_dir):
+    """"HTTP 401" or "HTTP 403" when what a failed run left shows the provider refusing its credential, else None.
+    Only the status is returned, never the provider's words: a provider may echo a part of the key."""
+    for name in ("error.log", "stderr.log", "raw.json", "response.md"):
+        text = read_text(os.path.join(out_dir, name), 400000)
+        for m in AUTH_STATUS.finditer(text):
+            code = next((g for g in m.groups()[:5] if g), None) or "401"  # "authentication_error" is the 401's type
+            if code == "401" or AUTH_KEY_WORDS.search(text[max(0, m.start() - AUTH_WINDOW):m.end() + AUTH_WINDOW]):
+                return f"HTTP {code}"
+    return None
+
+
+def credential_label(harness, names):
+    """The variables a refused run received its key in, by name, each with the secret store username its
+    adapter registers for it ("secrets" of adapters/<harness>/adapter.json); never a value."""
+    try:
+        with open(os.path.join(ROOT, "adapters", harness, "adapter.json"), encoding="utf-8") as f:
+            secrets = json.load(f).get("secrets") or []
+    except (OSError, ValueError, AttributeError):
+        secrets = []
+    store = {s.get("name"): s.get("store_username") for s in secrets if isinstance(s, dict)}
+    if not names:
+        return "no variable (the harness's own login)"
+    return ", ".join(name + (f" (secret store username {store[name]!r})" if store.get(name) else "") for name in names)
+
+
+class EventStopped(Exception):
+    """A run that was not started because its event stopped: it gets no ledger line, so --resume runs it."""
 
 
 def mount_patterns():
@@ -2818,6 +2868,16 @@ def run(argv):
             return o["pass_env"] + o["floor_pass_env"]
         return o["pass_env"] + (web_env if web[case_id] and web_env else o["strong_pass_env"])
 
+    def key_names(tier, case_id):
+        """The variables that carry the tier's own key, which a refusal of the credential names; the caller's
+        --pass-env variables when the tier has none of its own."""
+        own = o["floor_pass_env"] if tier == "floor" else (web_env if web[case_id] and web_env else o["strong_pass_env"])
+        return own or env_names(tier, case_id)
+
+    # Set when a provider refused a run's credential: every later run would meet the same refusal, so no run of
+    # the event starts after it, and the runs not started are left for --resume once the key is stored again.
+    refused_key, refused_note = threading.Event(), []
+
     grader_env = o["pass_env"] + o["strong_pass_env"]
     all_values = load_measure().redaction_values(names)  # of every tier: a grading prompt carries none of them
     grader_account = {"key": harness_for["strong"], "markers": eval_for["strong"]["account_limit"],
@@ -2858,10 +2918,14 @@ def run(argv):
         if os.path.isdir(run_dir) and any(not item.startswith(KEPT_PREFIXES) for item in os.listdir(run_dir)):
             set_aside("before-resume")  # what an earlier pass of the event left of this run
         while True:
+            if refused_key.is_set():
+                raise EventStopped()
             wait_while_paused(account["key"], account["probe"])
             count["attempts"] += 1
             # The run happens outside the repository; its folders come back to run_dir when it ends, however it ends.
             with Slots(control, tier, web[c["id"]]):
+                if refused_key.is_set():  # refused while this run waited for its place
+                    raise EventStopped()
                 root = new_run_root(run_dir, names=(o["skill"],))
                 case_dir, changed, delta, inputs, vcs, case_text = os.path.join(root, "case"), [], None, {}, None, ""
                 carried, staged = None, []
@@ -2939,6 +3003,8 @@ def run(argv):
                 kind = "timeout"
             elif why and provider_refusal(out, eval_for[tier]["refusal_markers"]):
                 kind, detail = "refused", provider_refusal(out, eval_for[tier]["refusal_markers"])[:300]
+            elif why and auth_refusal(out):
+                kind, detail = "auth", auth_refusal(out)
             elif why:
                 kind = "adapter"
             else:
@@ -2946,6 +3012,22 @@ def run(argv):
                 kind = "early_end" if detail else None
             if kind is None:
                 break
+            if kind == "auth":
+                # The provider refused the credential: never retried, and the event stops, since every later run
+                # with it would meet the same refusal. The message names the variable, never its value.
+                refused_key.set()
+                reason = (f"the provider refused the key ({detail}) passed in "
+                          f"{credential_label(harness_for[tier], key_names(tier, c['id']))}")
+                note = (f"KEY REFUSED case {c['id']} {name} run {k}: {reason}. The event stops: every later run with that "
+                        "key would meet the same refusal, so the run is not retried and no new run starts. Store a valid "
+                        "key under that name, then run what is left with: python3 evals/eval_run.py --resume "
+                        f"{os.path.relpath(it_dir, ROOT)}")
+                if not refused_note:
+                    refused_note.append(note)
+                    print(note, file=sys.stderr)
+                return entry(None, infra(reason, "auth", detail=detail, attempts=count["attempts"]), [
+                    f"RUN FAILED  case {c['id']} {name} run {k} ({reason}; not retried): see "
+                    f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"])
             count[RETRY_KINDS[kind]] += 1
             if kind == "refused":
                 count["refused"] = detail
@@ -3007,7 +3089,10 @@ def run(argv):
         return entry(row, failed)
 
     def run_and_log(job):
-        result = one_run(*job)
+        try:
+            result = one_run(*job)
+        except EventStopped:  # not started: no ledger line, so the run is listed as not run and --resume runs it
+            return {"msgs": []}
         ledger_add(it_dir, {**{key: value for key, value in result.items() if key != "msgs"}, "date": today()})
         return result
 
@@ -3121,6 +3206,8 @@ def run(argv):
               "(benchmark.json infra_failures). Run them again, and only them, with: python3 evals/eval_run.py --resume "
               f"{os.path.relpath(it_dir, ROOT)} (a run still failing after {control['max_resumes']} resumption(s) is written "
               "as a timeout with score 0). Do not change the skill for them.", file=sys.stderr)
+    for note in refused_note:  # said again at the end, where the operator reads the outcome
+        print(note, file=sys.stderr)
     for hit in timeouts:
         print(f"TIMEOUT     case {hit['case']} {hit['variant']} ({hit['tier']}) run {hit['run']}: still incomplete after "
               f"{hit['resumes']} resumption(s) ({hit['reason']}); it scores 0", file=sys.stderr)

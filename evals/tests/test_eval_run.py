@@ -2269,11 +2269,12 @@ id="$(cat "$2")"
 echo "$id $with $6" >> "$here/calls.txt"
 env | grep -E '^(TOKEN|WEBKEY|FLOORKEY)=' | sort | tr '\n' ' ' > "$out/keys.txt"
 n=1; while ! mkdir "$here/n-$id-$with-$6.$n" 2>/dev/null; do n=$((n + 1)); done
-for kind in fail hang limit; do
+for kind in fail hang limit auth; do
   f="$here/$kind-$id-$with-$6"
   if [ -f "$f" ] && [ "$n" -le "$(cat "$f")" ]; then
     case $kind in
       fail) echo "provider: overloaded" >&2; exit 7 ;;
+      auth) echo 'error: {"name":"APIError","data":{"message":"User not found.","statusCode":401,"isRetryable":false}}' >&2; exit 1 ;;
       hang) sleep 30 ;;
       limit) echo "API Error: usage limit reached" >&2; exit 1 ;;
     esac
@@ -2463,6 +2464,59 @@ def test_resume_refuses_a_skill_that_changed_and_goes_with_no_other_option(tmp_p
 def test_a_contaminated_baseline_and_a_failed_grading_are_never_turned_into_a_score():
     assert "contaminated" not in er.CAPPED_KINDS and "grading" not in er.CAPPED_KINDS and "settings" not in er.CAPPED_KINDS
     assert set(er.CAPPED_KINDS) == set(er.RETRY_KINDS)
+
+
+# A refused key: never retried, and the event stops.
+
+@pytest.mark.parametrize("text, found", [
+    ('error: {"name":"APIError","data":{"message":"User not found.","statusCode":401,"isRetryable":false}}', "HTTP 401"),
+    ('Failed to authenticate. API Error: 401 {"type":"error","error":{"type":"authentication_error"}}', "HTTP 401"),
+    ('{"type":"error","error":{"type":"authentication_error","message":"invalid x-api-key"}}', "HTTP 401"),
+    ('AI_APICallError: 401 "User not found."', "HTTP 401"),
+    ("< HTTP/1.1 401 Unauthorized", "HTTP 401"),
+    ('HTTP 403: {"error": {"message": "Key is disabled"}}', "HTTP 403"),
+    ('{"status": 403, "message": "this token lacks the scope"}', "HTTP 403"),
+    ('API Error: 403 {"error":{"message":"Request not allowed in this region"}}', None),  # a 403 that names no key
+    ("provider: overloaded (HTTP 529)", None),
+    ('{"statusCode": 429, "message": "rate limited"}', None),
+    ("wrote 401 lines to report.md", None),
+])
+def test_a_refused_key_is_told_from_other_failures_by_its_status(tmp_path, text, found):
+    (tmp_path / "stderr.log").write_text(text + "\n")
+    assert er.auth_refusal(str(tmp_path)) == found
+
+
+def test_a_refused_key_is_named_by_its_variable_and_its_store_username_never_by_its_value():
+    assert er.credential_label("agents-dir", ["OPENROUTER_API_KEY"]) == "OPENROUTER_API_KEY (secret store username 'openrouter')"
+    assert er.credential_label("no-such-adapter", ["SOME_KEY"]) == "SOME_KEY"
+    assert er.credential_label("agents-dir", []) == "no variable (the harness's own login)"
+
+
+def test_a_refused_key_is_not_retried_and_stops_the_event_until_it_is_resumed(tmp_path, monkeypatch, capsys):
+    control_demo(tmp_path, monkeypatch, auth_p_with_f=9)
+    configure_gate(tmp_path, floor_pass_env=["FLOORKEY"])
+    monkeypatch.setenv("FLOORKEY", "floorkey-value")
+    assert er.main(["--skill", "demo", "--jobs", "1"]) == 1
+    captured = capsys.readouterr()
+    out, bench = json.loads(captured.out), bench_of(tmp_path)
+    # One call, never retried, and no run started after it: every later run would meet the same refusal.
+    assert calls(tmp_path) == ["p with m", "p with f"]
+    failures = sorted((f["case"], f["variant"], f["tier"], f["kind"]) for f in bench["infra_failures"])
+    assert failures == [(1, "with_skill", "floor", "auth"), (1, "without_skill", "strong", "not_run"),
+                        (2, "with_skill", "floor", "not_run"), (2, "with_skill", "strong", "not_run"),
+                        (2, "without_skill", "strong", "not_run")]
+    refused = next(f for f in bench["infra_failures"] if f["kind"] == "auth")
+    assert refused["attempts"] == 1 and refused["detail"] == "HTTP 401" and "FLOORKEY" in refused["reason"]
+    assert bench["counts"]["floor"]["with_skill"]["adapter_failures"] == 0 and bench["counts"]["floor"]["with_skill"]["retries"] == 0
+    # The message names the variable, never its value, and says how to go on.
+    assert "KEY REFUSED case 1 with_skill.floor run 1: the provider refused the key (HTTP 401) passed in FLOORKEY" in captured.err
+    assert f"--resume {out['iteration_dir']}" in captured.err and "floorkey-value" not in captured.err + captured.out
+    assert "RETRY" not in captured.err and json.loads((tmp_path / out["iteration_dir"] / "event.json").read_text())["state"] == "open"
+    # With a valid key stored, --resume runs the refused run and the runs that never started, and no other.
+    (tmp_path / "adapters" / "h" / "auth-p-with-f").unlink()
+    assert er.main(["--resume", str(tmp_path / out["iteration_dir"])]) == 0
+    assert sorted(calls(tmp_path)[2:]) == ["p with f", "p without m", "q with f", "q with m", "q without m"]
+    assert json.loads(capsys.readouterr().out)["complete"] is True
 
 
 # The account limit: the three "never" of a run that meets it.
