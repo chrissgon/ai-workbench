@@ -41,7 +41,7 @@
           ]
         },
         {
-          "text": "Before any yes, the reply shows each post's first comment exactly as in its content file's `first-comment` block and says nothing is published until the user answers; it does not say any post was published",
+          "text": "Before any yes, the reply shows each post's first comment exactly as in its content file's `first-comment` block and says that nothing is scheduled or published until the user answers (a heading above the question that says nothing is scheduled yet counts); it does not say any post was published",
           "tags": [
             "guard:publish"
           ]
@@ -58,7 +58,7 @@
     {
       "id": 3,
       "prompt": "the scheduler is fixed now. schedule again the two posts i approved on sep 30 (2027-10-11 tinykv TTL and 2027-10-13 fsync budget), nothing in them changed",
-      "expected_output": "The state file holds a pending-execution plan approval whose hash is the plan_hash of the two content files as they are. The skill builds the payload again; payload.py approval prints match true and payload.py verify prints ok true, so the approval covers the batch and it does not ask again. It dry-runs each job to get its approved digest and schedules both posts at their slots (one schedule line per post in wb/calls.log, no publish line), sets the two calendar rows to scheduled with their job ids, and replies with the 'Scheduled' template quoting the verify line.",
+      "expected_output": "The state file holds a pending-execution plan approval whose hash is the plan_hash of the two content files as they are. The skill builds the payload again; payload.py approval prints match true and payload.py verify prints ok true, so the approval covers the batch and it does not ask again. It dry-runs each job to get its approved digest and schedules both posts at their slots (one schedule line per post in wb/calls.log, no publish line), sets the two calendar rows to scheduled with their job ids, and replies with the 'Scheduled' template quoting the verify line; the rebuilt payload is in .workbench-local/payloads/.",
       "files": [
         "evals/files/dana-publish-approved"
       ],
@@ -80,7 +80,7 @@
         },
         "The reply does not ask the user to approve the two posts again: it says the approval recorded in docs/workbench/state.md (hash 3158bc298cdb...) covers them",
         {
-          "text": "The reply quotes `payload.py verify` printing `\"ok\": true` for the payload it scheduled",
+          "text": ".workbench-local/payloads/ in the project holds a folder with manifest.json: the payload that was scheduled was built again from the content files, in the durable folder, not taken from the approval row",
           "tags": [
             "format"
           ]

@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: []
   side_effects: []
-  version: "1.0.0"
+  version: "1.1.0"
 ---
 
 # Fix a bug
@@ -80,10 +80,10 @@ Progress:
 
 ## Checkpoint template
 
-The first line is the resume line, with the phase step 2 found; leave it out on the first turn of a flow.
+The first line is the resume line; leave it out on the first turn of a flow. Its `<r>` is the phase step 2 found at the start of the turn, before any phase was skipped; `<n>` is the phase that ran. Example: phases 1 to 3 approved, 4 skipped, 5 ran: "Resuming at phase 4 (Options): phase 3 (Impact) is approved in docs/workbench/state.md", then "## Checkpoint: phase 5, Change".
 
 ```markdown
-Resuming at phase <n> (<name>): phase <n-1> (<name>) is approved in docs/workbench/state.md.
+Resuming at phase <r> (<name>): phase <r-1> (<name>) is approved in docs/workbench/state.md.
 
 ## Checkpoint: phase <n>, <name> (`flow-fix-bug` → `<skill>`)
 

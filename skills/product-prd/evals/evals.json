@@ -53,7 +53,7 @@
         },
         "At most three questions are asked, each with a recommended answer",
         {
-          "text": "The reply holds no draft of the PRD (no feature list, no metric, no release phase): it says nothing was written, asks its questions and stops",
+          "text": "The reply holds no draft of the PRD (no feature list, no metric, no release phase) outside its questions: it says nothing was written, asks its questions and stops. The recommended answer given with a question, even one that names a day-one scope, is not a draft and does not fail this; nor does the section on instructions found in external content",
           "tags": [
             "guard"
           ]
