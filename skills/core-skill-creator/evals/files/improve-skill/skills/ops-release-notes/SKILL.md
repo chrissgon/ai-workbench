@@ -10,9 +10,10 @@ metadata:
   kind: capability
   inputs: [docs/release/changes.md]
   outputs: [docs/release/notes.md]
+  updates: []
   requires: []
   side_effects: []
-  version: "0.1"
+  version: "0.1.0"
 ---
 
 # Release notes
