@@ -83,6 +83,8 @@ sys.exit(1 if bad else 0)
 FAKE_RENDER = r'''
 import json, os, sys
 args = sys.argv[1:]
+with open(os.environ["FAKE_CALLS"], "a") as f:
+    f.write(json.dumps(["render"] + args) + "\n")
 if os.environ.get("FAKE_NO_BROWSER"):
     print("no browser", file=sys.stderr); sys.exit(3)
 out = args[args.index("--out") + 1]
@@ -244,16 +246,20 @@ def edit_data_file(env, change):
 def test_the_payload_builder_gets_the_data_file_and_the_publisher(env):
     # Row 46 made payload.py read the platform's limits from --platform-file and take the publisher's path; the
     # runtime passed neither, so a post was checked against no limit of the platform and no job.json was written.
-    edit_data_file(env, lambda d: d["post"].update(max_characters=20))
+    scripts = env["wb"] / "skills/mkt-publish/scripts"
+    (scripts / "payload.py").rename(scripts / "payload_real.py")
+    (scripts / "payload.py").write_text(  # records its arguments, then is the real payload.py
+        "import json, os, runpy, sys\nfrom pathlib import Path\n"
+        "with open(os.environ['FAKE_CALLS'], 'a') as f:\n    f.write(json.dumps(['payload'] + sys.argv[1:]) + '\\n')\n"
+        "runpy.run_path(str(Path(__file__).with_name('payload_real.py')), run_name='__main__')\n")
     code, out, err = rt(env, "tick")
     assert code == 0, err
     b = inbox(env)[0]["payload"]
-    assert b["ready"] is False and any("payload.py build" in p and "20" in p for p in b["problems"]), b["problems"]
-    edit_data_file(env, lambda d: d["post"].update(max_characters=3000))
-    assert rt(env, "reject", "--id", str(inbox(env)[0]["id"]))[0] == 0
-    code, out, err = rt(env, "tick")
-    b = inbox(env)[0]["payload"]
     assert b["ready"] is True, b["problems"]
+    (build,) = calls(env, "payload")
+    data_file = str(env["wb"].resolve() / "shared/references/platforms/linkedin.json")
+    assert build[build.index("--platform") + 1] == "linkedin" and build[build.index("--platform-file") + 1] == data_file
+    assert build[build.index("--publisher") + 1] == str(env["wb"].resolve() / "providers/publisher/linkedin.py")
     post = Path(b["files"]["post"]["path"])
     job = json.loads((post.parent / "job.json").read_text())  # written by payload.py only when given --publisher
     assert job["argv"][job["argv"].index("run") + 1] == str(env["wb"].resolve() / "providers/publisher/linkedin.py")
@@ -445,8 +451,9 @@ def test_parse_proposal_rules():
     state = {"round": {"round": "2026-10-05", "winner": None, "winner_topic": None,
                        "options": {"A": "One", "B": "Two", "C": "Three"}},
              "slot": {"language": "PT"}, "rotation": {"next_pillar": "Small tools"}}
+    limits = {"post": 3000, "first_comment": 1250}
     text = proposal(topic="Two", reason="It has material in the notes.", language="PT", pillar="Small tools")
-    assert runtime_vote.parse_proposal(text, state)["topic"] == "Two"
+    assert runtime_vote.parse_proposal(text, state, limits)["topic"] == "Two"
     for bad, message in ((proposal(topic="Two", language="PT", pillar="Small tools"), "reason"),
                          (proposal(topic="Two", reason="x", language="EN", pillar="Small tools"), "language"),
                          (proposal(topic="Two", reason="x", language="PT", pillar="Other"), "pillar"),
@@ -454,7 +461,29 @@ def test_parse_proposal_rules():
                                    options={"A": "", "B": "b", "C": "c"}), "without material"),
                          (text + text, "found 2")):
         with pytest.raises(ValueError, match=message):
-            runtime_vote.parse_proposal(bad, state)
+            runtime_vote.parse_proposal(bad, state, limits)
+    with pytest.raises(ValueError, match="at most 20 characters"):
+        runtime_vote.parse_proposal(text, state, {**limits, "post": 20})
+    with pytest.raises(ValueError, match="first_comment must have at most 0"):
+        runtime_vote.parse_proposal(text, state, {**limits, "first_comment": 0})
+
+
+def test_the_limits_and_the_image_size_come_from_the_data_file(env):
+    # CT2: the post's 3000 characters, the first comment's 1250 and the image's 1080 x 1350 were constants of the
+    # runtime; they are the platform's, and its data file holds them.
+    def change(d):
+        d["post"]["max_characters"] = 30
+        d["media"]["post_image"] = {"width": 600, "height": 400}
+    edit_data_file(env, change)
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["vote"]["status"] == "to_inbox" and "at most 30 characters" in out["vote"]["note"], out
+    assert rt(env, "reject", "--id", str(inbox(env)[0]["id"]))[0] == 0
+    edit_data_file(env, lambda d: d["post"].update(max_characters=3000))
+    code, out, err = rt(env, "tick")
+    assert inbox(env)[0]["payload"]["ready"] is True, err
+    (render,) = calls(env, "render")
+    assert render[render.index("--width") + 1] == "600" and render[render.index("--height") + 1] == "400"
 
 
 def test_vote_job_publishes_then_records_the_post(env, tmp_path):

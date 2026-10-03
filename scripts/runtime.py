@@ -325,6 +325,7 @@ def load_config(project: Path) -> dict:
     missing = [str(p) for p in cfg["paths"].values() if not p.exists()]
     if missing:
         raise Fail(f"not found: {', '.join(missing)}", 3)
+    cfg["limits"] = platform_limits(cfg["paths"]["platform_file"], platform)
     runtime_vote.vote_config(cfg, Fail)
     return cfg
 
@@ -424,7 +425,25 @@ Answer with a short explanation and exactly one block:
 """
 
 
-def parse_decision(text: str) -> dict:
+def platform_limits(path: Path, platform: str) -> dict:
+    """The limits the runtime enforces, read from the platform's data file: it holds no limit of its own (CT2)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict) or data.get("platform") != platform:
+            raise ValueError(f"it is not the data file of {platform!r}")
+        post, image = data["post"], data["media"].get("post_image")
+        limits = {"reply": int(data["reply"]["max_characters"]), "post": int(post["max_characters"]),
+                  "first_comment": int(post["first_comment"]["max_characters"])
+                  if post["first_comment"].get("supported") else 0,
+                  "image": (int(image["width"]), int(image["height"])) if image else None}
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as e:
+        raise Fail(f"{path}: not a platform data file the runtime can read ({type(e).__name__}: {e})", 3)
+    if min(limits["reply"], limits["post"]) < 1:
+        raise Fail(f"{path}: reply.max_characters and post.max_characters must be positive", 3)
+    return limits
+
+
+def parse_decision(text: str, max_reply: int) -> dict:
     blocks = DECISION.findall(text)
     if len(blocks) != 1:
         raise ValueError(f"expected one engage-decision block, found {len(blocks)}")
@@ -435,8 +454,8 @@ def parse_decision(text: str) -> dict:
         raise ValueError(f"unknown category {d['category']!r}")
     if not isinstance(d["language"], str) or not re.fullmatch(r"[A-Za-z]{2,3}", d["language"]):
         raise ValueError("language must be a 2-3 letter code")
-    if not isinstance(d["reply"], str) or len(d["reply"]) > 1500:
-        raise ValueError("reply must be text of at most 1500 characters")
+    if not isinstance(d["reply"], str) or len(d["reply"]) > max_reply:
+        raise ValueError(f"reply must be text of at most {max_reply} characters (the platform's reply limit)")
     return d
 
 
@@ -562,7 +581,7 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
 
     decision, reasons = None, []
     try:
-        decision = parse_decision(response)
+        decision = parse_decision(response, cfg["limits"]["reply"])
     except (ValueError, json.JSONDecodeError) as e:
         reasons.append(f"agent proposal unusable: {e}")
     comment_file = write_private(run_dir, "comment.json", json.dumps(comment, ensure_ascii=False))

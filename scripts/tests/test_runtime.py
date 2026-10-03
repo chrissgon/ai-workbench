@@ -230,6 +230,22 @@ def test_a_platform_without_a_data_file_is_not_configured(env):
     assert code == 3 and "platforms/linkedin.json" in err
 
 
+def test_the_reply_limit_comes_from_the_data_file(env):
+    # CT2: the reply's 1500 characters were a constant of the runtime; the platform's data file holds the limit.
+    path = env["wb"] / "shared/references/platforms/linkedin.json"
+    data = json.loads(path.read_text())
+    data["reply"]["max_characters"] = 10
+    path.write_text(json.dumps(data))
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "to_inbox" and "at most 10 characters" in out["handled"][0]["note"]
+    assert publisher_calls(env) == []
+    path.write_text(json.dumps({**data, "platform": "other"}))
+    code, _, err = rt(env, "status")
+    assert code == 3 and "not the data file of 'linkedin'" in err
+
+
 def test_the_parsers_generic_identifier_names_are_read(env):
     # The parser prints comment_id, parent_comment_id and post_id, and the runtime's stored names only until the
     # runtime reads the generic ones: a parser without the stored names must still be answered correctly.
@@ -606,7 +622,8 @@ def test_configured_names_keep_working_and_auto_resolves_the_class(env, monkeypa
     # The publisher key is the platform: the resolution function chooses the implementation that declares it,
     # whatever its name, and the runtime has no rule of its own (the platform's name is not an implementation's).
     edit_config(env, publisher="mastodon")
-    (env["wb"] / "shared/references/platforms/mastodon.json").write_text('{"platform": "mastodon"}\n')
+    data = json.loads((env["wb"] / "shared/references/platforms/linkedin.json").read_text())
+    (env["wb"] / "shared/references/platforms/mastodon.json").write_text(json.dumps({**data, "platform": "mastodon"}))
     with pytest.raises(runtime.Fail) as e:
         runtime.load_config(env["proj"])
     assert e.value.code == 3 and "serves mastodon" in str(e.value)

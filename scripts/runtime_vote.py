@@ -40,7 +40,8 @@ ROUND = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")  # a round id, as it go
 QUEUE_ALLOW = ["data/pick-queue.json"]
 SYSTEM_PYTHON = "/usr/bin/python3"
 JOB_TIMEOUT_MINUTES = 30  # vote_job.py's own limits add up to 27 minutes (scripts/vote_job.py)
-MAX_POST = 3000
+# The platform's limits (a post's characters, its first comment's, the post image's size) are read from its data
+# file by scripts/runtime.py (cfg["limits"]): the runtime holds none of its own.
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -125,8 +126,10 @@ Answer with a short explanation and exactly one block:
 """
 
 
-def parse_proposal(text: str, state: dict) -> dict:
-    """The agent's vote-proposal block, checked against the state. Raises ValueError with the first problem."""
+def parse_proposal(text: str, state: dict, limits: dict) -> dict:
+    """The agent's vote-proposal block, checked against the state and the platform's limits (cfg["limits"]:
+    "post" and "first_comment", in characters; 0 when the platform takes no first comment). Raises ValueError
+    with the first problem."""
     blocks = PROPOSAL.findall(text)
     if len(blocks) != 1:
         raise ValueError(f"expected one vote-proposal block, found {len(blocks)}")
@@ -150,10 +153,13 @@ def parse_proposal(text: str, state: dict) -> dict:
         raise ValueError("post keys must be exactly language, text, first_comment, sources")
     if post["language"] != slot["language"]:
         raise ValueError(f"post.language must be the slot's language, {slot['language']}")
-    if not isinstance(post["text"], str) or not post["text"].strip() or len(post["text"]) > MAX_POST:
-        raise ValueError(f"post.text must be text of at most {MAX_POST} characters")
-    if not isinstance(post["first_comment"], str) or len(post["first_comment"]) > 1250:
+    if not isinstance(post["text"], str) or not post["text"].strip() or len(post["text"]) > limits["post"]:
+        raise ValueError(f"post.text must be text of at most {limits['post']} characters (the platform's limit)")
+    if not isinstance(post["first_comment"], str):
         raise ValueError("post.first_comment must be text (empty when there is no link)")
+    if len(post["first_comment"]) > limits["first_comment"]:
+        raise ValueError(f"post.first_comment must have at most {limits['first_comment']} characters (the "
+                         "platform's limit; 0 when it takes no first comment)")
     if not isinstance(post["sources"], list) or not post["sources"]:
         raise ValueError("post.sources must name the file and section of every fact")
     nxt = d["next_round"]
@@ -285,7 +291,7 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
           "--duration-ms", h["nz"](timing.get("duration_ms")), "--out-dir", run_dir / "out",
           *(["--error", err.strip()[-1000:]] if code != 0 and err.strip() else []))
     try:
-        d = parse_proposal(response, state)
+        d = parse_proposal(response, state, cfg["limits"])
     except (ValueError, json.JSONDecodeError) as e:
         out = to_inbox(store, write_private, folder, f"vote {rid}: proposal unusable", {
             "round": rid, "ready": False, "problems": [f"agent proposal unusable: {e}"], "run_id": run_id,
@@ -337,11 +343,15 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
                                                         [err.strip()[-300:] or f"exit {code}"]))
 
     image = None
-    if v["image"]:
+    size = cfg["limits"]["image"]
+    if v["image"] and not size:
+        notes.append("no image: the platform's data file gives no post image size (media.post_image); the post "
+                     "goes text-only")
+    elif v["image"]:
         card = project / v["card_html"] if v.get("card_html") else v["paths"]["card"]
         png = work / f"{key}.png"
-        code, out, err = run([sys.executable, str(v["paths"]["render"]), "--html", str(card), "--width", "1080",
-                              "--height", "1350", "--out", str(png), "--fill", f"title={d['topic']}",
+        code, out, err = run([sys.executable, str(v["paths"]["render"]), "--html", str(card), "--width", str(size[0]),
+                              "--height", str(size[1]), "--out", str(png), "--fill", f"title={d['topic']}",
                               "--fill", f"subtitle={state['round']['pillar']}"])
         if code == 0 and png.is_file():
             image = png
