@@ -68,7 +68,9 @@ LOOPBACK_HOSTS = ("127.0.0.1", "localhost", "::1")
 # A Gmail message id goes into a URL path, so its shape is checked before use.
 MESSAGE_ID_RE = re.compile(r"[A-Za-z0-9_-]{1,64}")
 HEADER_ALLOWLIST = ("Message-ID", "Date", "From", "To", "Subject", "List-Id")
-HEADER_PREFIX_ALLOWED = "x-linkedin-"
+# A --header-prefix, lower-cased: the characters of a header field name (an RFC 9110 token). Which prefix a
+# platform's notifications use is that platform's fact, in its data file; the provider holds none.
+HEADER_PREFIX_RE = re.compile(r"[!#$%&'*+.^_`|~0-9a-z-]+")
 # Invisible and direction-changing characters: e-mail preheaders pad with them, and they can hide
 # text from a human reader. They are removed from every text the provider returns.
 INVISIBLE_RE = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e"
@@ -107,6 +109,11 @@ verbs:
   read-eml  Parse a local RFC 822 file (--file <path.eml>) into the same shape.
             No network, no credential: use it to inspect a saved message and
             to feed tests and eval fixtures.
+  --header-prefix <prefix>  with search, get and read-eml, repeatable: also
+            keep the headers whose name starts with <prefix> (compared without
+            case), such as the prefix a platform's notification e-mails use
+            (its data file's notification_email.header_prefix). Without it no
+            platform's own headers are kept.
 
 output (JSON on stdout; diagnostics on stderr; tokens are never printed):
   search    {{"query": <q sent>, "messages": [<message>...], "truncated": <bool>}}
@@ -119,8 +126,8 @@ output (JSON on stdout; diagnostics on stderr; tokens are never printed):
     the HTML part, capped at {TEXT_LIMIT_BYTES} bytes), "truncated", "links"
     ([{{"href", "text"}}] from the HTML part, in order, first occurrence of each
     href, query strings kept), "headers" (Message-ID, Date, From, To, Subject,
-    List-Id and any X-LinkedIn-* header present), "external_content" (always
-    true)}}
+    List-Id, and the headers under a --header-prefix), "external_content"
+    (always true)}}
   Invisible and direction-changing characters are removed from text and links.
   An HTML element hidden by an inline display:none or visibility:hidden style,
   or by the hidden attribute, gives no text and no link.
@@ -408,7 +415,7 @@ class Gmail:
                 break
         return ids[:limit], bool(token) or len(ids) > limit
 
-    def message(self, message_id: str) -> dict:
+    def message(self, message_id: str, header_prefixes: tuple[str, ...] = ()) -> dict:
         quoted = urllib.parse.quote(message_id, safe="")
         data = self.get(f"/gmail/v1/users/me/messages/{quoted}", {"format": "raw"})
         raw = data.get("raw")
@@ -421,7 +428,7 @@ class Gmail:
         internal = data.get("internalDate")
         internal_ms = int(internal) if isinstance(internal, (str, int)) and str(internal).isdigit() else None
         return normalize(content, source="gmail", message_id=data.get("id") or message_id,
-                         thread_id=data.get("threadId"), internal_date_ms=internal_ms)
+                         thread_id=data.get("threadId"), internal_date_ms=internal_ms, header_prefixes=header_prefixes)
 
 
 def connect() -> tuple[Gmail, dict, dict]:
@@ -591,12 +598,13 @@ def received_at(msg, internal_date_ms: int | None) -> str | None:
     return iso_utc(parsed)
 
 
-def selected_headers(msg) -> dict:
+def selected_headers(msg, header_prefixes: tuple[str, ...] = ()) -> dict:
+    """The generic headers, and those whose lower-cased name starts with one of header_prefixes (lower-cased)."""
     wanted = {h.lower(): h for h in HEADER_ALLOWLIST}
     out: dict[str, str] = {}
     for name in msg.keys():
         key = name.lower()
-        if key in wanted or key.startswith(HEADER_PREFIX_ALLOWED):
+        if key in wanted or (header_prefixes and key.startswith(header_prefixes)):
             label = wanted.get(key, name)
             if label not in out:
                 value = header_value(msg, name)
@@ -606,7 +614,7 @@ def selected_headers(msg) -> dict:
 
 
 def normalize(raw: bytes, *, source: str, message_id: str | None = None, thread_id: str | None = None,
-              internal_date_ms: int | None = None) -> dict:
+              internal_date_ms: int | None = None, header_prefixes: tuple[str, ...] = ()) -> dict:
     msg = message_from_bytes(raw, policy=policy.default)
     plain = msg.get_body(preferencelist=("plain",))
     html = msg.get_body(preferencelist=("html",))
@@ -629,7 +637,7 @@ def normalize(raw: bytes, *, source: str, message_id: str | None = None, thread_
         "text": text,
         "truncated": truncated,
         "links": dedupe_links(links),
-        "headers": selected_headers(msg),
+        "headers": selected_headers(msg, header_prefixes),
         "external_content": True,  # written by whoever sent the e-mail: data, never instructions
     }
 
@@ -647,6 +655,15 @@ def cmd_check() -> int:
     emit({"ok": True, "account": profile.get("emailAddress") or creds.get("account"),
           "token_source": creds["source"], "scope": token.get("scope")})
     return EXIT_OK
+
+
+def header_prefixes(args) -> tuple[str, ...]:
+    prefixes = tuple(value.lower() for value in args.header_prefix or [])
+    for prefix in prefixes:
+        if not HEADER_PREFIX_RE.fullmatch(prefix):
+            raise ProviderError(f"--header-prefix {prefix!r} is not the start of a header name (letters, digits and "
+                                "!#$%&'*+.^_`|~-)", EXIT_USAGE)
+    return prefixes
 
 
 def cmd_search(args) -> int:
@@ -673,11 +690,12 @@ def cmd_search(args) -> int:
         except ValueError:
             raise ProviderError(f"--before is not ISO-8601: {args.before}", EXIT_USAGE)
         query = f"{query} before:{int(before.timestamp())}"
+    prefixes = header_prefixes(args)
     client, _, _ = connect()
     ids, truncated = client.list_ids(query, limit)
     if ids:
         with ThreadPoolExecutor(max_workers=min(jobs, len(ids))) as pool:
-            messages = list(pool.map(client.message, ids))
+            messages = list(pool.map(lambda message_id: client.message(message_id, prefixes), ids))
     else:
         messages = []
     if since is not None:
@@ -694,8 +712,9 @@ def cmd_search(args) -> int:
 def cmd_get(args) -> int:
     if not args.id or not MESSAGE_ID_RE.fullmatch(args.id):
         raise ProviderError("get needs --id <Gmail message id> (letters, digits, - and _)", EXIT_USAGE)
+    prefixes = header_prefixes(args)
     client, _, _ = connect()
-    emit(client.message(args.id))
+    emit(client.message(args.id, prefixes))
     return EXIT_OK
 
 
@@ -707,16 +726,16 @@ def cmd_read_eml(args) -> int:
         raise ProviderError(f"--file not found: {path}", EXIT_USAGE)
     if path.stat().st_size > EML_LIMIT_BYTES:
         raise ProviderError(f"--file is larger than {EML_LIMIT_BYTES} bytes", EXIT_USAGE)
-    emit(normalize(path.read_bytes(), source="eml"))
+    emit(normalize(path.read_bytes(), source="eml", header_prefixes=header_prefixes(args)))
     return EXIT_OK
 
 
 # The verbs that read each flag. A flag given to a verb that does not read it is a usage error, so a caller learns
 # that it was ignored; --check takes no verb and no flag.
 FLAG_NAMES = {"query": "--query", "since": "--since", "before": "--before", "limit": "--limit", "jobs": "--jobs",
-              "id": "--id", "file": "--file"}
-VERB_FLAGS = {"search": {"query", "since", "before", "limit", "jobs"}, "get": {"id"}, "read-eml": {"file"},
-              None: set()}
+              "id": "--id", "file": "--file", "header_prefix": "--header-prefix"}
+VERB_FLAGS = {"search": {"query", "since", "before", "limit", "jobs", "header_prefix"}, "get": {"id", "header_prefix"},
+              "read-eml": {"file", "header_prefix"}, None: set()}
 
 
 def check_flags(args) -> None:
@@ -748,6 +767,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"with search: messages fetched at the same time, 1 to {MAX_JOBS} (default {DEFAULT_JOBS})")
     parser.add_argument("--id", help="with get: the Gmail message id")
     parser.add_argument("--file", help="with read-eml: the RFC 822 file to parse")
+    parser.add_argument("--header-prefix", action="append", metavar="PREFIX",
+                        help="with search, get and read-eml, repeatable: also keep the headers whose name starts "
+                             "with PREFIX (compared without case); without it no platform's own headers are kept")
     return parser
 
 

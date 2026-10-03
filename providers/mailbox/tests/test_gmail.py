@@ -401,9 +401,8 @@ def test_get_multipart_quoted_printable(env, fake):
     assert m["text"].startswith("Caf\u00e9 plan: ship tokens = v2 long line")  # decoded, the plain part wins
     assert "=3D" not in m["text"] and "\n\n\n" not in m["text"] and m["text"].endswith("\n\nend")
     assert m["links"] == [{"href": "https://example.com/p?id=1&x=2", "text": "view"}]
-    assert m["headers"]["X-LinkedIn-Class"] == "SYNTHETIC"
-    assert "X-Other" not in m["headers"]
-    assert set(m["headers"]) == {"From", "To", "Subject", "Message-ID", "Date", "X-LinkedIn-Class"}
+    # Without --header-prefix only the generic headers are kept: no platform's own.
+    assert set(m["headers"]) == {"From", "To", "Subject", "Message-ID", "Date"}
     assert m["truncated"] is False
     assert FAKE_ACCESS not in json.dumps(fake.requests[-1]["path"])
 
@@ -454,8 +453,8 @@ def test_read_eml_needs_no_network_and_no_credential(tmp_path):
         {"href": "https://notify.example.com/unsubscribe?u=abc", "text": "Unsubscribe"},
     ]
     assert m["headers"]["List-Id"] == "<comments.notify.example.com>"
-    assert m["headers"]["X-LinkedIn-Template"] == "synthetic_fixture_v1"
-    assert "X-Fixture-Note" not in m["headers"] and "Return-Path" not in m["headers"]
+    assert not any(h.lower().startswith("x-") for h in m["headers"])  # no --header-prefix, no platform header
+    assert "Return-Path" not in m["headers"]
 
 
 def test_read_eml_missing_file_is_usage_error(tmp_path):
@@ -719,3 +718,35 @@ def test_every_message_says_its_content_is_external(env, fake, tmp_path):
     found = json.loads(run(SCRIPT, ["search", "--query", "x"], env).stdout)
     assert found["messages"] and all(m["external_content"] is True for m in found["messages"])
     assert "external_content" in run(SCRIPT, ["--help"], env).stdout
+
+
+# --- a platform's own headers are kept only under a prefix the caller gives ------------------------------
+
+
+def test_header_prefix_keeps_the_headers_under_it(env, fake, tmp_path):
+    got = json.loads(run(SCRIPT, ["get", "--id", "m1", "--header-prefix", "X-LinkedIn-"], env).stdout)
+    assert got["headers"]["X-LinkedIn-Class"] == "SYNTHETIC" and "X-Other" not in got["headers"]
+    both = json.loads(run(SCRIPT, ["get", "--id", "m1", "--header-prefix", "x-linkedin-", "--header-prefix", "x-oth"],
+                          env).stdout)
+    assert both["headers"]["X-LinkedIn-Class"] == "SYNTHETIC" and both["headers"]["X-Other"] == "not allowlisted"
+    eml = run(SCRIPT, ["read-eml", "--file", str(FIXTURE), "--header-prefix", "x-linkedin-"],
+              {"PATH": os.environ["PATH"], "HOME": str(tmp_path)})
+    headers = json.loads(eml.stdout)["headers"]
+    assert headers["X-LinkedIn-Template"] == "synthetic_fixture_v1" and headers["X-LinkedIn-Class"] == "SYNTHETIC-COMMENT"
+    assert "X-Fixture-Note" not in headers and "Return-Path" not in headers
+    found = json.loads(run(SCRIPT, ["search", "--query", "x", "--header-prefix", "x-linkedin-"], env).stdout)
+    assert any("X-LinkedIn-Class" in m["headers"] for m in found["messages"])
+
+
+def test_header_prefix_must_be_a_header_name_prefix(env, fake):
+    for bad in ("", "x:y", "x y", "x\ny", "x-é"):
+        proc = run(SCRIPT, ["get", "--id", "m1", "--header-prefix", bad], env)
+        assert proc.returncode == 2 and "--header-prefix" in proc.stderr, repr(bad)
+    proc = run(SCRIPT, ["--check", "--header-prefix", "x-linkedin-"], env)
+    assert proc.returncode == 2
+    assert fake.requests == []
+
+
+def test_no_platform_prefix_is_held_in_the_provider():
+    source = SCRIPT.read_text(encoding="utf-8").lower()
+    assert "x-linkedin-" not in source and "header_prefix_allowed" not in source
