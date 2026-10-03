@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import importlib.util
 import json
 import mimetypes
@@ -142,10 +143,13 @@ identifiers:
 idempotency:
   Each key publishes one post or one comment at most once. It is recorded as pending in the ledger
   before the request and as published after it, under a file lock; a pending
-  key refuses every new attempt until resolve settles it. A key is released
-  when nothing was sent, or when LinkedIn refused the request with a 4xx answer
-  other than 408 and 429; after a timeout, a dropped connection, a 5xx, a 408
-  or a 429 the outcome is unknown and the key stays pending.
+  key refuses every new attempt until resolve settles it. A key holds one
+  content: the ledger keeps the sha256 of what was sent (the text, and the
+  image), and the same key with other content is refused (exit 1, nothing
+  sent); an entry written before the hash was kept replays as before. A key
+  is released when nothing was sent, or when LinkedIn refused the request with
+  a 4xx answer other than 408 and 429; after a timeout, a dropped connection,
+  a 5xx, a 408 or a 429 the outcome is unknown and the key stays pending.
 
 credentials (never from files or flags):
   The access token is read from the OS secret store (service "{KEYRING_SERVICE}",
@@ -465,6 +469,22 @@ def entry_kind(entry: dict) -> str:
     return entry.get("kind") or "post"
 
 
+def payload_digest(text: str, media: bytes | None = None) -> str:
+    """The sha256 of what a request sends: its text as sent, and the sha256 of the image when there is one."""
+    doc = {"text": text, "media_sha256": hashlib.sha256(media).hexdigest() if media is not None else None}
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def check_same_payload(key: str, existing: dict, digest: str, kind: str) -> None:
+    """A key holds one content. An entry written before the hash was recorded has none and replays as before."""
+    held = existing.get("payload_sha256")
+    if held and held != digest:
+        raise ProviderError(
+            f"idempotency key {key!r} already holds a {kind} with other content (sha256 {held[:12]}..., this "
+            f"one {digest[:12]}...); nothing was sent. One key per {kind}: use a new key for new content",
+            EXIT_SERVICE)
+
+
 def ledger_claim(key: str, extra: dict | None = None) -> dict | None:
     """Record key as pending (with extra fields) and return None, or return the entry that already holds it."""
     with ledger_locked() as data:
@@ -712,12 +732,15 @@ def member_urn_reader(base: str, token: dict):
 def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary: str,
                  image: Path | None, key: str) -> tuple[str, bool]:
     """Publish the post at most once per key; return (post URN, replayed)."""
-    existing = ledger_claim(key)
+    media = image.read_bytes() if image else None
+    digest = payload_digest(commentary, media)
+    existing = ledger_claim(key, {"payload_sha256": digest})
     if existing:
         if entry_kind(existing) != "post":
             raise ProviderError(f"idempotency key {key!r} belongs to a comment, not a post; use another key",
                                 EXIT_USAGE)
         if entry_status(existing) == "published":
+            check_same_payload(key, existing, digest, "post")
             log(f"idempotency key {key!r} already published; returning the existing post")
             return existing["post_urn"], True
         raise ProviderError(pending_message(key, existing), EXIT_SERVICE)
@@ -746,7 +769,7 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
                 "PUT",
                 upload_url,
                 {"Authorization": f"Bearer {access}", "Content-Type": "application/octet-stream"},
-                image.read_bytes(),
+                media,
             )
             log(f"uploaded {image.name} as {image_urn}")
 
@@ -763,7 +786,8 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
         if not sent or refused(exc):
             ledger_update(key, None)
         else:
-            ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": str(exc)})
+            ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": str(exc),
+                                "payload_sha256": digest})
             if exc.status in UNKNOWN_OUTCOME_STATUSES:
                 raise ProviderError(f"{exc}; that answer does not say whether the post was taken, so the key "
                                     f"stays pending: {after_unknown(key, 'post')}", EXIT_SERVICE, exc.status) from None
@@ -775,9 +799,9 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
     urn = headers.get("x-restli-id")
     if status != 201 or not urn:
         error = f"unexpected Posts API response: status {status}, no x-restli-id header"
-        ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": error})
+        ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": error, "payload_sha256": digest})
         raise ProviderError(error + "; the key stays pending until resolve settles it")
-    ledger_update(key, {"status": "published", "post_urn": urn, "created_at": now_iso()})
+    ledger_update(key, {"status": "published", "post_urn": urn, "created_at": now_iso(), "payload_sha256": digest})
     return urn, False
 
 
@@ -904,7 +928,7 @@ def comment_result(entry: dict, token: dict, key: str, replayed: bool) -> dict:
 def create_comment(base: str, token: dict, member_urn, post_urn: str, parent: str | None,
                    text: str, key: str) -> dict:
     """Post one comment at most once per key; return the comment result."""
-    claim = {"kind": "comment", "post_urn": post_urn, "parent_comment": parent}
+    claim = {"kind": "comment", "post_urn": post_urn, "parent_comment": parent, "payload_sha256": payload_digest(text)}
     existing = ledger_claim(key, claim)
     if existing:
         if entry_kind(existing) != "comment":
@@ -916,6 +940,7 @@ def create_comment(base: str, token: dict, member_urn, post_urn: str, parent: st
             raise ProviderError(
                 f"idempotency key {key!r} already holds a comment on {existing.get('post_urn')} "
                 f"(parent {existing.get('parent_comment')}); one key per comment, use another key", EXIT_USAGE)
+        check_same_payload(key, existing, claim["payload_sha256"], "comment")
         log(f"idempotency key {key!r} already published; returning the existing comment")
         return comment_result(existing, token, key, True)
 
@@ -1077,14 +1102,16 @@ def cmd_resolve(args) -> int:
     with ledger_locked() as data:
         entry = data["entries"].get(key)
         check(entry)
+        # The hash of what the pending attempt sent stays with the key, so a later call with other content is refused.
+        sent = {"payload_sha256": entry["payload_sha256"]} if entry.get("payload_sha256") else {}
         if args.post_urn:
             data["entries"][key] = {"status": "published", "post_urn": args.post_urn,
-                                    "created_at": now_iso(), "resolved": True}
+                                    "created_at": now_iso(), "resolved": True, **sent}
         elif args.comment_urn:
             data["entries"][key] = {"kind": "comment", "post_urn": entry.get("post_urn"),
                                     "parent_comment": entry.get("parent_comment"), "status": "published",
                                     "comment_urn": args.comment_urn, "comment_id": match.group(2),
-                                    "created_at": now_iso(), "resolved": True}
+                                    "created_at": now_iso(), "resolved": True, **sent}
         else:
             del data["entries"][key]
         ledger_save(data)

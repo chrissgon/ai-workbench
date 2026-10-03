@@ -1453,3 +1453,62 @@ def test_a_corrupt_ledger_stops_every_verb_before_anything_is_sent(env, fake, te
         proc = run(SCRIPT, args, env)
         assert proc.returncode == 1 and "not valid JSON" in proc.stderr, args
     assert fake.requests == [] and path.read_text() == "{not json"
+
+
+# --- a key holds one content: what was sent is hashed in the ledger ----------------------------------------
+
+
+def test_a_reused_key_with_other_text_is_refused_and_sends_nothing(env, fake, text_file, tmp_path):
+    args = publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed")
+    assert run(SCRIPT, args, env).returncode == 0
+    assert len(ledger(env)["launch-1"]["payload_sha256"]) == 64
+    other = tmp_path / "other.txt"
+    other.write_text("A different post.\n")
+    proc = run(SCRIPT, publish_args(other, "--idempotency-key", "launch-1", "--confirmed"), env)
+    assert proc.returncode == 1 and "launch-1" in proc.stderr and "nothing was sent" in proc.stderr
+    assert proc.stdout == "" and post_count(fake) == 1
+    same = run(SCRIPT, args, env)  # the same content still replays
+    assert same.returncode == 0 and json.loads(same.stdout)["replayed"] is True and post_count(fake) == 1
+
+
+def test_a_reused_key_with_another_image_is_refused(env, fake, text_file, image_file, tmp_path):
+    assert run(SCRIPT, publish_args(text_file, "--media", str(image_file), "--idempotency-key", "k",
+                                    "--confirmed"), env).returncode == 0
+    second = tmp_path / "second.png"
+    second.write_bytes(b"\x89PNG\r\n\x1a\n" + b"other-bytes" * 4)
+    for extra in (["--media", str(second)], []):
+        proc = run(SCRIPT, publish_args(text_file, *extra, "--idempotency-key", "k", "--confirmed"), env)
+        assert proc.returncode == 1 and "'k'" in proc.stderr, extra
+    assert post_count(fake) == 1
+
+
+def test_a_reused_comment_key_with_other_text_is_refused(env, fake, comment_file, tmp_path):
+    args = comment_args(comment_file, "--post-id", POST_URN, "--idempotency-key", "reply-1", "--confirmed")
+    assert run(SCRIPT, args, env).returncode == 0
+    other = tmp_path / "other-comment.txt"
+    other.write_text("Another reply.\n")
+    proc = run(SCRIPT, comment_args(other, "--post-id", POST_URN, "--idempotency-key", "reply-1", "--confirmed"), env)
+    assert proc.returncode == 1 and "reply-1" in proc.stderr and comment_count(fake) == 1
+    assert json.loads(run(SCRIPT, args, env).stdout)["replayed"] is True and comment_count(fake) == 1
+
+
+def test_an_entry_written_before_the_hash_replays_as_before(env, fake, text_file):
+    path = Path(env["PUBLISHER_LINKEDIN_LEDGER"])
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"version": 2, "entries": {
+        "old": {"status": "published", "post_urn": POST_URN, "created_at": "2026-10-01T00:00:00Z"}}}))
+    proc = run(SCRIPT, publish_args(text_file, "--idempotency-key", "old", "--confirmed"), env)
+    assert proc.returncode == 0 and json.loads(proc.stdout)["replayed"] is True and post_count(fake) == 0
+
+
+def test_resolve_keeps_the_hash_of_what_was_sent(env, fake, text_file, tmp_path):
+    fake.post_delay = 2.0
+    env["LINKEDIN_HTTP_TIMEOUT"] = "0.5"
+    assert run(SCRIPT, publish_args(text_file, "--idempotency-key", "k", "--confirmed"), env).returncode == 1
+    sent = ledger(env)["k"]["payload_sha256"]
+    fake.post_delay = 0.0
+    assert run(SCRIPT, ["resolve", "--idempotency-key", "k", "--post-id", POST_URN, "--confirmed"], env).returncode == 0
+    assert ledger(env)["k"]["payload_sha256"] == sent
+    other = tmp_path / "other.txt"
+    other.write_text("A different post.\n")
+    assert run(SCRIPT, publish_args(other, "--idempotency-key", "k", "--confirmed"), env).returncode == 1
