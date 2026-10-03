@@ -19,7 +19,7 @@ metadata:
   updates: []
   requires: []
   side_effects: []
-  version: "2.0.0"
+  version: "3.0.0"
 ---
 
 # Skill creator
@@ -55,12 +55,12 @@ On the improve path, a security `no` found at step 7 is fixed in the same iterat
 
 ## Stop rules
 
-Check these before creating or editing any file, and again before replying. They override the procedure. A "go", "proceed" or "use your judgement" is not an answer to a question and does not accept the recommendation: ask again. Nothing is written before the answer.
+Check rules 1, 2 and 4 before writing any file, and all again before replying. They override the procedure. A "go", "proceed" or "use your judgement" is not an answer to a question and does not accept the recommendation: ask again. Under rules 1, 2 and 4 nothing is written before the answer; rule 3 comes at step 9 and stops only the test. A question no rule names stops nothing: mark it `OPEN-<n>` in the draft and ask it in the reply.
 
 1. **No real material.** If step 1 finds none, write no file: say that the skill would be generic knowledge, and ask for real material with a recommended answer that names the one kind to bring first and why: a conversation trace in which the user corrected the work, when one may exist, because it shows what a model gets wrong; otherwise a real task to run the draft against.
 2. **The placement is the user's.** If the skill has no entry in `docs/inventory.md`, or two areas pass the boundary test of `docs/area-map.md`, scaffold nothing: propose the entry (area, prefix, kind, `inputs`, `outputs`, `updates`), with the area the boundary test favours as the recommended answer, and wait.
 3. **No gate file.** If `evals/eval-gate.json` is missing (the plan command answers that `--harness` is required), run no test: show `python3 evals/eval_run.py --skill <name> --dry-run --harness <adapter> --model <reference model id> --floor-harness <adapter> --floor-model <floor model id>` and ask for the harness and the two model ids, or for the gate file. Never choose them. Step 12's status still runs.
-4. **A side effect, a credential or a permission the request did not mention.** If the skill needs one, do not write it into the skill: ask first.
+4. **A side effect, a credential or a permission that neither the request nor its `docs/inventory.md` entry names.** If the skill needs one, do not write it into the skill: ask first.
 5. **An assertion is the user's.** An assertion proposed at step 10 for removal or replacement changes in `evals.json` only after the user agrees. A case defect (a fixture at the wrong path, a prompt citing a file the case does not ship) is fixed without asking.
 
 The reply that asks carries the "Grounding note" block of the output template, then:
@@ -154,7 +154,7 @@ Approve only if all of the following hold:
 
 ## Gotchas
 
-- A first draft is a hypothesis until it has run against a real task. A skill is not done because it validates (that checks conventions) or is ticked in the inventory (that means built): only a passed first full test makes it done, and its band says where it stands now.
+- A first draft is a hypothesis until it has run against a real task; validating or a tick in the inventory does not make it done, only a passed first full test does.
 - The grader is a model. Read at least one grading per case before trusting the numbers.
 - An assertion that fails a good output, with no gain in the skill's quality, is too rigid: it checks a formality (a wording, where the evidence sits, something the grader cannot see). Reword it to say what counts, and report the old and the new text. When the output was not good, fix the skill, never the assertion, and never drop a check that separates runs with the skill from runs without it.
 - A reference model that does worse with the skill than without it means the skill is over-specified: loosen the procedure, keep the criteria.
@@ -162,4 +162,4 @@ Approve only if all of the following hold:
 - A without-skill run must not reach the skill: [references/running-evals.md](references/running-evals.md), "Contamination".
 - A case can be broken while the skill is fine: a fixture at another path than the prompt names, or an assertion about an input the grader never sees. `--check-cases` finds the first; `grader_files` fixes the second.
 - A changed case loses its evidence and its baseline and asks for a full test; an added case is `pending` until `--cases <id> --baseline` has run it. Edits to the repository files a case brings through `workbench_files` change no hash.
-- When the reference model, the grader or the measurement changes, earlier evidence is inherited or weighs nothing: rerun what the band asks, never edit a file to match ([references/running-evals.md](references/running-evals.md), "When the measurement or a model changes").
+- When the reference model, the grader or the measurement changes, rerun what the band asks; never edit a file to match ([references/running-evals.md](references/running-evals.md), "When the measurement or a model changes").
