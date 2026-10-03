@@ -23,6 +23,6 @@
 
 | Scope | What | Payload hash | Approved | Expires | Status |
 |-------|------|--------------|----------|---------|--------|
-| standing | push a merge of origin/main into a docs/* branch that has an open pull request, when the merge resolved no conflict; never rebase, never force push (user: "for docs branches just sync and push") | — | 2026-09-26 | 2027-12-31 | active |
+| standing | push a merge of origin/main into a docs/* branch, when the merge resolved no conflict; never rebase, never force push (user: "for docs branches just sync and push") | — | 2026-09-26 | 2027-12-31 | active |
 
 ## Open questions
