@@ -19,7 +19,7 @@ metadata:
   updates: [docs/marketing/calendar.md]
   requires: []
   side_effects: []
-  version: "0.1"
+  version: "1.0.0"
 ---
 
 # Social copy

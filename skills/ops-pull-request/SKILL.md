@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [integration:vcs]
   side_effects: [push, create]
-  version: "0.6"
+  version: "1.0.0"
 ---
 
 # Pull request

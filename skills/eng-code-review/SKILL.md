@@ -20,7 +20,7 @@ metadata:
   updates: []
   requires: [integration:vcs]
   side_effects: []
-  version: "0.2"
+  version: "1.0.0"
 ---
 
 # Code review

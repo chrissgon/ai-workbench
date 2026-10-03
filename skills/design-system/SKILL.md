@@ -20,7 +20,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [integration:design-tool]
   side_effects: [create]
-  version: "0.2"
+  version: "1.0.0"
 ---
 
 # Design system

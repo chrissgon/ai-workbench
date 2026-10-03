@@ -17,7 +17,7 @@ metadata:
   updates: [AGENTS.md]
   requires: []
   side_effects: []
-  version: "0.2"
+  version: "1.0.0"
 ---
 
 # Project init

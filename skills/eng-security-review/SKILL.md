@@ -20,7 +20,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: [integration:vcs]
   side_effects: [dismiss]
-  version: "0.1"
+  version: "1.0.0"
 ---
 
 # Security review: dependency alerts

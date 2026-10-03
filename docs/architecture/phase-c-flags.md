@@ -6,46 +6,25 @@ Skills validated: 48.
 
 | Rule | Skills listed |
 |------|---------------|
-| `meta-keys` | 2 |
-| `requires-role` | 0 |
-| `requires-vocabulary` | 0 |
-| `side-effects-vocabulary` | 0 |
+| `meta-keys` | 0 |
 | `description-when` | 0 |
 | `description-length` | 0 |
-| `skill-tokens` | 1 |
+| `skill-tokens` | 0 |
 | `eval-cases-count` | 0 |
 | `eval-keys` | 0 |
 | `eval-assertions-count` | 0 |
-| `eval-conditional-assertion` | 1 |
+| `eval-conditional-assertion` | 0 |
 | `eval-run-assertion` | 0 |
-| `eval-prompt-names-skill` | 2 |
+| `eval-prompt-names-skill` | 0 |
 | `eval-product-names` | 0 |
 | `skill-name` | 0 |
-| `routing-table` | 1 |
+| `routing-table` | 0 |
 | `test-file-names` | 0 |
-| `contract-updates` | 0 |
-| `contract-owner` | 0 |
-| `contract-inputs` | 0 |
-| `contract-overlap` | 0 |
-| `contract-placeholder` | 0 |
-| `contract-cycle` | 0 |
-| `contract-owner-table` | 0 |
-| `copy-not-adopted` | 1 |
+| `copy-not-adopted` | 0 |
+| `guard-missing` | 0 |
+| `guard-cannot-fail` | 0 |
 
 ## `meta-keys`
-
-- `core-orchestrator`: missing: metadata.updates
-- `core-skill-creator`: missing: metadata.updates
-
-## `requires-role`
-
-Nothing listed.
-
-## `requires-vocabulary`
-
-Nothing listed.
-
-## `side-effects-vocabulary`
 
 Nothing listed.
 
@@ -59,7 +38,7 @@ Nothing listed.
 
 ## `skill-tokens`
 
-- `core-skill-creator`: SKILL.md has about 6016 tokens (24066 characters / 4), over 5000: move depth to references/
+Nothing listed.
 
 ## `eval-cases-count`
 
@@ -75,7 +54,7 @@ Nothing listed.
 
 ## `eval-conditional-assertion`
 
-- `core-orchestrator`: an assertion that starts with "If" holds whenever its condition is false; state what the output shows: case 2, assertion 3
+Nothing listed.
 
 ## `eval-run-assertion`
 
@@ -83,8 +62,7 @@ Nothing listed.
 
 ## `eval-prompt-names-skill`
 
-- `mkt-engage`: the prompt names the skill under test, which the run without the skill cannot follow: case 1; case 2; case 3
-- `mkt-vote-round`: the prompt names the skill under test, which the run without the skill cannot follow: case 1; case 2
+Nothing listed.
 
 ## `eval-product-names`
 
@@ -96,40 +74,20 @@ Nothing listed.
 
 ## `routing-table`
 
-- `core-orchestrator`: built and not in the table: brand-name, brand-profile, core-security-audit, eng-security-review, mkt-engage, mkt-vote-round, ops-repo-baseline
+Nothing listed.
 
 ## `test-file-names`
 
 Nothing listed.
 
-## `contract-updates`
-
-Nothing listed.
-
-## `contract-owner`
-
-Nothing listed.
-
-## `contract-inputs`
-
-Nothing listed.
-
-## `contract-overlap`
-
-Nothing listed.
-
-## `contract-placeholder`
-
-Nothing listed.
-
-## `contract-cycle`
-
-Nothing listed.
-
-## `contract-owner-table`
-
-Nothing listed.
-
 ## `copy-not-adopted`
 
-- `core-orchestrator`: not yet generated from the shared source: references/requirement-classes.md (differs; source contracts/environment.md); references/owners.md (missing; source contracts/project-layout.md); adopt each with python3 scripts/sync_copies.py --adopt <copy>
+Nothing listed.
+
+## `guard-missing`
+
+Nothing listed.
+
+## `guard-cannot-fail`
+
+Nothing listed.

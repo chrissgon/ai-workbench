@@ -135,11 +135,17 @@ def test_the_tools_run_in_the_folder_the_case_builds(tmp_path, skill, case):
         row = json.loads(r.stdout)["skills"][0]
         assert r.returncode == 0 and row["band"] == "needs a test" and row["command"].endswith(f"--skill {name}"), r.stderr
 
-    # The validator: zero errors on what was made, in a tree with no other skill (or only the fixture's).
+    # The validator: zero errors on what was made, in a tree with no other skill (or only the fixture's), once each
+    # new skill has its first version line (step 9 of the skill: the version-bump rule is an error since phase C).
+    for name in (CAPABILITY, FLOW):
+        r = python(folder, "evals/eval_status.py", "bump", "--skill", name)
+        assert r.returncode == 0 and json.loads(r.stdout)["class"] == "new", r.stderr
     assert python(folder, "scripts/validate.py", "--help").returncode == 0
     r = python(folder, "scripts/validate.py", "--json")
     report = json.loads(r.stdout)
-    ours = [e for e in report["errors"] if e["where"].split("/")[1:2] not in [[s] for s in shipped]]
+    # A rule that lists several skills on one line (version-bump) is the fixture's when it lists only shipped skills.
+    fixtures_only = lambda e: e["where"] == "skills" and set(e["message"].rsplit(": ", 1)[-1].split(", ")) <= set(shipped)
+    ours = [e for e in report["errors"] if e["where"].split("/")[1:2] not in [[s] for s in shipped] and not fixtures_only(e)]
     assert ours == [], ours
     assert report["summary"]["skills"] == len(shipped) + 2
     if not shipped:

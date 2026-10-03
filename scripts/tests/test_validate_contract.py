@@ -1,4 +1,4 @@
-"""Offline tests of the artifact contract: the seven rules scripts/validate.py reports as warnings, and
+"""Offline tests of the artifact contract: the seven rules scripts/validate.py reports as errors, and
 scripts/owner_table.py, which generates the table of owning skills. Each test writes a small tree to a
 temporary folder.
 
@@ -69,16 +69,16 @@ def check(root, skills, write_table=True):
         owner_table.write(skills, str(root))
     report = validate.Report()
     validate.check_contract(skills, report, root=str(root))
-    assert report.errors == []  # every rule of the contract is a warning until the close of phase C
+    assert report.warnings == []  # every rule of the contract is an error since the close of phase C
     return report
 
 
 def found(report, rule):
-    return [(w["where"], w["message"]) for w in report.warnings if w.get("rule") == rule]
+    return [(w["where"], w["message"]) for w in report.errors if w.get("rule") == rule]
 
 
 def rules(report):
-    return sorted({w["rule"] for w in report.warnings})
+    return sorted({w["rule"] for w in report.errors})
 
 
 STATE, PLAN = "docs/workbench/state.md", "docs/engineering/plans/<task>.md"
@@ -90,7 +90,7 @@ GOOD = [skill("core-init", outputs=[STATE]),
 
 def test_a_tree_that_follows_the_contract_gets_no_warning_and_no_note(tmp_path):
     report = check(tree(tmp_path), GOOD)
-    assert report.warnings == [] and report.notes == []
+    assert report.errors == [] and report.notes == []
 
 
 def test_rule_1_an_updated_path_has_an_owner(tmp_path):
@@ -137,7 +137,7 @@ def test_rule_3_reads_the_contracts_owner_table_for_a_tree_with_no_other_skill(t
     owner_table.write([skill("core-init", outputs=[STATE]), skill("eng-cause", outputs=[PLAN])], str(root))
     flow = [skill("flow-probe", inputs=[STATE, "docs/engineering/plans/<task>.md"], updates=[STATE])]
     report = check(root, flow, write_table=False)
-    assert report.warnings == []
+    assert report.errors == []
     assert report.notes == ["[contract-owner-table] skipped: scripts/owner_table.py is not in this tree"]
 
 
@@ -163,7 +163,7 @@ def test_rule_5_only_the_vocabulary_and_no_other_wildcard(tmp_path, path, why):
 def test_rule_5_accepts_a_folder_and_the_number_placeholder(tmp_path):
     report = check(tree(tmp_path), [skill("eng-demo", outputs=["docs/engineering/adr/<NNNN>-<title>.md",
                                                                "docs/design/results/<task>/"])])
-    assert report.warnings == []
+    assert report.errors == []
 
 
 def test_rule_6_the_graph_from_owner_to_reader_has_no_cycle_and_a_self_edge_is_not_one(tmp_path):
@@ -179,12 +179,12 @@ def test_rule_6_the_graph_from_owner_to_reader_has_no_cycle_and_a_self_edge_is_n
 def test_updates_adds_no_edge_to_the_graph(tmp_path):
     report = check(tree(tmp_path), [skill("eng-a", inputs=["docs/b.md"], outputs=["docs/a.md"]),
                                     skill("eng-b", outputs=["docs/b.md"], updates=["docs/a.md"])])
-    assert report.warnings == []
+    assert report.errors == []
 
 
 def test_rule_7_the_generated_table_equals_the_frontmatters(tmp_path):
     root = tree(tmp_path)
-    assert check(root, GOOD).warnings == []
+    assert check(root, GOOD).errors == []
     changed = GOOD[:-1] + [skill("biz-market", outputs=["docs/business/market.md"])]
     assert found(check(root, changed, write_table=False), "contract-owner-table") == [
         ("contracts/project-layout.md", "[contract-owner-table] the table of owning skills differs from the skills' "
@@ -217,8 +217,9 @@ def test_updates_is_a_required_key_and_must_be_a_list(tmp_path, monkeypatch):
     assert validate.declarations(str(tmp_path)) == [skill("eng-demo", outputs=["docs/a.md"])]
 
 
-def test_the_rules_are_listed_for_the_flags_document():
-    assert [r for r in validate.WARNING_RULES if r.startswith("contract-")] == [
+def test_the_rules_are_errors_since_the_close_of_phase_c_and_leave_the_flags_document():
+    assert not [r for r in validate.WARNING_RULES if r.startswith("contract-")]
+    assert [r for r in validate.ERROR_RULES if r.startswith("contract-")] == [
         "contract-updates", "contract-owner", "contract-inputs", "contract-overlap", "contract-placeholder",
         "contract-cycle", "contract-owner-table"]
 

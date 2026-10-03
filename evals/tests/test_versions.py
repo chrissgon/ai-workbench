@@ -262,11 +262,13 @@ def test_the_validator_reports_the_rules_and_skips_the_base_checks_outside_a_che
     edit(repo, "1. Read the change.", "1. Read the change, all of it.")
     report = validate.Report()
     validate.check_versions(report, root=str(repo))
-    assert [w["rule"] for w in report.warnings] == ["version-bump"] and "changed without a bump" in report.warnings[0]["message"]
-    monkeypatch.setattr(validate, "TRANSITIONAL_RULES", ())  # from the sweep that closes phase C: an error
+    assert any(e["message"].startswith("[version-bump]") and "changed without a bump" in e["message"] for e in report.errors)
+    assert not report.warnings  # an error since the sweep that closed phase C emptied TRANSITIONAL_RULES
+    monkeypatch.setattr(validate, "TRANSITIONAL_RULES", ("version-bump",))  # as it was while phase C was open
     report = validate.Report()
     validate.check_versions(report, root=str(repo))
-    assert any(e["message"].startswith("[version-bump]") for e in report.errors) and not report.warnings
+    assert [w["rule"] for w in report.warnings] == ["version-bump"] and "changed without a bump" in report.warnings[0]["message"]
+    monkeypatch.setattr(validate, "TRANSITIONAL_RULES", ())
     # A copy of the tree with no repository (a case folder): the class and append-only checks are skipped.
     copy = tmp_path_factory.mktemp("copy")
     subprocess.run(["cp", "-R", str(repo / "skills"), str(copy / "skills")], check=True)

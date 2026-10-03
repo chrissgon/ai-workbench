@@ -18,7 +18,7 @@ metadata:
   updates: [docs/workbench/state.md, docs/engineering/plans/<task>.md]
   requires: [integration:vcs, search:web]
   side_effects: [push, deploy]
-  version: "0.4"
+  version: "1.0.0"
 ---
 
 # CI pipeline

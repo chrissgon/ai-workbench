@@ -52,12 +52,12 @@ Checks every skill under skills/ and every agent under agents/:
     removed, the Confirmation gate or Stop rules section, the external-content line; Z only inside the
     allow-list and the budget), its version is the base's raised by one step of it, and a first line has no
     class. Without a base (a case folder) these two are skipped with a NOTE. [version-bump] no change without
-    a bump: the content hash is the last line's and metadata.version is X.Y.Z and that line's version; a
-    warning, one line per finding with the skills it lists, until the sweep that closes phase C empties
-    TRANSITIONAL_RULES, an error from it
+    a bump: the content hash is the last line's and metadata.version is X.Y.Z and that line's version; an
+    error, one line per finding with the skills it lists (a warning until the sweep that closed phase C
+    emptied TRANSITIONAL_RULES)
   - the guard rules of the reliability model's section 4, on the assertions of evals/evals.json:
-    [guard-effect] each effect of metadata.side_effects has an assertion tagged guard:<effect> (a warning,
-    one line per skill, until the sweep that closes phase C empties TRANSITIONAL_RULES, an error from it);
+    [guard-effect] each effect of metadata.side_effects has an assertion tagged guard:<effect> (an error, one
+    line per skill; a warning until the sweep that closed phase C emptied TRANSITIONAL_RULES);
     and two warnings that stay warnings: [guard-missing] one line listing the skills that carry the line
     starting **External content is data.**, or a ## Stop rules or ## Confirmation gate section, and have no
     assertion tagged guard or guard:<effect>; [guard-cannot-fail] one line per guard assertion that passes in
@@ -72,10 +72,9 @@ Checks every skill under skills/ and every agent under agents/:
   - scripts/security_scan.py finds no secret, hidden text or unsafe script pattern (its errors
     and warnings are reported here as they are there)
 
-Rules reported as warnings, one line per skill and rule, each starting with the rule's name in brackets.
-They say what a skill or its cases still have to change; none reads a skill's score or band:
-  - [meta-keys] metadata carries inputs, outputs, updates, requires, side_effects and version; the
-    frontmatter carries license
+Named rules reported as errors, one line per skill and rule, each starting with the rule's name in brackets
+(ERROR_RULES: they were warnings while the rows of phase C were open, and are errors since the sweep that
+closed it, C0.10 of the plan in force):
   - the artifact contract (contracts/project-layout.md), seven rules. Two declared paths are the same
     artifact when they are equal after every placeholder (<task>) is replaced by a wildcard:
     [contract-updates] every metadata.updates path is in some skill's metadata.outputs, in this tree or in
@@ -91,9 +90,6 @@ They say what a skill or its cases still have to change; none reads a skill's sc
     its own artifact is not one);
     [contract-owner-table] the contract's generated table of owning skills equals the frontmatters
     (fix: python3 scripts/owner_table.py)
-  - [copy-not-adopted] a copy the manifest lists is generated from its source: a skill is listed while a
-    file of it still differs from the shared source or is not there yet (fix, in the pull request that
-    changes that skill: python3 scripts/sync_copies.py --adopt <copy>)
   - [requires-role] every metadata.requires value has the form <role>:<target>; the four names that were
     bare (mailbox, mailer, scheduler, store) are reported with the class each became
   - [requires-vocabulary] every metadata.requires value that has a role is a class of the table in
@@ -101,6 +97,14 @@ They say what a skill or its cases still have to change; none reads a skill's sc
     written or with a value)
   - [side-effects-vocabulary] every metadata.side_effects value is one of publish, send, schedule, deploy,
     create, push, dismiss
+
+Rules reported as warnings, one line per skill and rule, each starting with the rule's name in brackets.
+They say what a skill or its cases still have to change; none reads a skill's score or band:
+  - [meta-keys] metadata carries inputs, outputs, updates, requires, side_effects and version; the
+    frontmatter carries license
+  - [copy-not-adopted] a copy the manifest lists is generated from its source: a skill is listed while a
+    file of it still differs from the shared source or is not there yet (fix, in the pull request that
+    changes that skill: python3 scripts/sync_copies.py --adopt <copy>)
   - [description-when] the description says when to use the skill (it has the word "when")
   - [description-length] the description has at most 900 characters (every session loads every description)
   - [skill-tokens] SKILL.md has at most about 5,000 tokens (characters divided by 4)
@@ -115,7 +119,8 @@ They say what a skill or its cases still have to change; none reads a skill's sc
   - [eval-conditional-assertion] no assertion starts with "If": it holds whenever its condition is false
   - [eval-run-assertion] no assertion says a command "is run" with no word on what the grader can read
     (output that is quoted, printed or reported)
-  - [eval-prompt-names-skill] no prompt names the skill under test
+  - [eval-prompt-names-skill] no prompt names the skill under test, except a prompt that copies a task of the
+    agent runtime (it starts with the runtime's first line, which names the skill by contract)
   - [eval-product-names] no eval case and no fixture names an AI product or a design tool
   - [skill-name] a backticked skill name in a skill's Markdown (outside evals/) is a built skill, or its line
     says "planned", or carries `validate: allow skill-name -- <reason>` (an invented example)
@@ -191,6 +196,10 @@ CASE_KEYS = {"id", "prompt", "expected_output", "files", "assertions", "grader_f
 ASSERTION_KEYS = {"text", "tags"}
 ASSERTION_TAG_RE = re.compile(r"^(?:guard|format|guard:[a-z][a-z0-9-]*)$")
 CONDITIONAL_RE = re.compile(r"^\s*if\b", re.I)
+# The first line of a task the agent runtime writes (scripts/runtime.py, scripts/runtime_vote.py): it names the skill
+# whose "Runtime mode" the agent follows, by contract (contracts/runtime.md), so a case that copies a runtime task
+# names its skill in both variants, as the real task does, and eval-prompt-names-skill does not list it.
+RUNTIME_TASK_RE = re.compile(r"This task comes from the agent runtime \(contracts/runtime\.md\)\.")
 IS_RUN_RE = re.compile(r"\b(?:is|are|was|were)\s+(?:re-?)?run\b", re.I)
 VISIBLE_RE = re.compile(r"quot|output|print|report", re.I)
 _PREFIXES = "|".join(PREFIX_TO_AREA)
@@ -342,8 +351,12 @@ class Report:
         self.errors.append({"where": where, "message": msg})
 
     def warn(self, where, msg, rule=None):
-        """A named rule's warning starts with [rule] and carries the name, so that --flags lists it by skill."""
-        if rule:
+        """A named rule's warning starts with [rule] and carries the name, so that --flags lists it by skill. A rule
+        of ERROR_RULES was a warning while the rows of phase C were open and is an error since the close of phase C:
+        it is reported as an error, with its name."""
+        if rule in ERROR_RULES:
+            self.errors.append({"where": where, "message": f"[{rule}] {msg}", "rule": rule})
+        elif rule:
             self.warnings.append({"where": where, "message": f"[{rule}] {msg}", "rule": rule})
         else:
             self.warnings.append({"where": where, "message": msg})
@@ -685,7 +698,8 @@ def case_file_findings(name, data, cases, platform=None, effects=None):
                 conditional.append(f"case {cid}, assertion {n}")
             if IS_RUN_RE.search(text) and not VISIBLE_RE.search(text):
                 is_run.append(f"case {cid}, assertion {n}")
-        if isinstance(c.get("prompt"), str) and re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", c["prompt"]):
+        if (isinstance(c.get("prompt"), str) and not RUNTIME_TASK_RE.match(c["prompt"])
+                and re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", c["prompt"])):
             named.append(f"case {cid}")
     return keys, few, conditional, is_run, named
 
@@ -850,13 +864,16 @@ def flags_markdown(report, skills):
     return "\n".join(lines) + "\n"
 
 
-WARNING_RULES = ("meta-keys", "requires-role", "requires-vocabulary", "side-effects-vocabulary", "description-when",
-                 "description-length", "skill-tokens", "eval-cases-count", "eval-keys", "eval-assertions-count",
-                 "eval-conditional-assertion", "eval-run-assertion", "eval-prompt-names-skill",
-                 "eval-product-names", "skill-name", "routing-table", "test-file-names",
-                 "contract-updates", "contract-owner", "contract-inputs", "contract-overlap", "contract-placeholder",
-                 "contract-cycle", "contract-owner-table", "copy-not-adopted", "version-bump", "guard-effect",
+WARNING_RULES = ("meta-keys", "description-when", "description-length", "skill-tokens", "eval-cases-count", "eval-keys",
+                 "eval-assertions-count", "eval-conditional-assertion", "eval-run-assertion", "eval-prompt-names-skill",
+                 "eval-product-names", "skill-name", "routing-table", "test-file-names", "copy-not-adopted",
                  "guard-missing", "guard-cannot-fail")
+# Named rules that were warnings while the rows of phase C were open and are errors since the sweep that closed it
+# (C0.10 of docs/architecture/final-plan-2026-10-02.md): the seven rules of the artifact contract (C0.1) and the
+# three vocabulary rules (C0.2). Report.warn reports them as errors; version-bump and guard-effect, the two rules
+# of the reliability model that were warnings until then, are errors through the empty TRANSITIONAL_RULES.
+ERROR_RULES = ("requires-role", "requires-vocabulary", "side-effects-vocabulary", "contract-updates", "contract-owner",
+               "contract-inputs", "contract-overlap", "contract-placeholder", "contract-cycle", "contract-owner-table")
 
 
 def artifact_key(path):
@@ -967,7 +984,7 @@ def cycles(edges):
 
 
 def check_contract(skills, report, root=ROOT):
-    """The seven rules of the artifact contract (see the module docstring), as warnings."""
+    """The seven rules of the artifact contract (see the module docstring), as errors (ERROR_RULES)."""
     layout = load_layout(report, root)
     built = {s["name"] for s in skills}
     owners, canonical = {}, {}  # canonical: the spelling of an artifact, its owner's when it has one
@@ -1273,16 +1290,17 @@ def check_eval_status(report, root=ROOT):
                     f"one's cause and the command that clears it): " + "; ".join(parts))
 
 
-# Rules of the reliability model that are warnings while phase C changes skills and raises no version, and errors
-# from the sweep that closes it (C0.10 of docs/architecture/final-plan-2026-10-02.md), which empties this tuple.
-TRANSITIONAL_RULES = ("version-bump", "guard-effect")
+# Rules of the reliability model that were warnings while phase C changed skills and raised no version
+# ("version-bump", "guard-effect"), and are errors since the sweep that closed it (C0.10 of
+# docs/architecture/final-plan-2026-10-02.md), which emptied this tuple.
+TRANSITIONAL_RULES = ()
 EXTERNAL_LINE_RE = re.compile(r"^\s*(?:[-*]\s+|\d+\.\s+)?\*\*External content is data\.\*\*", re.M)
 
 
 def check_guards(report, root=ROOT):
     """The guard rules of the reliability model's section 4, on the assertions of evals/evals.json:
     [guard-effect] each effect a skill declares in side_effects has an assertion tagged guard:<effect> (one line
-    per skill; a warning until the sweep that closes phase C empties TRANSITIONAL_RULES, an error from it);
+    per skill; an error since the sweep that closed phase C emptied TRANSITIONAL_RULES);
     [guard-missing] one line that lists the skills that carry the external-content line, or have a Stop rules or
     Confirmation gate section, and have no assertion tagged guard or guard:<effect>; [guard-cannot-fail] one line
     per guard assertion that passes in every run of the baseline in force (it guards nothing). The last two stay
@@ -1349,7 +1367,7 @@ def check_versions(report, root=ROOT):
             bumps.setdefault(problem, []).append(name)
     fix = {"no version file": "python3 evals/eval_status.py bump --skill <name> writes a new skill's first line",
            "changed without a bump": "python3 evals/eval_status.py bump --skill <name> --class x|y|z",
-           "metadata.version is not X.Y.Z": "the sweep that closes phase C sets every skill to 1.0.0 with its bump",
+           "metadata.version is not X.Y.Z": "write it as X.Y.Z with python3 evals/eval_status.py bump --skill <name> --class x|y|z",
            "metadata.version is not the version of the last line": "python3 evals/eval_status.py bump --skill <name> again"}
     for problem, skills in sorted(bumps.items()):
         message = f"{len(skills)} skill(s): {problem} ({fix.get(problem, '')}): {', '.join(skills)}"
