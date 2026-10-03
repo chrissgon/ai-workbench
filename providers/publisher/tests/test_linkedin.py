@@ -1292,7 +1292,7 @@ def test_first_comment_file_must_exist_and_have_text(env, fake, text_file, tmp_p
 
 def test_comment_dry_run_accepts_the_short_comment_urn_of_a_copied_link(tmp_path, monkeypatch):
     text = tmp_path / "reply.txt"
-    text.write_text("Valeu!")
+    text.write_text("Thanks!")
     monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(tmp_path / "ledger.json"))
     r = subprocess.run([sys.executable, str(SCRIPT), "comment", "--platform", "linkedin", "--text-file", str(text),
                         "--idempotency-key", "reply-1", "--post-id", "urn:li:activity:7400000000000000001",
@@ -1352,22 +1352,34 @@ def test_default_ledger_is_in_the_data_folder_not_the_cache(env, fake, text_file
     assert json.loads(second.stdout)["replayed"] is True and post_count(fake) == 1
 
 
-def test_old_ledger_is_copied_on_first_use_and_its_post_is_not_published_again(env, fake, text_file, tmp_path):
+def test_old_ledger_is_read_by_a_dry_run_and_copied_by_the_first_real_verb(env, fake, text_file, tmp_path):
     e, new, old = default_ledger_env(env, tmp_path)
     # The post went out before the move: the provider of that time recorded it in the cache folder.
     first = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed"),
                 {**env, "PUBLISHER_LINKEDIN_LEDGER": str(old)})
     assert first.returncode == 0 and post_count(fake) == 1 and not new.exists()
     before = old.read_bytes()
+    # A dry run reads the old ledger where the new one does not exist yet, and writes nothing: no copy, no folder.
     dry = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--dry-run"), e)
     assert json.loads(dry.stdout)["existing_post_urn"] == POST_URN  # found on the very first read
-    assert "ledger moved" in dry.stderr and str(old) in dry.stderr and str(new) in dry.stderr
-    assert new.read_bytes() == before and oct(new.stat().st_mode & 0o777) == "0o600"
+    assert "ledger moved" not in dry.stderr and not new.exists() and not new.parent.exists()
+    comment = tmp_path / "c.txt"
+    comment.write_text("Thanks!")
+    on_key = run(SCRIPT, ["comment", "--platform", "linkedin", "--text-file", str(comment), "--idempotency-key", "c-1",
+                          "--on-key", "launch-1", "--dry-run"], e)
+    assert json.loads(on_key.stdout)["post_urn"] == POST_URN and "ledger moved" not in on_key.stderr
+    resolve = run(SCRIPT, ["resolve", "--idempotency-key", "launch-1", "--not-published", "--dry-run"], e)
+    assert resolve.returncode == 2 and "ledger moved" not in resolve.stderr  # the key is published: nothing to do
+    assert not new.parent.exists()
+    # The first real verb copies it, and finds the key there.
     proc = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed"), e)
     assert proc.returncode == 0, proc.stderr
+    assert "ledger moved" in proc.stderr and str(old) in proc.stderr and str(new) in proc.stderr
+    assert new.read_bytes() == before and oct(new.stat().st_mode & 0o777) == "0o600"
     assert json.loads(proc.stdout)["replayed"] is True and json.loads(proc.stdout)["post_urn"] == POST_URN
     assert post_count(fake) == 1  # not published twice
-    assert "ledger moved" not in proc.stderr  # copied once
+    again = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed"), e)
+    assert again.returncode == 0 and "ledger moved" not in again.stderr  # copied once
     assert old.read_bytes() == before  # never edited, never deleted
     # After the copy the new ledger is the only one read and written.
     assert run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-2", "--confirmed"), e).returncode == 0
@@ -1429,3 +1441,192 @@ def test_ledger_override_reads_no_old_ledger(env, fake, text_file, tmp_path):
     old.write_text(json.dumps({"version": 2, "entries": {"launch-1": {"status": "published", "post_urn": POST_URN}}}))
     dry = run(SCRIPT, publish_args(text_file, "--idempotency-key", "launch-1", "--dry-run"), env)
     assert json.loads(dry.stdout)["existing_post_urn"] is None and "ledger moved" not in dry.stderr
+
+
+def test_a_corrupt_ledger_stops_every_verb_before_anything_is_sent(env, fake, text_file, comment_file):
+    path = Path(env["PUBLISHER_LINKEDIN_LEDGER"])
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json")
+    for args in (publish_args(text_file, "--confirmed"), publish_args(text_file, "--dry-run"),
+                 comment_args(comment_file, "--post-id", POST_URN, "--confirmed"),
+                 ["resolve", "--idempotency-key", "k", "--not-published", "--confirmed"]):
+        proc = run(SCRIPT, args, env)
+        assert proc.returncode == 1 and "not valid JSON" in proc.stderr, args
+    assert fake.requests == [] and path.read_text() == "{not json"
+
+
+# --- a key holds one content: what was sent is hashed in the ledger ----------------------------------------
+
+
+def test_a_reused_key_with_other_text_is_refused_and_sends_nothing(env, fake, text_file, tmp_path):
+    args = publish_args(text_file, "--idempotency-key", "launch-1", "--confirmed")
+    assert run(SCRIPT, args, env).returncode == 0
+    assert len(ledger(env)["launch-1"]["payload_sha256"]) == 64
+    other = tmp_path / "other.txt"
+    other.write_text("A different post.\n")
+    proc = run(SCRIPT, publish_args(other, "--idempotency-key", "launch-1", "--confirmed"), env)
+    assert proc.returncode == 1 and "launch-1" in proc.stderr and "nothing was sent" in proc.stderr
+    assert proc.stdout == "" and post_count(fake) == 1
+    same = run(SCRIPT, args, env)  # the same content still replays
+    assert same.returncode == 0 and json.loads(same.stdout)["replayed"] is True and post_count(fake) == 1
+
+
+def test_a_reused_key_with_another_image_is_refused(env, fake, text_file, image_file, tmp_path):
+    assert run(SCRIPT, publish_args(text_file, "--media", str(image_file), "--idempotency-key", "k",
+                                    "--confirmed"), env).returncode == 0
+    second = tmp_path / "second.png"
+    second.write_bytes(b"\x89PNG\r\n\x1a\n" + b"other-bytes" * 4)
+    for extra in (["--media", str(second)], []):
+        proc = run(SCRIPT, publish_args(text_file, *extra, "--idempotency-key", "k", "--confirmed"), env)
+        assert proc.returncode == 1 and "'k'" in proc.stderr, extra
+    assert post_count(fake) == 1
+
+
+def test_a_reused_comment_key_with_other_text_is_refused(env, fake, comment_file, tmp_path):
+    args = comment_args(comment_file, "--post-id", POST_URN, "--idempotency-key", "reply-1", "--confirmed")
+    assert run(SCRIPT, args, env).returncode == 0
+    other = tmp_path / "other-comment.txt"
+    other.write_text("Another reply.\n")
+    proc = run(SCRIPT, comment_args(other, "--post-id", POST_URN, "--idempotency-key", "reply-1", "--confirmed"), env)
+    assert proc.returncode == 1 and "reply-1" in proc.stderr and comment_count(fake) == 1
+    assert json.loads(run(SCRIPT, args, env).stdout)["replayed"] is True and comment_count(fake) == 1
+
+
+def test_an_entry_written_before_the_hash_replays_as_before(env, fake, text_file):
+    path = Path(env["PUBLISHER_LINKEDIN_LEDGER"])
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({"version": 2, "entries": {
+        "old": {"status": "published", "post_urn": POST_URN, "created_at": "2026-10-01T00:00:00Z"}}}))
+    proc = run(SCRIPT, publish_args(text_file, "--idempotency-key", "old", "--confirmed"), env)
+    assert proc.returncode == 0 and json.loads(proc.stdout)["replayed"] is True and post_count(fake) == 0
+
+
+def test_resolve_keeps_the_hash_of_what_was_sent(env, fake, text_file, tmp_path):
+    fake.post_delay = 2.0
+    env["LINKEDIN_HTTP_TIMEOUT"] = "0.5"
+    assert run(SCRIPT, publish_args(text_file, "--idempotency-key", "k", "--confirmed"), env).returncode == 1
+    sent = ledger(env)["k"]["payload_sha256"]
+    fake.post_delay = 0.0
+    assert run(SCRIPT, ["resolve", "--idempotency-key", "k", "--post-id", POST_URN, "--confirmed"], env).returncode == 0
+    assert ledger(env)["k"]["payload_sha256"] == sent
+    other = tmp_path / "other.txt"
+    other.write_text("A different post.\n")
+    assert run(SCRIPT, publish_args(other, "--idempotency-key", "k", "--confirmed"), env).returncode == 1
+
+
+# --- a verb takes its own flags; --check takes no verb ---------------------------------------------------
+
+
+def test_check_with_a_verb_is_a_usage_error(env, fake, text_file):
+    for args in (["--check", *publish_args(text_file, "--confirmed")], ["--check", "resolve", "--idempotency-key", "k"],
+                 ["--check", "--text-file", str(text_file)], ["--check", "--idempotency-key", "k"]):
+        proc = run(SCRIPT, args, env)
+        assert proc.returncode == 2 and "--check" in proc.stderr, args
+        assert proc.stdout == ""
+    assert fake.requests == [] and ledger(env) == {}
+
+
+def test_a_flag_of_another_verb_is_refused(env, fake, text_file, comment_file):
+    cases = [
+        (publish_args(text_file, "--on-key", "k", "--confirmed"), "--on-key"),
+        (publish_args(text_file, "--post-id", POST_URN, "--confirmed"), "--post-id"),
+        (publish_args(text_file, "--not-published", "--confirmed"), "--not-published"),
+        (comment_args(comment_file, "--post-id", POST_URN, "--media", str(text_file), "--confirmed"), "--media"),
+        (comment_args(comment_file, "--post-id", POST_URN, "--first-comment-file", str(comment_file), "--confirmed"),
+         "--first-comment-file"),
+        (comment_args(comment_file, "--post-id", POST_URN, "--at", "2026-01-01T00:00:00Z", "--confirmed"), "--at"),
+        (["resolve", "--idempotency-key", "k", "--not-published", "--text-file", str(text_file), "--confirmed"],
+         "--text-file"),
+        (["resolve", "--idempotency-key", "k", "--not-published", "--parent-comment-id", PARENT_URN, "--confirmed"],
+         "--parent-comment-id"),
+    ]
+    for args, flag in cases:
+        proc = run(SCRIPT, args, env)
+        assert proc.returncode == 2 and flag in proc.stderr and args[0] in proc.stderr, (args, proc.stderr)
+    assert fake.requests == [] and ledger(env) == {}
+
+
+def test_resolve_checks_the_post_id_as_strictly_as_comment(env, fake):
+    path = Path(env["PUBLISHER_LINKEDIN_LEDGER"])
+    path.parent.mkdir(parents=True)
+    pending = {"version": 2, "entries": {"k": {"status": "pending", "started_at": "2026-10-01T00:00:00Z"}}}
+    path.write_text(json.dumps(pending))
+    for bad in ("urn:li:share:12/../../v2/me", "urn:li:person:abc", "urn:li:share:", "urn:li:share:12 "):
+        for mode in ("--dry-run", "--confirmed"):
+            proc = run(SCRIPT, ["resolve", "--idempotency-key", "k", "--post-id", bad, mode], env)
+            assert proc.returncode == 2 and "--post-id" in proc.stderr, (bad, mode)
+    assert json.loads(path.read_text()) == pending
+    ok = run(SCRIPT, ["resolve", "--idempotency-key", "k", "--post-id", "urn:li:activity:7000000000000000009",
+                      "--confirmed"], env)
+    assert ok.returncode == 0, ok.stderr
+
+
+# --- the ledger is written durably, and its own folder is private ----------------------------------------
+
+
+def test_ledger_save_syncs_and_leaves_no_temporary_file_on_error(tmp_path, monkeypatch):
+    module = load_module()
+    path = tmp_path / "l" / "ledger.json"
+    path.parent.mkdir()
+    monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(path))
+    synced = []
+    real_fsync = module.os.fsync
+    monkeypatch.setattr(module.os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd)))
+    module.ledger_save({"entries": {"k": {"status": "published"}}})
+    assert synced and json.loads(path.read_text())["entries"] == {"k": {"status": "published"}}
+    before = path.read_bytes()
+
+    def broken_dump(*args, **kwargs):
+        raise TypeError("cannot serialize")
+
+    monkeypatch.setattr(module.json, "dump", broken_dump)
+    with pytest.raises(TypeError):
+        module.ledger_save({"entries": {}})
+    assert sorted(p.name for p in path.parent.iterdir()) == ["ledger.json"] and path.read_bytes() == before
+
+
+def test_the_provider_s_own_ledger_folder_is_tightened_and_a_given_one_is_left_alone(env, fake, text_file, tmp_path):
+    e, new, _ = default_ledger_env(env, tmp_path)
+    new.parent.mkdir(parents=True)
+    os.chmod(new.parent, 0o755)
+    assert run(SCRIPT, publish_args(text_file, "--confirmed"), e).returncode == 0
+    assert oct(new.parent.stat().st_mode & 0o777) == "0o700"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    os.chmod(shared, 0o755)
+    given = {**env, "PUBLISHER_LINKEDIN_LEDGER": str(shared / "ledger.json")}
+    assert run(SCRIPT, publish_args(text_file, "--confirmed"), given).returncode == 0
+    assert oct(shared.stat().st_mode & 0o777) == "0o755"  # not ours: a folder the user chose
+    assert oct((shared / "ledger.json").stat().st_mode & 0o777) == "0o600"
+
+
+# --- publish honours --legacy-v2 for its first comment; the contract states the platform's flags and media count ---
+
+
+def test_publish_legacy_v2_sends_the_first_comment_to_the_unversioned_endpoint(env, fake, text_file, comment_file):
+    proc = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--comments-endpoint", "rest",
+                                    "--legacy-v2", "--dry-run"), env)
+    assert proc.returncode == 0, proc.stderr
+    comment = json.loads(proc.stdout)["requests"][-1]
+    assert "/v2/socialActions/" in comment["url"] and "LinkedIn-Version" not in comment["headers"]
+    rest = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--comments-endpoint", "rest",
+                                    "--dry-run"), env)
+    assert "/rest/socialActions/" in json.loads(rest.stdout)["requests"][-1]["url"]
+
+
+def test_media_must_exist_and_be_an_image(env, fake, text_file, tmp_path):
+    other = tmp_path / "notes.txt"
+    other.write_text("x")
+    for media, said in ((tmp_path / "none.png", "not found"), (other, "JPG, PNG or GIF")):
+        proc = run(SCRIPT, publish_args(text_file, "--media", str(media), "--confirmed"), env)
+        assert proc.returncode == 2 and said in proc.stderr
+    assert fake.requests == []
+
+
+def test_the_contract_row_states_own_flags_and_the_platform_s_media_count():
+    contract = (HERE.parents[1] / "CONTRACT.md").read_text(encoding="utf-8")
+    row = next(line for line in contract.splitlines() if line.startswith("| `publisher:<platform>` | `--check"))
+    assert "flags of its own" in row and "portable caller does not pass" in row and "`--comments-endpoint`" in row
+    assert "`media.max_count`" in row and "[--media <path>...]" in row
+    data = json.loads((HERE.parents[2] / "shared" / "references" / "platforms" / "linkedin.json").read_text())
+    assert data["media"]["max_count"] == 1  # this implementation refuses a second --media (test_rejects_two_images)

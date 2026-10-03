@@ -9,7 +9,7 @@
         "evals/files/docs-site"
       ],
       "assertions": [
-        "Every --plu- custom property of the library file appears in the document with the same light and dark values",
+        "Every --ds- custom property of the library file appears in the document with the same light and dark values",
         {"text": "The typeface is asked with a recommended answer, not chosen silently", "tags": ["guard"]},
         "Every contrast row has two ratios and a pass or fail",
         "Every component row names at least one screen from the flows",

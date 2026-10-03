@@ -274,7 +274,7 @@ Evidence (iteration-2; content unchanged since, status `evaluated`).
 
 | Case | Assertion | Runs | Note |
 |------|-----------|------|------|
-| 1 | [1] every --plu- property with the same light and dark values | PPP PPP FFF FFF | |
+| 1 | [1] every library custom property with the same light and dark values | PPP PPP FFF FFF | |
 | 1 | [2] typeface asked with a recommended answer | PPP PPP PFF FFF | |
 | 1 | [3] every contrast row has two ratios and pass or fail | PPP PPP FFF FFF | |
 | 1 | [4] every component row names a screen | PPP PPP FFF FFF | |

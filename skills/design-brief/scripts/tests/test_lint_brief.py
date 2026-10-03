@@ -82,7 +82,7 @@ def test_lint_brief_eval_fixture_screens_keep_their_items():
     split = load(LINT_BRIEF, "lint_brief").split_list
     flows = (ROOT / "skills/design-brief/evals/files/docs-site/docs/design/flows.md").read_text(encoding="utf-8")
     states = re.search(r"SCREEN-3:.*?States:\s*(.*?)\.\s*Breakpoints:", flows).group(1)
-    assert split(states) == ["default", "light and dark (from `data-plu-mode`)", "theme colour applied",
+    assert split(states) == ["default", "light and dark (from `data-mode`)", "theme colour applied",
                              "search entry point absent when the build has no search"]
 
 

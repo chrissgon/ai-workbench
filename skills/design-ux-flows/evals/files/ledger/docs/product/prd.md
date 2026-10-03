@@ -16,7 +16,7 @@ A personal finance app for freelancers.
 
 ## Users
 
-- U-1: Freelance designers. Situation: bill 3 to 8 clients a month. Needs: know what is overdue. Source: brief
+- U-1: Freelance designers. Situation: bill 3 to 8 clients a month. Needs: know what is overdue. Source: brief, facts established without asking
 
 ## Scope
 

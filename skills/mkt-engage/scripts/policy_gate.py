@@ -14,7 +14,10 @@ decide  Reads the ```engagement-policy JSON block of the policy, the standing ap
         "policy:<sha256 of the policy file>"), today's entries in the log, and the comment
         ({"comment_id", "post_id", "commenter", "text", "received_at"}; the names the agent runtime stores,
         "comment_urn" and "post_urn", are read too, in the comment and in the log). Prints
-        {"decision": "auto" | "inbox", "reasons": [...], "idempotency_key", "counts", "reply_checks"}.
+        {"decision": "auto" | "inbox", "reasons": [...], "idempotency_key", "earlier_idempotency_key", "counts",
+        "reply_checks"}. idempotency_key is "reply-" and a hash of the whole comment identifier, which is opaque;
+        earlier_idempotency_key is the form logs written before hold ("reply-" and the digits after the
+        identifier's last comma): a logged reply under either key counts as the comment answered.
         "auto" only when every rule holds: an active, unexpired standing approval bound to this exact
         policy file; the category is in auto_reply_categories; the language is allowed; the daily limit and
         the per-person-per-post limit are not reached; the comment and the reply pass the sensitive-topics
@@ -206,6 +209,18 @@ def source_checks(reply: str, sources_file) -> list:
     return problems
 
 
+def reply_key(comment_id: str) -> str:
+    """The idempotency key of the reply to a comment: a hash of the whole identifier, which is opaque."""
+    return "reply-" + hashlib.sha256(comment_id.encode("utf-8")).hexdigest()[:32]
+
+
+def earlier_reply_key(comment_id: str) -> str:
+    """The key this script gave before (the digits after the identifier's last comma), which logs already hold:
+    read when checking for a reply already sent, never given to a new reply."""
+    digits = re.sub(r"[^0-9]", "", comment_id.rsplit(",", 1)[-1])
+    return f"reply-{digits or hashlib.sha256(comment_id.encode()).hexdigest()[:16]}"
+
+
 def decide(a) -> int:
     policy_path = Path(a.policy)
     policy = load_policy(policy_path)
@@ -254,7 +269,9 @@ def decide(a) -> int:
         reasons.append(f"daily limit reached ({len(auto_today)}/{policy['max_replies_per_day']})")
     if len(same) >= policy["max_auto_replies_per_person_per_post"]:
         reasons.append("this person already got an automatic reply on this post")
-    if any(field(e, "comment_id", "comment_urn") == comment_id and e.get("action") in ("auto_replied", "replied")
+    key, earlier = reply_key(comment_id), earlier_reply_key(comment_id)
+    if any(e.get("action") in ("auto_replied", "replied") and
+           (field(e, "comment_id", "comment_urn") == comment_id or e.get("idempotency_key") in (key, earlier))
            for e in log):
         reasons.append("this comment was already answered")
 
@@ -286,9 +303,8 @@ def decide(a) -> int:
     else:
         reasons.append("no reply drafted")
 
-    cid = re.sub(r"[^0-9]", "", comment_id.rsplit(",", 1)[-1]) or hashlib.sha256(comment_id.encode()).hexdigest()[:16]
     out = {"decision": "inbox" if reasons else "auto", "reasons": reasons,
-           "idempotency_key": f"reply-{cid}", "policy_hash": f"policy:{phash}",
+           "idempotency_key": key, "earlier_idempotency_key": earlier, "policy_hash": f"policy:{phash}",
            "counts": {"auto_today": len(auto_today), "max_per_day": policy["max_replies_per_day"]},
            "reply_checks": checks}
     json.dump(out, sys.stdout, ensure_ascii=False, indent=1)

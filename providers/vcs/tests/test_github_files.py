@@ -28,7 +28,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 SCRIPT = HERE.parent / "github.py"
 FAKE_TOKEN = "FAKE-test-github-token-7d6e5f4a3b2c-never-print-me"
-REPO = "octo/octo"
+REPO = "example-org/site"
 ALLOW = ["--allow", "data/pick.json", "--allow", "data/pick-queue.json", "--allow", "data/posts.json",
          "--allow", "assets/posts/*"]
 
@@ -171,6 +171,21 @@ def test_read_file_large_missing_and_redirect(api_env, contents):
     assert len(contents.requests) == 3
 
 
+def test_read_file_has_a_size_cap(api_env, contents):
+    """VS15: read-file read whatever the service answered, of any size."""
+    cap = 1024 * 1024
+    contents.files["data/at-cap.txt"] = b"a" * cap
+    contents.files["data/over-cap.txt"] = b"a" * (cap + 1)
+    contents.files["data/huge-answer.txt"] = {"type": "file", "encoding": "base64", "size": 2, "path": "x",
+                                              "content": "aGk=", "sha": "c" * 40, "noise": "n" * (5 * cap)}
+    at_cap = run(["read-file", "--repo", REPO, "--path", "data/at-cap.txt"], api_env)
+    assert at_cap.returncode == 0 and json.loads(at_cap.stdout)["size"] == cap
+    for path in ("data/over-cap.txt", "data/huge-answer.txt"):
+        proc = run(["read-file", "--repo", REPO, "--path", path], api_env)
+        assert proc.returncode == 1 and "cap" in proc.stderr and proc.stdout == "", (path, proc.stderr)
+    assert "1 MiB" in run(["--help"], api_env).stdout
+
+
 def test_read_file_validates_path_and_ref_before_any_request(api_env, contents):
     bad_paths = ["../etc/passwd", "/abs.json", "a//b", "data/", ".git/config", "a/.git/x", "a b.json",
                  "data/../x", ".", "-rf", "a?b", "a%2e", "x\n"]
@@ -208,7 +223,7 @@ def git(env, cwd, *args):
 
 
 class Remote:
-    """A bare repository standing in for the profile repository, and a git setup around it."""
+    """A bare repository standing in for the repository on the host, and a git setup around it."""
 
     def __init__(self, tmp: Path):
         self.tmp = tmp
@@ -285,7 +300,7 @@ def out_files(tmp_path):
     image = out / "post.png"
     image.write_bytes(b"\x89PNG\r\n\x1a\n" + bytes(range(256)))
     message = out / "message.txt"
-    message.write_text("chore(vote): queue the round after 12\n\nApproved in the weekly gate.\n")
+    message.write_text("chore(data): queue item 12\n\nApproved at the gate.\n")
     return {"queue": queue, "image": image, "message": message}
 
 
@@ -329,7 +344,7 @@ def test_dry_run_prints_the_diff_and_pushes_nothing(remote, out_files):
          "bytes": out_files["image"].stat().st_size}]
     assert "data/pick-queue.json" in out["diff_stat"] and "assets/posts/vote-12.png" in out["diff_stat"]
     assert '+[{"pillar": "Engineering"' in out["diff"] and out["diff_truncated"] is False
-    assert out["message"].startswith("chore(vote): queue the round after 12")
+    assert out["message"].startswith("chore(data): queue item 12")
     assert remote.head() == before
     assert ledger(env) == {}
     assert list(work_root(env).iterdir()) == []  # the private clone is removed
@@ -362,7 +377,7 @@ def test_confirmed_pushes_one_signed_commit_with_exactly_the_files(remote, out_f
     assert remote.changed() == ["assets/posts/vote-12.png", "data/pick-queue.json"]
     raw = git(remote.env, remote.bare, "cat-file", "commit", "refs/heads/main")
     assert "BEGIN SSH SIGNATURE" in raw
-    assert "chore(vote): queue the round after 12" in raw
+    assert "chore(data): queue item 12" in raw
     assert git(remote.env, remote.bare, "show", "refs/heads/main:data/pick-queue.json") == out_files["queue"].read_text()
     assert ledger(env)["k1"]["status"] == "committed" and ledger(env)["k1"]["commit"] == out["commit"]
     assert list(work_root(env).iterdir()) == []
@@ -373,7 +388,7 @@ def test_confirmed_pushes_one_signed_commit_with_exactly_the_files(remote, out_f
 def test_paths_outside_allow_are_refused_before_cloning(remote, out_files):
     env = remote.provider_env()
     before = remote.head()
-    for repo_path in (".github/workflows/weekly.yml", "README.md", "assets/posts/sub/x.png", "data/pick.json.bak",
+    for repo_path in (".github/workflows/ci.yml", "README.md", "assets/posts/sub/x.png", "data/pick.json.bak",
                       "assets/link/x.png", "../x"):
         proc = run(commit_args(out_files, "k1", "--confirmed", files=[f"{repo_path}={out_files['queue']}"]), env)
         assert proc.returncode == 2, repo_path
@@ -761,3 +776,71 @@ def test_sigterm_during_the_clone_releases_the_key(remote, out_files, tmp_path):
     assert proc.returncode == 128 + signal.SIGTERM, err
     assert list(work_root(env).iterdir()) == []
     assert ledger(env) == {}  # nothing was sent: the key is free
+
+
+# --- VS13: a wildcard does not match a dotfile -------------------------------------------------
+
+
+@needs_tools
+def test_a_wildcard_does_not_admit_a_dotfile(remote, out_files):
+    # fnmatch lets '*' and '?' match a leading '.', so --allow '*' admitted .gitattributes, a file that changes
+    # how git treats every other path.
+    env = remote.provider_env()
+    q = out_files["queue"]
+    for allow, path in (("*", ".gitattributes"), ("?gitattributes", ".gitattributes"), ("data/*", "data/.env"),
+                        ("*/x.json", ".github/x.json"), ("[.]env", ".env")):
+        args = commit_args(out_files, "k1", "--dry-run", files=[f"{path}={q}"])
+        args = [a for a in args if a not in ALLOW] + ["--allow", allow]
+        proc = run(args, env)
+        assert proc.returncode == 2 and "outside the allowed paths" in proc.stderr, (allow, path, proc.stderr)
+    assert not work_root(env).exists()  # refused before cloning
+    # A pattern whose part starts with '.' names dotfiles on purpose.
+    args = [a for a in commit_args(out_files, "k1", "--dry-run", files=[f".gitattributes={q}"]) if a not in ALLOW]
+    proc = run([*args, "--allow", ".*"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout)["files"][0]["path"] == ".gitattributes"
+    assert "leading '.'" in run(["--help"], env).stdout
+
+
+# --- VS14: only a definite refusal releases the key ----------------------------------------------
+
+GIT_WHOSE_REMOTE_DID_NOT_REPORT = """#!/bin/sh
+if [ "$1" = push ]; then
+  "$REAL_GIT" "$@" >/dev/null 2>&1
+  printf 'To %s\\n!\\tHEAD:refs/heads/main\\t[remote failure] (remote failed to report status)\\nDone\\n' "$VCS_GIT_REMOTE"
+  echo "error: failed to push some refs" >&2
+  exit 1
+fi
+exec "$REAL_GIT" "$@"
+"""
+
+
+@needs_tools
+def test_a_push_whose_remote_did_not_report_keeps_the_key_pending(remote, out_files, tmp_path):
+    # Every '!' line of the push report other than [rejected] released the key; git also prints '!' for a remote
+    # that did not report its status, after which the commit may well be on the branch.
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    wrapper = bin_dir / "git"
+    wrapper.write_text(GIT_WHOSE_REMOTE_DID_NOT_REPORT)
+    wrapper.chmod(0o755)
+    env = remote.provider_env()
+    env.update({"REAL_GIT": shutil.which("git"), "PATH": f"{bin_dir}{os.pathsep}{env['PATH']}"})
+    before = remote.head()
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 1 and "outcome is unknown" in proc.stderr, proc.stderr
+    assert remote.head() != before  # the remote took it
+    entry = ledger(env)["k1"]
+    assert entry["status"] == "pending" and entry["attempted_commit"] == remote.head()
+
+
+@needs_tools
+def test_a_push_the_remote_refused_releases_the_key(remote, out_files):
+    hook = remote.bare / "hooks" / "pre-receive"
+    hook.write_text("#!/bin/sh\necho 'declined by policy' >&2\nexit 1\n")
+    hook.chmod(0o755)
+    env = remote.provider_env()
+    before = remote.head()
+    proc = run(commit_args(out_files, "k1", "--confirmed"), env)
+    assert proc.returncode == 1 and "[remote rejected]" in proc.stderr, proc.stderr
+    assert remote.head() == before and ledger(env) == {}  # a definite refusal: the key is free

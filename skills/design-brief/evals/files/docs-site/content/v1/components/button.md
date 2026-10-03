@@ -7,10 +7,10 @@ section: Components
 
 ## Usage
 
-Add the class `plu-btn` to a `button` or an `a` element. Without a style class the button is solid; without a colour class it uses the theme colour.
+Add the class `btn` to a `button` or an `a` element. Without a style class the button is solid; without a colour class it uses the theme colour.
 
 ```html
-<button class="plu-btn">Save</button>
+<button class="btn">Save</button>
 ```
 
 ## Styles
@@ -18,10 +18,10 @@ Add the class `plu-btn` to a `button` or an `a` element. Without a style class t
 Four styles change how much weight the button carries: `solid`, `soft`, `outline` and `text`.
 
 ```html
-<button class="plu-btn">Solid</button>
-<button class="plu-btn plu-soft">Soft</button>
-<button class="plu-btn plu-outline">Outline</button>
-<button class="plu-btn plu-text">Text</button>
+<button class="btn">Solid</button>
+<button class="btn soft">Soft</button>
+<button class="btn outline">Outline</button>
+<button class="btn text">Text</button>
 ```
 
 ## Colours
@@ -29,17 +29,17 @@ Four styles change how much weight the button carries: `solid`, `soft`, `outline
 Seven colour classes set the role: `theme`, `success`, `error`, `warn`, `muted`, `surface` and `inverse`.
 
 ```html
-<button class="plu-btn plu-success">Publish</button>
-<button class="plu-btn plu-error plu-outline">Delete</button>
-<button class="plu-btn plu-surface">Cancel</button>
+<button class="btn success">Publish</button>
+<button class="btn error outline">Delete</button>
+<button class="btn surface">Cancel</button>
 ```
 
 ## Rounded
 
-Add `plu-rounded` for a pill shape.
+Add `rounded` for a pill shape.
 
 ```html
-<button class="plu-btn plu-rounded">Subscribe</button>
+<button class="btn rounded">Subscribe</button>
 ```
 
 ## Disabled
@@ -47,7 +47,7 @@ Add `plu-rounded` for a pill shape.
 A disabled button keeps its colour at 50% opacity and ignores the pointer.
 
 ```html
-<button class="plu-btn" disabled>Save</button>
+<button class="btn" disabled>Save</button>
 ```
 
 ## Accessibility

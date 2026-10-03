@@ -41,8 +41,8 @@ ever sent to the URL that was checked.
 The ledger lives in a data folder (~/Library/Application Support/ai-workbench/ on macOS,
 $XDG_DATA_HOME/ai-workbench/ or ~/.local/share/ai-workbench/ elsewhere), next to the scheduler's jobs.
 It used to live in the cache folder, where clearing the cache lost the record of what was already
-published; on first use the old ledger is copied to the new place (a note on stderr says so) and is
-never deleted. Jobs scheduled before this change run a copy of the old provider and keep writing to the
+published; the first verb that writes the ledger copies the old one to the new place (a note on stderr says
+so) and never deletes it. A dry run reads the old ledger while the new one does not exist, and writes nothing. Jobs scheduled before this change run a copy of the old provider and keep writing to the
 old location, so they must be scheduled again after upgrading.
 """
 from __future__ import annotations
@@ -50,6 +50,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import fcntl
+import hashlib
 import importlib.util
 import json
 import mimetypes
@@ -142,10 +143,13 @@ identifiers:
 idempotency:
   Each key publishes one post or one comment at most once. It is recorded as pending in the ledger
   before the request and as published after it, under a file lock; a pending
-  key refuses every new attempt until resolve settles it. A key is released
-  when nothing was sent, or when LinkedIn refused the request with a 4xx answer
-  other than 408 and 429; after a timeout, a dropped connection, a 5xx, a 408
-  or a 429 the outcome is unknown and the key stays pending.
+  key refuses every new attempt until resolve settles it. A key holds one
+  content: the ledger keeps the sha256 of what was sent (the text, and the
+  image), and the same key with other content is refused (exit 1, nothing
+  sent); an entry written before the hash was kept replays as before. A key
+  is released when nothing was sent, or when LinkedIn refused the request with
+  a 4xx answer other than 408 and 429; after a timeout, a dropped connection,
+  a 5xx, a 408 or a 429 the outcome is unknown and the key stays pending.
 
 credentials (never from files or flags):
   The access token is read from the OS secret store (service "{KEYRING_SERVICE}",
@@ -168,7 +172,8 @@ other environment variables:
                                on macOS; elsewhere $XDG_DATA_HOME/ai-workbench/publisher-linkedin.json,
                                or ~/.local/share/ai-workbench/publisher-linkedin.json. A ledger at
                                its old place ($XDG_CACHE_HOME/ai-workbench/ or ~/.cache/ai-workbench/)
-                               is copied there on first use and never deleted.
+                               is copied there by the first verb that writes the ledger and never
+                               deleted; a dry run reads it there and writes nothing.
   LINKEDIN_API_BASE            tests only. Replaces {DEFAULT_API_BASE} with a
                                loopback URL (http://127.0.0.1:<port>). Any other
                                host is refused. When set, the secret store is not
@@ -186,7 +191,9 @@ output:
   token_expires_at, token_expires_in_days.
   Diagnostics on stderr. Tokens are never printed.
 
-exit codes: 0 success, 1 provider or service error, 2 usage error, 3 not configured.
+exit codes: 0 success, 1 provider or service error, 2 usage error (also --check
+with a verb, and a flag the verb does not read: --media with comment, --on-key
+with publish), 3 not configured.
 
 LinkedIn API version pinned: {LINKEDIN_VERSION}. Access tokens last 60 days and
 there is no refresh token for self-serve apps: rerun auth.py before expiry.
@@ -370,6 +377,15 @@ def old_ledger_path() -> Path | None:
     return Path(cache) / "ai-workbench" / LEDGER_NAME
 
 
+def ledger_folder_ready(path: Path) -> None:
+    """Create the ledger's folder (0700). The provider's own data folder is set to 0700 even when it exists with
+    wider permissions; a folder the user chose (PUBLISHER_LINKEDIN_LEDGER, or --ledger elsewhere) is theirs and
+    keeps its mode, while the ledger and its lock inside it are 0600."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.path.abspath(path.parent) == os.path.abspath(data_home()):
+        os.chmod(path.parent, 0o700)
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -377,8 +393,8 @@ def now_iso() -> str:
 def ledger_migrate() -> None:
     """First use after the move: copy the old ledger to the new place, so no recorded key is lost.
 
-    Runs before every read, and does something only while the new ledger does not exist and the old one
-    does. The copy appears under its final name in one step (a hard link, which fails when the name
+    Runs before every read made under the lock (only a verb that writes the ledger takes it; a dry run never
+    does), and does something only while the new ledger does not exist and the old one does. The copy appears under its final name in one step (a hard link, which fails when the name
     exists), so two runs at once cannot overwrite each other. The old file is never changed or deleted.
     """
     path, old = ledger_path(), old_ledger_path()
@@ -389,7 +405,7 @@ def ledger_migrate() -> None:
         json.loads(content.decode("utf-8"))
     except (OSError, ValueError) as exc:
         raise ProviderError(f"the idempotency ledger at {old} cannot be copied to {path}: {exc}", EXIT_SERVICE)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ledger_folder_ready(path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".publisher-linkedin.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -406,10 +422,14 @@ def ledger_migrate() -> None:
 
 
 def ledger_read() -> dict:
-    ledger_migrate()
+    """The ledger's content. It writes nothing: while the new ledger does not exist, the old one is read where it
+    is, and only ledger_locked(), which a verb that writes takes, copies it."""
     path = ledger_path()
     if not path.exists():
-        return {"version": 2, "entries": {}}
+        old = old_ledger_path()
+        if old is None or not old.is_file():
+            return {"version": 2, "entries": {}}
+        path = old
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
@@ -422,17 +442,24 @@ def ledger_save(data: dict) -> None:
     path = ledger_path()
     data["version"] = 2
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".publisher-linkedin.", suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())  # on disk before it replaces the ledger: a crash leaves the old one or the new one
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
 
 
 @contextlib.contextmanager
 def ledger_locked():
     """Hold an exclusive lock on the ledger while reading and changing it."""
     path = ledger_path()
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ledger_folder_ready(path)
     fd = os.open(f"{path}.lock", os.O_RDWR | os.O_CREAT, 0o600)
     try:
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS
@@ -444,6 +471,7 @@ def ledger_locked():
                 if time.monotonic() > deadline:
                     raise ProviderError(f"the idempotency ledger {path} stayed locked for {LOCK_TIMEOUT_SECONDS} s")
                 time.sleep(0.05)
+        ledger_migrate()
         yield ledger_read()
     finally:
         os.close(fd)  # closing the descriptor releases the lock
@@ -457,6 +485,22 @@ def entry_status(entry: dict) -> str:
 def entry_kind(entry: dict) -> str:
     # Post entries carry no kind (the ledger format before comments); comment entries say "comment".
     return entry.get("kind") or "post"
+
+
+def payload_digest(text: str, media: bytes | None = None) -> str:
+    """The sha256 of what a request sends: its text as sent, and the sha256 of the image when there is one."""
+    doc = {"text": text, "media_sha256": hashlib.sha256(media).hexdigest() if media is not None else None}
+    return hashlib.sha256(json.dumps(doc, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def check_same_payload(key: str, existing: dict, digest: str, kind: str) -> None:
+    """A key holds one content. An entry written before the hash was recorded has none and replays as before."""
+    held = existing.get("payload_sha256")
+    if held and held != digest:
+        raise ProviderError(
+            f"idempotency key {key!r} already holds a {kind} with other content (sha256 {held[:12]}..., this "
+            f"one {digest[:12]}...); nothing was sent. One key per {kind}: use a new key for new content",
+            EXIT_SERVICE)
 
 
 def ledger_claim(key: str, extra: dict | None = None) -> dict | None:
@@ -706,12 +750,15 @@ def member_urn_reader(base: str, token: dict):
 def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary: str,
                  image: Path | None, key: str) -> tuple[str, bool]:
     """Publish the post at most once per key; return (post URN, replayed)."""
-    existing = ledger_claim(key)
+    media = image.read_bytes() if image else None
+    digest = payload_digest(commentary, media)
+    existing = ledger_claim(key, {"payload_sha256": digest})
     if existing:
         if entry_kind(existing) != "post":
             raise ProviderError(f"idempotency key {key!r} belongs to a comment, not a post; use another key",
                                 EXIT_USAGE)
         if entry_status(existing) == "published":
+            check_same_payload(key, existing, digest, "post")
             log(f"idempotency key {key!r} already published; returning the existing post")
             return existing["post_urn"], True
         raise ProviderError(pending_message(key, existing), EXIT_SERVICE)
@@ -740,7 +787,7 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
                 "PUT",
                 upload_url,
                 {"Authorization": f"Bearer {access}", "Content-Type": "application/octet-stream"},
-                image.read_bytes(),
+                media,
             )
             log(f"uploaded {image.name} as {image_urn}")
 
@@ -757,7 +804,8 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
         if not sent or refused(exc):
             ledger_update(key, None)
         else:
-            ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": str(exc)})
+            ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": str(exc),
+                                "payload_sha256": digest})
             if exc.status in UNKNOWN_OUTCOME_STATUSES:
                 raise ProviderError(f"{exc}; that answer does not say whether the post was taken, so the key "
                                     f"stays pending: {after_unknown(key, 'post')}", EXIT_SERVICE, exc.status) from None
@@ -769,15 +817,16 @@ def publish_post(base: str, test_mode: bool, token: dict, member_urn, commentary
     urn = headers.get("x-restli-id")
     if status != 201 or not urn:
         error = f"unexpected Posts API response: status {status}, no x-restli-id header"
-        ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": error})
+        ledger_update(key, {"status": "pending", "started_at": now_iso(), "error": error, "payload_sha256": digest})
         raise ProviderError(error + "; the key stays pending until resolve settles it")
-    ledger_update(key, {"status": "published", "post_urn": urn, "created_at": now_iso()})
+    ledger_update(key, {"status": "published", "post_urn": urn, "created_at": now_iso(), "payload_sha256": digest})
     return urn, False
 
 
 def cmd_publish(args) -> int:
     global LEGACY_V2
-    LEGACY_V2 = getattr(args, "comments_endpoint", "v2") != "rest"
+    # The first comment goes where the comment verb would send it: --legacy-v2 is honoured here too.
+    LEGACY_V2 = args.comments_endpoint != "rest" or bool(args.legacy_v2)
     text, image, first_comment = validate_publish_args(args)
     # A setting the first comment needs is read before anything is sent: found malformed only after the
     # post was public, it left a post without its comment for a mistake no request could have caused.
@@ -898,7 +947,7 @@ def comment_result(entry: dict, token: dict, key: str, replayed: bool) -> dict:
 def create_comment(base: str, token: dict, member_urn, post_urn: str, parent: str | None,
                    text: str, key: str) -> dict:
     """Post one comment at most once per key; return the comment result."""
-    claim = {"kind": "comment", "post_urn": post_urn, "parent_comment": parent}
+    claim = {"kind": "comment", "post_urn": post_urn, "parent_comment": parent, "payload_sha256": payload_digest(text)}
     existing = ledger_claim(key, claim)
     if existing:
         if entry_kind(existing) != "comment":
@@ -910,6 +959,7 @@ def create_comment(base: str, token: dict, member_urn, post_urn: str, parent: st
             raise ProviderError(
                 f"idempotency key {key!r} already holds a comment on {existing.get('post_urn')} "
                 f"(parent {existing.get('parent_comment')}); one key per comment, use another key", EXIT_USAGE)
+        check_same_payload(key, existing, claim["payload_sha256"], "comment")
         log(f"idempotency key {key!r} already published; returning the existing comment")
         return comment_result(existing, token, key, True)
 
@@ -1006,7 +1056,7 @@ def post_urn_of_key(on_key: str, required: bool) -> str | None:
 
 def cmd_comment(args) -> int:
     global LEGACY_V2
-    LEGACY_V2 = getattr(args, "comments_endpoint", "v2") != "rest" or bool(getattr(args, "legacy_v2", False))
+    LEGACY_V2 = args.comments_endpoint != "rest" or bool(args.legacy_v2)
     text, post_urn, parent = validate_comment_args(args)
     if not args.dry_run and not args.confirmed:
         raise ProviderError(
@@ -1039,8 +1089,10 @@ def cmd_resolve(args) -> int:
     if sum(bool(x) for x in (args.post_urn, args.comment_urn, args.not_published)) != 1:
         raise ProviderError("resolve needs exactly one of --post-id <urn> (a post), --comment-id <urn> "
                             "(a comment) or --not-published", EXIT_USAGE)
-    if args.post_urn and not args.post_urn.startswith("urn:li:"):
-        raise ProviderError("--post-id must be a LinkedIn URN such as urn:li:share:<id>", EXIT_USAGE)
+    # The same full-value patterns as comment: the value is recorded, and a later --on-key puts it in a URL path.
+    if args.post_urn and not POST_URN_RE.fullmatch(args.post_urn):
+        raise ProviderError("--post-id must look like urn:li:share:<digits>, urn:li:ugcPost:<digits> or "
+                            "urn:li:activity:<digits>", EXIT_USAGE)
     match = COMMENT_URN_RE.fullmatch(args.comment_urn) if args.comment_urn else None
     if args.comment_urn and not match:
         raise ProviderError("--comment-id must look like urn:li:comment:(urn:li:activity:<digits>,<digits>)",
@@ -1071,14 +1123,16 @@ def cmd_resolve(args) -> int:
     with ledger_locked() as data:
         entry = data["entries"].get(key)
         check(entry)
+        # The hash of what the pending attempt sent stays with the key, so a later call with other content is refused.
+        sent = {"payload_sha256": entry["payload_sha256"]} if entry.get("payload_sha256") else {}
         if args.post_urn:
             data["entries"][key] = {"status": "published", "post_urn": args.post_urn,
-                                    "created_at": now_iso(), "resolved": True}
+                                    "created_at": now_iso(), "resolved": True, **sent}
         elif args.comment_urn:
             data["entries"][key] = {"kind": "comment", "post_urn": entry.get("post_urn"),
                                     "parent_comment": entry.get("parent_comment"), "status": "published",
                                     "comment_urn": args.comment_urn, "comment_id": match.group(2),
-                                    "created_at": now_iso(), "resolved": True}
+                                    "created_at": now_iso(), "resolved": True, **sent}
         else:
             del data["entries"][key]
         ledger_save(data)
@@ -1202,6 +1256,38 @@ def cmd_check() -> int:
 # --- entry point ---------------------------------------------------------------
 
 
+# Each flag by its destination, and the verbs that read it. A flag given to a verb that does not read it is a usage
+# error, so a caller learns that it was ignored; --check takes no verb and no flag but --platform.
+FLAG_NAMES = {
+    "platform": "--platform", "text_file": "--text-file", "first_comment_file": "--first-comment-file",
+    "media": "--media", "at": "--at", "idempotency_key": "--idempotency-key", "post_urn": "--post-id",
+    "on_key": "--on-key", "parent_comment": "--parent-comment-id", "comments_endpoint": "--comments-endpoint",
+    "legacy_v2": "--legacy-v2", "comment_urn": "--comment-id", "not_published": "--not-published",
+    "ledger": "--ledger", "dry_run": "--dry-run", "confirmed": "--confirmed",
+}
+VERB_FLAGS = {
+    "publish": {"platform", "text_file", "first_comment_file", "media", "at", "idempotency_key", "comments_endpoint",
+                "legacy_v2", "ledger", "dry_run", "confirmed"},
+    "comment": {"platform", "text_file", "idempotency_key", "post_urn", "on_key", "parent_comment",
+                "comments_endpoint", "legacy_v2", "ledger", "dry_run", "confirmed"},
+    "resolve": {"platform", "idempotency_key", "post_urn", "comment_urn", "not_published", "ledger", "dry_run",
+                "confirmed"},
+    None: {"platform"},  # --check
+}
+
+
+def check_flags(args) -> None:
+    if args.check and args.verb:
+        raise ProviderError(f"--check takes no verb: run --check alone, or {args.verb} without --check", EXIT_USAGE)
+    if not args.check and not args.verb:
+        return
+    given = [dest for dest in FLAG_NAMES if getattr(args, dest) not in (None, False)]
+    extra = [FLAG_NAMES[dest] for dest in given if dest not in VERB_FLAGS[args.verb]]
+    if extra:
+        raise ProviderError(f"{', '.join(extra)}: not a flag of {args.verb or '--check'}; nothing was done "
+                            "(see --help)", EXIT_USAGE)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="linkedin.py",
@@ -1228,12 +1314,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--parent-comment-id", "--parent-comment", dest="parent_comment",
                         help="with comment: reply to the comment with this id (a comment URN). "
                              "Alias: --parent-comment")
-    parser.add_argument("--comments-endpoint", choices=["v2", "rest"], default="v2",
+    parser.add_argument("--comments-endpoint", choices=["v2", "rest"],
                         help="comments: v2 (default; works with a member's w_member_social token, checked "
                              "2026-09-30) or rest (the versioned endpoint; needs LinkedIn partner access)")
     parser.add_argument("--legacy-v2", action="store_true",
-                        help="with comment: use the unversioned /v2/socialActions endpoint (a trial: the versioned "
-                             "endpoint needs partner access for member comments)")
+                        help="with comment, or publish's first comment: use the unversioned /v2/socialActions "
+                             "endpoint (the default; an alias kept from its trial, and it wins over "
+                             "--comments-endpoint rest)")
     parser.add_argument("--comment-id", "--comment-urn", dest="comment_urn",
                         help="with resolve: the pending comment was published as this id (a comment URN). "
                              "Alias: --comment-urn")
@@ -1254,6 +1341,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     global PINNED_LEDGER
     try:
+        check_flags(args)
         if args.ledger is not None:
             if not os.path.isabs(args.ledger):
                 raise ProviderError("--ledger must be an absolute path", EXIT_USAGE)

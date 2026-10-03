@@ -1,3 +1,7 @@
+# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 """The runtime's weekly vote step (docs/architecture/weekly-vote.md), imported by scripts/runtime.py.
 
 Configuration: a "vote" section in runtime.json (no secrets):
@@ -40,7 +44,8 @@ ROUND = re.compile(r"^[0-9A-Za-z][0-9A-Za-z._-]{0,63}$")  # a round id, as it go
 QUEUE_ALLOW = ["data/pick-queue.json"]
 SYSTEM_PYTHON = "/usr/bin/python3"
 JOB_TIMEOUT_MINUTES = 30  # vote_job.py's own limits add up to 27 minutes (scripts/vote_job.py)
-MAX_POST = 3000
+# The platform's limits (a post's characters, its first comment's, the post image's size) are read from its data
+# file by scripts/runtime.py (cfg["limits"]): the runtime holds none of its own.
 
 
 def sha256_bytes(data: bytes) -> str:
@@ -125,8 +130,10 @@ Answer with a short explanation and exactly one block:
 """
 
 
-def parse_proposal(text: str, state: dict) -> dict:
-    """The agent's vote-proposal block, checked against the state. Raises ValueError with the first problem."""
+def parse_proposal(text: str, state: dict, limits: dict) -> dict:
+    """The agent's vote-proposal block, checked against the state and the platform's limits (cfg["limits"]:
+    "post" and "first_comment", in characters; 0 when the platform takes no first comment). Raises ValueError
+    with the first problem."""
     blocks = PROPOSAL.findall(text)
     if len(blocks) != 1:
         raise ValueError(f"expected one vote-proposal block, found {len(blocks)}")
@@ -150,10 +157,13 @@ def parse_proposal(text: str, state: dict) -> dict:
         raise ValueError("post keys must be exactly language, text, first_comment, sources")
     if post["language"] != slot["language"]:
         raise ValueError(f"post.language must be the slot's language, {slot['language']}")
-    if not isinstance(post["text"], str) or not post["text"].strip() or len(post["text"]) > MAX_POST:
-        raise ValueError(f"post.text must be text of at most {MAX_POST} characters")
-    if not isinstance(post["first_comment"], str) or len(post["first_comment"]) > 1250:
+    if not isinstance(post["text"], str) or not post["text"].strip() or len(post["text"]) > limits["post"]:
+        raise ValueError(f"post.text must be text of at most {limits['post']} characters (the platform's limit)")
+    if not isinstance(post["first_comment"], str):
         raise ValueError("post.first_comment must be text (empty when there is no link)")
+    if len(post["first_comment"]) > limits["first_comment"]:
+        raise ValueError(f"post.first_comment must have at most {limits['first_comment']} characters (the "
+                         "platform's limit; 0 when it takes no first comment)")
     if not isinstance(post["sources"], list) or not post["sources"]:
         raise ValueError("post.sources must name the file and section of every fact")
     nxt = d["next_round"]
@@ -249,7 +259,11 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
     if not state.get("pending"):
         open_round = (state.get("open_round") or {}).get("round")
         return {"status": "none", "note": f"no closed round waiting for a post (open round: {open_round})"}
-    rid = state["round"]["round"]
+    rid = (state.get("round") or {}).get("round")
+    if not isinstance(rid, str) or not ROUND.match(rid):
+        # The round id comes from the repository's vote file and becomes a folder name the runtime later deletes
+        # (shutil.rmtree); it is checked here, not left to the skill script that computed the state.
+        raise Fail(f"the vote state names a round id that is not one ({str(rid)[:80]!r}); nothing was built")
     if store("cursor-get", "--name", f"vote:{rid}").get("value"):
         return {"status": "none", "note": f"round {rid} already handled"}
     folder = base / rid
@@ -285,7 +299,7 @@ def vote_tick(cfg: dict, project: Path, store, h) -> dict:
           "--duration-ms", h["nz"](timing.get("duration_ms")), "--out-dir", run_dir / "out",
           *(["--error", err.strip()[-1000:]] if code != 0 and err.strip() else []))
     try:
-        d = parse_proposal(response, state)
+        d = parse_proposal(response, state, cfg["limits"])
     except (ValueError, json.JSONDecodeError) as e:
         out = to_inbox(store, write_private, folder, f"vote {rid}: proposal unusable", {
             "round": rid, "ready": False, "problems": [f"agent proposal unusable: {e}"], "run_id": run_id,
@@ -337,11 +351,15 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
                                                         [err.strip()[-300:] or f"exit {code}"]))
 
     image = None
-    if v["image"]:
+    size = cfg["limits"]["image"]
+    if v["image"] and not size:
+        notes.append("no image: the platform's data file gives no post image size (media.post_image); the post "
+                     "goes text-only")
+    elif v["image"]:
         card = project / v["card_html"] if v.get("card_html") else v["paths"]["card"]
         png = work / f"{key}.png"
-        code, out, err = run([sys.executable, str(v["paths"]["render"]), "--html", str(card), "--width", "1080",
-                              "--height", "1350", "--out", str(png), "--fill", f"title={d['topic']}",
+        code, out, err = run([sys.executable, str(v["paths"]["render"]), "--html", str(card), "--width", str(size[0]),
+                              "--height", str(size[1]), "--out", str(png), "--fill", f"title={d['topic']}",
                               "--fill", f"subtitle={state['round']['pillar']}"])
         if code == 0 and png.is_file():
             image = png
@@ -351,7 +369,9 @@ def build_bundle(cfg: dict, project: Path, store, h, state: dict, d: dict, run_i
     pay = work / "payload"
     pay.mkdir(mode=0o700)
     code, out, err = run([sys.executable, str(v["paths"]["payload"]), "build", "--content", str(content),
-                          "--out", str(pay), "--workbench", cfg["workbench"], "--platform", cfg["publisher"]])
+                          "--out", str(pay), "--workbench", cfg["workbench"], "--platform", cfg["publisher"],
+                          "--platform-file", str(cfg["paths"]["platform_file"]),
+                          "--publisher", str(cfg["paths"]["publisher"])])
     built = _loads(out)
     entry = (built.get("posts") or [{}])[0]
     if code != 0 or not entry.get("post_file"):
@@ -419,12 +439,15 @@ def write_job(cfg: dict, v: dict, work: Path, key: str, rid: str, slot: dict, d:
     python = SYSTEM_PYTHON if Path(SYSTEM_PYTHON).exists() else sys.executable
     argv = [python, str(p["job"]), "--key", key, "--round", rid, "--date", slot["when"][:10],
             "--lang", d["post"]["language"], "--title", d["topic"], "--repo", v["repo"], "--branch", v["branch"],
-            "--platform", cfg["publisher"], "--post-file", entry["post_file"],
+            "--platform", cfg["publisher"], "--platform-file", str(cfg["paths"]["platform_file"]),
+            "--post-file", entry["post_file"],
             "--publisher", str(publisher), "--resolver", str(p["resolver"]), "--vcs", str(p["vcs"]),
             "--vote-update", str(p["vote_update"]), "--vote-state", str(p["vote_state"]),
             "--work", str(Path(cfg["data_dir"]) / "vote" / rid / "job-work")]
+    # The platform's data file is a file argument like the others: the job runs its verified copy, so the
+    # address check at the slot is the one the person approved.
     snapshot = [str(p["job"]), entry["post_file"], str(publisher), str(p["resolver"]), str(p["vcs"]),
-                str(p["vote_update"]), str(p["vote_state"])]
+                str(p["vote_update"]), str(p["vote_state"]), str(cfg["paths"]["platform_file"])]
     for folder in cfg.get("path") or []:
         # The scheduler runs the job on its own short PATH; these are the folders runtime.json lists so that
         # uv resolves, and the job puts them first, as the tick does.
@@ -473,6 +496,11 @@ def vote_approve(cfg: dict, project: Path, store, item: dict, a, h) -> dict:
     if not v:
         raise Fail("runtime.json has no vote section", 3)
     b = load_bundle(item)
+    # The bundle in the store is what the item's hash was computed over (to_inbox): re-hashed here, so that the
+    # slot, the key and the files it names are covered by the hash and not only by the database (RT12).
+    if sha256_bytes(json.dumps(b, ensure_ascii=False, indent=1).encode("utf-8")) != item.get("payload_sha256"):
+        raise Fail("this vote item's stored bundle no longer has the hash it was proposed with; nothing done. "
+                   "Reject it so the next tick redoes the round", 1)
     shown = preview(item)
     if not b.get("ready"):
         raise Fail("this vote item is not ready: " + "; ".join(b.get("problems") or []) +
