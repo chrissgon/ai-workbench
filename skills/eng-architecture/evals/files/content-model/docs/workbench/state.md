@@ -1,7 +1,7 @@
 # Workbench state
 
 - Project: plinthui-docs
-- Current flow: flow-new-feature
+- Current flow: none
 - Current phase: Engineering
 - Updated: 2026-03-10
 

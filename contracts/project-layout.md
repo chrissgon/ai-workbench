@@ -119,7 +119,7 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, mkt-engage, mkt-publish | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, eng-security-review, flow-fix-bug, mkt-content-plan, mkt-messaging, ops-branch-sync, ops-ci-pipeline, ops-pull-request, ops-repo-baseline |
+| `docs/workbench/state.md` | core-clarify, core-project-init, mkt-engage, mkt-publish | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, eng-architecture, eng-codebase-map, eng-security-review, flow-fix-bug, mkt-content-plan, mkt-messaging, ops-branch-sync, ops-ci-pipeline, ops-pull-request, ops-repo-baseline |
 <!-- owner-table:end -->
 
 ## Rules
