@@ -11,10 +11,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import socket
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -584,11 +587,28 @@ def test_the_served_platforms_are_declared_on_one_line_the_resolver_reads_as_tex
     assert lines == ['PLATFORMS = ("linkedin",)']
 
 
-def test_check_not_ready_without_token(env, fake):
+def test_check_exits_3_when_the_person_has_something_to_do(env, fake):
+    """The contract's one reading: 3 is "not configured" (no token, an expired one, a rejected one)."""
+    fake.userinfo_status = 401  # the service rejects the token
+    proc = run(SCRIPT, ["--check"], env)
+    assert proc.returncode == 3 and "rejected the token" in proc.stderr
+    env["LINKEDIN_TOKEN_EXPIRES_AT"] = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    proc = run(SCRIPT, ["--check"], env)
+    assert proc.returncode == 3 and "expired" in proc.stderr
     del env["LINKEDIN_ACCESS_TOKEN"]
     proc = run(SCRIPT, ["--check"], env)
-    assert proc.returncode == 1
-    assert proc.stderr.strip()
+    assert proc.returncode == 3 and "auth.py --provider linkedin" in proc.stderr
+    assert not proc.stdout.strip()
+
+
+def test_check_exits_1_when_the_service_could_not_be_asked(env, fake):
+    """1 is "whether the provider is ready is not known": the service is down or answered something else."""
+    fake.userinfo_status = 503
+    proc = run(SCRIPT, ["--check"], env)
+    assert proc.returncode == 1 and "503" in proc.stderr
+    env["LINKEDIN_API_BASE"] = "http://127.0.0.1:1"  # nothing listens there
+    proc = run(SCRIPT, ["--check"], env)
+    assert proc.returncode == 1 and "cannot reach LinkedIn" in proc.stderr
 
 
 # --- auth.py -------------------------------------------------------------------
@@ -654,6 +674,96 @@ def load_auth():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+class FakeStore:
+    def __init__(self, values=None):
+        self.values = dict(values or {})
+
+    def get_password(self, service, username):
+        return self.values.get((service, username))
+
+
+def auth_with(monkeypatch, environ, stored=None):
+    """auth.py with a resolver that reads this environment and this fake store, never the machine's."""
+    auth = load_auth()
+    resolver = auth.secret_resolver()
+    real_resolve = resolver.resolve
+    store = FakeStore({("ai-workbench", "publisher-linkedin"): stored} if stored else {})
+    monkeypatch.setattr(resolver, "resolve", lambda name, **kw: real_resolve(name, environ=environ, store=store))
+    monkeypatch.setattr(auth, "secret_resolver", lambda: resolver)
+    monkeypatch.delenv("LINKEDIN_TOKEN_EXPIRES_AT", raising=False)
+    return auth
+
+
+def test_auth_check_finds_a_token_given_through_the_environment(monkeypatch, capsys):
+    """PUB5: --check read the OS secret store directly, so a token from the environment (a cloud session,
+    CI) was reported as not stored, while the provider, which reads through the resolver, worked."""
+    auth = auth_with(monkeypatch, {"LINKEDIN_ACCESS_TOKEN": FAKE_TOKEN})
+    assert auth.main(["--provider", "linkedin", "--check"]) == 0
+    out = capsys.readouterr()
+    report = json.loads(out.out)
+    assert report["found"] is True and report["stored"] is False
+    assert report["source"] == "environment (LINKEDIN_ACCESS_TOKEN)" and report["expired"] is False
+    assert FAKE_TOKEN not in out.out + out.err
+    assert "get_password" not in AUTH_SCRIPT.read_text(encoding="utf-8")  # the store is read by the resolver only
+
+
+def test_auth_check_reads_the_stored_record_and_its_expiry(monkeypatch, capsys):
+    soon = (datetime.now(timezone.utc) + timedelta(days=30, hours=1)).isoformat()
+    record = json.dumps({"access_token": FAKE_TOKEN, "expires_at": soon, "scope": "openid"})
+    auth = auth_with(monkeypatch, {}, stored=record)
+    assert auth.main(["--provider", "linkedin", "--check"]) == 0
+    out = capsys.readouterr()
+    report = json.loads(out.out)
+    assert (report["stored"], report["source"], report["expires_in_days"]) == (True, "secret store", 30)
+    assert FAKE_TOKEN not in out.out + out.err
+
+
+def test_auth_check_exits_3_when_the_person_has_something_to_do(monkeypatch, capsys):
+    """The contract's one reading of --check: no token, an unreadable record or an expired token is 3."""
+    auth = auth_with(monkeypatch, {})
+    assert auth.main(["--provider", "linkedin", "--check"]) == 3
+    assert json.loads(capsys.readouterr().out) == {"provider": "linkedin", "found": False, "stored": False}
+    auth = auth_with(monkeypatch, {}, stored="not json")
+    assert auth.main(["--provider", "linkedin", "--check"]) == 3
+    past = (datetime.now(timezone.utc) - timedelta(days=1)).isoformat()
+    auth = auth_with(monkeypatch, {}, stored=json.dumps({"access_token": FAKE_TOKEN, "expires_at": past}))
+    assert auth.main(["--provider", "linkedin", "--check"]) == 3
+    assert '"expired": true' in capsys.readouterr().out
+
+
+def test_a_silent_connection_does_not_block_the_callback(monkeypatch):
+    """PUB3: the listener serves one connection at a time and had no timeout, so a local connection that
+    sent nothing held it for ever: the real callback waited behind it, and so did the shutdown."""
+    auth = load_auth()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setattr(auth, "CALLBACK_HOST", "127.0.0.1")
+    monkeypatch.setattr(auth, "CALLBACK_PORT", port)
+    monkeypatch.setattr(auth, "CALLBACK_HANDLER_TIMEOUT_SECONDS", 0.3)
+    monkeypatch.setattr(auth, "CALLBACK_TIMEOUT_SECONDS", 10)
+    got: dict = {}
+    waiter = threading.Thread(target=lambda: got.update(code=auth.wait_for_code("st")), daemon=True)
+    waiter.start()
+    silent = None
+    for _ in range(100):  # until the listener is up
+        try:
+            silent = socket.create_connection(("127.0.0.1", port), timeout=5)
+            break
+        except OSError:
+            time.sleep(0.05)
+    assert silent is not None
+    try:
+        time.sleep(0.1)  # the listener is now inside the silent connection
+        url = f"http://127.0.0.1:{port}/callback?" + urllib.parse.urlencode({"state": "st", "code": "c"})
+        with urllib.request.urlopen(url, timeout=5) as response:
+            assert response.status == 200
+        waiter.join(5)
+        assert not waiter.is_alive() and got == {"code": "c"}
+    finally:
+        silent.close()
 
 
 def test_token_exchange_refuses_a_redirect(monkeypatch):
@@ -1119,10 +1229,19 @@ def test_first_comment_other_refusals_are_not_retried(env, fake, text_file, comm
 
 def test_bad_retry_delays_are_refused(env, fake, text_file, comment_file):
     fake.comment_status = 404
-    env["PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS"] = "soon"
-    r = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file), "--idempotency-key", "p1",
-                                 "--confirmed"), env)
-    assert "PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS" in json.loads(r.stdout)["first_comment_error"]
+    """PUB6: the setting was read inside the first-comment step, after the post was public. It is a usage
+    error found before anything is sent: no request, no ledger entry, in a dry run too."""
+    for bad in ("soon", "5,-1", "1,2,3,4,5,6,7,8,9", "301"):
+        env["PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS"] = bad
+        for mode in ("--confirmed", "--dry-run"):
+            r = run(SCRIPT, publish_args(text_file, "--first-comment-file", str(comment_file),
+                                         "--idempotency-key", "p1", mode), env)
+            assert r.returncode == 2 and "PUBLISHER_LINKEDIN_COMMENT_RETRY_DELAYS" in r.stderr, (bad, mode)
+            assert not r.stdout.strip()
+    assert fake.requests == [] and ledger(env) == {}
+    # A post without a first comment does not read the setting at all.
+    r = run(SCRIPT, publish_args(text_file, "--idempotency-key", "p2", "--confirmed"), env)
+    assert r.returncode == 0, r.stderr
 
 
 def test_first_comment_unknown_outcome_blocks_only_the_comment(env, fake, text_file, comment_file):

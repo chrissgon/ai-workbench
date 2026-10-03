@@ -66,6 +66,9 @@ GOOGLE_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 GMAIL_SCOPE = gmail.GMAIL_SCOPE
 CALLBACK_HOST = "127.0.0.1"
 CALLBACK_TIMEOUT_SECONDS = 300
+# One connection is served at a time. A connection that sends nothing (a browser opens spare ones) is
+# dropped after this long, so that it cannot hold the listener while the real callback waits.
+CALLBACK_HANDLER_TIMEOUT_SECONDS = 5
 
 HELP_EPILOG = f"""\
 Google Cloud setup (once), at https://console.cloud.google.com:
@@ -104,7 +107,8 @@ secrets (environment variable, else the OS secret store; see contracts/secrets.m
 The authorization asks only for {GMAIL_SCOPE}, with PKCE (S256), a random
 state checked on the callback, access_type=offline and prompt=consent. If the
 consent screen shows a box for Gmail, keep it ticked: without it nothing is stored.
---check reads the stored record only (no network); gmail.py --check proves the
+--check says whether an authorization is found, through the secret resolver (the
+environment, then the OS secret store; no network); gmail.py --check proves the
 token still works.
 
 exit codes: 0 success, 1 provider or service error, 2 usage error, 3 not configured.
@@ -172,6 +176,8 @@ class CallbackServer:
         owner = self
 
         class Handler(BaseHTTPRequestHandler):
+            timeout = CALLBACK_HANDLER_TIMEOUT_SECONDS  # a silent connection is dropped, never waited on for ever
+
             def do_GET(self):  # noqa: N802 (http.server naming)
                 parsed = urllib.parse.urlparse(self.path)
                 if parsed.path != "/" or owner.done.is_set():
@@ -294,23 +300,30 @@ def gmail_authorize(open_browser: bool) -> int:
 
 
 def gmail_check() -> int:
+    """Whether an authorization is there, read the way gmail.py reads it: through the secret resolver (the
+    environment, then the OS secret store; contracts/secrets.md). No network. Test mode never reads the store."""
     _, _, test_mode = gmail.endpoints()
-    store = keyring_module(test_mode)
-    try:
-        stored = store.get_password(KEYRING_SERVICE, GMAIL_KEYRING_USERNAME)
-    except Exception as exc:
-        raise ProviderError(f"cannot read the OS secret store: {type(exc).__name__}")
-    if not stored:
-        print(json.dumps({"provider": "gmail", "stored": False}, indent=2))
-        log("not configured: no Gmail authorization stored; run auth.py --provider gmail")
+    found = gmail.secret_resolver().resolve("GMAIL_REFRESH_TOKEN", allow_store=not test_mode)
+    if not found:
+        print(json.dumps({"provider": "gmail", "found": False, "stored": False}, indent=2))
+        log("not configured: no Gmail authorization in the environment or the OS secret store; "
+            "run auth.py --provider gmail")
         return EXIT_NOT_CONFIGURED
+    value, source = found
+    if source != "secret store":  # a bare refresh token from the environment: nothing else is known about it
+        print(json.dumps({"provider": "gmail", "found": True, "source": source, "stored": False,
+                          "has_refresh_token": True}, indent=2))
+        return EXIT_OK
     try:
-        record = json.loads(stored)
-    except ValueError:
+        record = json.loads(value)
+        record.get("refresh_token")
+    except (ValueError, AttributeError):
         raise ProviderError("the stored Gmail authorization is unreadable; rerun auth.py --provider gmail",
                             EXIT_NOT_CONFIGURED)
     print(json.dumps({
         "provider": "gmail",
+        "found": True,
+        "source": source,
         "stored": True,
         "has_refresh_token": bool(record.get("refresh_token")),
         "account": record.get("account"),
@@ -332,7 +345,8 @@ def main(argv: list[str] | None = None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--provider", required=True, choices=["gmail"], help="the provider to authorize")
-    parser.add_argument("--check", action="store_true", help="report whether an authorization is stored (no network)")
+    parser.add_argument("--check", action="store_true", help="report whether an authorization is found: the environment, then the OS secret "
+                        "store (no network)")
     parser.add_argument("--no-browser", action="store_true", help="print the authorization URL without opening a browser")
     args = parser.parse_args(argv)
     try:

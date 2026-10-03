@@ -15,6 +15,8 @@ import importlib.util
 import json
 import os
 import subprocess
+import socket
+import time
 import sys
 import threading
 import urllib.error
@@ -495,6 +497,11 @@ def auth(env, monkeypatch):
     module = load(AUTH_SCRIPT, "mailbox_auth_under_test")
     store = FakeStore()
     monkeypatch.setattr(module, "keyring_module", lambda test_mode: store)
+    # --check reads through the secret resolver; here its store is the fake one, never the machine's.
+    resolver = module.gmail.secret_resolver()
+    real_resolve = resolver.resolve
+    monkeypatch.setattr(resolver, "resolve", lambda name, **kw: real_resolve(name, allow_store=True, store=store))
+    monkeypatch.setattr(module.gmail, "secret_resolver", lambda: resolver)
     module.fake_store = store
     return module
 
@@ -514,8 +521,41 @@ def test_auth_without_client_is_not_configured(env):
 
 
 def test_auth_test_mode_never_uses_the_real_store(env):
-    proc = run(AUTH_SCRIPT, ["--provider", "gmail", "--check"], env)
+    proc = run(AUTH_SCRIPT, ["--provider", "gmail", "--no-browser"], env)
     assert proc.returncode == 2 and "secret store" in proc.stderr
+    del env["GMAIL_REFRESH_TOKEN"]  # --check in test mode asks the environment only
+    proc = run(AUTH_SCRIPT, ["--provider", "gmail", "--check"], env)
+    assert proc.returncode == 3 and json.loads(proc.stdout) == {"provider": "gmail", "found": False, "stored": False}
+
+
+def test_auth_check_finds_a_token_given_through_the_environment(env):
+    """PUB5: --check read the OS secret store directly, so a token from the environment (a cloud session,
+    CI) was reported as not stored, while the provider, which reads through the resolver, worked."""
+    proc = run(AUTH_SCRIPT, ["--provider", "gmail", "--check"], env)
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout) == {"provider": "gmail", "found": True, "stored": False,
+                                       "source": "environment (GMAIL_REFRESH_TOKEN)", "has_refresh_token": True}
+
+
+def test_auth_check_reads_through_the_resolver():
+    """contracts/secrets.md: a secret is read only through the resolver, never from the store directly."""
+    source = AUTH_SCRIPT.read_text(encoding="utf-8")
+    assert "get_password" not in source
+
+
+def test_a_silent_connection_does_not_block_the_callback(auth, monkeypatch):
+    """PUB3: the listener serves one connection at a time and had no timeout, so a local connection that
+    sent nothing held it for ever: the real callback waited behind it, and so did the shutdown."""
+    monkeypatch.setattr(auth, "CALLBACK_HANDLER_TIMEOUT_SECONDS", 0.3)
+    server = auth.CallbackServer("s")
+    port = int(server.redirect_uri.rsplit(":", 1)[1])
+    silent = socket.create_connection(("127.0.0.1", port), timeout=5)
+    try:
+        time.sleep(0.1)  # the listener is now inside the silent connection
+        assert callback(server.redirect_uri, state="s", code="c") == 200
+        assert server.wait(5) == "c"
+    finally:
+        silent.close()
 
 
 def test_pkce_pair_follows_s256(auth):
@@ -590,9 +630,10 @@ def test_full_authorization_stores_the_record_only_in_the_store(auth, fake, monk
     exchange = urllib.parse.parse_qs(next(r for r in fake.requests if r["method"] == "POST")["body"].decode())
     assert exchange["grant_type"] == ["authorization_code"] and exchange["redirect_uri"] == [seen["redirect_uri"]]
     assert exchange["code_verifier"][0] and seen["code_challenge_method"] == "S256"
+    monkeypatch.delenv("GMAIL_REFRESH_TOKEN")  # so that --check finds the record just stored
     assert auth.main(["--provider", "gmail", "--check"]) == 0
     checked = capsys.readouterr()
-    assert json.loads(checked.out)["account"] == ACCOUNT
+    assert json.loads(checked.out)["account"] == ACCOUNT and json.loads(checked.out)["source"] == "secret store"
     for secret in SECRETS:
         assert secret not in checked.out + checked.err + json.dumps(out)
 
@@ -604,9 +645,12 @@ def test_authorization_without_the_gmail_scope_stores_nothing(auth, fake, monkey
     assert auth.fake_store.writes == []
 
 
-def test_auth_check_without_a_record_is_not_configured(auth, capsys):
+def test_auth_check_without_a_record_is_not_configured(auth, capsys, monkeypatch):
+    monkeypatch.delenv("GMAIL_REFRESH_TOKEN")
     assert auth.main(["--provider", "gmail", "--check"]) == 3
-    assert json.loads(capsys.readouterr().out) == {"provider": "gmail", "stored": False}
+    assert json.loads(capsys.readouterr().out) == {"provider": "gmail", "found": False, "stored": False}
+    auth.fake_store.values[("ai-workbench", "mailbox-gmail")] = "not json"
+    assert auth.main(["--provider", "gmail", "--check"]) == 3
 
 
 def test_stored_record_is_read_by_the_provider(env, fake, monkeypatch):
