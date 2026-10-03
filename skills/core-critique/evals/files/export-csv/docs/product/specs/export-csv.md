@@ -16,8 +16,9 @@ translation and its note intact.
   they copy terms out by hand. Source: 9 of 14 support requests in March 2026 (user's count, 2026-04-02)
 - Users: freelance translators with at least one glossary (PRD U-1)
 - Success: at least 30% of active translators export a glossary within 60 days of release, and support
-  requests about copying terms out fall from 9 a month to 2 or fewer. Measured by: the analytics event
-  `glossary_exported` and the support tag `export`. Source: user answer 2026-04-02
+  requests about copying terms out fall from 9 a month to 2 or fewer. An active translator is a member who
+  exported or edited a glossary in the last 30 days. Measured by: the analytics event `glossary_exported`
+  (REQ-7) and the support tag `export`. Source: user answer 2026-04-02
 
 ## Scope
 
@@ -39,6 +40,7 @@ translation and its note intact.
 - REQ-4: The file is UTF-8 with a byte order mark, comma separated, CRLF line endings, and fields quoted per RFC 4180 when they contain a comma, a quote or a line break. Source: user answer 2026-04-02
 - REQ-5: A field that starts with `=`, `+`, `-` or `@` is written with a leading apostrophe so a spreadsheet does not run it as a formula. Source: user answer 2026-04-02
 - REQ-6: The export contains only the glossary the member opened; the server checks read permission on that glossary for every request. Source: architecture, "Glossary service"
+- REQ-7: When the last row of an export has been sent, the server records one `glossary_exported` event with the member and the glossary; a failed or refused export records none. Source: user answer 2026-04-02
 
 ## Non-functional requirements
 
@@ -71,7 +73,7 @@ translation and its note intact.
   Given a term whose note is `"a, b"` followed by a line break and `c`
   When the glossary is exported and the file is parsed by an RFC 4180 parser
   Then the note field equals the original text and the file starts with the UTF-8 byte order mark
-  Covers: REQ-4
+  Covers: REQ-4, EDGE-4
 - AC-3:
   Given a term whose translation is `=SUM(A1:A2)`
   When the glossary is exported
@@ -84,14 +86,39 @@ translation and its note intact.
   Covers: REQ-6
 - AC-5:
   Given a glossary of 20,000 terms
-  When it is exported 100 times in the load test
+  When it is exported 100 times in the load test, by 20 load-test members, at most 10 per member per minute
   Then the 95th percentile of the complete download is 5 seconds or less and peak memory per export is under 50 MB
   Covers: NFR-1, NFR-2
 - AC-6:
   Given an empty glossary
   When it is exported
   Then the file has exactly 1 row, the header
-  Covers: REQ-2
+  Covers: REQ-2, EDGE-1
+- AC-7:
+  Given a member whose read permission on glossary G is removed after they opened its page
+  When they activate "Export CSV"
+  Then no file downloads and the page shows "You no longer have access to this glossary." with a link to the glossary list
+  Covers: EDGE-2, REQ-6
+- AC-8:
+  Given an export of a 20,000-term glossary whose connection is cut after half of the rows
+  When the download fails
+  Then the page shows "Export failed. Try again." with a retry control, and no `glossary_exported` event is recorded
+  Covers: EDGE-3, REQ-7
+- AC-9:
+  Given a member who has exported 10 times in the last minute
+  When they activate "Export CSV" an eleventh time
+  Then no file downloads and the page shows "Too many exports. Try again in a minute."
+  Covers: EDGE-5
+- AC-10:
+  Given an export of a 20,000-term glossary that has started
+  When another member edits term 15,000 before the export reaches it
+  Then the file holds the text of term 15,000 as it was when the export started
+  Covers: EDGE-6
+- AC-11:
+  Given a member who exports a glossary of 3 terms and the download completes
+  When the analytics events of that minute are read
+  Then exactly one `glossary_exported` event names that member and that glossary
+  Covers: REQ-7
 
 ## Assumptions
 

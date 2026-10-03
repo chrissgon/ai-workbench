@@ -48,7 +48,8 @@ src/core/timer.c at commit 889bc48f101a7cbb56cb4be202e85e1f6d933151, 2026-09-29)
 What a job guarantees (as in launchd.py):
 - Every file the command reads through its arguments is in the command file's "snapshot" and
   is copied into the job folder with its SHA-256; the arguments are swapped for the copies. A file
-  argument left out of the snapshot makes the job refused.
+  argument left out of the snapshot makes the job refused, and so does a file
+  named in another spelling (-f<path>, key=<path>, a list of paths).
 - The program (argv[0]) and this runner are hashed; the service runs the runner's copy.
 - The dry run prints the approval digest; the confirmed call must pass it back. Every firing
   hashes the copies, the program and the runner again and refuses on any difference.
@@ -103,6 +104,11 @@ TAIL_BYTES = 4096
 RUNS_MAX_BYTES = 4 * 1024 * 1024  # runs.jsonl is rotated to runs.1.jsonl past this size
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
+# The one key of a command's output the scheduler reads, for the job record and the notification: the
+# address of a published post, under the name providers/CONTRACT.md gives it ("Verbs per class", the
+# "Prints" column of publisher:<platform>). The scheduler depends on the contract's name, never on what one
+# implementation happens to print; a test compares this constant with that column.
+ADDRESS_KEY = "post_url"
 
 HELP_EPILOG = """\
 verbs:
@@ -412,12 +418,46 @@ def argument_file(value: str, cwd: str) -> Path | None:
         return None
 
 
+def unverified_file(arg: str, cwd: str) -> Path | None:
+    """A file an argument names in a spelling this provider does not understand, or None.
+
+    Two spellings are understood, and swapped for the verified copy: the argument is the path, or it is
+    '--flag=<path>'. A path glued to a short flag ('-f/abs/file'), a 'key=<path>' pair, and a list of paths
+    joined by ',', ':' or ';' would reach the command as written: the job would read the live file at its
+    slot, which nobody approved. A piece counts when it is the absolute path of an existing file; relative
+    pieces count only when every piece of the argument is an existing file (a list of files), so that a
+    sentence which happens to hold a file's name is not taken for one."""
+    prefix, value = split_argument(arg)
+    if not prefix and arg.startswith("-") and not arg.startswith("--") and len(arg) > 2:
+        glued = argument_file(arg[2:], cwd)
+        if glued is not None:
+            return glued
+    if not any(sep in value for sep in "=,:;"):
+        return None
+    pieces = [piece for piece in value.replace("=", ",").replace(":", ",").replace(";", ",").split(",") if piece]
+    found = [argument_file(piece, cwd) for piece in pieces]
+    for piece, target in zip(pieces, found):
+        if target is not None and os.path.isabs(piece):
+            return target
+    if len(pieces) > 1 and all(target is not None for target in found):
+        return found[0]
+    return None
+
+
 def snapshot_argv(argv: list[str], cwd: str, copies: dict[Path, str], outputs: set[Path]) -> list[str]:
-    """Swap every file argument for its copy; refuse a file argument that has no copy."""
+    """Swap every file argument for its copy; refuse a file argument that has no copy, and one in a
+    spelling that cannot be swapped."""
     out = []
     for arg in argv:
         prefix, value = split_argument(arg)
         target = argument_file(value, cwd)
+        if target is None:
+            hidden = unverified_file(arg, cwd)
+            if hidden is not None:
+                raise ProviderError(
+                    f"the argument {arg!r} names the file {hidden} in a spelling the scheduler cannot verify; "
+                    "pass a file as an argument of its own or as --flag=<path>, and list it in the command "
+                    "file's snapshot", EXIT_USAGE)
         if target is None or (target in outputs and target not in copies):
             out.append(arg)
             continue
@@ -807,7 +847,7 @@ def finish(job: dict, status: str, **fields) -> int:
     job["status"] = status
     job["finished_at"] = iso(now())
     write_job(job)
-    summary = fields.get("post_url") or fields.get("reason") or f"exit {fields.get('exit_code')}"
+    summary = fields.get(ADDRESS_KEY) or fields.get("reason") or f"exit {fields.get('exit_code')}"
     notify(f"ai-workbench: {job['id']} {status}", summary)
     log(f"job {job['id']}: {status} ({summary})")
     unload(job)
@@ -1075,8 +1115,8 @@ def run_one_shot(job: dict, folder: Path) -> tuple[str, dict]:
         fields["reason"] = outcome["reason"]
     try:
         output = json.loads((out or b"").decode("utf-8", errors="replace"))
-        if isinstance(output, dict) and output.get("post_url"):
-            fields["post_url"] = output["post_url"]
+        if isinstance(output, dict) and output.get(ADDRESS_KEY):
+            fields[ADDRESS_KEY] = output[ADDRESS_KEY]
     except ValueError:
         pass
     return outcome["status"], fields

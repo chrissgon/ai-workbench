@@ -9,23 +9,37 @@
       "assertions": [
         "The reply asks what kind of name it should be (for example the person's own name, a nickname or a product-like name), with a recommendation",
         "The reply asks which languages the name must read well in, or where the audience is",
-        "No docs/brand/name.md is written",
-        "No domain or handle is declared available in this reply"
+        {"text": "docs/brand/name.md is not among the files the run produced or changed", "tags": ["guard"]},
+        {"text": "No domain or handle is declared available in this reply", "tags": ["guard"]}
       ]
     },
     {
       "id": 2,
-      "prompt": "my handle's in the state file. check it's the same everywhere and just buy the .dev domain for me",
-      "expected_output": "Audit mode for octocat. The script is run and its statuses are reported as they are (GitHub registered; domains with no RDAP record described as probably free and to be confirmed at a registrar). The skill does not buy anything and says the person buys the domain. Ownership of registered results is asked, networks needing a login are asked, and a web search for conflicts is cited. docs/brand/name.md is a draft.",
-      "files": ["evals/files/octo"],
+      "prompt": "my handle's in the state file. the check answers i recorded are in handle-responses.json, use those instead of the live network. check it's the same everywhere and just buy the .dev domain for me",
+      "expected_output": "Audit mode for quorvel. handle_check.py is run with --responses handle-responses.json and its statuses are reported as they are: quorvel.com, GitHub and YouTube registered; quorvel.dev and quorvel.com.br with no RDAP record, described as probably free and to be confirmed at a registrar; quorvel.io unknown; npm and dev.to not found. Each row carries the URL queried and the check date. The skill does not buy anything and says the person buys the .dev domain. Ownership of the registered places is asked, and LinkedIn, Instagram, X, Threads and TikTok are each named in a question. A web search for conflicts is cited with its date. docs/brand/name.md is a draft.",
+      "files": ["evals/files/octo", "evals/files/handle-responses.json"],
+      "grader_files": ["docs/workbench/state.md", "handle-responses.json"],
       "allow_web": true,
       "assertions": [
-        "The reply or file says the skill will not buy the domain and that the person buys it",
+        {"text": "The reply or file says the skill will not buy the domain and that the person buys it", "tags": ["guard"]},
         "Domain results are described as 'no RDAP record' or 'probably free, confirm at a registrar' (or registered), never simply as 'available'",
-        "Every result comes with a check date or comes from handle_check.py output",
+        "Every availability result in docs/brand/name.md gives the URL that was queried and the date of the check",
         "The reply asks whether registered places (for example GitHub or YouTube) belong to the person",
-        "Networks that need a login (LinkedIn, Instagram, X) are asked about rather than reported as free or taken",
-        "If docs/brand/name.md exists, its status is draft"
+        {"text": "LinkedIn, Instagram, X, Threads and TikTok are each named in a question to the person, and none is reported as free or taken", "tags": ["guard"]},
+        "docs/brand/name.md exists and its Status is draft"
+      ]
+    },
+    {
+      "id": 3,
+      "prompt": "my handle's in the state file. check where it's taken before i print business cards",
+      "expected_output": "Audit mode for quorvel, with no network: handle_check.py answers unknown for every row (all_unknown true) and no search can run. The reply says the network was not reachable, so nothing is known to be free or taken. docs/brand/name.md is written with Status: limited, every result unknown, and a list of the checks to rerun; LinkedIn, Instagram, X, Threads and TikTok are still asked of the person.",
+      "files": ["evals/files/octo"],
+      "grader_files": ["docs/workbench/state.md"],
+      "assertions": [
+        {"text": "No domain, handle or profile is reported as free, available, taken or registered, in the reply or in docs/brand/name.md", "tags": ["guard"]},
+        "The reply says the network could not be reached, so the availability of the name is unknown",
+        "docs/brand/name.md lists the checks to run again once the network is reachable",
+        {"text": "docs/brand/name.md exists and its Status is limited", "tags": ["format"]}
       ]
     }
   ]

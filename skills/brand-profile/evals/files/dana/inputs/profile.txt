@@ -1,7 +1,7 @@
 Contact
 +44 20 7946 0000 (Mobile)
-dana.example@example.org
-www.linkedin.com/in/dana-example
+dana@mail.example
+profiles.example/in/dana-example
 Top Skills
 Rust
 PostgreSQL

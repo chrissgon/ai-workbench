@@ -258,3 +258,35 @@ def test_a_second_runner_does_not_run_the_command_again(s):
         os.close(lock)
     assert s.run("run", "--id", "post-1").returncode == 0
     assert marker.read_text() == "x" and s.job()["status"] == "done"
+
+
+# --- SC4: a file argument in a spelling the scheduler does not understand --------------------
+
+
+def test_a_file_in_a_spelling_that_cannot_be_verified_is_refused(s):
+    # Only a bare path and --flag=<path> were recognised: "-f/abs/file", "key=/abs/file" and "a,b" passed
+    # through with an empty snapshot, and the job read the live files at its slot.
+    post, other = s.tmp / "post.txt", s.tmp / "other.txt"
+    post.write_text("hello")
+    other.write_text("world")
+    spellings = (f"-f{post}", f"text={post}", f"--file=data/post.txt={post}", f"{post},{other}",
+                 f"{post}:{other}", f"--files={post};{other}", "post.txt,other.txt", "-fpost.txt")
+    for arg in spellings:
+        # In the snapshot or not: the argument cannot be swapped for the copy, so the job is refused.
+        for snapshot in ([], [str(post), str(other)]):
+            path = s.command_file(snapshot=snapshot, argv=[sys.executable, "-c", OK, arg])
+            done, _ = s.schedule(path)
+            assert done.returncode == 2, (arg, done.stderr)
+            assert "in a spelling the scheduler cannot verify" in done.stderr, arg
+    assert not Path(s.env["SCHEDULER_HOME"]).exists()
+
+
+def test_arguments_that_name_no_file_pass_as_they_are(s):
+    (s.tmp / "post.txt").write_text("hello")
+    (s.tmp / "LICENSE").write_text("text")
+    plain = ["--at=2026-10-14T09:00:00-03:00", "https://example.test/a:b", "key=value", "a,b;c", "-v",
+             "--path", str(s.tmp), "a note: post.txt, and more", "-x", "--title", "LICENSE: what it means",
+             "post.txt,missing.txt"]
+    done, planned = s.schedule(s.command_file(argv=[sys.executable, "-c", OK, *plain]))
+    assert done.returncode == 0, done.stderr
+    assert planned["job"]["argv"][3:] == plain

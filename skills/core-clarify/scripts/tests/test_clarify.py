@@ -283,3 +283,40 @@ def test_state_refuses_a_parked_item_as_decision(tmp_path):
     code, data, _ = run("state", "--state", str(f), "--decision", "Review ownership is parked as an open question. (user)")
     assert code == 1 and "--open" in data["errors"][0]
     assert f.read_text(encoding="utf-8") == STATE
+
+
+CONTRADICTION_ROUND = """## Clarify: redesign, round 1
+
+### Facts established without asking
+- Server-side rendering is on: `ssr: true` (source: nuxt.config.ts)
+
+### Contradictions
+- The request says to add server-side rendering; nuxt.config.ts already has `ssr: true`: asked as Q1.
+
+### Questions
+**Q1. {title}**
+- Options: the file is right and the request means something else; the request is right and the file is wrong or not in effect
+- Recommended: the file is right, and the gap is per-page metadata
+- Why: the configuration already renders every page on the server.
+
+### Next
+Nothing is written yet.
+"""
+
+
+def test_a_listed_contradiction_makes_q1_ask_which_one_holds():
+    title = "Which one holds: the request to add server-side rendering, or nuxt.config.ts with ssr already on?"
+    code, data, _ = run("round", "--file", "-", stdin=CONTRADICTION_ROUND.format(title=title))
+    assert code == 0 and data["ok"], data["errors"]
+
+
+def test_a_listed_contradiction_with_another_q1_is_an_error():
+    title = "What is the actual gap this work closes?"
+    code, data, _ = run("round", "--file", "-", stdin=CONTRADICTION_ROUND.format(title=title))
+    assert code == 1
+    assert any(e.startswith('Q1: a contradiction is listed, so Q1 asks "Which one holds') for e in data["errors"])
+
+
+def test_no_contradiction_leaves_q1_free():
+    code, data, _ = run("round", "--file", "-", stdin=GOOD_ROUND)
+    assert code == 0 and not any("Which one holds" in e for e in data["errors"])

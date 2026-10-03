@@ -77,10 +77,11 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 <!-- owner-table:begin -->
 | Artifact | Owning skill | Updated by |
 |----------|--------------|------------|
-| `AGENTS.md` | core-agents-md, core-project-init | - |
+| `AGENTS.md` | core-agents-md | core-project-init |
 | `docs/brand/guidelines.md` | brand-guidelines | - |
 | `docs/brand/identity.md` | brand-identity | - |
 | `docs/brand/name.md` | brand-name | - |
+| `docs/brand/pieces/` | brand-identity | - |
 | `docs/brand/profile.md` | brand-profile | - |
 | `docs/brand/strategy.md` | brand-strategy | - |
 | `docs/brand/voice.md` | brand-voice | - |
@@ -115,10 +116,13 @@ Generated from the skills' frontmatter by `python3 scripts/owner_table.py`; neve
 | `docs/product/prd.md` | product-prd | - |
 | `docs/product/roadmap.md` | product-roadmap | - |
 | `docs/product/specs/<feature>.md` | product-feature-spec | - |
+| `docs/security/audit-<date>.md` | core-security-audit | - |
+| `docs/security/vetting-<skill>-<date>.md` | core-security-audit | - |
 | `docs/workbench/briefs/<topic>.md` | core-clarify | - |
 | `docs/workbench/critiques/<topic>.md` | core-critique | - |
+| `docs/workbench/research/<topic>.check.json` | core-research | - |
 | `docs/workbench/research/<topic>.md` | core-research | - |
-| `docs/workbench/state.md` | core-clarify, core-project-init, flow-fix-bug, ops-branch-sync | eng-security-review, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish |
+| `docs/workbench/state.md` | core-project-init, flow-fix-bug, ops-branch-sync | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-research, eng-architecture, eng-codebase-map, eng-security-review, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish |
 <!-- owner-table:end -->
 
 ## Rules

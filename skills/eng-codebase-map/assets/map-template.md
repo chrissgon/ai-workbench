@@ -2,8 +2,8 @@
 
 - Owner: eng-codebase-map
 - Status: draft
-- Date: {YYYY-MM-DD}
-- Scope: {root or focused directory}; {n} source files; measured with `scripts/map_codebase.py` (static imports only; framework auto-imports, dynamic imports and runtime injection are not counted)
+- Date: {YYYY-MM-DD, from `date +%F`}
+- Scope: {root or focused directory}; {n} source files; measured with `map_codebase.py {its arguments}` (static imports only; framework auto-imports, dynamic imports and runtime injection are not counted)
 
 ## Summary
 
@@ -55,7 +55,12 @@ Afferent and efferent numbers are copied from the `modules` list printed by `map
 ## Observations
 
 - {fact with location}
+- Specification {file}:{line} says "{quote}"; the code: {fact} at {file}:{line}; {the file, package or call the specification names}: {exists | not in the repository | not a dependency}
 
 ## Files read
 
 - {path} — {why}
+
+## Assumptions
+
+- {one line per assumption, each starting `Assumption:`; `none` when every fact has a source}

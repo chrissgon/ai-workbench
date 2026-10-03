@@ -1,1 +1,1 @@
-{ "name": "acme", "private": true, "workspaces": ["packages/*"] }
+{ "name": "tallowshop", "private": true, "workspaces": ["packages/*"] }

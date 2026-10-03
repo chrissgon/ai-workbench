@@ -4,11 +4,13 @@
 Usage:
   python3 evals/eval_status.py status [--skill <name>]
   python3 evals/eval_status.py hash --skill <name>
-  python3 evals/eval_status.py record --skill <name> --benchmark <path to benchmark.json> [--date YYYY-MM-DD]
+  python3 evals/eval_status.py evidence [--skill <name> | --file <path>]
+  python3 evals/eval_status.py gate --skill <name>
   python3 evals/eval_status.py inventory --write | --check
 
-A skill's eval result lives in skills/<name>/evals/result.json. It is written by tooling (the eval runner,
-evals/eval_run.py, after a complete full run; or `record` here), never by hand:
+The records of the first round, skills/<name>/evals/result.json, are history: nothing writes one any more
+(the runner writes evidence, below), and the status of a skill is still read from them until the bands
+replace it. A record was written by tooling, never by hand:
 
   {"skill", "content_sha256", "date", "iteration", "runs", "cases": [ids], "harness", "floor_harness",
    "models": {"strong", "floor"}, "grader", "threshold",
@@ -19,8 +21,7 @@ evals/eval_run.py, after a complete full run; or `record` here), never by hand:
    "environment": {"kind": "container", "definition_sha256", "image", "image_id"},   (required from version 3:
                                                  the container the runs executed in, written by the runner)
    "early_ends": {"<tier>": {"early_ends": <n>, "rate": <float>}},   (optional: records written before it lack it)
-   "baseline": {"date", "iteration", "runs"}}   (optional: the without-skill scores were measured again, alone,
-                                                 by eval_run.py --only without --update-record)
+   "baseline": {"date", "iteration", "runs"}}   (optional: the without-skill scores were measured again, alone)
 
 "early_ends" counts the attempts in which a model ended its turn early with no error; the runner retried them,
 so they are not in the scores (see eval_run.py --help).
@@ -30,15 +31,42 @@ A record of measurement version 1 was written under the earlier rule (floor_with
 strong_with >= strong_without) and its "gate" has no "strong" key; it is valid as a record and always stale.
 
 Content hash: sha256 over the files of the skill folder (sorted relative paths and their bytes), leaving out
-evals/result.json, everything under scripts/tests/, __pycache__ folders, *.pyc and .DS_Store. A change to
-SKILL.md, a reference, an asset, a script or an eval case changes it; files outside the folder do not. The
-tests of a skill's scripts (skills/<name>/scripts/tests/) are left out because no model reads them: they are
-not copied into an eval run, so adding, changing or removing one measures nothing differently.
+all of evals/ (the cases, the evidence, the version file, the old record), everything under scripts/tests/,
+caches (__pycache__, .pytest_cache, *.pyc, .DS_Store) and the marker file an installer writes into a copied
+skill folder (.installed-by-ai-workbench). A change to SKILL.md, a reference, an asset or a script changes it;
+a case, an evidence file, a test and files outside the folder do not: none of them is read by a model that
+uses the skill, and none is copied into an eval run. Each case has a hash of its own (`hash --skill <name>`
+prints both): over the whole case object as it stands in the case file and the bytes of its fixture files,
+with "workbench_files" as the list of paths, never as the content of those files.
+
+Evidence. The eval runner writes one file per test event, skills/<name>/evals/evidence/lab-<test id>.jsonl
+(the reliability model, section 1): a first line that describes the event and one line per run. Both have
+closed keys: `evidence` below validates every file, and an unknown key or a value outside its form is an
+error. A committed evidence file is written by tooling and never edited. The old records, result.json, stay
+as the history of the first round; the status below still reads them until the bands replace it.
+
+  The event line: {"record": "test", "skill", "test", "kind": "full"|"partial", "version", "content_sha256",
+   "date", "models": {tier: model id}, "adapters": {tier: adapter}, "adapter_sha256": {adapter: sha256 of its
+   run-prompt.sh}, "grader", "runs", "timeout_seconds", "retries", "measurement_version",
+   "measurement_sha256", "image_digest", "image_platform", "grading_template_sha256", "tools": {name:
+   version}, "cases": {case id: case hash}, "baseline": {case id: "run"|"reused"|"none"}, "web_cases": [ids],
+   "counts": {model id: {"with"|"without": {"retries", "refusals", "timeouts", "pauses", "early_ends",
+   "resumes"[, "invoked"]}}}, "extra_pass_env": [names], "complete": bool[, "gate": {"passed", "with",
+   "baseline", "threshold", "tolerance"[, "note"]}][, "upstream": {model id: provider}]}
+  A run line: {"record": "run", "skill", "version", "content_sha256", "model", "adapter", "kind", "test",
+   "date", "measurement_version", "measurement_sha256", "case", "case_sha256", "variant": "with"|"without",
+   "outcome": "graded"|"timeout", "score", "results": [0|1, ...][, "context_sha256"][, "platform"]
+   [, "guard_failed": [positions]]}
+
+A model id in a line is an id of the gate file's "models" ({id: [aliases]}): an alias is written as its id,
+anything else as "unknown", so that one model never falls into two rows and a private model name never enters
+the repository. Without that key the known ids are the configured strong model, floor model and grader.
 
 The eval gate is configured in evals/eval-gate.json, committed: {"strong_model", "strong_harness",
 "floor_model", "floor_harness", "floor_pass_env": [variables], "strong_pass_env": [variables], "grader",
-"threshold", "strong_tolerance", "measurement_version", "measurement_floor"} and, once a measurement version is
-closed, "measurement_sha256". It names the models, the adapters and the grader a gate run uses (eval_run.py takes
+"threshold", "strong_tolerance", "measurement_version", "measurement_floor"}, once a measurement version is
+closed "measurement_sha256", the optional "models" ({model id: [aliases]}, the ids an evidence line may
+carry) and the optional keys that control a test event (below). It names the models, the adapters and the grader a gate run uses (eval_run.py takes
 them as defaults) and what a record is judged against. "measurement_version" is a number raised by hand, in
 the same commit, when a change alters what a run measures (the gate's rule, the environment runs execute in,
 the grading template, what a model under test may do): every record of another version then reads stale. The
@@ -52,6 +80,17 @@ decide what a run measures, 64 hexadecimal characters. A gate file without it de
 that is still open: files that decide what a run measures are still changing under that number, so nothing
 measured meanwhile is written as evidence (evidence_refusal below; the runner and `record` both ask it).
 
+Control of a test event, all optional keys of the gate file (a key it lacks takes the default in brackets):
+"runs" [3], the runs of every case; "timeout_seconds" [900], the limit of one model run; "retries" [2], how
+often a run that timed out, was refused, failed in its adapter or ended early is made again inside the event;
+"max_resumes" [3], how often `eval_run.py --resume` reruns one failed run before it is written as a timeout
+with score 0; "total_jobs" [10], the model runs in progress at one time over every runner process of the
+machine; "web_jobs" [{"strong": 2, "floor": 2}], the same for runs on the open network, per tier;
+"web_cases", {skill: [case ids]}, the only cases that may set "allow_web" (with a gate file and no such key,
+none may); "strong_web_pass_env", the variables a strong-model run of a web case receives in place of
+"strong_pass_env" (a low-limit API key in place of the account's token). An event made with another number of
+runs, another timeout or another number of retries than these writes no evidence (eval_run.py --help).
+
 Status of a skill:
   draft      no record, or a record whose gate did not pass (on the configured threshold) or that is not complete
   evaluated  the record passed, is complete, is of the configured measurement version, strong model, grader
@@ -63,18 +102,37 @@ Commands:
   status     prints {"skills": [{"skill", "status", "date", "scores", "reason"}], "counts",
              "gate": {"floor_model", "threshold", "strong_model", "grader", "strong_tolerance", "measurement_version"}}
              (the configured gate; null values without the file).
-  hash       prints the content hash of one skill.
-  record     builds result.json from an existing benchmark.json (a run made before records existed, or with
-             --no-record). Refused when the benchmark did not run every case of the skill, lacks one of the
-             four variants (with and without the skill, strong and floor model) or lacks a score, and while
-             the gate file carries no "measurement_sha256" (an open measurement version). It stores
-             the CURRENT content hash unless the benchmark carries one: the caller answers for not having
-             edited the skill since that run. The date is the benchmark's, else its file date, else --date.
+  hash       prints the content hash of one skill, its version and the hash of each of its cases.
+  evidence   validates the evidence files: every skill's, one skill's (--skill) or one file (--file <path>,
+             which may be in a run folder's scratch tree). Prints {"files", "problems": {path: [...]}};
+             exit 1 when a file is not valid.
+  gate       prints the gate of one skill computed from its lab evidence (the model's section 2, below):
+             {"computed", "passed", "with", "baseline", "threshold", "tolerance", "version", "test", "cases",
+             "pending", "note", "cause"}.
   inventory  regenerates the block between <!-- eval-status:begin --> and <!-- eval-status:end --> in
              docs/inventory.md (--write), or exits 1 when the block differs from what would be generated (--check).
 
+The gate (the reliability model, section 2). Only a full test evaluates it, and the runner writes its result
+into the event line when the test ends; `gate` computes it again from the lines. It is computed over the run
+lines with the skill, of kind full, on the reference model (strong_model), of the X.Y version the newest full
+test ran on and of the same epoch as that test, every current case being required and only lines of weight
+above zero being counted: the case exists with the same hash, the measurement version is at or above the
+floor, and the line's major version is the current one. A second full test of an unchanged X.Y adds its runs
+to the first and replaces none; a full test closed as abandoned keeps its lines. The mean of those lines
+passes when it is at the threshold or above and is not below the mean of the baselines in force by more than
+the tolerance, both unrounded. A partial test never moves the gate, with one exception: a case added after
+the newest full test is "pending", and is left out of the gate, until it has with-skill lines and a baseline
+in force (eval_run.py --cases <id> --baseline); those lines then enter the gate. A case changed after the
+newest full test makes the gate impossible to compute until a full test runs it. When a case of the gate has
+no baseline in force (after an epoch that reaches the skill), the result the newest full test wrote stands,
+with the note "baseline expired".
+A baseline line is in force while three things are unchanged: the case (its hash), the reference model (no
+epoch of it after the line's date: "epochs" of the gate file, [{"date", "models", "skills", "cause"}], where
+models and skills are lists or "all"), and the measurement (its version at or above the floor). The skill's
+version does not age it: a run without the skill never saw the skill.
+
 Data goes to stdout as JSON, diagnostics to stderr. Standard library only.
-Exit codes: 0 ok, 1 the inventory block is out of date (--check) or a record was refused, 2 usage error.
+Exit codes: 0 ok, 1 the inventory block is out of date (--check) or an evidence file is not valid, 2 usage error.
 """
 import datetime
 import hashlib
@@ -86,13 +144,27 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RECORD_REL = os.path.join("evals", "result.json")
 TESTS_REL = "scripts/tests"  # the tests of a skill's scripts: outside the content hash and outside eval runs
+EVALS_REL = "evals"  # the cases, the evidence, the version file and the old record: outside the content hash
+EVIDENCE_REL = os.path.join("evals", "evidence")
+CACHE_DIRS = ("__pycache__", ".pytest_cache")
+INSTALL_MARKER = ".installed-by-ai-workbench"  # what an installer writes into a skill folder it copied
 BEGIN, END = "<!-- eval-status:begin -->", "<!-- eval-status:end -->"
 INVENTORY_REL = os.path.join("docs", "inventory.md")
 GATE_REL = os.path.join("evals", "eval-gate.json")
 GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "floor_harness": str,
                "floor_pass_env": list, "strong_pass_env": list, "grader": str, "threshold": (int, float), "strong_tolerance": (int, float),
                "measurement_version": int, "measurement_floor": int}
-GATE_OPTIONAL = {"measurement_sha256": str}  # absent while a measurement version is open
+GATE_OPTIONAL = {"measurement_sha256": str,  # absent while a measurement version is open
+                 # Control of a test event (event_config below): absent keys take the defaults of EVENT_DEFAULTS.
+                 "runs": int, "timeout_seconds": int, "retries": int, "max_resumes": int, "total_jobs": int,
+                 "web_jobs": dict, "web_cases": dict, "strong_web_pass_env": list, "models": dict}
+# What an event uses when the gate file does not say: 3 runs per case (the plan's decision 1), 900 seconds per
+# run, 2 retries inside the event, 3 resumptions of one run before it is written as a timeout, 10 runs at a
+# time over every runner process of the machine, 2 runs on the open network at a time per tier.
+EVENT_DEFAULTS = {"runs": 3, "timeout_seconds": 900, "retries": 2, "max_resumes": 3, "total_jobs": 10,
+                  "web_jobs": {"strong": 2, "floor": 2}}
+EVENT_RANGES = {"runs": (1, 10), "timeout_seconds": (30, 86400), "retries": (0, 5), "max_resumes": (0, 10), "total_jobs": (1, 64)}
+TIERS = ("strong", "floor")
 CONTAINER_VERSION = 3  # from this version on every run executes in the eval container, and a record names it
 LEGACY_VERSION = 1  # a record with no "measurement_version": the gate had no threshold for the strong model
 STATUSES = ("evaluated", "stale", "draft")
@@ -141,11 +213,64 @@ def gate_problems(root=ROOT):
     if not out and "measurement_sha256" in cfg and not (isinstance(cfg["measurement_sha256"], str)
                                                         and re.fullmatch(r"[0-9a-f]{64}", cfg["measurement_sha256"])):
         out.append("measurement_sha256 must be 64 hexadecimal characters")
+    return out or event_problems(cfg)
+
+
+def whole(value, low, high):
+    return isinstance(value, int) and not isinstance(value, bool) and low <= value <= high
+
+
+def event_problems(cfg):
+    """Why the keys that control a test event are not valid; every one of them is optional."""
+    out = []
+    for key, (low, high) in EVENT_RANGES.items():
+        if key in cfg and not whole(cfg[key], low, high):
+            out.append(f"{key} must be a whole number from {low} to {high}")
+    jobs = cfg.get("web_jobs")
+    if "web_jobs" in cfg and not (isinstance(jobs, dict) and set(jobs) == set(TIERS) and all(whole(v, 1, 64) for v in jobs.values())):
+        out.append("web_jobs must give a whole number, 1 or more, for \"strong\" and for \"floor\"")
+    cases = cfg.get("web_cases")
+    if "web_cases" in cfg and not (isinstance(cases, dict) and all(
+            isinstance(k, str) and re.fullmatch(r"[a-z0-9]+(-[a-z0-9]+)*", k) and isinstance(v, list) and v
+            and all(isinstance(i, (int, str)) and not isinstance(i, bool) for i in v) for k, v in cases.items())):
+        out.append("web_cases must map a skill name to the list of its case ids that may use the web")
+    names = cfg.get("strong_web_pass_env")
+    if "strong_web_pass_env" in cfg and not (isinstance(names, list) and all(
+            isinstance(v, str) and re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", v) for v in names)):
+        out.append("strong_web_pass_env must list variable names")
+    models = cfg.get("models")
+    if "models" in cfg:
+        names = [n for k, v in models.items() for n in [k] + (v if isinstance(v, list) else [])] if isinstance(models, dict) else []
+        if not (isinstance(models, dict) and models and all(isinstance(v, list) for v in models.values())
+                and all(isinstance(n, str) and MODEL_RE.fullmatch(n) and n != "unknown" for n in names)):
+            out.append("models must map each known model id to the list of its aliases")
+        elif len(set(names)) != len(names):
+            out.append("models names an id or an alias twice: one model is one id")
+        else:
+            for key in ("strong_model", "floor_model", "grader"):
+                if cfg.get(key) not in names:
+                    out.append(f"{key} {cfg.get(key)!r} is not in models: every configured model is a known one")
     return out
 
 
+def event_config(cfg):
+    """The values that control a test event: the gate file's, and EVENT_DEFAULTS for a key it does not carry.
+    cfg is a loaded gate configuration ({} when there is none)."""
+    out = {key: cfg.get(key, default) for key, default in EVENT_DEFAULTS.items()}
+    out["web_jobs"] = dict(out["web_jobs"])
+    return out
+
+
+def web_case_allowed(cfg, skill, case_id):
+    """True when the gate file lists the case among those that may use the web. Without a gate file there is no
+    list, and nothing is refused; with one, a case it does not list never gets the open network."""
+    if not cfg:
+        return True
+    return str(case_id) in {str(i) for i in (cfg.get("web_cases") or {}).get(skill, [])}
+
+
 def evidence_refusal(root=ROOT):
-    """Why nothing measured now may be written as evidence, or None when it may.
+    """Why nothing measured now may be written as evidence (eval_run.py asks it), or None when it may.
 
     A gate file that carries no "measurement_sha256" describes a measurement version that is open: the
     files that decide what a run measures are still changing under its number, so a result written now
@@ -184,16 +309,20 @@ def skill_names(root=ROOT):
 def content_hash(skill_dir):
     """sha256 over the skill folder: each file's relative path and bytes, in sorted path order.
 
-    Left out: the record, caches and the tests of the skill's scripts (TESTS_REL), which no eval run copies.
+    Left out, because no model that uses the skill reads them: all of evals/ (the cases, the evidence, the
+    version file, the old record), the tests of the skill's scripts (TESTS_REL), caches, and the marker file an
+    installer writes into a copied skill folder. So a case, an evidence file or a test changes no hash, and a
+    copy an installer made has the hash of its source.
     """
     files = []
     for dp, dns, fns in os.walk(skill_dir):
-        dns[:] = sorted(d for d in dns if d != "__pycache__")
+        top = dp == skill_dir
+        dns[:] = sorted(d for d in dns if d not in CACHE_DIRS and not (top and d == EVALS_REL))
         for fn in fns:
             rel = os.path.relpath(os.path.join(dp, fn), skill_dir).replace(os.sep, "/")
             if rel.startswith(TESTS_REL + "/"):
                 continue
-            if fn == ".DS_Store" or fn.endswith(".pyc") or rel == RECORD_REL.replace(os.sep, "/"):
+            if fn == ".DS_Store" or fn.endswith(".pyc") or (top and fn == INSTALL_MARKER):
                 continue
             files.append(rel)
     h = hashlib.sha256()
@@ -205,6 +334,535 @@ def content_hash(skill_dir):
             data = b""  # a dangling link: its name still counts
         h.update(rel.encode("utf-8") + b"\0" + str(len(data)).encode() + b"\0" + data)
     return h.hexdigest()
+
+
+def file_sha256(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for block in iter(lambda: f.read(1 << 20), b""):
+            h.update(block)
+    return h.hexdigest()
+
+
+def _litter(name):
+    return name in CACHE_DIRS or name == ".DS_Store" or name.endswith(".pyc")
+
+
+def case_hash(skill_dir, case, top_allow_web=False):
+    """sha256 over the whole case: the case object as it stands in the case file (its prompt, its assertions
+    with their tags, grader_files, skills, setup, allow_web, workbench_files as the list of paths, its tags,
+    every other key) and the bytes of its fixture files. A change to one case changes that case's hash only.
+    top_allow_web is the file's own "allow_web", which applies to every case of the file."""
+    obj = {**case, "allow_web": True} if top_allow_web and not case.get("allow_web") else case
+    h = hashlib.sha256(json.dumps(obj, sort_keys=True, ensure_ascii=False, separators=(",", ":")).encode("utf-8"))
+    for entry in case.get("files") or []:
+        if not isinstance(entry, str):
+            continue
+        src, found = os.path.join(skill_dir, entry), []
+        if os.path.isdir(src):
+            for dp, dns, fns in os.walk(src):
+                dns[:] = sorted(d for d in dns if not _litter(d))
+                found += [os.path.join(dp, fn) for fn in fns if not _litter(fn)]
+        elif os.path.isfile(src):
+            found = [src]
+        for path in sorted(found):
+            rel = entry.strip("/") + "/" + os.path.relpath(path, src).replace(os.sep, "/") if os.path.isdir(src) else entry
+            try:
+                with open(path, "rb") as f:
+                    data = f.read()
+            except OSError:
+                data = b""  # a dangling link: its name still counts
+            h.update(b"\0file\0" + rel.encode("utf-8") + b"\0" + str(len(data)).encode() + b"\0" + data)
+    return h.hexdigest()
+
+
+def case_hashes(skill_dir):
+    """{case id as text: hash} of the skill's current cases; {} when it has no readable case file."""
+    try:
+        with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    cases = data.get("evals") if isinstance(data, dict) else None
+    return {str(c.get("id")): case_hash(skill_dir, c, data.get("allow_web") is True)
+            for c in cases or [] if isinstance(c, dict)}
+
+
+def context_hash(dependency_dirs, references):
+    """One hash over what a run was given besides the skill under test: the dependency skills the case
+    installs (each by name and content hash) and the shared and platform references staged into the run
+    (references: [(path relative to shared/references, file path)]). None when there is neither. A line that
+    ran with another context than the current one counts as inherited evidence."""
+    parts = [f"skill\0{os.path.basename(os.path.normpath(d))}\0{content_hash(d)}" for d in dependency_dirs]
+    parts += [f"reference\0{rel}\0{file_sha256(path)}" for rel, path in references]
+    if not parts:
+        return None
+    return hashlib.sha256("\n".join(sorted(parts)).encode("utf-8")).hexdigest()
+
+
+def skill_version(skill_dir):
+    """metadata.version of the skill as X.Y.Z, or None when it has none in a known form. A two-part version,
+    the form every skill had before the version rules, is read as X.Y.0."""
+    try:
+        with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+            text = f.read()
+    except OSError:
+        return None
+    if not text.startswith("---"):
+        return None
+    m = re.search(r"^\s+version:\s*[\"']?([0-9]+(?:\.[0-9]+){1,2})[\"']?\s*(?:#.*)?$", text.split("\n---", 1)[0], re.M)
+    if not m:
+        return None
+    parts = m.group(1).split(".")
+    return ".".join(parts + ["0"] * (3 - len(parts)))
+
+
+def known_models(cfg):
+    """{model id: [aliases]} of a gate configuration: its "models", or, without that key, the configured
+    strong model, floor model and grader with no alias."""
+    if isinstance(cfg.get("models"), dict):
+        return {k: list(v) for k, v in cfg["models"].items()}
+    return {cfg[k]: [] for k in ("strong_model", "floor_model", "grader") if cfg.get(k)}
+
+
+def model_id(cfg, name):
+    """The id a model is written under in an evidence line: the listed id for a listed id or one of its
+    aliases, "unknown" for anything else. Without a gate configuration there is no list: the name as given."""
+    if not cfg:
+        return name
+    for listed, aliases in known_models(cfg).items():
+        if name == listed or name in aliases:
+            return listed
+    return "unknown"
+
+
+# The files that decide what a run measures, as far as they exist today: the grading template, the image's
+# definition, the executor, the staging module, the eval adapters' run-prompt.sh and adapter.json. The plan's
+# item B10 completes the list (evals/measure.py, evals/measurement.json) and makes the validator compare the
+# result with the committed "measurement_sha256".
+FINGERPRINT_FILES = ("evals/grading-prompt.md", "evals/executor.py", "scripts/stage_skills.py")
+
+
+def measurement_fingerprint(root=ROOT):
+    """sha256 over the files that decide what a run measures (sorted relative paths and their bytes). The
+    runner computes it when an event starts and writes it into every evidence line."""
+    paths = [os.path.join(root, *rel.split("/")) for rel in FINGERPRINT_FILES]
+    for dp, dns, fns in os.walk(os.path.join(root, "evals", "container")):
+        dns[:] = sorted(d for d in dns if d not in CACHE_DIRS)
+        paths += [os.path.join(dp, fn) for fn in fns if not _litter(fn)]
+    adapters = os.path.join(root, "adapters")
+    for name in sorted(os.listdir(adapters)) if os.path.isdir(adapters) else []:
+        if os.path.isfile(os.path.join(adapters, name, "run-prompt.sh")):  # an eval adapter
+            paths += [os.path.join(adapters, name, "run-prompt.sh"), os.path.join(adapters, name, "adapter.json")]
+    h = hashlib.sha256()
+    for path in sorted(p for p in paths if os.path.isfile(p)):
+        with open(path, "rb") as f:
+            data = f.read()
+        h.update(os.path.relpath(path, root).replace(os.sep, "/").encode("utf-8") + b"\0" + str(len(data)).encode() + b"\0" + data)
+    return h.hexdigest()
+
+
+def new_test_id(now=None):
+    """The id of a test event: the UTC time it started and eight random hexadecimal characters, so two events
+    never share a file and ids sort by time."""
+    now = now or datetime.datetime.now(datetime.timezone.utc)
+    return now.strftime("%Y%m%dT%H%M%SZ") + "-" + os.urandom(4).hex()
+
+
+# --- evidence: the closed forms of an event line and of a run line -------------------------------------
+
+HEX64_RE = re.compile(r"[0-9a-f]{64}")
+TEST_ID_RE = re.compile(r"\d{8}T\d{6}Z-[0-9a-f]{8}")
+VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
+NAME_RE = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+CASE_ID_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+MODEL_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:/@-]{0,199}")
+VARIABLE_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+TOOL_RE = re.compile(r"[A-Za-z0-9 ._()/+:,-]{1,80}")
+KINDS, VARIANT_NAMES, OUTCOMES, BASELINES = ("full", "partial"), ("with", "without"), ("graded", "timeout"), ("run", "reused", "none")
+COUNT_KEYS = ("retries", "refusals", "timeouts", "pauses", "early_ends", "resumes")
+EVENT_REQUIRED = ("record", "skill", "test", "kind", "version", "content_sha256", "date", "models", "adapters",
+                  "adapter_sha256", "grader", "runs", "timeout_seconds", "retries", "measurement_version",
+                  "measurement_sha256", "image_digest", "image_platform", "grading_template_sha256", "tools", "cases",
+                  "baseline", "web_cases", "counts", "extra_pass_env", "complete")
+EVENT_OPTIONAL = ("gate", "upstream")
+RUN_REQUIRED = ("record", "skill", "version", "content_sha256", "model", "adapter", "kind", "test", "date",
+                "measurement_version", "measurement_sha256", "case", "case_sha256", "variant", "outcome", "score", "results")
+RUN_OPTIONAL = ("context_sha256", "platform", "guard_failed")
+GATE_KEYS = ("passed", "with", "baseline", "threshold", "tolerance")
+
+
+def _is(pattern, value):
+    return isinstance(value, str) and pattern.fullmatch(value) is not None
+
+
+def _date(value):
+    if not isinstance(value, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _number(value, low=0, high=1):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and low <= value <= high
+
+
+def _count(value, low=0):
+    return isinstance(value, int) and not isinstance(value, bool) and value >= low
+
+
+def _model(value, models):
+    return value == "unknown" or (_is(MODEL_RE, value) and (models is None or value in models))
+
+
+def _case_id(value):
+    return _count(value) or _is(CASE_ID_RE, value)
+
+
+def _keys(line, required, optional):
+    out = [f"unknown key {k!r}" for k in line if k not in required and k not in optional]
+    return out + [f"missing key {k!r}" for k in required if k not in line]
+
+
+def event_line_problems(line, models=None):
+    """Why an event line is outside its form; models is the set of known model ids, None when there is no list."""
+    out = _keys(line, EVENT_REQUIRED, EVENT_OPTIONAL)
+    if out:
+        return out
+    bad = lambda key, form: out.append(f"{key} must be {form}")
+    if line["record"] != "test":
+        bad("record", "\"test\"")
+    if not _is(NAME_RE, line["skill"]):
+        bad("skill", "a skill name")
+    if not _is(TEST_ID_RE, line["test"]):
+        bad("test", "a test id (YYYYMMDDTHHMMSSZ-8 hex)")
+    if line["kind"] not in KINDS:
+        bad("kind", "full or partial")
+    if not _is(VERSION_RE, line["version"]):
+        bad("version", "X.Y.Z")
+    for key in ("content_sha256", "measurement_sha256", "grading_template_sha256"):
+        if not _is(HEX64_RE, line[key]):
+            bad(key, "64 hexadecimal characters")
+    if not _date(line["date"]):
+        bad("date", "YYYY-MM-DD")
+    tiers = line["models"]
+    if not (isinstance(tiers, dict) and tiers and "strong" in tiers and set(tiers) <= set(TIERS)
+            and all(_model(v, models) for v in tiers.values())):
+        bad("models", "{\"strong\": model id[, \"floor\": model id]}, each a listed id or \"unknown\"")
+        tiers = {}
+    if not (isinstance(line["adapters"], dict) and set(line["adapters"]) == set(tiers or line["adapters"])
+            and all(_is(NAME_RE, v) for v in line["adapters"].values())):
+        bad("adapters", "an adapter's folder name for each tier of models")
+    hashes = line["adapter_sha256"]
+    if not (isinstance(hashes, dict) and all(_is(NAME_RE, k) and _is(HEX64_RE, v) for k, v in hashes.items())
+            and (not isinstance(line["adapters"], dict) or set(hashes) == set(line["adapters"].values()))):
+        bad("adapter_sha256", "the sha256 of the run-prompt.sh of each adapter named in adapters")
+    if not _model(line["grader"], models):
+        bad("grader", "a listed model id or \"unknown\"")
+    for key, low in (("runs", 1), ("timeout_seconds", 1), ("retries", 0), ("measurement_version", 1)):
+        if not _count(line[key], low):
+            bad(key, f"a whole number, {low} or more")
+    if not (isinstance(line["image_digest"], str) and re.fullmatch(r"sha256:[0-9a-f]{64}", line["image_digest"])):
+        bad("image_digest", "sha256:<64 hexadecimal characters>")
+    if not (isinstance(line["image_platform"], str) and re.fullmatch(r"linux/[a-z0-9]+(/[a-z0-9]+)?", line["image_platform"])):
+        bad("image_platform", "a platform such as linux/arm64")
+    if not (isinstance(line["tools"], dict) and all(_is(NAME_RE, k) and _is(TOOL_RE, v) for k, v in line["tools"].items())):
+        bad("tools", "{tool name: its version line}")
+    cases = line["cases"]
+    if not (isinstance(cases, dict) and cases and all(_is(CASE_ID_RE, k) and _is(HEX64_RE, v) for k, v in cases.items())):
+        bad("cases", "{case id: the case's hash}, at least one")
+        cases = {}
+    if not (isinstance(line["baseline"], dict) and set(line["baseline"]) == set(cases or line["baseline"])
+            and all(v in BASELINES for v in line["baseline"].values())):
+        bad("baseline", "run, reused or none for each case of cases")
+    if not (isinstance(line["web_cases"], list) and all(_case_id(v) and str(v) in (cases or {str(v): 1}) for v in line["web_cases"])):
+        bad("web_cases", "a list of ids of cases")
+    counts = line["counts"]
+    ok = isinstance(counts, dict) and all(_model(model, models) and isinstance(by, dict) and by and set(by) <= set(VARIANT_NAMES)
+                                          for model, by in counts.items())
+    for by in counts.values() if ok else []:
+        for variant, c in by.items():
+            allowed = COUNT_KEYS + (("invoked",) if variant == "with" else ())
+            ok = ok and isinstance(c, dict) and set(COUNT_KEYS) <= set(c) and set(c) <= set(allowed) and all(_count(v) for v in c.values())
+    if not ok:
+        bad("counts", "{model id: {\"with\"|\"without\": {" + ", ".join(COUNT_KEYS) + "[, invoked]: whole numbers}}}")
+    if not (isinstance(line["extra_pass_env"], list) and all(_is(VARIABLE_RE, v) for v in line["extra_pass_env"])):
+        bad("extra_pass_env", "a list of variable names")
+    if not isinstance(line["complete"], bool):
+        bad("complete", "true or false")
+    if "gate" in line:
+        g = line["gate"]
+        if line["kind"] != "full":
+            out.append("gate belongs to a full test only: a partial test never evaluates the gate")
+        elif not (isinstance(g, dict) and set(GATE_KEYS) <= set(g) and set(g) <= set(GATE_KEYS + ("note",))
+                  and isinstance(g["passed"], bool) and _number(g["with"]) and (g["baseline"] is None or _number(g["baseline"]))
+                  and _number(g["threshold"]) and _number(g["tolerance"]) and g.get("note", "baseline expired") == "baseline expired"):
+            bad("gate", "{\"passed\": bool, \"with\": mean, \"baseline\": mean or null, \"threshold\", \"tolerance\"[, \"note\": \"baseline expired\"]}")
+        elif line["complete"] is not True:
+            out.append("gate is written by a complete full test only: an event closed as abandoned evaluates no gate")
+    elif line["kind"] == "full" and line["complete"] is True:
+        out.append("a complete full test carries its gate")
+    if "upstream" in line and not (isinstance(line["upstream"], dict) and all(
+            _model(k, models) and _is(TOOL_RE, v) for k, v in line["upstream"].items())):
+        bad("upstream", "{model id: the upstream provider its responses name}")
+    return out
+
+
+def run_line_problems(line, event=None, models=None):
+    """Why a run line is outside its form, or disagrees with the event line of its file."""
+    out = _keys(line, RUN_REQUIRED, RUN_OPTIONAL)
+    if out:
+        return out
+    bad = lambda key, form: out.append(f"{key} must be {form}")
+    if line["record"] != "run":
+        bad("record", "\"run\"")
+    if not _is(NAME_RE, line["skill"]):
+        bad("skill", "a skill name")
+    if not _is(VERSION_RE, line["version"]):
+        bad("version", "X.Y.Z")
+    for key in ("content_sha256", "measurement_sha256", "case_sha256") + (("context_sha256",) if "context_sha256" in line else ()):
+        if not _is(HEX64_RE, line[key]):
+            bad(key, "64 hexadecimal characters")
+    if not _model(line["model"], models):
+        bad("model", "an id of the gate file's model list, or \"unknown\"")
+    if not _is(NAME_RE, line["adapter"]):
+        bad("adapter", "an adapter's folder name")
+    if line["kind"] not in KINDS:
+        bad("kind", "full or partial")
+    if not _is(TEST_ID_RE, line["test"]):
+        bad("test", "a test id")
+    if not _date(line["date"]):
+        bad("date", "YYYY-MM-DD")
+    if not _count(line["measurement_version"], 1):
+        bad("measurement_version", "a whole number, 1 or more")
+    if not _case_id(line["case"]):
+        bad("case", "a case id")
+    if line["variant"] not in VARIANT_NAMES:
+        bad("variant", "with or without")
+    if line["outcome"] not in OUTCOMES:
+        bad("outcome", "graded or timeout")
+    results = line["results"]
+    if not (isinstance(results, list) and results and all(r in (0, 1) and not isinstance(r, bool) for r in results)):
+        bad("results", "a list of 0 and 1, one per assertion")
+        results = None
+    if not _number(line["score"]):
+        bad("score", "a number from 0 to 1")
+    elif results and abs(line["score"] - sum(results) / len(results)) > 1e-9:
+        out.append("score must be the share of results that are 1")
+    if results and line["outcome"] == "timeout" and any(results):
+        out.append("a timeout has score 0 and results all 0")
+    if "platform" in line and not _is(NAME_RE, line["platform"]):
+        bad("platform", "a platform name")
+    if "guard_failed" in line:
+        failed = line["guard_failed"]
+        if not (isinstance(failed, list) and failed and all(_count(v, 1) for v in failed) and len(set(failed)) == len(failed)
+                and (results is None or all(v <= len(results) and results[v - 1] == 0 for v in failed))):
+            bad("guard_failed", "a list of positions of assertions whose result is 0")
+        elif line["variant"] != "with":
+            out.append("guard_failed belongs to a with-skill run only")
+    if event and not out:
+        for key in ("skill", "test", "kind", "version", "content_sha256", "measurement_version", "measurement_sha256"):
+            if line[key] != event.get(key):
+                out.append(f"{key} differs from the event line of the file")
+        if isinstance(event.get("models"), dict) and line["model"] not in event["models"].values():
+            out.append("model is not one of the event's models")
+        if isinstance(event.get("adapters"), dict) and line["adapter"] not in event["adapters"].values():
+            out.append("adapter is not one of the event's adapters")
+        if isinstance(event.get("cases"), dict) and event["cases"].get(str(line["case"])) != line["case_sha256"]:
+            out.append("case and case_sha256 are not a case of the event line")
+    return out
+
+
+def read_evidence_file(path):
+    """(event line or None, run lines, problems) of one evidence file, each line parsed and not yet judged."""
+    problems, lines = [], []
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read().split("\n")
+    except (OSError, UnicodeDecodeError) as e:
+        return None, [], [f"cannot be read: {e}"]
+    if raw and raw[-1] == "":
+        raw.pop()
+    for n, text in enumerate(raw, 1):
+        try:
+            obj = json.loads(text)
+        except ValueError:
+            problems.append(f"line {n}: not valid JSON")
+            continue
+        if not isinstance(obj, dict):
+            problems.append(f"line {n}: must be a JSON object")
+            continue
+        lines.append((n, obj))
+    if not lines:
+        return None, [], problems or ["the file is empty: an evidence file has an event line"]
+    return lines[0][1], lines[1:], problems
+
+
+def evidence_file_problems(path, root=ROOT, skill=None):
+    """Why one lab evidence file is not valid; an empty list when it is. skill is the folder the file belongs
+    to; by default it is read from a path .../skills/<name>/evals/evidence/<file>."""
+    name = os.path.basename(path)
+    parts = os.path.normpath(os.path.abspath(path)).split(os.sep)
+    if skill is None and len(parts) >= 5 and parts[-3:-1] == ["evals", "evidence"] and parts[-5] == "skills":
+        skill = parts[-4]
+    m = re.fullmatch(r"lab-(" + TEST_ID_RE.pattern + r")\.jsonl", name)
+    if not m:
+        return [f"the name must be lab-<test id>.jsonl, not {name}"]
+    cfg = load_gate(root)
+    models = set(known_models(cfg)) if cfg else None
+    event, runs, problems = read_evidence_file(path)
+    if event is None:
+        return problems
+    first = event_line_problems(event, models)
+    problems += [f"line 1: {p}" for p in first]
+    if not first:
+        if event["test"] != m.group(1):
+            problems.append("line 1: test differs from the file's name")
+        if skill is not None and event["skill"] != skill:
+            problems.append(f"line 1: skill must be the folder's name, {skill}")
+    for n, line in runs:
+        problems += [f"line {n}: {p}" for p in run_line_problems(line, None if first else event, models)]
+    return problems
+
+
+def evidence_files(skill_dir):
+    """The lab evidence files of a skill, oldest first (a test id starts with its time)."""
+    folder = os.path.join(skill_dir, EVIDENCE_REL)
+    if not os.path.isdir(folder):
+        return []
+    return [os.path.join(folder, n) for n in sorted(os.listdir(folder)) if n.startswith("lab-") and n.endswith(".jsonl")]
+
+
+def evidence_problems(root=ROOT, only=None):
+    """{relative path: [problems]} for the evidence folders of every skill, or of one. A file whose name is
+    neither lab-<test id>.jsonl nor field-<id>.jsonl is a problem: nothing else belongs in that folder."""
+    found, checked = {}, 0
+    for name in [only] if only else skill_names(root):
+        folder = os.path.join(root, "skills", name, EVIDENCE_REL)
+        for entry in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+            rel = os.path.relpath(os.path.join(folder, entry), root)
+            if re.fullmatch(r"field-[0-9a-f]{12}\.jsonl", entry):
+                continue  # contributed field evidence: its own importer validates it
+            checked += 1
+            problems = evidence_file_problems(os.path.join(folder, entry), root, name)
+            if problems:
+                found[rel] = problems
+    return found, checked
+
+
+def skill_evidence(skill_dir):
+    """[(event line, run lines)] of a skill's lab evidence files, oldest first. A file whose first line is not an
+    event line is left out (`evidence` reports it); so is a run line that lacks a key the rules below read."""
+    found = []
+    for path in evidence_files(skill_dir):
+        event, runs, _ = read_evidence_file(path)
+        if not isinstance(event, dict) or event.get("record") != "test" or not isinstance(event.get("test"), str):
+            continue
+        found.append((event, [line for _, line in runs if all(k in line for k in RUN_REQUIRED)]))
+    return found
+
+
+def epochs(cfg):
+    """The epochs of a gate configuration: [{"date", "models", "skills", "cause"}]; models and skills are lists or
+    "all". The key is optional: without it there is none."""
+    return [e for e in cfg.get("epochs") or [] if isinstance(e, dict) and _date(e.get("date"))]
+
+
+def reaches(epoch, skill, model):
+    applies = lambda value, name: value == "all" or (isinstance(value, list) and name in value)
+    return applies(epoch.get("skills"), skill) and applies(epoch.get("models"), model)
+
+
+def epoch_after(cfg, skill, model, date, until=None):
+    """True when an epoch that reaches the skill on that model is dated after `date` (and not after `until`)."""
+    return any(reaches(e, skill, model) and e["date"] > date and (until is None or e["date"] <= until) for e in epochs(cfg))
+
+
+def reference_model(cfg):
+    """The id the reference model's lines carry: the configured strong model, as the model list writes it."""
+    return model_id(cfg, cfg["strong_model"]) if cfg.get("strong_model") else None
+
+
+def baseline_lines(skill_dir, cfg, events=None):
+    """{case id: [baseline lines in force]}: lines without the skill, on the reference model, of the case's current
+    hash, at or above the measurement floor, with no epoch of that model after their date."""
+    skill = os.path.basename(os.path.normpath(skill_dir))
+    current, ref, floor = case_hashes(skill_dir), reference_model(cfg), cfg.get("measurement_floor", 1)
+    found = {}
+    for _, runs in skill_evidence(skill_dir) if events is None else events:
+        for line in runs:
+            cid = str(line["case"])
+            if (line["variant"] == "without" and (ref is None or line["model"] == ref) and current.get(cid) == line["case_sha256"]
+                    and line["measurement_version"] >= floor and not epoch_after(cfg, skill, line["model"], line["date"])):
+                found.setdefault(cid, []).append(line)
+    return found
+
+
+def gate_of(skill_dir, cfg, extra=()):
+    """The gate of a skill from its lab evidence and the events in extra (the event the runner is ending, whose
+    file is not in the skill yet), by the rule of the model's section 2 (see the module's help)."""
+    skill = os.path.basename(os.path.normpath(skill_dir))
+    events = sorted(skill_evidence(skill_dir) + list(extra), key=lambda e: e[0]["test"])
+    current, version = case_hashes(skill_dir), skill_version(skill_dir)
+    ref, floor = reference_model(cfg), cfg.get("measurement_floor", 1)
+    threshold, tolerance = cfg.get("threshold", 0.8), cfg.get("strong_tolerance", 0)
+    out = {"computed": False, "passed": None, "with": None, "baseline": None, "threshold": threshold, "tolerance": tolerance,
+           "version": None, "test": None, "cases": [], "pending": [], "note": None, "cause": None}
+    major = version.split(".")[0] if version else None
+    full = [e for e in events if e[0].get("kind") == "full" and str(e[0].get("version", "")).split(".")[0] == major]
+    if not full:
+        return {**out, "cause": "no full test of the current major version"}
+    newest = full[-1][0]
+    xy = ".".join(newest["version"].split(".")[:2])
+    out.update(version=xy, test=newest["test"])
+    gate_events = [e for e in full if ".".join(e[0]["version"].split(".")[:2]) == xy]
+    planned = {}
+    for event, _ in gate_events:
+        for cid, h in (event.get("cases") or {}).items():
+            planned.setdefault(cid, set()).add(h)
+    weighs = lambda l: (current.get(str(l["case"])) == l["case_sha256"] and l["measurement_version"] >= floor
+                        and l["version"].split(".")[0] == major)
+    same_epoch = lambda l: not epoch_after(cfg, skill, l["model"], l["date"], newest["date"])
+    changed = sorted((cid for cid in current if cid in planned and current[cid] not in planned[cid]), key=_case_key)
+    if changed:
+        return {**out, "cause": f"case(s) {', '.join(changed)} changed after the newest full test: a full test runs them"}
+    pool = [l for _, runs in gate_events for l in runs
+            if l["variant"] == "with" and l["kind"] == "full" and (ref is None or l["model"] == ref) and weighs(l) and same_epoch(l)]
+    baselines = baseline_lines(skill_dir, cfg, events)
+    for cid in sorted((c for c in current if c not in planned), key=_case_key):
+        # An added case: pending until it has run with the skill on this X.Y and has a baseline in force.
+        lines = [l for _, runs in events for l in runs
+                 if str(l["case"]) == cid and l["variant"] == "with" and (ref is None or l["model"] == ref) and weighs(l)
+                 and ".".join(l["version"].split(".")[:2]) == xy]
+        if lines and baselines.get(cid):
+            pool += lines
+        else:
+            out["pending"].append(cid)
+    in_gate = sorted((c for c in current if c not in out["pending"]), key=_case_key)
+    out["cases"] = in_gate
+    missing = [cid for cid in in_gate if not any(str(l["case"]) == cid for l in pool)]
+    if missing:
+        return {**out, "cause": f"case(s) {', '.join(missing)} have no run with the skill of the full tests of {xy}"}
+    if not in_gate:
+        return {**out, "cause": "no current case is in the gate"}
+    if any(not baselines.get(cid) for cid in in_gate):
+        stored = next((e["gate"] for e, _ in reversed(full) if isinstance(e.get("gate"), dict)), None)
+        if stored is None:
+            return {**out, "cause": "no baseline in force and no full test that wrote a gate"}
+        return {**out, "computed": False, "passed": stored["passed"], "with": stored["with"], "baseline": stored["baseline"],
+                "note": "baseline expired"}
+    with_mean = sum(l["score"] for l in pool) / len(pool)
+    base = [l["score"] for cid in in_gate for l in baselines[cid]]
+    base_mean = sum(base) / len(base)
+    passed = with_mean >= threshold and with_mean >= base_mean - tolerance  # unrounded, both
+    return {**out, "computed": True, "passed": passed, "with": with_mean, "baseline": base_mean}
+
+
+def _case_key(cid):
+    return (0, int(cid), "") if cid.isdigit() else (1, 0, cid)
 
 
 def record_path(skill_dir):
@@ -290,122 +948,6 @@ def gate(scores, threshold, tolerance=0, version=LEGACY_VERSION + 1):
         return {"floor": floor, "strong_delta": delta, "passed": floor and delta}
     strong = scores["strong_with"] >= threshold
     return {"floor": floor, "strong": strong, "strong_delta": delta, "passed": floor and strong and delta}
-
-
-def case_ids(skill_dir):
-    with open(os.path.join(skill_dir, "evals", "evals.json"), encoding="utf-8") as f:
-        return [c.get("id") for c in json.load(f).get("evals") or []]
-
-
-def build_record(skill_dir, bench, iteration, date, content_sha256=None):
-    """A record from a benchmark.json. Raises ValueError, naming every reason, when the benchmark is partial."""
-    skill = os.path.basename(os.path.normpath(skill_dir))
-    why = []
-    if bench.get("skill") != skill:
-        why.append(f"the benchmark is of skill {bench.get('skill')!r}, not {skill!r}")
-    summary = bench.get("run_summary") or {}
-    try:
-        wanted = case_ids(skill_dir)
-    except (OSError, ValueError) as e:
-        raise ValueError(f"cannot read the skill's evals.json: {e}") from e
-    runs = bench.get("runs") or 1
-    scores, completed = {}, 0
-    for key, name in VARIANTS.items():
-        rows = (summary.get(name) or {}).get("cases") or []
-        rate = (summary.get(name) or {}).get("pass_rate") or {}
-        if name not in summary:
-            why.append(f"variant {name} did not run")
-            continue
-        graded = [r for r in rows if r.get("pass_rate") is not None]
-        missing = [c for c in wanted if c not in {r.get("case") for r in graded}]
-        if missing:
-            why.append(f"variant {name} has no graded run of case(s) {', '.join(str(c) for c in missing)}")
-        if rate.get("mean") is None:
-            why.append(f"variant {name} has no score")
-        else:
-            scores[key] = rate["mean"]
-        completed += len([r for r in graded if r.get("case") in wanted])
-    for key in ("strong", "floor"):
-        if not isinstance((bench.get("models") or {}).get(key), str):
-            why.append(f"the benchmark names no {key} model")
-    if not wanted:
-        why.append("the skill has no eval cases")
-    if why:
-        raise ValueError("; ".join(why))
-    expected = len(wanted) * len(VARIANTS) * runs
-    infra = bench.get("infra_failures")
-    infra = len(infra) if isinstance(infra, list) else max(expected - completed, 0)
-    threshold = bench.get("threshold", 0.8)
-    tolerance, version = bench.get("strong_tolerance") or 0, bench.get("measurement_version") or LEGACY_VERSION + 1
-    extra = {"environment": bench["environment"]} if isinstance(bench.get("environment"), dict) else {}
-    early = bench.get("early_ends")
-    early = {"early_ends": {t: {"early_ends": v.get("early_ends", 0), "rate": v.get("rate", 0.0)}
-                            for t, v in early.items() if isinstance(v, dict)}} if isinstance(early, dict) else {}
-    return {**early, "skill": skill, "content_sha256": content_sha256 or bench.get("content_sha256") or content_hash(skill_dir),
-            "date": date, "iteration": iteration, "runs": runs, "cases": wanted,
-            "harness": bench.get("harness") or "", "floor_harness": bench.get("floor_harness") or bench.get("harness") or "",
-            "models": {"strong": bench["models"]["strong"], "floor": bench["models"]["floor"]},
-            "grader": bench.get("grader") or bench["models"]["strong"], "threshold": threshold, "scores": scores,
-            "complete": bool(bench.get("complete", True)) and completed >= expected and infra == 0,
-            "infra_failures": infra, "measurement_version": version, "tolerance": tolerance, **extra,
-            "gate": gate(scores, threshold, tolerance, version)}
-
-
-def update_baseline(skill_dir, bench, iteration, date, config=None):
-    """The skill's record with its two without-skill scores replaced by a benchmark of that variant alone.
-
-    Raises ValueError, naming every reason, when there is no valid record, when the record is not of the
-    skill's current content, of the benchmark's models and of the configured models and threshold, or when
-    the benchmark lacks a graded run of a case. The caller checks that the run was complete and clean."""
-    skill = os.path.basename(os.path.normpath(skill_dir))
-    rec, problems = load_record(skill_dir)
-    if problems:
-        raise ValueError("the existing record is invalid: " + "; ".join(problems))
-    if rec is None:
-        raise ValueError("the skill has no record to update: run the full evals first")
-    config, why = config or {}, []
-    if bench.get("skill") != skill:
-        why.append(f"the benchmark is of skill {bench.get('skill')!r}, not {skill!r}")
-    if rec["content_sha256"] != content_hash(skill_dir):
-        why.append("the record is of another content of the skill (stale): run the full evals")
-    if bench.get("content_sha256") and bench["content_sha256"] != rec["content_sha256"]:
-        why.append("the benchmark was run on another content of the skill")
-    models = bench.get("models") or {}
-    for key in ("strong", "floor"):
-        if models.get(key) != rec["models"][key]:
-            why.append(f"the record's {key} model is {rec['models'][key]}, this run's is {models.get(key)}")
-        if config.get(f"{key}_model") and rec["models"][key] != config[f"{key}_model"]:
-            why.append(f"the record's {key} model is {rec['models'][key]}, the configured one is {config[f'{key}_model']}")
-    for name, value in (("this run's", bench.get("threshold")), ("the configured one", config.get("threshold"))):
-        if value is not None and value != rec["threshold"]:
-            why.append(f"the record's threshold is {rec['threshold']}, {name} is {value}")
-    version = rec.get("measurement_version", LEGACY_VERSION)
-    for name, value in (("this run's", bench.get("measurement_version")), ("the configured one", config.get("measurement_version"))):
-        if value is not None and value != version:
-            why.append(f"the record's measurement version is {version}, {name} is {value}: run the full evals")
-    summary, wanted, scores = bench.get("run_summary") or {}, case_ids(skill_dir), {}
-    for key in ("strong_without", "floor_without"):
-        entry = summary.get(VARIANTS[key]) or {}
-        graded = {r.get("case") for r in entry.get("cases") or [] if r.get("pass_rate") is not None}
-        missing = [c for c in wanted if c not in graded]
-        if missing or (entry.get("pass_rate") or {}).get("mean") is None:
-            why.append(f"variant {VARIANTS[key]} has no graded run of case(s) {', '.join(str(c) for c in missing) or 'any'}")
-        else:
-            scores[key] = entry["pass_rate"]["mean"]
-    if why:
-        raise ValueError("; ".join(why))
-    rec["scores"].update(scores)
-    rec["gate"] = gate(rec["scores"], rec["threshold"], rec.get("tolerance", 0), version)
-    rec["baseline"] = {"date": date, "iteration": iteration, "runs": bench.get("runs") or 1}
-    return rec
-
-
-def write_record(skill_dir, record):
-    path = record_path(skill_dir)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(record, f, indent=2)
-        f.write("\n")
-    return path
 
 
 def skill_status(skill_dir, config=None):
@@ -496,34 +1038,6 @@ def inventory_current(root=ROOT):
     return text == new
 
 
-def cmd_record(root, skill, bench_path, date):
-    skill_dir = os.path.join(root, "skills", skill)
-    refusal = evidence_refusal(root)
-    if refusal:
-        die(f"record refused: {refusal}.", 1)
-    try:
-        with open(bench_path, encoding="utf-8") as f:
-            bench = json.load(f)
-    except (OSError, ValueError) as e:
-        die(f"cannot read the benchmark: {e}")
-    m = re.search(r"iteration-(\d+)", os.path.abspath(bench_path))
-    iteration = bench.get("iteration") or (int(m.group(1)) if m else 0)
-    date = date or bench.get("date") or datetime.date.fromtimestamp(os.path.getmtime(bench_path)).isoformat()
-    try:
-        rec = build_record(skill_dir, bench, iteration, date)
-    except ValueError as e:
-        die(f"record refused: {e}", 1)
-    if not bench.get("content_sha256"):
-        print(f"The benchmark carries no content hash: recording the CURRENT hash of skills/{skill} "
-              f"({rec['content_sha256'][:12]}). This is only true if the skill was not edited since that run.", file=sys.stderr)
-    elif rec["content_sha256"] != content_hash(skill_dir):
-        print(f"skills/{skill} changed since the benchmark's run: the record will read as stale.", file=sys.stderr)
-    path = write_record(skill_dir, rec)
-    print(f"wrote {os.path.relpath(path, root)}; run: python3 evals/eval_status.py inventory --write", file=sys.stderr)
-    print(json.dumps({"record": rec, "status": skill_status(skill_dir)}, indent=2))
-    return 0
-
-
 def main(argv, root=None):
     root = root or ROOT
     if not argv or argv[0] in ("--help", "-h"):
@@ -535,7 +1049,7 @@ def main(argv, root=None):
         return 0
     opts, flags, i = {}, set(), 0
     while i < len(rest):
-        if rest[i] in ("--skill", "--benchmark", "--date"):
+        if rest[i] in ("--skill", "--file"):
             if i + 1 >= len(rest):
                 die(f"{rest[i]} needs a value.")
             opts[rest[i][2:]] = rest[i + 1]
@@ -555,17 +1069,26 @@ def main(argv, root=None):
     if cmd == "hash":
         if not skill:
             die("hash needs --skill <name>.")
-        print(content_hash(os.path.join(root, "skills", skill)))
+        skill_dir = os.path.join(root, "skills", skill)
+        print(json.dumps({"skill": skill, "content_sha256": content_hash(skill_dir), "version": skill_version(skill_dir),
+                          "cases": case_hashes(skill_dir)}, indent=2))
         return 0
-    if cmd == "record":
-        if not skill or not opts.get("benchmark"):
-            die("record needs --skill <name> and --benchmark <path>.")
-        if opts.get("date"):
-            try:
-                datetime.date.fromisoformat(opts["date"])
-            except ValueError:
-                die("--date must be YYYY-MM-DD.")
-        return cmd_record(root, skill, opts["benchmark"], opts.get("date"))
+    if cmd == "evidence":
+        if opts.get("file"):
+            problems = evidence_file_problems(opts["file"], root, skill)
+            found, checked = ({opts["file"]: problems} if problems else {}), 1
+        else:
+            found, checked = evidence_problems(root, skill)
+        for path, problems in found.items():
+            for problem in problems:
+                print(f"{path}: {problem}", file=sys.stderr)
+        print(json.dumps({"files": checked, "problems": found}, indent=2))
+        return 1 if found else 0
+    if cmd == "gate":
+        if not skill:
+            die("gate needs --skill <name>.")
+        print(json.dumps(gate_of(os.path.join(root, "skills", skill), load_gate(root)), indent=2))
+        return 0
     if cmd == "inventory":
         if len(flags) != 1:
             die("inventory needs exactly one of --write or --check.")

@@ -18,11 +18,15 @@ Usage:
           baseline: the file given with --baseline <path> (a copy of the previous AGENTS.md),
           or, without that option, the version of the file in the last git commit when there is
           one ("baseline" in the output says which). Exit 1 when the audit finds problems.
---fix     with --audit: first replaces, inside the file, every unknown command and missing path
-          that has exactly one suggestion, touching nothing else, prints them under "fixed",
-          then audits the result. A problem with no suggestion or several is left for a person.
+          The workbench section (between <!-- workbench:start --> and <!-- workbench:end -->) belongs
+          to core-project-init: it is left out of the check, and what the check would flag inside it
+          is listed under "in_workbench_section", never fixed and never counted against "ok".
+--fix     with --audit: first replaces, outside the workbench section, every unknown command and
+          missing path that has exactly one suggestion, touching nothing else, prints them under
+          "fixed", then audits the result. A problem with no suggestion or several is left for a
+          person. The workbench section is never edited.
 
-Exit codes: 0 ok, 1 audit problems, 2 usage error.
+Exit codes: 0 ok, 1 audit problems, 2 usage error (on stderr).
 """
 import difflib
 import hashlib
@@ -177,6 +181,21 @@ def section(text):
     return text[text.index(START): text.index(END) + len(END)] if START in text and END in text else None
 
 
+def split_section(text):
+    """(text before the workbench section, the section with its markers, text after it); the section is ''
+    when the text has none."""
+    if START in text and END in text and text.index(START) < text.index(END):
+        a, b = text.index(START), text.index(END) + len(END)
+        return text[:a], text[a:b], text[b:]
+    return text, "", ""
+
+
+def replace_outside(text, old, new):
+    """Replace `old` with `new` everywhere except inside the workbench section."""
+    before, block, after = split_section(text)
+    return before.replace(old, new) + block + after.replace(old, new)
+
+
 def section_sha(text):
     sec = section(text)
     return hashlib.sha256(sec.encode("utf-8")).hexdigest() if sec is not None else None
@@ -301,17 +320,22 @@ def audit(root, agents_path, baseline, fix=False):
     committed = None if baseline else committed_version(root, agents_path)
     fixed = []
     if fix:
-        _, unknown, missing = check(root, text)
+        before, _, after = split_section(text)
+        _, unknown, missing = check(root, before + "\n" + after)
         for old, candidates in suggestions_for(root, unknown, missing).items():
             if len(candidates) == 1:
-                text = text.replace(f"`{old}`", f"`{candidates[0]}`")
+                text = replace_outside(text, f"`{old}`", f"`{candidates[0]}`")
                 fixed.append({"from": old, "to": candidates[0],
                               "why": "the only existing path with a matching name" if old in missing
                               else "the only package script or Makefile target with a close name"})
         if fixed:
             with open(agents_path, "w", encoding="utf-8") as f:
                 f.write(text)
-    checked, unknown_commands, missing_paths = check(root, text)
+    before, block, after = split_section(text)
+    checked, unknown_commands, missing_paths = check(root, before + "\n" + after)
+    _, block_commands, block_paths = check(root, block)
+    in_section = [{"kind": "command", "span": c} for c in block_commands] + \
+        [{"kind": "path", "span": p} for p in block_paths]
     section_state, source = "not checked", "none"
     if baseline:
         with open(baseline, encoding="utf-8") as f:
@@ -329,33 +353,40 @@ def audit(root, agents_path, baseline, fix=False):
               "missing_paths": missing_paths,
               "suggestions": suggestions_for(root, unknown_commands, missing_paths),
               "fixed": fixed, "workbench_section": section_state, "baseline": source,
+              "in_workbench_section": {"owner": "core-project-init", "not_fixed": in_section},
               "workbench_sha256": section_sha(text), "lines": text.count("\n") + 1}
     print(json.dumps(result, indent=2))
     return 0 if ok else 1
 
 
 def main(argv):
-    if not argv or "--help" in argv or "-h" in argv:
+    if not argv:
+        print(__doc__, file=sys.stderr)
+        return 2
+    if "--help" in argv or "-h" in argv:
         print(__doc__)
-        return 0 if argv else 2
+        return 0
     root, mode, target, baseline, fix = ".", None, None, None, False
     i = 0
     while i < len(argv):
         a = argv[i]
+        if a in ("--root", "--audit", "--baseline") and (i + 1 >= len(argv) or argv[i + 1].startswith("--")):
+            print(f"Error: {a} needs a value. See --help.", file=sys.stderr)
+            return 2
         if a == "--root":
-            root = argv[i + 1] if i + 1 < len(argv) else None
+            root = argv[i + 1]
             i += 2
         elif a == "--detect":
             mode = "detect"
             i += 1
         elif a == "--audit":
-            mode, target = "audit", (argv[i + 1] if i + 1 < len(argv) else None)
+            mode, target = "audit", argv[i + 1]
             i += 2
         elif a == "--fix":
             fix = True
             i += 1
         elif a == "--baseline":
-            baseline = argv[i + 1] if i + 1 < len(argv) else None
+            baseline = argv[i + 1]
             i += 2
         else:
             print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr)
@@ -363,7 +394,7 @@ def main(argv):
     if fix and mode != "audit":
         print("Error: --fix needs --audit <file>.", file=sys.stderr)
         return 2
-    if not root or not os.path.isdir(root):
+    if not os.path.isdir(root):
         print(f"Error: --root {root!r} is not a directory.", file=sys.stderr)
         return 2
     if mode == "detect":

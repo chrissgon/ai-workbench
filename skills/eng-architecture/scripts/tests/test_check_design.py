@@ -73,8 +73,8 @@ def test_fixture_passes_after_the_adr_is_removed(tmp_path):
     root = project(tmp_path)
     fix(root)
     code, out, _ = run(root)
-    assert code == 0 and json.loads(out) == {"ok": True, "spec_ids": 8, "covered": 8, "adrs": [], "errors": [],
-                                             "warnings": []}
+    assert code == 0 and json.loads(out) == {"ok": True, "summary": "check_design ok: 8/8 ids covered, 0 ADR(s) valid",
+                                             "spec_ids": 8, "covered": 8, "adrs": [], "errors": [], "warnings": []}
 
 
 def test_fixture_passes_after_a_second_option(tmp_path):
@@ -106,10 +106,14 @@ def test_report_records_the_run_and_its_arguments(tmp_path):
     record = json.loads((root / REPORT).read_text(encoding="utf-8"))
     result = json.loads(out)
     assert code == 1
-    assert record["ok"] is False and record["errors"] == result["errors"] and record["adrs"] == result["adrs"]
-    assert (record["spec"], record["design"], record["adr_dir"]) == (SPEC, DESIGN, ADR_DIR)
+    assert set(record) == {"script", "date", "arguments", "ok", "summary", "errors", "warnings", "counts"}
+    assert record["script"] == "check_design.py"
+    assert record["ok"] is False and record["errors"] == result["errors"]
+    assert record["summary"] == result["summary"]
+    assert record["summary"] == "check_design FAILED: 3 error(s); 6/8 ids covered, 1 of 1 ADR(s) with problems"
+    assert record["arguments"] == {"--spec": SPEC, "--design": DESIGN, "--adr-dir": ADR_DIR}
     assert record["date"] == datetime.date.today().isoformat()
-    assert (record["spec_ids"], record["covered"]) == (8, 6)
+    assert record["counts"] == {"spec_ids": 8, "covered": 6, "adrs": 1, "adrs_failed": 1}
 
 
 def test_report_holds_the_last_run(tmp_path):
@@ -118,7 +122,7 @@ def test_report_holds_the_last_run(tmp_path):
     fix(root)
     code, _, _ = run(root, "--report", REPORT)
     record = json.loads((root / REPORT).read_text(encoding="utf-8"))
-    assert code == 0 and record["ok"] is True and record["errors"] == [] and record["covered"] == 8
+    assert code == 0 and record["ok"] is True and record["errors"] == [] and record["counts"]["covered"] == 8
 
 
 def test_report_next_to_the_design_is_not_read_as_an_adr(tmp_path):
@@ -129,10 +133,11 @@ def test_report_next_to_the_design_is_not_read_as_an_adr(tmp_path):
     assert code == 0 and json.loads(out)["adrs"] == []
 
 
-def test_report_without_adr_dir_records_null(tmp_path):
+def test_report_without_adr_dir_records_only_the_flags_given(tmp_path):
     root = project(tmp_path)
-    run(root, "--report", REPORT, adr_dir=None)
-    assert json.loads((root / REPORT).read_text(encoding="utf-8"))["adr_dir"] is None
+    run(root, "--report", REPORT, "--json", adr_dir=None)
+    arguments = json.loads((root / REPORT).read_text(encoding="utf-8"))["arguments"]
+    assert arguments == {"--spec": SPEC, "--design": DESIGN, "--json": True}
 
 
 def test_report_that_cannot_be_written_is_a_usage_error(tmp_path):
@@ -151,3 +156,14 @@ def test_option_without_a_value_is_a_usage_error(tmp_path):
 def test_help_names_the_report_option():
     p = subprocess.run([sys.executable, str(CHECK), "--help"], capture_output=True, text=True)
     assert p.returncode == 0 and "--report" in p.stdout
+
+
+def test_no_arguments_prints_the_usage_on_stderr():
+    p = subprocess.run([sys.executable, str(CHECK)], capture_output=True, text=True)
+    assert p.returncode == 2 and p.stdout == "" and "Usage:" in p.stderr
+
+
+def test_usage_error_writes_no_report(tmp_path):
+    root = project(tmp_path)
+    code, _, _ = run(root, "--report", REPORT, "--no-such-flag")
+    assert code == 2 and not (root / REPORT).exists()

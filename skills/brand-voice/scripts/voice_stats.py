@@ -17,7 +17,8 @@ check   reads one draft {"id", "text"} on stdin and the limits from the ```voice
         a voice guide (or a plain JSON file) with keys max_emojis, max_hashtags, max_exclamations,
         end_with_question (true/false), no_emoji_line_start (true/false), banned (list of phrases,
         case-insensitive). Prints {"ok", "violations": [...], "stats"}; exit 1 on any violation.
-Exit 2 on bad input. An emoji sequence joined by zero-width joiners or modifiers counts as one.
+Exit 2 on bad input or a usage error: the arguments are checked before standard input is read, so a
+wrong call never waits for input. An emoji sequence joined by zero-width joiners or modifiers counts as one.
 """
 import json
 import re
@@ -58,13 +59,15 @@ def load_rules(path):
     try:
         with open(path, encoding="utf-8") as fh:
             raw = fh.read()
-    except OSError as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         fail(f"cannot read {path}: {exc}")
     m = re.search(r"```voice-rules\s*\n(.*?)```", raw, re.S)
     try:
         rules = json.loads(m.group(1) if m else raw)
     except ValueError:
         fail(f"{path} has no ```voice-rules block and is not JSON")
+    if not isinstance(rules, dict):
+        fail(f"the voice rules in {path} must be a JSON object")
     for key, value in rules.items():
         if key not in KEYS or not isinstance(value, KEYS[key]) or (KEYS[key] is int and isinstance(value, bool)):
             fail(f"rule {key!r} is unknown or has the wrong type")
@@ -94,29 +97,39 @@ def fail(msg):
     sys.exit(2)
 
 
+USAGE = "usage: voice_stats.py stats | check --rules <file> (see --help)"
+
+
 def main(argv):
-    if not argv or argv[0] in ("-h", "--help"):
+    if "-h" in argv or "--help" in argv:
         print(__doc__)
         return 0
+    # The arguments first: a wrong call says so at once, and never blocks on standard input.
+    if argv == ["stats"]:
+        rules = None
+    elif len(argv) == 3 and argv[:2] == ["check", "--rules"]:
+        rules = load_rules(argv[2])
+    elif argv[:1] == ["check"] and argv[-1:] == ["--rules"]:
+        fail("--rules needs a file. " + USAGE)
+    else:
+        fail(USAGE)
     try:
         data = json.load(sys.stdin)
     except ValueError:
         fail("stdin is not JSON")
-    if argv[0] == "stats" and len(argv) == 1:
+    if argv[0] == "stats":
         if not isinstance(data, list) or not all(isinstance(d, dict) and isinstance(d.get("text"), str) for d in data):
             fail("stats expects a list of {\"id\", \"text\"}")
         rows = [{"id": d.get("id", str(i + 1)), **stats(d["text"])} for i, d in enumerate(data)]
         total = {k: sum(r[k] for r in rows) for k in ("words", "emojis", "hashtags", "exclamations", "links")}
         print(json.dumps({"samples": rows, "total": total}, ensure_ascii=False, indent=2))
         return 0
-    if argv[0] == "check" and len(argv) == 3 and argv[1] == "--rules":
-        if not isinstance(data, dict) or not isinstance(data.get("text"), str):
-            fail("check expects {\"id\", \"text\"}")
-        violations, s = check(data["text"], load_rules(argv[2]))
-        print(json.dumps({"id": data.get("id"), "ok": not violations, "violations": violations, "stats": s},
-                         ensure_ascii=False, indent=2))
-        return 1 if violations else 0
-    fail("usage: voice_stats.py stats | check --rules <file> (see --help)")
+    if not isinstance(data, dict) or not isinstance(data.get("text"), str):
+        fail("check expects {\"id\", \"text\"}")
+    violations, s = check(data["text"], rules)
+    print(json.dumps({"id": data.get("id"), "ok": not violations, "violations": violations, "stats": s},
+                     ensure_ascii=False, indent=2))
+    return 1 if violations else 0
 
 
 if __name__ == "__main__":
