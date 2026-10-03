@@ -421,3 +421,52 @@ def test_cancel_does_not_write_over_a_runner_that_still_holds_the_job(s, monkeyp
         os.close(lock)
     assert module.main(["cancel", "--id", "post-1", "--confirmed"]) == 0
     assert s.job()["status"] == "cancelled"
+
+
+# --- SC3: a command that outlived its runner ------------------------------------------------
+
+
+def schedule_every(s, path: Path, job_id="tick"):
+    base = ["schedule", "--id", job_id, "--every", "15", "--command-file", str(path)]
+    dry = s.run(*base, "--dry-run")
+    assert dry.returncode == 0, dry.stderr
+    return s.run(*base, "--confirmed", "--approved", json.loads(dry.stdout)["approved"])
+
+
+def firings(s, job_id="tick") -> list:
+    return [json.loads(line) for line in (s.folder(job_id) / "runs.jsonl").read_text().splitlines()]
+
+
+def test_a_firing_records_its_commands_process_group_while_it_runs(s):
+    seen = s.tmp / "seen.txt"
+    code = (f"import os; open({str(seen)!r}, 'w').write("
+            f"open({str(s.folder('tick') / 'run.group')!r}).read().strip() + ' ' + str(os.getpgrp()))")
+    assert schedule_every(s, s.command_file(code)).returncode == 0
+    assert s.run("run", "--id", "tick").returncode == 0, firings(s)
+    recorded, actual = seen.read_text().split()
+    assert recorded == actual  # the command's own process group, beside run.lock
+    assert not (s.folder("tick") / "run.group").exists()  # and gone once the command ended
+    assert firings(s)[-1]["status"] == "done"
+
+
+def test_a_command_that_outlived_its_runner_is_not_overlapped(s):
+    # The command runs in its own session. When its runner dies (SIGKILL after the service's stop timeout, a
+    # crash), the kernel drops run.lock but the command goes on: the next firing took the free lock, recorded
+    # stale_lock_pid and started the command again next to the old one.
+    marker = s.tmp / "ran.txt"
+    assert schedule_every(s, s.command_file(f"open({str(marker)!r}, 'a').write('x')")).returncode == 0
+    orphan = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
+    try:
+        (s.folder("tick") / "run.group").write_text(f"{orphan.pid}\n")  # what a runner that died mid-firing leaves
+        fired = s.run("run", "--id", "tick")
+        assert fired.returncode == 0, fired.stderr
+        assert not marker.exists()
+        record = firings(s)[-1]
+        assert record["status"] == "skipped-overlap" and f"process group {orphan.pid}" in record["reason"]
+        assert s.job("tick")["status"] == "scheduled"  # the job keeps firing
+    finally:
+        orphan.kill()
+        orphan.wait()
+    assert s.run("run", "--id", "tick").returncode == 0  # the group is gone: the next firing runs
+    assert marker.read_text() == "x" and firings(s)[-1]["status"] == "done"
+    assert not (s.folder("tick") / "run.group").exists()

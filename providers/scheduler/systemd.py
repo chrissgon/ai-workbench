@@ -95,6 +95,7 @@ SYSTEM_BIN_PATH = "/usr/bin:/bin"  # where systemctl and loginctl are looked up;
 BASE_RUN_PATH = "/usr/local/bin:/usr/bin:/bin:/usr/local/sbin:/usr/sbin:/sbin"
 PLAIN_PATH = re.compile(r"^[A-Za-z0-9/._@+,:=~-]+$")  # written into unit files without quoting
 HISTORY = ".history"
+GROUP_FILE = "run.group"  # the running command's process-group id, beside run.lock
 EVERY_MIN_MINUTES, EVERY_MAX_MINUTES = 5, 1440
 DEFAULT_TIMEOUT_MINUTES, MAX_TIMEOUT_MINUTES = 30, 240
 DEFAULT_ONE_SHOT_TIMEOUT_MINUTES = 10  # a one-shot command without timeout_minutes in its command file
@@ -952,6 +953,41 @@ def wait_for_lock(folder: Path, seconds: float) -> int | None:
         time.sleep(0.1)
 
 
+def record_group(folder: Path, pgid: int | None) -> None:
+    """Write the running command's process-group id beside run.lock (GROUP_FILE), or remove it (None) at its end."""
+    path = folder / GROUP_FILE
+    try:
+        if pgid is None:
+            path.unlink(missing_ok=True)
+        else:
+            write_private(path, f"{pgid}\n".encode("ascii"))
+    except OSError as exc:
+        log(f"could not record the command's process group in {path}: {exc}")
+
+
+def orphan_group(folder: Path) -> str | None:
+    """The process group of a command whose runner died while it ran, when that group still lives; else None.
+
+    The kernel drops run.lock when its holder dies, but the command runs in a session of its own and outlives a
+    runner that was killed or crashed: a firing that took the free lock and started the command again would run
+    beside it. A group that is gone has its record removed."""
+    path = folder / GROUP_FILE
+    try:
+        pgid = int(path.read_text(encoding="ascii").strip())
+    except (OSError, ValueError):
+        return None
+    if pgid <= 1:
+        return None
+    try:
+        os.killpg(pgid, 0)
+    except ProcessLookupError:
+        record_group(folder, None)
+        return None
+    except PermissionError:
+        pass  # the group exists, under another user
+    return str(pgid)
+
+
 def tail(data: bytes | None) -> str:
     return (data or b"")[-TAIL_BYTES:].decode("utf-8", errors="replace")
 
@@ -999,6 +1035,8 @@ def run_command(job: dict, timeout: float, limit: str) -> tuple[dict, bytes | No
                                 start_new_session=True, env={**os.environ, "PATH": run_path()})
     except OSError as exc:
         return {"status": "failed", "exit_code": None, "reason": f"{type(exc).__name__}: {exc}"}, None, None
+    folder = job_dir(job["id"])
+    record_group(folder, proc.pid)  # start_new_session: the command leads a process group of its own
     stopping = []
 
     def on_term(_signum, _frame):
@@ -1023,6 +1061,7 @@ def run_command(job: dict, timeout: float, limit: str) -> tuple[dict, bytes | No
     finally:
         if previous is not None:
             signal.signal(signal.SIGTERM, previous)
+        record_group(folder, None)
     result = {"exit_code": proc.returncode}
     if reason:
         result.update(status="failed", reason=reason)
@@ -1043,6 +1082,13 @@ def run_recurring(job: dict) -> int:
     if fd is None:
         record_firing(folder, {"started_at": started, "ended_at": iso(now()), "status": "skipped-overlap",
                                "exit_code": None, "reason": f"the previous firing (pid {other or 'unknown'}) still runs"})
+        return EXIT_OK
+    orphan = orphan_group(folder)
+    if orphan:
+        record_firing(folder, {"started_at": started, "ended_at": iso(now()), "status": "skipped-overlap",
+                               "exit_code": None, "reason": f"the command of an earlier firing (process group {orphan}) "
+                                                            "still runs; its runner is gone"})
+        release_lock(fd)
         return EXIT_OK
     previous = last_firing(folder)
     record = {"started_at": started}
