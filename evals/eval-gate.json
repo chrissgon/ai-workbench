@@ -3,12 +3,8 @@
   "strong_harness": "claude-code",
   "floor_model": "openrouter/deepseek/deepseek-v4.1-flash",
   "floor_harness": "agents-dir",
-  "floor_pass_env": [
-    "OPENROUTER_API_KEY"
-  ],
-  "strong_pass_env": [
-    "CLAUDE_CODE_OAUTH_TOKEN"
-  ],
+  "floor_pass_env": ["OPENROUTER_API_KEY"],
+  "strong_pass_env": ["CLAUDE_CODE_OAUTH_TOKEN"],
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "strong_tolerance": 0.05,
@@ -30,12 +26,11 @@
     "core-research": [1, 4, 5],
     "eng-architecture": [1]
   },
-  "strong_web_pass_env": [
-    "CLAUDE_CODE_WEB_API_KEY"
-  ],
+  "strong_web_pass_env": ["CLAUDE_CODE_WEB_API_KEY"],
   "models": {
     "claude-sonnet-5-5": [],
     "openrouter/deepseek/deepseek-v4.1-flash": ["deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash"]
   },
-  "epochs": []
+  "epochs": [],
+  "measurement_sha256": "965d9daceaf76c445084882edab65909d6d5dea0c75bdc88853d46bf740bdbde"
 }
