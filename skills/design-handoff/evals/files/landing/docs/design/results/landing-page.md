@@ -4,7 +4,7 @@
 - Status: approved
 - Date: 2026-03-05
 - Brief: docs/design/briefs/landing-page.md
-- Tool: Claude Design
+- Tool: Draftloom (generative design tool)
 - Mode: assisted, because the tool offers no generation interface to agents
 
 ## Runs
@@ -21,6 +21,8 @@
 | CRIT-1 | pass: all three in the first viewport | pass: all three in the first viewport |
 | CRIT-2 | fail: three accent colours | partial: not checked value by value; left to the handoff |
 | CRIT-3 | fail: 2 examples | partial: not counted; left to the handoff |
+| CRIT-4 | fail: an invented tagline under the headline | partial: not compared word by word; left to the handoff |
+| CRIT-5 | fail: the size block sits below the fold | pass: the size is the only large number next to the headline |
 
 ## Decision
 

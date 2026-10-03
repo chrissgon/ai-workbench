@@ -577,15 +577,30 @@ def test_check_with_repo_reads_one_alert(env, fake):
     assert "per_page=1" in fake.requests[0]["path"]
 
 
-def test_check_not_ready(env, fake):
+def test_check_exits_3_when_the_person_has_something_to_do(env, fake):
+    """The contract's one reading: 3 is "not configured" (no token, or one the service rejects)."""
     fake.auth_status = 401
     proc = run(["--check"], env)
-    assert proc.returncode == 1
-    assert proc.stderr.strip()
+    assert proc.returncode == 3 and "rejected the token" in proc.stderr
     del env["GITHUB_TOKEN"]
     proc = run(["--check"], env)
-    assert proc.returncode == 1
-    assert "GITHUB_TOKEN" in proc.stderr
+    assert proc.returncode == 3
+    assert "GITHUB_TOKEN" in proc.stderr and not proc.stdout.strip()
+
+
+def test_check_exits_1_when_the_service_could_not_be_asked(env, fake):
+    """1 is "whether the provider is ready is not known": the service is down or answered something else."""
+    env["VCS_GITHUB_API_BASE"] = "http://127.0.0.1:1"  # nothing listens there
+    proc = run(["--check"], env)
+    assert proc.returncode == 1 and "cannot reach GitHub" in proc.stderr and not proc.stdout.strip()
+
+
+def test_check_exits_3_when_the_token_lacks_the_permission(env, fake):
+    """A 403 that names the permission the token needs is the service rejecting the credential: the person
+    has something to do, and the reason says what."""
+    fake.auth_status = 403
+    proc = run(["--check", "--repo", REPO], env)
+    assert proc.returncode == 3 and "the token needs" in proc.stderr
 
 
 def test_vcs_github_token_wins_over_github_token(env, fake):
@@ -646,3 +661,24 @@ def test_old_ledger_that_is_not_json_stops_the_run(env, fake, comment_file, tmp_
     proc = run(dismiss_args(comment_file, "--confirmed"), e)
     assert proc.returncode == 1 and "cannot be copied" in proc.stderr
     assert fake.patches() == [] and not new.exists() and old.read_text() == "{not json"
+
+
+# --- VS7: the contract says what this provider does ------------------------------------------------
+
+
+def test_the_contract_states_the_dry_run_of_commit_files_resolves_flag_and_the_token_permissions():
+    root = HERE.parents[2]
+    contract = (root / "providers" / "CONTRACT.md").read_text(encoding="utf-8")
+    (rule,) = [line for line in contract.splitlines() if line.startswith("- `--dry-run` on every verb")]
+    # The rule said "no credential is read and no network call is made" and the row said "clones".
+    assert "commit-files" in rule and "exception" in rule
+    table = contract.split("\n## Verbs per class\n", 1)[1]
+    (row,) = [line for line in table.splitlines() if line.startswith("| `integration:vcs` |")]
+    assert "--not-committed) --confirmed`" in row  # resolve is refused without it (test_github_files.py)
+    assert "[--ref <branch, tag or commit>]" in row
+    # read-file needs a permission the secrets contract did not list.
+    module = load_module()
+    permission = module.secret_resolver().REGISTRY["VCS_GITHUB_TOKEN"].permission
+    assert "Contents: Read-only" in permission and "Dependabot alerts: Read-only" in permission
+    assert permission in (root / "contracts" / "secrets.md").read_text(encoding="utf-8")
+    assert '"Contents: Read-only"' in module.HELP_EPILOG

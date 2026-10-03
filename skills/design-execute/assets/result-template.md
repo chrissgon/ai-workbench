@@ -2,16 +2,16 @@
 
 - Owner: design-execute
 - Status: {in progress | waiting on user | approved}
-- Date: {YYYY-MM-DD}
+- Date: {YYYY-MM-DD, from `date +%F`}
 - Brief: docs/design/briefs/{artifact}.md
 - Tool: {tool}
 - Mode: {automatic | assisted}, because {reason}
 
 ## Runs
 
-| Run | Round | Direction | Status | Outputs |
-|-----|-------|-----------|--------|---------|
-| R1 | 1 | {A name} | {planned | waiting on user | done} | {paths or links} |
+| Run | Round | Direction | Status | Pack | Outputs |
+|-----|-------|-----------|--------|------|---------|
+| R1 | 1 | {A name} | {planned | waiting on user | done | approved} | docs/design/results/{artifact}/round-1/{a-name}/prompt.md | {paths or links, or -} |
 
 ## Critique
 
@@ -27,6 +27,10 @@ Findings outside the criteria:
 
 - Recommendation: {direction or round-2 changes, and why}
 - Decision: {the user's answer, with the date | pending}
+
+## Assumptions
+
+- {Assumption: … | none}
 
 ## Next
 

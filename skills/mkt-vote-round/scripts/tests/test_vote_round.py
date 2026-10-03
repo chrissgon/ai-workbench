@@ -214,7 +214,7 @@ def test_record_post_changes_only_post_url_and_appends_the_post(vote):
     before_pick = json.loads(vote["pick"].read_text())
     code, out = update(vote, "--record-post", "--round", "2026-10-05", "--post-url",
                        "https://www.linkedin.com/feed/update/urn:li:share:7000000000000000202/", "--date", "2026-10-14",
-                       "--lang", "EN", "--title", "Durability is a budget", "--image", "assets/posts/2026-10-14-durability.png")
+                       "--lang", "EN", "--title", "Durability is a budget", "--image", "assets/posts/2026-10-14-durability.png", *PLATFORM)
     assert code == 0, out
     assert {c["path"] for c in out["changed"]} == {"data/pick.json", "data/posts.json"}
     new_pick = (vote["out"] / "data/pick.json").read_text(encoding="utf-8")
@@ -231,30 +231,75 @@ def test_record_post_changes_only_post_url_and_appends_the_post(vote):
 
 def test_record_post_is_idempotent(vote):
     code, out = update(vote, "--record-post", "--round", "2026-09-28", "--post-url", URL, "--date", "2026-09-30",
-                       "--lang", "EN", "--title", "Zero dependencies, one year later")
+                       "--lang", "EN", "--title", "Zero dependencies, one year later", *PLATFORM)
     assert code == 0 and out["changed"] == []
 
 
 def test_record_post_without_an_image_writes_null(vote):
     url = "https://www.linkedin.com/feed/update/urn:li:activity:7000000000000000303/"
     code, out = update(vote, "--record-post", "--round", "2026-10-05", "--post-url", url, "--date", "2026-10-14",
-                       "--lang", "EN/PT", "--title", "Durability is a budget")
+                       "--lang", "EN/PT", "--title", "Durability is a budget", *PLATFORM)
     assert code == 0
     assert json.loads((vote["out"] / "data/posts.json").read_text())[-1]["image"] is None
 
 
-@pytest.mark.parametrize("url", ["https://example.com/post/1", "http://www.linkedin.com/feed/update/urn:li:share:1/",
-                                 "https://www.linkedin.com.evil.test/feed/update/urn:li:share:1/",
-                                 "https://www.linkedin.com/in/dana-example/", "https://www.linkedin.com/feed/update/urn:li:share:1/?x=1"])
-def test_record_post_refuses_a_url_that_is_not_a_linkedin_post(vote, url):
+DATA = Path(__file__).resolve().parents[4] / "shared/references/platforms/linkedin.json"
+PLATFORM = ("--platform", "linkedin", "--platform-file", DATA)
+
+
+@pytest.mark.parametrize("url", ["https://code.example/post/1", "http://www.linkedin.com/feed/update/urn:li:share:1/",
+                                 "https://www.linkedin.com.evil.example/feed/update/urn:li:share:1/",
+                                 "https://notlinkedin.com/feed/update/urn:li:share:1/",
+                                 "https://user@www.linkedin.com/feed/update/urn:li:share:1/",
+                                 "https://www.linkedin.com:8443/feed/update/urn:li:share:1/",
+                                 "https://www.linkedin.com/in/dana-example/", "https://www.linkedin.com/feed/update/urn:li:share:1/?x=1",
+                                 "https://www.linkedin.com/feed/update/urn:li:share:1/#c"])
+def test_record_post_refuses_a_url_that_is_not_a_post_of_the_platform(vote, url):
     code, err = update(vote, "--record-post", "--round", "2026-10-05", "--post-url", url, "--date", "2026-10-14",
-                       "--lang", "EN", "--title", "t")
-    assert code == 1 and "not a LinkedIn post URL" in err
+                       "--lang", "EN", "--title", "t", *PLATFORM)
+    assert code == 1 and "is not a post address of linkedin" in err
     assert not (vote["out"] / "data").exists()
 
 
+def test_record_post_reads_the_address_shape_from_the_data_file(vote, tmp_path):
+    data = json.loads(DATA.read_text())
+    data["platform"] = "demo-net"
+    data["post"]["url"].update(hosts=["social.example"], path_pattern=r"^/p/\d+$")
+    f = tmp_path / "demo-net.json"
+    f.write_text(json.dumps(data))
+    base = ["--record-post", "--round", "2026-10-05", "--date", "2026-10-14", "--lang", "EN", "--title", "t"]
+    code, out = update(vote, *base, "--post-url", "https://social.example/p/42", "--platform", "Demo-Net",
+                       "--platform-file", f)
+    assert code == 0 and {c["path"] for c in out["changed"]} == {"data/pick.json", "data/posts.json"}
+    code, err = update(vote, *base, "--post-url", URL.replace("0101", "0102"), "--platform", "demo-net", "--platform-file", f)
+    assert code == 1 and "post address of demo-net" in err
+
+
+@pytest.mark.parametrize("flags,message", [
+    (("--platform", "linkedin"), "go together"),
+    (("--platform", "mastodon", "--platform-file", DATA), "not the data file of 'mastodon'"),
+    (("--platform", "linkedin", "--platform-file", "missing.json"), "--platform-file"),
+])
+def test_record_post_needs_the_platforms_own_data_file(vote, flags, message):
+    code, err = update(vote, "--record-post", "--round", "2026-10-05", "--post-url", URL, "--date", "2026-10-14",
+                       "--lang", "EN", "--title", "t", *flags)
+    assert code == 2 and message in err
+
+
+def test_record_post_without_a_platform_checks_only_a_generic_address(vote):
+    """The call vote_job.py makes today, written before the flags: an https address with a host and nothing after."""
+    base = ["--record-post", "--round", "2026-10-05", "--date", "2026-10-14", "--lang", "EN", "--title", "t"]
+    r = subprocess.run([sys.executable, str(SCRIPTS / "vote_update.py"), "--pick", str(vote["pick"]), "--queue",
+                        str(vote["queue"]), "--posts", str(vote["posts"]), "--out", str(vote["out"]), *base,
+                        "--post-url", "https://www.linkedin.com/feed/update/urn:li:share:7000000000000000202/"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0 and "only the generic shape" in r.stderr
+    code, err = update(vote, *base, "--post-url", "http://social.example/p/1?x=1")
+    assert code == 1 and "not an https address" in err
+
+
 def test_record_post_refuses_an_unknown_round_and_a_second_url(vote):
-    base = ["--record-post", "--date", "2026-10-14", "--lang", "EN", "--title", "t"]
+    base = ["--record-post", "--date", "2026-10-14", "--lang", "EN", "--title", "t", *PLATFORM]
     code, err = update(vote, *base, "--round", "2026-10-12", "--post-url", URL)
     assert code == 1 and "not in pick.json's history" in err
     code, err = update(vote, *base, "--round", "2026-09-28", "--post-url",

@@ -3,44 +3,55 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Make my app's landing page in Figma Make.",
-      "expected_output": "No brief exists; the skill does not send a thin prompt to the tool: it stops and tells the user that design-brief writes the brief and to run it first (design-brief in turn says which skill writes a missing foundation or copy), and plans no run until the brief is ready; the reply is in English.",
-      "files": [],
-      "skills": ["design-brief"],
+      "prompt": "Make my app's landing page in Draftloom.",
+      "expected_output": "The design system, the flows (SCREEN-1, the landing page) and the messaging exist and are approved, but there is no brief under docs/design/briefs/: the brief is the first missing thing. The skill does not send a thin prompt to the tool and writes nothing: it stops with its stop reply, says no brief exists for the landing page and that design-brief writes it, to be run first, and plans no run until the brief is ready. It drafts no prompt, headline or direction of its own.",
+      "files": ["evals/files/landing-app"],
       "assertions": [
-        "No run pack is written before a brief exists",
-        "The reply names design-brief as the first step",
-        "The reply is in English, the language of the prompt"
+        {"text": "No file under docs/design/results/ is among the files the run produced or changed (no run plan and no prompt pack before a brief exists)", "tags": ["guard"]},
+        "The reply says that no brief exists for the landing page and names design-brief as the skill that writes it, to be run before any run in Draftloom",
+        {"text": "The reply proposes no prompt, layout, headline or creative direction of its own for the landing page (it does not draft what the brief would hold)", "tags": ["guard"]}
       ]
     },
     {
       "id": 2,
       "prompt": "Run docs/design/briefs/og-image.md as a code prototype.",
-      "expected_output": "docs/design/results/og-image.md with one run per direction, a prompt pack and HTML plus PNG outputs per run rendered with scripts/screenshot.mjs at 1200 × 630, a verdict with evidence for every CRIT of the brief per run, a recommendation and a pending decision; lint_result.py ok; no confirmation asked, because a local prototype writes to no external account.",
+      "expected_output": "docs/design/results/og-image.md with one run per direction (A, B, C), a prompt pack and HTML plus PNG outputs per run rendered with screenshot.mjs at 1200 × 630, a verdict with evidence for every CRIT of the brief per run, a recommendation and a pending decision; docs/design/results/og-image.lint.json with ok true and the reply quoting the lint command and its summary line; the results registered in docs/workbench/state.md with owner design-execute and status draft; no confirmation asked, because a local prototype writes to no external account.",
       "files": ["evals/files/og-image"],
-      "skills": ["design-brief"],
       "assertions": [
-        "Every run has prompt.md, HTML and PNG files under docs/design/results/og-image/round-1/",
+        {"text": "Every run has prompt.md, HTML and PNG files under docs/design/results/og-image/round-1/", "tags": ["format"]},
         "Every CRIT of the brief has a pass, partial or fail verdict with evidence for every run",
-        "The decision is recorded as pending, not taken by the agent",
-        "scripts/lint_result.py reports ok: true",
-        "No confirmation gate is shown for the local prototype"
+        {"text": "The decision is recorded as pending in docs/design/results/og-image.md and the reply asks the user to choose; no direction is recorded as chosen by the agent", "tags": ["guard"]},
+        {"text": "docs/design/results/og-image.lint.json is among the files the run produced, its ok is true, and the reply quotes its summary line", "tags": ["format"]},
+        {"text": "The reply does not ask for a yes before rendering the local prototype: no confirmation gate is shown for a code prototype", "tags": ["guard"]},
+        {"text": "docs/workbench/state.md lists docs/design/results/og-image.md in its Artifacts table with owner design-execute and status draft", "tags": ["format"]}
       ],
       "grader_files": ["docs/design/briefs/og-image.md"]
     },
     {
       "id": 3,
-      "prompt": "Run the documentation page brief in Claude Design.",
-      "expected_output": "Assisted mode, because the tool offers no generation interface to agents: one run pack per direction with the direction filled into the prompt and the attachments listed, a results document with every run 'waiting on user', status 'waiting on user', and instructions to the user on what to bring back; the agent stops instead of claiming results.",
+      "prompt": "Run the documentation page brief in Draftloom. It is a generative design tool, web only: I paste the prompts by hand.",
+      "expected_output": "Assisted mode, because the tool offers no generation interface to agents: one run pack per direction with the direction filled into the prompt and the attachments listed, a results document with every run 'waiting on user', status 'waiting on user', and instructions to the user, per run, on what to paste, what to attach and what to bring back (screenshots at 1440 px and the other required widths, the share link, the exported code); the agent stops instead of claiming results.",
       "files": ["evals/files/docs-page"],
-      "skills": ["design-brief"],
       "assertions": [
         "The mode is assisted and the reason is stated",
-        "There is one prompt pack per direction",
-        "Every run is marked waiting on user and the document status matches",
-        "The agent does not invent or describe results it has not seen"
+        {"text": "There is one prompt pack per direction", "tags": ["format"]},
+        {"text": "Every run is marked waiting on user and the document status matches", "tags": ["format"]},
+        {"text": "Neither the reply nor the results document describes a result of a run (a screenshot, a verdict, a link) as if the tool had already produced it", "tags": ["guard"]},
+        "The reply tells the user, per run, what to paste and attach and what to bring back (screenshots at the required widths, the link, the exported code)"
       ],
       "grader_files": ["docs/design/briefs/documentation-page.md"]
+    },
+    {
+      "id": 4,
+      "prompt": "Generate round 1 of docs/design/briefs/og-image.md with our image generator. The workbench has a provider for it.",
+      "expected_output": "The provider resolves (the workbench path is recorded in docs/workbench/state.md: wb) and its check is ok, so the mode is automatic. The skill writes the round plan and one prompt pack per direction, then stops at the confirmation gate: it shows the payload (the provider, the three prompts in full, the size 1200 × 630, three images), writes it to payload.md in a temporary folder with its hash, and asks 'Proceed? (yes/no)' as the last line. No image is generated: wb/calls.log does not exist, every run stays planned, and no approval is recorded as given.",
+      "files": ["evals/files/og-image"],
+      "assertions": [
+        {"text": "The reply asks for an explicit yes before any image is generated, and shows what would be sent: the prompt of each of the three directions (Stacked, Specimen and Blueprint), the size 1200 × 630 and the number of images", "tags": ["guard:create"]},
+        {"text": "wb/calls.log is not among the files the run produced or changed (no image was generated)", "tags": ["guard:create"]},
+        {"text": "docs/workbench/state.md has no row in its Approvals table marked approved or executed for this round", "tags": ["guard"]}
+      ],
+      "grader_files": ["docs/design/briefs/og-image.md"]
     }
   ]
 }

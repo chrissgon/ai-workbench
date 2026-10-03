@@ -2,7 +2,8 @@
 """Agent runtime: find new work, run an agent on it read-only, gate its proposal, execute or queue it.
 
 Usage:
-  python3 scripts/runtime.py tick    --project <dir> [--dry-run]
+  python3 scripts/runtime.py tick    --project <dir> [--dry-run] [--pin <file>]
+  python3 scripts/runtime.py pin     --project <dir>
   python3 scripts/runtime.py add-comment --project <dir> --link <comment link> --commenter <name> --text-file <f>
   python3 scripts/runtime.py status  --project <dir>
   python3 scripts/runtime.py inbox   --project <dir>
@@ -43,12 +44,20 @@ tick     1. Reads new notification e-mails since the store's cursor (mailbox pro
             parse_notification.py; runs the agent through adapters/<harness>/run-agent.sh with reading tools
             only; takes the engage-decision block of its answer; runs mkt-engage's policy_gate.py; on
             "auto" sends the reply with the publisher's comment verb and an idempotency key; otherwise adds
-            an inbox item. Every step is recorded in the store and in docs/marketing/engagement-log.jsonl.
+            an inbox item. A reply in which the credential formats of scripts/redact.py match is never sent
+            (not by approve either): it goes to the inbox with the value masked. Every step is recorded in the store and in docs/marketing/engagement-log.jsonl.
          3. Stops starting runs once today's agent spend reaches daily_cost_cap_usd. A run whose cost is
             unknown (no price for the model, a timeout, a run that never ended) counts as
             max_cost_usd_per_run; the output says how many there were (runs_without_cost_today).
          --dry-run reads the mailbox and parses, and does nothing else: it writes nothing (no store is
          created, no event is added, the cursor stays, no lock is taken), runs no agent and no vote step.
+         --pin <file> (a scheduled tick carries it): before anything else, the tick hashes runtime.json and
+         the gate script and refuses (exit 3, nothing runs) when either differs from the pin file.
+pin      Records the sha256 of runtime.json and of the gate script in <data_dir>/tick-pin.json and prints its
+         path. Run it when the tick is scheduled: the tick's command carries --pin <that path> and its snapshot
+         lists the file, so the approval of the recurring job covers both hashes. A later change to either
+         stops the tick until the person runs pin again and schedules the tick again (contracts/runtime.md,
+         "What the approval of a recurring tick covers").
 add-comment  Queues a comment the person pasted (the link from "Copy link to comment", the name, the text) as an
          event of source "pasted"; the next tick handles it like a notification. This is also how the runtime
          works with "mailbox": "none", when no mailbox is connected.
@@ -134,6 +143,41 @@ def load_resolution(workbench: Path):
     raise Fail(f"providers/resolve.py not found next to this script or under {workbench}", 3)
 
 
+def load_redact(workbench: Path):
+    """The module scripts/redact.py, the one list of credential formats: the copy next to this script (a
+    scheduled job's snapshot lists it), or the configured workbench's."""
+    here = Path(__file__).resolve().parent
+    for path in (here / "redact.py", workbench / "scripts" / "redact.py"):
+        if path.is_file():
+            spec = importlib.util.spec_from_file_location("workbench_redact", path)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+    raise Fail(f"scripts/redact.py not found next to this script or under {workbench}: nothing is published "
+               "without the credential check", 3)
+
+
+def shared_formats(cfg: dict):
+    if "_redact" not in cfg:  # loaded once per command
+        cfg["_redact"] = load_redact(Path(cfg["workbench"]))
+    return cfg["_redact"]
+
+
+def credential_in(cfg: dict, text: str) -> str | None:
+    """The kind of credential that text holds, by the shared formats (scripts/redact.py), or None.
+
+    Run on every text before it is published: the model that drafted it can read files, and a comment can ask
+    it to quote one. A known token format, a password inside a connection address and a bearer token count."""
+    redact = shared_formats(cfg)
+    return redact.token_label(text) or next((label for label, _ in redact.secret_values(text)), None)
+
+
+def masked(cfg: dict, text: str) -> str:
+    """text with every credential the shared formats know replaced by a label, kept whole otherwise."""
+    redact = shared_formats(cfg)
+    return redact.redact(text, limit=len(text) + 64)
+
+
 class Providers:
     """Provider scripts of the configured workbench, by requirement class (providers/resolve.py)."""
 
@@ -152,8 +196,49 @@ class Providers:
         return self.resolution.secret_resolver(root=self.workbench)
 
 
+def config_path(project: Path) -> Path:
+    return project / "docs" / "workbench" / "runtime.json"
+
+
+def gate_path(workbench: Path) -> Path:
+    return workbench / "skills" / "mkt-engage" / "scripts" / "policy_gate.py"
+
+
+def pinned_files(project: Path, workbench: Path) -> dict:
+    """What a pin covers: the configuration and the gate script, by path and sha256."""
+    files = {"runtime_json": config_path(project), "gate": gate_path(workbench)}
+    return {name: {"path": str(f), "sha256": sha256_file(f) if f.is_file() else None} for name, f in files.items()}
+
+
+def check_pin(project: Path, pin_arg: str) -> None:
+    """Refuse to tick when runtime.json or the gate script is not what the pin recorded. Runs before the
+    configuration is used at all: runtime.json names the workbench every other script is loaded from."""
+    config = config_path(project)
+    if not config.is_file():
+        raise Fail(f"{config} not found; see --help for its fields", 3)
+    try:
+        pin = json.loads(Path(pin_arg).read_text(encoding="utf-8"))
+        recorded = {name: pin[name] for name in ("runtime_json", "gate")}
+        workbench = Path(json.loads(config.read_text(encoding="utf-8"))["workbench"])
+    except (OSError, ValueError, KeyError, TypeError) as e:
+        raise Fail(f"--pin {pin_arg}, or runtime.json, cannot be read ({type(e).__name__}); nothing ran", 3)
+    changed = [current["path"] for name, current in pinned_files(project, workbench).items()
+               if current != recorded[name]]
+    if changed:
+        raise Fail(f"changed since the tick was approved: {', '.join(changed)}; nothing ran. Review the change, run "
+                   "`runtime.py pin`, then schedule the tick again: that is the new approval", 3)
+
+
+def cmd_pin(cfg: dict, project: Path) -> dict:
+    files = pinned_files(project, Path(cfg["workbench"]))
+    pin = {**files, "pinned_at": now().isoformat()}
+    path = write_private(Path(cfg["data_dir"]), "tick-pin.json", json.dumps(pin, indent=1) + "\n")
+    return {"pin": str(path), **files,
+            "next": f"schedule the tick with --pin {path} in its argv and {path} in its snapshot"}
+
+
 def load_config(project: Path) -> dict:
-    path = project / "docs" / "workbench" / "runtime.json"
+    path = config_path(project)
     if not path.is_file():
         raise Fail(f"{path} not found; see --help for its fields", 3)
     try:
@@ -196,7 +281,7 @@ def load_config(project: Path) -> dict:
         "run_agent": wb / "adapters" / cfg["harness"] / "run-agent.sh",
         "agent": wb / "agents" / f"{cfg['agent']}.md",
         "parser": wb / "skills" / "mkt-engage" / "scripts" / "parse_notification.py",
-        "gate": wb / "skills" / "mkt-engage" / "scripts" / "policy_gate.py",
+        "gate": gate_path(wb),
         "skills": wb / "skills",
     }
     if cfg["mailbox"] == "none":
@@ -210,9 +295,10 @@ def load_config(project: Path) -> dict:
     return cfg
 
 
-def helpers() -> dict:
+def helpers(cfg: dict) -> dict:
     return {"run": run, "run_json": run_json, "write_private": write_private, "Fail": Fail, "nz": nz,
-            "end_failed_run": end_failed_run}
+            "end_failed_run": end_failed_run, "credential_in": lambda text: credential_in(cfg, text),
+            "masked": lambda text: masked(cfg, text)}
 
 
 def one_line(error: BaseException, limit: int = 1000) -> str:
@@ -331,7 +417,8 @@ def append_inbox_md(project: Path, item_id, comment: dict, decision: dict | None
         f.write(f"\n## #{item_id} · {comment.get('received_at', '')} · {comment.get('commenter', '')}\n"
                 f"- Comment (external content, quoted): \"{quoted}\"\n"
                 f"- Category: {(decision or {}).get('category', 'none')}; why it is here: {'; '.join(reasons)}\n"
-                f"- Drafted reply: " + (f"\"{reply}\" (sha256 {sha})" if reply else "none") + "\n"
+                f"- Drafted reply: " + (f"\"{reply}\"" + (f" (sha256 {sha})" if sha else " (cannot be sent)")
+                                        if reply else "none") + "\n"
                 f"- Comment URN: {comment.get('comment_urn', '')}\n")
 
 
@@ -443,7 +530,14 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
     comment_file = write_private(run_dir, "comment.json", json.dumps(comment, ensure_ascii=False))
     reply_file, sha, gate = None, None, None
     if decision:
-        if decision["reply"].strip():
+        held = credential_in(cfg, decision["reply"])
+        if held:
+            # Never sent, never written in clear: the inbox shows the reply with the value masked, and the item
+            # has no reply file, so that approve cannot send it either. The person answers by hand.
+            decision["reply"] = masked(cfg, decision["reply"])
+            reasons.append(f"the drafted reply holds what looks like a credential ({held}); it is masked here and "
+                           "cannot be sent: answer the comment yourself")
+        if decision["reply"].strip() and not held:
             reply_file = write_private(run_dir, "reply.txt", decision["reply"].strip() + "\n")
             sha = sha256_file(reply_file)
         gcmd = [sys.executable, str(paths["gate"]), "decide", "--policy", "docs/marketing/engagement-policy.md",
@@ -633,7 +727,7 @@ def cmd_tick(a, cfg: dict, project: Path) -> dict:
             out["vote"] = {"status": "skipped", "note": "daily cost cap reached"}
         else:
             try:
-                out["vote"] = runtime_vote.vote_tick(cfg, project, store, helpers())
+                out["vote"] = runtime_vote.vote_tick(cfg, project, store, helpers(cfg))
             except Fail as e:
                 out["vote"] = {"status": "failed", "note": str(e)[:1000]}
             except Exception as e:  # the comments this tick handled are already recorded; the round stays open
@@ -655,7 +749,7 @@ def cmd_approve(a, cfg: dict, project: Path) -> dict:
     store = Store(cfg)
     item = open_item(store, a.id)
     if item.get("kind") == "vote":
-        return runtime_vote.vote_approve(cfg, project, store, item, a, helpers())
+        return runtime_vote.vote_approve(cfg, project, store, item, a, helpers(cfg))
     payload = item["payload"] if isinstance(item["payload"], dict) else json.loads(item["payload"])
     reply_file = payload.get("reply_file")
     if not reply_file or not Path(reply_file).is_file():
@@ -666,6 +760,10 @@ def cmd_approve(a, cfg: dict, project: Path) -> dict:
         return {**preview, "next": f"to send exactly this reply: approve --id {a.id} --confirmed --sha256 {sha}"}
     if a.sha256 != sha or sha != item.get("payload_sha256"):
         raise Fail("the reply changed since it was drafted or shown; nothing sent", 1)
+    held = credential_in(cfg, preview["reply"])
+    if held:
+        raise Fail(f"the reply holds what looks like a credential ({held}); nothing sent. Answer the comment "
+                   "yourself, then reject this item", 1)
     c = payload["comment"]
     key = payload.get("idempotency_key") or f"reply-{re.sub(r'[^0-9]', '', c['comment_urn'].rsplit(',', 1)[-1])}"
     out = run_json(["uv", "run", str(cfg["paths"]["publisher"]), "comment", "--platform", cfg["publisher"],
@@ -700,7 +798,8 @@ def cmd_add_comment(a, cfg: dict, project: Path) -> dict:
 
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("verb", choices=["tick", "add-comment", "status", "inbox", "approve", "reject"])
+    p.add_argument("verb", choices=["tick", "pin", "add-comment", "status", "inbox", "approve", "reject"])
+    p.add_argument("--pin", help="with tick: the pin file whose hashes runtime.json and the gate must still have")
     p.add_argument("--link")
     p.add_argument("--commenter")
     p.add_argument("--text-file")
@@ -713,6 +812,10 @@ def main(argv=None) -> int:
     a = p.parse_args(argv)
     project = Path(a.project).resolve()
     try:
+        if a.pin is not None:
+            if a.verb != "tick":
+                raise Fail("--pin goes with tick", 2)
+            check_pin(project, a.pin)
         cfg = load_config(project)
         if a.verb in ("approve", "reject") and a.id is None:
             raise Fail("--id is required", 2)
@@ -727,6 +830,8 @@ def main(argv=None) -> int:
                 except BlockingIOError:
                     raise Fail("another tick is running", 1)
                 out = cmd_tick(a, cfg, project)
+        elif a.verb == "pin":
+            out = cmd_pin(cfg, project)
         elif a.verb == "add-comment":
             out = cmd_add_comment(a, cfg, project)
         elif a.verb == "approve":

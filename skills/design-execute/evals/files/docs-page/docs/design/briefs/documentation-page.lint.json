@@ -1,16 +1,19 @@
 {
-  "ok": true,
+  "script": "lint_brief.py",
   "date": "2026-10-01",
-  "file": "docs/design/briefs/documentation-page.md",
-  "type": "screen",
-  "values": "inline",
-  "screen": "SCREEN-2",
-  "flows": "docs/design/flows.md",
-  "messaging": null,
+  "arguments": {
+    "--file": "docs/design/briefs/documentation-page.md",
+    "--type": "screen",
+    "--values": "inline",
+    "--flows": "docs/design/flows.md",
+    "--screen": "SCREEN-2"
+  },
+  "ok": true,
+  "summary": "lint_brief ok: 0 errors; 13 hex colours, 3 directions, 7 criteria",
+  "errors": [],
   "counts": {
     "hex_colours": 13,
     "directions": 3,
     "criteria": 7
-  },
-  "errors": []
+  }
 }

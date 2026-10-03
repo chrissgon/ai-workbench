@@ -114,3 +114,65 @@ def test_sensitive_comment_is_locked(proj):
 
 def test_other_language_goes_to_the_inbox(proj):
     assert decide(proj, category="thanks_or_praise", reply="Valeu, Sam.", sources=None, language="PT")["decision"] == "inbox"
+
+
+def gate(proj, *args):
+    return subprocess.run([sys.executable, str(GATE), "decide", "--policy", "docs/marketing/engagement-policy.md",
+                           "--comment-file", "comment.json", "--category", "thanks_or_praise", "--language", "EN",
+                           *args], capture_output=True, text=True, cwd=proj, timeout=60)
+
+
+def test_a_missing_reply_file_exits_2_without_a_traceback(proj):
+    r = gate(proj, "--reply-file", "missing.txt")
+    assert r.returncode == 2 and "--reply-file" in r.stderr and "Traceback" not in r.stderr and r.stdout == ""
+
+
+def test_the_lock_beside_the_script_runs_without_a_skills_folder(proj):
+    (proj / "reply.txt").write_text("Thanks, Kim.")
+    (proj / "comment.json").write_text(json.dumps({
+        "comment_id": "urn:li:comment:(urn:li:activity:1,3)", "post_id": "urn:li:activity:1",
+        "commenter": "Kim", "text": "Nice! What's your salary?"}))
+    r = gate(proj, "--reply-file", "reply.txt")
+    out = json.loads(r.stdout)
+    assert r.returncode == 0 and any("sensitive topics" in x for x in out["reasons"]), r.stderr
+
+
+@pytest.mark.parametrize("names", [("comment_id", "post_id"), ("comment_urn", "post_urn")])
+def test_the_comment_and_the_log_are_read_under_both_names(proj, names):
+    cid, pid = names
+    (proj / "comment.json").write_text(json.dumps({
+        cid: "urn:li:comment:(urn:li:activity:1,2)", pid: "urn:li:activity:1", "commenter": "Sam",
+        "text": "How big is tinykv?"}))
+    assert decide(proj)["decision"] == "auto"
+    for logged in (("comment_urn", "post_urn"), ("comment_id", "post_id")):
+        (proj / "docs/marketing/engagement-log.jsonl").write_text(json.dumps({
+            "action": "auto_replied", logged[0]: "urn:li:comment:(urn:li:activity:1,2)", logged[1]: "urn:li:activity:1",
+            "commenter": "Sam", "logged_at": "2026-09-30T10:00:00+00:00"}) + "\n")
+        reasons = " ".join(decide(proj)["reasons"])
+        assert "already answered" in reasons and "already got an automatic reply" in reasons
+
+
+def test_a_comment_without_its_identifier_is_refused(proj):
+    (proj / "comment.json").write_text(json.dumps({"commenter": "Sam", "text": "hi", "post_id": "p"}))
+    (proj / "reply.txt").write_text("Thanks.")
+    r = gate(proj, "--reply-file", "reply.txt")
+    assert r.returncode == 2 and "comment_id" in r.stderr
+
+
+@pytest.mark.parametrize("reply", ["Thanks! Slides at short.example/db-course", "See https://code.example/x",
+                                   "www.example.org has it", "It is on tinykv.dev"])
+def test_one_link_pattern_finds_every_form(proj, reply):
+    out = decide(proj, category="thanks_or_praise", reply=reply, sources=None)
+    assert "reply: contains a link" in out["reasons"]
+
+
+def test_a_file_name_is_not_a_link(proj):
+    out = decide(proj, category="thanks_or_praise", reply="Thanks, it is all in notes.md.", sources=None)
+    assert "reply: contains a link" not in out["reasons"]
+
+
+def test_the_link_pattern_is_the_one_of_check_post():
+    gate_src = GATE.read_text()
+    post_src = (REPO / "shared/scripts/check_post.py").read_text()
+    pattern = lambda src: src[src.index("LINK = re.compile("):].split(", re.I)", 1)[0]
+    assert pattern(gate_src) == pattern(post_src)

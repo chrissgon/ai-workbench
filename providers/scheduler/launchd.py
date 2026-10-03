@@ -85,6 +85,11 @@ TAIL_BYTES = 4096
 RUNS_MAX_BYTES = 4 * 1024 * 1024  # runs.jsonl is rotated to runs.1.jsonl past this size
 
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
+# The one key of a command's output the scheduler reads, for the job record and the notification: the
+# address of a published post, under the name providers/CONTRACT.md gives it ("Verbs per class", the
+# "Prints" column of publisher:<platform>). The scheduler depends on the contract's name, never on what one
+# implementation happens to print; a test compares this constant with that column.
+ADDRESS_KEY = "post_url"
 
 HELP_EPILOG = """\
 verbs:
@@ -124,7 +129,9 @@ command file (JSON):
   "snapshot" is required. Every argv entry after argv[0] that names an existing
   file, bare or as --flag=<path>, absolute or relative to cwd, must be listed in
   it (as an absolute path) and is replaced by the job's copy of that file; a file
-  argument left out makes the job refused. "outputs" (optional) lists absolute
+  argument left out makes the job refused, and so does a file named in another
+  spelling (-f<path>, key=<path>, a list joined by ',', ':' or ';'), which the
+  scheduler cannot swap for a copy. "outputs" (optional) lists absolute
   paths the command writes and does not read; they are exempt. argv[0] is resolved to an absolute
   path at schedule time and hashed. Directories are not snapshotted: files the
   command reads from cwd or from a directory argument are not verified.
@@ -219,12 +226,15 @@ def launchctl() -> str:
 
 
 def run_launchctl(*args: str) -> subprocess.CompletedProcess | None:
-    """Run launchctl with a timeout; None when it timed out."""
+    """Run launchctl with a timeout; None when it timed out or could not be started."""
     try:
         return subprocess.run([launchctl(), *args], capture_output=True, text=True,
                               timeout=LAUNCHCTL_TIMEOUT_SECONDS)
     except subprocess.TimeoutExpired:
         log(f"launchctl {args[0]} timed out after {LAUNCHCTL_TIMEOUT_SECONDS} s")
+        return None
+    except OSError as exc:
+        log(f"launchctl {args[0]} could not be started: {type(exc).__name__}")
         return None
 
 
@@ -367,12 +377,46 @@ def argument_file(value: str, cwd: str) -> Path | None:
         return None
 
 
+def unverified_file(arg: str, cwd: str) -> Path | None:
+    """A file an argument names in a spelling this provider does not understand, or None.
+
+    Two spellings are understood, and swapped for the verified copy: the argument is the path, or it is
+    '--flag=<path>'. A path glued to a short flag ('-f/abs/file'), a 'key=<path>' pair, and a list of paths
+    joined by ',', ':' or ';' would reach the command as written: the job would read the live file at its
+    slot, which nobody approved. A piece counts when it is the absolute path of an existing file; relative
+    pieces count only when every piece of the argument is an existing file (a list of files), so that a
+    sentence which happens to hold a file's name is not taken for one."""
+    prefix, value = split_argument(arg)
+    if not prefix and arg.startswith("-") and not arg.startswith("--") and len(arg) > 2:
+        glued = argument_file(arg[2:], cwd)
+        if glued is not None:
+            return glued
+    if not any(sep in value for sep in "=,:;"):
+        return None
+    pieces = [piece for piece in value.replace("=", ",").replace(":", ",").replace(";", ",").split(",") if piece]
+    found = [argument_file(piece, cwd) for piece in pieces]
+    for piece, target in zip(pieces, found):
+        if target is not None and os.path.isabs(piece):
+            return target
+    if len(pieces) > 1 and all(target is not None for target in found):
+        return found[0]
+    return None
+
+
 def snapshot_argv(argv: list[str], cwd: str, copies: dict[Path, str], outputs: set[Path]) -> list[str]:
-    """Swap every file argument for its copy; refuse a file argument that has no copy."""
+    """Swap every file argument for its copy; refuse a file argument that has no copy, and one in a
+    spelling that cannot be swapped."""
     out = []
     for arg in argv:
         prefix, value = split_argument(arg)
         target = argument_file(value, cwd)
+        if target is None:
+            hidden = unverified_file(arg, cwd)
+            if hidden is not None:
+                raise ProviderError(
+                    f"the argument {arg!r} names the file {hidden} in a spelling the scheduler cannot verify; "
+                    "pass a file as an argument of its own or as --flag=<path>, and list it in the command "
+                    "file's snapshot", EXIT_USAGE)
         if target is None or (target in outputs and target not in copies):
             out.append(arg)
             continue
@@ -675,7 +719,7 @@ def finish(job: dict, status: str, **fields) -> int:
     job["status"] = status
     job["finished_at"] = iso(now())
     write_job(job)
-    summary = fields.get("post_url") or fields.get("reason") or f"exit {fields.get('exit_code')}"
+    summary = fields.get(ADDRESS_KEY) or fields.get("reason") or f"exit {fields.get('exit_code')}"
     notify(f"ai-workbench: {job['id']} {status}", summary)
     log(f"job {job['id']}: {status} ({summary})")
     # Unloading stops this process's launchd job, so it is the last thing done.
@@ -947,8 +991,8 @@ def run_one_shot(job: dict, folder: Path) -> tuple[str, dict]:
         fields["reason"] = outcome["reason"]
     try:
         output = json.loads((out or b"").decode("utf-8", errors="replace"))
-        if isinstance(output, dict) and output.get("post_url"):
-            fields["post_url"] = output["post_url"]
+        if isinstance(output, dict) and output.get(ADDRESS_KEY):
+            fields[ADDRESS_KEY] = output[ADDRESS_KEY]
     except ValueError:
         pass
     return outcome["status"], fields
@@ -959,6 +1003,14 @@ def cmd_check() -> int:
         raise ProviderError("launchd exists only on macOS")
     if not Path(launchctl()).exists():
         raise ProviderError(f"launchctl not found at {launchctl()}")
+    # Jobs are loaded into the user's own launchd domain, which exists only while the user has a graphical
+    # session: without it every schedule would fail at bootstrap. That is "not configured" (exit 3): the
+    # person has something to do, the same reading systemd.py gives an unreachable user manager.
+    probe = run_launchctl("print", domain())
+    if probe is None or probe.returncode != 0:
+        detail = "timed out or could not run" if probe is None else probe.stderr.strip()
+        raise ProviderError(f"the user's launchd domain is not reachable (launchctl print {domain()}: {detail}); "
+                            "log in to the Mac's desktop as this user, then try again", EXIT_NOT_CONFIGURED)
     print(json.dumps({
         "ready": True,
         "jobs_dir": str(home()),

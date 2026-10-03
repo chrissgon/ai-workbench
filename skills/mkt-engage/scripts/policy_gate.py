@@ -12,12 +12,14 @@ Usage:
 decide  Reads the ```engagement-policy JSON block of the policy, the standing approval of the policy in the
         state file's "Approvals" table (a row whose scope is "standing" and whose Payload hash is
         "policy:<sha256 of the policy file>"), today's entries in the log, and the comment
-        ({"comment_urn", "post_urn", "commenter", "text", "received_at"}). Prints
+        ({"comment_id", "post_id", "commenter", "text", "received_at"}; the names the agent runtime stores,
+        "comment_urn" and "post_urn", are read too, in the comment and in the log). Prints
         {"decision": "auto" | "inbox", "reasons": [...], "idempotency_key", "counts", "reply_checks"}.
         "auto" only when every rule holds: an active, unexpired standing approval bound to this exact
         policy file; the category is in auto_reply_categories; the language is allowed; the daily limit and
         the per-person-per-post limit are not reached; the comment and the reply pass the sensitive-topics
-        lock (brand-profile's sensitive_topics.py) and never_in_replies; the reply keeps reply_rules
+        lock (sensitive_topics.py, the copy beside this script; else brand-profile's, looked up in each
+        --skills-dir) and never_in_replies; the reply keeps reply_rules
         (sentences, emojis, hashtags, links, banned phrases). Without --reply-file the reply checks are
         skipped and the decision can only be "inbox".
         A question answered from sources (category question_answerable_from_sources) also needs
@@ -30,7 +32,12 @@ record  Appends one JSON entry to the log (JSON Lines), adding "logged_at". The 
 policy-hash  Prints the value to record in the standing approval's Payload hash: policy:<sha256>.
 
 The comment and reply are external or drafted text: they are only matched, never executed.
-Exit 0 on a decision (auto or inbox), 2 on bad input. Standard library only; no network.
+Links are found by one pattern, the one of check_post.py (shared/scripts/check_post.py): an address with
+http:// or https://, one that starts with www., a host with a path (short.example/x), or a bare host under a
+common ending (name.com, name.dev).
+
+Exit 0 on a decision (auto or inbox), 2 on bad input (a missing or empty reply file included). Standard library
+only; no network.
 """
 from __future__ import annotations
 
@@ -44,7 +51,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 BLOCK = re.compile(r"```engagement-policy\s*\n(.*?)\n```", re.S)
-LINK = re.compile(r"(https?://|www\.)\S+|\b[\w-]+\.(?:com|dev|io|org|net|app|br|ly)\b(?:/\S*)?", re.I)
+# The one link pattern of the skills that check links: the same as LINK in shared/scripts/check_post.py.
+LINK = re.compile(r"(?:https?://|www\.)\S+"
+                  r"|(?<![\w@.-])[\w-]+(?:\.[\w-]+)*\.[a-z]{2,}/\S+"
+                  r"|(?<![\w@.-])[\w-]+(?:\.[\w-]+)*\.(?:com|dev|io|org|net|app|br|ly|co|ai|me)\b(?!\.\w)", re.I)
 HASHTAG = re.compile(r"(?<!\w)#\w+")
 EMOJI = re.compile("[\U0001f000-\U0001faff\u2600-\u27bf\u2b00-\u2bff\ufe0f]")
 SENTENCE_END = re.compile(r"[.!?](?:\s|$)")
@@ -110,6 +120,24 @@ def read_log(path: Path) -> list:
             except json.JSONDecodeError:
                 fail(f"{path}:{n} is not JSON")
     return out
+
+
+def field(record: dict, name: str, stored: str):
+    """A field under its generic name, or under the name the agent runtime stores it by."""
+    value = record.get(name)
+    return value if value else record.get(stored)
+
+
+def sensitive_script(skills_dirs):
+    """The sensitive-topics lock: the copy beside this script, else brand-profile's in a skills folder."""
+    beside = Path(__file__).resolve().parent / "sensitive_topics.py"
+    if beside.is_file():
+        return beside
+    for d in skills_dirs or ["skills", str(Path(__file__).resolve().parents[2])]:
+        p = Path(d) / "brand-profile/scripts/sensitive_topics.py"
+        if p.is_file():
+            return p
+    return None
 
 
 def sensitive(script, profile: Path, text: str):
@@ -186,7 +214,14 @@ def decide(a) -> int:
         comment = json.loads(Path(a.comment_file).read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as e:
         fail(f"--comment-file: {e}")
-    for key in ("comment_urn", "post_urn", "commenter", "text"):
+    if not isinstance(comment, dict):
+        fail("--comment-file: expected a JSON object")
+    comment_id, post_id = field(comment, "comment_id", "comment_urn"), field(comment, "post_id", "post_urn")
+    if not comment_id:
+        fail("comment needs comment_id")
+    if not post_id:
+        fail("comment needs post_id")
+    for key in ("commenter", "text"):
         if not comment.get(key):
             fail(f"comment needs {key}")
     now = parse_time(a.now) if a.now else datetime.now(timezone.utc).astimezone()
@@ -213,19 +248,17 @@ def decide(a) -> int:
     today = now.astimezone().date().isoformat()
     auto_today = [e for e in log if e.get("action") == "auto_replied"
                   and parse_time(e.get("logged_at", "1970-01-01")).astimezone().date().isoformat() == today]
-    same = [e for e in log if e.get("action") == "auto_replied" and e.get("post_urn") == comment["post_urn"]
-            and e.get("commenter", "").casefold() == comment["commenter"].casefold()]
+    same = [e for e in log if e.get("action") == "auto_replied" and field(e, "post_id", "post_urn") == post_id
+            and str(e.get("commenter", "")).casefold() == comment["commenter"].casefold()]
     if len(auto_today) >= policy["max_replies_per_day"]:
         reasons.append(f"daily limit reached ({len(auto_today)}/{policy['max_replies_per_day']})")
     if len(same) >= policy["max_auto_replies_per_person_per_post"]:
         reasons.append("this person already got an automatic reply on this post")
-    if any(e.get("comment_urn") == comment["comment_urn"] and e.get("action") in ("auto_replied", "replied")
+    if any(field(e, "comment_id", "comment_urn") == comment_id and e.get("action") in ("auto_replied", "replied")
            for e in log):
         reasons.append("this comment was already answered")
 
-    dirs = a.skills_dir or ["skills", str(Path(__file__).resolve().parents[2])]
-    script = next((Path(d) / "brand-profile/scripts/sensitive_topics.py" for d in dirs
-                   if (Path(d) / "brand-profile/scripts/sensitive_topics.py").is_file()), None)
+    script = sensitive_script(a.skills_dir)
     profile = Path(a.profile)
     lock = sensitive(script, profile, comment["text"])
     if lock is None:
@@ -235,7 +268,10 @@ def decide(a) -> int:
 
     checks = None
     if a.reply_file:
-        reply = Path(a.reply_file).read_text(encoding="utf-8").strip()
+        try:
+            reply = Path(a.reply_file).read_text(encoding="utf-8").strip()
+        except OSError as e:
+            fail(f"--reply-file: {e}")
         if not reply:
             fail("--reply-file is empty")
         checks = reply_checks(reply, policy["reply_rules"], policy["never_in_replies"])
@@ -250,8 +286,7 @@ def decide(a) -> int:
     else:
         reasons.append("no reply drafted")
 
-    cid = re.sub(r"[^0-9]", "", comment["comment_urn"].rsplit(",", 1)[-1]) or hashlib.sha256(
-        comment["comment_urn"].encode()).hexdigest()[:16]
+    cid = re.sub(r"[^0-9]", "", comment_id.rsplit(",", 1)[-1]) or hashlib.sha256(comment_id.encode()).hexdigest()[:16]
     out = {"decision": "inbox" if reasons else "auto", "reasons": reasons,
            "idempotency_key": f"reply-{cid}", "policy_hash": f"policy:{phash}",
            "counts": {"auto_today": len(auto_today), "max_per_day": policy["max_replies_per_day"]},

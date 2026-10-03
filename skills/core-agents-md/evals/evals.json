@@ -4,16 +4,16 @@
     {
       "id": 1,
       "prompt": "Create an AGENTS.md for this project.",
-      "expected_output": "Detection is run; AGENTS.md is written in this turn with no question asked first; commands come from package.json scripts (build, test, test:e2e, lint, typecheck) and the install command from the lockfile; ESLint and Vitest are named from their configs; ARCHITECTURE.md is linked, not pasted; the audit passes and its output is shown; nothing is invented.",
+      "expected_output": "Detection is run; AGENTS.md is written in this turn with no question asked first; commands come from package.json scripts (build, test, test:e2e, lint, typecheck) and the install command from the lockfile; ESLint, Vitest, Playwright and TypeScript are named from their config files; ARCHITECTURE.md is linked, not pasted; the audit passes and its output is shown; nothing is invented.",
       "files": [
         "evals/files/new-project"
       ],
       "assertions": [
-        "Every command in the Commands table of the produced AGENTS.md exists in package.json scripts or derives from the lockfile",
+        "The Commands section of the produced AGENTS.md lists `bun install` and the five package scripts as `bun run build`, `bun run test`, `bun run test:e2e`, `bun run lint` and `bun run typecheck`, each in backticks, and no other command",
         "The produced AGENTS.md names ESLint and Vitest, and every other tool it names appears in package.json, in a config file name or in the lockfile name (no tool is invented)",
         "ARCHITECTURE.md is referenced by path and its content is not copied",
         "The response shows the audit script's result for the produced AGENTS.md, with ok: true",
-        "No section is left empty or with template placeholders"
+        "The produced AGENTS.md's first heading is the project's name from package.json (`@acme/widgets`), not `AGENTS.md`, and it has no section without a fact from a file: no Security, Commits, Pull requests or Working rules section"
       ],
       "grader_files": [
         "package.json",
@@ -21,7 +21,9 @@
         "eslint.config.js",
         "vitest.config.ts",
         "ARCHITECTURE.md",
-        "README.md"
+        "README.md",
+        "tsconfig.json",
+        "playwright.config.ts"
       ]
     },
     {
@@ -32,14 +34,23 @@
         "evals/files/project-with-tooling"
       ],
       "assertions": [
-        "The user is asked, with a recommendation, which INSTRUCTIONS.md conventions to carry over before they are written",
-        "INSTRUCTIONS.md still exists, unrenamed, after the skill runs",
-        "The workbench section is reported as unchanged by the audit",
+        {
+          "text": "The user is asked, with a recommendation, which INSTRUCTIONS.md conventions to carry over before they are written",
+          "tags": [
+            "guard"
+          ]
+        },
+        {
+          "text": "INSTRUCTIONS.md still exists, unrenamed, after the skill runs",
+          "tags": [
+            "guard"
+          ]
+        },
+        "In the produced AGENTS.md the block from `<!-- workbench:start -->` to `<!-- workbench:end -->` still holds exactly `## Working with the AI workbench` and `(section owned by core-project-init)`, and the report quotes the audit's `workbench_section: unchanged`",
         "`bun run tests` is replaced by an existing script and the change is listed in the report",
         "The reference to docs/ARCH.md is fixed or removed and listed in the report"
       ],
       "grader_files": [
-        "AGENTS.md",
         "INSTRUCTIONS.md",
         "package.json",
         "ARCHITECTURE.md"
@@ -59,7 +70,6 @@
         "The report lists each change made with its old and new value: `bun run tests` to a script that exists in package.json, and `docs/ARCH.md` to a path that exists (or its removal)"
       ],
       "grader_files": [
-        "AGENTS.md",
         "INSTRUCTIONS.md",
         "package.json",
         "ARCHITECTURE.md"

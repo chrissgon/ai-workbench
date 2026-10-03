@@ -1,4 +1,8 @@
 {
+  "skills/core-research/scripts/check_brief.py": {
+    "args": ["--file", "brief.md", "--today", "2026-10-02"],
+    "files": {"brief.md": "# Research: x\n\n- Status: limited\n- Search capability: none\n"}
+  },
   "skills/design-brief/scripts/lint_brief.py": {
     "args": [
       "--file",
@@ -11,6 +15,10 @@
     "files": {
       "brief.md": "# Brief\n"
     }
+  },
+  "skills/design-execute/scripts/lint_result.py": {
+    "args": ["--file", "results.md", "--brief", "brief.md"],
+    "files": {"results.md": "# Results\n", "brief.md": "# Brief\n"}
   },
   "skills/design-handoff/scripts/lint_handoff.py": {
     "args": [
@@ -25,6 +33,10 @@
       "handoff.md": "# Handoff\n",
       "flows.md": "# Flows\n"
     }
+  },
+  "skills/design-system/scripts/lint_design_system.py": {
+    "args": ["--file", "design-system.md", "--flows", "flows.md"],
+    "files": {"design-system.md": "# Design system\n", "flows.md": "# Flows\n"}
   },
   "skills/design-ux-flows/scripts/lint_flows.py": {
     "args": [

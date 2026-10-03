@@ -20,7 +20,7 @@ import pytest
 
 REPO = Path(__file__).resolve().parents[2]
 ON_SYSTEM_PYTHON = [
-    "scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py",
+    "scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py", "scripts/redact.py",
     "providers/resolve.py", "providers/store/sqlite.py",
     "providers/scheduler/launchd.py", "providers/scheduler/systemd.py",
     "skills/mkt-engage/scripts/policy_gate.py", "skills/mkt-engage/scripts/parse_notification.py",
@@ -31,7 +31,7 @@ ON_SYSTEM_PYTHON = [
     # The sources of the four above that are generated copies (shared/scripts/copies.json): a copy is adopted
     # from its source, so the source runs on the system interpreter too.
     "shared/scripts/check_post.py", "shared/scripts/contrast.py", "shared/scripts/voice_stats.py",
-    "shared/scripts/sensitive_topics.py",
+    "shared/scripts/sensitive_topics.py", "shared/scripts/redact.py",
 ]
 SYSTEM_PYTHON = (3, 9)
 REQUIRES = re.compile(r'^# requires-python = "([^"]+)"$', re.M)

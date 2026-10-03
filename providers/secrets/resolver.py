@@ -67,16 +67,17 @@ class Secret:
 
 REGISTRY: dict[str, Secret] = {s.name: s for s in (
     Secret("VCS_GITHUB_TOKEN",
-           "read (and, with a separate token, dismiss) Dependabot alerts",
+           "read (and, with a separate token, dismiss) Dependabot alerts; read one file of a repository",
            "fine-grained token, only the repositories concerned: \"Dependabot alerts: Read-only\" "
-           "(\"Read and write\" only in the separate token used to dismiss)",
+           "(\"Read and write\" only in the separate token used to dismiss); \"Contents: Read-only\" to read a "
+           "file of a private repository (read-file); commit-files uses no token",
            ("providers/vcs/github.py", ".github/workflows/dependabot-alerts.yml"),
            store_username="github", aliases=("GITHUB_TOKEN",),
            note="GITHUB_TOKEN is read last: a harness or CI may set its own, with other permissions"),
     Secret("LINKEDIN_ACCESS_TOKEN",
            "publish posts on LinkedIn",
            "OAuth scopes openid, profile and w_member_social (providers/publisher/auth.py)",
-           ("providers/publisher/linkedin.py",),
+           ("providers/publisher/linkedin.py", "providers/publisher/auth.py"),
            store_username="publisher-linkedin",
            set_local="uv run providers/publisher/auth.py --provider linkedin (writes the record after the browser consent)",
            note="the store holds a JSON record written by providers/publisher/auth.py "
@@ -94,7 +95,7 @@ REGISTRY: dict[str, Secret] = {s.name: s for s in (
     Secret("GMAIL_REFRESH_TOKEN",
            "read the user's Gmail (search and read messages, never change them)",
            "OAuth scope https://www.googleapis.com/auth/gmail.readonly only (providers/mailbox/auth.py)",
-           ("providers/mailbox/gmail.py",),
+           ("providers/mailbox/gmail.py", "providers/mailbox/auth.py"),
            store_username="mailbox-gmail",
            set_local="uv run providers/mailbox/auth.py --provider gmail (writes the record after the browser consent)",
            note="the store holds a JSON record written by providers/mailbox/auth.py (refresh_token, scope, "

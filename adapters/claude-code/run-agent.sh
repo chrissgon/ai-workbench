@@ -10,7 +10,11 @@
 # (--tools Read,Glob,Grep): it cannot write, run commands or fetch pages; it reads --project through
 # --add-dir and answers. No connectors or MCP servers are loaded (ENABLE_CLAUDEAI_MCP_SERVERS=false,
 # --strict-mcp-config) and only the run folder's settings apply (--setting-sources project,local).
-# --max-cost-usd becomes --max-budget-usd; --timeout-seconds (default 600) stops the run.
+# --max-cost-usd becomes --max-budget-usd; --timeout-seconds (default 600; 30 to 3600) stops the run: the
+# CLI runs in a session of its own, and its whole process group is ended (TERM, then KILL 5 s later) at the
+# limit and whenever the CLI returns, so nothing it started outlives the run. The system prompt names the
+# copied skills' SKILL.md files, which the model reaches with its reading tools. A skill's evals/ and
+# scripts/tests/ are not copied in.
 # Writes <out>/response.md, <out>/timing.json {total_tokens, duration_ms, cost_usd, exit_code},
 # <out>/raw.json and <out>/stderr.log. Exit 0 when the model answered, 1 otherwise, 2 on usage errors.
 set -euo pipefail
@@ -31,9 +35,11 @@ while [[ $# -gt 0 ]]; do
       MAX_COST="$2"; shift 2 ;;
     --timeout-seconds)
       need "$@"
-      [[ "$2" =~ ^[0-9]+$ && "$2" -ge 30 && "$2" -le 3600 ]] || { echo "Error: --timeout-seconds takes 30 to 3600." >&2; exit 2; }
+      # RUN_AGENT_TEST=1 (tests only) admits a limit under 30 seconds, so that the timeout can be tested quickly.
+      MIN_TIMEOUT=30; [[ "${RUN_AGENT_TEST:-}" == 1 ]] && MIN_TIMEOUT=1
+      [[ "$2" =~ ^[0-9]+$ && "$2" -ge "$MIN_TIMEOUT" && "$2" -le 3600 ]] || { echo "Error: --timeout-seconds takes 30 to 3600." >&2; exit 2; }
       TIMEOUT="$2"; shift 2 ;;
-    --help|-h) sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,19p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -48,12 +54,19 @@ chmod 700 "$OUT" "$CWD"
 for d in ${SKILLS[@]+"${SKILLS[@]}"}; do
   src="$(cd "$d" && pwd)"; dest="$CWD/.claude/skills/$(basename "$src")"
   cp -RL "$src" "$dest"
-  rm -rf "${dest:?}/evals"   # test cases and fixtures never reach the model
+  rm -rf "${dest:?}/evals" "${dest:?}/scripts/tests"   # test cases, fixtures and script tests never reach the model
 done
 WORKBENCH="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 [[ -d "$WORKBENCH/shared" ]] && cp -RL "$WORKBENCH/shared" "$CWD/.claude/shared"
 # The agent body without its YAML frontmatter.
 BODY="$(awk 'NR==1 && /^---$/ {fm=1; next} fm && /^---$/ {fm=0; next} !fm' "$AGENT")"
+# The model has reading tools only, so it reaches a skill by reading its file: the prompt says where each is.
+SKILL_LINES=""
+for d in ${SKILLS[@]+"${SKILLS[@]}"}; do
+  name="$(basename "$(cd "$d" && pwd)")"
+  SKILL_LINES+=$'\n'"- $name: .claude/skills/$name/SKILL.md"
+done
+[[ -z "$SKILL_LINES" ]] || BODY+=$'\n\n## Skills of this run\n\nYour tools only read files. The skills this run gives you are files in the working folder; when the task names one, read its SKILL.md first, then the files it points to:\n'"$SKILL_LINES"
 PROJECT_ABS="$(cd "$PROJECT" && pwd)"
 EXTRA=(); [[ -n "$MAX_COST" ]] && EXTRA+=(--max-budget-usd "$MAX_COST")
 START=$(python3 -c 'import time; print(int(time.time()*1000))')
@@ -61,13 +74,37 @@ set +e
 ( cd "$CWD" && ENABLE_CLAUDEAI_MCP_SERVERS=false python3 - "$TIMEOUT" claude -p "$(cat "$TASK")" --model "$MODEL" \
     --output-format json --setting-sources project,local --strict-mcp-config --tools Read,Glob,Grep \
     --add-dir "$PROJECT_ABS" --append-system-prompt "$BODY" ${EXTRA[@]+"${EXTRA[@]}"} <<'PY'
-import subprocess, sys
+import os, signal, subprocess, sys, time
 timeout, cmd = int(sys.argv[1]), sys.argv[2:]
+
+def end_group(proc):
+    """TERM, then KILL 5 s later, to the CLI's whole process group: whatever it started ends with it."""
+    for sig, grace in ((signal.SIGTERM, 5), (signal.SIGKILL, 0)):
+        try:
+            os.killpg(proc.pid, sig)
+        except (ProcessLookupError, PermissionError):
+            return
+        deadline = time.monotonic() + grace
+        while time.monotonic() < deadline:
+            try:
+                os.killpg(proc.pid, 0)
+            except (ProcessLookupError, PermissionError):
+                return
+            time.sleep(0.1)
+
+proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, start_new_session=True)
 try:
-    sys.exit(subprocess.run(cmd, stdin=subprocess.DEVNULL, timeout=timeout).returncode)
+    code = proc.wait(timeout=timeout)
 except subprocess.TimeoutExpired:
+    end_group(proc)
+    proc.wait()
     print(f"timeout after {timeout} s", file=sys.stderr)
     sys.exit(124)
+except BaseException:
+    end_group(proc)
+    raise
+end_group(proc)  # the CLI returned: anything it left running in its group ends now
+sys.exit(code)
 PY
 ) > "$OUT/raw.json" 2> "$OUT/stderr.log"
 RC=$?

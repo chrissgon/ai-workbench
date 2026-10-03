@@ -18,7 +18,12 @@
         "Every question has a recommended answer with a one-line reason",
         "No question bundles two decisions: each question can be settled by picking one of its options. Options that are alternative answers to the same question (for example 'yes, I will supply them; no, derive them') are one decision, not two",
         "No question asks what the project files already answer (which site generator the docs use, where the header lives, whether dark styles already exist in the repository); the reply states at least one of these facts with the file it came from. A question about something only the user knows (a preference, a target, or material that is not in the repository) is not answered by the files",
-        "No brief file and no state file is written in this turn, and no recommended answer is presented as already decided: the reply says the questions are open until the user answers"
+        {
+          "text": "No brief file and no state file is written in this turn, and no recommended answer is presented as already decided: the reply says the questions are open until the user answers",
+          "tags": [
+            "guard"
+          ]
+        }
       ]
     },
     {
@@ -33,14 +38,26 @@
         "package.json"
       ],
       "assertions": [
-        "The conflict between the request (add server-side rendering) and nuxt.config.ts (server-side rendering is already on) is stated in the first round, and the user is asked which one wins",
-        "The fact established from the codebase appears under 'Facts established without asking' with its source"
+        {
+          "text": "The conflict between the request (add server-side rendering) and nuxt.config.ts (server-side rendering is already on) is stated in the first round, and Q1 asks the user to choose between the two (the configuration is right and the request means something else, or the request is right); a question that takes the configuration as settled and only asks what else is missing does not count",
+          "tags": [
+            "guard"
+          ]
+        },
+        "The fact established from the codebase appears under 'Facts established without asking' with its source",
+        {
+          "text": "No brief file and no state file is written in this turn",
+          "tags": [
+            "guard"
+          ]
+        },
+        "The round has at most three questions, each with a recommended answer and a one-sentence reason"
       ]
     },
     {
       "id": 3,
       "prompt": "Interview me about migrating our component library docs to v1. I'm going offline in a minute so don't wait on me, here's what I know: goal is that every component page documents the v1 API before the v1 release on 2026-11-16, for app developers who use the library. In: the 14 component pages and the getting-started guide. Out for now: the theming guide and the blog. I haven't decided who reviews the pages, park that. Anything else still open, park it too and write the brief.",
-      "expected_output": "No round is asked, because the user said not to wait. Decisions already recorded in docs/workbench/state.md are cited, not re-asked; facts in MIGRATION.md (registered in the state file) are listed with their source; the brief lands in docs/workbench/briefs/ with the user's In and Out lists and decisions attributed to who made them; the new decisions are appended to the state file and the reviewer question is parked there as a checkbox.",
+      "expected_output": "No round is asked, because the user said not to wait. Decisions already recorded in docs/workbench/state.md are cited, not re-asked; facts in MIGRATION.md (registered in the state file) and in the site/ folder (the 14 component pages and the getting-started guide, still on the v0 API) are listed with their source; the brief lands in docs/workbench/briefs/ with the user's In and Out lists and decisions attributed to who made them; the new decisions are appended to the state file and the reviewer question is parked there as a checkbox.",
       "files": [
         "evals/files/library-docs"
       ],
@@ -49,8 +66,13 @@
       ],
       "assertions": [
         "Facts that MIGRATION.md answers (at least the renamed components or the removed props) appear in the brief under 'Facts established without asking' with MIGRATION.md as their source, and are neither asked nor parked as open questions",
-        "The brief is written to docs/workbench/briefs/<topic>.md",
-        "New decisions are appended to the Decisions section of the state file without rewriting existing lines: the two lines dated 2026-09-14 and 2026-09-21 are still there, unchanged, above the new ones",
+        {
+          "text": "The brief is written to docs/workbench/briefs/<topic>.md and holds the seven sections of the template (Goal, Scope with In and Out, Constraints, Decisions, Facts established without asking, Open questions, Contradictions surfaced)",
+          "tags": [
+            "format"
+          ]
+        },
+        "New decisions are appended to the Decisions section of the state file without rewriting existing lines: the lines `- 2026-09-14: The v0 docs stay online under /v0 until 2027-01-31. (user)` and `- 2026-09-21: The docs site keeps its current static generator; no platform change during the migration. (user)` are still there, word for word, above the new ones",
         "Each decision in the brief names who decided it",
         "Who reviews the pages is parked, not decided: it is a checkbox under the brief's 'Open questions' section that says what it blocks, and a checkbox under 'Open questions' in the state file next to the existing TypeScript question; it is in neither Decisions table nor Decisions list"
       ]

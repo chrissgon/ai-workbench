@@ -165,6 +165,10 @@ verbs:
                   open -> approved|rejected|done, approved -> done; nothing else
   action-add      --kind <k> --idempotency-key <k> --target <urn> --payload-sha256 <hex>
                   --result-file <json>   -> {{id, created}}; a key is recorded once
+                  --payload-sha256, here and in inbox-add, is the approval hash the caller
+                  computed (of what the person approves, or of what was executed); it may
+                  be the hash of another file than the payload, and it is stored as given,
+                  never compared with the payload
   actions         --since <ISO-8601> [--kind <k>] [--limit n]
   action-count    --kind <k> --since <ISO-8601>              -> {{kind, since, count}}
   export          --format json [--since <ISO-8601>]         every table, for review

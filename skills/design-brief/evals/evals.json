@@ -3,56 +3,52 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "I want the documentation screen in Claude Design, which already has our design system loaded. Use the Button page as the example.",
-      "expected_output": "docs/design/briefs/documentation-page.md of type screen in loaded mode: regions and states of SCREEN-2 from the flows named in Content, the Button page copy quoted from content/v1/components/button.md, three named directions, the brand colour restated as hex, at least five CRIT lines, attachments that exclude any earlier mockup, a prompt with a Direction slot; lint ok, recorded in documentation-page.lint.json and quoted in the reply; the reply in English points to design-execute.",
-      "files": [
-        "evals/files/flows.md",
-        "evals/files/design-system.md",
-        "evals/files/site-content"
-      ],
+      "prompt": "I want the documentation screen designed in Draftloom, our generative design tool. It already has our design system loaded as the project \"Plinth UI site\". Use the Button page as the example.",
+      "expected_output": "docs/design/briefs/documentation-page.md of type screen in loaded mode (the user named the tool and says it holds the design system): regions and states of SCREEN-2 from the flows named in Content, the Button page copy quoted from content/v1/components/button.md, three named directions, the brand colour restated as hex, at least five CRIT lines, attachments that exclude any earlier mockup, a prompt with a Direction slot; documentation-page.lint.json with ok true, quoted in the reply; the brief registered in the state file as a draft; the reply names design-execute as the next step.",
+      "files": ["evals/files/docs-site"],
       "assertions": [
-        "The header says Values: loaded and names the design system in the tool",
-        "Every region and state of SCREEN-2 is named in Content",
-        "Creative direction names three directions that differ in idea",
-        "Attachments tells not to send an existing design of the page in round 1",
-        "scripts/lint_brief.py --type screen --values loaded --flows --screen SCREEN-2 reports ok: true",
-        "The reply is in English, the language of the prompt, and names design-execute as the next step"
+        {"text": "The header says Values: loaded and names the design system in the tool", "tags": ["format"]},
+        {"text": "Every region and state of SCREEN-2 is named in Content", "tags": ["format"]},
+        {"text": "Creative direction names three directions that differ in idea", "tags": ["format"]},
+        {"text": "Attachments tells not to send an existing design of the page in round 1", "tags": ["format"]},
+        {"text": "docs/design/briefs/documentation-page.lint.json is among the files the run produced, its ok is true, its arguments include --type screen, --values loaded and --screen SCREEN-2, and the reply quotes its summary line", "tags": ["format"]},
+        "The reply names design-execute as the skill that runs the brief next",
+        {"text": "docs/workbench/state.md lists docs/design/briefs/documentation-page.md in its Artifacts table with owner design-brief and status draft", "tags": ["format"]}
       ],
       "grader_files": [
-        "flows.md",
+        "docs/design/flows.md",
+        "docs/design/design-system.md",
         "content/v1/components/button.md"
       ]
     },
     {
       "id": 2,
       "prompt": "Make a logo for my new bakery app.",
-      "expected_output": "No design system, brand identity or name source exists; the skill does not write the brief with invented values or name: it stops and points the user to design-system, which writes the missing visual foundation (and interviews when there is no input), and asks for the exact name as it must be written, with a recommendation on what to answer.",
+      "expected_output": "No design system, brand identity or name source exists; the skill does not write the brief with invented values or name: it stops with its stop reply, names design-system as the skill that writes the missing visual foundation (and interviews when there is no input), and asks for the exact name as it must be written, with a recommendation on where the answer is, never a value. It proposes no name, colour, palette or style, not even as an example, and does not offer to continue on its own picks.",
       "files": [],
       "assertions": [
-        "No brief file is written",
-        "The reply routes to design-system for the missing visual foundation",
-        "The reply asks for the exact name of the app instead of inventing one"
+        {"text": "No file under docs/design/briefs/ is among the files the run produced", "tags": ["guard"]},
+        "The reply names design-system as the skill that writes the missing visual foundation, to be run first",
+        {"text": "The reply asks for the exact name of the app instead of inventing one", "tags": ["guard"]},
+        {"text": "The reply proposes no name, colour, palette or style of its own, not even as an example, and does not offer to continue on its own picks", "tags": ["guard"]}
       ]
     },
     {
       "id": 3,
       "prompt": "Write the brief for the site's share images (og:image) for the landing and every docs page.",
-      "expected_output": "docs/design/briefs/og-image.md of type image in inline mode: Size, Format and Text parts in Content, the landing card's texts quoted from the Share images part of messaging.md, the variable fields of the documentation template with their longest real values taken from the page list in the flows, colours and type written out, at least five CRIT lines including a thumbnail legibility check; lint ok, recorded in the .lint.json file next to the brief and quoted in the reply.",
-      "files": [
-        "evals/files/design-system.md",
-        "evals/files/flows.md",
-        "evals/files/messaging.md"
-      ],
+      "expected_output": "docs/design/briefs/og-image.md of type image in inline mode (no tool is named, so the design tool section of the design system does not make it loaded): Size, Format and Text parts in Content, the landing card's texts quoted from the Share images part of messaging.md, the variable fields of the documentation template with their longest real values taken from the page list in the flows (page title \"Migrating from 0.19\", 19 characters; section \"Getting started\", 15 characters, as longest_value.py prints them), colours and type written out with their token names, at least five CRIT lines including a thumbnail legibility check; og-image.lint.json with ok true, quoted in the reply.",
+      "files": ["evals/files/docs-site"],
       "assertions": [
-        "Content has Size, Format and Text parts",
-        "The variable fields name their longest value",
-        "Visual language writes out hex colours and pixel sizes",
+        {"text": "Content has Size, Format and Text parts", "tags": ["format"]},
+        "The variable fields of the documentation card template name their longest real value from the page list in docs/design/flows.md: \"Migrating from 0.19\" (19 characters) for the page title and \"Getting started\" (15 characters) for the section name; a brief that also names the landing title as the longest value a shared title field must fit does not fail this",
+        "Every colour and type size the brief writes out is a value of docs/design/design-system.md, written with its token name, and no colour appears that the design system does not have",
         "One criterion checks legibility at thumbnail size",
-        "scripts/lint_brief.py --type image --values inline reports ok: true"
+        {"text": "docs/design/briefs/og-image.lint.json is among the files the run produced, its ok is true, its arguments include --type image and --values inline, and the reply quotes its summary line", "tags": ["format"]}
       ],
       "grader_files": [
-        "messaging.md",
-        "flows.md"
+        "docs/marketing/messaging.md",
+        "docs/design/flows.md",
+        "docs/design/design-system.md"
       ]
     }
   ]
