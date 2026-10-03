@@ -377,6 +377,15 @@ def old_ledger_path() -> Path | None:
     return Path(cache) / "ai-workbench" / LEDGER_NAME
 
 
+def ledger_folder_ready(path: Path) -> None:
+    """Create the ledger's folder (0700). The provider's own data folder is set to 0700 even when it exists with
+    wider permissions; a folder the user chose (PUBLISHER_LINKEDIN_LEDGER, or --ledger elsewhere) is theirs and
+    keeps its mode, while the ledger and its lock inside it are 0600."""
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if os.path.abspath(path.parent) == os.path.abspath(data_home()):
+        os.chmod(path.parent, 0o700)
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -396,7 +405,7 @@ def ledger_migrate() -> None:
         json.loads(content.decode("utf-8"))
     except (OSError, ValueError) as exc:
         raise ProviderError(f"the idempotency ledger at {old} cannot be copied to {path}: {exc}", EXIT_SERVICE)
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ledger_folder_ready(path)
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".publisher-linkedin.", suffix=".tmp")
     try:
         with os.fdopen(fd, "wb") as fh:
@@ -433,17 +442,24 @@ def ledger_save(data: dict) -> None:
     path = ledger_path()
     data["version"] = 2
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".publisher-linkedin.", suffix=".tmp")
-    with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, indent=2, sort_keys=True)
+            fh.flush()
+            os.fsync(fh.fileno())  # on disk before it replaces the ledger: a crash leaves the old one or the new one
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
 
 
 @contextlib.contextmanager
 def ledger_locked():
     """Hold an exclusive lock on the ledger while reading and changing it."""
     path = ledger_path()
-    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    ledger_folder_ready(path)
     fd = os.open(f"{path}.lock", os.O_RDWR | os.O_CREAT, 0o600)
     try:
         deadline = time.monotonic() + LOCK_TIMEOUT_SECONDS

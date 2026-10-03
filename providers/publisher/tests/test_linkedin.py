@@ -1559,3 +1559,42 @@ def test_resolve_checks_the_post_id_as_strictly_as_comment(env, fake):
     ok = run(SCRIPT, ["resolve", "--idempotency-key", "k", "--post-id", "urn:li:activity:7000000000000000009",
                       "--confirmed"], env)
     assert ok.returncode == 0, ok.stderr
+
+
+# --- the ledger is written durably, and its own folder is private ----------------------------------------
+
+
+def test_ledger_save_syncs_and_leaves_no_temporary_file_on_error(tmp_path, monkeypatch):
+    module = load_module()
+    path = tmp_path / "l" / "ledger.json"
+    path.parent.mkdir()
+    monkeypatch.setenv("PUBLISHER_LINKEDIN_LEDGER", str(path))
+    synced = []
+    real_fsync = module.os.fsync
+    monkeypatch.setattr(module.os, "fsync", lambda fd: (synced.append(fd), real_fsync(fd)))
+    module.ledger_save({"entries": {"k": {"status": "published"}}})
+    assert synced and json.loads(path.read_text())["entries"] == {"k": {"status": "published"}}
+    before = path.read_bytes()
+
+    def broken_dump(*args, **kwargs):
+        raise TypeError("cannot serialize")
+
+    monkeypatch.setattr(module.json, "dump", broken_dump)
+    with pytest.raises(TypeError):
+        module.ledger_save({"entries": {}})
+    assert sorted(p.name for p in path.parent.iterdir()) == ["ledger.json"] and path.read_bytes() == before
+
+
+def test_the_provider_s_own_ledger_folder_is_tightened_and_a_given_one_is_left_alone(env, fake, text_file, tmp_path):
+    e, new, _ = default_ledger_env(env, tmp_path)
+    new.parent.mkdir(parents=True)
+    os.chmod(new.parent, 0o755)
+    assert run(SCRIPT, publish_args(text_file, "--confirmed"), e).returncode == 0
+    assert oct(new.parent.stat().st_mode & 0o777) == "0o700"
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    os.chmod(shared, 0o755)
+    given = {**env, "PUBLISHER_LINKEDIN_LEDGER": str(shared / "ledger.json")}
+    assert run(SCRIPT, publish_args(text_file, "--confirmed"), given).returncode == 0
+    assert oct(shared.stat().st_mode & 0o777) == "0o755"  # not ours: a folder the user chose
+    assert oct((shared / "ledger.json").stat().st_mode & 0o777) == "0o600"
