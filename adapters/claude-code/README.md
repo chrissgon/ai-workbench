@@ -7,15 +7,45 @@ Builds a Claude Code plugin from the core for one pack and installs it. The adap
 ```bash
 bash adapters/claude-code/install.sh                    # pack "default": every area except optional ones
 bash adapters/claude-code/install.sh --pack all         # optional areas too
+bash adapters/claude-code/install.sh --listing-budget write --project <dir>  # and the skill-listing budget (below)
 claude --plugin-dir adapters/claude-code/build/default  # one session only, after a build
 ```
 
 Skills are invoked as `/ai-workbench:<skill-name>` and trigger automatically from their descriptions.
 
+## The skill-listing budget
+
+Claude Code lists the installed skills to the model within a character budget, its bundled skills first, and lists a skill past the budget by name only. Measured on 2026-10-03 with the default budget, 28 of the default pack's 48 descriptions reached the model (`docs/architecture/phase-d-proof-2026-10-03.md`). A skill listed by name only is one the model cannot tell when to use. By decision 9 of the plan the installer writes the budget when the person agrees, and no description is shortened for it.
+
+- **The setting.** `SLASH_COMMAND_TOOL_CHAR_BUDGET`, a variable of the CLI's environment. Its only source in this repository is this adapter's eval runner, which raises it (see "Evals" below; checked 2026-10-01, CLI 2.1.283). A settings file sets a variable for every session through its `env` object; that an installed project gets every description this way is what the re-measurement below checks.
+- **What the installer computes.** Each skill of the pack counted as the line `- ai-workbench:<name>: <description>` (the plugin's name prefixes the skill's), plus a margin of a quarter of that, at least 10,000 characters, rounded up to the next 1,000. The margin is for what the CLI lists before the pack: its bundled skills and any other skill or plugin of the person's. No source in the repository gives their size, so the margin is an assumption, proportionate to the pack so that it grows with it and is never a fixed huge number. `python3 adapters/claude-code/listing_budget.py compute --pack <name>` prints it.
+- **The budgets today** (2026-10-03): `default` 50,000 (48 skills, 39,366 characters listed); `all` the same, since no optional skill exists yet; `assistant` none, since it selects no skill. The eval runner's 200,000 stays as it is: a run installs one skill and needs only that it is never cut.
+- **What the installer does with it.** By default (`--listing-budget print`) it prints the budget, the line to add and the file it goes in, on stderr and under `listing_budget` in its JSON line, and writes nothing. With `--listing-budget write --project <dir>` it merges the value into `<dir>/.claude/settings.json`; `--settings-scope local` writes `<dir>/.claude/settings.local.json` instead, and `--settings-scope user` writes `~/.claude/settings.json`, which is never written unless that flag names it. `--listing-budget skip` leaves the budget out.
+- **How it writes.** It keeps every other key, refuses a file that is not a JSON object (or whose `env` is not one) and changes nothing then, the plugin included; it keeps a dated backup (`settings.json.ai-workbench-<time>.bak`) of a file it changes for the first time; it never lowers a larger value the person set; the value is written as a string, as the `env` object holds them. Each write is recorded in `installed/listing-budget.json` in this adapter, git-ignored. A later install with another pack replaces the value it wrote.
+- **Uninstall.** `install.sh --uninstall` puts back what each recorded write replaced (the earlier value, or nothing), only while the value there is still the one written; a value changed since is reported and left alone. A file or a `.claude` folder the write created and that is empty again is removed.
+
+To apply it to a project:
+
+```bash
+bash adapters/claude-code/install.sh --pack default --listing-budget write --project /path/to/project
+```
+
+To check what reaches the model afterwards (one model call, the maintainer's to run, with the CLI's credential in the environment as in the phase D measurement): the measurement of `docs/architecture/phase-d-proof-2026-10-03.md` again, with the budget written into a scratch project and the call made from it. Run from the checkout; it removes its scratch folders and keeps the reply in `listing-reply.json` of a fresh temporary folder, whose path it prints.
+
+```bash
+WB="$PWD" S="$(mktemp -d)" OUT="$(mktemp -d)" && mkdir -p "$S/home" "$S/proj" \
+  && HOME="$S/home" bash "$WB/adapters/claude-code/install.sh" --pack default --listing-budget write --project "$S/proj" \
+  && (cd "$S/proj" && HOME="$S/home" claude --plugin-dir "$WB/adapters/claude-code/build/default" \
+       -p "List every skill you were given: its name and its description, word for word." --output-format json) \
+     > "$OUT/listing-reply.json"; \
+  HOME="$S/home" bash "$WB/adapters/claude-code/install.sh" --uninstall; rm -rf "$S"; echo "$OUT/listing-reply.json"
+```
+
 ## What lives here and nowhere else
 
 - `plugin.json`: the manifest source, copied into every build. It names no `agents` path: the build's `agents/` folder is the default place.
 - `overrides/<agent>.yaml`: model, tools, permissionMode per agent, merged into the generated agents.
+- `listing_budget.py`: the skill-listing budget of a pack, printed or written into a settings file (above); `installed/`, git-ignored, holds its record of what it wrote.
 - `connectors.json` (when needed): which requirement classes this harness satisfies through connectors, read by `scripts/doctor.py --harness claude-code`.
 - `hooks/` (when needed): validation hooks, referenced from `plugin.json`.
 
