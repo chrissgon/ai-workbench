@@ -8,6 +8,9 @@
       "files": [
         "evals/files/dana-publish"
       ],
+      "platforms": [
+        "linkedin"
+      ],
       "grader_files": [
         "docs/marketing/content/2027-10-11-tinykv-05-ttl.md",
         "docs/marketing/content/2027-10-13-fsync-budget.md",
@@ -59,6 +62,9 @@
       "files": [
         "evals/files/dana-publish-approved"
       ],
+      "platforms": [
+        "linkedin"
+      ],
       "grader_files": [
         "docs/workbench/state.md",
         "docs/marketing/content/2027-10-11-tinykv-05-ttl.md",
@@ -88,6 +94,9 @@
       "expected_output": "The workbench of this project has no provider for publisher:linkedin: resolve.py exits 3. The skill degrades: it builds the payload without a publisher so the texts are final, gives the user each of the three posts and its first comment to publish by hand, sets the three calendar rows to manual, and says that nothing was scheduled or published.",
       "files": [
         "evals/files/dana-publish-no-provider"
+      ],
+      "platforms": [
+        "linkedin"
       ],
       "grader_files": [
         "docs/marketing/content/2027-10-11-tinykv-05-ttl.md",

@@ -30,6 +30,7 @@ This file is for the author of a case. A skill's cases live in `skills/<name>/ev
 | `grader_files` | Input files, relative to the case folder, that the grader is shown as the run found them. |
 | `absent_on_purpose` | Paths the prompt cites and the case leaves out on purpose, for a case that tests a missing input. |
 | `skills` | Other skills installed for the run, in both variants. Three uses only (see "`skills` in a case"). |
+| `platforms` | The social platforms whose reference the run needs, for a case whose run reaches a skill's platform step: `["<name>"]`, each a file `shared/references/platforms/<name>.md`. The runner stages that reference and its data file into a run with the skill, never into a run without it. |
 | `allow_web` | `true` for a case that must search and read web pages. It runs on the open network, so keep such cases few; once the gate file lists the web cases (`web_cases`), the case is named there too. |
 | `workbench_files` | Files of this repository copied into the case folder, for a skill whose job is the workbench itself. |
 | `assertions` | Statements about the output that the grader judges true or false, one by one. |
@@ -108,4 +109,4 @@ A case changes for a stated reason, never to raise a score: when the output is n
 
 ## What checks these rules
 
-The preflight (`eval_run.py --skill <name> --check-cases`, which the validator runs for every skill) checks today that each `files` and `grader_files` entry exists, that each `skills` entry is a skill, and that every path a prompt cites is in the case folder, is an output or is listed in `absent_on_purpose`. `evals/tests/test_case_rules.py` checks the form of every assertion and its tags. The checks of the tags against `side_effects`, of the three uses of `skills` and of a folder a prompt names are built in phase B of `docs/architecture/final-plan-2026-10-02.md`; until then they are rules a reviewer applies.
+The preflight (`eval_run.py --skill <name> --check-cases`, which the validator runs for every skill) checks today that each `files` and `grader_files` entry exists, that each `skills` entry is a skill, that each `platforms` entry has its reference, and that every path a prompt cites is in the case folder, is an output or is listed in `absent_on_purpose`. `evals/tests/test_case_rules.py` checks the form of every assertion and its tags. The checks of the tags against `side_effects`, of the three uses of `skills` and of a folder a prompt names are built in phase B of `docs/architecture/final-plan-2026-10-02.md`; until then they are rules a reviewer applies.

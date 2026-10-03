@@ -8,6 +8,7 @@
       "files": [
         "evals/files/dana"
       ],
+      "platforms": ["linkedin"],
       "grader_files": [
         "inputs/profile.txt",
         "inputs/readme.md",
