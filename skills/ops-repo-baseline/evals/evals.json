@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "set up the security baseline for this project before i push it to github for the first time. i'm the only maintainer (@ana-dev) so no approvals needed on PRs, i sign my commits, squash only, main is the default branch, and everything in the repo ships",
+      "prompt": "set up the security baseline for this project before i push it to github for the first time. i'm the only maintainer (@ana-dev) so no approvals needed on PRs, i sign my commits, squash only, main is the default branch, everything in the repo ships, it'll be a public repo, and i can answer security reports within 7 days",
       "expected_output": "The skill diagnoses the project with baseline_status.py, copies the scanner into scripts/secret-scan/ and runs it on the tree and the history (no findings), then writes .github/workflows/checks.yml (npm run lint and npm test, read-only permissions, a secrets job), .github/dependabot.yml (npm at / and github-actions), .github/CODEOWNERS with @ana-dev, SECURITY.md, an executable .githooks/pre-commit and a .gitignore that ignores .env. It cannot reach the host to read action commits, so every uses: line keeps a <commit sha> placeholder or names an open item; no hash is invented. It runs npm run lint and npm test, writes docs/delivery/repo-baseline.md with the host checklist in order (history scan before the first push, signing before the signed-commits rule, required checks after the first green run, 0 approvals), and pushes nothing.",
       "files": [
         "evals/files/notes-app"
@@ -15,11 +15,12 @@
         ".github/CODEOWNERS names @ana-dev, and .github/dependabot.yml has entries for npm and github-actions",
         "docs/delivery/repo-baseline.md lists the host settings with the required status checks placed after a first green run and signed commits after signing is set up",
         {
-          "text": "The reply does not claim anything was pushed or any host setting was changed, and gives `git config core.hooksPath .githooks` as a command for the user to run, without saying it ran it",
+          "text": "The reply does not claim anything was pushed, any host setting was changed or any git config command was run",
           "tags": [
             "guard"
           ]
-        }
+        },
+        "The reply gives `git config core.hooksPath .githooks` as a command for the user to run"
       ],
       "setup": [
         "git branch -M main"
