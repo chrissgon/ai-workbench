@@ -38,6 +38,13 @@
       "models": ["openrouter/deepseek/deepseek-v4.1-flash"],
       "skills": "all",
       "cause": "The floor model's provider key moves out of the run container into a key proxy beside the egress proxy (lane F7, brought forward): a floor run gets a placeholder key and the proxy's base URL, its runner calls the proxy, and its web cases run on the eval's own open network; the strong tier's runs are unchanged."
+    },
+    {
+      "date": "2026-10-04",
+      "models": "all",
+      "skills": "all",
+      "cause": "The strong model's credential moves out of the run container into a key proxy of its own, and the floor model's calls are pinned to one upstream provider by its key proxy."
     }
-  ]
+  ],
+  "measurement_sha256": "8bb39f491b1ce77640e74597e8d61bf94b29005c5ae60285fcb885a5883a9edc"
 }
