@@ -32,8 +32,9 @@
 # In an eval run that variable holds a placeholder and ANTHROPIC_BASE_URL names the eval's key proxy, which holds
 # the real value and adds it to each call (evals/executor.py): the CLI reads both from the environment.
 # CLAUDE_CODE_WEB_API_KEY, when set, is used in place of both: the runner passes it, and not the account's
-# token, to a run of a case on the open network (strong_web_pass_env of evals/eval-gate.json), so that a
-# leak there costs at most that key's limit. It reaches the CLI as ANTHROPIC_API_KEY.
+# token, to a run of a case on the open network only when evals/eval-gate.json names it in
+# strong_web_pass_env, so that a leak there costs at most that key's limit; without that key such a run gets
+# the account's token as a placeholder, held by the key proxy. It reaches the CLI as ANTHROPIC_API_KEY.
 # Extra CLI flags: CLAUDE_EVAL_ARGS.
 # The prompt reaches the CLI on standard input, not as an argument: a grading prompt with long files
 # is larger than one argument may be.
