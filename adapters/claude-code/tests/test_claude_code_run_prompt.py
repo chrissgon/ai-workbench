@@ -80,9 +80,10 @@ def test_a_skill_the_runner_staged_is_left_as_it_is(env):
 
 def test_the_manifest_names_where_the_harness_finds_skills_and_what_carries_its_settings():
     manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
-    assert manifest["eval"]["skills_dir"] == ".claude/skills"
+    block = json.loads((SCRIPT.parent / "eval.json").read_text(encoding="utf-8"))
+    assert block["skills_dir"] == ".claude/skills"
     # Its settings folder, its server list and its project-instructions files: the runner refuses a case that carries one.
-    assert set(manifest["eval"]["settings"]) == {".claude", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md"}
+    assert set(block["settings"]) == {".claude", ".mcp.json", "CLAUDE.md", "CLAUDE.local.md"}
     assert manifest["eval_runner"] == "run-prompt.sh" and manifest["runtime_runner"] == "run-agent.sh"
     assert (SCRIPT.parent / manifest["runtime_runner"]).is_file()
     assert set(manifest["consumes"]) == set(manifest["strategy"])  # nothing consumed without saying how
@@ -207,8 +208,8 @@ def test_the_low_limit_key_of_a_web_case_replaces_the_accounts_token(env):
 
 
 def test_the_manifest_names_what_an_exhausted_account_answers():
-    manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
-    assert manifest["eval"]["account_limit"] and all(isinstance(m, str) and m for m in manifest["eval"]["account_limit"])
+    block = json.loads((SCRIPT.parent / "eval.json").read_text(encoding="utf-8"))
+    assert block["account_limit"] and all(isinstance(m, str) and m for m in block["account_limit"])
 
 
 
@@ -251,8 +252,8 @@ def test_the_cli_is_asked_for_its_stream(env):
 
 
 def test_the_manifest_names_the_providers_refusal(env):
-    manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
-    assert manifest["eval"]["refusal_markers"] == ["safeguards flagged this message"]
+    block = json.loads((SCRIPT.parent / "eval.json").read_text(encoding="utf-8"))
+    assert block["refusal_markers"] == ["safeguards flagged this message"]
 
 
 # --- the two eval adapters agree with each other and with the contract ------------------------------

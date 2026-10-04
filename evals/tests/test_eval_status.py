@@ -408,26 +408,30 @@ def test_the_fingerprint_follows_the_files_that_decide_what_a_run_measures(root)
     for harness in ("one", "two"):
         (root / "adapters" / harness).mkdir(parents=True)
         (root / "adapters" / harness / "adapter.json").write_text("{}")
+        (root / "adapters" / harness / "eval.json").write_text("{}")
     (root / "adapters" / "one" / "run-prompt.sh").write_text("echo\n")
     first = es.measurement_fingerprint(str(root))
     assert len(first) == 64 and es.measurement_fingerprint(str(root)) == first
     seen = {first}
     for rel, text in (("evals/grading-prompt.md", "another template\n"), ("evals/container/Dockerfile", "FROM y\n"),
-                      ("adapters/one/run-prompt.sh", "echo changed\n"), ("adapters/one/adapter.json", '{"eval": {}}'),
+                      ("adapters/one/run-prompt.sh", "echo changed\n"), ("adapters/one/eval.json", '{"skills_dir": ".x/skills"}'),
                       ("evals/measure.py", "# the measuring module\n"), ("evals/measurement.json", '{"file_limit": 1}'),
                       ("evals/executor.py", "# the executor\n"), ("scripts/stage_skills.py", "# the staging\n")):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text(text)
         seen.add(es.measurement_fingerprint(str(root)))
     assert len(seen) == 9
-    # What decides nothing either: the rest of the runner, the gate file, a shared reference, redact.py.
-    for rel in ("evals/eval_run.py", "evals/eval-gate.json", "shared/references/security.md", "scripts/redact.py"):
+    # What decides nothing either: the rest of the runner, the gate file, a shared reference, redact.py, and the
+    # manifest of an eval adapter (its eval block is in eval.json; adapter.json holds installation text and secrets).
+    for rel in ("evals/eval_run.py", "evals/eval-gate.json", "shared/references/security.md", "scripts/redact.py",
+                "adapters/one/adapter.json"):
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text("anything\n")
     assert es.measurement_fingerprint(str(root)) in seen
     seen = {es.measurement_fingerprint(str(root))}
-    # What decides nothing: a skill, a document, the manifest of an adapter that runs no eval.
+    # What decides nothing: a skill, a document, the files of an adapter that runs no eval.
     (root / "adapters" / "two" / "adapter.json").write_text('{"changed": true}')
+    (root / "adapters" / "two" / "eval.json").write_text('{"changed": true}')
     (root / "skills" / "core-demo" / "SKILL.md").write_text("# edited\n")
     assert es.measurement_fingerprint(str(root)) in seen and len(seen) == 1
 

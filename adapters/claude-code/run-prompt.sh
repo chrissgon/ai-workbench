@@ -10,9 +10,9 @@
 # folder the stream shows the model loading (the skill tool, or a read of a skill's SKILL.md), which the
 # runner reads as whether the skill under test was invoked. It installs nothing: the eval runner stages the
 # skill under test and a case's dependency skills in <cwd>/.claude/skills/<name> before this script
-# starts (the "eval" object of adapter.json names that folder; scripts/stage_skills.py copies them),
+# starts ("skills_dir" of this adapter's eval.json names that folder; scripts/stage_skills.py copies them),
 # so they are discoverable at project scope. Settings are limited to the project scope; the runner
-# refuses a case folder that carries a name of adapter.json's "eval.settings" (.claude, .mcp.json or
+# refuses a case folder that carries a name of eval.json's "settings" (.claude, .mcp.json or
 # the project-instructions files CLAUDE.md and CLAUDE.local.md, from a fixture or a setup), since the
 # project scope would apply its rules, hooks, servers or instructions.
 # No MCP servers or claude.ai connectors are loaded (--strict-mcp-config, ENABLE_CLAUDEAI_MCP_SERVERS=false).
