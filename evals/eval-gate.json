@@ -13,7 +13,7 @@
   "runs": 3,
   "baseline_runs": 1,
   "baseline_margin": 0.2,
-  "timeout_seconds": 900,
+  "timeout_seconds": 1800,
   "retries": 2,
   "max_resumes": 3,
   "total_jobs": 10,

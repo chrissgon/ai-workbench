@@ -721,7 +721,7 @@ def test_runs_timeout_and_cost_are_checked(args):
 
 def test_parse_defaults_to_three_runs():
     o = er.parse(["--skill", "s", "--harness", "h", "--model", "m", "--max-cost-usd", "0.50"])
-    assert (o["runs"], o["timeout"], o["max_cost"]) == (3, 900, "0.50")
+    assert (o["runs"], o["timeout"], o["max_cost"]) == (3, 1800, "0.50")  # timeout_seconds of evals/eval-gate.json
 
 
 def test_a_run_past_its_timeout_fails_and_says_why(tmp_path):
