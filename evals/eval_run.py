@@ -26,11 +26,13 @@ model, such as one served on the same machine, needs no provider key). Without t
 Full and partial tests (the reliability model, section 2). `eval_run.py --skill <name>` is a full test:
 every current case with the skill, on every model the gate file lists, "runs" times each, and the baseline
 (the case without the skill, on the reference model, the strong model) of each case whose baseline is not in
-force. A baseline is in force while its case (its hash), the reference model (no epoch of it after the
-baseline's date) and the measurement (its version at or above the floor) are unchanged and it has "runs"
-lines: it is reused, and the event line says "reused". `--cases <ids>` is a partial test: the named cases,
-with the skill only. `--baseline` runs the baseline of the cases the event runs, in force or not (for a case
-added after the newest full test: `--cases <id> --baseline`, which is how such a case enters the gate).
+force. In a full test a baseline runs "baseline_runs" times (evals/eval-gate.json; without the key, as many as
+the runs); --baseline runs it as many times as the runs. A baseline is in force while its case (its hash), the
+reference model (no epoch of it after the baseline's date) and the measurement (its version at or above the
+floor) are unchanged and it has as many lines as a full test runs it: it is reused, and the event line says
+"reused". `--cases <ids>` is a partial test: the named cases, with the skill only. `--baseline` runs the
+baseline of the cases the event runs, in force or not (for a case added or changed after the newest full test:
+`--cases <id> --baseline`, which is how such a case enters the gate).
 `--baseline-on <model>` also runs the baseline on another model the gate file lists (the floor model), for
 whoever wants that column; no rule reads it. An event is full by the reference model: it is complete when
 every run with the skill and every baseline run on the reference model is graded. A run that is missing on
@@ -2804,7 +2806,9 @@ def run(argv):
         ablated_lines = ablated_line_count(skill_dir, o["ablate"])
         if not o["dry"]:
             ablated_dir, _ = ablated_copy(skill_dir, o["ablate"], os.path.join(it_dir, "ablated-skill"))
-    # The baselines in force, from the skill's committed evidence: {case id: lines}. A case with "runs" of them
+    # A full test runs each baseline "baseline_runs" times (the gate file); --baseline asks for the configured runs.
+    baseline_count = o["runs"] if o["baseline"] else min(o["runs"], control["baseline_runs"])
+    # The baselines in force, from the skill's committed evidence: {case id: lines}. A case with that many of them
     # is not run without the skill again in a full test; the event line says it was reused.
     gate_cfg = {**gate, "strong_model": o["model"], "threshold": o["threshold"], "strong_tolerance": o["tolerance"]}
     in_force = {cid: len(lines) for cid, lines in status.baseline_lines(skill_dir, gate_cfg).items()}
@@ -2818,7 +2822,7 @@ def run(argv):
             return []
         if o["only"]:
             return tier_names if o["only"] == "without" else []
-        wanted = o["baseline"] or (not o["cases"] and in_force.get(str(case["id"]), 0) < o["runs"])
+        wanted = o["baseline"] or (not o["cases"] and in_force.get(str(case["id"]), 0) < baseline_count)
         return [t for t in tier_names if (t == "strong" and wanted) or t in o["baseline_on"]]
     if resumed is not None and resumed.get("plan"):
         planned = {(str(cid), v, t) for cid, v, t in resumed["plan"]}  # a resumption runs the plan it started with
@@ -2826,7 +2830,7 @@ def run(argv):
     jobs = []
     for c in cases:
         jobs += [(c, v, t, m, k) for v in with_variants for t, m in models for k in range(1, o["runs"] + 1)]
-        jobs += [(c, "without_skill", t, m, k) for t, m in models if t in baseline_tiers(c) for k in range(1, o["runs"] + 1)]
+        jobs += [(c, "without_skill", t, m, k) for t, m in models if t in baseline_tiers(c) for k in range(1, baseline_count + 1)]
     if o["dry"]:
         plan = [{"case": c["id"], "variant": v, "model_tier": t, "model": m, "run": k, "allow_web": web[c["id"]]}
                 for c, v, t, m, k in jobs]
@@ -3286,7 +3290,7 @@ def run(argv):
                 if variant == "with" and "invoked" in c:
                     into["invoked"] = into.get("invoked", 0) + c["invoked"]
     ran_baseline = {str(job[0]["id"]) for job in jobs if job[1] == "without_skill" and job[2] == "strong"}
-    reused = {cid for cid, n in in_force.items() if n >= o["runs"]} if kind == "full" else set()  # a partial test uses none
+    reused = {cid for cid, n in in_force.items() if n >= baseline_count} if kind == "full" else set()  # a partial test uses none
     event_line = {"record": "test", "skill": o["skill"], "test": test, "kind": kind, "version": version,
                   "content_sha256": start_hash, "date": event["started"][:10], "models": model_ids,
                   "adapters": {tier: harness_for[tier] for tier, _ in models},
@@ -3311,9 +3315,14 @@ def run(argv):
         else:  # not computable from the lines (it should be, right after a full test): this test's own lines
             print(f"NOTE the gate could not be computed from the evidence ({computed['cause']}); it is computed on this "
                   "test's own lines", file=sys.stderr)
-            scores = lambda variant: [l["score"] for l in run_lines if l["variant"] == variant and l["model"] == model_ids["strong"]]
-            with_mean = statistics.mean(scores("with"))
-            base_mean = statistics.mean(scores("without")) if scores("without") else None
+            def per_case(variant):
+                by = {}
+                for l in run_lines:
+                    if l["variant"] == variant and l["model"] == model_ids["strong"]:
+                        by.setdefault(str(l["case"]), []).append(l["score"])
+                return statistics.mean(statistics.mean(v) for v in by.values()) if by else None
+
+            with_mean, base_mean = per_case("with"), per_case("without")
             gate_result = {"passed": bool(load_measure().gate_passes(with_mean, base_mean, o["threshold"], o["tolerance"])),
                            "with": with_mean, "baseline": base_mean, "threshold": o["threshold"], "tolerance": o["tolerance"]}
         event_line["gate"] = gate_result

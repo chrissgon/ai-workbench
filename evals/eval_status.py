@@ -110,10 +110,12 @@ The band, on the reference model (strong_model), the first that applies:
   needs a test  (a) no full test of the current major version passes the gate (none at or above the
                 measurement floor, or the gate cannot be computed); (b) a guard assertion (tagged guard or
                 guard:<effect>) has no with-skill run in the current set, or a confirmed failure there
-                ("guard_failed"); (c) the newest full test fails the gate, or a case changed after it
+                ("guard_failed"); (c) the newest full test fails the gate, or a case changed again after it
   watch         no with-skill lab line in the current set; or the current set holds runs of guard-only cases
                 alone; or the pessimistic score is under 0.70; or three or more Y changes (the version file)
-                since the version the newest complete full test ran on; or the field signal is on
+                since the version the newest complete full test ran on; or a case changed after the newest
+                full test waits for its runs; or the baseline has fewer runs per case than "runs" and is
+                within "baseline_margin" of the mean with the skill; or the field signal is on
   reliable      otherwise
 The field signal: three or more `failed` verdicts on the current X.Y, on the reference model, in the weeks after
 the newest lab event of that X.Y (all of them when it has none), at most one per contributor except the
@@ -132,7 +134,8 @@ Commands:
              "judged", "mean"}][, "platforms": {platform: {"mean", "runs"}}]}}[, "assertions": [{"case",
              "assertion", "tags", "with": [passes, runs], "without": [passes, runs]}], "difference_not_format"]}.
              The kinds of a cause: "no passing full test", "guard", "gate failed" (needs a test); "no current run",
-             "guard cases only", "score", "y changes", "field signal" (watch). Exit 0.
+             "guard cases only", "score", "y changes", "case pending", "thin baseline", "field signal" (watch).
+             Exit 0.
   hash       prints the content hash of one skill, its version and the hash of each of its cases (and of each case of
              its platforms' case files, "platform_cases").
   evidence   validates the evidence files: every skill's, one skill's (--skill) or one file (--file <path>,
@@ -140,7 +143,8 @@ Commands:
              exit 1 when a file is not valid.
   gate       prints the gate of one skill computed from its lab evidence (the model's section 2, below):
              {"computed", "passed", "with", "baseline", "threshold", "tolerance", "version", "test", "cases",
-             "pending", "note", "cause"}.
+             "pending", "note", "cause", "changed", "dropped": {case id: {"runs", "mean"}}[, "baseline_runs"
+             (the fewest baseline lines in force of a case of the gate, when it is computed)]}.
   inventory  writes the two snapshot tables of the reliability model's section 10 between <!-- eval-status:begin -->
              and <!-- eval-status:end --> in docs/inventory.md (--write): the band table, one row per skill on the
              reference model, and the model table, one row per skill and model that has any evidence, marked with
@@ -194,12 +198,15 @@ above zero being counted: the case exists with the same hash, the measurement ve
 floor, and the line's major version is the current one. A second full test of an unchanged X.Y adds its runs
 to the first and replaces none; a full test closed as abandoned keeps its lines. The mean of those lines
 passes when it is at the threshold or above and is not below the mean of the baselines in force by more than
-the tolerance, both unrounded. A partial test never moves the gate, with one exception: a case added after
-the newest full test is "pending", and is left out of the gate, until it has with-skill lines and a baseline
-in force (eval_run.py --cases <id> --baseline); those lines then enter the gate. A case changed after the
-newest full test makes the gate impossible to compute until a full test runs it. When a case of the gate has
-no baseline in force (after an epoch that reaches the skill), the result the newest full test wrote stands,
-with the note "baseline expired".
+the tolerance, both unrounded. Both means are the mean of the cases' means, so that a case with more lines
+weighs as much as the others. A partial test never moves the gate, with one exception: a case added after the
+newest full test is "pending", and is left out of the gate, until it has with-skill lines and a baseline in
+force (eval_run.py --cases <id> --baseline); those lines then enter the gate. A case changed after the newest
+full test is treated as an added case, once: it is pending ("changed" lists it), its earlier text's runs leave
+the gate ("dropped" shows how many and their mean), and its new runs enter it as an added case's do. When a
+case changes again after an earlier changed text of it has run since that full test, the gate cannot be
+computed until a full test runs every case. When a case of the gate has no baseline in force (after an epoch
+that reaches the skill), the result the newest full test wrote stands, with the note "baseline expired".
 A baseline line is in force while three things are unchanged: the case (its hash), the reference model (no
 epoch of it after the line's date: "epochs" of the gate file, [{"date", "models", "skills", "cause"}], where
 models and skills are lists or "all"), and the measurement (its version at or above the floor). The skill's
@@ -1082,7 +1089,7 @@ def gate_of(skill_dir, cfg, extra=()):
     ref, floor = reference_model(cfg), cfg.get("measurement_floor", 1)
     threshold, tolerance = cfg.get("threshold", 0.8), cfg.get("strong_tolerance", 0)
     out = {"computed": False, "passed": None, "with": None, "baseline": None, "threshold": threshold, "tolerance": tolerance,
-           "version": None, "test": None, "cases": [], "pending": [], "note": None, "cause": None}
+           "version": None, "test": None, "cases": [], "pending": [], "note": None, "cause": None, "changed": [], "dropped": {}}
     major = version.split(".")[0] if version else None
     full = [e for e in events if e[0].get("kind") == "full" and str(e[0].get("version", "")).split(".")[0] == major]
     if not full:
@@ -1099,13 +1106,23 @@ def gate_of(skill_dir, cfg, extra=()):
                         and l["version"].split(".")[0] == major)
     same_epoch = lambda l: not epoch_after(cfg, skill, l["model"], l["date"], newest["date"])
     changed = sorted((cid for cid in current if cid in planned and current[cid] not in planned[cid]), key=_case_key)
-    if changed:
-        return {**out, "cause": f"case(s) {', '.join(changed)} changed after the newest full test: a full test runs them"}
+    # A case changed after the newest full test is treated as an added case: it waits, pending, for its own runs.
+    # Once only: when an earlier changed text of the case already ran since that test, a full test runs every case.
+    again = [cid for cid in changed
+             if {l["case_sha256"] for e, runs in events if e["test"] > newest["test"] for l in runs if str(l["case"]) == cid}
+             - {current[cid]} - planned[cid]]
+    if again:
+        return {**out, "cause": f"case(s) {', '.join(again)} changed again after the newest full test: a full test runs them"}
+    out["changed"] = changed
+    for cid in changed:  # what the case's earlier text had in the gate: shown, so that a changed case never hides runs
+        old = [l["score"] for _, runs in gate_events for l in runs
+               if str(l["case"]) == cid and l["variant"] == "with" and l["kind"] == "full" and (ref is None or l["model"] == ref)]
+        out["dropped"][cid] = {"runs": len(old), "mean": (sum(old) / len(old)) if old else None}
     pool = [l for _, runs in gate_events for l in runs
             if l["variant"] == "with" and l["kind"] == "full" and (ref is None or l["model"] == ref) and weighs(l) and same_epoch(l)]
     baselines = baseline_lines(skill_dir, cfg, events)
-    for cid in sorted((c for c in current if c not in planned), key=_case_key):
-        # An added case: pending until it has run with the skill on this X.Y and has a baseline in force.
+    for cid in sorted((c for c in current if c not in planned or c in changed), key=_case_key):
+        # An added or changed case: pending until it has run with the skill on this X.Y and has a baseline in force.
         lines = [l for _, runs in events for l in runs
                  if str(l["case"]) == cid and l["variant"] == "with" and (ref is None or l["model"] == ref) and weighs(l)
                  and ".".join(l["version"].split(".")[:2]) == xy]
@@ -1126,11 +1143,19 @@ def gate_of(skill_dir, cfg, extra=()):
             return {**out, "cause": "no baseline in force and no full test that wrote a gate"}
         return {**out, "computed": False, "passed": stored["passed"], "with": stored["with"], "baseline": stored["baseline"],
                 "note": "baseline expired"}
-    with_mean = sum(l["score"] for l in pool) / len(pool)
-    base = [l["score"] for cid in in_gate for l in baselines[cid]]
-    base_mean = sum(base) / len(base)
+    def case_mean(scores_of):
+        """The mean of the cases' means: a case with more lines weighs as much as the others."""
+        means = []
+        for cid in in_gate:
+            scores = scores_of(cid)
+            means.append(sum(scores) / len(scores))
+        return sum(means) / len(means)
+
+    with_mean = case_mean(lambda cid: [l["score"] for l in pool if str(l["case"]) == cid])
+    base_mean = case_mean(lambda cid: [l["score"] for l in baselines[cid]])
     passed = load_measure().gate_passes(with_mean, base_mean, threshold, tolerance)  # unrounded, both
-    return {**out, "computed": True, "passed": passed, "with": with_mean, "baseline": base_mean}
+    return {**out, "computed": True, "passed": passed, "with": with_mean, "baseline": base_mean,
+            "baseline_runs": min(len(baselines[cid]) for cid in in_gate)}
 
 
 def _case_key(cid):
@@ -1662,7 +1687,7 @@ FIELD_SIGNAL_AT = 3  # `failed` verdicts on the current X.Y, on the reference mo
 FIELD_CAP = 20  # uses, and verdicts, one contributor adds to the field columns of one skill
 BANDS = ("needs a test", "watch", "reliable")
 CAUSE_KINDS = ("no passing full test", "guard", "gate failed", "no current run", "guard cases only", "score",
-               "y changes", "field signal")
+               "y changes", "field signal", "case pending", "thin baseline")
 STAGE_SCRIPT = os.path.join(ROOT, "scripts", "stage_skills.py")
 
 
@@ -1926,7 +1951,7 @@ def skill_band(root, skill_dir, cfg, authors=None):
             causes.append(("gate failed", f"the newest full test of {gate['version']} failed the gate (baseline expired)",
                            f"after the fix: {run_full}"))
     elif not gate.get("computed"):
-        kind = "gate failed" if "changed after the newest full test" in (gate.get("cause") or "") else "no passing full test"
+        kind = "gate failed" if "changed again after the newest full test" in (gate.get("cause") or "") else "no passing full test"
         causes.append((kind, gate.get("cause") or "the gate cannot be computed", run_full))
 
     # needs a test (b): every guard assertion has a with-skill run in the current set, and no confirmed failure.
@@ -1960,6 +1985,21 @@ def skill_band(root, skill_dir, cfg, authors=None):
         y = y_changes_since(skill_dir, newest_full["version"]) if newest_full else 0
         if y >= Y_CHANGES_FOR_FULL:
             watch.append(("y changes", f"{y} Y changes since the newest full test", run_full))
+        waiting = [c for c in gate.get("changed") or [] if c in (gate.get("pending") or [])]
+        if waiting:
+            lost = "; ".join(f"case {c} had {gate['dropped'][c]['runs']} run(s)"
+                             + (f" of mean {gate['dropped'][c]['mean']:.3f}" if gate["dropped"][c]["mean"] is not None else "")
+                             for c in waiting)
+            watch.insert(0, ("case pending", f"case(s) {', '.join(waiting)} changed after the newest full test and wait for their runs ({lost})",
+                          f"python3 evals/eval_run.py --skill {skill} --cases {','.join(waiting)} --baseline"))
+        control = event_config(cfg)
+        margin = control.get("baseline_margin")
+        if (margin is not None and gate.get("computed") and gate.get("baseline_runs", control["runs"]) < control["runs"]
+                and gate["with"] - gate["baseline"] < margin):
+            every = ",".join(sorted(cases, key=_case_key))
+            watch.append(("thin baseline", f"the baseline ({gate['baseline']:.3f}) is within {margin:.2f} of the mean with the skill "
+                          f"({gate['with']:.3f}) and has fewer than {control['runs']} runs per case",
+                          f"python3 evals/eval_run.py --skill {skill} --cases {every} --baseline"))
     field = field_view(root, skill_dir, cfg, authors, events, version)
     if not causes and field["on"]:
         watch.append(("field signal", f"{field['signal']} `failed` verdicts on {xy} since its newest lab test",

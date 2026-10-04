@@ -192,7 +192,7 @@ def test_after_an_x_change_nothing_is_carried_and_the_skill_needs_a_test(root):
     assert band(root, folder)["band"] == "reliable"
 
 
-def test_a_failed_gate_and_a_changed_case_need_a_test_cause_c(root):
+def test_a_failed_gate_needs_a_test_cause_c_and_a_changed_case_waits_in_watch(root):
     folder = skill(root)
     full(folder, score=0.6, gate={"passed": False, "with": 0.6, "baseline": 0.5, "threshold": 0.8, "tolerance": 0.05})
     row = band(root, folder)
@@ -203,7 +203,10 @@ def test_a_failed_gate_and_a_changed_case_need_a_test_cause_c(root):
     cases["evals"][0]["prompt"] = "changed"
     (folder / "evals" / "evals.json").write_text(json.dumps(cases))
     row = band(root / "other", folder)
-    assert (row["band"], row["kind"]) == ("needs a test", "gate failed") and "changed after the newest full test" in row["cause"]
+    # A changed case is treated as an added case: it waits for its runs, and the gate is computed over the others.
+    assert (row["band"], row["kind"]) == ("watch", "case pending") and "changed after the newest full test" in row["cause"]
+    assert row["gate"]["computed"] and row["pending"] == ["1"] and es.gate_of(str(folder), CFG)["changed"] == ["1"]
+    assert row["command"] == "python3 evals/eval_run.py --skill core-demo --cases 1 --baseline"
 
 
 def test_a_raised_measurement_floor_leaves_every_skill_needing_a_test(root):
