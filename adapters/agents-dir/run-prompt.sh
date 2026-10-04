@@ -10,8 +10,8 @@
 # json`), kept beside the reply and never shown to the grader. A custom runner (RUN_PROMPT_CMD) prints text:
 # that text is the reply, and its tokens are unknown (null). It installs nothing: the eval
 # runner stages the skill under test and a case's dependency skills in <cwd>/.agents/skills/<name>
-# before this script starts (the "eval" object of adapter.json names that folder). The runner refuses
-# a case folder that carries a name of adapter.json's "eval.settings": .agents/, .opencode/ and
+# before this script starts ("skills_dir" of this adapter's eval.json names that folder). The runner refuses
+# a case folder that carries a name of eval.json's "settings": .agents/, .opencode/ and
 # opencode.json[c], and what the default runner also reads at project level, another tool's skills
 # folder and instruction file (.claude/, CLAUDE.md) and its own older instruction file (CONTEXT.md);
 # checked in the binary of opencode 1.18.32. AGENTS.md is not in the list: it is the project's own

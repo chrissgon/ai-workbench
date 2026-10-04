@@ -58,8 +58,9 @@ def test_a_skill_the_runner_staged_is_left_as_it_is(case):
 
 def test_the_manifest_names_where_the_harness_finds_skills_and_what_carries_its_settings():
     manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
-    assert manifest["eval"]["skills_dir"] == ".agents/skills"
-    settings = set(manifest["eval"]["settings"])
+    block = json.loads((SCRIPT.parent / "eval.json").read_text(encoding="utf-8"))
+    assert block["skills_dir"] == ".agents/skills"
+    settings = set(block["settings"])
     assert {".agents", ".opencode", "opencode.json", "opencode.jsonc"} <= settings
     # What the default runner also reads at project level: another tool's folder and instruction file.
     assert {".claude", "CLAUDE.md"} <= settings and "AGENTS.md" not in settings
@@ -197,8 +198,8 @@ def test_a_stopped_adapter_stops_the_runner_and_its_children(case):
 
 
 def test_the_manifest_names_what_an_exhausted_account_answers():
-    manifest = json.loads((SCRIPT.parent / "adapter.json").read_text(encoding="utf-8"))
-    assert manifest["eval"]["account_limit"] and all(isinstance(m, str) and m for m in manifest["eval"]["account_limit"])
+    block = json.loads((SCRIPT.parent / "eval.json").read_text(encoding="utf-8"))
+    assert block["account_limit"] and all(isinstance(m, str) and m for m in block["account_limit"])
 
 
 

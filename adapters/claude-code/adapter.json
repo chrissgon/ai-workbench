@@ -16,24 +16,6 @@
   ],
   "eval_runner": "run-prompt.sh",
   "runtime_runner": "run-agent.sh",
-  "eval": {
-    "skills_dir": ".claude/skills",
-    "settings": [
-      ".claude",
-      ".mcp.json",
-      "CLAUDE.md",
-      "CLAUDE.local.md"
-    ],
-    "account_limit": [
-      "limit reached",
-      "hit your limit",
-      "out of extra usage",
-      "Credit balance is too low"
-    ],
-    "refusal_markers": [
-      "safeguards flagged this message"
-    ]
-  },
   "secrets": [
     {
       "name": "CLAUDE_CODE_OAUTH_TOKEN",

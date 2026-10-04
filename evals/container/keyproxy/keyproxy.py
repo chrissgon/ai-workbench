@@ -11,6 +11,7 @@ header made from the key it alone holds. It:
     them is forwarded;
   - never routes by the Host header: the upstream is fixed when the proxy starts;
   - removes the Authorization (and Proxy-Authorization) a run sends, and adds its own;
+  - when the route names "provider_only", sets "provider": {"only": [that name], "allow_fallbacks": false} in the body of every POST to a path that ends in /chat/completions, and refuses a body it cannot read as a JSON object;
   - passes the response through as it arrives, so a streamed answer streams, with the route's timeout
     ("timeout_seconds", the egress proxy's own) on the run's side and on the provider's;
   - logs one line per request (method, path without its query, status, bytes, milliseconds): never a
@@ -73,6 +74,9 @@ def load_route(path=ROUTE, upstream=None):
             raise RouteError(f"{key} must be a positive number")
     if not (isinstance(route.get("secret"), str) and route["secret"]):
         raise RouteError("secret must name the variable that holds the key")
+    only = route.get("provider_only")
+    if only is not None and not (isinstance(only, str) and only and all(c.isalnum() or c in " ._/-" for c in only) and len(only) <= 80):
+        raise RouteError("provider_only must name one upstream provider")
     return route
 
 
@@ -175,6 +179,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             body = self.read_body(route["max_body_bytes"])
         except BodyError as e:
             return self.refuse(e.status, str(e), started)
+        only = route.get("provider_only")
+        if only and self.command == "POST" and urllib.parse.urlsplit(self.path).path.endswith("/chat/completions"):
+            # The route pins one upstream provider: the request says so, whatever the run asked for. A body that
+            # cannot be read is refused, so that no call leaves unpinned.
+            try:
+                doc = json.loads(body or b"")
+                if not isinstance(doc, dict):
+                    raise ValueError("not an object")
+            except ValueError:
+                return self.refuse(400, "the key proxy pins the provider and could not read the request body as a JSON object", started)
+            doc["provider"] = {"only": [only], "allow_fallbacks": False}
+            body = json.dumps(doc).encode("utf-8")
         listed = {t.strip().lower() for v in self.headers.get_all("Connection") or [] for t in v.split(",")}
         headers = [(k, v) for k, v in self.headers.items() if k.lower() not in NOT_FORWARDED and k.lower() not in listed]
         conn = None

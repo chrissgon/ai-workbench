@@ -43,7 +43,9 @@ as the history of the first round, and nothing reads them.
   A run line: {"record": "run", "skill", "version", "content_sha256", "model", "adapter", "kind", "test",
    "date", "measurement_version", "measurement_sha256", "case", "case_sha256", "variant": "with"|"without",
    "outcome": "graded"|"timeout", "score", "results": [0|1, ...][, "context_sha256"][, "platform"]
-   [, "guard_failed": [positions]]}
+   [, "guard_failed": [positions]][, "cost_usd"][, "run_sha256"]}
+  "cost_usd" is the cost the adapter reported for the run; it is absent when the adapter reported none.
+  "run_sha256" is a hash of what the run left and a re-grading would read (eval_run.py run_record_hash).
 
 A run line with "platform" is a run of a case of that platform's case file, skills/<name>/evals/platforms/
 <platform>.json (eval_run.py --platform; the plan's decision 14c): it belongs to a partial test and to a run
@@ -186,7 +188,7 @@ are skipped.
 
 The measurement fingerprint: sha256 over the files of FINGERPRINT_FILES (the grading template, the measuring
 module evals/measure.py and its constants evals/measurement.json, the executor, the staging module), every file
-of evals/container/, and the run-prompt.sh and adapter.json of each eval adapter. scripts/validate.py fails when
+of evals/container/, and the run-prompt.sh and eval.json of each eval adapter. scripts/validate.py fails when
 it differs from a committed "measurement_sha256"; the runner computes it when an event starts, writes it into
 every evidence line and writes no evidence when it differs.
 
@@ -535,7 +537,7 @@ def model_id(cfg, name):
 
 # The files that decide what a run measures (item B10 of the plan): the grading template, the measuring module
 # and its constants, the executor, the staging module; with them every file of the image's definition
-# (evals/container/) and the run-prompt.sh and adapter.json of each eval adapter (an adapter with a
+# (evals/container/) and the run-prompt.sh and eval.json of each eval adapter (an adapter with a
 # run-prompt.sh). Not in it: scripts/redact.py and shared/references/ (FR-I4), the rest of the runner
 # (infrastructure), the gate file itself. scripts/validate.py compares the result with the committed
 # "measurement_sha256", and the runner refuses to write evidence when they differ.
@@ -569,7 +571,7 @@ def measurement_fingerprint(root=ROOT):
     adapters = os.path.join(root, "adapters")
     for name in sorted(os.listdir(adapters)) if os.path.isdir(adapters) else []:
         if os.path.isfile(os.path.join(adapters, name, "run-prompt.sh")):  # an eval adapter
-            paths += [os.path.join(adapters, name, "run-prompt.sh"), os.path.join(adapters, name, "adapter.json")]
+            paths += [os.path.join(adapters, name, "run-prompt.sh"), os.path.join(adapters, name, "eval.json")]
     h = hashlib.sha256()
     for path in sorted(p for p in paths if os.path.isfile(p)):
         with open(path, "rb") as f:
@@ -716,7 +718,7 @@ EVENT_REQUIRED = ("record", "skill", "test", "kind", "version", "content_sha256"
 EVENT_OPTIONAL = ("gate", "upstream")
 RUN_REQUIRED = ("record", "skill", "version", "content_sha256", "model", "adapter", "kind", "test", "date",
                 "measurement_version", "measurement_sha256", "case", "case_sha256", "variant", "outcome", "score", "results")
-RUN_OPTIONAL = ("context_sha256", "platform", "guard_failed")
+RUN_OPTIONAL = ("context_sha256", "platform", "guard_failed", "cost_usd", "run_sha256")
 GATE_KEYS = ("passed", "with", "baseline", "threshold", "tolerance")
 
 
@@ -882,6 +884,11 @@ def run_line_problems(line, event=None, models=None):
         out.append("score must be the share of results that are 1")
     if results and line["outcome"] == "timeout" and any(results):
         out.append("a timeout has score 0 and results all 0")
+    if "cost_usd" in line and not (isinstance(line["cost_usd"], (int, float)) and not isinstance(line["cost_usd"], bool)
+                                   and line["cost_usd"] >= 0):
+        bad("cost_usd", "a number, 0 or more")
+    if "run_sha256" in line and not _is(HEX64_RE, line["run_sha256"]):
+        bad("run_sha256", "64 hexadecimal characters")
     if "platform" in line and not _is(NAME_RE, line["platform"]):
         bad("platform", "a platform name")
     elif "platform" in line and (line["kind"] != "partial" or line["variant"] != "with"):
