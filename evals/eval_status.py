@@ -837,7 +837,7 @@ def event_line_problems(line, models=None):
         out.append("a complete full test carries its gate")
     if "upstream" in line and not (isinstance(line["upstream"], dict) and all(
             _model(k, models) and _is(TOOL_RE, v) for k, v in line["upstream"].items())):
-        bad("upstream", "{model id: the upstream provider its responses name}")
+        bad("upstream", "{model id: the upstream provider the key proxy's route pins}")
     return out
 
 

@@ -2773,8 +2773,9 @@ def run(argv):
     if unlisted:
         die(f"case(s) {', '.join(unlisted)} of {o['skill']} set \"allow_web\" and are not in \"web_cases\" of "
             "evals/eval-gate.json: the network is opened for the cases listed there and for no other.", 2)
-    # On a web case the strong tier runs with the variables the gate file names for it (a low-limit API key)
-    # in place of the account's token: a run on the open network reads pages written by others.
+    # On a web case the strong tier runs with the variables the gate file names for it in "strong_web_pass_env"
+    # (a low-limit API key), when it names any, in place of the account's token. Without that key a web case
+    # gets the account's token like any other run: its key proxy holds the value outside the run.
     web_env = list(gate.get("strong_web_pass_env") or []) if o["model"] == gate.get("strong_model") else []
     strong_web = bool(web_env) and any(web.values()) and "strong" in [t for t, _ in models]
     names = o["pass_env"] + o["floor_pass_env"] + (o["strong_pass_env"] + (web_env if strong_web else [])
