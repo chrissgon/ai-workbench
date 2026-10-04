@@ -5,7 +5,7 @@ description: >
   whenever the user asks which skill or workflow would handle something, or whether it has what it
   needs, even when the answer looks obvious from the skill list or the user says not to start yet:
   loading it starts nothing; it reports the route and what is found or missing, then stops. Use it
-  first, too, for any request to build, implement, fix, design, plan, write, publish, schedule or
+  first, too, for any request to build, implement, fix, design, plan, write, review, validate, publish, schedule or
   send something, including one naming an external system (a ticket, a post), before checking for
   a tool for that system and even when no other skill is installed; for a request spanning areas,
   continuing a multi-phase effort, or that may need no skill; and for "where are we", "what's
@@ -20,7 +20,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: []
   side_effects: []
-  version: "2.1.0"
+  version: "2.2.0"
 ---
 
 # Orchestrator
@@ -106,7 +106,7 @@ Approve the route only if all of the following hold:
 
 - "Improve our onboarding" fits product, design, engineering and marketing. It is `ambiguous`; ask what "onboarding" and "improve" mean here before routing.
 - A ticket is not automatically engineering. Read it (or ask for it) before routing; design and marketing tickets exist.
-- A request that names a product with no `docs/` artifacts and no state file: ask where the project lives before assuming it is the current directory.
+- A request that names a product with no `docs/` artifacts and no state file: ask where the project lives before assuming it is the current directory. Ask for a path or a name only, never for a description of its customers, pricing, revenue or costs: the routed skill asks for those.
 - Skill names are identifiers, not descriptions. If the table says `biz-business-model`, the route says `biz-business-model`, not a longer name that sounds more precise. A `(planned)` mark next to a name says the skill is not built, so its route is `pending`; the mark is not part of the name.
 - Three skills carry "security": a diff is `eng-code-review`, dependency alerts are `eng-security-review`, the workbench itself or a skill from outside is `core-security-audit`. Securing a repository before it is published is `ops-repo-baseline`.
 - Never start two flows for one request. A cross-area outcome goes to one cross-area flow, which invokes the others one level deep.
