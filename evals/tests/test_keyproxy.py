@@ -147,7 +147,8 @@ def test_the_proxy_adds_the_key_and_removes_the_authorization_a_run_sends(provid
     assert resp.status == 200
     seen = provider.seen[-1]
     assert seen["authorization"] == [f"Bearer {KEY}"]  # one header, the proxy's own
-    assert seen["path"] == "/api/v1/chat/completions?x=1" and seen["body"] == body
+    assert seen["path"] == "/api/v1/chat/completions?x=1"
+    assert json.loads(seen["body"]) == {**json.loads(body), "provider": {"only": ["deepinfra"], "allow_fallbacks": False}}
     assert seen["headers"]["Host"] == f"127.0.0.1:{provider.server_address[1]}"  # never the Host the run sent
     assert seen["headers"]["X-Title"] == "eval" and seen["headers"]["Content-Type"] == "application/json"
     assert not any(FROM_THE_RUN in v for v in seen["headers"].values())
