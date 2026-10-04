@@ -46,5 +46,5 @@
       "cause": "The strong model's credential moves out of the run container into a key proxy of its own, and the floor model's calls are pinned to one upstream provider by its key proxy."
     }
   ],
-  "measurement_sha256": "8bb39f491b1ce77640e74597e8d61bf94b29005c5ae60285fcb885a5883a9edc"
+  "measurement_sha256": "2f141c251a98cc004c55c72acc9064596934ffe13de387c3d75fb1853783531d"
 }
