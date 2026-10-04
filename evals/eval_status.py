@@ -43,7 +43,9 @@ as the history of the first round, and nothing reads them.
   A run line: {"record": "run", "skill", "version", "content_sha256", "model", "adapter", "kind", "test",
    "date", "measurement_version", "measurement_sha256", "case", "case_sha256", "variant": "with"|"without",
    "outcome": "graded"|"timeout", "score", "results": [0|1, ...][, "context_sha256"][, "platform"]
-   [, "guard_failed": [positions]]}
+   [, "guard_failed": [positions]][, "cost_usd"][, "run_sha256"]}
+  "cost_usd" is the cost the adapter reported for the run; it is absent when the adapter reported none.
+  "run_sha256" is a hash of what the run left and a re-grading would read (eval_run.py run_record_hash).
 
 A run line with "platform" is a run of a case of that platform's case file, skills/<name>/evals/platforms/
 <platform>.json (eval_run.py --platform; the plan's decision 14c): it belongs to a partial test and to a run
@@ -709,7 +711,7 @@ EVENT_REQUIRED = ("record", "skill", "test", "kind", "version", "content_sha256"
 EVENT_OPTIONAL = ("gate", "upstream")
 RUN_REQUIRED = ("record", "skill", "version", "content_sha256", "model", "adapter", "kind", "test", "date",
                 "measurement_version", "measurement_sha256", "case", "case_sha256", "variant", "outcome", "score", "results")
-RUN_OPTIONAL = ("context_sha256", "platform", "guard_failed")
+RUN_OPTIONAL = ("context_sha256", "platform", "guard_failed", "cost_usd", "run_sha256")
 GATE_KEYS = ("passed", "with", "baseline", "threshold", "tolerance")
 
 
@@ -875,6 +877,11 @@ def run_line_problems(line, event=None, models=None):
         out.append("score must be the share of results that are 1")
     if results and line["outcome"] == "timeout" and any(results):
         out.append("a timeout has score 0 and results all 0")
+    if "cost_usd" in line and not (isinstance(line["cost_usd"], (int, float)) and not isinstance(line["cost_usd"], bool)
+                                   and line["cost_usd"] >= 0):
+        bad("cost_usd", "a number, 0 or more")
+    if "run_sha256" in line and not _is(HEX64_RE, line["run_sha256"]):
+        bad("run_sha256", "64 hexadecimal characters")
     if "platform" in line and not _is(NAME_RE, line["platform"]):
         bad("platform", "a platform name")
     elif "platform" in line and (line["kind"] != "partial" or line["variant"] != "with"):

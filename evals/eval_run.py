@@ -1905,6 +1905,27 @@ def shown_in(cwd, rel):
     return load_measure().shown(os.path.join(cwd, rel)) if readable(cwd, rel) else load_measure().NOT_SHOWN
 
 
+def run_record_hash(run_dir):
+    """sha256 over what a run left that a later re-grading reads: prompt.md, facts.md, outputs/response.md and every
+    regular file under cwd/ (sorted relative paths and their bytes; a symbolic link is skipped). The gradings, the
+    timing, the event stream and anything added later (regrade-<k>/) are outside it."""
+    paths = [p for p in ("prompt.md", "facts.md", os.path.join("outputs", "response.md"))
+             if os.path.isfile(os.path.join(run_dir, p)) and not os.path.islink(os.path.join(run_dir, p))]
+    cwd = os.path.join(run_dir, "cwd")
+    for dp, dns, fns in os.walk(cwd):
+        dns[:] = sorted(d for d in dns if not os.path.islink(os.path.join(dp, d)))
+        for fn in fns:
+            path = os.path.join(dp, fn)
+            if os.path.isfile(path) and not os.path.islink(path):
+                paths.append(os.path.relpath(path, run_dir))
+    h = hashlib.sha256()
+    for rel in sorted(paths):
+        with open(os.path.join(run_dir, rel), "rb") as f:
+            data = f.read()
+        h.update(rel.replace(os.sep, "/").encode("utf-8") + b"\0" + str(len(data)).encode() + b"\0" + data)
+    return h.hexdigest()
+
+
 def template_hash():
     """sha256 of the grading template: the instrument a grading was made with."""
     with open(GRADING_TEMPLATE, "rb") as f:
@@ -3114,6 +3135,7 @@ def run(argv):
                     json.dump(g, f, indent=2)
         row = {"case": c["id"], "run": k, "pass_rate": g["summary"]["pass_rate"] if g else None,
                "tokens": timing.get("total_tokens"), "duration_ms": timing.get("duration_ms"),
+               "cost_usd": timing.get("cost_usd"), "run_sha256": run_record_hash(run_dir),
                **{key: timing[key] for key in ("stop_reason", "num_turns", "invoked") if key in timing},
                **({"redactions": count["redactions"]} if count["redactions"] else {})}
         if g:  # one 0 or 1 per assertion, in the case's order: what a per-assertion count is made from
@@ -3272,6 +3294,9 @@ def run(argv):
                           "measurement_sha256": fingerprint, "case": job[0]["id"], "case_sha256": hashes[str(job[0]["id"])],
                           **({"context_sha256": context} if context else {}),
                           **({"platform": o["platform"]} if o.get("platform") else {}),
+                          **({"cost_usd": row["cost_usd"]} if isinstance(row.get("cost_usd"), (int, float))
+                             and not isinstance(row.get("cost_usd"), bool) and row["cost_usd"] >= 0 else {}),
+                          **({"run_sha256": row["run_sha256"]} if row.get("run_sha256") else {}),
                           "variant": variant, "outcome": row.get("outcome", "graded"), "score": row["pass_rate"],
                           "results": row["results"],
                           **({"guard_failed": row["guard_failed"]} if variant == "with" and row.get("guard_failed") else {})})
@@ -3287,6 +3312,11 @@ def run(argv):
                     into["invoked"] = into.get("invoked", 0) + c["invoked"]
     ran_baseline = {str(job[0]["id"]) for job in jobs if job[1] == "without_skill" and job[2] == "strong"}
     reused = {cid for cid, n in in_force.items() if n >= o["runs"]} if kind == "full" else set()  # a partial test uses none
+    # The provider the floor model's calls are pinned to (the key proxy's route), when the event ran that model
+    # through the key proxy: what the event line's "upstream" states.
+    pin = load_executor().route().get("provider_only") if EXECUTOR == "container" else None
+    floor_id = model_ids.get("floor")
+    upstream = {floor_id: pin} if pin and floor_id and str(dict(models).get("floor", "")).startswith("openrouter/") else None
     event_line = {"record": "test", "skill": o["skill"], "test": test, "kind": kind, "version": version,
                   "content_sha256": start_hash, "date": event["started"][:10], "models": model_ids,
                   "adapters": {tier: harness_for[tier] for tier, _ in models},
@@ -3297,7 +3327,7 @@ def run(argv):
                   "grading_template_sha256": template_hash(), "tools": event.get("tools") or {}, "cases": hashes,
                   "baseline": {cid: ("run" if cid in ran_baseline else "reused" if cid in reused else "none") for cid in hashes},
                   "web_cases": bench["web_cases"], "counts": line_counts, "extra_pass_env": o["extra_pass_env"],
-                  "complete": bool(complete_ref)}
+                  "complete": bool(complete_ref), **({"upstream": upstream} if upstream else {})}
     gate_result = None
     if kind == "full" and complete_ref:
         # The gate, evaluated when a full test ends, by the rule of the model's section 2: this test's lines with

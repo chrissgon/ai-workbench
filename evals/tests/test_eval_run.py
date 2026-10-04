@@ -1352,7 +1352,9 @@ def test_a_complete_full_test_writes_its_evidence_file_into_the_skill(tmp_path, 
         assert (line["outcome"], line["score"], line["results"]) == ("graded", 1.0, [1])
         assert line["case_sha256"] == event["cases"][str(line["case"])] and line["content_sha256"] == before
         assert line["measurement_sha256"] == event["measurement_sha256"] and "context_sha256" not in line
-        assert set(line) == set(status.RUN_REQUIRED)
+        # The required keys, and of the optional ones only those a run line may carry (the run hash, a cost).
+        assert set(status.RUN_REQUIRED) <= set(line) <= set(status.RUN_REQUIRED) | set(status.RUN_OPTIONAL)
+        assert len(line["run_sha256"]) == 64
     assert status.evidence_problems(str(tmp_path)) == ({}, 1)  # the file the runner wrote is a valid one
     # A second full test of the same content adds its file and replaces none; the old record is not written.
     assert er.main(FULL) == 0
