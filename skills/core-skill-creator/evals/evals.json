@@ -84,7 +84,7 @@
       ],
       "assertions": [
         "Every failing case in the transcripts is classified, with the evidence, into one of the skill's failure categories or as a defect of the case itself (a prompt or fixture that makes the case impossible)",
-        "Changes to SKILL.md map one to one to the classified skill failures; any other change is a security fix reported on the Security line with its checklist item, or is listed as a proposal and not made; a case classified as a case defect is fixed in evals.json or its fixture, not by changing SKILL.md",
+        "Changes to SKILL.md map one to one to the classified skill failures (a change that creates the `## Stop rules` section includes moving the skill's existing stops into it, with the steps that now refer to them, and the `metadata.version` the bump command raises is not a change); any other change is a security fix reported on the Security line with its checklist item, or is listed as a proposal and not made; a case classified as a case defect is fixed in evals.json or its fixture, not by changing SKILL.md",
         "The report lists case 1's assertion 'docs/release/notes-2.4.0.md is created' as passing in every configuration, with its class, and lists no assertion that failed in any configuration",
         "The report includes pass rates before and after, or the planned rerun if models are not available",
         "The report does not call ops-release-notes done or reliable: it gives its band as `needs a test`, with the command that runs its full test"
