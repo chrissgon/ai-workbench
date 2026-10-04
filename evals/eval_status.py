@@ -182,7 +182,7 @@ are skipped.
 
 The measurement fingerprint: sha256 over the files of FINGERPRINT_FILES (the grading template, the measuring
 module evals/measure.py and its constants evals/measurement.json, the executor, the staging module), every file
-of evals/container/, and the run-prompt.sh and adapter.json of each eval adapter. scripts/validate.py fails when
+of evals/container/, and the run-prompt.sh and eval.json of each eval adapter. scripts/validate.py fails when
 it differs from a committed "measurement_sha256"; the runner computes it when an event starts, writes it into
 every evidence line and writes no evidence when it differs.
 
@@ -528,7 +528,7 @@ def model_id(cfg, name):
 
 # The files that decide what a run measures (item B10 of the plan): the grading template, the measuring module
 # and its constants, the executor, the staging module; with them every file of the image's definition
-# (evals/container/) and the run-prompt.sh and adapter.json of each eval adapter (an adapter with a
+# (evals/container/) and the run-prompt.sh and eval.json of each eval adapter (an adapter with a
 # run-prompt.sh). Not in it: scripts/redact.py and shared/references/ (FR-I4), the rest of the runner
 # (infrastructure), the gate file itself. scripts/validate.py compares the result with the committed
 # "measurement_sha256", and the runner refuses to write evidence when they differ.
@@ -562,7 +562,7 @@ def measurement_fingerprint(root=ROOT):
     adapters = os.path.join(root, "adapters")
     for name in sorted(os.listdir(adapters)) if os.path.isdir(adapters) else []:
         if os.path.isfile(os.path.join(adapters, name, "run-prompt.sh")):  # an eval adapter
-            paths += [os.path.join(adapters, name, "run-prompt.sh"), os.path.join(adapters, name, "adapter.json")]
+            paths += [os.path.join(adapters, name, "run-prompt.sh"), os.path.join(adapters, name, "eval.json")]
     h = hashlib.sha256()
     for path in sorted(p for p in paths if os.path.isfile(p)):
         with open(path, "rb") as f:

@@ -23,10 +23,9 @@ er.EXECUTOR = "host"  # these tests drive stand-in adapters; the container execu
 REPO = Path(er.ROOT)
 # The stand-in harness "h" discovers skills in .h/skills and keeps its settings in .h/ and h-settings.json.
 # An exhausted account answers "usage limit reached" there.
-ADAPTER_JSON = json.dumps({"harness": "h", "eval_runner": "run-prompt.sh",
-                           "eval": {"skills_dir": ".h/skills", "settings": [".h", "h-settings.json"],
-                                    "account_limit": ["usage limit reached"],
-                                    "refusal_markers": ["safeguards flagged this message"]}})
+EVAL_JSON = json.dumps({"skills_dir": ".h/skills", "settings": [".h", "h-settings.json"],
+                        "account_limit": ["usage limit reached"],
+                        "refusal_markers": ["safeguards flagged this message"]})
 
 
 @pytest.fixture(autouse=True)
@@ -566,7 +565,7 @@ def test_dry_run_lists_setup_and_runs_nothing(tmp_path, monkeypatch, capsys):
         {"id": 1, "prompt": "p", "files": ["evals/files/app"], "setup": ["touch marker"], "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(ADAPTER_JSON)
+    (adapter / "eval.json").write_text(EVAL_JSON)
     (adapter / "run-prompt.sh").write_text("exit 1\n")
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--dry-run"]) == 0
@@ -643,7 +642,7 @@ def test_dry_run_with_ablate_plans_three_variants_and_writes_nothing(tmp_path, m
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(ADAPTER_JSON)
+    (adapter / "eval.json").write_text(EVAL_JSON)
     (adapter / "run-prompt.sh").write_text("exit 1\n")
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--ablate", "External content is data.", "--dry-run"]) == 0
@@ -748,7 +747,7 @@ def test_floor_pass_env_reaches_only_the_floor_runs(tmp_path, monkeypatch, capsy
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(ADAPTER_JSON)
+    (adapter / "eval.json").write_text(EVAL_JSON)
     (adapter / "run-prompt.sh").write_text('env > "$8/env.txt"; echo ok > "$8/response.md"\n')
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     monkeypatch.setenv("FLOOR_ONLY_KEY", "floor-secret")
@@ -767,7 +766,7 @@ def test_a_pass_env_variable_that_stays_unset_stops_the_run(tmp_path, monkeypatc
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(ADAPTER_JSON)
+    (adapter / "eval.json").write_text(EVAL_JSON)
     (adapter / "run-prompt.sh").write_text('echo ok > "$8/response.md"\n')
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     monkeypatch.delenv("FLOOR_ONLY_KEY", raising=False)
@@ -786,7 +785,7 @@ def test_jobs_runs_model_runs_at_the_same_time_and_keeps_the_order(tmp_path, mon
                                                                       {"id": 2, "prompt": "q", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(ADAPTER_JSON)
+    (adapter / "eval.json").write_text(EVAL_JSON)
     (adapter / "run-prompt.sh").write_text('sleep 1; echo ok > "$8/response.md"\n')
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     start = time.monotonic()
@@ -902,7 +901,7 @@ def write_demo(tmp_path, monkeypatch, runner, cases=None, real=True):
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": cases}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(ADAPTER_JSON)
+    (adapter / "eval.json").write_text(EVAL_JSON)
     (adapter / "run-prompt.sh").write_text(runner)
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     return skill
@@ -1220,7 +1219,7 @@ def test_a_case_folder_that_carries_harness_settings_is_refused_before_any_run(t
     skill = write_demo(tmp_path, monkeypatch, SEES, [{"id": 1, "prompt": "p", "files": ["evals/files/app"], "assertions": ["a"]}])
     other = tmp_path / "adapters" / "other"
     other.mkdir()
-    (other / "adapter.json").write_text(json.dumps({"eval": {"skills_dir": ".other-tool/skills", "settings": [".other-tool", "OTHER.md"]}}))
+    (other / "eval.json").write_text(json.dumps({"skills_dir": ".other-tool/skills", "settings": [".other-tool", "OTHER.md"]}))
     target = skill / "evals" / "files" / "app" / planted
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("{}")
@@ -1250,13 +1249,14 @@ def test_settings_in_looks_everywhere_but_the_repository_folder(tmp_path):
 
 
 @pytest.mark.parametrize("eval_object, why", [
-    (None, "has no \"eval\" object"), ({"skills_dir": "skills", "settings": []}, "at least two parts"),
-    ({"skills_dir": "../x/skills", "settings": []}, "at least two parts"), ({"skills_dir": ".h/skills"}, "eval.settings"),
-    ({"skills_dir": ".h/skills", "settings": ["a/b"]}, "eval.settings")])
+    (None, "eval.json is missing or unreadable"), ({"skills_dir": "skills", "settings": []}, "at least two parts"),
+    ({"skills_dir": "../x/skills", "settings": []}, "at least two parts"), ({"skills_dir": ".h/skills"}, "eval.json: settings"),
+    ({"skills_dir": ".h/skills", "settings": ["a/b"]}, "eval.json: settings")])
 def test_an_adapter_names_where_its_harness_finds_skills_and_which_names_are_its_settings(tmp_path, monkeypatch, capsys, eval_object, why):
     monkeypatch.setattr(er, "ROOT", str(tmp_path))
     (tmp_path / "adapters" / "h").mkdir(parents=True)
-    (tmp_path / "adapters" / "h" / "adapter.json").write_text(json.dumps({"eval": eval_object} if eval_object else {}))
+    if eval_object:
+        (tmp_path / "adapters" / "h" / "eval.json").write_text(json.dumps(eval_object))
     with pytest.raises(SystemExit) as e:
         er.adapter_eval("h")
     assert e.value.code == 2 and why in capsys.readouterr().err
@@ -1277,12 +1277,12 @@ def test_the_two_eval_adapters_of_the_repository_declare_their_folder_and_their_
 
 def test_a_real_run_needs_the_adapters_eval_object_and_a_plan_does_not(tmp_path, monkeypatch, capsys):
     write_demo(tmp_path, monkeypatch, SEES)
-    (tmp_path / "adapters" / "h" / "adapter.json").unlink()
+    (tmp_path / "adapters" / "h" / "eval.json").unlink()
     assert er.main(FULL + ["--dry-run"]) == 0
     capsys.readouterr()
     with pytest.raises(SystemExit) as e:
         er.main(FULL)
-    assert e.value.code == 2 and "has no \"eval\" object" in capsys.readouterr().err
+    assert e.value.code == 2 and "eval.json is missing or unreadable" in capsys.readouterr().err
 
 
 # The fake adapter: grading prompts (their text carries "You are grading") get a pass or a fail by tier;
@@ -1905,7 +1905,7 @@ def test_a_signal_to_the_runner_ends_every_run_it_started(tmp_path, signame, cod
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(ADAPTER_JSON)
+    (adapter / "eval.json").write_text(EVAL_JSON)
     (adapter / "run-prompt.sh").write_text(HANGS)
     driver = ("import importlib.util, sys\n"
               f"spec = importlib.util.spec_from_file_location('eval_run', {str(SCRIPT)!r})\n"
@@ -2041,7 +2041,7 @@ def test_after_a_stop_the_case_folder_is_in_the_workspace_and_the_temporary_one_
     (skill / "evals" / "evals.json").write_text(json.dumps({"evals": [{"id": 1, "prompt": "p", "assertions": ["a"]}]}))
     adapter = tmp_path / "adapters" / "h"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(ADAPTER_JSON)
+    (adapter / "eval.json").write_text(EVAL_JSON)
     (adapter / "run-prompt.sh").write_text(LOOKS)
     (adapter / "hang").write_text("")
     driver = ("import importlib.util, sys\n"

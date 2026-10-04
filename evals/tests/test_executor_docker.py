@@ -372,7 +372,7 @@ def test_the_grading_path_with_a_stub_grader_runs_in_the_container_and_a_stub_ru
     (skill / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "0.1"\n---\n# demo\n')
     adapter = wb / "adapters" / "stub"
     adapter.mkdir(parents=True)
-    (adapter / "adapter.json").write_text(json.dumps({"harness": "stub", "eval": {"skills_dir": ".stub/skills", "settings": [".stub"]}}))
+    (adapter / "eval.json").write_text(json.dumps({"skills_dir": ".stub/skills", "settings": [".stub"]}))
     (adapter / "run-prompt.sh").write_text(STUB_ADAPTER)
     (wb / "evals").mkdir()
     (wb / "evals" / "grading-prompt.md").write_text((REPO / "evals" / "grading-prompt.md").read_text())

@@ -13,7 +13,8 @@ CODEOWNERS = REPO / ".github" / "CODEOWNERS"
 
 # What item B11 asks the file to gain, besides the rules and checks it already covered.
 REQUIRED = ["/evals/", "/adapters/claude-code/run-prompt.sh", "/adapters/claude-code/adapter.json",
-            "/adapters/agents-dir/run-prompt.sh", "/adapters/agents-dir/adapter.json", "/adapters/*/install.sh",
+            "/adapters/agents-dir/run-prompt.sh", "/adapters/agents-dir/adapter.json", "/adapters/claude-code/eval.json",
+            "/adapters/agents-dir/eval.json", "/adapters/*/install.sh",
             "/scripts/stage_skills.py", "/scripts/redact.py", "/scripts/test_dirs.py", "/scripts/evidence.py",
             "/.security-scan-allow", "/shared/", "/skills/*/evals/evidence/", "/skills/*/evals/versions.jsonl",
             "/skills/*/evals/result.json", "/AGENTS.md", "/scripts/validate.py", "/.github/"]
@@ -46,7 +47,9 @@ def test_every_pattern_matches_a_tracked_path_or_one_that_tooling_writes():
 
 
 def test_every_eval_adapter_is_covered():
-    """An eval adapter (one with a run-prompt.sh) is in the measurement fingerprint: its two files are owned."""
+    """An eval adapter (one with a run-prompt.sh) is in the measurement fingerprint: its run-prompt.sh and its
+    eval.json are owned, and so is its adapter.json."""
     for script in sorted(REPO.glob("adapters/*/run-prompt.sh")):
         name = script.parent.name
         assert f"/adapters/{name}/run-prompt.sh" in patterns() and f"/adapters/{name}/adapter.json" in patterns(), name
+        assert f"/adapters/{name}/eval.json" in patterns(), name

@@ -119,7 +119,7 @@ most "max_resumes" times (3). A run still incomplete after that is written as a 
 it would raise a mean. That is the only way a run that did not complete scores. A contaminated baseline and a
 failed grading are never turned into a score: the first needs the way in closed, the second is made again.
 The account limit. Each adapter's data names what its harness prints when the account of its tier is
-exhausted ("account_limit" in the "eval" object of adapter.json). When a model run or a grading call fails
+exhausted ("account_limit" in its eval.json). When a model run or a grading call fails
 with one of those texts, the runner pauses: it writes a pause file under the shared lock, prints the time it
 stopped, and every runner process waits before its next call on that account. The pause ends when a probe
 call succeeds (one small model call every PROBE_SECONDS, by one process at a time), or at the time the
@@ -150,7 +150,7 @@ shows the model loading; for a with-skill run the runner keeps "invoked" (whethe
 among them) in the run's timing.json and row, and counts it per model in the event line. It is reported and
 never scored: a run that did not load the skill still scores, as the description's failure. The adapter of the grader also takes --no-tools: the model
 then gets no tool at all (an adapter that cannot do it refuses the option, and the grading fails). It installs nothing: the runner stages the skills. What the
-runner needs to know about a harness is data, the "eval" object of adapters/<harness>/adapter.json:
+runner needs to know about a harness is data, adapters/<harness>/eval.json:
 "skills_dir", the folder inside a project where the harness discovers skills, and "settings", the names of
 the files and folders that carry the harness's settings or instructions at project level.
 
@@ -489,36 +489,36 @@ def load_stage():
 
 
 def adapter_eval(harness, required=True):
-    """The "eval" object of adapters/<harness>/adapter.json: {"skills_dir", "settings", "account_limit",
-    "refusal_markers"}. What the runner must know about a harness to stage a case folder for it and to read what
+    """The eval block of an adapter, which lives in its own file, adapters/<harness>/eval.json: {"skills_dir",
+    "settings", "account_limit", "refusal_markers"}. What the runner must know about a harness to stage a case folder for it and to read what
     it left; it is data of the adapter, never code here, and its one home. "account_limit" (optional) is what the
     harness prints when the account of its tier is exhausted; "refusal_markers" (optional) what it prints when the
-    provider declines a request on policy grounds. With required=False a missing manifest or object gives None (a
-    plan that runs nothing)."""
-    path = os.path.join(ROOT, "adapters", harness, "adapter.json")
+    provider declines a request on policy grounds. With required=False a missing or unreadable eval.json gives None
+    (a plan that runs nothing)."""
+    path = os.path.join(ROOT, "adapters", harness, "eval.json")
     try:
         with open(path, encoding="utf-8") as f:
-            cfg = json.load(f).get("eval")
+            cfg = json.load(f)
     except (OSError, ValueError, AttributeError):
         cfg = None
     if cfg is None:
         if required:
-            die(f"adapters/{harness}/adapter.json has no \"eval\" object: it names where the harness discovers skills "
+            die(f"adapters/{harness}/eval.json is missing or unreadable: it names where the harness discovers skills "
                 "(\"skills_dir\") and which names carry its settings (\"settings\"). See AGENTS.md, Adding an adapter.")
         return None
     skills_dir, settings = cfg.get("skills_dir") if isinstance(cfg, dict) else None, (cfg.get("settings") if isinstance(cfg, dict) else None)
     parts = skills_dir.split("/") if isinstance(skills_dir, str) else []
     if len(parts) < 2 or any(not re.fullmatch(r"[A-Za-z0-9._-]+", p) or p in (".", "..", ".git") for p in parts):
-        die(f"adapters/{harness}/adapter.json: eval.skills_dir must be a relative folder of at least two parts, "
+        die(f"adapters/{harness}/eval.json: skills_dir must be a relative folder of at least two parts, "
             "such as .tool/skills (the shared references are staged beside it).")
     if not isinstance(settings, list) or not all(isinstance(n, str) and n and "/" not in n and n not in (".", "..", ".git")
                                                  for n in settings):
-        die(f"adapters/{harness}/adapter.json: eval.settings must list file or folder names, without a folder.")
+        die(f"adapters/{harness}/eval.json: settings must list file or folder names, without a folder.")
     texts = {}
     for key, what in (("account_limit", "its account is exhausted"), ("refusal_markers", "the provider declines a request")):
         texts[key] = cfg.get(key, [])
         if not isinstance(texts[key], list) or not all(isinstance(m, str) and m.strip() for m in texts[key]):
-            die(f"adapters/{harness}/adapter.json: eval.{key} must list the texts the harness prints when {what}.")
+            die(f"adapters/{harness}/eval.json: {key} must list the texts the harness prints when {what}.")
     return {"skills_dir": skills_dir, "settings": list(settings), **texts}
 
 
@@ -526,7 +526,7 @@ def harness_settings():
     """Every name that carries a harness's settings at project level: the "settings" lists of all eval adapters.
     A fixture carries none of them, whichever harness runs it: one runner may read another tool's folder."""
     names = set()
-    for manifest in sorted(glob.glob(os.path.join(ROOT, "adapters", "*", "adapter.json"))):
+    for manifest in sorted(glob.glob(os.path.join(ROOT, "adapters", "*", "eval.json"))):
         cfg = adapter_eval(os.path.basename(os.path.dirname(manifest)), required=False)
         names.update(cfg["settings"] if cfg else ())
     return names
@@ -1334,7 +1334,7 @@ def return_all_runs():
 
 def provider_refusal(out_dir, markers):
     """The provider's refusal message when the run ended because the provider declined the request, else None.
-    markers are the adapter's own words for it ("refusal_markers" in the "eval" object of its adapter.json)."""
+    markers are the adapter's own words for it ("refusal_markers" in its eval.json)."""
     for name in ("response.md", "raw.json", "error.log", "stderr.log"):
         text = read_text(os.path.join(out_dir, name), 200000)
         for marker in markers or ():
@@ -2335,7 +2335,7 @@ class Slots:
 
 def account_limit(out_dir, markers):
     """The words of an exhausted account in what a failed call left (the markers are the adapter's data:
-    "eval.account_limit" of its adapter.json), else None."""
+    "account_limit" of its eval.json), else None."""
     for name in ("response.md", "raw.json", "error.log", "stderr.log"):
         text = read_text(os.path.join(out_dir, name), 400000)
         for marker in markers or ():
