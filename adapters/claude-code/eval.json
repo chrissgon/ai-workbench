@@ -14,7 +14,8 @@
     "hit your session limit",
     "hit your weekly limit",
     "out of usage credits",
-    "\"api_error_status\":429"
+    "You've hit your",
+    "\"api_error_status\": 429"
   ],
   "refusal_markers": [
     "safeguards flagged this message"
