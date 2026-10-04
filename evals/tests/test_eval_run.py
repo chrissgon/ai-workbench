@@ -3039,18 +3039,21 @@ def test_an_added_case_is_pending_until_it_runs_with_its_baseline_and_then_enter
     capsys.readouterr()
     gate = gate_now(tmp_path)
     assert gate["pending"] == [] and gate["cases"] == ["1", "2", "3"]
-    # Its runs enter the gate (the two partial events' runs of it: 0 and 0), which now reads every current case.
-    assert gate["with"] == pytest.approx(0.5) and gate["passed"] is False
+    # Its runs enter the gate (the two partial events' runs of it: 0 and 0), which now reads every current case,
+    # as the mean of the cases' means: 1, 1 and 0.
+    assert gate["with"] == pytest.approx(2 / 3) and gate["passed"] is False
 
 
-def test_a_changed_case_makes_the_gate_wait_for_a_full_test_that_runs_its_baseline_and_reuses_the_others(tmp_path, monkeypatch, capsys):
+def test_a_changed_case_is_pending_the_gate_reads_the_others_and_its_runs_with_its_baseline_enter_the_gate(tmp_path, monkeypatch, capsys):
     skill = scores_demo(tmp_path, monkeypatch)
     assert er.main(["--skill", "demo"]) == 0
     set_cases(skill, [{"id": 1, "prompt": "p", "assertions": ["a"]}, {"id": 2, "prompt": "s", "assertions": ["a"]}])
     gate = gate_now(tmp_path)
-    assert gate["computed"] is False and "case(s) 2 changed after the newest full test" in gate["cause"]
-    assert er.main(["--skill", "demo", "--cases", "2", "--baseline"]) == 0  # its own runs never complete the gate
-    assert gate_now(tmp_path)["computed"] is False
+    # Treated as an added case: pending, and the gate is computed over the other case.
+    assert gate["computed"] is True and gate["pending"] == ["2"] and gate["changed"] == ["2"] and gate["cases"] == ["1"]
+    assert er.main(["--skill", "demo", "--cases", "2", "--baseline"]) == 0
+    gate = gate_now(tmp_path)
+    assert gate["computed"] is True and gate["pending"] == [] and gate["cases"] == ["1", "2"]
     before = len(calls(tmp_path))
     assert er.main(["--skill", "demo"]) == 0
     capsys.readouterr()
@@ -3085,7 +3088,15 @@ def test_an_abandoned_full_test_is_closed_and_its_runs_stay_in_the_gate_of_its_v
     # The next full test adds its runs to the closed one's: case 1 scored 0 there and 1 here.
     assert er.main(["--skill", "demo"]) == 3
     newest = [e for e, _ in evidence_of(skill) if e["complete"]][0]
-    assert newest["gate"]["with"] == pytest.approx(2 / 3) and newest["gate"]["passed"] is False
+    # The gate's mean is the mean of the cases' means, over the lines with the skill on the reference model.
+    by_case = {}
+    for _, lines in evidence_of(skill):
+        for l in lines:
+            if l["variant"] == "with" and l["model"] == "m":
+                by_case.setdefault(l["case"], []).append(l["score"])
+    expected = sum(sum(v) / len(v) for v in by_case.values()) / len(by_case)
+    assert sorted(by_case) == [1, 2] and expected != pytest.approx(2 / 3)  # the mean over lines was 2/3
+    assert newest["gate"]["with"] == pytest.approx(expected) and newest["gate"]["passed"] is False
 
 
 def test_the_two_options_that_rewrote_a_record_are_gone():
