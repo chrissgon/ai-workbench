@@ -68,7 +68,7 @@
       "assertions": [
         "A brief file is written whose every source carries URL, publisher, publication date or undated, access date, tier and quote",
         "The exact figure found is quoted with its sample, period and source, or the claim is marked unverifiable",
-        "The reply gives a verdict on the 80% claim in one of three words: confirmed, corrected (with the figure found, its sample and period), or unverifiable",
+        "The reply gives a plain verdict on the 80% claim: that it holds, that it does not hold (with the figure found, its sample and period), or that it cannot be verified",
         "The brief notes that a public claim must cite its source and exact wording"
       ],
       "allow_web": true
