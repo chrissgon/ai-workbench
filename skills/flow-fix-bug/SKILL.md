@@ -5,9 +5,10 @@ description: >
   this skill whenever the user reports wrong behaviour and asks for it to be fixed ("fix
   this", "it's broken", "fix this bug", a screenshot of a wrong screen), even when the fix
   looks obvious: the flow proves the cause before any code changes. Also use it to continue a
-  bug fix started earlier ("go ahead with the fix"). Phases: root cause with a reproduction,
-  failing tests, impact, options when there is more than one way, the change, integration
-  tests, documentation, review, delivery. For only the cause, use eng-root-cause; for a
+  bug fix started earlier ("go ahead with the fix"), and when the project is not set up for
+  the workbench yet: the flow runs core-project-init as its first step. Phases: root cause
+  with a reproduction, failing tests, impact, options when there is more than one way, the
+  change, integration tests, documentation, review, delivery. For only the cause, use eng-root-cause; for a
   feature, flow-build-feature (planned).
 license: MIT
 metadata:
@@ -18,7 +19,7 @@ metadata:
   updates: [docs/workbench/state.md]
   requires: []
   side_effects: []
-  version: "1.1.0"
+  version: "1.2.0"
 ---
 
 # Fix a bug
