@@ -15,22 +15,22 @@ Network, per command:
   none    no network at all (setup commands, the fixture commit)
   proxy   an internal network whose only way out is a proxy that lets through the hosts listed in
           evals/container/proxy/allow.txt, the model providers (model runs and gradings)
-  open    the default network (a case with "allow_web": true); a run whose key the key proxy holds is put
-          on an open network of the eval's own instead, where the key proxy also listens
+  open    the default network (a case with "allow_web": true); a run whose key a key proxy holds is put
+          on that proxy's open network instead, one of the eval's own, where the proxy also listens
 
 Secrets reach a container as environment variables named by the caller; their values travel in the
-environment of the docker client, never on a command line. A run's environment therefore holds the
-credential of its tier, and every command the model runs can read it: that is why the runner replaces
-the passed values in everything a run leaves (evals/eval_run.py, "Secrets in what a run leaves").
-One credential is kept out of the run instead: the key the key proxy holds (evals/container/keyproxy/,
-keyproxy.json names it, today the floor model's provider key). When a command is passed that variable,
-the run container gets a placeholder in it and the proxy's base URL in the route's "base_url_env"; the
-key proxy, a container of its own on the internal network and on the eval's open network, holds the
-value, forwards the provider's API path only, to the provider's one host, over HTTPS and through the
-egress proxy, and adds the key to each call. The runner starts it (keyproxy()) before such a command.
-A run can still spend that key, through the proxy, on the provider's API (any container on the eval
-networks can reach it, the strong tier's too); it can no longer read it, print it or take it elsewhere.
-The strong tier's credential still travels into its runs. The proxy filters by host name only, and the
+environment of the docker client, never on a command line. A variable passed that way can be read by
+every command the model runs: that is why the runner replaces the passed values in everything a run
+leaves (evals/eval_run.py, "Secrets in what a run leaves"). Each tier's credential is kept out of its
+runs instead, by a key proxy of its own (evals/container/keyproxy/: keyproxy.json names the floor model's
+provider key, keyproxy-strong.json the strong model's credential). When a command is passed one of those
+variables, the run container gets a placeholder in it and its proxy's base URL in the route's
+"base_url_env"; that key proxy, a container of its own on its tier's internal network and on its tier's
+open network, holds the value, forwards the provider's API path only, to the provider's one host, over
+HTTPS and through the egress proxy, and adds the key to each call. The runner starts it (keyproxy())
+before such a command. Each tier's proxy is on networks of its own: a run can still spend its own tier's
+key, through its proxy, on the provider's API, but it can no longer read it, print it or take it
+elsewhere, and it cannot reach the other tier's proxy. The proxy filters by host name only, and the
 hosts it lets through serve many accounts: a run reaches no other host, but could still hand data to
 another account of the same provider. The proxy is not a guarantee that nothing leaves.
 
@@ -70,6 +70,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DEFINITION = os.path.join(HERE, "container")
 KEYPROXY = os.path.join(DEFINITION, "keyproxy")  # the key proxy's definition and its route (keyproxy.json)
+ROUTE_FILES = {"floor": "keyproxy.json", "strong": "keyproxy-strong.json"}
 NETWORKS = ("none", "proxy", "open")
 PROXY_PORT = 8888
 RUNNER_MOUNT = "/wb/run-prompt.sh"  # where the one adapter script in use is seen inside a container
@@ -120,27 +121,52 @@ def names(folder=DEFINITION):
         tag += "-" + image_platform().split("/", 1)[1].replace("/", "")
     return {"image": f"wb-eval:{tag}", "proxy_image": f"wb-eval-proxy:{tag}", "network": f"wb-eval-net-{tag}",
             "proxy": f"wb-eval-proxy-{tag}", "keys_image": f"wb-eval-keys:{tag}", "keys": f"wb-eval-keys-{tag}",
-            "open_network": f"wb-eval-open-{tag}"}
+            "open_network": f"wb-eval-open-{tag}", "keys_strong": f"wb-eval-keys-strong-{tag}",
+            "strong_network": f"wb-eval-strong-{tag}", "strong_open_network": f"wb-eval-strong-open-{tag}"}
 
 
-def route(folder=KEYPROXY):
-    """The key proxy's route (keyproxy.json): the variable it holds, the placeholder a run gets in its place, the
-    variable that carries the proxy's base URL, the provider, the path prefix, the port and the timeout."""
-    with open(os.path.join(folder, "keyproxy.json"), encoding="utf-8") as f:
+def route(folder=KEYPROXY, name="floor"):
+    """A key proxy's route (keyproxy.json for the floor model, keyproxy-strong.json for the strong one): the variable
+    it holds, the placeholder a run gets in its place, the variable that carries the proxy's base URL, the provider,
+    the path prefix, the port and the timeout."""
+    with open(os.path.join(folder, ROUTE_FILES[name]), encoding="utf-8") as f:
         return json.load(f)
 
 
+def routes(folder=KEYPROXY):
+    """{name: route} of the route files that exist."""
+    return {name: route(folder, name) for name, file in ROUTE_FILES.items() if os.path.isfile(os.path.join(folder, file))}
+
+
+def held_route(pass_names, env=None, network="proxy"):
+    """The name of the key proxy a command needs ("floor" or "strong"), or None: the command is passed the variable
+    that proxy holds, that variable has a value in the caller's environment, and the command has a network."""
+    if network == "none":
+        return None
+    found = [name for name, r in routes().items() if r["secret"] in (pass_names or ()) and (env or {}).get(r["secret"])]
+    if len(found) > 1:
+        raise ExecutorError("a command is passed the keys of both key proxies")
+    return found[0] if found else None
+
+
 def holds(pass_names, env=None, network="proxy"):
-    """True when a command needs the key proxy: it is passed the variable the proxy holds, that variable has a
-    value in the caller's environment, and the command has a network."""
-    secret = route()["secret"]
-    return network != "none" and secret in (pass_names or ()) and bool((env or {}).get(secret))
+    """True when a command needs a key proxy (held_route())."""
+    return held_route(pass_names, env, network) is not None
 
 
-def keyproxy_url(n=None):
-    """The base URL a run gives its provider calls: the key proxy, by its name on the eval networks."""
-    r, n = route(), n or names()
-    return f"http://{n['keys']}:{r['port']}{r['prefix'].rstrip('/')}"
+def places(name, n=None):
+    """(the key proxy's container, its internal network, its open network) of one route."""
+    n = n or names()
+    if name == "strong":
+        return n["keys_strong"], n["strong_network"], n["strong_open_network"]
+    return n["keys"], n["network"], n["open_network"]
+
+
+def keyproxy_url(n=None, name="floor"):
+    """The base URL a run gives its provider calls: the key proxy of its route, by its name on that route's networks."""
+    r, n = route(name=name), n or names()
+    path = r["base_path"] if "base_path" in r else r["prefix"].rstrip("/")
+    return f"http://{places(name, n)[0]}:{r['port']}{path}"
 
 
 def docker(*args, env=None, check=True, timeout=1800):
@@ -165,7 +191,8 @@ def ensure(env=None):
                           (n["keys_image"], KEYPROXY)):
         if docker("image", "inspect", image, env=env, check=False).returncode != 0:
             docker("build", "-q", "--platform", platform, "-t", image, folder, env=env)
-    for network, internal in ((n["network"], True), (n["open_network"], False)):
+    for network, internal in ((n["network"], True), (n["open_network"], False),
+                              (n["strong_network"], True), (n["strong_open_network"], False)):
         if docker("network", "inspect", network, env=env, check=False).returncode != 0:
             r = docker("network", "create", *(["--internal"] if internal else []), network, env=env, check=False)
             if r.returncode != 0 and "already exists" not in r.stderr:
@@ -180,6 +207,9 @@ def ensure(env=None):
         r = docker("network", "connect", n["network"], n["proxy"], env=env, check=False)
         if r.returncode != 0 and "already exists" not in r.stderr:
             raise ExecutorError(f"cannot connect the eval proxy: {r.stderr.strip()[-300:]}")
+    r = docker("network", "connect", n["strong_network"], n["proxy"], env=env, check=False)
+    if r.returncode != 0 and "already exists" not in r.stderr:
+        raise ExecutorError(f"cannot connect the eval proxy to the strong model's network: {r.stderr.strip()[-300:]}")
     image_id = docker("image", "inspect", "--format", "{{.Id}}", n["image"], env=env).stdout.strip()
     # image_digest is the id of the built image: it survives `docker save` and `docker load`, so the kept
     # archive and the image a run executed in can be told to be the same. image_id is the same value under
@@ -188,15 +218,17 @@ def ensure(env=None):
             "image_digest": image_id, "image_platform": platform}
 
 
-def keyproxy(env=None, upstream=None, cafile=None, egress=True):
+def keyproxy(env=None, upstream=None, cafile=None, egress=True, name="floor"):
     """Start the key proxy holding the value the caller's environment has for the route's variable, unless it
     runs already with that value (and the same upstream). Returns its name. The value reaches the proxy's
     container through the docker client's environment, never a command line; the container's label holds a
     hash of what it was started with, so a key stored again (rotated) replaces it. upstream and cafile put a
     test's stand-in in the provider's place, reached directly (egress=False) instead of through the egress
     proxy; a real run passes none of them. The container has no restart policy and is removed when it stops:
-    after a restart of docker the next command that needs it starts it again."""
-    r, n, platform = route(), names(), image_platform()
+    after a restart of docker the next command that needs it starts it again.
+    name is the route: "floor" (the default) or "strong"."""
+    r, n, platform = route(name=name), names(), image_platform()
+    keys, internal, opened = places(name, n)
     value = ((env or {}).get(r["secret"]) or "").strip()
     if not value:
         raise ExecutorError(f"{r['secret']} has no value: the key proxy has no key to hold")
@@ -204,31 +236,32 @@ def keyproxy(env=None, upstream=None, cafile=None, egress=True):
     label = hashlib.sha256(b"wb-eval-keyproxy\0" + started_with.encode("utf-8")).hexdigest()
     with KEYPROXY_LOCK:
         state = docker("inspect", "--format", "{{.State.Running}} {{index .Config.Labels \"%s\"}}" % KEYPROXY_LABEL,
-                       n["keys"], env=env, check=False)
+                       keys, env=env, check=False)
         if state.returncode == 0 and state.stdout.split() == ["true", label]:
-            return n["keys"]
-        docker("rm", "-f", n["keys"], env=env, check=False)
+            return keys
+        docker("rm", "-f", keys, env=env, check=False)
         argv = ["run", "-d", "--rm", "--init", "--platform", platform, *CONFINED, "--pids-limit", "256",
-                "--name", n["keys"], "--label", f"{KEYPROXY_LABEL}={label}", "--network", n["network"], "-e", r["secret"]]
+                "--name", keys, "--label", f"{KEYPROXY_LABEL}={label}", "--network", internal, "-e", r["secret"]]
         if egress:
             argv += ["-e", f"HTTPS_PROXY=http://{n['proxy']}:{PROXY_PORT}"]
         if cafile:
             argv += ["-v", f"{os.path.realpath(cafile)}:/etc/keyproxy/upstream-ca.pem:ro"]
-        argv += [n["keys_image"], *(["--upstream", upstream] if upstream else []),
+        argv += [n["keys_image"], *(["--route", "/etc/keyproxy/" + ROUTE_FILES[name]] if name != "floor" else []),
+                 *(["--upstream", upstream] if upstream else []),
                  *(["--cafile", "/etc/keyproxy/upstream-ca.pem"] if cafile else [])]
         started = docker(*argv, env={**(env or {}), r["secret"]: value}, check=False)
         if started.returncode != 0 and "already in use" not in started.stderr:
             raise ExecutorError(f"cannot start the key proxy: {started.stderr.strip()[-300:]}")
-        joined = docker("network", "connect", n["open_network"], n["keys"], env=env, check=False)
+        joined = docker("network", "connect", opened, keys, env=env, check=False)
         if joined.returncode != 0 and "already exists" not in joined.stderr:
             raise ExecutorError(f"cannot connect the key proxy to the open network: {joined.stderr.strip()[-300:]}")
         deadline = time.monotonic() + KEYPROXY_READY_SECONDS
-        while "keyproxy: listening" not in docker("logs", n["keys"], env=env, check=False).stderr:
+        while "keyproxy: listening" not in docker("logs", keys, env=env, check=False).stderr:
             if time.monotonic() > deadline:
-                logs = docker("logs", n["keys"], env=env, check=False)
+                logs = docker("logs", keys, env=env, check=False)
                 raise ExecutorError(f"the key proxy did not start: {(logs.stderr or logs.stdout).strip()[-300:]}")
             time.sleep(0.2)
-    return n["keys"]
+    return keys
 
 
 def archive(out, env=None):
@@ -250,9 +283,10 @@ def archive(out, env=None):
 def clean(env=None):
     n = names()
     docker("rm", "-f", n["keys"], env=env, check=False)
+    docker("rm", "-f", n["keys_strong"], env=env, check=False)
     docker("rm", "-f", n["proxy"], env=env, check=False)
-    docker("network", "rm", n["network"], env=env, check=False)
-    docker("network", "rm", n["open_network"], env=env, check=False)
+    for network in (n["network"], n["open_network"], n["strong_network"], n["strong_open_network"]):
+        docker("network", "rm", network, env=env, check=False)
 
 
 def mounts(root, runner=None):
@@ -297,26 +331,28 @@ def command(cmd, root, cwd=None, env=None, runner=None, pass_names=(), network="
     for key in FORWARD:
         if env.get(key):
             argv += ["-e", f"{key}={env[key]}"]
-    r = route()
-    held = holds(pass_names, env, network)
+    held_by = held_route(pass_names, env, network)
+    held = held_by is not None
+    kept = {r["secret"]: r["placeholder"] for r in routes().values()}  # what a key proxy holds never enters a container
     for key in dict.fromkeys(pass_names):
-        if key == r["secret"] and env.get(key):
-            argv += ["-e", f"{key}={r['placeholder']}"]  # the key stays with the key proxy
+        if key in kept and env.get(key):
+            argv += ["-e", f"{key}={kept[key]}"]  # the key stays with its key proxy
         elif env.get(key):
             argv += ["-e", key]  # the value comes from the docker client's environment
     if held:
-        argv += ["-e", f"{r['base_url_env']}={keyproxy_url(n)}"]
+        argv += ["-e", f"{route(name=held_by)['base_url_env']}={keyproxy_url(n, held_by)}"]
+    keys, internal, opened = places(held_by, n) if held else (None, n["network"], None)
     if network == "none":
         argv += ["--network", "none"]
     elif network == "proxy":
         proxy = f"http://{n['proxy']}:{PROXY_PORT}"
-        argv += ["--network", n["network"]]
+        argv += ["--network", internal]
         for key in ("HTTPS_PROXY", "HTTP_PROXY", "https_proxy", "http_proxy"):
             argv += ["-e", f"{key}={proxy}"]
-        direct = "localhost,127.0.0.1" + (f",{n['keys']}" if held else "")
+        direct = "localhost,127.0.0.1" + (f",{keys}" if held else "")
         argv += ["-e", f"NO_PROXY={direct}", "-e", f"no_proxy={direct}"]
-    elif held:  # open: the eval's own open network, where the key proxy also listens
-        argv += ["--network", n["open_network"]]
+    elif held:  # open: the open network of the run's own key proxy, where that proxy also listens
+        argv += ["--network", opened]
     return argv + [n["image"]] + [translate(a, pairs) for a in cmd], name
 
 

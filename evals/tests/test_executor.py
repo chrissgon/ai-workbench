@@ -41,7 +41,8 @@ def test_the_definition_hash_follows_the_files_and_names_everything(tmp_path):
     assert second != first
     n = ex.names(str(tmp_path))
     assert all(second[:12] in value for value in n.values())
-    assert set(n) == {"image", "proxy_image", "network", "proxy", "keys_image", "keys", "open_network"}
+    assert set(n) == {"image", "proxy_image", "network", "proxy", "keys_image", "keys", "open_network", "keys_strong",
+                      "strong_network", "strong_open_network"}
 
 
 def test_a_command_sees_the_run_folder_and_the_one_adapter_script_and_nothing_else(tmp_path):

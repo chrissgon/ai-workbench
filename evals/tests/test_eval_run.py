@@ -2419,7 +2419,8 @@ def test_the_repository_gate_file_holds_the_control_of_an_event_and_names_the_ni
         data = json.loads(Path(path).read_text(encoding="utf-8"))
         declared |= {(Path(path).parents[1].name, str(c["id"])) for c in data.get("evals") or [] if er.allow_web(data, c)}
     assert listed == declared  # no case opens the network unlisted, and the list names no case that does not
-    assert gate["strong_web_pass_env"] and not set(gate["strong_web_pass_env"]) & set(gate["strong_pass_env"])
+    # No low-limit key for the web cases: a strong run of one receives strong_pass_env, which its key proxy holds.
+    assert "strong_web_pass_env" not in gate and gate["strong_pass_env"]
 
 
 @pytest.mark.parametrize("extra, why", [
@@ -3361,7 +3362,7 @@ def test_a_command_passed_the_held_key_starts_the_key_proxy_first_and_fails_as_i
     secret, key = executor.route()["secret"], "fake-floor-key-for-the-runner-tests-0004"
     started, ran = [], []
     monkeypatch.setattr(er, "EXECUTOR", "container")
-    monkeypatch.setattr(executor, "keyproxy", lambda env=None: started.append(env[secret]))
+    monkeypatch.setattr(executor, "keyproxy", lambda env=None, name="floor": started.append(env[secret]))
     monkeypatch.setattr(executor, "remove", lambda name, env=None: None)
     monkeypatch.setattr(er, "_run_group", lambda cmd, timeout, cwd, env, container: ran.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", ""))
     box = {"root": str(tmp_path), "pass": [secret], "network": "proxy"}
@@ -3371,7 +3372,7 @@ def test_a_command_passed_the_held_key_starts_the_key_proxy_first_and_fails_as_i
     er.run_group(["true"], 10, env={"OTHER": "v"}, box={**box, "pass": ["OTHER"]})  # another tier's run
     assert started == [key] and len(ran) == 3
 
-    def down(env=None):
+    def down(env=None, name="floor"):
         raise executor.ExecutorError("the key proxy did not start: cannot start")
     monkeypatch.setattr(executor, "keyproxy", down)
     r = er.run_group(["true"], 10, env={secret: key}, box=box)

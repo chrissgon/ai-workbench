@@ -191,6 +191,8 @@ gate file has no list and refuses nothing). On a listed case the strong model's 
 "strong_web_pass_env" (a low-limit API key) in place of "strong_pass_env" (the account's token): a run on the
 open network reads pages written by others, and with a key a leak costs at most the key's limit. The gradings
 of such a case keep the account's token: a grading has no tool and no open network.
+When the gate file names no "strong_web_pass_env", such a run receives "strong_pass_env", whose value the strong
+model's key proxy holds outside the run.
 
 Containment. Every model run, grading, setup command and fixture commit executes in a container built
 from evals/container/, one container per command (evals/executor.py); there is no host mode. A container
@@ -1611,14 +1613,15 @@ def run_group(cmd, timeout, cwd=None, env=None, box=None):
     the run's folder, the only thing it can change; runner is the one run-prompt.sh the command starts, the
     only file of the workbench the container sees. The container is removed by name when the command
     returns, times out or the script is stopped, since ending the docker client does not end it. A command
-    passed the variable the key proxy holds starts the key proxy first (executor.holds(), keyproxy()); when
+    passed the variable a key proxy holds starts that key proxy first (executor.held_route(), keyproxy()); when
     it cannot start, the command fails as an infrastructure failure, before any container runs."""
     container = None
     if box is not None and EXECUTOR == "container":
         executor = load_executor()
-        if executor.holds(box.get("pass") or (), env, box.get("network") or "none"):
+        held = executor.held_route(box.get("pass") or (), env, box.get("network") or "none")
+        if held:
             try:  # the key stays there; the run gets a placeholder and the proxy's address
-                executor.keyproxy(env=env)
+                executor.keyproxy(env=env, name=held)
             except executor.ExecutorError as e:  # an infrastructure failure of this command, never a score
                 return subprocess.CompletedProcess(cmd, 1, "", f"Error: {e}\n")
         cmd, container = executor.command(cmd, box["root"], cwd=cwd, env=env, runner=box.get("runner"),
