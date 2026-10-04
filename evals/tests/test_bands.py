@@ -328,8 +328,10 @@ def test_the_floor_model_has_its_own_row_and_no_rule_reads_it(root):
     full(folder)
     event(folder, "partial", "1.0.0", "2030-02-01", [(1, "with", 0.0, {"model": "f-model", "adapter": "fh"})] * 3)
     row = band(root, folder)
-    assert row["band"] == "reliable" and row["models"]["f-model"] == {"score": 0.0, "mean": 0.0, "runs": 3, "current_runs": 3,
-                                                                      "inherited_runs": 0}
+    figures = row["models"]["f-model"]
+    assert row["band"] == "reliable" and {k: figures[k] for k in ("score", "mean", "runs", "current_runs", "inherited_runs")} == {
+        "score": 0.0, "mean": 0.0, "runs": 3, "current_runs": 3, "inherited_runs": 0}
+    assert figures["band"] == "needs a test"  # its own band, by the same rules, is information: no rule reads it
 
 
 def test_the_pass_count_of_each_assertion_and_the_difference_on_assertions_that_are_not_format(root):
