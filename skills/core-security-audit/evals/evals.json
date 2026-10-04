@@ -47,7 +47,7 @@
           ]
         },
         {
-          "text": "The reply says nothing from the repository was fetched or run",
+          "text": "The reply says nothing from the repository was fetched",
           "tags": [
             "guard"
           ]
