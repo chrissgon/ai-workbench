@@ -28,7 +28,6 @@
     "core-research": [1, 4, 5],
     "eng-architecture": [1]
   },
-  "strong_web_pass_env": ["CLAUDE_CODE_WEB_API_KEY"],
   "models": {
     "claude-sonnet-5-5": [],
     "openrouter/deepseek/deepseek-v4.1-flash": ["deepseek/deepseek-v4.1-flash", "deepseek-v4.1-flash"]

@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
-"""The key proxy of the eval network: it holds the floor model's provider key, so that a run never does.
+"""The key proxy of the eval network: one proxy runs per route file and holds the one key that route names, so that a run never does.
 
-evals/executor.py starts it in a container of its own, beside the egress proxy, with the key in its
-environment. A run container gets a placeholder in the key's variable and, in the variable keyproxy.json
-names ("base_url_env"), the base URL of this proxy. The floor runner sends its calls here over plain HTTP,
-and the proxy forwards each to the one provider host keyproxy.json names, over HTTPS, with an Authorization
+evals/executor.py starts each in a container of its own, beside the egress proxy, with its key in its
+environment: keyproxy.json routes the floor model's provider key, keyproxy-strong.json the strong model's.
+A run container gets a placeholder in the key's variable and, in the variable its route names
+("base_url_env"), the base URL of its proxy. The run's runner sends its calls there over plain HTTP, and
+the proxy forwards each to the one provider host the route names, over HTTPS, with an Authorization
 header made from the key it alone holds. It:
-  - forwards only a request whose target is a path under the route's prefix (/api/v1/), in origin form; an
+  - forwards only a request whose target is a path under the route's prefix (/api/v1/ for the floor
+    model, /v1/ for the strong one), in origin form; an
     absolute URL, another path, a path with a "." or ".." segment and CONNECT are refused, and nothing of
     them is forwarded;
   - never routes by the Host header: the upstream is fixed when the proxy starts;
@@ -77,6 +79,9 @@ def load_route(path=ROUTE, upstream=None):
     only = route.get("provider_only")
     if only is not None and not (isinstance(only, str) and only and all(c.isalnum() or c in " ._/-" for c in only) and len(only) <= 80):
         raise RouteError("provider_only must name one upstream provider")
+    base_path = route.get("base_path")
+    if base_path is not None and not (isinstance(base_path, str) and (base_path == "" or base_path.startswith("/"))):
+        raise RouteError("base_path must be empty or a path that starts with /")
     return route
 
 

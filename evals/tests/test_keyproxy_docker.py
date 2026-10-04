@@ -212,3 +212,37 @@ def test_the_floor_adapter_sends_its_calls_through_the_key_proxy(keys, root):
     for path in (root / "out").rglob("*"):
         if path.is_file():
             assert FAKE_KEY not in path.read_text(errors="ignore")
+
+
+STRONG_ROUTE = ex.route(name="strong")
+FAKE_STRONG_KEY = "fake-strong-token-for-the-docker-tests-0008"
+KEYS_STRONG = f"wb-eval-keys-strong-test-{TAG}"  # this test's strong key proxy: never the one a real run uses
+
+
+@pytest.fixture(scope="module")
+def strong_keys(keys, standin):
+    """This test's strong key proxy, holding a fake token, beside the floor one. ex.names() names both for every
+    command of this module."""
+    floor_names = ex.names
+    ex.names = lambda folder=ex.DEFINITION: {**floor_names(folder), "keys_strong": KEYS_STRONG}
+    try:
+        assert ex.keyproxy(env={**os.environ, STRONG_ROUTE["secret"]: FAKE_STRONG_KEY}, upstream=f"https://{STANDIN}:8443",
+                           cafile=str(standin), egress=False, name="strong") == KEYS_STRONG
+        yield KEYS_STRONG
+    finally:
+        docker("rm", "-f", KEYS_STRONG, check=False)
+        ex.names = floor_names
+
+
+def resolves(network, host):
+    """True when a container on network can resolve host by name."""
+    r = docker("run", "--rm", "--platform", ex.image_platform(), "--network", network, ex.names()["image"], "python3", "-c",
+               "import socket, sys; socket.gethostbyname(sys.argv[1])", host, check=False)
+    return r.returncode == 0
+
+
+def test_a_run_of_one_tier_cannot_reach_the_other_tiers_key_proxy(keys, strong_keys):
+    n = ex.names()
+    assert resolves(n["network"], keys) and resolves(n["strong_network"], strong_keys)  # each reaches its own
+    assert not resolves(n["network"], strong_keys)  # the floor model's network: no strong key proxy
+    assert not resolves(n["strong_network"], keys)  # the strong model's network: no floor key proxy

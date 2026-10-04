@@ -29,6 +29,8 @@
 # character budget, its own bundled skills first, and past the budget a project skill is listed by name
 # only, with no description, so the model cannot tell when to use the skill under test.
 # The CLI authenticates with CLAUDE_CODE_OAUTH_TOKEN (or ANTHROPIC_API_KEY) from the environment.
+# In an eval run that variable holds a placeholder and ANTHROPIC_BASE_URL names the eval's key proxy, which holds
+# the real value and adds it to each call (evals/executor.py): the CLI reads both from the environment.
 # CLAUDE_CODE_WEB_API_KEY, when set, is used in place of both: the runner passes it, and not the account's
 # token, to a run of a case on the open network (strong_web_pass_env of evals/eval-gate.json), so that a
 # leak there costs at most that key's limit. It reaches the CLI as ANTHROPIC_API_KEY.
