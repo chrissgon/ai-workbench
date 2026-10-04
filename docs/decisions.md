@@ -505,3 +505,12 @@ The strong model's account-limit markers match what the pinned command-line tool
 - Fingerprint: `2f141c251a98cc004c55c72acc9064596934ffe13de387c3d75fb1853783531d`.
 - Written by `python3 evals/eval_status.py measurement --kind infrastructure`.
 - Found by the fourth independent review before the battery: 23 real runs of 2026-09-29 that met the limit left the reply "You've hit your session limit · resets …", `api_error_status` 429 and exit code 1, and none of the four earlier markers is in that text (the pause of phase D was proven with a stand-in that printed "hit your limit"). Without the new markers every run at the limit would fail as an adapter failure, be retried into the limit and, after the resumptions, be written with score 0. Test: `evals/tests/test_account_limit_markers.py`.
+
+## 2026-10-04: measurement change, infrastructure
+
+The 429 marker of the strong model's account limit takes the form the adapter writes to raw.json (a space after the colon), and the marker "You've hit your" covers every limit message the pinned command-line tool builds (a Sonnet, Opus, usage or spend limit as well as the session and weekly ones).
+
+- Kind: infrastructure: locks, resumption, retries, pacing or reports changed in a file the fingerprint covers. No version is raised; the new fingerprint is committed with the reason.
+- Fingerprint: `b628afd5ab52f0e416a52719c885c647d81639c05fd8daf9d72539f5299cf01d`.
+- Written by `python3 evals/eval_status.py measurement --kind infrastructure`.
+- Found by the fifth independent review before the battery: the 429 marker added by #112 was written compact, as the old adapter left `raw.json`, while the current adapter writes it with `json.dump` (`"api_error_status": 429`), so it never matched; the session and weekly texts did. Re-serialized as the current adapter writes them, the real limit runs of 2026-09-29 that kept a `raw.json` (5) now match through `raw.json` alone. Every limit message of the pinned tool starts "You've hit your" (session, weekly, Sonnet, Opus, usage, monthly spend, team budget), and that text is now a marker.
