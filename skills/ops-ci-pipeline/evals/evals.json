@@ -3,7 +3,7 @@
   "evals": [
     {
       "id": 1,
-      "prompt": "Set up CI/CD for the docsite project with GitHub Actions. Decided: a preview per PR on Netlify, production from main, main protected with the required checks (I'm the only maintainer). Right now Netlify builds on its own on every push.",
+      "prompt": "Set up CI/CD for the docsite project with GitHub Actions. Decided: a preview per PR on Netlify, production from main, the pipeline builds and deploys, main protected with lint, typecheck and test as required checks (I'm the only maintainer). Right now Netlify builds on its own on every push.",
       "expected_output": "A workflow that builds once with the Netlify preset, runs lint, typecheck and tests on that build, uploads it and deploys the same files (alias per PR, --prod on main), with Node pinned to the .nvmrc version (22.19.0), the Netlify CLI to the version AGENTS.md gives (27.10.0), actions pinned to commits read from the host or left as placeholders listed as open items, and secrets by name; the tests read the output folder from a variable because they hardcode .output/public while the Netlify build writes dist/; the plan's Pipeline section with the decisions, the workflow and its jobs, and the local run (not run here: no registry, no lockfile, with the command to run); a settings checklist in order (secrets now; stop Netlify builds and protect main after the first green run, with the job names as required checks); no push asked, since the local run could not happen.",
       "files": [
         "evals/files/docsite"
