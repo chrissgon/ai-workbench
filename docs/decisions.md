@@ -518,3 +518,26 @@ The 429 marker of the strong model's account limit takes the form the adapter wr
 ## 2026-10-04: fourteen model runs at a time during the battery
 
 `total_jobs` of `evals/eval-gate.json` goes from 10 to 14, at the maintainer's request to run more in parallel and use the whole limit of the account. It is the number of model runs in progress at one time over every runner process of the machine: a pace, outside the measurement fingerprint, and not recorded in an evidence line or compared by the validator, so the evidence of wave 1 and of the first group of wave 2 (made at 10) and of the groups after it (made at 14) are measured alike. Wave 1 used about 14 points of the 5-hour window per hour at 10 runs, about 70 of each window; 14 runs uses about the whole window. The open network keeps its own limit (`web_jobs`, 2 per tier). A run is never lost to the limit: the runner pauses on the account-limit texts, and during the battery a watchdog writes the runner's own pause file, with the window's reset as its end, when the 5-hour window reaches 88% or the week 95%, so that the calls in flight finish and no new one starts. This merges into `evals/` during the battery, which section 12.1 of the execution plan freezes for changes to what a run measures; this one changes the pace only.
+
+## 2026-10-04: the first full test of the 48 skills, closed
+
+The battery of T21 is closed: every one of the 48 skills has a full test under measurement version 8 that passes the gate, and a band on each model.
+
+- Commit: `811b485` (the evidence of the battery and its repairs merged; the band and model tables of `docs/inventory.md` are generated at it).
+- Measurement version 8, floor 6, fingerprint `b628afd5ab52f0e416a52719c885c647d81639c05fd8daf9d72539f5299cf01d`; every event of the battery ran under it.
+- Image digest: `sha256:4a446f8ae551e20ccca1728602c6fa8ce510b73db4b1fdb17cf87ad21351eb28`.
+- Reference model `claude-sonnet-5-5`; floor model `openrouter/deepseek/deepseek-v4.1-flash`, pinned to `deepinfra`.
+- The run folders (`evals-workspace/`, 967 MB, 3,360 run streams) are archived outside the repository as one file, `battery-runs-2026-10-04-final.tar.gz`, sha256 `74ed34ba6a18f3bd749b531390ac43ba87e47c3e057f8df5d4a3e96e02b197bc`, inspected only in a copy (T26).
+- Order: the routing pass of the 48 (no description collision); wave 1, the five skills of the pilot, and its reading (`docs/architecture/battery-wave-1-2026-10-04.md`: no stop condition, 20 gradings read with none wrong, 1.4% of the grader's verdicts differing on a second grading); wave 2, the other 43.
+- Repairs on the reference model, each a change followed by the test its class asks for: `flow-fix-bug` 1.2.0 (#115, a full test), `core-security-audit` case 2 (#119), `ops-repo-baseline` case 1 (#121), `core-orchestrator` 2.2.0 (#120, a full test).
+- **Reference model: 48 `reliable`, 0 `watch`, 0 `needs a test`.**
+- **Floor model, by the same rules, information only: 43 `reliable`, 1 `watch`, 4 `needs a test`; the gate passes on the floor model for all 48.** After the per-model display (#123) the floor model's gaps were run (more runs of four skills, two missing floor baselines) and two of its guard failures were repaired: `mkt-engage` 1.2.0 (#125) and `ops-ci-pipeline` case 1 (#124), both `reliable` on both models after their tests (#126). The floor model's skills that are not `reliable`, each with its cause:
+  - `core-skill-creator`, `needs a test`: guard 2.6 failed in 1 of 3 runs (a required line of the output template left out).
+  - `design-ux-flows`, `needs a test`: guard 1.5 failed in 1 of 3 runs, a run in which the model's tool calls collapsed into a loop of its raw call syntax until the output limit (see T27).
+  - `eng-codebase-map`, `needs a test`: guard 1.5 failed in 1 of 3 runs (a word the case forbids, "should", in the output).
+  - `mkt-social-copy`, `needs a test`: guard 2.3 failed in 1 of 6 runs (the money figure and the employer were left out, as the guard asks, but no measured source was asked for).
+  - `eng-docs`, `watch`: the pessimistic score 0.68 is under 0.70 (mean 0.85, 12 runs).
+
+  Each is a lapse of the floor model in one run that the reference model does not show; none is repaired, because a repair is a change of the skill that the reference model must pass again, and the floor model's band decides nothing (T28).
+- Cost: the battery used about 14 points of the reference model's weekly limit (35% before wave 1, 49% after the last repair) and US$6.44 of the floor model's key on the day of the battery, its rehearsal included.
+- Alternatives rejected: repairing the five floor-model findings now, which would cost a test of each changed skill on the reference model for a band that decides nothing; leaving the floor model's gaps unrun, which would have left six skills outside `reliable` on the floor model for want of runs rather than for a failure.
