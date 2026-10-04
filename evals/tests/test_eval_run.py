@@ -2411,7 +2411,7 @@ def test_the_runs_the_timeout_and_the_retries_come_from_the_gate_file(tmp_path, 
 
 def test_the_repository_gate_file_holds_the_control_of_an_event_and_names_the_nine_web_cases():
     gate = json.loads((REPO / "evals" / "eval-gate.json").read_text(encoding="utf-8"))
-    assert (gate["runs"], gate["retries"], gate["max_resumes"], gate["total_jobs"]) == (3, 2, 3, 10)
+    assert (gate["runs"], gate["retries"], gate["max_resumes"], gate["total_jobs"]) == (3, 2, 3, 14)
     assert gate["web_jobs"] == {"strong": 2, "floor": 2} and gate["timeout_seconds"] >= 30
     listed = {(skill, str(i)) for skill, ids in gate["web_cases"].items() for i in ids}
     declared = set()
