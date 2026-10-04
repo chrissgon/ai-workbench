@@ -170,7 +170,8 @@ def test_the_model_table_has_a_row_per_skill_and_model_with_evidence(root, capsy
     es.main(["inventory", "--write"], root=str(root))
     text = (root / "docs" / "inventory.md").read_text()
     assert "| `core-demo` | 1.2.0 | watch | the pessimistic score 0.55 is under 0.70 | 0.55 | 1.00 | 2 | 2030-01-01, passed | 0, 0, n/a |" in text
-    assert "| `core-demo` | `s-model` | 0.55 | 1.00 | 2 | 0, 0, n/a | `chirp`: 1.00 (1) |" in text
+    assert ("| `core-demo` | `s-model` | watch | the pessimistic score 0.55 is under 0.70 | passed, 1.00 vs 0.00 | 0.55 | 1.00 | 2 | "
+            "0, 0, n/a | `chirp`: 1.00 (1) |") in text
     assert "Model table: no skill" not in text
     # A skill that changed with no new evidence puts the snapshot behind, and that is a warning, never an error.
     (root / "skills" / "core-demo" / "SKILL.md").write_text('---\nname: core-demo\nmetadata:\n  version: "2.0.0"\n---\n')

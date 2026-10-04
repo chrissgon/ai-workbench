@@ -119,6 +119,12 @@ The band, on the reference model (strong_model), the first that applies:
                 full test waits for its runs; or the baseline has fewer runs per case than "runs" and is
                 within "baseline_margin" of the mean with the skill; or the field signal is on
   reliable      otherwise
+The same band, cause and gate are computed for every other model that has evidence of the skill, by the same rules
+on that model's lines (as_reference: that model in the reference model's place). Two rules belong to the
+configured reference model alone, and are not given to another model: the earlier reference model's lines that
+count as inherited, and the result a full test wrote into its event line when no baseline is in force (it was
+computed on the reference model); without a baseline of its own in force another model's gate is not computed.
+Only the reference model's band decides a skill's standing and the gate; another model's band is information.
 The field signal: three or more `failed` verdicts on the current X.Y, on the reference model, in the weeks after
 the newest lab event of that X.Y (all of them when it has none), at most one per contributor except the
 repository's owner. The contributor of a field file is the author of the commit that added it, read from git
@@ -132,9 +138,12 @@ Commands:
              "cause", "command"}], "pending": [case ids added and not run yet; "pending_command"], "score",
              "mean", "runs" (N), "current_runs", "inherited_runs", "gate", "last_full_test", "guards": [{"case",
              "assertion", "state": "passed"|"failed"|"not run"}], "field": {"computed", "signal", "on"},
-             "models": {model id: {"score", "mean", "runs", "current_runs", "inherited_runs"[, "field": {"uses",
-             "judged", "mean"}][, "platforms": {platform: {"mean", "runs"}}]}}[, "assertions": [{"case",
+             "models": {model id: {"score", "mean", "runs", "current_runs", "inherited_runs", "band", "cause",
+             "kind", "command", "causes", "gate"[, "field": {"uses", "judged", "mean"}][, "platforms": {platform:
+             {"mean", "runs"}}]}}[, "assertions": [{"case",
              "assertion", "tags", "with": [passes, runs], "without": [passes, runs]}], "difference_not_format"]}.
+             A model's "band", "cause", "kind", "command", "causes" and "gate" are the row's keys computed on that
+             model's lines; the reference model's are the row's own.
              The kinds of a cause: "no passing full test", "guard", "gate failed" (needs a test); "no current run",
              "guard cases only", "score", "y changes", "case pending", "thin baseline", "field signal" (watch).
              Exit 0.
@@ -149,8 +158,10 @@ Commands:
              (the fewest baseline lines in force of a case of the gate, when it is computed)]}.
   inventory  writes the two snapshot tables of the reliability model's section 10 between <!-- eval-status:begin -->
              and <!-- eval-status:end --> in docs/inventory.md (--write): the band table, one row per skill on the
-             reference model, and the model table, one row per skill and model that has any evidence, marked with
-             the commit they were generated at. --check exits 1 when the tables differ from what would be generated
+             reference model, and the model table, one row per skill and model that has any evidence, the
+             reference model first, with that model's band, cause, gate (passed or failed, the mean with the skill
+             vs the baseline mean, or not computed), score, mean, lab runs, field and platforms; marked with the
+             commit they were generated at. --check exits 1 when the tables differ from what would be generated
              now, the commit line aside. They are a published snapshot: no pull request has to regenerate them, and
              the validator reports tables behind the evidence as a warning, never as an error.
   measurement  commits a change of a file the measurement fingerprint covers as one of the three kinds of the
@@ -1072,6 +1083,25 @@ def reference_model(cfg):
     return model_id(cfg, cfg["strong_model"]) if cfg.get("strong_model") else None
 
 
+def configured_reference(cfg):
+    """The id of the reference model the gate file names, also in a configuration as_reference made for another
+    model: two rules belong to it alone (lab_view's earlier reference model, gate_of's written result)."""
+    name = cfg["configured_strong_model"] if "configured_strong_model" in cfg else cfg.get("strong_model")
+    return model_id(cfg, name) if name else None
+
+
+def as_reference(cfg, model):
+    """The gate configuration with `model` in the reference model's place, so that the band, its cause, the gate and
+    the score of that model are computed by the same functions and rules on that model's lines (the reliability
+    model, section 10). The model list stays the configured one, and the configured reference model is kept under
+    "configured_strong_model" (configured_reference). Only the configured reference model's band decides a
+    skill's standing; the others are information."""
+    out = {**cfg, "strong_model": model, "configured_strong_model": configured_reference(cfg)}
+    if cfg:
+        out["models"] = known_models(cfg)
+    return out
+
+
 def baseline_lines(skill_dir, cfg, events=None):
     """{case id: [baseline lines in force]}: lines without the skill, on the reference model, of the case's current
     hash, at or above the measurement floor, with no epoch of that model after their date."""
@@ -1145,6 +1175,9 @@ def gate_of(skill_dir, cfg, extra=()):
     if not in_gate:
         return {**out, "cause": "no current case is in the gate"}
     if any(not baselines.get(cid) for cid in in_gate):
+        if ref != configured_reference(cfg):  # the result a full test wrote is the configured reference model's
+            return {**out, "cause": f"no baseline in force on {ref} for case(s) "
+                                    f"{', '.join(c for c in in_gate if not baselines.get(c))}"}
         stored = next((e["gate"] for e, _ in reversed(full) if isinstance(e.get("gate"), dict)), None)
         if stored is None:
             return {**out, "cause": "no baseline in force and no full test that wrote a gate"}
@@ -1695,6 +1728,8 @@ FIELD_CAP = 20  # uses, and verdicts, one contributor adds to the field columns 
 BANDS = ("needs a test", "watch", "reliable")
 CAUSE_KINDS = ("no passing full test", "guard", "gate failed", "no current run", "guard cases only", "score",
                "y changes", "field signal", "case pending", "thin baseline")
+GATE_ROW_KEYS = ("computed", "passed", "with", "baseline", "version", "test", "note", "cause")  # the gate in a row
+MODEL_BAND_KEYS = ("band", "cause", "kind", "command", "causes", "gate")  # what each model's row adds to its figures
 STAGE_SCRIPT = os.path.join(ROOT, "scripts", "stage_skills.py")
 
 
@@ -1810,6 +1845,7 @@ def lab_view(root, skill_dir, cfg, events=None):
     hashes, cases = case_hashes(skill_dir), skill_cases(skill_dir)
     floor = cfg.get("measurement_floor", 1)
     ref = reference_model(cfg)
+    earlier_reference = ref is not None and ref == configured_reference(cfg)  # the configured reference model's rule
     grader = model_id(cfg, cfg["grader"]) if cfg.get("grader") else None
     contexts = {}
 
@@ -1831,7 +1867,7 @@ def lab_view(root, skill_dir, cfg, events=None):
                        and not epoch_after(cfg, skill, model, line["date"]) and context_ok(line))
             pools.setdefault(model, {"current": [], "inherited": []})["current" if current else "inherited"].append(line)
             strong = (event.get("models") or {}).get("strong")
-            if ref is not None and model != ref and strong == model:
+            if earlier_reference and model != ref and strong == model:
                 pools.setdefault(ref, {"current": [], "inherited": []})["inherited"].append(line)
     return {"version": version, "reference": ref, "pools": pools}
 
@@ -1924,9 +1960,13 @@ def assertion_counts(cases, ref_current, baselines):
     return rows, (round(sum(diffs) / len(diffs), 4) if diffs else None)
 
 
-def skill_band(root, skill_dir, cfg, authors=None):
+def skill_band(root, skill_dir, cfg, authors=None, per_model=True):
     """The band of one skill on the reference model, with its cause and the command that clears it, the score,
-    the gate, the guards, the field columns and a row per model (the model's sections 4 to 7; see --help)."""
+    the gate, the guards, the field columns and a row per model (the model's sections 4 to 7; see --help).
+
+    Each model's row carries the same band, cause and gate, computed by this same function on that model's lines
+    (as_reference; per_model=False there, so that it does not recurse); the reference model's row copies the
+    skill's own. Only the reference model's band decides the skill's standing."""
     skill = os.path.basename(os.path.normpath(skill_dir))
     events = skill_evidence(skill_dir)
     view = lab_view(root, skill_dir, cfg, events)
@@ -2024,11 +2064,18 @@ def skill_band(root, skill_dir, cfg, authors=None):
             models.setdefault(model, {"score": None, "mean": None, "runs": 0, "current_runs": 0,
                                       "inherited_runs": 0}).setdefault("platforms", {})[name] = figures
     counts, difference = assertion_counts(cases, ref_current, baseline_lines(skill_dir, cfg, events) if ref_current else {})
+    standing = {"band": band, "cause": first[1], "kind": first[0], "command": first[2],
+                "causes": [{"kind": k, "cause": t, "command": c} for k, t, c in causes + watch],
+                "gate": {k: gate.get(k) for k in GATE_ROW_KEYS}}
+    if per_model:
+        for model, figures in models.items():
+            other = standing if model == ref else skill_band(root, skill_dir, as_reference(cfg, model), authors, per_model=False)
+            figures.update({k: other[k] for k in MODEL_BAND_KEYS})
     row = {"skill": skill, "version": version, "band": band, "cause": first[1], "kind": first[0], "command": first[2],
-           "causes": [{"kind": k, "cause": t, "command": c} for k, t, c in causes + watch],
+           "causes": standing["causes"],
            "pending": gate.get("pending") or [], "score": ref_score["score"], "mean": ref_score["mean"],
            "runs": ref_score["runs"], "current_runs": ref_score["current_runs"], "inherited_runs": ref_score["inherited_runs"],
-           "gate": {k: gate.get(k) for k in ("computed", "passed", "with", "baseline", "version", "test", "note", "cause")},
+           "gate": standing["gate"],
            "last_full_test": ({"test": last_full["test"], "date": last_full.get("date"), "version": last_full.get("version"),
                                "complete": last_full.get("complete"),
                                "passed": (last_full.get("gate") or {}).get("passed")} if last_full else None),
@@ -2081,11 +2128,22 @@ def _sum_field(models):
     return {"uses": uses, "judged": judged, "mean": mean}
 
 
+def _gate_cell(gate):
+    """passed or failed, with the two means "with vs baseline"; "not computed" when the gate has no result."""
+    if not gate or gate.get("passed") is None:
+        return "not computed"
+    verdict = ("passed" if gate["passed"] else "failed") + ("" if gate.get("computed") else f" ({gate.get('note') or 'written'})")
+    return f"{verdict}, {_num(gate.get('with'))} vs {_num(gate.get('baseline'))}"
+
+
 def inventory_block(root=ROOT):
     """The two snapshot tables of the reliability model's section 10, with the commit they were generated at:
     the band table (one row per skill, on the reference model; its field column sums every model) and the
-    model table (one row per skill and model that has any evidence)."""
+    model table (one row per skill and model that has any evidence, the reference model first): the same band,
+    cause, gate and figures for every model, computed by the same rules on that model's lines. Only the
+    reference model's band decides a skill's standing; the other rows are information."""
     data = all_status(root)
+    ref = reference_model(load_gate(root))
     head = git_out(root, "rev-parse", "--short=12", "HEAD")
     lines = [f"Generated at commit `{head.strip() if head else 'none'}` by `python3 evals/eval_status.py inventory --write`.", "",
              "| Skill | Version | Band | Cause | Score | Mean | Runs (N) | Last full test | Field: uses, judged, mean (self-reported) |",
@@ -2105,14 +2163,17 @@ def inventory_block(root=ROOT):
               f"{len(data['skills'])} skills.", ""]
     rows = []
     for r in data["skills"]:
-        for model, m in r["models"].items():
+        for model, m in sorted(r["models"].items(), key=lambda item: (item[0] != ref, item[0])):
             platforms = ", ".join(f"`{name}`: {_num(p['mean'])} ({p['runs']})" for name, p in sorted((m.get("platforms") or {}).items()))
             field = m.get("field", {"uses": 0, "judged": 0, "mean": None}) if r["field"]["computed"] else None
-            rows.append(f"| `{r['skill']}` | `{model}` | {_num(m['score'])} | {_num(m['mean'])} | {m['runs']:g} | "
+            rows.append(f"| `{r['skill']}` | `{model}` | {m.get('band') or 'n/a'} | {_cell(m.get('cause') or '') or '-'} | "
+                        f"{_gate_cell(m.get('gate'))} | {_num(m['score'])} | {_num(m['mean'])} | {m['runs']:g} | "
                         f"{_field_cell(field)} | {platforms or '-'} |")
     if rows:
-        lines += ["| Skill | Model | Score | Mean | Lab runs (N) | Field: uses, judged, mean (self-reported) | Platforms: mean (runs) |",
-                  "|-------|-------|-------|------|--------------|-------------------------------------------|------------------------|"] + rows
+        lines += ["| Skill | Model | Band | Cause | Gate: with vs baseline | Score | Mean | Lab runs (N) | "
+                  "Field: uses, judged, mean (self-reported) | Platforms: mean (runs) |",
+                  "|-------|-------|------|-------|------------------------|-------|------|--------------|"
+                  "-------------------------------------------|------------------------|"] + rows
     else:
         lines.append("Model table: no skill has lab or field evidence yet.")
     return "\n".join(lines)
