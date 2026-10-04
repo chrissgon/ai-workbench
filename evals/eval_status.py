@@ -79,7 +79,9 @@ with score 0; "total_jobs" [10], the model runs in progress at one time over eve
 machine; "web_jobs" [{"strong": 2, "floor": 2}], the same for runs on the open network, per tier;
 "web_cases", {skill: [case ids]}, the only cases that may set "allow_web" (with a gate file and no such key,
 none may); "strong_web_pass_env", the variables a strong-model run of a web case receives in place of
-"strong_pass_env" (a low-limit API key in place of the account's token). An event made with another number of
+"strong_pass_env" (a low-limit API key in place of the account's token). "baseline_runs" is the number of runs
+of a baseline in a full test (from 1 to "runs"; without it, "runs"), and "baseline_margin" the distance under
+which the status asks a thin baseline to be run in full. An event made with another number of
 runs, another timeout or another number of retries than these writes no evidence (eval_run.py --help), and
 an evidence file whose event line carries another "runs" than the configured one is not valid (`evidence`).
 
@@ -229,14 +231,15 @@ GATE_FIELDS = {"strong_model": str, "strong_harness": str, "floor_model": str, "
 GATE_OPTIONAL = {"measurement_sha256": str,  # absent while a measurement version is open
                  # Control of a test event (event_config below): absent keys take the defaults of EVENT_DEFAULTS.
                  "runs": int, "timeout_seconds": int, "retries": int, "max_resumes": int, "total_jobs": int,
-                 "web_jobs": dict, "web_cases": dict, "strong_web_pass_env": list, "models": dict,
+                 "web_jobs": dict, "web_cases": dict, "strong_web_pass_env": list, "models": dict, "baseline_runs": int, "baseline_margin": (int, float),
                  "epochs": list}  # [{"date", "models", "skills", "cause"}]: the model's section 8
 # What an event uses when the gate file does not say: 3 runs per case (the plan's decision 1), 900 seconds per
 # run, 2 retries inside the event, 3 resumptions of one run before it is written as a timeout, 10 runs at a
 # time over every runner process of the machine, 2 runs on the open network at a time per tier.
 EVENT_DEFAULTS = {"runs": 3, "timeout_seconds": 900, "retries": 2, "max_resumes": 3, "total_jobs": 10,
                   "web_jobs": {"strong": 2, "floor": 2}}
-EVENT_RANGES = {"runs": (1, 10), "timeout_seconds": (30, 86400), "retries": (0, 5), "max_resumes": (0, 10), "total_jobs": (1, 64)}
+EVENT_RANGES = {"runs": (1, 10), "timeout_seconds": (30, 86400), "retries": (0, 5), "max_resumes": (0, 10), "total_jobs": (1, 64),
+                "baseline_runs": (1, 10)}
 TIERS = ("strong", "floor")
 LEGACY_VERSION = 1  # the measurement of the first records, whose gate had no threshold for the strong model
 
@@ -318,6 +321,11 @@ def event_problems(cfg):
             for key in ("strong_model", "floor_model", "grader"):
                 if cfg.get(key) not in names:
                     out.append(f"{key} {cfg.get(key)!r} is not in models: every configured model is a known one")
+    if "baseline_runs" in cfg and whole(cfg["baseline_runs"], 1, 10) and cfg["baseline_runs"] > cfg.get("runs", EVENT_DEFAULTS["runs"]):
+        out.append("baseline_runs must not be above runs")
+    margin = cfg.get("baseline_margin")
+    if "baseline_margin" in cfg and (isinstance(margin, bool) or not isinstance(margin, (int, float)) or not 0 <= margin <= 1):
+        out.append("baseline_margin must be a number from 0 to 1")
     return out
 
 
@@ -326,6 +334,10 @@ def event_config(cfg):
     cfg is a loaded gate configuration ({} when there is none)."""
     out = {key: cfg.get(key, default) for key, default in EVENT_DEFAULTS.items()}
     out["web_jobs"] = dict(out["web_jobs"])
+    # A full test runs each baseline this many times; without the key, as many as "runs" (the behaviour before it).
+    out["baseline_runs"] = cfg.get("baseline_runs", out["runs"])
+    # Under this distance between the mean with the skill and the baseline, a thin baseline is asked to run in full.
+    out["baseline_margin"] = cfg.get("baseline_margin")
     return out
 
 

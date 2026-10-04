@@ -271,7 +271,7 @@ def test_the_repository_measurement_is_at_version_5_with_its_floor(root):
 
 def test_the_control_of_an_event_has_defaults_and_the_gate_file_overrides_them(root):
     assert es.event_config({}) == {"runs": 3, "timeout_seconds": 900, "retries": 2, "max_resumes": 3, "total_jobs": 10,
-                                   "web_jobs": {"strong": 2, "floor": 2}}
+                                   "web_jobs": {"strong": 2, "floor": 2}, "baseline_runs": 3, "baseline_margin": None}
     configure(root, runs=5, max_resumes=1, web_jobs={"strong": 1, "floor": 4})
     assert es.gate_problems(str(root)) == []
     control = es.event_config(es.load_gate(str(root)))
