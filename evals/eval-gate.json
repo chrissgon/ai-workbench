@@ -8,9 +8,11 @@
   "grader": "claude-sonnet-5-5",
   "threshold": 0.8,
   "strong_tolerance": 0.05,
-  "measurement_version": 7,
+  "measurement_version": 8,
   "measurement_floor": 6,
   "runs": 3,
+  "baseline_runs": 1,
+  "baseline_margin": 0.2,
   "timeout_seconds": 900,
   "retries": 2,
   "max_resumes": 3,
@@ -38,6 +40,5 @@
       "skills": "all",
       "cause": "The floor model's provider key moves out of the run container into a key proxy beside the egress proxy (lane F7, brought forward): a floor run gets a placeholder key and the proxy's base URL, its runner calls the proxy, and its web cases run on the eval's own open network; the strong tier's runs are unchanged."
     }
-  ],
-  "measurement_sha256": "44716ae7029a0e4442e346befba1252ca63a8e10cc18a1bbb9e1f0b60969cf07"
+  ]
 }
