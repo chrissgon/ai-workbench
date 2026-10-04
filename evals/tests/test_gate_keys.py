@@ -36,9 +36,3 @@ def test_baseline_margin_is_a_number_from_0_to_1():
     for bad in (-0.1, 1.5, True, "0.2"):
         assert es.event_problems({"baseline_margin": bad}) == ["baseline_margin must be a number from 0 to 1"]
 
-
-# True only while measurement version 8 is open: the closing pull request of the version deletes this test.
-def test_the_committed_gate_file_is_valid_and_its_version_is_open():
-    assert es.gate_problems() == []
-    assert es.fingerprint_problem() is None
-    assert "is open" in es.evidence_refusal()
