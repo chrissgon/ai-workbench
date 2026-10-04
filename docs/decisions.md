@@ -496,3 +496,12 @@ Measurement version 8: the strong model's credential is held by a key proxy, the
 ## 2026-10-04: the time limit of a run is 1800 seconds
 
 Before any evidence under measurement version 8, `timeout_seconds` of `evals/eval-gate.json` goes from 900 to 1800. In the rehearsal of the battery a web case of the reference model was stopped twice at 900 seconds and finished on its third attempt in 860 seconds, and a floor web run took 798: at 900 seconds the slow web runs are the ones that time out, are made again (spending the account on attempts that are thrown away) and, after the retries and resumptions, are written with score 0, so the evidence would keep the runs fast enough to finish. The limit is a control of the event, outside the measurement fingerprint; every event of the battery runs under the same value, and the committed evidence (all of it inherited, from 2026-10-03) is not touched.
+
+## 2026-10-04: measurement change, infrastructure
+
+The strong model's account-limit markers match what the pinned command-line tool prints at the limit ("You've hit your session limit", the weekly limit, spent credits) and the 429 of its result: none of the earlier markers matched, so the runner would not have paused.
+
+- Kind: infrastructure: locks, resumption, retries, pacing or reports changed in a file the fingerprint covers. No version is raised; the new fingerprint is committed with the reason.
+- Fingerprint: `2f141c251a98cc004c55c72acc9064596934ffe13de387c3d75fb1853783531d`.
+- Written by `python3 evals/eval_status.py measurement --kind infrastructure`.
+- Found by the fourth independent review before the battery: 23 real runs of 2026-09-29 that met the limit left the reply "You've hit your session limit · resets …", `api_error_status` 429 and exit code 1, and none of the four earlier markers is in that text (the pause of phase D was proven with a stand-in that printed "hit your limit"). Without the new markers every run at the limit would fail as an adapter failure, be retried into the limit and, after the resumptions, be written with score 0. Test: `evals/tests/test_account_limit_markers.py`.

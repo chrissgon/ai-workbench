@@ -10,7 +10,11 @@
     "limit reached",
     "hit your limit",
     "out of extra usage",
-    "Credit balance is too low"
+    "Credit balance is too low",
+    "hit your session limit",
+    "hit your weekly limit",
+    "out of usage credits",
+    "\"api_error_status\":429"
   ],
   "refusal_markers": [
     "safeguards flagged this message"
