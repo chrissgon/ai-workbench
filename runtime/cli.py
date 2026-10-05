@@ -16,6 +16,7 @@ Usage:
   python3 runtime/cli.py status   --project <dir>
   python3 runtime/cli.py accept-config --project <dir> --sha256 <hash>
   python3 runtime/cli.py proof    --project <dir> [--skill <name>]
+  python3 runtime/cli.py verdict  --project <dir> --run <run id> --word worked|corrected|failed
 
 request   records what you want and plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes. A task without a dependency is ready at once.
@@ -38,6 +39,8 @@ cancel    cancels a request, its tasks that are not done and their open pending 
 status    requests, tasks and pending decisions, from the store's records.
 proof     the model each skill in use would run on, with the bands and the two checks (the measurement files,
           the eval image). It calls no model.
+verdict   records your verdict on what one run delivered (worked, corrected, failed), with the existing
+          recorder (scripts/evidence.py), on the use the run recorded. One verdict per run; only you give one.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -58,7 +61,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
-VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof")
+VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict")
 
 
 class Usage(Exception):
@@ -105,6 +108,8 @@ def run(argv) -> dict:
     p.add_argument("--sha256")
     p.add_argument("--tier")
     p.add_argument("--skill")
+    p.add_argument("--run", type=int)
+    p.add_argument("--word")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
@@ -125,6 +130,8 @@ def run(argv) -> dict:
         return ops.accept_config(project, need(a, "--sha256"))
     if a.verb == "proof":
         return ops.proof(project, a.skill)
+    if a.verb == "verdict":
+        return ops.verdict(project, need(a, "--run"), need(a, "--word"))
     return ops.status(project)
 
 
