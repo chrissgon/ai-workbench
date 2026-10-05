@@ -14,10 +14,14 @@ task runtime reads three keys the first runtime already defined, with the same m
 
 and ignores every key it does not know (the first runtime's "agent", "harness", "mailbox"... stay valid in
 the same file). Keys reserved for later stages of the platform plan, read by nothing yet: "area_agents",
-"protected_paths", "documents", "task_board".
+"documents", "task_board".
 
-The hash is the sha256 of the file's bytes. From stage 2 every operation compares it with the hash the person
-accepted last (kept in the store) and refuses to act on a file that changed; stage 1 computes it and shows it.
+It also reads "protected_paths" (a list of path globs; absent means none): stage 2 asks it one question only,
+whether a glob matches AGENTS.md (runtime/workcopy.py, limit L5).
+
+The hash is the sha256 of the file's bytes. Every operation compares it with the hash the person accepted last
+(kept in the store's cursor ACCEPTED, written only by ops.accept_config) and refuses to act on a file that
+changed. Nothing in this module reads the store.
 
 Usage (a library):
   python3 runtime/project_config.py --help
@@ -34,7 +38,8 @@ import sys
 
 REL = "docs/workbench/runtime.json"
 REQUIRED = ("workbench", "data_dir", "store_db")
-RESERVED = ("area_agents", "protected_paths", "documents", "task_board")
+ACCEPTED = "config:accepted-sha256"  # the store's cursor that holds the hash the person accepted last
+RESERVED = ("area_agents", "documents", "task_board")
 
 
 class ConfigError(Exception):
@@ -73,6 +78,10 @@ def load(project: str) -> dict:
         for inside, what in ((project, "the project"), (out["workbench"], "the workbench checkout")):
             if out[key] == inside or out[key].startswith(inside + os.sep):
                 raise ConfigError(f"runtime.json {key} is inside {what}: work data lives outside every repository")
+    protected = raw.get("protected_paths", [])
+    if not isinstance(protected, list) or not all(isinstance(p, str) and p.strip() for p in protected):
+        raise ConfigError("runtime.json protected_paths must be a list of path globs")
+    out["protected_paths"] = list(protected)
     return out
 
 

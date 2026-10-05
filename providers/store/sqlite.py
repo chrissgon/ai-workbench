@@ -1171,6 +1171,27 @@ def request_cancel(conn: sqlite3.Connection, request_id: int, *, by: str) -> dic
     return {"request": request_id, "cancelled": ids, "pending": pending}
 
 
+def cursor_get(conn: sqlite3.Connection, name: str) -> str | None:
+    """The value of a cursor, or None when there is no such cursor: the cursor-get verb, in process."""
+    name = text_arg(name, "name", LABEL_MAX)
+    with write(conn):
+        row = conn.execute("SELECT value FROM cursors WHERE name = ?", (name,)).fetchone()
+    return row["value"] if row else None
+
+
+def cursor_set(conn: sqlite3.Connection, name: str, value: str) -> dict:
+    """Insert or replace a cursor: the cursor-set verb, in process, with the same limits. Returns {"name",
+    "value", "updated_at"}."""
+    name = text_arg(name, "name", LABEL_MAX)
+    value = text_arg(value, "value", VALUE_MAX)
+    now = iso(utcnow())
+    with write(conn):
+        conn.execute("INSERT INTO cursors (name, value, updated_at) VALUES (?, ?, ?) "
+                     "ON CONFLICT (name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                     (name, value, now))
+    return {"name": name, "value": value, "updated_at": now}
+
+
 def task_get(conn: sqlite3.Connection, task_id: int) -> dict:
     """One task, with depends_on as a list of task ids."""
     return _task(conn, task_id)

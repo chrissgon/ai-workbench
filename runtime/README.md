@@ -39,7 +39,11 @@ A project is configured with three absolute paths in `<project>/docs/workbench/r
 {"workbench": "<this checkout>", "data_dir": "<a folder outside every repository>", "store_db": "<data folder>/tasks.sqlite"}
 ```
 
+Every command refuses a configuration whose hash is not the one the person accepted last. Read the file, then
+accept it with the hash the refusal shows (and again after every change of the file):
+
 ```sh
+python3 runtime/cli.py accept-config --project <dir> --sha256 <hash>
 python3 runtime/cli.py request  --project <dir> --flow market-positioning --text "<what you want>"
 uv run --with keyring==25.7.0 python3 runtime/cli.py run-next --project <dir>   # needs docker and the credential
 python3 runtime/cli.py pending  --project <dir>

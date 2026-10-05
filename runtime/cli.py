@@ -14,6 +14,7 @@ Usage:
   python3 runtime/cli.py retry    --project <dir> --task <task id>
   python3 runtime/cli.py cancel   --project <dir> --request <request id>
   python3 runtime/cli.py status   --project <dir>
+  python3 runtime/cli.py accept-config --project <dir> --sha256 <hash>
 
 request   records what you want and plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes. A task without a dependency is ready at once.
@@ -32,6 +33,8 @@ release   releases a delivery (a pending decision of kind review): the task is d
 retry     makes a failed or blocked task ready again.
 cancel    cancels a request, its tasks that are not done and their open pending decisions.
 status    requests, tasks and pending decisions, from the store's records.
+accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
+          reading the file. Every other command refuses a file with another hash.
 
 --text-file - reads the text from standard input.
 The project is configured in <project>/docs/workbench/runtime.json (runtime/project_config.py).
@@ -50,7 +53,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
-VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status")
+VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config")
 
 
 class Usage(Exception):
@@ -94,6 +97,7 @@ def run(argv) -> dict:
     p.add_argument("--id", type=int)
     p.add_argument("--task", type=int)
     p.add_argument("--request", type=int)
+    p.add_argument("--sha256")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
@@ -110,6 +114,8 @@ def run(argv) -> dict:
         return ops.retry(project, need(a, "--task"))
     if a.verb == "cancel":
         return ops.cancel(project, need(a, "--request"))
+    if a.verb == "accept-config":
+        return ops.accept_config(project, need(a, "--sha256"))
     return ops.status(project)
 
 
