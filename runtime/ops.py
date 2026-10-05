@@ -29,6 +29,10 @@ Operations of stage 1 of the platform plan:
 
 Releasing is not approving: a released delivery stays a draft in the project's state file.
 
+The pending decision a run opens: a `question` when the run wrote nothing and asks (ending `question`); a
+`review` otherwise. A draft with open questions (ending `draft_with_questions`) opens a review: the person
+releases it as it stands, its open questions left in it, or answers it, and the task runs again.
+
 Usage (a library; the shell is runtime/cli.py): python3 runtime/ops.py --help
 
 Standard library only. Runs on Python 3.9.
@@ -353,7 +357,11 @@ def _run(ctx: dict, task: dict) -> dict:
     loaded = timing.get("skills_loaded")
     body = result["response"]
     cut = len(body.encode("utf-8")) > store.BODY_MAX
-    decision = {"kind": "question" if ending in ("question", "draft_with_questions") else "review",
+    # A run that wrote nothing and asks opens a question, which is answered. A run that wrote a declared output
+    # opens a review, a draft with open questions included: its body is the whole reply, so the person reads the
+    # questions and either releases the draft as it stands (its open questions stay in it, its row stays a
+    # draft) or answers it, and the next run is given the answer.
+    decision = {"kind": "question" if ending == "question" else "review",
                 "title": f"{skill}: {ending.replace('_', ' ')}",
                 "body": body.encode("utf-8")[:store.BODY_MAX].decode("utf-8", errors="ignore") if cut else body,
                 "payload": {"ending": ending, "why": why, "returned": returned, "kept": kept, "run_dir": dest,

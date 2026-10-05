@@ -26,7 +26,9 @@ pending   lists what waits for you; with --id, prints that pending decision whol
           what was kept in the run folder.
 answer    answers a pending decision; the task becomes ready and its next run is given your answer.
 release   releases a delivery (a pending decision of kind review): the task is done and what depended on it
-          becomes ready. The delivery stays a draft: releasing is not approving.
+          becomes ready. The delivery stays a draft: releasing is not approving. A run that wrote a document
+          and still asks (ending draft_with_questions) opens a review too: release it as it stands, its open
+          questions left in it, or answer it. A run that wrote nothing and asks opens a question: answer it.
 retry     makes a failed or blocked task ready again.
 cancel    cancels a request, its tasks that are not done and their open pending decisions.
 status    requests, tasks and pending decisions, from the store's records.

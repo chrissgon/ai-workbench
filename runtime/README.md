@@ -50,6 +50,12 @@ python3 runtime/cli.py status   --project <dir>
 `run-next` calls a model: it runs the skill on the reference model of the gate file, in the eval container. It
 writes no lab evidence and edits no file of the measurement.
 
+After a run the task waits on one pending decision. A run that wrote nothing and asks (ending `question`)
+opens a `question`, which is answered. Every other ending opens a `review`, whose body is the whole reply: a
+run that wrote a declared output and still asks (ending `draft_with_questions`) included. A review is released
+as it stands (the task is done; the document keeps its open questions and stays a draft) or answered (the task
+runs again with the answer).
+
 ## Tests
 
 `uv run --with pytest==9.1.1 pytest runtime/tests`: offline. A stand-in adapter (a shell script) and two
