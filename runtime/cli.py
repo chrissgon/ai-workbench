@@ -7,7 +7,7 @@
 
 Usage:
   python3 runtime/cli.py request  --project <dir> --flow <name> (--text <text> | --text-file <file>) [--title <title>]
-  python3 runtime/cli.py run-next --project <dir>
+  python3 runtime/cli.py run-next --project <dir> [--tier strong]
   python3 runtime/cli.py pending  --project <dir> [--id <pending id>]
   python3 runtime/cli.py answer   --project <dir> --id <pending id> (--text <text> | --text-file <file>)
   python3 runtime/cli.py release  --project <dir> --id <pending id>
@@ -15,10 +15,13 @@ Usage:
   python3 runtime/cli.py cancel   --project <dir> --request <request id>
   python3 runtime/cli.py status   --project <dir>
   python3 runtime/cli.py accept-config --project <dir> --sha256 <hash>
+  python3 runtime/cli.py proof    --project <dir> [--skill <name>]
 
 request   records what you want and plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes. A task without a dependency is ready at once.
-run-next  runs the next ready task: one skill, once, in the eval container, on the reference model, on a copy
+run-next  runs the next ready task: one skill, once, in the eval container, on the model its proof gives (the
+          floor model only where the skill is reliable there and the proof holds; --tier strong asks for the
+          reference model; nothing asks for the floor model), on a copy
           of what may enter by limits L1 to L6 (runtime/workcopy.py). What the run left comes back by the path rule
           (runtime/path_rule.py); then the task waits for you. One task at a time per project. Start it with
           the secret store's library available, as the eval runner is started:
@@ -33,6 +36,8 @@ release   releases a delivery (a pending decision of kind review): the task is d
 retry     makes a failed or blocked task ready again.
 cancel    cancels a request, its tasks that are not done and their open pending decisions.
 status    requests, tasks and pending decisions, from the store's records.
+proof     the model each skill in use would run on, with the bands and the two checks (the measurement files,
+          the eval image). It calls no model.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -53,7 +58,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
-VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config")
+VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof")
 
 
 class Usage(Exception):
@@ -98,12 +103,14 @@ def run(argv) -> dict:
     p.add_argument("--task", type=int)
     p.add_argument("--request", type=int)
     p.add_argument("--sha256")
+    p.add_argument("--tier")
+    p.add_argument("--skill")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
         return ops.request(project, text_of(a), need(a, "--flow"), a.title)
     if a.verb == "run-next":
-        return ops.run_next(project)
+        return ops.run_next(project, a.tier)
     if a.verb == "pending":
         return ops.pending(project, a.id)
     if a.verb == "answer":
@@ -116,6 +123,8 @@ def run(argv) -> dict:
         return ops.cancel(project, need(a, "--request"))
     if a.verb == "accept-config":
         return ops.accept_config(project, need(a, "--sha256"))
+    if a.verb == "proof":
+        return ops.proof(project, a.skill)
     return ops.status(project)
 
 

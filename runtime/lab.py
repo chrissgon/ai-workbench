@@ -29,6 +29,7 @@ Standard library only. Runs on Python 3.9.
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import importlib.util
 import json
 import os
@@ -161,6 +162,77 @@ def settings_names() -> list:
     """Every name that carries a tool's settings at project level, from the adapters' own lists (the lab's
     harness_settings): a path with such a part never enters a run copy (limit L4)."""
     return sorted(_lab_call(LAB.harness_settings))
+
+
+def measurement_problem():
+    """Why the measurement files of this checkout are not the recorded ones (the status script's
+    fingerprint_problem), or None when they are."""
+    return _lab_call(LAB.load_status).fingerprint_problem(LAB.ROOT)
+
+
+def image() -> dict:
+    """{"name", "digest", "platform"} of the eval image on this machine. digest is None when the lab does not run in
+    a container, or when the image is not on this machine. It only inspects, the way ensure() of evals/executor.py
+    reads the id of the built image (its digest); it never calls ensure() and never builds."""
+    if LAB.EXECUTOR != "container":
+        return {"name": None, "digest": None, "platform": None}
+    try:
+        executor = LAB.load_executor()
+        name, platform = executor.names()["image"], executor.image_platform()
+        found = executor.docker("image", "inspect", "--format", "{{.Id}}", name, check=False)
+    except Exception:  # no docker client, no daemon: the image cannot be seen, so it is not there
+        return {"name": None, "digest": None, "platform": None}
+    digest = found.stdout.strip() if found.returncode == 0 else ""
+    return {"name": name, "digest": digest or None, "platform": platform}
+
+
+def proof_inputs(skill: str) -> str:
+    """A sha256 that changes when the proof of a skill may have changed. Over, in this order: the bytes of the gate
+    file; of the skill's evals/versions.jsonl; of every file of the skill's evals/evidence/ in sorted name order,
+    each preceded by its name; and the skill's content hash. It lives here because no other module of runtime/
+    may name a path under evals/."""
+    status = _lab_call(LAB.load_status)
+    skill_dir = os.path.join(LAB.ROOT, "skills", skill)
+    digest = hashlib.sha256()
+
+    def add(path: str) -> None:
+        try:
+            with open(path, "rb") as f:
+                digest.update(f.read())
+        except OSError:
+            digest.update(b"\0missing\0")
+
+    add(os.path.join(LAB.ROOT, *status.GATE_REL.split("/")))
+    add(os.path.join(skill_dir, "evals", "versions.jsonl"))
+    evidence = os.path.join(skill_dir, "evals", "evidence")
+    for name in sorted(os.listdir(evidence)) if os.path.isdir(evidence) else []:
+        digest.update(b"\0" + name.encode("utf-8") + b"\0")
+        add(os.path.join(evidence, name))
+    digest.update(skill_identity(skill)["content_sha256"].encode("utf-8"))
+    return digest.hexdigest()
+
+
+def standing(skill: str) -> dict:
+    """What the status script computes for one skill: {"skill", "version", "models": {model id: {"band", "cause",
+    "score", "mean", "runs"}}, "tiers": {"strong": {"model", "adapter"}, "floor": {"model", "adapter"}},
+    "web_cases": the gate file's web cases of the skill, "evidence_images": the sorted distinct image digests of
+    the skill's lab events at or above the measurement floor}."""
+    status = _lab_call(LAB.load_status)
+    gate = status.load_gate(LAB.ROOT)
+    row = _lab_call(status.all_status, LAB.ROOT, only=skill)["skills"][0]
+    floor = gate.get("measurement_floor") or 0
+    images = set()
+    for event, _ in status.skill_evidence(os.path.join(LAB.ROOT, "skills", skill)):
+        version = event.get("measurement_version")
+        if isinstance(version, (int, float)) and version >= floor and event.get("image_digest"):
+            images.add(event["image_digest"])
+    return {"skill": skill, "version": row["version"],
+            "models": {model: {k: found.get(k) for k in ("band", "cause", "score", "mean", "runs")}
+                       for model, found in (row.get("models") or {}).items()},
+            "tiers": {"strong": {"model": gate.get("strong_model"), "adapter": gate.get("strong_harness")},
+                      "floor": {"model": gate.get("floor_model"), "adapter": gate.get("floor_harness")}},
+            "web_cases": list((gate.get("web_cases") or {}).get(skill, [])),
+            "evidence_images": sorted(images)}
 
 
 def readable(cwd: str, rel: str) -> bool:
