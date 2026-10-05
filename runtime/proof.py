@@ -11,10 +11,10 @@ through the lab facade, runtime/lab.py). This module keeps a copy of it, the pro
 files, its content): a cache in the data folder, never a source and never committed.
 
 A run goes to the floor model only when the skill is `reliable` there, the measurement files of this checkout are
-the recorded ones, the eval image on this machine is the one the evidence was measured in, and the runtime has
-its own key for the floor model. Otherwise it goes to the reference model. Nobody can ask for the floor model;
-the person can ask for the reference model. A skill runs in the condition it was measured in: one that requires
-the web but was measured without it runs without it.
+the recorded ones, the eval image on this machine is the one the evidence was measured in, and a key for the floor
+model is found (the runtime's own, else the lab's: runtime/ops.py, _floor_key). Otherwise it goes to the
+reference model. Nobody can ask for the floor model; the person can ask for the reference model. A skill runs in
+the condition it was measured in: one that requires the web but was measured without it runs without it.
 
 Functions:
   row(cfg, skill)                                    the skill's entry of the proof file
@@ -123,7 +123,7 @@ def route(cfg: dict, skill: str, meta: dict, *, force=None, floor_key: bool = Fa
     2. force is None or "strong"; anything else raises ValueError: nobody can ask for the floor model.
     3. A check that fails: the reference model, not proven.
     4. Else force "strong": the reference model.
-    5. Else the floor model when its band is `reliable` and the runtime has its own key for it.
+    5. Else the floor model when its band is `reliable` and a key for it was found (floor_key).
     6. Else the reference model, with the reason.
     7. proven: both checks pass and the chosen pair's band is `reliable`; autonomy equals proven (stage 2 records
        it; stage 6 is the first to read it).
@@ -144,7 +144,7 @@ def route(cfg: dict, skill: str, meta: dict, *, force=None, floor_key: bool = Fa
     else:
         tier = "strong"
         reasons.append(f"the band on the floor model is {pairs['floor']['band']}" if pairs["floor"]["band"] != RELIABLE
-                       else "the runtime's own key for the floor model is not set")
+                       else "no key for the floor model was found")
     chosen = pairs[tier]
     proven = not (found["measurement"] or found["image"]) and chosen["band"] == RELIABLE
     web = bool(meta.get("web")) and bool(entry["web_measured"])

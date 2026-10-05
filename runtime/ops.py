@@ -85,7 +85,8 @@ CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 EVIDENCE = None
 VERDICTS = ("worked", "corrected", "failed")
 RECORDER_TIMEOUT = 60
-# The one secret the runtime owns: its own key for the floor model's provider, with a spend cap set there.
+# The one secret the runtime owns: its own key for the floor model's provider, with a spend cap set there. When it
+# is not stored, a floor run uses the lab's key for the floor model (_floor_key).
 FLOOR_KEY = "WB_RUNTIME_FLOOR_KEY"
 
 
@@ -253,7 +254,7 @@ def _use_start(ctx: dict, run_id: int, skill: str, routing: dict):
     return use
 
 
-def _floor_key() -> tuple:
+def _own_key() -> tuple:
     """(value or None, reason or None): the runtime's own key for the floor model, through the secret resolver
     (providers/secrets/resolver.py) with the registry runtime/secrets.json. The value is never printed, logged,
     stored or put in a message."""
@@ -269,30 +270,62 @@ def _floor_key() -> tuple:
     return found[0], None
 
 
-def _route(ctx: dict, skill: str, meta: dict, tier, key) -> dict:
-    """proof.route with the runtime's own key; a floor tier whose gate file does not pass exactly one variable is
-    routed again without the key, because the key travels under that one name."""
-    routing = proof_rules.route(ctx["cfg"], skill, meta, force=tier, floor_key=key[0] is not None)
-    if key[1] and routing["tier"] == "strong":
-        routing["reasons"].append(key[1])
-    if routing["tier"] == "floor":
+def _floor_key() -> dict:
+    """The key a floor run would use: {"value", "source", "reason"}, in this order.
+    source "runtime": the runtime's own key (_own_key), when it is stored and the floor tier passes exactly one
+      variable, under which it travels (_key_in_environment). It wins: a person who wants a capped key of the
+      runtime's own stores it.
+    source "lab": no key of its own, and every variable the gate file names for the floor tier is set or found in
+      the secret store, by the lab's own lookup (lab.credential_missing). value is None: the value stays the lab's,
+      which run_skill passes as it does for a lab run.
+    source None: neither, and reason says why; the run stays on the reference model.
+    Only the source is shown, by name; the value is never printed, logged, stored or put in a message."""
+    reasons = []
+    value, reason = _own_key()
+    if reason:
+        reasons.append(reason)
+    try:
         names = lab.reference("floor")["pass_env"]
-        if len(names) != 1:
-            routing = proof_rules.route(ctx["cfg"], skill, meta, force=tier, floor_key=False)
-            routing["reasons"].append(f"the floor tier passes {len(names)} variables; the runtime's key travels under one")
+        if value is not None:
+            if len(names) == 1:
+                return {"value": value, "source": "runtime", "reason": None}
+            reasons.append(f"the floor tier passes {len(names)} variables; the runtime's own key travels under one")
+        missing = lab.credential_missing("floor") if names else None
+    except Exception as e:  # a gate file the facade refuses, a resolver that does not run on this interpreter
+        reasons.append(f"the lab's key for the floor model could not be looked up: {type(e).__name__}")
+        missing = None
+    if missing == []:
+        return {"value": None, "source": "lab", "reason": None}
+    if value is None and not reason:
+        reasons.append(f"the runtime's own key ({FLOOR_KEY}) is not stored")
+    if not names:
+        reasons.append("the gate file names no variable for the floor model's key")
+    elif missing:
+        reasons.append(f"the lab's key for the floor model ({', '.join(missing)}) is neither set nor in the secret store")
+    return {"value": None, "source": None, "reason": "no key for the floor model: " + "; ".join(reasons)}
+
+
+def _route(ctx: dict, skill: str, meta: dict, tier, key: dict) -> dict:
+    """proof.route with the key _floor_key found; the routing names that key by its source ("runtime" or "lab")
+    on a floor run, and None otherwise."""
+    routing = proof_rules.route(ctx["cfg"], skill, meta, force=tier, floor_key=key["source"] is not None)
+    if key["reason"] and routing["tier"] == "strong":
+        routing["reasons"].append(key["reason"])
+    routing["key"] = key["source"] if routing["tier"] == "floor" else None
     return routing
 
 
 @contextlib.contextmanager
-def _key_in_environment(routing: dict, key: tuple):
-    """Around a floor run: the variable the gate file names for the floor tier holds the runtime's own key, and
-    afterwards what was there before (the earlier value, or no variable). Nothing for a strong run."""
-    if routing["tier"] != "floor" or key[0] is None:
+def _key_in_environment(routing: dict, key: dict):
+    """Around a floor run on the runtime's own key: the variable the gate file names for the floor tier holds that
+    key, and afterwards what was there before (the earlier value, or no variable). Nothing for a strong run, nor
+    for a floor run on the lab's key, which the lab passes itself."""
+    if routing["tier"] != "floor" or key["source"] != "runtime" or key["value"] is None:
         yield
         return
     name = lab.reference("floor")["pass_env"][0]
     before = os.environ.get(name)
-    os.environ[name] = key[0]
+    os.environ[name] = key["value"]
     try:
         yield
     finally:
@@ -326,7 +359,8 @@ def run_next(project: str, tier: str | None = None) -> dict:
     for the floor model. Returns {"ran": None, "reason"} when there is nothing to run, else {"ran": task id, "skill",
     "run_id", "run_dir", "status", "ending" or None, "failure" or None, "task_state", "pending_id" or None,
     "returned", "kept", "left_out", "entered": {"kind", "agents_md", "files"} or None, "routing": the
-    choice of proof.route or None}; "recovered" names the tasks an interrupted run had left running."""
+    choice of proof.route, with "key" (the key of a floor run by name: "runtime" or "lab"; None otherwise), or
+    None}; "recovered" names the tasks an interrupted run had left running."""
     if tier not in (None, "strong"):
         raise OpsError("tier may only be \"strong\": the person can ask for the reference model, never for the floor model", 2)
     ctx = context(project)

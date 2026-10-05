@@ -59,9 +59,12 @@ model and adapter of the gate file), in the project's `.workbench-local/evidence
 never stops a run. The verdict on what a run delivered is yours, once per run:
 `python3 runtime/cli.py verdict --project <dir> --run <run id> --word worked|corrected|failed`.
 
-A run goes to the floor model only with the runtime's own key, `WB_RUNTIME_FLOOR_KEY` (registry
-`runtime/secrets.json`, store username `runtime-floor`), a key with a spend cap set at the provider and used by
-nothing else; the lab's key is never used for it. Without that key every run goes to the reference model.
+A run goes to the floor model only with a key for it. The runtime's own key, `WB_RUNTIME_FLOOR_KEY` (registry
+`runtime/secrets.json`, store username `runtime-floor`), wins when it is stored: store it when you want the
+runtime's runs on a key of their own, with a spend cap set at the provider. Without it, a floor run uses the lab's
+key for the floor model: the variables `floor_pass_env` of the gate file names, set or found in the secret store
+the way the lab's runner finds them. Without either, every run goes to the reference model. The routing a run
+returns names the key by its source, never by its value: `"key": "runtime"` or `"key": "lab"` on a floor run.
 `proof --project <dir>` shows, without a model call, where each skill in use would run and why.
 
 `run-next` calls a model: it runs the skill on the model its proof gives (`proof --project <dir>` shows it without
