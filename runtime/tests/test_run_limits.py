@@ -21,9 +21,10 @@ ops = st.load("ops")
 workcopy = st.load("workcopy")
 skill_meta = st.load("skill_meta")
 project_config = st.load("project_config")
+manifest = st.load("manifest")
 
 # The numbers of the limits built so far; each has exactly one test below named test_limit_<two digits>_...
-BUILT = (1, 2, 3, 4, 5, 6)
+BUILT = (1, 2, 3, 4, 5, 6, 7, 8, 12, 14)
 
 SECTION_ASSET = st.REPO / "skills" / "core-project-init" / "assets" / "agents-md-section.md"
 GIT_ENV = {"GIT_AUTHOR_NAME": "Demo Person", "GIT_AUTHOR_EMAIL": "demo@example.com",
@@ -212,6 +213,134 @@ def test_limit_06_no_credential_enters_the_container(tree):
         assert rel not in rels(entered)
     assert token() not in repr(entered["left_out"])
     assert workcopy.credential_findings(f"one\nkey {token()}\ntwo") and workcopy.credential_findings("API_KEY=<x>\n") == []
+
+
+def finished(tree, files: dict, *, created=(), modified=(), deleted=()) -> dict:
+    """A completed run's result, made by hand: a copy folder holding files, and what the run did to it."""
+    cwd = tree["prepared"].parent / "copy"
+    for rel, text in files.items():
+        write(cwd, rel, text)
+    return {"cwd": str(cwd), "staged": [".h/skills/demo-writes"],
+            "changes": {"created": sorted(created), "modified": sorted(modified), "deleted": sorted(deleted),
+                        "unchanged": []}}
+
+
+def base_of(tree, *rels) -> dict:
+    out = {}
+    for rel in rels:
+        path = tree["project"] / rel
+        out[rel] = workcopy._sha256(str(path)) if path.is_file() else None
+    return out
+
+
+def test_limit_07_the_destination_of_each_returned_file_comes_from_the_path_rule(tree):
+    project = tree["project"]
+    state = (project / "docs" / "workbench" / "state.md").read_text(encoding="utf-8")
+    left = {"docs/business/icp.md": "# Profile\n", "docs/business/icp.lint.json": "{}\n",
+            ".workbench-local/notes/run.json": "{}\n", "docs/workbench/state.md": state + "- a decision\n",
+            "src/app.py": "print('app')\n", "node_modules/x/index.js": "x\n"}
+    created = [rel for rel in left if rel != "docs/workbench/state.md"]
+    result = finished(tree, left, created=created, modified=["docs/workbench/state.md"])
+    base = base_of(tree, *left)
+    returned, kept, _ = workcopy.returning(str(project), result, base, state, "demo-writes")
+    assert returned == [{"path": ".workbench-local/notes/run.json", "class": "machine"},
+                        {"path": "docs/business/icp.lint.json", "class": "machine"},
+                        {"path": "docs/business/icp.md", "class": "document"},
+                        {"path": "docs/workbench/state.md", "class": "state"}]
+    assert kept == [{"path": "src/app.py", "class": "other", "reason": "this class of path is not brought back yet"}]
+    assert not (project / "src").exists() and not (project / "node_modules").exists()
+    # The same document, bound to an approval by the skill's manifest, comes back as a machine file.
+    known = {**manifest.load(str(tree["tree"]), "demo-writes")}
+    known["documents"] = [{**d, "bound_to_approval": True} for d in known["documents"]]
+    (project / "docs" / "business" / "icp.md").unlink()
+    (project / "docs" / "workbench" / "state.md").write_text(state, encoding="utf-8")
+    bound = manifest.bound_among(known, created)
+    assert bound == ["docs/business/icp.md"]
+    returned, _, _ = workcopy.returning(str(project), result, base, state, "demo-writes", bound=bound)
+    assert {"path": "docs/business/icp.md", "class": "machine"} in returned
+
+
+def test_limit_08_only_a_regular_file_with_its_real_path_inside_the_copy_comes_back(tree, tmp_path):
+    project = tree["project"]
+    outside = tmp_path / "outside-secret.md"
+    outside.write_text("not the run's\n", encoding="utf-8")
+    result = finished(tree, {"docs/business/real.md": "# Real\n"})
+    cwd = Path(result["cwd"])
+    os.symlink(outside, cwd / "docs" / "business" / "out.md")
+    os.symlink(cwd / "docs" / "business" / "real.md", cwd / "docs" / "business" / "in.md")
+    result["changes"]["created"] = ["docs/business/in.md", "docs/business/out.md"]
+    returned, kept, _ = workcopy.returning(str(project), result, {}, None, "demo-writes")
+    assert returned == []
+    assert {item["path"]: item["reason"] for item in kept} == {
+        "docs/business/in.md": "not a regular file inside the copy",
+        "docs/business/out.md": "not a regular file inside the copy"}
+    assert not (project / "docs" / "business" / "out.md").exists() and not (project / "docs" / "business" / "in.md").exists()
+
+
+def test_limit_12_what_comes_back_never_overwrites_what_changed_at_the_origin(tree):
+    project = tree["project"]
+    write(project, "docs/business/changed.md", "as the copy was made\n")
+    write(project, "docs/business/same.md", "as the copy was made\n")
+    base = base_of(tree, "docs/business/changed.md", "docs/business/same.md", "docs/business/new.md")
+    write(project, "docs/business/changed.md", "edited by the person during the run\n")
+    write(project, "docs/business/new.md", "created by the person during the run\n")
+    left = {"docs/business/changed.md": "by the run\n", "docs/business/same.md": "by the run\n",
+            "docs/business/new.md": "by the run\n"}
+    result = finished(tree, left, created=["docs/business/new.md"],
+                      modified=["docs/business/changed.md", "docs/business/same.md"])
+    returned, kept, _ = workcopy.returning(str(project), result, base, None, "demo-writes")
+    assert returned == [{"path": "docs/business/same.md", "class": "document"}]
+    reason = "the project's file changed while the run was in progress"
+    assert {item["path"]: item["reason"] for item in kept} == {"docs/business/changed.md": reason,
+                                                               "docs/business/new.md": reason}
+    assert (project / "docs" / "business" / "changed.md").read_text() == "edited by the person during the run\n"
+    assert (project / "docs" / "business" / "new.md").read_text() == "created by the person during the run\n"
+    assert (project / "docs" / "business" / "same.md").read_text() == "by the run\n"
+
+
+def test_limit_14_everything_passes_the_credential_scan_before_it_leaves(tree, monkeypatch):
+    project, path = tree["project"], str(tree["project"])
+    ops.request(path, "Tell me which market to go after first.", "demo")
+    first = ops.run_next(path)
+    ops.answer(path, first["pending_id"], "Portugal.")
+    real = lab.run_skill
+
+    def leaks(*args, **kwargs):
+        result = real(*args, **kwargs)
+        cwd = Path(result["cwd"])
+        (cwd / "docs" / "business" / "market.md").write_text(f"# Market analysis\n\nkey: {token()}\n")
+        result["response"] = f"- Analysis: docs/business/market.md\n- the key {token()} is in it\n- Next: demo-writes"
+        return result
+
+    monkeypatch.setattr(lab, "run_skill", leaks)
+    out = ops.run_next(path)
+    kept = {item["path"]: item["reason"] for item in out["kept"]}
+    assert kept["docs/business/market.md"].startswith("holds what looks like a credential (")
+    assert not (project / "docs" / "business" / "market.md").exists()
+    assert token() in (Path(out["run_dir"]) / "cwd" / "docs" / "business" / "market.md").read_text()
+    item = ops.pending(path, out["pending_id"])
+    assert token() not in item["body"] and "<line removed: it held what looks like a credential (" in item["body"]
+    assert item["body"].startswith("- Analysis: docs/business/market.md\n") and item["payload"]["body_masked"] == 1
+    assert token() not in repr(out)
+
+
+def test_nothing_is_deleted_in_the_project_because_a_run_deleted_it(tree):
+    project = tree["project"]
+    write(project, "docs/business/old.md", "kept\n")
+    result = finished(tree, {}, deleted=["docs/business/old.md"])
+    returned, kept, _ = workcopy.returning(str(project), result, base_of(tree, "docs/business/old.md"), None, "demo-writes")
+    assert returned == [] and kept == [{"path": "docs/business/old.md", "class": "document",
+                                        "reason": "the run deleted it; the project's file is left as it is"}]
+    assert (project / "docs" / "business" / "old.md").read_text() == "kept\n"
+
+
+def test_a_run_row_keeps_the_number_of_values_the_lab_replaced(tree):
+    path = str(tree["project"])
+    ops.request(path, "Tell me which market to go after first.", "demo")
+    out = ops.run_next(path)
+    ctx = ops.context(path)
+    runs = ctx["store"].task_runs_list(ctx["conn"], out["ran"])
+    assert runs[0]["redactions"] == 0
 
 
 def test_the_two_lines_are_put_back_where_they_were():

@@ -8,7 +8,7 @@ skeleton, and is not hardened yet: stage 2 of that plan adds the limits, each wi
 
 It is a second runtime only in its code. The first one, `scripts/runtime.py`, runs one agent on social
 comments and stays as it is until that agent moves to the container (stage 7). Both keep their state in the
-same store (`providers/store/sqlite.py`): the tables of this one are migration 2 of that file.
+same store (`providers/store/sqlite.py`): the tables of this one are migrations 2 and 3 of that file.
 
 ## Modules
 
@@ -23,7 +23,7 @@ same store (`providers/store/sqlite.py`): the tables of this one are migration 2
 | `state_merge.py` | The one module that decides what a run may change in `docs/workbench/state.md` |
 | `endings.py` | The classifier of endings: how a completed run ended, from a closed list; it never guesses |
 | `project_config.py` | The project's configuration, `<project>/docs/workbench/runtime.json`, and its hash |
-| `workcopy.py` | What enters a run copy (limits L1 to L6): the versioned files, the documents and the declared machine files of a run without the web, only the declared artifacts of a run with it; never the store, the configuration, a tool's settings or a credential; the project's `AGENTS.md` without the two lines the container cannot serve |
+| `workcopy.py` | What enters a run copy (limits L1 to L6) and what comes back from it (L7, L8, L12, L14: the path rule with the manifest's bound documents, regular files inside the copy only, never over a change at the origin, the credential scan, the masked reply): the versioned files, the documents and the declared machine files of a run without the web, only the declared artifacts of a run with it; never the store, the configuration, a tool's settings or a credential; the project's `AGENTS.md` without the two lines the container cannot serve |
 | `manifest.py` | A skill's runtime manifest, `skills/<name>/evals/runtime-manifest.json`: what the runtime knows of a skill that its frontmatter does not declare. A skill of a pack in use (`PACKS_IN_USE`) without a well-formed one does not run |
 
 Rules of the folder: `lab.py` is the only importer of anything under `evals/`; no shell reaches the store, the

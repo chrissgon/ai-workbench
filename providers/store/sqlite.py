@@ -41,7 +41,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 BUSY_TIMEOUT_SECONDS = 10
 PATH_ENV = "STORE_SQLITE_PATH"
 
@@ -205,6 +205,9 @@ MIGRATIONS = {
             resolved_by TEXT)""",
         "CREATE INDEX pending_decisions_by_status ON pending_decisions (status, id)",
         "CREATE INDEX pending_decisions_by_task ON pending_decisions (task_id, id)",
+    ]),
+    3: ("the number of values the lab replaced in what a task run left", [
+        "ALTER TABLE task_runs ADD COLUMN redactions INTEGER",
     ]),
 }
 
@@ -1032,9 +1035,11 @@ def task_run_finish(conn: sqlite3.Connection, run_id: int, *, status: str, task_
                     failure: str | None = None, ending: str | None = None, attempts: int = 0,
                     cost_usd: float | None = None, tokens: int | None = None, duration_ms: int | None = None,
                     skill_loaded: bool | None = None, image_digest: str | None = None, run_dir: str | None = None,
-                    error: str | None = None, task_note: str | None = None, pending: dict | None = None) -> dict:
+                    error: str | None = None, task_note: str | None = None, pending: dict | None = None,
+                    redactions: int | None = None) -> dict:
     """End a run and move its task, in one transaction; with `pending`, also open the pending decision the task
-    then waits on. task_state is `waiting` (pending is required: a waiting task always points to a pending
+    then waits on. redactions is the number of passed values the lab replaced in what the run left, None when
+    the lab did not report it. task_state is `waiting` (pending is required: a waiting task always points to a pending
     decision), `failed` or `blocked` (pending is refused). pending is {"kind", "title", "body"[, "payload":
     object][, "payload_sha256"]}. Returns {"run_id", "task_id", "task_state", "pending_id" or None}."""
     if status not in ("ok", "failed") or (status == "failed") != (failure is not None):
@@ -1062,6 +1067,8 @@ def task_run_finish(conn: sqlite3.Connection, run_id: int, *, status: str, task_
         item = (pending["kind"], text_arg(pending.get("title"), "title", TITLE_MAX), body,
                 json.dumps(pending.get("payload") or {}, ensure_ascii=True, sort_keys=True), digest)
     loaded = None if skill_loaded is None else (1 if skill_loaded else 0)
+    if redactions is not None and (isinstance(redactions, bool) or not isinstance(redactions, int) or redactions < 0):
+        raise StoreError("redactions is a count: a whole number, 0 or more", EXIT_USAGE)
     now = iso(utcnow())
     with write(conn):
         row = conn.execute("SELECT task_id, status FROM task_runs WHERE id = ?", (run_id,)).fetchone()
@@ -1072,9 +1079,10 @@ def task_run_finish(conn: sqlite3.Connection, run_id: int, *, status: str, task_
         task_id = row["task_id"]
         conn.execute(
             "UPDATE task_runs SET status = ?, failure = ?, ending = ?, attempts = ?, ended_at = ?, cost_usd = ?, "
-            "tokens = ?, duration_ms = ?, skill_loaded = ?, image_digest = ?, run_dir = ?, error = ? WHERE id = ?",
+            "tokens = ?, duration_ms = ?, skill_loaded = ?, image_digest = ?, run_dir = ?, error = ?, redactions = ? "
+            "WHERE id = ?",
             (status, failure, ending, int(attempts), now, cost_usd, tokens, duration_ms, loaded, image_digest,
-             run_dir, error, run_id))
+             run_dir, error, redactions, run_id))
         moved = conn.execute("UPDATE tasks SET state = ?, note = ?, updated_at = ? WHERE id = ? AND state = 'running'",
                              (task_state, task_note, now, task_id)).rowcount
         if not moved:

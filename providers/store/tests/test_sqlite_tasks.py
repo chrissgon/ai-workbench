@@ -49,12 +49,12 @@ def run_to_waiting(conn, kind="question", body="1. Which country? Recommended: y
     return task["id"], run["run_id"], done["pending_id"]
 
 
-def test_init_db_creates_a_private_database_at_version_2_and_puts_the_umask_back(tmp_path):
+def test_init_db_creates_a_private_database_at_the_current_version_and_puts_the_umask_back(tmp_path):
     before = os.umask(0o022)
     try:
         path = tmp_path / "new" / "tasks.sqlite"
         out = store.init_db(path)
-        assert out["created"] is True and out["applied"] == [1, 2] and out["schema_version"] == 2
+        assert out["created"] is True and out["applied"] == [1, 2, 3] and out["schema_version"] == 3
         assert stat.S_IMODE(path.stat().st_mode) == 0o600 and stat.S_IMODE(path.parent.stat().st_mode) == 0o700
         assert os.umask(0o022) == 0o022  # the caller's umask is what it was
     finally:
@@ -76,7 +76,7 @@ def test_a_version_1_database_keeps_its_rows_and_gains_the_three_tables(tmp_path
         store.open_db(path)
     assert refused.value.code == store.EXIT_NOT_CONFIGURED and "run init" in str(refused.value)
     out = store.init_db(path)
-    assert out["migrated_from"] == 1 and out["applied"] == [2]
+    assert out["migrated_from"] == 1 and out["applied"] == [2, 3]
     conn = store.open_db(path)
     assert conn.execute("SELECT value FROM cursors WHERE name = 'since'").fetchone()[0] == "v1"
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -246,7 +246,7 @@ def test_export_prints_the_three_tables_and_the_verbs_of_version_1_still_work(tm
     assert (len(out["tasks"]), len(out["task_runs"]), len(out["pending_decisions"])) == (3, 1, 1)
     assert out["tasks"][2]["depends_on"] == [out["tasks"][1]["id"]] and out["pending_decisions"][0]["payload"] == {}
     assert cli("cursor-set", "--name", "since", "--value", "v").returncode == 0
-    assert json.loads(cli("--check").stdout)["schema_version"] == 2
+    assert json.loads(cli("--check").stdout)["schema_version"] == 3
 
 
 def test_a_cursor_written_in_process_is_the_one_the_verb_reads(tmp_path):
@@ -269,3 +269,18 @@ def test_a_cursor_that_was_never_written_reads_as_none(conn):
     assert store.cursor_get(conn, "config:accepted-sha256") is None
     with pytest.raises(store.StoreError):
         store.cursor_get(conn, " ")
+
+
+def test_a_run_keeps_the_number_of_redactions_the_lab_reported(conn):
+    planned(conn)
+    task = store.task_claim_next(conn)["task"]
+    run = store.task_run_start(conn, task["id"], skill=task["skill"], model="m", adapter="h")
+    with pytest.raises(store.StoreError):
+        store.task_run_finish(conn, run["run_id"], status="failed", failure="auth", task_state="failed", redactions=-1)
+    store.task_run_finish(conn, run["run_id"], status="failed", failure="auth", task_state="failed", redactions=2)
+    assert store.task_runs_list(conn, task["id"])[0]["redactions"] == 2
+    store.task_retry(conn, task["id"])
+    task = store.task_claim_next(conn)["task"]
+    again = store.task_run_start(conn, task["id"], skill=task["skill"], model="m", adapter="h")
+    store.task_run_finish(conn, again["run_id"], status="failed", failure="adapter", task_state="failed")
+    assert store.task_runs_list(conn, task["id"])[1]["redactions"] is None  # not reported is not zero
