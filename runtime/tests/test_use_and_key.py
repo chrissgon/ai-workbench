@@ -1,6 +1,6 @@
 """Tests of what the runtime records with the existing recorder (scripts/evidence.py): a use per run, and the
-person's verdict on it; and of the runtime's own key for the floor model, which travels only around a floor
-run. Offline: a stand-in recorder written by the test, the stand-in tree of runtime/tests/standin_tree.py, and
+person's verdict on it; and of the key a floor run uses: the runtime's own when it is stored, which travels only
+around a floor run, else the lab's key for the floor model, else none and the reference model. Offline: a stand-in recorder written by the test, the stand-in tree of runtime/tests/standin_tree.py, and
 stand-in key values built at run time; no credential is read or printed.
 
 Run: uv run --with pytest==9.1.1 pytest runtime/tests/test_use_and_key.py
@@ -42,7 +42,7 @@ def tree(tmp_path, monkeypatch):
     recorder.write_text(RECORDER, encoding="utf-8")
     (tmp_path / "recorder.py.mode").write_text("ok", encoding="utf-8")
     monkeypatch.setattr(ops, "EVIDENCE", str(recorder))
-    monkeypatch.setattr(ops, "_floor_key", lambda: (None, None))
+    monkeypatch.setattr(ops, "_own_key", lambda: (None, None))  # never the real secret store
     path = str(built["project"])
     ops.accept_config(path, ops.project_config.load(path)["sha256"])
     ops.request(path, "Tell me which market to go after first.", "demo")
@@ -105,46 +105,113 @@ def test_a_verdict_is_one_of_three_words_and_no_code_path_gives_one(tree):
     assert set(holders) <= {"ops.verdict", "cli.run"} and "ops.verdict" in holders
 
 
-def test_a_floor_run_carries_the_runtimes_own_key_and_the_environment_is_restored(tree, monkeypatch):
-    lab_value, own_value = "lab-" + "x" * 12, "own-" + "y" * 12
-    name = "STANDIN_FLOOR_PASS"
+FLOOR_VAR = "STANDIN_FLOOR_PASS"
+
+
+def floor_reliable(monkeypatch, missing=None):
+    """The floor tier passes one stand-in variable, the stand-in skill is reliable on the floor model, and the lab's
+    lookup of the floor tier's key answers `missing` (the names it did not find) without the real secret store."""
     control = {"total_jobs": 2, "web_jobs": {"strong": 1, "floor": 1}}
     monkeypatch.setattr(lab, "reference", lambda tier="strong": {
         "tier": tier, "model": "m" if tier == "strong" else "fm", "adapter": "h",
-        "pass_env": [name] if tier == "floor" else [], "timeout_seconds": 60, "retries": 2, "control": control})
+        "pass_env": [FLOOR_VAR] if tier == "floor" else [], "timeout_seconds": 60, "retries": 2, "control": control})
     reliable = lab.standing("demo-asks")
     reliable["models"]["fm"] = {"band": "reliable", "cause": None, "score": 0.9, "mean": 0.95, "runs": 6}
     monkeypatch.setattr(lab, "standing", lambda skill: reliable)
-    monkeypatch.setattr(ops, "_floor_key", lambda: (own_value, None))
-    seen = []
-    real = lab.run_skill
+    monkeypatch.setattr(lab, "credential_missing", lambda tier: [FLOOR_VAR] if missing is None else missing)
+
+
+def watch_the_key(monkeypatch) -> list:
+    """What the floor tier's variable holds at the moment lab.run_skill is called, per call."""
+    seen, real = [], lab.run_skill
 
     def run_skill(*args, **kwargs):
-        seen.append((kwargs.get("tier"), os.environ.get(name)))
+        seen.append((kwargs.get("tier"), os.environ.get(FLOOR_VAR)))
         return real(*args, **kwargs)
 
     monkeypatch.setattr(lab, "run_skill", run_skill)
-    monkeypatch.setenv(name, lab_value)
+    return seen
+
+
+def test_a_floor_run_carries_the_runtimes_own_key_and_the_environment_is_restored(tree, monkeypatch):
+    lab_value, own_value = "lab-" + "x" * 12, "own-" + "y" * 12
+    floor_reliable(monkeypatch, missing=[])  # the lab's key is there too: the runtime's own wins
+    monkeypatch.setattr(ops, "_own_key", lambda: (own_value, None))
+    seen = watch_the_key(monkeypatch)
+    monkeypatch.setenv(FLOOR_VAR, lab_value)
     out = ops.run_next(tree["path"])
-    assert out["routing"]["tier"] == "floor" and seen == [("floor", own_value)]
-    assert os.environ.get(name) == lab_value
+    assert out["routing"]["tier"] == "floor" and out["routing"]["key"] == "runtime" and seen == [("floor", own_value)]
+    assert os.environ.get(FLOOR_VAR) == lab_value
     assert own_value not in json.dumps(out) and own_value not in json.dumps(ops.pending(tree["path"], out["pending_id"]))
     ops.answer(tree["path"], out["pending_id"], "Portugal.")
-    monkeypatch.delenv(name)
+    monkeypatch.delenv(FLOOR_VAR)
     ops.run_next(tree["path"])
-    assert seen[-1] == ("floor", own_value) and name not in os.environ
+    assert seen[-1] == ("floor", own_value) and FLOOR_VAR not in os.environ
 
 
-def test_without_the_runtimes_own_key_no_run_goes_to_the_floor_model(tree, monkeypatch):
-    reliable = lab.standing("demo-asks")
-    reliable["models"]["fm"] = {"band": "reliable", "cause": None, "score": 0.9, "mean": 0.95, "runs": 6}
-    monkeypatch.setattr(lab, "standing", lambda skill: reliable)
+def test_without_a_key_of_its_own_a_floor_run_uses_the_labs_key_and_the_runtime_sets_nothing(tree, monkeypatch):
+    lab_value = "lab-" + "x" * 12
+    floor_reliable(monkeypatch, missing=[])
+    seen = watch_the_key(monkeypatch)
+    monkeypatch.setenv(FLOOR_VAR, lab_value)  # the lab's key, as the lab's lookup finds it
+    out = ops.run_next(tree["path"])
+    assert out["status"] == "ok" and out["routing"]["tier"] == "floor" and out["routing"]["key"] == "lab"
+    assert out["routing"]["model"] == "fm" and seen == [("floor", lab_value)]
+    assert os.environ.get(FLOOR_VAR) == lab_value
+    assert ops.pending(tree["path"], out["pending_id"])["payload"]["routing"]["key"] == "lab"
+    shown = ops.proof(tree["path"], "demo-writes")["skills"]["demo-writes"]
+    assert (shown["tier"], shown["key"]) == ("floor", "lab")
+
+
+def test_without_any_key_no_run_goes_to_the_floor_model(tree, monkeypatch):
+    floor_reliable(monkeypatch)  # the lab's lookup finds nothing either
+    seen = watch_the_key(monkeypatch)
     out = ops.run_next(tree["path"])
     assert out["routing"]["tier"] == "strong" and out["routing"]["bands"]["floor"] == "reliable"
-    assert "the runtime's own key for the floor model is not set" in out["routing"]["reasons"]
-    monkeypatch.setattr(ops, "_floor_key", lambda: (None, "the secret resolver could not be used: ImportError"))
+    assert out["routing"]["key"] is None and seen == [("strong", None)]
+    reasons = out["routing"]["reasons"]
+    assert "no key for the floor model was found" in reasons
+    why = [r for r in reasons if r.startswith("no key for the floor model: ")]
+    assert len(why) == 1 and "WB_RUNTIME_FLOOR_KEY" in why[0] and "is not stored" in why[0]
+    assert f"({FLOOR_VAR}) is neither set nor in the secret store" in why[0]
+    monkeypatch.setattr(ops, "_own_key", lambda: (None, "the secret resolver could not be used: ImportError"))
     shown = ops.proof(tree["path"], "demo-writes")["skills"]["demo-writes"]
-    assert shown["tier"] == "strong" and "the secret resolver could not be used: ImportError" in shown["reasons"]
+    assert shown["tier"] == "strong" and shown["key"] is None
+    assert any("the secret resolver could not be used: ImportError" in r for r in shown["reasons"])
+
+
+def test_the_lab_lookup_of_a_tier_key_returns_names_and_puts_the_environment_back(monkeypatch):
+    found = "found-" + "z" * 12
+
+    class Lookup:
+        def resolve_pass_env(self, names):  # the lab's lookup fills what it finds, as resolve_pass_env does
+            os.environ["STANDIN_FOUND"] = found
+            return ["STANDIN_FOUND (stand-in)"]
+
+    monkeypatch.setattr(lab, "LAB", Lookup())
+    monkeypatch.setattr(lab, "reference", lambda tier="strong": {"pass_env": ["STANDIN_FOUND", "STANDIN_ABSENT"]})
+    monkeypatch.delenv("STANDIN_FOUND", raising=False)
+    monkeypatch.delenv("STANDIN_ABSENT", raising=False)
+    assert lab.credential_missing("floor") == ["STANDIN_ABSENT"]
+    assert "STANDIN_FOUND" not in os.environ  # the value the lookup found is not kept
+    monkeypatch.setenv("STANDIN_FOUND", "before")
+    assert lab.credential_missing("floor") == ["STANDIN_ABSENT"] and os.environ["STANDIN_FOUND"] == "before"
+
+
+def test_the_key_value_never_appears_in_what_the_operation_prints_or_logs(tree, monkeypatch, capsys):
+    own_value = "own-" + "q" * 16
+    floor_reliable(monkeypatch, missing=[])
+    monkeypatch.setattr(ops, "_own_key", lambda: (own_value, None))
+    assert cli.main(["proof", "--project", tree["path"], "--skill", "demo-asks"]) == 0
+    assert cli.main(["run-next", "--project", tree["path"]]) == 0
+    assert cli.main(["status", "--project", tree["path"]]) == 0
+    printed = capsys.readouterr()
+    assert '"key": "runtime"' in printed.out
+    assert own_value not in printed.out and own_value not in printed.err
+    for folder in (tree["data"], tree["db"].parent, tree["project"]):
+        for file in Path(folder).rglob("*"):
+            if file.is_file():
+                assert own_value.encode() not in file.read_bytes(), file
 
 
 def test_the_runtimes_secret_is_registered_in_the_form_the_resolver_accepts():

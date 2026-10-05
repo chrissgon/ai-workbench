@@ -151,6 +151,24 @@ def reference(tier: str = "strong") -> dict:
             "timeout_seconds": control["timeout_seconds"], "retries": control["retries"], "control": control}
 
 
+def credential_missing(tier: str) -> list:
+    """The variables of a tier's credential (its pass_env in the gate file) that are neither set nor found in the
+    secret store, by the lab's own lookup (resolve_pass_env of evals/eval_run.py, the one run_skill uses). It
+    tells whether a run of the tier would have its key; no value is returned or kept: the environment is put back
+    as it was. An empty list for a tier whose gate file names no variable."""
+    names = reference(tier)["pass_env"]
+    before = {name: os.environ.get(name) for name in names}
+    try:
+        _lab_call(LAB.resolve_pass_env, names)
+        return [name for name in names if not os.environ.get(name)]
+    finally:
+        for name, value in before.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
 def skill_identity(skill: str) -> dict:
     """{"version", "content_sha256"} of a skill of this checkout, as the lab computes them for an evidence line."""
     status = _lab_call(LAB.load_status)
