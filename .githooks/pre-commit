@@ -51,6 +51,7 @@ while IFS= read -r -d '' f; do
     .githooks/*|.github/*|packs/*|templates/*|agents/*) d="scripts/tests" ;;
     evals/*) d="evals/tests" ;;
     runtime/*|flows/*) d="runtime/tests" ;;  # a flow file is checked by the tests of the code that reads it
+    skills/*/evals/runtime-manifest.json) d="runtime/tests" ;;  # read by runtime/manifest.py, before any skills/* pattern
     skills/*/scripts/*) d="skills/$(echo "$f" | cut -d/ -f2)/scripts/tests" ;;
     adapters/*/*) d="adapters/$(echo "$f" | cut -d/ -f2)/tests" ;;
     *) continue ;;

@@ -86,6 +86,11 @@ def skill(tree: Path, name: str, inputs: str, outputs: str) -> Path:
         f"  inputs: [{inputs}]\n  outputs: [{outputs}]\n  updates: [docs/workbench/state.md]\n  requires: []\n"
         f"  side_effects: []\n  version: \"0.1.0\"\n---\n# {name}\n", encoding="utf-8")
     (folder / "evals" / "evals.json").write_text("{}", encoding="utf-8")
+    documents = [{"path": p.strip(), "checks": [], "platform": "read_only", "bound_to_approval": False}
+                 for p in outputs.split(",") if p.strip() and "<" not in p]
+    (folder / "evals" / "runtime-manifest.json").write_text(json.dumps({
+        "skill": name, "documents": documents, "machine_files": [], "mandatory_milestone": False,
+        "asking_openings": ["Nothing was written yet"], "gate": None}), encoding="utf-8")
     (folder / "scripts" / "check.py").write_text("print(1)\n", encoding="utf-8")
     (folder / "scripts" / "tests" / "test_check_demo.py").write_text("def test_x():\n    assert True\n", encoding="utf-8")
     return folder

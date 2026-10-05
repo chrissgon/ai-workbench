@@ -6,6 +6,7 @@ Harnesses load the name and description of every installed skill into every sess
 packs/default.txt     everything except optional areas; what `install.sh` uses when no --pack is given
 packs/all.txt         everything, optional areas included
 packs/assistant.txt   the optional assistant area only
+packs/business.txt    the business area: the scope of the task runtime's business area agent
 ```
 
 ## Format

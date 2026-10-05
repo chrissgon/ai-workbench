@@ -102,6 +102,7 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 | `runtime/state_merge.py` | The one module that decides what a run may change in `docs/workbench/state.md`. Stage 1: the whole file, only when the origin did not change; stage 2 replaces it with the real merge |
 | `runtime/endings.py` | The classifier of endings: a closed list; what no rule recognises is `unclassified` |
 | `runtime/project_config.py` | The project's configuration, `docs/workbench/runtime.json`, and its hash |
+| `runtime/manifest.py` | A skill's runtime manifest, `skills/<name>/evals/runtime-manifest.json`, read and checked; a task whose skill has none does not run. The skills of `packs/business.txt` have one |
 | `runtime/tests/` | The tests of the above, offline, with a stand-in adapter and invented skills; `corpus/` holds the classifier's corpus of archived lab runs |
 | `flows/market-positioning.json` | The first flow file: a market analysis, then the customer profile and positioning |
 | `providers/store/sqlite.py` | The store (class `store:runtime`): migration 2 holds the task runtime's three tables; its functions are the contract, one transaction each |
