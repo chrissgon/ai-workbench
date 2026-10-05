@@ -25,6 +25,7 @@ same store (`providers/store/sqlite.py`): the tables of this one are migrations 
 | `project_config.py` | The project's configuration, `<project>/docs/workbench/runtime.json`, and its hash |
 | `workcopy.py` | What enters a run copy (limits L1 to L6) and what comes back from it (L7, L8, L12, L14: the path rule with the manifest's bound documents, regular files inside the copy only, never over a change at the origin, the credential scan, the masked reply): the versioned files, the documents and the declared machine files of a run without the web, only the declared artifacts of a run with it; never the store, the configuration, a tool's settings or a credential; the project's `AGENTS.md` without the two lines the container cannot serve |
 | `manifest.py` | A skill's runtime manifest, `skills/<name>/evals/runtime-manifest.json`: what the runtime knows of a skill that its frontmatter does not declare. A skill of a pack in use (`PACKS_IN_USE`) without a well-formed one does not run |
+| `proof.py` | The proof of a skill (what the status script computes, cached in `<data_dir>/proof.json`) and the choice of the model a run goes to: the floor model only where the skill is `reliable` there and the proof holds on this checkout and machine; the reference model otherwise, or when the person asks for it (`run-next --tier strong`) |
 
 Rules of the folder: `lab.py` is the only importer of anything under `evals/`; no shell reaches the store, the
 facade or a project's files except through `ops.py`; every module runs on Python 3.9 with the standard library
@@ -53,7 +54,8 @@ python3 runtime/cli.py release  --project <dir> --id <n>
 python3 runtime/cli.py status   --project <dir>
 ```
 
-`run-next` calls a model: it runs the skill on the reference model of the gate file, in the eval container. It
+`run-next` calls a model: it runs the skill on the model its proof gives (`proof --project <dir>` shows it without
+calling one), in the eval container. It
 writes no lab evidence and edits no file of the measurement.
 
 After a run the task waits on one pending decision, unless the skill stopped on a missing input that another

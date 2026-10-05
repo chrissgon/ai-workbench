@@ -16,6 +16,8 @@ import pytest
 import standin_tree as st
 
 lab = st.load("lab")
+REAL_PROOF_INPUTS = lab.proof_inputs  # the stand-in tree replaces it; one test needs the real one
+REPO = Path(__file__).resolve().parents[2]
 
 
 @pytest.fixture
@@ -178,3 +180,59 @@ def test_no_other_module_of_the_runtime_reads_the_lab():
 
 def test_the_names_of_a_tools_settings_come_from_the_adapters_lists(tree):
     assert lab.settings_names() == sorted(st.EVAL_JSON["settings"])
+
+
+def test_the_standing_of_a_real_skill_has_a_band_for_the_reference_model_and_names_the_evidences_image():
+    found = lab.standing("biz-market-analysis")
+    strong = found["tiers"]["strong"]["model"]
+    assert strong and strong in found["models"] and found["models"][strong]["band"]
+    assert found["evidence_images"] and all(d.startswith("sha256:") for d in found["evidence_images"])
+    assert found["version"] and found["tiers"]["floor"]["model"] and found["web_cases"]
+
+
+class _Done:
+    def __init__(self, code, out=""):
+        self.returncode, self.stdout, self.stderr = code, out, ""
+
+
+def test_the_image_is_only_inspected_and_never_built(monkeypatch):
+    er = lab.load()
+    seen = []
+
+    def never(*args, **kwargs):
+        raise AssertionError("lab.image() called ensure(): it may only inspect")
+
+    def docker(*args, **kwargs):
+        seen.append(args)
+        return _Done(0, "sha256:" + "c" * 64 + "\n") if args[:2] == ("image", "inspect") else _Done(1)
+
+    fake = type("Executor", (), {"names": staticmethod(lambda: {"image": "wb-eval:demo"}), "ensure": staticmethod(never),
+                                 "image_platform": staticmethod(lambda: "linux/arm64"), "docker": staticmethod(docker)})
+    monkeypatch.setattr(er, "EXECUTOR", "container")
+    monkeypatch.setattr(er, "load_executor", lambda: fake)
+    assert lab.image() == {"name": "wb-eval:demo", "digest": "sha256:" + "c" * 64, "platform": "linux/arm64"}
+    assert seen and all(a[:2] == ("image", "inspect") for a in seen)
+    monkeypatch.setattr(fake, "docker", staticmethod(lambda *a, **k: _Done(1)))
+    assert lab.image()["digest"] is None
+    monkeypatch.setattr(er, "EXECUTOR", "host")
+    assert lab.image()["digest"] is None
+
+
+def test_the_measurement_problem_is_the_status_scripts_own():
+    assert lab.measurement_problem() is None
+
+
+def test_the_proof_inputs_change_when_an_evidence_file_or_the_gate_file_changes(tree):
+    evidence = tree["tree"] / "skills" / "demo-asks" / "evals" / "evidence"
+    evidence.mkdir(parents=True, exist_ok=True)
+    (evidence / "lab-1.jsonl").write_text("{}\n", encoding="utf-8")
+    first = REAL_PROOF_INPUTS("demo-asks")
+    assert first == REAL_PROOF_INPUTS("demo-asks") and len(first) == 64
+    with open(evidence / "lab-1.jsonl", "ab") as f:
+        f.write(b" ")
+    second = REAL_PROOF_INPUTS("demo-asks")
+    assert second != first
+    gate = tree["tree"] / "evals" / "eval-gate.json"
+    gate.parent.mkdir(parents=True, exist_ok=True)
+    gate.write_text("{}\n", encoding="utf-8")
+    assert REAL_PROOF_INPUTS("demo-asks") != second

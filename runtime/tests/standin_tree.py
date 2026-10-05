@@ -77,6 +77,9 @@ STATE = ("# Workbench state\n\n- Project: demo\n- Docs in git: none\n\n## Autono
          "|-------|------|--------------|----------|---------|--------|\n\n## Decisions\n\n")
 
 
+STANDIN_IMAGE = "sha256:" + "5" * 64
+
+
 def load(name: str):
     """A module of runtime/, imported the way the modules import each other (runtime/ first on the path), so
     that a test and the module under test see the same module objects."""
@@ -139,6 +142,16 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     control = {"total_jobs": 2, "web_jobs": {"strong": 1, "floor": 1}}
     monkeypatch.setattr(lab, "reference", lambda tier="strong": {
         "tier": tier, "model": "m", "adapter": "h", "pass_env": [], "timeout_seconds": 60, "retries": 2, "control": control})
+    # The proof of the stand-in skills (runtime/proof.py): the reference model "m" is reliable, the floor model
+    # "fm" has no evidence, the measurement files are the recorded ones and the image is the evidence's.
+    monkeypatch.setattr(lab, "standing", lambda skill: {
+        "skill": skill, "version": "0.1.0",
+        "models": {"m": {"band": "reliable", "cause": None, "score": 0.9, "mean": 0.95, "runs": 6}},
+        "tiers": {"strong": {"model": "m", "adapter": "h"}, "floor": {"model": "fm", "adapter": "h"}},
+        "web_cases": [], "evidence_images": [STANDIN_IMAGE]})
+    monkeypatch.setattr(lab, "proof_inputs", lambda skill: "standin-" + skill)
+    monkeypatch.setattr(lab, "measurement_problem", lambda: None)
+    monkeypatch.setattr(lab, "image", lambda: {"name": "standin", "digest": STANDIN_IMAGE, "platform": "linux/arm64"})
     return {"tree": tree, "project": project, "data": data, "db": db, "adapter": adapter}
 
 
