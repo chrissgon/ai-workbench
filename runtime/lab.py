@@ -157,6 +157,12 @@ def skill_identity(skill: str) -> dict:
     return {"version": status.skill_version(skill_dir), "content_sha256": status.content_hash(skill_dir)}
 
 
+def settings_names() -> list:
+    """Every name that carries a tool's settings at project level, from the adapters' own lists (the lab's
+    harness_settings): a path with such a part never enters a run copy (limit L4)."""
+    return sorted(_lab_call(LAB.harness_settings))
+
+
 def readable(cwd: str, rel: str) -> bool:
     """True when the host may read the path rel of what a run left in cwd: a regular file, no link, inside cwd."""
     return bool(LAB.readable(cwd, rel))

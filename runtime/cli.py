@@ -19,7 +19,7 @@ Usage:
 request   records what you want and plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes. A task without a dependency is ready at once.
 run-next  runs the next ready task: one skill, once, in the eval container, on the reference model, on a copy
-          that holds only the artifacts the skill declares. What the run left comes back by the path rule
+          of what may enter by limits L1 to L6 (runtime/workcopy.py). What the run left comes back by the path rule
           (runtime/path_rule.py); then the task waits for you. One task at a time per project. Start it with
           the secret store's library available, as the eval runner is started:
             uv run --with keyring==25.7.0 python3 runtime/cli.py run-next --project <dir>

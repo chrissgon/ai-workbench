@@ -102,6 +102,7 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 | `runtime/state_merge.py` | The one module that decides what a run may change in `docs/workbench/state.md`. Stage 1: the whole file, only when the origin did not change; stage 2 replaces it with the real merge |
 | `runtime/endings.py` | The classifier of endings: a closed list; what no rule recognises is `unclassified` |
 | `runtime/project_config.py` | The project's configuration, `docs/workbench/runtime.json`, and its hash |
+| `runtime/workcopy.py` | What enters a run copy, limits L1 to L6, each left-out file listed with its reason (`entering`); the project's `AGENTS.md` enters only when the skill declares it, without the two lines the container cannot serve, and only its workbench section when a protected path covers it and the skill is not of a code area |
 | `runtime/manifest.py` | A skill's runtime manifest, `skills/<name>/evals/runtime-manifest.json`, read and checked; a task whose skill has none does not run. The skills of `packs/business.txt` have one |
 | `runtime/tests/` | The tests of the above, offline, with a stand-in adapter and invented skills; `corpus/` holds the classifier's corpus of archived lab runs |
 | `flows/market-positioning.json` | The first flow file: a market analysis, then the customer profile and positioning |
@@ -114,7 +115,7 @@ The configuration of a project names three absolute paths: `workbench` (the chec
 
 `run-next` takes the oldest `ready` task of the project, one task at a time per project (a lock in `data_dir`), and runs its skill once:
 
-- **What enters the copy:** the artifacts the skill declares (its `inputs`, `outputs` and `updates`) that exist under `docs/` of the project, as regular files. Never the runtime's configuration, a link, a file whose real path leaves the project, or anything outside `docs/`. The project's `AGENTS.md` is left out in stage 1 and listed in `left_out`; stage 2 brings it in when the skill declares it (L5).
+- **What enters the copy** (`runtime/workcopy.py`, limits L1 to L6): for a skill that requires the web, only the artifacts it declares (its `inputs`, `outputs` and `updates`) found under `docs/` and `.workbench-local/`; for any other skill, the files the project's git tracks, the documents and the state file under `docs/`, and the machine files the skill declares. Never the runtime's configuration, the store or the runtime's data folder, a link or a file whose real path leaves the project, a path with a part that carries a tool's settings, work data the skill does not declare, a credential file by its name, a file too large to scan, or a file whose text looks like it holds a credential. The project's `AGENTS.md` enters only when the skill declares it, without the two lines of the workbench section the container cannot serve (recording a use and the skill check); when a glob of `protected_paths` covers it and the skill is not of a code area, only its workbench section enters. Every file left out is listed in `left_out` with its reason.
 - **The text:** the request in the person's words, then "For this task:" and the task's text from the flow file; on a run made after an answer, every earlier reply of the task with the person's answer, oldest first, each answer stated as the person's decision. The text names no skill: the one skill staged for the run loads by its description, as in a lab run.
 - **How the skill is staged:** as in a lab run (`scripts/stage_skills.py`): the skill's folder, without its `evals/` and `scripts/tests/`, with the shared references it cites, where the adapter's tool discovers skills. Only that skill is staged.
 - **Where it runs:** in the eval container of `evals/executor.py`, on the image the lab evidence is bound to, through the adapter's `run-prompt.sh`, on the reference model of the gate file. A copy that carries a tool's settings is refused before any model call.
@@ -145,12 +146,12 @@ The twenty limits that live in code (section B.2 of the platform plan). Each get
 
 | # | Limit | Built by | Test |
 |---|---|---|---|
-| L1 | Every run starts from a new copy, with the skills installed again from the fixed checkout | stage 2 | stage 2 |
-| L2 | What enters: versioned files, the project's documents, the machine files the skills use, and what the person handed over through the file drop. No other file outside git. The store and the runtime's configuration never | stage 2 | stage 2 |
-| L3 | A task with the web receives only the artifacts its skill declares | stage 2 | stage 2 |
-| L4 | A tool's configuration files are removed at any depth | stage 2 | stage 2 |
-| L5 | The project's `AGENTS.md` enters when the skill declares it | stage 2 | stage 2 |
-| L6 | No credential enters the container | stage 2 (first form in stage 1) | first form: `runtime/tests/test_lab_facade.py`, `test_the_value_of_a_passed_variable_is_replaced_in_everything_a_run_leaves` |
+| L1 | Every run starts from a new copy, with the skills installed again from the fixed checkout | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_01_every_run_starts_from_a_new_copy_with_the_skill_staged_again` |
+| L2 | What enters: versioned files, the project's documents, the machine files the skills use, and what the person handed over through the file drop. No other file outside git. The store and the runtime's configuration never | stage 2 (the file drop: stage 3) | `runtime/tests/test_run_limits.py`, `test_limit_02_only_versioned_files_documents_and_declared_machine_files_enter_and_never_the_store_or_the_configuration` |
+| L3 | A task with the web receives only the artifacts its skill declares | stage 2 (strict form: no allowance for web and code together) | `runtime/tests/test_run_limits.py`, `test_limit_03_a_run_with_the_web_receives_only_the_artifacts_its_skill_declares` |
+| L4 | A tool's configuration files are removed at any depth | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_04_a_tools_configuration_files_are_removed_at_any_depth` |
+| L5 | The project's `AGENTS.md` enters when the skill declares it | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_05_agents_md_enters_only_when_the_skill_declares_it_and_without_the_two_lines_the_container_cannot_serve` |
+| L6 | No credential enters the container | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_06_no_credential_enters_the_container`; and `runtime/tests/test_lab_facade.py`, `test_the_value_of_a_passed_variable_is_replaced_in_everything_a_run_leaves` |
 | L7 | The destination of each returned file comes from the path rule | stage 2 (first form in stage 1) | first form: `runtime/tests/test_return_rules.py`, `test_every_path_gets_exactly_one_class` |
 | L8 | Only a regular file, with its real path inside the copy, comes back | stage 2 (first form in stage 1) | first form: in `runtime/ops.py` (`bring_back`); its test is stage 2 |
 | L9 | Code comes back as a change set; the commit is one, made by the code provider with the person's own git and signature | stage 4 | stage 4 |

@@ -55,7 +55,10 @@ def test_the_whole_path_of_a_request_ask_answer_write_release_and_the_next_task(
     # 1. The first run stops to ask: nothing comes back, and the task waits on a question.
     first = ops.run_next(path)
     assert (first["skill"], first["status"], first["ending"], first["task_state"]) == ("demo-asks", "ok", "question", "waiting")
-    assert first["returned"] == [] and first["left_out"] == [{"path": "AGENTS.md", "reason": "not copied in stage 1"}]
+    assert first["returned"] == [] and first["left_out"] == [
+        {"path": ".", "reason": "the project is not a git checkout: no versioned file enters"},
+        {"path": "docs/workbench/runtime.json", "reason": "the runtime's configuration never enters a run"}]
+    assert first["entered"] == {"kind": "general", "agents_md": "whole", "files": 2}  # the state file and AGENTS.md
     item = ops.pending(path, first["pending_id"])
     assert item["kind"] == "question" and item["body"].startswith("Nothing was searched or written yet")
     assert ops.run_next(path)["reason"] == "no task is ready"  # a waiting task does not run
@@ -266,12 +269,16 @@ def test_the_configuration_is_read_with_its_hash_and_unknown_keys_are_ignored(tm
         ops.project_config.load(str(project))
 
 
-def test_the_runtimes_own_configuration_never_enters_a_run(tree):
-    files, base, left_out = ops.copy_list(project_of(tree), {"inputs": ["docs/workbench/"], "outputs": [], "updates": []})
-    assert [rel for _, rel in files] == ["docs/workbench/state.md"] and "docs/workbench/runtime.json" not in base
+def test_the_runtimes_own_configuration_never_enters_a_run(tree, tmp_path):
+    meta = {"inputs": ["docs/workbench/"], "outputs": [], "updates": [], "area": "business"}
+    cfg = ops.project_config.load(project_of(tree))
+    enter = lambda: ops.workcopy.entering(project_of(tree), meta, web=True, cfg=cfg, settings_names=[],
+                                          prepared_dir=str(tmp_path / "prepared"))
+    entered = enter()
+    assert [rel for _, rel in entered["files"]] == ["docs/workbench/state.md"] and "docs/workbench/runtime.json" not in entered["base"]
     link = tree["project"] / "docs" / "workbench" / "linked.md"
     os.symlink(tree["project"] / "AGENTS.md", link)
-    assert [rel for _, rel in ops.copy_list(project_of(tree), {"inputs": ["docs/workbench/"], "outputs": [], "updates": []})[0]] == ["docs/workbench/state.md"]
+    assert [rel for _, rel in enter()["files"]] == ["docs/workbench/state.md"]
 
 
 def test_the_shell_prints_one_json_object_and_uses_the_documented_exit_codes(tree, capsys, monkeypatch):
