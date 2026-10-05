@@ -107,6 +107,9 @@ The workbench is a set of instructions that models execute with a terminal, file
 - [ ] **T28. Findings of the battery left unrepaired.** Found on 2026-10-04: on the floor model, by the reference model's rules, `core-skill-creator` (guard 2.6), `design-ux-flows` (guard 1.5, see T27), `eng-codebase-map` (guard 1.5) and `mkt-social-copy` (guard 2.3) are `needs a test`, each from one run in which a guard lapsed, and `eng-docs` is `watch` (pessimistic score 0.68). Also seen, on the reference model: `ops-repo-baseline` writes a period of "7 days" into the security policy when nobody gives one, where its procedure asks for it.
   - Done when: each is repaired with a change of the skill (a Y change: a partial test of the case and of the guard cases on both models) or kept with a reason written here.
   - Plan: with the next change of each skill, or when the floor model's band starts to decide anything.
+- [ ] **T29. `core-project-init`'s detection does not see a linked git worktree as version control.** Found on 2026-10-05 in the acceptance of stage 1 of the platform plan (`architecture/skeleton-findings-2026-10-05.md`, finding 4): the project was a linked worktree, whose `.git` is a file that points to the main checkout, and `init_project.py --detect` reported it as "not a project root (no version control)".
+  - Done when: the detection treats a `.git` file of a linked worktree as version control, with a test in the skill's `scripts/tests/`.
+  - Plan: a Y change of `core-project-init` (a bump and a partial test of the cases the change could move and of the guard cases), with the maintainer; the task runtime does not depend on it.
 ## Agent runtime
 
 Status note, 2026-10-01: R1, R2, R5, R6 and R7 are built for one agent (the social agent, PB7) and stay unticked because none is generic yet; the runtime script names its providers and its use case in code.
@@ -162,6 +165,10 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - Done when: someone with only an API key, and someone with only a local model, each run a capability skill end to end from the interface, including one confirmation gate shown, approved and recorded; and `eval_run.py` runs a skill's cases through the interface's adapter.
   - Plan: lane F2, after R2, R5, R8 and N11.
   - Amended 2026-10-05 (the platform plan, `architecture/platform-plan-2026-10-05.md`, decisions 6 and 12): the conversation is a shell over the operations layer, first in the terminal (stage 6) and then in the local interface (stage 9); it is not an adapter and has no `run-prompt.sh`. A project is entered through a conversation with a planning agent that uses the core's skills as they are. `adapters/api/` is deleted once the social agent runs in the container (stage 7).
+- [ ] **R12. The adapter's report of the skills a run loaded is not reliable.** Found on 2026-10-05 in the acceptance of stage 1 of the platform plan (`architecture/skeleton-findings-2026-10-05.md`, finding 6): `skill_loaded` was 0 on two short follow-up runs whose replies followed the skill's template and reported running the skill's own scripts.
+  - Until this is done: the task runtime stores the field as the adapter reports it and reads 0 as "not reported", never as "not loaded"; no rule of the runtime depends on it (decided by the supervisor on the maintainer's delegation on 2026-10-05).
+  - Done when: the eval adapters report the skills a run loaded on follow-up runs too, shown on a recorded run, and a rule of the runtime may then read the field.
+  - Plan: an adapter's `run-prompt.sh` is a measurement file, so the fix is a measurement change of the execution side, with the maintainer; no stage of the platform plan makes it.
 
 ## Project conventions
 

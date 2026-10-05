@@ -35,6 +35,9 @@ ON_SYSTEM_PYTHON = [
     # The field recorder: the runtime calls `record --start` before it starts an agent (the reliability model,
     # section 7), and it loads the status script for the form of a field line and the content hash.
     "scripts/evidence.py", "evals/eval_status.py",
+    # The task runtime: its shell runs on the system interpreter, and a scheduler will start its dispatcher.
+    "runtime/lab.py", "runtime/ops.py", "runtime/cli.py", "runtime/flow_files.py", "runtime/skill_meta.py",
+    "runtime/path_rule.py", "runtime/state_merge.py", "runtime/endings.py", "runtime/project_config.py",
 ]
 RUNTIME = ("scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py")  # the scheduler starts these
 SYSTEM_PYTHON = (3, 9)
