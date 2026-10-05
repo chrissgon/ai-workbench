@@ -205,6 +205,38 @@ def asking_openings_of(skill_md: str) -> list:
     return out
 
 
+def ending_facts(root: str, skill: str) -> dict:
+    """The facts of a skill the classifier of endings reads (runtime/endings.py, classify(..., facts=)), the one
+    source for runtime/ops.py and for the corpus test alike: {"skill", "asking_openings", "fixed_output",
+    "side_effects", "gate_payload", "skills"}.
+
+    asking_openings  the manifest's when the skill has one, else asking_openings_of(<its SKILL.md>)
+    fixed_output     true when a declared output has no placeholder and does not end in "/"
+    side_effects     the frontmatter's side_effects
+    gate_payload     the manifest's gate.payload_file, else None
+    skills           the sorted names of the folders of <root>/skills/ that hold a SKILL.md
+
+    A skill whose manifest file exists but is not well formed raises ManifestError, as load() does."""
+    skill_dir = os.path.join(root, "skills", skill)
+    try:
+        declared = skill_meta.declared(skill_dir)
+    except skill_meta.SkillError as e:
+        raise ManifestError(str(e)) from None
+    data = load(root, skill) if os.path.isfile(path(root, skill)) else None
+    if data is not None:
+        openings = list(data.get("asking_openings") or [])
+    else:
+        with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
+            openings = asking_openings_of(f.read())
+    gate = (data or {}).get("gate") or None
+    skills_dir = os.path.join(root, "skills")
+    return {"skill": skill, "asking_openings": openings,
+            "fixed_output": any("<" not in p and not p.endswith("/") for p in declared["outputs"]),
+            "side_effects": list(declared["side_effects"]),
+            "gate_payload": gate.get("payload_file") if isinstance(gate, dict) else None,
+            "skills": sorted(n for n in os.listdir(skills_dir) if os.path.isfile(os.path.join(skills_dir, n, "SKILL.md")))}
+
+
 def bound_among(manifest: dict, paths) -> list:
     """The paths of `paths` that match a document with bound_to_approval true or an entry of machine_files: what
     runtime/path_rule.py gets as facts["bound"]."""

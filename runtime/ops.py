@@ -33,7 +33,9 @@ Releasing is not approving: a released delivery stays a draft in the project's s
 
 The pending decision a run opens: a `question` when the run wrote nothing and asks (ending `question`); a
 `review` otherwise. A draft with open questions (ending `draft_with_questions`) opens a review: the person
-releases it as it stands, its open questions left in it, or answers it, and the task runs again.
+releases it as it stands, its open questions left in it, or answers it, and the task runs again. A run that
+stopped on a missing input that another skill writes (ending `blocked`) opens nothing: the task is `blocked`, with
+the start of the reply as its note, until the person retries it.
 
 Usage (a library; the shell is runtime/cli.py): python3 runtime/ops.py --help
 
@@ -193,14 +195,17 @@ def _count(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
-def _ending(result: dict, meta: dict) -> tuple:
-    """(ending, why) of a completed run, from runtime/endings.py."""
+def _ending(result: dict, meta: dict, skill: str) -> tuple:
+    """(ending, why) of a completed run, from runtime/endings.py, with the skill's facts (manifest.ending_facts)
+    and the declared outputs without a placeholder that the copy held, unchanged, after the run."""
     cwd, changes = result["cwd"], result["changes"]
     written = [p for p in changes["created"] + changes["modified"] if skill_meta.matches(meta["outputs"], p)]
     after = set(changes["created"] + changes["modified"] + changes["unchanged"])
-    missing = [p for p in meta["outputs"] if "<" not in p and not p.endswith("/") and p not in after]
+    fixed = [p for p in meta["outputs"] if "<" not in p and not p.endswith("/")]
+    missing = [p for p in fixed if p not in after]
     texts = [(_read(os.path.join(cwd, *p.split("/"))) or "") if lab.readable(cwd, p) else "" for p in written]
-    return endings.classify(result["response"], changes, written, missing, texts)
+    facts = dict(manifest.ending_facts(ROOT, skill), outputs_present=[p for p in fixed if p in set(changes["unchanged"])])
+    return endings.classify(result["response"], changes, written, missing, texts, facts=facts)
 
 
 # --- the operations ----------------------------------------------------------------------------------------
@@ -302,16 +307,28 @@ def _run(ctx: dict, task: dict) -> dict:
     left = result["changes"]["created"] + result["changes"]["modified"]
     returned, kept, state_report = workcopy.returning(cfg["project"], result, base, base_state, skill,
                                                        bound=manifest.bound_among(known, left))
-    ending, why = _ending(result, meta)
+    ending, why = _ending(result, meta, skill)
     loaded = timing.get("skills_loaded")
     body, masked = workcopy.masked_reply(result["response"])
     if state_report is not None:
         out["state"] = {"accepted": len(state_report["accepted"]), "rejected": state_report["rejected"]}
+    number = lambda key, kind: timing.get(key) if isinstance(timing.get(key), kind) and not isinstance(timing.get(key), bool) else None
+    finish = dict(status="ok", ending=ending, attempts=counts["attempts"], cost_usd=number("cost_usd", (int, float)),
+                  tokens=number("total_tokens", int), duration_ms=number("duration_ms", int),
+                  skill_loaded=(skill in loaded) if isinstance(loaded, list) else None,
+                  image_digest=result["image_digest"], run_dir=dest, redactions=_count(counts.get("redactions")))
+    if ending == "blocked":
+        # The skill stopped on a missing input that another skill writes: the task is blocked, with no pending
+        # decision; the note is the start of the masked reply, and `retry` makes the task ready again.
+        done = _stored(ctx, store.task_run_finish, run_id, task_state="blocked", task_note=_note(body), **finish)
+        out.update(status="ok", ending=ending, task_state="blocked", pending_id=None, returned=returned, kept=kept)
+        return out
     cut = len(body.encode("utf-8")) > store.BODY_MAX
     # A run that wrote nothing and asks opens a question, which is answered. A run that wrote a declared output
     # opens a review, a draft with open questions included: its body is the whole reply, so the person reads the
     # questions and either releases the draft as it stands (its open questions stay in it, its row stays a
-    # draft) or answers it, and the next run is given the answer.
+    # draft) or answers it, and the next run is given the answer. A run that stopped at its confirmation gate
+    # (ending `gate`) opens a review too until stage 4 of the platform plan turns it into an `effect`.
     decision = {"kind": "question" if ending == "question" else "review",
                 "title": f"{skill}: {ending.replace('_', ' ')}",
                 "body": body.encode("utf-8")[:store.BODY_MAX].decode("utf-8", errors="ignore") if cut else body,
@@ -319,13 +336,7 @@ def _run(ctx: dict, task: dict) -> dict:
                             "entered": out["entered"], "left_out": out["left_out"], "state": out["state"],
                             "response_file": os.path.join(result["outputs"], "response.md"), "body_cut": cut,
                             "body_masked": masked}}
-    number = lambda key, kind: timing.get(key) if isinstance(timing.get(key), kind) and not isinstance(timing.get(key), bool) else None
-    done = _stored(ctx, store.task_run_finish, run_id, status="ok", ending=ending, task_state="waiting",
-                   attempts=counts["attempts"], cost_usd=number("cost_usd", (int, float)), tokens=number("total_tokens", int),
-                   duration_ms=number("duration_ms", int),
-                   skill_loaded=(skill in loaded) if isinstance(loaded, list) else None,
-                   image_digest=result["image_digest"], run_dir=dest, pending=decision,
-                   redactions=_count(counts.get("redactions")))
+    done = _stored(ctx, store.task_run_finish, run_id, task_state="waiting", pending=decision, **finish)
     out.update(status="ok", ending=ending, task_state="waiting", pending_id=done["pending_id"], returned=returned, kept=kept)
     return out
 
