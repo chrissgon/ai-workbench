@@ -15,7 +15,10 @@ Of the state file a run left, the merge accepts three things, line by line, on t
     change while the run was in progress;
   - a new line of ## Decisions attributed to the skill that ran (its last parenthesis starts with the skill's
     name and no item of it holds the word "user");
-  - a new open question of ## Open questions ("- [ ] ...").
+  - a new open question of ## Open questions, read in any list form ("- ...", "* ...", "1. ...", with or
+    without "[ ]"; an OPEN-<n> mark stays part of its text) and written in the form of contracts/state.md,
+    "- [ ] <text>", unless it is attributed to the person or to another skill. A question the project has is
+    never closed, reworded or removed by a run, and each of those is refused with its own reason.
 Everything else stays as the project has it, and each line refused is reported with its reason. Only code
 writes what is the person's: an answer (with_answer()), "approved", the autonomy mode, the approval rows.
 
@@ -25,6 +28,7 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import difflib
 import re
 import sys
 
@@ -39,6 +43,16 @@ SEPARATOR = re.compile(r"^\|?\s*:?-{3,}")
 LAST_PARENTHESIS = re.compile(r"\(([^()]*)\)\s*\.?\s*$")
 WORD_USER = re.compile(r"\buser\b", re.I)
 PROTECTED = {"Autonomy": "only code writes the autonomy mode", "Approvals": "only code writes an approval row"}
+# A list item of ## Open questions as a run may write it: "- ", "* ", "+ ", "1. " or "1) ", then the text, with
+# or without the checkbox of contracts/state.md ("[ ]", or "[x]" when closed). The merge writes "- [ ] <text>".
+LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*)$")
+CHECKBOX = re.compile(r"^\[([ xX])\]\s*(.*)$")
+# Who raised an open question: its last parenthesis, as in the template of contracts/state.md ("(raised by
+# flow-fix-bug, phase 9, pull request)"). The person, or a skill named by the area prefixes of AGENTS.md.
+RAISED_BY = re.compile(r"^raised\s+by\s+", re.I)
+THE_USER = re.compile(r"^(?:(?:raised|asked|added|decided|approved|confirmed)\s+by\s+)?(?:the\s+)?user$", re.I)
+SKILL_PREFIXES = ("biz", "product", "brand", "design", "eng", "ops", "mkt", "ai", "core", "asst", "flow")
+SKILL_NAME = re.compile(r"^(?:%s)(?:-[a-z0-9]+)+$" % "|".join(SKILL_PREFIXES))
 
 
 class Conflict(Exception):
@@ -184,24 +198,92 @@ def merge_report(base, current, returned, skill: str) -> dict:
     for line in before:
         if line.strip() and line not in (_section(new, DECISIONS) or []):
             refuse(DECISIONS, line, "a run may add a decision of its own, never change or remove one")
-    # Open questions: new ones are added; none is closed, changed or removed.
-    before, target = _section(old, QUESTIONS) or [], _section(now, QUESTIONS)
-    returned_questions = _section(new, QUESTIONS) or []
-    for line in returned_questions:
-        if not line.strip() or line in before:
+    # Open questions: read tolerantly, written strictly (WP-2.12). A new list item in any form is added as
+    # "- [ ] <text>"; none the project has is closed, reworded or removed.
+    target = _section(now, QUESTIONS)
+    for kind, line in _question_changes(_section(old, QUESTIONS) or [], _section(new, QUESTIONS) or []):
+        if kind != "new":
+            refuse(QUESTIONS, line, kind)
             continue
-        if not line.lstrip().startswith(OPEN_QUESTION):
-            refuse(QUESTIONS, line, "a run may add an open question, never close or remove one")
+        item = _question(line)
+        reason = _question_refused(item, skill)
+        if reason:
+            refuse(QUESTIONS, line, reason)
         elif target is None:
             refuse(QUESTIONS, line, "the project's state file has no such section")
         else:
-            if line not in target:
-                _append(target, line)
-            accepted.append({"section": QUESTIONS, "line": line})
-    for line in before:
-        if line.strip() and line not in returned_questions:
-            refuse(QUESTIONS, line, "a run may add an open question, never close or remove one")
+            written = f"{OPEN_QUESTION} {item[0]}"
+            if item[0] not in {q[0] for q in map(_question, target) if q}:
+                _append(target, written)
+            accepted.append({"section": QUESTIONS, "line": written})
     return {"text": _render(now), "accepted": accepted, "rejected": rejected}
+
+
+def _question(line: str):
+    """(text, checked) of a list item of ## Open questions ("- ", "* ", "+ ", "1. " or "1) ", with or without a
+    checkbox), or None when the line is not a list item."""
+    found = LIST_ITEM.match(line)
+    if not found:
+        return None
+    body = found.group(1).strip()
+    box = CHECKBOX.match(body)
+    if box:
+        return box.group(2).strip(), box.group(1) != " "
+    return body, False
+
+
+def _question_refused(item, skill: str):
+    """None when a new line of ## Open questions may be added; otherwise the reason it is refused."""
+    if item is None or not item[0]:
+        return "an open question is a list item with a text"
+    if item[1]:
+        return "a run adds an open question unchecked: a checked one is closed"
+    found = LAST_PARENTHESIS.search(item[0])
+    items = [part.strip() for part in found.group(1).split(",")] if found else []
+    if any(THE_USER.match(part) for part in items):
+        return "an open question of the person is written by code"
+    who = RAISED_BY.sub("", items[0]).strip() if items else ""
+    if SKILL_NAME.match(who) and who != skill:
+        return f"an open question attributed to {who}, not to the skill that ran"
+    return None
+
+
+def _question_changes(before: list, returned: list) -> list:
+    """[(kind, line)] of what a run did to ## Open questions, its lines compared with the base's as sequences:
+    kind "new" for a line it added (the returned line), or the reason of a refusal for a question of the project
+    it closed, reworded (the returned line) or removed (the base line). A question moved, or only rewritten in
+    another list form, is no change."""
+    old = [line for line in before if line.strip()]
+    new = [line for line in returned if line.strip()]
+    text_of = lambda line: (_question(line) or (line.strip(), False))  # noqa: E731
+    old_texts, new_texts = {text_of(l)[0] for l in old}, {text_of(l)[0] for l in new}
+    still_open = {text_of(l)[0] for l in old if not text_of(l)[1]}
+    out = []
+    for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+        if op == "equal":
+            continue
+        gone, came = old[i1:i2], new[j1:j2]
+        paired = min(len(gone), len(came)) if op == "replace" else 0
+        for b, r in zip(gone[:paired], came[:paired]):
+            (bt, _), (rt, _) = text_of(b), text_of(r)
+            if rt in old_texts:  # moved, rewritten in another form, or closed (below)
+                if bt not in new_texts:
+                    out.append(("a run may not remove an open question the project has", b))
+            elif bt in new_texts:  # the base line moved elsewhere: this one is new
+                out.append(("new", r))
+            else:
+                out.append(("a run may not reword an open question the project has", r))
+        for r in came[paired:]:
+            if text_of(r)[0] not in old_texts:
+                out.append(("new", r))
+        for b in gone[paired:]:
+            if text_of(b)[0] not in new_texts:
+                out.append(("a run may not remove an open question the project has", b))
+    for r in new:
+        text, checked = text_of(r)
+        if checked and text in still_open:
+            out.append(("a run may not close an open question the project has", r))
+    return out
 
 
 def merge(base, current, returned: str, skill: str) -> str:

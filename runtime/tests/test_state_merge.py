@@ -106,10 +106,78 @@ def test_a_new_open_question_is_accepted_and_none_is_closed_or_removed():
     report = state_merge.merge_report(BASE, BASE, closed, SKILL)
     assert "- [ ] Which country first?" in report["text"].splitlines()
     assert "- [x] Which country first?" not in report["text"]
-    reasons = {r["reason"] for r in report["rejected"]}
-    assert reasons == {"a run may add an open question, never close or remove one"}
+    assert report["rejected"] == [{"section": "Open questions", "line": "- [x] Which country first?",
+                                   "reason": "a run may not close an open question the project has"}]
     removed = BASE.replace("- [ ] Which country first?\n", "")
-    assert "- [ ] Which country first?" in state_merge.merge(BASE, BASE, removed, SKILL).splitlines()
+    report = state_merge.merge_report(BASE, BASE, removed, SKILL)
+    assert "- [ ] Which country first?" in report["text"].splitlines()
+    assert report["rejected"] == [{"section": "Open questions", "line": "- [ ] Which country first?",
+                                   "reason": "a run may not remove an open question the project has"}]
+
+
+@pytest.mark.parametrize("written", [
+    "- OPEN-2 (docs/business/market.md): Which country first, by revenue or by reach?",
+    "- Which country first, by revenue or by reach?",
+    "* Which country first, by revenue or by reach?",
+    "1. Which country first, by revenue or by reach?",
+    "- [ ] Which country first, by revenue or by reach? (demo-writes)",
+    "- [ ] Which country first, by revenue or by reach? (raised by demo-writes, step 8)",
+    "- Which country first, by revenue or by reach? (market analysis)",
+])
+def test_a_new_open_question_in_any_list_form_is_written_as_a_checkbox_with_its_text(written):
+    report = state_merge.merge_report(BASE, BASE, ran(("- [ ] Which country first?", written)), SKILL)
+    text = state_merge._question(written)[0]
+    line = "- [ ] " + text
+    assert report["rejected"] == [] and report["accepted"] == [{"section": "Open questions", "line": line}]
+    questions = report["text"].split("## Open questions\n", 1)[1].split("## Approvals", 1)[0]
+    assert [q for q in questions.splitlines() if q.strip()] == ["- [ ] Which country first?", line]
+    if "OPEN-2" in written:
+        assert line == "- [ ] OPEN-2 (docs/business/market.md): Which country first, by revenue or by reach?"
+
+
+def test_a_question_the_project_has_is_never_reworded_and_each_refusal_says_what_happened():
+    reworded = BASE.replace("- [ ] Which country first?", "- [ ] Which country first, and which city? (demo-writes)")
+    report = state_merge.merge_report(BASE, BASE, reworded, SKILL)
+    assert "- [ ] Which country first?" in report["text"].splitlines() and report["accepted"] == []
+    assert report["rejected"] == [{"section": "Open questions",
+                                   "line": "- [ ] Which country first, and which city? (demo-writes)",
+                                   "reason": "a run may not reword an open question the project has"}]
+    # Only rewritten in another list form, or moved under a new question: nothing changes, nothing is refused.
+    plain = BASE.replace("- [ ] Which country first?", "- Which country first?")
+    assert state_merge.merge_report(BASE, BASE, plain, SKILL) == {"text": BASE, "accepted": [], "rejected": []}
+    moved = BASE.replace("- [ ] Which country first?", QUESTION + "\n- [ ] Which country first?")
+    report = state_merge.merge_report(BASE, BASE, moved, SKILL)
+    assert report["rejected"] == [] and report["accepted"] == [{"section": "Open questions", "line": QUESTION}]
+
+
+@pytest.mark.parametrize("who, reason", [
+    ("(user)", "an open question of the person is written by code"),
+    ("(raised by the user)", "an open question of the person is written by code"),
+    ("(demo-writes, raised by user)", "an open question of the person is written by code"),
+    ("(biz-other-skill)", "an open question attributed to biz-other-skill, not to the skill that ran"),
+    ("(raised by flow-fix-bug, phase 9, pull request)",
+     "an open question attributed to flow-fix-bug, not to the skill that ran"),
+])
+def test_a_new_open_question_of_the_person_or_of_another_skill_is_refused(who, reason):
+    line = f"- OPEN-3 Who signs the contract? {who}"
+    report = state_merge.merge_report(BASE, BASE, ran(("- [ ] Which country first?", line)), SKILL)
+    assert report["text"] == BASE and report["accepted"] == []
+    assert report["rejected"] == [{"section": "Open questions", "line": line, "reason": reason}]
+
+
+def test_a_new_checked_item_or_a_line_that_is_not_a_list_item_is_refused():
+    for line, reason in (("- [x] Who signs the contract?", "a run adds an open question unchecked: a checked one is closed"),
+                         ("Who signs the contract?", "an open question is a list item with a text")):
+        report = state_merge.merge_report(BASE, BASE, ran(("- [ ] Which country first?", line)), SKILL)
+        assert report["text"] == BASE
+        assert report["rejected"] == [{"section": "Open questions", "line": line, "reason": reason}]
+
+
+def test_an_open_question_outside_its_section_is_refused():
+    line = "- OPEN-2 Who signs the contract?"
+    report = state_merge.merge_report(BASE, BASE, ran(("- Checkpoints: milestones", line)), SKILL)
+    assert report["text"] == BASE and report["accepted"] == []
+    assert report["rejected"] == [{"section": "Autonomy", "line": line, "reason": "only code writes the autonomy mode"}]
 
 
 def test_the_autonomy_mode_the_approval_rows_and_the_head_stay_as_the_project_has_them():
@@ -173,3 +241,6 @@ def test_merging_the_same_run_twice_changes_nothing():
     once = state_merge.merge(BASE, BASE, returned, SKILL)
     assert once.endswith("\n") and not once.endswith("\n\n")
     assert state_merge.merge(BASE, once, returned, SKILL) == once
+    other_form = ran(("- [ ] Which country first?", "- OPEN-2 Who signs the contract?"))
+    once = state_merge.merge(BASE, BASE, other_form, SKILL)
+    assert state_merge.merge(BASE, once, other_form, SKILL) == once
