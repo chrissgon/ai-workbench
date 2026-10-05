@@ -53,6 +53,7 @@ sys.path.insert(0, HERE)
 import endings  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
 import flow_files  # noqa: E402
 import lab  # noqa: E402
+import manifest  # noqa: E402
 import path_rule  # noqa: E402
 import project_config  # noqa: E402
 import skill_meta  # noqa: E402
@@ -318,11 +319,12 @@ def _run(ctx: dict, task: dict) -> dict:
     cfg, store, skill = ctx["cfg"], ctx["store"], task["skill"]
     try:
         meta = skill_meta.declared(os.path.join(ROOT, "skills", skill))
+        known = manifest.load(ROOT, skill)  # a skill the runtime knows nothing of does not run
         ref, identity = lab.reference("strong"), lab.skill_identity(skill)
         run_id = _stored(ctx, store.task_run_start, task["id"], skill=skill, model=ref["model"], adapter=ref["adapter"],
                          skill_version=identity["version"], skill_sha256=identity["content_sha256"],
                          web=meta["web"])["run_id"]
-    except (skill_meta.SkillError, lab.LabError, OpsError) as e:
+    except (skill_meta.SkillError, manifest.ManifestError, lab.LabError, OpsError) as e:
         _stored(ctx, store.task_fail_running, _note(f"the run could not start: {e}"))
         raise OpsError(f"task {task['id']} ({skill}) could not start: {e}", 1) from None
     dest = os.path.join(cfg["data_dir"], RUNS_DIR, str(run_id))

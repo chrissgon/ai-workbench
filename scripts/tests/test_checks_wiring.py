@@ -109,6 +109,7 @@ HOOK_CASES = [
     ("evals/eval_run.py", "evals/tests"), ("adapters/api/run_agent.py", "adapters/api/tests"),
     ("runtime/lab.py", "runtime/tests"), ("runtime/tests/test_lab_facade.py", "runtime/tests"),
     ("flows/market-positioning.json", "runtime/tests"),
+    ("skills/demo/evals/runtime-manifest.json", "runtime/tests"),
     ("skills/core-demo/scripts/tool.py", "skills/core-demo/scripts/tests"),
     ("shared/scripts/rank.py", "shared/scripts/tests"), ("shared/scripts/copies.json", "shared/scripts/tests"),
     ("shared/scripts/tests/test_shared_rank.py", "shared/scripts/tests"),

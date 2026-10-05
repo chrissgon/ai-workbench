@@ -23,6 +23,7 @@ same store (`providers/store/sqlite.py`): the tables of this one are migration 2
 | `state_merge.py` | The one module that decides what a run may change in `docs/workbench/state.md` |
 | `endings.py` | The classifier of endings: how a completed run ended, from a closed list; it never guesses |
 | `project_config.py` | The project's configuration, `<project>/docs/workbench/runtime.json`, and its hash |
+| `manifest.py` | A skill's runtime manifest, `skills/<name>/evals/runtime-manifest.json`: what the runtime knows of a skill that its frontmatter does not declare. A skill of a pack in use (`PACKS_IN_USE`) without a well-formed one does not run |
 
 Rules of the folder: `lab.py` is the only importer of anything under `evals/`; no shell reaches the store, the
 facade or a project's files except through `ops.py`; every module runs on Python 3.9 with the standard library
