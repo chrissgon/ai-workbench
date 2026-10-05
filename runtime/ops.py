@@ -26,6 +26,8 @@ Operations of stage 1 of the platform plan:
   retry(project, task_id)          make a failed or blocked task ready again
   cancel(project, request_id)      cancel a request and what is still open under it
   status(project)                  requests, tasks, pending decisions
+  accept_config(project, sha256)   record the hash of docs/workbench/runtime.json the person accepts; every
+                                   other operation refuses a configuration whose hash is not the accepted one
 
 Releasing is not approving: a released delivery stays a draft in the project's state file.
 
@@ -96,9 +98,10 @@ def store_module():
     return _load("workbench_store_" + found["implementation"], found["path"])
 
 
-def context(project: str) -> dict:
+def context(project: str, *, check_config: bool = True) -> dict:
     """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
-    (idempotent), so the first operation on a project needs no separate setup step."""
+    (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
+    operation but accept_config), the configuration's hash must be the one the person accepted last."""
     try:
         cfg = project_config.load(project)
     except project_config.ConfigError as e:
@@ -112,6 +115,16 @@ def context(project: str) -> dict:
         conn = store.open_db(cfg["store_db"])
     except store.StoreError as e:
         raise OpsError(f"the store at {cfg['store_db']}: {e}", e.code) from None
+    if check_config:
+        try:
+            accepted = store.cursor_get(conn, project_config.ACCEPTED)
+        except store.StoreError as e:
+            raise OpsError(f"the store at {cfg['store_db']}: {e}", e.code) from None
+        if accepted != cfg["sha256"]:
+            raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
+                           f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
+                           f"want, run: python3 runtime/cli.py accept-config --project {cfg['project']} --sha256 "
+                           f"{cfg['sha256']}", 3)
     return {"cfg": cfg, "store": store, "conn": conn}
 
 
@@ -412,6 +425,19 @@ def cancel(project: str, request_id: int) -> dict:
     """Cancel a request, its tasks that are not done, and their open pending decisions."""
     ctx = context(project)
     return _stored(ctx, ctx["store"].request_cancel, request_id, by="user")
+
+
+def accept_config(project: str, sha256: str) -> dict:
+    """Record the hash of the project's configuration that the person accepts, after reading the file. The only
+    operation that writes it, and the only one that runs on a configuration that was not accepted. Returns
+    {"accepted", "previous", "path"}."""
+    ctx = context(project, check_config=False)
+    cfg = ctx["cfg"]
+    if sha256 != cfg["sha256"]:
+        raise OpsError(f"the file's hash is {cfg['sha256']} and you typed {sha256}: nothing was accepted", 1)
+    previous = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+    _stored(ctx, ctx["store"].cursor_set, project_config.ACCEPTED, sha256)
+    return {"accepted": sha256, "previous": previous, "path": cfg["path"]}
 
 
 def status(project: str) -> dict:

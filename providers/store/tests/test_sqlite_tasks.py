@@ -247,3 +247,25 @@ def test_export_prints_the_three_tables_and_the_verbs_of_version_1_still_work(tm
     assert out["tasks"][2]["depends_on"] == [out["tasks"][1]["id"]] and out["pending_decisions"][0]["payload"] == {}
     assert cli("cursor-set", "--name", "since", "--value", "v").returncode == 0
     assert json.loads(cli("--check").stdout)["schema_version"] == 2
+
+
+def test_a_cursor_written_in_process_is_the_one_the_verb_reads(tmp_path):
+    path = tmp_path / "state" / "tasks.sqlite"
+    store.init_db(path)
+    conn = store.open_db(path)
+    out = store.cursor_set(conn, "config:accepted-sha256", "ab" * 32)
+    assert out["name"] == "config:accepted-sha256" and out["value"] == "ab" * 32 and out["updated_at"]
+    read = subprocess.run([sys.executable, str(SCRIPT), "cursor-get", "--name", "config:accepted-sha256", "--db", str(path)],
+                          capture_output=True, text=True, timeout=60)
+    assert read.returncode == 0 and json.loads(read.stdout)["value"] == "ab" * 32
+    store.cursor_set(conn, "config:accepted-sha256", "cd" * 32)  # replaced, not added
+    assert store.cursor_get(conn, "config:accepted-sha256") == "cd" * 32
+    assert conn.execute("SELECT COUNT(*) FROM cursors").fetchone()[0] == 1
+    with pytest.raises(store.StoreError):
+        store.cursor_set(conn, "config:accepted-sha256", "x" * (store.VALUE_MAX + 1))
+
+
+def test_a_cursor_that_was_never_written_reads_as_none(conn):
+    assert store.cursor_get(conn, "config:accepted-sha256") is None
+    with pytest.raises(store.StoreError):
+        store.cursor_get(conn, " ")
