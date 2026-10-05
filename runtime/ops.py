@@ -166,16 +166,6 @@ def _read(path: str):
         return None
 
 
-def _inside(project: str, rel: str) -> bool:
-    """True when the project's path rel is, or would be, a regular file inside the project: no link on the way."""
-    target = os.path.join(project, *rel.split("/"))
-    folder = os.path.dirname(target)
-    while not os.path.exists(folder):
-        folder = os.path.dirname(folder)
-    real = os.path.realpath(folder)
-    return not os.path.islink(target) and (real == project or real.startswith(project + os.sep))
-
-
 # --- what enters a run: runtime/workcopy.py (limits L1 to L6) --------------------------------------------------
 
 
@@ -194,61 +184,12 @@ def task_prompt(request_text: str, task_text: str, answered) -> str:
     return "\n".join(parts) + "\n"
 
 
-# --- what comes back ---------------------------------------------------------------------------------------
+# --- what comes back: runtime/workcopy.py (limits L7, L8, L12, L14) -------------------------------------------
 
 
-def _write(target: str, data: bytes) -> None:
-    os.makedirs(os.path.dirname(target), exist_ok=True)
-    temporary = f"{target}.{os.getpid()}.tmp"
-    with open(temporary, "wb") as f:
-        f.write(data)
-    os.replace(temporary, target)
-
-
-def bring_back(project: str, result: dict, base: dict, base_state, skill: str) -> tuple:
-    """Bring back what a completed run left, by the path rule. Returns (returned, kept): returned lists
-    {"path", "class"} of what was written into the project; kept lists {"path", "class", "reason"} of what
-    stays in the run folder only. Nothing is deleted in the project, and a file that changed in the project
-    since the copy was made is never overwritten."""
-    cwd, changes = result["cwd"], result["changes"]
-    facts = {"staged": result["staged"]}
-    returned, kept = [], []
-    for rel in sorted(changes["created"] + changes["modified"]):
-        cls = path_rule.classify(rel, facts)
-        keep = lambda reason: kept.append({"path": rel, "class": cls, "reason": reason})
-        if cls == "ignored":
-            continue
-        if cls not in path_rule.RETURNED:
-            keep("this class of path is not brought back yet")
-            continue
-        if not lab.readable(cwd, rel):
-            keep("not a regular file inside the copy")
-            continue
-        target = os.path.join(project, *rel.split("/"))
-        if not _inside(project, rel):
-            keep("the project's path is a link or leaves the project")
-            continue
-        if (_sha256(target) if os.path.isfile(target) else None) != base.get(rel):
-            keep("the project's file changed while the run was in progress")
-            continue
-        source = os.path.join(cwd, *rel.split("/"))
-        if cls == "state":
-            try:
-                merged = state_merge.merge(base_state, _read(target) if os.path.isfile(target) else None,
-                                           _read(source) or "", skill)
-            except state_merge.Conflict as e:
-                keep(str(e))
-                continue
-            _write(target, merged.encode("utf-8"))
-        else:
-            with open(source, "rb") as f:
-                _write(target, f.read())
-        returned.append({"path": rel, "class": cls})
-    for rel in sorted(changes["deleted"]):
-        if path_rule.classify(rel, facts) != "ignored":
-            kept.append({"path": rel, "class": path_rule.classify(rel, facts),
-                         "reason": "the run deleted it; the project's file is left as it is"})
-    return returned, kept
+def _count(value):
+    """A count the lab reported, or None when it reported none."""
+    return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
 def _ending(result: dict, meta: dict) -> tuple:
@@ -322,9 +263,10 @@ def _run(ctx: dict, task: dict) -> dict:
            "failure": None, "task_state": "failed", "pending_id": None, "returned": [], "kept": [], "left_out": [],
            "entered": None}
 
-    def fail(kind: str, reason: str, attempts: int = 0, digest=None) -> dict:
+    def fail(kind: str, reason: str, attempts: int = 0, digest=None, redactions=None) -> dict:
         _stored(ctx, store.task_run_finish, run_id, status="failed", failure=kind, task_state="failed",
-                attempts=attempts, image_digest=digest, run_dir=dest, error=_note(reason), task_note=_note(reason))
+                attempts=attempts, image_digest=digest, run_dir=dest, error=_note(reason), task_note=_note(reason),
+                redactions=redactions)
         out["failure"] = {"kind": kind, "reason": _note(reason)}
         return out
 
@@ -354,11 +296,14 @@ def _run(ctx: dict, task: dict) -> dict:
     counts, timing = result["counts"], result["timing"]
     if result["status"] != "ok":
         failure = result["failure"]
-        return fail(failure["kind"], failure["reason"], counts["attempts"], result["image_digest"])
-    returned, kept = bring_back(cfg["project"], result, base, base_state, skill)
+        return fail(failure["kind"], failure["reason"], counts["attempts"], result["image_digest"],
+                    _count(counts.get("redactions")))
+    left = result["changes"]["created"] + result["changes"]["modified"]
+    returned, kept, _state_report = workcopy.returning(cfg["project"], result, base, base_state, skill,
+                                                       bound=manifest.bound_among(known, left))
     ending, why = _ending(result, meta)
     loaded = timing.get("skills_loaded")
-    body = result["response"]
+    body, masked = workcopy.masked_reply(result["response"])
     cut = len(body.encode("utf-8")) > store.BODY_MAX
     # A run that wrote nothing and asks opens a question, which is answered. A run that wrote a declared output
     # opens a review, a draft with open questions included: its body is the whole reply, so the person reads the
@@ -369,13 +314,15 @@ def _run(ctx: dict, task: dict) -> dict:
                 "body": body.encode("utf-8")[:store.BODY_MAX].decode("utf-8", errors="ignore") if cut else body,
                 "payload": {"ending": ending, "why": why, "returned": returned, "kept": kept, "run_dir": dest,
                             "entered": out["entered"], "left_out": out["left_out"],
-                            "response_file": os.path.join(result["outputs"], "response.md"), "body_cut": cut}}
+                            "response_file": os.path.join(result["outputs"], "response.md"), "body_cut": cut,
+                            "body_masked": masked}}
     number = lambda key, kind: timing.get(key) if isinstance(timing.get(key), kind) and not isinstance(timing.get(key), bool) else None
     done = _stored(ctx, store.task_run_finish, run_id, status="ok", ending=ending, task_state="waiting",
                    attempts=counts["attempts"], cost_usd=number("cost_usd", (int, float)), tokens=number("total_tokens", int),
                    duration_ms=number("duration_ms", int),
                    skill_loaded=(skill in loaded) if isinstance(loaded, list) else None,
-                   image_digest=result["image_digest"], run_dir=dest, pending=decision)
+                   image_digest=result["image_digest"], run_dir=dest, pending=decision,
+                   redactions=_count(counts.get("redactions")))
     out.update(status="ok", ending=ending, task_state="waiting", pending_id=done["pending_id"], returned=returned, kept=kept)
     return out
 

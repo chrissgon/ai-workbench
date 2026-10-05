@@ -23,6 +23,16 @@ What enters (entering()):
 
 Every file left out is listed with its reason, except a path inside a folder the path rule drops.
 
+What comes back (returning()), for a run that completed:
+  L7  the destination of each file comes from the path rule (runtime/path_rule.py); a document bound to an
+      approval, or a machine file the skill's manifest names, comes back as a machine file
+  L8  only a regular file, with its real path inside the copy, comes back
+  L12 a file that changed in the project since the copy was made is never overwritten
+  L14 everything passes the credential scan before it leaves the copy; the reply the person reads is masked
+      line by line (masked_reply())
+Nothing is deleted in the project because a run deleted it. The state file comes back through
+runtime/state_merge.py only.
+
 Usage (a library): python3 runtime/workcopy.py --help
 
 Standard library only. Runs on Python 3.9.
@@ -39,8 +49,10 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import path_rule  # noqa: E402  (the same folder)
+import lab  # noqa: E402  (the same folder)
+import path_rule  # noqa: E402
 import skill_meta  # noqa: E402
+import state_merge  # noqa: E402
 
 CODE_AREAS = ("engineering", "delivery")
 SECTION_START = "<!-- workbench:start -->"
@@ -284,6 +296,100 @@ def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, 
             agents_md = mode
     files.sort(key=lambda item: item[1])
     return {"files": files, "base": base, "left_out": left_out, "kind": kind, "agents_md": agents_md}
+
+
+def _project_inside(project: str, rel: str) -> bool:
+    """True when the project's path rel is, or would be, a regular file inside the project: no link on the way."""
+    target = os.path.join(project, *rel.split("/"))
+    folder = os.path.dirname(target)
+    while not os.path.exists(folder):
+        folder = os.path.dirname(folder)
+    real = os.path.realpath(folder)
+    return not os.path.islink(target) and (real == project or real.startswith(project + os.sep))
+
+
+def _write(target: str, data: bytes) -> None:
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    temporary = f"{target}.{os.getpid()}.tmp"
+    with open(temporary, "wb") as f:
+        f.write(data)
+    os.replace(temporary, target)
+
+
+def returning(project: str, result: dict, base: dict, base_state, skill: str, *, bound=()) -> tuple:
+    """(returned, kept, state_report): bring back what a completed run left, by the path rule. returned lists
+    {"path", "class"} of what was written into the project; kept lists {"path", "class", "reason"} of what stays
+    in the run folder only; state_report is None (the state file's merge report is stage 2's next package).
+
+    The checks of one path, in order, the first that fails giving the reason: its class (L7), a regular file
+    inside the copy (L8), the project's path is not a link and stays inside the project, the project's file is
+    unchanged since the copy (L12), the credential scan (L14). Nothing is deleted in the project."""
+    project = os.path.realpath(project)
+    cwd, changes = result["cwd"], result["changes"]
+    facts = {"staged": result["staged"], "bound": list(bound)}
+    returned, kept = [], []
+    for rel in sorted(changes["created"] + changes["modified"]):
+        cls = path_rule.classify(rel, facts)
+        keep = lambda reason: kept.append({"path": rel, "class": cls, "reason": reason})
+        if cls == "ignored":
+            continue
+        if cls not in path_rule.RETURNED:
+            keep("this class of path is not brought back yet")
+            continue
+        if not lab.readable(cwd, rel):
+            keep("not a regular file inside the copy")
+            continue
+        target = os.path.join(project, *rel.split("/"))
+        if not _project_inside(project, rel):
+            keep("the project's path is a link or leaves the project")
+            continue
+        if (_sha256(target) if os.path.isfile(target) else None) != base.get(rel):
+            keep("the project's file changed while the run was in progress")
+            continue
+        source = os.path.join(cwd, *rel.split("/"))
+        with open(source, "rb") as f:
+            data = f.read(SCAN_MAX + 1)
+        scanned = _scan(data)
+        if scanned:
+            keep(scanned)
+            continue
+        if cls == "state":
+            try:
+                merged = state_merge.merge(base_state, _read(target), data.decode("utf-8", errors="replace"), skill)
+            except state_merge.Conflict as e:
+                keep(str(e))
+                continue
+            _write(target, merged.encode("utf-8"))
+        else:
+            _write(target, data)
+        returned.append({"path": rel, "class": cls})
+    for rel in sorted(changes["deleted"]):
+        cls = path_rule.classify(rel, facts)
+        if cls != "ignored":
+            kept.append({"path": rel, "class": cls, "reason": "the run deleted it; the project's file is left as it is"})
+    return returned, kept, None
+
+
+def masked_reply(text: str) -> tuple:
+    """(text, n): the reply with every line that has a finding of credential_findings() replaced by a marker that
+    names the labels, never the value; n is the number of such lines. The run folder's response.md is left as
+    it is: it stays on the person's machine."""
+    lines = (text or "").split("\n")
+    count = 0
+    for i, line in enumerate(lines):
+        found = credential_findings(line)
+        if found:
+            lines[i] = f"<line removed: it held what looks like a credential ({', '.join(sorted(set(found)))})>"
+            count += 1
+    return "\n".join(lines), count
+
+
+def _read(path: str):
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
+            return f.read()
+    except OSError:
+        return None
 
 
 if __name__ == "__main__":
