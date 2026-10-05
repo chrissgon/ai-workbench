@@ -125,11 +125,14 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - Open: tasks, messages, an artifacts index, decisions and agent memory, each added when R3 or R4 needs it.
   - Done when: every table a second agent needs exists behind the same verbs, with offline tests.
   - Plan: lane F2; T15 is about the same file.
+  - Amended 2026-10-05 (the platform plan, `architecture/platform-plan-2026-10-05.md`, architecture rule 4): one store, the one the runtime has. A new table is a migration of `providers/store/sqlite.py`, and the contract of the new tables is that file's functions, one transaction per operation: no new verb and no second store. Tasks, runs and pending decisions come first (stage 1 of that plan); approvals, conversation messages and document records come with the stage that needs each. "Agent memory" and "the user picks the store" are not built.
 - [ ] **R3. Department agents.** Agent definitions per department (marketing first, then sales, finance, operations), each with scope, skills, tools and a budget, from `templates/agent.md`. Only `agents/social-manager.md` exists.
   - Each is written against a real company's first task for that department; the company's case and its decisions live in its own project.
   - Plan: lane F2, after R1.
+  - Amended 2026-10-05 (the platform plan, `architecture/platform-plan-2026-10-05.md`, decisions 8 and 14): an agent of an area is a scope, not a persona: a pack of skills (`packs/`), a queue, a spend cap and an autonomy mode. It has no file under `agents/` and no persona text; `templates/agent.md` stays for the delegation agents. The plan calls it an area agent.
 - [ ] **R4. Messages between agents.** A message contract (who may ask whom for what, format, replies, deadlines) stored through R2; artifacts over invocation still holds.
   - Plan: lane F2, after R2 and R3.
+  - Amended 2026-10-05 (the platform plan, `architecture/platform-plan-2026-10-05.md`, section 4): there is no message contract. Area agents communicate through the task layer: the document a task left, a note on the next task, a proposal of a task.
 - [ ] **R5. Approval inbox.** Every outward action from any agent waits in one place for the user, with S12's payload hash, spend limits and standing approvals from `contracts/environment.md`.
   - Built for one agent: an inbox table that stores the payload's hash, `runtime.py approve`, and a daily spend cap in `contracts/runtime.md`.
   - Done when: an outward action of any agent waits in the same inbox under the same rules, and no code of the inbox names an agent or a skill.
@@ -145,6 +148,7 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - Plan: lane F2.
 - [ ] **R8. Local web app.** Org chart, task board, approval inbox, messages, costs; reads and writes only through R2. It also holds the chat view of R11: one app, not two.
   - Plan: lane F2, after R2, R5 and R7.
+  - Amended 2026-10-05 (the platform plan, `architecture/platform-plan-2026-10-05.md`, stage 9): the local interface is a shell over the operations layer of `runtime/`, reached through a local service with a token and an origin check; it lives in a folder of its own in this repository and starts with the list of pending decisions. It never reads or writes the store by itself.
 - [ ] **R9. Scenario evals.** Multi-agent scenarios ("a week of a small company's marketing") graded like skill evals. They live in `evals/`, run in the eval container and write no evidence of a skill.
   - Plan: lane F2, after R3 and R4.
 - [ ] **R10. Provider classes an agent's first task needs.** A provider class is added when the first task of an agent needs it, chosen with the user: asked, not assumed. The list of services one company uses lives in that company's project. Built so far: the mailbox class (`providers/mailbox/gmail.py`); no mailer and no customer-records class.
@@ -156,6 +160,7 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - To decide when building: a local backend that owns files, commands and the approval gate (a page in the browser cannot run skills' scripts on its own); which API providers and which local runtime come first, asked to the user; which models are supported, decided by their evidence, since a local model may score below the floor model; and how a run is contained (the executor of the eval container is the model for it: N15).
   - Done when: someone with only an API key, and someone with only a local model, each run a capability skill end to end from the interface, including one confirmation gate shown, approved and recorded; and `eval_run.py` runs a skill's cases through the interface's adapter.
   - Plan: lane F2, after R2, R5, R8 and N11.
+  - Amended 2026-10-05 (the platform plan, `architecture/platform-plan-2026-10-05.md`, decisions 6 and 12): the conversation is a shell over the operations layer, first in the terminal (stage 6) and then in the local interface (stage 9); it is not an adapter and has no `run-prompt.sh`. A project is entered through a conversation with a planning agent that uses the core's skills as they are. `adapters/api/` is deleted once the social agent runs in the container (stage 7).
 
 ## Project conventions
 
