@@ -21,7 +21,7 @@ same store (`providers/store/sqlite.py`): the tables of this one are migrations 
 | `skill_meta.py` | What a skill declares in its frontmatter, read for the runtime |
 | `path_rule.py` | The path rule: the class of one path a run left (state, machine, document, versioned, ignored, other) |
 | `state_merge.py` | The one module that decides what a run may change in `docs/workbench/state.md` (L10): a draft row of the skill that ran, a decision attributed to it, a new open question; only code writes what is the person's, the answer to a question included |
-| `endings.py` | The classifier of endings: how a completed run ended, from a closed list; it never guesses |
+| `endings.py` | The classifier of endings: how a completed run ended, from a closed list, each ending by a rule that reads the run's facts and the skill's (`manifest.ending_facts`); it never guesses, and is tested against a corpus of archived lab runs (`python3 runtime/endings.py --corpus runtime/tests/corpus/endings.jsonl` prints its counts) |
 | `project_config.py` | The project's configuration, `<project>/docs/workbench/runtime.json`, and its hash |
 | `workcopy.py` | What enters a run copy (limits L1 to L6) and what comes back from it (L7, L8, L12, L14: the path rule with the manifest's bound documents, regular files inside the copy only, never over a change at the origin, the credential scan, the masked reply): the versioned files, the documents and the declared machine files of a run without the web, only the declared artifacts of a run with it; never the store, the configuration, a tool's settings or a credential; the project's `AGENTS.md` without the two lines the container cannot serve |
 | `manifest.py` | A skill's runtime manifest, `skills/<name>/evals/runtime-manifest.json`: what the runtime knows of a skill that its frontmatter does not declare. A skill of a pack in use (`PACKS_IN_USE`) without a well-formed one does not run |
@@ -56,8 +56,9 @@ python3 runtime/cli.py status   --project <dir>
 `run-next` calls a model: it runs the skill on the reference model of the gate file, in the eval container. It
 writes no lab evidence and edits no file of the measurement.
 
-After a run the task waits on one pending decision. A run that wrote nothing and asks (ending `question`)
-opens a `question`, which is answered. Every other ending opens a `review`, whose body is the whole reply: a
+After a run the task waits on one pending decision, unless the skill stopped on a missing input that another
+skill writes (ending `blocked`): then the task is `blocked`, and `retry` makes it ready once the input exists.
+A run that wrote nothing and asks (ending `question`) opens a `question`, which is answered. Every other ending opens a `review`, whose body is the whole reply: a
 run that wrote a declared output and still asks (ending `draft_with_questions`) included. A review is released
 as it stands (the task is done; the document keeps its open questions and stays a draft) or answered (the task
 runs again with the answer).
