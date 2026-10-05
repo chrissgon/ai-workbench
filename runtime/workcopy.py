@@ -319,15 +319,17 @@ def _write(target: str, data: bytes) -> None:
 def returning(project: str, result: dict, base: dict, base_state, skill: str, *, bound=()) -> tuple:
     """(returned, kept, state_report): bring back what a completed run left, by the path rule. returned lists
     {"path", "class"} of what was written into the project; kept lists {"path", "class", "reason"} of what stays
-    in the run folder only; state_report is None (the state file's merge report is stage 2's next package).
+    in the run folder only; state_report is the state file's merge report without its text ({"accepted",
+    "rejected"}, runtime/state_merge.py), or None when the run did not change the state file or it was kept.
 
     The checks of one path, in order, the first that fails giving the reason: its class (L7), a regular file
     inside the copy (L8), the project's path is not a link and stays inside the project, the project's file is
-    unchanged since the copy (L12), the credential scan (L14). Nothing is deleted in the project."""
+    unchanged since the copy (L12; the state file is merged line by line instead, L10), the credential scan
+    (L14). Nothing is deleted in the project."""
     project = os.path.realpath(project)
     cwd, changes = result["cwd"], result["changes"]
     facts = {"staged": result["staged"], "bound": list(bound)}
-    returned, kept = [], []
+    returned, kept, state_report = [], [], None
     for rel in sorted(changes["created"] + changes["modified"]):
         cls = path_rule.classify(rel, facts)
         keep = lambda reason: kept.append({"path": rel, "class": cls, "reason": reason})
@@ -343,7 +345,8 @@ def returning(project: str, result: dict, base: dict, base_state, skill: str, *,
         if not _project_inside(project, rel):
             keep("the project's path is a link or leaves the project")
             continue
-        if (_sha256(target) if os.path.isfile(target) else None) != base.get(rel):
+        # L12. The state file is held line by line instead: the merge starts from what the project has now.
+        if cls != "state" and (_sha256(target) if os.path.isfile(target) else None) != base.get(rel):
             keep("the project's file changed while the run was in progress")
             continue
         source = os.path.join(cwd, *rel.split("/"))
@@ -355,11 +358,13 @@ def returning(project: str, result: dict, base: dict, base_state, skill: str, *,
             continue
         if cls == "state":
             try:
-                merged = state_merge.merge(base_state, _read(target), data.decode("utf-8", errors="replace"), skill)
+                report = state_merge.merge_report(base_state, _read(target), data.decode("utf-8", errors="replace"),
+                                                  skill)
             except state_merge.Conflict as e:
                 keep(str(e))
                 continue
-            _write(target, merged.encode("utf-8"))
+            _write(target, report["text"].encode("utf-8"))
+            state_report = {"accepted": report["accepted"], "rejected": report["rejected"]}
         else:
             _write(target, data)
         returned.append({"path": rel, "class": cls})
@@ -367,7 +372,7 @@ def returning(project: str, result: dict, base: dict, base_state, skill: str, *,
         cls = path_rule.classify(rel, facts)
         if cls != "ignored":
             kept.append({"path": rel, "class": cls, "reason": "the run deleted it; the project's file is left as it is"})
-    return returned, kept, None
+    return returned, kept, state_report
 
 
 def masked_reply(text: str) -> tuple:

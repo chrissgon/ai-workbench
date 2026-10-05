@@ -65,11 +65,3 @@ ASKING = "Nothing was searched or written yet: the scope below is your decision.
 def test_an_ending_is_one_of_the_closed_list_and_what_no_rule_recognises_is_unclassified(response, changes, written, missing, texts, expected):
     ending, why = endings.classify(response, changes, written, missing, texts)
     assert ending == expected and ending in endings.ENDINGS and why
-
-
-def test_the_state_file_comes_back_whole_only_when_the_origin_did_not_change():
-    assert state_merge.merge("a\n", "a\n", "a\nb\n", "demo") == "a\nb\n"
-    assert state_merge.merge(None, None, "new\n", "demo") == "new\n"
-    for base, current, returned in (("a\n", "edited\n", "a\nb\n"), (None, "appeared\n", "x\n"), ("a\n", None, "x\n"), ("a\n", "a\n", "  \n")):
-        with pytest.raises(state_merge.Conflict):
-            state_merge.merge(base, current, returned, "demo")

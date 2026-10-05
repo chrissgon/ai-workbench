@@ -41,6 +41,7 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import datetime
 import fcntl
 import hashlib
 import importlib.util
@@ -261,7 +262,7 @@ def _run(ctx: dict, task: dict) -> dict:
     dest = os.path.join(cfg["data_dir"], RUNS_DIR, str(run_id))
     out = {"ran": task["id"], "skill": skill, "run_id": run_id, "run_dir": dest, "status": "failed", "ending": None,
            "failure": None, "task_state": "failed", "pending_id": None, "returned": [], "kept": [], "left_out": [],
-           "entered": None}
+           "entered": None, "state": None}
 
     def fail(kind: str, reason: str, attempts: int = 0, digest=None, redactions=None) -> dict:
         _stored(ctx, store.task_run_finish, run_id, status="failed", failure=kind, task_state="failed",
@@ -299,11 +300,13 @@ def _run(ctx: dict, task: dict) -> dict:
         return fail(failure["kind"], failure["reason"], counts["attempts"], result["image_digest"],
                     _count(counts.get("redactions")))
     left = result["changes"]["created"] + result["changes"]["modified"]
-    returned, kept, _state_report = workcopy.returning(cfg["project"], result, base, base_state, skill,
+    returned, kept, state_report = workcopy.returning(cfg["project"], result, base, base_state, skill,
                                                        bound=manifest.bound_among(known, left))
     ending, why = _ending(result, meta)
     loaded = timing.get("skills_loaded")
     body, masked = workcopy.masked_reply(result["response"])
+    if state_report is not None:
+        out["state"] = {"accepted": len(state_report["accepted"]), "rejected": state_report["rejected"]}
     cut = len(body.encode("utf-8")) > store.BODY_MAX
     # A run that wrote nothing and asks opens a question, which is answered. A run that wrote a declared output
     # opens a review, a draft with open questions included: its body is the whole reply, so the person reads the
@@ -313,7 +316,7 @@ def _run(ctx: dict, task: dict) -> dict:
                 "title": f"{skill}: {ending.replace('_', ' ')}",
                 "body": body.encode("utf-8")[:store.BODY_MAX].decode("utf-8", errors="ignore") if cut else body,
                 "payload": {"ending": ending, "why": why, "returned": returned, "kept": kept, "run_dir": dest,
-                            "entered": out["entered"], "left_out": out["left_out"],
+                            "entered": out["entered"], "left_out": out["left_out"], "state": out["state"],
                             "response_file": os.path.join(result["outputs"], "response.md"), "body_cut": cut,
                             "body_masked": masked}}
     number = lambda key, kind: timing.get(key) if isinstance(timing.get(key), kind) and not isinstance(timing.get(key), bool) else None
@@ -338,10 +341,31 @@ def pending(project: str, pending_id: int | None = None) -> dict:
 
 
 def answer(project: str, pending_id: int, text: str) -> dict:
-    """Answer a pending decision. The task becomes ready, and its next run is given the answer."""
+    """Answer a pending decision. The task becomes ready, and its next run is given the answer. The answer to a
+    question is also written by code into the project's state file, as a decision of the user (L10), so that the
+    next run finds it where the skills look for decisions; "state" says whether it was written. A failure there
+    never undoes the answer: the store has it, and the next run's prompt carries it."""
     ctx = context(project)
-    return _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="answered", by="user",
-                   answer=_text(text, "the answer"))
+    said = _text(text, "the answer")
+    out = _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="answered", by="user", answer=said)
+    item = _stored(ctx, ctx["store"].pending_get, pending_id)
+    if item["kind"] != "question":
+        return out
+    target = os.path.join(ctx["cfg"]["project"], *path_rule.STATE.split("/"))
+    current = _read(target) if os.path.isfile(target) and not os.path.islink(target) else None
+    if current is None:
+        return {**out, "state": {"written": False, "reason": "the project has no state file"}}
+    skill = _stored(ctx, ctx["store"].task_get, item["task_id"])["skill"]
+    try:
+        text_after = state_merge.with_answer(current, date=datetime.date.today().isoformat(), skill=skill,
+                                             pending_id=pending_id, answer=said)
+    except state_merge.Conflict as e:
+        return {**out, "state": {"written": False, "reason": str(e)}}
+    temporary = f"{target}.{os.getpid()}.tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
+        f.write(text_after)
+    os.replace(temporary, target)
+    return {**out, "state": {"written": True}}
 
 
 def release(project: str, pending_id: int) -> dict:

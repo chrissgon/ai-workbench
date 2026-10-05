@@ -50,7 +50,7 @@ case "$skill" in
     if grep -q "the user's answer" "$prompt"; then
       mkdir -p "$cwd/docs/business" "$cwd/docs/workbench"
       printf '# Market analysis\n\n- Owner: demo-asks\n- Status: draft\n' > "$cwd/docs/business/market.md"
-      echo "- decision recorded by demo-asks" >> "$cwd/docs/workbench/state.md"
+      echo "- 2026-10-05: decision recorded by demo-asks. (demo-asks)" >> "$cwd/docs/workbench/state.md"
       echo "{}" > "$cwd/docs/business/market.lint.json"
       echo "x" > "$cwd/notes.txt"
       printf -- '- Analysis: docs/business/market.md (Status: draft)\n- Next: demo-writes\n' > "$out/response.md"
@@ -67,6 +67,14 @@ case "$skill" in
   *) echo "ok" > "$out/response.md" ;;
 esac
 '''
+
+
+# The project's state file, in the form of contracts/state.md; ## Decisions is last, so that a line the
+# stand-in adapter appends to the file lands in it.
+STATE = ("# Workbench state\n\n- Project: demo\n- Docs in git: none\n\n## Autonomy\n\n- Checkpoints: milestones\n\n"
+         "## Artifacts\n\n| Artifact | Owner skill | Status | Updated |\n|----------|-------------|--------|---------|\n\n"
+         "## Open questions\n\n## Approvals\n\n| Scope | What | Payload hash | Approved | Expires | Status |\n"
+         "|-------|------|--------------|----------|---------|--------|\n\n## Decisions\n\n")
 
 
 def load(name: str):
@@ -119,7 +127,7 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     data, db = tmp_path / "data", tmp_path / "store" / "tasks.sqlite"
     (project / "docs" / "workbench" / "runtime.json").write_text(json.dumps(
         {"workbench": str(tree), "data_dir": str(data), "store_db": str(db)}), encoding="utf-8")
-    (project / "docs" / "workbench" / "state.md").write_text("# Workbench state\n\n## Decisions\n", encoding="utf-8")
+    (project / "docs" / "workbench" / "state.md").write_text(STATE, encoding="utf-8")
     (project / "AGENTS.md").write_text("# Project\n", encoding="utf-8")
     er = lab.load()
     monkeypatch.setattr(er, "ROOT", str(tree))
