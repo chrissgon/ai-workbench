@@ -110,9 +110,14 @@ def test_a_file_that_changed_in_the_project_during_the_run_is_never_overwritten(
 
     monkeypatch.setattr(lab, "run_skill", edited_meanwhile)
     out = ops.run_next(path)
-    assert out["returned"] == [{"path": "docs/business/market.lint.json", "class": "machine"}]
+    # The state file is merged line by line on top of what the person wrote (L10), not kept whole: the person's
+    # text stays, and the run's decision has no section to go into.
+    assert out["returned"] == [{"path": "docs/business/market.lint.json", "class": "machine"},
+                               {"path": "docs/workbench/state.md", "class": "state"}]
     kept = {item["path"]: item["reason"] for item in out["kept"]}
-    assert kept["docs/business/market.md"] == kept["docs/workbench/state.md"] == "the project's file changed while the run was in progress"
+    assert kept["docs/business/market.md"] == "the project's file changed while the run was in progress"
+    assert "docs/workbench/state.md" not in kept and out["state"]["accepted"] == 0
+    assert [item["reason"] for item in out["state"]["rejected"]] == ["the project's state file has no such section"]
     assert (project / "docs" / "business" / "market.md").read_text() == "written by the person\n"
     assert (project / "docs" / "workbench" / "state.md").read_text().endswith("edited by the person\n")
 
