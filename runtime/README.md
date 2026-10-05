@@ -54,6 +54,16 @@ python3 runtime/cli.py release  --project <dir> --id <n>
 python3 runtime/cli.py status   --project <dir>
 ```
 
+Every run records a use of its skill with the existing recorder (`scripts/evidence.py record --start`, with the
+model and adapter of the gate file), in the project's `.workbench-local/evidence/`; a use that cannot be recorded
+never stops a run. The verdict on what a run delivered is yours, once per run:
+`python3 runtime/cli.py verdict --project <dir> --run <run id> --word worked|corrected|failed`.
+
+A run goes to the floor model only with the runtime's own key, `WB_RUNTIME_FLOOR_KEY` (registry
+`runtime/secrets.json`, store username `runtime-floor`), a key with a spend cap set at the provider and used by
+nothing else; the lab's key is never used for it. Without that key every run goes to the reference model.
+`proof --project <dir>` shows, without a model call, where each skill in use would run and why.
+
 `run-next` calls a model: it runs the skill on the model its proof gives (`proof --project <dir>` shows it without
 calling one), in the eval container. It
 writes no lab evidence and edits no file of the measurement.

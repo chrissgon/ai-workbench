@@ -284,3 +284,13 @@ def test_a_run_keeps_the_number_of_redactions_the_lab_reported(conn):
     again = store.task_run_start(conn, task["id"], skill=task["skill"], model="m", adapter="h")
     store.task_run_finish(conn, again["run_id"], status="failed", failure="adapter", task_state="failed")
     assert store.task_runs_list(conn, task["id"])[1]["redactions"] is None  # not reported is not zero
+
+
+def test_a_run_is_read_by_its_id(conn):
+    planned(conn)
+    task = store.task_claim_next(conn)["task"]
+    run = store.task_run_start(conn, task["id"], skill=task["skill"], model="m", adapter="h")
+    got = store.task_run_get(conn, run["run_id"])
+    assert (got["id"], got["task_id"], got["model"], got["status"]) == (run["run_id"], task["id"], "m", "running")
+    with pytest.raises(store.StoreError):
+        store.task_run_get(conn, run["run_id"] + 1)

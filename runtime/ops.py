@@ -28,6 +28,8 @@ Operations of stage 1 of the platform plan:
   status(project)                  requests, tasks, pending decisions
   proof(project[, skill])          the model each skill in use would run on, by its proof (runtime/proof.py); no
                                    model is called
+  verdict(project, run_id, word)   record the person's verdict (worked, corrected, failed) on the use of a run,
+                                   with the existing recorder (scripts/evidence.py)
   accept_config(project, sha256)   record the hash of docs/workbench/runtime.json the person accepts; every
                                    other operation refuses a configuration whose hash is not the accepted one
 
@@ -45,6 +47,7 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import contextlib
 import datetime
 import fcntl
 import hashlib
@@ -53,6 +56,7 @@ import os
 import re
 import sys
 import shutil
+import subprocess
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -74,7 +78,15 @@ RUNS_DIR = "task-runs"
 LOCK_NAME = "run.lock"
 NOTE_LIMIT = 1000        # characters of a failure's reason kept on a task and on a run row
 PREPARED_DIR = "prepared"  # <data_dir>/prepared/<run id>/: files written for one run before they enter its copy
+USE_ID = re.compile(r"[0-9a-f]{8}")
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+# The recorder of uses and verdicts (scripts/evidence.py of the checkout, ROOT, when None; a test points it at a
+# stand-in). The runtime records a use of every run and the person's verdict with it, and builds nothing of its own.
+EVIDENCE = None
+VERDICTS = ("worked", "corrected", "failed")
+RECORDER_TIMEOUT = 60
+# The one secret the runtime owns: its own key for the floor model's provider, with a spend cap set there.
+FLOOR_KEY = "WB_RUNTIME_FLOOR_KEY"
 
 
 class OpsError(Exception):
@@ -211,6 +223,85 @@ def _ending(result: dict, meta: dict, skill: str) -> tuple:
     return endings.classify(result["response"], changes, written, missing, texts, facts=facts)
 
 
+# --- a use and a verdict, with the existing recorder; the runtime's own key for the floor model ---------------
+
+
+def _recorder() -> str:
+    return EVIDENCE or os.path.join(ROOT, "scripts", "evidence.py")
+
+
+def _record(args: list) -> "subprocess.CompletedProcess":
+    return subprocess.run([sys.executable, _recorder(), "record", *args], capture_output=True, text=True,
+                          timeout=RECORDER_TIMEOUT, check=False)
+
+
+def _use_start(ctx: dict, run_id: int, skill: str, routing: dict):
+    """Record the start of a use of the skill with the recorder, with the model and adapter of the routing (the
+    gate file's ids, never a model's own account), and keep its id in the cursor use:<run id>. Returns the id, or
+    None when the use could not be recorded: that never stops a run."""
+    try:
+        done = _record(["--start", "--skill-dir", os.path.join(ROOT, "skills", skill), "--project", ctx["cfg"]["project"],
+                        "--model", routing["model"], "--adapter", routing["adapter"]])
+    except (OSError, subprocess.SubprocessError) as e:
+        print(f"the use of run {run_id} could not be recorded: {type(e).__name__}", file=sys.stderr)
+        return None
+    use = done.stdout.strip()
+    if done.returncode != 0 or not USE_ID.fullmatch(use):
+        print(f"the use of run {run_id} could not be recorded: {done.stderr.strip()[-500:]}", file=sys.stderr)
+        return None
+    _stored(ctx, ctx["store"].cursor_set, f"use:{run_id}", use)
+    return use
+
+
+def _floor_key() -> tuple:
+    """(value or None, reason or None): the runtime's own key for the floor model, through the secret resolver
+    (providers/secrets/resolver.py) with the registry runtime/secrets.json. The value is never printed, logged,
+    stored or put in a message."""
+    try:
+        resolver = _load("workbench_secret_resolver_runtime", os.path.join(ROOT, "providers", "secrets", "resolver.py"))
+        resolver.register_file(os.path.join(ROOT, "runtime", "secrets.json"))
+        found = resolver.resolve(FLOOR_KEY)
+    except Exception as e:  # an interpreter the resolver does not run on, a missing store library, a bad registry
+        sys.modules.pop("workbench_secret_resolver_runtime", None)
+        return None, f"the secret resolver could not be used: {type(e).__name__}"
+    if not found:
+        return None, None
+    return found[0], None
+
+
+def _route(ctx: dict, skill: str, meta: dict, tier, key) -> dict:
+    """proof.route with the runtime's own key; a floor tier whose gate file does not pass exactly one variable is
+    routed again without the key, because the key travels under that one name."""
+    routing = proof_rules.route(ctx["cfg"], skill, meta, force=tier, floor_key=key[0] is not None)
+    if key[1] and routing["tier"] == "strong":
+        routing["reasons"].append(key[1])
+    if routing["tier"] == "floor":
+        names = lab.reference("floor")["pass_env"]
+        if len(names) != 1:
+            routing = proof_rules.route(ctx["cfg"], skill, meta, force=tier, floor_key=False)
+            routing["reasons"].append(f"the floor tier passes {len(names)} variables; the runtime's key travels under one")
+    return routing
+
+
+@contextlib.contextmanager
+def _key_in_environment(routing: dict, key: tuple):
+    """Around a floor run: the variable the gate file names for the floor tier holds the runtime's own key, and
+    afterwards what was there before (the earlier value, or no variable). Nothing for a strong run."""
+    if routing["tier"] != "floor" or key[0] is None:
+        yield
+        return
+    name = lab.reference("floor")["pass_env"][0]
+    before = os.environ.get(name)
+    os.environ[name] = key[0]
+    try:
+        yield
+    finally:
+        if before is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = before
+
+
 # --- the operations ----------------------------------------------------------------------------------------
 
 
@@ -264,7 +355,8 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     try:
         meta = skill_meta.declared(os.path.join(ROOT, "skills", skill))
         known = manifest.load(ROOT, skill)  # a skill the runtime knows nothing of does not run
-        routing = proof_rules.route(cfg, skill, meta, force=tier, floor_key=False)
+        key = _floor_key()
+        routing = _route(ctx, skill, meta, tier, key)
         identity = lab.skill_identity(skill)
         run_id = _stored(ctx, store.task_run_start, task["id"], skill=skill, model=routing["model"],
                          adapter=routing["adapter"], skill_version=identity["version"],
@@ -275,7 +367,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     dest = os.path.join(cfg["data_dir"], RUNS_DIR, str(run_id))
     out = {"ran": task["id"], "skill": skill, "run_id": run_id, "run_dir": dest, "status": "failed", "ending": None,
            "failure": None, "task_state": "failed", "pending_id": None, "returned": [], "kept": [], "left_out": [],
-           "entered": None, "state": None, "routing": routing}
+           "entered": None, "state": None, "routing": routing, "use": None}
 
     def fail(kind: str, reason: str, attempts: int = 0, digest=None, redactions=None) -> dict:
         _stored(ctx, store.task_run_finish, run_id, status="failed", failure=kind, task_state="failed",
@@ -284,6 +376,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         out["failure"] = {"kind": kind, "reason": _note(reason)}
         return out
 
+    out["use"] = _use_start(ctx, run_id, skill, routing)  # one use per run, also for a run made after an answer
     # Outside the run folder: the facade sets aside whatever it finds there.
     prepared_dir = os.path.join(cfg["data_dir"], PREPARED_DIR, str(run_id))
     try:
@@ -298,7 +391,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         request_text = _stored(ctx, store.task_get, task["parent_id"])["text"]
         answered = [p for p in _stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
         prompt = task_prompt(request_text, task["text"], answered)
-        with lab.session():
+        with lab.session(), _key_in_environment(routing, key):
             result = lab.run_skill(skill, prompt, files, dest, web=routing["web"], tier=routing["tier"])
     except lab.LabError as e:
         return fail("internal", f"{e.kind}: {e.reason}")
@@ -342,7 +435,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
                 "body": body.encode("utf-8")[:store.BODY_MAX].decode("utf-8", errors="ignore") if cut else body,
                 "payload": {"ending": ending, "why": why, "returned": returned, "kept": kept, "run_dir": dest,
                             "entered": out["entered"], "left_out": out["left_out"], "state": out["state"],
-                            "routing": routing,
+                            "routing": routing, "use": out["use"],
                             "response_file": os.path.join(result["outputs"], "response.md"), "body_cut": cut,
                             "body_masked": masked}}
     done = _stored(ctx, store.task_run_finish, run_id, task_state="waiting", pending=decision, **finish)
@@ -413,14 +506,38 @@ def proof(project: str, skill: str | None = None) -> dict:
     calls no model; it refreshes the proof file <data_dir>/proof.json where its inputs changed."""
     ctx = context(project)
     names = [skill] if skill else manifest.skills_in_use(ROOT)
-    out = {}
+    key, out = _floor_key(), {}
     for name in names:
         try:
             meta = skill_meta.declared(os.path.join(ROOT, "skills", name))
-            out[name] = proof_rules.route(ctx["cfg"], name, meta, floor_key=False)
+            out[name] = _route(ctx, name, meta, None, key)
         except (skill_meta.SkillError, lab.LabError, OSError, KeyError) as e:
             raise OpsError(f"the proof of {name} cannot be read: {e}", 1) from None
     return {"skills": out}
+
+
+def verdict(project: str, run_id: int, word: str) -> dict:
+    """Record the person's verdict on the use of one run, with the recorder (scripts/evidence.py record --verdict):
+    {"run_id", "use", "verdict"}. word is worked, corrected or failed. One verdict per run. The verdict is the
+    person's: no code path calls this by itself, and nothing reads a verdict out of a model's reply."""
+    if word not in VERDICTS:
+        raise OpsError(f"a verdict is one of {', '.join(VERDICTS)}", 2)
+    ctx = context(project)
+    use = _stored(ctx, ctx["store"].cursor_get, f"use:{run_id}")
+    if not use:
+        raise OpsError(f"run {run_id} has no recorded use", 1)
+    given = _stored(ctx, ctx["store"].cursor_get, f"verdict:{run_id}")
+    if given:
+        raise OpsError(f"run {run_id} already has the verdict {given}", 1)
+    try:
+        done = _record(["--verdict", word, "--use", use, "--project", ctx["cfg"]["project"]])
+    except (OSError, subprocess.SubprocessError) as e:
+        raise OpsError(f"the recorder could not be run: {type(e).__name__}", 1) from None
+    if done.returncode != 0:
+        lines = done.stderr.strip().splitlines()
+        raise OpsError(lines[-1] if lines else f"the recorder exited {done.returncode}", 1)
+    _stored(ctx, ctx["store"].cursor_set, f"verdict:{run_id}", word)
+    return {"run_id": run_id, "use": use, "verdict": word}
 
 
 def accept_config(project: str, sha256: str) -> dict:

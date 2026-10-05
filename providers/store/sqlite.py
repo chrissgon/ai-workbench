@@ -1212,6 +1212,14 @@ def tasks_list(conn: sqlite3.Connection, request: int | None = None) -> list:
     return [row_dict(r, ("depends_on",)) for r in rows]
 
 
+def task_run_get(conn: sqlite3.Connection, run_id: int) -> dict:
+    """One row of task_runs; StoreError when there is none."""
+    row = conn.execute("SELECT * FROM task_runs WHERE id = ?", (run_id,)).fetchone()
+    if row is None:
+        raise StoreError(f"no task run {run_id}")
+    return row_dict(row)
+
+
 def task_runs_list(conn: sqlite3.Connection, task_id: int) -> list:
     """The runs of one task, oldest first."""
     return [row_dict(r) for r in conn.execute("SELECT * FROM task_runs WHERE task_id = ? ORDER BY id", (task_id,))]
