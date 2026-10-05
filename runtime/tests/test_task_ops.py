@@ -143,6 +143,67 @@ def test_a_reply_no_rule_recognises_reaches_the_person_whole_as_unclassified(tre
     assert item["payload"]["ending"] == "unclassified"
 
 
+DRAFT_REPLY = "The analysis is written; OPEN-1 (which segment first) is a close call.\n\nDo you want to settle OPEN-1 now?"
+
+
+def drafted(tree, monkeypatch) -> dict:
+    """The first task asks, is answered, and its second run writes the document and still asks."""
+    path = project_of(tree)
+    requested(tree)
+    ops.answer(path, ops.run_next(path)["pending_id"], "Portugal, remote.")
+    real = lab.run_skill
+
+    def still_asks(*args, **kwargs):
+        result = real(*args, **kwargs)
+        if result["changes"] and result["changes"]["created"]:
+            result["response"] = DRAFT_REPLY
+        return result
+
+    monkeypatch.setattr(lab, "run_skill", still_asks)
+    return ops.run_next(path)
+
+
+def test_a_draft_with_open_questions_opens_a_review_with_the_whole_reply(tree, monkeypatch):
+    out = drafted(tree, monkeypatch)
+    assert (out["ending"], out["task_state"]) == ("draft_with_questions", "waiting")
+    assert {"path": "docs/business/market.md", "class": "document"} in out["returned"]
+    item = ops.pending(project_of(tree), out["pending_id"])
+    assert item["kind"] == "review" and item["body"] == DRAFT_REPLY
+    assert item["payload"]["ending"] == "draft_with_questions"
+
+
+def test_the_review_of_a_draft_with_open_questions_is_released_as_it_stands(tree, monkeypatch):
+    path = project_of(tree)
+    out = drafted(tree, monkeypatch)
+    released = ops.release(path, out["pending_id"])
+    assert released["task_state"] == "done" and len(released["ready"]) == 1
+    tasks = ops.status(path)["requests"][0]["tasks"]
+    assert [t["state"] for t in tasks] == ["done", "ready"]
+    assert (tree["project"] / "docs" / "business" / "market.md").is_file()
+
+
+def test_the_review_of_a_draft_with_open_questions_is_answered_and_the_next_run_gets_the_text(tree, monkeypatch):
+    path = project_of(tree)
+    out = drafted(tree, monkeypatch)
+    answered = ops.answer(path, out["pending_id"], "Leave OPEN-1 open.")
+    assert answered["task_state"] == "ready" and answered["ready"] == []
+    again = ops.run_next(path)
+    assert again["skill"] == "demo-asks"
+    prompt = open(os.path.join(again["run_dir"], "prompt.md"), encoding="utf-8").read()
+    assert "--- your reply 2 ---\n" + DRAFT_REPLY in prompt
+    assert "--- the user's answer 2 ---\nLeave OPEN-1 open.\n" in prompt
+
+
+def test_a_run_that_wrote_nothing_and_asks_still_opens_a_question_that_cannot_be_released(tree):
+    path = project_of(tree)
+    requested(tree)
+    out = ops.run_next(path)
+    assert out["ending"] == "question" and ops.pending(path, out["pending_id"])["kind"] == "question"
+    with pytest.raises(ops.OpsError):
+        ops.release(path, out["pending_id"])
+    assert ops.status(path)["requests"][0]["tasks"][0]["state"] == "waiting"
+
+
 def test_one_task_at_a_time_per_project_and_an_interrupted_run_is_ended_at_the_next_one(tree):
     path = project_of(tree)
     requested(tree)
