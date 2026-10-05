@@ -34,6 +34,9 @@ evals/              the eval harness: eval_run.py (the runner), executor.py and 
                     eval_status.py (status, hashes, the inventory table), eval-gate.json (models, grader, gate, measurement version), tests/
 scripts/            repository tooling: validate.py, security_scan.py, sync_copies.py, owner_table.py, new-skill.sh, install-hooks.sh,
                     select_skills.py, doctor.py, and the agent runtime (runtime.py, runtime_vote.py, vote_job.py)
+runtime/            the task runtime: a request becomes tasks, each task runs one skill in the eval container, a person decides
+                    through pending decisions; lab.py is the one file that imports the eval runner, ops.py the operations, cli.py the shell
+flows/              one data file per flow: the tasks and their written dependencies, read by the task runtime
 .githooks/          the versioned pre-commit hook
 docs/               area map, decisions, inventory, backlog, architecture notes and plans
 ```
