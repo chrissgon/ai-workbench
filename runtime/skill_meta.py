@@ -31,7 +31,7 @@ class SkillError(Exception):
 
 
 def declared(skill_dir: str) -> dict:
-    """{"name", "inputs", "outputs", "updates", "requires", "side_effects", "version", "web"} of a skill folder.
+    """{"name", "inputs", "outputs", "updates", "requires", "side_effects", "version", "web", "area"} of a skill folder.
     Every list is written inline in the frontmatter (`inputs: [a, b]`), as scripts/validate.py requires; a list
     that is missing or written another way is an error, never an empty list."""
     path = os.path.join(skill_dir, "SKILL.md")
@@ -51,6 +51,10 @@ def declared(skill_dir: str) -> dict:
         out[key] = [v.strip().strip("\"'") for v in m.group(1).split(",") if v.strip()]
     m = re.search(r"^  version:\s*[\"']?(\d+\.\d+\.\d+)[\"']?\s*(?:#.*)?$", head, re.M)
     out["version"] = m.group(1) if m else None
+    m = re.search(r"^  area:\s*([a-z]+)", head, re.M)
+    if not m:
+        raise SkillError(f"{path}: metadata.area is missing")
+    out["area"] = m.group(1)
     out["web"] = WEB_CLASS in out["requires"]
     return out
 

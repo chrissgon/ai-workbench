@@ -174,3 +174,7 @@ def test_no_other_module_of_the_runtime_reads_the_lab():
     read = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name) and node.value.id == "LAB"}
     assert read <= set(lab.ALLOWED), read - set(lab.ALLOWED)
+
+
+def test_the_names_of_a_tools_settings_come_from_the_adapters_lists(tree):
+    assert lab.settings_names() == sorted(st.EVAL_JSON["settings"])

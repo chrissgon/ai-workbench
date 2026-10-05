@@ -1,7 +1,7 @@
 # The task runtime
 
 Code that turns a request into tasks and runs each task as one skill, once, in the container the skill was
-proven in (`evals/executor.py`), on a fresh copy that holds only what the skill declares. What a run leaves
+proven in (`evals/executor.py`), on a fresh copy that holds only what may enter it (`workcopy.py`). What a run leaves
 comes back to the project by one rule of paths, and the task then waits for the person. The design is the
 platform plan, `docs/architecture/platform-plan-2026-10-05.md`; this folder is its stage 1, an end-to-end
 skeleton, and is not hardened yet: stage 2 of that plan adds the limits, each with its test.
@@ -23,6 +23,7 @@ same store (`providers/store/sqlite.py`): the tables of this one are migration 2
 | `state_merge.py` | The one module that decides what a run may change in `docs/workbench/state.md` |
 | `endings.py` | The classifier of endings: how a completed run ended, from a closed list; it never guesses |
 | `project_config.py` | The project's configuration, `<project>/docs/workbench/runtime.json`, and its hash |
+| `workcopy.py` | What enters a run copy (limits L1 to L6): the versioned files, the documents and the declared machine files of a run without the web, only the declared artifacts of a run with it; never the store, the configuration, a tool's settings or a credential; the project's `AGENTS.md` without the two lines the container cannot serve |
 | `manifest.py` | A skill's runtime manifest, `skills/<name>/evals/runtime-manifest.json`: what the runtime knows of a skill that its frontmatter does not declare. A skill of a pack in use (`PACKS_IN_USE`) without a well-formed one does not run |
 
 Rules of the folder: `lab.py` is the only importer of anything under `evals/`; no shell reaches the store, the

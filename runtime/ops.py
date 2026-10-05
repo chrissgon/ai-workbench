@@ -18,8 +18,8 @@ through one function of the store, which is one transaction.
 Operations of stage 1 of the platform plan:
   request(project, text, flow)     record a request and the tasks of the named flow file
   run_next(project)                run the next ready task: one skill, once, in the eval container, on a copy
-                                   of what the skill declares; bring back what it left by the path rule; open
-                                   the pending decision the task then waits on
+                                   of what may enter by limits L1 to L6 (runtime/workcopy.py); bring back what
+                                   it left by the path rule; open the pending decision the task then waits on
   pending(project[, pending_id])   what waits for the person
   answer(project, pending_id, text)   answer a pending decision: the task runs again with the answer
   release(project, pending_id)     release a delivery: the task is done, and what depended on it becomes ready
@@ -47,6 +47,7 @@ import importlib.util
 import os
 import re
 import sys
+import shutil
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -60,12 +61,13 @@ import path_rule  # noqa: E402
 import project_config  # noqa: E402
 import skill_meta  # noqa: E402
 import state_merge  # noqa: E402
+import workcopy  # noqa: E402
 
 STORE_CLASS = "store:runtime"
 RUNS_DIR = "task-runs"
 LOCK_NAME = "run.lock"
 NOTE_LIMIT = 1000        # characters of a failure's reason kept on a task and on a run row
-NOT_COPIED = ("AGENTS.md",)  # declared inputs stage 1 leaves out of the copy (stage 2 brings the project's own section)
+PREPARED_DIR = "prepared"  # <data_dir>/prepared/<run id>/: files written for one run before they enter its copy
 CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
@@ -174,33 +176,7 @@ def _inside(project: str, rel: str) -> bool:
     return not os.path.islink(target) and (real == project or real.startswith(project + os.sep))
 
 
-# --- what enters a run -------------------------------------------------------------------------------------
-
-
-def copy_list(project: str, meta: dict) -> tuple:
-    """What a run of a skill sees of the project in stage 1: the artifacts the skill declares (its inputs,
-    outputs and updates) that exist under docs/, as regular files. Returns ([(source, relative path)],
-    {relative path: sha256 at the time of the copy}, [declared paths left out, with the reason]).
-
-    Never copied: the runtime's configuration, a link, a file whose real path leaves the project, anything
-    outside docs/. The project's AGENTS.md is left out in stage 1 (NOT_COPIED)."""
-    declared = [p for p in dict.fromkeys(meta["inputs"] + meta["outputs"] + meta["updates"])]
-    left_out = [{"path": p, "reason": "not copied in stage 1"} for p in declared if p in NOT_COPIED]
-    wanted = [p for p in declared if p not in NOT_COPIED]
-    files, base = [], {}
-    docs = os.path.join(project, "docs")
-    for folder, names, file_names in os.walk(docs):
-        names[:] = sorted(n for n in names if not os.path.islink(os.path.join(folder, n)))
-        for name in sorted(file_names):
-            source = os.path.join(folder, name)
-            rel = os.path.relpath(source, project).replace(os.sep, "/")
-            if rel == path_rule.CONFIG or os.path.islink(source) or not os.path.isfile(source):
-                continue
-            if not skill_meta.matches(wanted, rel) or not _inside(project, rel):
-                continue
-            files.append((source, rel))
-            base[rel] = _sha256(source)
-    return files, base, left_out
+# --- what enters a run: runtime/workcopy.py (limits L1 to L6) --------------------------------------------------
 
 
 def task_prompt(request_text: str, task_text: str, answered) -> str:
@@ -306,7 +282,8 @@ def run_next(project: str) -> dict:
     """Run the next ready task of the project, if no task of it is running: one skill, once, on the reference
     model. Returns {"ran": None, "reason"} when there is nothing to run, else {"ran": task id, "skill",
     "run_id", "run_dir", "status", "ending" or None, "failure" or None, "task_state", "pending_id" or None,
-    "returned", "kept", "left_out"}; "recovered" names the tasks an interrupted run had left running."""
+    "returned", "kept", "left_out", "entered": {"kind", "agents_md", "files"} or None}; "recovered" names the
+    tasks an interrupted run had left running."""
     ctx = context(project)
     cfg, store = ctx["cfg"], ctx["store"]
     os.makedirs(cfg["data_dir"], mode=0o700, exist_ok=True)
@@ -342,7 +319,8 @@ def _run(ctx: dict, task: dict) -> dict:
         raise OpsError(f"task {task['id']} ({skill}) could not start: {e}", 1) from None
     dest = os.path.join(cfg["data_dir"], RUNS_DIR, str(run_id))
     out = {"ran": task["id"], "skill": skill, "run_id": run_id, "run_dir": dest, "status": "failed", "ending": None,
-           "failure": None, "task_state": "failed", "pending_id": None, "returned": [], "kept": [], "left_out": []}
+           "failure": None, "task_state": "failed", "pending_id": None, "returned": [], "kept": [], "left_out": [],
+           "entered": None}
 
     def fail(kind: str, reason: str, attempts: int = 0, digest=None) -> dict:
         _stored(ctx, store.task_run_finish, run_id, status="failed", failure=kind, task_state="failed",
@@ -350,8 +328,16 @@ def _run(ctx: dict, task: dict) -> dict:
         out["failure"] = {"kind": kind, "reason": _note(reason)}
         return out
 
+    # Outside the run folder: the facade sets aside whatever it finds there.
+    prepared_dir = os.path.join(cfg["data_dir"], PREPARED_DIR, str(run_id))
     try:
-        files, base, out["left_out"] = copy_list(cfg["project"], meta)
+        try:
+            entered = workcopy.entering(cfg["project"], meta, web=meta["web"], cfg=cfg,
+                                        settings_names=lab.settings_names(), prepared_dir=prepared_dir)
+        except workcopy.CopyError as e:
+            return fail("internal", f"the copy could not be built: {e}")
+        files, base, out["left_out"] = entered["files"], entered["base"], entered["left_out"]
+        out["entered"] = {"kind": entered["kind"], "agents_md": entered["agents_md"], "files": len(files)}
         base_state = _read(os.path.join(cfg["project"], *path_rule.STATE.split("/")))
         request_text = _stored(ctx, store.task_get, task["parent_id"])["text"]
         answered = [p for p in _stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
@@ -363,6 +349,8 @@ def _run(ctx: dict, task: dict) -> dict:
     except Exception as e:  # the task never stays `running`: the error is recorded, then shown
         traceback.print_exc()
         return fail("internal", f"{type(e).__name__}: {e}")
+    finally:
+        shutil.rmtree(prepared_dir, ignore_errors=True)
     counts, timing = result["counts"], result["timing"]
     if result["status"] != "ok":
         failure = result["failure"]
@@ -380,6 +368,7 @@ def _run(ctx: dict, task: dict) -> dict:
                 "title": f"{skill}: {ending.replace('_', ' ')}",
                 "body": body.encode("utf-8")[:store.BODY_MAX].decode("utf-8", errors="ignore") if cut else body,
                 "payload": {"ending": ending, "why": why, "returned": returned, "kept": kept, "run_dir": dest,
+                            "entered": out["entered"], "left_out": out["left_out"],
                             "response_file": os.path.join(result["outputs"], "response.md"), "body_cut": cut}}
     number = lambda key, kind: timing.get(key) if isinstance(timing.get(key), kind) and not isinstance(timing.get(key), bool) else None
     done = _stored(ctx, store.task_run_finish, run_id, status="ok", ending=ending, task_state="waiting",
