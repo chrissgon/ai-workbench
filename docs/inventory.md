@@ -154,7 +154,7 @@ Only `flow-fix-bug` is built (2026-10-02). Every other row is planned: its name 
 | flow-new-project | engineering | clarify → prd or feature-spec → backlog → architecture → implement per task → pull-request | rewrite (backlog NS6) | 1 |
 | flow-implement-ticket | engineering | read ticket → clarify → route to fix-bug, build-feature or improve-code → update ticket | create; requires `integration:issue-tracker` (backlog NS7) | 1 |
 | flow-business-plan | business | validate-idea → ai-opportunity-assessment → market-analysis → icp-positioning → business-model → gtm → business-plan | rewrite (backlog NS8) | 2 |
-| flow-brand | brand | profile (person) → name → strategy → identity → voice → guidelines | rewrite; phases requested by the user on 2026-09-29 (backlog PB14) | 3 |
+| flow-brand | brand | strategy → name → identity → voice → guidelines | rewrite; phases requested by the user on 2026-09-29 (backlog PB14); the task runtime plans it from flows/brand.json | 3 |
 | flow-design | design | user-research → ux-flows → design-system → ui → handoff | create (backlog NS9) | 3 |
 | flow-social-post | marketing | social-copy → generate-asset → confirmation gate → publish → calendar | create (backlog NS10) | 4 |
 | flow-launch | marketing | messaging → launch-plan → content-plan → landing-page → analytics | create (backlog NS3) | 4 |
