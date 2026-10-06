@@ -24,6 +24,9 @@ Usage:
   python3 runtime/cli.py sync     --project <dir> [--dry-run] [--take page|project --path <relative path>]
   python3 runtime/cli.py hand-over --project <dir> --task <task id> --file <path>
   python3 runtime/cli.py progress --project <dir> [--since 7d | <n>d | YYYY-MM-DD]
+  python3 runtime/cli.py approve-policy --project <dir> --file <docs/...> --agent <name> [--sha256 <hash> --expires <YYYY-MM-DD>] [--what <text>]
+  python3 runtime/cli.py revoke-policy --project <dir> --id <approval id>
+  python3 runtime/cli.py standing --project <dir> --policy <name>
   python3 runtime/cli.py set-mode --project <dir> --agent <name> --mode stopped|supervised|milestones|autonomous|autonomous-with-policy
 
 request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
@@ -90,6 +93,14 @@ progress  where the work stands (each open request, what waits for you, what is 
           period (default the last 7 days; --since <n>d or a date YYYY-MM-DD): deliveries, runs, the known cost and
           the runs without one, your decisions and those of an autonomy mode, the effects executed. Computed from
           the store's records; it calls no model. "text" holds the same as plain lines.
+approve-policy  approves a policy file for one area agent (a standing approval). Without --sha256 it shows the
+          file's bounds and hash and writes nothing; type the hash it shows with --expires, a date at most 365 days
+          ahead. A bounds file (docs/workbench/policies/<policy>.json) is checked whole; any other file under docs/
+          (an engagement policy) is bound by its hash only. An earlier approval of the same policy and agent is
+          revoked; the state file's Approvals table gets the generated row a skill's gate reads. An edited file is
+          covered by nothing until you approve it again. Only an agent in the mode autonomous-with-policy acts on it.
+revoke-policy  ends a standing approval; its row leaves the state file.
+standing  whether an active standing approval covers a policy now, and why not; it executes nothing.
 set-mode  sets one area agent's autonomy mode in docs/workbench/runtime.json (area_agents): stopped (it starts
           nothing), supervised (every delivery waits for you), milestones (the default: a milestone waits, the rest is
           released by the mode), autonomous (only what must reach you waits), autonomous-with-policy (as autonomous,
@@ -117,7 +128,8 @@ sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
-         "route", "approve", "reject", "sync", "hand-over", "deps", "progress", "set-mode")
+         "route", "approve", "reject", "sync", "hand-over", "deps", "progress", "set-mode", "approve-policy",
+         "revoke-policy", "standing")
 
 
 class Usage(Exception):
@@ -175,6 +187,9 @@ def run(argv) -> dict:
     p.add_argument("--since")
     p.add_argument("--agent")
     p.add_argument("--mode")
+    p.add_argument("--expires")
+    p.add_argument("--what")
+    p.add_argument("--policy")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
@@ -213,6 +228,12 @@ def run(argv) -> dict:
         return ops.progress(project, a.since)
     if a.verb == "set-mode":
         return ops.set_mode(project, need(a, "--agent"), need(a, "--mode"))
+    if a.verb == "approve-policy":
+        return ops.approve_policy(project, need(a, "--file"), need(a, "--agent"), a.sha256, a.expires, a.what)
+    if a.verb == "revoke-policy":
+        return ops.revoke_policy(project, need(a, "--id"))
+    if a.verb == "standing":
+        return ops.standing(project, need(a, "--policy"))
     return ops.status(project)
 
 

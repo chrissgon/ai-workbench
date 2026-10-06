@@ -59,6 +59,7 @@ The vocabulary is closed. A new name is added to this table in the pull request 
 | `<NNNN>` | a four-digit sequence number, zero-padded; the one name that is not lowercase |
 | `<title>` | a kebab-case title |
 | `<skill>` | the name of a skill |
+| `<policy>` | the kebab-case name of a policy; its bounds file's name |
 
 ## Slots no built skill writes
 
@@ -69,6 +70,7 @@ An input that no skill owns is listed here, or the validator reports it. `Provid
 | `docs/business/idea-validation.md` | planned: biz-validate-idea |
 | `docs/marketing/launch-plan.md` | planned: mkt-launch-plan |
 | `docs/workbench/runtime.json` | user |
+| `docs/workbench/policies/<policy>.json` | user |
 
 ## Owning skills
 

@@ -25,6 +25,8 @@ autonomous-with-policy whose approval expired acts as autonomous: its effects as
   review_action(task, pending, facts, proven, mandatory)   "release" or "hold": whether a mode releases a review
   covers(approval, policy_sha256, effect, executed_today, now)   (True, "") or (False, why): whether a standing
                                                 approval covers one effect, inside every bound
+  bounds_of(data, agent, effects)               a policy's bounds file, checked (docs/workbench/policies/<policy>.json);
+                                                effects is the closed vocabulary of side effects, given by the caller
 
 A mode never releases a question; it releases a review only when the run ended `done` and wrote something (never a
 `draft_with_questions`, an `unclassified` reply, a `done` whose reason says no file changed, or a blocked change set),
@@ -40,6 +42,7 @@ from __future__ import annotations
 import datetime
 import fnmatch
 import math
+import re
 import sys
 
 MODES = ("stopped", "supervised", "milestones", "autonomous", "autonomous-with-policy")
@@ -50,6 +53,8 @@ CAREFUL_ORDER = ("every-phase", "milestones", "end")  # the most careful first
 AGENT_KEYS = ("pack", "enabled", "mode", "max_runs_per_day", "max_usd_per_day")
 POLICY_MODE = "autonomous-with-policy"
 NO_CHANGE = "no file changed"  # the start of the classifier's reason for a `done` that wrote nothing (runtime/endings.py)
+BOUNDS_KEYS = ("policy", "agent", "effects", "targets", "files", "max_per_day", "max_items_per_run")
+POLICY_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
 
 
 def agents(raw) -> dict:
@@ -240,6 +245,35 @@ def covers(approval: dict, policy_sha256: str, effect: dict, executed_today: int
     if not isinstance(per_day, int) or executed_today >= per_day:
         return False, f"{executed_today} executed today is at the policy's {per_day} per day"
     return True, ""
+
+
+def bounds_of(data, agent: str, effects) -> dict:
+    """A policy's bounds file, checked: {"policy", "agent", "effects", "targets", "files", "max_per_day",
+    "max_items_per_run"}, every key present and no other; "agent" equal to agent; its effects words of effects (the
+    closed vocabulary of contracts/environment.md, which the caller reads from its one source in code);
+    targets and files lists of texts; the two maxima whole numbers of 1 or more. ValueError names the key."""
+    if not isinstance(data, dict):
+        raise ValueError("a bounds file holds one JSON object")
+    unknown = sorted(set(data) - set(BOUNDS_KEYS))
+    if unknown:
+        raise ValueError(f"unknown key {unknown[0]} (known: {', '.join(BOUNDS_KEYS)})")
+    missing = [key for key in BOUNDS_KEYS if key not in data]
+    if missing:
+        raise ValueError(f"missing key {missing[0]}")
+    if not isinstance(data["policy"], str) or not POLICY_NAME.fullmatch(data["policy"]):
+        raise ValueError("policy is lowercase words joined by hyphens")
+    if data["agent"] != agent:
+        raise ValueError(f"agent is {data['agent']!r}, not {agent!r}")
+    if not isinstance(data["effects"], list) or not data["effects"] or any(e not in effects for e in data["effects"]):
+        raise ValueError(f"effects is a list of {', '.join(effects)}")
+    for key in ("targets", "files"):
+        if not isinstance(data[key], list) or not data[key] or not all(isinstance(v, str) and v.strip() for v in data[key]):
+            raise ValueError(f"{key} is a non-empty list of texts")
+    for key in ("max_per_day", "max_items_per_run"):
+        value = data[key]
+        if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+            raise ValueError(f"{key} is a whole number, 1 or more")
+    return dict(data)
 
 
 if __name__ == "__main__":

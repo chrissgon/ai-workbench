@@ -58,6 +58,12 @@ Operations of stage 4:
 Operations of stage 6:
   progress(project[, since])       where the work stands and what happened in a period (runtime/progress.py),
                                    computed from the store's records; it calls no model
+  approve_policy(project, file, agent[, sha256, expires, what])   a standing approval of a policy file, bound by
+                                   its hash, with an expiry: without the hash a preview; with it, the approvals table
+                                   gets the row (an earlier one of the same policy and agent is revoked) and the state
+                                   file's ## Approvals its generated copy, the row the engagement gate reads
+  revoke_policy(project, approval_id)   end a standing approval; its row leaves the state file
+  standing(project, policy)        whether an active standing approval covers the policy now: a read
   set_mode(project, agent, mode)   set one area agent's autonomy mode in runtime.json (runtime/autonomy.py, the five
                                    modes); the person then accepts the new hash. accept_config rewrites the state
                                    file's Checkpoints line, a generated copy of the most careful enabled agent's mode
@@ -1144,6 +1150,160 @@ def _write_checkpoints(cfg: dict):
         f.write(text)
     os.replace(temporary, target)
     return {"written": True, "value": value}
+
+
+POLICY_EXPIRY_DAYS = 365  # a standing approval always has an expiry, at most this far ahead
+
+
+def _policy_file(cfg: dict, file: str) -> tuple:
+    """(relative path, absolute path) of a policy file: under docs/, a regular file whose real path is inside the
+    project; else OpsError 2."""
+    rel = (file or "").replace("\\", "/")
+    parts = rel.split("/")
+    if not rel or rel.startswith(("/", "~")) or any(p in ("", ".", "..") for p in parts) or parts[0] != "docs":
+        raise OpsError(f"{file!r} is not a relative path under docs/ of the project", 2)
+    target = os.path.join(cfg["project"], *parts)
+    real = os.path.realpath(target)
+    if not (real.startswith(cfg["project"] + os.sep)) or os.path.islink(target) or not os.path.isfile(real):
+        raise OpsError(f"{rel} is not a regular file inside the project", 2)
+    return rel, real
+
+
+SIDE_EFFECTS_LINE = re.compile(r"^SIDE_EFFECTS = \(([^)]*)\)", re.M)
+
+
+def _effect_words() -> tuple:
+    """The closed vocabulary of side effects (contracts/environment.md), read from its one source in code, SIDE_EFFECTS
+    of the checkout's scripts/validate.py, so the runtime keeps no copy of it."""
+    found = SIDE_EFFECTS_LINE.search(_read(os.path.join(ROOT, "scripts", "validate.py")) or "")
+    if not found:
+        raise OpsError("the vocabulary of side effects (SIDE_EFFECTS of scripts/validate.py) cannot be read", 1)
+    return tuple(word.strip().strip('"') for word in found.group(1).split(",") if word.strip())
+
+
+def _policy_bounds(rel: str, real: str, agent: str) -> dict:
+    """The bounds an approval of this file stores: a bounds file (.json) checked whole, else {"policy": <file name
+    without extension>, "agent"} (a file a skill's own gate reads, such as an engagement policy); with "file", the
+    path the approval binds."""
+    if rel.endswith(".json"):
+        try:
+            with open(real, encoding="utf-8") as f:
+                data = json.load(f)
+            bounds = autonomy.bounds_of(data, agent, _effect_words())
+        except (OSError, ValueError) as e:
+            raise OpsError(f"{rel} is not a bounds file: {e}", 2) from None
+    else:
+        bounds = {"policy": os.path.splitext(os.path.basename(rel))[0], "agent": agent}
+    return dict(bounds, file=rel)
+
+
+def _standing_rows(ctx: dict) -> dict:
+    """Write the standing rows of the state file from the store (state_merge.write_standing): one per policy file
+    hash, the active approval else the newest expired one; only when the file did not change between its read and
+    the write (L12). Returns {"state_rows", "superseded_rows"}, or {"written": false, "reason"}."""
+    # T23: workaround 5, the copy a skill's gate reads until it reads the runtime's record
+    cfg = ctx["cfg"]
+    target = os.path.join(cfg["project"], *path_rule.STATE.split("/"))
+    if not os.path.isfile(target) or os.path.islink(target):
+        return {"written": False, "reason": "the project has no state file"}
+    every = _stored(ctx, ctx["store"].approvals_list, scope="standing")
+    chosen = {}
+    for row in every:
+        if row["status"] not in ("active", "expired"):
+            continue
+        held = chosen.get(row["policy_sha256"])
+        rank = lambda r: (r["status"] == "active", r["id"])  # the active one, else the newest
+        if held is None or rank(row) > rank(held):
+            chosen[row["policy_sha256"]] = row
+    rows = [["standing", f"{row['what']} (runtime #{row['id']})", f"policy:{row['policy_sha256']}",
+             row["approved_at"][:10], (row["expires_at"] or "")[:10], row["status"]]
+            for row in sorted(chosen.values(), key=lambda r: r["id"])]
+    before = _sha256(target)
+    try:
+        text, written, superseded = state_merge.write_standing(
+            _read(target), rows, {f"policy:{row['policy_sha256']}" for row in every if row["policy_sha256"]})
+    except state_merge.Conflict as e:
+        return {"written": False, "reason": str(e)}
+    if _sha256(target) != before:
+        return {"written": False, "reason": "the state file changed while the rows were being written; they are written at "
+                                            "the next write"}
+    temporary = f"{target}.{os.getpid()}.tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(temporary, target)
+    return {"state_rows": written, "superseded_rows": superseded}
+
+
+def approve_policy(project: str, file: str, agent: str, sha256: str | None = None, expires: str | None = None,
+                   what: str | None = None) -> dict:
+    """A standing approval of a policy file for one area agent (limits L15, L17; contracts/environment.md, rule 7).
+    Without sha256: a preview ({"file", "agent", "policy", "bounds", "sha256", "next"}), nothing written. With it:
+    refused unless it is the file's hash now and expires is a date YYYY-MM-DD after today and at most 365 days ahead;
+    then, in one transaction, an active approval of the same policy and agent is revoked and the new row added, and
+    the state file's generated standing rows are rewritten. Never granted by default, never without an expiry."""
+    ctx = context(project)
+    cfg = ctx["cfg"]
+    if agent not in cfg["area_agents"]:
+        raise OpsError(f"{agent!r} is not an agent of area_agents in {cfg['path']}", 2)
+    rel, real = _policy_file(cfg, file)
+    bounds = _policy_bounds(rel, real, agent)
+    now_hash = _sha256(real)
+    if sha256 is None:
+        return {"file": rel, "agent": agent, "policy": bounds["policy"], "bounds": bounds, "sha256": now_hash,
+                "next": f"approve-policy --file {rel} --agent {agent} --sha256 {now_hash} --expires <YYYY-MM-DD>"}
+    if sha256 != now_hash:
+        raise OpsError(f"{rel} has the hash {now_hash} now, not {sha256}: nothing was approved", 1)
+    today = datetime.date.today()
+    try:
+        until = datetime.date.fromisoformat(str(expires)) if isinstance(expires, str) and len(expires) == 10 else None
+    except ValueError:
+        until = None
+    if until is None or until <= today or until > today + datetime.timedelta(days=POLICY_EXPIRY_DAYS):
+        raise OpsError(f"a standing approval needs --expires, a date YYYY-MM-DD after today and at most "
+                       f"{POLICY_EXPIRY_DAYS} days ahead: nothing was approved", 1)
+    row = _stored(ctx, ctx["store"].approval_standing_add, what=_text(what or bounds["policy"], "what"), by="user",
+                  policy_sha256=now_hash, bounds=bounds, expires_at=f"{until.isoformat()}T23:59:59Z")
+    return {**row, **_standing_rows(ctx)}
+
+
+def revoke_policy(project: str, approval_id: int) -> dict:
+    """End a standing approval: the row becomes revoked and its generated row leaves the state file."""
+    ctx = context(project)
+    item = _stored(ctx, ctx["store"].approval_get, approval_id)
+    if item["scope"] != "standing" or item["status"] != "active":
+        raise OpsError(f"approval {approval_id} is not an active standing approval", 2)
+    row = _stored(ctx, ctx["store"].approval_revoke, approval_id, by="user")
+    return {**row, **_standing_rows(ctx)}
+
+
+def standing(project: str, policy: str) -> dict:
+    """Whether an active standing approval covers a policy now: a read, it executes nothing. covered is true only
+    when the row exists, its file hashes as approved, it has not expired and its agent acts in the mode
+    autonomous-with-policy. executed_today counts today's actions of kind <policy> (the store's action_count)."""
+    ctx = context(project)
+    cfg = ctx["cfg"]
+    now = datetime.datetime.now(datetime.timezone.utc)
+    active = _stored(ctx, ctx["store"].approvals_list, status="active", scope="standing")
+    found = [row for row in active if (row.get("bounds") or {}).get("policy") == policy]
+    approval = found[-1] if found else None
+    midnight = datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    executed = _stored(ctx, ctx["store"].action_count, kind=policy, since=midnight.isoformat())
+    out = {"policy": policy, "covered": False, "why": "", "approval": None, "executed_today": executed, "mode": None}
+    if approval is None:
+        return {**out, "why": "no active standing approval names this policy"}
+    agent = approval["bounds"].get("agent")
+    out["approval"] = {key: approval.get(key) for key in ("id", "expires_at", "policy_sha256", "bounds")}
+    out["approval"]["agent"] = agent
+    out["mode"] = autonomy.mode_of(autonomy.facts(agent, cfg["area_agents"], active, now))
+    rel = approval["bounds"].get("file")
+    current = _sha256(os.path.join(cfg["project"], *rel.split("/"))) if rel else None
+    if current != approval["policy_sha256"]:
+        return {**out, "why": "the policy file changed since it was approved, or is gone"}
+    if datetime.datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00")) <= now:
+        return {**out, "why": "the approval expired"}
+    if out["mode"] != autonomy.POLICY_MODE:
+        return {**out, "why": f"the agent {agent} acts in the mode {out['mode']}, not {autonomy.POLICY_MODE}"}
+    return {**out, "covered": True}
 
 
 def set_mode(project: str, agent: str, mode: str) -> dict:

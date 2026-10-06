@@ -308,6 +308,36 @@ def with_answer(text: str, *, date: str, skill: str, pending_id: int, answer: st
 
 APPROVALS = "Approvals"
 AUTONOMY = "Autonomy"
+RUNTIME_MARK = re.compile(r"\(runtime #\d+\)$")
+
+
+def write_standing(state_text: str, rows, owned) -> tuple:
+    """(text, written, superseded): the state file's ## Approvals table with its standing rows generated from the
+    store. rows are the cells of the rows to write (Scope, What, Payload hash, Approved, Expires, Status), the What of
+    each ending " (runtime #<id>)"; owned is every "policy:<sha256>" third cell of a standing approval of the store.
+    As write_generated() tells a generated row, a row whose third cell is owned is code's: it is removed, and the rows
+    are written after the table's last row. A removed row without the runtime mark was written by a session and is
+    superseded by the store's row for the same file: superseded counts them. Every other row stays. Raises Conflict
+    when the file has no ## Approvals section."""
+    # T23: workaround 5, the standing approval copied into the state file until the policy gate reads the runtime's record
+    parsed = parse(state_text)
+    target = _section(parsed, APPROVALS)
+    if target is None:
+        raise Conflict("the state file has no ## Approvals section: the standing rows were not written into it")
+    owned = set(owned)
+    superseded, kept = 0, []
+    for line in target:
+        cells = _cells(line)
+        if cells and len(cells) >= 3 and cells[2] in owned:
+            if not RUNTIME_MARK.search(cells[1]):
+                superseded += 1
+            continue
+        kept.append(line)
+    target[:] = kept
+    for cells in rows:
+        clean = [" ".join(str(cell).replace("|", "/").split()) or "-" for cell in cells]
+        _append(target, "| " + " | ".join(clean) + " |")
+    return _render(parsed), len(rows), superseded
 CHECKPOINTS_LINE = re.compile(r"^(\s*-\s*Checkpoints:[ \t]*)([^\s#]*)(.*)$")
 
 
