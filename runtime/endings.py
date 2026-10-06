@@ -45,6 +45,7 @@ import path_rule  # noqa: E402  (the same folder, as the other modules import ea
 import skill_meta  # noqa: E402
 
 ENDINGS = ("done", "question", "draft_with_questions", "gate", "blocked", "unclassified")
+TMP_PREFIX = "<tmp>/"  # a gate's payload file under the run's temporary folder (runtime/lab.py, tmp_in_run)
 # The opening of the reply the skills' asking template gives ("Nothing was searched or written yet: ...",
 # "Nothing was written yet: ...").
 ASK_OPENING = re.compile(r"^\W*Nothing was (?:searched or )?written yet\b", re.I)
@@ -133,7 +134,9 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
     1. No file changed; a line holds "writes it" or "run it first" and, on the same line, another skill of
        facts["skills"] or "(planned)"; and the reply does not hold "Recommended:": `blocked`.
     2. facts["gate_payload"] is set, a created or modified path matches it, and the reply's last line ends with a
-       question mark: `gate`.
+       question mark: `gate`. A payload under "<tmp>/" (a file the skill writes in a folder it makes under the
+       temporary folder) is matched by its last part against facts["gate_files"], the files found under the run's
+       returned temporary folder.
     3. No file changed, or only the state file (path_rule.STATE) changed, and the reply asks (rule 1 above, with
        the skill's own asking openings too): `question`. A run that changed only the state file and asks
        nothing goes on to rules 6 and 7.
@@ -172,7 +175,12 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
     payload = facts.get("gate_payload")
     if payload and last_asks:
         left = list(changes.get("created") or []) + list(changes.get("modified") or [])
-        if any(skill_meta.matches([payload], p) for p in left):
+        if payload.startswith(TMP_PREFIX):
+            name = payload.rsplit("/", 1)[-1]
+            seen = any(p.rsplit("/", 1)[-1] == name for p in facts.get("gate_files") or [])
+        else:
+            seen = any(skill_meta.matches([payload], p) for p in left)
+        if seen:
             return "gate", "the run wrote the file of its confirmation gate and asks for approval"
     # For telling `question` from the other endings, a change limited to the state file counts as having written
     # nothing (WP-2.13): the skills write their open questions and decisions there when they stop to ask.
