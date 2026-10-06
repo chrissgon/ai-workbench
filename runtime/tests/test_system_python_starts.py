@@ -23,13 +23,15 @@ STARTS = {
     "runtime/plan.py": ["scripts/select_skills.py"],
     "runtime/board.py": ["providers/issue-tracker/local.py"],  # a provider whose header declares no dependency
     "runtime/documents.py": ["<manifest checkers>"],
+    "runtime/handlers/published_posts.py": ["providers/resolve.py", "providers/store/sqlite.py", "runtime/cli.py"],
 }
 # The programs a module of the runtime starts by name; the lab's own starts (docker, the adapters) go through the
 # facade, runtime/lab.py, and are the lab's.
 PROGRAMS = ("git", "uv", "bash")
 # A start whose argument list is built elsewhere in the module: where it is built.
 BUILT_ELSEWHERE = {"runtime/board.py": "provider_argv", "runtime/effects.py": "_provider_call",
-                   "runtime/documents.py": "argv = [sys.executable"}
+                   "runtime/documents.py": "argv = [sys.executable",
+                   "runtime/handlers/published_posts.py": "def _call"}
 
 
 def system_list() -> list:
