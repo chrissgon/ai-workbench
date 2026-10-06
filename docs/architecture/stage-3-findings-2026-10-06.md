@@ -81,3 +81,80 @@ On every row the base's own status property reads the platform's default for a n
 ## Due at the end of this stage
 
 Section F of part 0 of the execution plan (outside the repository) is amended to state what stage 3 built: the modules `router.py`, `plan.py`, `board.py`, `documents.py` and `drop.py`; store migration 4; the configuration keys of `task_board` (`provider`, `base`, `fields`, `states`, `dir`, `expires`) and `documents` (`provider`, `parent`, `dir`, `expires`); the operations `route`, `approve`, `reject`, `hand_over`, `sync` and `answer(..., with_comments)`; the verbs of both classes with `comments`; and the rule that a version covers the content.
+
+## The real case, resumed on 2026-10-06
+
+The maintainer decided, later the same day, the job the offer does, the first audience and the brand's platform, and answered the five choices the strategy asked for; the brand name stays his to choose. The acceptance resumed from finding 1 with the acceptance checkout advanced each time to the central branch then current (the store migrated to version 5 by the first command of a checkout holding it; no migration after it). The image was the evidence's each time; nothing was built. As above, counts, kinds and endings only.
+
+### The positioning, through a one-skill plan
+
+The runtime has no option that names one skill for a request. A plan of one skill is built when the router's route line names a capability, so the positioning was asked as a request with no flow and routed. The router answered with one strict route line naming `biz-icp-positioning` (O2: the strict form, this time), and its plan of one task was approved by its hash. The skill first stopped on its own stop rules and asked five numbered questions; the answers came only from the facts the maintainer recorded, with the narrower segment kept open as he asked; its second run wrote `docs/business/positioning.md` and updated the customer profile, ending `draft_with_questions`, released as it stood. Both documents were pushed to their pages by the run.
+
+### The strategy, the person's edit and comment, the name
+
+| Step | Observed |
+|---|---|
+| The strategy, again | First run: `question`, its stop rule refused "keep them open" for five choices (label, pillars, rhythm, numeric targets, the public product to measure), each with a recommendation. The maintainer answered the five. Second run: `draft_with_questions`, `docs/brand/strategy.md` written and pushed as a new page; released |
+| The platform reference (O7) | The run copy held the platform's reference and data file under the staged skill (#173), and the reply cited what the reference says: read |
+| The person's edit and comment | The maintainer appended one sentence to the strategy page and added one comment, in the app, by hand. The next `sync` imported the page (1 imported, 0 rejected, 0 conflicts) and saved 1 comment. The project's file holds the sentence once; against the run's own text the trip changed 6 diff lines (the sentence, three blank lines, one nested item's indent), and no text was lost. The comment was saved `open`; it enters a prompt only through `answer --with-comments` (choice T3) |
+| The name reads the edit | The name task's run copy held the sentence (count 1): what the run saw holds the person's edit, the proof the stage asks for |
+| The name, first round | `draft_with_questions`: 10 candidates checked with the skill's script, none chosen, 5 questions; released with the choice left open |
+| The name, second round | The maintainer rejected the first round. A new request with no flow was routed to `brand-name` by one strict route line, its one-task plan approved; the run ended `draft_with_questions`: 10 new candidates checked with the script (the first round's dropped), 12 more names set aside, the brand's platform listed by the script as a place to check by hand, 7 questions; released with the choice left open |
+| The identity | `question`: its stop rules 2 and 3, four questions; the facts settle only the platform. Left open: the answers are the maintainer's |
+
+### The runs since the resume (13 to 23)
+
+| Run | Task | Skill | Tier | Key | Ending | Right? | Duration (ms) | Tokens |
+|---|---|---|---|---|---|---|---|---|
+| 13 | route | core-orchestrator | floor | lab | done (one strict route line, a capability) | yes | 65,704 | 99,001 |
+| 14 | positioning | biz-icp-positioning | floor | lab | question | yes | 200,811 | 151,925 |
+| 15 | positioning | biz-icp-positioning | floor | lab | draft_with_questions | yes | 509,520 | 995,731 |
+| 16 | strategy | brand-strategy | floor | lab | question | yes | 334,938 | 225,411 |
+| 17 | strategy | brand-strategy | floor | lab | draft_with_questions | yes | 185,359 | 636,301 |
+| 18 | name | brand-name | floor | lab | draft_with_questions | yes | 573,362 | 1,081,540 |
+| 19 | identity | brand-identity | floor | lab | question | yes | 123,575 | 166,348 |
+| 20 | voice | brand-voice | floor | lab | failed, `internal`, before the model | no: a runtime defect (finding 9) | 0 | 0 |
+| 21 | route | core-orchestrator | floor | lab | done (one strict route line, a capability) | yes | 294,632 | 813,902 |
+| 22 | name, second round | brand-name | floor | lab | draft_with_questions | yes | 341,442 | 818,165 |
+| 23 | voice, retried after #201 | brand-voice | floor | lab | blocked | yes: it stopped on its missing input (O8) | 108,852 | 420,726 |
+
+Every run that started: `ok` on the first attempt, no value replaced in what it left, a use recorded. Total: 11 runs, 10 of which called a model (run 20 failed before it), 2,738,195 ms of model time and 5,409,050 tokens. Every run went to the floor model with the lab's key, each skill proven.
+
+### What the platform showed
+
+| After | Board | Documents |
+|---|---|---|
+| the strategy written, then `sync` (17 s) | 4 rows written (the strategy `done`; name, identity, voice `ready`); 0 read; 0 comments | the strategy page written by the run's own push; 4 pages |
+| the person's edit and comment, then `sync` (57 s) | nothing written | 1 page imported, 1 comment saved, 0 rejected, 0 conflicts |
+| the second name round, then `sync` (22 s) | 5 rows written; 0 read | nothing imported; the name page replaced by the run's own push; 5 pages |
+| run 23, then `sync` (15 s) | 1 row written (the voice `blocked`) | nothing |
+
+At the end, by the store's mirror records: 14 rows (10 `done`, 2 `planned`, 1 `waiting`, 1 `blocked`) and 5 pages (the three business documents, the strategy and the name).
+
+A request and its one task that started and finished between two syncs were never mirrored: the first board sync of the advanced checkout recorded the board as configured, and they were final before it (#175, as designed); every later sync reported `left_out_final` 2.
+
+### Findings of the resumed case
+
+| # | Finding | Kind | What it asks of the design |
+|---|---|---|---|
+| 8 | The person's edit was read by the next runs as content written by someone else: the name and identity runs (and the router of the second name round) listed the maintainer's appended sentence under "Instructions found in external content", not followed. The runtime handed the edited document over with nothing that says the person wrote it | runtime gap | Fixed in #201 (WP-4.12): when a `sync` imports an edit of a document, the next run of a task that reads that document gets one line written by code, next to where answers are placed, saying the person edited it on the platform and that its content is theirs; once per import, never from a run's own text. Not yet observed live: the import that would show it came before the import record existed |
+| 9 | The voice task failed before any model call, kind `internal`: a task without the web gets the general copy, and its change set required a clean tracked tree; the project carries uncommitted tracked changes (the workbench's own section and ignore lines), so the task could not start. The route runs, which return no file, never hit it; the guidelines task would have | runtime defect | Fixed in #201 (WP-4.12): the clean-tree check and the change set apply only to a task whose skill belongs to a code area, never to a document task. Retried after #201 (run 23): the task ran on the same project with its uncommitted files, no change set was made, and it ended on its own stop rule: the defect is gone |
+| 10 | A run's state merge refuses decision lines the run attributes to the user and the rewording of an open question; after the positioning's answer, the state file still listed the job as open although the answer, written by code, decided it | design gap | A small runtime package: the answer that settles an open question closes it, by code. Deferred |
+| 11 | The second name round was routed as a new request to one capability; a rejected delivery has no "do it again" of its own | as designed | None now |
+
+### Open points of part 3, resumed
+
+| # | Open point | Observed |
+|---|---|---|
+| O7 | Whether a brand run can read the platform reference its skill cites | Yes, since #173: the strategy's reply cited it |
+| O8 | What the voice skill does for a company with no profile | Run 23 ended `blocked` with nothing written: it opened with the skill's "Nothing was written" form, named the missing person's profile (its stop rule 1) and the skill that writes it, noted that skill is scoped to a person and not a company, said the missing piece is the brand's own writing samples and a voice direction, and asked which way. As the acceptance script expected; the skill was not edited. How a company brand gives the voice its material is the maintainer's to decide |
+| O9 | Whether a run treats a handed-over file as intended | Not exercised: no file was handed over |
+| O10 | Whether an edit made within the minute of the runtime's write is seen | Not exercised: the edit came about 20 minutes after the write, and it was seen |
+| O11 | How long a `sync` takes on the real base | 17 s with board writes only; 22 s with five board writes; 57 s for one that imported a page and saved a comment; 15 s with one board write; calls not counted |
+
+### What waits for the maintainer
+
+- The brand name: the choice among the second round's candidates, and its open questions (who owns each place already registered, which networks, a fallback handle, a trademark search).
+- The identity's answers (the first piece, a design system and where it lives, how pieces are produced); the identity task waits on them; the voice task is `blocked` on the material above; the guidelines task stays `planned`, since it depends on both.
+- The measurements by hand: N5, N10 and the by-hand variants of N1, N3, N4 and N8 (O10 included).
+- Finding 10's package, and whether the saved comment should enter an answer (`answer --with-comments`).
