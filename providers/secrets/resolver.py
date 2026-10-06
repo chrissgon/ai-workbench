@@ -110,6 +110,12 @@ REGISTRY: dict[str, Secret] = {s.name: s for s in (
            "the Desktop app client's secret",
            ("providers/mailbox/auth.py", "providers/mailbox/gmail.py"),
            store_username="gmail-client-secret"),
+    Secret("NOTION_TOKEN",
+           "read and write the task board and the documents of a project on Notion",
+           "an internal integration with read content, update content, insert content and read comments, "
+           "given only the base and the parent page the project names",
+           ("providers/issue-tracker/notion.py", "providers/documents/notion.py"),
+           store_username="notion"),
 )}
 
 

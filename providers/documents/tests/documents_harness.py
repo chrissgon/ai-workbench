@@ -13,7 +13,17 @@ whose instance gives:
 """
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+
+HERE = Path(__file__).resolve().parent
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class LocalDocuments:
@@ -39,4 +49,33 @@ class LocalDocuments:
         return markdown
 
 
-HARNESSES = {"local": LocalDocuments}
+class NotionDocuments:
+    """The Notion implementation, against the stand-in service of fake_notion.py: the documents are pages under a
+    parent page of the stand-in, and the person edits them there."""
+
+    fake_notion = None
+
+    def config(self, tmp_path) -> dict:
+        if NotionDocuments.fake_notion is None:
+            NotionDocuments.fake_notion = _load("fake_notion_for_documents", HERE / "fake_notion.py")
+        self.blocks = _load("notion_blocks_for_documents_harness", HERE.parent / "notion_blocks.py")
+        self.fake = NotionDocuments.fake_notion.shared()
+        self.parent = self.fake.create_root()
+        self.ledger = Path(tmp_path) / "ledger" / "documents-notion.json"
+        return {"provider": "notion", "parent": self.parent, "expires": "2099-12-31"}
+
+    def env(self) -> dict:
+        return {"NOTION_TOKEN": self.fake.token, "INTEGRATION_DOCUMENTS_NOTION_API_BASE": self.fake.base,
+                "INTEGRATION_DOCUMENTS_NOTION_LEDGER": str(self.ledger)}
+
+    def person_edits(self, ident: str, markdown: str) -> None:
+        self.fake.person_replaces_body(ident, self.blocks.to_blocks(markdown))
+
+    def person_comments(self, ident: str, text: str) -> None:
+        self.fake.comment(ident, text)
+
+    def expected(self, markdown: str) -> str:
+        return self.blocks.round_trip(markdown)
+
+
+HARNESSES = {"local": LocalDocuments, "notion": NotionDocuments}
