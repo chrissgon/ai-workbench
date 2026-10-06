@@ -313,6 +313,9 @@ class FakeNotion:
                 if not isinstance(position, dict) or position.get("type") not in ("end", "start"):
                     raise Answer(400, "validation_error", "position should be end or start in this stand-in")
                 made = self.store(ids["id"], self.checked_children(body or {}), first=position["type"] == "start")
+                if position["type"] == "start":  # as observed live (N12): not only the blocks it made
+                    return self.listing([self.shown(i) for i in self.children[ids["id"]]
+                                         if not self.blocks[i]["in_trash"]], None, None)
                 return {"object": "list", "results": [self.shown(i) for i in made], "has_more": False,
                         "next_cursor": None}
             kids = [self.shown(i) for i in self.children[ids["id"]] if not self.blocks[i]["in_trash"]]

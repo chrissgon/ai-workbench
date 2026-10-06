@@ -292,8 +292,8 @@ class Service:
         """Append blocks under a parent, at most MAX_CHILDREN_PER_CALL per call. A block is sent without its children
         (a table keeps its rows, one level); the children are appended under the block the answer names. first: the
         blocks (at most one call's worth) go before the parent's other children (position "start")."""
-        if first and len(blocks) > MAX_CHILDREN_PER_CALL:
-            raise ProviderError("at most one call's worth of blocks goes at the start", EXIT_USAGE)
+        if first and (len(blocks) > MAX_CHILDREN_PER_CALL or any(b[b["type"]].get("children") for b in blocks)):
+            raise ProviderError("at most one call's worth of blocks, with no children, goes at the start", EXIT_USAGE)
         for start in range(0, len(blocks), MAX_CHILDREN_PER_CALL):
             batch, later = [], []
             for b in blocks[start:start + MAX_CHILDREN_PER_CALL]:
@@ -304,6 +304,10 @@ class Service:
                 later.append(kids)
             body = {"children": batch, **({"position": {"type": "start"}} if first else {})}
             made = self.call("append_children", parent, body=body).get("results")
+            if first and isinstance(made, list):
+                # Measured live (README.md, N12): the answer to an append at the start does not list only the
+                # blocks it made, so it is not read; blocks put at the start have no children to append under them.
+                continue
             if not isinstance(made, list) or len(made) != len(batch):
                 raise ProviderError("the answer to an append does not list the blocks it made; the body may be "
                                     "incomplete, write it again")
