@@ -117,6 +117,45 @@ STATE = ("# Workbench state\n\n- Project: demo\n- Docs in git: none\n\n## Autono
 
 STANDIN_IMAGE = "sha256:" + "5" * 64
 
+# A stand-in code provider (class integration:vcs, implementation "github"): it records each call in calls.jsonl
+# beside it, with the sha256 of every --file it is handed, and answers as providers/vcs/github.py prints, from
+# answers.json beside it ({"base_commit", "branch_exists", "fail": {"<verb>": [exit code, last line]}}). A key it
+# committed or opened replays. No network, no git, no push.
+VCS = r'''import hashlib, json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+argv = sys.argv[1:]
+verb = argv[0]
+pairs = [(argv[i], argv[i + 1]) for i in range(1, len(argv) - 1) if argv[i].startswith("--")]
+files = {}
+for flag, value in pairs:
+    if flag == "--file":
+        path, local = value.split("=", 1)
+        files[path] = hashlib.sha256(open(local, "rb").read()).hexdigest()
+with open(os.path.join(here, "calls.jsonl"), "a") as f:
+    f.write(json.dumps({"argv": argv, "files": files, "env_token": bool(os.environ.get("VCS_GITHUB_TOKEN"))}) + "\n")
+answers = json.load(open(os.path.join(here, "answers.json"))) if os.path.isfile(os.path.join(here, "answers.json")) else {}
+state_file = os.path.join(here, "state.json")
+state = json.load(open(state_file)) if os.path.isfile(state_file) else {}
+key = dict(pairs).get("--idempotency-key")
+failing = (answers.get("fail") or {}).get(verb)
+if failing and "--dry-run" not in argv:
+    print(failing[1], file=sys.stderr)
+    sys.exit(failing[0])
+if verb == "commit-files" and "--dry-run" in argv:
+    print(json.dumps({"dry_run": True, "existing_status": "committed" if key in state else None,
+                      "base_commit": answers.get("base_commit"), "branch_exists": bool(answers.get("branch_exists"))}))
+elif verb == "commit-files":
+    replayed = key in state
+    state[key] = "c" * 40
+    print(json.dumps({"idempotency_key": key, "commit": state[key], "pushed": not replayed, "replayed": replayed}))
+elif verb == "open-pr":
+    replayed = key in state
+    state[key] = 7
+    print(json.dumps({"idempotency_key": key, "number": 7, "url": "https://code.example/example-org/web/pull/7",
+                      "replayed": replayed}))
+json.dump(state, open(state_file, "w"))
+'''
+
 
 def load(name: str):
     """A module of runtime/, imported the way the modules import each other (runtime/ first on the path), so
@@ -186,6 +225,8 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     for rel in ("providers/resolve.py", "providers/store/sqlite.py"):
         (tree / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / rel, tree / rel)
+    (tree / "providers" / "vcs").mkdir(parents=True, exist_ok=True)
+    (tree / "providers" / "vcs" / "github.py").write_text(VCS, encoding="utf-8")
     (project / "docs" / "workbench").mkdir(parents=True)
     data, db = tmp_path / "data", tmp_path / "store" / "tasks.sqlite"
     (project / "docs" / "workbench" / "runtime.json").write_text(json.dumps(
