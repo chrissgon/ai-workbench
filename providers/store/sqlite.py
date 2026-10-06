@@ -1865,6 +1865,37 @@ def approval_add(conn: sqlite3.Connection, *, scope: str, what: str, by: str, pa
         return {**_approval(conn, approval_id), "existing": False}
 
 
+def approval_standing_add(conn: sqlite3.Connection, *, what: str, by: str, policy_sha256: str, bounds: dict,
+                          expires_at: str) -> dict:
+    """A standing approval of one policy for one agent, in one transaction (stage 6): every `active` standing row
+    whose bounds name the same "policy" and "agent" becomes `revoked`, and the new row is added `active`, as
+    approval_add adds one. bounds must name both. Returns the new row, with "revoked": [the ids revoked]."""
+    _sha_or_none(policy_sha256, "policy_sha256")
+    if policy_sha256 is None:
+        raise StoreError("a standing approval of a policy needs policy_sha256", EXIT_USAGE)
+    if not isinstance(bounds, dict) or not isinstance(bounds.get("policy"), str) or not isinstance(bounds.get("agent"), str):
+        raise StoreError("the bounds of a standing approval name its policy and its agent", EXIT_USAGE)
+    what = text_arg(what, "what", TITLE_MAX)
+    by = text_arg(by, "by", LABEL_MAX)
+    expires = since_arg(expires_at, "expires_at")
+    if expires is None:
+        raise StoreError("a standing approval has an expiry", EXIT_USAGE)
+    now = iso(utcnow())
+    with write(conn):
+        revoked = []
+        for row in conn.execute("SELECT id, bounds FROM approvals WHERE scope = 'standing' AND status = 'active' "
+                                "ORDER BY id").fetchall():
+            earlier = json.loads(row["bounds"] or "{}")
+            if (earlier.get("policy"), earlier.get("agent")) == (bounds["policy"], bounds["agent"]):
+                _approval_move(conn, row["id"], "revoked", now)
+                revoked.append(row["id"])
+        approval_id = conn.execute(
+            "INSERT INTO approvals (scope, what, policy_sha256, bounds, approved_at, approved_by, expires_at, status) "
+            "VALUES ('standing', ?, ?, ?, ?, ?, ?, 'active')",
+            (what, policy_sha256, json.dumps(bounds, ensure_ascii=True, sort_keys=True), now, by, expires)).lastrowid
+        return {**_approval(conn, approval_id), "revoked": revoked}
+
+
 def approval_get(conn: sqlite3.Connection, approval_id: int) -> dict:
     """One approval, with bounds as an object."""
     return _approval(conn, approval_id)

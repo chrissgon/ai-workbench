@@ -261,3 +261,22 @@ def test_an_acceptance_from_the_board_resolves_as_it_did_before(conn):
                                       remote_version="v1", by="board")
     out = store.acceptance_resolve(conn, second["pending_id"], resolution="rejected", by="user")
     assert out["task_state"] == "cancelled"
+
+
+def test_a_standing_approval_of_a_policy_revokes_the_active_one_of_the_same_policy_and_agent(conn):
+    bounds = {"policy": "published-posts", "agent": "marketing", "file": "docs/workbench/policies/published-posts.json"}
+    first = store.approval_standing_add(conn, what="posts", by="user", policy_sha256=HASH, bounds=bounds,
+                                        expires_at="2027-01-01T23:59:59Z")
+    other = store.approval_standing_add(conn, what="posts", by="user", policy_sha256=HASH,
+                                        bounds=dict(bounds, agent="planning"), expires_at="2027-01-01T23:59:59Z")
+    second = store.approval_standing_add(conn, what="posts", by="user", policy_sha256="e" * 64, bounds=bounds,
+                                         expires_at="2027-02-01T23:59:59Z")
+    assert first["revoked"] == [] and other["revoked"] == [] and second["revoked"] == [first["id"]]
+    statuses = {r["id"]: r["status"] for r in store.approvals_list(conn, scope="standing")}
+    assert statuses == {first["id"]: "revoked", other["id"]: "active", second["id"]: "active"}
+    for bad in ({"policy": "published-posts"}, None):
+        with pytest.raises(store.StoreError):
+            store.approval_standing_add(conn, what="posts", by="user", policy_sha256=HASH, bounds=bad,
+                                        expires_at="2027-01-01T23:59:59Z")
+    with pytest.raises(store.StoreError):
+        store.approval_standing_add(conn, what="posts", by="user", policy_sha256=HASH, bounds=bounds, expires_at=None)
