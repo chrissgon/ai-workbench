@@ -17,7 +17,9 @@ runtime" below, which runtime/ops.py imports: one function call is one transacti
 `export` prints them. Schema version 4 adds a task's item on the task board (three columns of tasks), the
 records of documents mirrored to a platform (document_records) and the comments saved from a platform
 (platform_comments), under the same rule. Schema version 5 adds the approvals table (approvals): what the person
-approved, of the three scopes of contracts/environment.md, a record that only grows.
+approved, of the three scopes of contracts/environment.md, a record that only grows. Schema version 6 adds the
+messages of the conversation with the planning agent (conversation_messages), and the functions the dispatcher needs
+(a named task claimed, tasks added to a plan, the runs of a period, the actions counted in process).
 
 Concurrency: the database runs in WAL mode (readers never block the writer) with a 10-second busy
 timeout, and every write is one BEGIN IMMEDIATE transaction, so several agents and overlapping
@@ -44,7 +46,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 BUSY_TIMEOUT_SECONDS = 10
 PATH_ENV = "STORE_SQLITE_PATH"
 
@@ -275,6 +277,17 @@ MIGRATIONS = {
                     (OLD.status = 'pending-execution' AND NEW.status IN ('executed', 'revoked'))
                  OR (OLD.status = 'active' AND NEW.status IN ('expired', 'revoked'))))
             BEGIN SELECT RAISE(ABORT, 'an approval only moves forward: its status, never its content'); END""",
+    ]),
+    6: ("the messages of the conversation with the planning agent", [
+        """CREATE TABLE conversation_messages (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation TEXT NOT NULL,
+            role TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
+            text TEXT NOT NULL,
+            task_id INTEGER REFERENCES tasks (id),
+            run_id INTEGER REFERENCES task_runs (id),
+            created_at TEXT NOT NULL)""",
+        "CREATE INDEX conversation_messages_by_conversation ON conversation_messages (conversation, id)",
     ]),
 }
 
@@ -884,7 +897,12 @@ def cmd_action_add(args) -> int:
     target = text_arg(args.target, "--target", REF_MAX)
     digest = sha_arg(args.payload_sha256)
     result = json_file(args.result_file, "--result-file")
-    conn = open_ready(args)
+    return emit(_action_write(open_ready(args), kind, key, target, digest, result))
+
+
+def _action_write(conn: sqlite3.Connection, kind: str, key: str, target: str, digest: str, result: str) -> dict:
+    """Record one outward action, idempotent by its key: the work of the verb action-add and of action_add(), on
+    checked values. Returns {"id", "created", "created_at"}."""
     with write(conn):
         created = conn.execute(
             "INSERT INTO actions (kind, idempotency_key, target, payload_sha256, result, created_at) "
@@ -895,7 +913,7 @@ def cmd_action_add(args) -> int:
     if not created and (row["kind"], row["target"], row["payload_sha256"]) != (kind, target, digest):
         raise StoreError(f"idempotency key {key!r} is already recorded for a different action "
                          f"(action {row['id']}: {row['kind']} on {row['target']})")
-    return emit({"id": row["id"], "created": created, "created_at": row["created_at"]})
+    return {"id": row["id"], "created": created, "created_at": row["created_at"]}
 
 
 def cmd_actions(args) -> int:
@@ -912,10 +930,13 @@ def cmd_actions(args) -> int:
 def cmd_action_count(args) -> int:
     kind = text_arg(args.kind, "--kind", LABEL_MAX)
     since = since_arg(args.since)
-    conn = open_ready(args)
-    count = conn.execute("SELECT COUNT(*) FROM actions WHERE kind = ? AND created_at >= ?",
-                         (kind, since)).fetchone()[0]
-    return emit({"kind": kind, "since": since, "count": count})
+    return emit({"kind": kind, "since": since, "count": _action_count(open_ready(args), kind, since)})
+
+
+def _action_count(conn: sqlite3.Connection, kind: str, since: str) -> int:
+    """How many actions of one kind were recorded at or after since: the work of the verb action-count and of
+    action_count(), on checked values."""
+    return conn.execute("SELECT COUNT(*) FROM actions WHERE kind = ? AND created_at >= ?", (kind, since)).fetchone()[0]
 
 
 EXPORT_QUERIES = (
@@ -937,6 +958,8 @@ EXPORT_QUERIES = (
     ("platform_comments", "SELECT * FROM platform_comments WHERE ?1 IS NULL OR saved_at >= ?1 ORDER BY id", (), ()),
     ("approvals", "SELECT * FROM approvals WHERE ?1 IS NULL OR approved_at >= ?1 OR executed_at >= ?1 ORDER BY id",
      ("bounds",), ()),
+    ("conversation_messages", "SELECT * FROM conversation_messages WHERE ?1 IS NULL OR created_at >= ?1 ORDER BY id",
+     (), ()),
 )
 
 
@@ -1072,10 +1095,11 @@ def request_add(conn: sqlite3.Connection, *, title: str, text: str, flow: str | 
     return {"request": request_id, "state": state, "tasks": [row_dict(r) for r in rows]}
 
 
-def _plan_items(tasks, *, empty_text: bool = False) -> list:
-    """The tasks of a plan, checked: a list of {"key", "skill", "title", "text", "depends_on": [keys], "milestone"},
-    each dependency the key of a task earlier in the list. empty_text allows a task with no text of its own (a plan
-    of one skill, whose prompt is the plain request), stored as ""."""
+def _plan_items(tasks, *, empty_text: bool = False, known=()) -> list:
+    """The tasks of a plan, checked: a list of {"key", "skill", "title", "text", "depends_on": [keys], "milestone"
+    [, "agent"]}, each dependency the key of a task earlier in the list or one of known (the keys a request already
+    has, for tasks_add). empty_text allows a task with no text of its own (a plan of one skill, whose prompt is the
+    plain request), stored as "". agent, when given, is the area agent that owns the task (stage 6)."""
     if not isinstance(tasks, list):
         raise StoreError("a plan's tasks are a list", EXIT_USAGE)
     plan = []
@@ -1083,10 +1107,10 @@ def _plan_items(tasks, *, empty_text: bool = False) -> list:
         if not isinstance(item, dict):
             raise StoreError("a task of a plan is an object", EXIT_USAGE)
         key = text_arg(item.get("key"), "key", LABEL_MAX)
-        if not KEY_RE.fullmatch(key) or key in [p["key"] for p in plan]:
+        if not KEY_RE.fullmatch(key) or key in [p["key"] for p in plan] or key in known:
             raise StoreError(f"task key {key!r} must be lowercase words joined by hyphens, once per plan", EXIT_USAGE)
         depends = item.get("depends_on") or []
-        if not isinstance(depends, list) or any(d not in [p["key"] for p in plan] for d in depends):
+        if not isinstance(depends, list) or any(d not in [p["key"] for p in plan] and d not in known for d in depends):
             raise StoreError(f"task {key!r}: depends_on names the keys of tasks earlier in the plan", EXIT_USAGE)
         text = item.get("text")
         if empty_text and isinstance(text, str) and not text.strip():
@@ -1095,19 +1119,25 @@ def _plan_items(tasks, *, empty_text: bool = False) -> list:
             text = text_arg(text, "text", TEXT_MAX, multiline=True)
         plan.append({"key": key, "skill": text_arg(item.get("skill"), "skill", LABEL_MAX),
                      "title": text_arg(item.get("title"), "title", TITLE_MAX), "text": text,
-                     "depends_on": list(depends), "milestone": 1 if item.get("milestone") else 0})
+                     "depends_on": list(depends), "milestone": 1 if item.get("milestone") else 0,
+                     "agent": text_arg(item.get("agent"), "agent", LABEL_MAX, required=False)})
     return plan
 
 
-def _insert_plan(conn: sqlite3.Connection, request_id: int, flow: str | None, plan: list, now: str) -> None:
-    """Inside a transaction: add the checked tasks of a plan under a request, every one `planned`."""
-    ids = {}
+def _insert_plan(conn: sqlite3.Connection, request_id: int, flow: str | None, plan: list, now: str,
+                 known: dict | None = None) -> list:
+    """Inside a transaction: add the checked tasks of a plan under a request, every one `planned`. known maps the keys
+    of the request's existing tasks to their ids (tasks_add). Returns the new ids, in order."""
+    ids = dict(known or {})
+    added = []
     for item in plan:
         ids[item["key"]] = conn.execute(
-            "INSERT INTO tasks (parent_id, flow, key, skill, title, text, state, depends_on, milestone, "
-            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?)",
-            (request_id, flow, item["key"], item["skill"], item["title"], item["text"],
+            "INSERT INTO tasks (parent_id, flow, key, skill, agent, title, text, state, depends_on, milestone, "
+            "created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, 'planned', ?, ?, ?, ?)",
+            (request_id, flow, item["key"], item["skill"], item["agent"], item["title"], item["text"],
              json.dumps([ids[d] for d in item["depends_on"]]), item["milestone"], now, now)).lastrowid
+        added.append(ids[item["key"]])
+    return added
 
 
 def task_claim_next(conn: sqlite3.Connection) -> dict:
@@ -1442,16 +1472,37 @@ def request_from_board(conn: sqlite3.Connection, *, title: str, text: str, remot
     return {"request": request_id, "pending_id": pending_id, "existing": False}
 
 
-def acceptance_resolve(conn: sqlite3.Connection, pending_id: int, *, resolution: str, by: str) -> dict:
-    """The person's decision on an `acceptance`: `accepted` leaves the request `requested` (it is routed next);
-    `rejected` cancels it, with what is open under it. Returns {"pending_id", "task_id", "task_state"}."""
+def acceptance_resolve(conn: sqlite3.Connection, pending_id: int, *, resolution: str, by: str,
+                       note: str | None = None) -> dict:
+    """The person's decision on an `acceptance`, by its payload's `what` (stage 6):
+
+    no `what`   (a request written on the task board, stage 3) `accepted` leaves the request `requested` (it is
+                routed next); `rejected` cancels it, with what is open under it
+    subtasks    `accepted` adds the tasks of payload["tasks"] to the request as tasks_add adds them, in the same
+                transaction; `rejected` adds nothing
+    deliveries  the resolution and the note are recorded and nothing else changes
+
+    note is kept as the decision's answer. Returns {"pending_id", "task_id", "task_state"}, and "added" (the rows of
+    the added tasks) for accepted sub-tasks."""
     if ("acceptance", resolution) not in KIND_RESOLUTIONS:
         raise StoreError("an acceptance is accepted or rejected", EXIT_USAGE)
     by = text_arg(by, "by", LABEL_MAX)
+    note = text_arg(note, "note", NOTE_MAX, multiline=True, required=False)
     now = iso(utcnow())
     with write(conn):
         item = _open_of_kind(conn, pending_id, "acceptance")
-        _resolve(conn, pending_id, resolution, by, now)
+        what = (item["payload"] or {}).get("what")
+        if what is not None:
+            if what not in ACCEPTANCE_WHATS:
+                raise StoreError(f"pending decision {pending_id} accepts {what!r}, not one of "
+                                 f"{', '.join(ACCEPTANCE_WHATS)}")
+            _resolve(conn, pending_id, resolution, by, now, note)
+            out = {"pending_id": pending_id, "task_id": item["task_id"]}
+            if what == "subtasks" and resolution == "accepted":
+                out["added"] = _tasks_add(conn, item["task_id"], item["payload"].get("tasks"), now)["tasks"]
+            out["task_state"] = _task(conn, item["task_id"])["state"]
+            return out
+        _resolve(conn, pending_id, resolution, by, now, note)
         task = _task(conn, item["task_id"])
         if resolution == "rejected" and task["parent_id"] is None:
             _cancel_request(conn, task["id"], by, now)
@@ -1882,6 +1933,169 @@ def effect_done(conn: sqlite3.Connection, pending_id: int, approval_id: int, *, 
         ready, completed = _refresh(conn, now)
     return {"pending_id": pending_id, "approval_id": approval_id, "task_id": item["task_id"], "task_state": "done",
             "ready": ready, "completed": completed}
+
+
+# --- migration 6: the conversation's messages; what the dispatcher and the planning agent need ---------------------
+#
+# conversation_messages keeps the conversation with the planning agent as given (a text is never interpreted). The
+# functions after it let the dispatcher claim one named task, let a plan grow by sub-tasks after its approval, and
+# count a period's runs and a day's actions in process (action_add and action_count do the verbs' work, through the
+# same internal code).
+
+MESSAGE_ROLES = ("user", "assistant")
+MESSAGES_LIMIT = (50, 1, 500)  # default, min, max
+ACCEPTANCE_WHATS = ("subtasks", "deliveries")  # payload["what"] of an acceptance a stage-6 operation opens
+
+
+def message_add(conn: sqlite3.Connection, *, conversation: str, role: str, text: str, task_id: int | None = None,
+                run_id: int | None = None) -> dict:
+    """Record one message of a conversation, stored as given. role is `user` or `assistant`. Returns {"id",
+    "conversation", "role", "created_at"}."""
+    if role not in MESSAGE_ROLES:
+        raise StoreError(f"role must be one of {', '.join(MESSAGE_ROLES)}", EXIT_USAGE)
+    conversation = text_arg(conversation, "conversation", LABEL_MAX)
+    text = text_arg(text, "text", TEXT_MAX, multiline=True)
+    now = iso(utcnow())
+    with write(conn):
+        if task_id is not None:
+            _task(conn, task_id)
+        if run_id is not None and conn.execute("SELECT 1 FROM task_runs WHERE id = ?", (run_id,)).fetchone() is None:
+            raise StoreError(f"no task run {run_id}")
+        message_id = conn.execute(
+            "INSERT INTO conversation_messages (conversation, role, text, task_id, run_id, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)", (conversation, role, text, task_id, run_id, now)).lastrowid
+    return {"id": message_id, "conversation": conversation, "role": role, "created_at": now}
+
+
+def messages_list(conn: sqlite3.Connection, conversation: str, *, limit: int = MESSAGES_LIMIT[0],
+                  after_id: int | None = None) -> list:
+    """The newest `limit` messages of a conversation whose id is above after_id, returned oldest first."""
+    conversation = text_arg(conversation, "conversation", LABEL_MAX)
+    _default, low, high = MESSAGES_LIMIT
+    if isinstance(limit, bool) or not isinstance(limit, int) or not low <= limit <= high:
+        raise StoreError(f"limit must be between {low} and {high}", EXIT_USAGE)
+    rows = conn.execute("SELECT * FROM conversation_messages WHERE conversation = ? AND (? IS NULL OR id > ?) "
+                        "ORDER BY id DESC LIMIT ?", (conversation, after_id, after_id, limit)).fetchall()
+    return [row_dict(r) for r in reversed(rows)]
+
+
+def task_claim(conn: sqlite3.Connection, task_id: int) -> dict:
+    """Give out one named task as `running`, in the form of task_claim_next: {"task", "running"}. While a task of the
+    database runs, task is None and running is that task's id. A task that does not exist, or is not a `ready` task
+    of a request, is not claimed: task and running are None and "reason" is `unknown` or `not-ready`."""
+    now = iso(utcnow())
+    with write(conn):
+        busy = conn.execute(RUNNING_TASK).fetchone()
+        if busy:
+            return {"task": None, "running": busy["id"]}
+        row = conn.execute("SELECT id, parent_id, state FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None:
+            return {"task": None, "running": None, "reason": "unknown"}
+        if row["state"] != "ready" or row["parent_id"] is None:
+            return {"task": None, "running": None, "reason": "not-ready"}
+        conn.execute("UPDATE tasks SET state = 'running', updated_at = ? WHERE id = ? AND state = 'ready'",
+                     (now, task_id))
+        return {"task": _task(conn, task_id), "running": None}
+
+
+def _tasks_add(conn: sqlite3.Connection, request_id: int, tasks, now: str) -> dict:
+    """Inside a transaction: tasks_add's work."""
+    request = _request(conn, request_id)
+    if request["state"] not in ("planned", "done"):
+        raise StoreError(f"request {request_id} is {request['state']}: tasks are added to a planned or a done request")
+    known = {r["key"]: r["id"] for r in conn.execute("SELECT id, key FROM tasks WHERE parent_id = ? ORDER BY id",
+                                                       (request_id,)).fetchall() if r["key"] is not None}
+    if isinstance(tasks, list):
+        taken = [item.get("key") for item in tasks if isinstance(item, dict) and item.get("key") in known]
+        if taken:
+            raise StoreError(f"request {request_id} already has a task {taken[0]!r}: nothing was added", EXIT_USAGE)
+    plan = _plan_items(tasks, known=tuple(known))
+    if not plan:
+        raise StoreError("tasks_add adds at least one task", EXIT_USAGE)
+    added = _insert_plan(conn, request_id, request["flow"], plan, now, known)
+    conn.execute("UPDATE tasks SET state = 'planned', updated_at = ? WHERE id = ?", (now, request_id))
+    _refresh(conn, now)
+    rows = [conn.execute("SELECT id, key, skill, agent, state FROM tasks WHERE id = ?", (task_id,)).fetchone()
+            for task_id in added]
+    return {"request": request_id, "tasks": [row_dict(r) for r in rows]}
+
+
+def tasks_add(conn: sqlite3.Connection, request_id: int, tasks) -> dict:
+    """Add tasks to a request that is `planned` or `done` (a done request gets work again and is `planned`). Each item
+    is {"key", "skill", "title", "text", "depends_on": [keys], "milestone"[, "agent"]}; a dependency names a task the
+    request already has, or one earlier in this call. A key the request already has, or an unknown dependency, adds
+    nothing. A new task whose dependencies are all done (or that has none) is `ready`, else `planned`. Returns
+    {"request", "tasks": [{"id", "key", "skill", "agent", "state"}]}."""
+    now = iso(utcnow())
+    with write(conn):
+        return _tasks_add(conn, request_id, tasks, now)
+
+
+RUNS_SINCE = ("SELECT r.id, r.task_id, COALESCE(t.parent_id, t.id) AS request_id, t.agent, r.skill, r.model, "
+              "r.adapter, r.status, r.failure, r.cost_usd, r.started_at, r.ended_at FROM task_runs r "
+              "JOIN tasks t ON t.id = r.task_id WHERE r.started_at >= ? AND (? IS NULL OR t.agent = ?) ORDER BY r.id")
+
+
+def runs_since(conn: sqlite3.Connection, since: str, *, agent: str | None = None) -> list:
+    """The runs started at or after since (ISO-8601), oldest first, each with the agent of its task and its request:
+    {"id", "task_id", "request_id", "agent", "skill", "model", "adapter", "status", "failure", "cost_usd",
+    "started_at", "ended_at"}. A run of the router belongs to its request, whose agent is None. With agent, only the
+    runs of that agent's tasks."""
+    since = since_arg(since, "since")
+    agent = text_arg(agent, "agent", LABEL_MAX, required=False)
+    return [row_dict(r) for r in conn.execute(RUNS_SINCE, (since, agent, agent)).fetchall()]
+
+
+def action_add(conn: sqlite3.Connection, *, kind: str, idempotency_key: str, target: str, payload_sha256: str,
+               result) -> dict:
+    """The verb action-add, in process: the same checks and the same internal code. result is an object, or its
+    JSON text. Returns {"id", "created", "created_at"}."""
+    kind = text_arg(kind, "kind", LABEL_MAX)
+    key = text_arg(idempotency_key, "idempotency_key", REF_MAX)
+    target = text_arg(target, "target", REF_MAX)
+    digest = sha_arg(payload_sha256)
+    if isinstance(result, str):
+        try:
+            json.loads(result, parse_constant=reject_constant)
+        except ValueError as exc:
+            raise StoreError(f"result: not JSON ({exc})", EXIT_USAGE) from None
+        text = result
+    else:
+        try:
+            text = json.dumps(result, ensure_ascii=True, sort_keys=True, allow_nan=False)
+        except (TypeError, ValueError) as exc:
+            raise StoreError(f"result: not JSON ({exc})", EXIT_USAGE) from None
+    if len(text.encode("utf-8")) > PAYLOAD_MAX:
+        raise StoreError(f"result is over the cap of {PAYLOAD_MAX} bytes", EXIT_USAGE)
+    return _action_write(conn, kind, key, target, digest, text)
+
+
+def action_count(conn: sqlite3.Connection, *, kind: str, since: str) -> int:
+    """The verb action-count, in process: how many actions of a kind were recorded at or after since (ISO-8601)."""
+    kind = text_arg(kind, "kind", LABEL_MAX)
+    since = since_arg(since, "since")
+    if since is None:
+        raise StoreError("since is required", EXIT_USAGE)
+    return _action_count(conn, kind, since)
+
+
+def acceptance_open(conn: sqlite3.Connection, *, task_id: int, what: str, title: str, body: str, payload: dict) -> dict:
+    """Open a pending decision of kind `acceptance` on a request that is not cancelled, with payload["what"] set to
+    what (`subtasks` or `deliveries`). The request's state does not change. Returns {"pending_id", "task_id"}."""
+    if what not in ACCEPTANCE_WHATS:
+        raise StoreError(f"what must be one of {', '.join(ACCEPTANCE_WHATS)}", EXIT_USAGE)
+    if not isinstance(payload, dict):
+        raise StoreError("an acceptance's payload is an object", EXIT_USAGE)
+    item = _pending_item({"kind": "acceptance", "title": title, "body": body, "payload": dict(payload, what=what)})
+    now = iso(utcnow())
+    with write(conn):
+        request = _request(conn, task_id)
+        if request["state"] == "cancelled":
+            raise StoreError(f"request {task_id} is cancelled: nothing is accepted on it")
+        pending_id = conn.execute(
+            "INSERT INTO pending_decisions (task_id, kind, title, body, payload, payload_sha256, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)", (task_id, *item, now)).lastrowid
+    return {"pending_id": pending_id, "task_id": task_id}
 
 
 def task_runs_of_skill(conn: sqlite3.Connection, skill: str) -> list:
