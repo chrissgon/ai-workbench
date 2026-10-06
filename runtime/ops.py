@@ -58,6 +58,9 @@ Operations of stage 4:
 Operations of stage 6:
   progress(project[, since])       where the work stands and what happened in a period (runtime/progress.py),
                                    computed from the store's records; it calls no model
+  set_mode(project, agent, mode)   set one area agent's autonomy mode in runtime.json (runtime/autonomy.py, the five
+                                   modes); the person then accepts the new hash. accept_config rewrites the state
+                                   file's Checkpoints line, a generated copy of the most careful enabled agent's mode
 
 Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run whose copy holds versioned files
 starts only when the project's tracked files have no uncommitted change, from the project's files plus the newest
@@ -112,7 +115,8 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import board  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
+import autonomy  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
+import board  # noqa: E402
 import changeset  # noqa: E402
 import deps as deps_sets  # noqa: E402  (the operation `deps` would hide the module: part 0, F.1, rule 5)
 import documents  # noqa: E402
@@ -1116,7 +1120,52 @@ def accept_config(project: str, sha256: str) -> dict:
         raise OpsError(f"the file's hash is {cfg['sha256']} and you typed {sha256}: nothing was accepted", 1)
     previous = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
     _stored(ctx, ctx["store"].cursor_set, project_config.ACCEPTED, sha256)
-    return {"accepted": sha256, "previous": previous, "path": cfg["path"]}
+    return {"accepted": sha256, "previous": previous, "path": cfg["path"], "checkpoints": _write_checkpoints(cfg)}
+
+
+def _write_checkpoints(cfg: dict):
+    """The state file's "- Checkpoints:" line rewritten from the area agents (autonomy.state_checkpoints): only its
+    value changes, and only when the configuration has area agents and the file did not change between its read and
+    the write (L12). Returns {"written", "value"}, or a text saying why nothing was written."""
+    if cfg["raw"].get("area_agents") is None:
+        return "no area agents are configured"
+    target = os.path.join(cfg["project"], *path_rule.STATE.split("/"))
+    if not os.path.isfile(target) or os.path.islink(target):
+        return "the project has no state file"
+    value = autonomy.state_checkpoints(cfg["area_agents"])
+    before = _sha256(target)
+    text, found = state_merge.with_checkpoints(_read(target), value)
+    if not found:
+        return "no line to write"
+    if _sha256(target) != before:
+        return "the state file changed while the line was being written; it is written at the next acceptance"
+    temporary = f"{target}.{os.getpid()}.tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
+        f.write(text)
+    os.replace(temporary, target)
+    return {"written": True, "value": value}
+
+
+def set_mode(project: str, agent: str, mode: str) -> dict:
+    """Set one area agent's autonomy mode: only area_agents.<agent>.mode of runtime.json changes (decision P1: the
+    mode is the configuration's word). Every operation then refuses until the person accepts the new hash
+    (accept-config), which also rewrites the state file's Checkpoints line. Returns {"agent", "mode",
+    "config_sha256", "accepted": false, "next"}."""
+    ctx = context(project)
+    cfg = ctx["cfg"]
+    if mode not in autonomy.MODES:
+        raise OpsError(f"a mode is one of {', '.join(autonomy.MODES)}", 2)
+    if agent not in cfg["area_agents"]:
+        raise OpsError(f"{agent!r} is not an agent of area_agents in {cfg['path']}", 2)
+    raw = json.loads(json.dumps(cfg["raw"]))
+    raw["area_agents"][agent]["mode"] = mode
+    temporary = f"{cfg['path']}.{os.getpid()}.tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
+        f.write(json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
+    os.replace(temporary, cfg["path"])
+    new = _sha256(cfg["path"])
+    return {"agent": agent, "mode": mode, "config_sha256": new, "accepted": False,
+            "next": f"python3 runtime/cli.py accept-config --project {cfg['project']} --sha256 {new}"}
 
 
 def status(project: str) -> dict:
