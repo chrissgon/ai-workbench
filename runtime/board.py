@@ -22,6 +22,10 @@ fields, written by the runtime and never read back). Only code talks to the boar
                               is created, never after (they are the person's). With dry_run, every write is printed
                               by the provider (upsert --dry-run) and nothing changes.
 
+Only what is still open when the board is configured is mirrored: a task that was already final (done or cancelled)
+at the first sync that writes to the board never gets an item (left_out()). That sync records its time in the
+store's cursor board:configured. A task that becomes final later keeps its item, and the item moves.
+
 The three moves a person may make on the board:
   ready      on a task that is failed or blocked: it is retried (store.task_retry)
   cancelled  on a request that is not final: it is cancelled with what is open under it (store.request_cancel)
@@ -53,6 +57,7 @@ STDERR_CHARS = 1000
 SHOWN_CHARS = 300
 NO_DEPENDENCIES = re.compile(r'^# dependencies = \[\]\s*$', re.M)
 FINAL = ("done", "cancelled")
+CONFIGURED = "board:configured"  # the store's cursor: when the first sync wrote to the board (UTC, the store's form)
 
 
 class BoardError(Exception):
@@ -181,6 +186,20 @@ def bounds_problem(cfg: dict, today=None, key: str = "task_board"):
     return None
 
 
+def _now() -> str:
+    """The current time in the store's form, which compares correctly as text with a task's updated_at."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def left_out(ctx: dict, tasks=None) -> list:
+    """The ids of the tasks that are never mirrored: no item, final, and last changed at or before the time the
+    board was configured (the cursor CONFIGURED; now, while no sync has written to the board)."""
+    configured = ctx["store"].cursor_get(ctx["conn"], CONFIGURED) or _now()
+    tasks = ctx["store"].tasks_list(ctx["conn"]) if tasks is None else tasks
+    return [t["id"] for t in tasks
+            if not t.get("remote_id") and t["state"] in FINAL and t["updated_at"] <= configured]
+
+
 def _open_pending(ctx: dict, task_id: int):
     found = ctx["store"].pending_list(ctx["conn"], "open", task_id)
     return found[0] if found else None
@@ -188,11 +207,13 @@ def _open_pending(ctx: dict, task_id: int):
 
 def pull(ctx: dict) -> dict:
     """The board to the store (see the module's text). Returns {"pulled", "created", "edited", "refused", "gone",
-    "comments"}: "comments" is the number of comments saved that were not saved before."""
+    "comments", "left_out_final"}: "comments" is the number of comments saved that were not saved before;
+    "left_out_final" the number of tasks never mirrored because they were final when the board was configured."""
     cfg, store, conn, root = ctx["cfg"], ctx["store"], ctx["conn"], ctx["root"]
-    out = {"pulled": [], "created": [], "edited": [], "refused": [], "gone": [], "comments": 0}
+    out = {"pulled": [], "created": [], "edited": [], "refused": [], "gone": [], "comments": 0, "left_out_final": 0}
     listed = {item["id"]: item for item in call(cfg, root, "list", []).get("items", [])}
     tasks = store.tasks_list(conn)
+    out["left_out_final"] = len(left_out(ctx, tasks))
     known = {t["remote_id"]: t for t in tasks if t.get("remote_id")}
     for remote_id, task in known.items():
         item = listed.get(remote_id)
@@ -291,7 +312,13 @@ def push(ctx: dict, dry_run: bool = False) -> dict:
     if dry_run:
         out["would"] = []
     bounds = None if dry_run else bounds_problem(cfg)
-    for task in store.tasks_list(conn):
+    tasks = store.tasks_list(conn)
+    if not dry_run and store.cursor_get(conn, CONFIGURED) is None:
+        store.cursor_set(conn, CONFIGURED, _now())  # the board is configured: what is final now is never mirrored
+    never = set(left_out(ctx, tasks))
+    for task in tasks:
+        if task["id"] in never:
+            continue
         exists = bool(task.get("remote_id"))
         payload = item_payload(task, _open_pending(ctx, task["id"]), create=not exists)
         digest = payload_hash(payload)
