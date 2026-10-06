@@ -67,6 +67,11 @@ def workbench(tmp_path):
                                              encoding="utf-8")
     for name, area in (("eng-alpha", "engineering"), ("eng-beta", "engineering"), ("mkt-gamma", "marketing")):
         skill(wb, name, area)
+    # A small providers/ tree: resolve.py plus one implementation, so a copy install can run a provider
+    # by its class from the installed workbench root (the folder holding skills/, shared/ and providers/).
+    (wb / "providers" / "store").mkdir(parents=True)
+    shutil.copy(ROOT / "providers/resolve.py", wb / "providers/resolve.py")
+    (wb / "providers" / "store" / "sqlite.py").write_text("# an invented provider\n", encoding="utf-8")
     (wb / "packs").mkdir()
     (wb / "packs" / "default.txt").write_text("*\n", encoding="utf-8")
     (wb / "packs" / "engonly.txt").write_text("eng-*\n", encoding="utf-8")
@@ -208,6 +213,68 @@ def test_plugin_install_puts_the_shared_references_in_the_build(workbench, tmp_p
     manifest = json.loads((link / ".claude-plugin" / "plugin.json").read_text(encoding="utf-8"))
     # With an `agents` path the CLI refused the whole folder as an invalid manifest; agents/ is found by default.
     assert manifest["name"] == "ai-workbench" and "agents" not in manifest
+
+
+# --- the providers, beside the skills, and the workbench root an installed skill needs ---------------
+
+@pytest.mark.parametrize("mode", [[], ["--copy"]])
+def test_agents_dir_install_carries_the_providers_and_prints_the_workbench_root(workbench, tmp_path, mode):
+    r = agents_dir(workbench, tmp_path, *mode)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    root = tmp_path / "proj" / ".agents"
+    assert out["providers"] == "installed" and out["workbench_root"] == str(root)
+    providers = root / "providers"
+    assert (providers / MARK).is_file() and not providers.is_symlink()
+    assert (providers / "resolve.py").is_file()
+    assert (providers / "resolve.py").is_symlink() == (mode == [])
+    # a provider runs by its class from the installed workbench root, which is what WORKBENCH_ROOT names
+    got = subprocess.run([sys.executable, str(providers / "resolve.py"), "--class", "store:runtime"],
+                         capture_output=True, text=True, timeout=60)
+    assert got.returncode == 0 and Path(got.stdout.strip()).is_file()
+    assert f"WORKBENCH_ROOT={root}" in r.stderr
+
+    assert agents_dir(workbench, tmp_path, *mode).returncode == 0, "a second run replaces its own providers"
+    r = agents_dir(workbench, tmp_path, "--uninstall")
+    assert r.returncode == 0, r.stderr
+    assert json.loads(r.stdout)["providers"] == "removed"
+    assert not providers.exists()
+
+
+def test_agents_dir_install_leaves_a_providers_folder_it_did_not_make(workbench, tmp_path):
+    theirs = tmp_path / "proj" / ".agents" / "providers"
+    theirs.mkdir(parents=True)
+    (theirs / "notes.md").write_text("another tool's\n", encoding="utf-8")
+    r = agents_dir(workbench, tmp_path)
+    assert r.returncode == 1 and "providers were not installed" in r.stderr
+    out = json.loads(r.stdout)
+    assert out["providers"] == "skipped" and "providers" in out["skipped"] and out["installed"] == 3
+    r = agents_dir(workbench, tmp_path, "--uninstall")
+    assert r.returncode == 1
+    assert entries(theirs) == ["notes.md"]
+
+
+def test_plugin_install_carries_the_providers_and_prints_the_workbench_root(workbench, tmp_path):
+    r = plugin(workbench, tmp_path)
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout)
+    link = tmp_path / "cc" / "skills" / "ai-workbench"
+    assert out["workbench_root"] == str(link)
+    assert (link / "providers" / "resolve.py").is_file()
+    got = subprocess.run([sys.executable, str(link / "providers" / "resolve.py"), "--class", "store:runtime"],
+                         capture_output=True, text=True, timeout=60)
+    assert got.returncode == 0 and Path(got.stdout.strip()).is_file()
+    assert f"WORKBENCH_ROOT={link}" in r.stderr
+
+
+def test_doctor_checks_an_installed_workbench_root(workbench, tmp_path):
+    assert agents_dir(workbench, tmp_path, "--copy").returncode == 0
+    root = tmp_path / "proj" / ".agents"
+    r = subprocess.run([sys.executable, str(ROOT / "scripts/doctor.py"), "--root", str(root), "--json"],
+                       capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    report = json.loads(r.stdout)
+    assert report["workbench_root"] == str(root) and "classes" in report
 
 
 # --- a pack change and an uninstall remove what an earlier pack installed --------------------------
