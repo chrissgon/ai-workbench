@@ -261,6 +261,13 @@ def standing(skill: str) -> dict:
             "evidence_images": sorted(images)}
 
 
+def carries_settings(rel: str) -> bool:
+    """True when a part of the relative path rel is one of the names that carry a tool's settings, by the lab's own
+    list (harness_settings()): such a path never enters a run and never leaves one in a change set."""
+    names = set(settings_names())
+    return any(part in names for part in str(rel).replace("\\", "/").split("/"))
+
+
 def readable(cwd: str, rel: str) -> bool:
     """True when the host may read the path rel of what a run left in cwd: a regular file, no link, inside cwd."""
     return bool(LAB.readable(cwd, rel))

@@ -9,6 +9,8 @@ Otherwise it acts by the skill staged in the copy:
   demo-asks    with no answer in the prompt it asks, with the skills' asking template, and writes nothing;
                with an answer it writes docs/business/market.md and a line in docs/workbench/state.md
   demo-writes  writes docs/business/icp.md from docs/business/market.md; without that input it says so
+  demo-code    runs adapters/h/code.sh in the copy, when a test wrote one (with the attempt number as $1), and
+               replies that it changed the files
 """
 from __future__ import annotations
 
@@ -30,6 +32,7 @@ here="$(dirname "$0")"; prompt="$2"; cwd="$4"; out="$8"
 if grep -q "Reply with the single word: ok" "$prompt"; then echo probe >> "$here/probes.txt"; echo ok > "$out/response.md"; exit 0; fi
 skill=none
 for name in demo-asks demo-writes; do [ -d "$cwd/.h/skills/$name" ] && skill="$name"; done
+[ -d "$cwd/.h/skills/demo-code" ] && skill=demo-code
 n=1; while ! mkdir "$here/call-$skill.$n" 2>/dev/null; do n=$((n + 1)); done
 echo "$skill $n" >> "$here/calls.txt"
 (cd "$cwd" && find . -path ./.git -prune -o -type f -print | sort) > "$out/files.txt"
@@ -64,6 +67,9 @@ case "$skill" in
     else
       echo "There is no market analysis (docs/business/market.md)." > "$out/response.md"
     fi ;;
+  demo-code)
+    if [ -f "$here/code.sh" ]; then (cd "$cwd" && sh "$here/code.sh" "$n"); fi
+    echo "Changed the files the request names." > "$out/response.md" ;;
   *) echo "ok" > "$out/response.md" ;;
 esac
 '''
@@ -118,11 +124,16 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     (adapter / "run-prompt.sh").write_text(ADAPTER, encoding="utf-8")
     skill(tree, "demo-asks", "docs/workbench/state.md, docs/workbench/research/<topic>.md, AGENTS.md", "docs/business/market.md")
     skill(tree, "demo-writes", "docs/workbench/state.md, docs/business/market.md", "docs/business/icp.md")
+    skill(tree, "demo-code", "docs/workbench/state.md", "")
     (tree / "flows").mkdir()
     (tree / "flows" / "demo.json").write_text(json.dumps({"flow": "demo", "title": "Demo flow", "tasks": [
         {"key": "market", "skill": "demo-asks", "title": "Market", "text": "do the market analysis."},
         {"key": "profile", "skill": "demo-writes", "title": "Profile", "text": "choose the profile.",
          "depends_on": ["market"], "milestone": True}]}), encoding="utf-8")
+    (tree / "flows" / "code-demo.json").write_text(json.dumps({"flow": "code-demo", "title": "Code demo", "tasks": [
+        {"key": "first", "skill": "demo-code", "title": "First change", "text": "make the first change."},
+        {"key": "second", "skill": "demo-code", "title": "Second change", "text": "make the second change.",
+         "depends_on": ["first"]}]}), encoding="utf-8")
     for rel in ("providers/resolve.py", "providers/store/sqlite.py"):
         (tree / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / rel, tree / rel)

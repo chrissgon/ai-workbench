@@ -220,7 +220,9 @@ def _never(project: str, rel: str, declared, cfg: dict, settings_names) -> str |
     return None
 
 
-def _scan(data: bytes) -> str | None:
+def scan(data: bytes) -> str | None:
+    """Why bytes may not leave or enter a copy: too large to scan, or what looks like a credential (with the labels,
+    never the value); None when they may."""
     if len(data) > SCAN_MAX:
         return "too large to scan for credentials"
     found = credential_findings(data.decode("utf-8", errors="replace"))
@@ -279,7 +281,7 @@ def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, 
             except OSError as e:
                 reason = f"cannot be read: {e.strerror}"
             else:
-                reason = _scan(data)
+                reason = scan(data)
         if reason is None:
             files.append((source, rel))
             base[rel] = _sha256(source)
@@ -294,7 +296,7 @@ def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, 
             mode = "section" if protected and meta.get("area") not in CODE_AREAS else "whole"
             with open(source, encoding="utf-8", errors="replace") as f:
                 text, _removed = agents_md_for_run(f.read(), mode)  # the removed lines stay in memory only
-            reason = "protected, and it has no workbench section" if not text else _scan(text.encode("utf-8"))
+            reason = "protected, and it has no workbench section" if not text else scan(text.encode("utf-8"))
         if reason:
             left_out.append({"path": AGENTS_MD, "reason": reason})
         else:
@@ -331,7 +333,7 @@ def _write(target: str, data: bytes) -> None:
     os.replace(temporary, target)
 
 
-def returning(project: str, result: dict, base: dict, base_state, skill: str, *, bound=()) -> tuple:
+def returning(project: str, result: dict, base: dict, base_state, skill: str, *, bound=(), versioned=()) -> tuple:
     """(returned, kept, state_report): bring back what a completed run left, by the path rule. returned lists
     {"path", "class"} of what was written into the project; kept lists {"path", "class", "reason"} of what stays
     in the run folder only; state_report is the state file's merge report without its text ({"accepted",
@@ -340,16 +342,17 @@ def returning(project: str, result: dict, base: dict, base_state, skill: str, *,
     The checks of one path, in order, the first that fails giving the reason: its class (L7), a regular file
     inside the copy (L8), the project's path is not a link and stays inside the project, the project's file is
     unchanged since the copy (L12; the state file is merged line by line instead, L10), the credential scan
-    (L14). Nothing is deleted in the project."""
+    (L14). Nothing is deleted in the project. versioned lists the paths the path rule calls versioned (the change
+    set's, runtime/changeset.py): they never come back as loose files and are not listed here."""
     project = os.path.realpath(project)
     cwd, changes = result["cwd"], result["changes"]
-    facts = {"staged": list(result["staged"]) + [path_rule.DROP_DIR], "bound": list(bound)}
+    facts = {"staged": list(result["staged"]) + [path_rule.DROP_DIR], "bound": list(bound), "versioned": list(versioned)}
     returned, kept, state_report = [], [], None
     for rel in sorted(changes["created"] + changes["modified"]):
         cls = path_rule.classify(rel, facts)
         keep = lambda reason: kept.append({"path": rel, "class": cls, "reason": reason})
-        if cls == "ignored":
-            continue
+        if cls in ("ignored", "versioned"):
+            continue  # a versioned path travels in the change set
         if cls not in path_rule.RETURNED:
             keep("this class of path is not brought back yet")
             continue
@@ -367,7 +370,7 @@ def returning(project: str, result: dict, base: dict, base_state, skill: str, *,
         source = os.path.join(cwd, *rel.split("/"))
         with open(source, "rb") as f:
             data = f.read(SCAN_MAX + 1)
-        scanned = _scan(data)
+        scanned = scan(data)
         if scanned:
             keep(scanned)
             continue
@@ -385,7 +388,7 @@ def returning(project: str, result: dict, base: dict, base_state, skill: str, *,
         returned.append({"path": rel, "class": cls})
     for rel in sorted(changes["deleted"]):
         cls = path_rule.classify(rel, facts)
-        if cls != "ignored":
+        if cls not in ("ignored", "versioned"):
             kept.append({"path": rel, "class": cls, "reason": "the run deleted it; the project's file is left as it is"})
     return returned, kept, state_report
 
