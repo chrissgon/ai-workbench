@@ -11,7 +11,17 @@ whose instance gives:
 """
 from __future__ import annotations
 
+import importlib.util
 from pathlib import Path
+
+DOCUMENTS = Path(__file__).resolve().parents[2] / "documents"
+
+
+def _load(name: str, path: Path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 class LocalBoard:
@@ -56,4 +66,41 @@ class LocalBoard:
         return ident
 
 
-HARNESSES = {"local": LocalBoard}
+class NotionBoard:
+    """The Notion implementation, against the stand-in service of providers/documents/tests/fake_notion.py: the board
+    is a base of the stand-in, and the person edits its rows there."""
+
+    fake_notion = None
+
+    def config(self, tmp_path) -> dict:
+        if NotionBoard.fake_notion is None:
+            NotionBoard.fake_notion = _load("fake_notion_for_board", DOCUMENTS / "tests" / "fake_notion.py")
+        self.blocks = _load("notion_blocks_for_board_harness", DOCUMENTS / "notion_blocks.py")
+        self.fake = NotionBoard.fake_notion.shared()
+        self.base = self.fake.create_base()
+        self.ledger = Path(tmp_path) / "ledger" / "issue-tracker-notion.json"
+        return {"provider": "notion", "base": self.base, "expires": "2099-12-31"}
+
+    def env(self) -> dict:
+        return {"NOTION_TOKEN": self.fake.token, "INTEGRATION_ISSUE_TRACKER_NOTION_API_BASE": self.fake.base,
+                "INTEGRATION_ISSUE_TRACKER_NOTION_LEDGER": str(self.ledger)}
+
+    def person_edits(self, ident: str, title=None, text=None, state=None) -> None:
+        if title is not None:
+            self.fake.person_sets(ident, "Name", title)
+        if state is not None:
+            self.fake.person_sets(ident, "Status", state)
+        if text is not None:
+            self.fake.person_replaces_body(ident, self.blocks.to_blocks(text))
+
+    def person_comments(self, ident: str, text: str) -> None:
+        self.fake.comment(ident, text)
+
+    def person_creates(self, title: str, text: str) -> str:
+        page = self.fake.create_page({"type": "data_source_id", "data_source_id": self.base},
+                                     {"Name": {"title": [{"type": "text", "text": {"content": title}}]}},
+                                     self.blocks.to_blocks(text))
+        return page["id"]
+
+
+HARNESSES = {"local": LocalBoard, "notion": NotionBoard}
