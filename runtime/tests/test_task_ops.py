@@ -297,13 +297,16 @@ def test_the_shell_prints_one_json_object_and_uses_the_documented_exit_codes(tre
     capsys.readouterr()
     assert cli.main(["pending", "--project", path, "--id", str(ran["pending_id"])]) == 0
     assert json.loads(capsys.readouterr().out)["answer"] == "From standard input."
-    for argv, code in ((["status"], 2), (["request", "--project", path, "--text", "x"], 2), (["frobnicate", "--project", path], 2),
+    for argv, code in ((["status"], 2), (["frobnicate", "--project", path], 2),
                        (["answer", "--project", path, "--id", "1", "--text", "a", "--text-file", "b"], 2),
                        (["release", "--project", path, "--id", "99"], 1), (["status", "--project", path + "-missing"], 3)):
         assert cli.main(argv) == code, argv
         captured = capsys.readouterr()
         assert captured.out == "" and captured.err.startswith("error: ") and "Traceback" not in captured.err
     assert cli.main(["--help"]) == 0 and "run-next" in capsys.readouterr().out
+    # Without --flow a request waits for its route (stage 3): no longer a usage error.
+    assert cli.main(["request", "--project", path, "--text", "x"]) == 0
+    assert json.loads(capsys.readouterr().out)["state"] == "requested"
 
 
 def test_every_script_of_the_runtime_prints_its_help_and_refuses_an_unknown_call():
