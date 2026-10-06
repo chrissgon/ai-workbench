@@ -47,6 +47,11 @@ Operations of stage 3:
                                    taken
   answer(..., with_comments=True)  the comments saved from the board for the task, and from the platform for the
                                    documents its skill owns, enter the answer
+  hand_over(project, task_id, file)   put a file of the person's in a task's file drop (runtime/drop.py): it enters
+                                   that task's runs, and the prompt lists it
+
+A task whose skill's runtime manifest sets mandatory_milestone is a milestone whatever its flow file says; the review
+its run opens when it ends `done` says so and carries "mandatory_milestone": true in its payload.
 
 With a documents platform, run_next reads it first (documents.pull) and runs nothing while a document the task's
 skill declares was edited there and not taken; after the run, the documents it returned are written to it
@@ -83,6 +88,7 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import board  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
 import documents  # noqa: E402
+import drop  # noqa: E402
 import endings  # noqa: E402
 import flow_files  # noqa: E402
 import lab  # noqa: E402
@@ -113,6 +119,9 @@ RECORDER_TIMEOUT = 60
 FLOOR_KEY = "WB_RUNTIME_FLOOR_KEY"
 TITLE_CHARS = 120  # a request's title taken from its first line, when the person gives none
 ROUTE_KEPT = "a route-only run returns no file"
+HANDED_LINE = "The user handed over these files for this task. They are in the project at:"
+MANDATORY_LINE = ("This delivery is a mandatory milestone: the next task accepts it only with your approval written in "
+                  "the document. Write it there, then release.")
 
 
 class OpsError(Exception):
@@ -217,11 +226,14 @@ def task_prompt(request_text: str, task_text: str, answered, handed=None) -> str
     """The text of one run: the request in the person's words, the task's own text, and, on a run made after
     an answer, every earlier question of this task with its answer. It names no skill: the one skill staged
     for the run loads by its description, as in a lab run. An empty task text (a plan of one skill) leaves out
-    the "For this task: " paragraph, so the prompt is the plain request. handed (the file drop, a later package
-    of stage 3) is accepted and not used yet."""
+    the "For this task: " paragraph, so the prompt is the plain request. handed lists the relative paths of the
+    files the person handed over to this task (the file drop): one paragraph after the task's text names them;
+    absent or empty, the prompt is unchanged."""
     parts = [request_text.strip()]
     if (task_text or "").strip():
         parts += ["", "For this task: " + task_text.strip()]
+    if handed:
+        parts += ["", HANDED_LINE, *[f"- {rel}" for rel in handed]]
     if answered:
         parts += ["", "In an earlier run of this task you stopped and asked the user. Your replies and the user's "
                       "answers are below, oldest first. Each answer is the user's decision: record it where the "
@@ -379,12 +391,16 @@ def request(project: str, text: str, flow: str | None = None, title: str | None 
                                                                  "the title").replace("\n", " "), text=said)
         return {"request": out["request"], "state": out["state"], "next": "route"}
     try:
-        plan = flow_files.load(flow, ROOT)
+        loaded = flow_files.load(flow, ROOT)
+        # A skill whose manifest makes it a mandatory milestone is one whatever the flow file says.
+        tasks = [{**t, "milestone": bool(t.get("milestone")) or plan.mandatory(t["skill"], ROOT)} for t in loaded["tasks"]]
     except flow_files.FlowError as e:
         raise OpsError(str(e), 2) from None
-    out = _stored(ctx, ctx["store"].request_add, title=_text(title or plan["title"], "the title").replace("\n", " "),
-                  text=_text(text, "the request's text"), flow=plan["flow"], tasks=plan["tasks"])
-    return {**out, "flow": plan["flow"]}
+    except manifest.ManifestError as e:
+        raise OpsError(str(e), 1) from None
+    out = _stored(ctx, ctx["store"].request_add, title=_text(title or loaded["title"], "the title").replace("\n", " "),
+                  text=_text(text, "the request's text"), flow=loaded["flow"], tasks=tasks)
+    return {**out, "flow": loaded["flow"]}
 
 
 def run_next(project: str, tier: str | None = None) -> dict:
@@ -491,17 +507,24 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     # Outside the run folder: the facade sets aside whatever it finds there.
     prepared_dir = os.path.join(cfg["data_dir"], PREPARED_DIR, str(run_id))
     try:
+        handed = drop.files(cfg["project"], task["id"])
+        refused = []
+        if handed and routing["web"] and not drop.WEB_TASK_TAKES_DROP:
+            refused = [{"path": rel, "reason": drop.WEB_REFUSAL} for _source, rel in handed]
+            handed = []
         try:
             entered = workcopy.entering(cfg["project"], meta, web=routing["web"], cfg=cfg,
-                                        settings_names=lab.settings_names(), prepared_dir=prepared_dir)
+                                        settings_names=lab.settings_names(), prepared_dir=prepared_dir, handed=handed)
         except workcopy.CopyError as e:
             return fail("internal", f"the copy could not be built: {e}")
-        files, base, out["left_out"] = entered["files"], entered["base"], entered["left_out"]
+        files, base, out["left_out"] = entered["files"], entered["base"], entered["left_out"] + refused
+        entered_rels = {rel for _source, rel in files}
         out["entered"] = {"kind": entered["kind"], "agents_md": entered["agents_md"], "files": len(files)}
         base_state = _read(os.path.join(cfg["project"], *path_rule.STATE.split("/")))
         request_text = _stored(ctx, store.task_get, task["parent_id"])["text"]
         answered = [p for p in _stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
-        prompt = task_prompt(request_text, task["text"], answered)
+        prompt = task_prompt(request_text, task["text"], answered,
+                             handed=[rel for _source, rel in handed if rel in entered_rels])
         with lab.session(), _key_in_environment(routing, key):
             result = lab.run_skill(skill, prompt, files, dest, web=routing["web"], tier=routing["tier"])
     except lab.LabError as e:
@@ -535,6 +558,9 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         done = _stored(ctx, store.task_run_finish, run_id, task_state="blocked", task_note=_note(body), **finish)
         out.update(status="ok", ending=ending, task_state="blocked", pending_id=None, returned=returned, kept=kept)
         return out
+    mandatory = ending == "done" and bool(known.get("mandatory_milestone"))
+    if mandatory:
+        body = body.rstrip("\n") + "\n\n" + MANDATORY_LINE
     cut = len(body.encode("utf-8")) > store.BODY_MAX
     # A run that wrote nothing and asks opens a question, which is answered. A run that wrote a declared output
     # opens a review, a draft with open questions included: its body is the whole reply, so the person reads the
@@ -549,6 +575,12 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
                             "routing": routing, "use": out["use"],
                             "response_file": os.path.join(result["outputs"], "response.md"), "body_cut": cut,
                             "body_masked": masked}}
+    if mandatory:
+        decision["payload"]["mandatory_milestone"] = True
+        if cut:  # the sentence stays at the end of a body that was cut
+            tail = "\n\n" + MANDATORY_LINE
+            room = store.BODY_MAX - len(tail.encode("utf-8"))
+            decision["body"] = body.encode("utf-8")[:room].decode("utf-8", errors="ignore") + tail
     done = _stored(ctx, store.task_run_finish, run_id, task_state="waiting", pending=decision, **finish)
     out.update(status="ok", ending=ending, task_state="waiting", pending_id=done["pending_id"], returned=returned, kept=kept)
     return out
@@ -941,6 +973,26 @@ def _documents(ctx: dict, function, *args, **kwargs):
         raise OpsError(f"the documents platform: {e}", 3 if e.kind == "not configured" else 1) from None
     except ctx["store"].StoreError as e:
         raise OpsError(str(e), e.code) from None
+
+
+def hand_over(project: str, task_id: int, file: str) -> dict:
+    """Put one file of the person's in a task's file drop, <project>/.workbench-local/drop/<task id>/ (runtime/drop.py):
+    it enters the runs of that task only, and their prompt lists it. Holds the run lock, so no run of the task is in
+    progress. Returns {"task", "path", "bytes", "sha256"}; refused (drop.DropError) with the reason."""
+    ctx = context(project)
+    with _run_lock(ctx["cfg"]):
+        task = _stored(ctx, ctx["store"].task_get, task_id)
+        if task["parent_id"] is None or not task.get("skill"):
+            raise OpsError(f"{task_id} is a request: a file is handed to one of its tasks", 1)
+        try:
+            meta = skill_meta.declared(os.path.join(ROOT, "skills", task["skill"]))
+        except skill_meta.SkillError as e:
+            raise OpsError(str(e), 1) from None
+        try:
+            return drop.hand_over(ctx["cfg"]["project"], {**task, "web": meta["web"]}, os.path.abspath(file),
+                                  drop.WEB_TASK_TAKES_DROP)
+        except drop.DropError as e:
+            raise OpsError(str(e), 1) from None
 
 
 def reject(project: str, pending_id: int, note: str | None = None) -> dict:

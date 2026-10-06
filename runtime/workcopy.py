@@ -10,10 +10,11 @@ What enters (entering()):
   L1  every run starts from a new copy, with the skill staged again: the lab facade makes a new run root and
       stages the skill on every attempt (runtime/lab.py); nothing here keeps a copy between runs
   L2  a run without the web sees the versioned files (git ls-files, with the person's git), the project's
-      documents and state file under docs/, and the machine files the skill declares. No other file outside
-      git. The store, the runtime's data and its configuration never
+      documents and state file under docs/, the machine files the skill declares, and the files the person
+      handed over to this task (the file drop, runtime/drop.py; those of another task never). No other file
+      outside git. The store, the runtime's data and its configuration never
   L3  a run with the web sees only the artifacts its skill declares (strict form: no allowance for web and
-      code together is built)
+      code together is built; a handed-over file enters a web task only if drop.WEB_TASK_TAKES_DROP is true)
   L4  a path with a part that carries a tool's settings never enters, at any depth
   L5  the project's AGENTS.md enters only when the skill declares it, without the two lines the container
       cannot serve; when a protected path covers it and the skill is not of a code area, only its workbench
@@ -226,12 +227,15 @@ def _scan(data: bytes) -> str | None:
     return None
 
 
-def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, prepared_dir: str) -> dict:
+def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, prepared_dir: str,
+             handed=()) -> dict:
     """What one run sees of the project. Returns {"files": [(source, rel)], "base": {rel: sha256}, "left_out":
     [{"path", "reason"}], "kind": "artifacts" or "general", "agents_md": None, "whole" or "section"}.
 
     meta is skill_meta.declared() of the skill; cfg is project_config.load() of the project; settings_names
-    is lab.settings_names(); prepared_dir is a private folder for files written for this run only."""
+    is lab.settings_names(); prepared_dir is a private folder for files written for this run only. handed is
+    [(source, rel)] of the files the person handed over to this task (runtime/drop.py, files()): they enter at
+    their paths, after the credential scan; nothing else of the drop folder enters, whatever the task."""
     project = os.path.realpath(project)
     declared = list(dict.fromkeys(meta["inputs"] + meta["outputs"] + meta["updates"]))
     settings_names = set(settings_names)
@@ -252,11 +256,18 @@ def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, 
             elif rel == path_rule.CONFIG or os.path.islink(os.path.join(project, *rel.split("/"))):
                 candidates.append(rel)  # listed with its reason, so that the person sees it was kept out
         candidates += _walk(project, path_rule.LOCAL_DIR.rstrip("/"))
+    drop = path_rule.DROP_DIR + "/"
+    candidates = [rel for rel in candidates if not rel.startswith(drop)]
+    for source, rel in handed:
+        if not rel.startswith(drop):
+            raise CopyError(f"{rel} is not a path of the file drop")
+        candidates.append(rel)
+    handed_rels = {rel for _source, rel in handed}
     files, base = [], {}
     for rel in sorted(set(candidates)):
         if rel == AGENTS_MD and AGENTS_MD in declared:
             continue  # rule 5, below
-        reason = _never(project, rel, declared, cfg, settings_names)
+        reason = _never(project, rel, declared + sorted(handed_rels), cfg, settings_names)
         if reason is None:
             source = os.path.join(project, *rel.split("/"))
             try:
@@ -328,7 +339,7 @@ def returning(project: str, result: dict, base: dict, base_state, skill: str, *,
     (L14). Nothing is deleted in the project."""
     project = os.path.realpath(project)
     cwd, changes = result["cwd"], result["changes"]
-    facts = {"staged": result["staged"], "bound": list(bound)}
+    facts = {"staged": list(result["staged"]) + [path_rule.DROP_DIR], "bound": list(bound)}
     returned, kept, state_report = [], [], None
     for rel in sorted(changes["created"] + changes["modified"]):
         cls = path_rule.classify(rel, facts)

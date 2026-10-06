@@ -21,6 +21,7 @@ Usage:
   python3 runtime/cli.py proof    --project <dir> [--skill <name>]
   python3 runtime/cli.py verdict  --project <dir> --run <run id> --word worked|corrected|failed
   python3 runtime/cli.py sync     --project <dir> [--dry-run] [--take page|project --path <relative path>]
+  python3 runtime/cli.py hand-over --project <dir> --task <task id> --file <path>
 
 request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes; a task without a dependency is ready at once. Without --flow, the
@@ -68,6 +69,12 @@ sync      mirrors the tasks with the project's task board (task_board in runtime
           document that changed in the project goes to the platform, its open comments saved first. --dry-run
           reads nothing and prints every write it would make. --take page|project with --path settles a rejected
           document: the page's text, or the project's file over the page.
+hand-over copies one file of yours into the task's file drop, <project>/.workbench-local/drop/<task id>/: it
+          enters that task's runs and no other, and the run's prompt lists it; what a run leaves there never comes
+          back. Refused for a link, a folder, a file over 25 MB, a name with other characters than letters,
+          digits, '.', '_' and '-', a name already handed over, a task that is done, cancelled or running, a
+          file holding what looks like a credential, a git project that does not ignore .workbench-local/, and a
+          task whose skill uses the web (a web task receives only the artifacts its skill declares).
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -89,7 +96,7 @@ sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
-         "route", "approve", "reject", "sync")
+         "route", "approve", "reject", "sync", "hand-over")
 
 
 class Usage(Exception):
@@ -143,6 +150,7 @@ def run(argv) -> dict:
     p.add_argument("--take", choices=("page", "project"))
     p.add_argument("--path")
     p.add_argument("--with-comments", action="store_true")
+    p.add_argument("--file")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
@@ -173,6 +181,8 @@ def run(argv) -> dict:
         return ops.reject(project, need(a, "--id"), a.note)
     if a.verb == "sync":
         return ops.sync(project, dry_run=a.dry_run, take=a.take, path=a.path)
+    if a.verb == "hand-over":
+        return ops.hand_over(project, need(a, "--task"), need(a, "--file"))
     return ops.status(project)
 
 

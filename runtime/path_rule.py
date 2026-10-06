@@ -36,6 +36,7 @@ CLASSES = ("state", "machine", "document", "versioned", "ignored", "other")
 RETURNED = ("state", "machine", "document")  # the classes stage 1 brings back; "versioned" joins them in stage 4
 DROPPED_DIRS = (".git", "node_modules", "__pycache__", ".pytest_cache", ".venv")
 LOCAL_DIR = ".workbench-local/"
+DROP_DIR = ".workbench-local/drop"  # the file drop (runtime/drop.py): staged for every run, so never brought back
 DOCS_DIR = "docs/"
 DOCUMENT_SUFFIXES = (".md",)
 
