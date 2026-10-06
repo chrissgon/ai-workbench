@@ -169,6 +169,7 @@ The goal decided on 2026-09-28 (`docs/decisions.md`): a company run by agents, o
   - Until this is done: the task runtime stores the field as the adapter reports it and reads 0 as "not reported", never as "not loaded"; no rule of the runtime depends on it (decided by the supervisor on the maintainer's delegation on 2026-10-05).
   - Done when: the eval adapters report the skills a run loaded on follow-up runs too, shown on a recorded run, and a rule of the runtime may then read the field.
   - Plan: an adapter's `run-prompt.sh` is a measurement file, so the fix is a measurement change of the execution side, with the maintainer; no stage of the platform plan makes it.
+- [ ] **R13. A task board's own status property is not written.** Found on 2026-10-06 in the acceptance of stage 3 of the platform plan (`architecture/stage-3-findings-2026-10-06.md`, finding 4): a board whose status property cannot take the nine task states gets a select property of the runtime's own, and a coarse mapping of the nine states onto the board's own status (for example waiting and running as in progress, done and cancelled as done) is for the maintainer to decide.
 
 ## Project conventions
 
