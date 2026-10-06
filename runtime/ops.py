@@ -72,6 +72,11 @@ Operations of stage 6:
                                    (runtime/plan.py, combine); a route to the brief skill plans one brief task, and
                                    the delivery is routed again after the brief is released; every task names its
                                    area agent
+  dispatch(project[, budget_seconds])   the dispatcher's round (runtime/dispatcher.py decides): the handlers' ticks,
+                                   the releases each agent's mode makes, the runs its mode and caps allow, one at a time
+  poll(project)                    the short job: mirrors, expired approvals, the state file's generated lines, the
+                                   releases a mode makes; it calls no model and starts no task
+  handler_call(project, name, verb[, args])   one verb of a handler under runtime/handlers/, its JSON object
   release(project, pending_id)     also starts what a release starts: the brief's delivery routed again (its tasks
                                    wait in an acceptance), and, when the released task returned the product backlog,
                                    its todo tasks as sub-tasks inside the approved plan's limits (the others wait in
@@ -114,6 +119,7 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import ast
 import contextlib
 import datetime
 import fcntl
@@ -125,6 +131,7 @@ import re
 import sys
 import shutil
 import subprocess
+import time
 import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -134,6 +141,7 @@ import autonomy  # noqa: E402  (the same folder, as scripts/runtime.py imports r
 import board  # noqa: E402
 import changeset  # noqa: E402
 import deps as deps_sets  # noqa: E402  (the operation `deps` would hide the module: part 0, F.1, rule 5)
+import dispatcher  # noqa: E402
 import documents  # noqa: E402
 import drop  # noqa: E402
 import effects  # noqa: E402
@@ -467,6 +475,13 @@ def run_next(project: str, tier: str | None = None) -> dict:
     if tier not in (None, "strong"):
         raise OpsError("tier may only be \"strong\": the person can ask for the reference model, never for the floor model", 2)
     ctx = context(project)
+    return _claim_and_run(ctx, tier)
+
+
+def _claim_and_run(ctx: dict, tier=None, task_id=None) -> dict:
+    """The body of run_next, shared with dispatch: holding the run lock, end what an interrupted run left, read the
+    documents platform, claim the next ready task (or, with task_id, that task: task_claim), run it, write back the
+    documents it returned. What it returns is what run_next returns."""
     store = ctx["store"]
     with _run_lock(ctx["cfg"]):
         # This process holds the project's run lock, so a task still `running` is what an interrupted run left.
@@ -481,7 +496,7 @@ def run_next(project: str, tier: str | None = None) -> dict:
                         "recovered": recovered["tasks"]}
             except store.StoreError as e:
                 raise OpsError(str(e), e.code) from None
-            nxt = _stored(ctx, store.task_peek_next)["task"]
+            nxt = _stored(ctx, store.task_peek_next)["task"] if task_id is None else _stored(ctx, store.task_get, task_id)
             if nxt is not None and nxt.get("skill"):
                 try:
                     stopped = documents.blocked(ctx, skill_meta.declared(os.path.join(ROOT, "skills", nxt["skill"])))
@@ -490,10 +505,12 @@ def run_next(project: str, tier: str | None = None) -> dict:
                 if stopped:
                     return {"ran": None, "reason": "a document was edited on the platform and was not taken",
                             "task": nxt["id"], "documents": stopped, "pulled": pulled, "recovered": recovered["tasks"]}
-        claimed = _stored(ctx, store.task_claim_next)
+        claimed = _stored(ctx, store.task_claim_next) if task_id is None else _stored(ctx, store.task_claim, task_id)
         task = claimed["task"]
         if task is None:
-            out = {"ran": None, "reason": "no task is ready", "recovered": recovered["tasks"],
+            reason = "no task is ready" if task_id is None or claimed.get("reason") in (None, "not-ready") else \
+                f"task {task_id} is {claimed['reason']}"
+            out = {"ran": None, "reason": reason, "recovered": recovered["tasks"],
                    "pending": len(_stored(ctx, store.pending_list))}
             return {**out, "documents": pulled} if pulled is not None else out
         out = {**_run(ctx, task, tier), "recovered": recovered["tasks"]}
@@ -1917,6 +1934,260 @@ def reject(project: str, pending_id: int, note: str | None = None) -> dict:
         said = _text(note, "the note") if note is not None else None
         return _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="rejected", by="user", answer=said)
     raise OpsError(f"pending decision {pending_id} is a {item['kind']}: reject takes a plan, an acceptance or an effect", 2)
+
+
+# --- stage 6: the dispatcher's operations ----------------------------------------------------------------------------
+
+DISPATCH_BUDGET = 2700     # seconds after which a round starts no new run (the worker's limit is 240 minutes)
+HANDLER_TIMEOUT = 1800     # seconds a handler's verb may take
+PER_RUN_USD = 0.5          # what a floor run of unknown cost counts at, when runtime.json names no max_cost_usd_per_run
+# A run that failed so: the next run of the round would fail the same way, so the round stops.
+STOPPING_FAILURES = ("auth", "settings")
+STOPPING_REASONS = ("container:", "config:")  # a LabError of these kinds, recorded as an internal failure
+
+
+def _midnight_utc() -> str:
+    """The start of today, local time, as UTC ISO-8601: where a day's caps start counting."""
+    local = datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
+    return local.astimezone(datetime.timezone.utc).isoformat()
+
+
+def _snapshot(ctx: dict, key: dict) -> dict:
+    """What dispatcher.decide reads, from the store, the proof (proof.route through _route) and the runtime manifests:
+    the running task, the ready tasks oldest first with the tier each would run on, the open reviews with their
+    agent, proof and mandatory flag, and each area agent's facts, a day's spend and its entry. A run of the router
+    (its task is a request, so its agent is None) counts against the planning agent."""
+    store, cfg = ctx["store"], ctx["cfg"]
+    agents = cfg["area_agents"]
+    now = datetime.datetime.now(datetime.timezone.utc)
+    tasks = _stored(ctx, store.tasks_list)
+    by_id = {t["id"]: t for t in tasks}
+    standing_rows = _stored(ctx, store.approvals_list, status="active", scope="standing")
+    runs = [dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL else r
+            for r in _stored(ctx, store.runs_since, _midnight_utc())]
+    reference, floor = lab.reference("strong")["model"], lab.reference("floor")["model"]
+    per_run = cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD)
+    proofs = {}
+
+    def routed(skill: str) -> dict:
+        if skill not in proofs:
+            proofs[skill] = _route(ctx, skill, skill_meta.declared(os.path.join(ROOT, "skills", skill)), None, key)
+        return proofs[skill]
+
+    out = {"running": next((t for t in tasks if t["state"] == "running"), None),
+           "ready": [t for t in tasks if t["state"] == "ready" and t["parent_id"] is not None],
+           "reviews": [], "agents": {}, "tier": {}}
+    for name, entry in agents.items():
+        facts = autonomy.facts(name, agents, standing_rows, now)
+        out["agents"][name] = {"facts": facts, "entry": entry,
+                               "spent": autonomy.spend(runs, name, reference, floor, per_run)}
+    for item in _stored(ctx, store.pending_list):
+        task = by_id.get(item["task_id"])
+        if item["kind"] != "review" or task is None or not task.get("skill"):
+            continue
+        out["reviews"].append({"pending": item, "task": task, "agent": task.get("agent"),
+                               "proven": bool(routed(task["skill"]).get("proven")),
+                               "mandatory": plan.mandatory(task["skill"], ROOT)})
+    for task in out["ready"]:
+        if task.get("agent") in agents and task.get("skill"):
+            out["tier"][task["id"]] = routed(task["skill"])["tier"]
+    return out
+
+
+def _mode_releases(ctx: dict, released: list, snapshot: dict, decided: dict, skip=None) -> list:
+    """Apply the releases a decision lists, each as the mode of its agent (by "mode:<mode>"), with what a release starts
+    (_after_release). A review skip(task) names is left for later (poll leaves the brief's release, which runs the
+    router, to dispatch). When a release by a mode completes a request, one acceptance of kind deliveries lists every
+    delivery a mode released in it (part 0, F.3). Returns [{"pending_id", "task_id", "by", ...}]."""
+    reviews = {r["pending"]["id"]: r for r in snapshot["reviews"]}
+    agents = snapshot["agents"]
+    out = []
+    for pending_id in decided["release"]:
+        review = reviews[pending_id]
+        if skip is not None and skip(review["task"]):
+            continue
+        by = "mode:" + autonomy.mode_of(agents[review["agent"]]["facts"])
+        done = _release(ctx, pending_id, by=by)
+        out.append({"pending_id": pending_id, "task_id": review["task"]["id"], "by": by,
+                    **({"after": done["after"]} if done.get("after") else {})})
+        released.append(pending_id)
+        for request_id in done.get("completed") or []:
+            out[-1]["acceptance"] = _deliveries_acceptance(ctx, request_id)
+    return out
+
+
+def _deliveries_acceptance(ctx: dict, request_id: int):
+    """One acceptance of kind deliveries on a request a mode completed, listing every delivery a mode released in it;
+    None when no delivery of it was released by a mode."""
+    store = ctx["store"]
+    tasks = {t["id"]: t for t in _stored(ctx, store.tasks_list, request_id) if t["parent_id"] is not None}
+    by_mode = [p for p in _stored(ctx, store.pending_list, "resolved")
+               if p["task_id"] in tasks and p["kind"] == "review" and p["resolution"] == "released"
+               and str(p.get("resolved_by") or "").startswith("mode:")]
+    if not by_mode:
+        return None
+    lines = [f"Request {request_id} is done, and an autonomy mode released these deliveries without you. Each stays a "
+             "draft: read it, then accept (a note records what you think), or reject.", ""]
+    lines += [f"- task {p['task_id']} ({tasks[p['task_id']]['skill']}): {tasks[p['task_id']]['title']}, released by "
+              f"{p['resolved_by']}, pending decision {p['id']}" for p in by_mode]
+    return _stored(ctx, store.acceptance_open, task_id=request_id, what="deliveries",
+                   title=f"Accept the deliveries of request {request_id}", body="\n".join(lines),
+                   payload={"released": [p["id"] for p in by_mode]})["pending_id"]
+
+
+def _stops_the_round(ran: dict):
+    """The reason a round stops after this run, or None: a failure the next run would repeat."""
+    failure = ran.get("failure") or {}
+    if failure.get("kind") in STOPPING_FAILURES:
+        return f"a run failed ({failure['kind']}): the next run would fail the same way"
+    if failure.get("kind") == "internal" and str(failure.get("reason") or "").startswith(STOPPING_REASONS):
+        return f"a run could not reach the container ({failure['reason'][:200]}): the next run would fail the same way"
+    return None
+
+
+def dispatch(project: str, budget_seconds=None) -> dict:
+    """The dispatcher (decision P5): one round. The handlers whose `dispatch` is true and whose agent is enabled get
+    their tick; then, until nothing may start: the reviews each agent's mode releases are released (with what a release
+    starts), and the oldest ready task whose agent may start (its mode, its daily caps on the tier its proof gives) runs,
+    as run_next runs a task. No new run starts once budget_seconds (default DISPATCH_BUDGET) have passed, and a failure
+    the next run would repeat stops the round. Returns {"handlers", "released", "ran", "held", "stopped"}."""
+    started = time.monotonic()
+    ctx = context(project)
+    cfg = ctx["cfg"]
+    budget = DISPATCH_BUDGET if budget_seconds is None else budget_seconds
+    if not cfg["area_agents"]:
+        return {"stopped": "no area agent is configured"}
+    out = {"handlers": _ticks(ctx, project), "released": [], "ran": [], "held": [], "stopped": None}
+    key = _floor_key()
+    released = []
+    while out["stopped"] is None:
+        snapshot = _snapshot(ctx, key)
+        decided = dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)
+        out["held"] = decided["held"]
+        did = _mode_releases(ctx, released, snapshot, decided)
+        out["released"] += did
+        if decided["start"] is None:
+            if did:
+                continue  # a release may have made a task ready
+            out["stopped"] = "nothing may start" if decided["held"] or snapshot["ready"] else "no task is ready"
+            break
+        if time.monotonic() - started > budget:
+            out["stopped"] = f"the round's budget of {budget} s is spent: no new run starts"
+            break
+        try:
+            ran = _claim_and_run(ctx, None, decided["start"])
+        except OpsError as e:
+            out["stopped"] = f"task {decided['start']} could not run: {e}"
+            break
+        if ran.get("ran") is None:
+            out["stopped"] = ran.get("reason") or "nothing ran"
+            break
+        out["ran"].append({"task_id": ran["ran"], "run_id": ran["run_id"], "status": ran["status"],
+                           "ending": ran["ending"], "model": (ran.get("routing") or {}).get("model")})
+        out["stopped"] = _stops_the_round(ran)
+    return out
+
+
+def _ticks(ctx: dict, project: str) -> dict:
+    """The tick of every handler whose `dispatch` is true and whose agent is enabled; a failure is recorded, never
+    raised."""
+    out = {}
+    agents = ctx["cfg"]["area_agents"]
+    for name, entry in sorted((ctx["cfg"].get("handlers") or {}).items()):
+        agent = agents.get(entry.get("agent")) or {}
+        if not entry.get("dispatch") or not agent.get("enabled") or agent.get("mode") == "stopped":
+            continue
+        try:
+            out[name] = handler_call(project, name, "tick")
+        except OpsError as e:
+            out[name] = {"error": str(e), "code": e.code}
+    return out
+
+
+def poll(project: str) -> dict:
+    """The short job (decision P5): mirror the task board and the documents when the project has them (an error is
+    recorded, not raised), expire the standing approvals past their expiry, rewrite the state file's generated lines
+    (the Checkpoints line, the standing rows) when they changed, and release what each agent's mode releases. It calls
+    no model and starts no task: the release of a brief, which runs the router, is left to dispatch. Returns {"synced",
+    "expired", "released", "state"}."""
+    ctx = context(project)
+    cfg, store = ctx["cfg"], ctx["store"]
+    synced = None
+    if board.enabled(cfg) or documents.enabled(cfg):
+        try:
+            synced = sync(project)
+        except OpsError as e:
+            synced = {"error": str(e), "code": e.code}
+    expired = _stored(ctx, store.approvals_expire, datetime.datetime.now(datetime.timezone.utc).isoformat())
+    state = "unchanged"
+    if expired:
+        rows = _standing_rows(ctx)
+        state = "written" if rows.get("state_rows") is not None else state
+    if cfg["raw"].get("area_agents") is not None:
+        target = os.path.join(cfg["project"], *path_rule.STATE.split("/"))
+        current = _read(target) if os.path.isfile(target) and not os.path.islink(target) else None
+        if current is not None:
+            text, found = state_merge.with_checkpoints(current, autonomy.state_checkpoints(cfg["area_agents"]))
+            if found and text != current and isinstance(_write_checkpoints(cfg), dict):
+                state = "written"
+    released = []
+    if cfg["area_agents"]:
+        snapshot = _snapshot(ctx, _floor_key())
+        decided = dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)
+        released = _mode_releases(ctx, [], snapshot, decided, skip=lambda task: _brief_delivery(ctx, task) is not None)
+    return {"synced": synced, "expired": expired, "released": released, "state": state}
+
+
+def _handler_verbs(path: str) -> tuple:
+    """The words of a handler's VERBS constant, read with ast, without importing the file."""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read(), filename=path)
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "VERBS" for t in node.targets):
+            value = ast.literal_eval(node.value)
+            if isinstance(value, (tuple, list)) and all(isinstance(v, str) for v in value):
+                return tuple(value)
+    return ()
+
+
+def handler_call(project: str, name: str, verb: str, args=None) -> dict:
+    """Start one verb of a handler (runtime/handlers/<name with underscores>.py of the checkout) with this interpreter
+    and --project, and return the one JSON object it printed, with "exit_code". name is a key of the configuration's
+    handlers; verb is a word of the file's VERBS; args is {flag: value}, passed as --flag value. Anything else: OpsError
+    2. Output that is not one JSON object: OpsError 1, with the end of its stderr."""
+    ctx = context(project)
+    handlers = ctx["cfg"].get("handlers") or {}
+    if name not in handlers:
+        raise OpsError(f"{name!r} is not a handler of {ctx['cfg']['path']}", 2)
+    path = os.path.join(ROOT, "runtime", "handlers", name.replace("-", "_") + ".py")
+    if not os.path.isfile(path) or os.path.islink(path):
+        raise OpsError(f"the handler {name} has no file runtime/handlers/{os.path.basename(path)} in this checkout", 2)
+    try:
+        verbs = _handler_verbs(path)
+    except (OSError, SyntaxError, ValueError) as e:
+        raise OpsError(f"the handler {name}'s verbs cannot be read: {type(e).__name__}", 2) from None
+    if verb not in verbs:
+        raise OpsError(f"the handler {name} has no verb {verb!r} (its verbs: {', '.join(verbs) or 'none'})", 2)
+    flags = []
+    for flag, value in sorted((args or {}).items()):
+        if not isinstance(flag, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", flag) or flag == "project":
+            raise OpsError(f"{flag!r} is not a flag a handler takes", 2)
+        flags += [f"--{flag}", str(value)]
+    try:
+        done = subprocess.run([sys.executable, path, verb, "--project", ctx["cfg"]["project"], *flags],
+                              capture_output=True, text=True, timeout=HANDLER_TIMEOUT, check=False)
+    except subprocess.TimeoutExpired:
+        raise OpsError(f"the handler {name} {verb} ran over {HANDLER_TIMEOUT} s", 1) from None
+    except OSError as e:
+        raise OpsError(f"the handler {name} could not be started: {type(e).__name__}", 1) from None
+    try:
+        printed = json.loads(done.stdout)
+    except ValueError:
+        printed = None
+    if not isinstance(printed, dict):
+        raise OpsError(f"the handler {name} {verb} printed no JSON object (exit {done.returncode}): "
+                       f"{done.stderr.strip()[-300:]}", 1)
+    return {**printed, "exit_code": done.returncode}
 
 
 if __name__ == "__main__":

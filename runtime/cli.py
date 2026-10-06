@@ -28,6 +28,9 @@ Usage:
   python3 runtime/cli.py revoke-policy --project <dir> --id <approval id>
   python3 runtime/cli.py standing --project <dir> --policy <name>
   python3 runtime/cli.py set-mode --project <dir> --agent <name> --mode stopped|supervised|milestones|autonomous|autonomous-with-policy
+  python3 runtime/cli.py dispatch --project <dir>
+  python3 runtime/cli.py poll     --project <dir>
+  python3 runtime/cli.py handler  --project <dir> --name <handler> --verb <verb> [--arg <flag>=<value>]...
 
 request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes; a task without a dependency is ready at once. Without --flow, the
@@ -107,6 +110,13 @@ set-mode  sets one area agent's autonomy mode in docs/workbench/runtime.json (ar
           and an effect inside a policy you approved runs without asking). A question, an unclassified reply, a
           draft with open questions and a mandatory milestone always wait for you. Then accept the new hash with
           accept-config, which also rewrites the Checkpoints line of the state file.
+dispatch  one round of the dispatcher: the ticks of the handlers whose dispatch is true, the deliveries each area
+          agent's mode releases (released, never approved), and the next ready tasks, one at a time, while the agent's
+          mode and its daily caps allow (runs per day on the reference model, dollars per day on the floor model). It
+          calls a model, like run-next. The scheduler's worker job calls it.
+poll      the short job: mirrors the task board and the documents, expires standing approvals, rewrites the state file's
+          generated lines, and releases what a mode releases. It calls no model and starts no task.
+handler   starts one verb of a handler (runtime/handlers/) that handlers in runtime.json names, and prints its result.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -129,7 +139,7 @@ import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
          "route", "approve", "reject", "sync", "hand-over", "deps", "progress", "set-mode", "approve-policy",
-         "revoke-policy", "standing")
+         "revoke-policy", "standing", "dispatch", "poll", "handler")
 
 
 class Usage(Exception):
@@ -190,6 +200,9 @@ def run(argv) -> dict:
     p.add_argument("--expires")
     p.add_argument("--what")
     p.add_argument("--policy")
+    p.add_argument("--name")
+    p.add_argument("--verb")
+    p.add_argument("--arg", action="append", default=[])
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
@@ -234,6 +247,18 @@ def run(argv) -> dict:
         return ops.revoke_policy(project, need(a, "--id"))
     if a.verb == "standing":
         return ops.standing(project, need(a, "--policy"))
+    if a.verb == "dispatch":
+        return ops.dispatch(project)
+    if a.verb == "poll":
+        return ops.poll(project)
+    if a.verb == "handler":
+        pairs = {}
+        for item in a.arg:
+            if "=" not in item:
+                raise Usage(f"--arg takes <flag>=<value>, not {item!r}")
+            flag, value = item.split("=", 1)
+            pairs[flag] = value
+        return ops.handler_call(project, need(a, "--name"), need(a, "--verb"), pairs)
     return ops.status(project)
 
 
