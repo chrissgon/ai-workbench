@@ -57,4 +57,15 @@ Total: 3 runs, 1,050,026 ms of model time, 3,235,444 tokens, every run `ok` on i
 
 - No lab test, no `eval_run.py`, no docker build, removal or `ensure`.
 - `run-next` on the system's Python 3.9 (O1): read in code only, because it would fail a task of the acceptance project.
-- No answer was written into the state file by code in this acceptance (finding 3), so the check "one more `(user)` decision line" of step 4 did not apply.
+- No answer was written into the state file by code in this acceptance (finding 3), so the check "one more `(user)` decision line" of step 4 did not apply. It ran after the two fixes below.
+
+## The two defects, fixed
+
+Decided by the supervisor on the maintainer's delegation on 2026-10-05; no skill was edited.
+
+| Finding | Fix | Pull request |
+|---|---|---|
+| 1: a new open question not in the checkbox form was refused, with the reason for closing or removing one | The merge reads tolerantly and writes strictly: a new list item of `## Open questions`, in any list form, is written as `- [ ] <text>`, its text kept (an `OPEN-<n>` mark stays part of it). Closing, rewording or removing a question the project has, a question attributed to the person or to another skill, and a line that is not a list item are each refused with their own reason. A test binds the written form to `contracts/state.md` | #153 |
+| 2 and 3: a run that changed only the state file and asked was `unclassified`, so the answer was not written into the state file | For telling `question` from the other endings, a change limited to the state file counts as having written nothing: such a run that asks ends `question`, and its answer is written by code. One that asks nothing follows the rules already there; `draft_with_questions` still needs a declared output written. One corpus line moved from `unclassified` to `question` and is labelled | #154 |
+
+**Step 4, run after both fixes.** On a scratch project with invented names (not the workbench's own case), from the acceptance checkout advanced to the central branch holding #153 and #154: one run of `biz-market-analysis`, floor tier by proof, key `lab`, first attempt, 111,968 ms, 39,108 tokens, the image the evidence's. It changed no file and asked six numbered questions: ending `question`. The answer gave `"state": {"written": true}`, and the state file had one more decision line ending `(user)`, the last of `## Decisions`, in the form `- <date>: Answer to <skill> (pending decision <n>): <text> (user)`. The request was cancelled and the scratch project deleted. This run wrote nothing at all, so it did not exercise the state-only path of #154 in a real run; that path is covered by the classifier's tests and one corpus line.
