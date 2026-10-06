@@ -140,21 +140,33 @@ verbs:
                  resolves; without one the request is anonymous (public repositories only).
   commit-files   Side effect. Commit files to a branch with git and push it:
                  --repo <owner>/<name> --branch <b> --message-file <f>
-                 --file <repo-path>=<local-file> (repeat; at most {MAX_FILES} files,
-                 {MAX_FILE_BYTES // (1024 * 1024)} MB each) --allow <glob> (repeat; every repo path must
+                 --file <repo-path>=<local-file> (repeat; {MAX_FILE_BYTES // (1024 * 1024)} MB each)
+                 --delete <repo-path> (repeat; a path the commit removes; at most
+                 {MAX_FILES} files and deletions together, at least one of either)
+                 --mode <repo-path>=<644|755> (repeat; only for a --file path; without it
+                 a new file is 644 and an existing file keeps its mode)
+                 --from-branch <base> (when --branch does not exist on the remote, it is
+                 started from <base>; without it a missing branch is an error)
+                 --allow <glob> (repeat; every repo path, deleted ones too, must
                  match one; '*' never crosses '/', and '*', '?' and '[...]' never match a
                  leading '.' of a part: name a dotfile with a part that starts with '.')
                  --idempotency-key <k>, and --confirmed
                  (or --dry-run). It clones the branch shallowly over SSH
                  ({SSH_REMOTE.format(repo="<owner>/<name>")}) into a private folder, writes the files,
                  stages them by name, commits with the message file, and pushes to the
-                 branch. The commit is signed by your git configuration (commit.gpgsign,
-                 gpg.format, user.signingkey); an unsigned commit is never pushed (exit 3).
+                 branch. Deletions are made first (never through a symlink, never of a
+                 folder; a path the branch does not hold is skipped), then the files are
+                 written, then the modes applied. The commit is signed by your git
+                 configuration (commit.gpgsign, gpg.format, user.signingkey); an unsigned
+                 commit is never pushed (exit 3).
                  A push rejected because the branch moved is retried once from a fresh
                  clone; a second rejection exits 1. The dry run clones and writes but
                  never commits or pushes; it prints the diff (stat, and the text capped at
-                 {DIFF_MAX_BYTES // 1024} kB) and every file's sha256: that is what a gate shows.
-                 Prints {{commit, branch, files: [{{path, sha256}}], pushed, replayed}};
+                 {DIFF_MAX_BYTES // 1024} kB), every file's sha256, the deletes, the modes,
+                 from_branch and branch_exists: that is what a gate shows.
+                 Before the push, every blob, mode and deletion of the commit is checked
+                 against what was given. Prints {{commit, branch, files: [{{path, sha256}}],
+                 deletes, pushed, replayed}};
                  "unchanged": true (and pushed false) when the branch already holds
                  exactly these files.
   resolve        Settle a key left pending by a timeout or a crash, after looking at
@@ -799,9 +811,9 @@ def cmd_resolve(args) -> int:
                                 f"resolve it with {wanted}", EXIT_USAGE)
         if is_commit:
             if args.commit:
-                data["entries"][key] = {**{k: entry.get(k) for k in COMMIT_TARGET_KEYS}, "status": "committed",
-                                        "commit": args.commit, "pushed": True, "recorded_at": now_iso(),
-                                        "resolved": True}
+                recorded = {k: entry[k] for k in COMMIT_TARGET_KEYS if k in entry}
+                data["entries"][key] = {**recorded, "status": "committed", "commit": args.commit, "pushed": True,
+                                        "recorded_at": now_iso(), "resolved": True}
             else:
                 del data["entries"][key]
             ledger_save(data)
@@ -1078,26 +1090,48 @@ def work_root() -> Path:
     return Path(cache) / "ai-workbench" / "vcs-github-work"
 
 
+def remote_has_branch(repo: str, branch: str, remote: str, cwd: Path) -> bool:
+    """Ask the remote whether branch exists (git ls-remote --exit-code --heads). Exit 2 is "no such branch";
+    any other failure is an error, an SSH failure first (nothing was sent, so the key is released)."""
+    ref = f"refs/heads/{branch}"
+    code, out, err = run_git(["ls-remote", "--exit-code", "--heads", "--", remote, ref], cwd,
+                             git_timeout(GIT_CLONE_TIMEOUT_SECONDS))
+    if code == 2:
+        return False
+    if code != 0:
+        raise ssh_failure(err) or ProviderError(f"git ls-remote of {repo} failed: {one_line(err, 300)}")
+    # ls-remote matches a pattern against the end of each ref: only the exact name counts.
+    return any(line.split("\t", 1)[-1] == ref for line in out.decode("utf-8", "replace").splitlines())
+
+
 @contextlib.contextmanager
-def private_clone(repo: str, branch: str, remote: str):
-    """Yield (scratch folder, working tree) of a fresh shallow clone of branch; both are removed afterwards."""
+def private_clone(repo: str, branch: str, remote: str, from_branch: str | None = None):
+    """Yield (scratch folder, working tree, whether branch existed) of a fresh shallow clone of branch; both
+    folders are removed afterwards. With from_branch, a branch the remote lacks is started from from_branch:
+    the clone is of from_branch and the branch is created in it before anything is written."""
     root = work_root()
     root.mkdir(mode=0o700, parents=True, exist_ok=True)
     scratch = Path(tempfile.mkdtemp(prefix="clone-", dir=root))  # 0700
     try:
         work = scratch / "repo"
-        code, _, err = run_git(["clone", "--quiet", "--depth", "1", "--branch", branch, "--single-branch",
+        exists = True if from_branch is None else remote_has_branch(repo, branch, remote, scratch)
+        source = branch if exists else from_branch
+        flag = "--branch" if exists else "--from-branch"
+        code, _, err = run_git(["clone", "--quiet", "--depth", "1", "--branch", source, "--single-branch",
                                 "--no-tags", "--", remote, str(work)], scratch, git_timeout(GIT_CLONE_TIMEOUT_SECONDS))
         if code != 0:
-            raise ssh_failure(err) or ProviderError(f"git clone of {repo} branch {branch} failed: {one_line(err, 300)}")
+            raise ssh_failure(err) or ProviderError(f"git clone of {repo} branch {source} failed: {one_line(err, 300)}")
         # "clone --branch" also takes a tag, and leaves HEAD detached on it; the push would then create a
         # branch with the tag's name. Only a clone that is on the branch asked for goes on.
         code, head, _ = run_git(["symbolic-ref", "--quiet", "HEAD"], work, git_timeout(GIT_LOCAL_TIMEOUT_SECONDS))
-        if code != 0 or head.decode("utf-8", "replace").strip() != f"refs/heads/{branch}":
-            raise ProviderError(f"--branch {branch} is not a branch of {repo} (a tag of that name exists); "
+        if code != 0 or head.decode("utf-8", "replace").strip() != f"refs/heads/{source}":
+            raise ProviderError(f"{flag} {source} is not a branch of {repo} (a tag of that name exists); "
                                 "commit-files commits to an existing branch only. Nothing was written",
                                 EXIT_USAGE)
-        yield scratch, work
+        if not exists:  # the new branch starts at the base's head; no checkout, so no hook runs
+            git_ok(["update-ref", f"refs/heads/{branch}", "HEAD"], work, "update-ref")
+            git_ok(["symbolic-ref", "HEAD", f"refs/heads/{branch}"], work, "symbolic-ref")
+        yield scratch, work, exists
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
 
@@ -1120,6 +1154,34 @@ def write_files(work: Path, files: list[dict]) -> None:
         fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o644)
         with os.fdopen(fd, "wb") as fh:
             fh.write(item["data"])
+
+
+def delete_files(work: Path, deletes: list[str]) -> list[str]:
+    """Remove each path from the working tree and the index, never through a symlink the repository holds.
+    A path the branch does not hold is skipped. Return the paths that were removed."""
+    removed = []
+    for path in deletes:
+        parts = path.split("/")
+        target = work
+        absent = False
+        for part in parts[:-1]:
+            target = target / part
+            if target.is_symlink():
+                raise ProviderError(f"--delete {path}: '{part}' in the repository is a symlink; refusing to delete "
+                                    "through it. Nothing was pushed")
+            if not target.is_dir():
+                absent = True  # a missing folder, or a file where a folder would be: the path is not held
+                break
+        target = work / path
+        if absent or not (target.exists() or target.is_symlink()):
+            continue
+        if target.is_symlink() or target.is_dir():
+            raise ProviderError(f"--delete {path} in the repository is a symlink or a folder; refusing to remove it. "
+                                "Nothing was pushed")
+        removed.append(path)
+    if removed:
+        git_ok(["rm", "--quiet", "--ignore-unmatch", "--", *removed], work, "rm")
+    return removed
 
 
 def commit_signature(work: Path) -> str | None:
@@ -1157,12 +1219,33 @@ def make_commit(work: Path, message_file: Path, paths: list[str]) -> tuple[str, 
     return sha, signature
 
 
-def check_blobs(work: Path, files: list[dict], where: str) -> None:
-    """Refuse when what git holds for a path at HEAD is not the bytes that were given.
+def tree_entry(work: Path, path: str) -> str | None:
+    """The mode git holds for path at HEAD (100644, 100755, 120000, 040000...), or None when HEAD lacks it."""
+    out = git_ok(["ls-tree", "-z", "HEAD", "--", path], work, "ls-tree").decode("utf-8", "replace")
+    for record in out.split("\0"):
+        meta, sep, name = record.partition("\t")
+        if sep and name == path:
+            return meta.split(" ", 1)[0]
+    return None
+
+
+def check_blobs(work: Path, files: list[dict], where: str, modes: dict | None = None,
+                deletes: list[str] = ()) -> None:
+    """Refuse when what git holds for a path at HEAD is not the bytes that were given, a --mode path does not
+    have that mode, or a deleted path is still there.
 
     The commit is made by the user's own git: their hooks run, and the repository's attributes apply (a
     line-ending or filter rule in .gitattributes). Either can change a file between the bytes the person
     approved and the blob that would be pushed, so the blobs are hashed and compared before the push."""
+    for path, mode in sorted((modes or {}).items()):
+        held = tree_entry(work, path)
+        if held != f"100{mode}":
+            raise ProviderError(f"{path} in {where} has mode {held or 'none'}, not the {mode} that was given: a git "
+                                "hook or the repository changed it. Nothing was pushed")
+    for path in deletes:
+        if tree_entry(work, path) is not None:
+            raise ProviderError(f"{path} is still in {where} although it was given as a deletion: a git hook added "
+                                "it back. Nothing was pushed")
     for item in files:
         code, blob, err = run_git(["cat-file", "blob", f"HEAD:{item['path']}"], work,
                                   git_timeout(GIT_LOCAL_TIMEOUT_SECONDS))
@@ -1212,7 +1295,9 @@ def push(work: Path, branch: str) -> None:
 # --- commit-files ------------------------------------------------------------------
 
 
-COMMIT_TARGET_KEYS = ("kind", "repo", "branch", "files", "message_sha256")
+# The last three join a target only when the call uses them; an entry recorded without one compares as "not used".
+COMMIT_TARGET_KEYS = ("kind", "repo", "branch", "files", "message_sha256", "deletes", "modes", "from_branch")
+MODES = ("644", "755")
 
 
 def sha256_hex(data: bytes) -> str:
@@ -1226,12 +1311,14 @@ def validate_commit_args(args) -> dict:
     globs = [check_glob(g) for g in (args.allow or [])]
     if not globs:
         raise ProviderError("commit-files needs at least one --allow <glob>: the paths it may write", EXIT_USAGE)
-    if not args.file:
-        raise ProviderError("commit-files needs at least one --file <repo-path>=<local-file>", EXIT_USAGE)
-    if len(args.file) > MAX_FILES:
-        raise ProviderError(f"commit-files takes at most {MAX_FILES} files", EXIT_USAGE)
+    file_args, delete_args, mode_args = args.file or [], args.delete or [], args.mode or []
+    if not file_args and not delete_args:
+        raise ProviderError("commit-files needs at least one --file <repo-path>=<local-file> or one "
+                            "--delete <repo-path>", EXIT_USAGE)
+    if len(file_args) + len(delete_args) > MAX_FILES:
+        raise ProviderError(f"commit-files takes at most {MAX_FILES} files and deletions together", EXIT_USAGE)
     files, seen = [], set()
-    for value in args.file:
+    for value in file_args:
         repo_path, sep, local = value.partition("=")
         if not sep or not local:
             raise ProviderError(f"--file {one_line(repr(value), 120)} must be <repo-path>=<local-file>", EXIT_USAGE)
@@ -1253,6 +1340,29 @@ def validate_commit_args(args) -> dict:
             raise ProviderError(f"--file {repo_path}: the local file is over {MAX_FILE_BYTES // (1024 * 1024)} MB",
                                 EXIT_USAGE)
         files.append({"path": repo_path, "data": data, "sha256": sha256_hex(data)})
+    deletes = []
+    for value in delete_args:
+        repo_path = check_path(value, "--delete")
+        if not path_allowed(repo_path, globs):
+            raise ProviderError(f"--delete {repo_path} is outside the allowed paths ({', '.join(globs)}); "
+                                "nothing was cloned", EXIT_USAGE)
+        if repo_path in seen:
+            raise ProviderError(f"--delete {repo_path} is given twice, or also as a --file", EXIT_USAGE)
+        seen.add(repo_path)
+        deletes.append(repo_path)
+    file_paths = {f["path"] for f in files}
+    modes = {}
+    for value in mode_args:
+        repo_path, sep, mode = value.partition("=")
+        if not sep or repo_path not in file_paths:
+            raise ProviderError(f"--mode {one_line(repr(value), 120)} must be <repo-path>=<mode> for a --file path "
+                                "of this call", EXIT_USAGE)
+        if repo_path in modes:
+            raise ProviderError(f"--mode {repo_path} is given twice", EXIT_USAGE)
+        if mode not in MODES:
+            raise ProviderError(f"--mode {repo_path}: the mode must be one of {', '.join(MODES)}", EXIT_USAGE)
+        modes[repo_path] = mode
+    from_branch = check_ref(args.from_branch, "--from-branch") if args.from_branch is not None else None
     if not args.message_file:
         raise ProviderError("commit-files needs --message-file <f>: the commit message", EXIT_USAGE)
     message_path = Path(args.message_file).expanduser()
@@ -1271,21 +1381,34 @@ def validate_commit_args(args) -> dict:
         raise ProviderError("commit-files needs --idempotency-key <k>: one key per change set, reused on retries",
                             EXIT_USAGE)
     return {"repo": repo, "branch": branch, "files": files, "message": message, "message_text": text,
-            "message_sha256": sha256_hex(message)}
+            "message_sha256": sha256_hex(message), "deletes": deletes, "modes": modes, "from_branch": from_branch}
 
 
 def commit_target(spec: dict) -> dict:
-    return {"kind": "commit", "repo": spec["repo"], "branch": spec["branch"],
-            "files": [{"path": f["path"], "sha256": f["sha256"]} for f in spec["files"]],
-            "message_sha256": spec["message_sha256"]}
+    target = {"kind": "commit", "repo": spec["repo"], "branch": spec["branch"],
+              "files": [{"path": f["path"], "sha256": f["sha256"]} for f in spec["files"]],
+              "message_sha256": spec["message_sha256"]}
+    # Only what the call uses, so that a key recorded before these flags existed replays as before.
+    if spec["deletes"]:
+        target["deletes"] = sorted(spec["deletes"])
+    if spec["modes"]:
+        target["modes"] = [{"path": p, "mode": m} for p, m in sorted(spec["modes"].items())]
+    if spec["from_branch"]:
+        target["from_branch"] = spec["from_branch"]
+    return target
 
 
 def prepare(scratch: Path, work: Path, spec: dict) -> tuple[str, bool, Path]:
-    """Write and stage the files; return (base commit, whether anything changed, message file)."""
+    """Remove the deleted paths, write and stage the files, apply the modes; return (base commit, whether
+    anything changed, message file)."""
     base = git_ok(["rev-parse", "HEAD"], work, "rev-parse").decode().strip()
+    delete_files(work, spec["deletes"])
     write_files(work, spec["files"])
     paths = [f["path"] for f in spec["files"]]
-    git_ok(["add", "--", *paths], work, "add")
+    if paths:
+        git_ok(["add", "--", *paths], work, "add")
+    for path, mode in sorted(spec["modes"].items()):
+        git_ok(["update-index", "--chmod=" + ("+x" if mode == "755" else "-x"), "--", path], work, "update-index")
     code, _, err = run_git(["diff", "--cached", "--quiet", "--"], work, git_timeout(GIT_LOCAL_TIMEOUT_SECONDS))
     if code not in (0, 1):
         raise ProviderError(f"git diff failed: {one_line(err, 300)}")
@@ -1295,7 +1418,7 @@ def prepare(scratch: Path, work: Path, spec: dict) -> tuple[str, bool, Path]:
 
 
 def dry_run_commit(spec: dict, remote: str, key: str) -> dict:
-    with private_clone(spec["repo"], spec["branch"], remote) as (scratch, work):
+    with private_clone(spec["repo"], spec["branch"], remote, spec["from_branch"]) as (scratch, work, exists):
         base, changed, _ = prepare(scratch, work, spec)
         diff_args = ["diff", "--cached", "--no-color", "--no-ext-diff", "--no-textconv"]
         stat = git_ok([*diff_args, "--stat", "--"], work, "diff").decode("utf-8", "replace")
@@ -1308,19 +1431,22 @@ def dry_run_commit(spec: dict, remote: str, key: str) -> dict:
         "diff_stat": stat, "diff": text[:DIFF_MAX_BYTES].decode("utf-8", "replace"),
         "diff_truncated": len(text) > DIFF_MAX_BYTES, "idempotency_key": key,
         "existing_status": existing.get("status") if existing else None,
+        "deletes": sorted(spec["deletes"]), "modes": [{"path": p, "mode": m} for p, m in sorted(spec["modes"].items())],
+        "from_branch": spec["from_branch"], "branch_exists": exists,
     }
 
 
 def commit_once(spec: dict, remote: str, progress: dict) -> dict:
-    paths = [f["path"] for f in spec["files"]]
-    with private_clone(spec["repo"], spec["branch"], remote) as (scratch, work):
+    paths = [f["path"] for f in spec["files"]] + spec["deletes"]
+    with private_clone(spec["repo"], spec["branch"], remote, spec["from_branch"]) as (scratch, work, _):
         base, changed, message_file = prepare(scratch, work, spec)
         if not changed:
-            check_blobs(work, spec["files"], f"{spec['branch']} as it is")
+            check_blobs(work, spec["files"], f"{spec['branch']} as it is", spec["modes"], spec["deletes"])
             log(f"{spec['branch']} already holds exactly these files; nothing to commit")
             return {"commit": base, "unchanged": True, "pushed": False, "signature": None}
         sha, signature = make_commit(work, message_file, paths)
-        check_blobs(work, spec["files"], "the commit")  # before the push: what goes out is what was approved
+        # before the push: what goes out is what was approved
+        check_blobs(work, spec["files"], "the commit", spec["modes"], spec["deletes"])
         progress.update(pushing=True, attempted_commit=sha)
         push(work, spec["branch"])
         return {"commit": sha, "unchanged": False, "pushed": True, "signature": signature}
@@ -1342,7 +1468,8 @@ def commit_with_retry(spec: dict, remote: str, progress: dict) -> dict:
 def commit_result(key: str, entry: dict, replayed: bool, attempts: int | None = None) -> dict:
     out = {"idempotency_key": key, "repo": entry.get("repo"), "branch": entry.get("branch"),
            "commit": entry.get("commit"), "files": entry.get("files"), "pushed": entry.get("pushed", True),
-           "unchanged": entry.get("unchanged", False), "signature": entry.get("signature"), "replayed": replayed}
+           "unchanged": entry.get("unchanged", False), "signature": entry.get("signature"),
+           "deletes": entry.get("deletes", []), "replayed": replayed}
     if attempts is not None:
         out["attempts"] = attempts
     return out
@@ -1367,9 +1494,9 @@ def cmd_commit_files(args) -> int:
     if existing:
         if existing.get("kind") != "commit":
             raise ProviderError(f"idempotency key {key!r} was used for an alert dismissal; use a new key", EXIT_USAGE)
-        if any(existing.get(k) != target[k] for k in COMMIT_TARGET_KEYS):
+        if any(existing.get(k) != target.get(k) for k in COMMIT_TARGET_KEYS):
             raise ProviderError(f"idempotency key {key!r} was used for another change set (repository, branch, "
-                                "files or message); use a new key for this one", EXIT_USAGE)
+                                "files, deletions, modes, base or message); use a new key for this one", EXIT_USAGE)
         if existing.get("status") == "committed":
             log(f"idempotency key {key!r} already committed this change set; nothing pushed")
             print(json.dumps(commit_result(key, existing, True), indent=2))
@@ -1451,6 +1578,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--message-file", help="commit-files: UTF-8 file with the commit message")
     parser.add_argument("--file", action="append", metavar="REPO_PATH=LOCAL_FILE",
                         help="commit-files: a file to write; repeat for several")
+    parser.add_argument("--delete", action="append", metavar="REPO_PATH",
+                        help="commit-files: a path the commit removes; repeat for several")
+    parser.add_argument("--mode", action="append", metavar="REPO_PATH=644|755",
+                        help="commit-files: the mode of a --file path in the commit; repeat for several")
+    parser.add_argument("--from-branch", metavar="BASE",
+                        help="commit-files: when --branch does not exist on the remote, start it from this branch")
     parser.add_argument("--allow", action="append", metavar="GLOB",
                         help="commit-files: a pattern every repo path must match; repeat for several")
     parser.add_argument("--idempotency-key",
