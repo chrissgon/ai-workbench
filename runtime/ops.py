@@ -40,6 +40,10 @@ Operations of stage 3:
                                    (runtime/plan.py) as a pending decision of kind `plan`; no task is created
   approve(project, pending_id[, sha256])   approve a plan (its tasks are created) or an acceptance
   reject(project, pending_id[, note])      reject a plan or an acceptance: the request is cancelled
+  sync(project[, dry_run])         mirror the tasks with the project's task board (runtime/board.py): what a person
+                                   edited there comes in, what the store holds goes out; a dry run reads nothing
+                                   and shows every write
+  answer(..., with_comments=True)  the comments saved from the board for the task enter the answer
 
 Releasing is not approving: a released delivery stays a draft in the project's state file.
 
@@ -70,7 +74,8 @@ import traceback
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import endings  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
+import board  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
+import endings  # noqa: E402
 import flow_files  # noqa: E402
 import lab  # noqa: E402
 import manifest  # noqa: E402
@@ -527,14 +532,30 @@ def pending(project: str, pending_id: int | None = None) -> dict:
     return {"pending": [_listed(item) for item in _stored(ctx, ctx["store"].pending_list)]}
 
 
-def answer(project: str, pending_id: int, text: str) -> dict:
+COMMENTS_LINE = "Comments left on the platform:"
+
+
+def answer(project: str, pending_id: int, text: str, with_comments: bool = False) -> dict:
     """Answer a pending decision. The task becomes ready, and its next run is given the answer. The answer to a
     question is also written by code into the project's state file, as a decision of the user (L10), so that the
     next run finds it where the skills look for decisions; "state" says whether it was written. A failure there
-    never undoes the answer: the store has it, and the next run's prompt carries it."""
+    never undoes the answer: the store has it, and the next run's prompt carries it. With with_comments (the
+    person's command, never a default), the open comments saved from the platform for the task are appended under
+    COMMENTS_LINE, one per line, and marked used by this pending decision ("comments": their ids)."""
     ctx = context(project)
     said = _text(text, "the answer")
+    used = []
+    if with_comments:
+        item = _stored(ctx, ctx["store"].pending_get, pending_id)
+        saved = _stored(ctx, ctx["store"].comments_list, task_id=item["task_id"])
+        if saved:
+            lines = [f"- {c.get('author') or 'unknown'}: {' '.join(str(c['text']).split())}" for c in saved]
+            said = "\n".join([said, "", COMMENTS_LINE, *lines])
+            used = [c["id"] for c in saved]
     out = _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="answered", by="user", answer=said)
+    if used:
+        _stored(ctx, ctx["store"].comments_use, used, pending_id=pending_id)
+        out = {**out, "comments": used}
     item = _stored(ctx, ctx["store"].pending_get, pending_id)
     if item["kind"] != "question":
         return out
@@ -637,8 +658,13 @@ def status(project: str) -> dict:
     "skill", "state", "note"}]}], "pending": [...]}: everything from the store's records."""
     ctx = context(project)
     rows = _stored(ctx, ctx["store"].tasks_list)
-    requests = [{**{key: r[key] for key in ("id", "title", "flow", "state")},
-                 "tasks": [{key: t[key] for key in ("id", "key", "skill", "state", "note")}
+    comments = {}
+    for c in _stored(ctx, ctx["store"].comments_list):
+        if c.get("task_id") is not None:
+            comments[c["task_id"]] = comments.get(c["task_id"], 0) + 1
+    board_of = lambda t: {"on_board": bool(t.get("remote_id")), "open_comments": comments.get(t["id"], 0)}
+    requests = [{**{key: r[key] for key in ("id", "title", "flow", "state")}, **board_of(r),
+                 "tasks": [{**{key: t[key] for key in ("id", "key", "skill", "state", "note")}, **board_of(t)}
                            for t in rows if t["parent_id"] == r["id"]]}
                 for r in rows if r["parent_id"] is None]
     return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": requests,
@@ -814,6 +840,31 @@ def approve(project: str, pending_id: int, sha256: str | None = None) -> dict:
         return _stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="accepted", by="user")
     raise OpsError(f"pending decision {pending_id} is a {item['kind']}: approve takes a plan or an acceptance (an effect "
                    "is approved from stage 4); a question or a review is answered or released", 2)
+
+
+def sync(project: str, dry_run: bool = False, take: str | None = None, path: str | None = None) -> dict:
+    """Mirror the project's task board (runtime/board.py), holding the run lock: pull (the board to the store; not
+    on a dry run, which reads nothing), then push (the store to the board; with dry_run, every write the provider
+    would make, and nothing changes). take and path settle a document both sides changed (the documents' part,
+    a later package of stage 3). Returns {"board": {"pulled", "created", "edited", "refused", "gone", "pushed",
+    "failed"[, "would"]} or None, "documents": None}."""
+    if take is not None and take not in ("page", "project"):
+        raise OpsError("take is page or project", 2)
+    if (take is None) != (path is None):
+        raise OpsError("take and path go together", 2)
+    ctx = context(project)
+    ctx["root"] = ROOT
+    out = {"board": None, "documents": None}
+    with _run_lock(ctx["cfg"]):
+        if board.enabled(ctx["cfg"]):
+            try:
+                pulled = {"pulled": [], "created": [], "edited": [], "refused": [], "gone": []} if dry_run else board.pull(ctx)
+                out["board"] = {**pulled, **board.push(ctx, dry_run=dry_run)}
+            except board.BoardError as e:
+                raise OpsError(f"the task board: {e}", 3 if e.kind == "not configured" else 1) from None
+            except ctx["store"].StoreError as e:
+                raise OpsError(str(e), e.code) from None
+    return out
 
 
 def reject(project: str, pending_id: int, note: str | None = None) -> dict:

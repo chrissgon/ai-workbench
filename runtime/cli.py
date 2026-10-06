@@ -12,7 +12,7 @@ Usage:
   python3 runtime/cli.py reject   --project <dir> --id <pending id> [--note <text>]
   python3 runtime/cli.py run-next --project <dir> [--tier strong]
   python3 runtime/cli.py pending  --project <dir> [--id <pending id>]
-  python3 runtime/cli.py answer   --project <dir> --id <pending id> (--text <text> | --text-file <file>)
+  python3 runtime/cli.py answer   --project <dir> --id <pending id> (--text <text> | --text-file <file>) [--with-comments]
   python3 runtime/cli.py release  --project <dir> --id <pending id>
   python3 runtime/cli.py retry    --project <dir> --task <task id>
   python3 runtime/cli.py cancel   --project <dir> --request <request id>
@@ -20,6 +20,7 @@ Usage:
   python3 runtime/cli.py accept-config --project <dir> --sha256 <hash>
   python3 runtime/cli.py proof    --project <dir> [--skill <name>]
   python3 runtime/cli.py verdict  --project <dir> --run <run id> --word worked|corrected|failed
+  python3 runtime/cli.py sync     --project <dir> [--dry-run] [--take page|project --path <relative path>]
 
 request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes; a task without a dependency is ready at once. Without --flow, the
@@ -40,18 +41,26 @@ run-next  runs the next ready task: one skill, once, in the eval container, on t
             uv run --with keyring==25.7.0 python3 runtime/cli.py run-next --project <dir>
 pending   lists what waits for you; with --id, prints that pending decision whole: the reply, what came back,
           what was kept in the run folder.
-answer    answers a pending decision; the task becomes ready and its next run is given your answer.
+answer    answers a pending decision; the task becomes ready and its next run is given your answer. With
+          --with-comments, the comments saved from the task board for that task are added to your answer, under
+          "Comments left on the platform:"; without it, no comment enters an answer.
 release   releases a delivery (a pending decision of kind review): the task is done and what depended on it
           becomes ready. The delivery stays a draft: releasing is not approving. A run that wrote a document
           and still asks (ending draft_with_questions) opens a review too: release it as it stands, its open
           questions left in it, or answer it. A run that wrote nothing and asks opens a question: answer it.
 retry     makes a failed or blocked task ready again.
 cancel    cancels a request, its tasks that are not done and their open pending decisions.
-status    requests, tasks and pending decisions, from the store's records.
+status    requests, tasks and pending decisions, from the store's records; for each request and task, whether it is
+          on the task board and how many comments saved from there are open.
 proof     the model each skill in use would run on, with the bands and the two checks (the measurement files,
           the eval image). It calls no model.
 verdict   records your verdict on what one run delivered (worked, corrected, failed), with the existing
           recorder (scripts/evidence.py), on the use the run recorded. One verdict per run; only you give one.
+sync      mirrors the tasks with the project's task board (task_board in runtime.json): a title, a text or a
+          comment you wrote there comes in, and three state moves are taken (ready on a failed or blocked task,
+          cancelled on a request, done on a task waiting on a review); any other move is written back. An item
+          you wrote there waits for your approve before it can be routed. --dry-run reads nothing and prints
+          every write it would make. --take and --path settle a document both sides changed (documents only).
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -73,7 +82,7 @@ sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
-         "route", "approve", "reject")
+         "route", "approve", "reject", "sync")
 
 
 class Usage(Exception):
@@ -123,6 +132,10 @@ def run(argv) -> dict:
     p.add_argument("--run", type=int)
     p.add_argument("--word")
     p.add_argument("--note")
+    p.add_argument("--dry-run", action="store_true")
+    p.add_argument("--take", choices=("page", "project"))
+    p.add_argument("--path")
+    p.add_argument("--with-comments", action="store_true")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
@@ -132,7 +145,7 @@ def run(argv) -> dict:
     if a.verb == "pending":
         return ops.pending(project, a.id)
     if a.verb == "answer":
-        return ops.answer(project, need(a, "--id"), text_of(a))
+        return ops.answer(project, need(a, "--id"), text_of(a), with_comments=a.with_comments)
     if a.verb == "release":
         return ops.release(project, need(a, "--id"))
     if a.verb == "retry":
@@ -151,6 +164,8 @@ def run(argv) -> dict:
         return ops.approve(project, need(a, "--id"), a.sha256)
     if a.verb == "reject":
         return ops.reject(project, need(a, "--id"), a.note)
+    if a.verb == "sync":
+        return ops.sync(project, dry_run=a.dry_run, take=a.take, path=a.path)
     return ops.status(project)
 
 

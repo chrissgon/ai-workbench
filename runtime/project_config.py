@@ -13,8 +13,19 @@ task runtime reads three keys the first runtime already defined, with the same m
   "store_db"    the absolute path of the store database (class store:runtime)
 
 and ignores every key it does not know (the first runtime's "agent", "harness", "mailbox"... stay valid in
-the same file). Keys reserved for later stages of the platform plan, read by nothing yet: "area_agents",
-"documents", "task_board".
+the same file). "area_agents" is read by runtime/plan.py (the packs in scope).
+
+It also reads "task_board" and "documents" (stage 3), each an object or absent (None):
+
+  "task_board": {"provider": "local", "dir": "/abs/path/board"}
+  "task_board": {"provider": "<another implementation>", "expires": "YYYY-MM-DD", ...}
+
+"provider" is an implementation shipped in the class's folder of the workbench the file names
+(integration:issue-tracker for the board, integration:documents for the documents, by providers/resolve.py); for
+"local", "dir" is an absolute folder that is neither inside the project's docs/ (the path rule would call an item a
+document) nor inside the workbench checkout; any other provider has "expires", a date YYYY-MM-DD, after which the
+runtime writes nothing to it. Every other key is the implementation's, passed on untouched. These objects are the
+bounds of what the runtime writes to a platform: they are inside the file whose hash the person accepts.
 
 It also reads "protected_paths" (a list of path globs; absent means none): stage 2 asks it one question only,
 whether a glob matches AGENTS.md (runtime/workcopy.py, limit L5).
@@ -31,7 +42,9 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import sys
@@ -39,7 +52,7 @@ import sys
 REL = "docs/workbench/runtime.json"
 REQUIRED = ("workbench", "data_dir", "store_db")
 ACCEPTED = "config:accepted-sha256"  # the store's cursor that holds the hash the person accepted last
-RESERVED = ("area_agents", "documents", "task_board")
+PLATFORM_KEYS = {"task_board": "integration:issue-tracker", "documents": "integration:documents"}
 
 
 class ConfigError(Exception):
@@ -82,7 +95,53 @@ def load(project: str) -> dict:
     if not isinstance(protected, list) or not all(isinstance(p, str) and p.strip() for p in protected):
         raise ConfigError("runtime.json protected_paths must be a list of path globs")
     out["protected_paths"] = list(protected)
+    for key, cls in PLATFORM_KEYS.items():
+        out[key] = _platform(raw.get(key), key, cls, project, out["workbench"])
     return out
+
+
+def _implementations(workbench: str, cls: str) -> list:
+    """The implementations shipped for a class in the workbench checkout, by its providers/resolve.py."""
+    path = os.path.join(workbench, "providers", "resolve.py")
+    name = "workbench_config_resolve"
+    module = sys.modules.get(name)
+    if module is None or getattr(module, "__file__", None) != path:
+        if not os.path.isfile(path):
+            raise ConfigError(f"the workbench {workbench} has no providers/resolve.py")
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return module.implementations(cls, root=workbench)
+
+
+def _platform(value, key: str, cls: str, project: str, workbench: str):
+    """A task_board or documents object, checked (see the module's text); None when absent."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ConfigError(f"runtime.json {key} must be an object")
+    shipped = _implementations(workbench, cls)
+    provider = value.get("provider")
+    if provider not in shipped:
+        raise ConfigError(f"runtime.json {key}.provider must be one of {', '.join(shipped) or 'none: no provider is shipped'}")
+    if provider == "local":
+        folder = value.get("dir")
+        if not isinstance(folder, str) or not os.path.isabs(folder):
+            raise ConfigError(f"runtime.json {key}.dir must be an absolute path")
+        folder = os.path.realpath(folder)
+        for inside, what in ((os.path.join(project, "docs"), "the project's docs/ folder"),
+                             (workbench, "the workbench checkout")):
+            if folder == inside or folder.startswith(inside + os.sep):
+                raise ConfigError(f"runtime.json {key}.dir is inside {what}")
+    else:
+        try:
+            datetime.date.fromisoformat(str(value.get("expires")))
+        except ValueError:
+            raise ConfigError(f"runtime.json {key}.expires must be a date YYYY-MM-DD") from None
+        if not isinstance(value.get("expires"), str) or len(value["expires"]) != 10:
+            raise ConfigError(f"runtime.json {key}.expires must be a date YYYY-MM-DD")
+    return dict(value)
 
 
 def main(argv=None) -> int:
