@@ -81,7 +81,8 @@ def test_an_item_that_was_created_is_read_back_with_its_title_text_and_state(boa
     assert got["version"] == out["version"] and got["comments"] == [] and got["url"]
 
 
-def test_the_version_changes_when_a_person_edits_the_title_the_text_the_state_or_comments_and_not_otherwise(board):
+def test_the_version_changes_when_a_person_edits_the_title_the_text_or_the_state_and_not_otherwise(board):
+    # The version covers the content (WP-3.15): a comment may or may not move it, so nothing here asserts either.
     ident = board.upsert({"title": "Name", "text": "Check the name.", "state": "planned"})[1]["id"]
     seen = [board.get(ident)["version"]]
     assert board.get(ident)["version"] == seen[-1]  # reading changes nothing
@@ -90,11 +91,22 @@ def test_the_version_changes_when_a_person_edits_the_title_the_text_the_state_or
     for change in ({"title": "Name, renamed"}, {"text": "Check it twice."}, {"state": "cancelled"}):
         board.harness.person_edits(ident, **change)
         seen.append(board.get(ident)["version"])
-    board.harness.person_comments(ident, "Shorter, please.")
-    seen.append(board.get(ident)["version"])
     assert len(set(seen)) == len(seen)
+    board.harness.person_comments(ident, "Shorter, please.")
     got = board.get(ident)
     assert [c["text"] for c in got["comments"]] == ["Shorter, please."] and got["comments"][0]["id"]
+
+
+def test_comments_lists_an_items_open_comments_whatever_its_version(board):
+    ident = board.upsert({"title": "Name", "text": "Check the name.", "state": "planned"})[1]["id"]
+    code, out, err = board.run("comments", "--id", ident)
+    assert code == 0 and out == {"id": ident, "comments": []}, err
+    board.harness.person_comments(ident, "Shorter, please.")
+    board.harness.person_comments(ident, "Keep the blue.")
+    code, out, err = board.run("comments", "--id", ident)
+    assert code == 0 and [c["text"] for c in out["comments"]] == ["Shorter, please.", "Keep the blue."], err
+    assert all(c["id"] and set(c) >= {"id", "author", "created_at", "text"} for c in out["comments"])
+    assert [c["id"] for c in out["comments"]] == [c["id"] for c in board.get(ident)["comments"]]
 
 
 def test_a_write_of_the_state_alone_keeps_the_title_and_the_text_a_person_edited(board):

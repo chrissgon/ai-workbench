@@ -38,14 +38,16 @@ def test_the_id_is_the_project_path_and_the_file_lies_under_dir(tmp_path):
     assert out["version"] == hashlib.sha256(b"# Strategy\n").hexdigest()
 
 
-def test_the_version_joins_the_side_file_and_a_write_leaves_the_side_file(tmp_path):
+def test_the_version_covers_the_document_only_and_a_write_leaves_the_side_file(tmp_path):
+    # The version covers the content (WP-3.15): the side file of comments does not move it.
     (tmp_path / "docs-dir").mkdir()
     write(tmp_path, "# Strategy\n")
     side = tmp_path / "docs-dir" / "docs" / "brand" / "strategy.md.comments.md"
     side.write_text("- A comment.\nnot a comment\n", encoding="utf-8")
     code, out, _ = run(tmp_path, "stat", "--id", "docs/brand/strategy.md")
-    assert out["version"] == (hashlib.sha256(b"# Strategy\n").hexdigest() + ":"
-                              + hashlib.sha256(side.read_bytes()).hexdigest())
+    assert out["version"] == hashlib.sha256(b"# Strategy\n").hexdigest()
+    code, out, _ = run(tmp_path, "comments", "--id", "docs/brand/strategy.md")
+    assert code == 0 and [c["text"] for c in out["comments"]] == ["A comment."]
     write(tmp_path, "# Strategy, again\n")
     assert side.read_text(encoding="utf-8") == "- A comment.\nnot a comment\n"
     code, out, _ = run(tmp_path, "read", "--id", "docs/brand/strategy.md")

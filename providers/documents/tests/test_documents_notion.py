@@ -166,3 +166,20 @@ def test_a_comment_on_one_block_is_read_with_the_document(tmp_path):
     assert code == 0, said
     texts_read = [c["text"] for c in docs.run("read", "--id", made["id"])[1]["comments"]]
     assert sorted(texts_read) == ["On the nested item.", "On the page.", "On the paragraph."]  # each once
+
+
+def test_comments_is_one_listing_of_the_pages_own_comments_and_a_comment_does_not_move_the_version(tmp_path):
+    # Measured on the live service (README.md, N3): a comment does not move the version, so the runtime lists the
+    # page's own comments at every pull with this one call (WP-3.15); the comments on blocks come with read.
+    docs = Documents(tmp_path)
+    made = docs.write("# Strategy\n\nThe why.\n\nThe how.\n", key="k1")[1]
+    page = next(i for i in docs.fake.pages if i.replace("-", "") == made["id"].replace("-", ""))
+    before = docs.run("stat", "--id", made["id"])[1]["version"]
+    docs.fake.comment(page, "On the page.")
+    docs.fake.comment(docs.fake.children[page][1], "On the paragraph.")
+    assert docs.run("stat", "--id", made["id"])[1]["version"] == before
+    listed = docs.fake.count("list_comments")
+    code, out, said = docs.run("comments", "--id", made["id"])
+    assert code == 0, said
+    assert [c["text"] for c in out["comments"]] == ["On the page."]
+    assert docs.fake.count("list_comments") == listed + 1

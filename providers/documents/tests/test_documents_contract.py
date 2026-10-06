@@ -90,15 +90,27 @@ def test_a_write_replaces_the_whole_document(documents):
     assert got == documents.harness.expected("# Brand strategy\n\nShorter.\n") and "a person added" not in got
 
 
-def test_the_version_is_the_same_until_a_person_edits_or_comments(documents):
+def test_the_version_is_the_same_until_a_person_edits(documents):
+    # The version covers the content (WP-3.15): a comment may or may not move it, so nothing here asserts either.
     ident = documents.write(TEXT)[1]["id"]
     seen = [documents.read(ident)["version"]]
     assert documents.read(ident)["version"] == seen[-1]  # reading changes nothing
     documents.harness.person_edits(ident, TEXT + "\nEdited.\n")
     seen.append(documents.read(ident)["version"])
+    assert len(set(seen)) == 2
+
+
+def test_comments_lists_a_documents_open_comments_whatever_its_version(documents):
+    ident = documents.write(TEXT)[1]["id"]
+    code, out, err = documents.run("comments", "--id", ident)
+    assert code == 0 and out == {"id": ident, "comments": []}, err
     documents.harness.person_comments(ident, "Say who it is for.")
-    seen.append(documents.read(ident)["version"])
-    assert len(set(seen)) == 3
+    documents.harness.person_comments(ident, "Drop the last claim.")
+    code, out, err = documents.run("comments", "--id", ident)
+    assert code == 0 and [c["text"] for c in out["comments"]] == ["Say who it is for.", "Drop the last claim."], err
+    assert all(c["id"] and set(c) >= {"id", "author", "created_at", "text"} for c in out["comments"])
+    assert [c["id"] for c in out["comments"]] == [c["id"] for c in documents.read(ident)["comments"]]
+    assert documents.run("comments", "--id", "docs/brand/none.md")[0] == 1
 
 
 def test_stat_reports_the_version_read_reports(documents):

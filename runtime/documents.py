@@ -13,8 +13,10 @@ record in the store (store.document_put): the page's id, the hash of what the ru
 the hash of what it last read from the page (read_sha256), the page's version and a status (mirrored, read_only,
 rejected) with a note.
 
-  pull(ctx)            the platform to the project. A page whose version did not change is never read. A page read
-                       has its open comments saved (store.comments_save); a person's edit of an editable document
+  pull(ctx)            the platform to the project. A page whose version did not change is never read: its own
+                       open comments are listed (the provider's `comments`, one call) and the new ones saved, since
+                       the version covers the content and a comment may not move it. A page read has all its open
+                       comments saved (store.comments_save); a person's edit of an editable document
                        replaces the whole project document, only when the project's file is still what was last
                        written and the skill's checker passes on a scratch copy; otherwise neither side changes and
                        the record is `rejected`, with the reason. An edit of a read_only document is kept aside in
@@ -304,7 +306,11 @@ def pull(ctx: dict, dry_run: bool = False) -> dict:
             out["gone"].append(record["path"])
             continue
         if seen.get("version") == record.get("remote_version"):
-            continue  # no read: what keeps the conversion from wearing the document down
+            # No read: what keeps the conversion from wearing the document down. The version covers the content and
+            # a comment may not move it (measured, N3), so the page's own comments are listed whatever the version.
+            listed = call(ctx["cfg"], ctx["root"], "comments", ["--id", record["remote_id"]])
+            out["comments"] += _save_comments(ctx, record["path"], listed)
+            continue
         page = _read_page(ctx, record, out)
         _settle(ctx, record, entry_for(ctx["root"], record["path"]), page, out)
     return out

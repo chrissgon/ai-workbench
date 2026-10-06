@@ -142,8 +142,27 @@ def test_a_page_that_did_not_change_is_never_read(tree):
     delivered(tree)
     tree["calls"].clear()
     out = ops.sync(project_of(tree))["documents"]
-    assert tree["calls"] == ["stat"]
+    assert tree["calls"] == ["stat", "comments"]  # the page's own comments are listed, the page is not read
     assert out["imported"] == [] and out["pushed"] == [] and out["comments"] == 0
+
+
+def test_a_comment_added_on_an_unchanged_page_is_saved_by_the_next_pull(tree):
+    # WP-3.15: on the live service a comment does not move the page's version (N3), and the local provider's version
+    # covers the document only, so the page is not read; its comments are listed at every pull all the same.
+    delivered(tree)
+    project = project_of(tree)
+    version = record(tree)["remote_version"]
+    (tree["pages"] / (MARKET + ".comments.md")).write_text("- Name the city.\n", encoding="utf-8")
+    tree["calls"].clear()
+    out = ops.sync(project)["documents"]
+    assert tree["calls"] == ["stat", "comments"] and out["comments"] == 1 and out["imported"] == []
+    assert record(tree)["remote_version"] == version
+    ctx = ops.context(project)
+    assert [c["text"] for c in ctx["store"].comments_list(ctx["conn"], document_path=MARKET)] == ["Name the city."]
+    assert ops.sync(project)["documents"]["comments"] == 0  # saved once
+    tree["calls"].clear()  # the pull run_next makes before a claim lists them too
+    (tree["pages"] / (MARKET + ".comments.md")).write_text("- Name the city.\n- And the year.\n", encoding="utf-8")
+    assert ops.run_next(project)["documents"]["comments"] == 1 and tree["calls"][:2] == ["stat", "comments"]
 
 
 def test_a_persons_edit_replaces_the_whole_project_document_and_the_next_task_reads_it(tree):
@@ -167,7 +186,7 @@ def test_an_imported_edit_is_not_written_back(tree):
     got = record(tree)
     assert got["written_sha256"] == got["read_sha256"] == docs._sha(project_file(tree).read_bytes())
     tree["calls"].clear()
-    assert ops.sync(project_of(tree))["documents"]["pushed"] == [] and tree["calls"] == ["stat"]
+    assert ops.sync(project_of(tree))["documents"]["pushed"] == [] and tree["calls"] == ["stat", "comments"]
 
 
 def test_an_edit_that_breaks_the_skills_checker_is_not_taken_and_the_person_gets_the_reason(tree):

@@ -28,14 +28,17 @@ Reading: the title is the first line without its "# "; the state is the first li
 a word that is not one of the nine task states: null); the text is what lies between the state line (or the title)
 and the first of "## Comments" or "## Runtime", stripped; a comment is a line starting "- " under "## Comments", its
 id the first 16 hex characters of the sha256 of its text. "## Runtime" is written from the item's `shown` fields and
-never read back. `version` is the sha256 of the file's bytes; `archived` is always false. A write keeps every part
-whose key the item file does not name, so a write of the state alone never replaces a title the person edited.
+never read back. `version` is the sha256 of the file's bytes without its "## Comments" section: it covers the content,
+so a comment does not move it (comments lists them whatever the version); `archived` is always false. A write keeps
+every part whose key the item file does not name, so a write of the state alone never replaces a title the person
+edited.
 
 Usage:
   python3 providers/issue-tracker/local.py --help
   python3 providers/issue-tracker/local.py --check --config-file <f>
   python3 providers/issue-tracker/local.py list --config-file <f>
   python3 providers/issue-tracker/local.py get --config-file <f> --id <id>
+  python3 providers/issue-tracker/local.py comments --config-file <f> --id <id>
   python3 providers/issue-tracker/local.py upsert --config-file <f> [--id <id>] --item-file <json>
                                           --idempotency-key <k> (--dry-run | --confirmed)
   python3 providers/issue-tracker/local.py resolve --config-file <f> --idempotency-key <k>
@@ -173,6 +176,20 @@ def render(parts: dict) -> str:
         runtime.pop(0)
     out += [RUNTIME, ""] + (runtime + [""] if runtime else [])
     return "\n".join(out).rstrip("\n") + "\n"
+
+
+def version_of(data: bytes) -> str:
+    """The sha256 of an item file without its "## Comments" section (heading and lines): the version covers the
+    content, never the comments."""
+    kept, inside = [], False
+    for line in data.decode("utf-8", errors="replace").splitlines(keepends=True):
+        if line.strip() in (COMMENTS, RUNTIME):
+            inside = line.strip() == COMMENTS
+            if inside:
+                continue
+        if not inside:
+            kept.append(line)
+    return hashlib.sha256("".join(kept).encode("utf-8")).hexdigest()
 
 
 def read_item(folder: str, ident: str) -> tuple:
@@ -313,7 +330,7 @@ def cmd_list(args: dict) -> int:
     items = []
     for ident in item_ids(folder):
         with open(item_path(folder, ident), "rb") as f:
-            items.append({"id": ident, "version": hashlib.sha256(f.read()).hexdigest(), "archived": False})
+            items.append({"id": ident, "version": version_of(f.read()), "archived": False})
     return emit({"items": items, "truncated": False})
 
 
@@ -321,9 +338,16 @@ def cmd_get(args: dict) -> int:
     folder = board_dir(args.get("--config-file"))
     ident = item_id(args.get("--id"))
     data, parts = read_item(folder, ident)
-    return emit({"id": ident, "version": hashlib.sha256(data).hexdigest(), "title": parts["title"],
+    return emit({"id": ident, "version": version_of(data), "title": parts["title"],
                  "text": parts["text"], "state": parts["state"], "archived": False,
                  "comments": comments_of(parts["comments"]), "url": "file://" + item_path(folder, ident)})
+
+
+def cmd_comments(args: dict) -> int:
+    folder = board_dir(args.get("--config-file"))
+    ident = item_id(args.get("--id"))
+    _data, parts = read_item(folder, ident)
+    return emit({"id": ident, "comments": comments_of(parts["comments"])})
 
 
 def cmd_upsert(args: dict) -> int:
@@ -353,7 +377,7 @@ def cmd_upsert(args: dict) -> int:
             keys[key] = ident
             write_file(os.path.join(folder, KEYS_FILE), json.dumps(keys, indent=1, sort_keys=True) + "\n")
         write_file(item_path(folder, ident), text)
-    return emit({"id": ident, "version": hashlib.sha256(text.encode("utf-8")).hexdigest(), "created": created})
+    return emit({"id": ident, "version": version_of(text.encode("utf-8")), "created": created})
 
 
 def cmd_resolve(args: dict) -> int:
@@ -379,7 +403,7 @@ def cmd_resolve(args: dict) -> int:
     return emit({"key": key, "id": ident, "resolved": True})
 
 
-VERBS = {"list": cmd_list, "get": cmd_get, "upsert": cmd_upsert, "resolve": cmd_resolve}
+VERBS = {"list": cmd_list, "get": cmd_get, "comments": cmd_comments, "upsert": cmd_upsert, "resolve": cmd_resolve}
 VALUE_FLAGS = ("--config-file", "--id", "--item-file", "--idempotency-key")
 SWITCHES = ("--dry-run", "--confirmed", "--not-created", "--check")
 

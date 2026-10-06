@@ -212,7 +212,8 @@ def test_a_comment_is_saved_once_and_enters_an_answer_only_on_the_persons_comman
     asked = ops.run_next(project)
     ops.sync(project)
     edit_item(tree, ids["market"], "## Comments\n", "## Comments\n\n- Start with dental clinics.\n")
-    assert ops.sync(project)["board"]["pulled"] == [ids["market"]]
+    synced = ops.sync(project)["board"]  # a comment does not move the version: listed, the item not read (WP-3.15)
+    assert synced["pulled"] == [] and synced["comments"] == 1
     edit_item(tree, ids["market"], "do the market analysis.", "do the market analysis now.")
     ops.sync(project)
     s, conn = store(tree)
@@ -226,6 +227,21 @@ def test_a_comment_is_saved_once_and_enters_an_answer_only_on_the_persons_comman
     answer = ops.pending(project, delivered["pending_id"])["answer"]
     assert answer == "Narrow it.\n\nComments left on the platform:\n- unknown: Start with dental clinics."
     assert out["comments"] == [saved[0]["id"]] and s.comments_list(conn, task_id=ids["market"]) == []
+
+
+def test_a_comment_added_on_an_unchanged_item_is_saved_by_the_next_pull(tree):
+    # WP-3.15: on the live service a comment does not move an item's version (N3), and the local provider's version
+    # leaves out the comments, so the item is not read; its comments are listed at every pull all the same.
+    ids = planned(tree)
+    project = project_of(tree)
+    ops.sync(project)
+    version = task(tree, ids["profile"])["remote_version"]
+    edit_item(tree, ids["profile"], "## Comments\n", "## Comments\n\n- Keep it short.\n")
+    out = ops.sync(project)["board"]
+    assert out["pulled"] == [] and out["comments"] == 1 and task(tree, ids["profile"])["remote_version"] == version
+    s, conn = store(tree)
+    assert [c["text"] for c in s.comments_list(conn, task_id=ids["profile"])] == ["Keep it short."]
+    assert ops.sync(project)["board"]["comments"] == 0  # saved once
 
 
 def test_a_dry_run_reads_nothing_and_prints_every_write(tree):
