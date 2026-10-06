@@ -79,12 +79,17 @@ def pack_skills(project_cfg: dict, root: str) -> list:
     return sorted(names)
 
 
+def mandatory(skill: str, root: str) -> bool:
+    """Whether a task of this skill is a milestone in every mode: mandatory_milestone of its runtime manifest, the
+    one source; False for a skill with no manifest."""
+    if not os.path.isfile(manifest.path(root, skill)):
+        return False
+    return bool(manifest.load(root, skill).get("mandatory_milestone"))
+
+
 def _task_facts(skill: str, root: str) -> dict:
     meta = skill_meta.declared(os.path.join(root, "skills", skill))
-    mandatory = False
-    if os.path.isfile(manifest.path(root, skill)):
-        mandatory = bool(manifest.load(root, skill).get("mandatory_milestone"))
-    return {"mandatory_milestone": mandatory, "web": bool(meta["web"])}
+    return {"mandatory_milestone": mandatory(skill, root), "web": bool(meta["web"])}
 
 
 def from_flow(flow: dict, root: str, pack) -> list:
@@ -145,7 +150,8 @@ def build(request: dict, tasks: list, route, source: str, limits: dict, past: li
              "| # | Task | Skill | After | Milestone | Web |", "|---|---|---|---|---|---|"]
     for n, t in enumerate(tasks, 1):
         after = ", ".join(str(keys[d]) for d in t["depends_on"]) or "-"
-        lines.append(f"| {n} | {t['title']} | {t['skill']} | {after} | {'yes' if t['milestone'] else 'no'} | "
+        milestone = "yes, mandatory" if t.get("mandatory_milestone") else "yes" if t["milestone"] else "no"
+        lines.append(f"| {n} | {t['title']} | {t['skill']} | {after} | {milestone} | "
                      f"{'yes' if t['web'] else 'no'} |")
     lines += ["", f"One task at a time; each run at most {limits.get('timeout_seconds')} s, retried at most "
                   f"{limits.get('retries')} times. At least {len(tasks)} runs.",
