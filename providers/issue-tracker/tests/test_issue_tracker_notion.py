@@ -168,3 +168,25 @@ def test_the_task_board_loads_only_the_block_helper_from_the_documents_folder(tm
     assert other == {"documents/notion_blocks.py"}
     source = SCRIPT.read_text(encoding="utf-8")
     assert source.count('"documents"') == 1 and "spec_from_file_location" in source
+
+
+def test_a_comment_on_one_block_of_the_body_is_read_with_the_item(tmp_path):
+    # Measured on the live service (README.md, N4): a comment on a block is listed under that block, not the page's.
+    board = Board(tmp_path)
+    made = board.upsert({"title": "Voice", "text": "First paragraph.\n\nSecond paragraph."}, key="k1")[1]
+    block = board.fake.children[made["id"]][1]
+    board.fake.comment(made["id"], "On the row.")
+    board.fake.comment(block, "On the second paragraph.")
+    got = board.run("get", "--id", made["id"])[1]
+    assert [c["text"] for c in got["comments"]] == ["On the row.", "On the second paragraph."]
+
+
+def test_a_row_in_the_trash_is_got_as_archived_with_no_body(tmp_path):
+    # Measured on the live service (README.md, N8): the body of a trashed row cannot be listed (404).
+    board = Board(tmp_path)
+    made = board.upsert({"title": "Voice", "text": "A body.", "state": "ready"}, key="k1")[1]
+    board.fake.person_trashes(made["id"])
+    code, out, said = board.run("get", "--id", made["id"])
+    assert code == 0, said
+    assert (out["archived"], out["title"], out["text"], out["comments"], out["state"]) == (True, "Voice", "", [], "ready")
+    assert made["id"] not in [i["id"] for i in board.run("list")[1]["items"]]
