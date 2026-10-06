@@ -86,3 +86,25 @@ def test_the_estimate_counts_past_runs_of_the_same_skill_and_invents_no_number()
     assert built["payload"]["limits"] == LIMITS and "usd" not in str(built).lower() and "$" not in built["body"]
     with pytest.raises(plan.PlanError):
         plan.build(REQUEST, tasks, None, "guess", LIMITS, [])
+
+
+def test_the_brand_flow_plans_five_tasks_and_only_the_strategy_is_ready_at_first(tmp_path):
+    brand = flow_files.load("brand", ROOT)
+    scope = plan.pack_skills({"raw": {"area_agents": {"brand": {"pack": "brand", "enabled": True}}}}, ROOT)
+    tasks = plan.from_flow(brand, ROOT, scope)
+    assert [t["key"] for t in tasks] == ["strategy", "name", "identity", "voice", "guidelines"]
+    assert [t["depends_on"] for t in tasks][1:] == [["strategy"], ["strategy"], ["strategy"],
+                                                    ["strategy", "name", "identity", "voice"]]
+    assert [t["milestone"] for t in tasks] == [True, True, True, False, True]
+    store = ops.store_module()
+    db = str(tmp_path / "tasks.sqlite")
+    store.init_db(db)
+    conn = store.open_db(db)
+    try:
+        added = store.request_add(conn, title=brand["title"], text="Build the brand.", flow="brand", tasks=tasks)
+    finally:
+        conn.close()
+    assert added["state"] == "planned"
+    assert [(t["key"], t["state"]) for t in added["tasks"]] == [
+        ("strategy", "ready"), ("name", "planned"), ("identity", "planned"), ("voice", "planned"),
+        ("guidelines", "planned")]

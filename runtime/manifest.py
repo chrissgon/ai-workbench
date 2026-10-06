@@ -39,7 +39,7 @@ sys.path.insert(0, HERE)
 import skill_meta  # noqa: E402  (the same folder, as the other modules import each other)
 
 REL = "evals/runtime-manifest.json"
-PACKS_IN_USE = ("business",)
+PACKS_IN_USE = ("business", "brand", "planning")
 KEYS = ("skill", "documents", "machine_files", "mandatory_milestone", "asking_openings", "gate")
 DOCUMENT_KEYS = ("path", "checks", "platform", "bound_to_approval")
 PLATFORM = ("editable", "read_only")

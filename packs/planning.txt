@@ -1,0 +1,2 @@
+# The planning agent's scope: the router skill (runtime/manifest.py, PACKS_IN_USE).
+core-orchestrator

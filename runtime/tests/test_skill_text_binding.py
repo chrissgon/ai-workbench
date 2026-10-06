@@ -152,9 +152,17 @@ def test_the_sentences_the_classifier_reads_from_skills_are_still_there():
 
 
 def test_every_skill_in_use_asks_with_an_opening_the_classifier_knows():
+    asking = 0
     for skill in manifest.skills_in_use(str(REPO)):
         facts = manifest.ending_facts(str(REPO), skill)
         firsts = manifest.asking_openings_of(text(f"skills/{skill}/SKILL.md"))
+        if not firsts:
+            # A skill whose SKILL.md holds no asking template (brand-guidelines only stops on a missing file;
+            # core-orchestrator asks on its Q-lines, which runtime/router.py reads, not the classifier) gives the
+            # classifier nothing to recognise: its manifest says so with no opening, and nothing is guessed.
+            assert facts["asking_openings"] == [], f"{skill} has no asking template, so its manifest has no opening"
+            continue
+        asking += 1
         assert facts["asking_openings"], f"{skill} has no asking opening: look at its manifest"
         for opening in facts["asking_openings"]:
             assert any(first.startswith(opening) for first in firsts), \
@@ -162,6 +170,7 @@ def test_every_skill_in_use_asks_with_an_opening_the_classifier_knows():
             reply = f"{opening}: two points are undecided.\n\n1. Which country? Recommended: yours."
             got = endings.classify(reply, NONE, [], [], [], facts=facts)[0]
             assert got == "question", f"{skill}: a reply that opens with {opening!r} is {got}: look at rule 3"
+    assert asking, "no skill in use has an asking template: the test checks nothing"
 
 
 def test_the_code_areas_are_the_areas_of_the_skills_that_work_on_code():
