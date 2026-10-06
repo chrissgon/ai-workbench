@@ -14,9 +14,9 @@ option the map does not know is read as state null; a row with no option is `req
 of the row's page, converted with providers/documents/notion_blocks.py, the one file this script loads from another
 class's folder. `shown` is written to the shown property as "key: value" lines and never read back.
 
-`version` is the page's last_edited_time. Which edits move it, and how fine it is, is measured on the live service
-(README.md, "Measured on the live service"); the stand-in service of the tests moves it on every change to the page,
-its body or its comments. An upsert reads the row first and writes only the properties and the body that differ, so
+`version` is the page's last_edited_time. Measured on the live service (README.md, "Measured on the live service"):
+it is rounded to the minute and a comment does not move it; the stand-in service of the tests moves it on every
+change to the page, its body or its comments. Comments are those of the row's page and of each block of its body. An upsert reads the row first and writes only the properties and the body that differ, so
 a write of a value already there changes nothing.
 
 Usage:
@@ -467,15 +467,41 @@ def read_state(page: dict, cfg: dict):
     return cfg["states"].get(option.get("name"))
 
 
+def block_ids(blocks: list) -> list:
+    """The ids of the blocks given and of their children, at every depth, in reading order."""
+    out = []
+    for b in blocks:
+        out.append(b.get("id"))
+        kind = b.get("type")
+        out += block_ids(((b.get(kind) if isinstance(kind, str) else None) or {}).get("children") or [])
+    return [i for i in out if isinstance(i, str)]
+
+
+def comments_of(service: Service, ident: str, blocks: list) -> list:
+    """The comments of the row's page and of every block in its body: the service lists a comment made on a block
+    under that block only (measured, README.md, N4). One listing per block; a comment met twice is kept once."""
+    out, seen = [], set()
+    for target in [ident] + block_ids(blocks):
+        for c in service.paged("list_comments", query={"block_id": target})[0]:
+            if c.get("id") in seen:
+                continue
+            seen.add(c.get("id"))
+            out.append({"id": c.get("id"), "author": (c.get("created_by") or {}).get("id"),
+                        "created_at": c.get("created_time"), "text": plain(c.get("rich_text"))})
+    return out
+
+
 def item_of(service: Service, page: dict, cfg: dict) -> dict:
+    """A row as the contract shows it. The body of a row in the trash cannot be listed (the service answers 404,
+    measured, README.md, N8): it is read as no text and no comments, and archived is true."""
     ident = page["id"]
-    comments = service.paged("list_comments", query={"block_id": ident})[0]
+    gone = archived(page)
+    blocks = [] if gone else service.blocks(ident)
     return {"id": ident, "version": page.get("last_edited_time"),
             "title": plain(prop(page, cfg["fields"]["title"], "title").get("title")),
-            "text": nb.to_markdown(service.blocks(ident)).strip(), "state": read_state(page, cfg),
-            "archived": archived(page), "url": page.get("url"),
-            "comments": [{"id": c.get("id"), "author": (c.get("created_by") or {}).get("id"),
-                          "created_at": c.get("created_time"), "text": plain(c.get("rich_text"))} for c in comments]}
+            "text": nb.to_markdown(blocks).strip(), "state": read_state(page, cfg),
+            "archived": gone, "url": page.get("url"),
+            "comments": [] if gone else comments_of(service, ident, blocks)}
 
 
 def shown_text(shown: dict) -> str:

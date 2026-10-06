@@ -3,9 +3,12 @@ providers/documents/notion.py. Not a test file, and never a copy of the live ser
 the calls of the two providers' tables (their README.md, "Calls this provider makes"), keeps pages, blocks, rows and
 comments in memory, and returns stored blocks as given.
 
-What it decides where the live service is not measured yet (README.md, "Measured on the live service"): a page's
-last_edited_time moves on every change to the page, to a block under it and to its comments, by one second per
-change (N1 to N3); a listed comment is an open one (N5); a deleted block and a trashed page are left out of every list.
+What it decides where the live service differs or is not measured yet (README.md, "Measured on the live service"): a
+page's last_edited_time moves on every change to the page, to a block under it and to its comments, by one second per
+change, as the contract asks (live, N1 to N3: it is rounded to the minute and a comment does not move it); a listed
+comment is an open one (N5); a deleted block and a trashed page are left out of every list. As measured (N4, N8): a
+comment made on a block is listed under that block only, and with the page once the block is deleted; the children
+of a page in the trash cannot be listed (404).
 It refuses what the reference says the service refuses: no Notion-Version header, a wrong token, more than 100
 children in one append, more than two levels of nesting in one request, a text object over 2,000 characters.
 
@@ -102,6 +105,14 @@ class FakeNotion:
         while ident in self.blocks:
             ident = self.blocks[ident]["parent_id"]
         return ident if ident in self.pages else None
+
+    def deleted(self, ident: str) -> bool:
+        """A block is deleted when it or a block above it is."""
+        while ident in self.blocks:
+            if self.blocks[ident]["in_trash"]:
+                return True
+            ident = self.blocks[ident]["parent_id"]
+        return False
 
     def touch(self, ident: str) -> None:
         page = self.page_of(ident)
@@ -200,7 +211,8 @@ class FakeNotion:
             self.comments.setdefault(ident, []).append({
                 "object": "comment", "id": new_id(), "discussion_id": new_id(), "created_time": self.tick(),
                 "created_by": {"object": "user", "id": new_id()}, "rich_text": rich(text),
-                "parent": {"type": "page_id", "page_id": ident}})
+                "parent": {"type": "block_id", "block_id": ident} if ident in self.blocks
+                else {"type": "page_id", "page_id": ident}})
             self.touch(ident)
 
     # --- what a person does in the app ------------------------------------------
@@ -267,7 +279,8 @@ class FakeNotion:
                 page["last_edited_time"] = self.tick()
             return page
         if name in ("list_children", "append_children"):
-            if ids["id"] not in self.children or self.blocks.get(ids["id"], {}).get("in_trash"):
+            if ids["id"] not in self.children or self.blocks.get(ids["id"], {}).get("in_trash") \
+                    or self.pages.get(ids["id"], {}).get("in_trash"):
                 raise Answer(404, "object_not_found", "Could not find block.")
             if name == "append_children":
                 made = self.store(ids["id"], self.checked_children(body or {}))
@@ -287,7 +300,11 @@ class FakeNotion:
             target = query.get("block_id")
             if not target or (target not in self.pages and target not in self.blocks):
                 raise Answer(404, "object_not_found", "Could not find block.")
-            return self.listing(self.comments.get(target, []), query.get("start_cursor"), query.get("page_size"))
+            listed = list(self.comments.get(target, []))
+            if target in self.pages:  # the comments of a deleted block surface with its page
+                listed += [c for b, cs in self.comments.items() if b in self.blocks and self.deleted(b)
+                           and self.page_of(b) == target for c in cs]
+            return self.listing(listed, query.get("start_cursor"), query.get("page_size"))
         raise Answer(400, "invalid_request_url", "Invalid request URL.")
 
     def checked_children(self, body: dict) -> list:

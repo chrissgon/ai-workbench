@@ -12,12 +12,12 @@ identifier. A write converts the Markdown with notion_blocks.to_blocks (next to 
 block of the page: the new blocks are appended first, at most 100 per call, a block's own children in later calls
 under it, then the old blocks are deleted, so a write that fails never leaves the page empty. A read lists the
 children at every depth and converts them with notion_blocks.to_markdown: what comes back is the round trip of what
-was written (notion_blocks.py says what changes on the way), not the same bytes. Comments are the page's open
-comments, as the service lists them.
+was written (notion_blocks.py says what changes on the way), not the same bytes. Comments are the open comments the
+service lists for the page and for each of its blocks (a comment on a block is listed under that block only).
 
-`version` is the page's last_edited_time, and `stat` retrieves the page object only. Which edits move it, and how fine
-it is, is measured on the live service (README.md, "Measured on the live service"); the stand-in service of the tests
-moves it on every change to the page, its blocks or its comments.
+`version` is the page's last_edited_time, and `stat` retrieves the page object only. Measured on the live service
+(README.md, "Measured on the live service"): it is rounded to the minute and a comment does not move it; the stand-in
+service of the tests moves it on every change to the page, its blocks or its comments.
 
 Usage:
   uv run providers/documents/notion.py --help
@@ -488,10 +488,28 @@ def retrieve(service: Service, ident: str) -> dict:
         raise
 
 
-def comments_of(service: Service, ident: str) -> list:
-    comments = service.paged("list_comments", query={"block_id": ident})[0]
-    return [{"id": c.get("id"), "author": (c.get("created_by") or {}).get("id"), "created_at": c.get("created_time"),
-             "text": plain(c.get("rich_text"))} for c in comments]
+def block_ids(blocks: list) -> list:
+    """The ids of the blocks given and of their children, at every depth, in reading order."""
+    out = []
+    for b in blocks:
+        out.append(b.get("id"))
+        kind = b.get("type")
+        out += block_ids(((b.get(kind) if isinstance(kind, str) else None) or {}).get("children") or [])
+    return [i for i in out if isinstance(i, str)]
+
+
+def comments_of(service: Service, ident: str, blocks: list) -> list:
+    """The comments of the page and of every block in it: the service lists a comment made on a block under that
+    block only, not with the page's (measured, README.md, N4). One listing per block; a comment met twice is kept once."""
+    out, seen = [], set()
+    for target in [ident] + block_ids(blocks):
+        for c in service.paged("list_comments", query={"block_id": target})[0]:
+            if c.get("id") in seen:
+                continue
+            seen.add(c.get("id"))
+            out.append({"id": c.get("id"), "author": (c.get("created_by") or {}).get("id"),
+                        "created_at": c.get("created_time"), "text": plain(c.get("rich_text"))})
+    return out
 
 
 def cmd_check(args: dict) -> int:
@@ -516,8 +534,9 @@ def cmd_read(args: dict) -> int:
     ident = doc_id(args.get("--id"))
     service = Service()
     page = retrieve(service, ident)
-    return emit({"id": ident, "version": page.get("last_edited_time"), "markdown": nb.to_markdown(service.blocks(ident)),
-                 "comments": comments_of(service, ident)})
+    blocks = service.blocks(ident)
+    return emit({"id": ident, "version": page.get("last_edited_time"), "markdown": nb.to_markdown(blocks),
+                 "comments": comments_of(service, ident, blocks)})
 
 
 def cmd_write(args: dict) -> int:
