@@ -55,6 +55,12 @@ Operations of stage 4:
                                    (runtime/deps.py); a run whose copy holds versioned files gets each set that
                                    applies, after its base commit, and never brings it back
 
+Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run whose copy holds versioned files
+starts only when the project's tracked files have no uncommitted change, from the project's files plus the newest
+unblocked change set of its request; what it did to versioned files is kept in its run folder as one change set,
+never written into the project. The pending decision lists the change set, and a review whose change set is blocked
+is not released: it is answered, or the request is cancelled.
+
 A task whose skill's runtime manifest sets mandatory_milestone is a milestone whatever its flow file says; the review
 its run opens when it ends `done` says so and carries "mandatory_milestone": true in its payload.
 
@@ -92,6 +98,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import board  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
+import changeset  # noqa: E402
 import deps as deps_sets  # noqa: E402  (the operation `deps` would hide the module: part 0, F.1, rule 5)
 import documents  # noqa: E402
 import drop  # noqa: E402
@@ -531,12 +538,26 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         answered = [p for p in _stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
         prompt = task_prompt(request_text, task["text"], answered,
                              handed=[rel for _source, rel in handed if rel in entered_rels])
+        code = None
+        if entered.get("tracked"):
+            code = _code_state(ctx, task)
+            if code.get("refused"):
+                return fail("internal", code["refused"])
+        current = (code or {}).get("current")
         try:
-            installed = _dependencies(cfg, entered)
+            installed = _dependencies(cfg, entered, read=_reader(cfg, current))
         except deps_sets.DepsError as e:
             return fail("internal", f"dependencies: {e.reason}")
-        prepare = (lambda copy, _root: [deps_sets.place(r, copy) for r in installed]) if installed else None
+
+        def prepare(copy, _root):
+            if current is not None:
+                changeset.apply(current, copy)  # the earlier work of the request, as an uncommitted change
+            for r in installed:
+                deps_sets.place(r, copy)
+
         finish = (lambda copy, _root: [deps_sets.remove(copy, r["produces"]) for r in installed]) if installed else None
+        if current is None and not installed:
+            prepare = None
         with lab.session(), _key_in_environment(routing, key):
             result = lab.run_skill(skill, prompt, files, dest, web=routing["web"], tier=routing["tier"],
                                    prepare=prepare, finish=finish)
@@ -553,8 +574,10 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         return fail(failure["kind"], failure["reason"], counts["attempts"], result["image_digest"],
                     _count(counts.get("redactions")))
     left = result["changes"]["created"] + result["changes"]["modified"]
-    returned, kept, state_report = workcopy.returning(cfg["project"], result, base, base_state, skill,
-                                                       bound=manifest.bound_among(known, left))
+    bound = manifest.bound_among(known, left)
+    made = _changeset_of(ctx, task, run_id, dest, result, entered, code, bound) if code is not None else None
+    returned, kept, state_report = workcopy.returning(cfg["project"], result, base, base_state, skill, bound=bound,
+                                                       versioned=(made or {}).get("versioned", ()))
     ending, why = _ending(result, meta, skill)
     loaded = timing.get("skills_loaded")
     body, masked = workcopy.masked_reply(result["response"])
@@ -572,6 +595,8 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         out.update(status="ok", ending=ending, task_state="blocked", pending_id=None, returned=returned, kept=kept)
         return out
     mandatory = ending == "done" and bool(known.get("mandatory_milestone"))
+    if made is not None:
+        body = body.rstrip("\n") + "\n\n" + made["text"]
     if mandatory:
         body = body.rstrip("\n") + "\n\n" + MANDATORY_LINE
     cut = len(body.encode("utf-8")) > store.BODY_MAX
@@ -588,6 +613,8 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
                             "routing": routing, "use": out["use"],
                             "response_file": os.path.join(result["outputs"], "response.md"), "body_cut": cut,
                             "body_masked": masked}}
+    if made is not None:
+        decision["payload"]["changeset"] = made["summary"]
     if mandatory:
         decision["payload"]["mandatory_milestone"] = True
         if cut:  # the sentence stays at the end of a body that was cut
@@ -597,6 +624,91 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     done = _stored(ctx, store.task_run_finish, run_id, task_state="waiting", pending=decision, **finish)
     out.update(status="ok", ending=ending, task_state="waiting", pending_id=done["pending_id"], returned=returned, kept=kept)
     return out
+
+
+def _git(project: str, *args) -> "subprocess.CompletedProcess":
+    """git in the project (the person's own repository, run by the host); never in a copy a run touched."""
+    return subprocess.run(["git", "-C", project, *args], capture_output=True, text=True, timeout=120, check=False)
+
+
+def _request_run_dirs(ctx: dict, request_id: int) -> list:
+    """The run folders of the completed runs of a request's tasks, newest first."""
+    runs = []
+    for t in _stored(ctx, ctx["store"].tasks_list, request_id):
+        if t["parent_id"] is not None:
+            runs += [r for r in _stored(ctx, ctx["store"].task_runs_list, t["id"]) if r["status"] == "ok" and r["run_dir"]]
+    return [r["run_dir"] for r in sorted(runs, key=lambda r: r["id"], reverse=True)]
+
+
+def _code_state(ctx: dict, task: dict) -> dict:
+    """What a run whose copy holds versioned files starts from: {"project_commit", "current"}, or {"refused": why}.
+    A change set is made against one commit of the project (choice K4): the run is refused while the project's
+    tracked files have uncommitted changes, and when the request's current change set was made against another
+    commit."""
+    project = ctx["cfg"]["project"]
+    try:
+        dirty = _git(project, "status", "--porcelain", "--untracked-files=no")
+        head = _git(project, "rev-parse", "HEAD")
+    except (OSError, subprocess.SubprocessError) as e:
+        return {"refused": f"git could not be run in the project: {type(e).__name__}"}
+    if dirty.returncode != 0 or head.returncode != 0:
+        return {"refused": f"git failed in the project: {(dirty.stderr or head.stderr).strip()[:300]}"}
+    if dirty.stdout.strip():
+        return {"refused": "commit or stash the changes to tracked files first: a change set is made against a commit"}
+    commit = head.stdout.strip()
+    try:
+        current = changeset.current(_request_run_dirs(ctx, task["parent_id"]))
+    except changeset.ChangesetError as e:
+        return {"refused": f"the request's change set: {e.reason}"}
+    if current is not None and current.get("project_commit") != commit:
+        return {"refused": f"the request's change set was made against the commit {current.get('project_commit')} and the "
+                           f"project is at {commit}: cancel the request, or put the project back on that commit"}
+    return {"project_commit": commit, "current": current}
+
+
+def _reader(cfg: dict, current):
+    """read(rel) of a dependency file as the next run sees it: the request's current change set's when it holds or
+    removes the file, else the project's."""
+    def read(rel):
+        if current is not None:
+            if rel in (current.get("removed") or []):
+                return None
+            for item in current.get("files") or []:
+                if item["path"] == rel:
+                    with open(os.path.join(current["dir"], "files", *rel.split("/")), "rb") as f:
+                        return f.read()
+        return _project_bytes(cfg["project"], rel)
+    return read
+
+
+EMPTY_CHANGESET = changeset.canonical_sha256([], [])
+
+
+def _changeset_of(ctx: dict, task: dict, run_id: int, dest: str, result: dict, entered: dict, code: dict, bound) -> dict:
+    """The change set a completed run left, stored in its run folder when it differs from the one it started from:
+    {"summary" (for the pending decision's payload), "text" (for its body), "versioned" (the paths that never come
+    back as loose files)}."""
+    checks = {"readable": lab.readable, "scan": workcopy.scan, "settings": lab.carries_settings}
+    facts = {"staged": list(result["staged"]) + [path_rule.DROP_DIR], "bound": list(bound)}
+    try:
+        made = changeset.compute(dest, result.get("base_commit"), entered["tracked"], facts, checks,
+                                 protected=ctx["cfg"]["protected_paths"])
+    except changeset.ChangesetError as e:
+        why = f"the change set could not be computed: {e.reason.splitlines()[0] if e.reason else e.kind}"
+        return {"summary": {"error": why}, "text": why[0].upper() + why[1:] + ".", "versioned": []}
+    current = code.get("current")
+    file = None
+    if made["refused"] or made["sha256"] != (current["sha256"] if current else EMPTY_CHANGESET):
+        made.update(request=task["parent_id"], task=task["id"], run=run_id, project_commit=code["project_commit"])
+        file = changeset.store(dest, made)
+    summary = {"file": file, "sha256": made["sha256"], "files": len(made["files"]), "removed": len(made["removed"]),
+               "blocked": made["blocked"], "refused": made["refused"]}
+    lines = [f"Change set: {len(made['files'])} file(s), {len(made['removed'])} removed"
+             + (", blocked" if made["blocked"] else "") + (f", sha256 {made['sha256']}" if file else ", unchanged")]
+    lines += [f"- {item['change']}: {item['path']}" + (" (executable)" if item["executable"] else "") for item in made["files"]]
+    lines += [f"- removed: {rel}" for rel in made["removed"]]
+    lines += [f"- refused: {item['path'] or '(the whole set)'}: {item['reason']}" for item in made["refused"]]
+    return {"summary": summary, "text": "\n".join(lines), "versioned": made["versioned"]}
 
 
 def _project_bytes(project: str, rel: str):
@@ -729,6 +841,12 @@ def release(project: str, pending_id: int) -> dict:
     """Release a delivery (a pending decision of kind review). The task is done; the tasks that depended on it
     become ready. The delivery stays a draft: releasing is not approving."""
     ctx = context(project)
+    item = _stored(ctx, ctx["store"].pending_get, pending_id)
+    made = (item.get("payload") or {}).get("changeset") or {}
+    if item["kind"] == "review" and made.get("blocked"):
+        refused = "; ".join(f"{r['path'] or 'the whole set'}: {r['reason']}" for r in made.get("refused") or [])
+        raise OpsError(f"pending decision {pending_id}: its change set is blocked ({refused}): answer with what to change, "
+                       "or cancel the request", 1)
     return _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="released", by="user")
 
 
