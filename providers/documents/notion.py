@@ -13,17 +13,19 @@ block of the page: the new blocks are appended first, at most 100 per call, a bl
 under it, then the old blocks are deleted, so a write that fails never leaves the page empty. A read lists the
 children at every depth and converts them with notion_blocks.to_markdown: what comes back is the round trip of what
 was written (notion_blocks.py says what changes on the way), not the same bytes. Comments are the open comments the
-service lists for the page and for each of its blocks (a comment on a block is listed under that block only).
+service lists for the page and for each of its blocks (a comment on a block is listed under that block only): `read`
+lists them all; `comments` lists the page's own, in one listing, whatever the version.
 
-`version` is the page's last_edited_time, and `stat` retrieves the page object only. Measured on the live service
-(README.md, "Measured on the live service"): it is rounded to the minute and a comment does not move it; the stand-in
-service of the tests moves it on every change to the page, its blocks or its comments.
+`version` is the page's last_edited_time, and `stat` retrieves the page object only. It covers the content: measured
+on the live service (README.md, "Measured on the live service"), it is rounded to the minute and a comment does not
+move it; the stand-in service of the tests does the same.
 
 Usage:
   uv run providers/documents/notion.py --help
   uv run providers/documents/notion.py --check --config-file <f>
   uv run providers/documents/notion.py stat  --config-file <f> --id <id>
   uv run providers/documents/notion.py read  --config-file <f> --id <id>
+  uv run providers/documents/notion.py comments --config-file <f> --id <id>
   uv run providers/documents/notion.py write --config-file <f> [--id <id>] --path <project-relative path>
                                        --markdown-file <f> --idempotency-key <k> (--dry-run | --confirmed)
   uv run providers/documents/notion.py resolve --config-file <f> --idempotency-key <k>
@@ -507,9 +509,13 @@ def comments_of(service: Service, ident: str, blocks: list) -> list:
             if c.get("id") in seen:
                 continue
             seen.add(c.get("id"))
-            out.append({"id": c.get("id"), "author": (c.get("created_by") or {}).get("id"),
-                        "created_at": c.get("created_time"), "text": plain(c.get("rich_text"))})
+            out.append(comment_of(c))
     return out
+
+
+def comment_of(c: dict) -> dict:
+    return {"id": c.get("id"), "author": (c.get("created_by") or {}).get("id"), "created_at": c.get("created_time"),
+            "text": plain(c.get("rich_text"))}
 
 
 def cmd_check(args: dict) -> int:
@@ -537,6 +543,20 @@ def cmd_read(args: dict) -> int:
     blocks = service.blocks(ident)
     return emit({"id": ident, "version": page.get("last_edited_time"), "markdown": nb.to_markdown(blocks),
                  "comments": comments_of(service, ident, blocks)})
+
+
+def cmd_comments(args: dict) -> int:
+    """The page's own open comments, in one listing (paginated), whatever its version: a comment does not move the
+    version (measured, N3), so the runtime lists them at every pull. The comments on its blocks come with `read`."""
+    documents_config(args.get("--config-file"))
+    ident = doc_id(args.get("--id"))
+    try:
+        listed = Service().paged("list_comments", query={"block_id": ident})[0]
+    except ProviderError as exc:
+        if exc.status == 404:
+            raise ProviderError(f"no document {ident}") from None
+        raise
+    return emit({"id": ident, "comments": [comment_of(c) for c in listed]})
 
 
 def cmd_write(args: dict) -> int:
@@ -609,7 +629,7 @@ def cmd_resolve(args: dict) -> int:
     return emit({"key": key, "id": ident, "resolved": True})
 
 
-VERBS = {"stat": cmd_stat, "read": cmd_read, "write": cmd_write, "resolve": cmd_resolve}
+VERBS = {"stat": cmd_stat, "read": cmd_read, "comments": cmd_comments, "write": cmd_write, "resolve": cmd_resolve}
 VALUE_FLAGS = ("--config-file", "--id", "--path", "--markdown-file", "--idempotency-key")
 SWITCHES = ("--dry-run", "--confirmed", "--not-created", "--check")
 

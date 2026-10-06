@@ -4,8 +4,8 @@ the calls of the two providers' tables (their README.md, "Calls this provider ma
 comments in memory, and returns stored blocks as given.
 
 What it decides where the live service differs or is not measured yet (README.md, "Measured on the live service"): a
-page's last_edited_time moves on every change to the page, to a block under it and to its comments, by one second per
-change, as the contract asks (live, N1 to N3: it is rounded to the minute and a comment does not move it); a listed
+page's last_edited_time moves on every change to the page and to a block under it, by one second per change (live,
+N1 and N2: it is rounded to the minute), and, as on the live service (N3), not on a comment; a listed
 comment is an open one (N5); a deleted block and a trashed page are left out of every list. As measured (N4, N8): a
 comment made on a block is listed under that block only, and with the page once the block is deleted; the children
 of a page in the trash cannot be listed (404).
@@ -213,7 +213,7 @@ class FakeNotion:
                 "created_by": {"object": "user", "id": new_id()}, "rich_text": rich(text),
                 "parent": {"type": "block_id", "block_id": ident} if ident in self.blocks
                 else {"type": "page_id", "page_id": ident}})
-            self.touch(ident)
+            # As on the live service (N3): a comment does not move the page's last_edited_time.
 
     # --- what a person does in the app ------------------------------------------
 

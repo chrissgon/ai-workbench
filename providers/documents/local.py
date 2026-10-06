@@ -10,15 +10,17 @@ any editor.
 The folder is `dir` of the project configuration's `documents` object (an absolute path). The id of a document is
 its path relative to the project (docs/brand/strategy.md), and its file is <dir>/<path>. Comments are the lines
 starting "- " of the side file <dir>/<path>.comments.md, which a person writes; the id of a comment is the first 16
-hex characters of the sha256 of its text. `version` is the sha256 of the document's bytes, joined with ":" to the
-sha256 of the side file when it exists: it changes when a person edits the document or comments, and only then.
-A write replaces the whole document (atomically), never merges, and leaves the side file as it is.
+hex characters of the sha256 of its text. `version` is the sha256 of the document's bytes: it covers the content,
+so it changes when a person edits the document, and only then; a comment does not move it (comments lists them
+whatever the version). A write replaces the whole document (atomically), never merges, and leaves the side file as
+it is.
 
 Usage:
   python3 providers/documents/local.py --help
   python3 providers/documents/local.py --check --config-file <f>
   python3 providers/documents/local.py stat  --config-file <f> --id <id>
   python3 providers/documents/local.py read  --config-file <f> --id <id>
+  python3 providers/documents/local.py comments --config-file <f> --id <id>
   python3 providers/documents/local.py write --config-file <f> [--id <id>] --path <project-relative path>
                                        --markdown-file <f> --idempotency-key <k> (--dry-run | --confirmed)
   python3 providers/documents/local.py resolve --config-file <f> --idempotency-key <k>
@@ -109,9 +111,7 @@ def version_of(folder: str, ident: str) -> str:
     data = read_bytes(file_of(folder, ident))
     if data is None:
         raise Refused(f"no document {ident}", 1)
-    side = read_bytes(file_of(folder, ident) + SIDE)
-    out = hashlib.sha256(data).hexdigest()
-    return out if side is None else out + ":" + hashlib.sha256(side).hexdigest()
+    return hashlib.sha256(data).hexdigest()
 
 
 def comments_of(folder: str, ident: str) -> list:
@@ -202,6 +202,13 @@ def cmd_read(args: dict) -> int:
                  "comments": comments_of(folder, ident)})
 
 
+def cmd_comments(args: dict) -> int:
+    folder = documents_dir(args.get("--config-file"))
+    ident = doc_id(args.get("--id"), "--id")
+    version_of(folder, ident)  # a document that does not exist has no comments: exit 1
+    return emit({"id": ident, "comments": comments_of(folder, ident)})
+
+
 def cmd_write(args: dict) -> int:
     folder = documents_dir(args.get("--config-file"))
     mode = mode_of(args)
@@ -256,7 +263,7 @@ def cmd_resolve(args: dict) -> int:
     return emit({"key": key, "id": ident, "resolved": True})
 
 
-VERBS = {"stat": cmd_stat, "read": cmd_read, "write": cmd_write, "resolve": cmd_resolve}
+VERBS = {"stat": cmd_stat, "read": cmd_read, "comments": cmd_comments, "write": cmd_write, "resolve": cmd_resolve}
 VALUE_FLAGS = ("--config-file", "--id", "--path", "--markdown-file", "--idempotency-key")
 SWITCHES = ("--dry-run", "--confirmed", "--not-created", "--check")
 

@@ -935,7 +935,7 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
     the board; with dry_run, every write the provider would make, and nothing changes). The documents, after the
     board: pull (the platform to the project; not on a dry run), then push of every project document a manifest
     entry mirrors. take ("page" or "project") with path settles a document that was not taken (documents.take),
-    and does nothing else. Returns {"board": {"pulled", "created", "edited", "refused", "gone", "pushed",
+    and does nothing else. Returns {"board": {"pulled", "created", "edited", "refused", "gone", "comments", "pushed",
     "failed"[, "would"]} or None, "documents": {"imported", "not_taken", "conflicts", "rejected", "comments", "gone",
     "pushed", "failed"[, "would"]} or None}."""
     if take is not None and take not in ("page", "project"):
@@ -952,7 +952,8 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
             return out
         if board.enabled(ctx["cfg"]):
             try:
-                pulled = {"pulled": [], "created": [], "edited": [], "refused": [], "gone": []} if dry_run else board.pull(ctx)
+                pulled = ({"pulled": [], "created": [], "edited": [], "refused": [], "gone": [], "comments": 0} if dry_run
+                          else board.pull(ctx))
                 out["board"] = {**pulled, **board.push(ctx, dry_run=dry_run)}
             except board.BoardError as e:
                 raise OpsError(f"the task board: {e}", 3 if e.kind == "not configured" else 1) from None

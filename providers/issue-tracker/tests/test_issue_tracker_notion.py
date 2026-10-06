@@ -190,3 +190,19 @@ def test_a_row_in_the_trash_is_got_as_archived_with_no_body(tmp_path):
     assert code == 0, said
     assert (out["archived"], out["title"], out["text"], out["comments"], out["state"]) == (True, "Voice", "", [], "ready")
     assert made["id"] not in [i["id"] for i in board.run("list")[1]["items"]]
+
+
+def test_comments_is_one_listing_of_the_rows_own_comments_and_a_comment_does_not_move_the_version(tmp_path):
+    # Measured on the live service (README.md, N3): a comment does not move the version, so the runtime lists the
+    # row's own comments at every pull with this one call (WP-3.15); the comments on the body's blocks come with get.
+    board = Board(tmp_path)
+    made = board.upsert({"title": "Voice", "text": "First paragraph.\n\nSecond paragraph."}, key="k1")[1]
+    before = board.run("get", "--id", made["id"])[1]["version"]
+    board.fake.comment(made["id"], "On the row.")
+    board.fake.comment(board.fake.children[made["id"]][1], "On the second paragraph.")
+    assert board.run("list")[1]["items"][0]["version"] == before
+    listed = board.fake.count("list_comments")
+    code, out, said = board.run("comments", "--id", made["id"])
+    assert code == 0, said
+    assert [c["text"] for c in out["comments"]] == ["On the row."]
+    assert board.fake.count("list_comments") == listed + 1
