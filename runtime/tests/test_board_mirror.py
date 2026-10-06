@@ -302,3 +302,48 @@ def test_the_shown_fields_never_come_back_into_the_store(tree):
     got = task(tree, ids["market"])
     assert out["pulled"] == [ids["market"]] and out["edited"] == [] and out["refused"] == []
     assert (got["skill"], got["note"], got["milestone"]) == ("demo-asks", None, 0)
+
+
+def test_a_task_already_final_when_the_board_is_configured_is_never_mirrored_and_the_count_is_said(tree):
+    # WP-3.17: the first sync of a real board made an item for every task of the store, those finished long before.
+    project = project_of(tree)
+    old = planned(tree)
+    s, conn = store(tree)
+    s.request_cancel(conn, old["request"], by="user")  # final before any sync: the request and its two tasks
+    dry = ops.sync(project, dry_run=True)["board"]
+    assert dry["left_out_final"] == 3 and s.cursor_get(conn, "board:configured") is None
+    assert sorted(w["task"] for w in dry["would"]) == []
+    assert ops.status(project)["board"] == {"left_out_final": 3}
+    new = planned(tree)
+    first = ops.sync(project)["board"]
+    assert sorted(first["pushed"]) == sorted(new.values()) and first["left_out_final"] == 3
+    assert s.cursor_get(conn, "board:configured") is not None and len(items(tree)) == 3
+    assert all(task(tree, i)["remote_id"] is None for i in old.values())
+    again = ops.sync(project)["board"]
+    assert again["pushed"] == [] and again["left_out_final"] == 3 and len(items(tree)) == 3
+    assert ops.status(project)["board"] == {"left_out_final": 3}
+
+
+def test_a_task_that_becomes_final_after_the_board_is_configured_keeps_its_item_and_the_item_moves(tree):
+    project = project_of(tree)
+    first = planned(tree)
+    assert ops.sync(project)["board"]["left_out_final"] == 0
+    second = planned(tree)  # planned after the board was configured, and final before the next sync
+    s, conn = store(tree)
+    s.request_cancel(conn, first["request"], by="user")
+    s.request_cancel(conn, second["request"], by="user")
+    out = ops.sync(project)["board"]
+    assert out["left_out_final"] == 0 and sorted(out["pushed"]) == sorted(list(first.values()) + list(second.values()))
+    for task_id in list(first.values()) + list(second.values()):
+        assert "State: cancelled" in item_file(tree, task_id).read_text(encoding="utf-8")
+    assert len(items(tree)) == 6 and ops.status(project)["board"] == {"left_out_final": 0}
+
+
+def test_status_says_nothing_of_a_board_when_none_is_configured(tree):
+    project = project_of(tree)
+    path = tree["project"] / "docs" / "workbench" / "runtime.json"
+    cfg = json.loads(path.read_text(encoding="utf-8"))
+    del cfg["task_board"]
+    path.write_text(json.dumps(cfg), encoding="utf-8")
+    accept(project)
+    assert ops.status(project)["board"] is None

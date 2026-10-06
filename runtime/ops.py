@@ -739,8 +739,9 @@ def accept_config(project: str, sha256: str) -> dict:
 
 def status(project: str) -> dict:
     """{"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key",
-    "skill", "state", "note"}]}], "pending": [...], "documents": [{"path", "status", "note", "on_platform"}]}:
-    everything from the store's records."""
+    "skill", "state", "note"}]}], "pending": [...], "documents": [{"path", "status", "note", "on_platform"}],
+    "board": {"left_out_final"} or None}: everything from the store's records. "left_out_final" is the number of
+    tasks the board never mirrors because they were final when it was configured (runtime/board.py)."""
     ctx = context(project)
     rows = _stored(ctx, ctx["store"].tasks_list)
     comments = {}
@@ -755,7 +756,9 @@ def status(project: str) -> dict:
     return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": requests,
             "pending": [_listed(item) for item in _stored(ctx, ctx["store"].pending_list)],
             "documents": [{"path": d["path"], "status": d["status"], "note": d["note"], "on_platform": bool(d["remote_id"])}
-                          for d in _stored(ctx, ctx["store"].documents_list)]}
+                          for d in _stored(ctx, ctx["store"].documents_list)],
+            "board": ({"left_out_final": len(_stored(ctx, lambda _conn: board.left_out(ctx, rows)))}
+                      if board.enabled(ctx["cfg"]) else None)}
 
 
 # --- stage 3: the route, the plan, its approval ------------------------------------------------------------------
@@ -935,8 +938,8 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
     the board; with dry_run, every write the provider would make, and nothing changes). The documents, after the
     board: pull (the platform to the project; not on a dry run), then push of every project document a manifest
     entry mirrors. take ("page" or "project") with path settles a document that was not taken (documents.take),
-    and does nothing else. Returns {"board": {"pulled", "created", "edited", "refused", "gone", "comments", "pushed",
-    "failed"[, "would"]} or None, "documents": {"imported", "not_taken", "conflicts", "rejected", "comments", "gone",
+    and does nothing else. Returns {"board": {"pulled", "created", "edited", "refused", "gone", "comments",
+    "left_out_final", "pushed", "failed"[, "would"]} or None, "documents": {"imported", "not_taken", "conflicts", "rejected", "comments", "gone",
     "pushed", "failed"[, "would"]} or None}."""
     if take is not None and take not in ("page", "project"):
         raise OpsError("take is page or project", 2)
@@ -952,8 +955,8 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
             return out
         if board.enabled(ctx["cfg"]):
             try:
-                pulled = ({"pulled": [], "created": [], "edited": [], "refused": [], "gone": [], "comments": 0} if dry_run
-                          else board.pull(ctx))
+                pulled = ({"pulled": [], "created": [], "edited": [], "refused": [], "gone": [], "comments": 0,
+                           "left_out_final": len(board.left_out(ctx))} if dry_run else board.pull(ctx))
                 out["board"] = {**pulled, **board.push(ctx, dry_run=dry_run)}
             except board.BoardError as e:
                 raise OpsError(f"the task board: {e}", 3 if e.kind == "not configured" else 1) from None
