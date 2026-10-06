@@ -139,6 +139,41 @@ def test_rule_8_draft_with_questions(response, texts):
     assert ending(response, wrote(MARKET), [MARKET], [], texts) == "draft_with_questions"
 
 
+# A reply that closes with a list of questions (WP-3.20): the shapes of the forms runtime/endings.py lists.
+CLOSING_LISTS = [
+    "The draft is written.\n\n1. Which candidate? Recommended: the first.\n2. Fallback handle. Recommended: agree one now.\n"
+    "3. Words to avoid. Recommended: none recorded; confirm.",
+    "The draft is written.\n\n- Which audience comes first?\n- Which language?\n  - a sub-point that is not a question",
+    "The draft is written.\n\nOpen questions:\n1. The launch date.\n2. The second market.",
+    "The draft is written.\n\n### Questions for you\n\n1. The launch date.\n2. The second market.",
+    "The draft is written.\n\n**Questions**\n- The launch date.",
+    "The draft is written.\n\nQ1: Which flow? Recommended: the short one, because it is the one asked for.",
+]
+NOT_QUESTIONS = [
+    "The draft is written.\n\n1. Lumenfold: cleanest on conflicts.\n2. Quillmere: cleanest on domains.",
+    "The draft is written.\n\nWhich candidate? Recommended: the first.\n\n- File: docs/business/market.md\n- Next: brand-voice",
+    "The draft is written.\n\nQuestions were all answered in the last round:\n\n- File: docs/business/market.md",
+    "The draft is written.\n\n1. Which candidate? Recommended: the first.\n2. The file is docs/business/market.md.",
+]
+
+
+@pytest.mark.parametrize("response", CLOSING_LISTS)
+def test_a_reply_that_closes_with_a_list_of_questions_asks(response):
+    assert ending(response, wrote(MARKET), [MARKET], [], ["# Market\n"]) == "draft_with_questions"
+    assert ending(response, NONE) == "question"
+    assert ending(response, wrote("src/stats.ts"), facts=CODE) == "unclassified"
+
+
+@pytest.mark.parametrize("response", NOT_QUESTIONS)
+def test_a_closing_list_that_is_not_of_questions_asks_nothing(response):
+    assert ending(response, wrote(MARKET), [MARKET], [], ["# Market\n"]) == "done"
+
+
+def test_the_list_of_questions_is_read_only_with_facts():
+    changes = wrote(MARKET)
+    assert endings.classify(CLOSING_LISTS[0], changes, [MARKET], [], ["# Market\n"])[0] == "done"
+
+
 def test_rule_9_unclassified():
     assert ending("The profile is written.", wrote("docs/business/icp.md"), ["docs/business/icp.md"],
                   ["docs/business/positioning.md"], ["# ICP\n"]) == "unclassified"

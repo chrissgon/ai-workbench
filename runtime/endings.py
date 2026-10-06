@@ -67,6 +67,63 @@ PLANNED = "(planned)"
 # with facts: the first classifier is unchanged.
 YES_NO = re.compile(r"\?\s*\(yes/no\)$", re.I)
 LEADING = "*_#>`- \t"
+# A reply that closes with a list of questions (WP-3.20): its last paragraph is a numbered or bulleted list whose
+# items each ask, or a list under a line that says questions follow. An item asks when it ends with a question mark
+# or holds "Recommended:", the form of the asking reply of templates/capability.SKILL.md ("1. <question>
+# Recommended: <answer>") and of the "Open questions" of the skills' templates; the router's items are "Q<n>:"
+# (skills/core-orchestrator/SKILL.md). The lines that say questions follow, each from a template: "Open questions:"
+# (skills/brand-strategy/SKILL.md, its reply), "Questions:" and "Questions (<a note>):" (skills/design-brief,
+# skills/design-system, skills/design-handoff, skills/product-roadmap), "Questions for you:" (skills/design-system),
+# "### Questions for you" (skills/product-feature-spec, skills/product-prd), "### Open questions for you"
+# (skills/product-prd) and "### Decisions needed", whose items each carry a recommended answer
+# (skills/core-agents-md). Read only with facts: the first classifier is unchanged.
+LIST_ITEM = re.compile(r"^(\s*)(?:\d+[.)]|[-*+]|Q\d+:)\s+(.*)$")
+QUESTIONS_FOLLOW = re.compile(r"^(?:open questions|questions|decisions needed)(?: for you)?(?: \([^)]*\))?:?$", re.I)
+
+
+def _questions_follow(line: str) -> bool:
+    """A line that says questions follow: one of QUESTIONS_FOLLOW's forms, as a heading, a bold line or a line
+    that ends with a colon."""
+    raw = line.strip()
+    text = raw.lstrip("#*_ ").rstrip("*_ ")
+    if not QUESTIONS_FOLLOW.match(text):
+        return False
+    return raw.startswith("#") or text.endswith(":") or (raw.startswith("**") and raw.endswith("**"))
+
+
+def _item_asks(own: list, under: list) -> bool:
+    """An item asks when one of its own lines (its first, or a line that continues it) ends with a question mark,
+    or it holds "Recommended:"; the items under it (its options, say) do not decide it."""
+    return any(line.rstrip("*_` ").endswith("?") for line in own) or any(RECOMMENDED.search(t) for t in own + under)
+
+
+def _closes_with_question_list(response: str) -> bool:
+    """The reply's last paragraph (lines up to a blank line) is a list of questions: every item at the list's own
+    depth asks, or the paragraph opens with, or follows a paragraph that is only, a line that says questions follow.
+    A line of the paragraph that is not an item continues the item above it; an item deeper than the first is
+    under the item above it."""
+    paragraphs = [p for p in re.split(r"\n[ \t]*\n", (response or "").strip()) if p.strip()]
+    if not paragraphs:
+        return False
+    rows = [r for r in paragraphs[-1].splitlines() if r.strip()]
+    intro = not LIST_ITEM.match(rows[0]) and _questions_follow(rows[0])
+    if intro:
+        rows = rows[1:]
+    elif len(paragraphs) > 1 and len(paragraphs[-2].strip().splitlines()) == 1:
+        intro = _questions_follow(paragraphs[-2])
+    first = LIST_ITEM.match(rows[0]) if rows else None
+    if not first:
+        return False
+    depth, items = len(first.group(1)), []  # [(own lines, lines under it)]
+    for row in rows:
+        m = LIST_ITEM.match(row)
+        if m and len(m.group(1)) <= depth:
+            items.append(([m.group(2)], []))
+        elif m:
+            items[-1][1].append(m.group(2))
+        else:
+            items[-1][0].append(row.strip())
+    return intro or all(_item_asks(own, under) for own, under in items)
 
 
 def _lines(text: str) -> list:
@@ -75,12 +132,15 @@ def _lines(text: str) -> list:
 
 def _asks(response: str, lines: list, openings, yes_no: bool = False) -> bool:
     """The reply is an asking reply: it holds a question mark, and its first line starts with an asking opening
-    (the skill's own, or the template's), or it holds "Recommended:", or its last line ends with a question mark."""
-    if "?" not in (response or "") or not lines:
+    (the skill's own, or the template's), or it holds "Recommended:", or its last line ends with a question mark.
+    With yes_no (only with facts) a reply that closes with a list of questions asks, with or without a question
+    mark."""
+    if not lines or ("?" not in (response or "") and not (yes_no and _closes_with_question_list(response))):
         return False
     first = lines[0].lstrip(LEADING)
     return (any(o and first.lower().startswith(o.lower()) for o in openings) or bool(ASK_OPENING.search(lines[0]))
-            or bool(RECOMMENDED.search(response)) or _last_asks(lines, yes_no))
+            or bool(RECOMMENDED.search(response)) or _last_asks(lines, yes_no)
+            or (yes_no and _closes_with_question_list(response)))
 
 
 def _last_asks(lines: list, yes_no: bool = False) -> bool:
@@ -150,7 +210,11 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
     8. A written output holds OPEN-<n>, or the reply's last line ends with a question mark:
        `draft_with_questions`.
     9. A declared output without a placeholder is missing: `unclassified`.
-    10. Otherwise: `done`."""
+    10. Otherwise: `done`.
+
+    With facts, "the reply's last line ends with a question mark" also holds when the reply closes with a list of
+    questions (_closes_with_question_list, WP-3.20): its last paragraph is a numbered or bulleted list whose items
+    each end with a question mark or hold "Recommended:", or a list under a line that says questions follow."""
     lines = _lines(response)
     last_asks = _last_asks(lines)
     changed = list(changes.get("created") or []) + list(changes.get("modified") or []) + list(changes.get("deleted") or [])
@@ -168,7 +232,7 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
         return "done", "every declared output is there and nothing is asked"
 
     openings = list(facts.get("asking_openings") or [])
-    last_asks = _last_asks(lines, yes_no=True)
+    last_asks = _last_asks(lines, yes_no=True) or _closes_with_question_list(response)
     if not changed and _names_missing_input(lines, facts.get("skill") or "", facts.get("skills")) \
             and not RECOMMENDED.search(response or ""):
         return "blocked", "no file changed and the reply names a missing input and the skill that writes it"

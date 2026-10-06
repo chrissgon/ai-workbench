@@ -200,3 +200,20 @@ def test_the_prompt_of_a_run_names_no_skill_and_keeps_its_form():
             named = [n for n in names if re.search(r"(?<![\w-])" + re.escape(n) + r"(?![\w-])", prompt)]
             assert not named, f"{flow.name}, task {task['key']}: the prompt names {named}"
             assert prompt.count("For this task: ") == 1, f"{flow.name}, task {task['key']}: look at ops.task_prompt"
+
+
+def test_the_lines_that_say_questions_follow_are_still_in_the_skills_that_write_them():
+    # WP-3.20: the forms of endings.QUESTIONS_FOLLOW, each from the template of the skill named beside it.
+    expected = {
+        "skills/brand-strategy/SKILL.md": "Open questions:",
+        "skills/design-system/SKILL.md": "Questions for you:",
+        "skills/design-brief/SKILL.md": "Questions (the brief needs these as well; answer each):",
+        "skills/product-feature-spec/SKILL.md": "### Questions for you (<n>, at most three)",
+        "skills/product-prd/SKILL.md": "### Open questions for you",
+        "skills/core-agents-md/SKILL.md": "### Decisions needed",
+    }
+    source = text("runtime/endings.py")
+    for rel, line in expected.items():
+        assert rel.split("/")[1] in source, f"endings.py no longer cites {rel}: update this table"
+        assert line in text(rel).splitlines(), f"{rel} no longer holds the line {line!r}: look at endings.QUESTIONS_FOLLOW"
+        assert endings._questions_follow(line), f"endings does not read {line!r} as a line that says questions follow"
