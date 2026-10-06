@@ -165,12 +165,12 @@ def load(name: str):
     return importlib.import_module(name)
 
 
-def skill(tree: Path, name: str, inputs: str, outputs: str) -> Path:
+def skill(tree: Path, name: str, inputs: str, outputs: str, area: str = "business") -> Path:
     folder = tree / "skills" / name
     (folder / "evals").mkdir(parents=True)
     (folder / "scripts" / "tests").mkdir(parents=True)
     (folder / "SKILL.md").write_text(
-        f"---\nname: {name}\ndescription: invented\nlicense: MIT\nmetadata:\n  area: business\n  kind: capability\n"
+        f"---\nname: {name}\ndescription: invented\nlicense: MIT\nmetadata:\n  area: {area}\n  kind: capability\n"
         f"  inputs: [{inputs}]\n  outputs: [{outputs}]\n  updates: [docs/workbench/state.md]\n  requires: []\n"
         f"  side_effects: []\n  version: \"0.1.0\"\n---\n# {name}\n", encoding="utf-8")
     (folder / "evals" / "evals.json").write_text("{}", encoding="utf-8")
@@ -186,7 +186,7 @@ def skill(tree: Path, name: str, inputs: str, outputs: str) -> Path:
 
 def gate_skill(tree: Path) -> Path:
     """demo-gate: a skill with the side effect create and a gate whose payload is under the temporary folder."""
-    folder = skill(tree, "demo-gate", "docs/workbench/state.md", "")
+    folder = skill(tree, "demo-gate", "docs/workbench/state.md", "", area="delivery")
     text = (folder / "SKILL.md").read_text(encoding="utf-8")
     (folder / "SKILL.md").write_text(text.replace("  side_effects: []", "  side_effects: [create]"), encoding="utf-8")
     data = json.loads((folder / "evals" / "runtime-manifest.json").read_text(encoding="utf-8"))
@@ -207,7 +207,7 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     (adapter / "run-prompt.sh").write_text(ADAPTER, encoding="utf-8")
     skill(tree, "demo-asks", "docs/workbench/state.md, docs/workbench/research/<topic>.md, AGENTS.md", "docs/business/market.md")
     skill(tree, "demo-writes", "docs/workbench/state.md, docs/business/market.md", "docs/business/icp.md")
-    skill(tree, "demo-code", "docs/workbench/state.md", "")
+    skill(tree, "demo-code", "docs/workbench/state.md", "", area="engineering")  # a code task (ops.code_task)
     gate_skill(tree)
     (tree / "flows").mkdir()
     (tree / "flows" / "demo.json").write_text(json.dumps({"flow": "demo", "title": "Demo flow", "tasks": [

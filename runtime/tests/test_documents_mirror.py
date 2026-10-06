@@ -177,6 +177,37 @@ def test_a_persons_edit_replaces_the_whole_project_document_and_the_next_task_re
     assert "Dental clinics in Lisbon first." in seen
 
 
+def test_an_imported_edit_is_named_once_to_the_next_run_of_a_task_that_reads_it(tree):
+    review = delivered(tree)
+    project = project_of(tree)
+    line = ops.EDITED_LINE.format(path=MARKET)
+    assert line == f"The person edited {MARKET} on the platform since the last run; its content is theirs."
+    prompt = lambda out: (Path(out["run_dir"]) / "prompt.md").read_text(encoding="utf-8")
+    assert line not in prompt(review)  # the run that wrote the document itself
+    edit_page(tree, "- Status: draft", "- Status: draft\n\nStart with dental clinics.")
+    assert ops.sync(project)["documents"]["imported"] == [MARKET]
+    # A task whose skill does not list the document among its inputs is not told, though the document is in its copy.
+    ops.request(project, "Find a second market.", flow="demo")
+    other = ops.run_next(project)
+    assert other["skill"] == "demo-asks" and (Path(other["run_dir"]) / "cwd" / MARKET).is_file()
+    assert line not in prompt(other)
+    # The next run of a task that reads it is told, in one line, before the answers.
+    ops.release(project, review["pending_id"])
+    reads = ops.run_next(project)
+    assert reads["skill"] == "demo-writes" and prompt(reads).count(line) == 1
+    placed = ops.task_prompt("Find the market.", "choose.", [{"body": "Which?", "answer": "This."}], edited=[MARKET])
+    assert placed.index(line) < placed.index("In an earlier run of this task")  # next to the answers
+    # Not twice: the import came before this task's last run.
+    ops.answer(project, reads["pending_id"], "Name the clinics' size too.")
+    again = ops.run_next(project)
+    assert again["skill"] == "demo-writes" and "the user's answer" in prompt(again) and line not in prompt(again)
+    # Only code writes it: a run's own text never makes the line, and a document changed after the import is no
+    # longer the person's text.
+    assert docs.imported_since(ops.context(project)["cfg"], None) == [MARKET]
+    project_file(tree).write_text("# Market analysis\n\nRewritten.\n", encoding="utf-8")
+    assert docs.imported_since(ops.context(project)["cfg"], None) == []
+
+
 def test_an_imported_edit_is_not_written_back(tree):
     delivered(tree)
     edit_page(tree, "- Status: draft", "- Status: draft\n\nStart with dental clinics.")

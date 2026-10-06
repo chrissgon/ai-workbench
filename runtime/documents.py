@@ -27,6 +27,9 @@ rejected) with a note.
                        returns, so a difference the conversion makes is never taken for an edit.
   blocked(ctx, meta)   the rejected records among a skill's declared inputs, outputs and updates: a run does not
                        start on a document the person edited and the agents would not read (decision D11).
+  imported_since(cfg, since)  the documents imported (a person's edit, recorded in <data_dir>/documents/imported.json
+                       at each import) after a task's last run started, while the project's file is still that text:
+                       the next run of a task that reads one is told so in its prompt (ops.task_prompt).
   take(ctx, rel, side) settles a rejected record: "page" takes the page's text (when the checker passes), "project"
                        writes the project's file over the page, the page's text kept aside first.
 
@@ -61,6 +64,7 @@ TIMEOUT = 180
 CHECK_TIMEOUT = 120
 OUTPUT_CHARS = 2000
 NOT_TAKEN = os.path.join("documents", "not-taken")
+IMPORTED = os.path.join("documents", "imported.json")  # {rel: {"sha256", "at"}}: the last import of each document
 BOTH_CHANGED = "both changed"
 STATUS_OF = {"editable": "mirrored", "read_only": "read_only"}
 
@@ -284,11 +288,57 @@ def _settle(ctx: dict, record: dict, entry, page: dict, out: dict) -> str:
 
 def _import(ctx: dict, rel: str, markdown: str, version) -> None:
     """Write a page's text over the project's file and set both hashes to it, so that the next push sees nothing
-    to write and the person's edit is not sent back through the conversion."""
+    to write and the person's edit is not sent back through the conversion. The import is recorded (IMPORTED), so
+    the next run of a task that reads the document is told the content is the person's (ops.task_prompt)."""
     data = markdown.encode("utf-8")
     _write_project(ctx["cfg"]["project"], rel, data)
     _put(ctx, rel, status="mirrored", note=None, written_sha256=_sha(data), read_sha256=_sha(data),
          remote_version=version)
+    _record_import(ctx["cfg"], rel, _sha(data))
+
+
+def _now() -> str:
+    """The time in the store's own form (fixed-width UTC, to the microsecond), so it compares as text with a run's
+    started_at."""
+    return datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+
+
+def _imports(cfg: dict) -> dict:
+    """The record of imports, {rel: {"sha256", "at"}}; {} when there is none or it cannot be read."""
+    try:
+        with open(os.path.join(cfg["data_dir"], IMPORTED), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _record_import(cfg: dict, rel: str, digest: str) -> None:
+    path = os.path.join(cfg["data_dir"], IMPORTED)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    data = _imports(cfg)
+    data[rel] = {"sha256": digest, "at": _now()}
+    temporary = f"{path}.{os.getpid()}.tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1, sort_keys=True)
+    os.replace(temporary, path)
+
+
+def imported_since(cfg: dict, since) -> list:
+    """The documents the mirror imported from the platform (a person's edit) after `since` (a time in the store's
+    form, the start of a task's last run; None for a task's first run: any import), sorted, each only while the
+    project's file is still what was imported. Read from the record of imports alone: never from a run's text."""
+    out = []
+    for rel, item in sorted(_imports(cfg).items()):
+        if path_rule.normal(rel) != rel or not isinstance(item, dict) or not isinstance(item.get("at"), str) \
+                or not isinstance(item.get("sha256"), str):
+            continue
+        if since is not None and item["at"] <= since:
+            continue
+        current = _read_project(cfg["project"], rel)
+        if current is not None and _sha(current) == item["sha256"]:
+            out.append(rel)
+    return out
 
 
 def pull(ctx: dict, dry_run: bool = False) -> dict:
