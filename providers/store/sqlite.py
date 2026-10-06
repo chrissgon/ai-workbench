@@ -16,7 +16,8 @@ for the person to decide). Those three are read and written through the function
 runtime" below, which runtime/ops.py imports: one function call is one transaction. They have no CLI verb;
 `export` prints them. Schema version 4 adds a task's item on the task board (three columns of tasks), the
 records of documents mirrored to a platform (document_records) and the comments saved from a platform
-(platform_comments), under the same rule.
+(platform_comments), under the same rule. Schema version 5 adds the approvals table (approvals): what the person
+approved, of the three scopes of contracts/environment.md, a record that only grows.
 
 Concurrency: the database runs in WAL mode (readers never block the writer) with a 10-second busy
 timeout, and every write is one BEGIN IMMEDIATE transaction, so several agents and overlapping
@@ -43,7 +44,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 BUSY_TIMEOUT_SECONDS = 10
 PATH_ENV = "STORE_SQLITE_PATH"
 
@@ -241,6 +242,39 @@ MIGRATIONS = {
             used_by_pending INTEGER REFERENCES pending_decisions (id),
             UNIQUE (provider, remote_id))""",
         "CREATE INDEX platform_comments_by_status ON platform_comments (status, id)",
+    ]),
+    5: ("the approvals table: what the person approved, a record that only grows", [
+        """CREATE TABLE approvals (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            scope TEXT NOT NULL CHECK (scope IN ('action', 'plan', 'standing')),
+            what TEXT NOT NULL,
+            payload_sha256 TEXT,
+            policy_sha256 TEXT,
+            bounds TEXT,
+            task_id INTEGER REFERENCES tasks (id),
+            pending_id INTEGER REFERENCES pending_decisions (id),
+            approved_at TEXT NOT NULL,
+            approved_by TEXT NOT NULL,
+            expires_at TEXT,
+            status TEXT NOT NULL
+                CHECK (status IN ('pending-execution', 'executed', 'active', 'expired', 'revoked')),
+            executed_at TEXT)""",
+        "CREATE INDEX approvals_by_pending ON approvals (pending_id, id)",
+        "CREATE INDEX approvals_by_status ON approvals (status, id)",
+        # Limit L13 in the database itself: no row is deleted, only status and executed_at change, and a status
+        # moves only forward (pending-execution to executed or revoked; active to expired or revoked).
+        """CREATE TRIGGER approvals_never_deleted BEFORE DELETE ON approvals
+            BEGIN SELECT RAISE(ABORT, 'an approval is never deleted'); END""",
+        """CREATE TRIGGER approvals_only_status_moves BEFORE UPDATE ON approvals
+            WHEN NEW.id IS NOT OLD.id OR NEW.scope IS NOT OLD.scope OR NEW.what IS NOT OLD.what
+              OR NEW.payload_sha256 IS NOT OLD.payload_sha256 OR NEW.policy_sha256 IS NOT OLD.policy_sha256
+              OR NEW.bounds IS NOT OLD.bounds OR NEW.task_id IS NOT OLD.task_id OR NEW.pending_id IS NOT OLD.pending_id
+              OR NEW.approved_at IS NOT OLD.approved_at OR NEW.approved_by IS NOT OLD.approved_by
+              OR NEW.expires_at IS NOT OLD.expires_at
+              OR (NEW.status IS NOT OLD.status AND NOT (
+                    (OLD.status = 'pending-execution' AND NEW.status IN ('executed', 'revoked'))
+                 OR (OLD.status = 'active' AND NEW.status IN ('expired', 'revoked'))))
+            BEGIN SELECT RAISE(ABORT, 'an approval only moves forward: its status, never its content'); END""",
     ]),
 }
 
@@ -901,6 +935,8 @@ EXPORT_QUERIES = (
      "OR resolved_at >= ?1 ORDER BY id", ("payload",), ()),
     ("document_records", "SELECT * FROM document_records WHERE ?1 IS NULL OR updated_at >= ?1 ORDER BY id", (), ()),
     ("platform_comments", "SELECT * FROM platform_comments WHERE ?1 IS NULL OR saved_at >= ?1 ORDER BY id", (), ()),
+    ("approvals", "SELECT * FROM approvals WHERE ?1 IS NULL OR approved_at >= ?1 OR executed_at >= ?1 ORDER BY id",
+     ("bounds",), ()),
 )
 
 
@@ -936,6 +972,13 @@ RUN_ENDINGS = ("done", "question", "draft_with_questions", "gate", "blocked", "u
 # What a resolution does to the task that waited: the resolutions of later kinds are added with their stage.
 RESOLUTIONS = {"answered": "ready", "released": "done"}
 RELEASABLE_KINDS = ("review",)
+# The resolutions of an effect that pending_resolve writes: the comment sends the task back, a rejection cancels it.
+# Its approval is effect_done's alone ("approved", after code executed the effect: the task is done).
+EFFECT_RESOLUTIONS = {"answered": "ready", "rejected": "cancelled"}
+APPROVAL_SCOPES = ("action", "plan", "standing")
+APPROVAL_STATUSES = ("pending-execution", "executed", "active", "expired", "revoked")
+# Limit L13: a status only moves forward, along these pairs; no approval is ever deleted.
+APPROVAL_MOVES = {"pending-execution": ("executed", "revoked"), "active": ("expired", "revoked")}
 # The resolutions of a plan and of an acceptance, by kind and word, with the state the request is left in. Only
 # plan_approve, plan_reject and acceptance_resolve write them: each does more than move a state.
 KIND_RESOLUTIONS = {("plan", "approved"): "planned", ("plan", "rejected"): "cancelled",
@@ -1181,10 +1224,13 @@ def pending_resolve(conn: sqlite3.Connection, pending_id: int, *, resolution: st
     `released` (a review only) makes it done; then the tasks that depended on it become ready, and a request
     whose tasks are all done becomes done. A `plan` or an `acceptance` is never resolved here (plan_approve,
     plan_reject, acceptance_resolve). A question asked on a request (by the router, before any task exists) is
-    only answered, and the request stays `requested`: a request is never given out to run. Returns {"pending_id",
-    "task_id", "task_state", "ready": [ids], "completed": [request ids]}."""
-    if resolution not in RESOLUTIONS:
-        raise StoreError(f"resolution must be one of {', '.join(RESOLUTIONS)}", EXIT_USAGE)
+    only answered, and the request stays `requested`: a request is never given out to run. An `effect` is
+    `answered` (the task is ready again, its next run gets the comment) or `rejected` (the task is cancelled); both
+    revoke a `pending-execution` approval of it in the same transaction; it is approved through effect_done only.
+    Returns {"pending_id", "task_id", "task_state", "ready": [ids], "completed": [request ids]}."""
+    if resolution not in RESOLUTIONS and resolution not in EFFECT_RESOLUTIONS:
+        raise StoreError(f"resolution must be one of {', '.join(sorted({*RESOLUTIONS, *EFFECT_RESOLUTIONS}))}",
+                         EXIT_USAGE)
     by = text_arg(by, "by", LABEL_MAX)
     answer = text_arg(answer, "answer", TEXT_MAX, multiline=True, required=resolution == "answered")
     now = iso(utcnow())
@@ -1197,6 +1243,12 @@ def pending_resolve(conn: sqlite3.Connection, pending_id: int, *, resolution: st
         if row["kind"] in {kind for kind, _ in KIND_RESOLUTIONS}:
             raise StoreError(f"pending decision {pending_id} is a {row['kind']}: it is approved or rejected, "
                              "not answered or released")
+        if row["kind"] == "effect":
+            if resolution not in EFFECT_RESOLUTIONS:
+                raise StoreError(f"pending decision {pending_id} is an effect: it is answered or rejected here, and "
+                                 "approved only through effect_done, after code executed it")
+        elif resolution not in RESOLUTIONS:
+            raise StoreError(f"pending decision {pending_id} is a {row['kind']}: only an effect is rejected here")
         if resolution == "released" and row["kind"] not in RELEASABLE_KINDS:
             raise StoreError(f"pending decision {pending_id} is a {row['kind']}: it is answered, not released")
         task = _task(conn, row["task_id"])
@@ -1210,11 +1262,12 @@ def pending_resolve(conn: sqlite3.Connection, pending_id: int, *, resolution: st
                     "completed": []}
         conn.execute("UPDATE pending_decisions SET status = 'resolved', resolution = ?, answer = ?, resolved_at = ?, "
                      "resolved_by = ? WHERE id = ?", (resolution, answer, now, by, pending_id))
-        state = RESOLUTIONS[resolution]
+        state = (EFFECT_RESOLUTIONS if row["kind"] == "effect" else RESOLUTIONS)[resolution]
         moved = conn.execute("UPDATE tasks SET state = ?, updated_at = ? WHERE id = ? AND state = 'waiting'",
                              (state, now, row["task_id"])).rowcount
         if not moved:
             raise StoreError(f"task {row['task_id']} is not waiting: the decision is not recorded")
+        _revoke_pending_execution(conn, pending_id, now)
         ready, completed = _refresh(conn, now)
     return {"pending_id": pending_id, "task_id": row["task_id"], "task_state": state, "ready": ready,
             "completed": completed}
@@ -1274,6 +1327,7 @@ def _cancel_request(conn: sqlite3.Connection, request_id: int, by: str, now: str
                               (task_id,)).fetchall():
             conn.execute("UPDATE pending_decisions SET status = 'cancelled', resolved_at = ?, resolved_by = ? "
                          "WHERE id = ?", (now, by, p["id"]))
+            _revoke_pending_execution(conn, p["id"], now)
             pending.append(p["id"])
     return {"request": request_id, "cancelled": ids, "pending": pending}
 
@@ -1659,6 +1713,175 @@ def comments_use(conn: sqlite3.Connection, ids, *, pending_id: int) -> dict:
             conn.execute("UPDATE platform_comments SET status = 'used', used_by_pending = ? WHERE id = ?",
                          (pending_id, comment_id))
     return {"used": list(ids), "pending_id": pending_id}
+
+
+# --- migration 5: the approvals table (limits L13, L17) ----------------------------------------------------------
+#
+# An approval of the scope `action` binds one open `effect` by the hash of its exact content and waits for code to
+# execute it (`pending-execution`, then `executed` through effect_done); `plan` binds one hash of a batch (first
+# written in stage 10); `standing` is a policy with bounds and an expiry (`active`, first written in stage 6). A
+# row is never deleted, its content never changes, and its status only moves forward (APPROVAL_MOVES; the
+# migration's triggers refuse anything else at the database too).
+
+
+def _approval(conn: sqlite3.Connection, approval_id: int) -> dict:
+    row = conn.execute("SELECT * FROM approvals WHERE id = ?", (approval_id,)).fetchone()
+    if row is None:
+        raise StoreError(f"no approval {approval_id}")
+    return row_dict(row, ("bounds",))
+
+
+def _approval_move(conn: sqlite3.Connection, approval_id: int, status: str, now: str) -> dict:
+    """Inside a transaction: move one approval's status forward, or refuse (limit L13)."""
+    item = _approval(conn, approval_id)
+    if status not in APPROVAL_MOVES.get(item["status"], ()):
+        raise StoreError(f"approval {approval_id} is {item['status']}: it cannot become {status} (an approval only "
+                         "moves forward, and is never deleted)")
+    if status == "executed":
+        conn.execute("UPDATE approvals SET status = ?, executed_at = ? WHERE id = ?", (status, now, approval_id))
+    else:
+        conn.execute("UPDATE approvals SET status = ? WHERE id = ?", (status, approval_id))
+    return _approval(conn, approval_id)
+
+
+def _revoke_pending_execution(conn: sqlite3.Connection, pending_id: int, now: str) -> None:
+    """Inside a transaction: revoke the approvals still waiting to be executed for one pending decision."""
+    for row in conn.execute("SELECT id FROM approvals WHERE pending_id = ? AND status = 'pending-execution' ORDER BY id",
+                            (pending_id,)).fetchall():
+        _approval_move(conn, row["id"], "revoked", now)
+
+
+def approval_add(conn: sqlite3.Connection, *, scope: str, what: str, by: str, payload_sha256: str | None = None,
+                 policy_sha256: str | None = None, bounds: dict | None = None, task_id: int | None = None,
+                 pending_id: int | None = None, expires_at: str | None = None) -> dict:
+    """Record an approval, in one transaction. Returns the row, with "existing": true or false.
+
+    action    payload_sha256 and pending_id are required; the pending decision must be open, of kind `effect`, with
+              the same payload_sha256; the row is `pending-execution` and its task is the pending decision's. When a
+              `pending-execution` row already exists for that pending decision and hash, that row is returned and
+              nothing is inserted (approving twice is one approval)
+    plan      payload_sha256 is required; `pending-execution`
+    standing  bounds (a JSON object) and expires_at (ISO-8601) are required; policy_sha256 is the hash of the bounds
+              file; `active`"""
+    if scope not in APPROVAL_SCOPES:
+        raise StoreError(f"scope must be one of {', '.join(APPROVAL_SCOPES)}", EXIT_USAGE)
+    what = text_arg(what, "what", TITLE_MAX)
+    by = text_arg(by, "by", LABEL_MAX)
+    _sha_or_none(payload_sha256, "payload_sha256")
+    _sha_or_none(policy_sha256, "policy_sha256")
+    if scope in ("action", "plan") and payload_sha256 is None:
+        raise StoreError(f"an approval of scope {scope} needs payload_sha256", EXIT_USAGE)
+    if scope == "action" and pending_id is None:
+        raise StoreError("an approval of scope action needs pending_id", EXIT_USAGE)
+    if scope == "standing":
+        if not isinstance(bounds, dict) or expires_at is None:
+            raise StoreError("an approval of scope standing needs bounds (an object) and expires_at", EXIT_USAGE)
+    elif bounds is not None:
+        raise StoreError(f"an approval of scope {scope} has no bounds", EXIT_USAGE)
+    expires = since_arg(expires_at, "expires_at") if expires_at is not None else None
+    bounds_text = json.dumps(bounds, ensure_ascii=True, sort_keys=True) if bounds is not None else None
+    now = iso(utcnow())
+    with write(conn):
+        if scope == "action":
+            item = conn.execute("SELECT task_id, kind, status, payload_sha256 FROM pending_decisions WHERE id = ?",
+                                (pending_id,)).fetchone()
+            if item is None:
+                raise StoreError(f"no pending decision {pending_id}")
+            if item["kind"] != "effect" or item["status"] != "open":
+                raise StoreError(f"pending decision {pending_id} is a {item['status']} {item['kind']}: an action is "
+                                 "approved only on an open effect")
+            if item["payload_sha256"] != payload_sha256:
+                raise StoreError(f"pending decision {pending_id} has the hash {item['payload_sha256']}, not "
+                                 f"{payload_sha256}: nothing was approved")
+            if task_id is not None and task_id != item["task_id"]:
+                raise StoreError(f"pending decision {pending_id} belongs to task {item['task_id']}, not {task_id}")
+            task_id = item["task_id"]
+            found = conn.execute("SELECT id FROM approvals WHERE pending_id = ? AND payload_sha256 = ? "
+                                 "AND status = 'pending-execution' ORDER BY id LIMIT 1",
+                                 (pending_id, payload_sha256)).fetchone()
+            if found is not None:
+                return {**_approval(conn, found["id"]), "existing": True}
+        elif pending_id is not None:
+            _open_of_kind(conn, pending_id, "plan" if scope == "plan" else "effect")
+        if task_id is not None:
+            _task(conn, task_id)
+        status = "active" if scope == "standing" else "pending-execution"
+        approval_id = conn.execute(
+            "INSERT INTO approvals (scope, what, payload_sha256, policy_sha256, bounds, task_id, pending_id, "
+            "approved_at, approved_by, expires_at, status) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (scope, what, payload_sha256, policy_sha256, bounds_text, task_id, pending_id, now, by, expires,
+             status)).lastrowid
+        return {**_approval(conn, approval_id), "existing": False}
+
+
+def approval_get(conn: sqlite3.Connection, approval_id: int) -> dict:
+    """One approval, with bounds as an object."""
+    return _approval(conn, approval_id)
+
+
+def approvals_list(conn: sqlite3.Connection, *, status: str | None = None, scope: str | None = None,
+                   task_id: int | None = None) -> list:
+    """Approvals, oldest first, filtered by status, scope and task when given."""
+    if status is not None and status not in APPROVAL_STATUSES:
+        raise StoreError(f"status must be one of {', '.join(APPROVAL_STATUSES)}", EXIT_USAGE)
+    if scope is not None and scope not in APPROVAL_SCOPES:
+        raise StoreError(f"scope must be one of {', '.join(APPROVAL_SCOPES)}", EXIT_USAGE)
+    rows = conn.execute("SELECT * FROM approvals WHERE (?1 IS NULL OR status = ?1) AND (?2 IS NULL OR scope = ?2) "
+                        "AND (?3 IS NULL OR task_id = ?3) ORDER BY id", (status, scope, task_id)).fetchall()
+    return [row_dict(r, ("bounds",)) for r in rows]
+
+
+def approvals_expire(conn: sqlite3.Connection, now: str) -> int:
+    """Turn every `active` approval whose expires_at is before now (ISO-8601) into `expired`, in one transaction;
+    returns how many. Stage 6's poll calls it; nothing in stage 4 does."""
+    now = since_arg(now, "now")
+    with write(conn):
+        ids = [r["id"] for r in conn.execute("SELECT id FROM approvals WHERE status = 'active' AND expires_at < ? "
+                                             "ORDER BY id", (now,)).fetchall()]
+        for approval_id in ids:
+            _approval_move(conn, approval_id, "expired", now)
+    return len(ids)
+
+
+def approval_revoke(conn: sqlite3.Connection, approval_id: int, *, by: str) -> dict:
+    """Revoke an approval that is `pending-execution` or `active`, in one transaction; anything else is refused.
+    The table keeps no column for who revoked: by is checked and returned. Returns the row, with "revoked_by"."""
+    by = text_arg(by, "by", LABEL_MAX)
+    now = iso(utcnow())
+    with write(conn):
+        return {**_approval_move(conn, approval_id, "revoked", now), "revoked_by": by}
+
+
+def effect_done(conn: sqlite3.Connection, pending_id: int, approval_id: int, *, by: str, result: dict) -> dict:
+    """After code executed an effect, all or nothing: the pending decision is resolved `approved`, with result kept
+    under "result" of its payload; the approval is `executed`, with executed_at; the task goes from `waiting` to
+    `done`; the tasks that depended on it become ready and a request whose tasks are all done completes, as for the
+    resolution `released`. Refused for a pending decision that is not an open effect, and for an approval that is
+    not `pending-execution` or belongs to another pending decision. Returns {"pending_id", "approval_id", "task_id",
+    "task_state", "ready", "completed"}."""
+    by = text_arg(by, "by", LABEL_MAX)
+    if not isinstance(result, dict):
+        raise StoreError("the result of an effect is an object", EXIT_USAGE)
+    now = iso(utcnow())
+    with write(conn):
+        item = _open_of_kind(conn, pending_id, "effect")
+        approval = _approval(conn, approval_id)
+        if approval["pending_id"] != pending_id or approval["scope"] != "action":
+            raise StoreError(f"approval {approval_id} is not the approval of pending decision {pending_id}")
+        if approval["payload_sha256"] != item["payload_sha256"]:
+            raise StoreError(f"approval {approval_id} approved another hash than pending decision {pending_id}'s")
+        _approval_move(conn, approval_id, "executed", now)
+        payload = dict(item["payload"] or {}, result=result)
+        conn.execute("UPDATE pending_decisions SET status = 'resolved', resolution = 'approved', payload = ?, "
+                     "resolved_at = ?, resolved_by = ? WHERE id = ?",
+                     (json.dumps(payload, ensure_ascii=True, sort_keys=True), now, by, pending_id))
+        moved = conn.execute("UPDATE tasks SET state = 'done', updated_at = ? WHERE id = ? AND state = 'waiting'",
+                             (now, item["task_id"])).rowcount
+        if not moved:
+            raise StoreError(f"task {item['task_id']} is not waiting: the effect's result is not recorded")
+        ready, completed = _refresh(conn, now)
+    return {"pending_id": pending_id, "approval_id": approval_id, "task_id": item["task_id"], "task_state": "done",
+            "ready": ready, "completed": completed}
 
 
 def task_runs_of_skill(conn: sqlite3.Connection, skill: str) -> list:

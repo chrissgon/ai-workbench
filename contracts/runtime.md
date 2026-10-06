@@ -159,7 +159,7 @@ The twenty limits that live in code (section B.2 of the platform plan). Each get
 | L10 | The state file comes back through a merge made by one module | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_10_the_state_file_comes_back_through_the_merge_and_only_code_writes_what_is_the_persons`; the merge's rules in `runtime/tests/test_state_merge.py` |
 | L11 | A working document never enters a commit | stage 4 | stage 4 |
 | L12 | What comes back never overwrites what changed at the origin | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_12_what_comes_back_never_overwrites_what_changed_at_the_origin`; and `runtime/tests/test_task_ops.py`, `test_a_file_that_changed_in_the_project_during_the_run_is_never_overwritten` (the state file is merged line by line instead: L10) |
-| L13 | A record only grows | stage 4 (approvals) | stage 4 |
+| L13 | A record only grows | stage 4 (approvals) | `providers/store/tests/test_sqlite_approvals.py`, `test_limit_13_an_approval_is_never_deleted_and_its_status_only_moves_forward` |
 | L14 | Everything passes the credential scan before it leaves | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_14_everything_passes_the_credential_scan_before_it_leaves`; the number of values the lab replaced is kept on the run's row (`task_runs.redactions`) |
 | L15 | An external effect is executed by code, with the exact content approved or inside an approved policy | stage 4 | stage 4 |
 | L16 | A skill with a confirmation gate runs up to the gate; what it shows there is what the person approves | stage 4 | stage 4 |
