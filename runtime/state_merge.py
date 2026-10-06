@@ -307,6 +307,25 @@ def with_answer(text: str, *, date: str, skill: str, pending_id: int, answer: st
 
 
 APPROVALS = "Approvals"
+AUTONOMY = "Autonomy"
+CHECKPOINTS_LINE = re.compile(r"^(\s*-\s*Checkpoints:[ \t]*)([^\s#]*)(.*)$")
+
+
+def with_checkpoints(state_text: str, value: str) -> tuple:
+    """(text, written): the state file's text with the value of the "- Checkpoints:" line of ## Autonomy replaced by
+    value (only the word between "Checkpoints: " and the comment changes), and whether a line was found. A file
+    without ## Autonomy or without the line is returned as it is. Only code calls it, with the most careful
+    checkpoints of the enabled area agents (runtime/autonomy.py): the line is a generated copy of the configuration."""
+    parsed = parse(state_text)
+    target = _section(parsed, AUTONOMY)
+    if target is None:
+        return state_text, False
+    for i, line in enumerate(target):
+        found = CHECKPOINTS_LINE.match(line)
+        if found:
+            target[i] = found.group(1) + value + found.group(3)
+            return _render(parsed), True
+    return state_text, False
 
 
 def write_generated(state_text: str, rows) -> str:

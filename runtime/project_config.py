@@ -13,7 +13,13 @@ task runtime reads three keys the first runtime already defined, with the same m
   "store_db"    the absolute path of the store database (class store:runtime)
 
 and ignores every key it does not know (the first runtime's "agent", "harness", "mailbox"... stay valid in
-the same file). "area_agents" is read by runtime/plan.py (the packs in scope).
+the same file).
+
+It checks "area_agents" (stage 6) with runtime/autonomy.py, agents(): each entry {"pack", "enabled", "mode",
+"max_runs_per_day", "max_usd_per_day"}, an unknown key, a mode outside the five or a negative cap refused by the
+agent's name; an absent cap is 0. runtime/plan.py reads the packs in scope from it. And "handlers" (stage 6): an
+object {"<handler name, lowercase words joined by hyphens>": {"agent": "<an area agent of area_agents>",
+"dispatch": true or false (default false), ...the handler's own settings, passed on untouched}}.
 
 It also reads "task_board" and "documents" (stage 3), each an object or absent (None):
 
@@ -64,6 +70,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import autonomy  # noqa: E402  (the same folder: the check of the key "area_agents")
 import deps  # noqa: E402  (the same folder: the recipes and the check of the key "dependencies")
 
 REL = "docs/workbench/runtime.json"
@@ -119,6 +126,34 @@ def load(project: str) -> dict:
         raise ConfigError(e.reason) from None
     for key, cls in PLATFORM_KEYS.items():
         out[key] = _platform(raw.get(key), key, cls, project, out["workbench"])
+    try:
+        out["area_agents"] = autonomy.agents(raw.get("area_agents"))
+    except ValueError as e:
+        raise ConfigError(f"runtime.json {e}") from None
+    out["handlers"] = _handlers(raw.get("handlers"), out["area_agents"])
+    return out
+
+
+HANDLER_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def _handlers(value, agents: dict) -> dict:
+    """The key "handlers", checked: {} when absent."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError("runtime.json handlers must be an object of handlers")
+    out = {}
+    for name, entry in value.items():
+        if not isinstance(name, str) or not HANDLER_NAME.fullmatch(name):
+            raise ConfigError(f"runtime.json handlers: {name!r} is not lowercase words joined by hyphens")
+        if not isinstance(entry, dict):
+            raise ConfigError(f"runtime.json handlers.{name} must be an object")
+        if entry.get("agent") not in agents:
+            raise ConfigError(f"runtime.json handlers.{name}.agent must name an agent of area_agents")
+        if not isinstance(entry.get("dispatch", False), bool):
+            raise ConfigError(f"runtime.json handlers.{name}.dispatch must be true or false")
+        out[name] = dict(entry, dispatch=entry.get("dispatch", False))
     return out
 
 

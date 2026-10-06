@@ -36,7 +36,8 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import manifest  # noqa: E402  (the same folder)
+import autonomy  # noqa: E402  (the same folder)
+import manifest  # noqa: E402
 import skill_meta  # noqa: E402
 
 DEFAULT_PACK = "default"
@@ -49,18 +50,18 @@ class PlanError(Exception):
 
 def pack_skills(project_cfg: dict, root: str) -> list:
     """The sorted names of the skills in scope. project_cfg is project_config.load() of the project (or its raw
-    object). With `area_agents`, the union of the packs of the entries whose `enabled` is true; without it, the pack
-    `default`. A pack is resolved by scripts/select_skills.py of the workbench checkout."""
+    object). With `area_agents`, the union of the packs of the enabled entries, as runtime/autonomy.py reads them (an
+    entry without `enabled` is enabled); without it, the pack `default`. A pack is resolved by
+    scripts/select_skills.py of the workbench checkout."""
     raw = project_cfg.get("raw", project_cfg) if isinstance(project_cfg, dict) else {}
-    agents = raw.get("area_agents")
-    if agents is None:
+    if raw.get("area_agents") is None:
         packs = [DEFAULT_PACK]
-    elif not isinstance(agents, dict) or not all(isinstance(a, dict) for a in agents.values()):
-        raise PlanError("area_agents of the configuration is an object of agents, each an object")
     else:
-        packs = sorted({a.get("pack") for a in agents.values() if a.get("enabled") is True})
-        if not all(isinstance(p, str) and p for p in packs):
-            raise PlanError("every enabled area agent names its pack")
+        try:
+            agents = autonomy.agents(raw.get("area_agents"))
+        except ValueError as e:
+            raise PlanError(str(e)) from None
+        packs = sorted({a["pack"] for a in agents.values() if a["enabled"]})
     names = set()
     for pack in packs:
         try:

@@ -24,6 +24,7 @@ Usage:
   python3 runtime/cli.py sync     --project <dir> [--dry-run] [--take page|project --path <relative path>]
   python3 runtime/cli.py hand-over --project <dir> --task <task id> --file <path>
   python3 runtime/cli.py progress --project <dir> [--since 7d | <n>d | YYYY-MM-DD]
+  python3 runtime/cli.py set-mode --project <dir> --agent <name> --mode stopped|supervised|milestones|autonomous|autonomous-with-policy
 
 request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes; a task without a dependency is ready at once. Without --flow, the
@@ -89,6 +90,12 @@ progress  where the work stands (each open request, what waits for you, what is 
           period (default the last 7 days; --since <n>d or a date YYYY-MM-DD): deliveries, runs, the known cost and
           the runs without one, your decisions and those of an autonomy mode, the effects executed. Computed from
           the store's records; it calls no model. "text" holds the same as plain lines.
+set-mode  sets one area agent's autonomy mode in docs/workbench/runtime.json (area_agents): stopped (it starts
+          nothing), supervised (every delivery waits for you), milestones (the default: a milestone waits, the rest is
+          released by the mode), autonomous (only what must reach you waits), autonomous-with-policy (as autonomous,
+          and an effect inside a policy you approved runs without asking). A question, an unclassified reply, a
+          draft with open questions and a mandatory milestone always wait for you. Then accept the new hash with
+          accept-config, which also rewrites the Checkpoints line of the state file.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -110,7 +117,7 @@ sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
-         "route", "approve", "reject", "sync", "hand-over", "deps", "progress")
+         "route", "approve", "reject", "sync", "hand-over", "deps", "progress", "set-mode")
 
 
 class Usage(Exception):
@@ -166,6 +173,8 @@ def run(argv) -> dict:
     p.add_argument("--with-comments", action="store_true")
     p.add_argument("--file")
     p.add_argument("--since")
+    p.add_argument("--agent")
+    p.add_argument("--mode")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
@@ -202,6 +211,8 @@ def run(argv) -> dict:
         return ops.deps(project)
     if a.verb == "progress":
         return ops.progress(project, a.since)
+    if a.verb == "set-mode":
+        return ops.set_mode(project, need(a, "--agent"), need(a, "--mode"))
     return ops.status(project)
 
 
