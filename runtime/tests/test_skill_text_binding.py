@@ -11,6 +11,7 @@ Every binding of stage 2 of the platform plan, and where its test is:
 |---|---|---|
 | `workcopy.REMOVED_OPENINGS`, `SECTION_START`, `SECTION_END` | `skills/core-project-init/assets/agents-md-section.md`, `init_project.py` | `test_the_two_lines_the_copy_loses_are_in_the_section_core_project_init_writes` (here) |
 | `state_merge` section titles, the Artifacts header, the `draft` status | `contracts/state.md`, `STATE_TEMPLATE` of `init_project.py` | `test_the_state_files_sections_are_the_contracts` (here) |
+| `state_merge.OPEN_QUESTION` (the form the merge writes) and `SKILL_PREFIXES` | `contracts/state.md`, `init_project.py`, the prefixes table of `AGENTS.md` | `test_the_open_question_form_the_merge_writes_is_the_contracts` (here) |
 | the owner the merge names for a missing state file | `core-project-init`'s `outputs` | `test_the_state_file_is_owned_by_the_skill_the_merge_names` (here) |
 | `endings` constants (`writes it`, `run it first`, `Recommended:`, `(planned)`, `OPEN-<n>`, the asking reply) | `templates/capability.SKILL.md`, `AGENTS.md` | `test_the_sentences_the_classifier_reads_are_in_the_templates` (here) |
 | `endings` constants read from single skills (`writes them`, `writes that section`, `writes the PRD`, ``run `<skill>` first``, `? (yes/no)`) | the skills each comment names | `test_the_sentences_the_classifier_reads_from_skills_are_still_there` (here) |
@@ -92,6 +93,27 @@ def test_the_state_files_sections_are_the_contracts():
         assert header in block, f"{name} has another Artifacts header: look at state_merge's reading of the table"
     assert "`Status` is `draft`, `approved` or `skipped`" in text("contracts/state.md"), \
         "the statuses of an artifact row changed: look at state_merge's rule on draft rows"
+
+
+def test_the_open_question_form_the_merge_writes_is_the_contracts():
+    block = contract_template()
+    section = block.split("## Open questions", 1)[1]
+    items = [line for line in section.splitlines() if line.strip()]
+    assert items and all(line.startswith(state_merge.OPEN_QUESTION + " ") for line in items), \
+        "the open questions of contracts/state.md's template are in another form: look at state_merge.OPEN_QUESTION"
+    assert "Open questions are checkboxes" in text("contracts/state.md"), \
+        "contracts/state.md no longer says open questions are checkboxes: look at state_merge.OPEN_QUESTION"
+    assert 'f"' + state_merge.OPEN_QUESTION + ' {q}' in text("skills/core-project-init/scripts/init_project.py"), \
+        "core-project-init writes open questions in another form: look at state_merge.OPEN_QUESTION"
+    # What the merge writes for a question read in another form is the contract's form.
+    base = block.replace(items[0] + "\n", "")
+    returned = block.replace(items[0], "- OPEN-1 " + state_merge._question(items[0])[0])
+    written = state_merge.merge_report(base, base, returned, "flow-fix-bug")["accepted"]
+    assert [a["line"] for a in written] == ["- [ ] OPEN-1 " + state_merge._question(items[0])[0]]
+    # Who raised a question is read from the skill prefixes of AGENTS.md.
+    prefixes = set(re.findall(r"^\| `([a-z]+)-` \|", text("AGENTS.md"), re.M))
+    assert prefixes == set(state_merge.SKILL_PREFIXES), \
+        "the area prefixes of AGENTS.md changed: look at state_merge.SKILL_PREFIXES"
 
 
 def test_the_state_file_is_owned_by_the_skill_the_merge_names():
