@@ -236,3 +236,99 @@ def test_the_proof_inputs_change_when_an_evidence_file_or_the_gate_file_changes(
     gate.parent.mkdir(parents=True, exist_ok=True)
     gate.write_text("{}\n", encoding="utf-8")
     assert REAL_PROOF_INPUTS("demo-asks") != second
+
+
+def test_run_command_runs_with_no_model_no_credential_and_no_network_unless_asked(tree, tmp_path, monkeypatch):
+    er = lab.load()
+    seen = []
+    real = er.run_group
+
+    def spy(cmd, timeout, cwd=None, env=None, box=None):
+        seen.append({"cmd": cmd, "box": box, "env": dict(env or {}), "timeout": timeout})
+        return real(cmd, timeout, cwd=cwd, env=env, box=box)
+
+    monkeypatch.setattr(er, "run_group", spy)
+    monkeypatch.setenv("STANDIN_KEY", "invented-value-0123456789")
+    root = tmp_path / "root"
+    (root / "case").mkdir(parents=True)
+    out = lab.run_command(["git", "--version"], str(root), cwd=str(root / "case"))
+    assert out["returncode"] == 0 and out["stdout"].startswith("git version") and out["timed_out"] is False
+    lab.run_command(["true"], str(root), network="open", timeout=7)
+    assert [s["box"] for s in seen] == [{"root": str(root), "network": "none"}, {"root": str(root), "network": "open"}]
+    assert seen[0]["timeout"] == er.SETUP_TIMEOUT and seen[1]["timeout"] == 7
+    assert all("STANDIN_KEY" not in s["env"] for s in seen)  # no passed variable: no credential
+    for kwargs in ({"network": "proxy"}, {"cwd": str(tmp_path)}):
+        with pytest.raises(lab.LabError) as refused:
+            lab.run_command(["true"], str(root), **kwargs)
+        assert refused.value.kind == "config"
+    with pytest.raises(lab.LabError):
+        lab.run_command([], str(root))
+    slow = lab.run_command(["sleep", "5"], str(root), timeout=1)
+    assert slow == {"returncode": None, "stdout": "", "stderr": "", "timed_out": True}
+
+
+def test_run_command_never_builds_the_eval_image(tree, tmp_path, monkeypatch):
+    called = []
+
+    class Executor:
+        @staticmethod
+        def names():
+            return {"image": "wb-eval:invented"}
+
+        @staticmethod
+        def docker(*args, check=True, **kwargs):
+            called.append(args[:2])
+            return type("Result", (), {"returncode": 1, "stdout": "", "stderr": "No such image"})()
+
+        @staticmethod
+        def ensure():
+            called.append(("ensure",))
+            return {}
+
+    er = lab.load()
+    monkeypatch.setattr(er, "EXECUTOR", "container")
+    monkeypatch.setattr(er, "load_executor", lambda: Executor)
+    monkeypatch.setattr(er, "run_group", lambda *a, **k: called.append(("run",)))
+    with pytest.raises(lab.LabError) as e:
+        lab.run_command(["true"], str(tmp_path))
+    assert e.value.kind == "container" and "never builds it" in e.value.reason
+    assert called == [("image", "inspect")]
+
+
+def test_prepare_runs_after_the_base_commit_and_finish_before_the_folders_return_on_every_attempt(tree, tmp_path):
+    st.fail(tree["adapter"], "adapter", 1)
+    seen = []
+
+    def prepare(copy, root):
+        head = lab.run_command(["git", "rev-parse", "HEAD"], root, cwd=copy)
+        seen.append(("prepare", head["returncode"], os.path.exists(os.path.join(copy, "placed.txt"))))
+        with open(os.path.join(copy, "placed.txt"), "w") as f:
+            f.write("placed")
+
+    def finish(copy, root):
+        seen.append(("finish", os.path.exists(os.path.join(copy, "placed.txt"))))
+        os.remove(os.path.join(copy, "placed.txt"))
+
+    out = run(tree, tmp_path, prepare=prepare, finish=finish)
+    assert out["status"] == "ok" and out["counts"]["attempts"] == 2
+    assert seen == [("prepare", 0, False), ("finish", True), ("prepare", 0, False), ("finish", True)]
+    assert "./placed.txt" in (Path(out["outputs"]) / "files.txt").read_text().split("\n")  # the run saw it
+    assert "placed.txt" not in out["changes"]["created"]  # it entered before the index the changes are taken from
+    assert not (Path(out["cwd"]) / "placed.txt").exists()  # removed before the folders returned
+    assert not (tmp_path / "data" / "run-1" / "failed-1" / "cwd" / "placed.txt").exists()
+
+    def broken(copy, root):
+        raise OSError("disk full")
+
+    for hooks in ({"prepare": broken}, {"finish": broken}):
+        with pytest.raises(lab.LabError) as e:
+            run(tree, tmp_path, **hooks)
+        assert e.value.kind == "copy" and "disk full" in e.value.reason
+
+
+def test_the_base_commit_of_the_copy_is_returned(tree, tmp_path):
+    out = run(tree, tmp_path)
+    head = lab.run_command(["git", "rev-parse", "HEAD"], out["run_dir"], cwd=out["cwd"])
+    assert out["base_commit"] and out["base_commit"] == head["stdout"].strip()
+    log = lab.run_command(["git", "log", "--format=%s"], out["run_dir"], cwd=out["cwd"])
+    assert log["stdout"].strip() == "fixture"
