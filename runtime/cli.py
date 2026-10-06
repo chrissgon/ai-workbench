@@ -42,7 +42,8 @@ run-next  runs the next ready task: one skill, once, in the eval container, on t
 pending   lists what waits for you; with --id, prints that pending decision whole: the reply, what came back,
           what was kept in the run folder.
 answer    answers a pending decision; the task becomes ready and its next run is given your answer. With
-          --with-comments, the comments saved from the task board for that task are added to your answer, under
+          --with-comments, the comments saved from the task board for that task, and from the documents platform
+          for the documents its skill writes, are added to your answer, under
           "Comments left on the platform:"; without it, no comment enters an answer.
 release   releases a delivery (a pending decision of kind review): the task is done and what depended on it
           becomes ready. The delivery stays a draft: releasing is not approving. A run that wrote a document
@@ -51,7 +52,8 @@ release   releases a delivery (a pending decision of kind review): the task is d
 retry     makes a failed or blocked task ready again.
 cancel    cancels a request, its tasks that are not done and their open pending decisions.
 status    requests, tasks and pending decisions, from the store's records; for each request and task, whether it is
-          on the task board and how many comments saved from there are open.
+          on the task board and how many comments saved from there are open; each mirrored document, its status
+          and its note.
 proof     the model each skill in use would run on, with the bands and the two checks (the measurement files,
           the eval image). It calls no model.
 verdict   records your verdict on what one run delivered (worked, corrected, failed), with the existing
@@ -59,8 +61,13 @@ verdict   records your verdict on what one run delivered (worked, corrected, fai
 sync      mirrors the tasks with the project's task board (task_board in runtime.json): a title, a text or a
           comment you wrote there comes in, and three state moves are taken (ready on a failed or blocked task,
           cancelled on a request, done on a task waiting on a review); any other move is written back. An item
-          you wrote there waits for your approve before it can be routed. --dry-run reads nothing and prints
-          every write it would make. --take and --path settle a document both sides changed (documents only).
+          you wrote there waits for your approve before it can be routed. With documents in runtime.json it then
+          mirrors the documents a skill's runtime manifest lists: a page you edited comes into the project when the
+          project's file is still what was last written there and the skill's checker passes (else nothing changes
+          and the document is rejected, with the reason; no task that reads it runs until it is settled), and a
+          document that changed in the project goes to the platform, its open comments saved first. --dry-run
+          reads nothing and prints every write it would make. --take page|project with --path settles a rejected
+          document: the page's text, or the project's file over the page.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 

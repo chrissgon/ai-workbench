@@ -40,10 +40,17 @@ Operations of stage 3:
                                    (runtime/plan.py) as a pending decision of kind `plan`; no task is created
   approve(project, pending_id[, sha256])   approve a plan (its tasks are created) or an acceptance
   reject(project, pending_id[, note])      reject a plan or an acceptance: the request is cancelled
-  sync(project[, dry_run])         mirror the tasks with the project's task board (runtime/board.py): what a person
-                                   edited there comes in, what the store holds goes out; a dry run reads nothing
-                                   and shows every write
-  answer(..., with_comments=True)  the comments saved from the board for the task enter the answer
+  sync(project[, dry_run][, take, path])   mirror the tasks with the project's task board (runtime/board.py) and
+                                   the documents with its documents platform (runtime/documents.py): what a person
+                                   edited there comes in, what the store and the project hold goes out; a dry run
+                                   reads nothing and shows every write; take and path settle a document that was not
+                                   taken
+  answer(..., with_comments=True)  the comments saved from the board for the task, and from the platform for the
+                                   documents its skill owns, enter the answer
+
+With a documents platform, run_next reads it first (documents.pull) and runs nothing while a document the task's
+skill declares was edited there and not taken; after the run, the documents it returned are written to it
+(documents.push), and a failed write never fails the task.
 
 Releasing is not approving: a released delivery stays a draft in the project's state file.
 
@@ -75,6 +82,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import board  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
+import documents  # noqa: E402
 import endings  # noqa: E402
 import flow_files  # noqa: E402
 import lab  # noqa: E402
@@ -163,7 +171,7 @@ def context(project: str, *, check_config: bool = True) -> dict:
                            f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
                            f"want, run: python3 runtime/cli.py accept-config --project {cfg['project']} --sha256 "
                            f"{cfg['sha256']}", 3)
-    return {"cfg": cfg, "store": store, "conn": conn}
+    return {"cfg": cfg, "store": store, "conn": conn, "root": ROOT}
 
 
 def _stored(ctx: dict, function, *args, **kwargs):
@@ -395,12 +403,46 @@ def run_next(project: str, tier: str | None = None) -> dict:
     with _run_lock(ctx["cfg"]):
         # This process holds the project's run lock, so a task still `running` is what an interrupted run left.
         recovered = _stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task")
+        pulled = None
+        if documents.enabled(ctx["cfg"]):
+            # Before the task is claimed, so that a refusal leaves no task running (decision D11).
+            try:
+                pulled = documents.pull(ctx)
+            except documents.DocumentsError as e:
+                return {"ran": None, "reason": "the documents platform could not be read", "detail": str(e),
+                        "recovered": recovered["tasks"]}
+            except store.StoreError as e:
+                raise OpsError(str(e), e.code) from None
+            nxt = _stored(ctx, store.task_peek_next)["task"]
+            if nxt is not None and nxt.get("skill"):
+                try:
+                    stopped = documents.blocked(ctx, skill_meta.declared(os.path.join(ROOT, "skills", nxt["skill"])))
+                except skill_meta.SkillError:
+                    stopped = []  # the run fails to start below, with its reason
+                if stopped:
+                    return {"ran": None, "reason": "a document was edited on the platform and was not taken",
+                            "task": nxt["id"], "documents": stopped, "pulled": pulled, "recovered": recovered["tasks"]}
         claimed = _stored(ctx, store.task_claim_next)
         task = claimed["task"]
         if task is None:
-            return {"ran": None, "reason": "no task is ready", "recovered": recovered["tasks"],
-                    "pending": len(_stored(ctx, store.pending_list))}
-        return {**_run(ctx, task, tier), "recovered": recovered["tasks"]}
+            out = {"ran": None, "reason": "no task is ready", "recovered": recovered["tasks"],
+                   "pending": len(_stored(ctx, store.pending_list))}
+            return {**out, "documents": pulled} if pulled is not None else out
+        out = {**_run(ctx, task, tier), "recovered": recovered["tasks"]}
+        if pulled is not None:
+            out["documents"] = documents.merged(pulled, _push_after_run(ctx, out))
+        return out
+
+
+def _push_after_run(ctx: dict, out: dict) -> dict:
+    """Write to the documents platform the documents a run returned. Never fails the task: a failure is listed."""
+    rels = [r["path"] for r in out.get("returned") or [] if r.get("class") == "document"]
+    if not rels:
+        return documents.result()
+    try:
+        return documents.push(ctx, rels)
+    except Exception as e:  # a failed push never fails the task; the next sync tries again
+        return {**documents.result(), "failed": [{"path": rel, "reason": f"{type(e).__name__}: {e}"} for rel in rels]}
 
 
 @contextlib.contextmanager
@@ -540,14 +582,24 @@ def answer(project: str, pending_id: int, text: str, with_comments: bool = False
     question is also written by code into the project's state file, as a decision of the user (L10), so that the
     next run finds it where the skills look for decisions; "state" says whether it was written. A failure there
     never undoes the answer: the store has it, and the next run's prompt carries it. With with_comments (the
-    person's command, never a default), the open comments saved from the platform for the task are appended under
-    COMMENTS_LINE, one per line, and marked used by this pending decision ("comments": their ids)."""
+    person's command, never a default), the open comments saved from the platform for the task, and for the
+    documents its skill owns (its declared outputs), are appended under COMMENTS_LINE, one per line, oldest first,
+    and marked used by this pending decision ("comments": their ids)."""
     ctx = context(project)
     said = _text(text, "the answer")
     used = []
     if with_comments:
         item = _stored(ctx, ctx["store"].pending_get, pending_id)
         saved = _stored(ctx, ctx["store"].comments_list, task_id=item["task_id"])
+        skill = _stored(ctx, ctx["store"].task_get, item["task_id"])["skill"]
+        if skill:
+            try:
+                owned = skill_meta.declared(os.path.join(ROOT, "skills", skill))["outputs"]
+            except skill_meta.SkillError as e:
+                raise OpsError(f"the comments of {skill}'s documents cannot be found: {e}", 1) from None
+            saved += [c for c in _stored(ctx, ctx["store"].comments_list)
+                      if c.get("document_path") and skill_meta.matches(owned, c["document_path"])]
+            saved.sort(key=lambda c: c["id"])
         if saved:
             lines = [f"- {c.get('author') or 'unknown'}: {' '.join(str(c['text']).split())}" for c in saved]
             said = "\n".join([said, "", COMMENTS_LINE, *lines])
@@ -655,7 +707,8 @@ def accept_config(project: str, sha256: str) -> dict:
 
 def status(project: str) -> dict:
     """{"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key",
-    "skill", "state", "note"}]}], "pending": [...]}: everything from the store's records."""
+    "skill", "state", "note"}]}], "pending": [...], "documents": [{"path", "status", "note", "on_platform"}]}:
+    everything from the store's records."""
     ctx = context(project)
     rows = _stored(ctx, ctx["store"].tasks_list)
     comments = {}
@@ -668,7 +721,9 @@ def status(project: str) -> dict:
                            for t in rows if t["parent_id"] == r["id"]]}
                 for r in rows if r["parent_id"] is None]
     return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": requests,
-            "pending": [_listed(item) for item in _stored(ctx, ctx["store"].pending_list)]}
+            "pending": [_listed(item) for item in _stored(ctx, ctx["store"].pending_list)],
+            "documents": [{"path": d["path"], "status": d["status"], "note": d["note"], "on_platform": bool(d["remote_id"])}
+                          for d in _stored(ctx, ctx["store"].documents_list)]}
 
 
 # --- stage 3: the route, the plan, its approval ------------------------------------------------------------------
@@ -843,19 +898,26 @@ def approve(project: str, pending_id: int, sha256: str | None = None) -> dict:
 
 
 def sync(project: str, dry_run: bool = False, take: str | None = None, path: str | None = None) -> dict:
-    """Mirror the project's task board (runtime/board.py), holding the run lock: pull (the board to the store; not
-    on a dry run, which reads nothing), then push (the store to the board; with dry_run, every write the provider
-    would make, and nothing changes). take and path settle a document both sides changed (the documents' part,
-    a later package of stage 3). Returns {"board": {"pulled", "created", "edited", "refused", "gone", "pushed",
-    "failed"[, "would"]} or None, "documents": None}."""
+    """Mirror the project's task board (runtime/board.py) and its documents (runtime/documents.py), holding the run
+    lock. The board: pull (the board to the store; not on a dry run, which reads nothing), then push (the store to
+    the board; with dry_run, every write the provider would make, and nothing changes). The documents, after the
+    board: pull (the platform to the project; not on a dry run), then push of every project document a manifest
+    entry mirrors. take ("page" or "project") with path settles a document that was not taken (documents.take),
+    and does nothing else. Returns {"board": {"pulled", "created", "edited", "refused", "gone", "pushed",
+    "failed"[, "would"]} or None, "documents": {"imported", "not_taken", "conflicts", "rejected", "comments", "gone",
+    "pushed", "failed"[, "would"]} or None}."""
     if take is not None and take not in ("page", "project"):
         raise OpsError("take is page or project", 2)
     if (take is None) != (path is None):
         raise OpsError("take and path go together", 2)
     ctx = context(project)
-    ctx["root"] = ROOT
     out = {"board": None, "documents": None}
     with _run_lock(ctx["cfg"]):
+        if take is not None:
+            if not documents.enabled(ctx["cfg"]):
+                raise OpsError("take settles a document of the documents platform, and none is configured", 3)
+            out["documents"] = _documents(ctx, documents.take, ctx, path, take)
+            return out
         if board.enabled(ctx["cfg"]):
             try:
                 pulled = {"pulled": [], "created": [], "edited": [], "refused": [], "gone": []} if dry_run else board.pull(ctx)
@@ -864,7 +926,21 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
                 raise OpsError(f"the task board: {e}", 3 if e.kind == "not configured" else 1) from None
             except ctx["store"].StoreError as e:
                 raise OpsError(str(e), e.code) from None
+        if documents.enabled(ctx["cfg"]):
+            pulled = _documents(ctx, documents.pull, ctx, dry_run=dry_run)
+            pushed = _documents(ctx, lambda: documents.push(ctx, documents.mirrored_paths(ctx), dry_run=dry_run))
+            out["documents"] = documents.merged(pulled, pushed)
     return out
+
+
+def _documents(ctx: dict, function, *args, **kwargs):
+    """Call one function of runtime/documents.py; its refusal becomes this layer's."""
+    try:
+        return function(*args, **kwargs)
+    except documents.DocumentsError as e:
+        raise OpsError(f"the documents platform: {e}", 3 if e.kind == "not configured" else 1) from None
+    except ctx["store"].StoreError as e:
+        raise OpsError(str(e), e.code) from None
 
 
 def reject(project: str, pending_id: int, note: str | None = None) -> dict:
