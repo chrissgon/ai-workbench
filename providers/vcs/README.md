@@ -6,7 +6,7 @@ Implementations of the `integration:vcs` class. Interface: `providers/CONTRACT.m
 
 Reads a repository's Dependabot alerts and dismisses one, through the GitHub REST API (`X-GitHub-Api-Version: 2026-03-10`). It is the native layer for the security review of a project's dependencies (backlog S8).
 
-It also reads one file (`read-file`, REST contents API) and commits files to a branch (`commit-files`, git over SSH). A caller reads a file of a repository with the first and, after the person's approval, commits new files to it with the second.
+It also reads one file (`read-file`, REST contents API), commits files to a branch (`commit-files`, git over SSH) and opens a pull request (`open-pr`, REST API). A caller reads a file of a repository with the first and, after the person's approval, commits new files to it with the second and proposes them with the third.
 
 ### Setup (once)
 
@@ -81,6 +81,22 @@ uv run providers/vcs/github.py commit-files --repo example-org/site --branch wb/
 - git, and through it ssh and your hooks, run with the caller's environment minus two things: the `GIT_*` variables that would point git at another repository or change what is committed (`GIT_DIR`, `GIT_WORK_TREE`, `GIT_INDEX_FILE`, `GIT_AUTHOR_*` and the rest; only `GIT_CONFIG_GLOBAL`, `GIT_CONFIG_SYSTEM`, `GIT_CONFIG_NOSYSTEM`, `GIT_SSH` and `GIT_SSH_COMMAND` are kept), and every secret registered in `providers/secrets/resolver.py`. So the provider can be started from a git hook without committing in the hook's repository, and no hook sees the token.
 - Output: `{idempotency_key, repo, branch, commit, files: [{path, sha256}], deletes, pushed, unchanged, signature, replayed, attempts}`.
 - A scheduled job must reach your SSH agent (for the push, and for the signature when `user.signingkey` is a public key held by the agent). Check once from the same kind of session with a `--dry-run`.
+
+### Opening a pull request
+
+```sh
+uv run providers/vcs/github.py open-pr --repo example-org/site --head wb/request-7 --base main \
+    --title-file title.txt --body-file body.md --idempotency-key site-request-7-pr --dry-run   # then --confirmed
+uv run providers/vcs/github.py resolve --idempotency-key site-request-7-pr --pull-request 31 --confirmed
+```
+
+- One `POST /repos/{owner}/{repo}/pulls` with `title`, `head`, `base` and `body` (source: the OpenAPI description of the pinned version, operation `pulls/create`, [Create a pull request](https://docs.github.com/rest/pulls/pulls#create-a-pull-request), read 2026-10-06). The service answers 201 with the pull request; `number` and `html_url` are read. It answers 422 when a pull request already exists for the head or a branch does not exist.
+- The token needs the repository permission **Pull requests: Read and write**. Keep it in a separate token, exported as `VCS_GITHUB_TOKEN` only to open the pull request, as for a dismissal.
+- `--head` and `--base` are branch names that differ; the title file holds one UTF-8 line; the body file is UTF-8, not empty, at most 64 kB. Every flag and both files are checked before a token is read or a request made. The title and the body are usually written by a model: they are sent as data, never interpreted.
+- `--dry-run` prints the exact request, the sha256 of the title and of the body, the key and `existing_status`; it reads no credential and calls nothing.
+- One pull request per idempotency key: the key is recorded as pending before the request and as opened (with the number and the page) after the 201. A key already opened replays without a request and without a token; the same key for another repository, branch, title or body is refused (exit 2). A refusal by the service (any 4xx) opened nothing and releases the key; a timeout, a lost connection or a server error keeps it pending until `resolve --pull-request <number>` or `resolve --not-opened` records what GitHub shows.
+- It opens a pull request and nothing else: it never merges, approves, comments on or edits one.
+- Output: `{idempotency_key, repo, head, base, number, url, replayed}`.
 
 ### Environment variables
 
