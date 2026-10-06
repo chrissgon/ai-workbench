@@ -33,6 +33,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import shutil
 import signal
 import subprocess
@@ -317,6 +318,37 @@ def _set_aside(dest: str, prefix: str) -> str:
     return kept
 
 
+PLATFORMS_CITED = "shared/references/platforms/"
+# A platform's name, as scripts/stage_skills.py accepts it (its NAME_RE); the folder's README.md is not one.
+PLATFORM_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def platforms_cited(skill_dir: str) -> list:
+    """The platforms whose reference a run of the skill is given, for the lab's staging (a case's "platforms"):
+    every platform with a reference (shared/references/platforms/<name>.md of the lab's root) when the skill's
+    SKILL.md, or a file under its references/ folder, cites that folder; none otherwise. A lab case names the
+    platform its run needs; the runtime does not know in advance which platform a run will be told, so it gives
+    them all. They are staged beside the skill and, like it, never come back (runtime/path_rule.py, "staged")."""
+    texts = [os.path.join(skill_dir, "SKILL.md")]
+    for current, names, files in os.walk(os.path.join(skill_dir, "references")):
+        names.sort()
+        texts += [os.path.join(current, name) for name in sorted(files)]
+    cites = False
+    for path in texts:
+        try:
+            with open(path, encoding="utf-8", errors="ignore") as f:
+                cites = PLATFORMS_CITED in f.read()
+        except OSError:
+            continue
+        if cites:
+            break
+    folder = os.path.join(LAB.ROOT, *PLATFORMS_CITED.rstrip("/").split("/"))
+    if not cites or not os.path.isdir(folder):
+        return []
+    return sorted(name[:-3] for name in os.listdir(folder)
+                  if name.endswith(".md") and PLATFORM_NAME.match(name[:-3]) and os.path.isfile(os.path.join(folder, name)))
+
+
 def _copy_in(files, case_dir: str) -> None:
     """Copy the caller's files into the fresh folder of a run: regular files only, each at its relative path."""
     for src, rel in files:
@@ -336,7 +368,8 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
     """Run one skill once on one task text, in the eval container, on a fresh copy.
 
     skill    a folder name under skills/ of this checkout: it is staged where the adapter's tool finds skills,
-             without its evals/ and scripts/tests/, with the shared references it cites, as in a lab run
+             without its evals/ and scripts/tests/, with the shared references it cites, as in a lab run, and,
+             when it cites the platforms' folder, the reference of every platform (platforms_cited())
     prompt   the task text, written to prompt.md
     files    [(absolute source path, path relative to the copy)]: what the run sees of the project. The caller
              decides the list; this function copies regular files and nothing else
@@ -428,7 +461,8 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
                     if carried:
                         why = f"the copy holds {carried}: a tool's settings never enter a run"
                     else:
-                        staged, _ = _lab_call(LAB.stage_run, case_dir, eval_cfg, skill_dir, [], {}, None)
+                        case = {"platforms": platforms_cited(skill_dir)}
+                        staged, _ = _lab_call(LAB.stage_run, case_dir, eval_cfg, skill_dir, [], case, None)
                         prompt_path = os.path.join(root, "prompt.md")
                         with open(prompt_path, "w", encoding="utf-8") as f:
                             f.write(prompt)

@@ -117,6 +117,54 @@ def test_limit_01_every_run_starts_from_a_new_copy_with_the_skill_staged_again(t
     assert staged == (tree["tree"] / "skills" / "demo-asks" / "SKILL.md").read_text()
 
 
+def test_the_platform_references_a_skill_cites_are_staged_with_it_read_only_as_in_a_lab_run(tree, monkeypatch):
+    """L1, the references the skill cites: a skill that cites the platforms' folder is given the reference of every
+    platform (its data file too), staged beside it as the lab stages a case's platforms; a skill that does not
+    cite it is given none; what a run does to them never comes back, by the path rule."""
+    project, path = tree["project"], str(tree["project"])
+    platforms = tree["tree"] / "shared" / "references" / "platforms"
+    platforms.mkdir(parents=True)
+    for name, text in (("demo-net.md", "# Demo net\n"), ("demo-net.json", "{}\n"), ("other-net.md", "# Other net\n"),
+                       ("README.md", "# Platforms\n")):
+        (platforms / name).write_text(text, encoding="utf-8")
+    citing = tree["tree"] / "skills" / "demo-asks" / "SKILL.md"
+    citing.write_text(citing.read_text(encoding="utf-8") + "\nRead `../../shared/references/platforms/<platform>.md`.\n",
+                      encoding="utf-8")
+    assert lab.platforms_cited(str(citing.parent)) == ["demo-net", "other-net"]
+    assert lab.platforms_cited(str(tree["tree"] / "skills" / "demo-writes")) == []
+    ops.request(path, "Tell me which market to go after first.", "demo")
+    real, seen = lab.run_skill, {}
+
+    def changes_a_reference(*args, **kwargs):
+        result = real(*args, **kwargs)
+        seen.update(result)
+        (Path(result["cwd"]) / ".h" / "shared" / "references" / "platforms" / "demo-net.md").write_text("changed\n")
+        return result
+
+    monkeypatch.setattr(lab, "run_skill", changes_a_reference)
+    out = ops.run_next(path)
+    assert out["status"] == "ok"
+    listed = (Path(out["run_dir"]) / "outputs" / "files.txt").read_text(encoding="utf-8").splitlines()
+    staged_refs = {"./.h/shared/references/platforms/demo-net.md", "./.h/shared/references/platforms/demo-net.json",
+                   "./.h/shared/references/platforms/other-net.md"}
+    assert staged_refs <= set(listed)
+    assert not any(line.endswith("/platforms/README.md") for line in listed)
+    assert ".h/shared" in seen["staged"]
+    for rel in sorted(staged_refs):
+        assert st.load("path_rule").classify(rel[2:], {"staged": seen["staged"]}) == "ignored"
+    assert all(not item["path"].startswith(".h/") for item in out["returned"] + out["kept"])
+    assert not (project / ".h").exists() and not (project / "shared").exists()
+    assert (platforms / "demo-net.md").read_text(encoding="utf-8") == "# Demo net\n"
+
+
+def test_the_brand_skills_of_this_checkout_are_given_every_platform_reference_it_has():
+    platforms = sorted(p.stem for p in (st.REPO / "shared" / "references" / "platforms").glob("*.md") if p.stem != "README")
+    assert platforms
+    for skill in ("brand-strategy", "brand-identity", "brand-profile"):
+        assert lab.platforms_cited(str(st.REPO / "skills" / skill)) == platforms, skill
+    assert lab.platforms_cited(str(st.REPO / "skills" / "biz-market-analysis")) == []
+
+
 def test_limit_02_only_versioned_files_documents_and_declared_machine_files_enter_and_never_the_store_or_the_configuration(tree):
     project = tree["project"]
     checkout(project, {"src/app.py": "print('app')\n", ".workbench-local/other/notes.json": "{}\n"})
