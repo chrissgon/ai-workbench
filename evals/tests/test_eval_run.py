@@ -526,6 +526,55 @@ def test_regrade_is_refused_with_run_options_or_without_a_graded_run(tmp_path, m
         assert e.value.code == 2 and why in capsys.readouterr().err
 
 
+
+def graded_for_regrade(tmp_path, monkeypatch, capsys, **markers):
+    """One graded run of case 1 with the skill on the reference model, made by the control adapter; the markers
+    are written after it, so they act on the regrade only. Returns the event folder."""
+    control_demo(tmp_path, monkeypatch)
+    assert er.main(FULL + ["--case", "1", "--only", "with", "--tiers", "strong"]) == 0
+    capsys.readouterr()
+    for name, value in markers.items():
+        (tmp_path / "adapters" / "h" / name.replace("_", "-")).write_text(f"{value}\n")
+    return tmp_path / "evals-workspace" / "demo" / "iteration-1"
+
+
+def test_a_regrade_takes_a_place_of_the_shared_lock(tmp_path, monkeypatch, capsys):
+    iteration = graded_for_regrade(tmp_path, monkeypatch, capsys)
+    taken, real = [], er.Slots
+
+    class Recording(real):
+        def __enter__(self):
+            taken.append([(slot.kind, slot.n) for slot in self.slots])
+            return super().__enter__()
+
+    monkeypatch.setattr(er, "Slots", Recording)
+    assert er.main(["--regrade", str(iteration), "--harness", "h", "--grader", "m"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    total = er.load_status().event_config(er.load_status().load_gate(str(tmp_path)))["total_jobs"]
+    assert out["gradings"] == 1 and taken == [[("total", total)]]
+
+
+def test_a_regrade_waits_while_its_account_is_paused(tmp_path, monkeypatch, capsys):
+    iteration = graded_for_regrade(tmp_path, monkeypatch, capsys, probes_fail=1)
+    fast_pause(monkeypatch)
+    assert er.start_pause("h", "another run") is True
+    assert er.main(["--regrade", str(iteration), "--harness", "h", "--grader", "m"]) == 0
+    captured = capsys.readouterr()
+    # The first probe met the limit, the second ended the pause; only then was the grading call made.
+    assert len(calls(tmp_path, "probes.txt")) == 2 and "a probe call on the account of h succeeded" in captured.err
+    assert json.loads(captured.out)["gradings"] == 1 and not list((tmp_path / "locks").glob("pause-*.json"))
+
+
+def test_a_regrade_call_that_meets_the_account_limit_pauses_is_made_again_and_is_not_counted_as_refused(tmp_path, monkeypatch, capsys):
+    iteration = graded_for_regrade(tmp_path, monkeypatch, capsys, limit_grading=1)
+    fast_pause(monkeypatch)
+    assert er.main(["--regrade", str(iteration), "--harness", "h", "--grader", "m"]) == 0
+    captured = capsys.readouterr()
+    out = json.loads(captured.out)
+    assert "the account of h is exhausted (a grading call)" in captured.err
+    assert (out["gradings"], out["failed"]) == (1, 0) and out["runs"][0]["refused"] == 0
+    assert not list((tmp_path / "locks").glob("pause-*.json"))
+
 def test_an_operators_relative_path_is_read_against_the_current_folder_and_another_checkout_is_refused(tmp_path, monkeypatch, capsys):
     """A relative --regrade, --resume or --close path is read against the current folder, and nothing else; a
     folder outside this checkout's workspace is refused, so that another checkout's old round is never regraded."""
