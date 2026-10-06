@@ -13,8 +13,10 @@ fields, written by the runtime and never read back). Only code talks to the boar
                               text the person edited reaches the store (store.task_edit); a state the person set is
                               taken only when it is one of three moves (below), any other is refused and written back
                               by the next push; open comments are saved (store.comments_save) and change nothing by
-                              themselves. An item no task knows becomes a request waiting for the person's
-                              acceptance (store.request_from_board).
+                              themselves. The version covers the content and a comment may not move it, so an item
+                              whose version did not change has its own comments listed (the provider's `comments`,
+                              one call) and the new ones saved. An item no task knows becomes a request waiting for
+                              the person's acceptance (store.request_from_board).
   push(ctx, dry_run=False)    the store to the board, oldest first: an item is written only when what would be
                               written changed since the last write; a title and a text are written only when the item
                               is created, never after (they are the person's). With dry_run, every write is printed
@@ -185,9 +187,10 @@ def _open_pending(ctx: dict, task_id: int):
 
 
 def pull(ctx: dict) -> dict:
-    """The board to the store (see the module's text). Returns {"pulled", "created", "edited", "refused", "gone"}."""
+    """The board to the store (see the module's text). Returns {"pulled", "created", "edited", "refused", "gone",
+    "comments"}: "comments" is the number of comments saved that were not saved before."""
     cfg, store, conn, root = ctx["cfg"], ctx["store"], ctx["conn"], ctx["root"]
-    out = {"pulled": [], "created": [], "edited": [], "refused": [], "gone": []}
+    out = {"pulled": [], "created": [], "edited": [], "refused": [], "gone": [], "comments": 0}
     listed = {item["id"]: item for item in call(cfg, root, "list", []).get("items", [])}
     tasks = store.tasks_list(conn)
     known = {t["remote_id"]: t for t in tasks if t.get("remote_id")}
@@ -197,6 +200,13 @@ def pull(ctx: dict) -> dict:
             out["gone"].append(task["id"])
             continue
         if item.get("version") == task.get("remote_version"):
+            # Not read: the version covers the content, and a comment may not move it (measured, N3).
+            try:
+                said = call(cfg, root, "comments", ["--id", remote_id])
+            except BoardError as e:
+                out["refused"].append({"task": task["id"], "reason": str(e)})
+                continue
+            out["comments"] += _save_comments(ctx, task["id"], said.get("comments"))
             continue
         try:
             got = call(cfg, root, "get", ["--id", remote_id])
@@ -222,9 +232,7 @@ def pull(ctx: dict) -> dict:
             if reason:
                 out["refused"].append({"task": task["id"], "state": state, "reason": reason})
                 written = None  # the next push writes the store's state back
-        if got.get("comments"):
-            store.comments_save(conn, got["comments"], provider=cfg["task_board"]["provider"], subject="task",
-                                task_id=task["id"])
+        out["comments"] += _save_comments(ctx, task["id"], got.get("comments"))
         store.task_remote_set(conn, task["id"], remote_id=remote_id, remote_version=got.get("version"),
                               written_sha256=written)
     for remote_id, item in listed.items():
@@ -240,6 +248,13 @@ def pull(ctx: dict) -> dict:
             continue
         out["created"].append({"request": made["request"], "pending_id": made["pending_id"], "item": remote_id})
     return out
+
+
+def _save_comments(ctx: dict, task_id: int, comments) -> int:
+    if not comments:
+        return 0
+    return ctx["store"].comments_save(ctx["conn"], comments, provider=ctx["cfg"]["task_board"]["provider"],
+                                      subject="task", task_id=task_id)["saved"]
 
 
 def _take_state(ctx: dict, task: dict, state):

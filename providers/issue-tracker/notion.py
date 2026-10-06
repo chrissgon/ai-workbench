@@ -14,9 +14,10 @@ option the map does not know is read as state null; a row with no option is `req
 of the row's page, converted with providers/documents/notion_blocks.py, the one file this script loads from another
 class's folder. `shown` is written to the shown property as "key: value" lines and never read back.
 
-`version` is the page's last_edited_time. Measured on the live service (README.md, "Measured on the live service"):
-it is rounded to the minute and a comment does not move it; the stand-in service of the tests moves it on every
-change to the page, its body or its comments. Comments are those of the row's page and of each block of its body. An upsert reads the row first and writes only the properties and the body that differ, so
+`version` is the page's last_edited_time. It covers the content: measured on the live service (README.md, "Measured
+on the live service"), it is rounded to the minute and a comment does not move it; the stand-in service of the tests
+does the same. Comments are those of the row's page and of each block of its body (`get`); `comments` lists the row's
+own, in one listing, whatever the version. An upsert reads the row first and writes only the properties and the body that differ, so
 a write of a value already there changes nothing.
 
 Usage:
@@ -24,6 +25,7 @@ Usage:
   uv run providers/issue-tracker/notion.py --check --config-file <f>
   uv run providers/issue-tracker/notion.py list --config-file <f>
   uv run providers/issue-tracker/notion.py get --config-file <f> --id <id>
+  uv run providers/issue-tracker/notion.py comments --config-file <f> --id <id>
   uv run providers/issue-tracker/notion.py upsert --config-file <f> [--id <id>] --item-file <json>
                                           --idempotency-key <k> (--dry-run | --confirmed)
   uv run providers/issue-tracker/notion.py resolve --config-file <f> --idempotency-key <k>
@@ -486,9 +488,13 @@ def comments_of(service: Service, ident: str, blocks: list) -> list:
             if c.get("id") in seen:
                 continue
             seen.add(c.get("id"))
-            out.append({"id": c.get("id"), "author": (c.get("created_by") or {}).get("id"),
-                        "created_at": c.get("created_time"), "text": plain(c.get("rich_text"))})
+            out.append(comment_of(c))
     return out
+
+
+def comment_of(c: dict) -> dict:
+    return {"id": c.get("id"), "author": (c.get("created_by") or {}).get("id"), "created_at": c.get("created_time"),
+            "text": plain(c.get("rich_text"))}
 
 
 def item_of(service: Service, page: dict, cfg: dict) -> dict:
@@ -625,6 +631,20 @@ def cmd_get(args: dict) -> int:
     return emit(item_of(service, retrieve(service, ident), cfg))
 
 
+def cmd_comments(args: dict) -> int:
+    """The row's own open comments, in one listing (paginated), whatever its version: a comment does not move the
+    version (measured, N3), so the runtime lists them at every pull. The comments on its body's blocks come with get."""
+    board_config(args.get("--config-file"))
+    ident = notion_id(args.get("--id"), "--id")
+    try:
+        listed = Service().paged("list_comments", query={"block_id": ident})[0]
+    except ProviderError as exc:
+        if exc.status == 404:
+            raise ProviderError(f"no item {ident} on the board") from None
+        raise
+    return emit({"id": ident, "comments": [comment_of(c) for c in listed]})
+
+
 def cmd_upsert(args: dict) -> int:
     cfg = board_config(args.get("--config-file"))
     mode = mode_of(args)
@@ -700,7 +720,7 @@ def cmd_resolve(args: dict) -> int:
     return emit({"key": key, "id": ident, "resolved": True})
 
 
-VERBS = {"list": cmd_list, "get": cmd_get, "upsert": cmd_upsert, "resolve": cmd_resolve}
+VERBS = {"list": cmd_list, "get": cmd_get, "comments": cmd_comments, "upsert": cmd_upsert, "resolve": cmd_resolve}
 VALUE_FLAGS = ("--config-file", "--id", "--item-file", "--idempotency-key")
 SWITCHES = ("--dry-run", "--confirmed", "--not-created", "--check")
 
