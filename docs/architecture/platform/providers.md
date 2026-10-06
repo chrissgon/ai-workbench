@@ -29,16 +29,26 @@ Where: **repo** is this repository, **data** is the provider's data folder on th
 
 **The classes and their implementations, as built.** A row with no implementation is a reserved shape: a skill that requires it degrades as its body says.
 
-| Class | Folder | Implementations | Verbs |
+<!-- generated: provider-classes -->
+| Class | Folder | Implementation | Verbs |
 |---|---|---|---|
-| `store:runtime` | `store/` | `sqlite.py` (standard library, Python 3.9) | `init`, `cursor-*`, `event-*`, `run-*`, `runs`, `inbox-*`, `action-*`, `actions`, `export`; the task tables through functions only |
-| `scheduler:job` | `scheduler/` | `launchd.py` (macOS), `systemd.py` (Linux); both standard library, Python 3.9 | `--check`, `schedule`, `list`, `cancel`, `resolve`, `run` (internal) |
-| `integration:vcs` | `vcs/` | `github.py` | `alerts`, `dismiss-alert`, `read-file`, `commit-files`, `open-pr`, `resolve` |
-| `integration:issue-tracker` | `issue-tracker/` | `local.py` (standard library, Python 3.9), `notion.py` (`uv run`) | `--check`, `list`, `get`, `comments`, `upsert`, `resolve` |
-| `integration:documents` | `documents/` | `local.py` (standard library, Python 3.9), `notion.py` (`uv run`); `notion_blocks.py` is a helper | `--check`, `stat`, `read`, `comments`, `write`, `notice`, `resolve` |
-| `publisher:<platform>` | `publisher/` | `linkedin.py` (`PLATFORMS` names one platform); `auth.py` | `--check --platform`, `publish`, `comment`, `resolve`, `posts` |
-| `reader:email` | `mailbox/` | `gmail.py`; `auth.py` | `search`, `get`, `read-eml` (read only) |
-| `sender:email`, `generator:image`, `generator:video`, `search:web`, `integration:design-tool` | `mailer/`, `generator/`, `search/`, `design-tool/` | none ships | the reserved rows of the contract |
+| `publisher:<platform>` | `publisher/` | `linkedin.py` (PLATFORMS: linkedin) | `--check`, `publish`, `comment`, `resolve`, `posts` |
+| `sender:email` | `mailer/` | none ships | - |
+| `reader:email` | `mailbox/` | `gmail.py` | `--check`, `search`, `get`, `read-eml` |
+| `generator:image` | `generator/` | none ships | - |
+| `generator:video` | `generator/` | none ships | - |
+| `search:web` | `search/` | none ships | - |
+| `integration:vcs` | `vcs/` | `github.py` | `--check`, `alerts`, `dismiss-alert`, `read-file`, `commit-files`, `open-pr`, `resolve` |
+| `integration:issue-tracker` | `issue-tracker/` | `local.py` | `--check`, `list`, `get`, `comments`, `upsert`, `resolve` |
+| `integration:issue-tracker` | `issue-tracker/` | `notion.py` | `--check`, `list`, `get`, `comments`, `upsert`, `resolve` |
+| `integration:documents` | `documents/` | `local.py` | `--check`, `stat`, `read`, `comments`, `write`, `notice`, `resolve` |
+| `integration:documents` | `documents/` | `notion.py` | `--check`, `stat`, `read`, `comments`, `write`, `notice`, `resolve` |
+| `scheduler:job` | `scheduler/` | `launchd.py` | `--check`, `schedule`, `list`, `cancel`, `resolve`, `run` |
+| `scheduler:job` | `scheduler/` | `systemd.py` | `--check`, `schedule`, `list`, `cancel`, `resolve`, `run` |
+| `store:runtime` | `store/` | `sqlite.py` | `--check`, `init`, `cursor-get`, `cursor-set`, `cursor-clear`, `event-add`, `event-next`, `event-done`, `run-start`, `run-end`, `runs`, `inbox-add`, `inbox-list`, `inbox-resolve`, `action-add`, `actions`, `action-count`, `export` |
+<!-- /generated -->
+
+Generated: the classes are the rows of the "Verbs per class" table of `providers/CONTRACT.md`, the folder is `providers/resolve.py`'s, and the verbs are read from each file's text (its `VERBS`, the choices of its `verb` argument, a `--check` flag), never by running it. Not generated: `sqlite.py`, `launchd.py`, `systemd.py` and both `local.py` are standard library only and run on Python 3.9, the two `notion.py` run with `uv run`; `auth.py` and `notion_blocks.py` are helpers; the store's task tables have no verb and are reached through its functions; `run` of the scheduler is internal; `integration:design-tool` is a class of the environment contract with no row in the verbs table.
 
 **The secrets registry, per provider** (`REGISTRY` of `providers/secrets/resolver.py`, equal cell by cell to the table of [contracts/secrets.md](../../../contracts/secrets.md)): `vcs/github.py` reads an everyday token (alerts, `read-file`) and a separate pull-request token (`open-pr` only); `publisher/linkedin.py` and its `auth.py` read the platform's access token, client id and client secret; `mailbox/gmail.py` and its `auth.py` read a refresh token, client id and client secret; `issue-tracker/notion.py` and `documents/notion.py` share one integration token. `commit-files` reads no token: it uses the person's own git and SSH key. The store, the scheduler and both `local.py` read no secret. The keys of the model providers are registered by the adapters, never here (layer 5).
 
@@ -229,3 +239,4 @@ Every provider takes `--help` and `--check`. Side-effect verbs take `--dry-run` 
 ## Changes
 
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
+- 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the classes, implementations and verbs).
