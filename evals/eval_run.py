@@ -447,6 +447,7 @@ import sys
 import tempfile
 import threading
 import time
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, ".."))
@@ -626,6 +627,41 @@ def __getattr__(name):
     if name in MEASURE_NAMES:
         return getattr(load_measure(), name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+ATTEMPTS_SCRIPT = os.path.join(HERE, "run_attempts.py")
+ATTEMPTS_LOCK = threading.Lock()
+
+
+def load_attempts():
+    """evals/run_attempts.py as a module, loaded once and on first use: the control of a run's attempts, which
+    this runner and the runtime's lab facade both call. Not a measurement file. A command that runs no model (the
+    case preflight, a plan) runs without it, as in a case folder that brings this script alone."""
+    name = "workbench_eval_run_attempts"
+    with ATTEMPTS_LOCK:
+        if name not in sys.modules:
+            if not os.path.isfile(ATTEMPTS_SCRIPT):
+                die("evals/run_attempts.py is missing: run this script from a checkout of the workbench.")
+            spec = importlib.util.spec_from_file_location(name, ATTEMPTS_SCRIPT)
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            sys.modules[name] = module
+    return sys.modules[name]
+
+
+class _Runner:
+    """This module as run_attempts reads it: each name is looked up at the moment it is read, so a name a test
+    replaces on the module is the one the loop uses; the names of evals/measure.py come through the module's
+    own __getattr__."""
+
+    def __getattr__(self, name):
+        found = globals()
+        if name in found:
+            return found[name]
+        return __getattr__(name)
+
+
+_RUNNER = _Runner()
 
 
 def load_status():
@@ -2966,152 +3002,125 @@ def run(argv):
         account = {"key": harness_for[tier], "markers": eval_for[tier]["account_limit"],
                    "probe": lambda: probe_call(runner_for[tier], model, tier_env)}
 
-        def set_aside(prefix):
-            """Keep what an attempt left in a folder of its own inside the run folder, and clear the run folder
-            for the next attempt."""
-            n = 1
-            while os.path.exists(os.path.join(run_dir, f"{prefix}-{n}")):
-                n += 1
-            kept = os.path.join(run_dir, f"{prefix}-{n}")
-            os.makedirs(kept)
-            for item in os.listdir(run_dir):
-                if not item.startswith(KEPT_PREFIXES):
-                    shutil.move(os.path.join(run_dir, item), os.path.join(kept, item))
-            return kept
+        # What the hooks of one attempt find out, read once the run's attempts are made; reset on every attempt.
+        made = {"inputs": {}, "vcs": None, "case_text": ""}
 
-        if os.path.isdir(run_dir) and any(not item.startswith(KEPT_PREFIXES) for item in os.listdir(run_dir)):
-            set_aside("before-resume")  # what an earlier pass of the event left of this run
-        while True:
-            if refused_key.is_set():
+        def before_attempt():
+            if refused_key.is_set():  # refused before this run started, or while it waited for its place
                 raise EventStopped()
-            wait_while_paused(account["key"], account["probe"])
-            count["attempts"] += 1
-            # The run happens outside the repository; its folders come back to run_dir when it ends, however it ends.
-            with Slots(control, tier, web[c["id"]]):
-                if refused_key.is_set():  # refused while this run waited for its place
-                    raise EventStopped()
-                root = new_run_root(run_dir, names=(o["skill"],))
-                case_dir, changed, delta, inputs, vcs, case_text = os.path.join(root, "case"), [], None, {}, None, ""
-                carried, staged = None, []
-                try:
-                    build_tree(case_dir, sources[c["id"]], c)
-                    env = contained_env(root, tier_env)
-                    quiet = {"root": root, "network": "none"}  # setup and the fixture commit: no secret, no network
-                    isolate_git(case_dir, contained_env(root), box=quiet)
-                    run_setup(case_dir, c.get("setup") or [], contained_env(root), box=quiet)
-                    # The preflight refused such a case before any run; this is the same check on the folder that runs.
-                    carried = settings_in(case_dir, settings)
-                    why = (f"the case folder holds {carried}: a fixture or setup must not carry harness settings"
-                           if carried else None)
-                    if not why:
-                        staged, _ = stage_run(case_dir, eval_for[tier], variant_dir, deps[c["id"]], c, o.get("platform"))
-                        pp = os.path.join(root, "prompt.md")
-                        with open(pp, "w", encoding="utf-8") as f:
-                            f.write(c["prompt"])
-                        # The input files the assertions check facts against, as the run finds them: the grader
-                        # is shown this, even when the run changes them afterwards.
-                        inputs = {p: shown_in(case_dir, p) for p in c.get("grader_files") or [] if isinstance(p, str)}
-                        if v == "without_skill":  # what the case itself holds, as the run finds it: the dependency skills too
-                            case_text = c["prompt"] + "\n" + folder_text(case_dir)
-                        before = file_index(case_dir, staged)
-                        why = run_failure(runner_for[tier], pp, case_dir, model, os.path.join(root, "out"), env,
-                                          o["timeout"], o["max_cost"], web[c["id"]], start_dir=root,
-                                          box={"root": root, "runner": runner_for[tier], "pass": tier_env,
-                                               "network": "open" if web[c["id"]] else "proxy"})
-                        # The credential of the tier is in the run's environment, and a model that prints its
-                        # environment puts it in a file or in its reply. Before anything is stored, read or sent
-                        # to the grader, each passed value is replaced by a marker, by exact value.
-                        count["redactions"] += redact_folder(case_dir, values, staged) + redact_folder(os.path.join(root, "out"), values)
-                        if not why:
-                            delta = changes(case_dir, before, staged)
-                            changed = delta["created"] + delta["modified"] + delta["deleted"]
-                            if o["grade"]:  # commits, branches and pushes: read here, where the case folder still is
-                                vcs, hits = load_measure().replace_values(version_control(case_dir, contained_env(root), box=quiet), values)
-                                count["redactions"] += hits
-                finally:
-                    # Also when the run failed or was stopped: what it left goes to the workspace without the values.
-                    count["redactions"] += redact_folder(case_dir, values, staged) + redact_folder(os.path.join(root, "out"), values)
-                    return_run(root)
-            if carried:
-                return entry(None, infra(why, "settings"), [f"RUN FAILED  case {c['id']} {name} run {k} ({why})"])
-            if STOPPING.is_set():  # the script is being stopped: what the run left stays where a reader expects it
-                return entry(None, infra(why or "stopped before the run was read", "stopped"))
-            if why and account_limit(out, account["markers"]):
-                # The account is exhausted: this is no result of the run. Everything on the account waits, and
-                # this run starts again from its beginning afterwards: it is never retried into the limit, never
-                # counted as a timeout and never scored.
-                count["attempts"] -= 1
-                count["pauses"] += 1
-                start_pause(account["key"], f"case {c['id']} {name} run {k}")
+
+        def build(case_dir, root):
+            made.update(inputs={}, vcs=None, case_text="")
+            build_tree(case_dir, sources[c["id"]], c)
+
+        def after_base(case_dir, root):
+            quiet = {"root": root, "network": "none"}  # setup and the fixture commit: no secret, no network
+            run_setup(case_dir, c.get("setup") or [], contained_env(root), box=quiet)
+            # The preflight refused a case that carries harness settings before any run; the attempt checks the
+            # folder that runs again, after this.
+
+        def stage(case_dir):
+            staged, _ = stage_run(case_dir, eval_for[tier], variant_dir, deps[c["id"]], c, o.get("platform"))
+            return staged
+
+        def before_run(case_dir, root, staged):
+            # The input files the assertions check facts against, as the run finds them: the grader is shown this,
+            # even when the run changes them afterwards.
+            made["inputs"] = {p: shown_in(case_dir, p) for p in c.get("grader_files") or [] if isinstance(p, str)}
+            if v == "without_skill":  # what the case itself holds, as the run finds it: the dependency skills too
+                made["case_text"] = c["prompt"] + "\n" + folder_text(case_dir)
+
+        def after_run(case_dir, root, why, delta, staged):
+            if delta is not None and o["grade"]:  # commits, branches and pushes: read here, where the case folder still is
+                quiet = {"root": root, "network": "none"}
+                made["vcs"], hits = load_measure().replace_values(version_control(case_dir, contained_env(root), box=quiet), values)
+                count["redactions"] += hits
+
+        def judge(info):
+            if v != "without_skill":
+                return None
+            produced = (info["delta"]["created"] + info["delta"]["modified"]) if info["delta"] else []
+            count["contaminated"] = contamination(out, cwd, produced)
+            if count["contaminated"]:
+                # The run looked at the harness or reached the workbench: it is no baseline. No score, and no retry
+                # that would hide it: the iteration is incomplete until the way in is closed.
+                return count["contaminated"]
+            if not info["why"]:
+                count["passage"] = shared_passage(skill_grams, read_text(os.path.join(out, "response.md"), 200000) + "\n"
+                                                  + "\n".join(read_text(os.path.join(cwd, p), TEXT_LIMIT) for p in produced
+                                                              if readable(cwd, p) and load_measure().binary_stub(os.path.join(cwd, p)) is None),
+                                                  made["case_text"])
+            return None
+
+        # The run happens outside the repository; its folders come back to run_dir when it ends, however it ends.
+        # The attempts (the wait on a pause, the place of the shared lock, the settings check, the adapter call, the
+        # replacement of the passed values, the classification and the retries) are made by evals/run_attempts.py.
+        # The credential of the tier is in the run's environment, and a model that prints its environment puts it
+        # in a file or in its reply: before anything is stored, read or sent to the grader, each passed value is
+        # replaced by a marker, by exact value. What makes an attempt one to make again, with the skill and without
+        # it alike: a timeout, a refusal by the provider, a failure of the adapter, an early end. Each is counted.
+        # An attempt that meets the account limit is no result of the run: everything on the account waits, and
+        # the run starts again from its beginning afterwards, never retried into the limit, never counted as a
+        # timeout and never scored.
+        spec = {"dest": run_dir, "names": [o["skill"]], "label": f"case {c['id']} {name} run {k}",
+                "runner": runner_for[tier], "model": model, "account": account,
+                "refusal_markers": eval_for[tier]["refusal_markers"], "pass_env": tier_env, "values": values,
+                "settings": settings, "control": control, "tier": tier, "web": web[c["id"]], "timeout": o["timeout"],
+                "max_cost": o["max_cost"], "retries": o["retries"], "prompt": c["prompt"], "response_limit": 200000,
+                "counts": count}
+        hooks = types.SimpleNamespace(before_attempt=before_attempt, build=build, after_base=after_base, stage=stage,
+                                      before_run=before_run, after_run=after_run, judge=judge)
+        result = load_attempts().run(_RUNNER, spec, hooks)
+        why, delta, failure = result["why"], result["delta"], result["failure"]
+        inputs, vcs = made["inputs"], made["vcs"]
+        for event in result["events"]:
+            if event["kind"] == "refused":
+                count["refused"] = event["detail"]
+            if event["event"] == "paused":
                 msgs.append(f"PAUSED      case {c['id']} {name} run {k}: the account limit was met; the run starts again after the pause")
-                set_aside("paused")
-                continue
-            if v == "without_skill":
-                produced = (delta["created"] + delta["modified"]) if delta else []
-                count["contaminated"] = contamination(out, cwd, produced)
-                if count["contaminated"]:
-                    # The run looked at the harness or reached the workbench: it is no baseline. No score, and
-                    # no retry that would hide it: the iteration is incomplete until the way in is closed.
-                    return entry(None, infra("contaminated", "contaminated", evidence=count["contaminated"]),
-                                 [f"CONTAMINATED case {c['id']} {name} run {k}: {count['contaminated']}"])
-                if not why:
-                    count["passage"] = shared_passage(skill_grams, read_text(os.path.join(out, "response.md"), 200000) + "\n"
-                                                      + "\n".join(read_text(os.path.join(cwd, p), TEXT_LIMIT) for p in produced
-                                                                  if readable(cwd, p) and load_measure().binary_stub(os.path.join(cwd, p)) is None),
-                                                      case_text)
-            response = read_text(os.path.join(out, "response.md"), 200000)
-            # What makes an attempt one to make again, with the skill and without it alike: a timeout, a refusal
-            # by the provider, a failure of the adapter, an early end. Each is counted.
-            kind, detail = None, None
-            if why and why.startswith("timeout"):
-                kind = "timeout"
-            elif why and provider_refusal(out, eval_for[tier]["refusal_markers"]):
-                kind, detail = "refused", provider_refusal(out, eval_for[tier]["refusal_markers"])[:300]
-            elif why and auth_refusal(out):
-                kind, detail = "auth", auth_refusal(out)
-            elif why:
-                kind = "adapter"
+            elif event["event"] == "early_end":
+                msgs.append(f"EARLY END   case {c['id']} {name} run {k} attempt {event['attempt']} ({event['detail']}): retrying; "
+                            f"kept in {os.path.relpath(event['kept'], ROOT)}")
             else:
-                detail = load_measure().early_end(response, changed)
-                kind = "early_end" if detail else None
-            if kind is None:
-                break
-            if kind == "auth":
-                # The provider refused the credential: never retried, and the event stops, since every later run
-                # with it would meet the same refusal. The message names the variable, never its value.
-                refused_key.set()
-                reason = (f"the provider refused the key ({detail}) passed in "
-                          f"{credential_label(harness_for[tier], key_names(tier, c['id']))}")
-                note = (f"KEY REFUSED case {c['id']} {name} run {k}: {reason}. The event stops: every later run with that "
-                        "key would meet the same refusal, so the run is not retried and no new run starts. Store a valid "
-                        "key under that name, then run what is left with: python3 evals/eval_run.py --resume "
-                        f"{os.path.relpath(it_dir, ROOT)}")
-                if not refused_note:
-                    refused_note.append(note)
-                    print(note, file=sys.stderr)
-                return entry(None, infra(reason, "auth", detail=detail, attempts=count["attempts"]), [
-                    f"RUN FAILED  case {c['id']} {name} run {k} ({reason}; not retried): see "
-                    f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"])
-            count[RETRY_KINDS[kind]] += 1
+                msgs.append(f"RETRY       case {c['id']} {name} run {k} attempt {event['attempt']} ({event['why']}): making the run again; "
+                            f"kept in {os.path.relpath(event['kept'], ROOT)}")
+        if result["status"] == "caller":
+            return entry(None, infra("contaminated", "contaminated", evidence=count["contaminated"]),
+                         [f"CONTAMINATED case {c['id']} {name} run {k}: {count['contaminated']}"])
+        if failure and failure["kind"] == "settings":
+            why = f"the case folder holds {failure['detail']}: a fixture or setup must not carry harness settings"
+            return entry(None, infra(why, "settings"), [f"RUN FAILED  case {c['id']} {name} run {k} ({why})"])
+        if failure and failure["kind"] == "stopped":  # the script is being stopped: what the run left stays where a reader expects it
+            return entry(None, infra(why or "stopped before the run was read", "stopped"))
+        if failure and failure["kind"] == "auth":
+            detail = failure["detail"]
+            # The provider refused the credential: never retried, and the event stops, since every later run
+            # with it would meet the same refusal. The message names the variable, never its value.
+            refused_key.set()
+            reason = (f"the provider refused the key ({detail}) passed in "
+                      f"{credential_label(harness_for[tier], key_names(tier, c['id']))}")
+            note = (f"KEY REFUSED case {c['id']} {name} run {k}: {reason}. The event stops: every later run with that "
+                    "key would meet the same refusal, so the run is not retried and no new run starts. Store a valid "
+                    "key under that name, then run what is left with: python3 evals/eval_run.py --resume "
+                    f"{os.path.relpath(it_dir, ROOT)}")
+            if not refused_note:
+                refused_note.append(note)
+                print(note, file=sys.stderr)
+            return entry(None, infra(reason, "auth", detail=detail, attempts=count["attempts"]), [
+                f"RUN FAILED  case {c['id']} {name} run {k} ({reason}; not retried): see "
+                f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"])
+        if failure:
+            kind, detail = failure["kind"], failure["detail"]
             if kind == "refused":
                 count["refused"] = detail
-            if count["attempts"] > o["retries"]:
-                if kind == "early_end":
-                    return entry(None, infra("early_end", kind, detail=detail, attempts=count["attempts"]), [
-                        f"RUN FAILED  case {c['id']} {name} run {k} (early_end on all {count['attempts']} attempt(s): {detail})"])
-                reason = "refused: the provider declined the request" if kind == "refused" else why
-                return entry(None, infra(reason, kind, attempts=count["attempts"], **({"detail": detail} if detail else {})), [
-                    f"RUN FAILED  case {c['id']} {name} run {k} ({reason}; {count['attempts']} attempt(s)): see "
-                    f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"])
-            kept = set_aside("early-end" if kind == "early_end" else "failed")
             if kind == "early_end":
-                msgs.append(f"EARLY END   case {c['id']} {name} run {k} attempt {count['attempts']} ({detail}): retrying; "
-                            f"kept in {os.path.relpath(kept, ROOT)}")
-            else:
-                msgs.append(f"RETRY       case {c['id']} {name} run {k} attempt {count['attempts']} ({why}): making the run again; "
-                            f"kept in {os.path.relpath(kept, ROOT)}")
-                if kind == "adapter":  # a provider that is overloaded or limits the rate: not at once
-                    time.sleep(RETRY_PAUSE * count["attempts"])
+                return entry(None, infra("early_end", kind, detail=detail, attempts=count["attempts"]), [
+                    f"RUN FAILED  case {c['id']} {name} run {k} (early_end on all {count['attempts']} attempt(s): {detail})"])
+            reason = "refused: the provider declined the request" if kind == "refused" else why
+            return entry(None, infra(reason, kind, attempts=count["attempts"], **({"detail": detail} if detail else {})), [
+                f"RUN FAILED  case {c['id']} {name} run {k} ({reason}; {count['attempts']} attempt(s)): see "
+                f"{os.path.relpath(os.path.join(out, 'error.log'), ROOT)}"])
+        response = result["response"]
         timing = {}
         try:
             with open(os.path.join(out, "timing.json"), encoding="utf-8") as f:

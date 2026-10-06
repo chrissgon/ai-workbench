@@ -3388,3 +3388,41 @@ def test_a_command_passed_the_held_key_starts_the_key_proxy_first_and_fails_as_i
     monkeypatch.setattr(executor, "keyproxy", down)
     r = er.run_group(["true"], 10, env={secret: key}, box=box)
     assert r.returncode == 1 and "key proxy did not start" in r.stderr and len(ran) == 3  # no container ran
+
+
+# --- the attempts of a run are made by evals/run_attempts.py, loaded only when a model runs ------------------
+
+ATTEMPTS_MODULE = "workbench_eval_run_attempts"
+
+
+def test_a_command_that_runs_no_model_never_loads_the_shared_module(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, SEES)
+    monkeypatch.delitem(sys.modules, ATTEMPTS_MODULE, raising=False)
+    with pytest.raises(SystemExit) as e:
+        er.main(["--help"])
+    assert e.value.code == 0
+    assert er.main(["--skill", "demo", "--check-cases"]) == 0
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--dry-run"]) == 0
+    capsys.readouterr()
+    assert ATTEMPTS_MODULE not in sys.modules
+
+
+def test_a_run_makes_its_attempts_through_the_shared_module(tmp_path, monkeypatch, capsys):
+    write_demo(tmp_path, monkeypatch, SEES)
+    real, labels = er.load_attempts, []
+
+    class Counting:
+        def run(self, lab, spec, hooks=None):
+            labels.append(spec["label"])
+            assert lab is er._RUNNER
+            return real().run(lab, spec, hooks)
+
+    monkeypatch.setattr(er, "load_attempts", lambda: Counting())
+    assert er.main(["--skill", "demo", "--harness", "h", "--model", "m", "--runs", "1", "--only", "with",
+                    "--no-grade"]) == 0
+    capsys.readouterr()
+    assert sorted(labels) == ["case 1 with_skill run 1", "case 2 with_skill run 1"]
+    assert real() is sys.modules[ATTEMPTS_MODULE]
+    for case in (1, 2):
+        run = tmp_path / "evals-workspace" / "demo" / "iteration-1" / f"eval-{case}" / "with_skill"
+        assert (run / "outputs" / "response.md").read_text().strip() == "ok" and (run / "prompt.md").is_file()
