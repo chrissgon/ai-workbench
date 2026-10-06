@@ -10,6 +10,7 @@ Usage:
   python3 runtime/cli.py route    --project <dir> --request <request id> [--flow <name>]
   python3 runtime/cli.py approve  --project <dir> --id <pending id> [--sha256 <plan hash>]
   python3 runtime/cli.py reject   --project <dir> --id <pending id> [--note <text>]
+  python3 runtime/cli.py deps     --project <dir>
   python3 runtime/cli.py run-next --project <dir> [--tier strong]
   python3 runtime/cli.py pending  --project <dir> [--id <pending id>]
   python3 runtime/cli.py answer   --project <dir> --id <pending id> (--text <text> | --text-file <file>) [--with-comments]
@@ -75,6 +76,9 @@ hand-over copies one file of yours into the task's file drop, <project>/.workben
           digits, '.', '_' and '-', a name already handed over, a task that is done, cancelled or running, a
           file holding what looks like a credential, a git project that does not ignore .workbench-local/, and a
           task whose skill uses the web (a web task receives only the artifacts its skill declares).
+deps      installs the dependency sets of runtime.json ("dependencies") by code, with no model: in the eval
+          image, in a step that sees only the dependency files, on the open network; the result is cached under
+          the data folder by the files and the image, and a run whose copy holds versioned files gets a copy of it.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -96,7 +100,7 @@ sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
-         "route", "approve", "reject", "sync", "hand-over")
+         "route", "approve", "reject", "sync", "hand-over", "deps")
 
 
 class Usage(Exception):
@@ -183,6 +187,8 @@ def run(argv) -> dict:
         return ops.sync(project, dry_run=a.dry_run, take=a.take, path=a.path)
     if a.verb == "hand-over":
         return ops.hand_over(project, need(a, "--task"), need(a, "--file"))
+    if a.verb == "deps":
+        return ops.deps(project)
     return ops.status(project)
 
 

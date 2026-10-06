@@ -30,6 +30,11 @@ bounds of what the runtime writes to a platform: they are inside the file whose 
 It also reads "protected_paths" (a list of path globs; absent means none): stage 2 asks it one question only,
 whether a glob matches AGENTS.md (runtime/workcopy.py, limit L5).
 
+It also reads "dependencies" (stage 4; absent means none): the project's dependency sets, each installed by code
+from a recipe of the closed table of runtime/deps.py, checked there (deps.declared()):
+
+  "dependencies": [{"recipe": "python-requirements", "file": ".workbench-local/requirements-dev.txt"}]
+
 The hash is the sha256 of the file's bytes. Every operation compares it with the hash the person accepted last
 (kept in the store's cursor ACCEPTED, written only by ops.accept_config) and refuses to act on a file that
 changed. Nothing in this module reads the store.
@@ -48,6 +53,10 @@ import importlib.util
 import json
 import os
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import deps  # noqa: E402  (the same folder: the recipes and the check of the key "dependencies")
 
 REL = "docs/workbench/runtime.json"
 REQUIRED = ("workbench", "data_dir", "store_db")
@@ -95,6 +104,10 @@ def load(project: str) -> dict:
     if not isinstance(protected, list) or not all(isinstance(p, str) and p.strip() for p in protected):
         raise ConfigError("runtime.json protected_paths must be a list of path globs")
     out["protected_paths"] = list(protected)
+    try:
+        out["dependencies"] = deps.declared(raw)
+    except deps.DepsError as e:
+        raise ConfigError(e.reason) from None
     for key, cls in PLATFORM_KEYS.items():
         out[key] = _platform(raw.get(key), key, cls, project, out["workbench"])
     return out

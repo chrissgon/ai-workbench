@@ -232,7 +232,8 @@ def _scan(data: bytes) -> str | None:
 def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, prepared_dir: str,
              handed=()) -> dict:
     """What one run sees of the project. Returns {"files": [(source, rel)], "base": {rel: sha256}, "left_out":
-    [{"path", "reason"}], "kind": "artifacts" or "general", "agents_md": None, "whole" or "section"}.
+    [{"path", "reason"}], "kind": "artifacts" or "general", "agents_md": None, "whole" or "section", "tracked":
+    [the relative paths of the files the project's git tracks that entered]}.
 
     meta is skill_meta.declared() of the skill; cfg is project_config.load() of the project; settings_names
     is lab.settings_names(); prepared_dir is a private folder for files written for this run only. handed is
@@ -242,7 +243,7 @@ def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, 
     declared = list(dict.fromkeys(meta["inputs"] + meta["outputs"] + meta["updates"]))
     settings_names = set(settings_names)
     kind = "artifacts" if web else "general"
-    left_out, candidates = [], []
+    left_out, candidates, versioned = [], [], []
     if kind == "artifacts":
         for folder in ("docs", path_rule.LOCAL_DIR.rstrip("/")):
             candidates += [rel for rel in _walk(project, folder) if skill_meta.matches(declared, rel)]
@@ -308,7 +309,8 @@ def entering(project: str, meta: dict, *, web: bool, cfg: dict, settings_names, 
             base[AGENTS_MD] = _sha256(source)
             agents_md = mode
     files.sort(key=lambda item: item[1])
-    return {"files": files, "base": base, "left_out": left_out, "kind": kind, "agents_md": agents_md}
+    tracked = sorted(set(versioned) & {rel for _source, rel in files})
+    return {"files": files, "base": base, "left_out": left_out, "kind": kind, "agents_md": agents_md, "tracked": tracked}
 
 
 def _project_inside(project: str, rel: str) -> bool:
