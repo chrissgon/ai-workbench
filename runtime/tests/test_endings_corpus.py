@@ -28,7 +28,7 @@ LABELS = REPO / "runtime" / "tests" / "corpus" / "labels.json"
 # Set to the counts `python3 runtime/endings.py --corpus runtime/tests/corpus/endings.jsonl` printed after the
 # tuning of stage 2 (WP-2.2). Lowering one is always allowed; raising one needs a sentence in the pull request.
 UNCLASSIFIED_STOPPED_MAX = 115
-UNCLASSIFIED_CHANGED_MAX = 44
+UNCLASSIFIED_CHANGED_MAX = 43
 # The measured share of the stopped lines whose guard passed that are classified question or blocked (361 of 468),
 # rounded down to two decimals.
 STOPS_RECOGNISED_MIN = 0.77

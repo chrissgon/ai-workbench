@@ -138,7 +138,7 @@ The configuration of a project names three absolute paths: `workbench` (the chec
 
 | Kind | Opened when | Resolutions |
 |---|---|---|
-| `question` | A run ended `question`: it wrote nothing and asks | `answered`: the task is `ready`, and its next run gets the answer |
+| `question` | A run ended `question`: it wrote nothing (a change limited to the state file counts as nothing) and asks | `answered`: the task is `ready`, and its next run gets the answer |
 | `review` | A run ended `done`, `draft_with_questions` or `unclassified`: the body is the whole reply, so a draft's open questions are in it | `released`: the task is `done`, the tasks that depended on it become `ready`, and the document stays a draft with its open questions; `answered`: the task is `ready` again, and its next run gets the person's text |
 
 ## The limits

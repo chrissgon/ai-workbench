@@ -41,7 +41,8 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import skill_meta  # noqa: E402  (the same folder, as the other modules import each other)
+import path_rule  # noqa: E402  (the same folder, as the other modules import each other)
+import skill_meta  # noqa: E402
 
 ENDINGS = ("done", "question", "draft_with_questions", "gate", "blocked", "unclassified")
 # The opening of the reply the skills' asking template gives ("Nothing was searched or written yet: ...",
@@ -133,7 +134,9 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
        facts["skills"] or "(planned)"; and the reply does not hold "Recommended:": `blocked`.
     2. facts["gate_payload"] is set, a created or modified path matches it, and the reply's last line ends with a
        question mark: `gate`.
-    3. No file changed and the reply asks (rule 1 above, with the skill's own asking openings too): `question`.
+    3. No file changed, or only the state file (path_rule.STATE) changed, and the reply asks (rule 1 above, with
+       the skill's own asking openings too): `question`. A run that changed only the state file and asks
+       nothing goes on to rules 6 and 7.
     4. No file changed; a declared output is already in the copy (facts["outputs_present"]); the reply does not
        open with an asking opening, does not hold "Recommended:", and its last line does not end with a question
        mark: `done` (nothing was left to write: the delivery is the document already there).
@@ -171,9 +174,13 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
         left = list(changes.get("created") or []) + list(changes.get("modified") or [])
         if any(skill_meta.matches([payload], p) for p in left):
             return "gate", "the run wrote the file of its confirmation gate and asks for approval"
+    # For telling `question` from the other endings, a change limited to the state file counts as having written
+    # nothing (WP-2.13): the skills write their open questions and decisions there when they stop to ask.
+    state_only = bool(changed) and all(p == path_rule.STATE for p in changed)
+    if (not changed or state_only) and _asks(response, lines, openings, yes_no=True):
+        return "question", ("only the state file changed and the reply asks" if state_only
+                            else "no file changed and the reply asks")
     if not changed:
-        if _asks(response, lines, openings, yes_no=True):
-            return "question", "no file changed and the reply asks"
         first = lines[0].lstrip(LEADING).lower() if lines else ""
         opens_asking = bool(lines) and (bool(ASK_OPENING.search(lines[0]))
                                         or any(o and first.startswith(o.lower()) for o in openings))
