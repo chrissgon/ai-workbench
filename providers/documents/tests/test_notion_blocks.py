@@ -107,6 +107,27 @@ def test_what_changes_on_the_way_is_what_the_file_says_changes():
     assert nb.round_trip("") == "\n"
 
 
+def test_a_fence_word_the_service_does_not_know_goes_up_as_plain_text_and_a_known_one_is_unchanged():
+    known = nb.to_blocks("```python\nprint(1)\n```\n")[0]["code"]
+    assert (known["language"], known["rich_text"][0]["text"]["content"]) == ("python", "print(1)")
+    unknown = nb.to_blocks("```brand-tokens\nprimary: #1a2b3c\n```\n")[0]["code"]
+    assert (unknown["language"], unknown["rich_text"][0]["text"]["content"]) == ("plain text", "brand-tokens\nprimary: #1a2b3c")
+    assert "brand-tokens" not in nb.LANGUAGES and {"python", "plain text", "yaml"} <= nb.LANGUAGES
+    for text in ("```brand-tokens\nprimary: #1a2b3c\n```\n", "```python\nprint(1)\n```\n", "```Python\nx\n```\n",
+                 "```voice-rules\n\nnever: shouting\n```\n"):
+        assert nb.round_trip(text) == text
+
+
+def test_a_block_with_no_word_is_never_read_back_as_one_that_had_one():
+    for text in ("```\nDRAFT\nnot a language\n```\n", "```\n\nstarts empty\n```\n", "```\npython\n```\n",
+                 "```\nplain words\n```\n", "```\n\n```\n"):
+        blocks = nb.to_blocks(text)
+        assert blocks[0]["code"]["language"] == "plain text"
+        assert nb.round_trip(text) == text
+    escaped = nb.to_blocks("```\nDRAFT\nnot a language\n```\n")[0]["code"]["rich_text"][0]["text"]["content"]
+    assert escaped == "\nDRAFT\nnot a language"
+
+
 def test_the_helper_is_not_an_implementation_of_a_class():
     """providers/resolve.py lists <name>.py as an implementation only when the name has no underscore."""
     spec2 = importlib.util.spec_from_file_location("resolve_for_documents", REPO / "providers" / "resolve.py")

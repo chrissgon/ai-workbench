@@ -16,6 +16,7 @@ REPO = HERE.parents[2]
 SCRIPT = REPO / "providers" / "documents" / "notion.py"
 sys.path.insert(0, str(HERE))
 import documents_harness  # noqa: E402
+import pytest  # noqa: E402
 
 
 class Documents:
@@ -183,3 +184,23 @@ def test_comments_is_one_listing_of_the_pages_own_comments_and_a_comment_does_no
     assert code == 0, said
     assert [c["text"] for c in out["comments"]] == ["On the page."]
     assert docs.fake.count("list_comments") == listed + 1
+
+
+def test_a_fenced_block_whose_language_the_service_does_not_know_goes_up_as_plain_text_and_comes_back_unchanged(tmp_path):
+    # Measured on the live service (README.md, N11): a code block whose language is not on the service's list is
+    # refused (400), and the stand-in refuses it too. Words a skill made up go up as "plain text" and come back.
+    docs = Documents(tmp_path)
+    markdown = ("# Identity\n\n```brand-tokens\nprimary: #1a2b3c\naccent: #fafafa\n```\n\nBetween.\n\n"
+                "```python\nprint(1)\n```\n\n```voice-rules\n\nnever: shouting\n```\n\n```\nDRAFT\nno word\n```\n")
+    start = len(docs.fake.requests)
+    code, out, said = docs.write(markdown, key="fences")
+    assert code == 0, said
+    sent = [b["code"] for _, path, body in docs.fake.requests[start:] if path.endswith("/children") and body
+            for b in body["children"] if b["type"] == "code"]
+    assert [c["language"] for c in sent] == ["plain text", "python", "plain text", "plain text"]
+    assert [c["rich_text"][0]["text"]["content"] for c in sent] == [
+        "brand-tokens\nprimary: #1a2b3c\naccent: #fafafa", "print(1)", "voice-rules\n\nnever: shouting", "\nDRAFT\nno word"]
+    assert docs.run("read", "--id", out["id"])[1]["markdown"] == markdown
+    with pytest.raises(Exception, match="code.language") as refused:  # the stand-in's own answer to the old body
+        docs.fake.checked_children({"children": [{"type": "code", "code": {"rich_text": [], "language": "brand-tokens"}}]})
+    assert refused.value.status == 400
