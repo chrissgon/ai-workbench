@@ -192,3 +192,16 @@ def test_cli_registry_flag_merges_before_list_and_check(tmp_path):
     assert run("--registry").returncode == 2
     assert run("--registry", str(manifest)).returncode == 2
     assert run("--registry", str(tmp_path / "absent.json"), "--list").returncode == 2
+
+
+def test_the_pull_request_token_has_a_row_of_its_own_and_the_everyday_token_lost_that_permission():
+    """WP-4.11 of the platform plan: open-pr reads VCS_GITHUB_PR_TOKEN (store username github-pr), and the
+    everyday token's row no longer names the pull-request permission."""
+    everyday, own = res.REGISTRY["VCS_GITHUB_TOKEN"], res.REGISTRY["VCS_GITHUB_PR_TOKEN"]
+    assert own.store_username == "github-pr" and own.aliases == () and everyday.store_username == "github"
+    assert "Pull requests: Read and write" in own.permission and "Pull requests" not in everyday.permission
+    assert "pull request" not in everyday.purpose and own.purpose == "open a pull request (open-pr); nothing else"
+    assert own.readers == ("providers/vcs/github.py", "runtime/effects.py")
+    store = FakeStore({"github": "everyday", "github-pr": "own"})
+    assert res.resolve("VCS_GITHUB_PR_TOKEN", environ={"VCS_GITHUB_TOKEN": "x", "GITHUB_TOKEN": "y"}, store=store) \
+        == ("own", "secret store")

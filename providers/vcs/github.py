@@ -107,6 +107,9 @@ ACCEPT = "application/vnd.github+json"
 DEFAULT_API_BASE = "https://api.github.com"
 KEYRING_SERVICE = "ai-workbench"
 KEYRING_USERNAME = "github"
+# open-pr reads a token of its own (store username "github-pr"); the everyday token only when it is found nowhere.
+PR_TOKEN_NAME = "VCS_GITHUB_PR_TOKEN"
+PR_KEYRING_USERNAME = "github-pr"
 HTTP_TIMEOUT_SECONDS = 30
 LOCK_TIMEOUT_SECONDS = 10
 PER_PAGE = 100
@@ -226,8 +229,10 @@ credentials (never from files or flags):
     separate token, exported as VCS_GITHUB_TOKEN only for the dismissal.
   - "Contents: Read-only" lets read-file read a private repository; a public one needs no
     permission. commit-files uses no token at all (git over SSH).
-  - "Pull requests: Read and write" is needed for open-pr. Keep it, too, in a separate
-    token, exported as VCS_GITHUB_TOKEN only to open the pull request.
+  - "Pull requests: Read and write" is needed for open-pr. Keep it in a separate token of
+    its own: open-pr reads VCS_GITHUB_PR_TOKEN first (the environment, then the secret store,
+    username "{PR_KEYRING_USERNAME}"), and VCS_GITHUB_TOKEN only when that name is found nowhere.
+    It says on stderr which name it used, never the value. No other verb reads it.
   The token is never printed, not even partially.
 
 other environment variables:
@@ -366,6 +371,29 @@ def load_token(test_mode: bool, required: bool = True) -> tuple[str, str]:
     if any(ch.isspace() or not ch.isprintable() for ch in token):
         raise ProviderError("the GitHub token contains whitespace or control characters", EXIT_NOT_CONFIGURED)
     return token, source
+
+
+def load_pr_token(test_mode: bool) -> tuple[str, str, str]:
+    """Return (token, name, source) for open-pr: VCS_GITHUB_PR_TOKEN through the resolver (the environment, then
+    the secret store; tests never read the store), and only when that name is found nowhere the everyday token of
+    load_token. The name used and where it was found go to stderr; the value never does."""
+    resolver = secret_resolver()
+    try:
+        found = resolver.resolve(PR_TOKEN_NAME, allow_store=not test_mode)
+    except resolver.NotRegistered:  # an older resolver.py next to a scheduled job's copy of this script
+        found = None
+    if found and found[0]:
+        token, source = found
+        name = PR_TOKEN_NAME
+        if any(ch.isspace() or not ch.isprintable() for ch in token):
+            raise ProviderError(f"{PR_TOKEN_NAME} contains whitespace or control characters", EXIT_NOT_CONFIGURED)
+    else:
+        log(f"{PR_TOKEN_NAME} is not set nor stored (username {PR_KEYRING_USERNAME!r}); open-pr falls back to "
+            "VCS_GITHUB_TOKEN")
+        token, source = load_token(test_mode)
+        name = "VCS_GITHUB_TOKEN"
+    log(f"open-pr uses {name}, found in the {source}")
+    return token, name, source
 
 
 LEDGER_NAME = "vcs-github.json"
@@ -922,7 +950,7 @@ def cmd_open_pr(args) -> int:
     existing = ledger_read()["entries"].get(key)
     if existing:
         return settled(existing)
-    token, _ = load_token(test_mode)
+    token, _, _ = load_pr_token(test_mode)
     existing = ledger_claim(key, target)  # under the lock: another run may have claimed it meanwhile
     if existing:
         return settled(existing)
@@ -1206,7 +1234,7 @@ def secret_names() -> set:
     aliases. git, ssh and the user's hooks need none of them: the push goes over the user's own SSH key."""
     global SECRET_NAMES
     if SECRET_NAMES is None:
-        names = {"VCS_GITHUB_TOKEN", "GITHUB_TOKEN", "GH_TOKEN"}
+        names = {"VCS_GITHUB_TOKEN", PR_TOKEN_NAME, "GITHUB_TOKEN", "GH_TOKEN"}
         try:
             for secret in secret_resolver().REGISTRY.values():
                 names.add(secret.name)

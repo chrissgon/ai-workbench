@@ -27,6 +27,8 @@ SENTINEL = "zz-not-a-real-value-57"
 # name: (aliases, store username, readers), as the one registry held them before the adapters took theirs.
 BEFORE = {
     "VCS_GITHUB_TOKEN": (("GITHUB_TOKEN",), "github", ("providers/vcs/github.py", ".github/workflows/dependabot-alerts.yml")),
+    # The token that opens a pull request got a name of its own on 2026-10-06 (WP-4.11 of the platform plan).
+    "VCS_GITHUB_PR_TOKEN": ((), "github-pr", ("providers/vcs/github.py", "runtime/effects.py")),
     # The two tokens gained auth.py as a reader when its --check began to read through the resolver.
     "LINKEDIN_ACCESS_TOKEN": ((), "publisher-linkedin", ("providers/publisher/linkedin.py",
                                                          "providers/publisher/auth.py")),

@@ -955,3 +955,58 @@ def test_resolve_settles_a_pending_pull_request_either_way(env, fake, pr_files):
     assert opened.returncode == 0 and json.loads(opened.stdout)["replayed"] is False
     assert run(resolve + ["--not-opened", "--confirmed"], env).returncode == 2  # only a pending key
     assert len(fake.posts()) == 3
+
+
+# --- WP-4.11: open-pr's own token ------------------------------------------------------------------------
+
+FAKE_PR_TOKEN = "FAKE-test-pull-request-token-7d6e5f4a3b2c-never-print-me"
+
+
+def assert_pr_token_never_printed(proc):
+    for stream in (proc.stdout, proc.stderr):
+        assert FAKE_PR_TOKEN not in stream and FAKE_PR_TOKEN[:16] not in stream
+
+
+def test_open_pr_reads_its_own_token_first_and_names_it_never_its_value(env, fake, pr_files):
+    env["VCS_GITHUB_PR_TOKEN"] = FAKE_PR_TOKEN  # the everyday token is set too (GITHUB_TOKEN): the own one wins
+    proc = run(pr_args(pr_files, "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    assert_pr_token_never_printed(proc)
+    (post,) = fake.posts()
+    assert post["headers"]["authorization"] == f"Bearer {FAKE_PR_TOKEN}"
+    assert "open-pr uses VCS_GITHUB_PR_TOKEN, found in the environment (VCS_GITHUB_PR_TOKEN)" in proc.stderr
+    assert "falls back" not in proc.stderr
+    # The output keys are unchanged: the name is said on stderr only.
+    assert set(json.loads(proc.stdout)) == {"idempotency_key", "repo", "head", "base", "number", "url", "replayed"}
+
+
+def test_open_pr_falls_back_to_the_everyday_token_only_when_its_own_is_not_found(env, fake, pr_files):
+    env["VCS_GITHUB_PR_TOKEN"] = "  "  # an empty value is not a token
+    proc = run(pr_args(pr_files, "--confirmed"), env)
+    assert proc.returncode == 0, proc.stderr
+    (post,) = fake.posts()
+    assert post["headers"]["authorization"] == f"Bearer {FAKE_TOKEN}"
+    assert "VCS_GITHUB_PR_TOKEN is not set nor stored" in proc.stderr and "falls back to VCS_GITHUB_TOKEN" in proc.stderr
+    assert "open-pr uses VCS_GITHUB_TOKEN, found in the environment (GITHUB_TOKEN)" in proc.stderr
+    # Neither found: exit 3, nothing claimed, nothing sent.
+    del env["GITHUB_TOKEN"]
+    none = run(pr_args(pr_files, "--confirmed", key="site-8-pr", head="wb/request-8"), env)
+    assert none.returncode == 3 and "site-8-pr" not in ledger(env)
+    assert len(fake.posts()) == 1
+
+
+def test_only_open_pr_reads_the_pull_request_token(env, fake, comment_file):
+    del env["GITHUB_TOKEN"]
+    env["VCS_GITHUB_PR_TOKEN"] = FAKE_PR_TOKEN
+    for args in (["alerts", "--repo", REPO], ["--check"], dismiss_args(comment_file, "--confirmed"),
+                 ["read-file", "--repo", REPO, "--path", "README.md"]):
+        proc = run(args, env)
+        assert_pr_token_never_printed(proc)
+        if args[0] == "read-file":  # reads anonymously without the everyday token, never with the pull-request one
+            assert all(r["headers"].get("authorization") is None for r in fake.requests), proc.stderr
+        else:
+            assert proc.returncode == 3, (args, proc.stderr)
+    assert not any(r["headers"].get("authorization") == f"Bearer {FAKE_PR_TOKEN}" for r in fake.requests)
+    # git, ssh and the user's hooks never receive it either.
+    module = load_module()
+    assert "VCS_GITHUB_PR_TOKEN" in module.secret_names()
