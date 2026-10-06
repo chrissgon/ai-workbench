@@ -44,7 +44,8 @@ KEYS = ("skill", "documents", "machine_files", "mandatory_milestone", "asking_op
 DOCUMENT_KEYS = ("path", "checks", "platform", "bound_to_approval")
 PLATFORM = ("editable", "read_only")
 GATE_KEYS = ("effect", "payload_file")
-ASKING = re.compile(r"^The reply that asks")
+# "The reply that asks ..." and, for a skill with a confirmation gate, "Reply that asks for approval ..."
+ASKING = re.compile(r"^(?:The r|R)eply that asks")
 FENCE = re.compile(r"^\s*(```|~~~)")
 
 

@@ -227,6 +227,11 @@ def test_env_extra_is_set_in_the_adapter_call_and_named_in_its_box_never_replace
     assert run_call[1]["pass"] == ["H_KEY", "TMPDIR"] and run_call[1]["network"] == "open"
     assert run_call[2]["TMPDIR"] == "/run/tmp"
     assert ("slots", "strong", True) in lab.log
+    roots = []
+    lab = StandIn(tmp_path / "t", [{}])
+    ra.run(lab, spec_for(tmp_path / "run2", env_extra=lambda root: roots.append(root) or {"TMPDIR": root + "/tmp"}))
+    run_call = next(entry for entry in lab.log if entry[0] == "run_failure")
+    assert len(roots) == 1 and run_call[2]["TMPDIR"] == roots[0] + "/tmp" and run_call[1]["root"] == roots[0]
 
 
 @pytest.mark.parametrize("step, kind, detail", [

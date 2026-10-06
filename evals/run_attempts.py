@@ -83,7 +83,6 @@ def attempt(lab, spec, hooks, counts) -> dict:
     are replaced again and the folders return before it reaches the caller."""
     dest, values = spec["dest"], spec.get("values") or []
     pass_env = list(spec.get("pass_env") or [])
-    extra = dict(spec.get("env_extra") or {})
     root = lab.new_run_root(dest, names=tuple(spec.get("names") or ()))
     case_dir, out_tmp = os.path.join(root, "case"), os.path.join(root, "out")
     why, carried, delta, changed, staged, started, raised = None, None, None, [], [], False, False
@@ -92,7 +91,6 @@ def attempt(lab, spec, hooks, counts) -> dict:
         if build:
             build(case_dir, root)
         env = lab.contained_env(root, pass_env)
-        env.update(extra)
         quiet = {"root": root, "network": "none"}  # the fixture commit: no secret, no network
         lab.isolate_git(case_dir, lab.contained_env(root), box=quiet)
         after_base = _hook(hooks, "after_base")
@@ -110,6 +108,9 @@ def attempt(lab, spec, hooks, counts) -> dict:
                 before_run(case_dir, root, staged)
             before = lab.file_index(case_dir, staged)
             web = bool(spec.get("web"))
+            extra = spec.get("env_extra") or {}
+            extra = dict((extra(root) if callable(extra) else extra) or {})
+            env.update(extra)
             started = True
             why = lab.run_failure(spec["runner"], prompt_path, case_dir, spec["model"], out_tmp, env,
                                   spec.get("timeout"), spec.get("max_cost"), web, start_dir=root,
@@ -146,7 +147,8 @@ def run(lab, spec, hooks=None) -> dict:
     run in a pause's record), "runner", "model", "timeout", "max_cost", "web" (the adapter call), "account"
     ({"key", "markers", "probe"}), "refusal_markers", "settings", "pass_env", "values", "control", "tier",
     "retries", "prompt", "response_limit", and optionally "counts" (a dictionary updated in place) and
-    "env_extra" ({name: value} set in the adapter call's environment and added to its box's passed names).
+    "env_extra" ({name: value}, or a function of the attempt's fresh folder that returns one, called right before
+    the adapter call: set in its environment and added to its box's passed names, never to the values replaced).
 
     hooks is an object whose attributes are optional callables: before_attempt(), build(case_dir, root),
     after_base(case_dir, root), stage(case_dir) -> list, before_run(case_dir, root, staged),

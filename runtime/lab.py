@@ -264,6 +264,13 @@ def standing(skill: str) -> dict:
             "evidence_images": sorted(images)}
 
 
+def carries_settings(rel: str) -> bool:
+    """True when a part of the relative path rel is one of the names that carry a tool's settings, by the lab's own
+    list (harness_settings()): such a path never enters a run and never leaves one in a change set."""
+    names = set(settings_names())
+    return any(part in names for part in str(rel).replace("\\", "/").split("/"))
+
+
 def readable(cwd: str, rel: str) -> bool:
     """True when the host may read the path rel of what a run left in cwd: a regular file, no link, inside cwd."""
     return bool(LAB.readable(cwd, rel))
@@ -396,6 +403,21 @@ def _base_commit(root: str, case_dir: str):
     return line if done.get("returncode") == 0 and re.fullmatch(r"[0-9a-f]{40,64}", line) else None
 
 
+def _run_tmp(root: str, runner: str) -> dict:
+    """{"TMPDIR": path} for a run whose temporary folder is kept (tmp_in_run): <root>/tmp is made (mode 1777), and
+    the path is the one the run sees, the container's path of the run's folder with the container executor, the
+    host's otherwise. Given to the shared function as env_extra: TMPDIR is set in the adapter call's environment and
+    added to the passed names of its box, never to the values replaced. TMPDIR is no key proxy's variable, so the
+    route of the run's key does not change (evals/executor.py, held_route, reads only the routes' own variables)."""
+    folder = os.path.join(root, "tmp")
+    os.makedirs(folder, exist_ok=True)
+    os.chmod(folder, 0o1777)
+    if LAB.EXECUTOR == "container":
+        executor = LAB.load_executor()
+        return {"TMPDIR": executor.translate(folder, executor.mounts(root, runner))}
+    return {"TMPDIR": folder}
+
+
 def _copy_in(files, case_dir: str) -> None:
     """Copy the caller's files into the fresh folder of a run: regular files only, each at its relative path."""
     for src, rel in files:
@@ -411,7 +433,8 @@ def _copy_in(files, case_dir: str) -> None:
 
 def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, tier: str = "strong",
               model: str | None = None, adapter: str | None = None, pass_env=None,
-              timeout: int | None = None, retries: int | None = None, prepare=None, finish=None) -> dict:
+              timeout: int | None = None, retries: int | None = None, prepare=None, finish=None,
+              tmp_in_run: bool = False) -> dict:
     """Run one skill once on one task text, in the eval container, on a fresh copy.
 
     skill    a folder name under skills/ of this checkout: it is staged where the adapter's tool finds skills,
@@ -434,12 +457,17 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
     finish   finish(copy_dir, root), called on every attempt in which the adapter was started, after it returned
              and the changes were taken, before the last replacement of values and the return of the folders: the
              caller removes what must not be kept. An exception in either hook ends the run as LabError("copy")
+    tmp_in_run  True points the run's temporary folder (TMPDIR) at a folder made in its fresh folder, which comes
+             back as <dest>/outputs/tmp: what a skill writes under a folder from mktemp -d (the payload of its
+             confirmation gate) is kept. TMPDIR is passed to the container by name, as the passed variables are; it
+             is not a secret, so its value is never replaced in what the run left
 
     Returns {"status": "ok" | "failed", "failure": None | {"kind", "reason", "detail"}, "response", "changes":
     {"created", "modified", "deleted", "unchanged"} or None, "staged": [paths the runtime put in the copy],
     "run_dir", "cwd", "outputs", "timing": {...}, "counts": {"attempts", "timeouts", "refusals",
     "adapter_failures", "early_ends", "pauses", "redactions"}, "tier", "model", "adapter", "web",
-    "image_digest", "image_platform", "base_commit": the commit id of the copy's base, or None}. failure kinds: "timeout", "refused", "auth", "adapter", "early_end"
+    "image_digest", "image_platform", "base_commit": the commit id of the copy's base, or None, "tmp": with
+    tmp_in_run, <dest>/outputs/tmp, else None}. failure kinds: "timeout", "refused", "auth", "adapter", "early_end"
     (each after the gate file's retries, "auth" at once), "settings" (the copy carries a tool's settings) and
     "stopped". Raises LabError when no run could be made (configuration, container, a file that may not enter).
     Call it inside `with session():`."""
@@ -475,7 +503,8 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
     result = {"status": "failed", "failure": None, "response": "", "changes": None, "staged": [], "run_dir": dest,
               "cwd": cwd, "outputs": out, "timing": {}, "counts": counts, "tier": tier, "model": model,
               "adapter": adapter, "web": bool(web), "image_digest": environment.get("image_digest"),
-              "image_platform": environment.get("image_platform"), "base_commit": None}
+              "image_platform": environment.get("image_platform"), "base_commit": None,
+              "tmp": os.path.join(out, "tmp") if tmp_in_run else None}
 
     def failed(kind, reason, detail=None):
         result["failure"] = {"kind": kind, "reason": reason, "detail": detail}
@@ -502,18 +531,24 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
         return staged
 
     def after_run(case_dir, root, why, delta, staged):
+        hook = None
         if finish is not None:
             try:
                 finish(case_dir, root)
             except Exception as e:
-                raise LabError("copy", f"what the run left could not be finished: {type(e).__name__}: {e}") from None
+                hook = f"what the run left could not be finished: {type(e).__name__}: {e}"
+        run_tmp = os.path.join(root, "tmp")
+        if tmp_in_run and os.path.isdir(run_tmp) and not os.path.islink(run_tmp):
+            shutil.move(run_tmp, os.path.join(root, "out", "tmp"))  # replaced next, then returned with out/
+        if hook:
+            raise LabError("copy", hook)
 
     spec = {"dest": dest, "names": [skill], "label": f"task run {os.path.basename(dest)}", "runner": runner,
             "model": model, "account": {"key": adapter, "markers": eval_cfg["account_limit"], "probe": probe},
             "refusal_markers": eval_cfg["refusal_markers"], "pass_env": pass_env, "values": values,
             "settings": settings, "control": control, "tier": tier, "web": bool(web), "timeout": timeout,
             "max_cost": None, "retries": retries, "prompt": prompt, "response_limit": RESPONSE_LIMIT,
-            "counts": counts, "env_extra": None}
+            "counts": counts, "env_extra": (lambda root: _run_tmp(root, runner)) if tmp_in_run else None}
     hooks = types.SimpleNamespace(build=build, after_base=after_base, stage=stage, after_run=after_run)
     attempts = _lab_call(LAB.load_attempts)
     try:

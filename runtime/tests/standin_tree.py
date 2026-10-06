@@ -9,6 +9,11 @@ Otherwise it acts by the skill staged in the copy:
   demo-asks    with no answer in the prompt it asks, with the skills' asking template, and writes nothing;
                with an answer it writes docs/business/market.md and a line in docs/workbench/state.md
   demo-writes  writes docs/business/icp.md from docs/business/market.md; without that input it says so
+  demo-code    runs adapters/h/code.sh in the copy, when a test wrote one (with the attempt number as $1), and
+               replies that it changed the files
+  demo-gate    a skill with a confirmation gate: records the copy's branches, log and status in its output folder,
+               writes payload.md in a folder from mktemp -d and replies in the pull-request skill's form; when a test
+               wrote adapters/h/gate.sh it runs that instead (in the copy, with the output folder as $1)
 """
 from __future__ import annotations
 
@@ -30,6 +35,8 @@ here="$(dirname "$0")"; prompt="$2"; cwd="$4"; out="$8"
 if grep -q "Reply with the single word: ok" "$prompt"; then echo probe >> "$here/probes.txt"; echo ok > "$out/response.md"; exit 0; fi
 skill=none
 for name in demo-asks demo-writes; do [ -d "$cwd/.h/skills/$name" ] && skill="$name"; done
+[ -d "$cwd/.h/skills/demo-code" ] && skill=demo-code
+[ -d "$cwd/.h/skills/demo-gate" ] && skill=demo-gate
 n=1; while ! mkdir "$here/call-$skill.$n" 2>/dev/null; do n=$((n + 1)); done
 echo "$skill $n" >> "$here/calls.txt"
 (cd "$cwd" && find . -path ./.git -prune -o -type f -print | sort) > "$out/files.txt"
@@ -64,6 +71,37 @@ case "$skill" in
     else
       echo "There is no market analysis (docs/business/market.md)." > "$out/response.md"
     fi ;;
+  demo-code)
+    if [ -f "$here/code.sh" ]; then (cd "$cwd" && sh "$here/code.sh" "$n"); fi
+    echo "Changed the files the request names." > "$out/response.md" ;;
+  demo-gate)
+    if [ -f "$here/gate.sh" ]; then (cd "$cwd" && sh "$here/gate.sh" "$out"); else
+      head=$(git -C "$cwd" branch --show-current)
+      base=$(git -C "$cwd" for-each-ref --format='%(refname:short)' refs/heads | grep -vx "$head" | head -1)
+      echo "$base $head" > "$out/gate-branches.txt"
+      git -C "$cwd" log --format=%s > "$out/gate-log.txt"
+      git -C "$cwd" status --porcelain > "$out/gate-status.txt"
+      echo "$TMPDIR" > "$out/gate-tmpdir.txt"
+      d=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")  # GNU mktemp -d (the container's) uses TMPDIR; BSD needs the template
+      printf 'Repository: example-org/web
+Base ← head: %s ← %s
+Commits:
+- 0000000 %s
+Title: Carry the providers
+Body:
+What changes, and why.
+' "$base" "$head" "$(git -C "$cwd" log -1 --format=%s)" > "$d/payload.md"
+      sha=$( (sha256sum "$d/payload.md" 2>/dev/null || shasum -a 256 "$d/payload.md") | cut -d' ' -f1)
+      printf 'Nothing was pushed or created yet. This is what will be sent:
+
+(the payload)
+
+Payload file: `%s/payload.md`, sha256 `%s`
+Temporary folder: %s
+
+Proceed? (yes/no)
+' "$d" "$sha" "$TMPDIR" > "$out/response.md"
+    fi ;;
   *) echo "ok" > "$out/response.md" ;;
 esac
 '''
@@ -78,6 +116,45 @@ STATE = ("# Workbench state\n\n- Project: demo\n- Docs in git: none\n\n## Autono
 
 
 STANDIN_IMAGE = "sha256:" + "5" * 64
+
+# A stand-in code provider (class integration:vcs, implementation "github"): it records each call in calls.jsonl
+# beside it, with the sha256 of every --file it is handed, and answers as providers/vcs/github.py prints, from
+# answers.json beside it ({"base_commit", "branch_exists", "fail": {"<verb>": [exit code, last line]}}). A key it
+# committed or opened replays. No network, no git, no push.
+VCS = r'''import hashlib, json, os, sys
+here = os.path.dirname(os.path.abspath(__file__))
+argv = sys.argv[1:]
+verb = argv[0]
+pairs = [(argv[i], argv[i + 1]) for i in range(1, len(argv) - 1) if argv[i].startswith("--")]
+files = {}
+for flag, value in pairs:
+    if flag == "--file":
+        path, local = value.split("=", 1)
+        files[path] = hashlib.sha256(open(local, "rb").read()).hexdigest()
+with open(os.path.join(here, "calls.jsonl"), "a") as f:
+    f.write(json.dumps({"argv": argv, "files": files, "env_token": bool(os.environ.get("VCS_GITHUB_TOKEN"))}) + "\n")
+answers = json.load(open(os.path.join(here, "answers.json"))) if os.path.isfile(os.path.join(here, "answers.json")) else {}
+state_file = os.path.join(here, "state.json")
+state = json.load(open(state_file)) if os.path.isfile(state_file) else {}
+key = dict(pairs).get("--idempotency-key")
+failing = (answers.get("fail") or {}).get(verb)
+if failing and "--dry-run" not in argv:
+    print(failing[1], file=sys.stderr)
+    sys.exit(failing[0])
+if verb == "commit-files" and "--dry-run" in argv:
+    print(json.dumps({"dry_run": True, "existing_status": "committed" if key in state else None,
+                      "base_commit": answers.get("base_commit"), "branch_exists": bool(answers.get("branch_exists"))}))
+elif verb == "commit-files":
+    replayed = key in state
+    state[key] = "c" * 40
+    print(json.dumps({"idempotency_key": key, "commit": state[key], "pushed": not replayed, "replayed": replayed}))
+elif verb == "open-pr":
+    replayed = key in state
+    state[key] = 7
+    print(json.dumps({"idempotency_key": key, "number": 7, "url": "https://code.example/example-org/web/pull/7",
+                      "replayed": replayed}))
+json.dump(state, open(state_file, "w"))
+'''
 
 
 def load(name: str):
@@ -107,6 +184,18 @@ def skill(tree: Path, name: str, inputs: str, outputs: str) -> Path:
     return folder
 
 
+def gate_skill(tree: Path) -> Path:
+    """demo-gate: a skill with the side effect create and a gate whose payload is under the temporary folder."""
+    folder = skill(tree, "demo-gate", "docs/workbench/state.md", "")
+    text = (folder / "SKILL.md").read_text(encoding="utf-8")
+    (folder / "SKILL.md").write_text(text.replace("  side_effects: []", "  side_effects: [create]"), encoding="utf-8")
+    data = json.loads((folder / "evals" / "runtime-manifest.json").read_text(encoding="utf-8"))
+    data.update(asking_openings=["Nothing was pushed or created yet. This is what will be sent"],
+                gate={"effect": "create", "payload_file": "<tmp>/payload.md"})
+    (folder / "evals" / "runtime-manifest.json").write_text(json.dumps(data), encoding="utf-8")
+    return folder
+
+
 def build(tmp_path: Path, monkeypatch, lab) -> dict:
     """The tree, a project and the patches that point the lab facade at them. Returns {"tree", "project",
     "data", "db", "adapter"} as paths. The runner executes on this machine (EXECUTOR "host"), its lock folder is
@@ -118,14 +207,26 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     (adapter / "run-prompt.sh").write_text(ADAPTER, encoding="utf-8")
     skill(tree, "demo-asks", "docs/workbench/state.md, docs/workbench/research/<topic>.md, AGENTS.md", "docs/business/market.md")
     skill(tree, "demo-writes", "docs/workbench/state.md, docs/business/market.md", "docs/business/icp.md")
+    skill(tree, "demo-code", "docs/workbench/state.md", "")
+    gate_skill(tree)
     (tree / "flows").mkdir()
     (tree / "flows" / "demo.json").write_text(json.dumps({"flow": "demo", "title": "Demo flow", "tasks": [
         {"key": "market", "skill": "demo-asks", "title": "Market", "text": "do the market analysis."},
         {"key": "profile", "skill": "demo-writes", "title": "Profile", "text": "choose the profile.",
          "depends_on": ["market"], "milestone": True}]}), encoding="utf-8")
+    (tree / "flows" / "gate-demo.json").write_text(json.dumps({"flow": "gate-demo", "title": "Gate demo", "tasks": [
+        {"key": "change", "skill": "demo-code", "title": "Change", "text": "make the change."},
+        {"key": "pull-request", "skill": "demo-gate", "title": "Pull request", "text": "prepare it.",
+         "depends_on": ["change"], "milestone": True}]}), encoding="utf-8")
+    (tree / "flows" / "code-demo.json").write_text(json.dumps({"flow": "code-demo", "title": "Code demo", "tasks": [
+        {"key": "first", "skill": "demo-code", "title": "First change", "text": "make the first change."},
+        {"key": "second", "skill": "demo-code", "title": "Second change", "text": "make the second change.",
+         "depends_on": ["first"]}]}), encoding="utf-8")
     for rel in ("providers/resolve.py", "providers/store/sqlite.py"):
         (tree / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(REPO / rel, tree / rel)
+    (tree / "providers" / "vcs").mkdir(parents=True, exist_ok=True)
+    (tree / "providers" / "vcs" / "github.py").write_text(VCS, encoding="utf-8")
     (project / "docs" / "workbench").mkdir(parents=True)
     data, db = tmp_path / "data", tmp_path / "store" / "tasks.sqlite"
     (project / "docs" / "workbench" / "runtime.json").write_text(json.dumps(
