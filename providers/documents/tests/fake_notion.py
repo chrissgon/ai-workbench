@@ -10,7 +10,8 @@ comment is an open one (N5); a deleted block and a trashed page are left out of 
 comment made on a block is listed under that block only, and with the page once the block is deleted; the children
 of a page in the trash cannot be listed (404).
 It refuses what the reference says the service refuses: no Notion-Version header, a wrong token, more than 100
-children in one append, more than two levels of nesting in one request, a text object over 2,000 characters, and,
+children in one append, more than two levels of nesting in one request, a text object over 2,000 characters, a
+position other than end or start (after_block, which the providers do not use, is refused too), and,
 as measured (N11), a code block whose language is not one of the reference's list (LANGUAGES of
 providers/documents/notion_blocks.py, the one copy of that list).
 
@@ -201,9 +202,10 @@ class FakeNotion:
                 self.store(ident, children)
             return page
 
-    def store(self, parent: str, blocks: list) -> list:
+    def store(self, parent: str, blocks: list, first: bool = False) -> list:
+        """Keep blocks under a parent: after its other children, or before them when first (position "start")."""
         made = []
-        for b in blocks:
+        for n, b in enumerate(blocks):
             kind = b.get("type")
             if not isinstance(kind, str) or not isinstance(b.get(kind), dict):
                 raise Answer(400, "validation_error", "a block has no body of its type")
@@ -212,7 +214,10 @@ class FakeNotion:
             ident = new_id()
             self.blocks[ident] = {"object": "block", "id": ident, "type": kind, kind: body, "parent_id": parent,
                                   "in_trash": False}
-            self.children[parent].append(ident)
+            if first:
+                self.children[parent].insert(n, ident)
+            else:
+                self.children[parent].append(ident)
             self.children[ident] = []
             self.store(ident, kids)
             made.append(ident)
@@ -304,7 +309,10 @@ class FakeNotion:
                     or self.pages.get(ids["id"], {}).get("in_trash"):
                 raise Answer(404, "object_not_found", "Could not find block.")
             if name == "append_children":
-                made = self.store(ids["id"], self.checked_children(body or {}))
+                position = (body or {}).get("position") or {"type": "end"}
+                if not isinstance(position, dict) or position.get("type") not in ("end", "start"):
+                    raise Answer(400, "validation_error", "position should be end or start in this stand-in")
+                made = self.store(ids["id"], self.checked_children(body or {}), first=position["type"] == "start")
                 return {"object": "list", "results": [self.shown(i) for i in made], "has_more": False,
                         "next_cursor": None}
             kids = [self.shown(i) for i in self.children[ids["id"]] if not self.blocks[i]["in_trash"]]

@@ -286,21 +286,140 @@ def test_a_document_both_sides_changed_is_overwritten_on_neither_side_until_the_
         ops.sync(project, take="page", path=MARKET)  # nothing is left to settle
 
 
-def test_an_edit_of_a_read_only_type_is_kept_aside_and_the_page_is_written_again(tree):
+def profiled(tree) -> str:
+    """The demo request up to the read_only document: demo-writes writes docs/business/icp.md and pushes it."""
     review = delivered(tree)
     project = project_of(tree)
     ops.release(project, review["pending_id"])
     profile = ops.run_next(project)
     assert profile["documents"]["pushed"] == [ICP] and record(tree, ICP)["status"] == "read_only"
+    return project
+
+
+def notice_lines(tree, rel=ICP) -> list:
+    return [line for line in page(tree, rel).read_text(encoding="utf-8").splitlines() if line.startswith("> [notice] ")]
+
+
+def test_a_read_only_page_edited_after_the_last_write_is_not_overwritten_and_is_rejected(tree):
+    # WP-3.21 (replaces test_an_edit_of_a_read_only_type_is_kept_aside_and_the_page_is_written_again): the edit is
+    # still kept aside and never imported, and the page is no longer written over.
+    project = profiled(tree)
     written = project_file(tree, ICP).read_bytes()
     edit_page(tree, "- Status: hypothesis", "- Status: confirmed", rel=ICP)
+    on_page = page(tree, ICP).read_bytes()
     out = ops.sync(project)["documents"]
-    assert out["not_taken"] == [ICP] and out["pushed"] == [ICP] and out["imported"] == []
-    assert project_file(tree, ICP).read_bytes() == written and page(tree, ICP).read_bytes() == written
+    assert out["rejected"] == [{"path": ICP, "note": docs.READ_ONLY_CHANGED}]
+    assert out["pushed"] == [] and out["imported"] == [] and out["not_taken"] == []
+    assert project_file(tree, ICP).read_bytes() == written and page(tree, ICP).read_bytes() == on_page
     kept = list((tree["data"] / "documents" / "not-taken" / "docs" / "business").glob("icp.md.*.md"))
     assert len(kept) == 1 and "- Status: confirmed" in kept[0].read_text(encoding="utf-8")
+    assert (record(tree, ICP)["status"], record(tree, ICP)["note"]) == ("rejected", docs.READ_ONLY_CHANGED)
+    shown = next(d for d in ops.status(project)["documents"] if d["path"] == ICP)
+    assert shown["status"] == "rejected" and "read-only on the platform" in shown["note"]
+    # The file changes in the project too: still not written over the page, by a sync or by a direct push.
+    project_file(tree, ICP).write_text("# ICP\n\nA new profile from the project.\n", encoding="utf-8")
+    tree["calls"].clear()
+    assert ops.sync(project)["documents"]["pushed"] == [] and "write" not in tree["calls"]
+    assert docs.push(ops.context(project), [ICP])["pushed"] == [] and page(tree, ICP).read_bytes() == on_page
+    # A push that meets the edit itself (no pull before it) refuses as well.
+    other = profiled_again(tree, project)
+    assert other["rejected"] == [{"path": ICP, "note": docs.READ_ONLY_CHANGED}] and other["pushed"] == []
+
+
+def profiled_again(tree, project) -> dict:
+    """Take the project's side, edit the page again, change the file, and push without a pull first."""
+    ops.sync(project, take="project", path=ICP)
+    edit_page(tree, "A new profile from the project.", "Edited on the page again.", rel=ICP)
+    project_file(tree, ICP).write_text("# ICP\n\nAnother profile.\n", encoding="utf-8")
+    on_page = page(tree, ICP).read_bytes()
+    out = docs.push(ops.context(project), [ICP])
+    assert page(tree, ICP).read_bytes() == on_page
+    return out
+
+
+def test_take_page_keeps_a_read_only_page_and_the_file_is_not_mirrored_until_it_changes_again(tree):
+    project = profiled(tree)
+    written = project_file(tree, ICP).read_bytes()
+    edit_page(tree, "- Status: hypothesis", "- Status: confirmed", rel=ICP)
+    on_page = page(tree, ICP).read_bytes()
+    assert ops.sync(project)["documents"]["rejected"]
+    taken = ops.sync(project, take="page", path=ICP)["documents"]
+    assert taken["not_taken"] == [ICP] and taken["imported"] == [] and taken["pushed"] == []
+    assert project_file(tree, ICP).read_bytes() == written and page(tree, ICP).read_bytes() == on_page
+    assert (record(tree, ICP)["status"], record(tree, ICP)["note"]) == ("read_only", docs.KEPT_AS_IS)
+    for _ in range(2):  # nothing is written while the file is unchanged
+        tree["calls"].clear()
+        out = ops.sync(project)["documents"]
+        assert out["pushed"] == [] and out["rejected"] == [] and "write" not in tree["calls"]
+        assert page(tree, ICP).read_bytes() == on_page
+    project_file(tree, ICP).write_text("# ICP\n\nThe profile, rewritten in the project.\n", encoding="utf-8")
+    out = ops.sync(project)["documents"]
+    assert out["pushed"] == [ICP] and "rewritten in the project" in page(tree, ICP).read_text(encoding="utf-8")
+    assert (record(tree, ICP)["status"], record(tree, ICP)["note"]) == ("read_only", None)
     with pytest.raises(ops.OpsError):
-        ops.sync(project, take="page", path=ICP)
+        ops.sync(project, take="page", path=ICP)  # nothing is left to settle
+
+
+def test_take_project_writes_the_file_over_a_read_only_page(tree):
+    project = profiled(tree)
+    written = project_file(tree, ICP).read_bytes()
+    edit_page(tree, "- Status: hypothesis", "- Status: confirmed", rel=ICP)
+    assert ops.sync(project)["documents"]["rejected"]
+    taken = ops.sync(project, take="project", path=ICP)["documents"]
+    assert taken["pushed"] == [ICP] and taken["not_taken"] == [ICP]
+    got = ops.context(project)
+    read = docs.call(got["cfg"], got["root"], "read", ["--id", ICP])
+    assert read["markdown"].encode("utf-8") == written and read["notice"] == docs.NOTICE
+    assert (record(tree, ICP)["status"], record(tree, ICP)["note"]) == ("read_only", None)
+    kept = list((tree["data"] / "documents" / "not-taken" / "docs" / "business").glob("icp.md.*.md"))
+    assert any("- Status: confirmed" in k.read_text(encoding="utf-8") for k in kept)
+    assert ops.sync(project)["documents"]["rejected"] == []
+
+
+def test_a_read_only_page_carries_the_notice_once_and_an_editable_page_never(tree):
+    project = profiled(tree)
+    assert notice_lines(tree) == ["> [notice] " + docs.NOTICE]
+    assert page(tree, ICP).read_text(encoding="utf-8").startswith("> [notice] ")
+    assert notice_lines(tree, MARKET) == []
+    # Never counted as a change of the page, never imported: syncs read nothing new and write nothing.
+    for _ in range(2):
+        out = ops.sync(project)["documents"]
+        assert out["imported"] == [] and out["rejected"] == [] and out["pushed"] == [] and out["notices"] == []
+    assert "[notice]" not in project_file(tree, ICP).read_text(encoding="utf-8")
+    # A page that has none (made before WP-3.21, or a person removed it) gets it once, with nothing else touched.
+    text = page(tree, ICP).read_text(encoding="utf-8")
+    body = text.split("\n", 2)[2]
+    page(tree, ICP).write_text(body, encoding="utf-8")
+    first = ops.sync(project)["documents"]  # the pull sees the page without it: same text, not a change
+    assert first["rejected"] == [] and first["imported"] == []
+    assert first["notices"] == [ICP] and notice_lines(tree) == ["> [notice] " + docs.NOTICE]
+    assert page(tree, ICP).read_text(encoding="utf-8") == text
+    tree["calls"].clear()
+    again = ops.sync(project)["documents"]  # the version the notice moved is read once and recorded
+    assert again["notices"] == [] and again["rejected"] == [] and "write" not in tree["calls"]
+    assert "notice" not in tree["calls"]
+    tree["calls"].clear()
+    assert ops.sync(project)["documents"]["notices"] == [] and tree["calls"].count("read") == 0
+    # A new write of the file keeps exactly one notice, first.
+    project_file(tree, ICP).write_text("# ICP\n\nA second profile.\n", encoding="utf-8")
+    assert ops.sync(project)["documents"]["pushed"] == [ICP]
+    assert notice_lines(tree) == ["> [notice] " + docs.NOTICE] and notice_lines(tree, MARKET) == []
+    assert page(tree, ICP).read_text(encoding="utf-8").startswith("> [notice] ")
+
+
+def test_an_unchanged_read_only_page_is_written_as_before(tree):
+    project = profiled(tree)
+    project_file(tree, ICP).write_text("# ICP\n\nA profile written by a later run.\n", encoding="utf-8")
+    tree["calls"].clear()
+    out = ops.sync(project)["documents"]
+    assert out["pushed"] == [ICP] and out["rejected"] == [] and out["not_taken"] == []
+    assert tree["calls"].count("write") == 1
+    assert page(tree, ICP).read_text(encoding="utf-8") == (
+        "> [notice] " + docs.NOTICE + "\n\n" + project_file(tree, ICP).read_text(encoding="utf-8"))
+    got = record(tree, ICP)
+    assert got["status"] == "read_only" and got["written_sha256"] == docs._sha(project_file(tree, ICP).read_bytes())
+    tree["calls"].clear()
+    assert ops.sync(project)["documents"]["pushed"] == [] and "write" not in tree["calls"]
 
 
 def test_a_document_no_manifest_lists_is_never_sent(tree):
