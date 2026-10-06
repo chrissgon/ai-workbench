@@ -24,6 +24,14 @@ checker of the skill that owns it. It is not promised to come back byte for byte
   - of inline Markdown only **bold**, `code` and [text](address) become annotations; everything else,
     emphasis with one "*" or "_" included, travels as the characters it is.
 
+A fenced block's language word comes back as it was. The service accepts only the languages of its list
+(LANGUAGES, below) and refuses a write that carries any other (measured on the live service, README.md, N11). A
+block whose word is not on the list, a word the document's skill made up included, goes up as "plain text" with
+the word alone as the block's first line, and that line becomes the fence's word again on the way back. So that a
+block written with no word cannot be read as one that had one, a block with no word whose first line is empty or is
+a lone word that is not on the list goes up with one empty line in front, which the way back removes. A person who
+writes a "plain text" block on the page in either of those two shapes gets the same reading.
+
 The block shapes are those of the service's public API reference (block objects with "type" and a key of that
 name holding "rich_text"; "table" with "table_row" children; "to_do" with "checked"). They were written from
 that reference and have not been checked against the live service by this file's tests, which are offline.
@@ -49,6 +57,52 @@ TABLE_ROW = re.compile(r"^\s*\|.*\|\s*$")
 TABLE_RULE = re.compile(r"^\s*\|?\s*:?-{1,}:?\s*(?:\|\s*:?-{1,}:?\s*)*\|?\s*$")
 INLINE = re.compile(r"\*\*(?P<bold>[^*\n]+?)\*\*|`(?P<code>[^`\n]+)`|\[(?P<text>[^\]\n]+)\]\((?P<url>[^)\s]+)\)")
 LIST_TYPES = ("bulleted_list_item", "numbered_list_item", "to_do")
+PLAIN = "plain text"
+# The values the service accepts for a code block's "language": the public API reference, page "Block" (section
+# "Code", https://developers.notion.com/reference/block), read on 2026-10-06. The live service's refusal of
+# 2026-10-06 named further values (README.md, N11); they are left out until the reference lists them, and a block
+# that carries one travels as an unknown word does, coming back unchanged.
+LANGUAGES = frozenset((
+    "abap", "arduino", "bash", "basic", "c", "clojure", "coffeescript", "c++", "c#", "css", "dart", "diff", "docker",
+    "elixir", "elm", "erlang", "flow", "fortran", "f#", "gherkin", "glsl", "go", "graphql", "groovy", "haskell", "html",
+    "java", "javascript", "json", "julia", "kotlin", "latex", "less", "lisp", "livescript", "lua", "makefile",
+    "markdown", "markup", "matlab", "mermaid", "nix", "objective-c", "ocaml", "pascal", "perl", "php", "plain text",
+    "powershell", "prolog", "protobuf", "python", "r", "reason", "ruby", "rust", "sass", "scala", "scheme", "scss",
+    "shell", "sql", "swift", "typescript", "vb.net", "verilog", "vhdl", "visual basic", "webassembly", "xml", "yaml",
+    "java/c/c++/c#"))
+WORD = re.compile(r"[\w+-]+")  # a fence's language word, as FENCE reads it
+
+
+def unknown_word(line: str) -> bool:
+    """A line that is a lone language word the service does not accept: the marker of a "plain text" block."""
+    return bool(WORD.fullmatch(line)) and line not in LANGUAGES
+
+
+def code_block(language: str, body: list) -> dict:
+    """A fenced block: a word on the list is the block's language; any other word goes up as "plain text" with the
+    word as the first line; a block with no word is escaped with one empty line when it could be read as marked."""
+    if language in LANGUAGES:
+        lines = body
+    elif language:
+        language, lines = PLAIN, [language] + body
+    else:
+        language = PLAIN
+        lines = [""] + body if body and (body[0] == "" or unknown_word(body[0])) else body
+    return {"object": "block", "type": "code", "code": {"rich_text": text_object("\n".join(lines)), "language": language}}
+
+
+def fence_of(body: dict) -> tuple:
+    """A code block's body back to (fence word, text): the reverse of code_block."""
+    language = body.get("language") or ""
+    text = "".join((i.get("text") or {}).get("content", "") for i in body.get("rich_text") or [])
+    if language != PLAIN:
+        return language, text
+    first, sep, rest = text.partition("\n")
+    if first == "" and sep:
+        return "", rest
+    if unknown_word(first):
+        return first, rest
+    return "", text
 
 
 def text_object(content: str, bold: bool = False, code: bool = False, url=None) -> list:
@@ -135,8 +189,7 @@ def to_blocks(markdown: str) -> list:
             while i < len(lines) and not lines[i].startswith(fence.group(1)):
                 body.append(lines[i])
                 i += 1
-            add({"object": "block", "type": "code", "code": {"rich_text": text_object("\n".join(body)),
-                                                               "language": fence.group(2) or "plain text"}})
+            add(code_block(fence.group(2), body))
             i += 1
             continue
         if not line.strip():
@@ -226,9 +279,8 @@ def to_markdown(blocks: list) -> str:
         elif kind == "quote":
             out += ["> " + line for line in plain(body.get("rich_text")).split("\n")]
         elif kind == "code":
-            language = body.get("language") or ""
-            out += ["```" + ("" if language == "plain text" else language), "".join(
-                (i.get("text") or {}).get("content", "") for i in body.get("rich_text") or []), "```"]
+            language, text = fence_of(body)
+            out += ["```" + language, text, "```"]
         elif kind == "divider":
             out.append("---")
         elif kind == "table":

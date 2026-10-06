@@ -10,7 +10,9 @@ comment is an open one (N5); a deleted block and a trashed page are left out of 
 comment made on a block is listed under that block only, and with the page once the block is deleted; the children
 of a page in the trash cannot be listed (404).
 It refuses what the reference says the service refuses: no Notion-Version header, a wrong token, more than 100
-children in one append, more than two levels of nesting in one request, a text object over 2,000 characters.
+children in one append, more than two levels of nesting in one request, a text object over 2,000 characters, and,
+as measured (N11), a code block whose language is not one of the reference's list (LANGUAGES of
+providers/documents/notion_blocks.py, the one copy of that list).
 
 Usage (from a test or a harness):
   fake = fake_notion.shared()        one server per process, started on first use (a daemon thread)
@@ -21,6 +23,7 @@ Usage (from a test or a harness):
 """
 from __future__ import annotations
 
+import importlib.util
 import json
 import re
 import secrets
@@ -28,6 +31,7 @@ import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 VERSION = "2026-03-11"
@@ -36,6 +40,11 @@ MAX_NESTING = 2
 TEXT_LIMIT = 2000
 MAX_PAGE_SIZE = 100
 EPOCH = datetime(2026, 1, 1, tzinfo=timezone.utc)
+_spec = importlib.util.spec_from_file_location(
+    "notion_blocks_for_fake", Path(__file__).resolve().parents[1] / "notion_blocks.py")
+_blocks = importlib.util.module_from_spec(_spec)
+_spec.loader.exec_module(_blocks)
+LANGUAGES = _blocks.LANGUAGES
 
 ROUTES = [  # (call name, method, path pattern): the union of the two providers' tables
     ("retrieve_base", "GET", r"/v1/data_sources/(?P<id>[^/]+)"),
@@ -70,6 +79,18 @@ def depth(blocks: list) -> int:
     """Levels of nesting below the blocks given: 0 for blocks with no children."""
     return max((1 + depth(b.get(b.get("type"), {}).get("children") or []) for b in blocks
                 if b.get(b.get("type"), {}).get("children")), default=0)
+
+
+def check_languages(blocks: list, where: str = "body.children") -> None:
+    """A code block's language must be on the list; the message has the live service's shape (N11), shortened."""
+    for n, b in enumerate(blocks or []):
+        body = b.get(b.get("type")) if isinstance(b, dict) else None
+        if not isinstance(body, dict):
+            continue
+        if b.get("type") == "code" and body.get("language") not in LANGUAGES:
+            raise Answer(400, "validation_error", f"body failed validation: {where}[{n}].code.language should be "
+                                                  "one of the service's languages")
+        check_languages(body.get("children") or [], f"{where}[{n}].{b.get('type')}.children")
 
 
 def check_text(value) -> None:
@@ -316,6 +337,7 @@ class FakeNotion:
         if depth(kids) > MAX_NESTING:
             raise Answer(400, "validation_error", f"more than {MAX_NESTING} levels of nesting in one request")
         check_text(kids)
+        check_languages(kids)
         return kids
 
     def handler(self):
