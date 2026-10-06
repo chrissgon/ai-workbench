@@ -45,8 +45,9 @@ approve   approves a plan (its tasks are created; pass the plan's hash, shown wi
           exactly what you read) or a request written on the task board.
           An effect (a pull request a skill prepared up to its confirmation gate) is approved only with its hash:
           code then checks that nothing moved, makes the one commit with your own git and signature through the
-          code provider and opens the pull request. Start it with the token that opens a pull request available
-          to the provider (VCS_GITHUB_TOKEN, the separate token of providers/vcs/README.md); the runtime passes none.
+          code provider and opens the pull request. The provider reads the token that opens a pull request by its
+          own name (VCS_GITHUB_PR_TOKEN, from the secret store or the environment, providers/vcs/README.md); the
+          runtime passes none.
 reject    rejects a plan or a request written on the task board: the request is cancelled. An effect rejected
           cancels its task, and nothing is sent.
 run-next  runs the next ready task: one skill, once, in the eval container, on the model its proof gives (the

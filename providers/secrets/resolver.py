@@ -67,15 +67,21 @@ class Secret:
 
 REGISTRY: dict[str, Secret] = {s.name: s for s in (
     Secret("VCS_GITHUB_TOKEN",
-           "read (and, with a separate token, dismiss) Dependabot alerts; read one file of a repository; "
-           "open a pull request (with a separate token)",
+           "read (and, with a separate token, dismiss) Dependabot alerts; read one file of a repository",
            "fine-grained token, only the repositories concerned: \"Dependabot alerts: Read-only\" "
            "(\"Read and write\" only in the separate token used to dismiss); \"Contents: Read-only\" to read a "
-           "file of a private repository (read-file); \"Pull requests: Read and write\" only in the separate token "
-           "used to open a pull request (open-pr); commit-files uses no token",
+           "file of a private repository (read-file); commit-files uses no token",
            ("providers/vcs/github.py", ".github/workflows/dependabot-alerts.yml"),
            store_username="github", aliases=("GITHUB_TOKEN",),
-           note="GITHUB_TOKEN is read last: a harness or CI may set its own, with other permissions"),
+           note="GITHUB_TOKEN is read last: a harness or CI may set its own, with other permissions; "
+                "open-pr reads it only when VCS_GITHUB_PR_TOKEN is found nowhere"),
+    Secret("VCS_GITHUB_PR_TOKEN",
+           "open a pull request (open-pr); nothing else",
+           "fine-grained token, only the repositories concerned: \"Pull requests: Read and write\" only",
+           ("providers/vcs/github.py", "runtime/effects.py"),
+           store_username="github-pr",
+           note="open-pr reads it first and names it (never its value); when it is found nowhere, open-pr "
+                "falls back to VCS_GITHUB_TOKEN"),
     Secret("LINKEDIN_ACCESS_TOKEN",
            "publish posts on LinkedIn",
            "OAuth scopes openid, profile and w_member_social (providers/publisher/auth.py)",
