@@ -25,6 +25,10 @@ endings = importlib.import_module("endings")
 manifest = importlib.import_module("manifest")
 CORPUS = REPO / "runtime" / "tests" / "corpus" / "endings.jsonl"
 LABELS = REPO / "runtime" / "tests" / "corpus" / "labels.json"
+# Labelled stand-ins: lines in the corpus's form, with invented content, for a reply shape a real run showed after
+# the corpus was built (the corpus itself is what build_corpus.py writes from the archive, so nothing is added to
+# it). Their ids start with "standin/"; they are read by the label test only, never by the counts.
+STANDINS = REPO / "runtime" / "tests" / "corpus" / "standins.jsonl"
 # Set to the counts `python3 runtime/endings.py --corpus runtime/tests/corpus/endings.jsonl` printed after the
 # tuning of stage 2 (WP-2.2). Lowering one is always allowed; raising one needs a sentence in the pull request.
 UNCLASSIFIED_STOPPED_MAX = 115
@@ -53,6 +57,20 @@ def test_the_corpus_is_sorted_has_closed_keys_and_holds_runs_of_both_tiers():
     assert (REPO / "skills" / rows[0]["skill"]).is_dir()
 
 
+def standins():
+    return [json.loads(line) for line in STANDINS.read_text(encoding="ascii").splitlines()]
+
+
+def test_the_stand_ins_have_the_corpus_form_and_are_not_in_the_corpus():
+    rows, ids = standins(), {r["id"] for r in lines()}
+    assert rows
+    for r in rows:
+        assert set(r) == KEYS and r["id"].startswith("standin/") and r["id"] not in ids, r["id"]
+        assert r["stopped"] == (not (r["created"] or r["modified"] or r["deleted"])), r["id"]
+        assert set(r["outputs_written"]) <= set(r["created"] + r["modified"]), r["id"]
+        assert (REPO / "skills" / r["skill"]).is_dir(), r["id"]
+
+
 def test_the_classifier_answers_within_its_closed_list_and_never_calls_a_run_that_wrote_nothing_done():
     counts = {}
     for r in lines():
@@ -69,10 +87,10 @@ def test_the_classifier_answers_within_its_closed_list_and_never_calls_a_run_tha
     assert counts.get("question", 0) > 0 and counts.get("done", 0) > 0 and counts.get("unclassified", 0) > 0
 
 
-def classified():
-    """[(line, ending)] for every corpus line, with the facts of its skill."""
+def classified(rows=None):
+    """[(line, ending)] for every corpus line (or the lines given), with the facts of its skill."""
     facts, out = {}, []
-    for r in lines():
+    for r in lines() if rows is None else rows:
         if r["skill"] not in facts:
             facts[r["skill"]] = manifest.ending_facts(str(REPO), r["skill"])
         out.append((r, endings.classify_line(r, facts[r["skill"]])[0]))
@@ -96,7 +114,7 @@ def test_no_run_is_called_done_when_its_skill_declares_a_fixed_output_and_wrote_
 
 def test_every_labelled_run_gets_its_label():
     labels = json.loads(LABELS.read_text(encoding="utf-8"))
-    got = {r["id"]: ending for r, ending in classified()}
+    got = {r["id"]: ending for r, ending in classified(lines() + standins())}
     assert labels and set(labels.values()) <= set(endings.ENDINGS)
     wrong = {i: (want, got.get(i)) for i, want in labels.items() if got.get(i) != want}
     assert not wrong, f"labelled runs classified otherwise (label, classifier): {wrong}"
