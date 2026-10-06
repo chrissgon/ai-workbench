@@ -320,7 +320,8 @@ def test_every_script_of_the_runtime_prints_its_help_and_refuses_an_unknown_call
 
 def with_dependencies(tree, monkeypatch, fail=False) -> list:
     """The project as a git checkout with a committed requirements file and the set declared in its configuration;
-    the install is a stand-in that makes the folder (the real lab.run_command still runs every git command)."""
+    the install is a stand-in that makes the folder (the real lab.run_command still runs every git command, and the
+    script of the change set)."""
     project = tree["project"]
     (project / "requirements.txt").write_text("pytest==9.1.1\n")
     (project / "app.py").write_text("print(1)\n")
@@ -336,7 +337,7 @@ def with_dependencies(tree, monkeypatch, fail=False) -> list:
     installs, real = [], lab.run_command
 
     def run_command(argv, root, **kwargs):
-        if argv[0] == "git":
+        if argv[0] in ("git", "bash"):  # the base commit, and the difference a change set is taken from
             return real(argv, root, **kwargs)
         installs.append(list(argv))
         if fail:

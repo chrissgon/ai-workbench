@@ -33,7 +33,9 @@ import sys
 STATE = "docs/workbench/state.md"
 CONFIG = "docs/workbench/runtime.json"
 CLASSES = ("state", "machine", "document", "versioned", "ignored", "other")
-RETURNED = ("state", "machine", "document")  # the classes stage 1 brings back; "versioned" joins them in stage 4
+# The classes that come back as loose files. "versioned" comes back too since stage 4, but only as a change set
+# (runtime/changeset.py), never as a loose file, so it is not listed here.
+RETURNED = ("state", "machine", "document")
 DROPPED_DIRS = (".git", "node_modules", "__pycache__", ".pytest_cache", ".venv")
 LOCAL_DIR = ".workbench-local/"
 DROP_DIR = ".workbench-local/drop"  # the file drop (runtime/drop.py): staged for every run, so never brought back
@@ -69,6 +71,8 @@ def classify(rel: str, facts: dict | None = None) -> str:
     if path.startswith(DOCS_DIR):
         if path in (facts.get("bound") or ()):
             return "machine"
+        if path in (facts.get("versioned") or ()):
+            return "versioned"  # a docs/ folder the project versions (its Docs in git decision) travels in a change set
         return "document" if path.lower().endswith(DOCUMENT_SUFFIXES) else "machine"
     if path in (facts.get("versioned") or ()):
         return "versioned"
