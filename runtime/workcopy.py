@@ -8,7 +8,9 @@ of a project a run sees (L1 to L6) and which files a run leaves come back (L7, L
 
 What enters (entering()):
   L1  every run starts from a new copy, with the skill staged again: the lab facade makes a new run root and
-      stages the skill on every attempt (runtime/lab.py); nothing here keeps a copy between runs
+      stages the skill on every attempt (runtime/lab.py), with the shared references it cites and, when it cites
+      the platforms' folder, every platform's reference (lab.platforms_cited()), read-only; nothing here keeps
+      a copy between runs
   L2  a run without the web sees the versioned files (git ls-files, with the person's git), the project's
       documents and state file under docs/, the machine files the skill declares, and the files the person
       handed over to this task (the file drop, runtime/drop.py; those of another task never). No other file
