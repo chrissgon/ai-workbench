@@ -77,14 +77,16 @@ def attempt(lab, spec, hooks, counts) -> dict:
     """One attempt of a run, from the fresh folder to its return to spec["dest"]. Returns {"why", "carried",
     "delta", "changed", "staged"}: why is the adapter's failure (None when it exited 0), carried the first path of
     the copy that carries a tool's settings (the adapter was then not called), delta the changes of the copy when
-    the adapter did not fail. counts["redactions"] is added to. Whatever is raised, the passed values are
-    replaced again and the folders return before it reaches the caller."""
+    the adapter did not fail. counts["redactions"] is added to. after_run is called on every attempt in which the
+    adapter was started, also when the call raised (why and delta are then None); when the attempt is already
+    raising, an exception of after_run is dropped and the first one goes on. Whatever is raised, the passed values
+    are replaced again and the folders return before it reaches the caller."""
     dest, values = spec["dest"], spec.get("values") or []
     pass_env = list(spec.get("pass_env") or [])
     extra = dict(spec.get("env_extra") or {})
     root = lab.new_run_root(dest, names=tuple(spec.get("names") or ()))
     case_dir, out_tmp = os.path.join(root, "case"), os.path.join(root, "out")
-    why, carried, delta, changed, staged = None, None, None, [], []
+    why, carried, delta, changed, staged, started, raised = None, None, None, [], [], False, False
     try:
         build = _hook(hooks, "build")
         if build:
@@ -108,6 +110,7 @@ def attempt(lab, spec, hooks, counts) -> dict:
                 before_run(case_dir, root, staged)
             before = lab.file_index(case_dir, staged)
             web = bool(spec.get("web"))
+            started = True
             why = lab.run_failure(spec["runner"], prompt_path, case_dir, spec["model"], out_tmp, env,
                                   spec.get("timeout"), spec.get("max_cost"), web, start_dir=root,
                                   box={"root": root, "runner": spec["runner"], "pass": pass_env + list(extra),
@@ -117,13 +120,22 @@ def attempt(lab, spec, hooks, counts) -> dict:
             if not why:
                 delta = lab.changes(case_dir, before, staged)
                 changed = delta["created"] + delta["modified"] + delta["deleted"]
-            after_run = _hook(hooks, "after_run")
-            if after_run:
-                after_run(case_dir, root, why, delta, staged)
+    except BaseException:
+        raised = True
+        raise
     finally:
-        # Also when the attempt failed or was stopped: what it left goes to the run folder without the values.
-        counts["redactions"] += lab.redact_folder(case_dir, values, staged) + lab.redact_folder(out_tmp, values)
-        lab.return_run(root)
+        try:
+            after_run = _hook(hooks, "after_run")
+            if started and after_run:
+                try:
+                    after_run(case_dir, root, why, delta, staged)
+                except Exception:
+                    if not raised:
+                        raise
+        finally:
+            # Also when the attempt failed or was stopped: what it left goes to the run folder without the values.
+            counts["redactions"] += lab.redact_folder(case_dir, values, staged) + lab.redact_folder(out_tmp, values)
+            lab.return_run(root)
     return {"why": why, "carried": carried, "delta": delta, "changed": changed, "staged": staged}
 
 

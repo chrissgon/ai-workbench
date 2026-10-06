@@ -1,15 +1,18 @@
 """The parity test of the lab facade: the lab's own runner (evals/eval_run.py) and runtime/lab.py are given the
 same adapter output, and must classify it the same way and make the same number of attempts.
 
-runtime/lab.py writes the control of one run's loop again (the lab's is inside the closure that also grades and
-writes evidence, and cannot be called alone). Until the two call one function (stage 5 of the platform plan),
-this test is what keeps them from drifting. Offline: a stand-in adapter, no container, no model.
+Since stage 5 of the platform plan the two make a run's attempts through one function, run() of
+evals/run_attempts.py, reached by the facade through the runner: these tests now compare that function with itself
+through its two callers, and check that the runtime keeps no loop of its own. Offline: a stand-in adapter, no
+container, no model.
 
 Run: uv run --with pytest==9.1.1 pytest runtime/tests/test_lab_parity.py
 """
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 import pytest
 
@@ -76,3 +79,26 @@ def test_the_order_of_the_checks_is_the_labs(tmp_path):
     assert lab.failure_kind(None, str(tmp_path), [], "Let me just read the template first.", [])[0] == "early_end"
     assert lab.failure_kind(None, str(tmp_path), [], "Let me just read the template first.", ["a.md"]) == (None, None)
     assert lab.failure_kind(None, str(tmp_path), [], "Which country? Recommended: yours.", []) == (None, None)
+
+
+def test_the_lab_and_the_facade_call_the_same_function():
+    er = lab.load()
+    shared = er.load_attempts()
+    assert lab.LAB.load_attempts() is shared and lab.LAB.load_attempts().run is shared.run
+    assert "load_attempts" in lab.ALLOWED
+
+
+RUNTIME = Path(lab.__file__).resolve().parent
+LOOP_NAMES = {"wait_while_paused", "start_pause", "RETRY_PAUSE", "Slots"}
+
+
+def test_the_runtime_has_no_loop_of_its_own():
+    """lab.py holds no while statement, and no module under runtime/ reads a name of the loop's control: those
+    names stay in ALLOWED only because the shared function reads them through the facade's view of the runner."""
+    facade = ast.parse((RUNTIME / "lab.py").read_text(encoding="utf-8"))
+    assert not [node for node in ast.walk(facade) if isinstance(node, ast.While)]
+    for path in sorted(RUNTIME.rglob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        used = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
+        used |= {node.id for node in ast.walk(tree) if isinstance(node, ast.Name)}
+        assert not used & LOOP_NAMES, (str(path.relative_to(RUNTIME)), sorted(used & LOOP_NAMES))

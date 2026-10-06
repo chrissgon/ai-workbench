@@ -7,16 +7,17 @@
 
 The agent runtime runs a skill in the container the skill was proven in, through the same entry: the eval
 container of evals/executor.py, started by the adapter's run-prompt.sh, with the skill staged by
-scripts/stage_skills.py. This file imports the lab's runner as it is and calls its functions for everything
-except the control of the loop: the pause on the account limit, the shared lock, the refusals, the early end,
-the replacement of passed values, and the stopping of everything a run started are the lab's own code.
+scripts/stage_skills.py. This file imports the lab's runner as it is and calls its functions: the pause on the
+account limit, the shared lock, the refusals, the early end, the replacement of passed values, and the stopping of
+everything a run started are the lab's own code.
 
-What is written again here, and nowhere else in runtime/, is the loop of one run: prepare a fresh folder, run,
-classify how the attempt failed, make it again or stop (run_skill below). It mirrors the closure one_run of
-evals/eval_run.py without its measurement: no variant, no baseline, no contamination check, no shared-passage
-check, no grading, no evidence line. A parity test (runtime/tests/test_lab_parity.py) gives the same adapter
-output to the lab and to this file and expects the same classification. In stage 5 of the platform plan the
-loop moves into one function that the lab and the runtime both call, and it is deleted from this file.
+The runtime has no loop of its own. The attempts of one run (prepare a fresh folder, run, classify how the attempt
+failed, make it again or stop) are made by the one function the lab's runner calls too, run() of
+evals/run_attempts.py, reached through the runner (load_attempts), so both hold one module object. What run_skill
+adds through its hooks is the runtime's: the caller's files, the base commit, prepare and finish, the staging of
+the one skill. Nothing that measures: no variant, no baseline, no contamination check, no shared-passage check, no
+grading, no evidence line. The parity test (runtime/tests/test_lab_parity.py) gives the same adapter output to the
+lab and to this file and expects the same classification.
 
 Rule: no other module of runtime/ imports anything under evals/. They call the functions of this file.
 
@@ -43,7 +44,7 @@ import signal
 import subprocess
 import sys
 import threading
-import time
+import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
@@ -74,6 +75,9 @@ ALLOWED = (
     "account_limit", "provider_refusal", "auth_refusal", "early_end",
     # the control of the loop that is shared with every runner process of the machine
     "Slots", "start_pause", "wait_while_paused", "RETRY_KINDS", "RETRY_PAUSE", "KEPT_PREFIXES",
+    # the control of a run's attempts, evals/run_attempts.py, which the lab's runner calls too: it grades nothing
+    # and writes no evidence (stage 5 of the platform plan, WP-5.3)
+    "load_attempts",
     # one command in the container of a run, with no model and no credential (run_command): it grades nothing
     # and writes no evidence (stage 4 of the platform plan, WP-4.4)
     "run_group", "SETUP_TIMEOUT",
@@ -96,7 +100,6 @@ FORBIDDEN = (
 TIERS = {"strong": ("strong_model", "strong_harness", "strong_pass_env"),
          "floor": ("floor_model", "floor_harness", "floor_pass_env")}
 RESPONSE_LIMIT = 2000000  # characters of a reply handed to the caller
-EARLY_END_LIMIT = 200000  # characters of a reply the early-end rule reads: the lab's own limit
 
 
 class LabError(Exception):
@@ -293,36 +296,12 @@ def session():
 
 
 def failure_kind(why, out_dir: str, refusal_markers, response: str, changed) -> tuple:
-    """How one attempt failed, by the lab's own functions and in the lab's own order (one_run of
-    evals/eval_run.py): (kind, detail). kind is "timeout", "refused", "auth", "adapter", "early_end", or None
-    when the attempt is the run's result. why is what run_failure() returned; changed lists the files the run
-    created, changed or deleted. The account limit is looked at before this, by the caller."""
-    if why and why.startswith("timeout"):
-        return "timeout", None
-    if why:
-        refusal = LAB.provider_refusal(out_dir, refusal_markers)
-        if refusal:
-            return "refused", refusal[:300]
-        auth = LAB.auth_refusal(out_dir)
-        if auth:
-            return "auth", auth
-        return "adapter", None
-    detail = LAB.early_end(response[:EARLY_END_LIMIT], changed)
-    return ("early_end", detail) if detail else (None, None)
-
-
-def _set_aside(dest: str, prefix: str) -> str:
-    """Keep what an attempt left in a folder of its own inside the run folder, and clear the run folder for the
-    next attempt (the lab's set_aside)."""
-    n = 1
-    while os.path.exists(os.path.join(dest, f"{prefix}-{n}")):
-        n += 1
-    kept = os.path.join(dest, f"{prefix}-{n}")
-    os.makedirs(kept)
-    for item in os.listdir(dest):
-        if not item.startswith(tuple(LAB.KEPT_PREFIXES)):
-            shutil.move(os.path.join(dest, item), os.path.join(kept, item))
-    return kept
+    """How one attempt failed, by the lab's own functions and in the lab's own order: (kind, detail). kind is
+    "timeout", "refused", "auth", "adapter", "early_end", or None when the attempt is the run's result. why is what
+    run_failure() returned; changed lists the files the run created, changed or deleted. The account limit is
+    looked at before this, by the caller. One call of classify() of evals/run_attempts.py, the function the lab's
+    runner uses."""
+    return _lab_call(LAB.load_attempts).classify(LAB, why, out_dir, refusal_markers, response, changed)
 
 
 PLATFORMS_CITED = "shared/references/platforms/"
@@ -493,8 +472,6 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
               "redactions": 0}
     cwd, out = os.path.join(dest, "cwd"), os.path.join(dest, "outputs")
     os.makedirs(dest, exist_ok=True)
-    if any(not item.startswith(tuple(LAB.KEPT_PREFIXES)) for item in os.listdir(dest)):
-        _set_aside(dest, "before-resume")  # what an earlier call left in this run folder
     result = {"status": "failed", "failure": None, "response": "", "changes": None, "staged": [], "run_dir": dest,
               "cwd": cwd, "outputs": out, "timing": {}, "counts": counts, "tier": tier, "model": model,
               "adapter": adapter, "web": bool(web), "image_digest": environment.get("image_digest"),
@@ -505,101 +482,64 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
         result["response"] = LAB.read_text(os.path.join(out, "response.md"), RESPONSE_LIMIT)
         return result
 
-    while True:
-        try:
-            LAB.wait_while_paused(adapter, probe)
-            counts["attempts"] += 1
-            with LAB.Slots(control, tier, bool(web)):
-                root = LAB.new_run_root(dest, names=(skill,))
-                case_dir, out_tmp = os.path.join(root, "case"), os.path.join(root, "out")
-                why, delta, staged, carried, started, hook = None, None, [], None, False, None
-                try:
-                    _copy_in(files, case_dir)
-                    quiet = {"root": root, "network": "none"}  # the fixture commit: no secret, no network
-                    LAB.isolate_git(case_dir, LAB.contained_env(root), box=quiet)
-                    result["base_commit"] = _base_commit(root, case_dir)
-                    if prepare is not None:
-                        try:
-                            prepare(case_dir, root)
-                        except Exception as e:
-                            raise LabError("copy", f"the copy could not be prepared: {type(e).__name__}: {e}") from None
-                    carried = LAB.settings_in(case_dir, settings)
-                    if carried:
-                        why = f"the copy holds {carried}: a tool's settings never enter a run"
-                    else:
-                        case = {"platforms": platforms_cited(skill_dir)}
-                        staged, _ = _lab_call(LAB.stage_run, case_dir, eval_cfg, skill_dir, [], case, None)
-                        prompt_path = os.path.join(root, "prompt.md")
-                        with open(prompt_path, "w", encoding="utf-8") as f:
-                            f.write(prompt)
-                        before = LAB.file_index(case_dir, staged)
-                        started = True
-                        why = LAB.run_failure(runner, prompt_path, case_dir, model, out_tmp,
-                                              LAB.contained_env(root, pass_env), timeout, None, bool(web),
-                                              start_dir=root,
-                                              box={"root": root, "runner": runner, "pass": pass_env,
-                                                   "network": "open" if web else "proxy"})
-                        # Before anything is read or stored: each passed value is replaced by a marker, by exact value.
-                        counts["redactions"] += LAB.redact_folder(case_dir, values, staged) + LAB.redact_folder(out_tmp, values)
-                        if not why:
-                            delta = LAB.changes(case_dir, before, staged)
-                finally:
-                    if started and finish is not None:
-                        try:
-                            finish(case_dir, root)
-                        except Exception as e:
-                            hook = f"what the run left could not be finished: {type(e).__name__}: {e}"
-                    # Also when the run failed or was stopped: what it left goes to the run folder without the values.
-                    counts["redactions"] += LAB.redact_folder(case_dir, values, staged) + LAB.redact_folder(out_tmp, values)
-                    LAB.return_run(root)
-                if hook:
-                    raise LabError("copy", hook)
-        except LabError:
-            raise
-        except (RuntimeError, OSError, subprocess.SubprocessError) as e:
-            if LAB.STOPPING.is_set():
-                return failed("stopped", "stopped before the run ended")
-            raise LabError("container", f"the run could not be prepared or started: {type(e).__name__}: {e}") from None
-        result["staged"] = staged
-        if carried:
-            return failed("settings", why)
-        if LAB.STOPPING.is_set():
-            return failed("stopped", why or "stopped before the run was read")
-        if why and LAB.account_limit(out, eval_cfg["account_limit"]):
-            # The account is exhausted: no result of the run. Everything on the account waits, and the run starts
-            # again from its beginning afterwards: never retried into the limit, never counted as a timeout.
-            counts["attempts"] -= 1
-            counts["pauses"] += 1
-            LAB.start_pause(adapter, f"task run {os.path.basename(dest)}")
-            _set_aside(dest, "paused")
-            continue
-        response = LAB.read_text(os.path.join(out, "response.md"), RESPONSE_LIMIT)
-        changed = (delta["created"] + delta["modified"] + delta["deleted"]) if delta else []
-        kind, detail = failure_kind(why, out, eval_cfg["refusal_markers"], response, changed)
-        if kind is None:
-            break
-        if kind == "auth":  # never retried: every later run with that key would meet the same refusal
-            return failed("auth", f"the provider refused the key ({detail}) passed in "
-                                  f"{LAB.credential_label(adapter, pass_env)}", detail)
-        counts[LAB.RETRY_KINDS[kind]] += 1
-        if counts["attempts"] > retries:
-            reason = {"early_end": f"the model ended its turn early on all {counts['attempts']} attempt(s): {detail}",
-                      "refused": "refused: the provider declined the request"}.get(kind, why)
-            return failed(kind, reason, detail)
-        _set_aside(dest, "early-end" if kind == "early_end" else "failed")
-        if kind == "adapter":  # a provider that is overloaded or limits the rate: not at once
-            time.sleep(LAB.RETRY_PAUSE * counts["attempts"])
-    timing = {}
+    # What the runtime adds to an attempt; the attempts themselves (the wait on a pause, the place of the shared
+    # lock, the fresh folder and its return, the settings check, the adapter call, the replacement of the passed
+    # values, the classification and the retries) are the lab's one function, evals/run_attempts.py.
+    def build(case_dir, root):
+        _copy_in(files, case_dir)
+
+    def after_base(case_dir, root):
+        result["base_commit"] = _base_commit(root, case_dir)
+        if prepare is not None:
+            try:
+                prepare(case_dir, root)
+            except Exception as e:
+                raise LabError("copy", f"the copy could not be prepared: {type(e).__name__}: {e}") from None
+
+    def stage(case_dir):
+        case = {"platforms": platforms_cited(skill_dir)}
+        staged, _ = _lab_call(LAB.stage_run, case_dir, eval_cfg, skill_dir, [], case, None)
+        return staged
+
+    def after_run(case_dir, root, why, delta, staged):
+        if finish is not None:
+            try:
+                finish(case_dir, root)
+            except Exception as e:
+                raise LabError("copy", f"what the run left could not be finished: {type(e).__name__}: {e}") from None
+
+    spec = {"dest": dest, "names": [skill], "label": f"task run {os.path.basename(dest)}", "runner": runner,
+            "model": model, "account": {"key": adapter, "markers": eval_cfg["account_limit"], "probe": probe},
+            "refusal_markers": eval_cfg["refusal_markers"], "pass_env": pass_env, "values": values,
+            "settings": settings, "control": control, "tier": tier, "web": bool(web), "timeout": timeout,
+            "max_cost": None, "retries": retries, "prompt": prompt, "response_limit": RESPONSE_LIMIT,
+            "counts": counts, "env_extra": None}
+    hooks = types.SimpleNamespace(build=build, after_base=after_base, stage=stage, after_run=after_run)
+    attempts = _lab_call(LAB.load_attempts)
     try:
-        with open(os.path.join(out, "timing.json"), encoding="utf-8") as f:
-            timing = json.load(f)
-    except (OSError, ValueError):
-        pass
-    if not isinstance(timing, dict):
-        timing = {}
-    timing.update(LAB.run_ending(out))  # the stop reason and the turn count, beside the reply
-    result.update(status="ok", failure=None, response=response, changes=delta, timing=timing)
-    return result
+        made = attempts.run(LAB, spec, hooks)
+    except LabError:
+        raise
+    except (RuntimeError, OSError, subprocess.SubprocessError) as e:
+        if LAB.STOPPING.is_set():
+            return failed("stopped", "stopped before the run ended")
+        raise LabError("container", f"the run could not be prepared or started: {type(e).__name__}: {e}") from None
+    result["staged"] = made["staged"]
+    failure, why = made["failure"], made["why"]
+    if failure is None:
+        result.update(status="ok", failure=None, response=made["response"], changes=made["delta"], timing=made["timing"])
+        return result
+    kind, detail = failure["kind"], failure["detail"]
+    if kind == "settings":
+        return failed("settings", f"the copy holds {detail}: a tool's settings never enter a run")
+    if kind == "stopped":
+        return failed("stopped", why or "stopped before the run was read")
+    if kind == "auth":  # never retried: every later run with that key would meet the same refusal
+        return failed("auth", f"the provider refused the key ({detail}) passed in "
+                              f"{LAB.credential_label(adapter, pass_env)}", detail)
+    reason = {"early_end": f"the model ended its turn early on all {counts['attempts']} attempt(s): {detail}",
+              "refused": "refused: the provider declined the request"}.get(kind, why)
+    return failed(kind, reason, detail)
 
 
 def main(argv=None) -> int:
