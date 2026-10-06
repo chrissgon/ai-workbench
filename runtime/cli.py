@@ -6,7 +6,10 @@
 """The terminal shell of the task runtime: one command per operation of runtime/ops.py, nothing else.
 
 Usage:
-  python3 runtime/cli.py request  --project <dir> --flow <name> (--text <text> | --text-file <file>) [--title <title>]
+  python3 runtime/cli.py request  --project <dir> [--flow <name>] (--text <text> | --text-file <file>) [--title <title>]
+  python3 runtime/cli.py route    --project <dir> --request <request id> [--flow <name>]
+  python3 runtime/cli.py approve  --project <dir> --id <pending id> [--sha256 <plan hash>]
+  python3 runtime/cli.py reject   --project <dir> --id <pending id> [--note <text>]
   python3 runtime/cli.py run-next --project <dir> [--tier strong]
   python3 runtime/cli.py pending  --project <dir> [--id <pending id>]
   python3 runtime/cli.py answer   --project <dir> --id <pending id> (--text <text> | --text-file <file>)
@@ -18,8 +21,16 @@ Usage:
   python3 runtime/cli.py proof    --project <dir> [--skill <name>]
   python3 runtime/cli.py verdict  --project <dir> --run <run id> --word worked|corrected|failed
 
-request   records what you want and plans it from the flow file flows/<name>.json: its tasks, with the
-          dependencies the file writes. A task without a dependency is ready at once.
+request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
+          dependencies the file writes; a task without a dependency is ready at once. Without --flow, the
+          request waits for its route.
+route     plans a request that waits for its route. Without --flow: one run of the router skill, as it is, asked
+          only for the route (it calls a model, like run-next; nothing it writes comes back); a route it gives
+          becomes a plan for you to approve, a question it asks is answered with answer (then route again), and
+          a reply with no recognised route reaches you whole. With --flow: the plan of that flow file, no run.
+approve   approves a plan (its tasks are created; pass the plan's hash, shown with it, as --sha256 to approve
+          exactly what you read) or a request written on the task board.
+reject    rejects a plan or a request written on the task board: the request is cancelled.
 run-next  runs the next ready task: one skill, once, in the eval container, on the model its proof gives (the
           floor model only where the skill is reliable there and the proof holds; --tier strong asks for the
           reference model; nothing asks for the floor model), on a copy
@@ -61,7 +72,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
-VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict")
+VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
+         "route", "approve", "reject")
 
 
 class Usage(Exception):
@@ -110,10 +122,11 @@ def run(argv) -> dict:
     p.add_argument("--skill")
     p.add_argument("--run", type=int)
     p.add_argument("--word")
+    p.add_argument("--note")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
-        return ops.request(project, text_of(a), need(a, "--flow"), a.title)
+        return ops.request(project, text_of(a), a.flow, a.title)
     if a.verb == "run-next":
         return ops.run_next(project, a.tier)
     if a.verb == "pending":
@@ -132,12 +145,18 @@ def run(argv) -> dict:
         return ops.proof(project, a.skill)
     if a.verb == "verdict":
         return ops.verdict(project, need(a, "--run"), need(a, "--word"))
+    if a.verb == "route":
+        return ops.route(project, need(a, "--request"), a.flow)
+    if a.verb == "approve":
+        return ops.approve(project, need(a, "--id"), a.sha256)
+    if a.verb == "reject":
+        return ops.reject(project, need(a, "--id"), a.note)
     return ops.status(project)
 
 
 def main(argv=None) -> int:
     argv = sys.argv[1:] if argv is None else argv
-    if not argv or argv[0] in ("--help", "-h"):
+    if not argv or "--help" in argv or "-h" in argv:
         print(__doc__.strip(), file=sys.stdout if argv else sys.stderr)
         return 0 if argv else 2
     try:

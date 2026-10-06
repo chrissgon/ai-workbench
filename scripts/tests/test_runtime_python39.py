@@ -38,7 +38,7 @@ ON_SYSTEM_PYTHON = [
     # The task runtime: its shell runs on the system interpreter, and a scheduler will start its dispatcher.
     "runtime/lab.py", "runtime/ops.py", "runtime/cli.py", "runtime/flow_files.py", "runtime/skill_meta.py",
     "runtime/path_rule.py", "runtime/state_merge.py", "runtime/endings.py", "runtime/project_config.py",
-    "runtime/manifest.py", "runtime/workcopy.py", "runtime/proof.py",
+    "runtime/manifest.py", "runtime/workcopy.py", "runtime/proof.py", "runtime/router.py", "runtime/plan.py",
     # The task board's local implementation: the task runtime calls it with its own interpreter (stage 3).
     "providers/issue-tracker/local.py",
 ]

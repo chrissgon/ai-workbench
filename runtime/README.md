@@ -8,7 +8,7 @@ skeleton, and is not hardened yet: stage 2 of that plan adds the limits, each wi
 
 It is a second runtime only in its code. The first one, `scripts/runtime.py`, runs one agent on social
 comments and stays as it is until that agent moves to the container (stage 7). Both keep their state in the
-same store (`providers/store/sqlite.py`): the tables of this one are migrations 2 and 3 of that file.
+same store (`providers/store/sqlite.py`): the tables of this one are migrations 2 to 4 of that file.
 
 ## Modules
 
@@ -25,6 +25,8 @@ same store (`providers/store/sqlite.py`): the tables of this one are migrations 
 | `project_config.py` | The project's configuration, `<project>/docs/workbench/runtime.json`, and its hash |
 | `workcopy.py` | What enters a run copy (limits L1 to L6) and what comes back from it (L7, L8, L12, L14: the path rule with the manifest's bound documents, regular files inside the copy only, never over a change at the origin, the credential scan, the masked reply): the versioned files, the documents and the declared machine files of a run without the web, only the declared artifacts of a run with it; never the store, the configuration, a tool's settings or a credential; the project's `AGENTS.md` without the two lines the container cannot serve |
 | `manifest.py` | A skill's runtime manifest, `skills/<name>/evals/runtime-manifest.json`: what the runtime knows of a skill that its frontmatter does not declare. A skill of a pack in use (`PACKS_IN_USE`) without a well-formed one does not run |
+| `router.py` | The router step: what code reads of one run of the router skill (`core-orchestrator`, as it is) asked only for the route: the one route line `Route: <name> (<capability or flow>, <ready or pending>)`, or the question lines `Q<n>: ...`; anything else is unclassified and reaches the person whole. Pure: no lab, no store |
+| `plan.py` | The plan of a request (limit L19: the planning agent creates no task): the tasks code builds from a flow file or from a route to one skill, the skills in scope (the packs of the enabled area agents of the configuration, else the pack `default`), the hash the person approves, and an estimate that counts runs |
 | `proof.py` | The proof of a skill (what the status script computes, cached in `<data_dir>/proof.json`) and the choice of the model a run goes to: the floor model only where the skill is `reliable` there and the proof holds on this checkout and machine; the reference model otherwise, or when the person asks for it (`run-next --tier strong`) |
 
 Rules of the folder: `lab.py` is the only importer of anything under `evals/`; no shell reaches the store, the
@@ -47,6 +49,10 @@ accept it with the hash the refusal shows (and again after every change of the f
 ```sh
 python3 runtime/cli.py accept-config --project <dir> --sha256 <hash>
 python3 runtime/cli.py request  --project <dir> --flow market-positioning --text "<what you want>"
+#   or, without --flow, the router plans it: a model call, like run-next; then approve the plan it opens
+python3 runtime/cli.py request  --project <dir> --text "<what you want>"
+uv run --with keyring==25.7.0 python3 runtime/cli.py route --project <dir> --request <id>   # or --flow <name>: no run
+python3 runtime/cli.py approve  --project <dir> --id <n> --sha256 <the plan's hash>
 uv run --with keyring==25.7.0 python3 runtime/cli.py run-next --project <dir>   # needs docker and the credential
 python3 runtime/cli.py pending  --project <dir>
 python3 runtime/cli.py answer   --project <dir> --id <n> --text "<your answer>"
