@@ -85,10 +85,11 @@ Operations of stage 6:
                                    its todo tasks as sub-tasks inside the approved plan's limits (the others wait in
                                    an acceptance)
 
-Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run whose copy holds versioned files
-starts only when the project's tracked files have no uncommitted change, from the project's files plus the newest
-unblocked change set of its request; what it did to versioned files is kept in its run folder as one change set,
-never written into the project. The pending decision lists the change set, and a review whose change set is blocked
+Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run of a code task (its skill is of a
+code area, code_task) whose copy holds versioned files starts only when the project's tracked files have no
+uncommitted change, from the project's files plus the newest unblocked change set of its request; what it did to
+versioned files is kept in its run folder as one change set, never written into the project. A document task makes
+no change set and is not held to clean tracked files; a versioned file it changed is listed in `kept`. The pending decision lists the change set, and a review whose change set is blocked
 is not released: it is answered, or the request is cancelled.
 
 A task whose skill's runtime manifest names a gate (the pull-request skill) runs up to its confirmation gate: its
@@ -106,7 +107,9 @@ its run opens when it ends `done` says so and carries "mandatory_milestone": tru
 
 With a documents platform, run_next reads it first (documents.pull) and runs nothing while a document the task's
 skill declares was edited there and not taken; after the run, the documents it returned are written to it
-(documents.push), and a failed write never fails the task.
+(documents.push), and a failed write never fails the task. A document the mirror imported from the platform (a
+person's edit) since a task's last run is named to that task's next run, when its skill reads it, in one line of
+its prompt (EDITED_LINE): the content is the person's, not external content.
 
 Releasing is not approving: a released delivery stays a draft in the project's state file.
 
@@ -181,6 +184,8 @@ FLOOR_KEY = "WB_RUNTIME_FLOOR_KEY"
 TITLE_CHARS = 120  # a request's title taken from its first line, when the person gives none
 ROUTE_KEPT = "a route-only run returns no file"
 HANDED_LINE = "The user handed over these files for this task. They are in the project at:"
+# One line per document the mirror imported from the platform since the task's last run (decision of 2026-10-06).
+EDITED_LINE = "The person edited {path} on the platform since the last run; its content is theirs."
 MANDATORY_LINE = ("This delivery is a mandatory milestone: the next task accepts it only with your approval written in "
                   "the document. Write it there, then release.")
 
@@ -283,18 +288,23 @@ def _read(path: str):
 # --- what enters a run: runtime/workcopy.py (limits L1 to L6) --------------------------------------------------
 
 
-def task_prompt(request_text: str, task_text: str, answered, handed=None) -> str:
+def task_prompt(request_text: str, task_text: str, answered, handed=None, edited=None) -> str:
     """The text of one run: the request in the person's words, the task's own text, and, on a run made after
     an answer, every earlier question of this task with its answer. It names no skill: the one skill staged
     for the run loads by its description, as in a lab run. An empty task text (a plan of one skill) leaves out
     the "For this task: " paragraph, so the prompt is the plain request. handed lists the relative paths of the
     files the person handed over to this task (the file drop): one paragraph after the task's text names them;
-    absent or empty, the prompt is unchanged."""
+    absent or empty, the prompt is unchanged. edited lists the documents the mirror imported from the platform
+    since the task's last run (runtime/documents.py, imported_since): one line each, EDITED_LINE, right before
+    the answers, so that the person's edit is read as the person's word and not as external content. Only code
+    gives it, never a run's text."""
     parts = [request_text.strip()]
     if (task_text or "").strip():
         parts += ["", "For this task: " + task_text.strip()]
     if handed:
         parts += ["", HANDED_LINE, *[f"- {rel}" for rel in handed]]
+    if edited:
+        parts += ["", *[EDITED_LINE.format(path=rel) for rel in edited]]
     if answered:
         parts += ["", "In an earlier run of this task you stopped and asked the user. Your replies and the user's "
                       "answers are below, oldest first. Each answer is the user's decision: record it where the "
@@ -596,10 +606,13 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         request = _stored(ctx, store.task_get, task["parent_id"])
         request_text = request["text"]
         answered = [p for p in _stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
+        earlier = [r for r in _stored(ctx, store.task_runs_list, task["id"]) if r["id"] != run_id]
+        edited = [rel for rel in documents.imported_since(cfg, earlier[-1]["started_at"] if earlier else None)
+                  if rel in entered_rels and skill_meta.matches(meta["inputs"], rel)]
         prompt = task_prompt(request_text, task["text"], answered,
-                             handed=[rel for _source, rel in handed if rel in entered_rels])
+                             handed=[rel for _source, rel in handed if rel in entered_rels], edited=edited)
         code = None
-        if entered.get("tracked"):
+        if entered.get("tracked") and code_task(meta):
             code = _code_state(ctx, task)
             if code.get("refused"):
                 return fail("internal", code["refused"])
@@ -646,7 +659,8 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     bound = manifest.bound_among(known, left)
     made = _changeset_of(ctx, task, run_id, dest, result, entered, code, bound) if code is not None else None
     returned, kept, state_report = workcopy.returning(cfg["project"], result, base, base_state, skill, bound=bound,
-                                                       versioned=(made or {}).get("versioned", ()))
+                                                       versioned=(made or {}).get("versioned", ()),
+                                                       tracked=entered.get("tracked") or () if code is None else ())
     gate_files = _tmp_files(result.get("tmp"))
     ending, why = _ending(result, meta, skill, [rel for rel, _size in gate_files])
     gate_found = _gate_payload(result, dest, gate_files) if known.get("gate") else None
@@ -874,6 +888,14 @@ def _request_run_dirs(ctx: dict, request_id: int) -> list:
         if t["parent_id"] is not None:
             runs += [r for r in _stored(ctx, ctx["store"].task_runs_list, t["id"]) if r["status"] == "ok" and r["run_dir"]]
     return [r["run_dir"] for r in sorted(runs, key=lambda r: r["id"], reverse=True)]
+
+
+def code_task(meta: dict) -> bool:
+    """A code task: its skill is of a code area (workcopy.CODE_AREAS, the areas of the code-change flow's skills).
+    Only a code task whose copy holds versioned files is held to clean tracked files and makes a change set
+    (choice K4); a document task runs on a project whose tracked files carry uncommitted changes (a project
+    initialised by core-project-init always has two), and a versioned file it changed is listed in `kept`."""
+    return meta.get("area") in workcopy.CODE_AREAS
 
 
 def _code_state(ctx: dict, task: dict) -> dict:

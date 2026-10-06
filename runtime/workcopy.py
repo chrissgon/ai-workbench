@@ -58,6 +58,9 @@ import skill_meta  # noqa: E402
 import state_merge  # noqa: E402
 
 CODE_AREAS = ("engineering", "delivery")
+# Why a versioned file a document task changed stays in its run folder (ops.code_task: only a code task makes a
+# change set).
+TRACKED_KEPT = "a versioned file: only a code task brings one back, as a change set"
 SECTION_START = "<!-- workbench:start -->"
 SECTION_END = "<!-- workbench:end -->"
 REMOVED_OPENINGS = ("Recording a use, where no hook does it:", "Skill check:")
@@ -333,7 +336,8 @@ def _write(target: str, data: bytes) -> None:
     os.replace(temporary, target)
 
 
-def returning(project: str, result: dict, base: dict, base_state, skill: str, *, bound=(), versioned=()) -> tuple:
+def returning(project: str, result: dict, base: dict, base_state, skill: str, *, bound=(), versioned=(),
+              tracked=()) -> tuple:
     """(returned, kept, state_report): bring back what a completed run left, by the path rule. returned lists
     {"path", "class"} of what was written into the project; kept lists {"path", "class", "reason"} of what stays
     in the run folder only; state_report is the state file's merge report without its text ({"accepted",
@@ -343,18 +347,21 @@ def returning(project: str, result: dict, base: dict, base_state, skill: str, *,
     inside the copy (L8), the project's path is not a link and stays inside the project, the project's file is
     unchanged since the copy (L12; the state file is merged line by line instead, L10), the credential scan
     (L14). Nothing is deleted in the project. versioned lists the paths the path rule calls versioned (the change
-    set's, runtime/changeset.py): they never come back as loose files and are not listed here."""
+    set's, runtime/changeset.py): they never come back as loose files and are not listed here. tracked lists the
+    versioned paths of a run that makes no change set (a document task, ops.code_task): one of them the run changed
+    outside docs/ is kept, with the reason TRACKED_KEPT."""
     project = os.path.realpath(project)
     cwd, changes = result["cwd"], result["changes"]
     facts = {"staged": list(result["staged"]) + [path_rule.DROP_DIR], "bound": list(bound), "versioned": list(versioned)}
     returned, kept, state_report = [], [], None
+    tracked = set(tracked)
     for rel in sorted(changes["created"] + changes["modified"]):
         cls = path_rule.classify(rel, facts)
         keep = lambda reason: kept.append({"path": rel, "class": cls, "reason": reason})
         if cls in ("ignored", "versioned"):
             continue  # a versioned path travels in the change set
         if cls not in path_rule.RETURNED:
-            keep("this class of path is not brought back yet")
+            keep(TRACKED_KEPT if rel in tracked else "this class of path is not brought back yet")
             continue
         if not lab.readable(cwd, rel):
             keep("not a regular file inside the copy")

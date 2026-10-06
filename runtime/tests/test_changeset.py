@@ -302,6 +302,68 @@ def test_a_code_run_is_refused_while_tracked_files_of_the_project_have_uncommitt
     assert st.calls(tree["adapter"]) == [] and out["task_state"] == "failed"
 
 
+def dirty_project(tree) -> str:
+    """A repository whose tracked files carry an uncommitted change, as a project initialised by core-project-init
+    always does (its AGENTS.md section and ignore lines are never committed by rule)."""
+    path = git_project(tree, {"src/app.py": "v1\n", "notes.txt": "old\n"})
+    (tree["project"] / "AGENTS.md").write_text("# Project\n\nThe workbench's section.\n")
+    (tree["project"] / ".gitignore").write_text(".workbench-local/\ndocs/business/\n")
+    return path
+
+
+def test_a_document_task_runs_while_tracked_files_of_the_project_have_uncommitted_changes(tree):
+    path = dirty_project(tree)
+    ops.request(path, "Find the first market.", "demo")
+    out = ops.run_next(path)
+    assert out["status"] == "ok" and out["skill"] == "demo-asks" and out["ending"] == "question"
+    assert out["entered"]["kind"] == "general" and st.calls(tree["adapter"]) == ["demo-asks 1"]
+    assert "changeset" not in ops.pending(path, out["pending_id"])["payload"]
+    assert not (Path(out["run_dir"]) / "changeset").exists()
+
+
+def test_a_code_task_on_the_same_project_is_refused_with_the_clean_tree_message(tree):
+    path = dirty_project(tree)
+    ops.request(path, "Change the app.", "code-demo")
+    out = ops.run_next(path)
+    assert out["skill"] == "demo-code" and out["status"] == "failed" and out["failure"]["kind"] == "internal"
+    assert out["failure"]["reason"] == "commit or stash the changes to tracked files first: a change set is made against a commit"
+    assert st.calls(tree["adapter"]) == [] and out["task_state"] == "failed"
+
+
+def test_a_code_task_runs_when_the_only_uncommitted_tracked_change_is_the_state_file(tree):
+    path = git_project(tree)
+    state = tree["project"] / "docs" / "workbench" / "state.md"
+    assert git(tree["project"], "ls-files", "docs/workbench/state.md").strip() == "docs/workbench/state.md"
+    state.write_text(state.read_text() + "\n")  # code writes an answer or an approval row there between runs
+    code(tree, "echo v2 > src/app.py\n")
+    ops.request(path, "Change the app.", "code-demo")
+    out = ops.run_next(path)
+    assert out["status"] == "ok" and ops.pending(path, out["pending_id"])["payload"]["changeset"]["files"] == 1
+
+
+def test_a_document_task_never_makes_a_change_set_and_lists_a_tracked_file_it_changed_in_kept(tree):
+    path = dirty_project(tree)
+    ops.request(path, "Find the first market.", "demo")
+    asked = ops.run_next(path)
+    ops.answer(path, asked["pending_id"], "Clinics.")
+    out = ops.run_next(path)  # writes docs/business/market.md and changes the tracked notes.txt
+    assert out["status"] == "ok" and {"path": "docs/business/market.md", "class": "document"} in out["returned"]
+    assert {"path": "notes.txt", "class": "other", "reason": workcopy.TRACKED_KEPT} in out["kept"]
+    assert (tree["project"] / "notes.txt").read_text() == "old\n"  # a versioned file never comes back loose
+    assert (tree["project"] / "AGENTS.md").read_text().endswith("The workbench's section.\n")  # the person's change stays
+    assert not (Path(out["run_dir"]) / "changeset").exists()
+    assert "changeset" not in ops.pending(path, out["pending_id"])["payload"]
+
+
+def test_the_code_change_flow_runs_only_code_tasks():
+    skill_meta = st.load("skill_meta")
+    meta = lambda name: skill_meta.declared(str(st.REPO / "skills" / name))
+    code = json.loads((st.REPO / "flows" / "code-change.json").read_text(encoding="utf-8"))
+    assert code["tasks"] and all(ops.code_task(meta(t["skill"])) for t in code["tasks"])
+    brand = json.loads((st.REPO / "flows" / "brand.json").read_text(encoding="utf-8"))
+    assert brand["tasks"] and not any(ops.code_task(meta(t["skill"])) for t in brand["tasks"])
+
+
 def test_the_bounds_repeated_here_are_the_code_providers():
     text = (st.REPO / "providers" / "vcs" / "github.py").read_text(encoding="utf-8")
     files = int(re.search(r"^MAX_FILES = (\d+)$", text, re.M).group(1))
