@@ -75,7 +75,7 @@ def test_a_task_at_its_agent_s_cap_is_held_with_the_cap_s_name():
 def test_the_function_changes_nothing_and_imports_no_sibling():
     source = (st.RUNTIME / "dispatcher.py").read_text(encoding="utf-8")
     assert not re.search(r"^\s*(import|from)\s+(ops|lab|autonomy|plan|proof)\b", source, re.M)
-    assert "sqlite" not in source and "store" not in source.split('"""', 2)[2]
+    assert "sqlite" not in source and "open_db" not in source and "store_module" not in source
     snapshot = {"running": None, "ready": [ready(4, "a", milestone=1)], "agents": {"a": agent()}, "tier": {4: "strong"},
                 "reviews": [{"pending": {"id": 9, "kind": "review", "payload": {"ending": "done", "why": "wrote"}},
                              "task": ready(2, "a"), "agent": "a", "proven": True, "mandatory": False}]}
@@ -235,3 +235,13 @@ def test_run_next_returns_what_it_returned_before(tree):
     assert set(out) == {"ran", "skill", "run_id", "run_dir", "status", "ending", "failure", "task_state", "pending_id",
                         "returned", "kept", "left_out", "entered", "state", "routing", "use", "recovered"}
     assert ops.run_next(path) == {"ran": None, "reason": "no task is ready", "recovered": [], "pending": 1}
+
+
+def test_a_round_without_the_reference_model_s_credential_starts_nothing_and_says_why(tree, monkeypatch):
+    path = str(tree["project"])
+    planned(tree, "chain")
+    monkeypatch.setattr(lab, "credential_missing", lambda tier: ["EXAMPLE_REFERENCE_KEY"])
+    out = ops.dispatch(path)
+    assert out["ran"] == [] and st.calls(tree["adapter"]) == []
+    assert "EXAMPLE_REFERENCE_KEY" in out["stopped"] and "secret store" in out["stopped"] and "Python" in out["stopped"]
+    assert [t["state"] for t in store_rows(tree) if t["parent_id"]] == ["ready", "planned"]  # no task failed

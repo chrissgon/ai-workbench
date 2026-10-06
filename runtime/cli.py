@@ -31,6 +31,7 @@ Usage:
   python3 runtime/cli.py dispatch --project <dir>
   python3 runtime/cli.py poll     --project <dir>
   python3 runtime/cli.py handler  --project <dir> --name <handler> --verb <verb> [--arg <flag>=<value>]...
+  python3 runtime/cli.py pin      --project <dir>
 
 request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes; a task without a dependency is ready at once. Without --flow, the
@@ -116,6 +117,9 @@ dispatch  one round of the dispatcher: the ticks of the handlers whose dispatch 
           calls a model, like run-next. The scheduler's worker job calls it.
 poll      the short job: mirrors the task board and the documents, expires standing approvals, rewrites the state file's
           generated lines, and releases what a mode releases. It calls no model and starts no task.
+pin       writes the pin of the dispatcher's two jobs (<data_dir>/dispatch-pin.json): the path and the hash of the
+          accepted runtime.json. The scheduler's entry (runtime/dispatcher.py) refuses to run when the file changed;
+          after any change: accept-config, pin, then schedule both jobs again with the new command files.
 handler   starts one verb of a handler (runtime/handlers/) that handlers in runtime.json names, and prints its result.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
@@ -139,7 +143,7 @@ import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
          "route", "approve", "reject", "sync", "hand-over", "deps", "progress", "set-mode", "approve-policy",
-         "revoke-policy", "standing", "dispatch", "poll", "handler")
+         "revoke-policy", "standing", "dispatch", "poll", "handler", "pin")
 
 
 class Usage(Exception):
@@ -251,6 +255,8 @@ def run(argv) -> dict:
         return ops.dispatch(project)
     if a.verb == "poll":
         return ops.poll(project)
+    if a.verb == "pin":
+        return ops.pin(project)
     if a.verb == "handler":
         pairs = {}
         for item in a.arg:

@@ -23,12 +23,36 @@ started; (4) nothing else, and no state is changed here: runtime/ops.py applies 
 The two rule functions are passed in, so this file imports no sibling: the scheduler runs a copy of it alone (its
 entry, stage 6). It reaches neither the store nor the lab facade.
 
-Usage (a library; the shells are runtime/cli.py dispatch and poll): python3 runtime/dispatcher.py --help
+The entry for the scheduler (stage 6). The scheduler starts a copy of this file, kept in its job folder, with the
+system interpreter; so this file works alone, checks the project's configuration against the pin before it loads any
+code the configuration points to, and only then loads the checkout:
+
+  /usr/bin/python3 runtime/dispatcher.py poll  --project <dir> [--pin <file>]   ops.poll: the short job
+  /usr/bin/python3 runtime/dispatcher.py work  --project <dir> [--pin <file>]   ops.dispatch: the worker
+  /usr/bin/python3 runtime/dispatcher.py check --project <dir>                  can this interpreter run them?
+  /usr/bin/python3 runtime/dispatcher.py command-file --job poll|work --project <dir> --pin <file>
+
+With --pin (the file `cli.py pin` writes, <data_dir>/dispatch-pin.json), a runtime.json whose hash is not the pinned
+one stops the job before anything of the checkout is imported. Without --pin a job may only be run by hand. poll and
+work print one JSON object; an error of the operation is printed on stderr and ends with its exit code (1 failed, 2
+usage, 3 not configured). check imports every module of runtime/ and runtime/handlers/, loads the lab's gate file,
+says whether this interpreter can read the secret store and whether the reference model's credential is reachable,
+and finds docker, uv and git on PATH; it starts nothing. command-file prints the scheduler's command file of one
+job: argv[0] is always /usr/bin/python3, and the snapshot is this file and the pin.
+
+Usage: python3 runtime/dispatcher.py --help
 
 Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import argparse
+import hashlib
+import importlib
+import importlib.util
+import json
+import os
+import shutil
 import sys
 
 ONE_AT_A_TIME = "one task at a time per project"
@@ -68,6 +92,173 @@ def decide(snapshot: dict, review_action, may_start) -> dict:
     return {"release": release, "start": start, "held": held}
 
 
+# --- the entry for the scheduler --------------------------------------------------------------------------------------
+
+SYSTEM_PYTHON = "/usr/bin/python3"
+CONFIG = os.path.join("docs", "workbench", "runtime.json")
+JOBS = {"poll": 5, "work": 240}  # timeout_minutes: the poller's limit, the provider's maximum for the worker
+ENTRY_VERBS = ("poll", "work", "check", "command-file")
+TOOLS = ("docker", "uv", "git")
+CHANGED = ("changed since the job was approved: {path}; nothing ran. Review the change, accept it (accept-config), "
+           "run pin, then schedule the job again: that is the new approval")
+STORE_MODULE = "keyring"  # the library the secret resolver reads the secret store with
+
+
+class EntryError(Exception):
+    def __init__(self, message: str, code: int):
+        super().__init__(message)
+        self.code = code
+
+
+def _sha256(path: str) -> str:
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def _config_file(project: str) -> str:
+    path = os.path.join(os.path.abspath(project), CONFIG)
+    if not os.path.isfile(path):
+        raise EntryError(f"{path} not found: the project is not configured", 3)
+    return path
+
+
+def _check_pin(config: str, pin: str) -> None:
+    """Before anything of the checkout is loaded: the pin names this project's runtime.json and its hash now."""
+    try:
+        with open(pin, encoding="utf-8") as f:
+            recorded = json.load(f)["runtime_json"]
+        pinned_path, pinned_hash = recorded["path"], recorded["sha256"]
+    except (OSError, ValueError, KeyError, TypeError):
+        raise EntryError(CHANGED.format(path=config), 3) from None
+    if not isinstance(pinned_path, str) or os.path.realpath(pinned_path) != os.path.realpath(config) or \
+            pinned_hash != _sha256(config):
+        raise EntryError(CHANGED.format(path=config), 3)
+
+
+def bootstrap(project: str, pin=None):
+    """The operations layer of the checkout the project's configuration names, loaded only after the configuration
+    was checked against the pin (when there is one). The folders of its `path` go first on PATH, for what the
+    operations start (uv, docker, git). Returns the module ops."""
+    config = _config_file(project)
+    if pin is not None:
+        _check_pin(config, pin)
+    try:
+        with open(config, encoding="utf-8") as f:
+            raw = json.load(f)
+        workbench = raw["workbench"]
+    except (OSError, ValueError, KeyError, TypeError):
+        raise EntryError(f"{config} cannot be read, or names no workbench", 3) from None
+    folders = raw.get("path") or []
+    if not isinstance(workbench, str) or not os.path.isabs(workbench) or not isinstance(folders, list) or \
+            not all(isinstance(p, str) and os.path.isabs(p) for p in folders):
+        raise EntryError(f"{config}: workbench is an absolute path, and path a list of absolute folders", 3)
+    os.environ["PATH"] = os.pathsep.join(folders + [p for p in os.environ.get("PATH", "").split(os.pathsep) if p])
+    here = os.path.join(workbench, "runtime")
+    sys.path.insert(0, here)
+    loaded = importlib.import_module("ops")
+    if not os.path.realpath(getattr(loaded, "__file__", "") or "").startswith(os.path.realpath(here) + os.sep):
+        raise EntryError(f"the operations layer loaded is {getattr(loaded, '__file__', None)}, not the one of {workbench}", 3)
+    return loaded
+
+
+def store_readable():
+    """"ok" when this interpreter can import the secret store's library, else why not (one line)."""
+    try:
+        importlib.import_module(STORE_MODULE)
+    except Exception as e:  # any failure to import is the answer
+        return f"{sys.executable} (Python {sys.version.split()[0]}) cannot read the secret store: {type(e).__name__}: {e}"
+    return "ok"
+
+
+def check(project: str) -> tuple:
+    """(report, exit code) of the check verb. It imports, it starts nothing (no docker, no model, no provider)."""
+    report = {"python": sys.version.split()[0], "executable": sys.executable, "modules": {}, "lab": None,
+              "secret_store": store_readable(), "credential": None, "tools": {}}
+    ops = bootstrap(project)
+    workbench = os.path.dirname(os.path.dirname(os.path.realpath(ops.__file__)))
+    runtime = os.path.join(workbench, "runtime")
+    for folder, prefix in ((runtime, ""), (os.path.join(runtime, "handlers"), "handlers/")):
+        if not os.path.isdir(folder):
+            continue
+        for name in sorted(os.listdir(folder)):
+            if not name.endswith(".py"):
+                continue
+            try:
+                if prefix:
+                    spec = importlib.util.spec_from_file_location("workbench_handler_" + name[:-3], os.path.join(folder, name))
+                    spec.loader.exec_module(importlib.util.module_from_spec(spec))
+                else:
+                    importlib.import_module(name[:-3])
+                report["modules"][prefix + name] = "ok"
+            except BaseException as e:  # a module that exits or fails on import is reported, never raised
+                report["modules"][prefix + name] = " ".join(f"{type(e).__name__}: {e}".split())[:300]
+    try:
+        lab = importlib.import_module("lab")
+        lab.reference("strong")
+        report["lab"] = "ok"
+        missing = lab.credential_missing("strong")
+        report["credential"] = "ok" if not missing else (
+            f"the reference model's credential ({', '.join(missing)}) is neither set nor found in the secret store")
+    except BaseException as e:
+        report["lab"] = " ".join(f"{type(e).__name__}: {e}".split())[:300] if report["lab"] is None else report["lab"]
+        if report["credential"] is None:
+            report["credential"] = "not checked: the lab could not be loaded"
+    report["tools"] = {tool: shutil.which(tool) for tool in TOOLS}
+    ok = all(v == "ok" for v in report["modules"].values()) and report["lab"] == "ok" and \
+        report["credential"] == "ok" and report["tools"]["docker"] and report["tools"]["uv"]
+    return report, 0 if ok else 1
+
+
+def command_file(job: str, project: str, pin: str) -> dict:
+    """The scheduler's command file of one job: the system interpreter by its fixed path, this file, the job's verb,
+    the project and the pin; the snapshot is this file and the pin."""
+    entry, project, pin = os.path.abspath(__file__), os.path.abspath(project), os.path.abspath(pin)
+    return {"argv": [SYSTEM_PYTHON, entry, job, "--project", project, "--pin", pin], "cwd": project,
+            "snapshot": [entry, pin], "timeout_minutes": JOBS[job]}
+
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise EntryError(f"{message}. See --help.", 2)
+
+
+def main(argv=None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if not argv or "--help" in argv or "-h" in argv:
+        print(__doc__.strip(), file=sys.stdout if argv else sys.stderr)
+        return 0 if argv else 2
+    p = _Parser(prog="dispatcher.py", add_help=False)
+    p.add_argument("verb", choices=ENTRY_VERBS)
+    p.add_argument("--project", required=True)
+    p.add_argument("--pin")
+    p.add_argument("--job", choices=tuple(JOBS))
+    try:
+        a = p.parse_args(argv)
+        if a.verb == "command-file":
+            if a.job is None or a.pin is None:
+                raise EntryError("command-file needs --job poll|work and --pin. See --help.", 2)
+            _config_file(a.project)
+            out, code = command_file(a.job, a.project, a.pin), 0
+        elif a.verb == "check":
+            out, code = check(a.project)
+        else:
+            ops = bootstrap(a.project, a.pin)
+            if a.verb == "work" and store_readable() != "ok":
+                # Said at every firing, so the first one says it: a run whose credential is only in the store cannot
+                # start from this interpreter (contracts/runtime.md, "The dispatcher's two jobs").
+                print(f"warning: {store_readable()}", file=sys.stderr)
+            try:
+                out = ops.poll(os.path.abspath(a.project)) if a.verb == "poll" else ops.dispatch(os.path.abspath(a.project))
+            except ops.OpsError as e:
+                raise EntryError(str(e), e.code) from None
+            code = 0
+    except EntryError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return e.code
+    json.dump(out, sys.stdout, ensure_ascii=False, indent=1, default=str)
+    print()
+    return code
+
+
 if __name__ == "__main__":
-    print(__doc__.strip(), file=sys.stdout if sys.argv[1:] in (["--help"], ["-h"]) else sys.stderr)
-    sys.exit(0 if sys.argv[1:] in (["--help"], ["-h"]) else 2)
+    sys.exit(main())

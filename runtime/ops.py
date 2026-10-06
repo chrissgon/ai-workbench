@@ -77,6 +77,7 @@ Operations of stage 6:
   poll(project)                    the short job: mirrors, expired approvals, the state file's generated lines, the
                                    releases a mode makes; it calls no model and starts no task
   handler_call(project, name, verb[, args])   one verb of a handler under runtime/handlers/, its JSON object
+  pin(project)                     the pin of the dispatcher's two jobs: the accepted runtime.json's path and hash
   release(project, pending_id)     also starts what a release starts: the brief's delivery routed again (its tasks
                                    wait in an acceptance), and, when the released task returned the product backlog,
                                    its todo tasks as sub-tasks inside the approved plan's limits (the others wait in
@@ -2059,7 +2060,7 @@ def dispatch(project: str, budget_seconds=None) -> dict:
         return {"stopped": "no area agent is configured"}
     out = {"handlers": _ticks(ctx, project), "released": [], "ran": [], "held": [], "stopped": None}
     key = _floor_key()
-    released = []
+    released, checked = [], {}
     while out["stopped"] is None:
         snapshot = _snapshot(ctx, key)
         decided = dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)
@@ -2074,6 +2075,12 @@ def dispatch(project: str, budget_seconds=None) -> dict:
         if time.monotonic() - started > budget:
             out["stopped"] = f"the round's budget of {budget} s is spent: no new run starts"
             break
+        if snapshot["tier"].get(decided["start"]) == "strong":
+            if "credential" not in checked:
+                checked["credential"] = _credential_stop()
+            if checked["credential"]:
+                out["stopped"] = checked["credential"]
+                break
         try:
             ran = _claim_and_run(ctx, None, decided["start"])
         except OpsError as e:
@@ -2086,6 +2093,42 @@ def dispatch(project: str, budget_seconds=None) -> dict:
                            "ending": ran["ending"], "model": (ran.get("routing") or {}).get("model")})
         out["stopped"] = _stops_the_round(ran)
     return out
+
+
+PIN_NAME = "dispatch-pin.json"
+
+
+def pin(project: str) -> dict:
+    """The pin of the dispatcher's two jobs, <data_dir>/dispatch-pin.json (mode 0600): the path and the hash of the
+    project's runtime.json, which must be the accepted one. The scheduler's entry (runtime/dispatcher.py) refuses to
+    load anything when the file differs from it. Returns {"pin", "runtime_json", "next"}."""
+    ctx = context(project)
+    cfg = ctx["cfg"]
+    pinned = {"runtime_json": {"path": cfg["path"], "sha256": cfg["sha256"]},
+              "pinned_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
+    os.makedirs(cfg["data_dir"], mode=0o700, exist_ok=True)
+    target = os.path.join(cfg["data_dir"], PIN_NAME)
+    temporary = f"{target}.{os.getpid()}.tmp"
+    fd = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(json.dumps(pinned, indent=1) + "\n")
+    os.chmod(temporary, 0o600)
+    os.replace(temporary, target)
+    return {"pin": target, "runtime_json": pinned["runtime_json"],
+            "next": f"dispatcher.py command-file --job poll|work --project {cfg['project']} --pin {target}, then schedule "
+                    "each with the scheduler provider"}
+
+
+def _credential_stop():
+    """Why no run on the reference model can start from this process, or None: its credential is neither set nor
+    found in the secret store (lab.credential_missing). Named with the interpreter, since a scheduled job's
+    interpreter may not read the store (open point O1)."""
+    missing = lab.credential_missing("strong")
+    if not missing:
+        return None
+    return (f"the reference model's credential ({', '.join(missing)}) is neither set nor found in the secret store "
+            f"from {sys.executable} (Python {sys.version.split()[0]}): no run starts. See contracts/runtime.md, "
+            "\"The dispatcher's two jobs\"")
 
 
 def _ticks(ctx: dict, project: str) -> dict:

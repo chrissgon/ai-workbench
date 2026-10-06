@@ -59,6 +59,20 @@ A command file for the agent runtime's tick:
 
 The agent is not an argument: the tick reads it from the project's `docs/workbench/runtime.json`. `argv[0]` is the system interpreter by its fixed path, whose hash does not change with a package upgrade (a bare `python3` is resolved on the approver's `PATH` and hashed wherever it was found). The job runs the copy of `runtime.py` kept in its folder, so whatever that script finds next to itself (its sibling module `runtime_vote.py`; `redact.py`, the credential formats every text is checked against before it is published; and `providers/resolve.py`; the last two it loads from its own folder first and from the configured workbench otherwise) has to be in the snapshot too or passed as an argument; a folder argument such as `--project` is not snapshotted or verified. `--pin` names the file `runtime.py pin --project <dir>` writes (in the runtime's `data_dir`): run it just before scheduling. It holds the sha256 of `runtime.json` and of the gate script, and, being in the snapshot, it is part of what the person approves; at every firing the tick refuses to run when either file differs. What the approval does not cover is listed in `contracts/runtime.md`, "What the approval of a recurring tick covers".
 
+A command file for the task runtime's worker, as `/usr/bin/python3 runtime/dispatcher.py command-file --job work --project <dir> --pin <pin>` prints it (the poller's is the same with `poll` and `"timeout_minutes": 5`):
+
+```json
+{
+  "argv": ["/usr/bin/python3", "/abs/ai-workbench/runtime/dispatcher.py", "work",
+           "--project", "/abs/project", "--pin", "/abs/data/dispatch-pin.json"],
+  "cwd": "/abs/project",
+  "snapshot": ["/abs/ai-workbench/runtime/dispatcher.py", "/abs/data/dispatch-pin.json"],
+  "timeout_minutes": 240
+}
+```
+
+The entry works alone from its copy: it checks `runtime.json` against the pin `runtime/cli.py pin` wrote before it loads the checkout `runtime.json` names. What the two jobs' approval covers, and how a scheduled run reaches the model's credential, is in `contracts/runtime.md`, "The dispatcher's two jobs".
+
 ### Usage
 
 ```sh
