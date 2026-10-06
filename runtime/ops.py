@@ -50,6 +50,11 @@ Operations of stage 3:
   hand_over(project, task_id, file)   put a file of the person's in a task's file drop (runtime/drop.py): it enters
                                    that task's runs, and the prompt lists it
 
+Operations of stage 4:
+  deps(project)                    install the project's declared dependency sets by code, with no model
+                                   (runtime/deps.py); a run whose copy holds versioned files gets each set that
+                                   applies, after its base commit, and never brings it back
+
 A task whose skill's runtime manifest sets mandatory_milestone is a milestone whatever its flow file says; the review
 its run opens when it ends `done` says so and carries "mandatory_milestone": true in its payload.
 
@@ -87,6 +92,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 import board  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
+import deps as deps_sets  # noqa: E402  (the operation `deps` would hide the module: part 0, F.1, rule 5)
 import documents  # noqa: E402
 import drop  # noqa: E402
 import endings  # noqa: E402
@@ -525,8 +531,15 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         answered = [p for p in _stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
         prompt = task_prompt(request_text, task["text"], answered,
                              handed=[rel for _source, rel in handed if rel in entered_rels])
+        try:
+            installed = _dependencies(cfg, entered)
+        except deps_sets.DepsError as e:
+            return fail("internal", f"dependencies: {e.reason}")
+        prepare = (lambda copy, _root: [deps_sets.place(r, copy) for r in installed]) if installed else None
+        finish = (lambda copy, _root: [deps_sets.remove(copy, r["produces"]) for r in installed]) if installed else None
         with lab.session(), _key_in_environment(routing, key):
-            result = lab.run_skill(skill, prompt, files, dest, web=routing["web"], tier=routing["tier"])
+            result = lab.run_skill(skill, prompt, files, dest, web=routing["web"], tier=routing["tier"],
+                                   prepare=prepare, finish=finish)
     except lab.LabError as e:
         return fail("internal", f"{e.kind}: {e.reason}")
     except Exception as e:  # the task never stays `running`: the error is recorded, then shown
@@ -584,6 +597,53 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     done = _stored(ctx, store.task_run_finish, run_id, task_state="waiting", pending=decision, **finish)
     out.update(status="ok", ending=ending, task_state="waiting", pending_id=done["pending_id"], returned=returned, kept=kept)
     return out
+
+
+def _project_bytes(project: str, rel: str):
+    """The bytes of a project's file at rel, or None when it is not a regular file inside the project."""
+    path = os.path.join(project, *rel.split("/"))
+    real = os.path.realpath(path)
+    if os.path.islink(path) or not os.path.isfile(path) or not real.startswith(os.path.realpath(project) + os.sep):
+        return None
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def _dependencies(cfg: dict, entered: dict, read=None) -> list:
+    """The installed folders a run gets: for a run whose copy holds versioned files, each declared dependency set
+    whose files are all there (read(rel), default the project's own file), installed or taken from the cache
+    (runtime/deps.py). Empty for a run without versioned files. Raises deps.DepsError."""
+    if not entered.get("tracked"):
+        return []
+    read = read or (lambda rel: _project_bytes(cfg["project"], rel))
+    out = []
+    for entry in cfg.get("dependencies") or []:
+        files = deps_sets.files_for(entry, read)
+        if files is not None:
+            out.append(deps_sets.ensure(cfg["data_dir"], entry, files, lab.image()["digest"]))
+    return out
+
+
+def deps(project: str) -> dict:
+    """Install every dependency set the project's configuration declares, by code, with no model: {"dependencies":
+    [{"recipe", "file", "applies", and when it applies "key", "cached", "duration_ms"}]}. A set whose files are not
+    all in the project does not apply and installs nothing. Holds the run lock, so no run starts meanwhile."""
+    ctx = context(project)
+    cfg, out = ctx["cfg"], []
+    with _run_lock(cfg):
+        for entry in cfg.get("dependencies") or []:
+            files = deps_sets.files_for(entry, lambda rel: _project_bytes(cfg["project"], rel))
+            row = {"recipe": entry["recipe"], "file": entry["file"], "applies": files is not None}
+            if files is not None:
+                try:
+                    done = deps_sets.ensure(cfg["data_dir"], entry, files, lab.image()["digest"])
+                except deps_sets.DepsError as e:
+                    raise OpsError(f"dependencies: {e.reason}", 1) from None
+                except lab.LabError as e:
+                    raise OpsError(f"dependencies: {e.kind}: {e.reason}", 1) from None
+                row.update(key=done["key"], cached=done["cached"], duration_ms=done["duration_ms"])
+            out.append(row)
+    return {"dependencies": out}
 
 
 def _listed(item: dict) -> dict:
