@@ -55,6 +55,10 @@ Operations of stage 4:
                                    (runtime/deps.py); a run whose copy holds versioned files gets each set that
                                    applies, after its base commit, and never brings it back
 
+Operations of stage 6:
+  progress(project[, since])       where the work stands and what happened in a period (runtime/progress.py),
+                                   computed from the store's records; it calls no model
+
 Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run whose copy holds versioned files
 starts only when the project's tracked files have no uncommitted change, from the project's files plus the newest
 unblocked change set of its request; what it did to versioned files is kept in its run folder as one change set,
@@ -120,6 +124,7 @@ import lab  # noqa: E402
 import manifest  # noqa: E402
 import path_rule  # noqa: E402
 import plan  # noqa: E402
+import progress as progress_calc  # noqa: E402  (the operation `progress` would hide the module: part 0, F.1, rule 5)
 import proof as proof_rules  # noqa: E402  (the operation `proof` would hide the module: part 0, F.1, rule 5)
 import project_config  # noqa: E402
 import router  # noqa: E402
@@ -1136,6 +1141,25 @@ def status(project: str) -> dict:
                           for d in _stored(ctx, ctx["store"].documents_list)],
             "board": ({"left_out_final": len(_stored(ctx, lambda _conn: board.left_out(ctx, rows)))}
                       if board.enabled(ctx["cfg"]) else None)}
+
+
+def progress(project: str, since: str | None = None) -> dict:
+    """Where the work stands and what happened in a period, from the store's records only (runtime/progress.py): no
+    model is called and no number is estimated. since is None (the last 7 days), "<n>d" or "YYYY-MM-DD". Returns
+    {"progress", "summary", "text"}. The effects counted are the approvals code executed (status `executed`)."""
+    ctx = context(project)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    try:
+        start, end = progress_calc.window(since, now)
+    except ValueError as e:
+        raise OpsError(str(e), 2) from None
+    tasks = _stored(ctx, ctx["store"].tasks_list)
+    runs = [run for task in tasks for run in _stored(ctx, ctx["store"].task_runs_list, task["id"])]
+    pending_rows = _stored(ctx, ctx["store"].pending_list, "all")
+    executed = _stored(ctx, ctx["store"].approvals_list, status="executed")
+    now_progress = progress_calc.progress([t for t in tasks if t["parent_id"] is None], tasks, pending_rows, now)
+    period = progress_calc.summary(tasks, runs, pending_rows, executed, start, end)
+    return {"progress": now_progress, "summary": period, "text": progress_calc.render(now_progress, period)}
 
 
 # --- stage 3: the route, the plan, its approval ------------------------------------------------------------------
