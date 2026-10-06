@@ -61,6 +61,11 @@ unblocked change set of its request; what it did to versioned files is kept in i
 never written into the project. The pending decision lists the change set, and a review whose change set is blocked
 is not released: it is answered, or the request is cancelled.
 
+A task whose skill's runtime manifest names a gate (the pull-request skill) runs up to its confirmation gate: its
+copy holds the request's change set as one commit on a branch over its base (the configuration's code.base), as the
+skill was measured; its temporary folder comes back in its run folder; the payload it wrote there is recovered only
+when it is the file its reply hashed (runtime/effects.py), and kept as <run folder>/payload.md.
+
 A task whose skill's runtime manifest sets mandatory_milestone is a milestone whatever its flow file says; the review
 its run opens when it ends `done` says so and carries "mandatory_milestone": true in its payload.
 
@@ -102,6 +107,7 @@ import changeset  # noqa: E402
 import deps as deps_sets  # noqa: E402  (the operation `deps` would hide the module: part 0, F.1, rule 5)
 import documents  # noqa: E402
 import drop  # noqa: E402
+import effects  # noqa: E402
 import endings  # noqa: E402
 import flow_files  # noqa: E402
 import lab  # noqa: E402
@@ -265,16 +271,18 @@ def _count(value):
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
-def _ending(result: dict, meta: dict, skill: str) -> tuple:
-    """(ending, why) of a completed run, from runtime/endings.py, with the skill's facts (manifest.ending_facts)
-    and the declared outputs without a placeholder that the copy held, unchanged, after the run."""
+def _ending(result: dict, meta: dict, skill: str, gate_files=()) -> tuple:
+    """(ending, why) of a completed run, from runtime/endings.py, with the skill's facts (manifest.ending_facts),
+    the declared outputs without a placeholder that the copy held, unchanged, after the run, and the files found
+    under the run's returned temporary folder (gate_files)."""
     cwd, changes = result["cwd"], result["changes"]
     written = [p for p in changes["created"] + changes["modified"] if skill_meta.matches(meta["outputs"], p)]
     after = set(changes["created"] + changes["modified"] + changes["unchanged"])
     fixed = [p for p in meta["outputs"] if "<" not in p and not p.endswith("/")]
     missing = [p for p in fixed if p not in after]
     texts = [(_read(os.path.join(cwd, *p.split("/"))) or "") if lab.readable(cwd, p) else "" for p in written]
-    facts = dict(manifest.ending_facts(ROOT, skill), outputs_present=[p for p in fixed if p in set(changes["unchanged"])])
+    facts = dict(manifest.ending_facts(ROOT, skill), outputs_present=[p for p in fixed if p in set(changes["unchanged"])],
+                 gate_files=list(gate_files))
     return endings.classify(result["response"], changes, written, missing, texts, facts=facts)
 
 
@@ -534,7 +542,8 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         entered_rels = {rel for _source, rel in files}
         out["entered"] = {"kind": entered["kind"], "agents_md": entered["agents_md"], "files": len(files)}
         base_state = _read(os.path.join(cfg["project"], *path_rule.STATE.split("/")))
-        request_text = _stored(ctx, store.task_get, task["parent_id"])["text"]
+        request = _stored(ctx, store.task_get, task["parent_id"])
+        request_text = request["text"]
         answered = [p for p in _stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
         prompt = task_prompt(request_text, task["text"], answered,
                              handed=[rel for _source, rel in handed if rel in entered_rels])
@@ -544,23 +553,32 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
             if code.get("refused"):
                 return fail("internal", code["refused"])
         current = (code or {}).get("current")
+        gate = known.get("gate")
+        if gate:
+            refused = _gate_refusal(cfg, current)
+            if refused:
+                return fail("internal", refused)
         try:
             installed = _dependencies(cfg, entered, read=_reader(cfg, current))
         except deps_sets.DepsError as e:
             return fail("internal", f"dependencies: {e.reason}")
 
-        def prepare(copy, _root):
-            if current is not None:
+        def prepare(copy, root):
+            if gate:
+                # T23: a skill runs only up to its gate; a runtime mode in the skills with an external effect replaces this
+                changeset.as_branch(current, copy, root, base=cfg["code"]["base"], head=_head(cfg, task),
+                                    message=request["title"])
+            elif current is not None:
                 changeset.apply(current, copy)  # the earlier work of the request, as an uncommitted change
             for r in installed:
                 deps_sets.place(r, copy)
 
         finish = (lambda copy, _root: [deps_sets.remove(copy, r["produces"]) for r in installed]) if installed else None
-        if current is None and not installed:
+        if current is None and not installed and not gate:
             prepare = None
         with lab.session(), _key_in_environment(routing, key):
             result = lab.run_skill(skill, prompt, files, dest, web=routing["web"], tier=routing["tier"],
-                                   prepare=prepare, finish=finish)
+                                   prepare=prepare, finish=finish, tmp_in_run=bool(gate))
     except lab.LabError as e:
         return fail("internal", f"{e.kind}: {e.reason}")
     except Exception as e:  # the task never stays `running`: the error is recorded, then shown
@@ -578,7 +596,9 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     made = _changeset_of(ctx, task, run_id, dest, result, entered, code, bound) if code is not None else None
     returned, kept, state_report = workcopy.returning(cfg["project"], result, base, base_state, skill, bound=bound,
                                                        versioned=(made or {}).get("versioned", ()))
-    ending, why = _ending(result, meta, skill)
+    gate_files = _tmp_files(result.get("tmp"))
+    ending, why = _ending(result, meta, skill, [rel for rel, _size in gate_files])
+    gate_found = _gate_payload(result, dest, gate_files) if known.get("gate") else None
     loaded = timing.get("skills_loaded")
     body, masked = workcopy.masked_reply(result["response"])
     if state_report is not None:
@@ -615,6 +635,9 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
                             "body_masked": masked}}
     if made is not None:
         decision["payload"]["changeset"] = made["summary"]
+    if gate_found is not None:
+        decision["payload"]["gate"] = gate_found if ending == "gate" else {**gate_found, "recovered": False,
+                                                                            "why": f"the run ended {ending}, not at its gate"}
     if mandatory:
         decision["payload"]["mandatory_milestone"] = True
         if cut:  # the sentence stays at the end of a body that was cut
@@ -623,6 +646,52 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
             decision["body"] = body.encode("utf-8")[:room].decode("utf-8", errors="ignore") + tail
     done = _stored(ctx, store.task_run_finish, run_id, task_state="waiting", pending=decision, **finish)
     out.update(status="ok", ending=ending, task_state="waiting", pending_id=done["pending_id"], returned=returned, kept=kept)
+    return out
+
+
+def _head(cfg: dict, task: dict) -> str:
+    """The head branch of a request's pull request: <branch_prefix>request-<request id> (choice K10)."""
+    return f"{cfg['code']['branch_prefix']}request-{task['parent_id']}"
+
+
+def _gate_refusal(cfg: dict, current):
+    """Why a task whose skill has a gate cannot start, or None: it needs the configuration's code (the base branch)
+    and a change set of its request to show."""
+    if not cfg.get("code"):
+        return "the configuration has no code (provider, repo, base): a task with a confirmation gate needs it"
+    if current is None or not (current.get("files") or current.get("removed")):
+        return "there is no change to open a pull request for"
+    return None
+
+
+def _tmp_files(tmp) -> list:
+    """[(relative path, bytes)] of the regular files under a run's returned temporary folder, no link followed."""
+    out = []
+    if not tmp or not os.path.isdir(tmp) or os.path.islink(tmp):
+        return out
+    for current, folders, files in os.walk(tmp):
+        folders[:] = sorted(n for n in folders if not os.path.islink(os.path.join(current, n)))
+        for name in sorted(files):
+            path = os.path.join(current, name)
+            if not os.path.islink(path) and os.path.isfile(path):
+                out.append((os.path.relpath(path, tmp).replace(os.sep, "/"), os.path.getsize(path)))
+    return out
+
+
+def _gate_payload(result: dict, dest: str, tmp_files) -> dict:
+    """The payload a gate run wrote, recovered (runtime/effects.py) and kept as <dest>/payload.md; everything else
+    under the returned temporary folder is deleted, and only its names and sizes are kept. Returns {"recovered",
+    "why", "payload_file", "payload_sha256", "parsed", "tmp_left"}."""
+    found = effects.recover_payload(result.get("response") or "", result.get("tmp"), lab.readable)
+    out = {"recovered": found["recovered"], "why": found.get("why"), "payload_file": None, "payload_sha256": None,
+           "parsed": False, "tmp_left": [{"name": rel, "bytes": size} for rel, size in tmp_files]}
+    if found["recovered"]:
+        kept = os.path.join(dest, "payload.md")
+        shutil.copyfile(found["file"], kept)
+        out.update(payload_file=kept, payload_sha256=found["sha256"],
+                   parsed=effects.parse_pull_request_payload(found["text"]) is not None)
+    if result.get("tmp") and os.path.isdir(result["tmp"]) and not os.path.islink(result["tmp"]):
+        shutil.rmtree(result["tmp"])
     return out
 
 

@@ -22,7 +22,7 @@ blocked change set is stored so the person can read it, and is never applied to 
 <run_dir>/changeset/changeset.json holds the change set, and <run_dir>/changeset/files/<path> each created or
 changed file's bytes. Its "sha256" is the hash of the canonical form of its files and removed paths.
 
-Public names: ChangesetError, LIMITS, SCRIPT, compute, store, load, current, apply, verify_for_commit,
+Public names: ChangesetError, LIMITS, SCRIPT, AS_BRANCH, compute, store, load, current, apply, as_branch, verify_for_commit,
 versioned_in, provider_takes, canonical_sha256, matches.
 
 Usage (a library): python3 runtime/changeset.py --help
@@ -65,6 +65,17 @@ git --no-replace-objects -c core.hooksPath=/dev/null -c core.fsmonitor=false add
 git --no-replace-objects -c core.hooksPath=/dev/null -c core.fsmonitor=false diff --cached --raw -z --no-renames --no-abbrev "$1" --
 """
 COMMIT = re.compile(r"[0-9a-f]{40}([0-9a-f]{24})?")
+# The form a pull-request skill was measured in: its branch with one commit on top of the base, and no remote. $1 the
+# base branch's name, $2 the head's, $3 the commit message, then the change set's paths. Unsigned and without hooks:
+# this commit stays in the copy; the one that is pushed is made by the code provider (runtime/effects.py).
+AS_BRANCH = """set -eu
+base="$1"; head="$2"; message="$3"; shift 3
+git -c core.hooksPath=/dev/null branch -m "$base"
+git -c core.hooksPath=/dev/null checkout -q -b "$head"
+git -c core.hooksPath=/dev/null add -A -- "$@"
+git -c core.hooksPath=/dev/null -c commit.gpgsign=false commit -q --no-verify -m "$message"
+"""
+BRANCH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
 
 
 class ChangesetError(Exception):
@@ -285,6 +296,25 @@ def apply(changeset: dict, copy_dir: str) -> None:
         os.makedirs(os.path.dirname(target), exist_ok=True)
         shutil.copyfile(os.path.join(changeset["dir"], "files", *item["path"].split("/")), target)
         os.chmod(target, 0o755 if item["executable"] else 0o644)
+
+
+def as_branch(changeset: dict, copy_dir: str, root: str, base: str, head: str, message: str, run=None) -> None:
+    """In a fresh copy: write the change set as apply() does, then, with git in the run's container and no network
+    (AS_BRANCH, through run, default lab.run_command): name the copy's branch base, make the branch head and commit
+    exactly the change set's paths on it. Raises ChangesetError("git")."""
+    for name in (base, head):
+        if not BRANCH.fullmatch(name or "") or ".." in name:
+            raise ChangesetError("git", f"{name!r} is not a branch name")
+    paths = [f["path"] for f in changeset.get("files") or []] + list(changeset.get("removed") or [])
+    if not paths:
+        raise ChangesetError("git", "the change set holds no path to commit")
+    apply(changeset, copy_dir)
+    # security-scan: allow shell-string -- AS_BRANCH is a constant of this module, run in the run's container with no network; its arguments are checked branch names, the request's title and the change set's checked paths
+    done = (run or _run())(["bash", "-c", AS_BRANCH, "as-branch", base, head, message or "change", *paths], root,
+                           cwd=copy_dir, network="none", timeout=GIT_TIMEOUT)
+    if done.get("timed_out") or done.get("returncode") != 0:
+        first = ((done.get("stderr") or "").strip().splitlines() or ["timed out"])[0]
+        raise ChangesetError("git", f"the change could not be committed in the copy: {first}")
 
 
 def versioned_in(project: str, paths) -> list:
