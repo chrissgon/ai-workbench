@@ -77,3 +77,17 @@ def test_every_built_skill_declares_its_lists_in_the_form_the_runtime_reads():
     for folder in sorted((REPO / "skills").iterdir()):
         if (folder / "SKILL.md").is_file():
             assert skill_meta.declared(str(folder))["name"] == folder.name
+
+
+def test_the_code_change_flow_is_valid_and_its_last_task_is_a_milestone():
+    flow = flow_files.load("code-change")
+    assert [(t["key"], t["skill"]) for t in flow["tasks"]] == [("implement", "eng-implement"),
+                                                                  ("pull-request", "ops-pull-request")]
+    assert flow["tasks"][-1]["milestone"] is True and flow["tasks"][-1]["depends_on"] == ["implement"]
+    assert not any(t["skill"] in t["text"] for t in flow["tasks"])  # a task's text names no skill
+    manifest = importlib.import_module("manifest")
+    assert "code" in manifest.PACKS_IN_USE
+    assert {"eng-implement", "ops-pull-request"} <= set(manifest.skills_in_use(str(REPO)))
+    gate = manifest.load(str(REPO), "ops-pull-request")["gate"]
+    assert gate == {"effect": "create", "payload_file": "<tmp>/payload.md"}
+    assert manifest.load(str(REPO), "eng-implement")["gate"] is None
