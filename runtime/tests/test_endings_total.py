@@ -76,6 +76,34 @@ def test_rule_3_question(response):
     assert ending(response, NONE) == "question"
 
 
+@pytest.mark.parametrize("response", [
+    # The shape of the acceptance's run 9: no declared output, a blocker named, numbered questions closing it.
+    "**Positioning not written**\n- The job is not decided.\n\nTo go on, two decisions:\n\n"
+    "1. Which job does the offer do? Recommended: run the interviews first.\n"
+    "2. Which segment first, S1 or S3? Recommended: S1.\n3. Which claims can be made?",
+    "Nothing was written yet: two items are undecided.\n1. Which segments? Recommended: the three of the analysis.",
+    "Which audience is this for?",
+])
+def test_rule_3_question_when_only_the_state_file_changed(response):
+    state = wrote("docs/workbench/state.md", created=False)
+    assert ending(response, state) == "question"
+    assert ending(response, state, facts=CODE) == "question"
+    assert endings.classify(response, state, [], [], [], facts=FACTS)[1] == "only the state file changed and the reply asks"
+
+
+def test_a_run_that_changed_only_the_state_file_and_asks_nothing_follows_the_other_rules():
+    state = wrote("docs/workbench/state.md", created=False)
+    summary = "- The open questions are recorded in the state file.\n- Next: biz-market-analysis"
+    assert ending(summary, state) == "unclassified"                       # rule 7: a fixed output, none written
+    assert ending(summary, state, facts=CODE) == "done"                   # rule 6: no fixed output
+    assert ending(summary, state, facts=dict(FACTS, outputs_present=[MARKET])) == "unclassified"   # rule 4 is "no file changed"
+    # Another file beside the state file: it wrote something, so it is not a question, nor a draft without an output.
+    both = {**NONE, "modified": ["docs/workbench/state.md", "notes.txt"]}
+    assert ending("Which audience is this for?", both) == "unclassified"
+    # Without facts, the first classifier is unchanged.
+    assert endings.classify("Which audience is this for?", state, [], [], [])[0] == "unclassified"
+
+
 def test_rule_4_done():
     present = dict(FACTS, outputs_present=[MARKET])
     summary = "- Analysis: docs/business/market.md (Status: draft)\n- Open question 2 stays open, as you asked.\n- Next: biz-icp-positioning"
@@ -173,6 +201,31 @@ def test_a_run_that_stops_on_a_missing_input_blocks_the_task_and_retry_makes_it_
     monkeypatch.setattr(lab, "run_skill", real)
     assert ops.retry(path, task["id"])["state"] == "ready"
     assert ops.run_next(path)["ending"] == "question"
+
+
+def test_a_run_that_changed_only_the_state_file_and_asks_opens_a_question_whose_answer_code_writes(tree, monkeypatch):
+    path = str(tree["project"])
+    ops.request(path, "Tell me which market to go after first.", "demo")
+    real = lab.run_skill
+
+    def run_skill(*args, **kwargs):
+        result = real(*args, **kwargs)
+        result["response"] = "Nothing to write before two decisions.\n\n1. Which country first? Recommended: Portugal.\n2. Remote only?"
+        changes = result["changes"]
+        others = [p for p in changes["created"] + changes["modified"] if p != "docs/workbench/state.md"]
+        changes["unchanged"] = sorted(set(changes["unchanged"] + others))
+        changes["created"], changes["modified"], changes["deleted"] = [], ["docs/workbench/state.md"], []
+        return result
+
+    monkeypatch.setattr(lab, "run_skill", run_skill)
+    out = ops.run_next(path)
+    assert (out["ending"], out["task_state"]) == ("question", "waiting")
+    assert ops.pending(path, out["pending_id"])["kind"] == "question"
+    state_file = tree["project"] / "docs" / "workbench" / "state.md"
+    before = state_file.read_text(encoding="utf-8").count("(user)")
+    assert ops.answer(path, out["pending_id"], "1. Portugal.\n2. Yes.")["state"] == {"written": True}
+    lines = [l for l in state_file.read_text(encoding="utf-8").splitlines() if l.endswith("(user)")]
+    assert len(lines) == before + 1 and lines[-1].endswith(": 1. Portugal. 2. Yes. (user)")
 
 
 def test_a_run_that_changes_nothing_after_an_answer_is_done_when_its_output_is_already_there(tree, monkeypatch):

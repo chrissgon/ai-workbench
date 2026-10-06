@@ -73,7 +73,7 @@ writes no lab evidence and edits no file of the measurement.
 
 After a run the task waits on one pending decision, unless the skill stopped on a missing input that another
 skill writes (ending `blocked`): then the task is `blocked`, and `retry` makes it ready once the input exists.
-A run that wrote nothing and asks (ending `question`) opens a `question`, which is answered. Every other ending opens a `review`, whose body is the whole reply: a
+A run that wrote nothing (or changed only the state file) and asks (ending `question`) opens a `question`, which is answered. Every other ending opens a `review`, whose body is the whole reply: a
 run that wrote a declared output and still asks (ending `draft_with_questions`) included. A review is released
 as it stands (the task is done; the document keeps its open questions and stays a draft) or answered (the task
 runs again with the answer).
