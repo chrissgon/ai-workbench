@@ -23,7 +23,9 @@ No other key is read today. Reserved for later stages of the platform plan: a to
 that includes another) and a task with "writer": "user" in place of "skill" (a document the person writes).
 
 Dependencies are written, never computed: scripts/validate.py checks them against the skills' required inputs
-and the table of owning skills from stage 3 on.
+and their declared outputs (dependency_problems): a task that requires, without a condition, a path another
+task's skill of the same flow writes must reach that task through depends_on. required_inputs is a lower bound
+on purpose: a requirement with a condition ("yes for a person") is not computed.
 
 Usage:
   python3 runtime/flow_files.py --help
@@ -98,6 +100,85 @@ def problems(data, name: str, root: str = ROOT) -> list:
             out.append(f"{where}: \"milestone\" must be true or false")
         if isinstance(key, str):
             seen.append(key)
+    return out
+
+
+PLACEHOLDER = re.compile(r"<[^<>/]+>")
+
+
+def _cells(line: str) -> list:
+    return [c.strip() for c in line.strip().strip("|").split("|")]
+
+
+def required_inputs(skill_md: str, declared_inputs: list) -> list:
+    """The declared input paths a skill requires without a condition: in the table under `## Inputs`, a row
+    whose `Required` cell, stripped and lowercased, is exactly `yes`; from it, every path of declared_inputs
+    that occurs literally in its `Artifact` cell. A cell such as `yes for a person` is a condition and is not
+    computed, so this is a lower bound."""
+    lines = skill_md.splitlines()
+    try:
+        start = next(i for i, line in enumerate(lines) if line.strip() == "## Inputs")
+    except StopIteration:
+        return []
+    header, artifact, required, out = None, None, None, []
+    for line in lines[start + 1:]:
+        if line.startswith("## "):
+            break
+        if not line.startswith("|"):
+            if header is not None:
+                break
+            continue
+        cells = _cells(line)
+        if header is None:
+            header = [c.lower() for c in cells]
+            if "artifact" not in header or "required" not in header:
+                return []
+            artifact, required = header.index("artifact"), header.index("required")
+            continue
+        if all(re.fullmatch(r":?-+:?", c) for c in cells if c):
+            continue
+        if len(cells) <= max(artifact, required) or cells[required].strip().lower() != "yes":
+            continue
+        out += [p for p in declared_inputs if p in cells[artifact] and p not in out]
+    return out
+
+
+def _artifact(path: str) -> str:
+    """Two declared paths are the same artifact when they are equal once each placeholder is a wildcard."""
+    return PLACEHOLDER.sub("*", path)
+
+
+def dependency_problems(flow: dict, skills: dict) -> list:
+    """Each task T that requires (required_inputs) a path P which the skill of another task U of the same flow
+    owns (lists in its outputs) must reach U through depends_on. `skills` maps a skill name to {"inputs",
+    "outputs", "skill_md"}. One text per miss; a task whose skill is not in `skills` is skipped."""
+    tasks = [t for t in flow.get("tasks", []) if isinstance(t, dict) and isinstance(t.get("key"), str)]
+    by_key = {t["key"]: t for t in tasks}
+
+    def reachable(key: str) -> set:
+        seen, todo = set(), list(by_key[key].get("depends_on") or [])
+        while todo:
+            k = todo.pop()
+            if k in seen or k not in by_key:
+                continue
+            seen.add(k)
+            todo += list(by_key[k].get("depends_on") or [])
+        return seen
+
+    out = []
+    for t in tasks:
+        info = skills.get(t.get("skill"))
+        if not info:
+            continue
+        reached = reachable(t["key"])
+        for path in required_inputs(info.get("skill_md", ""), info.get("inputs", [])):
+            for u in tasks:
+                if u is t or u["key"] in reached:
+                    continue
+                owned = (skills.get(u.get("skill")) or {}).get("outputs", [])
+                if any(_artifact(o) == _artifact(path) for o in owned):
+                    out.append(f"task {t['key']} reads {path}, which task {u['key']} writes: "
+                               f"add \"{u['key']}\" to its depends_on")
     return out
 
 
