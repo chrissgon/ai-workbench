@@ -147,3 +147,22 @@ def test_a_parent_the_integration_was_not_given_is_not_configured(tmp_path):
     assert code == 3 and out is None and "404" in said
     other.write_text(json.dumps({"provider": "notion", "parent": "not a page"}), encoding="utf-8")
     assert docs.run("--check", "--config-file", str(other))[0] == 2
+
+
+def test_a_comment_on_one_block_is_read_with_the_document(tmp_path):
+    # Measured on the live service (README.md, N4): a comment on a block is listed under that block, not the page's.
+    docs = Documents(tmp_path)
+    made = docs.write("# Strategy\n\nThe why.\n\n- one\n  - nested\n", key="k1")[1]
+    page = made["id"].replace("-", "")
+    page = next(i for i in docs.fake.pages if i.replace("-", "") == page)
+    top = docs.fake.children[page]
+    nested = docs.fake.children[top[-1]][0]
+    docs.fake.comment(page, "On the page.")
+    docs.fake.comment(top[1], "On the paragraph.")
+    docs.fake.comment(nested, "On the nested item.")
+    texts_read = [c["text"] for c in docs.run("read", "--id", made["id"])[1]["comments"]]
+    assert texts_read == ["On the page.", "On the paragraph.", "On the nested item."]
+    code, out, said = docs.write("# Strategy\n\nReplaced.\n", key="k2", ident=made["id"])
+    assert code == 0, said
+    texts_read = [c["text"] for c in docs.run("read", "--id", made["id"])[1]["comments"]]
+    assert sorted(texts_read) == ["On the nested item.", "On the page.", "On the paragraph."]  # each once
