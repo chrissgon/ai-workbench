@@ -41,6 +41,8 @@ ON_SYSTEM_PYTHON = [
     "runtime/manifest.py", "runtime/workcopy.py", "runtime/proof.py", "runtime/router.py", "runtime/plan.py",
     "runtime/board.py", "runtime/documents.py", "runtime/drop.py", "runtime/deps.py", "runtime/changeset.py", "runtime/effects.py",
     "runtime/progress.py", "runtime/autonomy.py",
+    # The product backlog's parser: the task runtime loads it by path to propose sub-tasks (stage 6, WP-6.5).
+    "skills/eng-implement/scripts/task.py",
     # The task board's local implementation: the task runtime calls it with its own interpreter (stage 3).
     "providers/issue-tracker/local.py",
     # The documents' local implementation, called the same way (stage 3).

@@ -280,3 +280,31 @@ def test_a_standing_approval_of_a_policy_revokes_the_active_one_of_the_same_poli
                                         expires_at="2027-01-01T23:59:59Z")
     with pytest.raises(store.StoreError):
         store.approval_standing_add(conn, what="posts", by="user", policy_sha256=HASH, bounds=bounds, expires_at=None)
+
+
+def test_a_delivery_is_routed_again_only_on_a_planned_or_done_request_and_opens_an_acceptance(conn):
+    run = dict(skill="core-orchestrator", model="m", adapter="a")
+    fresh = store.request_add(conn, title="Loose", text="Make it known.")
+    with pytest.raises(store.StoreError):
+        store.route_run_start(conn, fresh["request"], reroute=True, **run)  # still waiting for its plan
+    planned = store.request_add(conn, title="Planned", text="Study the market.", flow="demo", tasks=PLAN)
+    started = store.route_run_start(conn, planned["request"], reroute=True, **run)
+    with pytest.raises(store.StoreError):  # a rerouted run opens no plan or question on a planned request
+        store.route_run_finish(conn, started["run_id"], status="ok", ending="done",
+                               pending={"kind": "plan", "title": "P", "body": "b", "payload": {"tasks": []}})
+    with pytest.raises(store.StoreError):  # an acceptance names what it accepts
+        store.route_run_finish(conn, started["run_id"], status="ok", ending="done",
+                               pending={"kind": "acceptance", "title": "A", "body": "b", "payload": {}})
+    done = store.route_run_finish(conn, started["run_id"], status="ok", ending="done", pending={
+        "kind": "acceptance", "title": "Accept", "body": "b",
+        "payload": {"what": "subtasks", "tasks": [{"key": "d1-more", "skill": "biz-market-analysis", "title": "More",
+                                                    "text": "more.", "depends_on": ["market"]}]}})
+    item = store.pending_get(conn, done["pending_id"])
+    assert (item["kind"], item["task_id"], item["run_id"]) == ("acceptance", planned["request"], started["run_id"])
+    assert store.task_get(conn, planned["request"])["state"] == "planned"
+    added = store.acceptance_resolve(conn, done["pending_id"], resolution="accepted", by="user")
+    assert [t["key"] for t in added["added"]] == ["d1-more"]
+    plain = store.route_run_start(conn, fresh["request"], **run)  # the request of stage 3 is routed as before
+    store.route_run_finish(conn, plain["run_id"], status="ok", ending="question")
+    with pytest.raises(store.StoreError):
+        store.route_run_start(conn, planned["request"], **run)
