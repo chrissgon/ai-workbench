@@ -1023,6 +1023,8 @@ DOCUMENT_UPDATES = {
 DOCUMENT_STATUSES = ("mirrored", "read_only", "rejected")
 COMMENT_SUBJECTS = ("task", "document")
 COMMENT_STATUSES = ("open", "used", "dismissed")
+ACCEPTANCE_WHATS = ("subtasks", "deliveries")  # payload["what"] of an acceptance a stage-6 operation opens
+REROUTE_STATES = ("planned", "done")  # a request one of whose deliveries is routed again after its brief (stage 6)
 
 
 def open_db(path) -> sqlite3.Connection:
@@ -1514,9 +1516,12 @@ def acceptance_resolve(conn: sqlite3.Connection, pending_id: int, *, resolution:
 
 
 def route_run_start(conn: sqlite3.Connection, request_id: int, *, skill: str, model: str, adapter: str,
-                    skill_version: str | None = None, skill_sha256: str | None = None, web: bool = False) -> dict:
+                    skill_version: str | None = None, skill_sha256: str | None = None, web: bool = False,
+                    reroute: bool = False) -> dict:
     """A run of the router on a request: a row of task_runs whose task is the request. Refused unless the request
     is `requested` with no open pending decision, no task of the database is running and no run row is running.
+    With reroute (stage 6: one delivery of an approved plan routed again after its brief), the request is `planned`
+    or `done` instead, and an open pending decision on it does not refuse the run.
     Returns {"run_id", "request_id", "started_at"}."""
     skill = text_arg(skill, "skill", LABEL_MAX)
     model = text_arg(model, "model", REF_MAX)
@@ -1526,9 +1531,13 @@ def route_run_start(conn: sqlite3.Connection, request_id: int, *, skill: str, mo
     now = iso(utcnow())
     with write(conn):
         request = _request(conn, request_id)
-        if request["state"] != "requested":
+        if reroute:
+            if request["state"] not in REROUTE_STATES:
+                raise StoreError(f"request {request_id} is {request['state']}: only a planned or done request has a "
+                                 "delivery routed again")
+        elif request["state"] != "requested":
             raise StoreError(f"request {request_id} is {request['state']}: only a request waiting for its plan is routed")
-        open_items = _open_pending(conn, request_id)
+        open_items = [] if reroute else _open_pending(conn, request_id)
         if open_items:
             raise StoreError(f"request {request_id} has an open {open_items[0]['kind']} (pending decision "
                              f"{open_items[0]['id']}): decide it first")
@@ -1548,15 +1557,20 @@ def route_run_finish(conn: sqlite3.Connection, run_id: int, *, status: str, fail
                      image_digest: str | None = None, run_dir: str | None = None, error: str | None = None,
                      pending: dict | None = None, redactions: int | None = None) -> dict:
     """End a run of the router and, with `pending` (kind `plan` or `question`), open it on the request, all or
-    nothing. The request stays `requested`. Returns {"run_id", "request_id", "pending_id" or None}."""
+    nothing. The request stays `requested`. A run made with reroute opens an `acceptance` instead (payload["what"]
+    `subtasks` or `deliveries`), on its `planned` or `done` request, whose state does not change. Returns {"run_id",
+    "request_id", "pending_id" or None}."""
     if status not in ("ok", "failed") or (status == "failed") != (failure is not None):
         raise StoreError("status is ok, or failed with the kind of failure", EXIT_USAGE)
     if failure is not None and failure not in RUN_FAILURES:
         raise StoreError(f"failure must be one of {', '.join(RUN_FAILURES)}", EXIT_USAGE)
     if ending is not None and ending not in RUN_ENDINGS:
         raise StoreError(f"ending must be one of {', '.join(RUN_ENDINGS)}", EXIT_USAGE)
-    if pending is not None and (not isinstance(pending, dict) or pending.get("kind") not in ("plan", "question")):
-        raise StoreError("a router run opens a plan or a question", EXIT_USAGE)
+    if pending is not None and (not isinstance(pending, dict) or pending.get("kind") not in ("plan", "question", "acceptance")):
+        raise StoreError("a router run opens a plan, a question or an acceptance", EXIT_USAGE)
+    if pending is not None and pending["kind"] == "acceptance" and \
+            (pending.get("payload") or {}).get("what") not in ACCEPTANCE_WHATS:
+        raise StoreError(f"an acceptance a router run opens says what it accepts: {', '.join(ACCEPTANCE_WHATS)}", EXIT_USAGE)
     if pending is not None and status != "ok":
         raise StoreError("a failed run opens no pending decision", EXIT_USAGE)
     item = None if pending is None else _pending_item(pending)
@@ -1582,7 +1596,8 @@ def route_run_finish(conn: sqlite3.Connection, run_id: int, *, status: str, fail
              run_dir, error, redactions, run_id))
         pending_id = None
         if item is not None:
-            if request["state"] != "requested":
+            wanted = REROUTE_STATES if item[0] == "acceptance" else ("requested",)
+            if request["state"] not in wanted:
                 raise StoreError(f"request {request['id']} is {request['state']}: the router's result is not recorded")
             pending_id = conn.execute(
                 "INSERT INTO pending_decisions (task_id, run_id, kind, title, body, payload, payload_sha256, "
@@ -1975,7 +1990,6 @@ def effect_done(conn: sqlite3.Connection, pending_id: int, approval_id: int, *, 
 
 MESSAGE_ROLES = ("user", "assistant")
 MESSAGES_LIMIT = (50, 1, 500)  # default, min, max
-ACCEPTANCE_WHATS = ("subtasks", "deliveries")  # payload["what"] of an acceptance a stage-6 operation opens
 
 
 def message_add(conn: sqlite3.Connection, *, conversation: str, role: str, text: str, task_id: int | None = None,

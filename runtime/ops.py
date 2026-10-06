@@ -67,6 +67,15 @@ Operations of stage 6:
   set_mode(project, agent, mode)   set one area agent's autonomy mode in runtime.json (runtime/autonomy.py, the five
                                    modes); the person then accepts the new hash. accept_config rewrites the state
                                    file's Checkpoints line, a generated copy of the most careful enabled agent's mode
+  route(project, request_id)       a request whose lines starting with "- " list several deliveries gets one router
+                                   run per delivery and one plan of them all, chained in the order listed
+                                   (runtime/plan.py, combine); a route to the brief skill plans one brief task, and
+                                   the delivery is routed again after the brief is released; every task names its
+                                   area agent
+  release(project, pending_id)     also starts what a release starts: the brief's delivery routed again (its tasks
+                                   wait in an acceptance), and, when the released task returned the product backlog,
+                                   its todo tasks as sub-tasks inside the approved plan's limits (the others wait in
+                                   an acceptance)
 
 Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run whose copy holds versioned files
 starts only when the project's tracked files have no uncommitted change, from the project's files plus the newest
@@ -1053,15 +1062,28 @@ def answer(project: str, pending_id: int, text: str, with_comments: bool = False
 
 def release(project: str, pending_id: int) -> dict:
     """Release a delivery (a pending decision of kind review). The task is done; the tasks that depended on it
-    become ready. The delivery stays a draft: releasing is not approving."""
+    become ready. The delivery stays a draft: releasing is not approving. What a release starts (stage 6,
+    _after_release) follows in the same call: the brief's delivery routed again (one run of the router, holding the
+    run lock, so the release is refused while another run is in progress), the backlog's sub-tasks; its result is
+    under "after"."""
     ctx = context(project)
+    return _release(ctx, pending_id, by="user")
+
+
+def _release(ctx: dict, pending_id: int, by: str) -> dict:
+    """pending_resolve(released) and then _after_release, for the person (by "user") and for a mode ("mode:<mode>")."""
     item = _stored(ctx, ctx["store"].pending_get, pending_id)
     made = (item.get("payload") or {}).get("changeset") or {}
     if item["kind"] == "review" and made.get("blocked"):
         refused = "; ".join(f"{r['path'] or 'the whole set'}: {r['reason']}" for r in made.get("refused") or [])
         raise OpsError(f"pending decision {pending_id}: its change set is blocked ({refused}): answer with what to change, "
                        "or cancel the request", 1)
-    return _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="released", by="user")
+    task = _stored(ctx, ctx["store"].task_get, item["task_id"])
+    lock = _run_lock(ctx["cfg"]) if item["kind"] == "review" and _brief_delivery(ctx, task) else contextlib.nullcontext()
+    with lock:
+        out = _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="released", by=by)
+        after = _after_release(ctx, item)
+    return {**out, "after": after} if after else out
 
 
 def retry(project: str, task_id: int) -> dict:
@@ -1374,6 +1396,13 @@ def progress(project: str, since: str | None = None) -> dict:
 # --- stage 3: the route, the plan, its approval ------------------------------------------------------------------
 
 
+def _with_agents(cfg: dict, tasks: list) -> list:
+    """The tasks of a plan the person named, each with its area agent (plan.agent_of) when area agents are
+    configured; without them every agent is None (stages 1 to 4)."""
+    skills = plan.agent_skills(cfg, ROOT)
+    return [dict(t, agent=plan.agent_of(t["skill"], skills) if skills else None) for t in tasks]
+
+
 def _plan_pending(ctx: dict, request: dict, tasks: list, route_read, source: str, flow) -> dict:
     """The pending decision of kind `plan` for these tasks: plan.build with the limits of the gate file and the past
     runs of the plan's skills in this store."""
@@ -1406,20 +1435,30 @@ def route(project: str, request_id: int, flow: str | None = None) -> dict:
         if flow is not None:
             try:
                 loaded = flow_files.load(flow, ROOT)
-                tasks = plan.from_flow(loaded, ROOT, plan.pack_skills(ctx["cfg"], ROOT))
+                tasks = _with_agents(ctx["cfg"], plan.from_flow(loaded, ROOT, plan.pack_skills(ctx["cfg"], ROOT)))
                 decision = _plan_pending(ctx, request, tasks, None, "named", loaded["flow"])
             except flow_files.FlowError as e:
                 raise OpsError(str(e), 2) from None
-            except (plan.PlanError, lab.LabError) as e:
+            except (plan.PlanError, lab.LabError, ValueError) as e:
                 raise OpsError(f"no plan can be built: {e}", 1) from None
             opened = _stored(ctx, store.plan_open, request_id, title=decision["title"], body=decision["body"],
                              payload=decision["payload"])
             return {"routed": True, "pending_id": opened["pending_id"], "source": "named", "flow": loaded["flow"],
                     "cancelled": opened["cancelled"], "recovered": recovered["tasks"]}
+        try:
+            parts = plan.split(request["text"])
+        except ValueError as e:
+            raise OpsError(str(e), 2) from None
+        if len(parts["items"]) > 1:
+            return {**_route_deliveries(ctx, request, parts), "recovered": recovered["tasks"]}
         return {**_route_run(ctx, request), "recovered": recovered["tasks"]}
 
 
-def _route_run(ctx: dict, request: dict) -> dict:
+def _router_call(ctx: dict, request: dict, text: str, *, reroute: bool = False) -> dict:
+    """One run of the router skill on a request, asked only for the route, with text as the request's words. Returns
+    {"out", "failed"} and, for a run that did not fail, "response", "body", "finish" (the arguments of
+    route_run_finish), "common" (the payload keys every decision of the run carries) and "read" (router.read_route).
+    A failed run is finished here; a run that did not fail is finished by the caller, with its decision."""
     cfg, store, skill = ctx["cfg"], ctx["store"], router.ROUTER_SKILL
     try:
         meta = skill_meta.declared(os.path.join(ROOT, "skills", skill))
@@ -1430,7 +1469,7 @@ def _route_run(ctx: dict, request: dict) -> dict:
         raise OpsError(f"the router ({skill}) could not start: {e}", 1) from None
     run_id = _stored(ctx, store.route_run_start, request["id"], skill=skill, model=routing["model"],
                      adapter=routing["adapter"], skill_version=identity["version"],
-                     skill_sha256=identity["content_sha256"], web=False)["run_id"]
+                     skill_sha256=identity["content_sha256"], web=False, reroute=reroute)["run_id"]
     dest = os.path.join(cfg["data_dir"], RUNS_DIR, str(run_id))
     out = {"routed": False, "request": request["id"], "source": "router", "run_id": run_id, "run_dir": dest,
            "status": "failed", "ending": None, "failure": None, "pending_id": None, "kind": None, "kept": [],
@@ -1440,7 +1479,7 @@ def _route_run(ctx: dict, request: dict) -> dict:
         _stored(ctx, store.route_run_finish, run_id, status="failed", failure=kind, attempts=attempts,
                 image_digest=digest, run_dir=dest, error=_note(reason), redactions=redactions)
         out["failure"] = {"kind": kind, "reason": _note(reason)}
-        return out
+        return {"out": out, "failed": True}
 
     out["use"] = _use_start(ctx, run_id, skill, routing)
     prepared_dir = os.path.join(cfg["data_dir"], PREPARED_DIR, str(run_id))
@@ -1452,9 +1491,9 @@ def _route_run(ctx: dict, request: dict) -> dict:
             return fail("internal", f"the copy could not be built: {e}")
         out["left_out"] = entered["left_out"]
         out["entered"] = {"kind": entered["kind"], "agents_md": entered["agents_md"], "files": len(entered["files"])}
-        answered = [p for p in _stored(ctx, store.pending_list, "resolved", request["id"])
-                    if p["kind"] == "question" and p["resolution"] == "answered"]
-        prompt = task_prompt(request["text"], router.ROUTE_TASK_TEXT, answered)
+        answered = [] if reroute else [p for p in _stored(ctx, store.pending_list, "resolved", request["id"])
+                                       if p["kind"] == "question" and p["resolution"] == "answered"]
+        prompt = task_prompt(text, router.ROUTE_TASK_TEXT, answered)
         with lab.session(), _key_in_environment(routing, key):
             result = lab.run_skill(skill, prompt, entered["files"], dest, web=False, tier=routing["tier"])
     except lab.LabError as e:
@@ -1477,7 +1516,6 @@ def _route_run(ctx: dict, request: dict) -> dict:
                    if path_rule.classify(rel, facts) != "ignored"]
     body, masked = workcopy.masked_reply(result["response"])
     body = body.encode("utf-8")[:store.BODY_MAX].decode("utf-8", errors="ignore")
-    read = router.read_route(result["response"])
     loaded = timing.get("skills_loaded")
     number = lambda key, kind: timing.get(key) if isinstance(timing.get(key), kind) and not isinstance(timing.get(key), bool) else None
     finish = dict(status="ok", attempts=counts["attempts"], cost_usd=number("cost_usd", (int, float)),
@@ -1486,24 +1524,60 @@ def _route_run(ctx: dict, request: dict) -> dict:
                   image_digest=result["image_digest"], run_dir=dest, redactions=_count(counts.get("redactions")))
     common = {"run_dir": dest, "response_file": os.path.join(result["outputs"], "response.md"), "kept": out["kept"],
               "routing": routing, "use": out["use"], "body_masked": masked}
+    return {"out": out, "failed": False, "response": result["response"], "body": body, "finish": finish,
+            "common": common, "read": router.read_route(result["response"])}
+
+
+def _checked(ctx: dict, read: dict) -> dict:
+    """read_route() of a reply with "checked": router.check_route() against the flow files and the pack in scope."""
+    return dict(read, checked=router.check_route(read, flow_files.names(ROOT), plan.pack_skills(ctx["cfg"], ROOT)))
+
+
+def _combined(ctx: dict, request: dict, routed: list) -> dict:
+    """plan.combine for these routed deliveries, with the flow files they name, the agents' packs, the gate file's
+    limits and the past runs of their skills. Raises plan.PlanError, ValueError, flow_files.FlowError."""
+    cfg = ctx["cfg"]
+    flows = {}
+    for entry in routed:
+        flow = ((entry.get("route") or {}).get("checked") or {}).get("flow")
+        if flow and flow not in flows:
+            flows[flow] = flow_files.load(flow, ROOT)
+    reference = lab.reference("strong")
+    limits = {"one_task_at_a_time": True, "timeout_seconds": reference["timeout_seconds"],
+              "retries": reference["retries"]}
+    skills = plan.agent_skills(cfg, ROOT)
+    pack = plan.pack_skills(cfg, ROOT)
+    out = plan.combine(request, routed, flows, skills, ROOT, pack=pack, limits=limits, past=[])
+    past = []
+    for skill in dict.fromkeys(t["skill"] for t in out["tasks"]):
+        past += _stored(ctx, ctx["store"].task_runs_of_skill, skill)
+    return plan.combine(request, routed, flows, skills, ROOT, pack=pack, limits=limits, past=past) if past else out
+
+
+def _route_run(ctx: dict, request: dict) -> dict:
+    """One run of the router on a request of one delivery (stage 3's behaviour): a valid route becomes a plan (through
+    plan.combine), a reply that asks a question, anything else a question that names the flow command."""
+    store = ctx["store"]
+    call = _router_call(ctx, request, request["text"])
+    out = call["out"]
+    if call["failed"]:
+        return out
+    read, body, finish, common = call["read"], call["body"], call["finish"], call["common"]
     why = read.get("why")
     if read["kind"] == "route":
+        decision = None
         try:
-            checked = router.check_route(read, flow_files.names(ROOT), plan.pack_skills(cfg, ROOT))
-            if checked["ok"] and "flow" in checked:
-                loaded_flow = flow_files.load(checked["flow"], ROOT)
-                tasks = plan.from_flow(loaded_flow, ROOT, plan.pack_skills(cfg, ROOT))
-                decision = _plan_pending(ctx, request, tasks, read, "router", loaded_flow["flow"])
-            elif checked["ok"]:
-                tasks = plan.from_skill(checked["skill"], request["title"], ROOT)
-                decision = _plan_pending(ctx, request, tasks, read, "router", None)
+            route_read = _checked(ctx, read)
+            if route_read["checked"]["ok"]:
+                built = _combined(ctx, request, [{"item": request["text"], "route": route_read, "reply": body}])["plan"]
+                decision = {"kind": "plan", **built}
             else:
-                decision, why = None, checked["why"]
-        except (flow_files.FlowError, plan.PlanError) as e:
+                why = route_read["checked"]["why"]
+        except (flow_files.FlowError, plan.PlanError, ValueError) as e:
             decision, why = None, f"no plan can be built from the route: {e}"
         if decision is not None:
             decision["payload"] = {**decision["payload"], **common}
-            done = _stored(ctx, store.route_run_finish, run_id, ending="done", pending=decision, **finish)
+            done = _stored(ctx, store.route_run_finish, out["run_id"], ending="done", pending=decision, **finish)
             out.update(status="ok", ending="done", routed=True, kind="plan", pending_id=done["pending_id"])
             return out
     if read["kind"] == "question":
@@ -1511,15 +1585,231 @@ def _route_run(ctx: dict, request: dict) -> dict:
                     "payload": {"ending": "question", **common}}
         ending = "question"
     else:
-        note = (f"\n\nName the flow with: route --request {request['id']} --flow <name>; or answer, and the router "
-                f"runs again.")
-        decision = {"kind": "question", "title": "The route was not recognised",
-                    "body": body.encode("utf-8")[:store.BODY_MAX - len(note.encode("utf-8"))].decode("utf-8", errors="ignore") + note,
-                    "payload": {"ending": "unclassified", "why": why, **common}}
+        decision = _not_recognised(store, request, body, why, common)
         ending = "unclassified"
-    done = _stored(ctx, store.route_run_finish, run_id, ending=ending, pending=decision, **finish)
+    done = _stored(ctx, store.route_run_finish, out["run_id"], ending=ending, pending=decision, **finish)
     out.update(status="ok", ending=ending, kind="question", pending_id=done["pending_id"])
     return out
+
+
+def _not_recognised(store, request: dict, body: str, why, common: dict) -> dict:
+    note = (f"\n\nName the flow with: route --request {request['id']} --flow <name>; or answer, and the router "
+            f"runs again.")
+    return {"kind": "question", "title": "The route was not recognised",
+            "body": body.encode("utf-8")[:store.BODY_MAX - len(note.encode("utf-8"))].decode("utf-8", errors="ignore") + note,
+            "payload": {"ending": "unclassified", "why": why, **common}}
+
+
+def _item_text(preamble: str, item: str) -> str:
+    return f"{preamble}\n\n{item}" if preamble else item
+
+
+def _route_deliveries(ctx: dict, request: dict, parts: dict) -> dict:
+    """A request that lists several deliveries (decision P3): one router run per item, each with the text
+    "<preamble>\n\n<item>"; then one plan of every routed delivery, chained in the order listed (plan.combine),
+    opened with the last run. An item whose reply asks, names no valid route or cannot be planned goes to the plan's
+    "unrouted" with the whole reply. When no item was routed, the last run opens one question with every reply."""
+    store = ctx["store"]
+    routed, runs, last = [], [], None
+    items = parts["items"]
+    for k, item in enumerate(items, 1):
+        call = _router_call(ctx, request, _item_text(parts["preamble"], item))
+        if call["failed"]:
+            return {**call["out"], "deliveries": len(items), "runs": runs + [call["out"]["run_id"]]}
+        read = call["read"]
+        entry = {"item": item, "route": None, "reply": call["body"]}
+        if read["kind"] == "route":
+            entry["route"] = _checked(ctx, read)
+            ending = "done" if entry["route"]["checked"]["ok"] else "unclassified"
+        else:
+            entry["route"] = None if read["kind"] == "question" else read
+            ending = "question" if read["kind"] == "question" else "unclassified"
+        routed.append(entry)
+        runs.append(call["out"]["run_id"])
+        if k < len(items):
+            _stored(ctx, store.route_run_finish, call["out"]["run_id"], ending=ending, **call["finish"])
+        else:
+            last = (call, ending)
+    call, ending = last
+    out = call["out"]
+    try:
+        combined = _combined(ctx, request, routed)
+        why = None
+    except (flow_files.FlowError, plan.PlanError, ValueError) as e:
+        combined, why = None, f"no plan can be built from the routes: {e}"
+    if combined is not None and combined["plan"] is not None:
+        decision = {"kind": "plan", **combined["plan"]}
+        decision["payload"] = {**decision["payload"], **call["common"], "router_runs": runs}
+        kind = "plan"
+    else:
+        replies = "\n\n".join(f"--- delivery {n}: {e['item']} ---\n{e['reply'].rstrip()}" for n, e in enumerate(routed, 1))
+        decision = _not_recognised(store, request, (why or "No delivery of the request was routed.") + "\n\n" + replies,
+                                   why or "no delivery was routed", {**call["common"], "router_runs": runs})
+        decision["title"] = "No delivery was routed"
+        kind = "question"
+    done = _stored(ctx, store.route_run_finish, out["run_id"], ending=ending, pending=decision, **call["finish"])
+    out.update(status="ok", ending=ending, routed=kind == "plan", kind=kind, pending_id=done["pending_id"],
+               deliveries=len(items), runs=runs,
+               unrouted=len(combined["unrouted"]) if combined is not None else len(items))
+    return out
+
+
+# --- stage 6: what follows a release: the brief's delivery routed again, the backlog's sub-tasks ------------------
+
+
+def _approved_plan(ctx: dict, request_id: int):
+    """The payload of the request's approved `plan` pending decision (the newest), or None: the one source of the
+    plan's deliveries and limits after its approval."""
+    found = [p for p in _stored(ctx, ctx["store"].pending_list, "resolved", request_id)
+             if p["kind"] == "plan" and p["resolution"] == "approved"]
+    return found[-1]["payload"] if found else None
+
+
+def _brief_delivery(ctx: dict, task: dict):
+    """(k, delivery, plan payload) when task is the brief after which a delivery of its approved plan is routed again,
+    else None."""
+    if task.get("parent_id") is None:
+        return None
+    approved = _approved_plan(ctx, task["parent_id"]) or {}
+    for k, delivery in enumerate(approved.get("deliveries") or [], 1):
+        if delivery.get("reroute_after") and delivery["reroute_after"] == task["key"]:
+            return k, delivery, approved
+    return None
+
+
+def _after_release(ctx: dict, item: dict) -> dict:
+    """What a release of a review starts, by the person or by a mode (WP-6.5): (a) the brief's delivery routed again,
+    with the brief's path from the files the run returned (never from the reply); (b) the backlog's sub-tasks, when the
+    task's skill owns the product backlog and the run returned it. Returns {"reroute": ..., "subtasks": ...}, each only
+    when it applied. The caller holds the run lock when (a) applies."""
+    out = {}
+    if item["kind"] != "review":
+        return out
+    task = _stored(ctx, ctx["store"].task_get, item["task_id"])
+    returned = [r.get("path") for r in (item.get("payload") or {}).get("returned") or [] if isinstance(r, dict)]
+    found = _brief_delivery(ctx, task)
+    if found is not None:
+        out["reroute"] = _reroute(ctx, task, returned, *found)
+    if task.get("skill") and task["skill"] == plan.owner_of(plan.BACKLOG, ROOT) and plan.BACKLOG in returned:
+        out["subtasks"] = _backlog_subtasks(ctx, task)
+    return out
+
+
+def _reroute(ctx: dict, task: dict, returned: list, k: int, delivery: dict, approved: dict) -> dict:
+    """Route delivery k again, once, with the line "The brief is at <path>." added. A route to a flow or a skill opens
+    an `acceptance` of kind subtasks with its tasks (keys d<k>-..., the first ones after the brief); a second route to
+    the brief skill, a reply that asks or names no valid route, a missing brief or a failed run opens an `acceptance`
+    of kind deliveries that shows the reason and the router's whole reply: the delivery reaches the person, never a
+    third run."""
+    store = ctx["store"]
+    request = _stored(ctx, store.task_get, task["parent_id"])
+    briefs = [rel for rel in returned if rel and rel.startswith(plan.BRIEFS_DIR)]
+    if not briefs:
+        return _not_rerouted(ctx, request, k, delivery, "the brief task returned no file under " + plan.BRIEFS_DIR, "")
+    parts = plan.split(request["text"])
+    text = _item_text(parts["preamble"] if len(parts["items"]) > 1 else "", delivery["item"]) + \
+        f"\n\nThe brief is at {briefs[0]}."
+    call = _router_call(ctx, request, text, reroute=True)
+    if call["failed"]:
+        return _not_rerouted(ctx, request, k, delivery, f"the router's run failed: {call['out']['failure']['reason']}",
+                             "", run_id=call["out"]["run_id"])
+    read, body = call["read"], call["body"]
+    why, tasks = None, None
+    if read["kind"] != "route":
+        why = "the router asked" if read["kind"] == "question" else read.get("why") or "no route"
+    else:
+        route_read = _checked(ctx, read)
+        checked = route_read["checked"]
+        if not checked["ok"]:
+            why = checked["why"]
+        elif checked.get("skill") == plan.BRIEF_SKILL:
+            why = "the router named the brief again: a delivery is routed again once"
+        else:
+            try:
+                flows = {checked["flow"]: flow_files.load(checked["flow"], ROOT)} if "flow" in checked else {}
+                tasks = plan.delivery_tasks(dict(route_read, title=delivery["item"][:120]), k, flows, ROOT,
+                                            plan.pack_skills(ctx["cfg"], ROOT), prefix=True)
+                skills = plan.agent_skills(ctx["cfg"], ROOT)
+                inside = {t["key"] for t in tasks}
+                for t in tasks:
+                    if not [d for d in t["depends_on"] if d in inside]:
+                        t["depends_on"] = [task["key"]] + t["depends_on"]
+                    t["agent"] = plan.agent_of(t["skill"], skills) if skills else None
+            except (flow_files.FlowError, plan.PlanError, ValueError) as e:
+                why, tasks = f"no task can be planned from the route: {e}", None
+    finish = call["finish"]
+    if tasks is None:
+        decision = _not_rerouted_decision(request, k, delivery, why, body, call["common"])
+        ending = "question" if read["kind"] == "question" else "unclassified"
+    else:
+        lines = [f"Delivery {k} ({delivery['item']}) was routed again after its brief ({briefs[0]}): {read['line']}.",
+                 "Accept to add these tasks to request " + str(request["id"]) + ":", ""]
+        lines += [f"- {t['key']}: {t['title']} ({t['skill']}, agent {t['agent'] or 'none'})" for t in tasks]
+        decision = {"kind": "acceptance", "title": f"Accept the tasks of delivery {k}, routed after its brief",
+                    "body": "\n".join(lines), "payload": {"what": "subtasks", "delivery": k, "brief": briefs[0],
+                                                          "route": read["line"], "tasks": tasks, **call["common"]}}
+        ending = "done"
+    done = _stored(ctx, store.route_run_finish, call["out"]["run_id"], ending=ending, pending=decision, **finish)
+    return {"delivery": k, "run_id": call["out"]["run_id"], "pending_id": done["pending_id"],
+            "routed": tasks is not None, "why": why}
+
+
+def _not_rerouted_decision(request: dict, k: int, delivery: dict, why: str, reply: str, common: dict) -> dict:
+    body = (f"Delivery {k} of request {request['id']} ({delivery['item']}) was not planned after its brief: {why}. "
+            "Accepting records that you read this; start a new request for this delivery when you want it.")
+    if reply:
+        body += "\n\nThe router's reply, whole:\n\n" + reply
+    return {"kind": "acceptance", "title": f"Delivery {k} was not routed after its brief",
+            "body": body, "payload": {"what": "deliveries", "delivery": k, "why": why, **common}}
+
+
+def _not_rerouted(ctx: dict, request: dict, k: int, delivery: dict, why: str, reply: str, run_id=None) -> dict:
+    decision = _not_rerouted_decision(request, k, delivery, why, reply, {})
+    opened = _stored(ctx, ctx["store"].acceptance_open, task_id=request["id"], what="deliveries",
+                     title=decision["title"], body=decision["body"], payload=decision["payload"])
+    return {"delivery": k, "run_id": run_id, "pending_id": opened["pending_id"], "routed": False, "why": why}
+
+
+def _task_script():
+    """skills/eng-implement/scripts/task.py of the checkout, loaded by path: the backlog's one parser."""
+    return _load("workbench_eng_implement_task", os.path.join(ROOT, "skills", plan.SUBTASK_SKILL, "scripts", "task.py"))
+
+
+def _backlog_subtasks(ctx: dict, task: dict) -> dict:
+    """The product backlog's todo tasks as sub-tasks of the request, within the limits of its approved plan (read from
+    that plan's payload and nowhere else): those inside are added at once (tasks_add), the others wait in one
+    `acceptance` of kind subtasks. A task the request already has is not proposed again."""
+    store, request_id = ctx["store"], task["parent_id"]
+    approved = _approved_plan(ctx, request_id) or {}
+    limits = approved.get("limits") or {}
+    try:
+        proposed = plan.backlog_tasks(os.path.join(ctx["cfg"]["project"], *plan.BACKLOG.split("/")), _task_script())
+    except ValueError as e:
+        return {"error": str(e)}
+    rows = [t for t in _stored(ctx, store.tasks_list, request_id) if t["parent_id"] is not None]
+    known = {t["key"] for t in rows if t.get("key")}
+    planned = {t.get("key") for t in approved.get("tasks") or []}
+    proposed = [p for p in proposed if p["key"] not in known]
+    if not proposed:
+        return {"created": [], "pending_id": None}
+    skills = plan.agent_skills(ctx["cfg"], ROOT)
+    for p in proposed:
+        try:
+            p["agent"] = plan.agent_of(p["skill"], skills) if skills else None
+        except ValueError:
+            p["agent"] = None  # no agent owns it: it waits, and the person can run it by hand
+    chosen = plan.subtasks(limits, len([t for t in rows if t.get("key") not in planned]), proposed, known)
+    created = _stored(ctx, store.tasks_add, request_id, chosen["create"])["tasks"] if chosen["create"] else []
+    pending_id = None
+    if chosen["ask"]:
+        lines = [f"The product backlog proposes {len(chosen['ask'])} task(s) outside the approved plan's limits "
+                 f"({limits.get('max_subtasks', 0)} sub-tasks of {', '.join(limits.get('subtask_skills') or []) or 'no skill'}):", ""]
+        lines += [f"- {t['key']}: {t['title']}" + (f" (after {', '.join(t['depends_on'])})" if t["depends_on"] else "")
+                  for t in chosen["ask"]]
+        pending_id = _stored(ctx, store.acceptance_open, task_id=request_id, what="subtasks",
+                             title=f"Accept {len(chosen['ask'])} sub-task(s) of request {request_id}",
+                             body="\n".join(lines), payload={"tasks": chosen["ask"]})["pending_id"]
+    return {"created": [t["id"] for t in created], "pending_id": pending_id}
 
 
 def approve(project: str, pending_id: int, sha256: str | None = None) -> dict:
