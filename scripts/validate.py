@@ -135,8 +135,11 @@ They say what a skill or its cases still have to change; none reads a skill's sc
   - [routing-table] every built skill is in skills/core-orchestrator/references/routing.md, and a name in
     that table is built or marked (planned), never both
   - [test-file-names] test file names are unique across the folders scripts/test_dirs.py lists
+  - [architecture-tables] every generated block of the architecture pages (docs/architecture/platform/, between
+    `<!-- generated: <table> -->` and `<!-- /generated -->`) equals what its source gives; a stale block is a
+    snapshot behind the code, a warning and never an error (fix: python3 scripts/architecture_tables.py --write)
 A rule whose file is not in the tree being validated (the class table, the layout contract, the owner-table
-script, the manifest of copies and its script, the routing table, test_dirs.py) is
+script, the architecture-tables script or the pages, the manifest of copies and its script, the routing table, test_dirs.py) is
 skipped and says so in a NOTE line on stderr, which counts as neither an error nor a warning.
 
 Options:
@@ -1070,6 +1073,23 @@ def check_contract(skills, report, root=ROOT):
                         "run python3 scripts/owner_table.py", "contract-owner-table")
 
 
+def check_architecture_tables(report, root=ROOT):
+    """[architecture-tables]: each generated block of docs/architecture/platform/ that differs from its source, or
+    that cannot be generated, is a warning (a snapshot behind the code, never an error). Reads
+    scripts/architecture_tables.py of the tree by path; a tree without it or without the pages is a note."""
+    path = os.path.join(root, "scripts", "architecture_tables.py")
+    if not os.path.isfile(path) or not os.path.isdir(os.path.join(root, "docs", "architecture", "platform")):
+        report.note("[architecture-tables] skipped: scripts/architecture_tables.py or docs/architecture/platform/ "
+                    "is not in this tree")
+        return
+    spec = importlib.util.spec_from_file_location("architecture_tables_under_validate", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    for page, name, problem in module.stale_blocks(root):
+        report.warn(page, f"the generated block {name}: {problem}; run python3 scripts/architecture_tables.py --write",
+                    "architecture-tables")
+
+
 FLOWS_HEADING = "Flows (`flow-`)"
 
 
@@ -1493,6 +1513,7 @@ def main(argv):
         check_routing(report, built)
     check_contract(skills, report)
     check_flows(skills, report)
+    check_architecture_tables(report)
     if os.path.isdir(AGENTS):
         for fn in sorted(os.listdir(AGENTS)):
             if fn.endswith(".md"):

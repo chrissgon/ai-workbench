@@ -1,0 +1,572 @@
+#!/usr/bin/env python3
+"""Generate the volatile tables of the architecture pages (docs/architecture/platform/) from the code.
+
+Usage:
+  python3 scripts/architecture_tables.py --write    # rewrite every generated block of the pages
+  python3 scripts/architecture_tables.py --check    # exit 1 and name each block that differs from its source
+  python3 scripts/architecture_tables.py --print <table>   # print one table and change nothing
+  python3 scripts/architecture_tables.py --help
+
+  --root <path>   the workbench checkout to read and write, instead of the one this script is in
+
+A page holds a generated table between the lines `<!-- generated: <table> -->` and `<!-- /generated -->`;
+nothing outside them is touched, and a block is never edited by hand. Each table has one source:
+
+  artifacts-by-owner    every outputs and updates path and its skills: the skills' frontmatters, through
+                        scripts/owner_table.py (the same rows as the table of contracts/project-layout.md)
+  provider-classes      each class of the "Verbs per class" table of providers/CONTRACT.md, its folder
+                        (providers/resolve.py), its implementations and the verbs each one declares, read from
+                        the file's text (a VERBS constant, the choices of its "verb" argument, a "--check" flag):
+                        no provider is imported or run
+  limits                the limits table of contracts/runtime.md, and the test named after each limit
+                        (test_limit_<nn>_...) found under runtime/tests/ and providers/store/tests/
+  operations            the public functions of runtime/ops.py, the first sentence of each docstring, and the
+                        verb of runtime/cli.py that calls each
+  cli-verbs             VERBS of runtime/cli.py, the flags each verb reads and the operation it calls
+  say-commands          SAY_COMMANDS of runtime/ops.py, with their line of SAY_HELP
+  dispatcher-jobs       ENTRY_VERBS and JOBS of runtime/dispatcher.py, with the usage lines of its docstring
+  store-migrations      MIGRATIONS of providers/store/sqlite.py: number, description, what each creates
+  task-runtime-tables   the tables migrations 2 and later create, with their columns
+  gate-keys             the keys of evals/eval-gate.json and the measurement version; a value is shown only
+                        when it is a number or a model or adapter id, never a text that could be a credential
+
+Every source is read as text or parsed with ast; nothing is executed but scripts/owner_table.py,
+scripts/validate.py (the frontmatter parser) and providers/resolve.py (the class-to-folder rule), which read files
+only. scripts/validate.py reports a stale block as a warning (rule architecture-tables).
+
+output: --print writes the table on stdout; --check names each stale block on stderr.
+exit codes: 0 ok (written, or every block current), 1 --check found a stale block, 2 usage error, an unknown
+table name in a page, or a source that cannot be read.
+Standard library only.
+"""
+import ast
+import glob
+import importlib.util
+import json
+import os
+import re
+import sys
+
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PAGES = os.path.join("docs", "architecture", "platform")
+BLOCK_RE = re.compile(r"(<!-- generated: ([a-z0-9-]+) -->\n)(.*?)(<!-- /generated -->)", re.S)
+NONE = "-"
+NO_TEST = "no test named"
+LIMIT_TEST_DIRS = ("runtime/tests", "providers/store/tests")
+LIMIT_TEST_RE = re.compile(r"^def (test_limit_(\d+)_\w+)\(", re.M)
+SHOWN_TEXT_KEYS = re.compile(r"(_model|_harness|^grader)$")
+
+
+class SourceError(Exception):
+    """A source of a table cannot be read."""
+
+
+# --- helpers -----------------------------------------------------------------------------------------------------
+
+def _read(root, rel):
+    path = os.path.join(root, rel)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except OSError as e:
+        raise SourceError(f"{rel}: {e.strerror}") from None
+
+
+def _tree(root, rel):
+    try:
+        return ast.parse(_read(root, rel))
+    except SyntaxError as e:
+        raise SourceError(f"{rel}: {e}") from None
+
+
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _constant(tree, name):
+    """The literal value of a top-level assignment `name = <literal>`, or None."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == name for t in node.targets):
+            try:
+                return ast.literal_eval(node.value)
+            except ValueError:
+                return None
+    return None
+
+
+def _cell(text):
+    return re.sub(r"(?<!\\)\|", r"\\|", " ".join(str(text).split()))
+
+
+def _code(text):
+    return f"`{text}`"
+
+
+def _first_sentence(doc):
+    """The docstring's first sentence, on one line: up to the first period followed by a space or the end."""
+    text = " ".join((doc or "").split())
+    m = re.match(r"(.+?\.)(\s|$)", text)
+    return m.group(1) if m else text
+
+
+def _table(header, rows):
+    lines = ["| " + " | ".join(header) + " |", "|" + "---|" * len(header)]
+    lines += ["| " + " | ".join(_cell(c) for c in row) + " |" for row in rows]
+    return "\n".join(lines) + "\n"
+
+
+def _markdown_rows(text, heading, first_header):
+    """The rows (lists of cells) of the first table whose header starts with first_header under the heading."""
+    start = text.find(heading)
+    if start == -1:
+        raise SourceError(f"no heading {heading!r}")
+    m = re.search(r"^\|\s*" + re.escape(first_header) + r"\s*\|.*$", text[start:], re.M)
+    if not m:
+        raise SourceError(f"no table starting with {first_header!r} under {heading!r}")
+    rows = []
+    for line in text[start + m.end():].lstrip("\n").split("\n"):
+        if not line.startswith("|"):
+            break
+        cells = [c.strip() for c in re.split(r"(?<!\\)\|", line.strip().strip("|"))]
+        if not re.fullmatch(r":?-+:?", cells[0]):
+            rows.append(cells)
+    return rows
+
+
+# --- the tables ----------------------------------------------------------------------------------------------------
+
+def artifacts_by_owner(root):
+    here = os.path.dirname(os.path.abspath(__file__))
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import validate  # noqa: E402  the one frontmatter parser
+    owner_table = _load("owner_table_for_architecture", os.path.join(here, "owner_table.py"))
+    return owner_table.table(validate.declarations(root))
+
+
+def verbs_of(path):
+    """(has --check, [verbs]) of one provider implementation, read from its text: a top-level VERBS constant (dict
+    keys or a sequence), else the choices of an add_argument("verb", choices=...). Nothing is imported."""
+    with open(path, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    check, verbs = False, []
+    for node in tree.body:  # VERBS = {"name": cmd_name, ...} or a sequence of names
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "VERBS" for t in node.targets):
+            if isinstance(node.value, ast.Dict):
+                verbs = [k.value for k in node.value.keys if isinstance(k, ast.Constant)]
+            elif isinstance(node.value, (ast.Tuple, ast.List)):
+                verbs = [e.value for e in node.value.elts if isinstance(e, ast.Constant)]
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and node.value == "--check":
+            check = True
+        if not verbs and isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "add_argument" \
+                and node.args and isinstance(node.args[0], ast.Constant) and node.args[0].value == "verb":
+            for kw in node.keywords:
+                if kw.arg == "choices":
+                    try:
+                        verbs = [str(v) for v in ast.literal_eval(kw.value)]
+                    except ValueError:
+                        pass
+    return check, verbs
+
+
+def provider_classes(root):
+    text = _read(root, "providers/CONTRACT.md")
+    classes = []
+    for row in _markdown_rows(text, "## Verbs per class", "Class"):
+        classes += re.findall(r"`([^`]+)`", row[0])
+    resolve = _load("resolve_for_architecture", os.path.join(root, "providers", "resolve.py"))
+    rows = []
+    for cls in classes:
+        folder = resolve.folder(cls)
+        names = resolve.implementations_in(folder, root=root)
+        if not names:
+            rows.append([_code(cls), _code(f"{folder}/"), "none ships", NONE])
+            continue
+        for name in names:
+            check, verbs = verbs_of(os.path.join(root, "providers", folder, name + ".py"))
+            shown = (["--check"] if check else []) + verbs
+            impl = _code(f"{name}.py")
+            if resolve.PARAMETER_ROLES and cls.split(":")[0] in resolve.PARAMETER_ROLES:
+                platforms = resolve.served_platforms(cls, name, root=root)
+                impl += f" (PLATFORMS: {', '.join(platforms) or 'none'})"
+            rows.append([_code(cls), _code(f"{folder}/"), impl, ", ".join(_code(v) for v in shown) or NONE])
+    return _table(["Class", "Folder", "Implementation", "Verbs"], rows)
+
+
+def _limit_tests(root):
+    found = {}
+    for folder in LIMIT_TEST_DIRS:
+        for path in sorted(glob.glob(os.path.join(root, folder, "test_*.py"))):
+            with open(path, encoding="utf-8") as f:
+                for m in LIMIT_TEST_RE.finditer(f.read()):
+                    found.setdefault(int(m.group(2)), []).append((os.path.relpath(path, root), m.group(1)))
+    return found
+
+
+def limits(root):
+    rows_in = _markdown_rows(_read(root, "contracts/runtime.md"), "## The limits", "#")
+    tests = _limit_tests(root)
+    rows = []
+    for cells in rows_in:
+        m = re.fullmatch(r"L(\d+)", cells[0])
+        if not m:
+            continue
+        named = tests.get(int(m.group(1)), [])
+        cell = "; ".join(f"`{path}`, `{name}`" for path, name in named) or NO_TEST
+        rows.append([cells[0], cells[1], cells[2] if len(cells) > 2 else NONE, cell])
+    return _table(["#", "Limit", "Built by", "Test named after it"], rows)
+
+
+def _cli_map(root):
+    """{verb: (operation, [flags])} read from runtime/cli.py's run(): each `if a.verb == "<verb>":` block, the
+    ops.<operation> it calls and the flags it reads (need(a, "--x"), text_of(a), a.<attr>); the last return of
+    run() is the verb no block names."""
+    tree = _tree(root, "runtime/cli.py")
+    verbs = list(_constant(tree, "VERBS") or ())
+    run = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run"), None)
+    if run is None:
+        raise SourceError("runtime/cli.py: no function run")
+    found = {}
+
+    def scan(nodes):
+        op, flags = None, []
+
+        class V(ast.NodeVisitor):
+            def visit_Call(self, node):
+                nonlocal op
+                f = node.func
+                if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "ops" and op is None:
+                    op = f.attr
+                if isinstance(f, ast.Name) and f.id == "need" and len(node.args) > 1 \
+                        and isinstance(node.args[1], ast.Constant):
+                    flags.append(node.args[1].value)
+                if isinstance(f, ast.Name) and f.id == "text_of":
+                    flags.append("--text | --text-file")
+                self.generic_visit(node)
+
+            def visit_Attribute(self, node):
+                if isinstance(node.value, ast.Name) and node.value.id == "a" and node.attr not in ("verb", "project"):
+                    flags.append(f"[--{node.attr.replace('_', '-')}]")
+                self.generic_visit(node)
+        for n in nodes:
+            V().visit(n)
+        seen = []
+        for f in flags:
+            if f not in seen and f"[{f}]" not in seen and not (f.startswith("[") and f[1:-1] in seen):
+                seen.append(f)
+        return op, seen
+
+    last = None
+    for node in run.body:
+        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) \
+                and isinstance(node.test.left, ast.Attribute) and node.test.left.attr == "verb" \
+                and isinstance(node.test.comparators[0], ast.Constant):
+            found[node.test.comparators[0].value] = scan(node.body)
+        elif isinstance(node, ast.Return):
+            last = scan([node])
+    for verb in verbs:
+        if verb not in found and last is not None:
+            found[verb] = last
+            last = None
+    return verbs, found
+
+
+def cli_verbs(root):
+    verbs, found = _cli_map(root)
+    rows = []
+    for verb in verbs:
+        op, flags = found.get(verb, (None, []))
+        rows.append([_code(verb), " ".join(_code(f) for f in flags) or NONE, _code(op) if op else NONE])
+    return _table(["Verb", "Flags it reads", "Operation"], rows)
+
+
+def operations(root):
+    tree = _tree(root, "runtime/ops.py")
+    verbs, found = _cli_map(root)
+    verb_of = {}
+    for verb in verbs:
+        op = found.get(verb, (None, []))[0]
+        if op:
+            verb_of.setdefault(op, []).append(verb)
+    rows = []
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
+            rows.append([_code(node.name), ", ".join(_code(v) for v in verb_of.get(node.name, [])) or NONE,
+                         _first_sentence(ast.get_docstring(node)) or NONE])
+    return _table(["Operation", "Verb of `cli.py`", "What it does (first sentence of its docstring)"], rows)
+
+
+def say_commands(root):
+    tree = _tree(root, "runtime/ops.py")
+    commands, help_text = _constant(tree, "SAY_COMMANDS") or (), _constant(tree, "SAY_HELP") or ""
+    lines = help_text.splitlines()
+    rows = []
+    for cmd in commands:
+        line = next((l for l in lines if l == cmd or l.startswith(cmd + " ")), None)
+        if line is None:
+            rows.append([_code(cmd), "not in SAY_HELP"])
+            continue
+        parts = re.split(r"\s{2,}", line.strip(), maxsplit=1)
+        rows.append([_code(parts[0]), parts[1] if len(parts) > 1 else NONE])
+    return _table(["Command", "What it does (its line of `SAY_HELP`)"], rows)
+
+
+def dispatcher_jobs(root):
+    tree = _tree(root, "runtime/dispatcher.py")
+    verbs, jobs = _constant(tree, "ENTRY_VERBS") or (), _constant(tree, "JOBS") or {}
+    doc = ast.get_docstring(tree) or ""
+    usage = {}
+    for line in doc.splitlines():
+        m = re.match(r"\s*\S*python3 runtime/dispatcher\.py\s+(\S+)\s*(.*)$", line)
+        if m and m.group(1) in verbs:
+            parts = re.split(r"\s{2,}", m.group(2).strip(), maxsplit=1)
+            usage.setdefault(m.group(1), (parts[0], parts[1] if len(parts) > 1 else ""))
+    rows = []
+    for verb in verbs:
+        flags, what = usage.get(verb, ("", ""))
+        minutes = jobs.get(verb)
+        rows.append([_code(verb), _code(flags) if flags else NONE, what or NONE,
+                     f"{minutes} minutes" if minutes is not None else NONE])
+    return _table(["Verb", "Flags", "What it does (the module's docstring)", "Time limit (`JOBS`)"], rows)
+
+
+def _migrations(root):
+    tree = _tree(root, "providers/store/sqlite.py")
+    found = _constant(tree, "MIGRATIONS")
+    if not isinstance(found, dict):
+        raise SourceError("providers/store/sqlite.py: MIGRATIONS is not a literal dict")
+    return found
+
+
+def _split_top(text):
+    parts, depth, cur = [], 0, ""
+    for ch in text:
+        depth += ch == "("
+        depth -= ch == ")"
+        if ch == "," and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    return parts + [cur]
+
+
+def _created_tables(statement):
+    m = re.match(r"\s*CREATE TABLE\s+(\w+)\s*\((.*)\)\s*$", statement, re.S)
+    if not m:
+        return None
+    columns = []
+    for part in _split_top(m.group(2)):
+        word = part.split()[0] if part.split() else ""
+        if word.upper() not in ("PRIMARY", "UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT", ""):
+            columns.append(word)
+    return m.group(1), columns
+
+
+def store_migrations(root):
+    migrations = _migrations(root)
+    rows = []
+    for number in sorted(migrations):
+        description, statements = migrations[number]
+        created, added, triggers = [], [], []
+        for s in statements:
+            table = _created_tables(s)
+            if table:
+                created.append(_code(table[0]))
+            m = re.match(r"\s*ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)", s)
+            if m:
+                added.append(_code(f"{m.group(1)}.{m.group(2)}"))
+            m = re.match(r"\s*CREATE TRIGGER\s+(\w+)", s)
+            if m:
+                triggers.append(_code(m.group(1)))
+        rows.append([str(number), description, ", ".join(created) or NONE, ", ".join(added) or NONE,
+                     ", ".join(triggers) or NONE])
+    head = f"Schema version {max(migrations)}: the highest migration of `MIGRATIONS`.\n\n"
+    return head + _table(["Migration", "Description", "Tables created", "Columns added", "Triggers"], rows)
+
+
+def task_runtime_tables(root):
+    migrations = _migrations(root)
+    tables, order = {}, []
+    for number in sorted(migrations):
+        for s in migrations[number][1]:
+            table = _created_tables(s)
+            if table and number >= 2:
+                tables[table[0]] = (number, list(table[1]))
+                order.append(table[0])
+            m = re.match(r"\s*ALTER TABLE\s+(\w+)\s+ADD COLUMN\s+(\w+)", s)
+            if m and m.group(1) in tables:
+                tables[m.group(1)][1].append(f"{m.group(2)} (migration {number})")
+    rows = [[_code(name), str(tables[name][0]), ", ".join(tables[name][1])] for name in order]
+    return _table(["Table", "Created by migration", "Columns"], rows)
+
+
+def _shape(key, value):
+    if isinstance(value, bool) or isinstance(value, (int, float)):
+        return str(value)
+    if isinstance(value, str):
+        return _code(value) if SHOWN_TEXT_KEYS.search(key) else "text, not shown"
+    if isinstance(value, dict):
+        if value and all(isinstance(v, (int, float)) and not isinstance(v, bool) for v in value.values()):
+            return ", ".join(f"{_code(k)}: {v}" for k, v in value.items())
+        return f"{len(value)} keys: " + ", ".join(_code(k) for k in value)
+    if isinstance(value, list):
+        if value and all(isinstance(v, str) for v in value):
+            return f"{len(value)} name{'s' if len(value) != 1 else ''}, not shown"
+        keys = []
+        for item in value:
+            if isinstance(item, dict):
+                keys += [k for k in item if k not in keys]
+        return f"{len(value)} entr{'ies' if len(value) != 1 else 'y'}" + (f", each with {', '.join(_code(k) for k in keys)}" if keys else "")
+    return type(value).__name__
+
+
+def gate_keys(root):
+    try:
+        gate = json.loads(_read(root, "evals/eval-gate.json"))
+    except ValueError as e:
+        raise SourceError(f"evals/eval-gate.json: {e}") from None
+    head = (f"Measurement version {gate.get('measurement_version', NONE)}, measurement floor "
+            f"{gate.get('measurement_floor', NONE)}.\n\n")
+    rows = [[_code(k), _shape(k, v)] for k, v in gate.items()]
+    return head + _table(["Key", "Value, or its shape"], rows)
+
+
+TABLES = {
+    "artifacts-by-owner": artifacts_by_owner,
+    "provider-classes": provider_classes,
+    "limits": limits,
+    "operations": operations,
+    "cli-verbs": cli_verbs,
+    "say-commands": say_commands,
+    "dispatcher-jobs": dispatcher_jobs,
+    "store-migrations": store_migrations,
+    "task-runtime-tables": task_runtime_tables,
+    "gate-keys": gate_keys,
+}
+
+
+# --- the blocks ----------------------------------------------------------------------------------------------------
+
+def pages(root=ROOT):
+    """The Markdown files of the platform pages, relative to root; [] when the folder is not in the tree."""
+    folder = os.path.join(root, PAGES)
+    if not os.path.isdir(folder):
+        return []
+    return [os.path.join(PAGES, n) for n in sorted(os.listdir(folder)) if n.endswith(".md")]
+
+
+def _generated(name, root, cache):
+    """The table's Markdown, or a SourceError when its name is unknown or its source cannot be read."""
+    if name not in TABLES:
+        return SourceError("unknown table")
+    if name not in cache:
+        try:
+            cache[name] = TABLES[name](root)
+        except (SourceError, OSError, SyntaxError, ValueError) as e:
+            cache[name] = SourceError(f"source not readable: {e}")
+    return cache[name]
+
+
+def _blocks(root, cache):
+    """[(page, text, [(match, generated)])] for every page of the tree."""
+    out = []
+    for page in pages(root):
+        with open(os.path.join(root, page), encoding="utf-8") as f:
+            text = f.read()
+        out.append((page, text, [(m, _generated(m.group(2), root, cache)) for m in BLOCK_RE.finditer(text)]))
+    return out
+
+
+def stale_blocks(root=ROOT):
+    """[(page, table, problem)] for every block that differs from its source, is unknown or cannot be generated."""
+    out = []
+    for page, _, blocks in _blocks(root, {}):
+        for m, generated in blocks:
+            if isinstance(generated, SourceError):
+                out.append((page, m.group(2), str(generated)))
+            elif m.group(3) != generated:
+                out.append((page, m.group(2), "differs from its source"))
+    return out
+
+
+def write(root=ROOT):
+    """Rewrite every block; [(page, table, problem)] for the blocks that could not be generated, kept as they are."""
+    out = []
+    for page, text, blocks in _blocks(root, {}):
+        new, end = "", 0
+        for m, generated in blocks:
+            if isinstance(generated, SourceError):
+                out.append((page, m.group(2), str(generated)))
+                continue
+            new += text[end:m.start(3)] + generated
+            end = m.end(3)
+        new += text[end:]
+        if new != text:
+            with open(os.path.join(root, page), "w", encoding="utf-8") as f:
+                f.write(new)
+    return out
+
+
+def main(argv):
+    if "--help" in argv or "-h" in argv:
+        print(__doc__.strip())
+        return 0
+    root, mode, table, i = ROOT, None, None, 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("--root", "--print"):
+            if i + 1 >= len(argv):
+                print(f"error: {a} needs a value. See --help.", file=sys.stderr)
+                return 2
+            if a == "--root":
+                root = os.path.abspath(argv[i + 1])
+            else:
+                if mode is not None:
+                    print("error: give one of --write, --check and --print. See --help.", file=sys.stderr)
+                    return 2
+                mode, table = "print", argv[i + 1]
+            i += 2
+            continue
+        if a not in ("--write", "--check"):
+            print(f"error: unknown option {a!r}. See --help.", file=sys.stderr)
+            return 2
+        if mode is not None:
+            print("error: give one of --write, --check and --print. See --help.", file=sys.stderr)
+            return 2
+        mode, i = a[2:], i + 1
+    if mode is None:
+        print("error: give one of --write, --check and --print. See --help.", file=sys.stderr)
+        return 2
+    if mode == "print":
+        if table not in TABLES:
+            print(f"error: unknown table {table!r}; known: {', '.join(TABLES)}.", file=sys.stderr)
+            return 2
+        try:
+            print(TABLES[table](root), end="")
+        except SourceError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        return 0
+    if not pages(root):
+        print(f"error: {PAGES} is not in {root}.", file=sys.stderr)
+        return 2
+    if mode == "check":
+        stale = stale_blocks(root)
+        for page, name, problem in stale:
+            print(f"{page}: generated block {name}: {problem}; run python3 scripts/architecture_tables.py --write",
+                  file=sys.stderr)
+        broken = [s for s in stale if s[2] != "differs from its source"]
+        return 2 if broken else (1 if stale else 0)
+    broken = write(root)
+    for page, name, problem in broken:
+        print(f"{page}: generated block {name}: {problem}", file=sys.stderr)
+    return 2 if broken else 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))
