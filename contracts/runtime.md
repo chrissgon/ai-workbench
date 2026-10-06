@@ -166,7 +166,7 @@ The twenty limits that live in code (section B.2 of the platform plan). Each get
 | L17 | The approval lives in the approvals table; the rows in the state file are generated copies | stage 4 | stage 4 |
 | L18 | A document bound to an approval by hash is a machine file | stage 6 | stage 6 |
 | L19 | The planning agent creates no task: it returns the route, and code builds the plan | stage 3 | stage 3 |
-| L20 | The measurement files are not changed | stage 4 (for the change set) | stage 4 |
+| L20 | The measurement files are not changed | stage 4 (for the change set: the project lists them in its protected_paths) | `runtime/tests/test_protected_paths.py`, `test_a_change_to_a_protected_path_blocks_the_change_set_and_names_the_path` and `test_a_created_or_removed_protected_path_blocks_it_too` |
 
 ## What the proof covers
 
