@@ -78,12 +78,13 @@ def _resolver(root: str):
     return module
 
 
-def provider_argv(cfg: dict, root: str) -> list:
-    """The command that starts the implementation the configuration names: with this interpreter when its header
-    declares `dependencies = []`, else with `uv run`."""
+def provider_argv(cfg: dict, root: str, key: str = "task_board", cls: str = CLASS) -> list:
+    """The command that starts the implementation the configuration's object `key` names, of the class cls: with
+    this interpreter when its header declares `dependencies = []`, else with `uv run`. The documents' mirror
+    (runtime/documents.py) starts its provider with the same rules."""
     resolve = _resolver(root)
     try:
-        found = resolve.resolve(CLASS, root=root, implementation=cfg["task_board"]["provider"])
+        found = resolve.resolve(cls, root=root, implementation=cfg[key]["provider"])
     except (resolve.UnknownClass, resolve.Unresolved) as e:
         raise BoardError("not configured", str(e)) from None
     try:
@@ -96,15 +97,17 @@ def provider_argv(cfg: dict, root: str) -> list:
     return ["uv", "run", found["path"]]
 
 
-def call(cfg: dict, root: str, verb: str, args: list, timeout: int = TIMEOUT) -> dict:
-    """Run one verb of the provider with the task_board object in a temporary file of mode 0600 (deleted after),
-    and return the one JSON object it prints."""
-    argv = provider_argv(cfg, root)
-    fd, config_file = tempfile.mkstemp(prefix="board-", suffix=".json")
+def call(cfg: dict, root: str, verb: str, args: list, timeout: int = TIMEOUT, key: str = "task_board",
+         cls: str = CLASS) -> dict:
+    """Run one verb of the provider with the configuration's object `key` (task_board unless the documents' mirror
+    asks for documents) in a temporary file of mode 0600 (deleted after), and return the one JSON object it
+    prints."""
+    argv = provider_argv(cfg, root, key, cls)
+    fd, config_file = tempfile.mkstemp(prefix=key.replace("_", "-") + "-", suffix=".json")
     try:
         os.fchmod(fd, 0o600)
         with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(cfg["task_board"], f)
+            json.dump(cfg[key], f)
         words = [verb] if verb else []
         try:
             done = subprocess.run(argv + words + ["--config-file", config_file] + list(args), capture_output=True,
@@ -156,19 +159,22 @@ def payload_hash(payload: dict) -> str:
     return hashlib.sha256(json.dumps(owned, sort_keys=True).encode("utf-8")).hexdigest()
 
 
-def _bounds_problem(cfg: dict, today=None):
-    """Why a write to the board is not allowed now, or None: a provider other than local writes only until the day
-    its expires names, included (UTC)."""
-    board = cfg["task_board"]
-    if board.get("provider") == "local":
+BOUNDS_OF = {"task_board": "the task board", "documents": "the documents platform"}
+
+
+def bounds_problem(cfg: dict, today=None, key: str = "task_board"):
+    """Why a write to the platform of the configuration's object `key` (task_board or documents) is not allowed
+    now, or None: a provider other than local writes only until the day its expires names, included (UTC)."""
+    bounds = cfg[key]
+    if bounds.get("provider") == "local":
         return None
     today = today or datetime.datetime.now(datetime.timezone.utc).date()
     try:
-        expires = datetime.date.fromisoformat(str(board.get("expires")))
+        expires = datetime.date.fromisoformat(str(bounds.get("expires")))
     except ValueError:
-        return "task_board.expires is not a date"
+        return f"{key}.expires is not a date"
     if today > expires:
-        return (f"the bounds of writing to the task board expired on {expires.isoformat()}: change expires in "
+        return (f"the bounds of writing to {BOUNDS_OF[key]} expired on {expires.isoformat()}: change expires in "
                 "docs/workbench/runtime.json and accept the new hash")
     return None
 
@@ -269,7 +275,7 @@ def push(ctx: dict, dry_run: bool = False) -> dict:
     out = {"pushed": [], "failed": []}
     if dry_run:
         out["would"] = []
-    bounds = None if dry_run else _bounds_problem(cfg)
+    bounds = None if dry_run else bounds_problem(cfg)
     for task in store.tasks_list(conn):
         exists = bool(task.get("remote_id"))
         payload = item_payload(task, _open_pending(ctx, task["id"]), create=not exists)
