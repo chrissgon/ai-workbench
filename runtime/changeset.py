@@ -14,14 +14,16 @@ the copy's own ignore rules, whatever the run did to its own index and history. 
 path with the path rule, checks it, reads and hashes every file itself: it never runs git in a copy a run touched.
 
 A path is refused, and the whole change set blocked, when it is not a regular file inside the copy (L8), is a path
-the code provider does not take, is over the provider's size limit, holds a credential format (L14) or carries a
-tool's settings (L4). A blocked change set is stored so the person can read it, and is never applied to a later task and never committed.
+the code provider does not take, is over the provider's size limit, holds a credential format (L14), carries a
+tool's settings (L4) or matches a protected path of the project (protected_paths of its configuration, the list the
+person accepted by its hash; matches()). A protected path still enters a copy: only the way back is closed. A
+blocked change set is stored so the person can read it, and is never applied to a later task and never committed.
 
 <run_dir>/changeset/changeset.json holds the change set, and <run_dir>/changeset/files/<path> each created or
 changed file's bytes. Its "sha256" is the hash of the canonical form of its files and removed paths.
 
 Public names: ChangesetError, LIMITS, SCRIPT, compute, store, load, current, apply, verify_for_commit,
-versioned_in, provider_takes, canonical_sha256.
+versioned_in, provider_takes, canonical_sha256, matches.
 
 Usage (a library): python3 runtime/changeset.py --help
 
@@ -29,6 +31,7 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import fnmatch
 import hashlib
 import json
 import os
@@ -79,6 +82,16 @@ def _run():
     return lab.run_command
 
 
+def matches(path: str, globs) -> bool:
+    """True when an entry of the project's protected_paths covers path: fnmatch.fnmatchcase of the whole relative
+    path (so `*` crosses `/`), or an entry that ends in `/` and starts the path. Case-sensitive. It protects too much
+    rather than too little; the list is the project's, and no default is written here."""
+    for glob in globs or ():
+        if fnmatch.fnmatchcase(path, glob) or (glob.endswith("/") and path.startswith(glob)):
+            return True
+    return False
+
+
 def provider_takes(path: str) -> bool:
     """True when the code provider takes the path: relative, every part letters, digits, '_', '.' or '-' (not
     starting with '-'), no '.', '..' or '.git' part."""
@@ -123,8 +136,8 @@ def compute(run_dir: str, base_commit, tracked, facts, checks, protected=(), run
     paths of the project's git that entered the copy; facts is the path rule's facts ("staged", "bound"), to which
     "versioned" is added here: tracked plus every path the difference reports as added. checks is {"readable",
     "scan", "settings"}: lab.readable(cwd, rel), the credential scan workcopy.scan(data) (a reason or None) and
-    lab.carries_settings(rel). protected is the project's protected_paths (checked from WP-4.6). run defaults to
-    lab.run_command.
+    lab.carries_settings(rel). protected is the project's protected_paths, as accepted: a created, changed or removed
+    path that matches one is refused. run defaults to lab.run_command.
 
     Returns {"base_commit", "files": [{"path", "change", "sha256", "bytes", "executable"}], "removed", "refused":
     [{"path", "reason"}], "blocked", "sha256", "versioned"}; "versioned" lists every path of the difference that
@@ -164,6 +177,8 @@ def compute(run_dir: str, base_commit, tracked, facts, checks, protected=(), run
             reason = "not a regular file inside the copy"
         elif checks["settings"](path):
             reason = "a tool's settings"
+        elif matches(path, protected):
+            reason = "protected path"
         if reason is None and not gone:
             size = os.path.getsize(os.path.join(cwd, *path.split("/")))
             if size > LIMITS["file_bytes"]:
@@ -296,13 +311,16 @@ def versioned_in(project: str, paths) -> list:
 
 def verify_for_commit(changeset: dict, facts: dict, protected) -> None:
     """The last check before a commit: every file and removed path still classifies as `versioned` with facts (the
-    project's versioned paths now, versioned_in()), and the change set is not blocked. Raises
-    ChangesetError("working-document") or ChangesetError("blocked"). protected is checked from WP-4.6."""
+    project's versioned paths now, versioned_in()) and matches no protected path of the list accepted now (a list
+    widened after the run still holds), and the change set is not blocked. Raises ChangesetError("working-document"),
+    ChangesetError("protected") or ChangesetError("blocked")."""
     if changeset.get("blocked"):
         raise ChangesetError("blocked", "the change set is blocked: it is never committed")
     for rel in [f["path"] for f in changeset.get("files") or []] + list(changeset.get("removed") or []):
         if path_rule.classify(rel, facts) != "versioned":
             raise ChangesetError("working-document", f"{rel} is not a versioned path of the project: it never enters a commit")
+        if matches(rel, protected):
+            raise ChangesetError("protected", f"{rel} matches a protected path of the project")
 
 
 if __name__ == "__main__":

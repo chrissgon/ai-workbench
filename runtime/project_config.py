@@ -27,8 +27,10 @@ document) nor inside the workbench checkout; any other provider has "expires", a
 runtime writes nothing to it. Every other key is the implementation's, passed on untouched. These objects are the
 bounds of what the runtime writes to a platform: they are inside the file whose hash the person accepts.
 
-It also reads "protected_paths" (a list of path globs; absent means none): stage 2 asks it one question only,
-whether a glob matches AGENTS.md (runtime/workcopy.py, limit L5).
+It also reads "protected_paths" (a list of non-empty texts; absent means none): stage 2 asks it whether a glob
+matches AGENTS.md (runtime/workcopy.py, limit L5); from stage 4 no change set may touch a path one of them covers
+(runtime/changeset.py, matches(): the whole relative path against the entry with fnmatch, so `*` crosses `/`, and an
+entry that ends in `/` covers everything under it). Protected paths still enter a copy; only the way back is closed.
 
 It also reads "dependencies" (stage 4; absent means none): the project's dependency sets, each installed by code
 from a recipe of the closed table of runtime/deps.py, checked there (deps.declared()):
