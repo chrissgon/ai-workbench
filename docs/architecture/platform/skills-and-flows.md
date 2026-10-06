@@ -76,6 +76,70 @@ flowchart LR
 
 An arrow is "the owner's path is an input of". A dashed arrow is an `updates` entry, which writes into the owner's file and orders nothing. An input that no built skill owns is a row of the slots table, with `user` or `planned: <skill>`.
 
+**The artifacts and their owners**, generated from the frontmatters by the same code as the table of owning skills of [contracts/project-layout.md](../../../contracts/project-layout.md) (`scripts/owner_table.py`): every path in an `outputs` or `updates` list, its owner and the skills that update it.
+
+<!-- generated: artifacts-by-owner -->
+| Artifact | Owning skill | Updated by |
+|----------|--------------|------------|
+| `AGENTS.md` | core-agents-md | core-project-init |
+| `docs/brand/guidelines.md` | brand-guidelines | - |
+| `docs/brand/identity.md` | brand-identity | - |
+| `docs/brand/name.md` | brand-name | - |
+| `docs/brand/pieces/` | brand-identity | - |
+| `docs/brand/profile.md` | brand-profile | - |
+| `docs/brand/strategy.md` | brand-strategy | - |
+| `docs/brand/voice.md` | brand-voice | - |
+| `docs/business/icp.md` | biz-icp-positioning | - |
+| `docs/business/market.md` | biz-market-analysis | - |
+| `docs/business/positioning.md` | biz-icp-positioning | - |
+| `docs/delivery/repo-baseline.md` | ops-repo-baseline | - |
+| `docs/design/briefs/<artifact>.lint.json` | design-brief | - |
+| `docs/design/briefs/<artifact>.md` | design-brief | - |
+| `docs/design/design-system.lint.json` | design-system | - |
+| `docs/design/design-system.md` | design-system | - |
+| `docs/design/flows.lint.json` | design-ux-flows | - |
+| `docs/design/flows.md` | design-ux-flows | - |
+| `docs/design/handoff/<screen>.lint.json` | design-handoff | - |
+| `docs/design/handoff/<screen>.md` | design-handoff | - |
+| `docs/design/handoff/<screen>/export/` | design-handoff | - |
+| `docs/design/results/<artifact>.lint.json` | design-execute | - |
+| `docs/design/results/<artifact>.md` | design-execute | - |
+| `docs/design/results/<artifact>/` | design-execute | - |
+| `docs/engineering/adr/<NNNN>-<title>.md` | eng-architecture | eng-implement, eng-tradeoffs |
+| `docs/engineering/architecture.md` | eng-codebase-map | - |
+| `docs/engineering/codebase-map.md` | eng-codebase-map | - |
+| `docs/engineering/designs/<feature>.check.json` | eng-architecture | - |
+| `docs/engineering/designs/<feature>.md` | eng-architecture | - |
+| `docs/engineering/plans/<task>.md` | eng-root-cause | eng-docs, eng-impact-analysis, eng-implement, eng-integration-tests, eng-refactor, eng-tradeoffs, eng-unit-tests, ops-ci-pipeline |
+| `docs/engineering/reviews/<change>.md` | eng-code-review | - |
+| `docs/engineering/security-reviews/<date>.md` | eng-security-review | - |
+| `docs/marketing/calendar.md` | mkt-content-plan | mkt-publish, mkt-social-copy, mkt-vote-round |
+| `docs/marketing/content/<post>.md` | mkt-social-copy | mkt-vote-round |
+| `docs/marketing/engagement-inbox.md` | mkt-engage | - |
+| `docs/marketing/engagement-log.jsonl` | mkt-engage | - |
+| `docs/marketing/engagement-policy.md` | mkt-engage | - |
+| `docs/marketing/messaging.lint.json` | mkt-messaging | - |
+| `docs/marketing/messaging.md` | mkt-messaging | - |
+| `docs/product/backlog.lint-before.json` | product-backlog | - |
+| `docs/product/backlog.lint.json` | product-backlog | - |
+| `docs/product/backlog.md` | product-backlog | eng-implement |
+| `docs/product/prd.lint-before.json` | product-prd | - |
+| `docs/product/prd.lint.json` | product-prd | - |
+| `docs/product/prd.md` | product-prd | - |
+| `docs/product/roadmap.lint.json` | product-roadmap | - |
+| `docs/product/roadmap.md` | product-roadmap | - |
+| `docs/product/specs/<feature>.lint-before.json` | product-feature-spec | - |
+| `docs/product/specs/<feature>.lint.json` | product-feature-spec | - |
+| `docs/product/specs/<feature>.md` | product-feature-spec | - |
+| `docs/security/audit-<date>.md` | core-security-audit | - |
+| `docs/security/vetting-<skill>-<date>.md` | core-security-audit | - |
+| `docs/workbench/briefs/<topic>.md` | core-clarify | - |
+| `docs/workbench/critiques/<topic>.md` | core-critique | - |
+| `docs/workbench/research/<topic>.check.json` | core-research | - |
+| `docs/workbench/research/<topic>.md` | core-research | - |
+| `docs/workbench/state.md` | core-project-init | biz-icp-positioning, biz-market-analysis, brand-guidelines, brand-identity, brand-name, brand-profile, brand-strategy, brand-voice, core-clarify, core-critique, core-orchestrator, core-research, design-brief, design-execute, design-handoff, design-system, design-ux-flows, eng-architecture, eng-codebase-map, eng-security-review, flow-fix-bug, mkt-content-plan, mkt-engage, mkt-messaging, mkt-publish, ops-branch-sync, ops-ci-pipeline, ops-pull-request, ops-repo-baseline, product-backlog, product-feature-spec, product-prd, product-roadmap |
+<!-- /generated -->
+
 **The writing standard's stops and gates.** Every stop of a skill is a numbered rule of its `## Stop rules` section, above the procedure; a step or the "If missing" column of the inputs table says "Stop rule <n>" and never restates it. The headings the change classes read have one spelling: `## Purpose`, `## Inputs`, `## Stop rules`, `## Confirmation gate`, `## Procedure`, `## Quality criteria`, `## Output template`, `## Gotchas`. A gate is one of two kinds, and the rule says which:
 
 - **A stop**: no input at all, a missing required artifact, a choice between options. Nothing is written before the answer; the reply follows the template "The reply that asks", whose first line in the template is "Nothing was written: ..." and in each skill its own wording of it (the runtime reads that opening from the manifest's `asking_openings`). A missing artifact another skill writes is met with "stop and tell the user that `<skill>` writes it and to run it first". A "go", "proceed" or "use your judgement" is not an answer.
@@ -258,3 +322,4 @@ Each invariant with its guard. A rule of `scripts/validate.py` is named in brack
 ## Changes
 
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
+- 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the artifacts and their owners, added).
