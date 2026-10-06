@@ -8,7 +8,7 @@ packs/all.txt         everything, optional areas included
 packs/assistant.txt   the optional assistant area only
 packs/business.txt    the business area: the scope of the task runtime's business area agent
 packs/brand.txt       the five skills of the brand flow (flows/brand.json): the scope of the task runtime's brand area agent
-packs/planning.txt    the router skill: the scope of the task runtime's planning agent
+packs/planning.txt    the router skill and the brief (`core-orchestrator`, `core-clarify`): the scope of the task runtime's planning agent
 packs/code.txt        the two skills of the code-change flow (flows/code-change.json): the scope of the task runtime's engineering area agent
 packs/marketing.txt   the marketing area's skills: the scope of the task runtime's marketing area agent (the weekly routine of the published posts)
 ```

@@ -5,11 +5,12 @@ Skills never keep state inside this repository. Everything they produce for a pr
 ```
 <target-project>/
 ├── AGENTS.md                     # project conventions; owned by core-agents-md
-├── .workbench-local/             # git-ignored work data: payloads/<date>/ (approved payloads that run later), evidence/ (recorded uses of a skill)
+├── .workbench-local/             # git-ignored work data: payloads/<date>/ (approved payloads that run later), evidence/ (recorded uses of a skill), drop/<task id>/ (files the person handed to one task of the task runtime), and the machine files a project's runtime.json names there (a dependency file)
 └── docs/
     ├── workbench/
     │   ├── state.md              # phase, artifact status, decisions, open questions (schema: state.md)
     │   ├── runtime.json          # the agent runtime's configuration, written by the person who sets it up (schema: runtime.md)
+│   ├── policies/<policy>.json # the bounds of a standing approval of the task runtime, written by the person (approve-policy binds its hash)
     │   ├── briefs/<topic>.md     # shared-understanding briefs written by core-clarify
     │   ├── critiques/<topic>.md  # adversarial reviews written by core-critique
     │   └── research/<topic>.md   # sourced research briefs written by core-research (with <topic>.check.json)

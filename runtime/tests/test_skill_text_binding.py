@@ -93,11 +93,14 @@ def test_the_state_files_sections_are_the_contracts():
         assert header in block, f"{name} has another Artifacts header: look at state_merge's reading of the table"
     assert "`Status` is `draft`, `approved` or `skipped`" in text("contracts/state.md"), \
         "the statuses of an artifact row changed: look at state_merge's rule on draft rows"
+    order = lambda block: [line[3:].strip() for line in block.splitlines() if line.startswith("## ")]
+    assert order(contract_template()) == order(state_template()), \
+        "contracts/state.md's template orders its sections otherwise than STATE_TEMPLATE of init_project.py"
 
 
 def test_the_open_question_form_the_merge_writes_is_the_contracts():
     block = contract_template()
-    section = block.split("## Open questions", 1)[1]
+    section = block.split("## Open questions", 1)[1].split("\n## ", 1)[0]  # the section alone, whatever follows it
     items = [line for line in section.splitlines() if line.strip()]
     assert items and all(line.startswith(state_merge.OPEN_QUESTION + " ") for line in items), \
         "the open questions of contracts/state.md's template are in another form: look at state_merge.OPEN_QUESTION"
