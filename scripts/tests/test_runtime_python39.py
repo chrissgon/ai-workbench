@@ -42,6 +42,8 @@ ON_SYSTEM_PYTHON = [
     "runtime/board.py",
     # The task board's local implementation: the task runtime calls it with its own interpreter (stage 3).
     "providers/issue-tracker/local.py",
+    # The documents' local implementation, called the same way (stage 3).
+    "providers/documents/local.py",
 ]
 RUNTIME = ("scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py")  # the scheduler starts these
 SYSTEM_PYTHON = (3, 9)
