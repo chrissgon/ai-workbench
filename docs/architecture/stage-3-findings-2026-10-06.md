@@ -158,3 +158,51 @@ A request and its one task that started and finished between two syncs were neve
 - The identity's answers (the first piece, a design system and where it lives, how pieces are produced); the identity task waits on them; the voice task is `blocked` on the material above; the guidelines task stays `planned`, since it depends on both.
 - The measurements by hand: N5, N10 and the by-hand variants of N1, N3, N4 and N8 (O10 included).
 - Finding 10's package, and whether the saved comment should enter an answer (`answer --with-comments`).
+
+## The brand chain, completed
+
+Later on 2026-10-06 the maintainer rejected the second round of names, chose a name from a third round, answered the identity's four questions and decided the brand's voice: the workbench, his personal project for now, speaks in his own voice, and the design system of another product of his is the identity's base, with the brand's own logo, primary colour and cover. The acceptance checkout stayed on the central branch of #201 (no migration) and the image was the evidence's; nothing was built. As above, counts, kinds and endings only.
+
+### The runs since #202 (24 to 37)
+
+| Run | Task | Skill | Tier | Key | Ending | Right? | Duration (ms) | Tokens |
+|---|---|---|---|---|---|---|---|---|
+| 24 | route, third name round | core-orchestrator | floor | lab | done (one strict route line) | yes | 38,203 | 84,437 |
+| 25 | name, third round | brand-name | floor | lab | done | the document was right; the ending was not (finding 13) | 866,417 | 2,017,479 |
+| 26 to 31 | route, the name decision, first form | core-orchestrator | floor | lab | done, six times (one strict route line each) | each reply right; six runs for one delivery (finding 12) | 293,435 | 759,317 |
+| 32 | route, the name decision, as prose | core-orchestrator | floor | lab | done (one strict route line) | yes | 57,950 | 125,970 |
+| 33 | name, the decision | brand-name | floor | lab | draft_with_questions | yes | 297,306 | 578,148 |
+| 34 | identity | brand-identity | floor | lab | draft_with_questions | yes | 276,453 | 951,080 |
+| 35 | voice | brand-voice | floor | lab | question | yes (O8) | 416,125 | 2,288,890 |
+| 36 | voice | brand-voice | floor | lab | draft_with_questions | yes | 220,818 | 673,303 |
+| 37 | guidelines | brand-guidelines | floor | lab | draft_with_questions | yes | 175,144 | 635,438 |
+
+14 runs, each `ok` on its first attempt, no value replaced, the image the evidence's: 8 of the router, 6 of a task. Total 2,641,851 ms of model time and 8,114,062 tokens. Every delivery was released as it stood; the brand request is `done`, with its five tasks.
+
+### How each step went
+
+| Step | Observed |
+|---|---|
+| The name decision | `brand-name` has no decision mode: a chosen name is recorded in research mode, in the `Decision` section its template gives "the chosen candidate". A one-skill request (no flow, routed, its plan approved by its hash) gave the choice, the registrar's readings and the notes for the guidelines. The run recorded the choice as the maintainer's and final, re-checked the name with its script and found two places registered minutes before the run, which the facts given said were not yet registered: it kept the script's word and asked who owns them. Released with ownership, networks, a fallback handle and the primary domain open |
+| The voice's source | The voice skill declares one input for the person: the profile. The maintainer's own profile was copied into the project as the brand's profile, and his confirmed voice guide beside it under another name (the skill's own output keeps its path). Both are work data of the project, ignored by its version control; nothing entered the repository |
+| The voice on a person's profile given as a company's (O8) | First run: `question`, nothing written: it saw that the profile is a person's while the strategy names a company as the subject, and asked whose voice it is, and the limits if it is the person's. Answered from the maintainer's decision and his recorded limits. Second run: `draft_with_questions`, the guide written in the person's voice with the person's limits, its rewrites checked by its script, the calibration asked |
+| The identity's inputs | The identity's task uses the web, so `hand-over` refused the design system's file (the constant of WP-3.12 is false). The answer gave the two paths and quoted the design system's foundations and tokens as text, since a run cannot read the machine's paths. The run took its base tokens from that text, citing their names, marked its own primary colour as the brand's, computed contrast, confirmed the cover's size on the platform's help page and rendered three variants at the exact size; it asked which variant to keep |
+| The guidelines | `draft_with_questions`: the guide written from the five brand files, its checker passing, every brand file's open questions listed, approval asked |
+| The last `sync` (33 s) | Board: 7 rows written, 0 read, 0 failed. Documents: 0 imported, 2 failed (finding 14) |
+
+### Findings of the brand chain
+
+| # | Finding | Kind | What it asks of the design |
+|---|---|---|---|
+| 12 | A request whose text holds two or more lines starting with `- ` is read as that many deliveries, and the router runs once per delivery (stage 6). A request that listed six facts about one delivery as bullets cost six router runs and became a plan of six chained tasks of the same skill; the plan was rejected and the request made again as prose, which cost one router run and planned one task | as designed, at a cost the person cannot see before it is paid | The request command could say how many deliveries it read, before any router run, or a plan whose deliveries all route to one skill could be offered as one |
+| 13 | The third name round ended `done` with a document marked draft and a reply that closed on five numbered questions; the second round of the same skill ended `draft_with_questions`. The classifier read the reply as asking nothing | runtime gap | The ending of a run whose document says it waits for answers, or whose reply ends on numbered questions, should be `draft_with_questions` |
+| 14 | Two documents could not be written to the documents platform: each holds a fenced block whose language is a word of the skill (the identity's tokens block, the voice's rules block), and the platform accepts only the languages of its own list. The push failed at the run and at the next `sync`; the store keeps no record for the two, and whether a partial page was left was not checked | provider defect | The documents provider maps a language the platform does not know to its plain-text language and keeps the word in the text, with a fidelity case per document type that carries such a block |
+| 15 | The runs that read the strategy still listed the person's appended sentence as an instruction found in external content: the import of that edit came before #201's import record, so no run has yet carried the line that says the person wrote it | as designed (WP-4.12, not yet observed live) | None; a new edit imported after #201 would show it |
+
+### Open points of part 3, completed
+
+| # | Open point | Observed |
+|---|---|---|
+| O8 | What the voice skill does for a company with no profile | With no profile: `blocked` (run 23). With a person's profile given as the company's: it named the mismatch, wrote nothing and asked whose voice it is; with the answer it wrote the draft (runs 35, 36). The skill was not edited |
+| O9 | Whether a run treats a handed-over file as intended | Not exercised: the one task that needed a file uses the web, and the drop refused it; the material entered as text of the answer and the run used it |
+| O10 | Whether an edit made within the minute of the runtime's write is seen | Not exercised: no edit was made on the platform in this part |
