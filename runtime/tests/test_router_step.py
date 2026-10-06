@@ -85,7 +85,6 @@ def test_a_skill_route_is_valid_only_when_the_skill_is_in_the_pack():
     assert router.check_route({**route, "shape": "direct"}, [], ["core-critique"])["ok"] is False
 
 
-@pytest.mark.xfail(strict=True, reason="the route-only case for a planned flow is added by WP-3.4")
 def test_the_route_task_text_is_what_the_added_eval_case_measures():
     cases = json.loads((st.REPO / "skills" / router.ROUTER_SKILL / "evals" / "evals.json").read_text(encoding="utf-8"))
     prompts = [c["prompt"] for c in cases["evals"]]
