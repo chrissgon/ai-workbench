@@ -36,7 +36,12 @@ def test_every_path_gets_exactly_one_class(rel, expected):
 def test_the_facts_of_later_stages_move_a_path_to_machine_or_versioned():
     assert path_rule.classify("src/app.py", {"versioned": ["src/app.py"]}) == "versioned"
     assert path_rule.classify("docs/marketing/content/post.md", {"bound": ["docs/marketing/content/post.md"]}) == "machine"
-    assert path_rule.classify("docs/business/market.md", {"versioned": ["docs/business/market.md"]}) == "document"
+    # A docs/ folder the project versions travels in a change set (part 0, F.7 as amended; part 4, A-8); one it keeps
+    # out of git stays a document, and a document bound to an approval stays a machine file either way.
+    assert path_rule.classify("docs/business/market.md", {"versioned": ["docs/business/market.md"]}) == "versioned"
+    assert path_rule.classify("docs/business/market.md", {"versioned": ["docs/business/icp.md"]}) == "document"
+    assert path_rule.classify("docs/business/market.md", {"bound": ["docs/business/market.md"],
+                                                         "versioned": ["docs/business/market.md"]}) == "machine"
     assert path_rule.classify("docs\\business\\market.md") == "document" and path_rule.classify("./docs/business/market.md") == "document"
     assert set(path_rule.RETURNED) == {"state", "machine", "document"}
 

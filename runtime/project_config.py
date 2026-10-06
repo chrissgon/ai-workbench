@@ -27,8 +27,20 @@ document) nor inside the workbench checkout; any other provider has "expires", a
 runtime writes nothing to it. Every other key is the implementation's, passed on untouched. These objects are the
 bounds of what the runtime writes to a platform: they are inside the file whose hash the person accepts.
 
-It also reads "protected_paths" (a list of path globs; absent means none): stage 2 asks it one question only,
-whether a glob matches AGENTS.md (runtime/workcopy.py, limit L5).
+It also reads "protected_paths" (a list of non-empty texts; absent means none): stage 2 asks it whether a glob
+matches AGENTS.md (runtime/workcopy.py, limit L5); from stage 4 no change set may touch a path one of them covers
+(runtime/changeset.py, matches(): the whole relative path against the entry with fnmatch, so `*` crosses `/`, and an
+entry that ends in `/` covers everything under it). Protected paths still enter a copy; only the way back is closed.
+
+It also reads "code" (stage 4; absent: no change set becomes a pull request): where a change set becomes a pull
+request, an object {"provider": "github", "repo": "<owner>/<name>", "base": "<branch>", "branch_prefix": "wb/"}
+(branch_prefix optional, default "wb/"). The repository and the base branch of a pull request come from here,
+never from what a model wrote.
+
+It also reads "dependencies" (stage 4; absent means none): the project's dependency sets, each installed by code
+from a recipe of the closed table of runtime/deps.py, checked there (deps.declared()):
+
+  "dependencies": [{"recipe": "python-requirements", "file": ".workbench-local/requirements-dev.txt"}]
 
 The hash is the sha256 of the file's bytes. Every operation compares it with the hash the person accepted last
 (kept in the store's cursor ACCEPTED, written only by ops.accept_config) and refuses to act on a file that
@@ -47,7 +59,12 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import deps  # noqa: E402  (the same folder: the recipes and the check of the key "dependencies")
 
 REL = "docs/workbench/runtime.json"
 REQUIRED = ("workbench", "data_dir", "store_db")
@@ -95,9 +112,37 @@ def load(project: str) -> dict:
     if not isinstance(protected, list) or not all(isinstance(p, str) and p.strip() for p in protected):
         raise ConfigError("runtime.json protected_paths must be a list of path globs")
     out["protected_paths"] = list(protected)
+    out["code"] = _code(raw.get("code"))
+    try:
+        out["dependencies"] = deps.declared(raw)
+    except deps.DepsError as e:
+        raise ConfigError(e.reason) from None
     for key, cls in PLATFORM_KEYS.items():
         out[key] = _platform(raw.get(key), key, cls, project, out["workbench"])
     return out
+
+
+CODE_KEYS = ("provider", "repo", "base", "branch_prefix")
+CODE_PROVIDERS = ("github",)
+REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+BRANCH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
+
+
+def _code(value):
+    """The key "code", checked; None when absent."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or sorted(set(value) - set(CODE_KEYS)):
+        raise ConfigError(f"runtime.json code must be an object with the keys {', '.join(CODE_KEYS)}")
+    if value.get("provider") not in CODE_PROVIDERS:
+        raise ConfigError(f"runtime.json code.provider must be one of {', '.join(CODE_PROVIDERS)}")
+    if not isinstance(value.get("repo"), str) or not REPO.fullmatch(value["repo"]):
+        raise ConfigError("runtime.json code.repo must be <owner>/<name>")
+    prefix = value.get("branch_prefix", "wb/")
+    for key, branch in (("base", value.get("base")), ("branch_prefix", prefix)):
+        if not isinstance(branch, str) or not BRANCH.fullmatch(branch) or ".." in branch or branch.endswith(".lock"):
+            raise ConfigError(f"runtime.json code.{key} must be a branch name")
+    return {"provider": value["provider"], "repo": value["repo"], "base": value["base"], "branch_prefix": prefix}
 
 
 def _implementations(workbench: str, cls: str) -> list:

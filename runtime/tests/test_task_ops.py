@@ -316,3 +316,66 @@ def test_every_script_of_the_runtime_prints_its_help_and_refuses_an_unknown_call
         assert helped.returncode == 0 and helped.stdout.strip() and "Traceback" not in helped.stderr, name
         refused = subprocess.run([sys.executable, script, "--no-such-flag-of-this-script"], capture_output=True, text=True, timeout=60)
         assert refused.returncode == 2 and "Traceback" not in refused.stderr, name
+
+
+def with_dependencies(tree, monkeypatch, fail=False) -> list:
+    """The project as a git checkout with a committed requirements file and the set declared in its configuration;
+    the install is a stand-in that makes the folder (the real lab.run_command still runs every git command, and the
+    script of the change set)."""
+    project = tree["project"]
+    (project / "requirements.txt").write_text("pytest==9.1.1\n")
+    (project / "app.py").write_text("print(1)\n")
+    config = project / "docs" / "workbench" / "runtime.json"
+    data = json.loads(config.read_text())
+    data["dependencies"] = [{"recipe": "python-requirements"}]
+    config.write_text(json.dumps(data))
+    git = ["git", "-C", str(project), "-c", "user.name=Demo", "-c", "user.email=demo@example.test",
+           "-c", "commit.gpgsign=false"]
+    for args in (["init", "-q"], ["add", "-A"], ["commit", "-q", "-m", "start"]):
+        subprocess.run(git + args, check=True, capture_output=True)
+    ops.accept_config(str(project), ops.project_config.load(str(project))["sha256"])
+    installs, real = [], lab.run_command
+
+    def run_command(argv, root, **kwargs):
+        if argv[0] in ("git", "bash"):  # the base commit, and the difference a change set is taken from
+            return real(argv, root, **kwargs)
+        installs.append(list(argv))
+        if fail:
+            return {"returncode": 1, "stdout": "", "stderr": "no matching distribution", "timed_out": False}
+        os.makedirs(os.path.join(kwargs["cwd"], ".venv", "bin"), exist_ok=True)
+        with open(os.path.join(kwargs["cwd"], ".venv", "bin", "python"), "w") as f:
+            f.write("#!/bin/sh\n")
+        return {"returncode": 0, "stdout": "", "stderr": "", "timed_out": False}
+
+    monkeypatch.setattr(lab, "run_command", run_command)
+    return installs
+
+
+def test_the_dependency_folder_enters_after_the_base_commit_and_never_comes_back(tree, monkeypatch):
+    installs = with_dependencies(tree, monkeypatch)
+    project = project_of(tree)
+    installed = ops.deps(project)["dependencies"]
+    assert [(d["recipe"], d["applies"], d["cached"]) for d in installed] == [("python-requirements", True, False)]
+    assert len(installs) == 2 and ops.deps(project)["dependencies"][0]["cached"] is True and len(installs) == 2
+    requested(tree)
+    out = ops.run_next(project)
+    assert out["status"] == "ok" and len(installs) == 2  # the run took the cached folder
+    seen = open(os.path.join(out["run_dir"], "outputs", "files.txt")).read().split("\n")
+    assert "./.venv/bin/python" in seen and "./app.py" in seen
+    cwd = os.path.join(out["run_dir"], "cwd")
+    assert not os.path.lexists(os.path.join(cwd, ".venv")) and not os.path.lexists(os.path.join(project, ".venv"))
+    committed = lab.run_command(["git", "ls-tree", "-r", "--name-only", "HEAD"], out["run_dir"], cwd=cwd)
+    assert ".venv" not in committed["stdout"] and "app.py" in committed["stdout"]  # not in the base commit
+    assert "/.venv/" in open(os.path.join(cwd, ".git", "info", "exclude")).read()
+
+
+def test_a_failed_install_fails_the_run_before_any_model_call(tree, monkeypatch):
+    with_dependencies(tree, monkeypatch, fail=True)
+    project = project_of(tree)
+    requested(tree)
+    out = ops.run_next(project)
+    assert out["status"] == "failed" and out["failure"]["kind"] == "internal"
+    assert out["failure"]["reason"].startswith("dependencies:") and "no matching distribution" in out["failure"]["reason"]
+    assert st.calls(tree["adapter"]) == [] and out["task_state"] == "failed"
+    with pytest.raises(ops.OpsError, match="no matching distribution"):
+        ops.deps(project)

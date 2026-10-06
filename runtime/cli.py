@@ -8,8 +8,9 @@
 Usage:
   python3 runtime/cli.py request  --project <dir> [--flow <name>] (--text <text> | --text-file <file>) [--title <title>]
   python3 runtime/cli.py route    --project <dir> --request <request id> [--flow <name>]
-  python3 runtime/cli.py approve  --project <dir> --id <pending id> [--sha256 <plan hash>]
+  python3 runtime/cli.py approve  --project <dir> --id <pending id> [--sha256 <plan hash> | --sha256 <effect hash>]
   python3 runtime/cli.py reject   --project <dir> --id <pending id> [--note <text>]
+  python3 runtime/cli.py deps     --project <dir>
   python3 runtime/cli.py run-next --project <dir> [--tier strong]
   python3 runtime/cli.py pending  --project <dir> [--id <pending id>]
   python3 runtime/cli.py answer   --project <dir> --id <pending id> (--text <text> | --text-file <file>) [--with-comments]
@@ -32,7 +33,12 @@ route     plans a request that waits for its route. Without --flow: one run of t
           a reply with no recognised route reaches you whole. With --flow: the plan of that flow file, no run.
 approve   approves a plan (its tasks are created; pass the plan's hash, shown with it, as --sha256 to approve
           exactly what you read) or a request written on the task board.
-reject    rejects a plan or a request written on the task board: the request is cancelled.
+          An effect (a pull request a skill prepared up to its confirmation gate) is approved only with its hash:
+          code then checks that nothing moved, makes the one commit with your own git and signature through the
+          code provider and opens the pull request. Start it with the token that opens a pull request available
+          to the provider (VCS_GITHUB_TOKEN, the separate token of providers/vcs/README.md); the runtime passes none.
+reject    rejects a plan or a request written on the task board: the request is cancelled. An effect rejected
+          cancels its task, and nothing is sent.
 run-next  runs the next ready task: one skill, once, in the eval container, on the model its proof gives (the
           floor model only where the skill is reliable there and the proof holds; --tier strong asks for the
           reference model; nothing asks for the floor model), on a copy
@@ -75,6 +81,9 @@ hand-over copies one file of yours into the task's file drop, <project>/.workben
           digits, '.', '_' and '-', a name already handed over, a task that is done, cancelled or running, a
           file holding what looks like a credential, a git project that does not ignore .workbench-local/, and a
           task whose skill uses the web (a web task receives only the artifacts its skill declares).
+deps      installs the dependency sets of runtime.json ("dependencies") by code, with no model: in the eval
+          image, in a step that sees only the dependency files, on the open network; the result is cached under
+          the data folder by the files and the image, and a run whose copy holds versioned files gets a copy of it.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -96,7 +105,7 @@ sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
-         "route", "approve", "reject", "sync", "hand-over")
+         "route", "approve", "reject", "sync", "hand-over", "deps")
 
 
 class Usage(Exception):
@@ -183,6 +192,8 @@ def run(argv) -> dict:
         return ops.sync(project, dry_run=a.dry_run, take=a.take, path=a.path)
     if a.verb == "hand-over":
         return ops.hand_over(project, need(a, "--task"), need(a, "--file"))
+    if a.verb == "deps":
+        return ops.deps(project)
     return ops.status(project)
 
 

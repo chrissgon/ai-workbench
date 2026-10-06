@@ -20,6 +20,10 @@ loop moves into one function that the lab and the runtime both call, and it is d
 
 Rule: no other module of runtime/ imports anything under evals/. They call the functions of this file.
 
+Also here: run_command(), one command with no model and no credential, in the same container as a run (the
+install of a project's dependencies, the difference a change set is taken from); and the hooks prepare and finish
+of run_skill, through which the caller changes a fresh copy before the run and removes what must not come back.
+
 Usage (a library; the terminal shell is runtime/cli.py):
   python3 runtime/lab.py --help        print this text
   python3 runtime/lab.py reference     print the reference model and its adapter, as JSON
@@ -70,6 +74,9 @@ ALLOWED = (
     "account_limit", "provider_refusal", "auth_refusal", "early_end",
     # the control of the loop that is shared with every runner process of the machine
     "Slots", "start_pause", "wait_while_paused", "RETRY_KINDS", "RETRY_PAUSE", "KEPT_PREFIXES",
+    # one command in the container of a run, with no model and no credential (run_command): it grades nothing
+    # and writes no evidence (stage 4 of the platform plan, WP-4.4)
+    "run_group", "SETUP_TIMEOUT",
 )
 # Measurement: never read from here. The list is not complete (ALLOWED is what decides); it names what a
 # maintainer is most likely to reach for.
@@ -254,6 +261,13 @@ def standing(skill: str) -> dict:
             "evidence_images": sorted(images)}
 
 
+def carries_settings(rel: str) -> bool:
+    """True when a part of the relative path rel is one of the names that carry a tool's settings, by the lab's own
+    list (harness_settings()): such a path never enters a run and never leaves one in a change set."""
+    names = set(settings_names())
+    return any(part in names for part in str(rel).replace("\\", "/").split("/"))
+
+
 def readable(cwd: str, rel: str) -> bool:
     """True when the host may read the path rel of what a run left in cwd: a regular file, no link, inside cwd."""
     return bool(LAB.readable(cwd, rel))
@@ -349,6 +363,87 @@ def platforms_cited(skill_dir: str) -> list:
                   if name.endswith(".md") and PLATFORM_NAME.match(name[:-3]) and os.path.isfile(os.path.join(folder, name)))
 
 
+def _container() -> dict:
+    """The environment of the eval container (executor.ensure(): the networks and the egress proxy, started once),
+    or {} when the lab does not run in a container. The image is looked for first: lab evidence is bound to one
+    built image, a rebuilt one is another image, and ensure() would build a missing one, so the runtime never
+    reaches ensure() without it. Raises LabError("container")."""
+    if LAB.EXECUTOR != "container":
+        return {}
+    try:
+        executor = LAB.load_executor()
+        if executor.docker("image", "inspect", executor.names()["image"], check=False).returncode != 0:
+            raise LabError("container", "the eval image of this checkout is not on this machine, and the runtime "
+                                        "never builds it: the maintainer loads the archived image (docker load), "
+                                        "or builds it with python3 evals/executor.py ensure")
+        return executor.ensure()
+    except LabError:
+        raise
+    except Exception as e:
+        raise LabError("container", f"the eval container is not available: {e}") from None
+
+
+NETWORKS = ("none", "open")  # what run_command may ask for; the proxied network is a model's, never a command's
+
+
+def run_command(argv, root: str, *, cwd: str | None = None, network: str = "none", timeout: int | None = None) -> dict:
+    """Run one command with no model and no credential, in the same container as a run, with root (an absolute
+    folder) as the only folder it sees; cwd (default root) is a folder inside it. network is "none" or "open"
+    (the install of a project's dependencies), never the proxied network of a model. The environment is the lab's
+    contained one with no passed variable, so no credential reaches the command. The image is looked for first
+    and never built (_container()). Returns {"returncode", "stdout", "stderr", "timed_out"}; a timeout (default the
+    lab's SETUP_TIMEOUT) gives timed_out true and returncode None. Raises LabError("config") for a bad argument,
+    LabError("container") when the image is missing."""
+    if not isinstance(argv, (list, tuple)) or not argv or not all(isinstance(a, str) and a for a in argv):
+        raise LabError("config", "argv is a non-empty list of texts")
+    if not isinstance(root, str) or not os.path.isabs(root) or not os.path.isdir(root):
+        raise LabError("config", "root is an absolute folder that exists")
+    if network not in NETWORKS:
+        raise LabError("config", f"network is one of {', '.join(NETWORKS)}")
+    cwd = cwd or root
+    real_root, real_cwd = os.path.realpath(root), os.path.realpath(cwd)
+    if not os.path.isabs(cwd) or not os.path.isdir(cwd) or not (real_cwd == real_root or real_cwd.startswith(real_root + os.sep)):
+        raise LabError("config", "cwd is a folder inside root")
+    _container()
+    try:
+        done = LAB.run_group(list(argv), timeout or LAB.SETUP_TIMEOUT, cwd=cwd, env=LAB.contained_env(root),
+                             box={"root": root, "network": network})
+    except subprocess.TimeoutExpired:
+        return {"returncode": None, "stdout": "", "stderr": "", "timed_out": True}
+    return {"returncode": done.returncode, "stdout": done.stdout or "", "stderr": done.stderr or "", "timed_out": False}
+
+
+def _base_commit(root: str, case_dir: str):
+    """The commit id of the copy's base, read in the container right after the fixture commit; None when it
+    cannot be read."""
+    try:
+        done = run_command(["git", "rev-parse", "HEAD"], root, cwd=case_dir)
+    except LabError:
+        return None
+    line = (done.get("stdout") or "").strip()
+    return line if done.get("returncode") == 0 and re.fullmatch(r"[0-9a-f]{40,64}", line) else None
+
+
+def _run_environment(root: str, runner: str, pass_env, tmp_in_run: bool) -> tuple:
+    """(environment, passed names) of the adapter call. With tmp_in_run, <root>/tmp is made (mode 1777) and TMPDIR,
+    added to the passed names, is its path as the run sees it: the container's path of the run's folder with the
+    container executor, the host's otherwise. TMPDIR is no key proxy's variable, so the route of the run's key
+    does not change (evals/executor.py, held_route, reads only the routes' own variables)."""
+    if not tmp_in_run:
+        return LAB.contained_env(root, pass_env), list(pass_env)
+    folder = os.path.join(root, "tmp")
+    os.makedirs(folder, exist_ok=True)
+    os.chmod(folder, 0o1777)
+    passed = list(pass_env) + ["TMPDIR"]
+    env = LAB.contained_env(root, passed)
+    if LAB.EXECUTOR == "container":
+        executor = LAB.load_executor()
+        env["TMPDIR"] = executor.translate(folder, executor.mounts(root, runner))
+    else:
+        env["TMPDIR"] = folder
+    return env, passed
+
+
 def _copy_in(files, case_dir: str) -> None:
     """Copy the caller's files into the fresh folder of a run: regular files only, each at its relative path."""
     for src, rel in files:
@@ -364,7 +459,8 @@ def _copy_in(files, case_dir: str) -> None:
 
 def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, tier: str = "strong",
               model: str | None = None, adapter: str | None = None, pass_env=None,
-              timeout: int | None = None, retries: int | None = None) -> dict:
+              timeout: int | None = None, retries: int | None = None, prepare=None, finish=None,
+              tmp_in_run: bool = False) -> dict:
     """Run one skill once on one task text, in the eval container, on a fresh copy.
 
     skill    a folder name under skills/ of this checkout: it is staged where the adapter's tool finds skills,
@@ -381,12 +477,23 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
     tier     "strong" (the reference model) or "floor": the model, its adapter and the names of the variables
              that carry its credential come from evals/eval-gate.json. model, adapter and pass_env replace them
              (a test's stand-in); timeout (seconds) and retries default to the gate file's too
+    prepare  prepare(copy_dir, root), called on every attempt after the base commit of the copy and before the
+             check of a tool's settings: the caller changes the fresh copy (puts a dependency folder in, applies a
+             change set)
+    finish   finish(copy_dir, root), called on every attempt in which the adapter was started, after it returned
+             and the changes were taken, before the last replacement of values and the return of the folders: the
+             caller removes what must not be kept. An exception in either hook ends the run as LabError("copy")
+    tmp_in_run  True points the run's temporary folder (TMPDIR) at a folder made in its fresh folder, which comes
+             back as <dest>/outputs/tmp: what a skill writes under a folder from mktemp -d (the payload of its
+             confirmation gate) is kept. TMPDIR is passed to the container by name, as the passed variables are; it
+             is not a secret, so its value is never replaced in what the run left
 
     Returns {"status": "ok" | "failed", "failure": None | {"kind", "reason", "detail"}, "response", "changes":
     {"created", "modified", "deleted", "unchanged"} or None, "staged": [paths the runtime put in the copy],
     "run_dir", "cwd", "outputs", "timing": {...}, "counts": {"attempts", "timeouts", "refusals",
     "adapter_failures", "early_ends", "pauses", "redactions"}, "tier", "model", "adapter", "web",
-    "image_digest", "image_platform"}. failure kinds: "timeout", "refused", "auth", "adapter", "early_end"
+    "image_digest", "image_platform", "base_commit": the commit id of the copy's base, or None, "tmp": with
+    tmp_in_run, <dest>/outputs/tmp, else None}. failure kinds: "timeout", "refused", "auth", "adapter", "early_end"
     (each after the gate file's retries, "auth" at once), "settings" (the copy carries a tool's settings) and
     "stopped". Raises LabError when no run could be made (configuration, container, a file that may not enter).
     Call it inside `with session():`."""
@@ -411,21 +518,7 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
         raise LabError("config", f"{', '.join(unset)} is not set and was not found in the secret store. Export it, or "
                                  "start the command with the store's library available: uv run --with keyring==25.7.0 "
                                  "python3 runtime/cli.py ...")
-    environment = {}
-    if LAB.EXECUTOR == "container":
-        try:
-            executor = LAB.load_executor()
-            # Lab evidence is bound to one built image, and a rebuilt one is another image: the runtime never
-            # builds it. ensure() would, so the image is looked for first.
-            if executor.docker("image", "inspect", executor.names()["image"], check=False).returncode != 0:
-                raise LabError("container", "the eval image of this checkout is not on this machine, and the runtime "
-                                            "never builds it: the maintainer loads the archived image (docker load), "
-                                            "or builds it with python3 evals/executor.py ensure")
-            environment = executor.ensure()  # the networks and the egress proxy, started once before the run
-        except LabError:
-            raise
-        except Exception as e:
-            raise LabError("container", f"the eval container is not available: {e}") from None
+    environment = _container()
     settings = _lab_call(LAB.harness_settings)
     values = LAB.redaction_values(pass_env)
     probe = lambda: LAB.probe_call(runner, model, pass_env)
@@ -438,7 +531,8 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
     result = {"status": "failed", "failure": None, "response": "", "changes": None, "staged": [], "run_dir": dest,
               "cwd": cwd, "outputs": out, "timing": {}, "counts": counts, "tier": tier, "model": model,
               "adapter": adapter, "web": bool(web), "image_digest": environment.get("image_digest"),
-              "image_platform": environment.get("image_platform")}
+              "image_platform": environment.get("image_platform"), "base_commit": None,
+              "tmp": os.path.join(out, "tmp") if tmp_in_run else None}
 
     def failed(kind, reason, detail=None):
         result["failure"] = {"kind": kind, "reason": reason, "detail": detail}
@@ -452,11 +546,17 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
             with LAB.Slots(control, tier, bool(web)):
                 root = LAB.new_run_root(dest, names=(skill,))
                 case_dir, out_tmp = os.path.join(root, "case"), os.path.join(root, "out")
-                why, delta, staged, carried = None, None, [], None
+                why, delta, staged, carried, started, hook = None, None, [], None, False, None
                 try:
                     _copy_in(files, case_dir)
                     quiet = {"root": root, "network": "none"}  # the fixture commit: no secret, no network
                     LAB.isolate_git(case_dir, LAB.contained_env(root), box=quiet)
+                    result["base_commit"] = _base_commit(root, case_dir)
+                    if prepare is not None:
+                        try:
+                            prepare(case_dir, root)
+                        except Exception as e:
+                            raise LabError("copy", f"the copy could not be prepared: {type(e).__name__}: {e}") from None
                     carried = LAB.settings_in(case_dir, settings)
                     if carried:
                         why = f"the copy holds {carried}: a tool's settings never enter a run"
@@ -467,19 +567,30 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
                         with open(prompt_path, "w", encoding="utf-8") as f:
                             f.write(prompt)
                         before = LAB.file_index(case_dir, staged)
-                        why = LAB.run_failure(runner, prompt_path, case_dir, model, out_tmp,
-                                              LAB.contained_env(root, pass_env), timeout, None, bool(web),
-                                              start_dir=root,
-                                              box={"root": root, "runner": runner, "pass": pass_env,
+                        run_env, passed = _run_environment(root, runner, pass_env, tmp_in_run)
+                        started = True
+                        why = LAB.run_failure(runner, prompt_path, case_dir, model, out_tmp, run_env, timeout, None,
+                                              bool(web), start_dir=root,
+                                              box={"root": root, "runner": runner, "pass": passed,
                                                    "network": "open" if web else "proxy"})
                         # Before anything is read or stored: each passed value is replaced by a marker, by exact value.
                         counts["redactions"] += LAB.redact_folder(case_dir, values, staged) + LAB.redact_folder(out_tmp, values)
                         if not why:
                             delta = LAB.changes(case_dir, before, staged)
                 finally:
+                    if started and finish is not None:
+                        try:
+                            finish(case_dir, root)
+                        except Exception as e:
+                            hook = f"what the run left could not be finished: {type(e).__name__}: {e}"
+                    run_tmp = os.path.join(root, "tmp")
+                    if tmp_in_run and os.path.isdir(run_tmp) and not os.path.islink(run_tmp):
+                        shutil.move(run_tmp, os.path.join(out_tmp, "tmp"))  # replaced below, then returned with out/
                     # Also when the run failed or was stopped: what it left goes to the run folder without the values.
                     counts["redactions"] += LAB.redact_folder(case_dir, values, staged) + LAB.redact_folder(out_tmp, values)
                     LAB.return_run(root)
+                if hook:
+                    raise LabError("copy", hook)
         except LabError:
             raise
         except (RuntimeError, OSError, subprocess.SubprocessError) as e:

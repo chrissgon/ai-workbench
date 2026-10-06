@@ -20,7 +20,8 @@ Of the state file a run left, the merge accepts three things, line by line, on t
     "- [ ] <text>", unless it is attributed to the person or to another skill. A question the project has is
     never closed, reworded or removed by a run, and each of those is refused with its own reason.
 Everything else stays as the project has it, and each line refused is reported with its reason. Only code
-writes what is the person's: an answer (with_answer()), "approved", the autonomy mode, the approval rows.
+writes what is the person's: an answer (with_answer()), "approved", the autonomy mode, the approval rows
+(write_generated(), a copy of the store's approvals table).
 
 Usage (a library): python3 runtime/state_merge.py --help
 
@@ -304,6 +305,32 @@ def with_answer(text: str, *, date: str, skill: str, pending_id: int, answer: st
     _append(target, f"- {date}: Answer to {skill} (pending decision {pending_id}): {said} (user)")
     return _render(parsed)
 
+
+APPROVALS = "Approvals"
+
+
+def write_generated(state_text: str, rows) -> str:
+    """The state file's text with generated approval rows added to, or replaced in, its ## Approvals table, and
+    nothing else touched. rows is a list of the cells of runtime/effects.py approval_row() (Scope, What, Payload
+    hash, Approved, Expires, Status); a row whose Payload hash is already in the table replaces that row, any other is
+    added after the table's last row. Only code calls it, with the runtime's record of the approval (the approvals
+    table of the store, limit L17); no run can write an approval row (merge_report() refuses it). Raises Conflict
+    when the file has no ## Approvals section."""
+    # T23: the approvals are copied into the state file until the policy gate reads the runtime's record
+    parsed = parse(state_text)
+    target = _section(parsed, APPROVALS)
+    if target is None:
+        raise Conflict("the state file has no ## Approvals section: the approval row was not written into it")
+    for cells in rows:
+        clean = [" ".join(str(cell).replace("|", "/").split()) or "-" for cell in cells]
+        line = "| " + " | ".join(clean) + " |"
+        found = next((i for i, existing in enumerate(target)
+                      if (_cells(existing) or [None, None, None])[2:3] == [clean[2]]), None)
+        if found is None:
+            _append(target, line)
+        else:
+            target[found] = line
+    return _render(parsed)
 
 if __name__ == "__main__":
     print(__doc__.strip())

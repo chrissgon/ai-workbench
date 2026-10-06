@@ -155,18 +155,18 @@ The twenty limits that live in code (section B.2 of the platform plan). Each get
 | L6 | No credential enters the container | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_06_no_credential_enters_the_container`; and `runtime/tests/test_lab_facade.py`, `test_the_value_of_a_passed_variable_is_replaced_in_everything_a_run_leaves` |
 | L7 | The destination of each returned file comes from the path rule | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_07_the_destination_of_each_returned_file_comes_from_the_path_rule`; and `runtime/tests/test_return_rules.py`, `test_every_path_gets_exactly_one_class` |
 | L8 | Only a regular file, with its real path inside the copy, comes back | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_08_only_a_regular_file_with_its_real_path_inside_the_copy_comes_back` |
-| L9 | Code comes back as a change set; the commit is one, made by the code provider with the person's own git and signature | stage 4 | stage 4 |
+| L9 | Code comes back as a change set; the commit is one, made by the code provider with the person's own git and signature | stage 4 | `runtime/tests/test_changeset.py`, `test_limit_09_code_comes_back_as_a_change_set_with_created_changed_and_removed_paths_and_the_executable_bit`; the one commit: `runtime/tests/test_effects.py`, `test_the_commit_is_one_made_by_the_code_provider_and_no_module_of_the_runtime_pushes` |
 | L10 | The state file comes back through a merge made by one module | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_10_the_state_file_comes_back_through_the_merge_and_only_code_writes_what_is_the_persons`; the merge's rules in `runtime/tests/test_state_merge.py` |
-| L11 | A working document never enters a commit | stage 4 | stage 4 |
+| L11 | A working document never enters a commit | stage 4 | `runtime/tests/test_changeset.py`, `test_limit_11_a_working_document_never_enters_a_commit` |
 | L12 | What comes back never overwrites what changed at the origin | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_12_what_comes_back_never_overwrites_what_changed_at_the_origin`; and `runtime/tests/test_task_ops.py`, `test_a_file_that_changed_in_the_project_during_the_run_is_never_overwritten` (the state file is merged line by line instead: L10) |
-| L13 | A record only grows | stage 4 (approvals) | stage 4 |
+| L13 | A record only grows | stage 4 (approvals) | `providers/store/tests/test_sqlite_approvals.py`, `test_limit_13_an_approval_is_never_deleted_and_its_status_only_moves_forward` |
 | L14 | Everything passes the credential scan before it leaves | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_14_everything_passes_the_credential_scan_before_it_leaves`; the number of values the lab replaced is kept on the run's row (`task_runs.redactions`) |
-| L15 | An external effect is executed by code, with the exact content approved or inside an approved policy | stage 4 | stage 4 |
-| L16 | A skill with a confirmation gate runs up to the gate; what it shows there is what the person approves | stage 4 | stage 4 |
-| L17 | The approval lives in the approvals table; the rows in the state file are generated copies | stage 4 | stage 4 |
+| L15 | An external effect is executed by code, with the exact content approved or inside an approved policy | stage 4 (the exact content; a policy: stage 6) | `runtime/tests/test_effects.py`, `test_limit_15_the_effect_is_executed_by_code_with_exactly_the_approved_content` |
+| L16 | A skill with a confirmation gate runs up to the gate; what it shows there is what the person approves | stage 4 | `runtime/tests/test_effects.py`, `test_limit_16_a_skill_with_a_gate_runs_up_to_the_gate_and_what_it_showed_is_what_the_person_approves`; the recovery of what it showed in `runtime/tests/test_gate_payload.py` |
+| L17 | The approval lives in the approvals table; the rows in the state file are generated copies | stage 4 | `runtime/tests/test_effects.py`, `test_limit_17_the_approval_lives_in_the_table_and_the_state_file_row_is_a_generated_copy` |
 | L18 | A document bound to an approval by hash is a machine file | stage 6 | stage 6 |
 | L19 | The planning agent creates no task: it returns the route, and code builds the plan | stage 3 | stage 3 |
-| L20 | The measurement files are not changed | stage 4 (for the change set) | stage 4 |
+| L20 | The measurement files are not changed | stage 4 (for the change set: the project lists them in its protected_paths) | `runtime/tests/test_protected_paths.py`, `test_a_change_to_a_protected_path_blocks_the_change_set_and_names_the_path` and `test_a_created_or_removed_protected_path_blocks_it_too` |
 
 ## What the proof covers
 
