@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Report which environment requirement classes are satisfied.
 
-Usage: python3 scripts/doctor.py [--harness <name>] [--json] [--strict]
+Usage: python3 scripts/doctor.py [--harness <name>] [--root <path>] [--json] [--strict]
 
 Collects `metadata.requires` from every skill, then checks each class against:
   1. connectors declared by the chosen adapter in adapters/<harness>/connectors.json
@@ -20,6 +20,8 @@ yet). An unknown class counts as missing. A class written with one of the four o
 
 Options:
   --harness <name>  include connectors declared by that adapter
+  --root <path>     check another workbench root (an installed copy) instead of this checkout; the
+                    environment variable WORKBENCH_ROOT is read when --root is not given
   --json            machine-readable report on stdout
   --strict          exit 1 when any required class is missing
   --help            show this text
@@ -39,7 +41,8 @@ import re
 import subprocess
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_DEFAULT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT = _DEFAULT_ROOT
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from validate import load_yaml, split_frontmatter  # noqa: E402
 
@@ -77,7 +80,21 @@ def _load(name, path):
 
 
 # The one resolution function (class -> provider script); this script builds no provider path itself.
-resolution = _load("workbench_provider_resolve", os.path.join(PROVIDERS, "resolve.py"))
+def set_root(path):
+    """Point the doctor at another workbench root: the one --root names, else WORKBENCH_ROOT, else this
+    checkout. An installed workbench carries skills/ and providers/ beside each other (lane F3), so the
+    doctor can check the environment an installer made."""
+    global ROOT, SKILLS, PROVIDERS, ADAPTERS, resolution
+    ROOT = os.path.abspath(os.path.expanduser(path))
+    SKILLS = os.path.join(ROOT, "skills")
+    PROVIDERS = os.path.join(ROOT, "providers")
+    ADAPTERS = os.path.join(ROOT, "adapters")
+    resolution = _load("workbench_provider_resolve", os.path.join(PROVIDERS, "resolve.py"))
+
+
+set_root(os.environ.get("WORKBENCH_ROOT") or _DEFAULT_ROOT)
+if not os.path.isfile(os.path.join(PROVIDERS, "resolve.py")):  # WORKBENCH_ROOT named no workbench
+    set_root(_DEFAULT_ROOT)
 NAME_RE = re.compile(r"[a-z0-9-]+")
 
 
@@ -162,21 +179,26 @@ def main(argv):
     if "--help" in argv or "-h" in argv:
         print(__doc__)
         return 0
-    harness, as_json, strict = None, "--json" in argv, "--strict" in argv
+    harness, as_json, strict, root = None, "--json" in argv, "--strict" in argv, None
     i = 0
     while i < len(argv):
         a = argv[i]
-        if a == "--harness":
+        if a in ("--harness", "--root"):
             if i + 1 >= len(argv):
-                print("Error: --harness needs a value, e.g. --harness claude-code", file=sys.stderr)
+                print(f"Error: {a} needs a value, e.g. {a} <path>.", file=sys.stderr)
                 return 2
-            harness = argv[i + 1]
+            if a == "--harness":
+                harness = argv[i + 1]
+            else:
+                root = argv[i + 1]
             i += 2
             continue
         if a not in ("--json", "--strict"):
             print(f"Error: unknown option {a!r}. See --help.", file=sys.stderr)
             return 2
         i += 1
+    if root:
+        set_root(root)
     if harness and (not NAME_RE.fullmatch(harness) or not os.path.isdir(os.path.join(ADAPTERS, harness))):
         print(f"Error: adapter {harness!r} not found under adapters/.", file=sys.stderr)
         return 2
@@ -195,7 +217,8 @@ def main(argv):
     secrets = secrets_report(report)
     secrets_missing = [s["name"] for s in secrets if not s["found"]]
     if as_json:
-        print(json.dumps({"harness": harness, "classes": report, "missing": missing, "secrets": secrets}, indent=2))
+        print(json.dumps({"harness": harness, "workbench_root": ROOT, "classes": report, "missing": missing,
+                          "secrets": secrets}, indent=2))
     else:
         for cls, r in report.items():
             print(f"{r['status']:<9} {cls:<28} {r['detail']}  <- {', '.join(r['skills'])}", file=sys.stderr)
@@ -203,7 +226,7 @@ def main(argv):
             state = f"found     {sec['name']:<28} {sec['source']}" if sec["found"] else \
                 f"missing   {sec['name']:<28} set it: {sec['set']}"
             print(f"{state}  <- {', '.join(sec['classes'] or sec['readers'])}", file=sys.stderr)
-        print(json.dumps({"harness": harness, "classes": len(report), "missing": missing,
+        print(json.dumps({"harness": harness, "workbench_root": ROOT, "classes": len(report), "missing": missing,
                           "secrets_missing": secrets_missing}))
     return 1 if (strict and missing) else 0
 

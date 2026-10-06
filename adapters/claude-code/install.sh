@@ -4,10 +4,11 @@
 # Usage: bash adapters/claude-code/install.sh [--pack <name>] [--dry-run] [--uninstall]
 #          [--listing-budget print|write|skip] [--project <dir>] [--settings-scope project|local|user]
 #
-# Builds build/<pack>/ (a plugin folder with symlinked skills, the shared references beside them
-# and generated agents), then symlinks it to ~/.claude/skills/ai-workbench (CLAUDE_SKILLS_DIR
-# replaces ~/.claude/skills). Claude Code loads any folder under a skills directory that contains
-# .claude-plugin/plugin.json as a plugin on the next session.
+# Builds build/<pack>/ (a plugin folder with symlinked skills, the shared references beside them, the
+# providers a skill may reach, and generated agents), then symlinks it to
+# ~/.claude/skills/ai-workbench (CLAUDE_SKILLS_DIR replaces ~/.claude/skills). Claude Code loads any
+# folder under a skills directory that contains .claude-plugin/plugin.json as a plugin on the next
+# session. The install prints WORKBENCH_ROOT, the built plugin folder, so a skill finds providers/.
 # Default pack: default (every area except optional ones). See packs/README.md.
 # One pack is installed at a time: an install removes the builds of other packs, --uninstall
 # removes the link and every build. A pack that selects no skill is reported and changes nothing.
@@ -37,7 +38,7 @@ while [[ $# -gt 0 ]]; do
     --listing-budget) need "$@"; BUDGET_MODE="$2"; shift 2 ;;
     --settings-scope) need "$@"; SCOPE="$2"; shift 2 ;;
     --project) need "$@"; PROJECT="$2"; shift 2 ;;
-    --help|-h) sed -n '2,24p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --help|-h) sed -n '2,25p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "Error: unknown option '$1'. See --help." >&2; exit 2 ;;
   esac
 done
@@ -97,7 +98,7 @@ if [[ $DRY -eq 1 ]]; then
   python3 "$HERE/build.py" --pack "$PACK" --prune --dry-run
   b="$(budget)" || exit $?
   [[ -n "$b" ]] && budget_arg=("listing_budget:=$b")
-  emit "would_link=$TARGET" "to=$BUILD" ${budget_arg[@]+"${budget_arg[@]}"}; exit 0
+  emit "would_link=$TARGET" "to=$BUILD" "workbench_root=$TARGET" ${budget_arg[@]+"${budget_arg[@]}"}; exit 0
 fi
 if [[ -e "$TARGET" || -L "$TARGET" ]] && ! ours; then
   echo "Error: $TARGET exists and was not created by this installer. Move it away or set CLAUDE_SKILLS_DIR." >&2; exit 1
@@ -109,5 +110,7 @@ python3 "$HERE/build.py" --pack "$PACK" --prune >/dev/null
 mkdir -p "$(dirname "$TARGET")"
 ln -sfn "$BUILD" "$TARGET"
 emit "linked=$TARGET" "to=$BUILD" "pack=$PACK" \
+  "workbench_root=$TARGET" \
   "next=restart the session; the plugin loads as ai-workbench@skills-dir" \
   "fallback=claude --plugin-dir $BUILD" ${budget_arg[@]+"${budget_arg[@]}"}
+echo "WORKBENCH_ROOT=$TARGET: set it so an installed skill finds providers/ (skills/, shared/ and providers/ live there)." >&2

@@ -128,10 +128,15 @@ def main(argv):
         os.makedirs(os.path.join(out, "shared"))
         os.symlink(os.path.relpath(os.path.join(ROOT, "shared", "references"), os.path.join(out, "shared")),
                    os.path.join(out, "shared", "references"))
+        # The providers a skill may reach, so that the plugin carries what a skill needs of providers/:
+        # a skill runs `python3 <workbench root>/providers/resolve.py --class <class>`.
+        if os.path.isdir(os.path.join(ROOT, "providers")):
+            os.symlink(os.path.relpath(os.path.join(ROOT, "providers"), out), os.path.join(out, "providers"))
+    providers = ["providers"] if os.path.isdir(os.path.join(ROOT, "providers")) else []
     agents = build_agents(os.path.join(out, "agents"), dry)
     pruned = remove_builds(build_root, pack, dry) if "--prune" in argv else []
     print(json.dumps({"dry_run": dry, "pack": pack, "output": os.path.relpath(out, ROOT), "skills": len(names),
-                      "shared": ["references"], "agents": agents, "pruned": pruned}))
+                      "shared": ["references"], "providers": providers, "agents": agents, "pruned": pruned}))
     return 0
 
 
