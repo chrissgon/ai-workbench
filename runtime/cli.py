@@ -23,6 +23,7 @@ Usage:
   python3 runtime/cli.py verdict  --project <dir> --run <run id> --word worked|corrected|failed
   python3 runtime/cli.py sync     --project <dir> [--dry-run] [--take page|project --path <relative path>]
   python3 runtime/cli.py hand-over --project <dir> --task <task id> --file <path>
+  python3 runtime/cli.py progress --project <dir> [--since 7d | <n>d | YYYY-MM-DD]
 
 request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes; a task without a dependency is ready at once. Without --flow, the
@@ -84,6 +85,10 @@ hand-over copies one file of yours into the task's file drop, <project>/.workben
 deps      installs the dependency sets of runtime.json ("dependencies") by code, with no model: in the eval
           image, in a step that sees only the dependency files, on the open network; the result is cached under
           the data folder by the files and the image, and a run whose copy holds versioned files gets a copy of it.
+progress  where the work stands (each open request, what waits for you, what is stuck) and what happened in a
+          period (default the last 7 days; --since <n>d or a date YYYY-MM-DD): deliveries, runs, the known cost and
+          the runs without one, your decisions and those of an autonomy mode, the effects executed. Computed from
+          the store's records; it calls no model. "text" holds the same as plain lines.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
@@ -105,7 +110,7 @@ sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
-         "route", "approve", "reject", "sync", "hand-over", "deps")
+         "route", "approve", "reject", "sync", "hand-over", "deps", "progress")
 
 
 class Usage(Exception):
@@ -160,6 +165,7 @@ def run(argv) -> dict:
     p.add_argument("--path")
     p.add_argument("--with-comments", action="store_true")
     p.add_argument("--file")
+    p.add_argument("--since")
     a = p.parse_args(argv)
     project = os.path.abspath(a.project)
     if a.verb == "request":
@@ -194,6 +200,8 @@ def run(argv) -> dict:
         return ops.hand_over(project, need(a, "--task"), need(a, "--file"))
     if a.verb == "deps":
         return ops.deps(project)
+    if a.verb == "progress":
+        return ops.progress(project, a.since)
     return ops.status(project)
 
 

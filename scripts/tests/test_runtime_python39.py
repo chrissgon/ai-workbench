@@ -40,6 +40,7 @@ ON_SYSTEM_PYTHON = [
     "runtime/path_rule.py", "runtime/state_merge.py", "runtime/endings.py", "runtime/project_config.py",
     "runtime/manifest.py", "runtime/workcopy.py", "runtime/proof.py", "runtime/router.py", "runtime/plan.py",
     "runtime/board.py", "runtime/documents.py", "runtime/drop.py", "runtime/deps.py", "runtime/changeset.py", "runtime/effects.py",
+    "runtime/progress.py",
     # The task board's local implementation: the task runtime calls it with its own interpreter (stage 3).
     "providers/issue-tracker/local.py",
     # The documents' local implementation, called the same way (stage 3).
