@@ -2088,6 +2088,12 @@ def regrade(o):
             load_executor().ensure()
         except Exception as e:
             die(f"the eval container is not available: {e}", 1)
+    # The account a test event's grading gets: each grading call waits while it is paused, takes a place of the
+    # shared lock, and pauses it at its limit, where the call is made again and is not counted as refused.
+    status = load_status()
+    account = {"key": o["harness"], "markers": adapter_eval(o["harness"])["account_limit"],
+               "probe": lambda: probe_call(runner, o["grader"], pass_env),
+               "control": status.event_config(status.load_gate(ROOT))}
 
     def one(run_dir):
         with open(os.path.join(run_dir, "grading.json"), encoding="utf-8") as f:
@@ -2102,7 +2108,7 @@ def regrade(o):
                 k += 1
         dest = os.path.join(run_dir, f"regrade-{k}", "grading")
         results, refused, why, _ = grading_call(runner, o["grader"], prompt, dest, len(old), pass_env, o["timeout"],
-                                                redact=load_measure().redaction_values(pass_env))
+                                                account=account, redact=load_measure().redaction_values(pass_env))
         row = {"run": os.path.relpath(run_dir, base), "verdicts": len(old), "refused": refused}
         if results is None:
             return {**row, "failed": why}
