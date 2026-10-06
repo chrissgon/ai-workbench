@@ -113,6 +113,8 @@ class StandIn:
             Path(out, "error.log").write_text(step["log"])
         for rel, text in (step.get("write") or {}).items():
             Path(case_dir, rel).write_text(text)
+        if step.get("raise"):
+            raise step["raise"]
         return step.get("why")
 
     def redact_folder(self, folder, values, staged=()):
@@ -225,6 +227,11 @@ def test_env_extra_is_set_in_the_adapter_call_and_named_in_its_box_never_replace
     assert run_call[1]["pass"] == ["H_KEY", "TMPDIR"] and run_call[1]["network"] == "open"
     assert run_call[2]["TMPDIR"] == "/run/tmp"
     assert ("slots", "strong", True) in lab.log
+    roots = []
+    lab = StandIn(tmp_path / "t", [{}])
+    ra.run(lab, spec_for(tmp_path / "run2", env_extra=lambda root: roots.append(root) or {"TMPDIR": root + "/tmp"}))
+    run_call = next(entry for entry in lab.log if entry[0] == "run_failure")
+    assert len(roots) == 1 and run_call[2]["TMPDIR"] == roots[0] + "/tmp" and run_call[1]["root"] == roots[0]
 
 
 @pytest.mark.parametrize("step, kind, detail", [
@@ -322,6 +329,21 @@ def test_the_folders_return_whatever_a_hook_raises(tmp_path, no_sleep):
         ra.run(lab, spec_for(tmp_path / "run"), SimpleNamespace(after_run=broken))
     assert lab.roots == {} and list((tmp_path / "t").iterdir()) == []
     assert (tmp_path / "run" / "cwd" / "made.md").is_file()
+    assert names(lab.log)[-3:] == ["redact_folder", "return_run", "slots_released"]
+
+
+def test_after_run_is_called_when_the_adapter_call_raises_and_the_first_exception_goes_on(tmp_path, no_sleep):
+    (tmp_path / "t").mkdir()
+    lab = StandIn(tmp_path / "t", [{"raise": RuntimeError("stopping: no new run is started")}])
+    seen = []
+
+    def after_run(case_dir, root, why, delta, staged):
+        seen.append((why, delta))
+        raise OSError("the hook broke too")
+
+    with pytest.raises(RuntimeError, match="stopping"):
+        ra.run(lab, spec_for(tmp_path / "run"), SimpleNamespace(after_run=after_run))
+    assert seen == [(None, None)] and lab.roots == {}
     assert names(lab.log)[-3:] == ["redact_folder", "return_run", "slots_released"]
 
 

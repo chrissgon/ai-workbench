@@ -14,7 +14,7 @@ same store (`providers/store/sqlite.py`): the tables of this one are migrations 
 
 | File | What it owns |
 |------|--------------|
-| `lab.py` | The lab facade: the one file here that talks to `evals/eval_run.py`. Runs one skill once in the container; the pause on the account limit, the refusals, the early end and the stopping are the lab's own functions |
+| `lab.py` | The lab facade: the one file here that talks to `evals/eval_run.py`. Runs one skill once in the container; the attempts of a run (the pause on the account limit, the refusals, the early end, the retries) are made by the lab's one function, `evals/run_attempts.py`, reached through the runner, and the stopping is the lab's own: the runtime has no loop of its own |
 | `ops.py` | The operations layer: every operation a shell can perform, once (request, run the next task, answer, release, retry, cancel, status) |
 | `cli.py` | The terminal shell: one command per operation, nothing else |
 | `flow_files.py` | Reads and checks a flow file, `flows/<name>.json`: the tasks of a flow and their written dependencies |
@@ -96,4 +96,5 @@ with your approval written in the document, and carries `"mandatory_milestone": 
 
 `uv run --with pytest==9.1.1 pytest runtime/tests`: offline. A stand-in adapter (a shell script) and two
 invented skills replace the container and the model (`runtime/tests/standin_tree.py`); the parity test gives
-the same adapter output to the lab's runner and to `lab.py` and expects the same classification.
+the same adapter output to the lab's runner and to `lab.py`, expects the same classification, and checks that
+both reach one function and that `runtime/` keeps no loop of its own.
