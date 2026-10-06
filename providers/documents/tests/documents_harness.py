@@ -10,6 +10,8 @@ whose instance gives:
   expected(markdown) -> str         what a read returns for a text that was written: the text itself for an
                                     implementation that stores Markdown, notion_blocks.round_trip(text) for one that
                                     stores blocks
+  notices(id) -> list               the texts of the runtime's notices the document holds, where it lives, in order
+  first_is_notice(id) -> bool       whether the document's first block is a notice
 """
 from __future__ import annotations
 
@@ -48,6 +50,14 @@ class LocalDocuments:
     def expected(self, markdown: str) -> str:
         return markdown
 
+    def notices(self, ident: str) -> list:
+        prefix = "> [notice] "
+        return [line[len(prefix):] for line in (self.dir / ident).read_text(encoding="utf-8").splitlines()
+                if line.startswith(prefix)]
+
+    def first_is_notice(self, ident: str) -> bool:
+        return (self.dir / ident).read_text(encoding="utf-8").startswith("> [notice] ")
+
 
 class NotionDocuments:
     """The Notion implementation, against the stand-in service of fake_notion.py: the documents are pages under a
@@ -76,6 +86,20 @@ class NotionDocuments:
 
     def expected(self, markdown: str) -> str:
         return self.blocks.round_trip(markdown)
+
+    def _top(self, ident: str) -> list:
+        with self.fake.lock:
+            return [self.fake.blocks[i] for i in self.fake.children[ident] if not self.fake.blocks[i]["in_trash"]]
+
+    def notices(self, ident: str) -> list:
+        icon = "\U0001F512"
+        return ["".join(r["text"]["content"] for r in b["callout"]["rich_text"]) for b in self._top(ident)
+                if b["type"] == "callout" and (b["callout"].get("icon") or {}).get("emoji") == icon]
+
+    def first_is_notice(self, ident: str) -> bool:
+        top = self._top(ident)
+        return bool(top) and top[0]["type"] == "callout" and (top[0]["callout"].get("icon") or {}).get(
+            "emoji") == "\U0001F512"
 
 
 HARNESSES = {"local": LocalDocuments, "notion": NotionDocuments}

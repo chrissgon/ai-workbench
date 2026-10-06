@@ -19,19 +19,23 @@ rejected) with a note.
                        comments saved (store.comments_save); a person's edit of an editable document
                        replaces the whole project document, only when the project's file is still what was last
                        written and the skill's checker passes on a scratch copy; otherwise neither side changes and
-                       the record is `rejected`, with the reason. An edit of a read_only document is kept aside in
-                       <data_dir>/documents/not-taken/ and the page is written again.
+                       the record is `rejected`, with the reason. An edit of a read_only document cannot be
+                       imported: it is kept aside in <data_dir>/documents/not-taken/, the page is left as the person
+                       left it, and the record is `rejected` (READ_ONLY_CHANGED) until `take` settles it.
   push(ctx, rels)      the project to the platform: a page is written only when the project's file changed since the
-                       last write, after its open comments are saved; a page a person edited since the last look is
-                       not written over (pull's rules settle it). The hashes kept are those of what the platform
-                       returns, so a difference the conversion makes is never taken for an edit.
+                       last write, after its open comments are saved; a page that changed since the runtime last
+                       wrote it is never written over, read_only or not (pull's rules settle it). The hashes kept are
+                       those of what the platform returns, so a difference the conversion makes is never taken for an
+                       edit. A read_only page carries NOTICE as its first block: written with the page, or added once
+                       (the provider's `notice`) to a page that has none; it is never part of what is read.
   blocked(ctx, meta)   the rejected records among a skill's declared inputs, outputs and updates: a run does not
                        start on a document the person edited and the agents would not read (decision D11).
   imported_since(cfg, since)  the documents imported (a person's edit, recorded in <data_dir>/documents/imported.json
                        at each import) after a task's last run started, while the project's file is still that text:
                        the next run of a task that reads one is told so in its prompt (ops.task_prompt).
-  take(ctx, rel, side) settles a rejected record: "page" takes the page's text (when the checker passes), "project"
-                       writes the project's file over the page, the page's text kept aside first.
+  take(ctx, rel, side) settles a rejected record: "page" takes the page's text (when the checker passes), or, for a
+                       read_only type, keeps the page as it is and leaves the file unmirrored until it changes again;
+                       "project" writes the project's file over the page, the page's text kept aside first.
 
 Nothing here merges two versions of a document: a write replaces the whole document, on either side. The bounds of
 the writes are the configuration's documents object (runtime/board.py, bounds_problem).
@@ -65,7 +69,15 @@ CHECK_TIMEOUT = 120
 OUTPUT_CHARS = 2000
 NOT_TAKEN = os.path.join("documents", "not-taken")
 IMPORTED = os.path.join("documents", "imported.json")  # {rel: {"sha256", "at"}}: the last import of each document
+NOTICES = os.path.join("documents", "notices.json")  # {rel: page id}: the read_only pages known to carry NOTICE
 BOTH_CHANGED = "both changed"
+READ_ONLY_CHANGED = ("the page changed since the last write; the type is read-only on the platform, so the edit cannot "
+                     "be imported: `take page` keeps the page as it is and marks the file as not mirrored until the "
+                     "file changes again, `take project` writes the file over the page")
+KEPT_AS_IS = "the page is kept as the person left it (take page); the file is not mirrored until it changes again"
+NOTICE = ("Read-only on the platform: edits made here are not imported into the project. Answer through the runtime "
+          "(a pending decision, a comment taken into an answer, or the chat). An edit made here is kept: the next "
+          "write to this page is refused while the page differs from what the runtime last wrote.")
 STATUS_OF = {"editable": "mirrored", "read_only": "read_only"}
 
 
@@ -98,7 +110,7 @@ def _sha(data) -> str:
 def result() -> dict:
     """The form of what pull, push and take return, so that their results add up."""
     return {"imported": [], "not_taken": [], "conflicts": [], "rejected": [], "comments": 0, "gone": [],
-            "pushed": [], "failed": []}
+            "pushed": [], "failed": [], "notices": []}
 
 
 def _entries(root: str) -> list:
@@ -251,7 +263,55 @@ def _put(ctx: dict, rel: str, **fields) -> dict:
 def _read_page(ctx: dict, record: dict, out: dict) -> dict:
     page = call(ctx["cfg"], ctx["root"], "read", ["--id", record["remote_id"]])
     out["comments"] += _save_comments(ctx, record["path"], page)
+    if "notice" in page and page["notice"] is None:
+        _notice_seen(ctx["cfg"], record["path"], None)  # the page has none (any more): the next push adds it
     return page
+
+
+def _notices(cfg: dict) -> dict:
+    """{rel: page id} of the read_only pages known to carry NOTICE; {} when there is none or it cannot be read."""
+    try:
+        with open(os.path.join(cfg["data_dir"], NOTICES), encoding="utf-8") as f:
+            data = json.load(f)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _notice_seen(cfg: dict, rel: str, ident) -> None:
+    """Record that the page ident of rel carries NOTICE (ident None: that it does not)."""
+    data = _notices(cfg)
+    if data.get(rel) == ident:
+        return
+    if ident is None:
+        data.pop(rel, None)
+    else:
+        data[rel] = ident
+    path = os.path.join(cfg["data_dir"], NOTICES)
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    temporary = f"{path}.{os.getpid()}.tmp"
+    with open(temporary, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=1, sort_keys=True)
+    os.replace(temporary, path)
+
+
+def _ensure_notice(ctx: dict, rel: str, record: dict, out: dict, dry_run: bool) -> None:
+    """Add NOTICE to a read_only page that is not known to carry it (the provider's `notice` touches nothing else
+    of the page). Its version then moves; the next pull reads the page once, finds the same text, and records it."""
+    ident = record.get("remote_id")
+    if not ident or record.get("status") == "rejected" or _notices(ctx["cfg"]).get(rel) == ident:
+        return
+    if dry_run:
+        out["would"].append({"path": rel, "verb": "notice", "id": ident})
+        return
+    try:
+        done = call(ctx["cfg"], ctx["root"], "notice", ["--id", ident, "--text", NOTICE, "--confirmed"])
+    except DocumentsError as e:
+        out["failed"].append({"path": rel, "reason": f"the notice: {e}"})
+        return
+    _notice_seen(ctx["cfg"], rel, ident)
+    if done.get("added"):
+        out["notices"].append(rel)
 
 
 def _settle(ctx: dict, record: dict, entry, page: dict, out: dict) -> str:
@@ -267,10 +327,11 @@ def _settle(ctx: dict, record: dict, entry, page: dict, out: dict) -> str:
         _put(ctx, rel, **fields)
         return "unchanged"
     if entry is None or entry["platform"] == "read_only":
+        # Never imported, and never written over while it differs (WP-3.21): the person settles it with take.
         _keep_aside(ctx["cfg"], rel, markdown)
-        _put(ctx, rel, written_sha256=None, read_sha256=digest, remote_version=version, status="read_only", note=None)
-        out["not_taken"].append(rel)
-        return "not_taken"
+        _put(ctx, rel, status="rejected", note=READ_ONLY_CHANGED, remote_version=version)
+        out["rejected"].append({"path": rel, "note": READ_ONLY_CHANGED})
+        return "rejected"
     current = _read_project(ctx["cfg"]["project"], rel)
     if current is None or _sha(current) != record.get("written_sha256"):
         _put(ctx, rel, status="rejected", note=BOTH_CHANGED)
@@ -390,7 +451,10 @@ def push(ctx: dict, rels, dry_run: bool = False) -> dict:
             continue
         digest = _sha(data)
         record = store.document_get(conn, rel) or {}
+        read_only = entry["platform"] == "read_only"
         if record.get("written_sha256") == digest:
+            if read_only and not bounds:
+                _ensure_notice(ctx, rel, record, out, dry_run)
             continue  # no write when the content did not change
         if record.get("status") == "rejected":
             continue  # waits for the person to settle it (take); pull reports it
@@ -399,17 +463,19 @@ def push(ctx: dict, rels, dry_run: bool = False) -> dict:
             continue
         try:
             if record.get("remote_id") and not dry_run:
+                # Before every write: the page against what the runtime last wrote there. The text's hash is the
+                # guard (a version is rounded to the minute, N1); a page that changed is never written over.
                 page = _read_page(ctx, record, out)
                 if record.get("read_sha256") is not None and _sha(page.get("markdown") or "") != record["read_sha256"]:
-                    if _settle(ctx, record, entry, page, out) != "not_taken":
-                        continue
+                    _settle(ctx, record, entry, page, out)
+                    continue
             fd, markdown_file = tempfile.mkstemp(prefix="document-", suffix=".md")
             try:
                 with os.fdopen(fd, "wb") as f:
                     f.write(data)
                 args = (["--id", record["remote_id"]] if record.get("remote_id") else []) + [
-                    "--path", rel, "--markdown-file", markdown_file, "--idempotency-key", _key(cfg, rel, digest),
-                    "--dry-run" if dry_run else "--confirmed"]
+                    "--path", rel, "--markdown-file", markdown_file, "--idempotency-key", _key(cfg, rel, digest)] + (
+                    ["--notice", NOTICE] if read_only else []) + ["--dry-run" if dry_run else "--confirmed"]
                 written = call(cfg, root, "write", args)
             finally:
                 try:
@@ -421,6 +487,8 @@ def push(ctx: dict, rels, dry_run: bool = False) -> dict:
                 continue
             if not isinstance(written.get("id"), str) or not written["id"]:
                 raise DocumentsError("failed", "the provider's write printed no id")
+            if read_only:
+                _notice_seen(cfg, rel, written["id"])
             try:
                 back = call(cfg, root, "read", ["--id", written["id"]])
             except DocumentsError as e:
@@ -469,7 +537,13 @@ def take(ctx: dict, rel: str, side: str) -> dict:
     markdown = page.get("markdown") or ""
     if side == "page":
         if entry["platform"] != "editable":
-            raise DocumentsError("refused", f"{rel} is read_only: an edit on the platform is never taken")
+            # Never imported: the page stays as the person left it, and the file is not written over it until the
+            # file itself changes again (the written hash is the file's own).
+            current = _read_project(ctx["cfg"]["project"], rel)
+            _put(ctx, rel, status=STATUS_OF[entry["platform"]], note=KEPT_AS_IS, read_sha256=_sha(markdown),
+                 written_sha256=None if current is None else _sha(current), remote_version=page.get("version"))
+            out["not_taken"].append(rel)
+            return out
         ok, reason = check_edit(ctx["root"], ctx["cfg"]["project"], entry, rel, markdown)
         if not ok:
             _put(ctx, rel, status="rejected", note=reason, remote_version=page.get("version"))
@@ -483,7 +557,7 @@ def take(ctx: dict, rel: str, side: str) -> dict:
     _put(ctx, rel, written_sha256=None, read_sha256=_sha(markdown), remote_version=page.get("version"),
          status=STATUS_OF[entry["platform"]], note=None)
     pushed = push(ctx, [rel])
-    for key in ("pushed", "failed", "conflicts", "rejected", "not_taken", "imported"):
+    for key in ("pushed", "failed", "conflicts", "rejected", "not_taken", "imported", "notices"):
         out[key] += [v for v in pushed[key] if v not in out[key]]
     out["comments"] += pushed["comments"]
     return out

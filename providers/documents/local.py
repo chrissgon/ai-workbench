@@ -15,6 +15,11 @@ so it changes when a person edits the document, and only then; a comment does no
 whatever the version). A write replaces the whole document (atomically), never merges, and leaves the side file as
 it is.
 
+A notice (write --notice, the verb notice) is the file's first line, "> [notice] <text>", and one empty line: it
+stays above the document, a write with --notice writes it first, and read leaves it out of markdown and prints it as
+notice (null when the file has none). The notice is written by the runtime, never by a person; the version, the
+sha256 of the file's bytes, moves when it is added.
+
 Usage:
   python3 providers/documents/local.py --help
   python3 providers/documents/local.py --check --config-file <f>
@@ -22,7 +27,9 @@ Usage:
   python3 providers/documents/local.py read  --config-file <f> --id <id>
   python3 providers/documents/local.py comments --config-file <f> --id <id>
   python3 providers/documents/local.py write --config-file <f> [--id <id>] --path <project-relative path>
-                                       --markdown-file <f> --idempotency-key <k> (--dry-run | --confirmed)
+                                       --markdown-file <f> --idempotency-key <k> [--notice <text>]
+                                       (--dry-run | --confirmed)
+  python3 providers/documents/local.py notice --config-file <f> --id <id> --text <text> (--dry-run | --confirmed)
   python3 providers/documents/local.py resolve --config-file <f> --idempotency-key <k>
                                        (--id <id> | --not-created) (--dry-run | --confirmed)
 
@@ -49,6 +56,8 @@ import tempfile
 KEYS_FILE = ".keys.json"
 LOCK_FILE = ".lock"
 SIDE = ".comments.md"
+NOTICE_PREFIX = "> [notice] "
+NOTICE_LIMIT = 2000
 
 
 class Refused(Exception):
@@ -125,6 +134,29 @@ def comments_of(folder: str, ident: str) -> list:
     return out
 
 
+def notice_text(value, flag: str) -> str:
+    """A notice: one line of at most NOTICE_LIMIT characters."""
+    if not isinstance(value, str) or not value.strip() or len(value) > NOTICE_LIMIT \
+            or re.search(r"[\x00-\x1f\x7f]", value):
+        raise Refused(f"{flag} is one line of at most {NOTICE_LIMIT} characters", 2)
+    return value.strip()
+
+
+def split_notice(data: bytes) -> tuple:
+    """(the notice's text or None, the document's bytes without it)."""
+    head = NOTICE_PREFIX.encode("utf-8")
+    if not data.startswith(head):
+        return None, data
+    line, _, rest = data.partition(b"\n")
+    if rest.startswith(b"\n"):
+        rest = rest[1:]
+    return line[len(head):].decode("utf-8", errors="replace"), rest
+
+
+def with_notice(text: str, data: bytes) -> bytes:
+    return (NOTICE_PREFIX + text + "\n\n").encode("utf-8") + data
+
+
 def write_file(path: str, data: bytes) -> None:
     folder = os.path.dirname(path)
     os.makedirs(folder, exist_ok=True)
@@ -197,9 +229,9 @@ def cmd_read(args: dict) -> int:
     folder = documents_dir(args.get("--config-file"))
     ident = doc_id(args.get("--id"), "--id")
     version = version_of(folder, ident)
-    data = read_bytes(file_of(folder, ident)) or b""
+    notice, data = split_notice(read_bytes(file_of(folder, ident)) or b"")
     return emit({"id": ident, "version": version, "markdown": data.decode("utf-8", errors="replace"),
-                 "comments": comments_of(folder, ident)})
+                 "notice": notice, "comments": comments_of(folder, ident)})
 
 
 def cmd_comments(args: dict) -> int:
@@ -224,6 +256,9 @@ def cmd_write(args: dict) -> int:
             data = f.read()
     except OSError:
         raise Refused(f"the Markdown file {source} cannot be read", 2) from None
+    notice = notice_text(args["--notice"], "--notice") if args.get("--notice") is not None else None
+    if notice is not None:
+        data = with_notice(notice, data)  # one notice, first, whatever the document held before
     with Lock(folder):
         keys = read_keys(folder)
         if ident is None:
@@ -238,6 +273,24 @@ def cmd_write(args: dict) -> int:
         write_file(file_of(folder, ident), data)
         version = version_of(folder, ident)
     return emit({"id": ident, "version": version, "created": created, "url": "file://" + file_of(folder, ident)})
+
+
+def cmd_notice(args: dict) -> int:
+    """Add the notice as the document's first block when it has none; the document itself is not touched."""
+    folder = documents_dir(args.get("--config-file"))
+    mode = mode_of(args)
+    ident = doc_id(args.get("--id"), "--id")
+    text = notice_text(args.get("--text"), "--text")
+    with Lock(folder):
+        data = read_bytes(file_of(folder, ident))
+        if data is None:
+            raise Refused(f"no document {ident}", 1)
+        add = split_notice(data)[0] is None
+        if mode == "dry":
+            return emit({"dry_run": True, "would": {"verb": "notice", "id": ident, "add": add}})
+        if add:
+            write_file(file_of(folder, ident), with_notice(text, data))
+    return emit({"id": ident, "added": add})
 
 
 def cmd_resolve(args: dict) -> int:
@@ -263,8 +316,9 @@ def cmd_resolve(args: dict) -> int:
     return emit({"key": key, "id": ident, "resolved": True})
 
 
-VERBS = {"stat": cmd_stat, "read": cmd_read, "comments": cmd_comments, "write": cmd_write, "resolve": cmd_resolve}
-VALUE_FLAGS = ("--config-file", "--id", "--path", "--markdown-file", "--idempotency-key")
+VERBS = {"stat": cmd_stat, "read": cmd_read, "comments": cmd_comments, "write": cmd_write, "notice": cmd_notice,
+         "resolve": cmd_resolve}
+VALUE_FLAGS = ("--config-file", "--id", "--path", "--markdown-file", "--idempotency-key", "--notice", "--text")
 SWITCHES = ("--dry-run", "--confirmed", "--not-created", "--check")
 
 

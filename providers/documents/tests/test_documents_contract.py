@@ -49,12 +49,14 @@ class Documents:
             out = None
         return done.returncode, out, done.stderr
 
-    def write(self, markdown: str, path="docs/brand/strategy.md", ident=None, key=None, mode="--confirmed"):
+    def write(self, markdown: str, path="docs/brand/strategy.md", ident=None, key=None, mode="--confirmed",
+              notice=None):
         self.count += 1
         source = self.tmp / f"doc-{self.count}.md"
         source.write_text(markdown, encoding="utf-8")
         argv = ["write", "--path", path, "--markdown-file", str(source), "--idempotency-key",
-                key or f"key-{self.count}", mode] + (["--id", ident] if ident else [])
+                key or f"key-{self.count}", mode] + (["--id", ident] if ident else []) + (
+                    ["--notice", notice] if notice is not None else [])
         return self.run(*argv)
 
     def read(self, ident: str) -> dict:
@@ -171,6 +173,46 @@ def test_check_says_not_configured_with_exit_3_and_prints_no_secret(documents, t
         assert value not in err
     code, _, _ = documents.run("--check", config=tmp_path / "missing.json")
     assert code == 3
+
+
+NOTICE = "Read-only here: edits are not imported, and the page is not overwritten while it differs."
+
+
+def test_a_notice_is_the_pages_first_block_once_and_never_part_of_what_is_read(documents):
+    code, out, err = documents.write(TEXT, notice=NOTICE)
+    assert code == 0 and out["created"] is True, err
+    ident = out["id"]
+    got = documents.read(ident)
+    assert got["markdown"] == documents.harness.expected(TEXT) and got["notice"] == NOTICE
+    assert documents.harness.notices(ident) == [NOTICE] and documents.harness.first_is_notice(ident)
+    shorter = "# Brand strategy\n\nShorter.\n"
+    for _ in range(2):  # a write keeps the notice it finds: still one, still first
+        assert documents.write(shorter, ident=ident, notice=NOTICE)[0] == 0
+        got = documents.read(ident)
+        assert got["markdown"] == documents.harness.expected(shorter) and got["notice"] == NOTICE
+        assert documents.harness.notices(ident) == [NOTICE] and documents.harness.first_is_notice(ident)
+    assert documents.write(shorter, ident=ident)[0] == 0  # a write without --notice leaves none
+    assert documents.read(ident)["notice"] is None and documents.harness.notices(ident) == []
+    plain = documents.write(TEXT, path="docs/brand/voice.md")[1]["id"]
+    assert documents.read(plain)["notice"] is None and documents.harness.notices(plain) == []
+    for bad in ("", "two\nlines"):
+        assert documents.write(TEXT, ident=ident, notice=bad)[0] == 2
+
+
+def test_notice_adds_the_notice_to_a_page_that_has_none_and_nothing_to_one_that_has_it(documents):
+    ident = documents.write(TEXT)[1]["id"]
+    before = documents.read(ident)
+    code, out, err = documents.run("notice", "--id", ident, "--text", NOTICE, "--dry-run")
+    assert code == 0 and out["dry_run"] is True and documents.read(ident) == before, err
+    assert documents.run("notice", "--id", ident, "--text", NOTICE)[0] == 2  # neither --dry-run nor --confirmed
+    code, out, err = documents.run("notice", "--id", ident, "--text", NOTICE, "--confirmed")
+    assert code == 0 and out == {"id": ident, "added": True}, err
+    got = documents.read(ident)
+    assert got["markdown"] == before["markdown"] and got["notice"] == NOTICE
+    assert documents.harness.notices(ident) == [NOTICE] and documents.harness.first_is_notice(ident)
+    code, out, err = documents.run("notice", "--id", ident, "--text", NOTICE, "--confirmed")
+    assert code == 0 and out == {"id": ident, "added": False} and documents.harness.notices(ident) == [NOTICE], err
+    assert documents.run("notice", "--id", "docs/brand/none.md", "--text", NOTICE, "--confirmed")[0] == 1
 
 
 def test_the_class_resolves_by_its_folder_and_is_not_in_the_listed_classes():

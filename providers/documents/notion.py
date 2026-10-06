@@ -16,6 +16,12 @@ was written (notion_blocks.py says what changes on the way), not the same bytes.
 service lists for the page and for each of its blocks (a comment on a block is listed under that block only): `read`
 lists them all; `comments` lists the page's own, in one listing, whatever the version.
 
+A notice (write --notice, the verb notice) is the page's first block: a callout with this provider's icon (NOTICE_ICON)
+and the notice's text, written by the runtime. A write with --notice keeps a notice with the same text and adds one
+where there is none (inserted at the start, the append call's position "start"); `notice` adds it to a page that has
+none and touches nothing else; `read` leaves it out of markdown and prints its text as `notice` (null when the first
+block is not one).
+
 `version` is the page's last_edited_time, and `stat` retrieves the page object only. It covers the content: measured
 on the live service (README.md, "Measured on the live service"), it is rounded to the minute and a comment does not
 move it; the stand-in service of the tests does the same.
@@ -27,7 +33,9 @@ Usage:
   uv run providers/documents/notion.py read  --config-file <f> --id <id>
   uv run providers/documents/notion.py comments --config-file <f> --id <id>
   uv run providers/documents/notion.py write --config-file <f> [--id <id>] --path <project-relative path>
-                                       --markdown-file <f> --idempotency-key <k> (--dry-run | --confirmed)
+                                       --markdown-file <f> --idempotency-key <k> [--notice <text>]
+                                       (--dry-run | --confirmed)
+  uv run providers/documents/notion.py notice --config-file <f> --id <id> --text <text> (--dry-run | --confirmed)
   uv run providers/documents/notion.py resolve --config-file <f> --idempotency-key <k>
                                        (--id <id> | --not-created) (--dry-run | --confirmed)
 
@@ -101,6 +109,8 @@ KEYRING_USERNAME = "notion"
 LEDGER_NAME = "documents-notion.json"
 EXIT_OK, EXIT_SERVICE, EXIT_USAGE, EXIT_NOT_CONFIGURED = 0, 1, 2, 3
 
+NOTICE_ICON = "\U0001F512"  # the icon that marks the runtime's notice among a page's callouts
+NOTICE_COLOR = "gray_background"
 NOTION_ID = re.compile(r"[0-9a-f]{32}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 SIDE = ".comments.md"
 
@@ -278,9 +288,12 @@ class Service:
                 b.setdefault(b["type"], {})["children"] = self.blocks(b["id"])
         return out
 
-    def append(self, parent: str, blocks: list) -> None:
+    def append(self, parent: str, blocks: list, first: bool = False) -> None:
         """Append blocks under a parent, at most MAX_CHILDREN_PER_CALL per call. A block is sent without its children
-        (a table keeps its rows, one level); the children are appended under the block the answer names."""
+        (a table keeps its rows, one level); the children are appended under the block the answer names. first: the
+        blocks (at most one call's worth) go before the parent's other children (position "start")."""
+        if first and len(blocks) > MAX_CHILDREN_PER_CALL:
+            raise ProviderError("at most one call's worth of blocks goes at the start", EXIT_USAGE)
         for start in range(0, len(blocks), MAX_CHILDREN_PER_CALL):
             batch, later = [], []
             for b in blocks[start:start + MAX_CHILDREN_PER_CALL]:
@@ -289,7 +302,8 @@ class Service:
                 kids = [] if kind == "table" else body.pop("children", None) or []
                 batch.append({**b, kind: body})
                 later.append(kids)
-            made = self.call("append_children", parent, body={"children": batch}).get("results")
+            body = {"children": batch, **({"position": {"type": "start"}} if first else {})}
+            made = self.call("append_children", parent, body=body).get("results")
             if not isinstance(made, list) or len(made) != len(batch):
                 raise ProviderError("the answer to an append does not list the blocks it made; the body may be "
                                     "incomplete, write it again")
@@ -297,11 +311,15 @@ class Service:
                 if kids:
                     self.append(notion_id(block.get("id"), "a block's id", EXIT_SERVICE), kids)
 
-    def replace_body(self, page: str, blocks: list) -> None:
-        """The new body first, then the old blocks deleted: a failure never leaves the page empty."""
-        old = [b["id"] for b in self.paged("list_children", page)[0]]
+    def replace_body(self, page: str, blocks: list, notice=None) -> None:
+        """The new body first, then the old blocks deleted: a failure never leaves the page empty. With a notice,
+        a first block that is that notice is kept, and where there is none the notice is put at the start first."""
+        listed = self.paged("list_children", page)[0]
+        keep = listed[0]["id"] if notice is not None and listed and notice_of(listed[0]) == notice else None
+        if notice is not None and keep is None:
+            self.append(page, [notice_block(notice)], first=True)
         self.append(page, blocks)
-        for ident in old:
+        for ident in [b["id"] for b in listed if b["id"] != keep]:
             self.call("delete_block", ident)
 
 
@@ -408,6 +426,30 @@ def plain(rich) -> str:
 
 def text_objects(text: str) -> list:
     return [{"type": "text", "text": {"content": text[i:i + TEXT_LIMIT]}} for i in range(0, len(text), TEXT_LIMIT)]
+
+
+def notice_block(text: str) -> dict:
+    return {"object": "block", "type": "callout", "callout": {
+        "rich_text": text_objects(text), "icon": {"type": "emoji", "emoji": NOTICE_ICON}, "color": NOTICE_COLOR}}
+
+
+def notice_of(block) -> str | None:
+    """The text of a block that is the runtime's notice (a callout with NOTICE_ICON), else None."""
+    if not isinstance(block, dict) or block.get("type") != "callout":
+        return None
+    body = block.get("callout") or {}
+    icon = body.get("icon") or {}
+    if icon.get("type") != "emoji" or icon.get("emoji") != NOTICE_ICON:
+        return None
+    return plain(body.get("rich_text"))
+
+
+def notice_text(value, flag: str) -> str:
+    """A notice: one line of at most TEXT_LIMIT characters."""
+    if not isinstance(value, str) or not value.strip() or len(value) > TEXT_LIMIT \
+            or re.search(r"[\x00-\x1f\x7f]", value):
+        raise ProviderError(f"{flag} is one line of at most {TEXT_LIMIT} characters", EXIT_USAGE)
+    return value.strip()
 
 
 def archived(page: dict) -> bool:
@@ -541,8 +583,10 @@ def cmd_read(args: dict) -> int:
     service = Service()
     page = retrieve(service, ident)
     blocks = service.blocks(ident)
-    return emit({"id": ident, "version": page.get("last_edited_time"), "markdown": nb.to_markdown(blocks),
-                 "comments": comments_of(service, ident, blocks)})
+    notice = notice_of(blocks[0]) if blocks else None
+    body = blocks[1:] if notice is not None else blocks
+    return emit({"id": ident, "version": page.get("last_edited_time"), "markdown": nb.to_markdown(body),
+                 "notice": notice, "comments": comments_of(service, ident, blocks)})
 
 
 def cmd_comments(args: dict) -> int:
@@ -574,6 +618,7 @@ def cmd_write(args: dict) -> int:
     except (OSError, UnicodeDecodeError):
         raise ProviderError(f"the Markdown file {source} cannot be read as UTF-8 text", EXIT_USAGE) from None
     blocks = nb.to_blocks(markdown)
+    notice = notice_text(args["--notice"], "--notice") if args.get("--notice") is not None else None
     entry = ledger_entry(cfg["parent"], key) if ident is None else None
     if entry and entry.get("status") != "done":
         raise ProviderError(pending_message(key, entry))
@@ -606,12 +651,30 @@ def cmd_write(args: dict) -> int:
                                             "error": "the answer named no page"})
             raise ProviderError("the answer to the creation names no page; the key stays pending until resolve")
         ledger_set(cfg["parent"], key, {"status": "done", "id": ident, "path": path, "recorded_at": now_iso()})
-        service.append(ident, blocks)
+        service.append(ident, ([notice_block(notice)] if notice is not None else []) + blocks)
     else:
         retrieve(service, ident)
-        service.replace_body(ident, blocks)
+        service.replace_body(ident, blocks, notice)
     page = retrieve(service, ident)
     return emit({"id": ident, "version": page.get("last_edited_time"), "created": create, "url": page.get("url")})
+
+
+def cmd_notice(args: dict) -> int:
+    """Add the notice as the page's first block when its first block is not one; nothing else of the page is
+    touched. A dry run makes no call, so it cannot say whether the notice would be added."""
+    documents_config(args.get("--config-file"))
+    mode = mode_of(args)
+    ident = doc_id(args.get("--id"))
+    text = notice_text(args.get("--text"), "--text")
+    if mode == "dry":
+        return emit({"dry_run": True, "would": {"verb": "notice", "id": ident}})
+    service = Service()
+    retrieve(service, ident)
+    first = service.call("list_children", ident, query={"page_size": 1}).get("results") or []
+    if first and notice_of(first[0]) is not None:
+        return emit({"id": ident, "added": False})
+    service.append(ident, [notice_block(text)], first=True)
+    return emit({"id": ident, "added": True})
 
 
 def cmd_resolve(args: dict) -> int:
@@ -629,8 +692,9 @@ def cmd_resolve(args: dict) -> int:
     return emit({"key": key, "id": ident, "resolved": True})
 
 
-VERBS = {"stat": cmd_stat, "read": cmd_read, "comments": cmd_comments, "write": cmd_write, "resolve": cmd_resolve}
-VALUE_FLAGS = ("--config-file", "--id", "--path", "--markdown-file", "--idempotency-key")
+VERBS = {"stat": cmd_stat, "read": cmd_read, "comments": cmd_comments, "write": cmd_write, "notice": cmd_notice,
+         "resolve": cmd_resolve}
+VALUE_FLAGS = ("--config-file", "--id", "--path", "--markdown-file", "--idempotency-key", "--notice", "--text")
 SWITCHES = ("--dry-run", "--confirmed", "--not-created", "--check")
 
 

@@ -204,3 +204,28 @@ def test_a_fenced_block_whose_language_the_service_does_not_know_goes_up_as_plai
     with pytest.raises(Exception, match="code.language") as refused:  # the stand-in's own answer to the old body
         docs.fake.checked_children({"children": [{"type": "code", "code": {"rich_text": [], "language": "brand-tokens"}}]})
     assert refused.value.status == 400
+
+
+def test_the_notice_is_a_callout_added_at_the_start_of_an_existing_page_and_kept_by_a_write(tmp_path):
+    docs = Documents(tmp_path)
+    ident = docs.write("# Brand name\n\nA first paragraph.\n", key="k-notice")[1]["id"]
+    seen = len(docs.fake.requests)
+    code, out, err = docs.run("notice", "--id", ident, "--text", "Read-only here.", "--confirmed")
+    assert code == 0 and out["added"] is True, err
+    appends = [body for method, path, body in docs.fake.requests[seen:] if method == "PATCH"]
+    assert len(appends) == 1 and appends[0]["position"] == {"type": "start"}
+    with docs.fake.lock:
+        top = [docs.fake.blocks[i] for i in docs.fake.children[ident]]
+    assert top[0]["type"] == "callout" and top[0]["callout"]["icon"] == {"type": "emoji", "emoji": "\U0001F512"}
+    assert texts(top[0]["callout"]) == ["Read-only here."] and top[1]["type"] == "heading_1"
+    seen = len(docs.fake.requests)
+    source = tmp_path / "again.md"
+    source.write_text("# Brand name\n\nAnother paragraph.\n", encoding="utf-8")
+    code, out, err = docs.run("write", "--id", ident, "--path", "docs/brand/name.md", "--markdown-file", str(source),
+                              "--idempotency-key", "k-notice-2", "--notice", "Read-only here.", "--confirmed")
+    assert code == 0, err
+    later = docs.fake.requests[seen:]
+    assert not any((body or {}).get("position") for _, _, body in later)  # the notice was kept, not written again
+    with docs.fake.lock:
+        top = [docs.fake.blocks[i] for i in docs.fake.children[ident] if not docs.fake.blocks[i]["in_trash"]]
+    assert [b["type"] for b in top] == ["callout", "heading_1", "paragraph"]

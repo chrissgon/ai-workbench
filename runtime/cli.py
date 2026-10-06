@@ -84,8 +84,11 @@ sync      mirrors the tasks with the project's task board (task_board in runtime
           project's file is still what was last written there and the skill's checker passes (else nothing changes
           and the document is rejected, with the reason; no task that reads it runs until it is settled), and a
           document that changed in the project goes to the platform, its open comments saved first. --dry-run
-          reads nothing and prints every write it would make. --take page|project with --path settles a rejected
-          document: the page's text, or the project's file over the page.
+          reads nothing and prints every write it would make. A page that changed since the last write is never
+          written over: a read-only type's page (it carries a notice saying so) is rejected until settled.
+          --take page|project with --path settles a rejected document: the page's text (for a read-only type,
+          the page kept as it is and the file not mirrored until it changes), or the project's file over the
+          page.
 hand-over copies one file of yours into the task's file drop, <project>/.workbench-local/drop/<task id>/: it
           enters that task's runs and no other, and the run's prompt lists it; what a run leaves there never comes
           back. Refused for a link, a folder, a file over 25 MB, a name with other characters than letters,
