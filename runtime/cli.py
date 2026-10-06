@@ -32,6 +32,7 @@ Usage:
   python3 runtime/cli.py poll     --project <dir>
   python3 runtime/cli.py handler  --project <dir> --name <handler> --verb <verb> [--arg <flag>=<value>]...
   python3 runtime/cli.py pin      --project <dir>
+  python3 runtime/cli.py say      --project <dir> (--text <line> | --text-file <file or ->)
 
 request   records what you want. With --flow, plans it from the flow file flows/<name>.json: its tasks, with the
           dependencies the file writes; a task without a dependency is ready at once. Without --flow, the
@@ -120,6 +121,9 @@ poll      the short job: mirrors the task board and the documents, expires stand
 pin       writes the pin of the dispatcher's two jobs (<data_dir>/dispatch-pin.json): the path and the hash of the
           accepted runtime.json. The scheduler's entry (runtime/dispatcher.py) refuses to run when the file changed;
           after any change: accept-config, pin, then schedule both jobs again with the new command files.
+say       one turn of the conversation with the planning agent (the same as one line of runtime/chat.py): a command
+          (/help lists them), the answer to its question, or a new request, which runs the router (a model call) and
+          shows the plan; refused when the planning agent is stopped or at its cap.
 handler   starts one verb of a handler (runtime/handlers/) that handlers in runtime.json names, and prints its result.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
@@ -143,7 +147,7 @@ import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
          "route", "approve", "reject", "sync", "hand-over", "deps", "progress", "set-mode", "approve-policy",
-         "revoke-policy", "standing", "dispatch", "poll", "handler", "pin")
+         "revoke-policy", "standing", "dispatch", "poll", "handler", "pin", "say")
 
 
 class Usage(Exception):
@@ -257,6 +261,8 @@ def run(argv) -> dict:
         return ops.poll(project)
     if a.verb == "pin":
         return ops.pin(project)
+    if a.verb == "say":
+        return ops.say(project, text_of(a))
     if a.verb == "handler":
         pairs = {}
         for item in a.arg:
