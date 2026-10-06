@@ -82,14 +82,14 @@ An arrow is "may read or call". Nothing points into the shells, and nothing in l
 
 | # | Layer | What it is | Page |
 |---|---|---|---|
-| 1 | Skills and flows | The capabilities and flow skills under `skills/`, the delegation agents under `agents/`, the packs, and the flow files `flows/<name>.json` that code reads | to come |
-| 2 | Contracts and references | The artifact, state, environment, runtime and secrets contracts under `contracts/`, the cross-cutting and platform references under `shared/references/`, the templates | to come |
-| 3 | Providers | One script per implementation of a requirement class, reached only through `providers/resolve.py`; the store is one of them | to come |
-| 4 | The lab | The eval runner, the container, the measurement, the status script and the evidence (`evals/`, `skills/<name>/evals/`) | to come |
-| 5 | Adapters | Everything specific to one AI tool: installers, the eval entry `run-prompt.sh`, overrides (`adapters/<harness>/`) | to come |
+| 1 | Skills and flows | The capabilities and flow skills under `skills/`, the delegation agents under `agents/`, the packs, and the flow files `flows/<name>.json` that code reads | [skills-and-flows.md](skills-and-flows.md) |
+| 2 | Contracts and references | The artifact, state, environment, runtime and secrets contracts under `contracts/`, the cross-cutting and platform references under `shared/references/`, the templates | [contracts-and-references.md](contracts-and-references.md) |
+| 3 | Providers | One script per implementation of a requirement class, reached only through `providers/resolve.py`; the store is one of them | [providers.md](providers.md) |
+| 4 | The lab | The eval runner, the container, the measurement, the status script and the evidence (`evals/`, `skills/<name>/evals/`) | [lab.md](lab.md) |
+| 5 | Adapters | Everything specific to one AI tool: installers, the eval entry `run-prompt.sh`, overrides (`adapters/<harness>/`) | [adapters.md](adapters.md) |
 | 6 | The runtime | The task runtime under `runtime/`: requests, tasks, runs in the container, pending decisions, approvals, mirrors, the dispatcher | [runtime.md](runtime.md) |
-| 7 | The shells | Thin fronts over the operations layer: the terminal (`runtime/cli.py`) and the conversation (`runtime/chat.py`) today; the local interface and the MCP mode planned | to come |
-| 8 | The target project | The project a person works on: its documents, its state file, its configuration, its work data; never a file of this repository | to come |
+| 7 | The shells | Thin fronts over the operations layer: the terminal (`runtime/cli.py`) and the conversation (`runtime/chat.py`) today; the local interface and the MCP mode planned | [shells.md](shells.md) |
+| 8 | The target project | The project a person works on: its documents, its state file, its configuration, its work data; never a file of this repository | [project.md](project.md) |
 
 **The direction rules.**
 
@@ -229,3 +229,4 @@ The names fixed for this work. Use each exactly.
 ## Changes
 
 - 2026-10-06: first version, with the runtime's page; the pages of the other seven layers follow.
+- 2026-10-06: the layer list links the page of every layer; the shells' and the target project's pages added.
