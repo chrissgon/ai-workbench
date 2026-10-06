@@ -32,6 +32,11 @@ matches AGENTS.md (runtime/workcopy.py, limit L5); from stage 4 no change set ma
 (runtime/changeset.py, matches(): the whole relative path against the entry with fnmatch, so `*` crosses `/`, and an
 entry that ends in `/` covers everything under it). Protected paths still enter a copy; only the way back is closed.
 
+It also reads "code" (stage 4; absent: no change set becomes a pull request): where a change set becomes a pull
+request, an object {"provider": "github", "repo": "<owner>/<name>", "base": "<branch>", "branch_prefix": "wb/"}
+(branch_prefix optional, default "wb/"). The repository and the base branch of a pull request come from here,
+never from what a model wrote.
+
 It also reads "dependencies" (stage 4; absent means none): the project's dependency sets, each installed by code
 from a recipe of the closed table of runtime/deps.py, checked there (deps.declared()):
 
@@ -54,6 +59,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -106,6 +112,7 @@ def load(project: str) -> dict:
     if not isinstance(protected, list) or not all(isinstance(p, str) and p.strip() for p in protected):
         raise ConfigError("runtime.json protected_paths must be a list of path globs")
     out["protected_paths"] = list(protected)
+    out["code"] = _code(raw.get("code"))
     try:
         out["dependencies"] = deps.declared(raw)
     except deps.DepsError as e:
@@ -113,6 +120,29 @@ def load(project: str) -> dict:
     for key, cls in PLATFORM_KEYS.items():
         out[key] = _platform(raw.get(key), key, cls, project, out["workbench"])
     return out
+
+
+CODE_KEYS = ("provider", "repo", "base", "branch_prefix")
+CODE_PROVIDERS = ("github",)
+REPO = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+BRANCH = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_./-]*$")
+
+
+def _code(value):
+    """The key "code", checked; None when absent."""
+    if value is None:
+        return None
+    if not isinstance(value, dict) or sorted(set(value) - set(CODE_KEYS)):
+        raise ConfigError(f"runtime.json code must be an object with the keys {', '.join(CODE_KEYS)}")
+    if value.get("provider") not in CODE_PROVIDERS:
+        raise ConfigError(f"runtime.json code.provider must be one of {', '.join(CODE_PROVIDERS)}")
+    if not isinstance(value.get("repo"), str) or not REPO.fullmatch(value["repo"]):
+        raise ConfigError("runtime.json code.repo must be <owner>/<name>")
+    prefix = value.get("branch_prefix", "wb/")
+    for key, branch in (("base", value.get("base")), ("branch_prefix", prefix)):
+        if not isinstance(branch, str) or not BRANCH.fullmatch(branch) or ".." in branch or branch.endswith(".lock"):
+            raise ConfigError(f"runtime.json code.{key} must be a branch name")
+    return {"provider": value["provider"], "repo": value["repo"], "base": value["base"], "branch_prefix": prefix}
 
 
 def _implementations(workbench: str, cls: str) -> list:

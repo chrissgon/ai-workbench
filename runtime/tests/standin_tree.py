@@ -11,6 +11,9 @@ Otherwise it acts by the skill staged in the copy:
   demo-writes  writes docs/business/icp.md from docs/business/market.md; without that input it says so
   demo-code    runs adapters/h/code.sh in the copy, when a test wrote one (with the attempt number as $1), and
                replies that it changed the files
+  demo-gate    a skill with a confirmation gate: records the copy's branches, log and status in its output folder,
+               writes payload.md in a folder from mktemp -d and replies in the pull-request skill's form; when a test
+               wrote adapters/h/gate.sh it runs that instead (in the copy, with the output folder as $1)
 """
 from __future__ import annotations
 
@@ -33,6 +36,7 @@ if grep -q "Reply with the single word: ok" "$prompt"; then echo probe >> "$here
 skill=none
 for name in demo-asks demo-writes; do [ -d "$cwd/.h/skills/$name" ] && skill="$name"; done
 [ -d "$cwd/.h/skills/demo-code" ] && skill=demo-code
+[ -d "$cwd/.h/skills/demo-gate" ] && skill=demo-gate
 n=1; while ! mkdir "$here/call-$skill.$n" 2>/dev/null; do n=$((n + 1)); done
 echo "$skill $n" >> "$here/calls.txt"
 (cd "$cwd" && find . -path ./.git -prune -o -type f -print | sort) > "$out/files.txt"
@@ -70,6 +74,34 @@ case "$skill" in
   demo-code)
     if [ -f "$here/code.sh" ]; then (cd "$cwd" && sh "$here/code.sh" "$n"); fi
     echo "Changed the files the request names." > "$out/response.md" ;;
+  demo-gate)
+    if [ -f "$here/gate.sh" ]; then (cd "$cwd" && sh "$here/gate.sh" "$out"); else
+      head=$(git -C "$cwd" branch --show-current)
+      base=$(git -C "$cwd" for-each-ref --format='%(refname:short)' refs/heads | grep -vx "$head" | head -1)
+      echo "$base $head" > "$out/gate-branches.txt"
+      git -C "$cwd" log --format=%s > "$out/gate-log.txt"
+      git -C "$cwd" status --porcelain > "$out/gate-status.txt"
+      echo "$TMPDIR" > "$out/gate-tmpdir.txt"
+      d=$(mktemp -d "${TMPDIR:-/tmp}/tmp.XXXXXXXX")  # GNU mktemp -d (the container's) uses TMPDIR; BSD needs the template
+      printf 'Repository: example-org/web
+Base ← head: %s ← %s
+Commits:
+- 0000000 %s
+Title: Carry the providers
+Body:
+What changes, and why.
+' "$base" "$head" "$(git -C "$cwd" log -1 --format=%s)" > "$d/payload.md"
+      sha=$( (sha256sum "$d/payload.md" 2>/dev/null || shasum -a 256 "$d/payload.md") | cut -d' ' -f1)
+      printf 'Nothing was pushed or created yet. This is what will be sent:
+
+(the payload)
+
+Payload file: `%s/payload.md`, sha256 `%s`
+Temporary folder: %s
+
+Proceed? (yes/no)
+' "$d" "$sha" "$TMPDIR" > "$out/response.md"
+    fi ;;
   *) echo "ok" > "$out/response.md" ;;
 esac
 '''
@@ -113,6 +145,18 @@ def skill(tree: Path, name: str, inputs: str, outputs: str) -> Path:
     return folder
 
 
+def gate_skill(tree: Path) -> Path:
+    """demo-gate: a skill with the side effect create and a gate whose payload is under the temporary folder."""
+    folder = skill(tree, "demo-gate", "docs/workbench/state.md", "")
+    text = (folder / "SKILL.md").read_text(encoding="utf-8")
+    (folder / "SKILL.md").write_text(text.replace("  side_effects: []", "  side_effects: [create]"), encoding="utf-8")
+    data = json.loads((folder / "evals" / "runtime-manifest.json").read_text(encoding="utf-8"))
+    data.update(asking_openings=["Nothing was pushed or created yet. This is what will be sent"],
+                gate={"effect": "create", "payload_file": "<tmp>/payload.md"})
+    (folder / "evals" / "runtime-manifest.json").write_text(json.dumps(data), encoding="utf-8")
+    return folder
+
+
 def build(tmp_path: Path, monkeypatch, lab) -> dict:
     """The tree, a project and the patches that point the lab facade at them. Returns {"tree", "project",
     "data", "db", "adapter"} as paths. The runner executes on this machine (EXECUTOR "host"), its lock folder is
@@ -125,11 +169,16 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     skill(tree, "demo-asks", "docs/workbench/state.md, docs/workbench/research/<topic>.md, AGENTS.md", "docs/business/market.md")
     skill(tree, "demo-writes", "docs/workbench/state.md, docs/business/market.md", "docs/business/icp.md")
     skill(tree, "demo-code", "docs/workbench/state.md", "")
+    gate_skill(tree)
     (tree / "flows").mkdir()
     (tree / "flows" / "demo.json").write_text(json.dumps({"flow": "demo", "title": "Demo flow", "tasks": [
         {"key": "market", "skill": "demo-asks", "title": "Market", "text": "do the market analysis."},
         {"key": "profile", "skill": "demo-writes", "title": "Profile", "text": "choose the profile.",
          "depends_on": ["market"], "milestone": True}]}), encoding="utf-8")
+    (tree / "flows" / "gate-demo.json").write_text(json.dumps({"flow": "gate-demo", "title": "Gate demo", "tasks": [
+        {"key": "change", "skill": "demo-code", "title": "Change", "text": "make the change."},
+        {"key": "pull-request", "skill": "demo-gate", "title": "Pull request", "text": "prepare it.",
+         "depends_on": ["change"], "milestone": True}]}), encoding="utf-8")
     (tree / "flows" / "code-demo.json").write_text(json.dumps({"flow": "code-demo", "title": "Code demo", "tasks": [
         {"key": "first", "skill": "demo-code", "title": "First change", "text": "make the first change."},
         {"key": "second", "skill": "demo-code", "title": "Second change", "text": "make the second change.",
