@@ -7,7 +7,10 @@
 
 The terminal shell (runtime/cli.py), the conversation (runtime/chat.py) and later the local interface are shells over the
 functions of this file: a shell parses what the person typed, calls one function here and prints what it
-returns. No shell reaches the store, the lab facade or a project's files by itself.
+returns. No shell reaches the store, the lab facade or a project's files by itself. What a shell may call, with which
+arguments and from which channel, is the table of operations (runtime/operations.py, re-exported here as
+ops.operations): a shell derives its verbs and commands from it, and a text of this file that names a command is built
+by it, never written out.
 
 Every operation takes the project folder first, reads the project's configuration
 (<project>/docs/workbench/runtime.json, runtime/project_config.py), refuses to act when that file names
@@ -158,6 +161,8 @@ import endings  # noqa: E402
 import flow_files  # noqa: E402
 import lab  # noqa: E402
 import manifest  # noqa: E402
+from operations import CHAT_OWN, OPERATIONS  # noqa: E402,F401  (re-exported: a shell reads the table through this module)
+import operations  # noqa: E402  (the table of operations; the shells read it through this module: ops.operations)
 import path_rule  # noqa: E402
 import plan  # noqa: E402
 import progress as progress_calc  # noqa: E402  (the operation `progress` would hide the module: part 0, F.1, rule 5)
@@ -247,8 +252,7 @@ def context(project: str, *, check_config: bool = True) -> dict:
         if accepted != cfg["sha256"]:
             raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
                            f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
-                           f"want, run: python3 runtime/cli.py accept-config --project {cfg['project']} --sha256 "
-                           f"{cfg['sha256']}", 3)
+                           f"want, run: {operations.command_line('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
     return {"cfg": cfg, "store": store, "conn": conn, "root": ROOT}
 
 
@@ -1497,7 +1501,7 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
     os.replace(temporary, cfg["path"])
     new = _sha256(cfg["path"])
     return {"agent": agent, "mode": mode, "config_sha256": new, "accepted": False,
-            "next": f"python3 runtime/cli.py accept-config --project {cfg['project']} --sha256 {new}"}
+            "next": operations.command_line("accept-config", cfg["project"], sha256=new)}
 
 
 def status(project: str) -> dict:
@@ -1957,14 +1961,20 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
     return {"created": [t["id"] for t in created], "pending_id": pending_id}
 
 
-def approve(project: str, pending_id: int, sha256: str | None = None) -> dict:
+def approve(project: str, pending_id: int, sha256: str | None = None, channel: str = "terminal") -> dict:
     """Approve a pending decision of kind `plan` (its tasks are created as the plan lists them, and those with no
     dependency are ready) or `acceptance` (the request written on the task board is kept, and waits for its route).
     With sha256, a plan is approved only when it is the plan's hash. An `effect` (stage 4) is approved only with
     its hash, and code then executes it: the one commit through the code provider, then the pull request; nothing is
-    sent when anything moved since the gate, and a failure leaves it open, approved again with the same hash."""
+    sent when anything moved since the gate, and a failure leaves it open, approved again with the same hash. An
+    effect is approved only from the terminal (decision D8): the table of operations tells this function which
+    channel called, and any other channel is refused before anything is read or sent."""
     ctx = context(project)
     item = _stored(ctx, ctx["store"].pending_get, pending_id)
+    if item["kind"] == "effect" and channel != "terminal":
+        raise OpsError("an effect is approved in the terminal, with its hash: "
+                       + operations.command_line("approve", ctx["cfg"]["project"], pending_id=pending_id,
+                                                 sha256="<hash>"), 1)
     if item["kind"] == "plan":
         payload = item.get("payload") or {}
         stated = payload.get("plan_sha256")
@@ -2368,22 +2378,8 @@ MEMORY_CHARS = 4000
 MEMORY_CUT = 600
 MEMORY_HEAD = "Earlier in this conversation, oldest first:"
 MEMORY_TAIL = "The request now:"
-SAY_COMMANDS = ("/help", "/status", "/progress", "/pending", "/answer", "/release", "/approve", "/reject", "/retry",
-                "/cancel", "/new")
-SAY_HELP = """Commands, one per line; any other line is a request for the planning agent, or the answer to its question:
-/help                      this text
-/status                    requests, tasks and what waits for you
-/progress [since]          where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD)
-/pending [id]              what waits for you; with an id, that decision whole
-/answer <id> <text>        answer a pending decision
-/release <id>              release a delivery (it stays a draft)
-/approve <id> [sha256]     approve a plan, an acceptance, or an effect with its hash
-/reject <id> [note]        reject a plan, an acceptance or an effect
-/retry <task id>           make a failed or blocked task ready again
-/cancel <request id>       cancel a request
-/new <text>                start a new request, whatever is open"""
-PLAN_NEXT = "Approve with /approve {pending}"
-ASK_NEXT = "Answer with a plain line, or start again with /new <text>"
+PLAN_NEXT = "Approve with " + operations.chat_line("approve", pending_id="{pending}")
+ASK_NEXT = "Answer with a plain line, or start again with " + operations.chat_line("new", text="<text>")
 
 
 def chat_memory(messages: list, settled: set) -> str:
@@ -2408,7 +2404,7 @@ def chat_memory(messages: list, settled: set) -> str:
 
 def say(project: str, text: str) -> dict:
     """One turn of the conversation with the planning agent (decision D12), one more shell of this layer. The person's
-    line is stored; a line that starts with "/" is one command of SAY_COMMANDS, which calls its operation once; a plain
+    line is stored; a line that starts with "/" is one command of the table of operations (runtime/operations.py), which calls its operation once; a plain
     line answers the router's open question on the conversation's last request, or else is a new request routed with
     the conversation's memory in front of it (one or more runs of the router: a model call), refused when the planning
     agent may not start. The reply is stored too. A model's reply is shown, never executed. Returns {"reply",
@@ -2453,35 +2449,24 @@ def _router_question(ctx: dict, request_id):
 
 
 def _say_command(project: str, ctx: dict, said: str) -> tuple:
-    """(reply, request_id, pending_id, ran, run_id) of a command line: each calls its operation once, and a line that
-    is not one of SAY_COMMANDS with its arguments gets the help."""
-    word, _, rest = said.partition(" ")
-    rest = rest.strip()
-    parts = rest.split(None, 1)
-    number = lambda value: int(value) if value is not None and value.isdigit() else None
-    first = number(parts[0]) if parts else None
-    second = parts[1].strip() if len(parts) > 1 else None
-    if word == "/new" and rest:
-        return _say_route(project, ctx, rest)
-    if word == "/progress":
-        return progress(project, rest or None)["text"], None, None, False, None
-    calls = {
-        "/status": (lambda: status(project)) if not rest else None,
-        "/pending": (lambda: pending(project, first)) if not rest or first is not None and len(parts) == 1 else None,
-        "/answer": (lambda: answer(project, first, second)) if first is not None and second else None,
-        "/release": (lambda: release(project, first)) if first is not None and len(parts) == 1 else None,
-        "/approve": (lambda: approve(project, first, second)) if first is not None else None,
-        "/reject": (lambda: reject(project, first, second)) if first is not None else None,
-        "/retry": (lambda: retry(project, first)) if first is not None and len(parts) == 1 else None,
-        "/cancel": (lambda: cancel(project, first)) if first is not None and len(parts) == 1 else None,
-    }
-    call = calls.get(word)
-    if call is None:
-        return SAY_HELP, None, None, False, None
+    """(reply, request_id, pending_id, ran, run_id) of a command line: the table of operations reads it
+    (operations.parse_chat); an operation it names is called once with the arguments it read and the channel `chat`,
+    and a line it does not read gets the help."""
+    parsed = operations.parse_chat(said)
+    if parsed is None or parsed[0] == "help":
+        return operations.chat_help(), None, None, False, None
+    name, found = parsed
+    if name == "new":
+        return _say_route(project, ctx, found)
+    row = operations.by_name(name)
+    if row.get("channel_arg"):
+        found = dict(found, channel="chat")
     try:
-        out = call()
+        out = globals()[row["call"]](project, **found)
     except OpsError as e:
         return f"error: {e}", None, None, False, None
+    if row.get("chat_reply"):
+        return out[row["chat_reply"]], None, None, False, None
     return json.dumps(out, ensure_ascii=False, indent=1, default=str), None, None, False, None
 
 

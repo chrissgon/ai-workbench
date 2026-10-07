@@ -37,6 +37,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import project_config  # noqa: E402  (the same folder: the resolver is loaded from here)
+import operations  # the table of operations: the one place that spells the terminal's command
 
 PAYLOAD_NAME = "payload.md"
 CANDIDATES_MAX = 20
@@ -180,8 +181,8 @@ def body(doc: dict, sha256: str) -> str:
     if doc["removed"]:
         lines += ["Removed:"] + [f"- {rel}" for rel in doc["removed"]]
     lines += ["", f"Hash of this effect: {sha256}",
-              "Approve exactly this: python3 runtime/cli.py approve --project <project> --id <this pending decision's id> "
-              f"--sha256 {sha256}",
+              "Approve exactly this: " + operations.command_line(
+                  "approve", "<project>", pending_id="<this pending decision's id>", sha256=sha256),
               "Or answer with what to change, or reject it: nothing is sent until you approve."]
     return "\n".join(lines) + "\n"
 
