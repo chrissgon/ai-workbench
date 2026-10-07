@@ -94,9 +94,11 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 | Path | What it owns |
 |---|---|
 | `runtime/lab.py` | The lab facade: the only file of `runtime/` that reads anything under `evals/`. Runs one skill once in the eval container; the pause on the account limit, the refusals, the early end and the stopping are the lab's own functions. Never builds the eval image: a missing one is an error |
-| `runtime/ops.py` | The operations layer: every operation a shell can perform (request, route, approve, reject, run the next task, pending, answer, release, retry, cancel, status, the configuration, the mirrors, the file drop, the dependencies, the standing approvals, the proof, the verdict, progress, the dispatcher's jobs, the conversation, the contained run). Every shell calls it; no shell reaches the store, the facade or a project's files by itself |
-| `runtime/operations.py` | The table of operations (a pure literal): one row per operation of `ops.py` with its verb, arguments, the channels that may call it (an effect is approved only from the terminal, with its hash) and whether it calls a model. Every shell derives what it accepts from it, and the texts that name a command are built from it |
+| `runtime/ops.py` | The operations layer: every operation a shell can perform (request, route, approve, reject, run the next task, pending, answer, release, retry, cancel, status, the configuration, the mirrors, the file drop, the dependencies, the standing approvals, the proof, the verdict, progress, the dispatcher's jobs, the conversation, the contained run, and what the local service reads: `config`, `task`, `flows`, `stop-runs`; a pending decision carries `actions`). Every shell calls it; no shell reaches the store, the facade or a project's files by itself |
+| `runtime/operations.py` | The table of operations (a pure literal): one row per operation of `ops.py` with its verb, arguments, the channels that may call it (`terminal`, `chat`, `page`; an effect is approved only from the terminal or the local page, with its hash), whether it calls a model and, as `job`, whether the local service runs it as a job. Every shell derives what it accepts from it, and the texts that name a command are built from it |
 | `runtime/cli.py` | The terminal shell: its parser is built from the table, one command per operation, one JSON object printed |
+| `runtime/service.py` | The local service: the operations layer through an API on `127.0.0.1`, with a token and an origin check, and the static files of `interface/` ("The local service" below). It imports `ops.py` and nothing else of the runtime |
+| `interface/` | The static files the service serves: pages, modules and vendored libraries, no build step, nothing loaded from another host |
 | `runtime/flow_files.py` | Reads and checks a flow file, `flows/<name>.json` |
 | `runtime/skill_meta.py` | What a skill declares in its frontmatter (artifact lists, requirement classes, side effects, version) |
 | `runtime/path_rule.py` | The path rule: the one class of each path a run left (`state`, `machine`, `document`, `versioned`, `ignored`, `other`) |
@@ -228,6 +230,46 @@ From stage 6 the task runtime runs unattended through two recurring jobs of the 
 3. Put the credential in the job's environment: refused, a credential is never written into a file.
 
 `dispatcher.py check --project <dir>` reports `"secret_store"` (whether this interpreter can import the library) and `"credential"` (whether the reference model's credential is set or found in the store), and exits 0 only when both, every module of `runtime/` and `runtime/handlers/`, the lab, docker and uv are found. Run it as the rehearsal's one-shot job, so the answer comes from the scheduler rather than a terminal. At every firing of the worker whose interpreter cannot read the store, the entry says so on standard error, and a round whose next run would go to the reference model without its credential starts nothing and says why in `"stopped"`, so no task fails for it.
+
+## The local service
+
+`python3 runtime/service.py --project <dir> [--project <dir>]... [--port 8765] [--poll-every 60] [--dispatch-every <seconds>] [--token-file <path>]` serves the operations layer to a page in the person's browser, on the person's machine. It is a shell like `cli.py`: it parses a request, calls one operation of the table and returns what it returned. It prints one JSON line (`url`, `token_file`, `projects`), never the token.
+
+**The token.** `secrets.token_hex(32)`, new at every start, written to a file for its owner only (mode 0600, created with `O_EXCL` after the older file is removed; default `<data_dir>/service.token` of the first project) and removed when the service stops. The person pastes it once per browser session; it is sent as `Authorization: Bearer <token>`, compared with `hmac.compare_digest`, and is never in a URL, a log line, a response or a page.
+
+**The rules of a request, in order; each is a refusal unless the request satisfies it** (each has a test in `runtime/tests/test_service.py`):
+
+1. The socket is bound to `127.0.0.1`; there is no option for another address.
+2. `Host` is `127.0.0.1:<port>` or `localhost:<port>`, else `403` (`host`). A name that resolves to the machine is refused.
+3. `Origin`, when present, is `http://127.0.0.1:<port>` or `http://localhost:<port>`, else `403` (`origin`); a `POST` without one is refused the same way.
+4. A path under `/api/` needs the token, else `401` (`token`). The static files need none and hold no data.
+5. Only `GET` and `POST` (any other method, `OPTIONS` included, is `405`; no `Access-Control-*` header is ever sent). A `POST` needs `Content-Type: application/json`, a `Content-Length` and no `Transfer-Encoding` (`415`, `411`, `400`), a body of at most 1 MiB (the file route: 34 MiB, the base64 of the 25 MiB a hand-over takes; `413`) that is one JSON object whose keys are the arguments of the operation's row, by name: an unknown, repeated, mistyped or missing key is `400` (`usage`). A `GET` reads only the query its route names; a token in a query string is not read.
+6. An unknown path is `404`, a known path with another method `405`, an unknown project id `404`.
+7. One route calls one operation and returns what it returned, unchanged, with `200`. `OpsError` code 1 is `409` (`refused`), 2 is `400` (`usage`), 3 is `412` (`not_configured`); anything else is `500` (`internal`, the traceback on standard error only). An error body is `{"error": "<word>", "message": "<text>"}`.
+8. A route whose operation's row has `job` returns `202` and a job (`job`, `op`, `project`, `state`, `result`, `error`, `started_at`, `ended_at`); `GET /api/v1/jobs/<n>` returns it again, `state` `done` or `failed` at the end. Jobs live in the service's memory; the records are in the store. A job whose operation calls a model is refused (`409`, `busy`) while another such job of the project, or the `dispatch` loop, runs: a second conversation turn waits for the first.
+9. Every response has `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; an HTML or SVG document also `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'` and `Referrer-Policy: no-referrer`.
+10. A static path is served only when its real path is inside `interface/`, with a known extension and no dotfile; there is no listing.
+11. The log line is the method, the path (never the query), the status and the duration; never a header, a body or the token.
+
+**The routes** (prefix `/api/v1`, `{p}` a project id: the first 12 hexadecimal characters of the sha256 of the project's real path; a path is never in a URL). A route exists only for an operation whose row lists the `page` channel.
+
+| Route | Operation |
+|---|---|
+| `GET /projects` | the service's own: each project with its hash, whether it was accepted (`config`) and, when it was, the pending decisions and the running task (`status`); a project that is not accepted is listed with `accepted` false and the refusal as `message`, never refused |
+| `GET /projects/{p}/status`, `/pending`, `/pending/{id}`, `/flows`, `/tasks/{id}`, `/progress?since=` | `status`, `pending`, `flows`, `task`, `progress` |
+| `POST /projects/{p}/pending/{id}/answer`, `/release`, `/approve`, `/reject` | `answer`, `release`, `approve`, `reject`; the body of `approve` is `{"sha256"}` and the service passes the channel `page` itself |
+| `POST /projects/{p}/requests`, `/requests/{id}/route`, `/requests/{id}/cancel` | `request`, `route`, `cancel` |
+| `POST /projects/{p}/tasks/{id}/retry`, `/tasks/{id}/files`, `/runs/{id}/verdict`, `/agents/{name}/mode` | `retry`, `hand-over` (the body is `{"name", "content_base64"}`: the service writes the bytes to `<data_dir>/uploads/<random>/<name>`, a plain file name, hands that file to the operation and removes the folder), `verdict`, `set-mode` |
+| `POST /projects/{p}/conversation`, `/sync`, `/dispatch` | `say`, `sync`, `dispatch` |
+| `GET /jobs/{n}` | the service's own |
+
+**Not exposed, on purpose.** `accept-config` (a configuration hash is accepted in the terminal only, so a page can never accept the change that widens what an agent may do; after a `set-mode` from the page every route answers `412` until it is), `run-next` (the dispatcher decides what runs), `deps`, `proof`, the standing approvals, `contained-run`, `poll`, `handler`, `pin`. No cookie, no host option, no cross-origin header, no streaming.
+
+**The loops.** `poll` runs for each project every `--poll-every` seconds (default 60; 0 turns it off). `dispatch` runs only when `--dispatch-every` is given: a handler's tick is not under the run lock, and a project already has the scheduler's two jobs, so a second dispatcher is the person's choice. A project that has a job running is skipped; an error is logged once while it repeats, and the loop goes on.
+
+**The shutdown.** On SIGINT or SIGTERM the service stops accepting requests, calls `ops.stop_runs()` (it ends the container and the process group of every run a job started, which has no signal handler of its own in a thread) and does not exit before that returns; a second signal while it stops is ignored. The token file is removed.
+
+**What it does not do.** It imports `ops.py` and nothing else of the runtime: no store, no lab facade, no provider, and it reads no file of a project; it writes the token file and an upload. It knows a project's data folder only through the `config` operation. Results pass through unchanged, host paths included (it is local); a page shows them as text.
 
 ## What the proof covers
 

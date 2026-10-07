@@ -49,7 +49,7 @@ ai-workbench is a workbench of skills that let a model build a digital solution 
 
 4. **Where the result lands.** The documents a skill writes come back into the project, under `docs/<area>/`, and the state file `docs/workbench/state.md` gets the skill's draft rows, decisions and open questions. Each run's copy, prompt and output are kept in `<data_dir>/task-runs/<run id>/`; the records (requests, tasks, runs, pending decisions, approvals) are in the store at `store_db`. A use of each skill is recorded in the project's `.workbench-local/evidence/`, and your verdict on a run is one command: `verdict --project <dir> --run <id> --word worked|corrected|failed`.
 
-5. **Where to read next.** The runtime's page, [runtime.md](runtime.md); then [contracts/runtime.md](../../../contracts/runtime.md) for the contract and [AGENTS.md](../../../AGENTS.md) for the rules every file follows. The terminal conversation with the planning agent is `python3 runtime/chat.py --project <dir>` (`/help` lists its commands). Planned, with no command yet: the local interface (a page per surface over the same operations, starting with the pending decisions) and an MCP mode.
+5. **Where to read next.** The runtime's page, [runtime.md](runtime.md); then [contracts/runtime.md](../../../contracts/runtime.md) for the contract and [AGENTS.md](../../../AGENTS.md) for the rules every file follows. The terminal conversation with the planning agent is `python3 runtime/chat.py --project <dir>` (`/help` lists its commands). The local service is `python3 runtime/service.py --project <dir>` (it prints its address and the token file's path; [shells.md](shells.md)); the pages it serves come with the next packages of stage 9. Planned, with no command yet: an MCP mode.
 
 6. **What is not yet a replaceable piece.** If you want to know which layers cannot yet be swapped on their own, read [the review of 2026-10-06](review-2026-10-06.md): seventeen findings, ranked, each with its state.
 
@@ -61,7 +61,7 @@ A table that changes with the code is generated, never edited by hand: it sits b
 
 ```mermaid
 flowchart TB
-    L7["7 Shells<br/>terminal, conversation<br/>(local interface, MCP mode: planned)"]
+    L7["7 Shells<br/>terminal, conversation<br/>(local service; MCP mode: planned)"]
     L6["6 Runtime<br/>runtime/, flows/ as data"]
     L5["5 Adapters<br/>adapters/&lt;harness&gt;/"]
     L4["4 Lab<br/>evals/"]
@@ -94,7 +94,7 @@ An arrow is "may read or call". Nothing points into the shells, and nothing in l
 | 4 | The lab | The eval runner, the container, the measurement, the status script and the evidence (`evals/`, `skills/<name>/evals/`) | [lab.md](lab.md) |
 | 5 | Adapters | Everything specific to one AI tool: installers, the eval entry `run-prompt.sh`, overrides (`adapters/<harness>/`) | [adapters.md](adapters.md) |
 | 6 | The runtime | The task runtime under `runtime/`: requests, tasks, runs in the container, pending decisions, approvals, mirrors, the dispatcher | [runtime.md](runtime.md) |
-| 7 | The shells | Thin fronts over the operations layer: the terminal (`runtime/cli.py`) and the conversation (`runtime/chat.py`) today; the local interface and the MCP mode planned | [shells.md](shells.md) |
+| 7 | The shells | Thin fronts over the operations layer: the terminal (`runtime/cli.py`), the conversation (`runtime/chat.py`) and the local service (`runtime/service.py`, with `interface/`); the MCP mode planned | [shells.md](shells.md) |
 | 8 | The target project | The project a person works on: its documents, its state file, its configuration, its work data; never a file of this repository | [project.md](project.md) |
 
 **The direction rules.**
@@ -194,7 +194,7 @@ The names fixed for this work. Use each exactly.
 | Lab | The eval harness under `evals/`: the runner, the executor, the container |
 | Lab facade | `runtime/lab.py`, the one file of `runtime/` that imports the lab's execution kit (`evals/execution.py`) |
 | Operations layer | `runtime/ops.py`: every operation a shell can perform, once |
-| Shell | A thin front over the operations layer: the terminal command, the conversation, later the local interface |
+| Shell | A thin front over the operations layer: the terminal command, the conversation, the local service |
 | Run copy | The fresh folder a run sees: what entered from the project, plus the staged skill |
 | Run folder | Where a run's copy and output are kept afterwards, `<data_dir>/task-runs/<run id>/` |
 | Path rule | The one function that gives each path a run left one class: `state`, `machine`, `document`, `versioned`, `ignored`, `other` |
@@ -241,3 +241,4 @@ The names fixed for this work. Use each exactly.
 - 2026-10-06: the volatile tables of the layer pages are generated ("Keeping the pages current").
 - 2026-10-06: the architecture review and its status table (review-2026-10-06.md).
 - 2026-10-07: the close-out of the architecture fixes: the review's status table is final, and the cross-cutting rows and the known limits name what the fixes changed.
+- 2026-10-07: the local service (`runtime/service.py`, `interface/`) is a shell of layer 7, with its own arrow to `runtime/ops.py` in the layer map.

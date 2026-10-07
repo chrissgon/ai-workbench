@@ -41,6 +41,8 @@ ON_SYSTEM_PYTHON = [
     "runtime/manifest.py", "runtime/workcopy.py", "runtime/proof.py", "runtime/router.py", "runtime/plan.py",
     "runtime/board.py", "runtime/documents.py", "runtime/drop.py", "runtime/deps.py", "runtime/changeset.py", "runtime/effects.py", "runtime/effect_pull_request.py",
     "runtime/progress.py", "runtime/autonomy.py", "runtime/dispatcher.py", "runtime/chat.py", "runtime/operations.py",
+    # The local service (stage 9): it serves the operations layer, so it runs where the layer runs.
+    "runtime/service.py",
     # The roles of the runtime as data, and the isolated runner of skill code (WP-R.5).
     "runtime/roles.py", "runtime/isolated.py",
     # The handlers the dispatcher's worker ticks (stage 6): the weekly routine of the published posts (WP-6.9).

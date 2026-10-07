@@ -31,5 +31,6 @@
 
 # The task runtime: what runs a skill for a person, what may enter a run and what may come back from it.
 /runtime/                      @chrissgon
+/interface/                    @chrissgon
 /flows/                        @chrissgon
 /skills/*/evals/runtime-manifest.json @chrissgon

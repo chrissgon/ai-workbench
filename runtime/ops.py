@@ -97,6 +97,17 @@ Operations of stage 7:
                                    for a caller that is not a task (a handler's agent run): nothing is brought back, only
                                    the reply, past the credential scan, in <out_dir>/response.md with <out_dir>/timing.json
 
+Operations of stage 9 (the local service, runtime/service.py, is one more shell of this layer):
+  config(project)                  the configuration's path and hash, whether the person accepted that hash, and the data
+                                   folder: the one read that does not refuse a configuration that was not accepted
+  task(project, task_id)           one task or request with its runs and its pending decisions of every status
+  flows(project)                   the flow files of this checkout: name, title, number of tasks (or the error)
+  stop_runs([project])             end the runs this process started, through the lab's own stop
+  pending, status                  each pending decision carries "actions": the resolution words the store allows for it
+                                   now, built from the store's tables (an open effect: approved and rejected)
+  approve(..., channel)            an effect is approved from the terminal and from the local page, with its hash; any
+                                   other channel, or none, is refused
+
 Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run of a code task (its skill is of a
 code area, code_task) whose copy holds versioned files starts only when the project's tracked files have no
 uncommitted change, from the project's files plus the newest unblocked change set of its request; what it did to
@@ -1032,9 +1043,37 @@ def deps(project: str) -> dict:
     return {"dependencies": out}
 
 
-def _listed(item: dict) -> dict:
-    """One pending decision as a list shows it; a plan also shows its tasks and the hash the person approves."""
+EFFECT_APPROVED = "approved"  # the word of an effect that code executed: the store takes it from effect_done only
+
+
+def _actions(store, item: dict) -> list:
+    """The resolution words the store allows for an open pending decision of this kind, in the store's order, built
+    from its own tables and from no table of this layer: a plan and an acceptance take the words of
+    store.KIND_RESOLUTIONS; an effect is approved (effect_done's word, after code executed it) or rejected, and its
+    comment (`answered`) is not offered as a button; a review takes every word of store.RESOLUTIONS, a question every
+    word but the release only a review takes; a `your_document` takes none until the stage that builds its delivery.
+    A decision that is not open takes none. The word-to-operation map belongs to the shell."""
+    if item.get("status", "open") != "open":
+        return []
+    kind = item["kind"]
+    words = [word for (of, word) in store.KIND_RESOLUTIONS if of == kind]
+    if words:
+        return words
+    if kind == "effect":
+        words = [EFFECT_APPROVED]
+        words += [word for word in store.EFFECT_RESOLUTIONS if word != "answered"]
+        return words
+    if kind == "your_document":
+        return []
+    return [word for word in store.RESOLUTIONS if word != "released" or kind in store.RELEASABLE_KINDS]
+
+
+def _listed(item: dict, store=None) -> dict:
+    """One pending decision as a list shows it; a plan also shows its tasks and the hash the person approves. With the
+    store, also the words it may be resolved with (`actions`)."""
     out = {key: item[key] for key in ("id", "kind", "title", "task_id", "created_at")}
+    if store is not None:
+        out["actions"] = _actions(store, item)
     if item["kind"] == "plan":
         payload = item.get("payload") or {}
         out["plan"] = {"tasks": [{"key": t.get("key"), "skill": t.get("skill")} for t in payload.get("tasks") or []],
@@ -1045,11 +1084,13 @@ def _listed(item: dict) -> dict:
 def pending(project: str, pending_id: int | None = None) -> dict:
     """What waits for the person. Without an id: {"pending": [{"id", "kind", "title", "task_id", "created_at"}]},
     oldest first, a plan with its tasks and its hash ("plan"). With one: that pending decision whole, with its body
-    (the reply, or the plan's table) and its payload."""
+    (the reply, or the plan's table) and its payload. Either way each carries "actions", the resolution words the
+    store allows for it now (_actions)."""
     ctx = context(project)
     if pending_id is not None:
-        return _stored(ctx, ctx["store"].pending_get, pending_id)
-    return {"pending": [_listed(item) for item in _stored(ctx, ctx["store"].pending_list)]}
+        item = _stored(ctx, ctx["store"].pending_get, pending_id)
+        return {**item, "actions": _actions(ctx["store"], item)}
+    return {"pending": [_listed(item, ctx["store"]) for item in _stored(ctx, ctx["store"].pending_list)]}
 
 
 COMMENTS_LINE = "Comments left on the platform:"
@@ -1508,7 +1549,7 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
 
 def status(project: str) -> dict:
     """{"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key",
-    "skill", "state", "note"}]}], "pending": [...], "documents": [{"path", "status", "note", "on_platform"}],
+    "skill", "state", "note"}]}], "pending": [... each with "actions"], "documents": [{"path", "status", "note", "on_platform"}],
     "board": {"left_out_final"} or None}: everything from the store's records. "left_out_final" is the number of
     tasks the board never mirrors because they were final when it was configured (runtime/board.py)."""
     ctx = context(project)
@@ -1523,11 +1564,51 @@ def status(project: str) -> dict:
                            for t in rows if t["parent_id"] == r["id"]]}
                 for r in rows if r["parent_id"] is None]
     return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": requests,
-            "pending": [_listed(item) for item in _stored(ctx, ctx["store"].pending_list)],
+            "pending": [_listed(item, ctx["store"]) for item in _stored(ctx, ctx["store"].pending_list)],
             "documents": [{"path": d["path"], "status": d["status"], "note": d["note"], "on_platform": bool(d["remote_id"])}
                           for d in _stored(ctx, ctx["store"].documents_list)],
             "board": ({"left_out_final": len(_stored(ctx, lambda _conn: board.left_out(ctx, rows)))}
                       if board.enabled(ctx["cfg"]) else None)}
+
+
+def config(project: str) -> dict:
+    """What a shell may know of a project's configuration, and the one read that never refuses an unaccepted one:
+    {"path", "sha256", "accepted", "data_dir"}. "accepted" says whether the file's hash is the one the person
+    accepted last. A configuration that cannot be read at all, or that names another checkout, is still refused
+    (code 3): there is nothing to report."""
+    ctx = context(project, check_config=False)
+    cfg = ctx["cfg"]
+    accepted = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+    return {"path": cfg["path"], "sha256": cfg["sha256"], "accepted": accepted == cfg["sha256"],
+            "data_dir": cfg["data_dir"]}
+
+
+def task(project: str, task_id: int) -> dict:
+    """One task or request with what is known of it: {"task": the store's row, "runs": its runs oldest first,
+    "pending": its pending decisions of every status, oldest first, each with "actions"}. For a request the runs are
+    the router's and the decisions its plan's or its question's; for a task of a plan, its own."""
+    ctx = context(project)
+    store = ctx["store"]
+    found = _stored(ctx, store.task_get, task_id)
+    return {"task": found, "runs": _stored(ctx, store.task_runs_list, task_id),
+            "pending": [{**item, "actions": _actions(store, item)}
+                        for item in _stored(ctx, store.pending_list, "all", task_id)]}
+
+
+def flows(project: str) -> dict:
+    """The flow files of this checkout: {"flows": [{"flow", "title", "tasks": <number of tasks>}]}, sorted by name.
+    A flow file that does not pass its checks is listed with "title" None, "tasks" 0 and an "error" text, so one bad
+    file hides no other. The project is only the configuration check every operation makes."""
+    context(project)
+    out = []
+    for name in flow_files.names(ROOT):
+        try:
+            loaded = flow_files.load(name, ROOT)
+        except flow_files.FlowError as e:
+            out.append({"flow": name, "title": None, "tasks": 0, "error": str(e)})
+        else:
+            out.append({"flow": name, "title": loaded["title"], "tasks": len(loaded["tasks"])})
+    return {"flows": out}
 
 
 def progress(project: str, since: str | None = None) -> dict:
@@ -1963,17 +2044,22 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
     return {"created": [t["id"] for t in created], "pending_id": pending_id}
 
 
+EFFECT_CHANNELS = ("terminal", "page")  # the channels an effect may be approved from (decision D8, extended)
+
+
 def approve(project: str, pending_id: int, sha256: str | None = None, channel: str | None = None) -> dict:
     """Approve a pending decision of kind `plan` (its tasks are created as the plan lists them, and those with no
     dependency are ready) or `acceptance` (the request written on the task board is kept, and waits for its route).
     With sha256, a plan is approved only when it is the plan's hash. An `effect` (stage 4) is approved only with
     its hash, and code then executes it: the one commit through the code provider, then the pull request; nothing is
     sent when anything moved since the gate, and a failure leaves it open, approved again with the same hash. An
-    effect is approved only from the terminal (decision D8): the table of operations tells this function which
-    channel called, and any other channel, or none, is refused before anything is read or sent (the rule fails closed)."""
+    effect is approved only from the terminal or from the local page (decision D8, extended: both show the person
+    the content's hash and take it back typed or clicked); the table of operations tells this function which channel
+    called, and any other channel (the conversation, a messaging app), or none, is refused before anything is read or
+    sent (the rule fails closed)."""
     ctx = context(project)
     item = _stored(ctx, ctx["store"].pending_get, pending_id)
-    if item["kind"] == "effect" and channel != "terminal":
+    if item["kind"] == "effect" and channel not in EFFECT_CHANNELS:
         raise OpsError("an effect is approved in the terminal, with its hash: "
                        + operations.command_line("approve", ctx["cfg"]["project"], pending_id=pending_id,
                                                  sha256="<hash>"), 1)
@@ -2652,6 +2738,18 @@ def _say_route(project: str, ctx: dict, said: str, answer_to=None) -> tuple:
     else:
         reply = item["body"].rstrip("\n") + "\n\n" + ASK_NEXT
     return reply, request_id, item["id"], True, routed.get("run_id")
+
+
+# --- stage 9: the local service --------------------------------------------------------------------------------------
+
+
+def stop_runs(project: str | None = None) -> dict:
+    """End every run this process started, through the lab's own stop (lab.stop_runs): the container and the process
+    group of each run are ended and the folders of a run in progress go back to its run folder. The local service
+    calls it before it exits, because a run it started in a thread has no signal handler of its own. Process-wide:
+    the project is accepted for the shape every operation has and read for nothing. Returns what lab.stop_runs
+    returns."""
+    return lab.stop_runs()
 
 
 if __name__ == "__main__":

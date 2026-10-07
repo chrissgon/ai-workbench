@@ -1,11 +1,11 @@
 """The table of operations: the one place that says what the operations layer (runtime/ops.py) offers to a shell.
 
-A shell (the terminal's runtime/cli.py, the conversation's runtime/chat.py, a later page) derives what it accepts from
+A shell (the terminal's runtime/cli.py, the conversation's runtime/chat.py, the local service's runtime/service.py) derives what it accepts from
 this table and spells nothing of its own: one row per operation, with its arguments, the channels that may call it
 and whether it calls a model. Adding an operation adds one row here and one function in ops.py; adding a shell adds a
 file. The channel rule is a column: a row lists the channels that may call it, and a row whose function takes the
 channel (`channel_arg`) is told which one called it, so that code, not a prompt, refuses what a channel may not do
-(an effect is approved only from the terminal, with its hash).
+(an effect is approved only from the terminal or from the local page, with its hash; never from the conversation).
 
 OPERATIONS and CHAT_OWN are pure literals (`ast.literal_eval` reads them: scripts/architecture_tables.py and a test
 do, so that the generated tables and the shells cannot differ). A row:
@@ -19,11 +19,16 @@ do, so that the generated tables and the shells cannot differ). A row:
                `flag` is true when present; `pairs` is the handler's repeated --arg k=v; `file` is the path of a file the
                shell reads whole, as text, and the function takes the text; `list` is a repeated flag, the function takes
                the list
-  channels     which channels may call it: "terminal", "chat" ("page" is reserved for the local interface)
+  channels     which channels may call it: "terminal", "chat", "page" (the local service, runtime/service.py: a route
+               exists only for an operation whose row lists "page"; an operation that widens what an agent may do on
+               its own, or that runs the next task by hand, lists "terminal" only)
   model        whether it calls a model: False, True, or the words that say when ("without --flow")
   help         one line: what it does
   channel_arg  (optional) the function takes `channel=<name>` and decides what that channel may do
   chat_reply   (optional) the key of the result the conversation shows instead of the whole result
+  job          (optional) true when the operation calls a model or a platform, so that it may take minutes: the local
+               service starts it in a thread and answers at once with a job to ask for again, instead of holding the
+               request open. It is the one source of "returns a job"; every row whose `model` is not False has it
   exit_unless  (optional) [key, value]: the terminal prints the result and exits 1 unless result[key] == value (a
                result that says the model did not answer is not a failure of the operation, and is still printed)
 
@@ -43,51 +48,59 @@ OPERATIONS = (
     {"name": "request", "call": "request",
      "args": ({"name": "text", "kind": "text", "required": True}, {"name": "flow", "kind": "str"},
               {"name": "title", "kind": "str"}),
-     "channels": ("terminal",), "model": False,
+     "channels": ("terminal", "page"), "model": False,
      "help": "record what you want; with a flow, plan it from the flow file, else it waits for its route"},
     {"name": "route", "call": "route",
      "args": ({"name": "request_id", "kind": "int", "required": True, "flag": "request"}, {"name": "flow", "kind": "str"}),
-     "channels": ("terminal",), "model": "without --flow",
+     "channels": ("terminal", "page"), "model": "without --flow", "job": True,
      "help": "plan a request that waits for its route: one run of the router skill, or the plan of a flow file"},
-    {"name": "status", "call": "status", "args": (), "channels": ("terminal", "chat"), "model": False,
+    {"name": "status", "call": "status", "args": (), "channels": ("terminal", "chat", "page"), "model": False,
      "help": "requests, tasks and what waits for you"},
+    {"name": "task", "call": "task",
+     "args": ({"name": "task_id", "kind": "int", "required": True, "flag": "task", "label": "task id"},),
+     "channels": ("terminal", "page"), "model": False,
+     "help": "one task or request with its runs and its pending decisions"},
+    {"name": "flows", "call": "flows", "args": (), "channels": ("terminal", "page"), "model": False,
+     "help": "the flow files of this checkout, with their titles and how many tasks each holds"},
+    {"name": "config", "call": "config", "args": (), "channels": ("terminal", "page"), "model": False,
+     "help": "the configuration's path and hash, whether you accepted it, and the data folder; it never refuses"},
     {"name": "progress", "call": "progress", "args": ({"name": "since", "kind": "str"},),
-     "channels": ("terminal", "chat"), "model": False, "chat_reply": "text",
+     "channels": ("terminal", "chat", "page"), "model": False, "chat_reply": "text",
      "help": "where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD)"},
     {"name": "pending", "call": "pending",
      "args": ({"name": "pending_id", "kind": "int", "flag": "id"},),
-     "channels": ("terminal", "chat"), "model": False,
+     "channels": ("terminal", "chat", "page"), "model": False,
      "help": "what waits for you; with an id, that decision whole"},
     {"name": "answer", "call": "answer",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"},
               {"name": "text", "kind": "text", "required": True},
               {"name": "with_comments", "kind": "flag", "flag": "with-comments"}),
-     "channels": ("terminal", "chat"), "model": False,
+     "channels": ("terminal", "chat", "page"), "model": False,
      "help": "answer a pending decision"},
     {"name": "release", "call": "release",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"},),
-     "channels": ("terminal", "chat"), "model": False,
+     "channels": ("terminal", "chat", "page"), "model": False, "job": True,
      "help": "release a delivery (it stays a draft)"},
     {"name": "approve", "call": "approve",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"}, {"name": "sha256", "kind": "str"}),
-     "channels": ("terminal", "chat"), "model": False, "channel_arg": True,
-     "help": "approve a plan or an acceptance; an effect is approved in the terminal, with its hash"},
+     "channels": ("terminal", "chat", "page"), "model": False, "channel_arg": True, "job": True,
+     "help": "approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash"},
     {"name": "reject", "call": "reject",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"}, {"name": "note", "kind": "str"}),
-     "channels": ("terminal", "chat"), "model": False,
+     "channels": ("terminal", "chat", "page"), "model": False,
      "help": "reject a plan, an acceptance or an effect"},
     {"name": "retry", "call": "retry",
      "args": ({"name": "task_id", "kind": "int", "required": True, "flag": "task", "label": "task id"},),
-     "channels": ("terminal", "chat"), "model": False,
+     "channels": ("terminal", "chat", "page"), "model": False,
      "help": "make a failed or blocked task ready again"},
     {"name": "cancel", "call": "cancel",
      "args": ({"name": "request_id", "kind": "int", "required": True, "flag": "request", "label": "request id"},),
-     "channels": ("terminal", "chat"), "model": False,
+     "channels": ("terminal", "chat", "page"), "model": False,
      "help": "cancel a request"},
     {"name": "deps", "call": "deps", "args": (), "channels": ("terminal",), "model": False,
      "help": "install the dependency sets of runtime.json, by code"},
     {"name": "run-next", "call": "run_next", "args": ({"name": "tier", "kind": "str"},),
-     "channels": ("terminal",), "model": True,
+     "channels": ("terminal",), "model": True, "job": True,
      "help": "run the next ready task: one skill, once, on the model its proof gives"},
     {"name": "accept-config", "call": "accept_config",
      "args": ({"name": "sha256", "kind": "str", "required": True},),
@@ -99,21 +112,21 @@ OPERATIONS = (
     {"name": "verdict", "call": "verdict",
      "args": ({"name": "run_id", "kind": "int", "required": True, "flag": "run"},
               {"name": "word", "kind": "str", "required": True}),
-     "channels": ("terminal",), "model": False,
+     "channels": ("terminal", "page"), "model": False,
      "help": "record your verdict on what one run delivered (worked, corrected or failed)"},
     {"name": "sync", "call": "sync",
      "args": ({"name": "dry_run", "kind": "flag", "flag": "dry-run"},
               {"name": "take", "kind": "choice", "choices": ("page", "project")}, {"name": "path", "kind": "str"}),
-     "channels": ("terminal",), "model": False,
+     "channels": ("terminal", "page"), "model": False, "job": True,
      "help": "mirror the tasks with the task board and the documents with the documents platform"},
     {"name": "hand-over", "call": "hand_over",
      "args": ({"name": "task_id", "kind": "int", "required": True, "flag": "task"},
               {"name": "file", "kind": "str", "required": True}),
-     "channels": ("terminal",), "model": False,
+     "channels": ("terminal", "page"), "model": False,
      "help": "copy one file of yours into a task's file drop"},
     {"name": "set-mode", "call": "set_mode",
      "args": ({"name": "agent", "kind": "str", "required": True}, {"name": "mode", "kind": "str", "required": True}),
-     "channels": ("terminal",), "model": False,
+     "channels": ("terminal", "page"), "model": False,
      "help": "set one area agent's autonomy mode in runtime.json"},
     {"name": "approve-policy", "call": "approve_policy",
      "args": ({"name": "file", "kind": "str", "required": True}, {"name": "agent", "kind": "str", "required": True},
@@ -139,22 +152,24 @@ OPERATIONS = (
               {"name": "out_dir", "kind": "str", "required": True, "flag": "out"},
               {"name": "platforms", "kind": "list", "flag": "platform"},
               {"name": "timeout", "kind": "int", "flag": "timeout-seconds"}),
-     "channels": ("terminal",), "model": True, "exit_unless": ("status", "ok"),
+     "channels": ("terminal",), "model": True, "job": True, "exit_unless": ("status", "ok"),
      "help": "run one skill of an area agent's pack in the container on the artifacts it declares; only its reply comes out"},
-    {"name": "dispatch", "call": "dispatch", "args": (), "channels": ("terminal",), "model": True,
+    {"name": "dispatch", "call": "dispatch", "args": (), "channels": ("terminal", "page"), "model": True, "job": True,
      "help": "one round of the dispatcher: the handlers' ticks, the releases by a mode, the next ready tasks"},
     {"name": "poll", "call": "poll", "args": (), "channels": ("terminal",), "model": False,
      "help": "the short job: mirrors, expired approvals, the state file's generated lines, the releases"},
     {"name": "handler", "call": "handler_call",
      "args": ({"name": "name", "kind": "str", "required": True}, {"name": "verb", "kind": "str", "required": True},
               {"name": "args", "kind": "pairs", "flag": "arg"}),
-     "channels": ("terminal",), "model": False,
+     "channels": ("terminal",), "model": False, "job": True,
      "help": "start one verb of a handler that runtime.json names"},
     {"name": "pin", "call": "pin", "args": (), "channels": ("terminal",), "model": False,
      "help": "write the pin of the dispatcher's two jobs"},
     {"name": "say", "call": "say", "args": ({"name": "text", "kind": "text", "required": True},),
-     "channels": ("terminal",), "model": "for a new request",
+     "channels": ("terminal", "page"), "model": "for a new request", "job": True,
      "help": "one turn of the conversation with the planning agent"},
+    {"name": "stop-runs", "call": "stop_runs", "args": (), "channels": ("terminal",), "model": False,
+     "help": "end the runs this process started (the local service calls it before it exits)"},
 )
 
 # What the conversation answers itself, with no operation: the help, and a new request whatever is open.

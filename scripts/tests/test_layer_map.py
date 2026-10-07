@@ -221,6 +221,7 @@ ALLOWED = (
     # layer 7, the shells: the operations layer only
     ("runtime/cli.py", ("runtime/ops.py",)),
     ("runtime/chat.py", ("runtime/ops.py",)),
+    ("runtime/service.py", ("runtime/ops.py",)),
     # the handlers: the resolver of providers and the shell's verbs, nothing imported from runtime/
     # a handler reaches the resolver, the terminal shell, the shared credential formats and its sibling handlers
     ("runtime/handlers/*.py", ("providers/resolve.py", "runtime/cli.py", "scripts/redact.py", "runtime/handlers/")),
@@ -356,7 +357,7 @@ def test_the_rules_the_diagram_states_hold_for_the_code_as_it_is():
             assert not target.startswith("runtime/"), (file, target)
         if file.startswith("runtime/") and target.startswith("evals/"):
             assert file == "runtime/lab.py", (file, target)
-        if file in ("runtime/cli.py", "runtime/chat.py"):
+        if file in ("runtime/cli.py", "runtime/chat.py", "runtime/service.py"):
             assert target == "runtime/ops.py", (file, target)
         if file.startswith("runtime/handlers/") and (file, target) not in TOLERATED:
             assert target in ("providers/resolve.py", "runtime/cli.py", "scripts/redact.py") \
@@ -425,6 +426,8 @@ def test_the_allowed_rules_say_what_the_diagram_says():
     assert allowed("runtime/lab.py", "evals/eval_run.py")
     assert not allowed("runtime/ops.py", "evals/eval_run.py")
     assert allowed("runtime/cli.py", "runtime/ops.py") and not allowed("runtime/cli.py", "runtime/plan.py")
+    assert allowed("runtime/service.py", "runtime/ops.py") and not allowed("runtime/service.py", "providers/store/sqlite.py")
+    assert not allowed("runtime/service.py", "runtime/lab.py") and not allowed("runtime/service.py", "runtime/plan.py")
     assert allowed("runtime/handlers/h.py", "runtime/cli.py") and not allowed("runtime/handlers/h.py", "runtime/ops.py")
     assert not allowed("scripts/doctor.py", "runtime/ops.py")
     assert allowed("scripts/runtime.py", "adapters/api/run-agent.sh")

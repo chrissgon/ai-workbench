@@ -18,6 +18,9 @@ Usage:
   python3 runtime/cli.py retry    --project <dir> --task <task id>
   python3 runtime/cli.py cancel   --project <dir> --request <request id>
   python3 runtime/cli.py status   --project <dir>
+  python3 runtime/cli.py task     --project <dir> --task <task id>
+  python3 runtime/cli.py flows    --project <dir>
+  python3 runtime/cli.py config   --project <dir>
   python3 runtime/cli.py accept-config --project <dir> --sha256 <hash>
   python3 runtime/cli.py proof    --project <dir> [--skill <name>]
   python3 runtime/cli.py verdict  --project <dir> --run <run id> --word worked|corrected|failed
@@ -33,6 +36,7 @@ Usage:
   python3 runtime/cli.py dispatch --project <dir>
   python3 runtime/cli.py poll     --project <dir>
   python3 runtime/cli.py handler  --project <dir> --name <handler> --verb <verb> [--arg <flag>=<value>]...
+  python3 runtime/cli.py stop-runs --project <dir>
   python3 runtime/cli.py pin      --project <dir>
   python3 runtime/cli.py say      --project <dir> (--text <line> | --text-file <file or ->)
 
@@ -46,7 +50,7 @@ route     plans a request that waits for its route. Without --flow: one run of t
 approve   approves a plan (its tasks are created; pass the plan's hash, shown with it, as --sha256 to approve
           exactly what you read) or a request written on the task board.
           An effect (a pull request a skill prepared up to its confirmation gate) is approved only here, in the
-          terminal (the conversation refuses it), and only with its hash:
+          terminal, or on the local page (runtime/service.py), and only with its hash (the conversation refuses it):
           code then checks that nothing moved, makes the one commit with your own git and signature through the
           code provider and opens the pull request. The provider reads the token that opens a pull request by its
           own name (VCS_GITHUB_PR_TOKEN, from the secret store or the environment, providers/vcs/README.md); the
@@ -72,9 +76,17 @@ release   releases a delivery (a pending decision of kind review): the task is d
           questions left in it, or answer it. A run that wrote nothing and asks opens a question: answer it.
 retry     makes a failed or blocked task ready again.
 cancel    cancels a request, its tasks that are not done and their open pending decisions.
-status    requests, tasks and pending decisions, from the store's records; for each request and task, whether it is
+status    requests, tasks and pending decisions (each with "actions", the words it may be resolved with), from the
+          store's records; for each request and task, whether it is
           on the task board and how many comments saved from there are open; each mirrored document, its status
           and its note.
+task      one task or request: its row, its runs (status, failure, ending, attempts, duration, tokens, cost, model) and
+          its pending decisions of every status, each with "actions". For a request: the router's runs and the
+          decisions on the request itself.
+flows     the flow files of this checkout (flows/*.json): each one's name, title and number of tasks; a file that
+          fails its checks is listed with its error.
+config    the project's configuration: its path, its hash, whether you accepted that hash, and the data folder. The one
+          command that does not refuse a configuration you did not accept yet.
 proof     the model each skill in use would run on, with the bands and the two checks (the measurement files,
           the eval image). It calls no model.
 verdict   records your verdict on what one run delivered (worked, corrected, failed), with the existing
@@ -146,6 +158,8 @@ say       one turn of the conversation with the planning agent (the same as one 
           (/help lists them), the answer to its question, or a new request, which runs the router (a model call) and
           shows the plan; refused when the planning agent is stopped or at its cap.
 handler   starts one verb of a handler (runtime/handlers/) that handlers in runtime.json names, and prints its result.
+stop-runs ends the runs this process started (the container and the process group of each run). The local service
+          calls it before it exits; started on its own it has no run to end.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 
