@@ -44,7 +44,8 @@ route     plans a request that waits for its route. Without --flow: one run of t
           a reply with no recognised route reaches you whole. With --flow: the plan of that flow file, no run.
 approve   approves a plan (its tasks are created; pass the plan's hash, shown with it, as --sha256 to approve
           exactly what you read) or a request written on the task board.
-          An effect (a pull request a skill prepared up to its confirmation gate) is approved only with its hash:
+          An effect (a pull request a skill prepared up to its confirmation gate) is approved only here, in the
+          terminal (the conversation refuses it), and only with its hash:
           code then checks that nothing moved, makes the one commit with your own git and signature through the
           code provider and opens the pull request. The provider reads the token that opens a pull request by its
           own name (VCS_GITHUB_PR_TOKEN, from the secret store or the environment, providers/vcs/README.md); the
@@ -154,9 +155,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import ops  # noqa: E402  (the same folder)
 
-VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
-         "route", "approve", "reject", "sync", "hand-over", "deps", "progress", "set-mode", "approve-policy",
-         "revoke-policy", "standing", "execute-under-policy", "dispatch", "poll", "handler", "pin", "say")
+table = ops.operations  # the table of operations, re-exported by the operations layer
 
 
 class Usage(Exception):
@@ -166,6 +165,43 @@ class Usage(Exception):
 class Parser(argparse.ArgumentParser):
     def error(self, message):
         raise Usage(message)
+
+
+def dest_of(arg: dict) -> str:
+    """The name a flag's value is kept under: never `verb` or `text`, which a flag and the command word both use."""
+    return "f_" + table.flag_of(arg).replace("-", "_")
+
+
+def build_parser() -> Parser:
+    """The parser of every verb: the command word, --project, and every flag of every row of the table, once
+    (the same flag of two rows is the same kind: a test checks it)."""
+    p = Parser(prog="cli.py", add_help=False)
+    p.add_argument("command", choices=table.terminal_verbs())
+    p.add_argument("--project", required=True)
+    seen = set()
+    for row in table.OPERATIONS:
+        if "terminal" not in row["channels"]:
+            continue
+        for arg in row["args"]:
+            flag = "--" + table.flag_of(arg)
+            if flag in seen:
+                continue
+            seen.add(flag)
+            kind = arg["kind"]
+            if kind == "text":
+                p.add_argument("--text")
+                p.add_argument("--text-file")
+            elif kind == "int":
+                p.add_argument(flag, dest=dest_of(arg), type=int)
+            elif kind == "flag":
+                p.add_argument(flag, dest=dest_of(arg), action="store_true")
+            elif kind == "choice":
+                p.add_argument(flag, dest=dest_of(arg), choices=arg["choices"])
+            elif kind == "pairs":
+                p.add_argument(flag, dest=dest_of(arg), action="append", default=[])
+            else:
+                p.add_argument(flag, dest=dest_of(arg))
+    return p
 
 
 def text_of(a) -> str:
@@ -182,108 +218,33 @@ def text_of(a) -> str:
         raise Usage(f"--text-file: cannot read {a.text_file}: {e.strerror}") from None
 
 
-def need(a, flag: str):
-    value = getattr(a, flag.lstrip("-").replace("-", "_"))
-    if value is None:
-        raise Usage(f"{a.verb} needs {flag}")
-    return value
+def pairs_of(items: list, flag: str) -> dict:
+    pairs = {}
+    for item in items:
+        if "=" not in item:
+            raise Usage(f"--{flag} takes <flag>=<value>, not {item!r}")
+        key, value = item.split("=", 1)
+        pairs[key] = value
+    return pairs
 
 
 def run(argv) -> dict:
-    p = Parser(prog="cli.py", add_help=False)
-    p.add_argument("verb", choices=VERBS)
-    p.add_argument("--project", required=True)
-    p.add_argument("--flow")
-    p.add_argument("--title")
-    p.add_argument("--text")
-    p.add_argument("--text-file")
-    p.add_argument("--id", type=int)
-    p.add_argument("--task", type=int)
-    p.add_argument("--request", type=int)
-    p.add_argument("--sha256")
-    p.add_argument("--tier")
-    p.add_argument("--skill")
-    p.add_argument("--run", type=int)
-    p.add_argument("--word")
-    p.add_argument("--note")
-    p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--take", choices=("page", "project"))
-    p.add_argument("--path")
-    p.add_argument("--with-comments", action="store_true")
-    p.add_argument("--file")
-    p.add_argument("--since")
-    p.add_argument("--agent")
-    p.add_argument("--mode")
-    p.add_argument("--expires")
-    p.add_argument("--what")
-    p.add_argument("--policy")
-    p.add_argument("--effect-file")
-    p.add_argument("--name")
-    p.add_argument("--verb")
-    p.add_argument("--arg", action="append", default=[])
-    a = p.parse_args(argv)
+    a = build_parser().parse_args(argv)
     project = os.path.abspath(a.project)
-    if a.verb == "request":
-        return ops.request(project, text_of(a), a.flow, a.title)
-    if a.verb == "run-next":
-        return ops.run_next(project, a.tier)
-    if a.verb == "pending":
-        return ops.pending(project, a.id)
-    if a.verb == "answer":
-        return ops.answer(project, need(a, "--id"), text_of(a), with_comments=a.with_comments)
-    if a.verb == "release":
-        return ops.release(project, need(a, "--id"))
-    if a.verb == "retry":
-        return ops.retry(project, need(a, "--task"))
-    if a.verb == "cancel":
-        return ops.cancel(project, need(a, "--request"))
-    if a.verb == "accept-config":
-        return ops.accept_config(project, need(a, "--sha256"))
-    if a.verb == "proof":
-        return ops.proof(project, a.skill)
-    if a.verb == "verdict":
-        return ops.verdict(project, need(a, "--run"), need(a, "--word"))
-    if a.verb == "route":
-        return ops.route(project, need(a, "--request"), a.flow)
-    if a.verb == "approve":
-        return ops.approve(project, need(a, "--id"), a.sha256)
-    if a.verb == "reject":
-        return ops.reject(project, need(a, "--id"), a.note)
-    if a.verb == "sync":
-        return ops.sync(project, dry_run=a.dry_run, take=a.take, path=a.path)
-    if a.verb == "hand-over":
-        return ops.hand_over(project, need(a, "--task"), need(a, "--file"))
-    if a.verb == "deps":
-        return ops.deps(project)
-    if a.verb == "progress":
-        return ops.progress(project, a.since)
-    if a.verb == "set-mode":
-        return ops.set_mode(project, need(a, "--agent"), need(a, "--mode"))
-    if a.verb == "approve-policy":
-        return ops.approve_policy(project, need(a, "--file"), need(a, "--agent"), a.sha256, a.expires, a.what)
-    if a.verb == "revoke-policy":
-        return ops.revoke_policy(project, need(a, "--id"))
-    if a.verb == "standing":
-        return ops.standing(project, need(a, "--policy"))
-    if a.verb == "execute-under-policy":
-        return ops.execute_under_policy(project, need(a, "--policy"), need(a, "--effect-file"))
-    if a.verb == "dispatch":
-        return ops.dispatch(project)
-    if a.verb == "poll":
-        return ops.poll(project)
-    if a.verb == "pin":
-        return ops.pin(project)
-    if a.verb == "say":
-        return ops.say(project, text_of(a))
-    if a.verb == "handler":
-        pairs = {}
-        for item in a.arg:
-            if "=" not in item:
-                raise Usage(f"--arg takes <flag>=<value>, not {item!r}")
-            flag, value = item.split("=", 1)
-            pairs[flag] = value
-        return ops.handler_call(project, need(a, "--name"), need(a, "--verb"), pairs)
-    return ops.status(project)
+    row = table.by_name(a.command)
+    kwargs = {}
+    for arg in row["args"]:
+        flag = table.flag_of(arg)
+        if arg["kind"] == "text":
+            kwargs[arg["name"]] = text_of(a)
+            continue
+        value = getattr(a, dest_of(arg))
+        if value is None and arg.get("required"):
+            raise Usage(f"{a.command} needs --{flag}")
+        kwargs[arg["name"]] = pairs_of(value, flag) if arg["kind"] == "pairs" else value
+    if row.get("channel_arg"):
+        kwargs["channel"] = "terminal"
+    return getattr(ops, row["call"])(project, **kwargs)
 
 
 def main(argv=None) -> int:

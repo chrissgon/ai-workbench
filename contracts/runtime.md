@@ -95,7 +95,8 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 |---|---|
 | `runtime/lab.py` | The lab facade: the only file of `runtime/` that reads anything under `evals/`. Runs one skill once in the eval container; the pause on the account limit, the refusals, the early end and the stopping are the lab's own functions. Never builds the eval image: a missing one is an error |
 | `runtime/ops.py` | The operations layer: every operation a shell can perform (request, route, approve, reject, run the next task, pending, answer, release, retry, cancel, status, the configuration, the mirrors, the file drop, the dependencies, the standing approvals, the proof, the verdict, progress, the dispatcher's jobs, the conversation). Every shell calls it; no shell reaches the store, the facade or a project's files by itself |
-| `runtime/cli.py` | The terminal shell: one command per operation, one JSON object printed |
+| `runtime/operations.py` | The table of operations (a pure literal): one row per operation of `ops.py` with its verb, arguments, the channels that may call it (an effect is approved only from the terminal, with its hash) and whether it calls a model. Every shell derives what it accepts from it, and the texts that name a command are built from it |
+| `runtime/cli.py` | The terminal shell: its parser is built from the table, one command per operation, one JSON object printed |
 | `runtime/flow_files.py` | Reads and checks a flow file, `flows/<name>.json` |
 | `runtime/skill_meta.py` | What a skill declares in its frontmatter (artifact lists, requirement classes, side effects, version) |
 | `runtime/path_rule.py` | The path rule: the one class of each path a run left (`state`, `machine`, `document`, `versioned`, `ignored`, `other`) |
@@ -116,7 +117,7 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 | `runtime/autonomy.py` | The five autonomy modes of an area agent, what each releases, the daily caps, and whether a standing approval covers an effect |
 | `runtime/progress.py` | Progress and the summary of a period, computed from the store's records |
 | `runtime/dispatcher.py` | The dispatcher's decision (`decide`, pure) and the scheduler's entry for the two jobs ("The dispatcher's two jobs" below) |
-| `runtime/chat.py` | The conversation with the planning agent in the terminal, one more shell of `ops.py` |
+| `runtime/chat.py` | The conversation with the planning agent in the terminal, one more shell of `ops.py`: its commands and its help are the table's |
 | `runtime/handlers/` | The handlers a round of the dispatcher ticks; the first is `published_posts.py`. A handler prepares an effect and hands it to the operations layer (`cli.py execute-under-policy`); it confirms no provider verb, re-reads no bound and records no action (L15) |
 | `runtime/tests/` | The tests of the above, offline, with a stand-in adapter and invented skills; `corpus/` holds the classifier's corpus of archived lab runs |
 | `flows/*.json` | The flow files: `market-positioning.json` (a market analysis, then the customer profile and positioning), `brand.json` (the brand flow) and `code-change.json` (the code-change flow) |

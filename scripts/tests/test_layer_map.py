@@ -255,11 +255,10 @@ NOT_A_DEPENDENCY = {
         "run); nothing is loaded or run",
     ("providers/secrets/resolver.py", "runtime/effects.py"):
         "a row of the secrets table names the module that reads the secret; nothing is loaded",
-    ("scripts/architecture_tables.py", "runtime/cli.py"):
-        "the generator reads the source text of the file to write a documentation table; nothing is imported",
+    ("scripts/architecture_tables.py", "runtime/operations.py"):
+        "the generator reads the literal table in the source text of the file to write a documentation table; "
+        "nothing is imported",
     ("scripts/architecture_tables.py", "runtime/dispatcher.py"):
-        "the generator reads the source text of the file to write a documentation table; nothing is imported",
-    ("scripts/architecture_tables.py", "runtime/ops.py"):
         "the generator reads the source text of the file to write a documentation table; nothing is imported",
 }
 

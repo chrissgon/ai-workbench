@@ -115,7 +115,7 @@ def test_a_command_calls_its_operation_once_and_no_model(tree, monkeypatch):
 def test_an_unknown_command_gets_the_help_and_runs_nothing(tree):
     for line in ("/frobnicate", "/release", "/release seven", "/approve-policy x", "/set-mode a b", "/pin"):
         out = say(tree, line)
-        assert out["reply"] == ops.SAY_HELP and out["ran"] is False, line
+        assert out["reply"] == ops.operations.chat_help() and out["ran"] is False, line
     assert st.calls(tree["adapter"]) == [] and ops.pending(str(tree["project"]))["pending"] == []
 
 
