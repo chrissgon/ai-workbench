@@ -14,9 +14,9 @@ Every binding of stage 2 of the platform plan, and where its test is:
 | `state_merge.OPEN_QUESTION` (the form the merge writes) and `SKILL_PREFIXES` | `contracts/state.md`, `init_project.py`, the prefixes table of `AGENTS.md` | `test_the_open_question_form_the_merge_writes_is_the_contracts` (here) |
 | the owner the merge names for a missing state file | `core-project-init`'s `outputs` | `test_the_state_file_is_owned_by_the_skill_the_merge_names` (here) |
 | `endings` constants (`writes it`, `run it first`, `Recommended:`, `(planned)`, `OPEN-<n>`, the asking reply) | `templates/capability.SKILL.md`, `AGENTS.md` | `test_the_sentences_the_classifier_reads_are_in_the_templates` (here) |
-| `endings` constants read from single skills (`writes them`, `writes that section`, `writes the PRD`, ``run `<skill>` first``, `? (yes/no)`) | the skills each comment names | `test_the_sentences_the_classifier_reads_from_skills_are_still_there` (here) |
+| a skill's own reply phrases (`reply_phrases` of its manifest: `writes them`, `writes the PRD`, `Questions (`, `Decisions needed`, a gate question, ...) | the skill's `SKILL.md` or `assets/` | `test_every_reply_phrase_of_a_manifest_is_in_the_text_of_its_skill` and `test_the_classifier_reads_every_reply_phrase_of_a_manifest` (here) |
 | rule 3 of the classifier, for the skills in use | the asking template of each skill | `test_every_skill_in_use_asks_with_an_opening_the_classifier_knows` (here) |
-| `workcopy.CODE_AREAS` | the skills' `metadata.area` | `test_the_code_areas_are_the_areas_of_the_skills_that_work_on_code` (here) |
+| `runtime/roles.json`'s `code_areas` (`workcopy.CODE_AREAS`) | the skills' `metadata.area` | `test_the_code_areas_are_the_areas_of_the_skills_that_work_on_code` (here) |
 | `ops.task_prompt` | the flow files | `test_the_prompt_of_a_run_names_no_skill_and_keeps_its_form` (here) |
 | a manifest's `asking_openings` | the skill's asking template | `test_the_asking_openings_of_a_manifest_are_the_first_line_of_the_skills_asking_template` (`test_runtime_manifest.py`) |
 | a manifest's checker commands | the skill's `scripts/` and its text | `test_every_checker_a_manifest_names_is_a_script_of_the_skill_and_is_named_in_its_text` (`test_runtime_manifest.py`) |
@@ -136,22 +136,72 @@ def test_the_sentences_the_classifier_reads_are_in_the_templates():
     assert "OPEN-<n>" in agents, "look at endings.OPEN_MARK"
 
 
-def test_the_sentences_the_classifier_reads_from_skills_are_still_there():
-    expected = {
-        "skills/brand-strategy/SKILL.md": "writes them and to run it first",
-        "skills/eng-tradeoffs/SKILL.md": "writes that section and to run it first",
-        "skills/product-roadmap/SKILL.md": "writes the PRD",
-        "skills/design-ux-flows/SKILL.md": "Next: run `product-prd` first",
-        "skills/design-execute/SKILL.md": "Proceed? (yes/no)",
-        "skills/ops-branch-sync/SKILL.md": "Push? (yes/no)",
-        "skills/eng-security-review/SKILL.md": "alerts? (yes/no)",
-    }
-    source = text("runtime/endings.py")
-    for rel, sentence in expected.items():
-        assert rel in source, f"endings.py no longer cites {rel}: update this table"
-        assert sentence in text(rel), f"{rel} no longer holds {sentence!r}: look at endings.MISSING_INPUT and YES_NO"
-        constant = endings.YES_NO if "yes/no" in sentence else endings.MISSING_INPUT
-        assert constant.search(sentence), f"endings does not read {sentence!r}: look at MISSING_INPUT and YES_NO"
+# The skills whose own reply phrases the classifier reads (design rule: no phrase of one skill lives in code).
+SKILLS_WITH_PHRASES = {
+    "brand-strategy", "eng-tradeoffs", "product-roadmap", "design-ux-flows", "design-execute", "ops-branch-sync",
+    "eng-security-review", "design-brief", "design-system", "design-handoff", "product-feature-spec", "product-prd",
+    "core-agents-md"}
+
+
+def reply_phrases() -> dict:
+    """{skill: {kind: [phrases]}} of every manifest of the repository that has any."""
+    found = {}
+    for name in skill_names():
+        file = REPO / "skills" / name / "evals" / "runtime-manifest.json"
+        if file.is_file():
+            given = json.loads(file.read_text(encoding="utf-8")).get("reply_phrases") or {}
+            if any(given.values()):
+                found[name] = given
+    return found
+
+
+def skill_text(name: str) -> str:
+    folder = REPO / "skills" / name
+    parts = [(folder / "SKILL.md").read_text(encoding="utf-8")]
+    parts += [p.read_text(encoding="utf-8") for p in sorted((folder / "assets").rglob("*")) if p.is_file()]
+    return "\n".join(parts)
+
+
+def test_every_reply_phrase_of_a_manifest_is_in_the_text_of_its_skill():
+    found = reply_phrases()
+    assert SKILLS_WITH_PHRASES <= set(found), sorted(SKILLS_WITH_PHRASES - set(found))
+    for name, phrases in found.items():
+        text_of = skill_text(name)
+        for kind, listed in phrases.items():
+            for phrase in listed:
+                assert phrase in text_of, f"{name} no longer holds {phrase!r} ({kind}): look at its runtime manifest"
+
+
+def test_the_classifier_reads_every_reply_phrase_of_a_manifest():
+    names = skill_names()
+    for name, phrases in reply_phrases().items():
+        facts = manifest.ending_facts(str(REPO), name)
+        assert facts["reply_phrases"] == {k: list(phrases.get(k) or []) for k in endings.PHRASE_KEYS}
+        other = next(n for n in names if n not in (name, "core-orchestrator") and n in facts["skills"])
+        for phrase in phrases.get("missing_input") or []:
+            reply = f"The input is missing: `{other}` {phrase}."
+            assert endings.classify(reply, NONE, [], [], [], facts=facts)[0] == "blocked", (name, phrase)
+        for phrase in phrases.get("question_intros") or []:
+            lines = [ln for ln in text(f"skills/{name}/SKILL.md").splitlines()
+                     if ln.lstrip("#*_ ").lower().startswith(phrase.lower())]
+            assert lines, f"{name}: no line of its SKILL.md starts like {phrase!r}"
+            reply = f"The draft is not ready.\n\n{lines[0]}\n1. The launch date.\n2. The second market."
+            assert endings.classify(reply, NONE, [], [], [], facts=facts)[0] == "question", (name, phrase)
+        for phrase in phrases.get("gate_questions") or []:
+            reply = f"The payload is below.\n\nPlease confirm: {phrase}"
+            assert endings.classify(reply, NONE, [], [], [], facts=facts)[0] == "question", (name, phrase)
+
+
+def test_a_phrase_only_one_skill_writes_is_read_only_with_that_skills_facts():
+    base = manifest.ending_facts(str(REPO), "core-agents-md")
+    bare = dict(base, reply_phrases={k: [] for k in endings.PHRASE_KEYS})
+    reply = "The draft is not ready.\n\n### Decisions needed\n1. The launch date.\n2. The second market."
+    assert endings.classify(reply, NONE, [], [], [], facts=base)[0] == "question"
+    assert endings.classify(reply, NONE, [], [], [], facts=bare)[0] == "unclassified"
+    roadmap = manifest.ending_facts(str(REPO), "product-roadmap")
+    reply = "Nothing was written yet: `product-prd` writes the PRD."
+    assert endings.classify(reply, NONE, [], [], [], facts=roadmap)[0] == "blocked"
+    assert endings.classify(reply, NONE, [], [], [], facts=dict(roadmap, reply_phrases={}))[0] == "unclassified"
 
 
 def test_every_skill_in_use_asks_with_an_opening_the_classifier_knows():
@@ -177,18 +227,20 @@ def test_every_skill_in_use_asks_with_an_opening_the_classifier_knows():
 
 
 def test_the_code_areas_are_the_areas_of_the_skills_that_work_on_code():
+    code_areas = json.loads(text("runtime/roles.json"))["code_areas"]
+    assert tuple(code_areas) == workcopy.CODE_AREAS, "workcopy.CODE_AREAS is not what runtime/roles.json says"
     found = {}
     for name in skill_names():
         found[name] = skill_meta.declared(str(REPO / "skills" / name))["area"]
     for name, area in found.items():
         if name.startswith(("eng-", "ops-")):
-            assert area in workcopy.CODE_AREAS, f"{name} is in {area}: look at workcopy.CODE_AREAS"
+            assert area in code_areas, f"{name} is in {area}: look at code_areas of runtime/roles.json"
         elif not name.startswith("flow-"):
-            assert area not in workcopy.CODE_AREAS, f"{name} is in {area}: look at workcopy.CODE_AREAS"
+            assert area not in code_areas, f"{name} is in {area}: look at code_areas of runtime/roles.json"
     # A flow takes the area of the work it orchestrates: one that runs code skills is in a code area too.
-    for name in (n for n in found if n.startswith("flow-") and found[n] in workcopy.CODE_AREAS):
+    for name in (n for n in found if n.startswith("flow-") and found[n] in code_areas):
         assert re.search(r"`(?:eng|ops)-[a-z-]+`", text(f"skills/{name}/SKILL.md")), \
-            f"{name} is in {found[name]} and runs no code skill: look at workcopy.CODE_AREAS"
+            f"{name} is in {found[name]} and runs no code skill: look at code_areas of runtime/roles.json"
     assert sum(1 for n, a in found.items() if n.startswith("eng-") and a == "engineering") >= 12
     assert sum(1 for n, a in found.items() if n.startswith("ops-") and a == "delivery") >= 4
 
@@ -206,17 +258,21 @@ def test_the_prompt_of_a_run_names_no_skill_and_keeps_its_form():
 
 
 def test_the_lines_that_say_questions_follow_are_still_in_the_skills_that_write_them():
-    # WP-3.20: the forms of endings.QUESTIONS_FOLLOW, each from the template of the skill named beside it.
+    # WP-3.20: the canonical forms of endings.QUESTIONS_FOLLOW, each from the template or the skill named beside it; the
+    # forms only one skill writes are that skill's `question_intros` (test_the_classifier_reads_every_reply_phrase...).
     expected = {
+        "templates/flow.SKILL.md": "Open questions:",
         "skills/brand-strategy/SKILL.md": "Open questions:",
         "skills/design-system/SKILL.md": "Questions for you:",
-        "skills/design-brief/SKILL.md": "Questions (the brief needs these as well; answer each):",
         "skills/product-feature-spec/SKILL.md": "### Questions for you (<n>, at most three)",
         "skills/product-prd/SKILL.md": "### Open questions for you",
-        "skills/core-agents-md/SKILL.md": "### Decisions needed",
     }
-    source = text("runtime/endings.py")
     for rel, line in expected.items():
-        assert rel.split("/")[1] in source, f"endings.py no longer cites {rel}: update this table"
         assert line in text(rel).splitlines(), f"{rel} no longer holds the line {line!r}: look at endings.QUESTIONS_FOLLOW"
+    for line in ("Open questions:", "Questions for you:", "### Open questions for you", "### Questions for you", "**Questions**"):
         assert endings._questions_follow(line), f"endings does not read {line!r} as a line that says questions follow"
+    for rel in ("skills/design-brief/SKILL.md", "skills/core-agents-md/SKILL.md"):
+        intros = {"skills/design-brief/SKILL.md": ["Questions ("], "skills/core-agents-md/SKILL.md": ["Decisions needed"]}[rel]
+        line = next(ln for ln in text(rel).splitlines() if ln.lstrip("#*_ ").startswith(intros[0]))
+        assert endings._questions_follow(line, intros), f"endings does not read {line!r} with its skill's intros"
+        assert not endings._questions_follow(line), f"{line!r} is read without its skill's phrases: it belongs in the manifest"

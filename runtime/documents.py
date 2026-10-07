@@ -58,6 +58,7 @@ import tempfile
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import board  # noqa: E402  (the same folder: the provider is started, and its bounds read, as the board's)
+import isolated  # noqa: E402
 import manifest  # noqa: E402
 import path_rule  # noqa: E402
 import skill_meta  # noqa: E402
@@ -193,8 +194,8 @@ def _docs_files(project: str) -> list:
 def check_edit(root: str, project: str, entry: dict, rel: str, markdown) -> tuple:
     """(True, "") when an edit of the document rel passes its skill's checker, else (False, the reason). The
     checker runs on a scratch copy of the project's docs/ with the edit written at rel, never in the project; each
-    command of entry["checks"] is `<this interpreter> <root>/skills/<skill>/scripts/<script> <arguments>`, with
-    {path} read as rel, run from the scratch root. With no checker, the edit passes when it is not empty and is
+    command of entry["checks"] is `<root>/skills/<skill>/scripts/<script> <arguments>`, with {path} read as rel, run
+    from the scratch root by runtime/isolated.py (an isolated interpreter with a scrubbed environment). With no checker, the edit passes when it is not empty and is
     valid UTF-8."""
     if not isinstance(markdown, str) or not markdown.strip():
         return False, "the page is empty"
@@ -217,11 +218,10 @@ def check_edit(root: str, project: str, entry: dict, rel: str, markdown) -> tupl
         with open(target, "wb") as f:
             f.write(data)
         for check in entry["checks"]:
-            script = os.path.join(root, "skills", entry["skill"], "scripts", check[0])
-            argv = [sys.executable, script] + [a.replace("{path}", rel) for a in check[1:]]
+            script = isolated.skill_script(root, entry["skill"], check[0])
             try:
-                done = subprocess.run(argv, cwd=scratch, capture_output=True, text=True, timeout=CHECK_TIMEOUT,
-                                      check=False)
+                done = isolated.run_script(script, [a.replace("{path}", rel) for a in check[1:]], cwd=scratch,
+                                           timeout=CHECK_TIMEOUT)
             except subprocess.TimeoutExpired:
                 return False, f"{check[0]} did not finish in {CHECK_TIMEOUT} seconds"
             except OSError as e:

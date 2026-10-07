@@ -9,16 +9,21 @@ A manifest holds only what the task runtime must know of a skill and the skill's
 which declared outputs a person reads as documents (with the skill's own checker commands, whether a person's
 edit on a platform is taken back, whether the document is bound to an approval), the machine files, whether
 the next skill needs the person's approval written inside the document, how the skill's asking reply opens,
-and its confirmation gate. What the frontmatter declares (the web, the artifacts, the side effects) is never
-repeated here. The file sits under evals/, outside the skill's content hash and never staged into a run, so
-adding or changing it costs no version bump and no lab test.
+and its confirmation gate; and, optionally, the phrases of the skill's replies the classifier of endings reads
+(`reply_phrases`: the lines that say a missing input, that questions follow, and the question of a gate, each a
+list of texts that appear in the skill's SKILL.md or assets/; absent means none). What the frontmatter declares
+(the web, the artifacts, the side effects) is never repeated here. The file sits under evals/, outside the skill's
+content hash and never staged into a run, so adding or changing it costs no version bump and no lab test.
 
-Every skill of a pack in use (PACKS_IN_USE) must have a well-formed manifest, and a task whose skill has none
-does not run (runtime/ops.py).
+Every skill of a pack in use (PACKS_IN_USE, runtime/roles.json) must have a whole, well-formed manifest, and a task
+whose skill has no whole one does not run (runtime/ops.py). A skill outside those packs may carry a partial manifest:
+`skill` and any subset of the other keys (for example only its reply phrases); the classifier of endings reads it,
+and the runtime still refuses to run the skill.
 
 Usage (a library):
   python3 runtime/manifest.py --help
-  python3 runtime/manifest.py --check     check the manifests of the skills of the packs in use; print one JSON
+  python3 runtime/manifest.py --check     check the manifests of the skills of the packs in use (whole) and any
+                                          other manifest (partial allowed); print one JSON
                                           object {"skills": n, "problems": {skill: [...]}}; exit 1 when any
 
 Standard library only. Runs on Python 3.9.
@@ -36,11 +41,14 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import skill_meta  # noqa: E402  (the same folder, as the other modules import each other)
+import roles  # noqa: E402  (the same folder, as the other modules import each other)
+import skill_meta  # noqa: E402
 
 REL = "evals/runtime-manifest.json"
-PACKS_IN_USE = ("business", "brand", "planning", "code")
+PACKS_IN_USE = tuple(roles.load()["packs_in_use"])  # runtime/roles.json
 KEYS = ("skill", "documents", "machine_files", "mandatory_milestone", "asking_openings", "gate")
+OPTIONAL_KEYS = ("reply_phrases",)
+PHRASE_KEYS = ("missing_input", "question_intros", "gate_questions")
 DOCUMENT_KEYS = ("path", "checks", "platform", "bound_to_approval")
 PLATFORM = ("editable", "read_only")
 GATE_KEYS = ("effect", "payload_file")
@@ -62,17 +70,18 @@ def _texts(value) -> bool:
     return isinstance(value, list) and all(isinstance(v, str) and v.strip() for v in value)
 
 
-def problems(data, declared: dict, skill_dir: str) -> list:
+def problems(data, declared: dict, skill_dir: str, in_use: bool = True) -> list:
     """Every problem of a parsed manifest, as sentences; empty when it is well formed. `declared` is
-    skill_meta.declared(skill_dir)."""
+    skill_meta.declared(skill_dir). `in_use` is whether the skill is of a pack in use: only then is every key of KEYS
+    required; a skill of another pack may hold `skill` and any subset of the keys, each checked when present."""
     if not isinstance(data, dict):
         return ["the manifest is not a JSON object"]
     out = []
-    for key in KEYS:
+    for key in KEYS if in_use else KEYS[:1]:
         if key not in data:
             out.append(f"missing key `{key}`")
     for key in data:
-        if key not in KEYS:
+        if key not in KEYS and key not in OPTIONAL_KEYS:
             out.append(f"unknown key `{key}`: what the frontmatter declares is never repeated here")
     name = os.path.basename(os.path.normpath(skill_dir))
     if "skill" in data and data["skill"] != name:
@@ -128,6 +137,16 @@ def problems(data, declared: dict, skill_dir: str) -> list:
         out.append("`mandatory_milestone` is not true or false")
     if "asking_openings" in data and not _texts(data["asking_openings"]):
         out.append("`asking_openings` is not a list of non-empty texts")
+    if "reply_phrases" in data:
+        phrases = data["reply_phrases"]
+        if not isinstance(phrases, dict):
+            out.append("`reply_phrases` is not an object")
+        else:
+            for key in phrases:
+                if key not in PHRASE_KEYS:
+                    out.append(f"reply_phrases: unknown key `{key}` (the keys are {', '.join(PHRASE_KEYS)})")
+                elif not _texts(phrases[key]):
+                    out.append(f"reply_phrases: `{key}` is not a list of non-empty texts")
     if "gate" in data:
         gate, effects = data["gate"], declared.get("side_effects") or []
         if not effects:
@@ -146,9 +165,10 @@ def problems(data, declared: dict, skill_dir: str) -> list:
     return out
 
 
-def load(root: str, skill: str) -> dict:
+def load(root: str, skill: str, whole: bool = True) -> dict:
     """The manifest of a skill, checked. Raises ManifestError when the file is missing, is not JSON, or
-    problems() is not empty."""
+    problems() is not empty. `whole` is true for a run: every key is required, whatever the skill's pack (a skill with
+    a partial manifest does not run). The classifier of endings reads a manifest with whole=in_use(root, skill)."""
     file = path(root, skill)
     try:
         with open(file, encoding="utf-8") as f:
@@ -162,7 +182,7 @@ def load(root: str, skill: str) -> dict:
         declared = skill_meta.declared(skill_dir)
     except skill_meta.SkillError as e:
         raise ManifestError(str(e)) from None
-    found = problems(data, declared, skill_dir)
+    found = problems(data, declared, skill_dir, in_use=whole)
     if found:
         raise ManifestError(f"{file}: " + "; ".join(found))
     return data
@@ -174,17 +194,35 @@ def _select_skills(root: str):
         spec = importlib.util.spec_from_file_location(name, os.path.join(root, "scripts", "select_skills.py"))
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
-        spec.loader.exec_module(module)
+        try:
+            spec.loader.exec_module(module)
+        except BaseException:
+            sys.modules.pop(name, None)  # never leave a half-loaded module for the next root
+            raise
     return sys.modules[name]
+
+
+_IN_USE = {}  # root -> the sorted names of the skills of the packs in use (a pack's file does not change in a process)
 
 
 def skills_in_use(root: str) -> list:
     """The sorted names of the skills of every pack of PACKS_IN_USE (scripts/select_skills.py, resolve())."""
-    select = _select_skills(root)
-    names = set()
-    for pack in PACKS_IN_USE:
-        names.update(select.resolve(pack=pack))
-    return sorted(names)
+    if root not in _IN_USE:
+        select = _select_skills(root)
+        names = set()
+        for pack in PACKS_IN_USE:
+            names.update(select.resolve(pack=pack))
+        _IN_USE[root] = sorted(names)
+    return list(_IN_USE[root])
+
+
+def in_use(root: str, skill: str) -> bool:
+    """Whether the skill is of a pack in use. A tree whose packs cannot be resolved (no scripts/select_skills.py, no
+    pack file) answers True: the stricter reading, the whole manifest."""
+    try:
+        return skill in skills_in_use(root)
+    except Exception:  # noqa: BLE001  (any failure of the resolver: stay strict)
+        return True
 
 
 def asking_openings_of(skill_md: str) -> list:
@@ -209,23 +247,26 @@ def asking_openings_of(skill_md: str) -> list:
 def ending_facts(root: str, skill: str) -> dict:
     """The facts of a skill the classifier of endings reads (runtime/endings.py, classify(..., facts=)), the one
     source for runtime/ops.py and for the corpus test alike: {"skill", "asking_openings", "fixed_output",
-    "side_effects", "gate_payload", "skills"}.
+    "side_effects", "gate_payload", "skills", "reply_phrases"}.
 
-    asking_openings  the manifest's when the skill has one, else asking_openings_of(<its SKILL.md>)
+    asking_openings  the manifest's when it has the key, else asking_openings_of(<its SKILL.md>)
     fixed_output     true when a declared output has no placeholder and does not end in "/"
     side_effects     the frontmatter's side_effects
     gate_payload     the manifest's gate.payload_file, else None
     skills           the sorted names of the folders of <root>/skills/ that hold a SKILL.md
+    reply_phrases    {"missing_input": [...], "question_intros": [...], "gate_questions": [...]}: the manifest's, an
+                     empty list for each key it does not give
 
-    A skill whose manifest file exists but is not well formed raises ManifestError, as load() does."""
+    A skill whose manifest file exists but is not well formed raises ManifestError, as load() does; a skill outside
+    the packs in use may have a partial manifest (see the module text)."""
     skill_dir = os.path.join(root, "skills", skill)
     try:
         declared = skill_meta.declared(skill_dir)
     except skill_meta.SkillError as e:
         raise ManifestError(str(e)) from None
-    data = load(root, skill) if os.path.isfile(path(root, skill)) else None
-    if data is not None:
-        openings = list(data.get("asking_openings") or [])
+    data = load(root, skill, whole=in_use(root, skill)) if os.path.isfile(path(root, skill)) else None
+    if data is not None and "asking_openings" in data:
+        openings = list(data["asking_openings"] or [])
     else:
         with open(os.path.join(skill_dir, "SKILL.md"), encoding="utf-8") as f:
             openings = asking_openings_of(f.read())
@@ -235,6 +276,7 @@ def ending_facts(root: str, skill: str) -> dict:
             "fixed_output": any("<" not in p and not p.endswith("/") for p in declared["outputs"]),
             "side_effects": list(declared["side_effects"]),
             "gate_payload": gate.get("payload_file") if isinstance(gate, dict) else None,
+            "reply_phrases": {k: list(((data or {}).get("reply_phrases") or {}).get(k) or []) for k in PHRASE_KEYS},
             "skills": sorted(n for n in os.listdir(skills_dir) if os.path.isfile(os.path.join(skills_dir, n, "SKILL.md")))}
 
 
@@ -258,6 +300,12 @@ def main(argv=None) -> int:
             load(ROOT, name)
         except ManifestError as e:
             found[name] = [str(e)]
+    for name in sorted(os.listdir(os.path.join(ROOT, "skills"))):
+        if name not in names and os.path.isfile(path(ROOT, name)):
+            try:
+                load(ROOT, name, whole=False)
+            except ManifestError as e:
+                found[name] = [str(e)]
     print(json.dumps({"skills": len(names), "problems": found}))
     return 1 if found else 0
 

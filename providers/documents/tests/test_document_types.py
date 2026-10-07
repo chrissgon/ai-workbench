@@ -32,7 +32,7 @@ def entries(platform: str) -> list:
     out = []
     for path in sorted((REPO / "skills").glob("*/evals/runtime-manifest.json")):
         data = json.loads(path.read_text(encoding="utf-8"))
-        out += [(data["skill"], doc) for doc in data["documents"] if doc["platform"] == platform]
+        out += [(data["skill"], doc) for doc in data.get("documents") or [] if doc["platform"] == platform]
     return out
 
 

@@ -16,13 +16,13 @@ import standin_tree as st
 REPO = st.REPO
 
 # Every start of a script with sys.executable, per module of the runtime: one row per argument list the module's
-# source opens with it (`[sys.executable`); a mention elsewhere (a report, a message) starts nothing. "<manifest checkers>" stands for the checkers a runtime manifest names (the third test);
+# source opens with it (`[sys.executable`); a mention elsewhere (a report, a message) starts nothing. "<skill scripts>" stands for the scripts of skills the runtime runs isolated: the checkers a runtime manifest names (the third test) and the backlog reader;
 # "<handlers>" for every file of runtime/handlers/ (the first test).
 STARTS = {
     "runtime/ops.py": ["scripts/evidence.py", "<handlers>"],
     "runtime/plan.py": ["scripts/select_skills.py"],
     "runtime/board.py": ["providers/issue-tracker/local.py"],  # a provider whose header declares no dependency
-    "runtime/documents.py": ["<manifest checkers>"],
+    "runtime/isolated.py": ["<skill scripts>"],  # a manifest's checkers and the backlog reader, through run_script
     "runtime/handlers/published_posts.py": ["providers/resolve.py", "providers/store/sqlite.py", "runtime/cli.py"],
 }
 # The programs a module of the runtime starts by name; the lab's own starts (docker, the adapters) go through the
@@ -30,7 +30,6 @@ STARTS = {
 PROGRAMS = ("git", "uv", "bash")
 # A start whose argument list is built elsewhere in the module: where it is built.
 BUILT_ELSEWHERE = {"runtime/board.py": "provider_argv", "runtime/effects.py": "def provider_call",
-                   "runtime/documents.py": "argv = [sys.executable",
                    "runtime/handlers/published_posts.py": "def _call"}
 
 

@@ -239,10 +239,6 @@ ALLOWED = (
 TOLERATED = {
     ("runtime/ops.py", "scripts/validate.py"):
         "finding 11 (WP-R.4): _effect_words reads the SIDE_EFFECTS line of scripts/validate.py with a regex",
-    ("runtime/ops.py", "skills/eng-implement/scripts/task.py"):
-        "findings 5 and 9 (WP-R.5): _task_script loads the backlog parser into the runtime's process",
-    ("runtime/documents.py", "skills/*/scripts/*"):
-        "finding 9 (WP-R.5): a document checker is a skill script run with the runtime's environment",
     ("skills/mkt-engage/scripts/policy_gate.py", "skills/brand-profile/scripts/sensitive_topics.py"):
         "finding 17 (a skill script falls back to another skill's copy of a shared script; removed at the next "
         "Y change of mkt-engage)",
