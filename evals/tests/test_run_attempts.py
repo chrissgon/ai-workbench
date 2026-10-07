@@ -19,7 +19,7 @@ from types import SimpleNamespace
 import pytest
 
 EVALS = Path(__file__).resolve().parents[1]
-FACADE = EVALS.parent / "runtime" / "lab.py"
+KIT = EVALS / "execution.py"
 
 
 def load(name):
@@ -410,15 +410,10 @@ def test_the_module_reads_the_runner_only_through_the_object_it_is_given():
     read = {node.attr for node in ast.walk(tree)
             if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id == "lab"}
     assert read, "the module reads nothing of the runner"
-    if not FACADE.is_file():
-        pytest.skip("runtime/lab.py is absent: the names cannot be checked against its lists")
-    facade = FACADE.read_text(encoding="utf-8")
-
-    def listed(name):
-        found = re.search(rf"^{name} = \((.*?)\n\)", facade, re.S | re.M)
-        assert found, f"{name} not found in runtime/lab.py"
-        return set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"', re.sub(r"#[^\n]*", "", found.group(1))))
-
-    allowed, forbidden = listed("ALLOWED"), listed("FORBIDDEN")
-    assert read <= allowed, sorted(read - allowed)
-    assert not read & forbidden
+    if not KIT.is_file():
+        pytest.skip("evals/execution.py is absent: the names cannot be checked against its list")
+    kit = KIT.read_text(encoding="utf-8")
+    found = re.search(r"^__all__ = \((.*?)\n\)", kit, re.S | re.M)
+    assert found, "__all__ not found in evals/execution.py"
+    listed = set(re.findall(r'"([A-Za-z_][A-Za-z0-9_]*)"', re.sub(r"#[^\n]*", "", found.group(1))))
+    assert read <= listed, sorted(read - listed)
