@@ -393,10 +393,24 @@ def _copy_in(files, case_dir: str) -> None:
         shutil.copyfile(src, target)
 
 
+def _platform_names(platforms) -> list:
+    """The platforms a caller names for one run, checked: None is none; otherwise a list of names, each a platform of
+    this checkout (shared/references/platforms/<name>.md). Anything else is LabError("config"), before any run."""
+    if platforms is None:
+        return []
+    if not isinstance(platforms, (list, tuple)) or not all(isinstance(n, str) and PLATFORM_NAME.match(n) for n in platforms):
+        raise LabError("config", "platforms is a list of platform names (lowercase letters, digits and hyphens)")
+    folder = os.path.join(LAB.ROOT, *PLATFORMS_CITED.rstrip("/").split("/"))
+    for name in platforms:
+        if not os.path.isfile(os.path.join(folder, name + ".md")):
+            raise LabError("config", f"platform {name!r} has no reference: {PLATFORMS_CITED}{name}.md does not exist")
+    return sorted(set(platforms))
+
+
 def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, tier: str = "strong",
               model: str | None = None, adapter: str | None = None, pass_env=None,
               timeout: int | None = None, retries: int | None = None, prepare=None, finish=None,
-              tmp_in_run: bool = False) -> dict:
+              tmp_in_run: bool = False, platforms=None) -> dict:
     """Run one skill once on one task text, in the eval container, on a fresh copy.
 
     skill    a folder name under skills/ of this checkout: it is staged where the adapter's tool finds skills,
@@ -423,6 +437,10 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
              back as <dest>/outputs/tmp: what a skill writes under a folder from mktemp -d (the payload of its
              confirmation gate) is kept. TMPDIR is passed to the container by name, as the passed variables are; it
              is not a secret, so its value is never replaced in what the run left
+    platforms  the platforms whose reference the caller names, a list of names ("a case's platforms"): each is
+             staged beside the skill, with its data file when it has one, as the lab stages a case's platforms. The
+             list is added to what platforms_cited() gives, never in its place; a name with no reference under
+             shared/references/platforms/ is LabError("config"). None, the default, adds none
 
     Returns {"status": "ok" | "failed", "failure": None | {"kind", "reason", "detail"}, "response", "changes":
     {"created", "modified", "deleted", "unchanged"} or None, "staged": [paths the runtime put in the copy],
@@ -433,6 +451,7 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
     (each after the gate file's retries, "auth" at once), "settings" (the copy carries a tool's settings) and
     "stopped". Raises LabError when no run could be made (configuration, container, a file that may not enter).
     Call it inside `with session():`."""
+    named = _platform_names(platforms)
     ref = reference(tier)
     model, adapter = model or ref["model"], adapter or ref["adapter"]
     pass_env = list(ref["pass_env"] if pass_env is None else pass_env)
@@ -488,7 +507,7 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
                 raise LabError("copy", f"the copy could not be prepared: {type(e).__name__}: {e}") from None
 
     def stage(case_dir):
-        case = {"platforms": platforms_cited(skill_dir)}
+        case = {"platforms": sorted(set(platforms_cited(skill_dir)) | set(named))}
         staged, _ = _lab_call(LAB.stage_run, case_dir, eval_cfg, skill_dir, [], case, None)
         return staged
 

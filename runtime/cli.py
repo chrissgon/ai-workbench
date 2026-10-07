@@ -29,6 +29,7 @@ Usage:
   python3 runtime/cli.py standing --project <dir> --policy <name>
   python3 runtime/cli.py execute-under-policy --project <dir> --policy <name> --effect-file <path>
   python3 runtime/cli.py set-mode --project <dir> --agent <name> --mode stopped|supervised|milestones|autonomous|autonomous-with-policy
+  python3 runtime/cli.py contained-run --project <dir> --skill <name> --prompt-file <file> --out <dir> [--platform <name>]... [--timeout-seconds <n>]
   python3 runtime/cli.py dispatch --project <dir>
   python3 runtime/cli.py poll     --project <dir>
   python3 runtime/cli.py handler  --project <dir> --name <handler> --verb <verb> [--arg <flag>=<value>]...
@@ -122,6 +123,16 @@ set-mode  sets one area agent's autonomy mode in docs/workbench/runtime.json (ar
           and an effect inside a policy you approved runs without asking). A question, an unclassified reply, a
           draft with open questions and a mandatory milestone always wait for you. Then accept the new hash with
           accept-config, which also rewrites the Checkpoints line of the state file.
+contained-run  one run of one skill of an area agent's pack, once, in the eval container, on a copy that holds only the
+          artifacts the skill declares (never runtime.json, never a versioned file the skill does not declare), on the
+          model the skill's proof gives, with no credential but the model's own, no open network and no retry, within
+          --timeout-seconds (the gate file's when absent). Nothing is brought back: no file the run created or changed
+          reaches the project (their number is "ignored_changes"). The reply, past the credential scan, is written to
+          <out>/response.md, and <out>/timing.json holds total_tokens, duration_ms, exit_code and cost_usd (null on the
+          reference model). Each --platform names a platform whose reference the run is given besides the ones the skill
+          cites. Exits 0 when the model answered, 1 when it did not (the result is still printed), 2 for a skill outside
+          every pack of the configuration, 3 when no run could be made (no eval image on this machine, a platform with no
+          reference): the image is never built. It calls a model.
 dispatch  one round of the dispatcher: the ticks of the handlers whose dispatch is true, the deliveries each area
           agent's mode releases (released, never approved), and the next ready tasks, one at a time, while the agent's
           mode and its daily caps allow (runs per day on the reference model, dollars per day on the floor model). It
@@ -197,7 +208,7 @@ def build_parser() -> Parser:
                 p.add_argument(flag, dest=dest_of(arg), action="store_true")
             elif kind == "choice":
                 p.add_argument(flag, dest=dest_of(arg), choices=arg["choices"])
-            elif kind == "pairs":
+            elif kind in ("pairs", "list"):
                 p.add_argument(flag, dest=dest_of(arg), action="append", default=[])
             else:
                 p.add_argument(flag, dest=dest_of(arg))
@@ -228,7 +239,17 @@ def pairs_of(items: list, flag: str) -> dict:
     return pairs
 
 
-def run(argv) -> dict:
+def file_text_of(path: str, flag: str) -> str:
+    """The whole text of the file a `file` argument names, line ends as they are."""
+    try:
+        with open(path, encoding="utf-8", newline="") as f:
+            return f.read()
+    except (OSError, UnicodeDecodeError) as e:
+        raise Usage(f"--{flag}: cannot read {path}: {getattr(e, 'strerror', None) or 'not UTF-8 text'}") from None
+
+
+def run_row(argv) -> tuple:
+    """(row, result) of one command line."""
     a = build_parser().parse_args(argv)
     project = os.path.abspath(a.project)
     row = table.by_name(a.command)
@@ -241,10 +262,18 @@ def run(argv) -> dict:
         value = getattr(a, dest_of(arg))
         if value is None and arg.get("required"):
             raise Usage(f"{a.command} needs --{flag}")
-        kwargs[arg["name"]] = pairs_of(value, flag) if arg["kind"] == "pairs" else value
+        if arg["kind"] == "pairs":
+            value = pairs_of(value, flag)
+        elif arg["kind"] == "file" and value is not None:
+            value = file_text_of(value, flag)
+        kwargs[arg["name"]] = value
     if row.get("channel_arg"):
         kwargs["channel"] = "terminal"
-    return getattr(ops, row["call"])(project, **kwargs)
+    return row, getattr(ops, row["call"])(project, **kwargs)
+
+
+def run(argv) -> dict:
+    return run_row(argv)[1]
 
 
 def main(argv=None) -> int:
@@ -253,7 +282,7 @@ def main(argv=None) -> int:
         print(__doc__.strip(), file=sys.stdout if argv else sys.stderr)
         return 0 if argv else 2
     try:
-        out = run(argv)
+        row, out = run_row(argv)
     except Usage as e:
         print(f"error: {e}. See --help.", file=sys.stderr)
         return 2
@@ -262,7 +291,8 @@ def main(argv=None) -> int:
         return e.code
     json.dump(out, sys.stdout, ensure_ascii=False, indent=1, default=str)
     print()
-    return 0
+    unless = row.get("exit_unless")  # the row says which result is not a success; the result is printed either way
+    return 1 if unless and out.get(unless[0]) != unless[1] else 0
 
 
 if __name__ == "__main__":
