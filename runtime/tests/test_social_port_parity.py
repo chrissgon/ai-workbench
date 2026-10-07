@@ -1,9 +1,12 @@
-"""WP-7.1: the ported social handler is its source with a closed list of replacements, byte for byte.
+"""WP-7.1, from WP-7.3b on: the ported vote job is scripts/vote_job.py with a closed list of replacements.
 
-The three files under runtime/handlers/ were made with cp from scripts/runtime.py, scripts/runtime_vote.py and
-scripts/vote_job.py and edited only as REPLACEMENTS says. While the old scripts stay (until WP-7.5), this test
-keeps the two from drifting: a repair made to a source must be made in the port too, and the other way round.
-The test of vote_job's port is retired from WP-7.3 on, and all of them at WP-7.6.
+runtime/handlers/social_vote_job.py was made with cp from scripts/vote_job.py and edited only as REPLACEMENTS
+says. While the old script stays (until WP-7.5), this test keeps the two from drifting: a repair made to the
+source must be made in the port too, and the other way round. Only that file is compared from WP-7.3b on:
+social.py and social_vote.py now differ from scripts/runtime.py and scripts/runtime_vote.py by design (the
+agent's run is a contained run, with the task text of the measured cases), so their entries are gone. The test
+is retired at WP-7.6. The last test is about the handler's own command, not about parity: it checks that the
+verbs the handler lists are the ones its parser takes.
 """
 import ast
 import re
@@ -16,23 +19,10 @@ sys.path.insert(0, str(HANDLERS))
 
 # source -> (ported file, [(find, replace, times in the source)])
 REPLACEMENTS = {
-    "scripts/runtime.py": ("runtime/handlers/social.py", [
-        ("python3 scripts/runtime.py", "python3 runtime/handlers/social.py", 7),
-        ("import runtime_vote  # noqa: E402  (the same folder)",
-         "import social_vote as runtime_vote  # noqa: E402  (the same folder)", 1),
-        ('here.parent / "providers" / "resolve.py"', 'here.parent.parent / "providers" / "resolve.py"', 1),
-        ("`runtime.py pin`", "`social.py pin`", 1),
-        ("<workbench>/scripts/runtime.py approve", "<workbench>/runtime/handlers/social.py approve", 1),
-        ('"harness": "claude-code"', '"harness": "<harness>"', 1),  # R19: no AI tool named under runtime/
-    ]),
-    "scripts/runtime_vote.py": ("runtime/handlers/social_vote.py", [
-        ('"job": wb / "scripts" / "vote_job.py",', '"job": wb / "runtime" / "handlers" / "social_vote_job.py",', 1),
-    ]),
     "scripts/vote_job.py": ("runtime/handlers/social_vote_job.py", [
         ("python3 vote_job.py", "python3 social_vote_job.py", 1),
     ]),
 }
-VERBS_LINE = 'VERBS = ("tick", "pin", "add-comment", "status", "inbox", "approve", "reject")\n'
 # No comment or docstring line was reworded: the lines that still name the old paths stay as they are.
 REWORDED_LINES = []
 
@@ -47,9 +37,6 @@ def test_each_ported_file_is_its_source_with_only_the_listed_replacements():
         for find, replace, times in replacements:
             text = text.replace(find, replace)
         ported = read(port)
-        if port.endswith("social.py"):
-            assert ported.count(VERBS_LINE) == 1
-            ported = ported.replace(VERBS_LINE, "")
         assert ported == text, f"{port} is not {source} with the listed replacements"
     assert REWORDED_LINES == []
 

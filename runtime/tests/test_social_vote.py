@@ -1,6 +1,6 @@
 """Offline tests of the runtime's weekly vote step (scripts/runtime_vote.py, scripts/vote_job.py).
 
-The vcs provider, the agent adapter, the post checker, the renderer, the scheduler and the publisher are fakes;
+The vcs provider, the contained run (a stand-in runtime/cli.py), the post checker, the renderer, the scheduler and the publisher are fakes;
 the store, vote_state.py, vote_update.py and payload.py are the real scripts, copied into a fake workbench.
 The vote files are the tests' own fixture, scripts/tests/fixtures/vote-round-winner: a calendar and the vote data of
 an invented author, owned by these tests, so that a change to a skill's eval fixture cannot break them and a change
@@ -64,14 +64,19 @@ elif args[0] == "commit-files":
                       "files": [{"path": p} for p, _ in files]}))
 '''
 
-FAKE_ADAPTER = r'''#!/usr/bin/env bash
-set -euo pipefail
-OUT=""
-while [[ $# -gt 0 ]]; do case "$1" in --out) OUT="$2"; shift 2 ;; *) shift ;; esac; done
-mkdir -p "$OUT"
-cp "$FAKE_RESPONSE" "$OUT/response.md"
-echo '{"total_tokens": 100, "duration_ms": 10, "cost_usd": 0.05, "exit_code": 0}' > "$OUT/timing.json"
-echo "$@" >> "$FAKE_CALLS.agent"
+FAKE_CLI = r'''
+import os, shutil, sys
+if sys.argv[1:2] != ["contained-run"]:
+    print("error: the stand-in takes only contained-run", file=sys.stderr)
+    sys.exit(2)
+args = sys.argv[2:]
+out = args[args.index("--out") + 1]
+os.makedirs(out, exist_ok=True)
+shutil.copy(os.environ["FAKE_RESPONSE"], os.path.join(out, "response.md"))
+with open(os.path.join(out, "timing.json"), "w") as f:
+    f.write('{"total_tokens": 100, "duration_ms": 10, "cost_usd": 0.05, "exit_code": 0}')
+with open(os.environ["FAKE_CALLS"] + ".agent", "a") as f:
+    f.write(" ".join(sys.argv[1:]) + "\n")
 '''
 
 FAKE_CHECK = r'''
@@ -159,8 +164,7 @@ def env(tmp_path, monkeypatch):
         "skills/mkt-social-copy/scripts/check_post.py": FAKE_CHECK,
         "skills/brand-identity/scripts/render.py": FAKE_RENDER,
         "skills/brand-identity/assets/post-card-template.html": "<p>{{title}} {{subtitle}}</p>",
-        "adapters/fake/run-agent.sh": FAKE_ADAPTER,
-        "agents/social-manager.md": "---\nname: social-manager\ndescription: x\nmetadata:\n  skills: [mkt-engage, mkt-vote-round]\n---\n",
+        "runtime/cli.py": FAKE_CLI,
     }
     for rel, text in fakes.items():
         p = wb / rel
@@ -179,7 +183,7 @@ def env(tmp_path, monkeypatch):
     (proj / "docs/workbench").mkdir(parents=True, exist_ok=True)
     data = tmp_path / "data"
     (proj / "docs/workbench/runtime.json").write_text(json.dumps({
-        "agent": "social-manager", "harness": "fake", "model": "m", "workbench": str(wb), "data_dir": str(data),
+        "agent": "social-manager", "workbench": str(wb), "data_dir": str(data),
         "store_db": str(data / "store.sqlite"), "mailbox": "none", "publisher": "linkedin", "daily_cost_cap_usd": 1,
         "vote": {"repo": "dana/dana", "branch": "main", "pillars": PILLARS}}))
     calls = tmp_path / "calls.jsonl"

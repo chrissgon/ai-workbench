@@ -23,14 +23,17 @@ STARTS = {
     "runtime/plan.py": ["scripts/select_skills.py"],
     "runtime/isolated.py": ["<skill scripts>"],  # a manifest's checkers and the backlog reader, through run_script
     "runtime/handlers/published_posts.py": ["runtime/cli.py"],
-    # The ported social agent (WP-7.1): the parser, the store, the gate twice (record, decide); the vote step's
-    # checkers, the scheduler provider twice (dry run, then confirmed); the vote job's queue update.
+    # The ported social agent (WP-7.1): the parser, the store, the gate twice (record, decide) and, since WP-7.3b,
+    # the contained run (the agent's run is the operation `contained-run` of runtime/cli.py); the vote step's
+    # checkers, the scheduler provider twice (dry run, then confirmed), the contained run of the vote agent;
+    # the vote job's queue update.
     "runtime/handlers/social.py": ["skills/mkt-engage/scripts/parse_notification.py", "providers/store/sqlite.py",
-                                   "skills/mkt-engage/scripts/policy_gate.py", "skills/mkt-engage/scripts/policy_gate.py"],
+                                   "skills/mkt-engage/scripts/policy_gate.py", "skills/mkt-engage/scripts/policy_gate.py",
+                                   "runtime/cli.py"],
     "runtime/handlers/social_vote.py": [
         "skills/mkt-vote-round/scripts/vote_state.py", "skills/mkt-vote-round/scripts/vote_update.py",
         "skills/mkt-social-copy/scripts/check_post.py", "skills/brand-identity/scripts/render.py",
-        "skills/mkt-publish/scripts/payload.py", "<scheduler provider>", "<scheduler provider>"],
+        "skills/mkt-publish/scripts/payload.py", "<scheduler provider>", "<scheduler provider>", "runtime/cli.py"],
     "runtime/handlers/social_vote_job.py": ["skills/mkt-vote-round/scripts/vote_update.py"],
 }
 # The programs a module of the runtime starts by name; the lab's own starts (docker, the adapters) go through the

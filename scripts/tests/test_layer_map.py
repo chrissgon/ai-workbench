@@ -260,10 +260,6 @@ TOLERATED = {
         "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
     ("runtime/handlers/social_vote.py", "skills/mkt-vote-round/scripts/vote_update.py"):
         "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
-    ("runtime/handlers/social.py", "adapters/api/run-agent.sh"):
-        "finding 15 (the first runtime's adapter contract; removed by stage 7, WP-7.3)",
-    ("runtime/handlers/social.py", "adapters/claude-code/run-agent.sh"):
-        "finding 15 (the first runtime's adapter contract; removed by stage 7, WP-7.3)",
 }
 
 # Paths the scan finds that are not a dependency: (file, target) -> why.
