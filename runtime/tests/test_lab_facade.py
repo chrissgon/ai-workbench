@@ -153,29 +153,58 @@ def test_the_runtime_never_builds_the_eval_image_a_missing_one_is_an_error(tree,
     assert called == [("image", "inspect")] and st.calls(tree["adapter"]) == []
 
 
-def test_only_the_allowed_names_of_the_runner_can_be_read_and_every_listed_name_exists():
-    er = lab.load()
-    for name in lab.ALLOWED:
-        assert hasattr(er, name) or name in er.MEASURE_NAMES, name
+# Names of the lab's runner (evals/eval_run.py): the event runner, the case files, the variants, the baseline's
+# checks, the grading and the evidence rows. None of them is in the execution kit, so the facade cannot read them.
+RUNNER_ONLY = (
+    "run", "main", "parse", "regrade", "routing", "check_cases_only",
+    "load_evals", "preflight", "case_files", "dependency_dirs", "workbench_files", "build_tree",
+    "ablated_copy", "ablated_line_count", "contamination", "mount_patterns",
+    "shared_passage", "skill_passages", "passages_of", "words_of", "folder_text",
+    "grade", "grading_call", "template_hash", "version_control", "shown_in",
+    "facts_block", "grading_prompt", "read_grading", "grading_summary", "score", "gate_passes",
+    "at_threshold", "within_tolerance", "failed_guards", "confirmed_guards", "guard_positions",
+    "run_record_hash", "write_evidence", "evidence_file", "ledger_add", "ledger_read",
+    "scratch_reason", "later_test_id", "next_iteration", "find_event", "conditions_of", "agg", "exact_mean",
+    "early_end_stats", "early_end_warning",
+)
+
+
+def test_the_facade_reads_only_names_of_the_kits_all_and_of_status_names_and_every_listed_name_exists():
+    kit = lab.load()
+    assert kit.__name__ == "workbench_eval_execution" and lab.MODULE == kit.__name__
+    for name in kit.__all__:
+        assert hasattr(kit, name), name
         getattr(lab.LAB, name)
-    for name in lab.FORBIDDEN:
-        assert hasattr(er, name) or name in er.MEASURE_NAMES, f"{name} is not a name of the runner any more"
+    status = lab.LAB.load_status()
+    for name in kit.STATUS_NAMES:
+        assert hasattr(status, name), name
+    for name in RUNNER_ONLY:
+        assert name not in kit.__all__ and name not in kit.STATUS_NAMES, name
         with pytest.raises(AttributeError):
             getattr(lab.LAB, name)
-    assert not set(lab.ALLOWED) & set(lab.FORBIDDEN)
+    assert not [name for name in RUNNER_ONLY if name in vars(kit)], "the kit holds a name of the event runner"
+    with pytest.raises(AttributeError):
+        getattr(lab.LAB, "die")  # a helper of the kit that is not in its __all__
 
 
 def test_no_other_module_of_the_runtime_reads_the_lab():
     """The rule of the facade: lab.py is the one file of runtime/ that names anything under evals/, and inside
-    lab.py every read of the runner goes through LAB."""
+    lab.py every read of the kit goes through LAB and every read of the status script is a name of STATUS_NAMES."""
+    kit = lab.load()
     for path in sorted((st.REPO / "runtime").glob("*.py")):
         text = path.read_text(encoding="utf-8")
         code = "\n".join(line for line in text.split('"""')[2::2]) if path.name != "lab.py" else ""
-        assert not re.search(r"eval_run|eval_status|executor\.py|measure\.py", code), path.name
+        assert not re.search(r"eval_run|eval_status|executor\.py|measure\.py|execution\.py", code), path.name
     tree = ast.parse((st.REPO / "runtime" / "lab.py").read_text(encoding="utf-8"))
     read = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
             and isinstance(node.value, ast.Name) and node.value.id == "LAB"}
-    assert read <= set(lab.ALLOWED), read - set(lab.ALLOWED)
+    assert read <= set(kit.__all__), read - set(kit.__all__)
+    status_read = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)
+                   and ((isinstance(node.value, ast.Name) and node.value.id == "status")
+                        or (isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name)
+                            and node.value.func.id == "_lab_call" and node.value.args
+                            and isinstance(node.value.args[0], ast.Attribute) and node.value.args[0].attr == "load_status"))}
+    assert status_read and status_read <= set(kit.STATUS_NAMES), status_read - set(kit.STATUS_NAMES)
 
 
 def test_the_names_of_a_tools_settings_come_from_the_adapters_lists(tree):

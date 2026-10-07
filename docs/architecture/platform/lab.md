@@ -19,8 +19,9 @@ Where: **repo** is this repository, **work** is `evals-workspace/` of the checko
 | `evals/measure.py`, `evals/measurement.json` | repo | what measures: the facts block, what the grader is shown, the grading prompt and the reading of its answer, the guard regrading, the early-end rule, the value replacement, a run's score, the gate's comparisons; constants `file_limit`, `vcs_limit`, `grading_retries`, `redact_min`, `early_end` | maintainers | the runner, the status script | in the fingerprint | yes | no |
 | `evals/executor.py`, `evals/container/` (`Dockerfile`, `proxy/`, `keyproxy/` with `keyproxy.json` and `keyproxy-strong.json`, `runners/`) | repo | the container every command runs in, the egress proxy and its allow list, the key proxies and their routes, the pinned runners | maintainers | the runner (`load_executor`), `runtime/lab.py` | in the fingerprint; a change is an execution-side change | yes | no |
 | `scripts/stage_skills.py` | repo | the staging module: what of a skill a run sees | maintainers | the runner | in the fingerprint | yes | no |
-| `evals/eval_run.py` | repo | the runner: options, case files, variants, baselines, preflight, contamination, concurrency, the shared lock, resuming, reports, evidence | maintainers | maintainers; `runtime/lab.py` through `ALLOWED` names only | infrastructure: changes freely | yes | no |
-| `evals/run_attempts.py` | repo | the control of one model run's attempts, shared by the runner and the runtime's facade | maintainers | `eval_run.load_attempts()` | infrastructure, not in the fingerprint | yes | no |
+| `evals/eval_run.py` | repo | the runner: options, case files, variants, baselines, preflight, contamination, concurrency, resuming, reports, evidence | maintainers | maintainers | infrastructure: changes freely | yes | no |
+| `evals/execution.py` | repo | the execution kit: the container run of one attempt (staging, credentials by name, the run folder, the adapter call, the stopping, the replacement of passed values, how an attempt failed, the pause and the shared slots); `__all__` is what the runtime may read, `STATUS_NAMES` what it may read of the status script | maintainers | the runner (it loads the kit by path and binds its names), `runtime/lab.py` | infrastructure, not in the fingerprint (decision D1 of the architecture-fix plan) | yes | no |
+| `evals/run_attempts.py` | repo | the control of one model run's attempts, shared by the runner and the runtime's facade | maintainers | `execution.load_attempts()` | infrastructure, not in the fingerprint | yes | no |
 | `evals/eval_status.py` | repo | the status script: hashes, evidence validation, gate, bands, versions, the measurement command, the snapshot | maintainers | maintainers, the validator, `runtime/lab.py` | infrastructure | yes | no |
 | `skills/<name>/evals/evidence/lab-<test id>.jsonl` | repo | one event line and one line per run, closed keys | the runner only, when an event ends complete or is closed | the status script, the validator, the runtime's proof | committed, never edited | yes | yes |
 | `skills/<name>/evals/evidence/field-<id>.jsonl` | repo | `use` and `verdict` lines, closed keys, no free text, a week not a day | `scripts/evidence.py import` | the status script | one file per contribution | yes | yes |
@@ -68,6 +69,8 @@ Measurement version 8, measurement floor 6.
 
 ## Abstractions
 
+**The execution kit.** `evals/execution.py` is the one piece the lab's runner and the runtime share: the container run of one model attempt, without any measuring. The runner loads it by path and binds its names; the runtime's facade loads it and reads only its `__all__`. Replacing the measurement runner (the event runner, the cases, the grading, the evidence) leaves the runtime's execution untouched, and the other way round. It stays outside the fingerprint (decision D1).
+
 **Reference model and floor model.** The reference model (`strong_model`) is the model the gate and the bands are computed on. The floor model (`floor_model`) is an inexpensive hosted open-weight model run with the skill only; its results are information, except that the runtime routes a skill to it only while its band there is `reliable`. Any other listed model is information. A model on a person's machine is a measured goal, not the gate. **Tier**: `strong` or `floor`, the runtime's name for the two.
 
 **Full test and partial test.** A full test (`eval_run.py --skill <name>`) runs every case with the skill, `runs` times, on every listed model, and the baseline of every case whose baseline is not in force; only it evaluates the gate. A partial test (`--cases <ids>`) runs named cases with the skill only and moves the score, never the gate, except for a case added or changed once (`--cases <id> --baseline`). A platform's cases (`--platform <p>`) run as a partial test and get a mean, never a score.
@@ -105,7 +108,8 @@ flowchart LR
     G["eval-gate.json<br/>models, runs, gate,<br/>measurement keys"] --> R["eval_run.py<br/>(preflight, variants, baseline)"]
     C["skills/&lt;name&gt;/evals/<br/>evals.json, fixtures"] --> R
     R -->|"stage_skills.py: copies"| F["&lt;tmp&gt;/eval-*/case<br/>(outside every repository)"]
-    R --> A["run_attempts.py<br/>(lock, pause, retries)"]
+    R --> N["execution.py, the kit<br/>(staging, credentials, folder, stopping)"]
+    N --> A["run_attempts.py<br/>(lock, pause, retries)"]
     A --> X["executor.py: one container per command<br/>sees the run folder + run-prompt.sh"]
     X -->|"proxy network"| K["key proxy of the tier<br/>adds the credential"]
     K --> P["egress proxy<br/>allow.txt: the model providers"]
@@ -115,6 +119,7 @@ flowchart LR
     E --> S["eval_status.py<br/>gate, score, band per model"]
     S --> I["docs/inventory.md (snapshot)"]
     S --> RT["runtime/lab.py, proof.py<br/>(routing by band)"]
+    N --> RT
 ```
 
 ## Dependencies
@@ -130,12 +135,13 @@ flowchart LR
 | git | the history, for the field evidence's contributor | the per-contributor cap; stored nowhere |
 | docker | the image, the networks, the proxies (`executor.py`) | the only place a command runs |
 
-**Who reads it.** Nothing in the core reads the lab, since the lab reads adapters, which the core may never do; no guard found that refuses a core file importing `evals/` (the validator's `harness-name` check refuses a path inside `adapters/`, not one inside `evals/`). The validator imports the status script for its checks (fingerprint, evidence, versions, guards, snapshot). The task runtime reaches the lab through one file, `runtime/lab.py`, which reads the runner through a list of allowed names (`ALLOWED`: where things are, the executor and status modules, the adapter's data, staging, credentials by name, the shared attempt function) and refuses the measuring ones (`FORBIDDEN`: the event runner, the case files, the variants, the baseline's checks, the grading, the evidence). The runtime never edits a measurement file: in a project, the `protected_paths` of its configuration keep a change set off them (limit L20); in this repository, the fingerprint check does.
+**Who reads it.** Nothing in the core reads the lab, since the lab reads adapters, which the core may never do; no guard found that refuses a core file importing `evals/` (the validator's `harness-name` check refuses a path inside `adapters/`, not one inside `evals/`). The validator imports the status script for its checks (fingerprint, evidence, versions, guards, snapshot). The task runtime reaches the lab through one file, `runtime/lab.py`, which loads the execution kit, `evals/execution.py`, and reads the names its `__all__` lists (where things are, the executor and status modules, the adapter's data, staging, credentials by name, the shared attempt function) and, of the status script, the names of the kit's `STATUS_NAMES`. The measuring parts (the event runner, the case files, the variants, the baseline's checks, the grading, the evidence) are not in the kit, so the facade cannot reach them; a test (`test_the_facade_reads_only_names_of_the_kits_all_and_of_status_names_and_every_listed_name_exists`) asserts it. The runtime never edits a measurement file: in a project, the `protected_paths` of its configuration keep a change set off them (limit L20); in this repository, the fingerprint check does.
 
 **The rules.**
 
 - What measures lives in `measure.py` and `measurement.json`, beside the template, the container, the executor, the staging and the eval adapters' two files; the rest of the runner is infrastructure and changes freely.
-- `run_attempts.py` imports nothing of the repository and reads the runner only through the object it is given; the runtime and the lab make attempts through the same function, so they classify the same failure the same way.
+- The execution kit imports the measurement modules (`measure.py`, `executor.py`, `stage_skills.py`) and never edits them; `redaction_values` and `early_end` are `measure.py`'s, re-exported, so a measurement-side change to them changes production redaction and the early end, by design.
+- `run_attempts.py` imports nothing of the repository and reads the runner only through the object it is given (the runner's namespace in the lab, the kit in the runtime); the runtime and the lab make attempts through the same function, so they classify the same failure the same way.
 - The facade never builds the image: a missing image is an error.
 
 ## Business rules
@@ -239,4 +245,5 @@ Trial options (`--runs`, `--timeout`, `--retries`, `--only`, `--tiers`, `--ablat
 ## Changes
 
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
+- 2026-10-07: the execution kit leaves the measurement runner: `evals/execution.py` holds the names the runtime's facade reads (`__all__`, `STATUS_NAMES`), and `runtime/lab.py` has no list of the runner's names any more (WP-R.8).
 - 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the gate file's keys).
