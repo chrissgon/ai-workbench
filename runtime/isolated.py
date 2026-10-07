@@ -41,7 +41,6 @@ import subprocess
 import sys
 import tempfile
 
-SKILLS_DIR, SCRIPTS_DIR = "skills", "scripts"  # where a skill keeps its scripts: the one place the runtime names it
 LOCALE = "C.UTF-8"
 NAMES = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL")
 
@@ -57,7 +56,7 @@ def skill_script(root: str, skill: str, name: str) -> str:
     reader names. Only a plain file name of that folder."""
     if not name or "/" in name or "\\" in name or name.startswith("."):
         raise ValueError(f"{name!r} is not the name of a script of a skill's scripts/ folder")
-    return os.path.join(root, SKILLS_DIR, skill, SCRIPTS_DIR, name)
+    return os.path.join(root, "skills", skill, "scripts", name)
 
 
 def run_script(script: str, args, *, cwd: str, timeout: float, stdin=None) -> subprocess.CompletedProcess:
