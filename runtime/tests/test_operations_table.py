@@ -197,7 +197,7 @@ def test_the_texts_that_name_a_command_are_built_by_the_table():
         operations.command_line("status", "/p", nothing=1)
     assert ops.PLAN_NEXT.format(pending=5) == "Approve with /approve 5"
     assert ops.ASK_NEXT == "Answer with a plain line, or start again with /new <text>"
-    body = effects.body({"repo": "r", "base": "b", "head": "h", "project_commit": "c", "title": "t", "body": "x",
+    body = st.load("effect_pull_request").body({"repo": "r", "base": "b", "head": "h", "project_commit": "c", "title": "t", "body": "x",
                          "files": [], "removed": []}, "f" * 64)
     assert f"Approve exactly this: python3 runtime/cli.py approve --project <project> --id <this pending decision's id> --sha256 {'f' * 64}" in body
 

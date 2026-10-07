@@ -20,6 +20,7 @@ import standin_tree as st
 lab = st.load("lab")
 ops = st.load("ops")
 effects = st.load("effects")
+effect_pull_request = st.load("effect_pull_request")
 manifest = st.load("manifest")
 
 GIT = ["git", "-c", "user.name=Demo", "-c", "user.email=demo@example.test", "-c", "commit.gpgsign=false"]
@@ -130,15 +131,15 @@ def test_a_link_named_payload_md_is_never_read(tmp_path):
 
 
 def test_a_payload_in_the_skills_form_parses_and_any_other_form_does_not():
-    parsed = effects.parse_pull_request_payload(PAYLOAD)
+    parsed = effect_pull_request.parse(PAYLOAD)
     assert parsed == {"repository": "example-org/web", "base": "main", "head": "wb/request-1",
                       "title": "feat(installer): carry the providers", "body": "What changes.\n\nWhy it changes."}
     bare = PAYLOAD.replace("```text\n", "").replace("```\n", "").replace("Commits:\n- 1a2b3c4 Carry the providers\n", "")
-    assert effects.parse_pull_request_payload(bare)["head"] == "wb/request-1"
+    assert effect_pull_request.parse(bare)["head"] == "wb/request-1"
     for broken in (PAYLOAD.replace("Repository:", "Repo:"), PAYLOAD.replace("Base ← head: main ← wb/request-1", "Base: main"),
                    PAYLOAD.replace("Title: ", "Subject: "), PAYLOAD.replace("Body:\n", "Body: inline\n"),
                    "Some text before\n" + PAYLOAD, PAYLOAD.replace("What changes.\n\nWhy it changes.\n", "")):
-        assert effects.parse_pull_request_payload(broken) is None, broken
+        assert effect_pull_request.parse(broken) is None, broken
 
 
 def test_a_gate_task_sees_the_change_set_as_one_commit_on_a_branch_over_its_base(tree):

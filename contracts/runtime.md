@@ -115,7 +115,8 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 | `runtime/drop.py` | The file drop: a file the person hands to one task, in `.workbench-local/drop/<task id>/`, enters that task's runs only |
 | `runtime/deps.py` | A project's dependencies, installed by code in the eval image with no model, cached, and copied into the run copies that need them |
 | `runtime/changeset.py` | The change set of a code task (L9, L11): what a run did to versioned files, taken by git in the run's container and checked by the host |
-| `runtime/effects.py` | A skill with a confirmation gate runs up to it (L16); the payload it showed is recovered, and code executes the effect through the code provider once the person approves its hash (L15, L17) |
+| `runtime/effects.py` | A skill with a confirmation gate runs up to it (L16); the payload it showed is recovered, and code executes the effect once the person approves its hash (L15, L17). The registry of the kinds of effect (the side-effect word a manifest names in its gate -> a module) |
+| `runtime/effect_pull_request.py` | The kind of the pull-request skill: its payload form, its effect document, the checks, and the execution through the code provider. Another kind is a module and a row of the registry |
 | `runtime/autonomy.py` | The five autonomy modes of an area agent, what each releases, the daily caps, and whether a standing approval covers an effect |
 | `runtime/progress.py` | Progress and the summary of a period, computed from the store's records |
 | `runtime/dispatcher.py` | The dispatcher's decision (`decide`, pure) and the scheduler's entry for the two jobs ("The dispatcher's two jobs" below) |

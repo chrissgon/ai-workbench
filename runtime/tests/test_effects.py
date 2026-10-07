@@ -21,6 +21,7 @@ import standin_tree as st
 lab = st.load("lab")
 ops = st.load("ops")
 effects = st.load("effects")
+effect_pull_request = st.load("effect_pull_request")
 state_merge = st.load("state_merge")
 
 GIT = ["git", "-c", "user.name=Demo", "-c", "user.email=demo@example.test", "-c", "commit.gpgsign=false"]
@@ -84,7 +85,7 @@ def test_limit_16_a_skill_with_a_gate_runs_up_to_the_gate_and_what_it_showed_is_
     assert item["payload_sha256"] == hashlib.sha256(effect_file.read_bytes()).hexdigest()
     doc = json.loads(effect_file.read_text())
     shown = (Path(out["run_dir"]) / "payload.md").read_text()
-    parsed = effects.parse_pull_request_payload(shown)
+    parsed = effect_pull_request.parse(shown)
     assert (doc["title"], doc["body"]) == (parsed["title"], parsed["body"])  # what it showed is what is approved
     assert (doc["repo"], doc["base"], doc["head"]) == ("example-org/web", "main", "wb/request-1")
     assert item["payload_sha256"] in item["body"] and parsed["body"].rstrip("\n") in item["body"]
@@ -259,10 +260,60 @@ def test_rejecting_an_effect_cancels_the_task_and_sends_nothing(tree):
 
 
 def test_the_provider_is_found_by_its_class_never_by_a_path_built_here(tree):
-    text = (st.REPO / "runtime" / "effects.py").read_text(encoding="utf-8") + \
-        (st.REPO / "runtime" / "ops.py").read_text(encoding="utf-8")
+    text = "".join((st.REPO / "runtime" / name).read_text(encoding="utf-8")
+                    for name in ("effects.py", "effect_pull_request.py", "ops.py"))
     assert "vcs/github.py" not in text and '"vcs"' not in text
-    assert '_provider_path(cfg, "integration:vcs")' in text and "resolve.resolve(cls, root=ROOT" in text
+    assert effect_pull_request.PROVIDER_CLASS == "integration:vcs" and "resolve.resolve(cls, root=ROOT" in text
     case = gate_project(tree)
-    found = ops._vcs_provider(ops.context(case["path"])["cfg"])
+    found = ops._provider_path(ops.context(case["path"])["cfg"], effect_pull_request.PROVIDER_CLASS)
     assert found == str(provider(tree) / "github.py")
+
+
+def test_a_kind_is_a_module_and_a_row_of_the_registry_and_ops_py_names_none(tree, monkeypatch):
+    import sys
+    import types
+    calls = []
+    kind = types.ModuleType("standin_effect_kind")
+    real = effect_pull_request
+    kind.PROVIDER_CLASS = real.PROVIDER_CLASS
+    for name in ("refusal", "head", "prepare", "parse", "mismatch", "document", "body", "title", "describe", "verify",
+                 "unconfigured", "summary"):
+        setattr(kind, name, getattr(real, name))
+    kind.document = lambda effect, *rest: real.document("standin", *rest)
+    kind.execute = lambda doc, changeset_dir, work_dir, provider, key_prefix, run=None: (
+        calls.append((doc["effect"], provider, key_prefix)) or
+        {"commit": "e" * 40, "pushed": True, "pull_request": {"number": 9, "url": "https://code.example/p/9"}, "replayed": False})
+    monkeypatch.setitem(sys.modules, "standin_effect_kind", kind)
+    monkeypatch.setitem(effects.KINDS, "create", "standin_effect_kind")  # no edit of ops.py
+    case = gate_project(tree)
+    item = case["item"]
+    assert item["kind"] == "effect" and json.loads(Path(item["payload"]["effect_file"]).read_text())["effect"] == "standin"
+    monkeypatch.setitem(effects.KINDS, "standin", "standin_effect_kind")
+    done = ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
+    assert done["pull_request"]["number"] == 9 and len(calls) == 1 and calls[0][0] == "standin"
+    assert provider_calls(tree) == []  # the stand-in kind executed it, not the code provider
+
+
+def test_a_gate_word_with_no_kind_opens_a_review_never_an_effect(tree, monkeypatch):
+    monkeypatch.setattr(effects, "KINDS", {})
+    case = gate_project(tree)
+    item = case["item"]
+    assert case["out"]["ending"] == "gate" and item["kind"] == "review"
+    assert item["body"].startswith("No effect was opened: the gate's effect 'create' names no kind of effect")
+    assert item["payload_sha256"] is None and provider_calls(tree) == []
+    with pytest.raises(effects.EffectError) as unknown:
+        effects.module_for("nothing")
+    assert unknown.value.kind == "usage"
+
+
+def test_ops_py_names_no_effect_kind():
+    code = []
+    import ast
+    tree_ = ast.parse((st.REPO / "runtime" / "ops.py").read_text(encoding="utf-8"))
+    docstrings = {id(n.body[0].value) for n in ast.walk(tree_)
+                  if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body
+                  and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+    for node in ast.walk(tree_):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
+            code.append(node.value)
+    assert not [t for t in code if "open-pr" in t or re.search(r"pull request|pull-request", t)], "ops.py spells an effect kind"
