@@ -67,7 +67,7 @@ The task runtime's tables, those that migration 2 and later create, with their c
 
 The cursors the runtime writes: `config:accepted-sha256` (the accepted configuration, written only by `accept_config`), `board:configured` (when the board was first written), `use:<run id>` (the recorded use of a run), and each handler's own (`routine:published-posts`).
 
-**The project configuration's keys** (`runtime/project_config.py`; an unknown key is ignored, so the first runtime's keys stay valid in the same file): `workbench`, `data_dir`, `store_db` (required, absolute); `area_agents` (`pack`, `enabled`, `mode`, `max_runs_per_day`, `max_usd_per_day`); `protected_paths`; `task_board` and `documents` (`provider`, and `expires` for a provider other than `local`, plus the provider's own keys); `code` (`provider`, `repo`, `base`, `branch_prefix`); `dependencies` (`recipe`, `file`); `handlers`; `path`; `max_cost_usd_per_run`. Planned: `model_prices`.
+**The project configuration's keys** (`runtime/project_config.py`; the keys are closed: an unknown key is refused (exit 3) with the nearest known name, and the first runtime's keys, a second closed tuple that leaves with stage 7, stay valid in the same file): `workbench`, `data_dir`, `store_db` (required, absolute); `area_agents` (`pack`, `enabled`, `mode`, `max_runs_per_day`, `max_usd_per_day`); `protected_paths`; `task_board` and `documents` (`provider`, and `expires` for a provider other than `local`, plus the provider's own keys); `code` (`provider`, `repo`, `base`, `branch_prefix`); `dependencies` (`recipe`, `file`); `handlers`; `path`; `max_cost_usd_per_run`. Planned: `model_prices`.
 
 ## Abstractions
 
