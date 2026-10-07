@@ -153,7 +153,7 @@ A pending decision is `open`, `resolved` or `cancelled`. A release by an autonom
 - No module under `runtime/` names an AI tool or a model: the model and its adapter come from the gate file (test `test_no_module_of_the_runtime_and_no_flow_file_names_an_ai_tool`).
 - `runtime/` is outside the core directories of the validator on purpose: it reads adapters through the lab, as `evals/` does, which the core may never do.
 - The facade is the only door to the lab: no other module imports anything under `evals/` (`test_no_other_module_of_the_runtime_reads_the_lab`), and the runtime has no attempt loop of its own (`test_the_runtime_has_no_loop_of_its_own`).
-- The store's functions are the contract: one function, one transaction; the task tables have no command-line verb, and `export` prints them.
+- The store's functions are the runtime's own persistence, not a substitutable class (decision D2, `providers/CONTRACT.md`): one function, one transaction; the task tables have no command-line verb, and `export` prints them.
 
 ## Business rules
 
@@ -385,13 +385,12 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | The board's own status property is not written | [backlog](../../backlog.md), R13 |
 | The checkout's revision is not in the dispatcher's pin (open point O11), and a scheduled job's interpreter may not read the secret store (open point O1) | [contracts/runtime.md](../../../contracts/runtime.md), "The dispatcher's two jobs" |
 | Eight workarounds leave with the next change of reference model, each marked `T23:` in the code | [backlog](../../backlog.md), T23 |
+| An effect document written before the registry of kinds names its kind `pull-request`; it is read as an unknown kind and opens a review | `runtime/effects.py` (`KINDS`), #225 |
 | Two glob rules: a `protected_paths` entry's `*` crosses `/` (`changeset.matches`), a policy's `files` glob's `*` does not (`autonomy.covers`) | the module docstrings of `runtime/project_config.py` and `runtime/autonomy.py` |
-| L18 and L19 have no test named after them, and the limit-name test checks only the eleven limits of stage 2 | `runtime/tests/test_run_limits.py` |
-| The naming test reads `runtime/*.py`, the README and the flow files, not `runtime/handlers/`, and it looks for AI tool names, not model ids | `runtime/tests/test_runtime_rules.py` |
-| `chat.py` has a test that it imports only the operations layer; `cli.py` has none | `runtime/tests/test_chat.py` |
 | The runtime contract lags the code: its module table lists the stage 1 and 2 modules, its store paragraph stops at migration 3, its pending-decision table shows the two kinds of stage 1, it says a run goes to the reference model and that a `gate` opens a review, and it names three packs with manifests where the code has four | [contracts/runtime.md](../../../contracts/runtime.md), "Pieces", "A task run", "Records"; [runtime/README.md](../../../runtime/README.md) says "migrations 2 to 4" |
 
 ## Changes
 
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
 - 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the migrations, the task-runtime tables, the limits, the verbs, the conversation's commands, the operations, the dispatcher's jobs).
+- 2026-10-07: the store's functions are the runtime's own persistence (decision D2); the known-limits rows the fixes closed are removed; the row on effect documents written before the registry of kinds is added (close-out).

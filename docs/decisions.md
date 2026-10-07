@@ -541,3 +541,18 @@ The battery of T21 is closed: every one of the 48 skills has a full test under m
   Each is a lapse of the floor model in one run that the reference model does not show; none is repaired, because a repair is a change of the skill that the reference model must pass again, and the floor model's band decides nothing (T28).
 - Cost: the battery used about 14 points of the reference model's weekly limit (35% before wave 1, 49% after the last repair) and US$6.44 of the floor model's key on the day of the battery, its rehearsal included.
 - Alternatives rejected: repairing the five floor-model findings now, which would cost a test of each changed skill on the reference model for a band that decides nothing; leaving the floor model's gaps unrun, which would have left six skills outside `reliable` on the floor model for want of runs rather than for a failure.
+
+## 2026-10-07: the architecture fixes, and eight decisions they rest on
+
+The review of 2026-10-06 (`docs/architecture/platform/review-2026-10-06.md`) found seventeen gaps between the layers and the goal of replaceable pieces; nine are fixed, one is partly fixed and seven wait for the next change of their layer (principle 12). The decisions taken to fix them:
+
+- D1. `evals/run_attempts.py` stays outside the measurement fingerprint, because retries, locks and pacing are infrastructure in the repository's taxonomy; the review's point is answered by the extraction of the execution kit, and no fingerprinted file changed.
+- D2. The store's task functions are the runtime's own persistence (finding 7, the first option): no conformance suite and no second backend are promised, and `providers/CONTRACT.md` says so.
+- D3. The runtime's wiring to named skills (router, brief, sub-task skill, code areas, packs in use) is one data file of the runtime, `runtime/roles.json`, bound to the skills by a test, not a key in every manifest.
+- D4. A skill outside the packs in use may carry a partial manifest, with only the keys it needs; a skill in a pack in use keeps the whole manifest, and the runtime refuses to run a skill without a whole one.
+- D5. Skill code the runtime runs on the host runs as an isolated subprocess with a scrubbed environment; the container is the stronger option and stays open in the review.
+- D6. The effect registry is keyed by the side-effect word the skill's manifest names in its gate; a second shape for one word adds a `kind` key later.
+- D7. The effects by kind were built with the one kind, before the second kind arrives, so that the code and its tests are fresh; it was the first package to drop if the budget ran short.
+- D8. A chat channel cannot approve an effect: an effect is approved only from the terminal, with its hash, and the channel rule is a column of the operations table.
+
+Rejected: a `role` key in every manifest (D3), running skill code in the container now (D5), and a fingerprint change for the retry rule (D1). The cost was no battery: no skill's content and no measurement file changed.

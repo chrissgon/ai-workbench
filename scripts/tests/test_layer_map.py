@@ -241,7 +241,7 @@ ALLOWED = (
 # Edges the code has today that ALLOWED refuses: (file, target) -> the finding that removes it. Only shrinks.
 TOLERATED = {
     ("runtime/ops.py", "scripts/validate.py"):
-        "finding 11 (WP-R.4): _effect_words reads the SIDE_EFFECTS line of scripts/validate.py with a regex",
+        "finding 11 (outside the fix plan: waits for the next change of reference model): _effect_words reads the SIDE_EFFECTS line of scripts/validate.py with a regex",
     ("skills/mkt-engage/scripts/policy_gate.py", "skills/brand-profile/scripts/sensitive_topics.py"):
         "finding 17 (a skill script falls back to another skill's copy of a shared script; removed at the next "
         "Y change of mkt-engage)",
