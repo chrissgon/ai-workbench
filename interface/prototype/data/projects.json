@@ -1,0 +1,416 @@
+[
+  {
+    "id": "northwind-shop",
+    "name": "northwind-shop",
+    "tagline": "An online shop for outdoor gear",
+    "height": 6,
+    "config": {
+      "path": "docs/workbench/runtime.json",
+      "sha256": "22b95e4ddc9485dadfb511e28fe3acc06300024e37b7246935d90ecf1fc041dc"
+    },
+    "agents": [
+      {
+        "key": "planning",
+        "name": "Atlas",
+        "enabled": true,
+        "mode": "milestones",
+        "max_runs_per_day": 4,
+        "max_usd_per_day": 1.0,
+        "runs_today": 1,
+        "usd_today": 0.31,
+        "state": "waiting",
+        "task": {
+          "id": 28,
+          "title": "Plan the launch week",
+          "skill": "core-orchestrator",
+          "run_state": "waiting",
+          "run_id": 208,
+          "since": "2026-10-07T13:02:00Z"
+        }
+      },
+      {
+        "key": "business",
+        "name": "Ledger",
+        "enabled": true,
+        "mode": "supervised",
+        "max_runs_per_day": 3,
+        "max_usd_per_day": 1.5,
+        "runs_today": 0,
+        "usd_today": 0.0,
+        "state": "idle",
+        "task": null
+      },
+      {
+        "key": "brand",
+        "name": "Palette",
+        "enabled": true,
+        "mode": "autonomous",
+        "max_runs_per_day": 4,
+        "max_usd_per_day": 1.5,
+        "runs_today": 2,
+        "usd_today": 0.64,
+        "state": "waiting",
+        "task": {
+          "id": 29,
+          "title": "Write the brand voice guide",
+          "skill": "brand-voice",
+          "run_state": "waiting",
+          "run_id": 201,
+          "since": "2026-10-07T10:05:00Z"
+        }
+      },
+      {
+        "key": "design",
+        "name": "Pixel",
+        "enabled": false,
+        "mode": "stopped",
+        "max_runs_per_day": 3,
+        "max_usd_per_day": 1.5,
+        "runs_today": 0,
+        "usd_today": 0.0,
+        "state": "idle",
+        "task": null
+      },
+      {
+        "key": "engineering",
+        "name": "Forge",
+        "enabled": true,
+        "mode": "milestones",
+        "max_runs_per_day": 6,
+        "max_usd_per_day": 3.0,
+        "runs_today": 2,
+        "usd_today": 1.12,
+        "state": "waiting",
+        "task": {
+          "id": 33,
+          "title": "Add an empty state to the checkout page",
+          "skill": "eng-implement",
+          "run_state": "waiting",
+          "run_id": 210,
+          "since": "2026-10-07T13:48:00Z"
+        }
+      },
+      {
+        "key": "marketing",
+        "name": "Herald",
+        "enabled": true,
+        "mode": "autonomous-with-policy",
+        "max_runs_per_day": 5,
+        "max_usd_per_day": 1.0,
+        "runs_today": 2,
+        "usd_today": 0.55,
+        "state": "working",
+        "task": {
+          "id": 31,
+          "title": "Write the launch-week social posts",
+          "skill": "mkt-social-copy",
+          "run_state": "running",
+          "run_id": 212,
+          "since": "2026-10-07T14:11:00Z",
+          "model_band": "reliable"
+        }
+      }
+    ],
+    "pending": [
+      {
+        "id": 21,
+        "kind": "plan",
+        "agent": "planning",
+        "task_id": null,
+        "created_at": "2026-10-07T13:02:00Z",
+        "title": "Plan: launch week, brand voice, posts and checkout fix",
+        "actions": [
+          "approve",
+          "reject"
+        ],
+        "body": "Four tasks, chained in this order. Approving creates the tasks; nothing runs before that.",
+        "plan": {
+          "tasks": [
+            {
+              "key": "brand-voice",
+              "skill": "brand-voice"
+            },
+            {
+              "key": "social-copy",
+              "skill": "mkt-social-copy"
+            },
+            {
+              "key": "checkout-empty-state",
+              "skill": "eng-implement"
+            },
+            {
+              "key": "pull-request",
+              "skill": "ops-pull-request"
+            }
+          ],
+          "plan_sha256": "891e5fe64b1c888c898174d4fd4af31e727785272003447dda9b4790522d1f49"
+        }
+      },
+      {
+        "id": 22,
+        "kind": "effect",
+        "agent": "engineering",
+        "task_id": 33,
+        "created_at": "2026-10-07T13:48:00Z",
+        "title": "Open pull request: empty state for the checkout page",
+        "actions": [
+          "approve",
+          "reject",
+          "answer"
+        ],
+        "body": "The task ran up to its confirmation gate. Approve with this exact hash and code opens the pull request; any change to the content voids the hash.",
+        "effect": {
+          "content": "{\n  \"base\": \"main\",\n  \"body\": \"The checkout page showed a blank area when the cart had no items.\\nIt now shows a short message and a link back to the catalogue.\\nTests: 2 added, 41 pass.\",\n  \"branch\": \"wb/checkout-empty-state\",\n  \"diffstat\": \"+64 -3\",\n  \"files\": [\n    \"src/checkout/EmptyCart.tsx\",\n    \"src/checkout/CheckoutPage.tsx\",\n    \"tests/checkout/empty-cart.test.tsx\"\n  ],\n  \"kind\": \"pull_request\",\n  \"repo\": \"northwind-shop.example/shop\",\n  \"title\": \"Add an empty state to the checkout page\"\n}",
+          "sha256": "076fc2b50d55ba1bccaf63cb4fc738c202752067ff937406f9fe50a31f72cb9c"
+        }
+      },
+      {
+        "id": 23,
+        "kind": "question",
+        "agent": "brand",
+        "task_id": 30,
+        "created_at": "2026-10-07T12:31:00Z",
+        "title": "Which tone for the launch: practical or adventurous?",
+        "actions": [
+          "answer"
+        ],
+        "body": "The brand voice guide lists both tones as allowed. The launch copy needs one. Recommended: practical, because the product pages already use it."
+      },
+      {
+        "id": 24,
+        "kind": "review",
+        "agent": "brand",
+        "task_id": 29,
+        "created_at": "2026-10-07T10:05:00Z",
+        "title": "Review: brand voice guide, first draft",
+        "actions": [
+          "release",
+          "answer"
+        ],
+        "body": "Draft written. Two open questions remain inside it (OPEN-1, OPEN-2). Release it as it stands or answer to run the task again."
+      },
+      {
+        "id": 25,
+        "kind": "acceptance",
+        "agent": "planning",
+        "task_id": 27,
+        "created_at": "2026-10-06T16:40:00Z",
+        "title": "Acceptance: launch brief",
+        "actions": [
+          "approve",
+          "reject"
+        ],
+        "body": "The brief was released. Approving lets the delivery be routed again and planned."
+      }
+    ],
+    "request": {
+      "id": 14,
+      "title": "Launch week: brand voice, social posts, checkout fix",
+      "flow": "launch-week",
+      "state": "running",
+      "tasks": [
+        {
+          "id": 27,
+          "key": "brief",
+          "skill": "core-clarify",
+          "agent": "planning",
+          "state": "done",
+          "note": "Brief released"
+        },
+        {
+          "id": 29,
+          "key": "brand-voice",
+          "skill": "brand-voice",
+          "agent": "brand",
+          "state": "waiting",
+          "note": "Review waits for you"
+        },
+        {
+          "id": 31,
+          "key": "social-copy",
+          "skill": "mkt-social-copy",
+          "agent": "marketing",
+          "state": "running",
+          "note": "Run 212 in the eval container"
+        },
+        {
+          "id": 33,
+          "key": "checkout-empty-state",
+          "skill": "eng-implement",
+          "agent": "engineering",
+          "state": "waiting",
+          "note": "Effect waits for approval"
+        },
+        {
+          "id": 34,
+          "key": "publish",
+          "skill": "mkt-publish",
+          "agent": "marketing",
+          "state": "blocked",
+          "note": "Waits for social-copy"
+        },
+        {
+          "id": 35,
+          "key": "acceptance",
+          "skill": "core-critique",
+          "agent": "planning",
+          "state": "ready",
+          "note": ""
+        }
+      ]
+    },
+    "van": {
+      "run_id": 212,
+      "skill": "mkt-social-copy",
+      "agent": "marketing",
+      "title": "Write the launch-week social posts"
+    }
+  },
+  {
+    "id": "tinykv-docs",
+    "name": "tinykv-docs",
+    "tagline": "Documentation for a small key-value store",
+    "height": 4,
+    "config": {
+      "path": "docs/workbench/runtime.json",
+      "sha256": "6808a79d46dc90dbe87be234cd994f459cdf4f7d20be69281bb3e01796ef495d"
+    },
+    "agents": [
+      {
+        "key": "planning",
+        "name": "Atlas",
+        "enabled": true,
+        "mode": "milestones",
+        "max_runs_per_day": 4,
+        "max_usd_per_day": 1.0,
+        "runs_today": 0,
+        "usd_today": 0.0,
+        "state": "idle",
+        "task": null
+      },
+      {
+        "key": "business",
+        "name": "Ledger",
+        "enabled": false,
+        "mode": "stopped",
+        "max_runs_per_day": 3,
+        "max_usd_per_day": 1.5,
+        "runs_today": 0,
+        "usd_today": 0.0,
+        "state": "idle",
+        "task": null
+      },
+      {
+        "key": "brand",
+        "name": "Palette",
+        "enabled": false,
+        "mode": "stopped",
+        "max_runs_per_day": 4,
+        "max_usd_per_day": 1.5,
+        "runs_today": 0,
+        "usd_today": 0.0,
+        "state": "idle",
+        "task": null
+      },
+      {
+        "key": "design",
+        "name": "Pixel",
+        "enabled": false,
+        "mode": "stopped",
+        "max_runs_per_day": 3,
+        "max_usd_per_day": 1.5,
+        "runs_today": 0,
+        "usd_today": 0.0,
+        "state": "idle",
+        "task": null
+      },
+      {
+        "key": "engineering",
+        "name": "Forge",
+        "enabled": true,
+        "mode": "supervised",
+        "max_runs_per_day": 6,
+        "max_usd_per_day": 3.0,
+        "runs_today": 2,
+        "usd_today": 0.9,
+        "state": "waiting",
+        "task": {
+          "id": 41,
+          "title": "Write the compaction API reference page",
+          "skill": "eng-docs",
+          "run_state": "waiting",
+          "run_id": 190,
+          "since": "2026-10-07T09:12:00Z"
+        }
+      },
+      {
+        "key": "marketing",
+        "name": "Herald",
+        "enabled": false,
+        "mode": "stopped",
+        "max_runs_per_day": 5,
+        "max_usd_per_day": 1.0,
+        "runs_today": 0,
+        "usd_today": 0.0,
+        "state": "idle",
+        "task": null
+      }
+    ],
+    "pending": [
+      {
+        "id": 26,
+        "kind": "review",
+        "agent": "engineering",
+        "task_id": 41,
+        "created_at": "2026-10-07T09:12:00Z",
+        "title": "Review: compaction API reference page",
+        "actions": [
+          "release",
+          "answer"
+        ],
+        "body": "Draft written from the code map. No open questions."
+      }
+    ],
+    "request": {
+      "id": 3,
+      "title": "Document the compaction API",
+      "flow": "docs-page",
+      "state": "running",
+      "tasks": [
+        {
+          "id": 39,
+          "key": "brief",
+          "skill": "core-clarify",
+          "agent": "planning",
+          "state": "done",
+          "note": "Brief released"
+        },
+        {
+          "id": 40,
+          "key": "code-map",
+          "skill": "eng-codebase-map",
+          "agent": "engineering",
+          "state": "done",
+          "note": "Map written"
+        },
+        {
+          "id": 41,
+          "key": "reference-page",
+          "skill": "eng-docs",
+          "agent": "engineering",
+          "state": "waiting",
+          "note": "Review waits for you"
+        },
+        {
+          "id": 42,
+          "key": "pull-request",
+          "skill": "ops-pull-request",
+          "agent": "engineering",
+          "state": "ready",
+          "note": ""
+        }
+      ]
+    },
+    "van": null
+  }
+]

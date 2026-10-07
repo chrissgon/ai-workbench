@@ -1,0 +1,104 @@
+{
+  "northwind-shop": [
+    {
+      "path": "docs/business/icp.md",
+      "owner": "biz-icp-positioning",
+      "agent": "business",
+      "modified": "2026-10-02T09:30:00Z",
+      "text": "# Ideal customer profile\n\nWho: weekend hikers who buy gear twice a year.\nWhere they are: outdoor forums and two newsletters.\nWhat they fear: buying gear that fails on the trail.\n\nAssumptions\n- Assumption: most buyers are between 28 and 45. Source: none yet, ask the person.\n"
+    },
+    {
+      "path": "docs/business/market-analysis.md",
+      "owner": "biz-market-analysis",
+      "agent": "business",
+      "modified": "2026-10-03T11:02:00Z",
+      "text": "# Market analysis\n\nThree direct competitors found. Each claim below has a source line.\n\n1. Trailhead Goods: free shipping over 50 (https://trailhead.example/shipping, accessed 2026-10-03)\n2. Summit Supply: 30-day returns (https://summit.example/returns, accessed 2026-10-03)\n3. Claim without a source: the market grows 8 percent a year. Unsourced.\n"
+    },
+    {
+      "path": "docs/brand/voice.md",
+      "owner": "brand-voice",
+      "agent": "brand",
+      "modified": "2026-10-07T10:04:00Z",
+      "text": "# Voice guide (draft)\n\nTone: practical or adventurous. OPEN-1: which one leads the launch?\nWords we use: sturdy, tested, trail-ready.\nWords we avoid: revolutionary, game-changing.\n\nThis line is plain text on purpose: <b>no markup is rendered</b> and <script>alert(1)</script> stays text.\n\nOPEN-2: should the voice use second person?\n"
+    },
+    {
+      "path": "docs/brand/guidelines.md",
+      "owner": "brand-guidelines",
+      "agent": "brand",
+      "modified": "2026-10-04T15:20:00Z",
+      "text": "# Brand guidelines\n\nPalette: pine green, sand, a warm orange for calls to action.\nLogo: the mark stays on a light background.\nTypography: one sans family, two weights.\n"
+    },
+    {
+      "path": "docs/design/ux-flows.md",
+      "owner": "design-ux-flows",
+      "agent": "design",
+      "modified": "2026-10-01T13:00:00Z",
+      "text": "# UX flows\n\nFlow 1: browse, add to cart, check out.\nFlow 2: returning customer, one-click reorder.\nEmpty cart: not designed yet.\n"
+    },
+    {
+      "path": "docs/engineering/architecture.md",
+      "owner": "eng-architecture",
+      "agent": "engineering",
+      "modified": "2026-10-05T17:45:00Z",
+      "text": "# Architecture\n\nA web front end, a small API, one relational database.\nDecision: server-side rendering for product pages.\nRisk: the checkout page has no empty state.\n"
+    },
+    {
+      "path": "docs/engineering/codebase-map.md",
+      "owner": "eng-codebase-map",
+      "agent": "engineering",
+      "modified": "2026-10-05T16:10:00Z",
+      "text": "# Codebase map\n\nsrc/catalogue: product listing\nsrc/checkout: cart and payment steps\nsrc/account: sign-in and orders\ntests/: one folder per area\n"
+    },
+    {
+      "path": "docs/marketing/messaging.md",
+      "owner": "mkt-messaging",
+      "agent": "marketing",
+      "modified": "2026-10-06T12:30:00Z",
+      "text": "# Messaging\n\nCore line: gear you do not have to think about.\nProof points: 2-year warranty, free repairs, tested on three trails.\n"
+    },
+    {
+      "path": "docs/marketing/content-plan.md",
+      "owner": "mkt-content-plan",
+      "agent": "marketing",
+      "modified": "2026-10-07T08:50:00Z",
+      "text": "# Content plan, launch week\n\nMon: announcement post\nWed: behind-the-scenes photos\nFri: customer story\nStatus: copy for Monday is being written.\n"
+    },
+    {
+      "path": "docs/workbench/briefs/launch-week.md",
+      "owner": "core-clarify",
+      "agent": "planning",
+      "modified": "2026-10-06T16:38:00Z",
+      "text": "# Brief: launch week\n\nGoal: a week of posts and a fix to the checkout page before it.\nDone when: posts approved, pull request merged.\nOut of scope: paid ads.\n"
+    },
+    {
+      "path": "docs/workbench/state.md",
+      "owner": "core-project-init",
+      "agent": "planning",
+      "modified": "2026-10-07T14:11:00Z",
+      "text": "# Workbench state\n\n## Checkpoints\nmilestones\n\n## Approvals\n(none standing)\n"
+    }
+  ],
+  "tinykv-docs": [
+    {
+      "path": "docs/engineering/codebase-map.md",
+      "owner": "eng-codebase-map",
+      "agent": "engineering",
+      "modified": "2026-10-06T10:00:00Z",
+      "text": "# Codebase map\n\nsrc/compaction: merges sorted files\nsrc/wal: write-ahead log\nsrc/api: the public interface\n"
+    },
+    {
+      "path": "docs/engineering/compaction-api.md",
+      "owner": "eng-docs",
+      "agent": "engineering",
+      "modified": "2026-10-07T09:10:00Z",
+      "text": "# Compaction API\n\ncompact(level): merges the files of one level into the next.\nReturns the number of bytes freed.\nRaises Busy when another compaction runs.\n"
+    },
+    {
+      "path": "docs/workbench/briefs/compaction.md",
+      "owner": "core-clarify",
+      "agent": "planning",
+      "modified": "2026-10-05T14:00:00Z",
+      "text": "# Brief: compaction page\n\nGoal: one reference page for the compaction API.\nDone when: the page is merged.\n"
+    }
+  ]
+}

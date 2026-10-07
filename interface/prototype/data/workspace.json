@@ -1,0 +1,48 @@
+{
+  "now": "2026-10-07T14:20:00Z",
+  "person": "Demo Person",
+  "daily_cost_cap_usd": 10.0,
+  "projects": [
+    "northwind-shop",
+    "tinykv-docs"
+  ],
+  "floors": [
+    {
+      "key": "planning",
+      "label": "Lobby",
+      "role": "Planning agent"
+    },
+    {
+      "key": "business",
+      "label": "Business",
+      "role": "Business agent"
+    },
+    {
+      "key": "brand",
+      "label": "Brand",
+      "role": "Brand agent"
+    },
+    {
+      "key": "design",
+      "label": "Design",
+      "role": "Design agent"
+    },
+    {
+      "key": "engineering",
+      "label": "Engineering",
+      "role": "Engineering agent"
+    },
+    {
+      "key": "marketing",
+      "label": "Marketing",
+      "role": "Marketing agent"
+    }
+  ],
+  "modes": {
+    "stopped": "Stopped: nothing runs, nothing is released.",
+    "supervised": "Supervised: the person checks every phase.",
+    "milestones": "Milestones: the person checks at milestones.",
+    "autonomous": "Autonomous: runs to the end, effects still wait for approval.",
+    "autonomous-with-policy": "Autonomous with policy: effects inside an approved policy go out by themselves."
+  }
+}

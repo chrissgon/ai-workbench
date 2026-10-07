@@ -1,0 +1,445 @@
+{
+  "models": [
+    {
+      "key": "reference",
+      "label": "Reference"
+    },
+    {
+      "key": "floor",
+      "label": "Floor"
+    },
+    {
+      "key": "local",
+      "label": "Local"
+    }
+  ],
+  "skills": [
+    {
+      "skill": "biz-icp-positioning",
+      "area": "business",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.93,
+          "runs": 24
+        },
+        "floor": {
+          "band": "watch",
+          "pessimistic": 0.72,
+          "runs": 12
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.3,
+          "runs": 3
+        }
+      }
+    },
+    {
+      "skill": "biz-market-analysis",
+      "area": "business",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.91,
+          "runs": 24
+        },
+        "floor": {
+          "band": "reliable",
+          "pessimistic": 0.84,
+          "runs": 12
+        },
+        "local": {
+          "band": "watch",
+          "pessimistic": 0.62,
+          "runs": 6
+        }
+      }
+    },
+    {
+      "skill": "brand-voice",
+      "area": "brand",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.88,
+          "runs": 24
+        },
+        "floor": {
+          "band": "watch",
+          "pessimistic": 0.71,
+          "runs": 12
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.3,
+          "runs": 3
+        }
+      }
+    },
+    {
+      "skill": "brand-guidelines",
+      "area": "brand",
+      "models": {
+        "reference": {
+          "band": "watch",
+          "pessimistic": 0.74,
+          "runs": 24
+        },
+        "floor": {
+          "band": "needs a test",
+          "pessimistic": 0.4,
+          "runs": 3
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.2,
+          "runs": 3
+        }
+      }
+    },
+    {
+      "skill": "design-ux-flows",
+      "area": "design",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.9,
+          "runs": 24
+        },
+        "floor": {
+          "band": "watch",
+          "pessimistic": 0.73,
+          "runs": 12
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.35,
+          "runs": 3
+        }
+      }
+    },
+    {
+      "skill": "eng-implement",
+      "area": "engineering",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.89,
+          "runs": 24
+        },
+        "floor": {
+          "band": "watch",
+          "pessimistic": 0.7,
+          "runs": 12
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.33,
+          "runs": 3
+        }
+      }
+    },
+    {
+      "skill": "eng-code-review",
+      "area": "engineering",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.92,
+          "runs": 24
+        },
+        "floor": {
+          "band": "reliable",
+          "pessimistic": 0.82,
+          "runs": 12
+        },
+        "local": {
+          "band": "watch",
+          "pessimistic": 0.66,
+          "runs": 6
+        }
+      }
+    },
+    {
+      "skill": "eng-docs",
+      "area": "engineering",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.9,
+          "runs": 24
+        },
+        "floor": {
+          "band": "reliable",
+          "pessimistic": 0.85,
+          "runs": 12
+        },
+        "local": {
+          "band": "watch",
+          "pessimistic": 0.64,
+          "runs": 6
+        }
+      }
+    },
+    {
+      "skill": "ops-pull-request",
+      "area": "delivery",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.87,
+          "runs": 24
+        },
+        "floor": {
+          "band": "watch",
+          "pessimistic": 0.71,
+          "runs": 12
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.4,
+          "runs": 3
+        }
+      }
+    },
+    {
+      "skill": "mkt-social-copy",
+      "area": "marketing",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.91,
+          "runs": 24
+        },
+        "floor": {
+          "band": "reliable",
+          "pessimistic": 0.8,
+          "runs": 12
+        },
+        "local": {
+          "band": "watch",
+          "pessimistic": 0.61,
+          "runs": 6
+        }
+      }
+    },
+    {
+      "skill": "mkt-publish",
+      "area": "marketing",
+      "models": {
+        "reference": {
+          "band": "watch",
+          "pessimistic": 0.69,
+          "runs": 24
+        },
+        "floor": {
+          "band": "needs a test",
+          "pessimistic": 0.42,
+          "runs": 3
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.2,
+          "runs": 3
+        }
+      }
+    },
+    {
+      "skill": "mkt-engage",
+      "area": "marketing",
+      "models": {
+        "reference": {
+          "band": "needs a test",
+          "pessimistic": 0.55,
+          "runs": 3
+        },
+        "floor": {
+          "band": "needs a test",
+          "pessimistic": 0.3,
+          "runs": 3
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.1,
+          "runs": 3
+        }
+      }
+    },
+    {
+      "skill": "core-clarify",
+      "area": "core",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.95,
+          "runs": 24
+        },
+        "floor": {
+          "band": "reliable",
+          "pessimistic": 0.86,
+          "runs": 12
+        },
+        "local": {
+          "band": "watch",
+          "pessimistic": 0.65,
+          "runs": 6
+        }
+      }
+    },
+    {
+      "skill": "core-orchestrator",
+      "area": "core",
+      "models": {
+        "reference": {
+          "band": "reliable",
+          "pessimistic": 0.94,
+          "runs": 24
+        },
+        "floor": {
+          "band": "watch",
+          "pessimistic": 0.72,
+          "runs": 12
+        },
+        "local": {
+          "band": "needs a test",
+          "pessimistic": 0.3,
+          "runs": 3
+        }
+      }
+    }
+  ],
+  "costs": {
+    "days": [
+      "2026-10-01",
+      "2026-10-02",
+      "2026-10-03",
+      "2026-10-04",
+      "2026-10-05",
+      "2026-10-06",
+      "2026-10-07"
+    ],
+    "by_agent": {
+      "planning": [
+        0.2,
+        0.3,
+        0.25,
+        0.1,
+        0.4,
+        0.5,
+        0.31
+      ],
+      "business": [
+        0.0,
+        0.4,
+        0.6,
+        0.0,
+        0.0,
+        0.2,
+        0.0
+      ],
+      "brand": [
+        0.3,
+        0.2,
+        0.5,
+        0.9,
+        0.4,
+        0.7,
+        0.64
+      ],
+      "design": [
+        0.5,
+        0.6,
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.0
+      ],
+      "engineering": [
+        1.1,
+        0.9,
+        1.4,
+        0.6,
+        1.8,
+        1.5,
+        2.02
+      ],
+      "marketing": [
+        0.0,
+        0.0,
+        0.2,
+        0.3,
+        0.5,
+        0.6,
+        0.55
+      ]
+    }
+  },
+  "connections": {
+    "classes": [
+      {
+        "class": "store:runtime",
+        "state": "found",
+        "provider": "sqlite store"
+      },
+      {
+        "class": "integration:issue-tracker",
+        "state": "found",
+        "provider": "board mirror"
+      },
+      {
+        "class": "integration:documents",
+        "state": "missing",
+        "provider": null
+      },
+      {
+        "class": "publisher:social",
+        "state": "found",
+        "provider": "social publisher"
+      },
+      {
+        "class": "generator:image",
+        "state": "missing",
+        "provider": null
+      },
+      {
+        "class": "vcs:code",
+        "state": "found",
+        "provider": "code forge provider"
+      }
+    ],
+    "secrets": [
+      {
+        "name": "VCS_GITHUB_TOKEN",
+        "state": "found",
+        "where": "secret store"
+      },
+      {
+        "name": "WB_RUNTIME_FLOOR_KEY",
+        "state": "found",
+        "where": "environment"
+      },
+      {
+        "name": "SOCIAL_API_TOKEN",
+        "state": "found",
+        "where": "secret store"
+      },
+      {
+        "name": "IMAGE_GENERATOR_KEY",
+        "state": "missing",
+        "where": null
+      },
+      {
+        "name": "BOARD_API_TOKEN",
+        "state": "missing",
+        "where": null
+      }
+    ],
+    "image": {
+      "present": true,
+      "name": "eval container image",
+      "built": "2026-10-05"
+    }
+  }
+}

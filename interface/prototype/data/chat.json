@@ -1,0 +1,50 @@
+{
+  "northwind-shop": {
+    "agent": "planning",
+    "messages": [
+      {
+        "id": 1,
+        "from": "person",
+        "at": "2026-10-07T12:58:00Z",
+        "text": "I want a launch week: posts that match our voice, and the checkout empty state fixed before Monday."
+      },
+      {
+        "id": 2,
+        "from": "agent",
+        "at": "2026-10-07T13:02:00Z",
+        "text": "Understood. I split it into four tasks, in order. Nothing runs until you approve the plan.",
+        "plan_pending_id": 21
+      },
+      {
+        "id": 3,
+        "from": "person",
+        "at": "2026-10-07T13:05:00Z",
+        "text": "/pending"
+      },
+      {
+        "id": 4,
+        "from": "agent",
+        "at": "2026-10-07T13:05:00Z",
+        "text": "Five decisions wait for you: 1 plan, 1 effect, 1 question, 1 review, 1 acceptance."
+      }
+    ]
+  },
+  "tinykv-docs": {
+    "agent": "planning",
+    "messages": [
+      {
+        "id": 1,
+        "from": "person",
+        "at": "2026-10-05T13:50:00Z",
+        "text": "Please document the compaction API."
+      },
+      {
+        "id": 2,
+        "from": "agent",
+        "at": "2026-10-05T14:01:00Z",
+        "text": "Brief written. Four tasks planned and approved. One review waits for you on the Engineering floor.",
+        "plan_pending_id": null
+      }
+    ]
+  }
+}
