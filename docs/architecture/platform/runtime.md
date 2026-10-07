@@ -135,7 +135,7 @@ A pending decision is `open`, `resolved` or `cancelled`. A release by an autonom
 
 | What | How | Why |
 |---|---|---|
-| The lab (`evals/eval_run.py`, `evals/run_attempts.py`, the status script, the gate file) and, through it, the adapters and the container | `runtime/lab.py` only, which reads the runner through a list of allowed names (`ALLOWED`) and refuses the measuring ones (`FORBIDDEN`) | a run is the lab's run without the grading |
+| The lab (`evals/execution.py`, `evals/run_attempts.py`, the status script, the gate file) and, through it, the adapters and the container | `runtime/lab.py` only, which loads the execution kit (`evals/execution.py`) and reads the names its `__all__` lists, and of the status script the names of its `STATUS_NAMES`; the event runner, the grading and the evidence are not in the kit | a run is the lab's run without the grading |
 | The providers | by class through `providers/resolve.py`: `store:runtime`, `integration:issue-tracker`, `integration:documents`, `integration:vcs`, `publisher:<platform>` (the handler's read-only `posts`) | never a provider path built by hand |
 | The skills | their frontmatter (`runtime/skill_meta.py`), their runtime manifests, and a few sentences of their text that the classifier and the merge read, each bound by a test (`runtime/tests/test_skill_text_binding.py`) | what the frontmatter declares is never repeated |
 | The packs and flow files | `scripts/select_skills.py`, `runtime/flow_files.py` | the scope of an area agent; the tasks of a flow |
