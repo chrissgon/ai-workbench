@@ -27,10 +27,14 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import os
 import re
 import sys
 
-ROUTER_SKILL = "core-orchestrator"
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import roles  # noqa: E402  (the same folder)
+
+ROUTER_SKILL = roles.load()["router"]  # runtime/roles.json
 # The task's text of a router run. "I only want the route" makes the skill's stop rule for a request that asks only
 # for the route apply: it names the route and hands nothing over.
 ROUTE_TASK_TEXT = ("tell me which skill or flow would handle the request above, and whether it has what it needs. "

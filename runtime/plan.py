@@ -32,8 +32,9 @@ Stage 6 (several deliveries, the brief, sub-tasks):
   combine(request, routed, flows, agent_skills, root, *, pack, limits, past)   one plan from the routes of the
                                             deliveries, in the order listed: {"plan": build() or None, "tasks",
                                             "deliveries", "unrouted"}
-  backlog_tasks(backlog_path, task_script)  the product backlog's `todo` tasks as proposed sub-tasks, read with the
-                                            script eng-implement ships (its load, find_tasks, status_of)
+  backlog_tasks(backlog_path, root=None)    the product backlog's `todo` tasks as proposed sub-tasks, each read by one
+                                            run of the sub-task skill's script task.py (runtime/isolated.py: an
+                                            isolated subprocess, never loaded into this process)
   subtasks(limits, existing_count, proposed, known=())   {"create", "ask"}: what the approved plan's limits cover
 
 A plan task is {"key", "skill", "title", "text", "depends_on": [keys], "milestone", "mandatory_milestone", "web"}:
@@ -46,6 +47,7 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
+import concurrent.futures
 import hashlib
 import json
 import os
@@ -56,22 +58,28 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import autonomy  # noqa: E402  (the same folder)
+import isolated  # noqa: E402
 import manifest  # noqa: E402
+import roles  # noqa: E402
 import skill_meta  # noqa: E402
 
 DEFAULT_PACK = "default"
 SELECT_TIMEOUT = 60
 PLANNING = "planning"            # the planning agent: the entry of area_agents with this name (part 0, F.6)
 MAX_DELIVERIES = 8               # each delivery costs one run of the router
-BRIEF_SKILL = "core-clarify"     # a route to it plans one brief task, and the delivery is routed again after it
+BRIEF_SKILL = roles.load()["brief"]  # runtime/roles.json: a route to it plans one brief task, and the delivery is routed again after it
 BRIEFS_DIR = "docs/workbench/briefs/"
 BACKLOG = "docs/product/backlog.md"
-SUBTASK_SKILL = "eng-implement"  # the one skill a sub-task runs in this stage (a product-backlog task)
+SUBTASK_SKILL = roles.load()["subtask"]  # runtime/roles.json: the one skill a sub-task runs in this stage (a product-backlog task)
 SUBTASKS_PER_PLAN = 20
 DELIVERIES_FLOW = "deliveries"   # the flow label of a plan of several deliveries: no flow file has this name
 RUNS_PER_TASK = 2
 ESTIMATE_FORMULA = "2 runs per task (consolidated plan, section 4)"
 BACKLOG_ID = re.compile(r"T-[a-z0-9]+-\d+")
+BACKLOG_TASK_LINE = re.compile(r"^- (" + BACKLOG_ID.pattern + r"):", re.M)  # where the backlog defines a task
+BACKLOG_TIMEOUT = 30   # seconds for one read of one task
+BACKLOG_JOBS = 8       # the reads are independent: they run at the same time
+CHECKOUT = os.path.dirname(HERE)
 
 
 class PlanError(Exception):
@@ -333,21 +341,48 @@ def combine(request: dict, routed: list, flows: dict, agent_skills: dict, root: 
     return {"plan": built, "tasks": tasks, "deliveries": deliveries, "unrouted": unrouted, "limits": full}
 
 
-def backlog_tasks(backlog_path: str, task_script) -> list:
-    """The product backlog's tasks as proposed sub-tasks, in file order: each id whose status is `todo`, as an
-    eng-implement task. task_script is skills/eng-implement/scripts/task.py loaded by path: its parser, no copy of it.
-    A dependency is kept when it is an id of the file whose task is not done. The Milestone field is not read: it is
-    not a review milestone. An unreadable file: ValueError."""
+def _read_task(script: str, backlog_path: str, ident: str):
+    """The JSON task.py prints for one task, or None when the backlog has no such task (exit 1). Any other failure:
+    ValueError."""
     try:
-        found = task_script.find_tasks(task_script.load(backlog_path))
+        done = isolated.run_script(script, ["--backlog", backlog_path, "--id", ident], cwd=os.path.dirname(backlog_path),
+                                   timeout=BACKLOG_TIMEOUT)
+    except (OSError, subprocess.SubprocessError) as e:
+        raise ValueError(f"task {ident} of the backlog could not be read: {type(e).__name__}") from None
+    if done.returncode == 1:
+        return None
+    try:
+        found = json.loads(done.stdout) if done.returncode == 0 else None
+    except ValueError:
+        found = None
+    if not isinstance(found, dict):
+        said = (done.stderr.strip().splitlines() or [f"exit {done.returncode}"])[-1]
+        raise ValueError(f"task {ident} of the backlog could not be read: {said}")
+    return found
+
+
+def backlog_tasks(backlog_path: str, root=None) -> list:
+    """The product backlog's tasks as proposed sub-tasks, in file order: each id whose status is `todo`, as a
+    sub-task of the role `subtask` (runtime/roles.json). The ids are the lines of the backlog's text that define a
+    task (BACKLOG_ID); each is read by one run of <root>/skills/<subtask skill>/scripts/task.py, which prints its title,
+    status and dependencies as JSON, through runtime/isolated.py, so that no code of the skill runs in this process.
+    A dependency is kept when it is an id of the file whose task is not done. The Milestone field is not read: it is
+    not a review milestone. An unreadable file or a script that fails: ValueError."""
+    try:
+        with open(backlog_path, encoding="utf-8") as f:
+            text = f.read()
     except (OSError, UnicodeDecodeError) as e:
         raise ValueError(f"the backlog {backlog_path} cannot be read: {type(e).__name__}") from None
+    script = os.path.join(CHECKOUT if root is None else root, "skills", SUBTASK_SKILL, "scripts", "task.py")
+    ids = list(dict.fromkeys(BACKLOG_TASK_LINE.findall(text)))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=BACKLOG_JOBS) as pool:
+        read = list(pool.map(lambda ident: _read_task(script, backlog_path, ident), ids))
+    found = {ident: t for ident, t in zip(ids, read) if t is not None}
     out = []
     for ident, t in found.items():
-        if task_script.status_of(t) != "todo":
+        if t.get("status") != "todo":
             continue
-        needs = [d for d in BACKLOG_ID.findall(t["fields"].get("Depends on", ""))
-                 if d in found and task_script.status_of(found[d]) != "done"]
+        needs = [d for d, status in (t.get("dependencies") or {}).items() if d in found and status != "done"]
         out.append({"key": ident.lower(), "skill": SUBTASK_SKILL, "title": f"{ident}: {t['title']}",
                     "text": f"implement task {ident} of {BACKLOG}.", "depends_on": [d.lower() for d in needs],
                     "milestone": False})

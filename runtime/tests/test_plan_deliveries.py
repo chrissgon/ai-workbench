@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import sys
 from pathlib import Path
 
 import pytest
@@ -270,25 +271,32 @@ def test_a_second_route_to_clarify_is_not_followed(tree):
 # --- the backlog's sub-tasks --------------------------------------------------------------------------------------------
 
 
-def task_script():
-    return ops._load("test_eng_implement_task", str(TASK_SCRIPT))
-
-
-def test_the_backlog_reader_is_the_script_eng_implement_ships():
-    script = task_script()
-    assert all(callable(getattr(script, name, None)) for name in ("load", "find_tasks", "status_of"))
-    assert [t["key"] for t in plan.backlog_tasks(str(FIXTURE_BACKLOG), script)] == ["t-ex-2", "t-ex-3", "t-ex-4"]
-    first = plan.backlog_tasks(str(FIXTURE_BACKLOG), script)[0]
+def test_the_backlog_reader_runs_the_script_eng_implement_ships_in_a_subprocess_and_loads_none_of_it():
+    keys = [t["key"] for t in plan.backlog_tasks(str(FIXTURE_BACKLOG))]
+    assert keys == ["t-ex-2", "t-ex-3", "t-ex-4"]
+    first = plan.backlog_tasks(str(FIXTURE_BACKLOG))[0]
     assert first == {"key": "t-ex-2", "skill": "eng-implement", "title": "T-ex-2: Add the list of example items",
                      "text": "implement task T-ex-2 of docs/product/backlog.md.", "depends_on": [], "milestone": False}
+    assert not [m for m in sys.modules if "eng_implement" in m], "the skill's script was loaded here"
     with pytest.raises(ValueError):
-        plan.backlog_tasks(str(FIXTURE_BACKLOG.parent / "no-such-backlog.md"), script)
+        plan.backlog_tasks(str(FIXTURE_BACKLOG.parent / "no-such-backlog.md"))
+    with pytest.raises(ValueError):                      # a checkout whose skill has no script: the read fails, loudly
+        plan.backlog_tasks(str(FIXTURE_BACKLOG), root=str(FIXTURE_BACKLOG.parent))
 
 
 def test_backlog_tasks_that_are_done_are_not_proposed_and_dependencies_are_kept():
-    found = {t["key"]: t["depends_on"] for t in plan.backlog_tasks(str(FIXTURE_BACKLOG), task_script())}
+    found = {t["key"]: t["depends_on"] for t in plan.backlog_tasks(str(FIXTURE_BACKLOG))}
     assert "t-ex-1" not in found  # done
     assert found == {"t-ex-2": [], "t-ex-3": ["t-ex-2"], "t-ex-4": ["t-ex-3"]}  # a done dependency is dropped
+
+
+def test_backlog_tasks_keep_the_order_of_the_file_whatever_the_order_the_ids_are_mentioned_in(tmp_path):
+    backlog = tmp_path / "backlog.md"
+    backlog.write_text("# Backlog\n\n- T-ex-1: First\n  Depends on: T-ex-3, T-zz-9\n  Status: todo\n\n"
+                       "- T-ex-3: Third\n  Depends on: none\n\n- T-ex-2: Second\n  Depends on: T-ex-1\n", encoding="utf-8")
+    found = {t["key"]: t["depends_on"] for t in plan.backlog_tasks(str(backlog))}
+    assert list(found) == ["t-ex-1", "t-ex-3", "t-ex-2"]
+    assert found == {"t-ex-1": ["t-ex-3"], "t-ex-3": [], "t-ex-2": ["t-ex-1"]}  # an id the file does not define is dropped
 
 
 def backlog_request(tree) -> int:
