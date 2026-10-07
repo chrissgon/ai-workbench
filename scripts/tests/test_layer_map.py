@@ -225,6 +225,9 @@ ALLOWED = (
     ("runtime/handlers/*.py", ("providers/resolve.py", "runtime/cli.py")),
     # layer 6, the runtime: runtime/lab.py is the one file that reaches evals/ and, through the lab, the adapters
     ("runtime/lab.py", ("runtime/", "evals/", "adapters/") + RUNTIME_OUTSIDE),
+    # the one runner of a skill's script, as an isolated subprocess with a scrubbed environment; no other module of
+    # runtime/ reaches skills/ as code (runtime/tests/test_isolated.py holds that)
+    ("runtime/isolated.py", ("runtime/", "skills/*/scripts/*") + RUNTIME_OUTSIDE),
     ("runtime/*.py", ("runtime/",) + RUNTIME_OUTSIDE),
     # scripts/: anything but the runtime (the first runtime, scripts/runtime.py, reaches providers/ and adapters/;
     # it leaves with stage 7)
@@ -239,10 +242,6 @@ ALLOWED = (
 TOLERATED = {
     ("runtime/ops.py", "scripts/validate.py"):
         "finding 11 (WP-R.4): _effect_words reads the SIDE_EFFECTS line of scripts/validate.py with a regex",
-    ("runtime/ops.py", "skills/eng-implement/scripts/task.py"):
-        "findings 5 and 9 (WP-R.5): _task_script loads the backlog parser into the runtime's process",
-    ("runtime/documents.py", "skills/*/scripts/*"):
-        "finding 9 (WP-R.5): a document checker is a skill script run with the runtime's environment",
     ("skills/mkt-engage/scripts/policy_gate.py", "skills/brand-profile/scripts/sensitive_topics.py"):
         "finding 17 (a skill script falls back to another skill's copy of a shared script; removed at the next "
         "Y change of mkt-engage)",

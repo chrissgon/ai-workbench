@@ -23,10 +23,11 @@ MARKET = "docs/business/market.md"
 ICP = "docs/business/icp.md"
 CHECKER = '''import os, sys
 path = sys.argv[sys.argv.index("--file") + 1]
-log = os.environ.get("CHECK_LOG")
+log = sys.argv[sys.argv.index("--log") + 1] if "--log" in sys.argv else None
 if log:
     with open(log, "a") as f:
-        f.write(os.getcwd() + "\\n")
+        # where it ran, then which planted variables of the runtime's environment it saw (the checker is isolated)
+        f.write(os.getcwd() + "\\n" + ",".join(sorted(k for k in os.environ if "PLANTED" in k)) + "\\n")
 with open("checker-was-here", "w") as f:
     f.write("x")
 with open(path, encoding="utf-8") as f:
@@ -58,14 +59,14 @@ def tree(tmp_path, monkeypatch):
     folder.mkdir(parents=True)
     shutil.copyfile(st.REPO / "providers" / "documents" / "local.py", folder / "local.py")
     (built["tree"] / "skills" / "demo-asks" / "scripts" / "check_doc.py").write_text(CHECKER, encoding="utf-8")
-    manifest(built["tree"], "demo-asks", [{"path": MARKET, "checks": [["check_doc.py", "--file", "{path}"]],
+    log = tmp_path / "check-log.txt"
+    manifest(built["tree"], "demo-asks", [{"path": MARKET, "checks": [["check_doc.py", "--file", "{path}", "--log", str(log)]],
                                            "platform": "editable", "bound_to_approval": False}])
     pages = tmp_path / "pages"
     pages.mkdir()
     configure(built, {"provider": "local", "dir": str(pages)})
     monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
-    log = tmp_path / "check-log.txt"
-    monkeypatch.setenv("CHECK_LOG", str(log))
+    monkeypatch.setenv("WB_PLANTED_SECRET", "planted")  # in the runtime's environment, never in the checker's
     calls = []
     real = docs.call
 
@@ -471,8 +472,10 @@ def test_the_checker_runs_on_a_scratch_copy_and_never_on_the_project(tree):
     delivered(tree)
     edit_page(tree, "- Status: draft", "- Status: draft\n\nChecked on a copy.")
     assert ops.sync(project_of(tree))["documents"]["imported"] == [MARKET]
-    ran_in = tree["log"].read_text().splitlines()
+    written = tree["log"].read_text().split("\n")[:-1]
+    ran_in, saw = written[0::2], written[1::2]
     assert len(ran_in) == 1
+    assert saw == [""], "the checker saw a variable of the runtime's environment"
     assert ran_in[0] != str(tree["project"]) and not ran_in[0].startswith(str(tree["project"]))
     assert not Path(ran_in[0]).exists()  # the scratch folder is removed
     assert not list(tree["project"].rglob("checker-was-here"))

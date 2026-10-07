@@ -1,0 +1,6 @@
+{
+  "skill": "design-ux-flows",
+  "reply_phrases": {
+    "missing_input": ["run `product-prd` first"]
+  }
+}

@@ -52,41 +52,50 @@ ASK_OPENING = re.compile(r"^\W*Nothing was (?:searched or )?written yet\b", re.I
 RECOMMENDED = re.compile(r"\bRecommended:", re.I)
 OPEN_MARK = re.compile(r"\bOPEN-\d+\b")
 # The stop on a missing input: stop rule 1 of templates/capability.SKILL.md ("stop and tell the user that
-# `<area>-<skill>` writes it and to run it first"), with the forms the skills write it in: "writes them"
-# (skills/brand-strategy/SKILL.md), "writes that section" (skills/eng-tradeoffs/SKILL.md), "writes the PRD"
-# (skills/product-roadmap/SKILL.md, its reply when the PRD is missing) and "run `<skill>` first"
-# (skills/design-ux-flows/SKILL.md, the same reply).
-MISSING_INPUT = re.compile(r"\bwrites (?:it|them|that section|the PRD)\b|\brun (?:it|`[a-z0-9-]+`) first\b", re.I)
+# `<area>-<skill>` writes it and to run it first"), and the form "run `<skill>` first" of its Next line. A form a
+# single skill writes otherwise ("writes them", "writes that section") is not here: it is the skill's own
+# reply_phrases["missing_input"] in its runtime manifest, and reaches the classifier as facts["reply_phrases"].
+MISSING_INPUT = re.compile(r"\bwrites it\b|\brun (?:it|`[a-z0-9-]+`) first\b", re.I)
 # A skill that is not built is cited with the mark `(planned)`: the writing standard of AGENTS.md.
 PLANNED = "(planned)"
 # The asking reply of templates/capability.SKILL.md gives each question a "Recommended:" answer (RECOMMENDED).
-# The question of a confirmation gate, asked as the reply's last line: "Proceed? (yes/no)"
-# (skills/design-execute/SKILL.md), "Push? (yes/no)" (skills/ops-branch-sync/SKILL.md), "Dismiss these <n>
-# alerts? (yes/no)" (skills/eng-security-review/SKILL.md). And a question closed by its recommended answer, as the
-# asking reply of templates/capability.SKILL.md writes each one ("<question>? Recommended: <answer>"). Read only
-# with facts: the first classifier is unchanged.
+# The question of a confirmation gate, asked as the reply's last line: "<question>? (yes/no)", the form of
+# "Proceed? (yes/no)" of templates/capability.SKILL.md; a gate question in another form is the skill's own
+# reply_phrases["gate_questions"]. And a question closed by its recommended answer, as the asking reply of
+# templates/capability.SKILL.md writes each one ("<question>? Recommended: <answer>"). Read only with facts: the
+# first classifier is unchanged.
 YES_NO = re.compile(r"\?\s*\(yes/no\)$", re.I)
 LEADING = "*_#>`- \t"
 # A reply that closes with a list of questions (WP-3.20): its last paragraph is a numbered or bulleted list whose
 # items each ask, or a list under a line that says questions follow. An item asks when it ends with a question mark
 # or holds "Recommended:", the form of the asking reply of templates/capability.SKILL.md ("1. <question>
 # Recommended: <answer>") and of the "Open questions" of the skills' templates; the router's items are "Q<n>:"
-# (skills/core-orchestrator/SKILL.md). The lines that say questions follow, each from a template: "Open questions:"
-# (skills/brand-strategy/SKILL.md, its reply), "Questions:" and "Questions (<a note>):" (skills/design-brief,
-# skills/design-system, skills/design-handoff, skills/product-roadmap), "Questions for you:" (skills/design-system),
-# "### Questions for you" (skills/product-feature-spec, skills/product-prd), "### Open questions for you"
-# (skills/product-prd) and "### Decisions needed", whose items each carry a recommended answer
-# (skills/core-agents-md). Read only with facts: the first classifier is unchanged.
+# (skills/core-orchestrator/SKILL.md). The lines that say questions follow, the canonical forms: "Open questions:"
+# (templates/flow.SKILL.md), "Questions:" and "Questions for you:", as a heading, a bold line or a line that ends
+# with a colon. A line a single skill writes otherwise ("Questions (<a note>):", "### Decisions needed") is that
+# skill's own reply_phrases["question_intros"] in its runtime manifest. Read only with facts: the first classifier is
+# unchanged.
 LIST_ITEM = re.compile(r"^(\s*)(?:\d+[.)]|[-*+]|Q\d+:)\s+(.*)$")
-QUESTIONS_FOLLOW = re.compile(r"^(?:open questions|questions|decisions needed)(?: for you)?(?: \([^)]*\))?:?$", re.I)
+QUESTIONS_FOLLOW = re.compile(r"^(?:open questions|questions)(?: for you)?:?$", re.I)
+PHRASE_KEYS = ("missing_input", "question_intros", "gate_questions")
 
 
-def _questions_follow(line: str) -> bool:
-    """A line that says questions follow: one of QUESTIONS_FOLLOW's forms, as a heading, a bold line or a line
-    that ends with a colon."""
+def _plain(text: str) -> str:
+    """A line without its heading marks, emphasis and trailing colon, in lower case: what a phrase is compared as."""
+    return text.strip().lstrip("#*_ ").rstrip("*_ ").rstrip(":").rstrip("*_ ").lower()
+
+
+def _phrases(facts, key: str) -> list:
+    """The phrases of one kind the skill's manifest gives (facts["reply_phrases"][key]); none when absent."""
+    return [p for p in (((facts or {}).get("reply_phrases") or {}).get(key) or []) if isinstance(p, str) and p.strip()]
+
+
+def _questions_follow(line: str, intros=()) -> bool:
+    """A line that says questions follow: one of QUESTIONS_FOLLOW's forms, or one that starts like a phrase of the
+    skill's `question_intros`, as a heading, a bold line or a line that ends with a colon."""
     raw = line.strip()
     text = raw.lstrip("#*_ ").rstrip("*_ ")
-    if not QUESTIONS_FOLLOW.match(text):
+    if not QUESTIONS_FOLLOW.match(text) and not any(_plain(text).startswith(_plain(p)) for p in intros):
         return False
     return raw.startswith("#") or text.endswith(":") or (raw.startswith("**") and raw.endswith("**"))
 
@@ -97,7 +106,7 @@ def _item_asks(own: list, under: list) -> bool:
     return any(line.rstrip("*_` ").endswith("?") for line in own) or any(RECOMMENDED.search(t) for t in own + under)
 
 
-def _closes_with_question_list(response: str) -> bool:
+def _closes_with_question_list(response: str, intros=()) -> bool:
     """The reply's last paragraph (lines up to a blank line) is a list of questions: every item at the list's own
     depth asks, or the paragraph opens with, or follows a paragraph that is only, a line that says questions follow.
     A line of the paragraph that is not an item continues the item above it; an item deeper than the first is
@@ -106,11 +115,11 @@ def _closes_with_question_list(response: str) -> bool:
     if not paragraphs:
         return False
     rows = [r for r in paragraphs[-1].splitlines() if r.strip()]
-    intro = not LIST_ITEM.match(rows[0]) and _questions_follow(rows[0])
+    intro = not LIST_ITEM.match(rows[0]) and _questions_follow(rows[0], intros)
     if intro:
         rows = rows[1:]
     elif len(paragraphs) > 1 and len(paragraphs[-2].strip().splitlines()) == 1:
-        intro = _questions_follow(paragraphs[-2])
+        intro = _questions_follow(paragraphs[-2], intros)
     first = LIST_ITEM.match(rows[0]) if rows else None
     if not first:
         return False
@@ -130,37 +139,39 @@ def _lines(text: str) -> list:
     return [line.strip() for line in (text or "").splitlines() if line.strip()]
 
 
-def _asks(response: str, lines: list, openings, yes_no: bool = False) -> bool:
+def _asks(response: str, lines: list, openings, yes_no: bool = False, facts=None) -> bool:
     """The reply is an asking reply: it holds a question mark, and its first line starts with an asking opening
     (the skill's own, or the template's), or it holds "Recommended:", or its last line ends with a question mark.
     With yes_no (only with facts) a reply that closes with a list of questions asks, with or without a question
-    mark."""
-    if not lines or ("?" not in (response or "") and not (yes_no and _closes_with_question_list(response))):
+    mark. `facts` carries the skill's reply phrases."""
+    intros = _phrases(facts, "question_intros")
+    if not lines or ("?" not in (response or "") and not (yes_no and _closes_with_question_list(response, intros))):
         return False
     first = lines[0].lstrip(LEADING)
     return (any(o and first.lower().startswith(o.lower()) for o in openings) or bool(ASK_OPENING.search(lines[0]))
-            or bool(RECOMMENDED.search(response)) or _last_asks(lines, yes_no)
-            or (yes_no and _closes_with_question_list(response)))
+            or bool(RECOMMENDED.search(response)) or _last_asks(lines, yes_no, facts)
+            or (yes_no and _closes_with_question_list(response, intros)))
 
 
-def _last_asks(lines: list, yes_no: bool = False) -> bool:
+def _last_asks(lines: list, yes_no: bool = False, facts=None) -> bool:
     """The reply's last line ends with a question mark. With yes_no (only with facts) also when it ends with
-    "? (yes/no)", or holds a question mark followed by "Recommended:" (a question of the asking reply, written
-    with its recommended answer, as the last line)."""
+    "? (yes/no)", or ends with one of the skill's `gate_questions`, or holds a question mark followed by
+    "Recommended:" (a question of the asking reply, written with its recommended answer, as the last line)."""
     if not lines:
         return False
     last = lines[-1].rstrip("*_` ")
     if last.endswith("?"):
         return True
-    return yes_no and (bool(YES_NO.search(last)) or ("?" in last and bool(RECOMMENDED.search(last.split("?", 1)[1]))))
+    return yes_no and (bool(YES_NO.search(last)) or ("?" in last and bool(RECOMMENDED.search(last.split("?", 1)[1])))
+                       or any(last.lower().endswith(p.strip().lower()) for p in _phrases(facts, "gate_questions")))
 
 
-def _names_missing_input(lines: list, skill: str, skills) -> bool:
-    """A line of the reply holds `writes it` or `run it first`, and the same line names another skill of the
-    workbench or the mark (planned)."""
+def _names_missing_input(lines: list, skill: str, skills, phrases=()) -> bool:
+    """A line of the reply holds `writes it` or `run it first` (or one of the skill's own `missing_input` phrases),
+    and the same line names another skill of the workbench or the mark (planned)."""
     others = [name for name in (skills or []) if name and name != skill]
     for line in lines:
-        if not MISSING_INPUT.search(line):
+        if not MISSING_INPUT.search(line) and not any(p.strip().lower() in line.lower() for p in phrases):
             continue
         if PLANNED in line or any(re.search(r"(?<![\w-])" + re.escape(name) + r"(?![\w-])", line) for name in others):
             return True
@@ -176,8 +187,10 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
     outputs_missing  the declared outputs without a placeholder that the copy does not hold after the run
     output_texts     the text of each path of outputs_written that is a text file, in the same order
     facts            None (the first classifier), or {"skill", "asking_openings", "fixed_output", "side_effects",
-                     "gate_payload", "skills"} from manifest.ending_facts(), and optionally "outputs_present": the
-                     declared outputs without a placeholder that the run's copy held, unchanged, after the run
+                     "gate_payload", "skills", "reply_phrases"} from manifest.ending_facts(), and optionally
+                     "outputs_present": the declared outputs without a placeholder that the run's copy held,
+                     unchanged, after the run; reply_phrases (absent means none) are the skill's own phrases
+                     for a missing input, the line that says questions follow and the question of its gate
 
     Without facts, the first that holds:
     1. No file was created, modified or deleted, the reply holds a question mark, and either its first line is
@@ -232,8 +245,10 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
         return "done", "every declared output is there and nothing is asked"
 
     openings = list(facts.get("asking_openings") or [])
-    last_asks = _last_asks(lines, yes_no=True) or _closes_with_question_list(response)
-    if not changed and _names_missing_input(lines, facts.get("skill") or "", facts.get("skills")) \
+    intros = _phrases(facts, "question_intros")
+    last_asks = _last_asks(lines, yes_no=True, facts=facts) or _closes_with_question_list(response, intros)
+    if not changed and _names_missing_input(lines, facts.get("skill") or "", facts.get("skills"),
+                                            _phrases(facts, "missing_input")) \
             and not RECOMMENDED.search(response or ""):
         return "blocked", "no file changed and the reply names a missing input and the skill that writes it"
     payload = facts.get("gate_payload")
@@ -249,7 +264,7 @@ def classify(response: str, changes: dict, outputs_written, outputs_missing, out
     # For telling `question` from the other endings, a change limited to the state file counts as having written
     # nothing (WP-2.13): the skills write their open questions and decisions there when they stop to ask.
     state_only = bool(changed) and all(p == path_rule.STATE for p in changed)
-    if (not changed or state_only) and _asks(response, lines, openings, yes_no=True):
+    if (not changed or state_only) and _asks(response, lines, openings, yes_no=True, facts=facts):
         return "question", ("only the state file changed and the reply asks" if state_only
                             else "no file changed and the reply asks")
     if not changed:
