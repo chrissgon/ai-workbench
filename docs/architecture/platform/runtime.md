@@ -367,13 +367,13 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `handler_call` | `handler` | terminal | no | start one verb of a handler that runtime.json names |
 | `pin` | `pin` | terminal | no | write the pin of the dispatcher's two jobs |
 | `say` | `say` | terminal, page | yes, for a new request | one turn of the conversation with the planning agent |
-| `agents` | `agents` | terminal | no | each area agent: its mode, its caps, what it used today and how many tasks wait for it |
-| `conversation` | `conversation` | terminal | no | the messages of the project's conversation above a message id, oldest first |
-| `skills` | `skills` | terminal | no | the skills in scope with their proof on each model, their runs here and the two checks of the proof |
-| `costs` | `costs` | terminal | no | the runs by day, agent, model and adapter, with the recorded cost and the cost recomputed from the prices |
-| `connections` | `connections` | terminal | no | which provider each requirement class resolves to, which secrets are found (never a value), the image |
-| `artifacts` | `artifacts` | terminal | no | the project's files under docs/ with their owner skill, size and time |
-| `artifact` | `artifact` | terminal | no | the text of one file under docs/ of the project, read-only |
+| `agents` | `agents` | terminal, page | no | each area agent: its mode, its caps, what it used today and how many tasks wait for it |
+| `conversation` | `conversation` | terminal, page | no | the messages of the project's conversation above a message id, oldest first |
+| `skills` | `skills` | terminal, page | no | the skills in scope with their proof on each model, their runs here and the two checks of the proof |
+| `costs` | `costs` | terminal, page | no | the runs by day, agent, model and adapter, with the recorded cost and the cost recomputed from the prices |
+| `connections` | `connections` | terminal, page | no | which provider each requirement class resolves to, which secrets are found (never a value), the image |
+| `artifacts` | `artifacts` | terminal, page | no | the project's files under docs/ with their owner skill, size and time |
+| `artifact` | `artifact` | terminal, page | no | the text of one file under docs/ of the project, read-only |
 | `stop_runs` | `stop-runs` | terminal | no | end the runs this process started (the local service calls it before it exits) |
 <!-- /generated -->
 
