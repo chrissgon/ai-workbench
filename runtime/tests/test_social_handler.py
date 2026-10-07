@@ -1,6 +1,6 @@
 """Offline tests of scripts/runtime.py with a fake workbench.
 
-The mailbox, the notification parser, the agent adapter and the publisher are fakes; the store, the policy
+The mailbox, the notification parser, the contained run (a stand-in runtime/cli.py) and the publisher are fakes; the store, the policy
 gate and the sensitive-topics lock are the real scripts, copied into the fake workbench. No network, no
 model, no credential.
 """
@@ -65,14 +65,19 @@ if os.environ.get("FAKE_PUBLISHER_FAIL"):
 print(json.dumps({"comment_urn": "urn:li:comment:(urn:li:activity:111,999)", "replayed": False}))
 '''
 
-FAKE_ADAPTER = r'''#!/usr/bin/env bash
-set -euo pipefail
-OUT=""
-while [[ $# -gt 0 ]]; do case "$1" in --out) OUT="$2"; shift 2 ;; *) shift ;; esac; done
-mkdir -p "$OUT"
-cp "$FAKE_RESPONSE" "$OUT/response.md"
-echo '{"total_tokens": 100, "duration_ms": 10, "cost_usd": '"${FAKE_COST:-0.05}"', "exit_code": 0}' > "$OUT/timing.json"
-echo "$@" >> "$FAKE_CALLS.agent"
+FAKE_CLI = r'''
+import os, shutil, sys
+if sys.argv[1:2] != ["contained-run"]:
+    print("error: the stand-in takes only contained-run", file=sys.stderr)
+    sys.exit(2)
+args = sys.argv[2:]
+out = args[args.index("--out") + 1]
+os.makedirs(out, exist_ok=True)
+shutil.copy(os.environ["FAKE_RESPONSE"], os.path.join(out, "response.md"))
+with open(os.path.join(out, "timing.json"), "w") as f:
+    f.write('{"total_tokens": 100, "duration_ms": 10, "cost_usd": ' + os.environ.get("FAKE_COST", "0.05") + ', "exit_code": 0}')
+with open(os.environ["FAKE_CALLS"] + ".agent", "a") as f:
+    f.write(" ".join(sys.argv[1:]) + "\n")
 '''
 
 POLICY = """# Policy
@@ -116,8 +121,7 @@ def env(tmp_path, monkeypatch):
         "providers/mailbox/gmail.py": FAKE_MAILBOX,
         "providers/publisher/linkedin.py": FAKE_PUBLISHER,
         "skills/mkt-engage/scripts/parse_notification.py": FAKE_PARSER,
-        "adapters/fake/run-agent.sh": FAKE_ADAPTER,
-        "agents/social-manager.md": "---\nname: social-manager\ndescription: x\nmetadata:\n  skills: [mkt-engage]\n---\n# Agent\n",
+        "runtime/cli.py": FAKE_CLI,
     }.items():
         p = wb / rel
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +142,7 @@ def env(tmp_path, monkeypatch):
         f"| standing | engagement | policy:{phash} | 2026-09-29 | 2099-01-01 | active |\n")
     data = tmp_path / "data"
     (proj / "docs/workbench/runtime.json").write_text(json.dumps({
-        "agent": "social-manager", "harness": "fake", "model": "m", "workbench": str(wb), "data_dir": str(data),
+        "agent": "social-manager", "workbench": str(wb), "data_dir": str(data),
         "store_db": str(data / "store.sqlite"), "mailbox": "gmail", "publisher": "linkedin",
         "notification_query": "from:notifications", "daily_cost_cap_usd": 1}))
     calls = tmp_path / "calls.jsonl"
@@ -427,17 +431,19 @@ def test_publisher_failure_goes_to_the_inbox(env, monkeypatch):
 def test_an_unexpected_error_fails_the_event_and_the_run_and_the_tick_goes_on(env):
     # RT6: an agent file without a skills line raised IndexError after the run row was opened. The tick ended in
     # a traceback, the two claimed events stayed claimed for an hour and the run row stayed "running".
-    (env["wb"] / "agents/social-manager.md").write_text("---\nname: social-manager\ndescription: x\n---\n# Agent\n")
+    # WP-7.3b: the handler no longer reads an agent file, so the same moment is reached with a reply that is not
+    # text (the run answered, then reading its response.md raises UnicodeDecodeError, an error the run row is open for).
     set_case(env, [message(1), message(2, commenter="Bruno")], decision())
+    env["resp"].write_bytes(b"\xff\xfe not text")
     edit_config(env, daily_cost_cap_usd=5)  # a run that broke has no cost and counts as the per-run maximum (RT2)
     code, out, err = rt(env, "tick")
     assert code == 0, err
     assert [h["status"] for h in out["handled"]] == ["failed", "failed"]
-    assert all("IndexError" in h["note"] for h in out["handled"])
+    assert all("UnicodeDecodeError" in h["note"] for h in out["handled"])
     assert "Traceback" in err  # the traceback stays on stderr, for whoever reads the tick's log
     code, status, _ = rt(env, "status")
     assert [r["status"] for r in status["runs"]] == ["failed", "failed"]
-    assert all("IndexError" in r["error"] for r in status["runs"])
+    assert all("UnicodeDecodeError" in r["error"] for r in status["runs"])
     code, again, _ = rt(env, "tick")
     assert again["handled"] == []  # the events ended "failed": none is left claimed for a later tick
     assert publisher_calls(env) == []
