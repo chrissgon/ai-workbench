@@ -6,6 +6,7 @@ Run: uv run --with pytest==9.1.1 pytest runtime/tests/test_run_limits.py
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -22,9 +23,13 @@ workcopy = st.load("workcopy")
 skill_meta = st.load("skill_meta")
 project_config = st.load("project_config")
 manifest = st.load("manifest")
+path_rule = st.load("path_rule")
+documents = st.load("documents")
 
-# The numbers of the limits built so far; each has exactly one test below named test_limit_<two digits>_...
-BUILT = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14)
+# The numbers of the limits whose test is in this file; each has exactly one test below named test_limit_<two digits>_.
+# The other limits' tests are named in contracts/runtime.md, "The limits", and checked by the last test of this file.
+BUILT = (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 18, 19)
+CONTRACT = st.REPO / "contracts" / "runtime.md"
 
 SECTION_ASSET = st.REPO / "skills" / "core-project-init" / "assets" / "agents-md-section.md"
 GIT_ENV = {"GIT_AUTHOR_NAME": "Demo Person", "GIT_AUTHOR_EMAIL": "demo@example.com",
@@ -413,6 +418,56 @@ def test_limit_14_everything_passes_the_credential_scan_before_it_leaves(tree, m
     assert token() not in repr(out)
 
 
+def test_limit_18_a_document_bound_to_an_approval_by_hash_is_a_machine_file(tree):
+    project, rel = tree["project"], "docs/business/icp.md"
+    result = finished(tree, {rel: "# Profile\n"}, created=[rel])
+    assert path_rule.classify(rel) == "document" and documents.entry_for(str(tree["tree"]), rel) is not None
+    # The skill's runtime manifest binds the document to an approval.
+    known = manifest.load(str(tree["tree"]), "demo-writes")
+    known["documents"] = [{**d, "bound_to_approval": True} for d in known["documents"]]
+    Path(manifest.path(str(tree["tree"]), "demo-writes")).write_text(json.dumps(known), encoding="utf-8")
+    bound = manifest.bound_among(manifest.load(str(tree["tree"]), "demo-writes"), [rel])
+    assert bound == [rel]
+    # It comes back as a machine file, stays one when the project versions it, and is never mirrored as a document.
+    returned, kept, _ = workcopy.returning(str(project), result, base_of(tree, rel), None, "demo-writes", bound=bound)
+    assert returned == [{"path": rel, "class": "machine"}] and kept == []
+    assert path_rule.classify(rel, {"bound": bound, "versioned": [rel]}) == "machine"
+    assert documents.entry_for(str(tree["tree"]), rel) is None
+
+
+ROUTER_BRANCH = r'''
+if [ "$skill" = core-orchestrator ]; then
+  mkdir -p "$cwd/docs/business"; echo "# Tasks I created" > "$cwd/docs/business/tasks.md"
+  printf 'Route: flow-demo (flow, pending)\nWhy: a market question\nI created the tasks market and profile for you.\n' > "$out/response.md"
+  exit 0
+fi
+'''
+
+
+def test_limit_19_the_planning_agent_creates_no_task_it_returns_the_route_and_code_builds_the_plan(tree, monkeypatch):
+    router = st.load("router")
+    st.skill(tree["tree"], router.ROUTER_SKILL, "docs/workbench/state.md", "")
+    script = tree["adapter"] / "run-prompt.sh"
+    text = st.ADAPTER.replace("for name in demo-asks demo-writes;", "for name in demo-asks demo-writes core-orchestrator;")
+    script.write_text(text.replace('case "$skill" in', ROUTER_BRANCH + 'case "$skill" in', 1), encoding="utf-8")
+    monkeypatch.setattr(ops.plan, "pack_skills", lambda cfg, root: ["core-orchestrator", "demo-asks", "demo-writes"])
+    path = str(tree["project"])
+    request = ops.request(path, "Tell me which market to go after first.")["request"]
+    ctx = ops.context(path)
+    count = lambda: ctx["conn"].execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
+    out = ops.route(path, request)
+    # The planning agent's run returned a route and claimed tasks; no task exists, and nothing it wrote came back.
+    assert out["kind"] == "plan" and count() == 1 and ops.status(path)["requests"][0]["tasks"] == []
+    assert not (tree["project"] / "docs" / "business" / "tasks.md").exists()
+    # The plan is built by code from the flow file the route names, and its tasks exist only once the person approves.
+    flows = st.load("flow_files")
+    payload = ops.pending(path, out["pending_id"])["payload"]
+    flow = flows.load(payload["flow"], str(tree["tree"]))
+    assert [t["key"] for t in payload["tasks"]] == [t["key"] for t in flow["tasks"]]
+    approved = ops.approve(path, out["pending_id"], payload["plan_sha256"])
+    assert [t["key"] for t in approved["tasks"]] == [t["key"] for t in flow["tasks"]] and count() == 1 + len(flow["tasks"])
+
+
 def test_nothing_is_deleted_in_the_project_because_a_run_deleted_it(tree):
     project = tree["project"]
     write(project, "docs/business/old.md", "kept\n")
@@ -439,12 +494,45 @@ def test_the_two_lines_are_put_back_where_they_were():
     assert workcopy.agents_md_restored(run_text, removed) == text
 
 
+def limits_table() -> dict:
+    """{number: (built by, test cell)} of the table of contracts/runtime.md, "The limits"."""
+    section = CONTRACT.read_text(encoding="utf-8").split("## The limits", 1)[1].split("\n## ", 1)[0]
+    rows = {}
+    for line in section.splitlines():
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if len(cells) == 4 and re.fullmatch(r"L\d+", cells[0]):
+            rows[int(cells[0][1:])] = (cells[2], cells[3])
+    return rows
+
+
 def test_every_limit_built_so_far_has_a_test_named_after_it():
     names = [name for name in globals() if name.startswith("test_limit_")]
-    assert BUILT == (1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14)  # the eleven limits stage 2 builds
     for number in BUILT:
         assert len([n for n in names if n.startswith(f"test_limit_{number:02d}_")]) == 1, number
     assert len(names) == len(BUILT)
+    # Every limit of the contract's table: the tests its row names exist where it says, and each limit that has a
+    # test named after it has exactly one in the runtime's and the store's tests, the one its row names.
+    rows = limits_table()
+    assert sorted(rows) == list(range(1, 21))
+    defined = {}
+    for test_file in sorted((st.REPO / "runtime" / "tests").glob("test_*.py")) + sorted(
+            (st.REPO / "providers" / "store" / "tests").glob("test_*.py")):
+        for name in re.findall(r"^def (test_\w+)\(", test_file.read_text(encoding="utf-8"), re.M):
+            defined.setdefault(name, []).append(test_file.relative_to(st.REPO).as_posix())
+    named = {}
+    for number, (_, cell) in rows.items():
+        cited = re.findall(r"`([\w/.-]+\.py)`, `(test_\w+)`", cell)
+        cited += [(cited[-1][0], extra) for extra in re.findall(r" and `(test_\w+)`", cell)] if cited else []
+        assert cited, f"L{number} names no test in contracts/runtime.md"
+        for test_file, name in cited:
+            assert test_file in defined.get(name, []), f"L{number}: {test_file} has no {name}"
+            if name.startswith("test_limit_"):
+                assert name.startswith(f"test_limit_{number:02d}_"), f"L{number} names {name}"
+                named[number] = name
+    numbered = {n for n in defined if n.startswith("test_limit_")}
+    assert numbered == set(named.values()) and all(len(defined[n]) == 1 for n in numbered)
+    # Every limit is built; L20 alone has no test named after it: the project's protected paths guard it.
+    assert sorted(named) == list(range(1, 20))
 
 
 def test_the_prepared_folder_of_a_run_is_removed_after_it(tree):

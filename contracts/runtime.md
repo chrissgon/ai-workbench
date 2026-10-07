@@ -120,7 +120,7 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 | `runtime/handlers/` | The handlers a round of the dispatcher ticks; the first is `published_posts.py` |
 | `runtime/tests/` | The tests of the above, offline, with a stand-in adapter and invented skills; `corpus/` holds the classifier's corpus of archived lab runs |
 | `flows/*.json` | The flow files: `market-positioning.json` (a market analysis, then the customer profile and positioning), `brand.json` (the brand flow) and `code-change.json` (the code-change flow) |
-| `providers/store/sqlite.py` | The store (class `store:runtime`): migration 2 holds the task runtime's three tables, migration 3 adds `task_runs.redactions`, migration 4 a task's item on the task board, the document records and the saved platform comments, migration 5 the approvals table, and migration 6 the conversation's messages; its functions are the contract, one transaction each |
+| `providers/store/sqlite.py` | The store (class `store:runtime`): migration 2 holds the task runtime's three tables, migration 3 adds `task_runs.redactions`, migration 4 a task's item on the task board, the document records and the saved platform comments, migration 5 the approvals table, migration 6 the conversation's messages, and migration 7 the triggers that refuse to delete a task, a run or a pending decision (L13); its functions are the contract, one transaction each |
 | `providers/documents/` | The documents provider (`integration:documents`): `notion.py`, with its pure converter `notion_blocks.py`, and the stand-in `local.py` |
 
 The configuration of a project names three absolute paths: `workbench` (the checkout the runtime runs from, a reviewed revision), `data_dir` (a folder outside every repository, for run folders and the run lock) and `store_db`. Every operation refuses a project whose configuration names another checkout than the one it runs from, and a configuration whose hash is not the one the person accepted last (`accept-config --sha256 <hash>`, kept in the store).
@@ -159,7 +159,7 @@ The configuration of a project names three absolute paths: `workbench` (the chec
 
 ## The limits
 
-The twenty limits that live in code (section B.2 of the platform plan). Each gets a test named after it in the stage that builds it; stage 1 built a first form of four of them.
+The twenty limits that live in code (section B.2 of the platform plan). Every one is built; each but L20 has a test named after it (L20 rests on the project's protected paths), and `runtime/tests/test_run_limits.py`, `test_every_limit_built_so_far_has_a_test_named_after_it`, checks that every test this table names exists.
 
 | # | Limit | Built by | Test |
 |---|---|---|---|
@@ -175,13 +175,13 @@ The twenty limits that live in code (section B.2 of the platform plan). Each get
 | L10 | The state file comes back through a merge made by one module | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_10_the_state_file_comes_back_through_the_merge_and_only_code_writes_what_is_the_persons`; the merge's rules in `runtime/tests/test_state_merge.py` |
 | L11 | A working document never enters a commit | stage 4 | `runtime/tests/test_changeset.py`, `test_limit_11_a_working_document_never_enters_a_commit` |
 | L12 | What comes back never overwrites what changed at the origin | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_12_what_comes_back_never_overwrites_what_changed_at_the_origin`; and `runtime/tests/test_task_ops.py`, `test_a_file_that_changed_in_the_project_during_the_run_is_never_overwritten` (the state file is merged line by line instead: L10) |
-| L13 | A record only grows | stage 4 (approvals) | `providers/store/tests/test_sqlite_approvals.py`, `test_limit_13_an_approval_is_never_deleted_and_its_status_only_moves_forward` |
+| L13 | A record only grows | stage 4 (approvals); tasks, runs and pending decisions: migration 7 of the store | `providers/store/tests/test_sqlite_approvals.py`, `test_limit_13_an_approval_is_never_deleted_and_its_status_only_moves_forward`; and `providers/store/tests/test_sqlite_tasks.py`, `test_a_task_a_run_and_a_pending_decision_are_never_deleted` |
 | L14 | Everything passes the credential scan before it leaves | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_14_everything_passes_the_credential_scan_before_it_leaves`; the number of values the lab replaced is kept on the run's row (`task_runs.redactions`) |
 | L15 | An external effect is executed by code, with the exact content approved or inside an approved policy | stage 4 (the exact content; a policy: stage 6) | `runtime/tests/test_effects.py`, `test_limit_15_the_effect_is_executed_by_code_with_exactly_the_approved_content` |
 | L16 | A skill with a confirmation gate runs up to the gate; what it shows there is what the person approves | stage 4 | `runtime/tests/test_effects.py`, `test_limit_16_a_skill_with_a_gate_runs_up_to_the_gate_and_what_it_showed_is_what_the_person_approves`; the recovery of what it showed in `runtime/tests/test_gate_payload.py` |
 | L17 | The approval lives in the approvals table; the rows in the state file are generated copies | stage 4 | `runtime/tests/test_effects.py`, `test_limit_17_the_approval_lives_in_the_table_and_the_state_file_row_is_a_generated_copy` |
-| L18 | A document bound to an approval by hash is a machine file | stage 6 | stage 6 |
-| L19 | The planning agent creates no task: it returns the route, and code builds the plan | stage 3 | stage 3 |
+| L18 | A document bound to an approval by hash is a machine file | stage 6 | `runtime/tests/test_run_limits.py`, `test_limit_18_a_document_bound_to_an_approval_by_hash_is_a_machine_file` |
+| L19 | The planning agent creates no task: it returns the route, and code builds the plan | stage 3 | `runtime/tests/test_run_limits.py`, `test_limit_19_the_planning_agent_creates_no_task_it_returns_the_route_and_code_builds_the_plan` |
 | L20 | The measurement files are not changed | stage 4 (for the change set: the project lists them in its protected_paths) | `runtime/tests/test_protected_paths.py`, `test_a_change_to_a_protected_path_blocks_the_change_set_and_names_the_path` and `test_a_created_or_removed_protected_path_blocks_it_too` |
 
 ## The dispatcher's two jobs

@@ -9,7 +9,7 @@ skeleton, and holds the stages built since: the limits that live in code, each w
 
 It is a second runtime only in its code. The first one, `scripts/runtime.py`, runs one agent on social
 comments and stays as it is until that agent moves to the container (stage 7). Both keep their state in the
-same store (`providers/store/sqlite.py`): the tables of this one are migrations 2 to 6 of that file.
+same store (`providers/store/sqlite.py`): the tables of this one are migrations 2 to 7 of that file.
 
 ## Modules
 

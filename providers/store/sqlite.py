@@ -7,8 +7,8 @@
 
 Tables: cursors (where a trigger source left off), events (triggers to handle, deduplicated and
 claimed atomically), runs (one row per agent run), inbox (what waits for the user) and actions
-(outward actions the runtime executed, for daily limits and audit). The runtime calls this script
-through its CLI, so another implementation of the `store:runtime` class can replace it (STORE_PROVIDER).
+(outward actions the runtime executed, for daily limits and audit). The first runtime (scripts/runtime.py) calls
+this script through its CLI, so another implementation of the `store:runtime` class can replace it (STORE_PROVIDER).
 
 Since schema version 2 the file also holds the tables of the task runtime (runtime/): tasks (a request and the
 tasks of its plan), task_runs (one row per run of a skill on a task) and pending_decisions (what a task waits
@@ -19,7 +19,8 @@ records of documents mirrored to a platform (document_records) and the comments 
 (platform_comments), under the same rule. Schema version 5 adds the approvals table (approvals): what the person
 approved, of the three scopes of contracts/environment.md, a record that only grows. Schema version 6 adds the
 messages of the conversation with the planning agent (conversation_messages), and the functions the dispatcher needs
-(a named task claimed, tasks added to a plan, the runs of a period, the actions counted in process).
+(a named task claimed, tasks added to a plan, the runs of a period, the actions counted in process). Schema version 7
+adds triggers that refuse to delete a task, a task run or a pending decision (limit L13, as for the approvals).
 
 Concurrency: the database runs in WAL mode (readers never block the writer) with a 10-second busy
 timeout, and every write is one BEGIN IMMEDIATE transaction, so several agents and overlapping
@@ -46,7 +47,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 BUSY_TIMEOUT_SECONDS = 10
 PATH_ENV = "STORE_SQLITE_PATH"
 
@@ -288,6 +289,16 @@ MIGRATIONS = {
             run_id INTEGER REFERENCES task_runs (id),
             created_at TEXT NOT NULL)""",
         "CREATE INDEX conversation_messages_by_conversation ON conversation_messages (conversation, id)",
+    ]),
+    # Limit L13 for the task runtime's own records: a task, a run and a pending decision are never deleted (a state,
+    # a status or a resolution moves; the row stays), as migration 5 does for the approvals.
+    7: ("tasks, task runs and pending decisions are never deleted", [
+        """CREATE TRIGGER tasks_never_deleted BEFORE DELETE ON tasks
+            BEGIN SELECT RAISE(ABORT, 'a task is never deleted'); END""",
+        """CREATE TRIGGER task_runs_never_deleted BEFORE DELETE ON task_runs
+            BEGIN SELECT RAISE(ABORT, 'a task run is never deleted'); END""",
+        """CREATE TRIGGER pending_decisions_never_deleted BEFORE DELETE ON pending_decisions
+            BEGIN SELECT RAISE(ABORT, 'a pending decision is never deleted'); END""",
     ]),
 }
 
