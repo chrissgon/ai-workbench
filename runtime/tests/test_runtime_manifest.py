@@ -142,7 +142,7 @@ def test_the_reply_phrases_of_a_manifest_are_checked_for_their_shape(change, nam
     assert len(found) == 1 and named in found[0], found
 
 
-PARTIAL = "design-brief"   # a skill of no pack in use, with a manifest of its reply phrases alone
+PARTIAL = "core-agents-md"   # a skill of no pack in use, with a manifest of its reply phrases alone (design-brief had one until WP-9: its manifest is whole now)
 
 
 def test_a_skill_outside_the_packs_in_use_may_have_a_partial_manifest_that_the_classifier_reads():
@@ -154,10 +154,10 @@ def test_a_skill_outside_the_packs_in_use_may_have_a_partial_manifest_that_the_c
     assert manifest.problems(data, declared, skill_dir, in_use=False) == []
     assert any("missing key `documents`" in p for p in manifest.problems(data, declared, skill_dir, in_use=True))
     assert manifest.problems({"skill": "other"}, declared, skill_dir, in_use=False) == [
-        "`skill` is 'other', and the folder is 'design-brief'"]
+        f"`skill` is 'other', and the folder is {PARTIAL!r}"]
     assert manifest.problems({"documents": []}, declared, skill_dir, in_use=False) == ["missing key `skill`"]
     facts = manifest.ending_facts(str(REPO), PARTIAL)
-    assert facts["reply_phrases"] == {"missing_input": [], "question_intros": ["Questions ("], "gate_questions": []}
+    assert facts["reply_phrases"] == {"missing_input": [], "question_intros": ["Decisions needed"], "gate_questions": []}
     assert facts["asking_openings"] == manifest.asking_openings_of((REPO / "skills" / PARTIAL / "SKILL.md").read_text("utf-8"))
 
 
