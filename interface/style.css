@@ -1,0 +1,109 @@
+/* The page's own rules. Colours, radius, spacing and type size come from the styling library's tokens (--pui-*), which
+   follow prefers-color-scheme by themselves; nothing here sets a colour of its own. The service sends the policy
+   "default-src 'self'", so there is no inline style anywhere: every rule is in this file. */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background-color: var(--pui-bg);
+  color: var(--pui-text);
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+h1, h2, h3, p { margin: 0; }
+
+.app-header, .app-main {
+  width: 100%;
+  max-width: 60rem;
+  margin-inline: auto;
+  padding-inline: 16px;
+}
+
+.app-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding-block: 16px 8px;
+}
+
+.app-title { font-size: 1.25rem; font-weight: 600; }
+
+.app-main {
+  display: grid;
+  gap: 16px;
+  padding-block: 8px 32px;
+}
+
+[hidden] { display: none !important; }
+
+.muted { color: var(--pui-text-muted); }
+
+.stack { display: grid; gap: 12px; }
+
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+/* Text that came from the service is shown as text; this keeps a long word or path from widening the page. */
+.wrap { overflow-wrap: anywhere; }
+
+.pui-input { width: 100%; }
+
+.notice {
+  padding: 8px 12px;
+  border: var(--pui-border-width) solid var(--pui-border);
+  border-radius: var(--pui-radius);
+  background-color: var(--pui-bg-muted);
+  overflow-wrap: anywhere;
+}
+
+.notice.error { border-color: var(--pui-error); }
+
+code, .mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.875em;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.project-list {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 18rem), 1fr));
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-card { height: 100%; }
+
+.project-card a.project-link {
+  color: inherit;
+  text-decoration: none;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.project-card a.project-link:hover, .project-card a.project-link:focus-visible { text-decoration: underline; }
+
+.facts { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+
+.table-wrap { overflow-x: auto; max-width: 100%; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

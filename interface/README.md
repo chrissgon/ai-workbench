@@ -5,9 +5,65 @@ their own machine. It holds no rule of the work. Which words a pending decision 
 hash must equal are decided by the operations layer (`runtime/ops.py`) and the store; the page shows what an operation
 returned and sends what the person typed or clicked.
 
-Today the folder holds only this file. The pages come with the next packages of stage 9 (the scene, then the views); they
-are plain files in this folder, ES modules and a stylesheet, with the libraries they use vendored under `vendor/`, each
-with its version, its licence text and its sha256 written beside it. There is no build step and no package to install.
+## What is here
+
+| Path | What |
+|---|---|
+| `index.html`, `style.css`, `favicon.svg` | The one page, its rules and its icon. No inline script, no inline style: every rule is in `style.css`, every script is a module. |
+| `js/main.js` | Draws the page by the hash: the token prompt, the project list (`#/`), a project's panel (`#/p/<id>`). |
+| `js/api.js` | The client of the service: one function per route of `ROUTES` in `runtime/service.py`, named after the operation. |
+| `js/token.js` | The token for this session. |
+| `js/dom.js` | Building elements: strings become text, a style or an event attribute is refused. |
+| `js/views/` | One module per view (`token-prompt.js`, `projects.js`, `project.js`); the next packages add theirs here. |
+| `js/three.js` | The one place the 3D library is imported from (a relative re-export); the scene packages use it. |
+| `vendor/three/`, `vendor/<library>/` | The two third-party libraries, copied unchanged, each folder with a README that records the package, the exact version, the licence and the sha256 of every file. |
+
+## How to open it
+
+```
+python3 runtime/service.py --project <dir>
+```
+
+It prints one JSON line with the page's `url` and the path of the `token_file`. Open the url in a browser, open the token
+file in an editor or with `cat`, and paste its one line into the page. The page asks for it once per browser session: it
+is kept in memory and in the tab's `sessionStorage` (which the browser drops when the tab closes), and the button "Forget
+the token" clears both. The service writes a new token at every start, so after a restart the page asks again. Then the
+project list appears: for each project its name, whether its configuration is accepted (when it is not, the service's
+message says the command to type in the terminal), its open decisions and the task that runs; choosing one keeps its id
+in the hash (`#/p/<id>`) and shows its status counts. The scene comes with the next packages.
+
+## The rules of these files
+
+- **Nothing from another host.** No CDN, no font host, no analytics, no remote import. Every `src`, `href`, `import`,
+  `url(` and `fetch` is a relative path inside this folder or a `/api/` path of the service.
+- **No build step, no package.** There is no manifest and no tool to run: a file here is the file the browser gets.
+- **The token lives in memory and in `sessionStorage`, nowhere else.** Never in a URL, a cookie or `localStorage`; the
+  client sends it only as the `Authorization: Bearer` header and logs nothing.
+- **Text is text.** What came from the service goes into the page with `textContent` or a text node; the page never builds
+  markup from a string.
+- **No import map.** The service's policy (`default-src 'self'`) forbids an inline script, and an import map is one, so a
+  module imports another by a relative path (the 3D library by `js/three.js`).
+- **The styling library's images are blocked by the policy.** Perfect UI draws the mark of a checkbox, a radio and a
+  select as an inline `data:` image, which `default-src 'self'` does not allow. A panel that needs one of these controls
+  draws its mark in `style.css` or uses another element, until the service's policy is widened in a package of its own.
+
+`runtime/tests/test_interface_files.py` keeps these rules: the routes the client calls are routes of the service, nothing
+is loaded from another host, no inline script or forbidden call is in a page file, and every vendored file has the hash its
+README records.
+
+## The vendored libraries, and how to update one
+
+Three.js (the 3D renderer) and Perfect UI (the panels' styling) are copied from their npm packages without an edit. To
+update one: in a folder outside the repository run `npm pack <package>@<version>`, unpack the tarball, replace the
+folder under `vendor/` with the package's files exactly as its README lists them, rewrite the version and the hashes in
+that README (`shasum -a 256 <file>`), and run `pytest -q runtime/tests/test_interface_files.py`. A vendored file is never
+edited by hand: a change to one fails that test.
+
+## What comes with the later packages
+
+The scene (the city of projects, the building of agents, the floor with its desk and inbox), the lobby's conversation and the
+control room (skills, costs, connections) are WP-9.2b and WP-9.3b to WP-9.5. They add modules under `js/` and `js/views/`
+and read more routes through `js/api.js`; they edit no vendored file.
 
 ## How the service serves it
 

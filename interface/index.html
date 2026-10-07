@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<title>Workbench</title>
+<link rel="icon" type="image/svg+xml" href="./favicon.svg">
+<link rel="stylesheet" href="./vendor/perfectui/perfectui.css">
+<link rel="stylesheet" href="./style.css">
+<script type="module" src="./vendor/perfectui/js/index.js"></script>
+<script type="module" src="./js/main.js"></script>
+</head>
+<body>
+<header class="app-header">
+  <h1 class="app-title">Workbench</h1>
+  <button id="forget-token" class="pui-btn pui-outline pui-surface" type="button" hidden>Forget the token</button>
+</header>
+<main id="app" class="app-main" aria-live="polite">
+  <p class="muted">Loading...</p>
+</main>
+<noscript>
+  <p class="app-main">This page needs JavaScript: it is a set of ES modules with no build step.</p>
+</noscript>
+</body>
+</html>
