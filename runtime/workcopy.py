@@ -54,10 +54,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import lab  # noqa: E402  (the same folder)
 import path_rule  # noqa: E402
+import roles  # noqa: E402
 import skill_meta  # noqa: E402
 import state_merge  # noqa: E402
 
-CODE_AREAS = ("engineering", "delivery")
+CODE_AREAS = tuple(roles.load()["code_areas"])  # runtime/roles.json
 # Why a versioned file a document task changed stays in its run folder (ops.code_task: only a code task makes a
 # change set).
 TRACKED_KEPT = "a versioned file: only a code task brings one back, as a change set"

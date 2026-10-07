@@ -41,11 +41,14 @@ ON_SYSTEM_PYTHON = [
     "runtime/manifest.py", "runtime/workcopy.py", "runtime/proof.py", "runtime/router.py", "runtime/plan.py",
     "runtime/board.py", "runtime/documents.py", "runtime/drop.py", "runtime/deps.py", "runtime/changeset.py", "runtime/effects.py",
     "runtime/progress.py", "runtime/autonomy.py", "runtime/dispatcher.py", "runtime/chat.py",
+    # The roles of the runtime as data, and the isolated runner of skill code (WP-R.5).
+    "runtime/roles.py", "runtime/isolated.py",
     # The handlers the dispatcher's worker ticks (stage 6): the weekly routine of the published posts (WP-6.9).
     "runtime/handlers/published_posts.py",
     # The resolver of a pack: runtime/plan.py starts it with its own interpreter (stage 3; listed in stage 6, WP-6.7).
     "scripts/select_skills.py",
-    # The product backlog's parser: the task runtime loads it by path to propose sub-tasks (stage 6, WP-6.5).
+    # The product backlog's parser: the task runtime runs it as an isolated subprocess to propose sub-tasks (stage 6,
+    # WP-6.5; runtime/isolated.py).
     "skills/eng-implement/scripts/task.py",
     # The task board's local implementation: the task runtime calls it with its own interpreter (stage 3).
     "providers/issue-tracker/local.py",
