@@ -57,6 +57,15 @@ def test_no_module_of_the_runtime_and_no_flow_file_names_a_model_id():
     assert found == [], "the model comes from evals/eval-gate.json, never from a literal in the runtime"
 
 
+def test_no_handler_executes_an_effect_itself():
+    """Limit L15 lives in one operation (ops.execute_under_policy): a handler prepares an effect and hands it over,
+    it never confirms a provider verb and never records an action."""
+    for handler in sorted((RUNTIME / "handlers").glob("*.py")):
+        text = handler.read_text(encoding="utf-8")
+        for word in ("--confirmed", "action-add", "action_add"):
+            assert word not in text, f"{handler.name} holds {word!r}: hand the effect to execute-under-policy"
+
+
 def test_the_terminal_shell_imports_only_the_operations_layer():
     source = (RUNTIME / "cli.py").read_text(encoding="utf-8")
     imported = re.findall(r"^\s*(?:import|from)\s+([A-Za-z_][\w.]*)", source, re.M)
