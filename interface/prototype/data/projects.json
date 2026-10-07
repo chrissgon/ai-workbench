@@ -1,0 +1,272 @@
+{
+ "now": "2026-10-07T17:00:00Z",
+ "daily_cap_usd": 12.0,
+ "projects": [
+  {
+   "id": "northwind-shop",
+   "name": "northwind-shop",
+   "title": "Northwind Shop",
+   "repo": "git.northwind.example/demo/northwind-shop",
+   "owner": "Demo Person",
+   "request_id": 14,
+   "running_task_id": 52,
+   "agents": [
+    {
+     "id": "planning",
+     "name": "Planning agent",
+     "mode": "supervised",
+     "enabled": true,
+     "max_runs_per_day": 10,
+     "max_usd_per_day": 3.0,
+     "used_today": {
+      "runs": 3,
+      "usd": 0.62
+     },
+     "state": "waiting",
+     "task": {
+      "id": 49,
+      "title": "Plan the spring campaign",
+      "skill": "core-orchestrator",
+      "state": "waiting"
+     },
+     "skills": [
+      "core-orchestrator",
+      "core-clarify",
+      "core-research"
+     ]
+    },
+    {
+     "id": "business",
+     "name": "Business agent",
+     "mode": "milestones",
+     "enabled": true,
+     "max_runs_per_day": 6,
+     "max_usd_per_day": 2.0,
+     "used_today": {
+      "runs": 1,
+      "usd": 0.31
+     },
+     "state": "idle",
+     "task": null,
+     "skills": [
+      "biz-market-analysis",
+      "biz-icp-positioning"
+     ]
+    },
+    {
+     "id": "brand",
+     "name": "Brand agent",
+     "mode": "milestones",
+     "enabled": true,
+     "max_runs_per_day": 6,
+     "max_usd_per_day": 2.0,
+     "used_today": {
+      "runs": 2,
+      "usd": 0.44
+     },
+     "state": "waiting",
+     "task": {
+      "id": 50,
+      "title": "Check the voice of the product pages",
+      "skill": "brand-voice",
+      "state": "waiting"
+     },
+     "skills": [
+      "brand-voice",
+      "brand-guidelines",
+      "brand-identity"
+     ]
+    },
+    {
+     "id": "design",
+     "name": "Design agent",
+     "mode": "supervised",
+     "enabled": true,
+     "max_runs_per_day": 6,
+     "max_usd_per_day": 2.0,
+     "used_today": {
+      "runs": 0,
+      "usd": 0.0
+     },
+     "state": "idle",
+     "task": null,
+     "skills": [
+      "design-brief",
+      "design-system",
+      "design-execute"
+     ]
+    },
+    {
+     "id": "engineering",
+     "name": "Engineering agent",
+     "mode": "autonomous",
+     "enabled": true,
+     "max_runs_per_day": 12,
+     "max_usd_per_day": 4.0,
+     "used_today": {
+      "runs": 5,
+      "usd": 1.87
+     },
+     "state": "working",
+     "task": {
+      "id": 52,
+      "title": "Add the order-history page",
+      "skill": "eng-implement",
+      "state": "running"
+     },
+     "skills": [
+      "eng-implement",
+      "eng-unit-tests",
+      "eng-code-review",
+      "ops-pull-request"
+     ]
+    },
+    {
+     "id": "marketing",
+     "name": "Marketing agent",
+     "mode": "autonomous-with-policy",
+     "enabled": true,
+     "max_runs_per_day": 8,
+     "max_usd_per_day": 2.5,
+     "used_today": {
+      "runs": 2,
+      "usd": 0.58
+     },
+     "state": "waiting",
+     "task": {
+      "id": 53,
+      "title": "Publish the launch post",
+      "skill": "mkt-publish",
+      "state": "waiting"
+     },
+     "skills": [
+      "mkt-social-copy",
+      "mkt-publish",
+      "mkt-engage"
+     ]
+    }
+   ]
+  },
+  {
+   "id": "tinykv-docs",
+   "name": "tinykv-docs",
+   "title": "TinyKV Docs",
+   "repo": "git.tinykv.example/demo/tinykv-docs",
+   "owner": "Demo Person",
+   "request_id": 7,
+   "running_task_id": null,
+   "agents": [
+    {
+     "id": "planning",
+     "name": "Planning agent",
+     "mode": "supervised",
+     "enabled": true,
+     "max_runs_per_day": 10,
+     "max_usd_per_day": 3.0,
+     "used_today": {
+      "runs": 1,
+      "usd": 0.12
+     },
+     "state": "idle",
+     "task": null,
+     "skills": [
+      "core-orchestrator",
+      "core-clarify"
+     ]
+    },
+    {
+     "id": "business",
+     "name": "Business agent",
+     "mode": "stopped",
+     "enabled": false,
+     "max_runs_per_day": 4,
+     "max_usd_per_day": 1.0,
+     "used_today": {
+      "runs": 0,
+      "usd": 0.0
+     },
+     "state": "off",
+     "task": null,
+     "skills": [
+      "biz-market-analysis"
+     ]
+    },
+    {
+     "id": "brand",
+     "name": "Brand agent",
+     "mode": "stopped",
+     "enabled": false,
+     "max_runs_per_day": 4,
+     "max_usd_per_day": 1.0,
+     "used_today": {
+      "runs": 0,
+      "usd": 0.0
+     },
+     "state": "off",
+     "task": null,
+     "skills": [
+      "brand-voice"
+     ]
+    },
+    {
+     "id": "design",
+     "name": "Design agent",
+     "mode": "milestones",
+     "enabled": true,
+     "max_runs_per_day": 4,
+     "max_usd_per_day": 1.5,
+     "used_today": {
+      "runs": 1,
+      "usd": 0.22
+     },
+     "state": "idle",
+     "task": null,
+     "skills": [
+      "design-brief"
+     ]
+    },
+    {
+     "id": "engineering",
+     "name": "Engineering agent",
+     "mode": "milestones",
+     "enabled": true,
+     "max_runs_per_day": 8,
+     "max_usd_per_day": 3.0,
+     "used_today": {
+      "runs": 2,
+      "usd": 0.74
+     },
+     "state": "waiting",
+     "task": {
+      "id": 31,
+      "title": "Document the compaction settings",
+      "skill": "eng-docs",
+      "state": "waiting"
+     },
+     "skills": [
+      "eng-docs",
+      "eng-code-review",
+      "eng-codebase-map"
+     ]
+    },
+    {
+     "id": "marketing",
+     "name": "Marketing agent",
+     "mode": "stopped",
+     "enabled": false,
+     "max_runs_per_day": 4,
+     "max_usd_per_day": 1.0,
+     "used_today": {
+      "runs": 0,
+      "usd": 0.0
+     },
+     "state": "off",
+     "task": null,
+     "skills": [
+      "mkt-content-plan"
+     ]
+    }
+   ]
+  }
+ ]
+}

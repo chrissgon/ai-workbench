@@ -1,0 +1,77 @@
+{
+ "northwind-shop": {
+  "request_id": 14,
+  "title": "Spring campaign",
+  "steps": [
+   {
+    "id": 48,
+    "agent": "marketing",
+    "skill": "mkt-content-plan",
+    "title": "Content plan",
+    "state": "done"
+   },
+   {
+    "id": 50,
+    "agent": "brand",
+    "skill": "brand-voice",
+    "title": "Voice check",
+    "state": "waiting"
+   },
+   {
+    "id": 51,
+    "agent": "marketing",
+    "skill": "mkt-social-copy",
+    "title": "Post copy",
+    "state": "done"
+   },
+   {
+    "id": 52,
+    "agent": "engineering",
+    "skill": "eng-implement",
+    "title": "Order-history page",
+    "state": "running"
+   },
+   {
+    "id": 54,
+    "agent": "engineering",
+    "skill": "eng-code-review",
+    "title": "Review",
+    "state": "ready"
+   },
+   {
+    "id": 53,
+    "agent": "marketing",
+    "skill": "mkt-publish",
+    "title": "Publish post",
+    "state": "waiting"
+   }
+  ]
+ },
+ "tinykv-docs": {
+  "request_id": 7,
+  "title": "Document compaction",
+  "steps": [
+   {
+    "id": 29,
+    "agent": "engineering",
+    "skill": "eng-codebase-map",
+    "title": "Map the code",
+    "state": "done"
+   },
+   {
+    "id": 31,
+    "agent": "engineering",
+    "skill": "eng-docs",
+    "title": "Write the page",
+    "state": "waiting"
+   },
+   {
+    "id": 32,
+    "agent": "engineering",
+    "skill": "eng-code-review",
+    "title": "Review the page",
+    "state": "ready"
+   }
+  ]
+ }
+}

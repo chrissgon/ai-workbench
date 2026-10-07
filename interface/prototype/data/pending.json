@@ -1,0 +1,167 @@
+{
+ "pending": [
+  {
+   "id": 21,
+   "project": "northwind-shop",
+   "agent": "marketing",
+   "kind": "effect",
+   "task_id": 53,
+   "created_at": "2026-10-07T14:10:00Z",
+   "title": "Publish the launch post",
+   "body": "The post below waits for your approval. Approve it with its hash, in the terminal.",
+   "actions": [
+    "approve",
+    "reject"
+   ],
+   "operation": {
+    "approve": "approve --id 21 --sha256 <hash>",
+    "reject": "reject --id 21"
+   },
+   "effect": {
+    "kind": "publish",
+    "content": "Publish to the project's social account, scheduled for 2026-10-08 09:00.\n\nText:\nThe spring collection is here. Order history, saved baskets and faster checkout are live today.\nRead what changed: https://shop.northwind.example/spring\n\nMedia: spring-hero.png (1200x630)\nAccount: @northwind_demo\n",
+    "sha256": "2991f591ec5b2d3eea00b097f72600b9cdc267659ef40a1b76ccb46287b06b31"
+   }
+  },
+  {
+   "id": 22,
+   "project": "northwind-shop",
+   "agent": "planning",
+   "kind": "plan",
+   "task_id": 49,
+   "created_at": "2026-10-07T13:02:00Z",
+   "title": "Plan: spring campaign, 5 tasks",
+   "body": "Five tasks, in order. Nothing runs until you approve.",
+   "actions": [
+    "approve",
+    "reject"
+   ],
+   "operation": {
+    "approve": "approve --id 22",
+    "reject": "reject --id 22"
+   },
+   "plan": {
+    "hash": "837838a4bc92a1eb4afa9c932d4e3e83f995c3a51199be83911f69498a7ddeb3",
+    "tasks": [
+     {
+      "key": "t1",
+      "skill": "brand-voice",
+      "title": "Check the voice of the product pages"
+     },
+     {
+      "key": "t2",
+      "skill": "mkt-social-copy",
+      "title": "Write the launch post"
+     },
+     {
+      "key": "t3",
+      "skill": "eng-implement",
+      "title": "Add the order-history page"
+     },
+     {
+      "key": "t4",
+      "skill": "eng-code-review",
+      "title": "Review the order-history change"
+     },
+     {
+      "key": "t5",
+      "skill": "mkt-publish",
+      "title": "Publish the launch post"
+     }
+    ]
+   }
+  },
+  {
+   "id": 23,
+   "project": "northwind-shop",
+   "agent": "brand",
+   "kind": "question",
+   "task_id": 50,
+   "created_at": "2026-10-07T15:31:00Z",
+   "title": "Which tone for the product pages?",
+   "body": "The brand guidelines allow two tones for product pages. Which one should the voice check use?\n\n  A. Warm and plain (recommended: it matches the three pages already written)\n  B. Playful",
+   "actions": [
+    "answer"
+   ],
+   "operation": {
+    "answer": "answer --id 23 --text <your answer>"
+   }
+  },
+  {
+   "id": 24,
+   "project": "northwind-shop",
+   "agent": "engineering",
+   "kind": "review",
+   "task_id": 51,
+   "created_at": "2026-10-07T16:20:00Z",
+   "title": "Review: cart totals rounding fix",
+   "body": "The change touches 3 files (cart/totals.py, tests/test_totals.py, docs/cart.md). All 14 tests pass. One finding: the rounding mode for refunds is now half-even; confirm that is wanted.",
+   "actions": [
+    "answer",
+    "approve",
+    "reject"
+   ],
+   "operation": {
+    "answer": "answer --id 24 --text <comments>",
+    "approve": "approve --id 24",
+    "reject": "reject --id 24"
+   }
+  },
+  {
+   "id": 25,
+   "project": "northwind-shop",
+   "agent": "marketing",
+   "kind": "acceptance",
+   "task_id": 48,
+   "created_at": "2026-10-06T18:45:00Z",
+   "title": "Accept: content plan for October",
+   "body": "The content plan for October is delivered as docs/marketing/content-plan.md (12 posts, 3 themes). Accept it, or send it back with a note.",
+   "actions": [
+    "approve",
+    "reject",
+    "release"
+   ],
+   "operation": {
+    "approve": "approve --id 25",
+    "reject": "reject --id 25",
+    "release": "release --id 25"
+   }
+  },
+  {
+   "id": 11,
+   "project": "tinykv-docs",
+   "agent": "engineering",
+   "kind": "question",
+   "task_id": 31,
+   "created_at": "2026-10-07T11:40:00Z",
+   "title": "Which settings are public?",
+   "body": "The code has 9 compaction settings; 4 are marked internal. Document all 9, or only the 5 public ones?\n\n  A. The 5 public ones (recommended)\n  B. All 9",
+   "actions": [
+    "answer"
+   ],
+   "operation": {
+    "answer": "answer --id 11 --text <your answer>"
+   }
+  },
+  {
+   "id": 12,
+   "project": "tinykv-docs",
+   "agent": "engineering",
+   "kind": "review",
+   "task_id": 30,
+   "created_at": "2026-10-07T12:05:00Z",
+   "title": "Review: README quick start",
+   "body": "The quick start now runs in 4 commands. One command was verified on a scratch copy; the other three were not run.",
+   "actions": [
+    "answer",
+    "approve",
+    "reject"
+   ],
+   "operation": {
+    "answer": "answer --id 12 --text <comments>",
+    "approve": "approve --id 12",
+    "reject": "reject --id 12"
+   }
+  }
+ ]
+}

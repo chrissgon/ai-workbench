@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Workbench - 3D prototype</title>
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "../vendor/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="scene"></canvas>
+<div id="labels"></div>
+<div id="tip" hidden></div>
+
+<header id="top">
+  <nav id="crumbs" class="card" aria-label="Breadcrumbs"></nav>
+  <section id="kpis"></section>
+  <button id="btn-control" class="card btn-top" type="button">Control room</button>
+</header>
+
+<aside id="panel" class="card" hidden></aside>
+<section id="list" class="card" hidden></section>
+<footer id="chain" class="card"></footer>
+<div id="toast" role="status" hidden></div>
+<div id="fallback" hidden class="card">This page needs WebGL. Open it in a browser with hardware acceleration on.</div>
+
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

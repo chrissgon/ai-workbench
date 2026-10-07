@@ -1,0 +1,90 @@
+{
+ "northwind-shop": [
+  {
+   "path": "docs/business/icp.md",
+   "owner": "biz-icp-positioning",
+   "agent": "business",
+   "modified": "2026-09-29T10:12:00Z"
+  },
+  {
+   "path": "docs/business/market-analysis.md",
+   "owner": "biz-market-analysis",
+   "agent": "business",
+   "modified": "2026-09-27T16:40:00Z"
+  },
+  {
+   "path": "docs/brand/voice.md",
+   "owner": "brand-voice",
+   "agent": "brand",
+   "modified": "2026-10-03T09:05:00Z"
+  },
+  {
+   "path": "docs/brand/guidelines.md",
+   "owner": "brand-guidelines",
+   "agent": "brand",
+   "modified": "2026-10-01T14:20:00Z"
+  },
+  {
+   "path": "docs/design/brief.md",
+   "owner": "design-brief",
+   "agent": "design",
+   "modified": "2026-10-02T11:00:00Z"
+  },
+  {
+   "path": "docs/engineering/architecture.md",
+   "owner": "eng-architecture",
+   "agent": "engineering",
+   "modified": "2026-10-05T08:30:00Z"
+  },
+  {
+   "path": "docs/engineering/order-history/spec.md",
+   "owner": "product-feature-spec",
+   "agent": "engineering",
+   "modified": "2026-10-06T17:10:00Z"
+  },
+  {
+   "path": "docs/marketing/content-plan.md",
+   "owner": "mkt-content-plan",
+   "agent": "marketing",
+   "modified": "2026-10-06T18:40:00Z"
+  },
+  {
+   "path": "docs/marketing/messaging.md",
+   "owner": "mkt-messaging",
+   "agent": "marketing",
+   "modified": "2026-10-04T13:00:00Z"
+  },
+  {
+   "path": "docs/workbench/state.md",
+   "owner": "core-project-init",
+   "agent": "planning",
+   "modified": "2026-10-07T16:21:00Z"
+  }
+ ],
+ "tinykv-docs": [
+  {
+   "path": "docs/design/brief.md",
+   "owner": "design-brief",
+   "agent": "design",
+   "modified": "2026-10-04T10:00:00Z"
+  },
+  {
+   "path": "docs/engineering/codebase-map.md",
+   "owner": "eng-codebase-map",
+   "agent": "engineering",
+   "modified": "2026-10-05T15:45:00Z"
+  },
+  {
+   "path": "docs/engineering/compaction.md",
+   "owner": "eng-docs",
+   "agent": "engineering",
+   "modified": "2026-10-07T11:30:00Z"
+  },
+  {
+   "path": "docs/workbench/state.md",
+   "owner": "core-project-init",
+   "agent": "planning",
+   "modified": "2026-10-07T12:06:00Z"
+  }
+ ]
+}

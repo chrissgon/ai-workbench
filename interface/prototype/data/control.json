@@ -1,0 +1,441 @@
+{
+ "models": [
+  {
+   "id": "reference",
+   "label": "Reference model"
+  },
+  {
+   "id": "floor",
+   "label": "Floor model"
+  }
+ ],
+ "skills": [
+  {
+   "skill": "biz-icp-positioning",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "reliable",
+    "score": 0.81,
+    "cause": ""
+   }
+  },
+  {
+   "skill": "biz-market-analysis",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  },
+  {
+   "skill": "brand-voice",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  },
+  {
+   "skill": "brand-guidelines",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "reliable",
+    "score": 0.81,
+    "cause": ""
+   }
+  },
+  {
+   "skill": "brand-identity",
+   "reference": {
+    "band": "watch",
+    "score": 0.66,
+    "cause": "pessimistic score under 0.70"
+   },
+   "floor": {
+    "band": "needs a test",
+    "score": 0.0,
+    "cause": "no full test of the current major version passes the gate"
+   }
+  },
+  {
+   "skill": "core-orchestrator",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "reliable",
+    "score": 0.81,
+    "cause": ""
+   }
+  },
+  {
+   "skill": "core-clarify",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "reliable",
+    "score": 0.81,
+    "cause": ""
+   }
+  },
+  {
+   "skill": "core-research",
+   "reference": {
+    "band": "watch",
+    "score": 0.66,
+    "cause": "pessimistic score under 0.70"
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  },
+  {
+   "skill": "design-brief",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  },
+  {
+   "skill": "design-system",
+   "reference": {
+    "band": "watch",
+    "score": 0.66,
+    "cause": "pessimistic score under 0.70"
+   },
+   "floor": {
+    "band": "needs a test",
+    "score": 0.0,
+    "cause": "no full test of the current major version passes the gate"
+   }
+  },
+  {
+   "skill": "design-execute",
+   "reference": {
+    "band": "needs a test",
+    "score": 0.0,
+    "cause": "no full test of the current major version passes the gate"
+   },
+   "floor": {
+    "band": "needs a test",
+    "score": 0.0,
+    "cause": "no full test of the current major version passes the gate"
+   }
+  },
+  {
+   "skill": "eng-implement",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  },
+  {
+   "skill": "eng-unit-tests",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "reliable",
+    "score": 0.81,
+    "cause": ""
+   }
+  },
+  {
+   "skill": "eng-code-review",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "reliable",
+    "score": 0.81,
+    "cause": ""
+   }
+  },
+  {
+   "skill": "eng-docs",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  },
+  {
+   "skill": "eng-codebase-map",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "reliable",
+    "score": 0.81,
+    "cause": ""
+   }
+  },
+  {
+   "skill": "ops-pull-request",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  },
+  {
+   "skill": "mkt-social-copy",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  },
+  {
+   "skill": "mkt-publish",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "needs a test",
+    "score": 0.0,
+    "cause": "no full test of the current major version passes the gate"
+   }
+  },
+  {
+   "skill": "mkt-engage",
+   "reference": {
+    "band": "watch",
+    "score": 0.66,
+    "cause": "pessimistic score under 0.70"
+   },
+   "floor": {
+    "band": "needs a test",
+    "score": 0.0,
+    "cause": "no full test of the current major version passes the gate"
+   }
+  },
+  {
+   "skill": "mkt-content-plan",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "reliable",
+    "score": 0.81,
+    "cause": ""
+   }
+  },
+  {
+   "skill": "mkt-messaging",
+   "reference": {
+    "band": "reliable",
+    "score": 0.86,
+    "cause": ""
+   },
+   "floor": {
+    "band": "watch",
+    "score": 0.58,
+    "cause": "pessimistic score under 0.70"
+   }
+  }
+ ],
+ "costs": {
+  "days": [
+   "2026-10-01",
+   "2026-10-02",
+   "2026-10-03",
+   "2026-10-04",
+   "2026-10-05",
+   "2026-10-06",
+   "2026-10-07"
+  ],
+  "agents": [
+   "planning",
+   "business",
+   "brand",
+   "design",
+   "engineering",
+   "marketing"
+  ],
+  "usd": {
+   "planning": [
+    0.4,
+    0.55,
+    0.2,
+    0.0,
+    0.3,
+    0.48,
+    0.74
+   ],
+   "business": [
+    0.8,
+    0.3,
+    0.0,
+    0.0,
+    0.0,
+    0.0,
+    0.31
+   ],
+   "brand": [
+    0.0,
+    0.2,
+    0.52,
+    0.0,
+    0.1,
+    0.0,
+    0.44
+   ],
+   "design": [
+    0.0,
+    0.0,
+    0.4,
+    0.0,
+    0.0,
+    0.0,
+    0.22
+   ],
+   "engineering": [
+    1.1,
+    1.6,
+    0.9,
+    0.0,
+    2.1,
+    1.45,
+    2.61
+   ],
+   "marketing": [
+    0.0,
+    0.0,
+    0.0,
+    0.6,
+    0.2,
+    0.9,
+    0.58
+   ]
+  }
+ },
+ "connections": {
+  "image": {
+   "name": "workbench-runtime:local",
+   "present": true,
+   "note": "the container every run executes in"
+  },
+  "classes": [
+   {
+    "class": "store:tasks",
+    "found": true,
+    "provider": "store/sqlite"
+   },
+   {
+    "class": "integration:issue-tracker",
+    "found": true,
+    "provider": "issue-tracker/board"
+   },
+   {
+    "class": "integration:documents",
+    "found": true,
+    "provider": "documents/pages"
+   },
+   {
+    "class": "vcs:remote",
+    "found": true,
+    "provider": "vcs/git"
+   },
+   {
+    "class": "publisher:social",
+    "found": false,
+    "provider": null
+   },
+   {
+    "class": "generator:image",
+    "found": false,
+    "provider": null
+   },
+   {
+    "class": "scheduler:timer",
+    "found": true,
+    "provider": "scheduler/local"
+   }
+  ],
+  "secrets": [
+   {
+    "name": "WB_RUNTIME_FLOOR_KEY",
+    "found": true,
+    "purpose": "the runtime's own key for the floor model"
+   },
+   {
+    "name": "ISSUE_TRACKER_TOKEN",
+    "found": true,
+    "purpose": "reads and writes the task board"
+   },
+   {
+    "name": "SOCIAL_PUBLISH_TOKEN",
+    "found": false,
+    "purpose": "publishes an approved post"
+   },
+   {
+    "name": "IMAGE_GENERATOR_KEY",
+    "found": false,
+    "purpose": "makes the images of a post"
+   }
+  ]
+ }
+}

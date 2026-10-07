@@ -1,0 +1,41 @@
+{
+ "northwind-shop": {
+  "messages": [
+   {
+    "from": "person",
+    "at": "2026-10-07T13:00:00Z",
+    "text": "I want to launch the spring campaign next week, with the new order-history page ready first."
+   },
+   {
+    "from": "planner",
+    "at": "2026-10-07T13:02:00Z",
+    "text": "I read the content plan and the order-history spec. I can plan five tasks: voice check, post copy, the page, its review, and the publish. Nothing runs until you approve the plan.",
+    "pending_id": 22
+   },
+   {
+    "from": "person",
+    "at": "2026-10-07T13:20:00Z",
+    "text": "Approve it, but I want to approve the post text myself."
+   },
+   {
+    "from": "planner",
+    "at": "2026-10-07T13:21:00Z",
+    "text": "Understood. The publish task stops at its gate: you will see the exact text and its hash before anything is sent."
+   }
+  ]
+ },
+ "tinykv-docs": {
+  "messages": [
+   {
+    "from": "person",
+    "at": "2026-10-07T11:00:00Z",
+    "text": "Document the compaction settings."
+   },
+   {
+    "from": "planner",
+    "at": "2026-10-07T11:02:00Z",
+    "text": "Planned: one task for the engineering agent. It will ask which settings are public."
+   }
+  ]
+ }
+}
