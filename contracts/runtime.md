@@ -20,7 +20,7 @@ The runtime starts agents without a person at the keyboard: a scheduler fires, t
 | Agent run | `adapters/<harness>/run-agent.sh` | runs one agent on one task, read-only, and returns its answer |
 | Gate | the skill's own script (`mkt-engage/scripts/policy_gate.py`) | decides whether a proposal is inside the person's approval |
 | Actuator | a provider (`publisher:<platform>`) | executes, with an idempotency key |
-| Configuration | `docs/workbench/runtime.json` in the project | paths, model, budgets, and optionally the implementation of a class; no secret. Its keys `mailbox`, `store`, `scheduler` and `publisher` are configuration keys, not class names: the runtime maps them to `reader:email`, `store:runtime`, `scheduler:job` and `publisher:<platform>` |
+| Configuration | `docs/workbench/runtime.json` in the project | paths, model, budgets, and optionally the implementation of a class; no secret. Its keys `mailbox`, `store`, `scheduler` and `publisher` are configuration keys, not class names, and the file's keys are closed (an unknown key is refused, and the error names the nearest known one): the runtime maps them to `reader:email`, `store:runtime`, `scheduler:job` and `publisher:<platform>` |
 | Provider resolution | `providers/resolve.py` | turns a requirement class into the provider script; the runtime builds no provider path itself |
 
 ### An agent run
