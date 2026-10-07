@@ -5,7 +5,7 @@
 # ///
 """The operations layer of the task runtime: every operation a person or a scheduler can perform, once.
 
-The terminal shell (runtime/cli.py), and later the conversation and the local interface, are shells over the
+The terminal shell (runtime/cli.py), the conversation (runtime/chat.py) and later the local interface are shells over the
 functions of this file: a shell parses what the person typed, calls one function here and prints what it
 returns. No shell reaches the store, the lab facade or a project's files by itself.
 

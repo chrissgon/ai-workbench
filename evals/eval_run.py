@@ -14,7 +14,7 @@ Usage:
   python3 eval_run.py --close <event folder>
   python3 eval_run.py --routing --pack <name> (--skill <name> | --prompts <file>) [--tier strong|floor] [--jobs 4]
   python3 eval_run.py --unpause [--at <HH:MM or YYYY-MM-DDTHH:MM>]
-  python3 eval_run.py --regrade <run folder> [--grader <id>] [--harness <adapter>] [--jobs 4] [--timeout 900]
+  python3 eval_run.py --regrade <run folder> [--grader <id>] [--harness <adapter>] [--jobs 4] [--timeout 1800]
 
 Defaults. --harness, --model, --floor-model, --floor-harness, --floor-pass-env and --threshold default to the
 eval gate configuration, evals/eval-gate.json (strong_harness, strong_model, floor_model, floor_harness,
@@ -84,7 +84,7 @@ the grader model (see "Grading" below), and writes:
 
 Control of a test event. One invocation on one skill is a test event; its folder is
 evals-workspace/<name>/iteration-N. The number of runs of every case, variant and model ("runs", 3), the limit
-of one model run ("timeout_seconds", 900) and the retries inside the event ("retries", 2) have one home, the
+of one model run ("timeout_seconds", 1800) and the retries inside the event ("retries", 2) have one home, the
 gate file evals/eval-gate.json. --runs, --timeout and --retries override them for a trial: each run gets its
 own folder, run-<k>/, and benchmark.json averages them, but **evidence is written only by an event that used
 the configured values and real runners**. An event with another number of runs, another timeout or other
@@ -96,7 +96,7 @@ never into the skill's folder; benchmark.json says why in "scratch".
 runs that many model runs, with their gradings, at the same time in this process. Each run has its own
 folders and a throwaway home, so runs share nothing. Across processes the limit is a lock that every runner
 process of the machine shares (a folder of slot files under the temporary base): "total_jobs" of the gate
-file (10) is the number of model calls in progress at one time, whatever the number of `eval_run.py` started
+file (14) is the number of model calls in progress at one time, whatever the number of `eval_run.py` started
 side by side, and "web_jobs" ({"strong": 2, "floor": 2}) the number of runs on the open network per tier,
 whose search services limit the rate.
 --max-cost-usd <amount> is passed to the adapter as a spend limit per run: the claude-code adapter

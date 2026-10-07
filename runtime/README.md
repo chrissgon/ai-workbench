@@ -3,19 +3,20 @@
 Code that turns a request into tasks and runs each task as one skill, once, in the container the skill was
 proven in (`evals/executor.py`), on a fresh copy that holds only what may enter it (`workcopy.py`). What a run leaves
 comes back to the project by one rule of paths, and the task then waits for the person. The design is the
-platform plan, `docs/architecture/platform-plan-2026-10-05.md`; this folder is its stage 1, an end-to-end
-skeleton, and is not hardened yet: stage 2 of that plan adds the limits, each with its test.
+platform plan, `docs/architecture/platform-plan-2026-10-05.md`; this folder began as its stage 1, an end-to-end
+skeleton, and holds the stages built since: the limits that live in code, each with its test, are listed in
+`contracts/runtime.md` ("The limits").
 
 It is a second runtime only in its code. The first one, `scripts/runtime.py`, runs one agent on social
 comments and stays as it is until that agent moves to the container (stage 7). Both keep their state in the
-same store (`providers/store/sqlite.py`): the tables of this one are migrations 2 to 4 of that file.
+same store (`providers/store/sqlite.py`): the tables of this one are migrations 2 to 6 of that file.
 
 ## Modules
 
 | File | What it owns |
 |------|--------------|
 | `lab.py` | The lab facade: the one file here that talks to `evals/eval_run.py`. Runs one skill once in the container; the attempts of a run (the pause on the account limit, the refusals, the early end, the retries) are made by the lab's one function, `evals/run_attempts.py`, reached through the runner, and the stopping is the lab's own: the runtime has no loop of its own |
-| `ops.py` | The operations layer: every operation a shell can perform, once (request, run the next task, answer, release, retry, cancel, status) |
+| `ops.py` | The operations layer: every operation a shell can perform, once. Stage 1's (request, run the next task, pending, answer, release, retry, cancel, status) and those of the later stages: the router and the plan (`route`, `approve`, `reject`), the configuration (`accept-config`, `set-mode`, `pin`), the mirrors (`sync`), the file drop (`hand-over`), the dependencies (`deps`), the effects and standing approvals (`approve --sha256`, `approve-policy`, `revoke-policy`, `standing`), the proof (`proof`), the verdict on a run (`verdict`), progress (`progress`), the dispatcher's jobs (`poll`, `dispatch`, `handler`) and the conversation (`say`); `python3 runtime/cli.py --help` lists every command |
 | `cli.py` | The terminal shell: one command per operation, nothing else |
 | `flow_files.py` | Reads and checks a flow file, `flows/<name>.json`: the tasks of a flow and their written dependencies |
 | `skill_meta.py` | What a skill declares in its frontmatter, read for the runtime |

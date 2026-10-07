@@ -1,6 +1,6 @@
 # Store providers
 
-Implementations of the `store:runtime` class (`store` until 2026-10-02; the folder and `STORE_PROVIDER` keep that name): the durable state of the agent runtime (backlog R2). Interface: `providers/CONTRACT.md`. Selected with `STORE_PROVIDER=sqlite`; the runtime calls the store only through its CLI, so another implementation (a cloud database) can replace it without changing the runtime.
+Implementations of the `store:runtime` class (`store` until 2026-10-02; the folder and `STORE_PROVIDER` keep that name): the durable state of the agent runtime (backlog R2). Interface: `providers/CONTRACT.md`. Selected with `STORE_PROVIDER=sqlite`. The first runtime (`scripts/runtime.py`) calls the store only through its CLI; the task runtime (`runtime/ops.py`) imports the functions of the implementation the class resolves to and calls them, one call per transaction (the paragraph below the table). Another implementation (a cloud database) replaces it by providing the same verbs and the same functions.
 
 The decision behind it is in `docs/decisions.md` ("2026-09-28: An agent runtime as a new, tool-free layer; storage behind an interface"): a Markdown file does not take several agents writing at once, so state that agents write goes to a store.
 

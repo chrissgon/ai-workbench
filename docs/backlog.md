@@ -293,14 +293,16 @@ Work the code or the documents show is needed and no item owned (N1 to N19: the 
 
 - [ ] **N1. The wiring test of the CI workflow.** The `python39` job, which failed on `main` because it named five test files that had moved into the skills, is repaired (pull request #45). Open: `scripts/tests/test_checks_wiring.py` requires that every path a file under `.github/workflows/` names exists, and the jobs of `checks.yml` get a `timeout-minutes`.
   - Plan: A1.
-- [ ] **N2. `payload.py` builds a provider's path.** `skills/mkt-publish/scripts/payload.py` takes `--workbench` and `--platform` and builds the publisher's command itself, where every other caller asks `providers/resolve.py`. It becomes `--publisher <path>` (the path the resolver printed) with `--platform` required.
+- [x] **N2. `payload.py` builds a provider's path.** `skills/mkt-publish/scripts/payload.py` takes `--workbench` and `--platform` and builds the publisher's command itself, where every other caller asks `providers/resolve.py`. It becomes `--publisher <path>` (the path the resolver printed) with `--platform` required.
   - Plan: phase C, the row of `mkt-publish` (default 68).
+  - Done on 2026-10-02 by `26fb6c5` (#75): `payload.py` takes `--publisher <path resolve.py printed>`, and `--platform` is required.
 - [ ] **N4. The grader grades its own model's runs.** Decided on 2026-10-02: every run is graded once, by the configured grader, which stays the same model and gets a key of its own in the gate file (decision 2 of the plan). Open: the grader's disagreement with itself is measured on the pilot's stored replies.
   - Plan: B3 (the grading), D4 (the measurement).
 - [ ] **N5. `skills/core-skill-creator/SKILL.md` is above the size guide.** About 6,000 tokens by the validator's rule (characters divided by 4), against a guide of about 5,000. To be trimmed into `references/`.
   - Plan: phase C, the row of `core-skill-creator`.
-- [ ] **N6. The routing table lacks seven built skills.** `brand-name`, `brand-profile`, `core-security-audit`, `eng-security-review`, `mkt-engage`, `mkt-vote-round` and `ops-repo-baseline` appear nowhere in `skills/core-orchestrator/`.
+- [x] **N6. The routing table lacks seven built skills.** `brand-name`, `brand-profile`, `core-security-audit`, `eng-security-review`, `mkt-engage`, `mkt-vote-round` and `ops-repo-baseline` appear nowhere in `skills/core-orchestrator/`.
   - Plan: phase C, the row of `core-orchestrator`; A5 adds the validator's rule.
+  - Done on 2026-10-03 by `7f8682a` (#82): the seven skills are in the router's references (`routing.md`, `owners.md`) or its `SKILL.md`.
 - [ ] **N7. Two references that could name a skill as an artifact's writer.** `skills/core-clarify/references/decision-tree.md` ("a `core-critique` candidate") and `skills/ops-repo-baseline/references/host-settings.md` ("triage them with `eng-security-review`").
   - Plan: phase C, the rows of `core-clarify` and `ops-repo-baseline`.
 - [ ] **N10. CI jobs that are not required checks.** The ruleset requires `validate` and `tests`; the jobs `container` and `python39` exist and are not required, which is how a pull request merged with `python39` failing.

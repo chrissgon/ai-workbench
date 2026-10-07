@@ -53,7 +53,7 @@ Learned in a cloud session on 2026-09-28 (`opencode-ai@1.18.32`):
 
 ## Floor model on your own machine (Ollama)
 
-Not wired to the eval container yet: evals now run in a container whose network reaches only the hosted providers, so a model served on the person's machine is not reachable from a run until the executor gains a route to it (backlog T12). What follows describes the adapter's side, which is unchanged.
+Not wired to the eval container yet: evals now run in a container whose network reaches only the hosted providers, so a model served on the person's machine is not reachable from a run until the executor gains a route to it (backlog N14, split from T12, which is archived). What follows describes the adapter's side, which is unchanged.
 
 A model id `ollama/<name>` runs a model served by Ollama on this machine (`http://127.0.0.1:11434`, or `RUN_PROMPT_OLLAMA_URL`). The adapter writes the provider entry into the run's throwaway home; nothing is added to the case folder and no key is needed.
 
