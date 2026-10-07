@@ -149,3 +149,16 @@ def test_every_key_the_first_runtime_reads_is_known():
         found |= set(pattern.findall((scripts / name).read_text(encoding="utf-8")))
     assert found, "the scan found no key: the pattern is stale"
     assert found <= known, f"read from the file but not in the key tuples: {sorted(found - known)}"
+
+
+def test_model_prices_is_a_known_key_and_a_misspelling_of_it_is_refused_with_its_name(tree):
+    assert "model_prices" in project_config.TASK_RUNTIME_KEYS and "model_prices" not in project_config.FIRST_RUNTIME_KEYS
+    path = write_config(tree, model_price={})
+    with pytest.raises(project_config.ConfigError) as raised:
+        project_config.load(path)
+    assert "'model_price'" in str(raised.value) and "did you mean model_prices?" in str(raised.value)
+    file = project_config.path(path)
+    clean = {k: v for k, v in json.loads(open(file, encoding="utf-8").read()).items() if k != "model_price"}
+    with open(file, "w", encoding="utf-8") as f:
+        json.dump({**clean, "model_prices": {}}, f)
+    assert project_config.load(path)["model_prices"] == {}
