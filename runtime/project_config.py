@@ -12,8 +12,10 @@ task runtime reads three keys the first runtime already defined, with the same m
   "data_dir"    an absolute folder outside every repository, for run folders and the run lock
   "store_db"    the absolute path of the store database (class store:runtime)
 
-and ignores every key it does not know (the first runtime's "agent", "harness", "mailbox"... stay valid in
-the same file).
+The keys are closed: the file may hold only the keys of TASK_RUNTIME_KEYS and FIRST_RUNTIME_KEYS. The second
+tuple keeps the first runtime's file ("agent", "harness", "mailbox"...) valid in the same file until stage 7. An
+unknown key is refused, and the error names the nearest known key, so that a misspelled security key (such as
+"protected_path") cannot turn a protection off in silence.
 
 It checks "area_agents" (stage 6) with runtime/autonomy.py, agents(): each entry {"pack", "enabled", "mode",
 "max_runs_per_day", "max_usd_per_day"}, an unknown key, a mode outside the five or a negative cap refused by the
@@ -61,6 +63,7 @@ Standard library only. Runs on Python 3.9.
 from __future__ import annotations
 
 import datetime
+import difflib
 import hashlib
 import importlib.util
 import json
@@ -75,6 +78,14 @@ import deps  # noqa: E402  (the same folder: the recipes and the check of the ke
 
 REL = "docs/workbench/runtime.json"
 REQUIRED = ("workbench", "data_dir", "store_db")
+# The top-level keys of the task runtime: the three required ones and every key this module checks or passes on.
+TASK_RUNTIME_KEYS = ("workbench", "data_dir", "store_db", "area_agents", "handlers", "task_board", "documents",
+                     "protected_paths", "code", "dependencies", "max_cost_usd_per_run")
+# The top-level keys scripts/runtime.py, scripts/runtime_vote.py and scripts/vote_job.py read from the same file
+# (the first runtime). Leaves with stage 7.
+FIRST_RUNTIME_KEYS = ("agent", "harness", "model", "mailbox", "publisher", "store", "scheduler", "notification_query",
+                      "first_lookback_minutes", "max_events_per_tick", "daily_cost_cap_usd", "timeout_seconds",
+                      "notify", "path", "vote")
 ACCEPTED = "config:accepted-sha256"  # the store's cursor that holds the hash the person accepted last
 PLATFORM_KEYS = {"task_board": "integration:issue-tracker", "documents": "integration:documents"}
 
@@ -105,6 +116,11 @@ def load(project: str) -> dict:
         raise ConfigError(f"{file} is not valid JSON: {e}") from None
     if not isinstance(raw, dict):
         raise ConfigError(f"{file} must hold a JSON object")
+    unknown = sorted(set(raw) - set(TASK_RUNTIME_KEYS) - set(FIRST_RUNTIME_KEYS))
+    if unknown:
+        near = difflib.get_close_matches(unknown[0], TASK_RUNTIME_KEYS + FIRST_RUNTIME_KEYS, n=1)
+        hint = f"; did you mean {near[0]}?" if near else ""
+        raise ConfigError(f"runtime.json has an unknown key {unknown[0]!r}{hint}")
     out = {"project": project, "path": file, "sha256": hashlib.sha256(data).hexdigest(), "raw": raw}
     for key in REQUIRED:
         value = raw.get(key)
