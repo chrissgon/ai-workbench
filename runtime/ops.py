@@ -625,8 +625,9 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
                 return fail("internal", code["refused"])
         current = (code or {}).get("current")
         gate = known.get("gate")
-        if gate:
-            refused = _gate_refusal(cfg, current)
+        kind = _effect_kind(gate)  # the module of the gate's effect kind; None when the word names none
+        if kind is not None:
+            refused = kind.refusal(cfg, current)
             if refused:
                 return fail("internal", refused)
         try:
@@ -635,10 +636,9 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
             return fail("internal", f"dependencies: {e.reason}")
 
         def prepare(copy, root):
-            if gate:
+            if kind is not None:
                 # T23: a skill runs only up to its gate; a runtime mode in the skills with an external effect replaces this
-                changeset.as_branch(current, copy, root, base=cfg["code"]["base"], head=_head(cfg, task),
-                                    message=request["title"])
+                kind.prepare(current, copy, root, cfg, task, request["title"])
             elif current is not None:
                 changeset.apply(current, copy)  # the earlier work of the request, as an uncommitted change
             for r in installed:
@@ -670,7 +670,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
                                                        tracked=entered.get("tracked") or () if code is None else ())
     gate_files = _tmp_files(result.get("tmp"))
     ending, why = _ending(result, meta, skill, [rel for rel, _size in gate_files])
-    gate_found = _gate_payload(result, dest, gate_files) if known.get("gate") else None
+    gate_found = _gate_payload(result, dest, gate_files, kind) if known.get("gate") else None
     loaded = timing.get("skills_loaded")
     body, masked = workcopy.masked_reply(result["response"])
     if state_report is not None:
@@ -711,7 +711,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         decision["payload"]["gate"] = gate_found if ending == "gate" else {**gate_found, "recovered": False,
                                                                             "why": f"the run ended {ending}, not at its gate"}
     if ending == "gate" and gate_found is not None:
-        decision = _effect_or_review(ctx, task, request, dest, decision, gate_found, made, code)
+        decision = _effect_or_review(ctx, task, request, dest, decision, gate_found, made, code, known["gate"]["effect"])
     if mandatory:
         decision["payload"]["mandatory_milestone"] = True
         if cut:  # the sentence stays at the end of a body that was cut
@@ -723,27 +723,39 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     return out
 
 
-def _effect_or_review(ctx: dict, task: dict, request: dict, dest: str, decision: dict, gate_found: dict, made, code) -> dict:
+def _effect_kind(gate):
+    """The module of the effect kind a manifest's gate names (gate.effect, through the registry of runtime/effects.py),
+    or None when there is no gate or its word names no kind."""
+    if not gate:
+        return None
+    try:
+        return effects.module_for(gate["effect"])
+    except effects.EffectError:
+        return None
+
+
+def _effect_or_review(ctx: dict, task: dict, request: dict, dest: str, decision: dict, gate_found: dict, made, code,
+                      effect: str) -> dict:
     """The pending decision a run that stopped at its gate opens: an `effect` (the effect document's hash in
     payload_sha256) when the payload was recovered and parsed, its base and head are the configuration's, the
     configuration has code, and the change set it would commit is not blocked; else the review, its body starting
     with the reason. The classifier never guesses, and neither does this."""
     cfg = ctx["cfg"]
+    kind = _effect_kind({"effect": effect})
     parsed = None
-    if gate_found.get("payload_file"):
+    if kind is not None and gate_found.get("payload_file"):
         with open(gate_found["payload_file"], encoding="utf-8", errors="replace") as f:
-            parsed = effects.parse_pull_request_payload(f.read())
+            parsed = kind.parse(f.read())
     stored = (made or {}).get("summary") or {}
     reason, chosen = None, None
-    if not gate_found.get("recovered"):
+    if kind is None:
+        reason = f"the gate's effect {effect!r} names no kind of effect"
+    elif not gate_found.get("recovered"):
         reason = f"the payload was not recovered: {gate_found.get('why')}"
     elif parsed is None:
-        reason = "the payload is not in the pull-request skill's form"
-    elif not cfg.get("code"):
-        reason = "the configuration has no code: no pull request can be opened"
-    elif (parsed["base"], parsed["head"]) != (cfg["code"]["base"], _head(cfg, task)):
-        reason = (f"the payload's base and head ({parsed['base']} ← {parsed['head']}) are not the configuration's "
-                  f"({cfg['code']['base']} ← {_head(cfg, task)})")
+        reason = "the payload is not in the form its kind of effect reads"
+    elif kind.mismatch(parsed, cfg, task):
+        reason = kind.mismatch(parsed, cfg, task)
     elif stored.get("blocked"):
         reason = "the change set is blocked"
     else:
@@ -752,17 +764,17 @@ def _effect_or_review(ctx: dict, task: dict, request: dict, dest: str, decision:
         except changeset.ChangesetError as e:
             reason = f"the change set: {e.reason}"
         if reason is None and (chosen is None or chosen.get("blocked") or not (chosen["files"] or chosen["removed"])):
-            reason = "there is no unblocked change set to open a pull request for"
+            reason = "there is no unblocked change set for the effect"
     if reason is not None:
         cut = decision["body"].encode("utf-8")[:ctx["store"].BODY_MAX - 2048].decode("utf-8", errors="ignore")
         return {**decision, "body": f"No effect was opened: {reason}.\n\n{cut}",
                 "payload": {**decision["payload"], "effect": {"opened": False, "why": reason}}}
-    doc = effects.document(cfg["code"], request, parsed, chosen, _head(cfg, task), gate_found["payload_sha256"])
+    doc = kind.document(effect, cfg, request, parsed, chosen, task, gate_found["payload_sha256"])
     path, digest = effects.write(dest, doc)
     payload = {**decision["payload"], "effect_file": path, "changeset_file": os.path.join(chosen["dir"], changeset.JSON_FILE),
                "changeset_dir": chosen["dir"], "payload_file": gate_found["payload_file"],
-               "effect": {"opened": True, "repo": doc["repo"], "base": doc["base"], "head": doc["head"]}}
-    return {"kind": "effect", "title": f"Pull request: {parsed['title']}"[:200], "body": effects.body(doc, digest),
+               "effect": {"opened": True, **kind.summary(doc)}}
+    return {"kind": "effect", "title": kind.title(doc)[:200], "body": kind.body(doc, digest),
             "payload": payload, "payload_sha256": digest}
 
 
@@ -777,11 +789,6 @@ def _provider_path(cfg: dict, cls: str) -> str:
         raise OpsError(f"the {'code ' if cls == 'integration:vcs' else ''}provider does not resolve: {e}", 3) from None
 
 
-def _vcs_provider(cfg: dict) -> str:
-    """The code provider's script (class integration:vcs)."""
-    return _provider_path(cfg, "integration:vcs")
-
-
 def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
     """approve() for an `effect`: the approval row, then, holding the run lock, the checks and the execution by code,
     then the effect is done and the state file gets the generated row."""
@@ -793,14 +800,17 @@ def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
     if item["status"] != "open":
         raise OpsError(f"pending decision {pending_id} is {item['status']}, not open", 1)
     payload = item.get("payload") or {}
-    if not cfg.get("code"):
-        raise OpsError("the configuration has no code: no pull request can be opened", 3)
     try:
         with open(payload["effect_file"], "rb") as f:
             doc = json.loads(f.read().decode("ascii"))
+        kind = effects.module_for(doc["effect"])
     except (OSError, KeyError, ValueError) as e:
         raise OpsError(f"the effect document of pending decision {pending_id} cannot be read: {e}", 1) from None
-    what = f"pull request {doc['head']} into {doc['base']} of {doc['repo']}: {doc['title']}"
+    except effects.EffectError as e:
+        raise OpsError(f"the effect of pending decision {pending_id} cannot be approved: {e.reason}", 1) from None
+    if kind.unconfigured(cfg):
+        raise OpsError(kind.unconfigured(cfg), 3)
+    what = kind.describe(doc)
     approval = _stored(ctx, store.approval_add, scope="action", what=" ".join(what.split())[:1000], by="user",
                        payload_sha256=sha256, pending_id=pending_id)
     with _run_lock(cfg):
@@ -810,10 +820,10 @@ def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
                 raise effects.EffectError("deviation", "the change set is no longer in its run folder")
             paths = [f["path"] for f in made["files"]] + list(made["removed"])
             facts = {"versioned": changeset.versioned_in(cfg["project"], paths)}
-            doc = effects.verify(payload["effect_file"], sha256, made, facts, cfg["protected_paths"])
+            doc = kind.verify(effects.read_document(payload["effect_file"], sha256), made, facts, cfg["protected_paths"])
             key_prefix = f"wb-{hashlib.sha256(cfg['store_db'].encode('utf-8')).hexdigest()[:12]}-p{pending_id}"
-            result = effects.execute(doc, made["dir"], os.path.join(cfg["data_dir"], EFFECTS_DIR, str(pending_id)),
-                                     _vcs_provider(cfg), key_prefix)
+            result = kind.execute(doc, made["dir"], os.path.join(cfg["data_dir"], EFFECTS_DIR, str(pending_id)),
+                                  _provider_path(cfg, kind.PROVIDER_CLASS), key_prefix)
         except (effects.EffectError, changeset.ChangesetError) as e:
             raise OpsError(f"nothing was sent: {e.reason}; the effect stays open, and approving it again with the same "
                            f"hash tries again", 3 if getattr(e, "kind", "") == "not-configured" else 1) from None
@@ -843,21 +853,6 @@ def _write_approval_row(cfg: dict, row: list) -> dict:
     return {"written": True}
 
 
-def _head(cfg: dict, task: dict) -> str:
-    """The head branch of a request's pull request: <branch_prefix>request-<request id> (choice K10)."""
-    return f"{cfg['code']['branch_prefix']}request-{task['parent_id']}"
-
-
-def _gate_refusal(cfg: dict, current):
-    """Why a task whose skill has a gate cannot start, or None: it needs the configuration's code (the base branch)
-    and a change set of its request to show."""
-    if not cfg.get("code"):
-        return "the configuration has no code (provider, repo, base): a task with a confirmation gate needs it"
-    if current is None or not (current.get("files") or current.get("removed")):
-        return "there is no change to open a pull request for"
-    return None
-
-
 def _tmp_files(tmp) -> list:
     """[(relative path, bytes)] of the regular files under a run's returned temporary folder, no link followed."""
     out = []
@@ -872,7 +867,7 @@ def _tmp_files(tmp) -> list:
     return out
 
 
-def _gate_payload(result: dict, dest: str, tmp_files) -> dict:
+def _gate_payload(result: dict, dest: str, tmp_files, kind) -> dict:
     """The payload a gate run wrote, recovered (runtime/effects.py) and kept as <dest>/payload.md; everything else
     under the returned temporary folder is deleted, and only its names and sizes are kept. Returns {"recovered",
     "why", "payload_file", "payload_sha256", "parsed", "tmp_left"}."""
@@ -883,7 +878,7 @@ def _gate_payload(result: dict, dest: str, tmp_files) -> dict:
         kept = os.path.join(dest, "payload.md")
         shutil.copyfile(found["file"], kept)
         out.update(payload_file=kept, payload_sha256=found["sha256"],
-                   parsed=effects.parse_pull_request_payload(found["text"]) is not None)
+                   parsed=kind is not None and kind.parse(found["text"]) is not None)
     if result.get("tmp") and os.path.isdir(result["tmp"]) and not os.path.islink(result["tmp"]):
         shutil.rmtree(result["tmp"])
     return out

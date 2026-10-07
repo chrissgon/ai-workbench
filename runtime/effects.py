@@ -18,8 +18,14 @@ file of the change set by its hash), code checks that nothing moved since, makes
 provider (commit-files, with the person's own git and signature) and opens the pull request (open-pr). The runtime
 passes the provider no credential: it reads its own. No module of runtime/ runs git commit or git push itself.
 
-Public names: recover_payload(reply, tmp_dir, readable), parse_pull_request_payload(text), EffectError,
-document(...), write(run_dir, doc), body(doc, sha256), verify(...), execute(...), provider_call(provider, args[, run]), approval_row(approval, doc).
+What belongs to one kind of effect (its payload form, its document, what the person reads, its checks and its
+execution) is a module of runtime/ with a fixed set of names (runtime/effect_pull_request.py states them), chosen by
+the side-effect word the skill's manifest names in its gate. This module holds what no kind changes: recovering the
+payload, the error, the effect file and its hash, the call of a provider, the row of the state file, and the registry.
+A new kind is a module and a row of KINDS; runtime/ops.py does not change.
+
+Public names: recover_payload(reply, tmp_dir, readable), EffectError, KINDS, module_for(kind), write(run_dir, doc),
+read_document(effect_file, sha256), provider_call(provider, args[, run]), approval_row(approval, doc).
 
 Usage (a library): python3 runtime/effects.py --help
 
@@ -28,6 +34,7 @@ Standard library only. Runs on Python 3.9.
 from __future__ import annotations
 
 import hashlib
+import importlib
 import json
 import os
 import re
@@ -37,13 +44,10 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import project_config  # noqa: E402  (the same folder: the resolver is loaded from here)
-import operations  # the table of operations: the one place that spells the terminal's command
 
 PAYLOAD_NAME = "payload.md"
 CANDIDATES_MAX = 20
 PAYLOAD_LINE = re.compile(r"^\s*Payload file:\s*`?(?P<path>[^`]+?)`?\s*,\s*sha256\s*`?(?P<sha>[0-9a-f]{64})`?\s*\.?\s*$")
-FENCE = re.compile(r"^\s*(```|~~~)")
-BASE_HEAD = re.compile(r"^Base ← head:\s*(?P<base>\S+)\s*←\s*(?P<head>\S+)\s*$")
 
 
 def _sha(data: bytes) -> str:
@@ -94,40 +98,11 @@ def recover_payload(reply: str, tmp_dir, readable) -> dict:
     return {"recovered": True, "file": path, "sha256": digest, "text": data.decode("utf-8", errors="replace")}
 
 
-def parse_pull_request_payload(text: str):
-    """{"repository", "base", "head", "title", "body"} of a payload in the pull-request skill's form, or None. The
-    form, line by line: "Repository: ..."; "Base ← head: <base> ← <head>"; optionally "Commits:" and its "- ..."
-    lines; "Title: <title>"; "Body:"; then the body, everything after it. One leading and one trailing code-fence
-    line are dropped. Anything else is None."""
-    lines = (text or "").replace("\r\n", "\n").split("\n")
-    while lines and lines[-1] == "":
-        lines.pop()
-    if lines and FENCE.match(lines[0]):
-        lines = lines[1:]
-    if lines and FENCE.match(lines[-1]):
-        lines = lines[:-1]
-    if len(lines) < 4 or not lines[0].startswith("Repository:"):
-        return None
-    repository = lines[0][len("Repository:"):].strip()
-    found = BASE_HEAD.match(lines[1])
-    if not repository or not found:
-        return None
-    i = 2
-    if lines[i] == "Commits:":
-        i += 1
-        while i < len(lines) and lines[i].startswith("- "):
-            i += 1
-    if i + 1 >= len(lines) or not lines[i].startswith("Title: ") or lines[i + 1] != "Body:":
-        return None
-    title = lines[i][len("Title: "):].strip()
-    body = "\n".join(lines[i + 2:])
-    if not title or not body.strip():
-        return None
-    return {"repository": repository, "base": found.group("base"), "head": found.group("head"), "title": title,
-            "body": body}
-
-
 # --- the effect: approved by its hash, executed by code (WP-4.8; limits L15, L16, L17) -----------------------------
+
+# The registry of the kinds of effect: the side-effect word a skill's manifest names in its gate (gate.effect) -> the
+# module of runtime/ that holds the kind. A word not here opens a review, never an effect.
+KINDS = {"create": "effect_pull_request"}
 
 EFFECT_FILE = "effect.json"
 PROVIDER_TIMEOUT = 600
@@ -142,18 +117,12 @@ class EffectError(Exception):
         self.kind, self.reason = kind, reason
 
 
-def document(code_cfg: dict, request: dict, payload: dict, changeset: dict, head: str, payload_file_sha256: str) -> dict:
-    """The effect document: the exact content the person approves, bound by one hash. repo and base come from the
-    project's configuration (code_cfg), never from the payload; head is the branch the runtime named
-    (<branch_prefix>request-<id>); title and body are the parsed payload's, as the skill showed them; the files and
-    the removed paths are the change set's, each file by its hash."""
-    return {"effect": "pull-request", "provider": code_cfg["provider"], "repo": code_cfg["repo"],
-            "base": code_cfg["base"], "head": head, "title": payload["title"], "body": payload["body"],
-            "commit_message": payload["title"] + "\n", "payload_file_sha256": payload_file_sha256,
-            "project_commit": changeset["project_commit"], "changeset_sha256": changeset["sha256"],
-            "files": [{"path": f["path"], "sha256": f["sha256"], "executable": bool(f["executable"])}
-                      for f in sorted(changeset["files"], key=lambda f: f["path"])],
-            "removed": sorted(changeset["removed"])}
+def module_for(kind):
+    """The module of an effect kind, loaded by name from runtime/. An unknown kind is EffectError("usage")."""
+    name = KINDS.get(kind) if isinstance(kind, str) else None
+    if name is None:
+        raise EffectError("usage", f"there is no effect kind {kind!r} (the kinds: {', '.join(sorted(KINDS))})")
+    return importlib.import_module(name)
 
 
 def _text(doc: dict) -> bytes:
@@ -170,29 +139,8 @@ def write(run_dir: str, doc: dict) -> tuple:
     return path, _sha(data)
 
 
-def body(doc: dict, sha256: str) -> str:
-    """What the person reads before approving: the repository, base and head, the title, the body whole, each file
-    with its hash, each removed path, the hash, and the command that approves."""
-    lines = ["Code opens this pull request after your approval, and nothing else:", "",
-             f"Repository: {doc['repo']}", f"Base ← head: {doc['base']} ← {doc['head']}",
-             f"Commit: one commit, made by the code provider with your own git and signature, over {doc['project_commit']}",
-             f"Title: {doc['title']}", "Body:", doc["body"].rstrip("\n"), "", "Files:"]
-    lines += [f"- {f['path']}" + (" (executable)" if f["executable"] else "") + f" sha256 {f['sha256']}" for f in doc["files"]]
-    if doc["removed"]:
-        lines += ["Removed:"] + [f"- {rel}" for rel in doc["removed"]]
-    lines += ["", f"Hash of this effect: {sha256}",
-              "Approve exactly this: " + operations.command_line(
-                  "approve", "<project>", pending_id="<this pending decision's id>", sha256=sha256),
-              "Or answer with what to change, or reject it: nothing is sent until you approve."]
-    return "\n".join(lines) + "\n"
-
-
-def verify(effect_file: str, sha256: str, changeset: dict, facts: dict, protected) -> dict:
-    """Before execution: the effect file's hash is the approved one; every stored file of the change set still has
-    its hash (changeset.load() did it, and the document's files are the change set's); the change set still passes
-    changeset.verify_for_commit with the project's versioned paths now and the protected paths accepted now.
-    Returns the document. Raises EffectError("deviation")."""
-    import changeset as changesets  # noqa: E402  (the same folder; only when an effect is executed)
+def read_document(effect_file: str, sha256: str) -> dict:
+    """The effect document, only when the file's hash is the approved one. Raises EffectError("deviation")."""
     try:
         with open(effect_file, "rb") as f:
             data = f.read()
@@ -200,17 +148,7 @@ def verify(effect_file: str, sha256: str, changeset: dict, facts: dict, protecte
         raise EffectError("deviation", f"the effect file cannot be read: {e.strerror}") from None
     if _sha(data) != sha256:
         raise EffectError("deviation", "the effect file is not the one approved: its hash changed")
-    doc = json.loads(data.decode("ascii"))
-    stored = [{"path": f["path"], "sha256": f["sha256"], "executable": bool(f["executable"])}
-              for f in sorted(changeset["files"], key=lambda f: f["path"])]
-    if (doc.get("files") != stored or doc.get("removed") != sorted(changeset["removed"])
-            or doc.get("changeset_sha256") != changeset["sha256"]):
-        raise EffectError("deviation", "the change set is not the one the effect names")
-    try:
-        changesets.verify_for_commit(changeset, facts, protected)
-    except changesets.ChangesetError as e:
-        raise EffectError("deviation", e.reason) from None
-    return doc
+    return json.loads(data.decode("ascii"))
 
 
 def provider_call(provider: str, args: list, run=None) -> dict:
@@ -230,51 +168,10 @@ def _subprocess(argv):
     return subprocess.run(argv, capture_output=True, text=True, timeout=PROVIDER_TIMEOUT, check=False)
 
 
-def execute(doc: dict, changeset_dir: str, work_dir: str, provider: str, key_prefix: str, run=None) -> dict:
-    """Run the code provider's verbs, as scripts/runtime_vote.py starts the same verb (the interpreter the script's header asks for, then the verb): the
-    runtime passes no credential, the provider reads its own. In order: write the commit message, the title and the
-    body into work_dir (a private folder); a dry run of commit-files, whose base commit must be the document's
-    project_commit and whose branch must not exist yet (unless the key already committed); commit-files, one commit
-    of exactly the change set's files, modes and removals; then, only when it succeeded, open-pr. Each verb has its
-    own idempotency key (<key_prefix>-commit, <key_prefix>-pr): approving again after a failure replays what was
-    done. Returns {"commit", "pushed", "pull_request": {"number", "url"}, "replayed"}. Raises EffectError."""
-    run = run or _subprocess
-    os.makedirs(work_dir, mode=0o700, exist_ok=True)
-    files = {}
-    for name, text in (("message.txt", doc["commit_message"]), ("title.txt", doc["title"] + "\n"), ("body.md", doc["body"])):
-        files[name] = os.path.join(work_dir, name)
-        with open(files[name], "w", encoding="utf-8") as f:
-            f.write(text)
-    commit = ["commit-files", "--repo", doc["repo"], "--branch", doc["head"], "--from-branch", doc["base"],
-              "--message-file", files["message.txt"]]
-    for item in doc["files"]:
-        commit += ["--file", f"{item['path']}={os.path.join(changeset_dir, 'files', *item['path'].split('/'))}",
-                   "--mode", f"{item['path']}={'755' if item['executable'] else '644'}"]
-    for rel in doc["removed"]:
-        commit += ["--delete", rel]
-    for rel in [item["path"] for item in doc["files"]] + doc["removed"]:
-        commit += ["--allow", rel]
-    commit += ["--idempotency-key", f"{key_prefix}-commit"]
-    seen = provider_call(provider, commit + ["--dry-run"], run)
-    if seen.get("existing_status") != "committed":
-        if seen.get("base_commit") != doc["project_commit"]:
-            raise EffectError("deviation", "the base branch moved since the change was made: it is at "
-                                           f"{seen.get('base_commit')}, the change was made against {doc['project_commit']}")
-        if seen.get("branch_exists"):
-            raise EffectError("deviation", f"the branch {doc['head']} already exists on the remote and is not this request's")
-    made = provider_call(provider, commit + ["--confirmed"], run)
-    opened = provider_call(provider, ["open-pr", "--repo", doc["repo"], "--head", doc["head"], "--base", doc["base"],
-                                      "--title-file", files["title.txt"], "--body-file", files["body.md"],
-                                      "--idempotency-key", f"{key_prefix}-pr", "--confirmed"], run)
-    return {"commit": made.get("commit"), "pushed": bool(made.get("pushed")),
-            "pull_request": {"number": opened.get("number"), "url": opened.get("url")},
-            "replayed": bool(made.get("replayed")) and bool(opened.get("replayed"))}
-
-
 def approval_row(approval: dict, doc: dict) -> list:
     """The generated copy of an approval for the state file's ## Approvals table (contracts/state.md): Scope, What,
     Payload hash, Approved, Expires, Status."""
-    what = f"pull request {doc['head']} into {doc['base']} of {doc['repo']}: {doc['title']}"
+    what = module_for(doc["effect"]).describe(doc)
     clean = lambda text: " ".join(str(text).replace("|", "/").split())
     return [approval["scope"], clean(what), f"sha256:{approval['payload_sha256']}", approval["approved_at"][:10],
             approval.get("expires_at") or "after execution", approval["status"]]

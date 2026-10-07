@@ -94,6 +94,8 @@ stateDiagram-v2
     cancelled --> [*]
 ```
 
+**Effect kind.** What differs between two external effects (the form of the payload a skill shows at its gate, the effect document, what the person reads, the checks that nothing moved, the provider verbs) is one module of `runtime/` with a fixed set of names, `runtime/effect_pull_request.py` today; `runtime/effects.py` keeps the rest (the recovery of the payload, the effect file and its hash, the provider call, the registry `KINDS`). The kind is chosen by the side-effect word the skill's manifest names in its gate (`gate.effect`) and recorded in the effect document as `effect`. Extension rule: a new kind is a module plus a row of `effects.KINDS`; the approval path of `runtime/ops.py` does not change, and a gate word with no row opens a review, never an effect.
+
 **Request.** A task with no parent and no skill, in the person's words. With a flow named it is planned at once; without, it stays `requested` until its route becomes an approved plan. A request written on the task board waits in an `acceptance` first.
 
 **Run and attempt.** A run is one row of `task_runs`: one skill, once, in a new copy. Inside it, the lab's one function (`evals/run_attempts.py`) makes attempts: it pauses on the account limit without counting a failure, retries a timeout, an adapter failure, a refusal or an early end, and never retries a refused credential. A failed run has a failure kind from a closed list: `timeout`, `refused`, `auth`, `adapter`, `early_end`, `settings`, `stopped`, `internal`.

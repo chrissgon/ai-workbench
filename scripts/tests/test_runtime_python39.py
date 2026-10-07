@@ -39,7 +39,7 @@ ON_SYSTEM_PYTHON = [
     "runtime/lab.py", "runtime/ops.py", "runtime/cli.py", "runtime/flow_files.py", "runtime/skill_meta.py",
     "runtime/path_rule.py", "runtime/state_merge.py", "runtime/endings.py", "runtime/project_config.py",
     "runtime/manifest.py", "runtime/workcopy.py", "runtime/proof.py", "runtime/router.py", "runtime/plan.py",
-    "runtime/board.py", "runtime/documents.py", "runtime/drop.py", "runtime/deps.py", "runtime/changeset.py", "runtime/effects.py",
+    "runtime/board.py", "runtime/documents.py", "runtime/drop.py", "runtime/deps.py", "runtime/changeset.py", "runtime/effects.py", "runtime/effect_pull_request.py",
     "runtime/progress.py", "runtime/autonomy.py", "runtime/dispatcher.py", "runtime/chat.py", "runtime/operations.py",
     # The roles of the runtime as data, and the isolated runner of skill code (WP-R.5).
     "runtime/roles.py", "runtime/isolated.py",
