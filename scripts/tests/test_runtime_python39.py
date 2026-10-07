@@ -45,6 +45,8 @@ ON_SYSTEM_PYTHON = [
     "runtime/roles.py", "runtime/isolated.py",
     # The handlers the dispatcher's worker ticks (stage 6): the weekly routine of the published posts (WP-6.9).
     "runtime/handlers/published_posts.py",
+    # The ported social agent (stage 7, WP-7.1): the scheduler will start the tick, and the vote step and its job.
+    "runtime/handlers/social.py", "runtime/handlers/social_vote.py", "runtime/handlers/social_vote_job.py",
     # The resolver of a pack: runtime/plan.py starts it with its own interpreter (stage 3; listed in stage 6, WP-6.7).
     "scripts/select_skills.py",
     # The product backlog's parser: the task runtime runs it as an isolated subprocess to propose sub-tasks (stage 6,
@@ -55,7 +57,8 @@ ON_SYSTEM_PYTHON = [
     # The documents' local implementation, called the same way (stage 3).
     "providers/documents/local.py",
 ]
-RUNTIME = ("scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py")  # the scheduler starts these
+RUNTIME = ("scripts/runtime.py", "scripts/runtime_vote.py", "scripts/vote_job.py",
+           "runtime/handlers/social.py", "runtime/handlers/social_vote_job.py")  # the scheduler starts these
 SYSTEM_PYTHON = (3, 9)
 REQUIRES = re.compile(r'^# requires-python = "([^"]+)"$', re.M)
 IMPORT = ("import importlib.util, sys; sys.path.insert(0, sys.argv[2]); "
