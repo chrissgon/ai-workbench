@@ -107,6 +107,20 @@ Operations of stage 9 (the local service, runtime/service.py, is one more shell 
                                    now, built from the store's tables (an open effect: approved and rejected)
   approve(..., channel)            an effect is approved from the terminal and from the local page, with its hash; any
                                    other channel, or none, is refused
+  agents(project)                  each area agent: its configuration, the mode it acts in now, its use of today, the
+                                   tasks queued for it
+  conversation(project[, conversation, after])   the messages of the project's conversation above an id, oldest first
+  skills(project)                  the skills in scope with their version, area, whether they have a runtime manifest,
+                                   their proof as runtime/proof.py gives it and their runs here, and the two checks
+  costs(project[, since])          the runs by day, agent, model and adapter with the cost the store recorded and the
+                                   cost recomputed from the token counts and model_prices (runtime/costs.py)
+  connections(project)             which provider each requirement class of the skills in scope resolves to, which
+                                   secrets are found and where (never a value), the eval image and the platform; no
+                                   provider is started and nothing goes over the network
+  artifacts(project), artifact(project, path)   the project's files under docs/ with their owner skill, and the text
+                                   of one of them, read-only
+  say                              refuses a turn that would route while another run of the project holds the run lock
+                                   before it stores anything
 
 Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run of a code task (its skill is of a
 code area, code_task) whose copy holds versioned files starts only when the project's tracked files have no
@@ -156,7 +170,9 @@ import hashlib
 import importlib.util
 import json
 import os
+import platform as platform_module
 import re
+import stat as stat_module
 import sys
 import shutil
 import subprocess
@@ -169,6 +185,7 @@ sys.path.insert(0, HERE)
 import autonomy  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
 import board  # noqa: E402
 import changeset  # noqa: E402
+import costs as costs_calc  # noqa: E402  (the operation `costs` would hide the module: part 0, F.1, rule 5)
 import deps as deps_sets  # noqa: E402  (the operation `deps` would hide the module: part 0, F.1, rule 5)
 import dispatcher  # noqa: E402
 import documents  # noqa: E402
@@ -2178,21 +2195,35 @@ def _midnight_utc() -> str:
     return local.astimezone(datetime.timezone.utc).isoformat()
 
 
-def _snapshot(ctx: dict, key: dict) -> dict:
-    """What dispatcher.decide reads, from the store, the proof (proof.route through _route) and the runtime manifests:
-    the running task, the ready tasks oldest first with the tier each would run on, the open reviews with their
-    agent, proof and mandatory flag, and each area agent's facts, a day's spend and its entry. A run of the router
-    (its task is a request, so its agent is None) counts against the planning agent."""
+def _agents_of_the_day(ctx: dict) -> dict:
+    """Each area agent's facts, a day's spend and entry, from the store and the configuration: {name: {"facts",
+    "entry", "spent"}}. The day starts at local midnight (_midnight_utc), as the caps count it, and a run of the router
+    (its task is a request, so its agent is None) counts against the planning agent. {} without area agents."""
     store, cfg = ctx["store"], ctx["cfg"]
-    agents = cfg["area_agents"]
+    agents_checked = cfg["area_agents"]
+    if not agents_checked:
+        return {}
     now = datetime.datetime.now(datetime.timezone.utc)
-    tasks = _stored(ctx, store.tasks_list)
-    by_id = {t["id"]: t for t in tasks}
     standing_rows = _stored(ctx, store.approvals_list, status="active", scope="standing")
     runs = [dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL else r
             for r in _stored(ctx, store.runs_since, _midnight_utc())]
     reference, floor = lab.reference("strong")["model"], lab.reference("floor")["model"]
     per_run = cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD)
+    return {name: {"facts": autonomy.facts(name, agents_checked, standing_rows, now), "entry": entry,
+                   "spent": autonomy.spend(runs, name, reference, floor, per_run)}
+            for name, entry in agents_checked.items()}
+
+
+def _snapshot(ctx: dict, key: dict) -> dict:
+    """What dispatcher.decide reads, from the store, the proof (proof.route through _route) and the runtime manifests:
+    the running task, the ready tasks oldest first with the tier each would run on, the open reviews with their
+    agent, proof and mandatory flag, and each area agent's facts, a day's spend and its entry
+    (_agents_of_the_day). A run of the router (its task is a request, so its agent is None) counts against the
+    planning agent."""
+    store, cfg = ctx["store"], ctx["cfg"]
+    agents = cfg["area_agents"]
+    tasks = _stored(ctx, store.tasks_list)
+    by_id = {t["id"]: t for t in tasks}
     proofs = {}
 
     def routed(skill: str) -> dict:
@@ -2202,11 +2233,7 @@ def _snapshot(ctx: dict, key: dict) -> dict:
 
     out = {"running": next((t for t in tasks if t["state"] == "running"), None),
            "ready": [t for t in tasks if t["state"] == "ready" and t["parent_id"] is not None],
-           "reviews": [], "agents": {}, "tier": {}}
-    for name, entry in agents.items():
-        facts = autonomy.facts(name, agents, standing_rows, now)
-        out["agents"][name] = {"facts": facts, "entry": entry,
-                               "spent": autonomy.spend(runs, name, reference, floor, per_run)}
+           "reviews": [], "agents": _agents_of_the_day(ctx), "tier": {}}
     for item in _stored(ctx, store.pending_list):
         task = by_id.get(item["task_id"])
         if item["kind"] != "review" or task is None or not task.get("skill"):
@@ -2620,11 +2647,17 @@ def say(project: str, text: str) -> dict:
     line is stored; a line that starts with "/" is one command of the table of operations (runtime/operations.py), which calls its operation once; a plain
     line answers the router's open question on the conversation's last request, or else is a new request routed with
     the conversation's memory in front of it (one or more runs of the router: a model call), refused when the planning
-    agent may not start. The reply is stored too. A model's reply is shown, never executed. Returns {"reply",
-    "request_id", "pending_id", "ran"}."""
+    agent may not start. The reply is stored too. A model's reply is shown, never executed. A line that would route
+    while another run of the project holds the run lock is refused (code 1) before the line or a request is stored.
+    Returns {"reply", "request_id", "pending_id", "ran"}."""
     ctx = context(project)
     said = _text(text, "the line")
     store = ctx["store"]
+    if _turn_routes(said):
+        # Before anything is stored: a turn that would route during a run is refused here, so that it leaves no message
+        # and no request behind (the router takes the same lock, after the line and the request would have been stored).
+        with _run_lock(ctx["cfg"]):
+            pass
     _stored(ctx, store.message_add, conversation=CONVERSATION, role="user", text=said)
     request_id, pending_id, ran, run_id = None, None, False, None
     if said.startswith("/"):
@@ -2639,6 +2672,15 @@ def say(project: str, text: str) -> dict:
     _stored(ctx, store.message_add, conversation=CONVERSATION, role="assistant", text=reply or "(no reply)",
             task_id=request_id, run_id=run_id)
     return {"reply": reply, "request_id": request_id, "pending_id": pending_id, "ran": ran}
+
+
+def _turn_routes(said: str) -> bool:
+    """Whether a line makes a turn that runs the router: a plain line, or /new. A command of the table calls its own
+    operation, which takes the run lock itself when it needs it, and a line that is no command gets the help."""
+    if not said.startswith("/"):
+        return True
+    parsed = operations.parse_chat(said)
+    return parsed is not None and parsed[0] == "new"
 
 
 def _last_request(ctx: dict):
@@ -2750,6 +2792,319 @@ def stop_runs(project: str | None = None) -> dict:
     the project is accepted for the shape every operation has and read for nothing. Returns what lab.stop_runs
     returns."""
     return lab.stop_runs()
+
+
+# --- stage 9: the reads of the local interface ---------------------------------------------------------------------
+
+
+COST_DAYS = 30           # costs: the default window, in days
+MESSAGES_PAGE = 500      # conversation: the most messages one call returns (the store's own maximum)
+ARTIFACT_LIMIT = 2000    # artifacts: the most files one call lists
+ARTIFACT_MAX_BYTES = 1024 * 1024  # artifact: the largest file whose text is returned
+SECRET_RESOLVER = ("providers", "secrets", "resolver.py")
+CONFIGURED_PROVIDER = {"integration:vcs": "code", "integration:issue-tracker": "task_board", "integration:documents": "documents"}
+
+
+def agents(project: str) -> dict:
+    """The area agents of the configuration with their use of today: {"agents": [{"name", "pack", "enabled", "mode",
+    "acting_mode", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "queued"}]}
+    in the order of the configuration. mode is the configured one; acting_mode the one the agent acts in now
+    (autonomy.mode_of: an agent set to autonomous-with-policy whose approval expired acts as autonomous). The day is
+    counted as the caps count it (_agents_of_the_day): runs_today is the runs on the reference model, usd_today the
+    dollars of the floor model's runs (a run of unknown cost counts at max_cost_usd_per_run, and runs_without_cost
+    says how many), and a router run counts for the planning agent. queued is the number of ready tasks of the agent.
+    A project without area_agents: {"agents": []}."""
+    ctx = context(project)
+    day = _agents_of_the_day(ctx)
+    ready = [t for t in _stored(ctx, ctx["store"].tasks_list) if t["state"] == "ready" and t["parent_id"] is not None]
+    out = []
+    for name, found in day.items():
+        entry, spent = found["entry"], found["spent"]
+        out.append({"name": name, "pack": entry["pack"], "enabled": entry["enabled"], "mode": entry["mode"],
+                    "acting_mode": autonomy.mode_of(found["facts"]), "max_runs_per_day": entry["max_runs_per_day"],
+                    "max_usd_per_day": entry["max_usd_per_day"], "runs_today": spent["runs_reference"],
+                    "usd_today": spent["usd_floor"], "runs_without_cost": spent["runs_without_cost"],
+                    "queued": sum(1 for t in ready if t.get("agent") == name)})
+    return {"agents": out}
+
+
+def conversation(project: str, conversation: str | None = CONVERSATION, after: int | None = 0) -> dict:
+    """The messages of a conversation whose id is above `after`, oldest first, at most MESSAGES_PAGE (the newest of
+    them when more are waiting): {"conversation", "messages": [{"id", "role", "text", "task_id", "run_id",
+    "created_at"}]}. There is one conversation per project and its name is CONVERSATION (an argument left out is the
+    default). For an assistant message
+    task_id is the request the turn made or answered. Reads nothing else."""
+    ctx = context(project)
+    conversation, after = CONVERSATION if conversation is None else conversation, 0 if after is None else after
+    if isinstance(after, bool) or not isinstance(after, int) or after < 0:
+        raise OpsError("after is a message id: a whole number, 0 or more", 2)
+    if not isinstance(conversation, str) or not conversation.strip():
+        raise OpsError("the conversation's name is empty", 2)
+    rows = _stored(ctx, ctx["store"].messages_list, conversation, limit=MESSAGES_PAGE, after_id=after)
+    keys = ("id", "role", "text", "task_id", "run_id", "created_at")
+    return {"conversation": conversation, "messages": [{key: row[key] for key in keys} for row in rows]}
+
+
+def _scope(ctx: dict) -> list:
+    """The skills in scope of the project: the packs of its enabled agents, or the default pack without area_agents."""
+    try:
+        return plan.pack_skills(ctx["cfg"], ROOT)
+    except plan.PlanError as e:
+        raise OpsError(f"the skills in scope cannot be listed: {e}", 1) from None
+
+
+def skills(project: str) -> dict:
+    """The skills in scope of the project (_scope) with what is known of each, and the two checks of the proof:
+    {"skills": [{"name", "version", "area", "manifest": true or false, "proof": [{"tier", "model", "adapter",
+    "band", "cause", "score", "mean", "runs"}], "runs_here": <runs of it in this project's store>}], "checks":
+    {"measurement": "ok" or why, "image": "ok" or why}}. The proof is the entry runtime/proof.py keeps (proof.row),
+    one pair for the reference model and one for the floor model, never recomputed here. The measurement check is the
+    status script's; the image check is made once for the machine: "ok" when the eval image is on it and is the image
+    the evidence of every skill that has evidence was measured in, else the reason (a skill with no evidence has
+    nothing to compare and is `needs a test` anyway). Calls no model and no provider, and starts no network call."""
+    ctx = context(project)
+    cfg = ctx["cfg"]
+    out, evidence = [], {}
+    for name in _scope(ctx):
+        try:
+            meta = skill_meta.declared(os.path.join(ROOT, "skills", name))
+            entry = proof_rules.row(cfg, name)
+        except (skill_meta.SkillError, lab.LabError, OSError, KeyError) as e:
+            raise OpsError(f"the proof of {name} cannot be read: {e}", 1) from None
+        evidence[name] = entry.get("evidence_images") or []
+        out.append({"name": name, "version": meta["version"], "area": meta["area"],
+                    "manifest": os.path.isfile(manifest.path(ROOT, name)),
+                    "proof": [{key: pair.get(key) for key in ("tier", "model", "adapter", "band", "cause", "score", "mean", "runs")}
+                              for pair in entry["pairs"]],
+                    "runs_here": len(_stored(ctx, ctx["store"].task_runs_of_skill, name))})
+    try:
+        problem, digest = lab.measurement_problem(), lab.image()["digest"]
+    except lab.LabError as e:
+        raise OpsError(f"the proof's checks cannot be made: {e}", 1) from None
+    others = sorted(name for name, images in evidence.items() if images and digest not in images)
+    if digest is None:
+        image = "the eval image is not on this machine"
+    elif others:
+        image = f"the image on this machine is not the one the evidence of {len(others)} skill(s) was measured in"
+    else:
+        image = None
+    return {"skills": out, "checks": {"measurement": problem or "ok", "image": image or "ok"}}
+
+
+def costs(project: str, since: str | None = None) -> dict:
+    """The runs of the project from the day `since` (YYYY-MM-DD; default the last COST_DAYS days) by day, agent, model
+    and adapter: {"since", "rows": [{"day", "agent", "model", "adapter", "runs", "tokens", "recorded_usd",
+    "recomputed_usd", "unknown_runs", "price"}], "caps": [{"agent", "max_runs_per_day", "max_usd_per_day"}]}. The runs
+    are read task by task (the store's runs_since has no token count and no run folder) and the token counts of a
+    run from its own folder (runtime/costs.py, usage_of): a folder outside <data_dir>/task-runs/ is not read, and the
+    run is unknown. recomputed_usd is computed from the prices of the configuration's model_prices (price says their
+    source and date) and is None, never a guess, for a model with no price or a group with a run of unknown usage
+    (unknown_runs counts them). A router run counts for the planning agent. The day is the local day."""
+    ctx = context(project)
+    cfg, store = ctx["cfg"], ctx["store"]
+    if since is None:
+        day = (datetime.date.today() - datetime.timedelta(days=COST_DAYS)).isoformat()
+    else:
+        try:
+            day = datetime.date.fromisoformat(str(since)).isoformat()
+        except ValueError:
+            raise OpsError("since is a day: YYYY-MM-DD", 2) from None
+    folder = os.path.realpath(os.path.join(cfg["data_dir"], RUNS_DIR)) + os.sep
+    runs = []
+    for task in _stored(ctx, store.tasks_list):
+        for run in _stored(ctx, store.task_runs_list, task["id"]):
+            agent = task.get("agent")
+            if agent is None and task["parent_id"] is None and run.get("skill") == router.ROUTER_SKILL:
+                agent = plan.PLANNING
+            where = run.get("run_dir")
+            inside = isinstance(where, str) and os.path.realpath(where).startswith(folder)
+            runs.append(dict(run, agent=agent, run_dir=where if inside else None))
+    return {"since": day, "rows": costs_calc.summary(runs, cfg["model_prices"], since=day),
+            "caps": [{"agent": name, "max_runs_per_day": entry["max_runs_per_day"],
+                      "max_usd_per_day": entry["max_usd_per_day"]} for name, entry in cfg["area_agents"].items()]}
+
+
+def _secret_rows() -> tuple:
+    """([{"name", "found", "where"}], note): the secrets the core and the runtime register, found or not and where
+    (resolver.report(): the environment or the secret store), then the variables the lab names for the two models'
+    keys (lab.credential_missing). Never a value: the resolver's report holds none, and only its name, found and
+    source are taken. note is None, or why a part could not be read."""
+    notes, rows = [], []
+    try:
+        resolver = _load("workbench_secret_resolver_runtime", os.path.join(ROOT, *SECRET_RESOLVER))
+        resolver.register_file(os.path.join(ROOT, "runtime", "secrets.json"))
+        rows = [{"name": r["name"], "found": bool(r["found"]), "where": r["source"] if r["found"] else None}
+                for r in resolver.report()]
+    except Exception as e:  # an interpreter the resolver does not run on, a bad registry
+        sys.modules.pop("workbench_secret_resolver_runtime", None)
+        notes.append(f"the secret resolver could not be used: {type(e).__name__}")
+    have = {row["name"] for row in rows}
+    try:
+        for tier in ("strong", "floor"):
+            names, missing = lab.reference(tier)["pass_env"], lab.credential_missing(tier)
+            for name in names:
+                if name not in have:
+                    have.add(name)
+                    rows.append({"name": name, "found": name not in missing,
+                                 "where": None if name in missing else "environment or secret store"})
+    except Exception as e:  # a gate file the facade refuses
+        notes.append(f"the models' keys could not be looked up: {type(e).__name__}")
+    return sorted(rows, key=lambda row: row["name"]), "; ".join(notes) or None
+
+
+def connections(project: str) -> dict:
+    """What the project's skills need from the machine and whether it is there, with no provider started and no
+    network call: {"classes": [{"class", "provider", "found", "note", "skills"}], "secrets": [{"name", "found",
+    "where"}], "secrets_note", "image": {"name", "present", "evidence": true, false or None}, "platform": {"machine",
+    "evidence"}}. classes: each requirement class the skills in scope declare, resolved by providers/resolve.py as the
+    runtime resolves it (the implementation the configuration names for the code provider, the task board and the
+    documents; else the environment, the platform default or the only implementation): provider is the
+    implementation or None, found whether its file exists, note how it was chosen or why it was not. secrets: see
+    _secret_rows; the names are the registry's, never a value. image: whether the eval image is on this machine and
+    whether its digest is the one the evidence of the skills in scope was measured in (None when it is not
+    present). platform: the architecture of this machine and the platform the evidence was made on."""
+    ctx = context(project)
+    cfg = ctx["cfg"]
+    needs, evidence = {}, set()
+    for name in _scope(ctx):
+        try:
+            for cls in skill_meta.declared(os.path.join(ROOT, "skills", name))["requires"]:
+                needs.setdefault(cls, []).append(name)
+            evidence.update(proof_rules.row(cfg, name).get("evidence_images") or [])
+        except (skill_meta.SkillError, lab.LabError, OSError, KeyError) as e:
+            raise OpsError(f"the needs of {name} cannot be read: {e}", 1) from None
+    resolve = _load("workbench_provider_resolve", os.path.join(ROOT, "providers", "resolve.py"))
+    classes = []
+    for cls in sorted(needs):
+        key = CONFIGURED_PROVIDER.get(cls)
+        implementation = (cfg.get(key) or {}).get("provider") if key else None
+        row = {"class": cls, "provider": None, "found": False, "note": None, "skills": sorted(needs[cls])}
+        try:
+            got = resolve.resolve(cls, root=ROOT, implementation=implementation)
+        except (resolve.UnknownClass, resolve.Unresolved) as e:
+            row["note"] = str(e)
+        else:
+            row.update(provider=got["implementation"], found=os.path.isfile(got["path"]),
+                       note=f"chosen by {got['source']}" + (f" ({got['variable']})" if got.get("variable") else ""))
+            if not row["found"]:
+                row["note"] = "the provider's file is missing: " + row["note"]
+        classes.append(row)
+    secrets, note = _secret_rows()
+    try:
+        seen = lab.image()
+    except lab.LabError as e:
+        raise OpsError(f"the eval image cannot be looked up: {e}", 1) from None
+    present = seen["digest"] is not None
+    return {"classes": classes, "secrets": secrets, "secrets_note": note,
+            "image": {"name": seen.get("name"), "present": present,
+                      "evidence": (seen["digest"] in evidence) if present else None},
+            "platform": {"machine": platform_module.machine() or None, "evidence": seen.get("evidence_platform")}}
+
+
+def _owners() -> list:
+    """[(skill, its declared outputs)] for every skill folder of the checkout that has a readable frontmatter."""
+    folder, out = os.path.join(ROOT, "skills"), []
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        try:
+            out.append((name, skill_meta.declared(os.path.join(folder, name))["outputs"]))
+        except (skill_meta.SkillError, OSError):
+            continue
+    return out
+
+
+def artifacts(project: str) -> dict:
+    """The files of the project under docs/ that the path rule calls a document or a machine file, sorted by path:
+    {"artifacts": [{"path", "owner", "size", "modified_at", "bound"}], "truncated"}. owner is the skill whose declared
+    outputs match the path (skill_meta.matches), or None. modified_at is ISO-8601 UTC. bound is true when a pending
+    decision still open lists the file among those a run returned or kept for it, or when its skill's runtime
+    manifest binds it to an approval by its hash. Never docs/workbench/runtime.json, a link, a folder the path rule
+    drops, or a file outside docs/. At most ARTIFACT_LIMIT files; truncated says whether more were left out."""
+    ctx = context(project)
+    root = ctx["cfg"]["project"]
+    base = os.path.join(root, "docs")
+    owners = _owners()
+    waiting = set()
+    for item in _stored(ctx, ctx["store"].pending_list):
+        payload = item.get("payload") or {}
+        for key in ("returned", "kept"):
+            waiting.update(f["path"] for f in payload.get(key) or [] if isinstance(f, dict) and isinstance(f.get("path"), str))
+    bound_by_owner = {}
+    out, truncated = [], False
+    if os.path.isdir(base) and not os.path.islink(base):
+        for current, folders, files in os.walk(base, followlinks=False):
+            folders[:] = sorted(d for d in folders if not os.path.islink(os.path.join(current, d)))
+            for name in sorted(files):
+                full = os.path.join(current, name)
+                if os.path.islink(full) or not os.path.isfile(full):
+                    continue
+                rel = os.path.relpath(full, root).replace(os.sep, "/")
+                if path_rule.classify(rel) not in ("document", "machine"):
+                    continue
+                if len(out) >= ARTIFACT_LIMIT:
+                    truncated = True
+                    break
+                owner = next((skill for skill, outputs in owners if skill_meta.matches(outputs, rel)), None)
+                if owner not in bound_by_owner:
+                    try:
+                        bound_by_owner[owner] = manifest.load(ROOT, owner, whole=False) if owner else {}
+                    except manifest.ManifestError:
+                        bound_by_owner[owner] = {}
+                found = os.lstat(full)
+                out.append({"path": rel, "owner": owner, "size": found.st_size, "modified_at": _utc(found.st_mtime),
+                            "bound": rel in waiting or bool(manifest.bound_among(bound_by_owner[owner], [rel]))})
+            if truncated:
+                break
+    return {"artifacts": sorted(out, key=lambda a: a["path"]), "truncated": truncated}
+
+
+def _utc(timestamp: float) -> str:
+    return datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def artifact(project: str, path: str) -> dict:
+    """The text of one file of the project under docs/, read-only: {"path", "text", "size", "modified_at"}. The path is
+    relative to the project and normalised first (path_rule.normal: no "..", no absolute path). Refused (code 2)
+    before anything is read: a path outside docs/, docs/workbench/runtime.json, a path the path rule drops or does
+    not know, a path with a link on any part of it (the project's own folder excepted), a file that is not a regular
+    file, over ARTIFACT_MAX_BYTES, or whose bytes are not UTF-8 text (a NUL is not text). A path that is not there is
+    refused with code 1."""
+    ctx = context(project)
+    rel = path_rule.normal(path)
+    if rel is None or not rel.startswith(path_rule.DOCS_DIR) or rel == path_rule.CONFIG:
+        raise OpsError("an artifact is a file under docs/ of the project, other than the runtime's configuration", 2)
+    if path_rule.classify(rel) not in ("state", "document", "machine"):
+        raise OpsError(f"{rel} is not a file the interface reads", 2)
+    here = ctx["cfg"]["project"]
+    for part in rel.split("/"):
+        here = os.path.join(here, part)
+        if os.path.islink(here):
+            raise OpsError(f"{rel} is or passes through a link: it is not read", 2)
+    try:
+        looked = os.lstat(here)
+    except OSError:
+        raise OpsError(f"there is no file {rel} in the project", 1) from None
+    if not stat_module.S_ISREG(looked.st_mode):  # before any open: a pipe would block it
+        raise OpsError(f"{rel} is not a regular file", 2)
+    if looked.st_size > ARTIFACT_MAX_BYTES:
+        raise OpsError(f"{rel} is {looked.st_size} bytes: over the {ARTIFACT_MAX_BYTES} the interface reads", 2)
+    try:
+        fd = os.open(here, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        raise OpsError(f"{rel} cannot be opened without following a link", 2) from None
+    with os.fdopen(fd, "rb") as f:
+        found = os.fstat(f.fileno())  # the file that was opened, not the one that was looked at
+        if not stat_module.S_ISREG(found.st_mode):
+            raise OpsError(f"{rel} is not a regular file", 2)
+        data = f.read(ARTIFACT_MAX_BYTES + 1)
+    if len(data) > ARTIFACT_MAX_BYTES:
+        raise OpsError(f"{rel} is over the {ARTIFACT_MAX_BYTES} bytes the interface reads", 2)
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        raise OpsError(f"{rel} is not UTF-8 text", 2) from None
+    if "\x00" in text:
+        raise OpsError(f"{rel} is not text", 2)
+    return {"path": rel, "text": text, "size": len(data), "modified_at": _utc(found.st_mtime)}
 
 
 if __name__ == "__main__":

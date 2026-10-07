@@ -43,6 +43,8 @@ ON_SYSTEM_PYTHON = [
     "runtime/progress.py", "runtime/autonomy.py", "runtime/dispatcher.py", "runtime/chat.py", "runtime/operations.py",
     # The local service (stage 9): it serves the operations layer, so it runs where the layer runs.
     "runtime/service.py",
+    # The cost of a run recomputed from its token counts (stage 9): the operations layer imports it.
+    "runtime/costs.py",
     # The roles of the runtime as data, and the isolated runner of skill code (WP-R.5).
     "runtime/roles.py", "runtime/isolated.py",
     # The handlers the dispatcher's worker ticks (stage 6): the weekly routine of the published posts (WP-6.9).

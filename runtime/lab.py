@@ -162,19 +162,23 @@ def measurement_problem():
 
 
 def image() -> dict:
-    """{"name", "digest", "platform"} of the eval image on this machine. digest is None when the lab does not run in
-    a container, or when the image is not on this machine. It only inspects, the way ensure() of evals/executor.py
-    reads the id of the built image (its digest); it never calls ensure() and never builds."""
+    """{"name", "digest", "platform", "evidence_platform"} of the eval image on this machine. digest is None when the lab
+    does not run in a container, or when the image is not on this machine. platform is the CPU platform the image runs
+    as here; evidence_platform is the one lab evidence is made on (the executor's IMAGE_PLATFORM, which every evidence
+    line carries as image_platform): the two differ on a machine of another architecture, and the proof holds for the
+    second. It only inspects, the way ensure() of evals/executor.py reads the id of the built image (its digest); it
+    never calls ensure() and never builds."""
     if LAB.EXECUTOR != "container":
-        return {"name": None, "digest": None, "platform": None}
+        return {"name": None, "digest": None, "platform": None, "evidence_platform": None}
     try:
         executor = LAB.load_executor()
         name, platform = executor.names()["image"], executor.image_platform()
+        evidence = executor.IMAGE_PLATFORM
         found = executor.docker("image", "inspect", "--format", "{{.Id}}", name, check=False)
     except Exception:  # no docker client, no daemon: the image cannot be seen, so it is not there
-        return {"name": None, "digest": None, "platform": None}
+        return {"name": None, "digest": None, "platform": None, "evidence_platform": None}
     digest = found.stdout.strip() if found.returncode == 0 else ""
-    return {"name": name, "digest": digest or None, "platform": platform}
+    return {"name": name, "digest": digest or None, "platform": platform, "evidence_platform": evidence}
 
 
 def proof_inputs(skill: str) -> str:

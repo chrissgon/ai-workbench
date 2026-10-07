@@ -67,7 +67,7 @@ The task runtime's tables, those that migration 2 and later create, with their c
 
 The cursors the runtime writes: `config:accepted-sha256` (the accepted configuration, written only by `accept_config`), `board:configured` (when the board was first written), `use:<run id>` (the recorded use of a run), and each handler's own (`routine:published-posts`).
 
-**The project configuration's keys** (`runtime/project_config.py`; the keys are closed: an unknown key is refused (exit 3) with the nearest known name, and the first runtime's keys, a second closed tuple that leaves with stage 7, stay valid in the same file): `workbench`, `data_dir`, `store_db` (required, absolute); `area_agents` (`pack`, `enabled`, `mode`, `max_runs_per_day`, `max_usd_per_day`); `protected_paths`; `task_board` and `documents` (`provider`, and `expires` for a provider other than `local`, plus the provider's own keys); `code` (`provider`, `repo`, `base`, `branch_prefix`); `dependencies` (`recipe`, `file`); `handlers`; `path`; `max_cost_usd_per_run`. Planned: `model_prices`.
+**The project configuration's keys** (`runtime/project_config.py`; the keys are closed: an unknown key is refused (exit 3) with the nearest known name, and the first runtime's keys, a second closed tuple that leaves with stage 7, stay valid in the same file): `workbench`, `data_dir`, `store_db` (required, absolute); `area_agents` (`pack`, `enabled`, `mode`, `max_runs_per_day`, `max_usd_per_day`); `protected_paths`; `task_board` and `documents` (`provider`, and `expires` for a provider other than `local`, plus the provider's own keys); `code` (`provider`, `repo`, `base`, `branch_prefix`); `dependencies` (`recipe`, `file`); `handlers`; `path`; `max_cost_usd_per_run`; `model_prices` (`{"<model id>": {"input_usd_per_mtok", "output_usd_per_mtok", "cache_read_usd_per_mtok", "cache_write_usd_per_mtok", "source", "date"}}`, typed by the person from the provider's price page; `runtime/costs.py` recomputes a run's cost from its token counts with it).
 
 ## Abstractions
 
@@ -300,6 +300,13 @@ The limit's text and the stage that built it come from the contract's table; the
 | `handler` | `--name` `--verb` `[--arg]` | `handler_call` |
 | `pin` | - | `pin` |
 | `say` | `--text \| --text-file` | `say` |
+| `agents` | - | `agents` |
+| `conversation` | `[--conversation]` `[--after]` | `conversation` |
+| `skills` | - | `skills` |
+| `costs` | `[--since]` | `costs` |
+| `connections` | - | `connections` |
+| `artifacts` | - | `artifacts` |
+| `artifact` | `--path` | `artifact` |
 | `stop-runs` | - | `stop_runs` |
 <!-- /generated -->
 
@@ -360,6 +367,13 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `handler_call` | `handler` | terminal | no | start one verb of a handler that runtime.json names |
 | `pin` | `pin` | terminal | no | write the pin of the dispatcher's two jobs |
 | `say` | `say` | terminal, page | yes, for a new request | one turn of the conversation with the planning agent |
+| `agents` | `agents` | terminal | no | each area agent: its mode, its caps, what it used today and how many tasks wait for it |
+| `conversation` | `conversation` | terminal | no | the messages of the project's conversation above a message id, oldest first |
+| `skills` | `skills` | terminal | no | the skills in scope with their proof on each model, their runs here and the two checks of the proof |
+| `costs` | `costs` | terminal | no | the runs by day, agent, model and adapter, with the recorded cost and the cost recomputed from the prices |
+| `connections` | `connections` | terminal | no | which provider each requirement class resolves to, which secrets are found (never a value), the image |
+| `artifacts` | `artifacts` | terminal | no | the project's files under docs/ with their owner skill, size and time |
+| `artifact` | `artifact` | terminal | no | the text of one file under docs/ of the project, read-only |
 | `stop_runs` | `stop-runs` | terminal | no | end the runs this process started (the local service calls it before it exits) |
 <!-- /generated -->
 
