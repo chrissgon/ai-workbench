@@ -95,7 +95,7 @@ def test_limit_15_the_effect_is_executed_by_code_with_exactly_the_approved_conte
     case = gate_project(tree)
     item = case["item"]
     doc = json.loads(Path(item["payload"]["effect_file"]).read_text())
-    done = ops.approve(case["path"], item["id"], item["payload_sha256"])
+    done = ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
     assert done["pull_request"] == {"number": 7, "url": "https://code.example/example-org/web/pull/7"}
     assert done["task_state"] == "done" and done["commit"] == "c" * 40
     calls = provider_calls(tree)
@@ -116,7 +116,7 @@ def test_an_approval_with_another_hash_executes_nothing(tree):
     case = gate_project(tree)
     for wrong, code in (("0" * 64, 1), (None, 2)):
         with pytest.raises(ops.OpsError) as refused:
-            ops.approve(case["path"], case["item"]["id"], wrong)
+            ops.approve(case["path"], case["item"]["id"], wrong, channel="terminal")
         assert refused.value.code == code
     assert provider_calls(tree) == [] and ops.pending(case["path"], case["item"]["id"])["status"] == "open"
 
@@ -126,13 +126,13 @@ def test_a_file_changed_after_the_gate_is_a_deviation_and_nothing_is_sent(tree):
     stored = Path(case["item"]["payload"]["changeset_dir"]) / "files" / "src" / "app.py"
     stored.write_text("edited after the gate\n")
     with pytest.raises(ops.OpsError, match="nothing was sent"):
-        ops.approve(case["path"], case["item"]["id"], case["item"]["payload_sha256"])
+        ops.approve(case["path"], case["item"]["id"], case["item"]["payload_sha256"], channel="terminal")
     assert provider_calls(tree) == []
     effect_file = Path(case["item"]["payload"]["effect_file"])
     stored.write_text("v2\n")
     effect_file.write_text(effect_file.read_text().replace("Carry the providers", "Something else"))
     with pytest.raises(ops.OpsError, match="its hash changed"):
-        ops.approve(case["path"], case["item"]["id"], case["item"]["payload_sha256"])
+        ops.approve(case["path"], case["item"]["id"], case["item"]["payload_sha256"], channel="terminal")
     assert provider_calls(tree) == [] and ops.pending(case["path"], case["item"]["id"])["status"] == "open"
 
 
@@ -141,17 +141,17 @@ def test_a_base_that_moved_or_a_branch_that_already_exists_is_a_deviation_and_no
     item = case["item"]
     answers(tree, base_commit="d" * 40, branch_exists=False)
     with pytest.raises(ops.OpsError, match="the base branch moved"):
-        ops.approve(case["path"], item["id"], item["payload_sha256"])
+        ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
     answers(tree, base_commit=git(tree["project"], "rev-parse", "HEAD").strip(), branch_exists=True)
     with pytest.raises(ops.OpsError, match="already exists on the remote"):
-        ops.approve(case["path"], item["id"], item["payload_sha256"])
+        ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
     assert all("--dry-run" in c["argv"] for c in provider_calls(tree))  # only dry runs: nothing committed or opened
 
 
 def test_limit_17_the_approval_lives_in_the_table_and_the_state_file_row_is_a_generated_copy(tree):
     case = gate_project(tree)
     item = case["item"]
-    done = ops.approve(case["path"], item["id"], item["payload_sha256"])
+    done = ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
     assert done["state"] == {"written": True}
     ctx = ops.context(case["path"])
     rows = ctx["store"].approvals_list(ctx["conn"])
@@ -183,7 +183,7 @@ def test_the_commit_is_one_made_by_the_code_provider_and_no_module_of_the_runtim
         assert not re.search(r"""["']push["']|git[^\n]{0,40}\bpush\b""", code), path.name
         assert not re.search(r"""["']git["'][^\n]*["']commit["']""", code), path.name
     case = gate_project(tree)
-    ops.approve(case["path"], case["item"]["id"], case["item"]["payload_sha256"])
+    ops.approve(case["path"], case["item"]["id"], case["item"]["payload_sha256"], channel="terminal")
     assert [c["argv"][0] for c in provider_calls(tree)].count("commit-files") == 2  # one dry run, one commit
 
 
@@ -192,7 +192,7 @@ def test_the_pull_request_is_opened_only_after_the_commit_succeeded(tree):
     item = case["item"]
     answers(tree, base_commit=git(tree["project"], "rev-parse", "HEAD").strip(), fail={"commit-files": [1, "the push was rejected"]})
     with pytest.raises(ops.OpsError, match="the push was rejected"):
-        ops.approve(case["path"], item["id"], item["payload_sha256"])
+        ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
     assert "open-pr" not in [c["argv"][0] for c in provider_calls(tree)]
 
 
@@ -202,12 +202,12 @@ def test_a_provider_failure_leaves_the_pending_decision_open_and_approving_again
     head = git(tree["project"], "rev-parse", "HEAD").strip()
     answers(tree, base_commit=head, fail={"open-pr": [1, "a server error"]})
     with pytest.raises(ops.OpsError, match="a server error"):
-        ops.approve(case["path"], item["id"], item["payload_sha256"])
+        ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
     assert ops.pending(case["path"], item["id"])["status"] == "open"
     ctx = ops.context(case["path"])
     assert [r["status"] for r in ctx["store"].approvals_list(ctx["conn"])] == ["pending-execution"]
     answers(tree, base_commit="moved-but-committed", branch_exists=True)
-    done = ops.approve(case["path"], item["id"], item["payload_sha256"])  # the key already committed: no check
+    done = ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")  # the key already committed: no check
     assert done["task_state"] == "done" and len(ctx["store"].approvals_list(ctx["conn"])) == 1
     keys = [c["argv"][c["argv"].index("--idempotency-key") + 1] for c in provider_calls(tree)]
     assert len(set(k for k in keys if k.endswith("-commit"))) == 1 and len(set(k for k in keys if k.endswith("-pr"))) == 1
@@ -231,7 +231,7 @@ def test_a_blocked_change_set_never_becomes_an_effect(tree):
     # A second request whose first task leaves a blocked change set: its review cannot be released, so the gate task
     # never runs on it; and an effect is never opened from a blocked one.
     (tree["adapter"] / "code.sh").write_text("echo 'KEY=AKIA" + "Q" * 16 + "' > leak.txt\n")
-    ops.approve(case["path"], case["item"]["id"], case["item"]["payload_sha256"])
+    ops.approve(case["path"], case["item"]["id"], case["item"]["payload_sha256"], channel="terminal")
     ops.request(case["path"], "Another change.", "gate-demo", title="Another change")
     first = ops.run_next(case["path"])
     assert first.get("pending_id"), first

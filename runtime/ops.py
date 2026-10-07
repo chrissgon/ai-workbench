@@ -1961,14 +1961,14 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
     return {"created": [t["id"] for t in created], "pending_id": pending_id}
 
 
-def approve(project: str, pending_id: int, sha256: str | None = None, channel: str = "terminal") -> dict:
+def approve(project: str, pending_id: int, sha256: str | None = None, channel: str | None = None) -> dict:
     """Approve a pending decision of kind `plan` (its tasks are created as the plan lists them, and those with no
     dependency are ready) or `acceptance` (the request written on the task board is kept, and waits for its route).
     With sha256, a plan is approved only when it is the plan's hash. An `effect` (stage 4) is approved only with
     its hash, and code then executes it: the one commit through the code provider, then the pull request; nothing is
     sent when anything moved since the gate, and a failure leaves it open, approved again with the same hash. An
     effect is approved only from the terminal (decision D8): the table of operations tells this function which
-    channel called, and any other channel is refused before anything is read or sent."""
+    channel called, and any other channel, or none, is refused before anything is read or sent (the rule fails closed)."""
     ctx = context(project)
     item = _stored(ctx, ctx["store"].pending_get, pending_id)
     if item["kind"] == "effect" and channel != "terminal":
