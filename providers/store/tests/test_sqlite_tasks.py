@@ -54,7 +54,7 @@ def test_init_db_creates_a_private_database_at_the_current_version_and_puts_the_
     try:
         path = tmp_path / "new" / "tasks.sqlite"
         out = store.init_db(path)
-        assert out["created"] is True and out["applied"] == [1, 2, 3, 4, 5, 6] and out["schema_version"] == 6
+        assert out["created"] is True and out["applied"] == [1, 2, 3, 4, 5, 6, 7] and out["schema_version"] == 7
         assert stat.S_IMODE(path.stat().st_mode) == 0o600 and stat.S_IMODE(path.parent.stat().st_mode) == 0o700
         assert os.umask(0o022) == 0o022  # the caller's umask is what it was
     finally:
@@ -76,7 +76,7 @@ def test_a_version_1_database_keeps_its_rows_and_gains_the_three_tables(tmp_path
         store.open_db(path)
     assert refused.value.code == store.EXIT_NOT_CONFIGURED and "run init" in str(refused.value)
     out = store.init_db(path)
-    assert out["migrated_from"] == 1 and out["applied"] == [2, 3, 4, 5, 6]
+    assert out["migrated_from"] == 1 and out["applied"] == [2, 3, 4, 5, 6, 7]
     conn = store.open_db(path)
     assert conn.execute("SELECT value FROM cursors WHERE name = 'since'").fetchone()[0] == "v1"
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
@@ -246,7 +246,7 @@ def test_export_prints_the_three_tables_and_the_verbs_of_version_1_still_work(tm
     assert (len(out["tasks"]), len(out["task_runs"]), len(out["pending_decisions"])) == (3, 1, 1)
     assert out["tasks"][2]["depends_on"] == [out["tasks"][1]["id"]] and out["pending_decisions"][0]["payload"] == {}
     assert cli("cursor-set", "--name", "since", "--value", "v").returncode == 0
-    assert json.loads(cli("--check").stdout)["schema_version"] == 6
+    assert json.loads(cli("--check").stdout)["schema_version"] == 7
 
 
 def test_a_cursor_written_in_process_is_the_one_the_verb_reads(tmp_path):
@@ -294,3 +294,36 @@ def test_a_run_is_read_by_its_id(conn):
     assert (got["id"], got["task_id"], got["model"], got["status"]) == (run["run_id"], task["id"], "m", "running")
     with pytest.raises(store.StoreError):
         store.task_run_get(conn, run["run_id"] + 1)
+
+
+def test_a_task_a_run_and_a_pending_decision_are_never_deleted(conn, tmp_path, monkeypatch):
+    """Limit L13 for the task runtime's records (migration 7): the database refuses to delete a task, a run or a
+    pending decision, whoever writes the SQL; their state, status and resolution still move."""
+    request, market, _ = planned(conn)
+    task, run, pending = run_to_waiting(conn)
+    assert task == market
+    for statement, args in (("DELETE FROM pending_decisions WHERE id = ?", (pending,)),
+                            ("DELETE FROM task_runs WHERE id = ?", (run,)),
+                            ("DELETE FROM tasks WHERE id = ?", (task,)),
+                            ("DELETE FROM tasks", ())):
+        with pytest.raises(sqlite3.DatabaseError, match="never deleted"):
+            with conn:
+                conn.execute(statement, args)
+    store.pending_resolve(conn, pending, resolution="answered", by="user", answer="Ours.")
+    assert store.task_get(conn, task)["state"] == "ready"
+    assert conn.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM task_runs").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM pending_decisions").fetchone()[0] == 1
+    # A database at version 6 keeps its rows and gains the triggers with init.
+    path = tmp_path / "six.sqlite"
+    monkeypatch.setattr(store, "SCHEMA_VERSION", 6)
+    monkeypatch.setattr(store, "MIGRATIONS", {k: v for k, v in store.MIGRATIONS.items() if k <= 6})
+    store.init_db(path)
+    planned(store.open_db(path))
+    monkeypatch.undo()
+    assert store.init_db(path)["applied"] == [7]
+    six = store.open_db(path)
+    with pytest.raises(sqlite3.DatabaseError, match="never deleted"):
+        with six:
+            six.execute("DELETE FROM tasks")
+    assert six.execute("SELECT COUNT(*) FROM tasks").fetchone()[0] == 3

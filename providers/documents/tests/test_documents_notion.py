@@ -117,6 +117,37 @@ def test_a_long_document_is_written_in_calls_no_larger_than_the_limit(tmp_path):
         markdown.replace("Paragraph 1:", "Paragraph one:"))
 
 
+def top_ids(docs, ident: str) -> list:
+    with docs.fake.lock:
+        return [i for i in docs.fake.children[ident] if not docs.fake.blocks[i]["in_trash"]]
+
+
+def test_a_write_appends_the_new_blocks_before_it_deletes_the_old_ones(tmp_path):
+    """The page write order (notion.py): the new blocks are appended first, then the old ones are deleted, so a write
+    that fails never leaves the page empty."""
+    docs = Documents(tmp_path)
+    nb = docs.harness.blocks
+    made = docs.write("# Strategy\n\nThe first why.\n\n- one\n- two\n", key="k1")[1]
+    old = top_ids(docs, made["id"])
+    start = len(docs.fake.requests)
+    code, _, said = docs.write("# Strategy\n\nThe second why.\n", key="k2", ident=made["id"])
+    assert code == 0, said
+    sent = docs.fake.requests[start:]
+    appends = [n for n, (method, path, _) in enumerate(sent) if method == "PATCH" and path.endswith("/children")]
+    deletes = [n for n, (method, _, _) in enumerate(sent) if method == "DELETE"]
+    assert appends and deletes and max(appends) < min(deletes), "an old block was deleted before every new one was appended"
+    assert sorted(path.rsplit("/", 1)[1] for method, path, _ in sent if method == "DELETE") == sorted(old)
+    second = docs.run("read", "--id", made["id"])[1]["markdown"]
+    assert second == nb.round_trip("# Strategy\n\nThe second why.\n")
+    # A write whose append fails deletes nothing: the page keeps what it held.
+    docs.fake.fail_next("append_children", 400)
+    start = len(docs.fake.requests)
+    code, _, said = docs.write("# Strategy\n\nThe third why.\n", key="k3", ident=made["id"])
+    assert code == 1, said
+    assert not [path for method, path, _ in docs.fake.requests[start:] if method == "DELETE"]
+    assert docs.run("read", "--id", made["id"])[1]["markdown"] == second
+
+
 def test_a_creation_with_an_unknown_outcome_blocks_its_key_until_resolve(tmp_path):
     docs = Documents(tmp_path)
     docs.fake.fail_next("create_page", 504, carried_out=True)

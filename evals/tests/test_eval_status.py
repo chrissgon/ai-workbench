@@ -262,8 +262,9 @@ def test_no_evidence_is_written_while_the_gate_file_carries_no_fingerprint(root,
     assert "is not valid" in es.evidence_refusal(str(root))
 
 
-def test_the_repository_measurement_is_at_version_5_with_its_floor(root):
-    """Phase B changes what the grader is shown, so nothing measured before it counts: version 5, floor 5."""
+def test_the_repository_measurement_is_at_version_5_or_later_with_its_floor(root):
+    """Phase B changes what the grader is shown, so nothing measured before it counts: version 5 or later, and a floor
+    of 5 or later."""
     gate = es.load_gate(str(REPO))
     assert gate["measurement_version"] >= 5 and gate["measurement_floor"] >= 5
 

@@ -123,6 +123,27 @@ def test_a_creation_with_an_unknown_outcome_blocks_its_key_until_resolve(tmp_pat
     assert "pending" in board.upsert({"title": "Voice"}, key="plan-1-voice")[2]
 
 
+def test_the_board_never_retries_a_429_or_a_5xx(tmp_path):
+    """The board's rule (notion.py, "a verb never retries"): too many requests or a server error ends the verb with exit
+    1 and the status, after exactly one request of that call, for a read and for a write alike; the runtime's next sync
+    is the retry."""
+    board = Board(tmp_path)
+    made = board.upsert({"title": "Identity", "state": "planned"}, key="k1")[1]
+    reads = (("retrieve_page", ("get", "--id", made["id"])), ("query_base", ("list",)))
+    for status in (429, 500, 503):
+        for name, argv in reads:
+            board.fake.fail_next(name, status)
+            calls = board.fake.count(name)
+            code, out, said = board.run(*argv)
+            assert code == 1 and out is None and str(status) in said, (name, status, said)
+            assert board.fake.count(name) == calls + 1, (name, status)
+    for n, status in enumerate((429, 502)):
+        board.fake.fail_next("update_page", status)
+        calls = board.fake.count("update_page")
+        code, _, said = board.upsert({"title": "Identity", "state": "ready"}, key=f"w{n}", ident=made["id"])
+        assert code == 1 and str(status) in said and board.fake.count("update_page") == calls + 1, (status, said)
+
+
 def test_a_write_of_values_already_on_the_row_sends_no_change(tmp_path):
     board = Board(tmp_path)
     made = board.upsert({"title": "Identity", "text": "Design the look.", "state": "planned",
