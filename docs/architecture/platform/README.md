@@ -51,6 +51,8 @@ ai-workbench is a workbench of skills that let a model build a digital solution 
 
 5. **Where to read next.** The runtime's page, [runtime.md](runtime.md); then [contracts/runtime.md](../../../contracts/runtime.md) for the contract and [AGENTS.md](../../../AGENTS.md) for the rules every file follows. The terminal conversation with the planning agent is `python3 runtime/chat.py --project <dir>` (`/help` lists its commands). Planned, with no command yet: the local interface (a page per surface over the same operations, starting with the pending decisions) and an MCP mode.
 
+6. **What is not yet a replaceable piece.** If you want to know which layers cannot yet be swapped on their own, read [the review of 2026-10-06](review-2026-10-06.md): sixteen findings, ranked, each with its state.
+
 ## Keeping the pages current
 
 A table that changes with the code is generated, never edited by hand: it sits between `<!-- generated: <table> -->` and `<!-- /generated -->`, and `python3 scripts/architecture_tables.py --help` names each table and its one source. After a change to one of those sources, run `python3 scripts/architecture_tables.py --write`; `--check` names the stale blocks, and `scripts/validate.py` reports each one as a warning (`[architecture-tables]`). The prose around a block stays hand-written.
@@ -82,7 +84,7 @@ flowchart TB
     L1 -->|"by class, resolve.py"| L3
 ```
 
-An arrow is "may read or call". Nothing points into the shells, and nothing in layers 1 to 3 points to adapters, the lab or the runtime.
+An arrow is "may read or call". Nothing points into the shells, and nothing in layers 1 to 3 points to adapters, the lab or the runtime. Every arrow is a row of `scripts/tests/test_layer_map.py`; an arrow the code violates is a tolerated row there, named after the finding that removes it.
 
 | # | Layer | What it is | Page |
 |---|---|---|---|
@@ -229,9 +231,11 @@ The names fixed for this work. Use each exactly.
 | A board's own status property is not written; the runtime's states live in a property of its own | [backlog](../../backlog.md), R13 |
 | Eight workarounds wait for the next change of reference model (the dependency install step, the two `AGENTS.md` lines, the approvals copied into the state file, the manifest outside the frontmatter, a skill run up to its gate, among others) | [backlog](../../backlog.md), T23 |
 | The runtime contract lags the code in places (its module table, its migrations, the pending-decision kinds stage 1 opened) | [runtime.md](runtime.md), "Known limits and improvements" |
+| The review of 2026-10-06 ranks sixteen findings against the goal of replaceable layers; the lab and the runtime are not yet replaceable pieces | [review-2026-10-06.md](review-2026-10-06.md) |
 
 ## Changes
 
 - 2026-10-06: first version, with the runtime's page; the pages of the other seven layers follow.
 - 2026-10-06: the layer list links the page of every layer; the shells' and the target project's pages added.
 - 2026-10-06: the volatile tables of the layer pages are generated ("Keeping the pages current").
+- 2026-10-06: the architecture review and its status table (review-2026-10-06.md).
