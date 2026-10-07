@@ -222,7 +222,8 @@ ALLOWED = (
     ("runtime/cli.py", ("runtime/ops.py",)),
     ("runtime/chat.py", ("runtime/ops.py",)),
     # the handlers: the resolver of providers and the shell's verbs, nothing imported from runtime/
-    ("runtime/handlers/*.py", ("providers/resolve.py", "runtime/cli.py")),
+    # a handler reaches the resolver, the terminal shell, the shared credential formats and its sibling handlers
+    ("runtime/handlers/*.py", ("providers/resolve.py", "runtime/cli.py", "scripts/redact.py", "runtime/handlers/")),
     # layer 6, the runtime: runtime/lab.py is the one file that reaches evals/ and, through the lab, the adapters
     ("runtime/lab.py", ("runtime/", "evals/", "adapters/") + RUNTIME_OUTSIDE),
     # the one runner of a skill's script, as an isolated subprocess with a scrubbed environment; no other module of
@@ -245,6 +246,24 @@ TOLERATED = {
     ("skills/mkt-engage/scripts/policy_gate.py", "skills/brand-profile/scripts/sensitive_topics.py"):
         "finding 17 (a skill script falls back to another skill's copy of a shared script; removed at the next "
         "Y change of mkt-engage)",
+    ("runtime/handlers/social.py", "skills/mkt-engage/scripts/parse_notification.py"):
+        "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
+    ("runtime/handlers/social.py", "skills/mkt-engage/scripts/policy_gate.py"):
+        "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
+    ("runtime/handlers/social_vote.py", "skills/brand-identity/scripts/render.py"):
+        "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
+    ("runtime/handlers/social_vote.py", "skills/mkt-publish/scripts/payload.py"):
+        "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
+    ("runtime/handlers/social_vote.py", "skills/mkt-social-copy/scripts/check_post.py"):
+        "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
+    ("runtime/handlers/social_vote.py", "skills/mkt-vote-round/scripts/vote_state.py"):
+        "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
+    ("runtime/handlers/social_vote.py", "skills/mkt-vote-round/scripts/vote_update.py"):
+        "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
+    ("runtime/handlers/social.py", "adapters/api/run-agent.sh"):
+        "finding 15 (the first runtime's adapter contract; removed by stage 7, WP-7.3)",
+    ("runtime/handlers/social.py", "adapters/claude-code/run-agent.sh"):
+        "finding 15 (the first runtime's adapter contract; removed by stage 7, WP-7.3)",
 }
 
 # Paths the scan finds that are not a dependency: (file, target) -> why.
@@ -343,8 +362,9 @@ def test_the_rules_the_diagram_states_hold_for_the_code_as_it_is():
             assert file == "runtime/lab.py", (file, target)
         if file in ("runtime/cli.py", "runtime/chat.py"):
             assert target == "runtime/ops.py", (file, target)
-        if file.startswith("runtime/handlers/"):
-            assert target in ("providers/resolve.py", "runtime/cli.py"), (file, target)
+        if file.startswith("runtime/handlers/") and (file, target) not in TOLERATED:
+            assert target in ("providers/resolve.py", "runtime/cli.py", "scripts/redact.py") \
+                or target.startswith("runtime/handlers/"), (file, target)
 
 
 # --- the scanner's own cases, on a small tree -------------------------------------------------------------
