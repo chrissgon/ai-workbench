@@ -225,6 +225,9 @@ ALLOWED = (
     ("runtime/handlers/*.py", ("providers/resolve.py", "runtime/cli.py")),
     # layer 6, the runtime: runtime/lab.py is the one file that reaches evals/ and, through the lab, the adapters
     ("runtime/lab.py", ("runtime/", "evals/", "adapters/") + RUNTIME_OUTSIDE),
+    # the one runner of a skill's script, as an isolated subprocess with a scrubbed environment; no other module of
+    # runtime/ reaches skills/ as code (runtime/tests/test_isolated.py holds that)
+    ("runtime/isolated.py", ("runtime/", "skills/*/scripts/*") + RUNTIME_OUTSIDE),
     ("runtime/*.py", ("runtime/",) + RUNTIME_OUTSIDE),
     # scripts/: anything but the runtime (the first runtime, scripts/runtime.py, reaches providers/ and adapters/;
     # it leaves with stage 7)
