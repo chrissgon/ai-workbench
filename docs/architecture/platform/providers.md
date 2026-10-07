@@ -85,7 +85,7 @@ A candidate is an implementation shipped in the class's folder and, for `publish
 
 **The credential by name.** A provider asks the resolver for a registered name and never reads its own variable or the store directly; the lookup is the environment variable, its aliases, then the store, and the provider prints where it found it, never the value. An `auth.py` writes the store once, after the browser consent. A request that carries a credential never follows a redirect.
 
-**A provider's interpreter declaration.** A provider's header is what decides how it is started: a header with `dependencies = []` runs on the caller's interpreter (the set that must run on the system Python 3.9 is listed in `scripts/tests/test_runtime_python39.py`); any other header is started with `uv run <script>`, never with the caller's interpreter. The task runtime reads the header to decide (`runtime/board.py`, `provider_argv`); `scripts/doctor.py` runs every `--check` through `uv run`.
+**A provider's interpreter declaration.** A provider's header is what decides how it is started: a header with `dependencies = []` runs on the caller's interpreter (the set that must run on the system Python 3.9 is listed in `scripts/tests/test_runtime_python39.py`); any other header is started with `uv run <script>`, never with the caller's interpreter. `resolve.interpreter_for` reads the header to decide, once, for every caller of the task runtime; `scripts/doctor.py` runs every `--check` through `uv run`.
 
 **The stand-in service.** Tests never reach a real service. An override of the service's address (`*_API_BASE`) or binary (`SCHEDULER_SYSTEMCTL`, `VCS_GIT_REMOTE`) is honoured only with a loopback URL or an explicit test flag, and then the secret store is never read. `providers/documents/tests/fake_notion.py` is the stand-in both page-based classes share: it serves exactly the calls of the providers' `CALLS` tables, refuses what the reference says the service refuses, and decides what the reference leaves open from the live measurements (a comment does not move the version; a code language off the list is refused).
 
@@ -110,7 +110,7 @@ A provider never reads a skill, the store (except the store provider itself), an
 **Who calls it.**
 
 - **Skills' scripts and steps**, by class: `python3 <workbench root>/providers/resolve.py --class <class>` prints the path, and the skill runs it. The skill holds the gate; the provider holds `--confirmed`.
-- **The task runtime**, by class through `resolve.resolve(..., implementation=<the configuration's name>)`: the board (`runtime/board.py`, class `integration:issue-tracker`), the documents (`runtime/documents.py`, `integration:documents`), the effects (`runtime/effects.py`, `integration:vcs`: `commit-files` then `open-pr`), the published-posts handler (`publisher:<platform>`, the read-only `posts`), and the store (`store:runtime`, whose task functions `runtime/ops.py` imports).
+- **The task runtime**, by class through `resolve.call(cls, verb, args, implementation=<the configuration's name>, config=...)`, the one function that resolves, picks the interpreter, starts the verb, maps the exit code and parses the one JSON object (`ProviderCallError`; "Calling a provider from code" of `providers/CONTRACT.md`): the board (`runtime/board.py`, class `integration:issue-tracker`), the documents (`runtime/documents.py`, `integration:documents`), the effects (`runtime/effects.py`, `integration:vcs`: `commit-files` then `open-pr`), the published-posts handler (`publisher:<platform>`, the read-only `posts`), and the store (`store:runtime`, whose task functions `runtime/ops.py` imports).
 - **The first runtime** (`scripts/runtime.py`, `scripts/runtime_vote.py`, `scripts/vote_job.py`), which the scheduler starts on the system interpreter: the store's verbs, the mailbox, the publisher.
 - **`scripts/doctor.py`**, which runs each class's `--check` through `uv run` and reports `connector`, `provider`, `missing` or `unknown`.
 
@@ -239,4 +239,5 @@ Every provider takes `--help` and `--check`. Side-effect verbs take `--dry-run` 
 ## Changes
 
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
+- 2026-10-07: `resolve.call` (and `invoke`, `interpreter_for`, `ProviderCallError`): the call of a provider's verb exists once, and the board, the documents, the effects and the published-posts handler use it (WP-R.7).
 - 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the classes, implementations and verbs).

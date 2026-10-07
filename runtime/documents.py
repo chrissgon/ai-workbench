@@ -38,7 +38,7 @@ rejected) with a note.
                        "project" writes the project's file over the page, the page's text kept aside first.
 
 Nothing here merges two versions of a document: a write replaces the whole document, on either side. The bounds of
-the writes are the configuration's documents object (runtime/board.py, bounds_problem).
+the writes are the configuration's documents object (runtime/project_config.py, bounds_problem).
 
 Usage (a library; the shell is runtime/cli.py sync): python3 runtime/documents.py --help
 
@@ -57,7 +57,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import board  # noqa: E402  (the same folder: the provider is started, and its bounds read, as the board's)
+import project_config  # noqa: E402  (the same folder: the resolver is loaded, and the bounds read, from here)
 import manifest  # noqa: E402
 import path_rule  # noqa: E402
 import skill_meta  # noqa: E402
@@ -96,11 +96,16 @@ def enabled(cfg: dict) -> bool:
 
 
 def call(cfg: dict, root: str, verb: str, args: list, timeout: int = TIMEOUT) -> dict:
-    """One verb of the provider the configuration names, as board.call starts the board's."""
+    """One verb of the provider the configuration names, through providers/resolve.py (resolve.call)."""
     try:
-        return board.call(cfg, root, verb, args, timeout, key=KEY, cls=CLASS)
-    except board.BoardError as e:
-        raise DocumentsError(e.kind, e.detail) from None
+        resolve = project_config.resolver(root)
+    except project_config.ConfigError as e:
+        raise DocumentsError("not configured", str(e)) from None
+    try:
+        return resolve.call(CLASS, verb, args, root=root, implementation=cfg[KEY]["provider"], config=cfg[KEY],
+                            timeout=timeout)
+    except resolve.ProviderCallError as e:
+        raise DocumentsError("not configured" if e.kind == "not-configured" else "failed", e.reason) from None
 
 
 def _sha(data) -> str:
@@ -441,7 +446,7 @@ def push(ctx: dict, rels, dry_run: bool = False) -> dict:
     out = result()
     if dry_run:
         out["would"] = []
-    bounds = None if dry_run else board.bounds_problem(cfg, key=KEY)
+    bounds = None if dry_run else project_config.bounds_problem(cfg, key=KEY)
     for rel in sorted(dict.fromkeys(rels)):
         entry = entry_for(root, rel)
         if entry is None:

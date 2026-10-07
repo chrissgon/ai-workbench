@@ -43,19 +43,18 @@ from __future__ import annotations
 
 import datetime
 import hashlib
-import importlib.util
 import json
 import os
-import re
-import subprocess
 import sys
 import tempfile
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import project_config  # noqa: E402  (the same folder: the resolver is loaded, and the bounds read, from here)
+
 CLASS = "integration:issue-tracker"
 TIMEOUT = 120
-STDERR_CHARS = 1000
 SHOWN_CHARS = 300
-NO_DEPENDENCIES = re.compile(r'^# dependencies = \[\]\s*$', re.M)
 FINAL = ("done", "cancelled")
 CONFIGURED = "board:configured"  # the store's cursor: when the first sync wrote to the board (UTC, the store's form)
 
@@ -73,70 +72,20 @@ def enabled(cfg: dict) -> bool:
     return cfg.get("task_board") is not None
 
 
-def _resolver(root: str):
-    name = "workbench_board_resolve"
-    path = os.path.join(root, "providers", "resolve.py")
-    module = sys.modules.get(name)
-    if module is None or getattr(module, "__file__", None) != path:
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-    return module
-
-
-def provider_argv(cfg: dict, root: str, key: str = "task_board", cls: str = CLASS) -> list:
-    """The command that starts the implementation the configuration's object `key` names, of the class cls: with
-    this interpreter when its header declares `dependencies = []`, else with `uv run`. The documents' mirror
-    (runtime/documents.py) starts its provider with the same rules."""
-    resolve = _resolver(root)
-    try:
-        found = resolve.resolve(cls, root=root, implementation=cfg[key]["provider"])
-    except (resolve.UnknownClass, resolve.Unresolved) as e:
-        raise BoardError("not configured", str(e)) from None
-    try:
-        with open(found["path"], encoding="utf-8") as f:
-            header = f.read(4096)
-    except OSError as e:
-        raise BoardError("not configured", f"{found['path']}: {e.strerror}") from None
-    if NO_DEPENDENCIES.search(header):
-        return [sys.executable, found["path"]]
-    return ["uv", "run", found["path"]]
-
-
 def call(cfg: dict, root: str, verb: str, args: list, timeout: int = TIMEOUT, key: str = "task_board",
          cls: str = CLASS) -> dict:
-    """Run one verb of the provider with the configuration's object `key` (task_board unless the documents' mirror
-    asks for documents) in a temporary file of mode 0600 (deleted after), and return the one JSON object it
-    prints."""
-    argv = provider_argv(cfg, root, key, cls)
-    fd, config_file = tempfile.mkstemp(prefix=key.replace("_", "-") + "-", suffix=".json")
+    """Run one verb of the provider the configuration's object `key` names (task_board unless the documents' mirror
+    asks for documents) through providers/resolve.py, with that object as its configuration file (mode 0600,
+    deleted after), and return the one JSON object it prints."""
     try:
-        os.fchmod(fd, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(cfg[key], f)
-        words = [verb] if verb else []
-        try:
-            done = subprocess.run(argv + words + ["--config-file", config_file] + list(args), capture_output=True,
-                                  text=True, timeout=timeout, check=False)
-        except (OSError, subprocess.SubprocessError) as e:
-            raise BoardError("failed", f"the provider could not be run: {type(e).__name__}") from None
-    finally:
-        try:
-            os.unlink(config_file)
-        except OSError:
-            pass
-    if done.returncode == 3:
-        raise BoardError("not configured", done.stderr.strip()[:STDERR_CHARS])
-    if done.returncode != 0:
-        raise BoardError("failed", done.stderr.strip()[:STDERR_CHARS])
+        resolve = project_config.resolver(root)
+    except project_config.ConfigError as e:
+        raise BoardError("not configured", str(e)) from None
     try:
-        out = json.loads(done.stdout)
-    except ValueError:
-        raise BoardError("failed", "the provider did not print one JSON object") from None
-    if not isinstance(out, dict):
-        raise BoardError("failed", "the provider did not print one JSON object")
-    return out
+        return resolve.call(cls, verb, args, root=root, implementation=cfg[key]["provider"], config=cfg[key],
+                            timeout=timeout)
+    except resolve.ProviderCallError as e:
+        raise BoardError("not configured" if e.kind == "not-configured" else "failed", e.reason) from None
 
 
 def _line(value) -> str:
@@ -164,26 +113,6 @@ def payload_hash(payload: dict) -> str:
     once at creation, are left out, so that an unchanged task is never written again."""
     owned = {k: payload[k] for k in ("state", "shown")}
     return hashlib.sha256(json.dumps(owned, sort_keys=True).encode("utf-8")).hexdigest()
-
-
-BOUNDS_OF = {"task_board": "the task board", "documents": "the documents platform"}
-
-
-def bounds_problem(cfg: dict, today=None, key: str = "task_board"):
-    """Why a write to the platform of the configuration's object `key` (task_board or documents) is not allowed
-    now, or None: a provider other than local writes only until the day its expires names, included (UTC)."""
-    bounds = cfg[key]
-    if bounds.get("provider") == "local":
-        return None
-    today = today or datetime.datetime.now(datetime.timezone.utc).date()
-    try:
-        expires = datetime.date.fromisoformat(str(bounds.get("expires")))
-    except ValueError:
-        return f"{key}.expires is not a date"
-    if today > expires:
-        return (f"the bounds of writing to {BOUNDS_OF[key]} expired on {expires.isoformat()}: change expires in "
-                "docs/workbench/runtime.json and accept the new hash")
-    return None
 
 
 def _now() -> str:
@@ -311,7 +240,7 @@ def push(ctx: dict, dry_run: bool = False) -> dict:
     out = {"pushed": [], "failed": []}
     if dry_run:
         out["would"] = []
-    bounds = None if dry_run else bounds_problem(cfg)
+    bounds = None if dry_run else project_config.bounds_problem(cfg)
     tasks = store.tasks_list(conn)
     if not dry_run and store.cursor_get(conn, CONFIGURED) is None:
         store.cursor_set(conn, CONFIGURED, _now())  # the board is configured: what is final now is never mirrored

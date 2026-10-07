@@ -196,8 +196,9 @@ def _code(value):
     return {"provider": value["provider"], "repo": value["repo"], "base": value["base"], "branch_prefix": prefix}
 
 
-def _implementations(workbench: str, cls: str) -> list:
-    """The implementations shipped for a class in the workbench checkout, by its providers/resolve.py."""
+def resolver(workbench: str):
+    """providers/resolve.py of the workbench checkout, as a module: the one place that resolves a class and calls a
+    provider's verb (resolve.call). Raises ConfigError when the checkout has none."""
     path = os.path.join(workbench, "providers", "resolve.py")
     name = "workbench_config_resolve"
     module = sys.modules.get(name)
@@ -208,7 +209,32 @@ def _implementations(workbench: str, cls: str) -> list:
         module = importlib.util.module_from_spec(spec)
         sys.modules[name] = module
         spec.loader.exec_module(module)
-    return module.implementations(cls, root=workbench)
+    return module
+
+
+def _implementations(workbench: str, cls: str) -> list:
+    """The implementations shipped for a class in the workbench checkout, by its providers/resolve.py."""
+    return resolver(workbench).implementations(cls, root=workbench)
+
+
+BOUNDS_OF = {"task_board": "the task board", "documents": "the documents platform"}
+
+
+def bounds_problem(cfg: dict, today=None, key: str = "task_board"):
+    """Why a write to the platform of the configuration's object `key` (task_board or documents) is not allowed
+    now, or None: a provider other than local writes only until the day its expires names, included (UTC)."""
+    bounds = cfg[key]
+    if bounds.get("provider") == "local":
+        return None
+    today = today or datetime.datetime.now(datetime.timezone.utc).date()
+    try:
+        expires = datetime.date.fromisoformat(str(bounds.get("expires")))
+    except ValueError:
+        return f"{key}.expires is not a date"
+    if today > expires:
+        return (f"the bounds of writing to {BOUNDS_OF[key]} expired on {expires.isoformat()}: change expires in "
+                "docs/workbench/runtime.json and accept the new hash")
+    return None
 
 
 def _platform(value, key: str, cls: str, project: str, workbench: str):

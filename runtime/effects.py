@@ -34,6 +34,10 @@ import re
 import subprocess
 import sys
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+import project_config  # noqa: E402  (the same folder: the resolver is loaded from here)
+
 PAYLOAD_NAME = "payload.md"
 CANDIDATES_MAX = 20
 PAYLOAD_LINE = re.compile(r"^\s*Payload file:\s*`?(?P<path>[^`]+?)`?\s*,\s*sha256\s*`?(?P<sha>[0-9a-f]{64})`?\s*\.?\s*$")
@@ -209,21 +213,16 @@ def verify(effect_file: str, sha256: str, changeset: dict, facts: dict, protecte
 
 
 def provider_call(provider: str, args: list, run=None) -> dict:
-    """One verb of a provider script, started as `uv run <provider> <args>`: the one JSON object it printed.
-    Raises EffectError ("usage", "not-configured" or "provider")."""
-    run = run or _subprocess
-    done = run(["uv", "run", provider, *args])
-    if done.returncode != 0:
-        lines = (done.stderr or "").strip().splitlines()
-        kind = {2: "usage", 3: "not-configured"}.get(done.returncode, "provider")
-        raise EffectError(kind, f"{args[0]}: {lines[-1] if lines else f'exit {done.returncode}'}")
+    """One verb of the provider script at the path `provider` (the code provider, found by its class in the
+    operations layer), started by providers/resolve.py (resolve.invoke: the interpreter its header asks for): the one
+    JSON object it printed. `run(argv)` starts the process (a stand-in in tests; _subprocess by default). Raises
+    EffectError ("usage", "not-configured" or "provider")."""
+    resolve = project_config.resolver(os.path.dirname(HERE))
     try:
-        out = json.loads(done.stdout)
-    except ValueError:
-        raise EffectError("provider", f"{args[0]} printed no JSON object") from None
-    if not isinstance(out, dict):
-        raise EffectError("provider", f"{args[0]} printed no JSON object")
-    return out
+        return resolve.invoke(provider, None, args, timeout=PROVIDER_TIMEOUT, run=run or _subprocess)
+    except resolve.ProviderCallError as e:
+        kind = {"usage": "usage", "not-configured": "not-configured"}.get(e.kind, "provider")
+        raise EffectError(kind, f"{args[0]}: {e.reason}") from None
 
 
 def _subprocess(argv):
@@ -231,7 +230,7 @@ def _subprocess(argv):
 
 
 def execute(doc: dict, changeset_dir: str, work_dir: str, provider: str, key_prefix: str, run=None) -> dict:
-    """Run the code provider's verbs, as scripts/runtime_vote.py starts the same verb (uv run <script> <verb>): the
+    """Run the code provider's verbs, as scripts/runtime_vote.py starts the same verb (the interpreter the script's header asks for, then the verb): the
     runtime passes no credential, the provider reads its own. In order: write the commit message, the title and the
     body into work_dir (a private folder); a dry run of commit-files, whose base commit must be the document's
     project_commit and whose branch must not exist yet (unless the key already committed); commit-files, one commit

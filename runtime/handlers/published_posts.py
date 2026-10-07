@@ -63,6 +63,7 @@ from __future__ import annotations
 import argparse
 import datetime
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -107,8 +108,37 @@ def failed(why: str, code: int = 1, **more) -> Stop:
     return Stop({"status": "failed", "why": why, **more}, code)
 
 
-def _call(argv: list, what: str) -> dict:
-    """Run one command and return the one JSON object it printed; anything else stops the routine."""
+def _resolver():
+    """providers/resolve.py of this checkout, loaded by its path: the one function that resolves a class and calls a
+    provider's verb. This file imports nothing else of the runtime."""
+    path = os.path.join(ROOT, "providers", "resolve.py")
+    name = "workbench_handler_resolve"
+    module = sys.modules.get(name)
+    if module is None or getattr(module, "__file__", None) != path:
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
+        spec.loader.exec_module(module)
+    return module
+
+
+def _provider(cls: str, verb, args: list, what: str) -> dict:
+    """One verb of the provider of a class (providers/resolve.py, call): the one JSON object it printed; anything
+    else stops the routine. A class that does not resolve ends with exit code 3."""
+    resolve = _resolver()
+    try:
+        return resolve.call(cls, verb, args, root=ROOT, timeout=CALL_TIMEOUT)
+    except resolve.ProviderCallError as e:
+        if e.kind == "timeout":
+            raise failed(f"{what} ran over {CALL_TIMEOUT} s") from None
+        if e.kind == "not-configured" and e.exit_code is None:
+            raise failed(f"the class {cls} does not resolve: {e.reason[-200:]}", 3) from None
+        raise failed(f"{what} failed (exit {e.exit_code}): {e.reason}") from None
+
+
+def _cli(argv: list, what: str) -> dict:
+    """The operations layer's command line (runtime/cli.py), started with this interpreter: the one JSON object it
+    printed; anything else stops the routine."""
     try:
         done = subprocess.run(argv, capture_output=True, text=True, timeout=CALL_TIMEOUT, check=False)
     except subprocess.TimeoutExpired:
@@ -125,27 +155,14 @@ def _call(argv: list, what: str) -> dict:
     return printed
 
 
-def _resolve(cls: str) -> str:
-    """The provider script of a class, chosen by providers/resolve.py, never by a path built here."""
-    try:
-        done = subprocess.run([sys.executable, os.path.join(ROOT, "providers", "resolve.py"), "--class", cls,
-                               "--root", ROOT], capture_output=True, text=True, timeout=60, check=False)
-    except (OSError, subprocess.TimeoutExpired) as e:
-        raise failed(f"providers/resolve.py --class {cls} could not run: {type(e).__name__}", 3) from None
-    path = done.stdout.strip()
-    if done.returncode != 0 or not os.path.isabs(path):
-        raise failed(f"the class {cls} does not resolve: {' '.join(done.stderr.split())[-200:]}", 3)
-    return path
-
-
 class Store:
     """The store's verbs (class store:runtime), on the database the project's configuration names."""
 
     def __init__(self, db: str):
-        self.script, self.db = _resolve("store:runtime"), db
+        self.db = db
 
     def __call__(self, *args) -> dict:
-        return _call([sys.executable, self.script, "--db", self.db, *args], f"the store's {args[0]}")
+        return _provider("store:runtime", None, ["--db", self.db, *args], f"the store's {args[0]}")
 
 
 def config(project: str) -> tuple:
@@ -274,10 +291,9 @@ def _post_entry(project: str, post: dict) -> tuple:
 def collect(settings: dict, project: str, now: datetime.datetime) -> tuple:
     """(entries, images, skipped) of the posts the publisher's ledger records as published in the last 7 days,
     oldest first. Stops when the ledger holds a published post with no time."""
-    publisher = _resolve(f"publisher:{settings['platform']}")
     since = (now - datetime.timedelta(days=LOOKBACK_DAYS)).isoformat(timespec="seconds")
-    listed = _call(["uv", "run", publisher, "posts", "--platform", settings["platform"], "--since", since],
-                   "the publisher's posts")
+    listed = _provider(f"publisher:{settings['platform']}", "posts",
+                       ["--platform", settings["platform"], "--since", since], "the publisher's posts")
     undated = listed.get("undated") or []
     if undated:
         raise Stop({"status": "stopped", "undated": undated,
@@ -324,9 +340,9 @@ def merge(posts_text: str, entries: list) -> tuple:
     return dump(items + added), added
 
 
-def _target(vcs: str, settings: dict) -> str:
-    read = _call(["uv", "run", vcs, "read-file", "--repo", settings["repo"], "--path", settings["file"],
-                  "--ref", settings["branch"]], "the code provider's read-file")
+def _target(settings: dict) -> str:
+    read = _provider("integration:vcs", "read-file", ["--repo", settings["repo"], "--path", settings["file"],
+                                                      "--ref", settings["branch"]], "the code provider's read-file")
     if not isinstance(read.get("content"), str):
         raise failed("the code provider's read-file printed no content")
     return read["content"]
@@ -349,28 +365,27 @@ def _commit_args(settings: dict, folder: str, text: str, images: list, key: str,
     return args
 
 
-def _commit_argv(vcs: str, args: list, globs: list, key: str) -> list:
+def _commit_dry_run(args: list, globs: list, key: str) -> dict:
     """A dry run only (preview): the verb with --allow for the paths it would commit and the key."""
-    argv = ["uv", "run", vcs, "commit-files", *args]
+    argv = list(args)
     for glob in globs:
         argv += ["--allow", glob]
-    return argv + ["--idempotency-key", key]
+    return _provider("integration:vcs", "commit-files", argv + ["--idempotency-key", key, "--dry-run"],
+                     "the code provider's commit-files --dry-run")
 
 
 def preview(project: str, now: datetime.datetime) -> dict:
     """The week's entries and the dry run of the commit: nothing is written and no cursor is set."""
     settings, _ = config(project)
     entries, images, skipped = collect(settings, project, now)
-    vcs = _resolve("integration:vcs")
-    text, added = merge(_target(vcs, settings), entries)
+    text, added = merge(_target(settings), entries)
     if not added:
         return {"status": "none", "skipped": skipped}
     used = [image for image in images if image["path"] in {entry["image"] for entry in added}]
     paths = [settings["file"]] + [image["path"] for image in used]
     with tempfile.TemporaryDirectory(prefix="wb-published-posts-") as folder:
         key = f"{NAME}-{week_of(now)}"
-        argv = _commit_argv(vcs, _commit_args(settings, folder, text, used, key, added), paths, key)
-        dry = _call(argv + ["--dry-run"], "the code provider's commit-files --dry-run")
+        dry = _commit_dry_run(_commit_args(settings, folder, text, used, key, added), paths, key)
     return {"status": "preview", "week": week_of(now), "added": added, "skipped": skipped, "dry_run": dry}
 
 
@@ -381,8 +396,7 @@ def tick(project: str, now: datetime.datetime) -> dict:
     if not due(settings, store("cursor-get", "--name", CURSOR).get("value"), now):
         return {"status": "not-due"}
     entries, images, skipped = collect(settings, project, now)
-    vcs = _resolve("integration:vcs")
-    text, added = merge(_target(vcs, settings), entries)
+    text, added = merge(_target(settings), entries)
     if not added:
         store("cursor-set", "--name", CURSOR, "--value", week)
         return {"status": "none", "skipped": skipped}
@@ -396,7 +410,7 @@ def tick(project: str, now: datetime.datetime) -> dict:
                        "files": paths, "items": len(added), "idempotency_key": key,
                        "payload_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
                        "args": _commit_args(settings, folder, text, used, key, added)}, f)
-        answer = _call([sys.executable, os.path.join(ROOT, "runtime", "cli.py"), "execute-under-policy", "--project",
+        answer = _cli([sys.executable, os.path.join(ROOT, "runtime", "cli.py"), "execute-under-policy", "--project",
                         project, "--policy", settings["policy"], "--effect-file", effect],
                        "runtime/cli.py execute-under-policy")
     if answer.get("executed") is not True:
