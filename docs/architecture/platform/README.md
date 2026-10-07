@@ -82,7 +82,7 @@ flowchart TB
     L1 -->|"by class, resolve.py"| L3
 ```
 
-An arrow is "may read or call". Nothing points into the shells, and nothing in layers 1 to 3 points to adapters, the lab or the runtime.
+An arrow is "may read or call". Nothing points into the shells, and nothing in layers 1 to 3 points to adapters, the lab or the runtime. Every arrow is a row of `scripts/tests/test_layer_map.py`; an arrow the code violates is a tolerated row there, named after the finding that removes it.
 
 | # | Layer | What it is | Page |
 |---|---|---|---|
