@@ -1924,11 +1924,6 @@ def _not_rerouted(ctx: dict, request: dict, k: int, delivery: dict, why: str, re
     return {"delivery": k, "run_id": run_id, "pending_id": opened["pending_id"], "routed": False, "why": why}
 
 
-def _task_script():
-    """skills/eng-implement/scripts/task.py of the checkout, loaded by path: the backlog's one parser."""
-    return _load("workbench_eng_implement_task", os.path.join(ROOT, "skills", plan.SUBTASK_SKILL, "scripts", "task.py"))
-
-
 def _backlog_subtasks(ctx: dict, task: dict) -> dict:
     """The product backlog's todo tasks as sub-tasks of the request, within the limits of its approved plan (read from
     that plan's payload and nowhere else): those inside are added at once (tasks_add), the others wait in one
@@ -1937,7 +1932,7 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
     approved = _approved_plan(ctx, request_id) or {}
     limits = approved.get("limits") or {}
     try:
-        proposed = plan.backlog_tasks(os.path.join(ctx["cfg"]["project"], *plan.BACKLOG.split("/")), _task_script())
+        proposed = plan.backlog_tasks(os.path.join(ctx["cfg"]["project"], *plan.BACKLOG.split("/")), ROOT)
     except ValueError as e:
         return {"error": str(e)}
     rows = [t for t in _stored(ctx, store.tasks_list, request_id) if t["parent_id"] is not None]

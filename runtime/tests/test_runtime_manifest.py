@@ -116,6 +116,77 @@ def test_a_skill_without_a_manifest_does_not_run(tree):
     assert st.calls(tree["adapter"]) == []
 
 
+def _bad_phrases(m):
+    m["reply_phrases"] = {"missing_input": ["writes it"], "question_intros": [], "gate_questions": "Proceed?"}
+
+
+def _unknown_phrase_kind(m):
+    m["reply_phrases"] = {"endings": ["done"]}
+
+
+def _phrases_not_an_object(m):
+    m["reply_phrases"] = ["writes it"]
+
+
+@pytest.mark.parametrize("change, named", [(_bad_phrases, "`gate_questions` is not a list"),
+                                           (_unknown_phrase_kind, "unknown key `endings`"),
+                                           (_phrases_not_an_object, "`reply_phrases` is not an object")])
+def test_the_reply_phrases_of_a_manifest_are_checked_for_their_shape(change, named):
+    skill_dir = str(REPO / "skills" / SIDE_EFFECT_FREE)
+    declared = skill_meta.declared(skill_dir)
+    data = _good()
+    data["reply_phrases"] = {"missing_input": ["writes it"], "question_intros": ["Open questions"], "gate_questions": []}
+    assert manifest.problems(data, declared, skill_dir) == []   # the key is optional, and any of its keys too
+    change(data)
+    found = manifest.problems(data, declared, skill_dir)
+    assert len(found) == 1 and named in found[0], found
+
+
+PARTIAL = "design-brief"   # a skill of no pack in use, with a manifest of its reply phrases alone
+
+
+def test_a_skill_outside_the_packs_in_use_may_have_a_partial_manifest_that_the_classifier_reads():
+    assert PARTIAL not in manifest.skills_in_use(str(REPO)) and not manifest.in_use(str(REPO), PARTIAL)
+    data = json.loads(Path(manifest.path(str(REPO), PARTIAL)).read_text(encoding="utf-8"))
+    assert set(data) == {"skill", "reply_phrases"}
+    skill_dir = str(REPO / "skills" / PARTIAL)
+    declared = skill_meta.declared(skill_dir)
+    assert manifest.problems(data, declared, skill_dir, in_use=False) == []
+    assert any("missing key `documents`" in p for p in manifest.problems(data, declared, skill_dir, in_use=True))
+    assert manifest.problems({"skill": "other"}, declared, skill_dir, in_use=False) == [
+        "`skill` is 'other', and the folder is 'design-brief'"]
+    assert manifest.problems({"documents": []}, declared, skill_dir, in_use=False) == ["missing key `skill`"]
+    facts = manifest.ending_facts(str(REPO), PARTIAL)
+    assert facts["reply_phrases"] == {"missing_input": [], "question_intros": ["Questions ("], "gate_questions": []}
+    assert facts["asking_openings"] == manifest.asking_openings_of((REPO / "skills" / PARTIAL / "SKILL.md").read_text("utf-8"))
+
+
+def test_every_manifest_outside_the_packs_in_use_is_well_formed_though_partial():
+    out = subprocess_check()
+    assert out["problems"] == {}
+
+
+def subprocess_check() -> dict:
+    import subprocess
+    import sys
+    done = subprocess.run([sys.executable, str(REPO / "runtime" / "manifest.py"), "--check"], capture_output=True, text=True)
+    assert done.returncode == 0, done.stdout + done.stderr
+    return json.loads(done.stdout)
+
+
+def test_the_runtime_refuses_to_run_a_skill_whose_manifest_is_partial(tree):
+    path = str(tree["project"])
+    file = Path(manifest.path(str(tree["tree"]), "demo-asks"))
+    file.write_text(json.dumps({"skill": "demo-asks", "reply_phrases": {"missing_input": ["writes them"]}}), encoding="utf-8")
+    with pytest.raises(manifest.ManifestError) as raised:
+        manifest.load(str(tree["tree"]), "demo-asks")
+    assert "missing key `documents`" in str(raised.value)
+    with pytest.raises(ops.OpsError) as refused:       # the flow's task would run it: the request is refused whole
+        ops.request(path, "Tell me which market to go after first.", "demo")
+    assert "missing key `documents`" in str(refused.value)
+    assert st.calls(tree["adapter"]) == []
+
+
 def test_the_asking_openings_of_a_manifest_are_the_first_line_of_the_skills_asking_template():
     for name in manifest.skills_in_use(str(REPO)):
         text = (REPO / "skills" / name / "SKILL.md").read_text(encoding="utf-8")

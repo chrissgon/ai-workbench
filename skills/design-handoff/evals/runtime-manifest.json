@@ -1,0 +1,6 @@
+{
+  "skill": "design-handoff",
+  "reply_phrases": {
+    "question_intros": ["Questions ("]
+  }
+}
