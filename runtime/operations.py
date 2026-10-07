@@ -13,15 +13,19 @@ do, so that the generated tables and the shells cannot differ). A row:
   name         the terminal's verb and the conversation's command word (`run-next`, `/approve`)
   call         the function of ops.py that runs it
   args         the arguments, in the order the conversation reads them; each {"name": the function's parameter,
-               "kind": int | str | text | flag | choice | pairs, "required": True, "flag": the terminal flag when it
+               "kind": int | str | text | file | list | flag | choice | pairs, "required": True, "flag": the terminal flag when it
                is not the name with hyphens, "label": the placeholder in a help line, "choices": for a choice}.
                `text` is the terminal's --text / --text-file pair and, in the conversation, the rest of the line;
-               `flag` is true when present; `pairs` is the handler's repeated --arg k=v
+               `flag` is true when present; `pairs` is the handler's repeated --arg k=v; `file` is the path of a file the
+               shell reads whole, as text, and the function takes the text; `list` is a repeated flag, the function takes
+               the list
   channels     which channels may call it: "terminal", "chat" ("page" is reserved for the local interface)
   model        whether it calls a model: False, True, or the words that say when ("without --flow")
   help         one line: what it does
   channel_arg  (optional) the function takes `channel=<name>` and decides what that channel may do
   chat_reply   (optional) the key of the result the conversation shows instead of the whole result
+  exit_unless  (optional) [key, value]: the terminal prints the result and exits 1 unless result[key] == value (a
+               result that says the model did not answer is not a failure of the operation, and is still printed)
 
 The functions are pure and use the standard library only. Runs on Python 3.9: python3 runtime/operations.py --help
 """
@@ -129,6 +133,14 @@ OPERATIONS = (
               {"name": "effect_file", "kind": "str", "required": True, "flag": "effect-file"}),
      "channels": ("terminal",), "model": False,
      "help": "execute an effect a handler wrote, inside the bounds of a standing approval"},
+    {"name": "contained-run", "call": "contained_run",
+     "args": ({"name": "skill", "kind": "str", "required": True},
+              {"name": "prompt", "kind": "file", "required": True, "flag": "prompt-file"},
+              {"name": "out_dir", "kind": "str", "required": True, "flag": "out"},
+              {"name": "platforms", "kind": "list", "flag": "platform"},
+              {"name": "timeout", "kind": "int", "flag": "timeout-seconds"}),
+     "channels": ("terminal",), "model": True, "exit_unless": ("status", "ok"),
+     "help": "run one skill of an area agent's pack in the container on the artifacts it declares; only its reply comes out"},
     {"name": "dispatch", "call": "dispatch", "args": (), "channels": ("terminal",), "model": True,
      "help": "one round of the dispatcher: the handlers' ticks, the releases by a mode, the next ready tasks"},
     {"name": "poll", "call": "poll", "args": (), "channels": ("terminal",), "model": False,
@@ -266,6 +278,9 @@ def command_line(name: str, project: str, /, **args) -> str:
         elif arg["kind"] == "pairs":
             for key, item in value.items():
                 parts += [flag, _word(f"{key}={item}")]
+        elif arg["kind"] == "list":
+            for item in value:
+                parts += [flag, _word(item)]
         else:
             parts += [flag, _word(value)]
     return " ".join(parts)

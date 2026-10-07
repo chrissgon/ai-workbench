@@ -178,6 +178,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 | `revoke-policy` | `--id` | `revoke_policy` |
 | `standing` | `--policy` | `standing` |
 | `execute-under-policy` | `--policy` `--effect-file` | `execute_under_policy` |
+| `contained-run` | `--skill` `--prompt-file` `--out` `[--platform]` `[--timeout-seconds]` | `contained_run` |
 | `dispatch` | - | `dispatch` |
 | `poll` | - | `poll` |
 | `handler` | `--name` `--verb` `[--arg]` | `handler_call` |
