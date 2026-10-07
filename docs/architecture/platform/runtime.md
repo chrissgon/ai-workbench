@@ -20,7 +20,7 @@ Where: **repo** is this repository, **project** is the target project, **data** 
 | `flows/<name>.json` | repo | flow file: `flow`, `title`, `tasks[]` (`key`, `skill`, `title`, `text`, `depends_on`, `milestone`); three today: `market-positioning`, `brand`, `code-change` | maintainers | `runtime/flow_files.py`, `scripts/validate.py` (dependencies, inventory) | changed by pull request | yes | no |
 | `skills/<name>/evals/runtime-manifest.json` | repo | runtime manifest: `skill`, `documents[]` (`path`, `checks`, `platform`, `bound_to_approval`), `machine_files`, `mandatory_milestone`, `asking_openings`, `gate`; eleven today, one per skill of the packs in use | maintainers | `runtime/manifest.py` | outside the skill's content hash: no bump, no lab test | yes | no |
 | `packs/business.txt`, `brand.txt`, `planning.txt`, `code.txt`, `marketing.txt` | repo | pack patterns | maintainers | `runtime/plan.py` (an area agent's scope), `runtime/manifest.py` (`PACKS_IN_USE`: the first four) | changed by pull request | yes | no |
-| The store's task tables (`providers/store/sqlite.py`, migrations 2 to 6) | data (`store_db`) | SQLite, WAL, mode 0600; one function call is one transaction | `ops.py` only, through the store's functions | `ops.py` only | grows; `approvals` never loses a row | no | no |
+| The store's task tables (`providers/store/sqlite.py`, migrations 2 and later: below) | data (`store_db`) | SQLite, WAL, mode 0600; one function call is one transaction | `ops.py` only, through the store's functions | `ops.py` only | grows; `approvals` never loses a row | no | no |
 | `docs/workbench/runtime.json` | project | JSON, no secret (keys below) | the person | `runtime/project_config.py`; the scheduler's entry checks its hash against the pin | accepted by its hash; every change accepted again | the project decides | no |
 | `docs/workbench/state.md` | project | the state contract ([contracts/state.md](../../../contracts/state.md)) | `core-project-init` owns it; the runtime writes into it through `runtime/state_merge.py` only | runs (it enters every copy), the engagement gate script | updated after each run, answer, approval and mode change | the project's `Docs in git` decision | its `Checkpoints` line and the runtime's approval rows are |
 | `docs/workbench/policies/<policy>.json` | project | bounds of a standing approval: `policy`, `agent`, `effects`, `targets`, `files`, `max_per_day`, `max_items_per_run` | the person | `runtime/autonomy.py` (`bounds_of`, `covers`) | bound by its hash; an edit covers nothing until approved again | the project decides | no |
@@ -35,15 +35,35 @@ Where: **repo** is this repository, **project** is the target project, **data** 
 | `<data_dir>/documents/not-taken/`, `imported.json`, `notices.json` | data | page texts not taken; the last import of each document; the read-only pages that carry the notice | `runtime/documents.py` | `runtime/documents.py`, `ops.task_prompt` (the imported line) | grows | no | yes |
 | `<data_dir>/dispatch-pin.json` | data | the path and sha256 of the accepted `runtime.json`, mode 0600 | `cli.py pin` | `runtime/dispatcher.py` (the scheduler's entry) | written again after each accepted change | no | yes |
 
-**The store, as built.** Schema version 6 of `providers/store/sqlite.py`. Migration 1 holds the first runtime's tables (`cursors`, `events`, `runs`, `inbox`, `actions`); the task runtime uses `cursors` and `actions` too.
+**The store, as built.** Migration 1 holds the first runtime's tables (`cursors`, `events`, `runs`, `inbox`, `actions`); the task runtime uses `cursors` and `actions` too. The migrations, generated from `MIGRATIONS` of `providers/store/sqlite.py`:
 
-| Migration | What it adds |
-|---|---|
-| 2 | `tasks` (a request has no parent and no skill; `state`, `depends_on`, `milestone`, `agent`), `task_runs` (skill, version and content hash, model, adapter, web, status, failure, ending, attempts, cost, tokens, duration, `skill_loaded`, image digest, run folder), `pending_decisions` (kind, title, body, payload, `payload_sha256`, status, resolution, answer, `resolved_by`) |
-| 3 | `task_runs.redactions`: how many passed values the lab replaced in what the run left |
-| 4 | `tasks.remote_id`, `remote_version`, `remote_written_sha256` (the board item); `document_records` (one per mirrored document); `platform_comments` |
-| 5 | `approvals` (scopes `action`, `plan`, `standing`), with two triggers: a row is never deleted, and only its status moves, forward |
-| 6 | `conversation_messages` (the conversation with the planning agent) |
+<!-- generated: store-migrations -->
+Schema version 7: the highest migration of `MIGRATIONS`.
+
+| Migration | Description | Tables created | Columns added | Triggers |
+|---|---|---|---|---|
+| 1 | cursors, events, runs, inbox and actions | `cursors`, `events`, `runs`, `inbox`, `actions` | - | - |
+| 2 | tasks, task_runs and pending_decisions of the task runtime | `tasks`, `task_runs`, `pending_decisions` | - | - |
+| 3 | the number of values the lab replaced in what a task run left | - | `task_runs.redactions` | - |
+| 4 | a task's item on the task board, the records of mirrored documents and saved platform comments | `document_records`, `platform_comments` | `tasks.remote_id`, `tasks.remote_version`, `tasks.remote_written_sha256` | - |
+| 5 | the approvals table: what the person approved, a record that only grows | `approvals` | - | `approvals_never_deleted`, `approvals_only_status_moves` |
+| 6 | the messages of the conversation with the planning agent | `conversation_messages` | - | - |
+| 7 | tasks, task runs and pending decisions are never deleted | - | - | `tasks_never_deleted`, `task_runs_never_deleted`, `pending_decisions_never_deleted` |
+<!-- /generated -->
+
+The task runtime's tables, those that migration 2 and later create, with their columns (generated from the same source):
+
+<!-- generated: task-runtime-tables -->
+| Table | Created by migration | Columns |
+|---|---|---|
+| `tasks` | 2 | id, parent_id, flow, key, skill, agent, title, text, state, depends_on, milestone, note, created_at, updated_at, remote_id (migration 4), remote_version (migration 4), remote_written_sha256 (migration 4) |
+| `task_runs` | 2 | id, task_id, skill, skill_version, skill_sha256, model, adapter, web, status, failure, ending, attempts, started_at, ended_at, cost_usd, tokens, duration_ms, skill_loaded, image_digest, run_dir, error, redactions (migration 3) |
+| `pending_decisions` | 2 | id, task_id, run_id, kind, title, body, payload, payload_sha256, status, resolution, answer, created_at, resolved_at, resolved_by |
+| `document_records` | 4 | id, path, provider, remote_id, written_sha256, remote_version, read_sha256, status, note, updated_at |
+| `platform_comments` | 4 | id, provider, remote_id, subject, task_id, document_path, author, text, created_at, saved_at, status, used_by_pending |
+| `approvals` | 5 | id, scope, what, payload_sha256, policy_sha256, bounds, task_id, pending_id, approved_at, approved_by, expires_at, status, executed_at |
+| `conversation_messages` | 6 | id, conversation, role, text, task_id, run_id, created_at |
+<!-- /generated -->
 
 The cursors the runtime writes: `config:accepted-sha256` (the accepted configuration, written only by `accept_config`), `board:configured` (when the board was first written), `use:<run id>` (the recorded use of a run), and each handler's own (`routine:published-posts`).
 
@@ -137,28 +157,32 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 
 **The limits that live in code** ([contracts/runtime.md](../../../contracts/runtime.md), "The limits").
 
-| # | Limit | Guard |
-|---|---|---|
-| L1 | Every run starts from a new copy, with the skill staged again | `test_limit_01_every_run_starts_from_a_new_copy_with_the_skill_staged_again` |
-| L2 | Only versioned files, documents, declared machine files and the task's drop enter; never the store or the configuration | `test_limit_02_...`; `test_the_runtimes_own_configuration_never_enters_a_run` |
-| L3 | A task with the web receives only the artifacts its skill declares | `test_limit_03_...`; `test_a_web_task_refuses_a_hand_over_while_the_constant_is_false` |
-| L4 | A tool's configuration files are removed at any depth | `test_limit_04_...`; `test_a_copy_that_carries_a_tools_settings_is_refused_before_any_model_call` |
-| L5 | The project's `AGENTS.md` enters only when the skill declares it, without the two lines the container cannot serve | `test_limit_05_...`; `test_the_two_lines_are_put_back_where_they_were` |
-| L6 | No credential enters the container | `test_limit_06_...`; `test_the_value_of_a_passed_variable_is_replaced_in_everything_a_run_leaves` |
-| L7 | The destination of each returned file comes from the path rule | `test_limit_07_...`; `test_every_path_gets_exactly_one_class` |
-| L8 | Only a regular file with its real path inside the copy comes back | `test_limit_08_...` |
-| L9 | Code comes back as a change set; the commit is one, made by the code provider | `test_limit_09_...`; `test_the_commit_is_one_made_by_the_code_provider_and_no_module_of_the_runtime_pushes` |
-| L10 | The state file comes back through the merge; only code writes what is the person's | `test_limit_10_...`; `test_state_merge.py` |
-| L11 | A working document never enters a commit | `test_limit_11_a_working_document_never_enters_a_commit` |
-| L12 | What comes back never overwrites what changed at the origin | `test_limit_12_...`; `test_a_file_that_changed_in_the_project_during_the_run_is_never_overwritten` |
-| L13 | A record only grows | the triggers of migration 5, for `approvals`; `providers/store/tests/test_sqlite_approvals.py`, `test_limit_13_...` |
-| L14 | Everything passes the credential scan before it leaves; the reply the person reads is masked | `test_limit_14_...`; `test_a_run_row_keeps_the_number_of_values_the_lab_replaced` |
-| L15 | An external effect is executed by code, with the exact content approved or inside an approved policy | `test_limit_15_...`; `test_an_approval_with_another_hash_executes_nothing`; `test_a_policy_covers_an_effect_only_inside_every_bound` |
-| L16 | A skill with a confirmation gate runs up to it; what it showed is what the person approves | `test_limit_16_...`; `test_gate_payload.py` |
-| L17 | The approval lives in the approvals table; the rows in the state file are generated copies | `test_limit_17_...`; `test_the_state_file_row_is_generated_and_a_row_a_session_wrote_is_left_alone` |
-| L18 | A document bound to an approval by hash is a machine file | `test_the_facts_of_later_stages_move_a_path_to_machine_or_versioned` (no test named after the limit) |
-| L19 | The planning agent creates no task: it returns the route, and code builds the plan | `test_a_valid_route_opens_a_plan_and_approving_it_creates_the_tasks` (no test named after the limit) |
-| L20 | The measurement files are not changed | for a change set, the project's `protected_paths`: `test_a_change_to_a_protected_path_blocks_the_change_set_and_names_the_path`; in this repository, the fingerprint check of `scripts/validate.py` |
+<!-- generated: limits -->
+| # | Limit | Built by | Test named after it |
+|---|---|---|---|
+| L1 | Every run starts from a new copy, with the skills installed again from the fixed checkout | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_01_every_run_starts_from_a_new_copy_with_the_skill_staged_again` |
+| L2 | What enters: versioned files, the project's documents, the machine files the skills use, and what the person handed over through the file drop. No other file outside git. The store and the runtime's configuration never | stage 2 (the file drop: stage 3) | `runtime/tests/test_run_limits.py`, `test_limit_02_only_versioned_files_documents_and_declared_machine_files_enter_and_never_the_store_or_the_configuration` |
+| L3 | A task with the web receives only the artifacts its skill declares | stage 2 (strict form: no allowance for web and code together) | `runtime/tests/test_run_limits.py`, `test_limit_03_a_run_with_the_web_receives_only_the_artifacts_its_skill_declares` |
+| L4 | A tool's configuration files are removed at any depth | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_04_a_tools_configuration_files_are_removed_at_any_depth` |
+| L5 | The project's `AGENTS.md` enters when the skill declares it | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_05_agents_md_enters_only_when_the_skill_declares_it_and_without_the_two_lines_the_container_cannot_serve` |
+| L6 | No credential enters the container | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_06_no_credential_enters_the_container` |
+| L7 | The destination of each returned file comes from the path rule | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_07_the_destination_of_each_returned_file_comes_from_the_path_rule` |
+| L8 | Only a regular file, with its real path inside the copy, comes back | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_08_only_a_regular_file_with_its_real_path_inside_the_copy_comes_back` |
+| L9 | Code comes back as a change set; the commit is one, made by the code provider with the person's own git and signature | stage 4 | `runtime/tests/test_changeset.py`, `test_limit_09_code_comes_back_as_a_change_set_with_created_changed_and_removed_paths_and_the_executable_bit` |
+| L10 | The state file comes back through a merge made by one module | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_10_the_state_file_comes_back_through_the_merge_and_only_code_writes_what_is_the_persons` |
+| L11 | A working document never enters a commit | stage 4 | `runtime/tests/test_changeset.py`, `test_limit_11_a_working_document_never_enters_a_commit` |
+| L12 | What comes back never overwrites what changed at the origin | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_12_what_comes_back_never_overwrites_what_changed_at_the_origin` |
+| L13 | A record only grows | stage 4 (approvals); tasks, runs and pending decisions: migration 7 of the store | `providers/store/tests/test_sqlite_approvals.py`, `test_limit_13_an_approval_is_never_deleted_and_its_status_only_moves_forward` |
+| L14 | Everything passes the credential scan before it leaves | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_14_everything_passes_the_credential_scan_before_it_leaves` |
+| L15 | An external effect is executed by code, with the exact content approved or inside an approved policy | stage 4 (the exact content; a policy: stage 6) | `runtime/tests/test_effects.py`, `test_limit_15_the_effect_is_executed_by_code_with_exactly_the_approved_content` |
+| L16 | A skill with a confirmation gate runs up to the gate; what it shows there is what the person approves | stage 4 | `runtime/tests/test_effects.py`, `test_limit_16_a_skill_with_a_gate_runs_up_to_the_gate_and_what_it_showed_is_what_the_person_approves` |
+| L17 | The approval lives in the approvals table; the rows in the state file are generated copies | stage 4 | `runtime/tests/test_effects.py`, `test_limit_17_the_approval_lives_in_the_table_and_the_state_file_row_is_a_generated_copy` |
+| L18 | A document bound to an approval by hash is a machine file | stage 6 | `runtime/tests/test_run_limits.py`, `test_limit_18_a_document_bound_to_an_approval_by_hash_is_a_machine_file` |
+| L19 | The planning agent creates no task: it returns the route, and code builds the plan | stage 3 | `runtime/tests/test_run_limits.py`, `test_limit_19_the_planning_agent_creates_no_task_it_returns_the_route_and_code_builds_the_plan` |
+| L20 | The measurement files are not changed | stage 4 (for the change set: the project lists them in its protected_paths) | no test named |
+<!-- /generated -->
+
+The limit's text and the stage that built it come from the contract's table; the last column is every test named `test_limit_<nn>_...` under `runtime/tests/` and `providers/store/tests/`. The other guards of each limit are named in the contract's table. A limit with no test named after it is guarded today by: L18, `test_the_facts_of_later_stages_move_a_path_to_machine_or_versioned`; L19, `test_a_valid_route_opens_a_plan_and_approving_it_creates_the_tasks`; L20, for a change set, the project's `protected_paths` (`test_a_change_to_a_protected_path_blocks_the_change_set_and_names_the_path`) and, in this repository, the fingerprint check of `scripts/validate.py`.
 
 `test_every_limit_built_so_far_has_a_test_named_after_it` checks the eleven limits stage 2 built (L1 to L8, L10, L12, L14).
 
@@ -237,32 +261,109 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 
 **The terminal shell**, `python3 runtime/cli.py <verb> --project <dir> ...`: one verb per operation, one JSON object printed, exit 0 ok, 1 failed or refused, 2 usage, 3 not configured. `python3 runtime/cli.py --help` gives every flag.
 
-| Verb | What it does | Calls a model |
+<!-- generated: cli-verbs -->
+| Verb | Flags it reads | Operation |
 |---|---|---|
-| `request` | records a request; with `--flow`, plans it from the flow file | no |
-| `route` | routes a request (one run of the router skill), or plans a named `--flow` | yes, without `--flow` |
-| `approve`, `reject` | resolve a plan, an acceptance, or an effect (approve with its hash) | no |
-| `run-next` | runs the next ready task; `--tier strong` asks for the reference model | yes |
-| `pending`, `answer`, `release`, `retry`, `cancel`, `status` | what waits; answer it; release a delivery; make a failed or blocked task ready; cancel a request; the records | no |
-| `accept-config`, `pin` | accept the configuration's hash; pin it for the scheduler's jobs | no |
-| `proof`, `progress`, `verdict` | where each skill would run; progress and a period's summary; your verdict on a run | no |
-| `sync`, `hand-over`, `deps` | mirror board and documents (`--take page\|project --path` settles a document); hand a file to a task; install dependencies by code | no |
-| `set-mode`, `approve-policy`, `revoke-policy`, `standing` | an agent's mode; a standing approval of a policy; its revocation; whether it covers now | no |
-| `dispatch`, `poll`, `handler` | one round of the dispatcher; the short job; one verb of a handler | `dispatch` yes |
-| `say` | one turn of the conversation with the planning agent | yes, for a new request |
+| `request` | `--text \| --text-file` `[--flow]` `[--title]` | `request` |
+| `run-next` | `[--tier]` | `run_next` |
+| `pending` | `[--id]` | `pending` |
+| `answer` | `--id` `--text \| --text-file` `[--with-comments]` | `answer` |
+| `release` | `--id` | `release` |
+| `retry` | `--task` | `retry` |
+| `cancel` | `--request` | `cancel` |
+| `status` | - | `status` |
+| `accept-config` | `--sha256` | `accept_config` |
+| `proof` | `[--skill]` | `proof` |
+| `verdict` | `--run` `--word` | `verdict` |
+| `route` | `--request` `[--flow]` | `route` |
+| `approve` | `--id` `[--sha256]` | `approve` |
+| `reject` | `--id` `[--note]` | `reject` |
+| `sync` | `[--dry-run]` `[--take]` `[--path]` | `sync` |
+| `hand-over` | `--task` `--file` | `hand_over` |
+| `deps` | - | `deps` |
+| `progress` | `[--since]` | `progress` |
+| `set-mode` | `--agent` `--mode` | `set_mode` |
+| `approve-policy` | `--file` `--agent` `[--sha256]` `[--expires]` `[--what]` | `approve_policy` |
+| `revoke-policy` | `--id` | `revoke_policy` |
+| `standing` | `--policy` | `standing` |
+| `dispatch` | - | `dispatch` |
+| `poll` | - | `poll` |
+| `handler` | `[--arg]` `--name` `--verb` | `handler_call` |
+| `pin` | - | `pin` |
+| `say` | `--text \| --text-file` | `say` |
+<!-- /generated -->
 
-**The conversation**, `python3 runtime/chat.py --project <dir>`: each line is a turn of `ops.say`; a line starting with `/` is one of `/help`, `/status`, `/progress`, `/pending`, `/answer`, `/release`, `/approve`, `/reject`, `/retry`, `/cancel`, `/new`; any other line answers the router's question or is a new request.
+The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`, and `say` for a new request.
 
-**The operations**, `runtime/ops.py`: `request`, `route`, `approve`, `reject`, `run_next`, `pending`, `answer`, `release`, `retry`, `cancel`, `status`, `accept_config`, `proof`, `verdict`, `sync`, `hand_over`, `deps`, `progress`, `set_mode`, `approve_policy`, `revoke_policy`, `standing`, `dispatch`, `poll`, `handler_call`, `pin`, `say`; and `context`, `task_prompt`, `code_task`, `chat_memory`, `store_module`, which other modules and tests use. Each takes the project folder first and returns a JSON-serialisable object or raises `OpsError` with code 1, 2 or 3.
+**The conversation**, `python3 runtime/chat.py --project <dir>`: each line is a turn of `ops.say`; a line starting with `/` is one of the commands below (`SAY_COMMANDS`); any other line answers the router's question or is a new request.
+
+<!-- generated: say-commands -->
+| Command | What it does (its line of `SAY_HELP`) |
+|---|---|
+| `/help` | this text |
+| `/status` | requests, tasks and what waits for you |
+| `/progress [since]` | where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD) |
+| `/pending [id]` | what waits for you; with an id, that decision whole |
+| `/answer <id> <text>` | answer a pending decision |
+| `/release <id>` | release a delivery (it stays a draft) |
+| `/approve <id> [sha256]` | approve a plan, an acceptance, or an effect with its hash |
+| `/reject <id> [note]` | reject a plan, an acceptance or an effect |
+| `/retry <task id>` | make a failed or blocked task ready again |
+| `/cancel <request id>` | cancel a request |
+| `/new <text>` | start a new request, whatever is open |
+<!-- /generated -->
+
+**The operations**, `runtime/ops.py`: its public functions, the verb of `cli.py` that calls each, and the first sentence of each docstring. A function with no verb is used by other modules and tests. Each takes the project folder first and returns a JSON-serialisable object or raises `OpsError` with code 1, 2 or 3.
+
+<!-- generated: operations -->
+| Operation | Verb of `cli.py` | What it does (first sentence of its docstring) |
+|---|---|---|
+| `store_module` | - | The store provider as a module, found by its class through providers/resolve.py, never by a path built here. |
+| `context` | - | What every operation starts from: {"cfg", "store", "conn"}. |
+| `task_prompt` | - | The text of one run: the request in the person's words, the task's own text, and, on a run made after an answer, every earlier question of this task with its answer. |
+| `request` | `request` | Record a request. |
+| `run_next` | `run-next` | Run the next ready task of the project, if no task of it is running: one skill, once, on the model its proof gives (runtime/proof.py: the floor model only where the skill is reliable there and the proof holds on this checkout; the reference model otherwise). |
+| `code_task` | - | A code task: its skill is of a code area (workcopy.CODE_AREAS, the areas of the code-change flow's skills). |
+| `deps` | `deps` | Install every dependency set the project's configuration declares, by code, with no model: {"dependencies": [{"recipe", "file", "applies", and when it applies "key", "cached", "duration_ms"}]}. |
+| `pending` | `pending` | What waits for the person. |
+| `answer` | `answer` | Answer a pending decision. |
+| `release` | `release` | Release a delivery (a pending decision of kind review). |
+| `retry` | `retry` | Make a failed or blocked task ready again. |
+| `cancel` | `cancel` | Cancel a request, its tasks that are not done, and their open pending decisions. |
+| `proof` | `proof` | The model each skill would run on now, by its proof, with the two checks and the bands: {"skills": {name: proof.route(...)}}, for the named skill or for every skill of the packs in use (manifest.skills_in_use). |
+| `verdict` | `verdict` | Record the person's verdict on the use of one run, with the recorder (scripts/evidence.py record --verdict): {"run_id", "use", "verdict"}. |
+| `accept_config` | `accept-config` | Record the hash of the project's configuration that the person accepts, after reading the file. |
+| `approve_policy` | `approve-policy` | A standing approval of a policy file for one area agent (limits L15, L17; contracts/environment.md, rule 7). |
+| `revoke_policy` | `revoke-policy` | End a standing approval: the row becomes revoked and its generated row leaves the state file. |
+| `standing` | `standing` | Whether an active standing approval covers a policy now: a read, it executes nothing. |
+| `set_mode` | `set-mode` | Set one area agent's autonomy mode: only area_agents.<agent>.mode of runtime.json changes (decision P1: the mode is the configuration's word). |
+| `status` | `status` | {"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key", "skill", "state", "note"}]}], "pending": [...], "documents": [{"path", "status", "note", "on_platform"}], "board": {"left_out_final"} or None}: everything from the store's records. |
+| `progress` | `progress` | Where the work stands and what happened in a period, from the store's records only (runtime/progress.py): no model is called and no number is estimated. |
+| `route` | `route` | Plan a request that waits for its route. |
+| `approve` | `approve` | Approve a pending decision of kind `plan` (its tasks are created as the plan lists them, and those with no dependency are ready) or `acceptance` (the request written on the task board is kept, and waits for its route). |
+| `sync` | `sync` | Mirror the project's task board (runtime/board.py) and its documents (runtime/documents.py), holding the run lock. |
+| `hand_over` | `hand-over` | Put one file of the person's in a task's file drop, <project>/.workbench-local/drop/<task id>/ (runtime/drop.py): it enters the runs of that task only, and their prompt lists it. |
+| `reject` | `reject` | Reject a pending decision of kind `plan` or `acceptance`: the request is cancelled, with what is open under it. |
+| `dispatch` | `dispatch` | The dispatcher (decision P5): one round. |
+| `pin` | `pin` | The pin of the dispatcher's two jobs, <data_dir>/dispatch-pin.json (mode 0600): the path and the hash of the project's runtime.json, which must be the accepted one. |
+| `poll` | `poll` | The short job (decision P5): mirror the task board and the documents when the project has them (an error is recorded, not raised), expire the standing approvals past their expiry, rewrite the state file's generated lines (the Checkpoints line, the standing rows) when they changed, and release what each agent's mode releases. |
+| `handler_call` | `handler` | Start one verb of a handler (runtime/handlers/<name with underscores>.py of the checkout) with this interpreter and --project, and return the one JSON object it printed, with "exit_code". |
+| `chat_memory` | - | The conversation's memory for the router (T23: workaround 2, the floor model's adapter takes the request as one argument, so the memory travels inside it, bounded): the plain lines and the router's replies after the newest reply whose request reached `planned`, `done` or `cancelled` (settled: those request ids); commands and their replies are left out. |
+| `say` | `say` | One turn of the conversation with the planning agent (decision D12), one more shell of this layer. |
+<!-- /generated -->
 
 **The dispatcher's jobs**, `/usr/bin/python3 runtime/dispatcher.py <verb> --project <dir> [--pin <file>]`, run by the scheduler from a copy kept in the job folder:
 
-| Verb | What it does | Limit |
-|---|---|---|
-| `poll` | `ops.poll`: mirrors, expired approvals, the state file's generated lines, the releases a mode makes; no model, no task | 5 minutes |
-| `work` | `ops.dispatch`: the handlers' ticks, the releases, then the runs one at a time while modes and caps allow | 240 minutes; no new run after 2,700 s |
-| `check` | whether this interpreter can run the jobs: every module, the lab, the secret store, the credential, docker, uv, git | |
-| `command-file --job poll\|work` | prints a job's command file for the scheduler | |
+<!-- generated: dispatcher-jobs -->
+| Verb | Flags | What it does (the module's docstring) | Time limit (`JOBS`) |
+|---|---|---|---|
+| `poll` | `--project <dir> [--pin <file>]` | ops.poll: the short job | 5 minutes |
+| `work` | `--project <dir> [--pin <file>]` | ops.dispatch: the worker | 240 minutes |
+| `check` | `--project <dir>` | can this interpreter run them? | - |
+| `command-file` | `--job poll\|work --project <dir> --pin <file>` | - | - |
+<!-- /generated -->
+
+`poll` mirrors, expires approvals, rewrites the state file's generated lines and makes the releases a mode makes, with no model and no task; `work` runs the handlers' ticks, the releases, then the runs one at a time while modes and caps allow, and starts no new run after 2,700 s; `check` looks for every module, the lab, the secret store, the credential, docker, uv and git; `command-file` prints a job's command file for the scheduler.
 
 **The handlers**, `python3 runtime/handlers/published_posts.py tick|preview --project <dir>`, or `cli.py handler --name published-posts --verb tick|preview`.
 
@@ -292,3 +393,4 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 ## Changes
 
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
+- 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the migrations, the task-runtime tables, the limits, the verbs, the conversation's commands, the operations, the dispatcher's jobs).

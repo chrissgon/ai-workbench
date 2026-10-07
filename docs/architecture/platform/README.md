@@ -51,6 +51,10 @@ ai-workbench is a workbench of skills that let a model build a digital solution 
 
 5. **Where to read next.** The runtime's page, [runtime.md](runtime.md); then [contracts/runtime.md](../../../contracts/runtime.md) for the contract and [AGENTS.md](../../../AGENTS.md) for the rules every file follows. The terminal conversation with the planning agent is `python3 runtime/chat.py --project <dir>` (`/help` lists its commands). Planned, with no command yet: the local interface (a page per surface over the same operations, starting with the pending decisions) and an MCP mode.
 
+## Keeping the pages current
+
+A table that changes with the code is generated, never edited by hand: it sits between `<!-- generated: <table> -->` and `<!-- /generated -->`, and `python3 scripts/architecture_tables.py --help` names each table and its one source. After a change to one of those sources, run `python3 scripts/architecture_tables.py --write`; `--check` names the stale blocks, and `scripts/validate.py` reports each one as a warning (`[architecture-tables]`). The prose around a block stays hand-written.
+
 ## The layers
 
 ```mermaid
@@ -230,3 +234,4 @@ The names fixed for this work. Use each exactly.
 
 - 2026-10-06: first version, with the runtime's page; the pages of the other seven layers follow.
 - 2026-10-06: the layer list links the page of every layer; the shells' and the target project's pages added.
+- 2026-10-06: the volatile tables of the layer pages are generated ("Keeping the pages current").

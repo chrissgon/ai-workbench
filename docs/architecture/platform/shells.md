@@ -73,7 +73,7 @@ Planned (stage 9, nothing built): `runtime/service.py`, `interface/` (static pag
 
 **Operation.** One function of `runtime/ops.py`, taking the project folder first and returning a JSON-serialisable object, or raising `OpsError` with an exit code: 1 failed or refused, 2 usage, 3 not configured. Every operation but `accept_config` starts from `ops.context`, which loads `runtime.json`, refuses another checkout than the running one, opens the store and refuses a configuration whose hash is not the accepted one. The operations are listed on [the runtime's page](runtime.md), "Entry points".
 
-**Verb.** One word of `cli.py` (`VERBS`, 27 today), mapped to one operation. The flags are shared by every verb; a verb that needs a flag it was not given is a usage error (exit 2).
+**Verb.** One word of `cli.py` (`VERBS`, listed under "Entry points"), mapped to one operation. The flags are shared by every verb; a verb that needs a flag it was not given is a usage error (exit 2).
 
 **The JSON a shell prints.** `cli.py` prints one JSON object on stdout (indented), diagnostics on stderr, nothing on stdout when it fails. `chat.py` prints each reply as text and a blank line, or with `--json` one object per line, `{"reply", "request_id", "pending_id", "ran"}`. `dispatcher.py` prints one JSON object for `poll`, `work`, `check` and `command-file`.
 
@@ -151,46 +151,72 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 
 **The terminal shell**, `python3 runtime/cli.py <verb> --project <dir> ...`; `--help` prints every verb and flag. Exit 0 ok, 1 failed or refused, 2 usage, 3 not configured. Start the verbs that call a model with the secret store's library available: `uv run --with keyring==25.7.0 python3 runtime/cli.py <verb> ...`.
 
-| Verb | Operation | Calls a model |
+<!-- generated: cli-verbs -->
+| Verb | Flags it reads | Operation |
 |---|---|---|
-| `request --text \| --text-file [--flow] [--title]` | `request` | no |
-| `route --request <id> [--flow]` | `route` | yes, without `--flow` |
-| `approve --id <n> [--sha256 <hash>]`, `reject --id <n> [--note]` | `approve`, `reject` | no |
-| `run-next [--tier strong]` | `run_next` | yes |
-| `pending [--id]`, `answer --id --text [--with-comments]`, `release --id` | `pending`, `answer`, `release` | no |
-| `retry --task`, `cancel --request`, `status` | `retry`, `cancel`, `status` | no |
-| `accept-config --sha256`, `pin` | `accept_config`, `pin` | no |
-| `proof [--skill]`, `progress [--since]`, `verdict --run --word` | `proof`, `progress`, `verdict` | no |
-| `sync [--dry-run] [--take page\|project --path]`, `hand-over --task --file`, `deps` | `sync`, `hand_over`, `deps` | no |
-| `set-mode --agent --mode`, `approve-policy --file --agent [--sha256 --expires] [--what]`, `revoke-policy --id`, `standing --policy` | `set_mode`, `approve_policy`, `revoke_policy`, `standing` | no |
-| `dispatch`, `poll`, `handler --name --verb [--arg <flag>=<value>]...` | `dispatch`, `poll`, `handler_call` | `dispatch` yes |
-| `say --text \| --text-file` | `say` | yes, for a new request or an answer to the router |
+| `request` | `--text \| --text-file` `[--flow]` `[--title]` | `request` |
+| `run-next` | `[--tier]` | `run_next` |
+| `pending` | `[--id]` | `pending` |
+| `answer` | `--id` `--text \| --text-file` `[--with-comments]` | `answer` |
+| `release` | `--id` | `release` |
+| `retry` | `--task` | `retry` |
+| `cancel` | `--request` | `cancel` |
+| `status` | - | `status` |
+| `accept-config` | `--sha256` | `accept_config` |
+| `proof` | `[--skill]` | `proof` |
+| `verdict` | `--run` `--word` | `verdict` |
+| `route` | `--request` `[--flow]` | `route` |
+| `approve` | `--id` `[--sha256]` | `approve` |
+| `reject` | `--id` `[--note]` | `reject` |
+| `sync` | `[--dry-run]` `[--take]` `[--path]` | `sync` |
+| `hand-over` | `--task` `--file` | `hand_over` |
+| `deps` | - | `deps` |
+| `progress` | `[--since]` | `progress` |
+| `set-mode` | `--agent` `--mode` | `set_mode` |
+| `approve-policy` | `--file` `--agent` `[--sha256]` `[--expires]` `[--what]` | `approve_policy` |
+| `revoke-policy` | `--id` | `revoke_policy` |
+| `standing` | `--policy` | `standing` |
+| `dispatch` | - | `dispatch` |
+| `poll` | - | `poll` |
+| `handler` | `[--arg]` `--name` `--verb` | `handler_call` |
+| `pin` | - | `pin` |
+| `say` | `--text \| --text-file` | `say` |
+<!-- /generated -->
+
+Every verb also takes `--project <dir>`. The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`, and `say` for a new request or an answer to the router.
 
 **The conversation**, `python3 runtime/chat.py --project <dir> [--json]`. Exit 0 at the end of the input, 2 usage, 3 not configured; any other error is printed and the conversation goes on.
 
-| Command | Operation |
+<!-- generated: say-commands -->
+| Command | What it does (its line of `SAY_HELP`) |
 |---|---|
-| `/help` | none: the help text |
-| `/status` | `status` |
-| `/progress [since]` | `progress` (its `text`) |
-| `/pending [id]` | `pending` |
-| `/answer <id> <text>` | `answer` |
-| `/release <id>` | `release` |
-| `/approve <id> [sha256]` | `approve` |
-| `/reject <id> [note]` | `reject` |
-| `/retry <task id>` | `retry` |
-| `/cancel <request id>` | `cancel` |
-| `/new <text>` | a new request, routed (a model call) |
-| any other line | the answer to the router's open question, or a new request, routed |
+| `/help` | this text |
+| `/status` | requests, tasks and what waits for you |
+| `/progress [since]` | where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD) |
+| `/pending [id]` | what waits for you; with an id, that decision whole |
+| `/answer <id> <text>` | answer a pending decision |
+| `/release <id>` | release a delivery (it stays a draft) |
+| `/approve <id> [sha256]` | approve a plan, an acceptance, or an effect with its hash |
+| `/reject <id> [note]` | reject a plan, an acceptance or an effect |
+| `/retry <task id>` | make a failed or blocked task ready again |
+| `/cancel <request id>` | cancel a request |
+| `/new <text>` | start a new request, whatever is open |
+<!-- /generated -->
+
+Each command calls its operation of the same name once (`/progress` shows its `text`, `/help` calls none, `/new` routes a new request, a model call); any other line is the answer to the router's open question, or a new request, routed.
 
 **The scheduler's entry**, `/usr/bin/python3 runtime/dispatcher.py <verb> --project <dir> ...`. Exit codes of the operation (1, 2, 3); `check` exits 0 only when every module, the lab, the credential, docker and uv are found (git is reported, not required).
 
-| Verb | What it does |
-|---|---|
-| `poll [--pin]` | `ops.poll`: mirrors, expired approvals, the state file's generated lines, the releases a mode makes; no model, no task; limit 5 minutes |
-| `work [--pin]` | `ops.dispatch`: the handlers' ticks, the releases, then the runs one at a time while modes and caps allow; limit 240 minutes |
-| `check` | whether this interpreter can run the jobs: every module, the lab, the secret store, the credential, docker, uv, git |
-| `command-file --job poll\|work --pin <file>` | prints a job's command file for the scheduler provider |
+<!-- generated: dispatcher-jobs -->
+| Verb | Flags | What it does (the module's docstring) | Time limit (`JOBS`) |
+|---|---|---|---|
+| `poll` | `--project <dir> [--pin <file>]` | ops.poll: the short job | 5 minutes |
+| `work` | `--project <dir> [--pin <file>]` | ops.dispatch: the worker | 240 minutes |
+| `check` | `--project <dir>` | can this interpreter run them? | - |
+| `command-file` | `--job poll\|work --project <dir> --pin <file>` | - | - |
+<!-- /generated -->
+
+`poll` is `ops.poll` (mirrors, expired approvals, the state file's generated lines, the releases a mode makes; no model, no task); `work` is `ops.dispatch` (the handlers' ticks, the releases, then the runs one at a time while modes and caps allow); `check` looks for every module, the lab, the secret store, the credential, docker, uv and git; `command-file` prints a job's command file for the scheduler provider.
 
 **The first runtime** (until stage 7), `python3 scripts/runtime.py <verb> --project <dir>`: `tick [--dry-run] [--pin]`, `pin`, `add-comment --link --commenter --text-file`, `status`, `inbox`, `approve --id [--confirmed --sha256]`, `reject --id [--note]`; exit 0 ok, 1 a step failed, 2 usage, 3 not configured. `scripts/vote_job.py` is started by the scheduler at a vote post's slot, never by hand (exit 0, 1, 2).
 
@@ -214,3 +240,4 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 ## Changes
 
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
+- 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the verbs, the conversation's commands, the dispatcher's jobs).
