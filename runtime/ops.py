@@ -91,6 +91,12 @@ Operations of stage 6:
                                    its todo tasks as sub-tasks inside the approved plan's limits (the others wait in
                                    an acceptance)
 
+Operations of stage 7:
+  contained_run(project, skill, prompt, out_dir[, platforms, timeout])   one run of one skill of an area agent's
+                                   pack, in the eval container, on the artifacts the skill declares and nothing else,
+                                   for a caller that is not a task (a handler's agent run): nothing is brought back, only
+                                   the reply, past the credential scan, in <out_dir>/response.md with <out_dir>/timing.json
+
 Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run of a code task (its skill is of a
 code area, code_task) whose copy holds versioned files starts only when the project's tracked files have no
 uncommitted change, from the project's files plus the newest unblocked change set of its request; what it did to
@@ -176,6 +182,7 @@ import workcopy  # noqa: E402
 STORE_CLASS = "store:runtime"
 EFFECTS_DIR = "effects"  # <data_dir>/effects/<pending id>/: the files code hands the code provider
 RUNS_DIR = "task-runs"
+CONTAINED_DIR = "contained-runs"  # <data_dir>/contained-runs/<n>/: the run folder of one contained run; no file of it ever comes back
 LOCK_NAME = "run.lock"
 NOTE_LIMIT = 1000        # characters of a failure's reason kept on a task and on a run row
 PREPARED_DIR = "prepared"  # <data_dir>/prepared/<run id>/: files written for one run before they enter its copy
@@ -2363,6 +2370,131 @@ def handler_call(project: str, name: str, verb: str, args=None) -> dict:
         raise OpsError(f"the handler {name} {verb} printed no JSON object (exit {done.returncode}): "
                        f"{done.stderr.strip()[-300:]}", 1)
     return {**printed, "exit_code": done.returncode}
+
+
+# --- stage 7: the contained run ----------------------------------------------------------------------------------
+
+SKILL_NAME = re.compile(r"[a-z0-9]+(-[a-z0-9]+)*")
+
+
+def _contained_scope(ctx: dict, skill: str) -> None:
+    """Refuse a skill that is not a folder of the checkout's skills/, that the runtime knows nothing of (no whole runtime
+    manifest), or that is in the pack of no enabled area agent of the configuration (a check of scope, not of mode). A
+    configuration with no area agents puts no skill in scope: nothing is allowed unless a pack says so."""
+    if not isinstance(skill, str) or not SKILL_NAME.fullmatch(skill) or \
+            not os.path.isfile(os.path.join(ROOT, "skills", skill, "SKILL.md")):
+        raise OpsError(f"{skill!r} is not a skill of this checkout", 2)
+    try:
+        packs = plan.agent_skills(ctx["cfg"], ROOT)
+    except plan.PlanError as e:
+        raise OpsError(str(e), 2) from None
+    if not any(skill in names for names in packs.values()):
+        raise OpsError(f"{skill} is in the pack of no enabled area agent of {ctx['cfg']['path']}: a contained run is "
+                       "made only for a skill of an area agent's pack", 2)
+    try:
+        manifest.load(ROOT, skill)  # a skill the runtime knows nothing of does not run, here as in a task
+    except manifest.ManifestError as e:
+        raise OpsError(str(e), 2) from None
+
+
+def _contained_folder(cfg: dict) -> tuple:
+    """(n, folder): a new folder <data_dir>/contained-runs/<n>, claimed by creating it, so that two runs never share one."""
+    base = os.path.join(cfg["data_dir"], CONTAINED_DIR)
+    os.makedirs(base, mode=0o700, exist_ok=True)
+    n = 1 + max([int(name) for name in os.listdir(base) if name.isdigit()] or [0])
+    while True:
+        folder = os.path.join(base, str(n))
+        try:
+            os.mkdir(folder, 0o700)
+        except FileExistsError:
+            n += 1
+            continue
+        return n, folder
+
+
+def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms=(), timeout=None) -> dict:
+    """Run one skill once on one task text, in the eval container, for a caller that is not a task (a handler's agent run).
+
+    1. The configuration's hash is the accepted one (context). The skill is a folder of this checkout's skills/, has a
+       whole runtime manifest and is in the pack of an enabled area agent of the configuration: else OpsError 2.
+    2. The tier, the model and the adapter come from the proof (proof.route, with the runtime's own key for the floor
+       model as run_next passes it), never from the configuration: a skill that is not proven runs on the reference model.
+    3. What enters the copy is the artifacts the skill declares and nothing else (workcopy.entering in its form for a
+       run that sees only declared artifacts, limit L3); the runtime's configuration is never in it, although a skill
+       may declare it as an input. Nothing is added: no file drop, no AGENTS.md the skill does not declare.
+    4. The run is one attempt (retries 0), in the facade's session, never on the open network (web False, whatever the
+       skill requires), within `timeout` seconds (None: the gate file's), in a new folder <data_dir>/contained-runs/<n>.
+       `platforms` names the platforms whose reference the run is given besides the ones the skill cites.
+    5. Nothing is brought back: no file the run created or changed reaches the project; their number is
+       `ignored_changes`.
+    6. The reply leaves through the credential scan of limit L14 (workcopy.masked_reply) and is written to
+       <out_dir>/response.md, as the scan leaves it; <out_dir>/timing.json holds total_tokens, duration_ms, exit_code (0
+       when the model answered, else 1) and cost_usd, which is null for a run on the reference model, whose cost the
+       runtime does not know. Those two files are all that is written outside the run folder.
+    7. Returns {"status": "ok" | "failed", "failure": None | {"kind", "reason"}, "tier", "model", "adapter",
+       "ignored_changes", "run_dir"}.
+
+    A LabError (no image on this machine, a configuration the lab refuses, a platform with no reference) is OpsError 3
+    with its reason: the eval image is never built here."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        raise OpsError("the prompt is empty", 2)
+    if isinstance(platforms, str) or not all(isinstance(n, str) for n in platforms or ()):
+        raise OpsError("platforms is a list of platform names", 2)
+    if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0):
+        raise OpsError("timeout is a number of seconds above 0", 2)
+    ctx = context(project)
+    cfg = ctx["cfg"]
+    _contained_scope(ctx, skill)
+    out_dir = os.path.abspath(out_dir)
+    try:
+        meta = skill_meta.declared(os.path.join(ROOT, "skills", skill))
+        key = _floor_key()
+        routing = _route(ctx, skill, meta, None, key)
+    except (skill_meta.SkillError, lab.LabError, KeyError, ValueError, OSError) as e:
+        raise OpsError(f"{skill} could not be routed: {e}", 3 if isinstance(e, lab.LabError) else 1) from None
+    number, dest = _contained_folder(cfg)
+    prepared_dir = os.path.join(cfg["data_dir"], PREPARED_DIR, f"contained-{number}")
+    try:
+        try:
+            # web=True here is the copy's form, "the artifacts the skill declares" (L3); the run itself is web=False below.
+            entered = workcopy.entering(cfg["project"], meta, web=True, cfg=cfg, settings_names=lab.settings_names(),
+                                        prepared_dir=prepared_dir)
+        except workcopy.CopyError as e:
+            raise OpsError(f"the copy could not be built: {e}", 1) from None
+        try:
+            with lab.session(), _key_in_environment(routing, key):
+                result = lab.run_skill(skill, prompt, entered["files"], dest, web=False, tier=routing["tier"],
+                                       timeout=timeout, retries=0, platforms=list(platforms or ()))
+        except lab.LabError as e:
+            with contextlib.suppress(OSError):
+                os.rmdir(dest)  # no run was made: the folder claimed for it is empty, and goes
+            raise OpsError(f"{e.kind}: {e.reason}", 3) from None
+    finally:
+        shutil.rmtree(prepared_dir, ignore_errors=True)
+    changes = result["changes"] or {}
+    ignored = len(changes.get("created") or []) + len(changes.get("modified") or [])
+    answered = result["status"] == "ok"
+    body, _masked = workcopy.masked_reply(result["response"])
+    timing = result["timing"] if isinstance(result["timing"], dict) else {}
+    number_of = lambda name: timing.get(name) if isinstance(timing.get(name), int) and not isinstance(timing.get(name), bool) \
+        and timing.get(name) >= 0 else None
+    cost = timing.get("cost_usd")
+    cost = cost if result["tier"] == "floor" and isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0 else None
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+        with open(os.path.join(out_dir, "response.md"), "w", encoding="utf-8", newline="") as f:
+            f.write(body)
+        with open(os.path.join(out_dir, "timing.json"), "w", encoding="utf-8") as f:
+            json.dump({"total_tokens": number_of("total_tokens"), "duration_ms": number_of("duration_ms"),
+                       "exit_code": 0 if answered else 1, "cost_usd": cost}, f)
+            f.write("\n")
+    except OSError as e:
+        raise OpsError(f"the reply could not be written to {out_dir}: {e.strerror}", 1) from None
+    failure = result["failure"]
+    return {"status": result["status"], "failure": None if failure is None else
+            {"kind": failure["kind"], "reason": _note(failure["reason"])},
+            "tier": result["tier"], "model": result["model"], "adapter": result["adapter"],
+            "ignored_changes": ignored, "run_dir": dest}
 
 
 # --- stage 6: the conversation with the planning agent ----------------------------------------------------------------

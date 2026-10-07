@@ -291,6 +291,7 @@ The limit's text and the stage that built it come from the contract's table; the
 | `revoke-policy` | `--id` | `revoke_policy` |
 | `standing` | `--policy` | `standing` |
 | `execute-under-policy` | `--policy` `--effect-file` | `execute_under_policy` |
+| `contained-run` | `--skill` `--prompt-file` `--out` `[--platform]` `[--timeout-seconds]` | `contained_run` |
 | `dispatch` | - | `dispatch` |
 | `poll` | - | `poll` |
 | `handler` | `--name` `--verb` `[--arg]` | `handler_call` |
@@ -346,6 +347,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `revoke_policy` | `revoke-policy` | terminal | no | end a standing approval |
 | `standing` | `standing` | terminal | no | whether an active standing approval covers a policy now; it executes nothing |
 | `execute_under_policy` | `execute-under-policy` | terminal | no | execute an effect a handler wrote, inside the bounds of a standing approval |
+| `contained_run` | `contained-run` | terminal | yes | run one skill of an area agent's pack in the container on the artifacts it declares; only its reply comes out |
 | `dispatch` | `dispatch` | terminal | yes | one round of the dispatcher: the handlers' ticks, the releases by a mode, the next ready tasks |
 | `poll` | `poll` | terminal | no | the short job: mirrors, expired approvals, the state file's generated lines, the releases |
 | `handler_call` | `handler` | terminal | no | start one verb of a handler that runtime.json names |

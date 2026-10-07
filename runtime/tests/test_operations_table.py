@@ -25,7 +25,7 @@ effects = st.load("effects")
 
 # Public functions of ops.py that are not an operation of a shell: what the other modules and the tests use.
 NOT_OPERATIONS = {"store_module", "context", "task_prompt", "code_task", "chat_memory"}
-KINDS = ("int", "str", "text", "flag", "choice", "pairs")
+KINDS = ("int", "str", "text", "file", "list", "flag", "choice", "pairs")
 CHANNELS = ("terminal", "chat", "page")
 # Modules that still hold the terminal's command as a string, outside the operations layer's own texts.
 HOLDS_THE_COMMAND = {"lab.py": "an error message of the lab facade, in the region of the execution kit's move (WP-R.8)"}
@@ -57,7 +57,7 @@ def test_the_table_is_a_pure_literal_and_its_rows_are_well_formed():
     names = [r["name"] for r in operations.OPERATIONS]
     assert len(names) == len(set(names))
     for row in operations.OPERATIONS:
-        assert set(row) <= {"name", "call", "args", "channels", "model", "help", "channel_arg", "chat_reply"}, row["name"]
+        assert set(row) <= {"name", "call", "args", "channels", "model", "help", "channel_arg", "chat_reply", "exit_unless"}, row["name"]
         assert row["help"].strip() and set(row["channels"]) <= set(CHANNELS) and row["channels"], row["name"]
         assert row["model"] in (True, False) or isinstance(row["model"], str), row["name"]
         for arg in row["args"]:
