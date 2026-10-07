@@ -236,10 +236,14 @@ def test_the_image_is_only_inspected_and_never_built(monkeypatch):
         return _Done(0, "sha256:" + "c" * 64 + "\n") if args[:2] == ("image", "inspect") else _Done(1)
 
     fake = type("Executor", (), {"names": staticmethod(lambda: {"image": "wb-eval:demo"}), "ensure": staticmethod(never),
-                                 "image_platform": staticmethod(lambda: "linux/arm64"), "docker": staticmethod(docker)})
+                                 "image_platform": staticmethod(lambda: "linux/arm64"), "docker": staticmethod(docker),
+                                 "IMAGE_PLATFORM": "linux/amd64"})
     monkeypatch.setattr(er, "EXECUTOR", "container")
     monkeypatch.setattr(er, "load_executor", lambda: fake)
-    assert lab.image() == {"name": "wb-eval:demo", "digest": "sha256:" + "c" * 64, "platform": "linux/arm64"}
+    # platform is what the image runs as here; evidence_platform is the one the lab evidence is made on (the executor's
+    # IMAGE_PLATFORM): the two may differ, and the proof holds for the second.
+    assert lab.image() == {"name": "wb-eval:demo", "digest": "sha256:" + "c" * 64, "platform": "linux/arm64",
+                           "evidence_platform": "linux/amd64"}
     assert seen and all(a[:2] == ("image", "inspect") for a in seen)
     monkeypatch.setattr(fake, "docker", staticmethod(lambda *a, **k: _Done(1)))
     assert lab.image()["digest"] is None

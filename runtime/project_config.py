@@ -50,6 +50,12 @@ from a recipe of the closed table of runtime/deps.py, checked there (deps.declar
 
   "dependencies": [{"recipe": "python-requirements", "file": ".workbench-local/requirements-dev.txt"}]
 
+It also reads "model_prices" (stage 9; absent means {}): what the person typed from a provider's price page so that a run's
+cost can be recomputed from its token counts (runtime/costs.py): {"<model id as the gate file writes it>":
+{"input_usd_per_mtok", "output_usd_per_mtok", "cache_read_usd_per_mtok", "cache_write_usd_per_mtok" (each a number, 0 or
+more), "source" (where the price was read), "date" (when)}}. An unknown key in an entry is refused. No model id and no
+price is written in the repository, and the hash covers them.
+
 The hash is the sha256 of the file's bytes. Every operation compares it with the hash the person accepted last
 (kept in the store's cursor ACCEPTED, written only by ops.accept_config) and refuses to act on a file that
 changed. Nothing in this module reads the store.
@@ -67,6 +73,7 @@ import difflib
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import sys
@@ -80,7 +87,7 @@ REL = "docs/workbench/runtime.json"
 REQUIRED = ("workbench", "data_dir", "store_db")
 # The top-level keys of the task runtime: the three required ones and every key this module checks or passes on.
 TASK_RUNTIME_KEYS = ("workbench", "data_dir", "store_db", "area_agents", "handlers", "task_board", "documents",
-                     "protected_paths", "code", "dependencies", "max_cost_usd_per_run")
+                     "protected_paths", "code", "dependencies", "max_cost_usd_per_run", "model_prices")
 # The top-level keys scripts/runtime.py, scripts/runtime_vote.py and scripts/vote_job.py read from the same file
 # (the first runtime). Leaves with stage 7.
 FIRST_RUNTIME_KEYS = ("agent", "harness", "model", "mailbox", "publisher", "store", "scheduler", "notification_query",
@@ -147,6 +154,47 @@ def load(project: str) -> dict:
     except ValueError as e:
         raise ConfigError(f"runtime.json {e}") from None
     out["handlers"] = _handlers(raw.get("handlers"), out["area_agents"])
+    out["model_prices"] = _model_prices(raw.get("model_prices"))
+    return out
+
+
+PRICE_KINDS = ("input", "output", "cache_read", "cache_write")
+PRICE_KEYS = tuple(f"{kind}_usd_per_mtok" for kind in PRICE_KINDS) + ("source", "date")
+
+
+def _model_prices(value) -> dict:
+    """The key "model_prices", checked: {} when absent. An object whose keys are model ids (as the gate file writes
+    them, any non-empty text) and whose values are objects with exactly the four prices in dollars per million tokens
+    (PRICE_KEYS: each a number of 0 or more, never a boolean) and `source` and `date`, both non-empty text: where the
+    person read the price and when. The person types them from the provider's price page; no model id or price is
+    written anywhere in the repository, and the file's hash covers them."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ConfigError("runtime.json model_prices must be an object of model ids")
+    out = {}
+    for model, entry in value.items():
+        if not isinstance(model, str) or not model.strip():
+            raise ConfigError("runtime.json model_prices: a model id is non-empty text")
+        if not isinstance(entry, dict):
+            raise ConfigError(f"runtime.json model_prices.{model} must be an object")
+        unknown = sorted(set(entry) - set(PRICE_KEYS))
+        if unknown:
+            raise ConfigError(f"runtime.json model_prices.{model}: unknown key {unknown[0]} (known: {', '.join(PRICE_KEYS)})")
+        missing = [key for key in PRICE_KEYS if key not in entry]
+        if missing:
+            raise ConfigError(f"runtime.json model_prices.{model}: missing key {missing[0]}")
+        checked = {}
+        for key in PRICE_KEYS[:4]:
+            price = entry[key]
+            if isinstance(price, bool) or not isinstance(price, (int, float)) or not math.isfinite(price) or price < 0:
+                raise ConfigError(f"runtime.json model_prices.{model}.{key} must be a number, 0 or more")
+            checked[key] = price
+        for key in ("source", "date"):
+            if not isinstance(entry[key], str) or not entry[key].strip():
+                raise ConfigError(f"runtime.json model_prices.{model}.{key} must be non-empty text")
+            checked[key] = entry[key].strip()
+        out[model] = checked
     return out
 
 

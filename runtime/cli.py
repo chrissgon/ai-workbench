@@ -20,6 +20,13 @@ Usage:
   python3 runtime/cli.py status   --project <dir>
   python3 runtime/cli.py task     --project <dir> --task <task id>
   python3 runtime/cli.py flows    --project <dir>
+  python3 runtime/cli.py agents   --project <dir>
+  python3 runtime/cli.py conversation --project <dir> [--conversation <name>] [--after <message id>]
+  python3 runtime/cli.py skills   --project <dir>
+  python3 runtime/cli.py costs    --project <dir> [--since YYYY-MM-DD]
+  python3 runtime/cli.py connections --project <dir>
+  python3 runtime/cli.py artifacts --project <dir>
+  python3 runtime/cli.py artifact --project <dir> --path <docs/...>
   python3 runtime/cli.py config   --project <dir>
   python3 runtime/cli.py accept-config --project <dir> --sha256 <hash>
   python3 runtime/cli.py proof    --project <dir> [--skill <name>]
@@ -85,6 +92,30 @@ task      one task or request: its row, its runs (status, failure, ending, attem
           decisions on the request itself.
 flows     the flow files of this checkout (flows/*.json): each one's name, title and number of tasks; a file that
           fails its checks is listed with its error.
+agents    each area agent of runtime.json: its pack, whether it is enabled, the mode it is set to and the mode it acts in now,
+          its two daily caps, what it used today (runs on the reference model, dollars on the floor model, the runs
+          whose cost is unknown) and how many ready tasks wait for it. Computed from the configuration and the
+          store's records; {"agents": []} without area_agents.
+conversation  the messages of the project's conversation above a message id (--after, default 0), oldest first, at most
+          500: id, role, text, the request it made or answered, the run, the time. The conversation is named project
+          (--conversation is the store's name, and no other is in use).
+skills    the skills in scope of the project (the packs of its agents, else the default pack): version, area, whether a
+          runtime manifest exists, the proof on the reference and the floor model as the proof file gives it (band,
+          cause, score, mean, runs), the runs of the skill in this project, and the two checks of the proof (the
+          measurement files, the eval image). It calls no model.
+costs     the runs from a day on (--since YYYY-MM-DD, default the last 30 days) by day, agent, model and adapter: runs,
+          tokens, the cost the store recorded, and the cost recomputed from the token counts a run left and the prices
+          in model_prices of runtime.json (with their source and date). A run whose token counts are not there, or a
+          model with no price, has no recomputed cost; the row counts such runs as unknown_runs. Also the daily caps.
+connections  which provider each requirement class of the skills in scope resolves to (providers/resolve.py), which
+          secrets are found and where (the environment or the secret store; never a value), whether the eval image is on
+          this machine and is the evidence's, and the machine's platform and the evidence's. It starts no provider and
+          makes no network call.
+artifacts the project's files under docs/ that are documents or machine files, each with its owner skill (the skill whose
+          outputs name it), size, modification time and whether a pending decision binds it. Never the runtime's
+          configuration.
+artifact  the text of one file under docs/ of the project (--path, relative to the project), read-only. Refused for a path
+          outside docs/, a link, the runtime's configuration, a file over 1 MiB or one that is not UTF-8 text.
 config    the project's configuration: its path, its hash, whether you accepted that hash, and the data folder. The one
           command that does not refuse a configuration you did not accept yet.
 proof     the model each skill in use would run on, with the bands and the two checks (the measurement files,
