@@ -98,3 +98,54 @@ def test_protected_paths_is_a_list_of_globs_or_absent(tree):
         with pytest.raises(project_config.ConfigError) as raised:
             project_config.load(path)
         assert "protected_paths must be a list of path globs" in str(raised.value)
+
+
+def write_config(tree, **extra) -> str:
+    path = str(tree["project"])
+    file = project_config.path(path)
+    good = json.loads(open(file, encoding="utf-8").read())
+    with open(file, "w", encoding="utf-8") as f:
+        json.dump({**good, **extra}, f)
+    return path
+
+
+def test_an_unknown_key_is_refused_with_the_nearest_known_name(tree, capsys):
+    path = write_config(tree, protected_path=["AGENTS.md"])
+    with pytest.raises(project_config.ConfigError) as raised:
+        project_config.load(path)
+    assert "'protected_path'" in str(raised.value) and "did you mean protected_paths?" in str(raised.value)
+    assert cli.main(["status", "--project", path]) == 3  # exit 3, as every ConfigError
+    captured = capsys.readouterr()
+    assert captured.out == "" and "did you mean protected_paths?" in captured.err
+    assert not tree["db"].exists()  # no operation ran: the store was never opened
+    write_config(tree, protected_path=None, zzzzzzzz=1)
+    with pytest.raises(project_config.ConfigError) as raised:
+        project_config.load(path)
+    assert "'protected_path'" in str(raised.value)  # the first unknown key, in sorted order
+    file = project_config.path(path)
+    clean = {k: v for k, v in json.loads(open(file, encoding="utf-8").read()).items()
+             if k not in ("protected_path", "zzzzzzzz")}
+    with open(file, "w", encoding="utf-8") as f:
+        json.dump({**clean, "qqqqqqqqqqqq": 1}, f)
+    with pytest.raises(project_config.ConfigError) as raised:
+        project_config.load(path)
+    assert "did you mean" not in str(raised.value)  # no near match, no hint
+
+
+def test_the_first_runtimes_keys_stay_valid_in_the_same_file(tree):
+    path = write_config(tree, agent="a", harness="h", mailbox="none", publisher="p", vote={"repo": "o/r"})
+    assert project_config.load(path)["workbench"]
+
+
+def test_every_key_the_first_runtime_reads_is_known():
+    import re
+    from pathlib import Path
+    scripts = Path(__file__).resolve().parents[2] / "scripts"
+    DERIVED = {"paths", "providers", "limits", "_redact"}  # set by the loader of scripts/runtime.py itself
+    known = set(project_config.FIRST_RUNTIME_KEYS) | set(project_config.TASK_RUNTIME_KEYS) | DERIVED
+    pattern = re.compile(r'\bcfg(?:\[|\.get\()\s*"([A-Za-z_]+)"')
+    found = set()
+    for name in ("runtime.py", "runtime_vote.py", "vote_job.py"):
+        found |= set(pattern.findall((scripts / name).read_text(encoding="utf-8")))
+    assert found, "the scan found no key: the pattern is stale"
+    assert found <= known, f"read from the file but not in the key tuples: {sorted(found - known)}"
