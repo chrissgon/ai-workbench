@@ -228,6 +228,10 @@ ALLOWED = (
     ("runtime/*.py", ("runtime/",) + RUNTIME_OUTSIDE),
     # scripts/: anything but the runtime (the first runtime, scripts/runtime.py, reaches providers/ and adapters/;
     # it leaves with stage 7)
+    # scripts/validate.py alone may also read the runtime's flow-file checker by path: tooling may read a layer's
+    # own checker (the validator reuses the runtime's flow-file rules instead of holding a copy); a layer never
+    # reads tooling except the scripts the runtime rows list.
+    ("scripts/validate.py", ("scripts/",) + NOT_RUNTIME + ("runtime/flow_files.py",)),
     ("scripts/**", ("scripts/",) + NOT_RUNTIME),
 )
 
@@ -239,16 +243,16 @@ TOLERATED = {
         "findings 5 and 9 (WP-R.5): _task_script loads the backlog parser into the runtime's process",
     ("runtime/documents.py", "skills/*/scripts/*"):
         "finding 9 (WP-R.5): a document checker is a skill script run with the runtime's environment",
-    ("skills/mkt-publish/scripts/payload.py", "providers/secrets/resolver.py"):
-        "finding 14 (gap A11): a skill reaches a provider's secret resolver by a path derived from the publisher",
     ("skills/mkt-engage/scripts/policy_gate.py", "skills/brand-profile/scripts/sensitive_topics.py"):
-        "finding 14 (gap A11): a skill falls back to the copy of another skill's script",
-    ("scripts/validate.py", "runtime/flow_files.py"):
-        "finding 14: the validator loads the flow-file reader of runtime/; no package moves it",
+        "finding 17 (a skill script falls back to another skill's copy of a shared script; removed at the next "
+        "Y change of mkt-engage)",
 }
 
 # Paths the scan finds that are not a dependency: (file, target) -> why.
 NOT_A_DEPENDENCY = {
+    ("skills/mkt-publish/scripts/payload.py", "providers/secrets/resolver.py"):
+        "the script hashes that file into the scheduled job's snapshot (the integrity record of what the job will "
+        "run); nothing is loaded or run",
     ("providers/secrets/resolver.py", "runtime/effects.py"):
         "a row of the secrets table names the module that reads the secret; nothing is loaded",
     ("scripts/architecture_tables.py", "runtime/cli.py"):
