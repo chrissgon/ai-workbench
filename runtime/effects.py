@@ -19,7 +19,7 @@ provider (commit-files, with the person's own git and signature) and opens the p
 passes the provider no credential: it reads its own. No module of runtime/ runs git commit or git push itself.
 
 Public names: recover_payload(reply, tmp_dir, readable), parse_pull_request_payload(text), EffectError,
-document(...), write(run_dir, doc), body(doc, sha256), verify(...), execute(...), approval_row(approval, doc).
+document(...), write(run_dir, doc), body(doc, sha256), verify(...), execute(...), provider_call(provider, args[, run]), approval_row(approval, doc).
 
 Usage (a library): python3 runtime/effects.py --help
 
@@ -208,7 +208,10 @@ def verify(effect_file: str, sha256: str, changeset: dict, facts: dict, protecte
     return doc
 
 
-def _provider_call(run, provider: str, args: list) -> dict:
+def provider_call(provider: str, args: list, run=None) -> dict:
+    """One verb of a provider script, started as `uv run <provider> <args>`: the one JSON object it printed.
+    Raises EffectError ("usage", "not-configured" or "provider")."""
+    run = run or _subprocess
     done = run(["uv", "run", provider, *args])
     if done.returncode != 0:
         lines = (done.stderr or "").strip().splitlines()
@@ -252,17 +255,17 @@ def execute(doc: dict, changeset_dir: str, work_dir: str, provider: str, key_pre
     for rel in [item["path"] for item in doc["files"]] + doc["removed"]:
         commit += ["--allow", rel]
     commit += ["--idempotency-key", f"{key_prefix}-commit"]
-    seen = _provider_call(run, provider, commit + ["--dry-run"])
+    seen = provider_call(provider, commit + ["--dry-run"], run)
     if seen.get("existing_status") != "committed":
         if seen.get("base_commit") != doc["project_commit"]:
             raise EffectError("deviation", "the base branch moved since the change was made: it is at "
                                            f"{seen.get('base_commit')}, the change was made against {doc['project_commit']}")
         if seen.get("branch_exists"):
             raise EffectError("deviation", f"the branch {doc['head']} already exists on the remote and is not this request's")
-    made = _provider_call(run, provider, commit + ["--confirmed"])
-    opened = _provider_call(run, provider, ["open-pr", "--repo", doc["repo"], "--head", doc["head"], "--base", doc["base"],
-                                            "--title-file", files["title.txt"], "--body-file", files["body.md"],
-                                            "--idempotency-key", f"{key_prefix}-pr", "--confirmed"])
+    made = provider_call(provider, commit + ["--confirmed"], run)
+    opened = provider_call(provider, ["open-pr", "--repo", doc["repo"], "--head", doc["head"], "--base", doc["base"],
+                                      "--title-file", files["title.txt"], "--body-file", files["body.md"],
+                                      "--idempotency-key", f"{key_prefix}-pr", "--confirmed"], run)
     return {"commit": made.get("commit"), "pushed": bool(made.get("pushed")),
             "pull_request": {"number": opened.get("number"), "url": opened.get("url")},
             "replayed": bool(made.get("replayed")) and bool(opened.get("replayed"))}
