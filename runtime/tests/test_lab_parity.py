@@ -31,7 +31,7 @@ def by_the_lab(tmp_path, monkeypatch, capsys, scenario):
     (tree["tree"] / "skills" / "demo-asks" / "evals" / "evals.json").write_text(json.dumps(CASES))
     if scenario:
         st.fail(tree["adapter"], scenario, 9)
-    er = lab.load()
+    er = st.load_runner()
     code = er.main(["--skill", "demo-asks", "--harness", "h", "--model", "m", "--runs", "1", "--only", "with",
                     "--no-grade", "--retries", str(RETRIES)])
     capsys.readouterr()
@@ -82,10 +82,10 @@ def test_the_order_of_the_checks_is_the_labs(tmp_path):
 
 
 def test_the_lab_and_the_facade_call_the_same_function():
-    er = lab.load()
+    er = st.load_runner()
     shared = er.load_attempts()
     assert lab.LAB.load_attempts() is shared and lab.LAB.load_attempts().run is shared.run
-    assert "load_attempts" in lab.ALLOWED
+    assert "load_attempts" in lab.load().__all__
 
 
 RUNTIME = Path(lab.__file__).resolve().parent
@@ -94,7 +94,7 @@ LOOP_NAMES = {"wait_while_paused", "start_pause", "RETRY_PAUSE", "Slots"}
 
 def test_the_runtime_has_no_loop_of_its_own():
     """lab.py holds no while statement, and no module under runtime/ reads a name of the loop's control: those
-    names stay in ALLOWED only because the shared function reads them through the facade's view of the runner."""
+    names stay in the kit's __all__ only because the shared function reads them through the facade's view of the runner."""
     facade = ast.parse((RUNTIME / "lab.py").read_text(encoding="utf-8"))
     assert not [node for node in ast.walk(facade) if isinstance(node, ast.While)]
     for path in sorted(RUNTIME.rglob("*.py")):

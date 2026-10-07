@@ -196,6 +196,21 @@ def gate_skill(tree: Path) -> Path:
     return folder
 
 
+_RUNNER = []
+
+
+def load_runner():
+    """The lab's own runner, evals/eval_run.py, loaded once by path: the parity tests run it beside the facade.
+    It binds the execution kit's names and shares the kit's module with the facade."""
+    if not _RUNNER:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("workbench_eval_run_for_runtime_tests", REPO / "evals" / "eval_run.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        _RUNNER.append(module)
+    return _RUNNER[0]
+
+
 def build(tmp_path: Path, monkeypatch, lab) -> dict:
     """The tree, a project and the patches that point the lab facade at them. Returns {"tree", "project",
     "data", "db", "adapter"} as paths. The runner executes on this machine (EXECUTOR "host"), its lock folder is
@@ -240,6 +255,10 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     monkeypatch.setattr(er, "RETRY_PAUSE", 0)
     monkeypatch.setattr(er, "PAUSE_POLL", 0.05)
     monkeypatch.setattr(er, "PROBE_SECONDS", 0)
+    runner = load_runner()  # the runner's own copies of the names the kit reads for itself
+    monkeypatch.setattr(runner, "ROOT", str(tree))
+    monkeypatch.setattr(runner, "EXECUTOR", "host")
+    monkeypatch.setattr(runner, "RETRY_PAUSE", 0)
     control = {"total_jobs": 2, "web_jobs": {"strong": 1, "floor": 1}}
     monkeypatch.setattr(lab, "reference", lambda tier="strong": {
         "tier": tier, "model": "m", "adapter": "h", "pass_env": [], "timeout_seconds": 60, "retries": 2, "control": control})
