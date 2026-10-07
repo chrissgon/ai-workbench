@@ -71,7 +71,7 @@ flowchart TB
     L8["8 Target project<br/>docs/, state file, runtime.json"]
 
     L7 -->|"ops.py only"| L6
-    L6 -->|"lab.py only"| L4
+    L6 -->|"lab.py only, the execution kit"| L4
     L6 -->|"by class, resolve.py"| L3
     L6 -->|"manifests, flow files, a few bound sentences"| L1
     L6 -->|"reads, writes back by the path rule"| L8
@@ -191,7 +191,7 @@ The names fixed for this work. Use each exactly.
 | Runtime manifest | `skills/<name>/evals/runtime-manifest.json`: what the runtime knows of a skill that its frontmatter does not declare |
 | Project configuration | `<project>/docs/workbench/runtime.json`, accepted by its hash |
 | Lab | The eval harness under `evals/`: the runner, the executor, the container |
-| Lab facade | `runtime/lab.py`, the one file of `runtime/` that imports the lab's runner |
+| Lab facade | `runtime/lab.py`, the one file of `runtime/` that imports the lab's execution kit (`evals/execution.py`) |
 | Operations layer | `runtime/ops.py`: every operation a shell can perform, once |
 | Shell | A thin front over the operations layer: the terminal command, the conversation, later the local interface |
 | Run copy | The fresh folder a run sees: what entered from the project, plus the staged skill |

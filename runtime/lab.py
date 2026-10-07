@@ -3,17 +3,19 @@
 # requires-python = ">=3.9"
 # dependencies = []
 # ///
-"""The lab facade: the one file of runtime/ that talks to the lab (evals/eval_run.py).
+"""The lab facade: the one file of runtime/ that talks to the lab (evals/execution.py, the execution kit).
 
 The agent runtime runs a skill in the container the skill was proven in, through the same entry: the eval
 container of evals/executor.py, started by the adapter's run-prompt.sh, with the skill staged by
-scripts/stage_skills.py. This file imports the lab's runner as it is and calls its functions: the pause on the
-account limit, the shared lock, the refusals, the early end, the replacement of passed values, and the stopping of
-everything a run started are the lab's own code.
+scripts/stage_skills.py. This file loads the execution kit, the one module the lab's runner (evals/eval_run.py)
+and the runtime share, and calls the names its __all__ lists: the pause on the account limit, the shared lock,
+the refusals, the early end, the replacement of passed values, and the stopping of everything a run started are
+the kit's own code. The runner's own code (events, cases, baselines, grading, evidence) is not in the kit and is
+not reachable from here; the status script is read through the names of the kit's STATUS_NAMES only.
 
 The runtime has no loop of its own. The attempts of one run (prepare a fresh folder, run, classify how the attempt
 failed, make it again or stop) are made by the one function the lab's runner calls too, run() of
-evals/run_attempts.py, reached through the runner (load_attempts), so both hold one module object. What run_skill
+evals/run_attempts.py, reached through the kit (load_attempts), so both hold one module object. What run_skill
 adds through its hooks is the runtime's: the caller's files, the base commit, prepare and finish, the staging of
 the one skill. Nothing that measures: no variant, no baseline, no contamination check, no shared-passage check, no
 grading, no evidence line. The parity test (runtime/tests/test_lab_parity.py) gives the same adapter output to the
@@ -48,55 +50,13 @@ import types
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
-RUNNER = os.path.join(ROOT, "evals", "eval_run.py")
-MODULE = "workbench_eval_run"
+RUNNER = os.path.join(ROOT, "evals", "execution.py")
+MODULE = "workbench_eval_execution"  # the name the lab's runner gives the kit too: one module object
 
-# The names of evals/eval_run.py this file may read. Anything else raises AttributeError (class Lab), and a
-# test asserts that every name of FORBIDDEN does. Add a name here only with a line in the pull request that
-# says why it is not measurement.
-ALLOWED = (
-    # where things are, and which executor is in use ("container" for every real run; a test sets "host")
-    "ROOT", "EXECUTOR",
-    # modules of the lab, loaded by path
-    "load_executor", "load_status",
-    # the adapter's data and what a run sees of the skills
-    "adapter_eval", "harness_settings", "settings_in", "stage_run",
-    # credentials by name, and the environment of a contained command
-    "resolve_pass_env", "contained_env", "credential_label",
-    # the fresh folder of a run, and its way back
-    "new_run_root", "return_run", "return_all_runs",
-    # running: the fixture commit, the adapter, the stopping of what was started
-    "isolate_git", "run_failure", "probe_call", "stop_all_groups", "STOPPING",
-    # what the host may read after a run, and what the run did to its folder
-    "run_files", "readable", "file_index", "changes", "read_text", "run_ending",
-    # passed values replaced in what a run leaves (redaction_values is read through the lab from evals/measure.py)
-    "redact_folder", "redaction_values",
-    # how an attempt failed (early_end is read through the lab from evals/measure.py)
-    "account_limit", "provider_refusal", "auth_refusal", "early_end",
-    # the control of the loop that is shared with every runner process of the machine
-    "Slots", "start_pause", "wait_while_paused", "RETRY_KINDS", "RETRY_PAUSE", "KEPT_PREFIXES",
-    # the control of a run's attempts, evals/run_attempts.py, which the lab's runner calls too: it grades nothing
-    # and writes no evidence (stage 5 of the platform plan, WP-5.3)
-    "load_attempts",
-    # one command in the container of a run, with no model and no credential (run_command): it grades nothing
-    # and writes no evidence (stage 4 of the platform plan, WP-4.4)
-    "run_group", "SETUP_TIMEOUT",
-)
-# Measurement: never read from here. The list is not complete (ALLOWED is what decides); it names what a
-# maintainer is most likely to reach for.
-FORBIDDEN = (
-    "run", "main", "parse", "regrade", "routing", "check_cases_only",                       # the event runner
-    "load_evals", "preflight", "case_files", "dependency_dirs", "workbench_files", "build_tree",  # case files
-    "ablated_copy", "ablated_line_count",                                                   # variants
-    "contamination", "mount_patterns",                                                      # the baseline's checks
-    "shared_passage", "skill_passages", "passages_of", "words_of", "folder_text",
-    "grade", "grading_call", "template_hash", "version_control", "shown_in",                # grading
-    "facts_block", "grading_prompt", "read_grading", "grading_summary", "score", "gate_passes",
-    "at_threshold", "within_tolerance", "failed_guards", "confirmed_guards", "guard_positions",
-    "run_record_hash", "write_evidence", "evidence_file", "ledger_add", "ledger_read",      # evidence rows
-    "scratch_reason", "later_test_id", "next_iteration", "find_event", "conditions_of", "agg", "exact_mean",
-    "early_end_stats", "early_end_warning",
-)
+# What this file may read of the kit is its __all__ (evals/execution.py): class Lab refuses any other name, and a
+# test asserts that the runner's own names (the event runner, the case files, the variants, the baseline's
+# checks, the grading, the evidence) are not in it. A name enters __all__ only with a line in the pull request that
+# says why it is not measurement. What this file may read of the status script is the kit's STATUS_NAMES.
 TIERS = {"strong": ("strong_model", "strong_harness", "strong_pass_env"),
          "floor": ("floor_model", "floor_harness", "floor_pass_env")}
 RESPONSE_LIMIT = 2000000  # characters of a reply handed to the caller
@@ -112,10 +72,11 @@ class LabError(Exception):
 
 
 def load():
-    """evals/eval_run.py as a module, loaded once by path, the way its own tests load it."""
+    """evals/execution.py as a module, loaded once by path under the name the lab's runner gives it, so that both
+    hold one module object."""
     if MODULE not in sys.modules:
         if not os.path.isfile(RUNNER):
-            raise LabError("config", "evals/eval_run.py is missing: the runtime runs from a checkout of the workbench")
+            raise LabError("config", "evals/execution.py is missing: the runtime runs from a checkout of the workbench")
         spec = importlib.util.spec_from_file_location(MODULE, RUNNER)
         module = importlib.util.module_from_spec(spec)
         sys.modules[MODULE] = module
@@ -124,13 +85,14 @@ def load():
 
 
 class Lab:
-    """The lab's module, seen through the names of ALLOWED only."""
+    """The kit's module, seen through the names of its __all__ only."""
 
     def __getattr__(self, name):
-        if name not in ALLOWED:
-            raise AttributeError(f"runtime/lab.py may not use {name!r} of evals/eval_run.py: it is not in ALLOWED "
+        kit = load()
+        if name not in kit.__all__:
+            raise AttributeError(f"runtime/lab.py may not use {name!r} of evals/execution.py: it is not in its __all__ "
                                  "(what measures is never shared with the runtime)")
-        return getattr(load(), name)
+        return getattr(kit, name)
 
 
 LAB = Lab()
@@ -164,7 +126,7 @@ def reference(tier: str = "strong") -> dict:
 
 def credential_missing(tier: str) -> list:
     """The variables of a tier's credential (its pass_env in the gate file) that are neither set nor found in the
-    secret store, by the lab's own lookup (resolve_pass_env of evals/eval_run.py, the one run_skill uses). It
+    secret store, by the lab's own lookup (resolve_pass_env of evals/execution.py, the one run_skill uses). It
     tells whether a run of the tier would have its key; no value is returned or kept: the environment is put back
     as it was. An empty list for a tier whose gate file names no variable."""
     names = reference(tier)["pass_env"]
