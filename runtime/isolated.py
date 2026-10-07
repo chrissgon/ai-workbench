@@ -24,6 +24,7 @@ the stronger boundary, stays an open option (docs/architecture/platform/review-2
 
 Functions:
   clean_env(home)                        the environment above, for a HOME folder
+  skill_script(root, skill, name)        the path of a skill's script (the one place the runtime names that folder)
   run_script(script, args, *, cwd, timeout, stdin=None)
                                          a subprocess.CompletedProcess with text stdout and stderr; raises
                                          subprocess.TimeoutExpired on a timeout and OSError when it cannot start
@@ -40,6 +41,7 @@ import subprocess
 import sys
 import tempfile
 
+SKILLS_DIR, SCRIPTS_DIR = "skills", "scripts"  # where a skill keeps its scripts: the one place the runtime names it
 LOCALE = "C.UTF-8"
 NAMES = ("PATH", "HOME", "TMPDIR", "LANG", "LC_ALL")
 
@@ -48,6 +50,14 @@ def clean_env(home: str) -> dict:
     """The whole environment of an isolated script: NAMES, and nothing else."""
     return {"PATH": os.environ.get("PATH") or os.defpath, "HOME": home, "TMPDIR": os.path.join(home, "tmp"),
             "LANG": LOCALE, "LC_ALL": LOCALE}
+
+
+def skill_script(root: str, skill: str, name: str) -> str:
+    """The path of a skill's script, <root>/skills/<skill>/scripts/<name>: what a manifest's checker or a role's
+    reader names. Only a plain file name of that folder."""
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        raise ValueError(f"{name!r} is not the name of a script of a skill's scripts/ folder")
+    return os.path.join(root, SKILLS_DIR, skill, SCRIPTS_DIR, name)
 
 
 def run_script(script: str, args, *, cwd: str, timeout: float, stdin=None) -> subprocess.CompletedProcess:

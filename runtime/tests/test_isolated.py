@@ -74,3 +74,16 @@ def test_no_module_of_the_runtime_loads_a_file_of_skills_as_code():
             assert '"skills"' not in call.group(1) and "'skills'" not in call.group(1), \
                 f"{module.name} loads a file of skills/ as code: {call.group(0)[:80]}"
         assert "task_script" not in source, f"{module.name}: the backlog reader is no longer loaded as a module"
+
+
+def test_the_path_of_a_skills_script_is_built_in_one_place_and_only_a_file_name_is_taken():
+    assert isolated.skill_script("/r", "a-skill", "check.py") == os.path.join("/r", "skills", "a-skill", "scripts", "check.py")
+    for bad in ("", "../x.py", "a/b.py", ".hidden", "a\\b.py"):
+        with pytest.raises(ValueError):
+            isolated.skill_script("/r", "a-skill", bad)
+    for module in sorted(st.RUNTIME.glob("*.py")) + sorted((st.RUNTIME / "handlers").glob("*.py")):
+        if module.name == "isolated.py":
+            continue
+        for line in module.read_text(encoding="utf-8").splitlines():
+            assert not ('"skills"' in line and '"scripts"' in line and "join" in line), \
+                f"{module.name} builds the path of a skill's script itself: {line.strip()[:80]}"

@@ -373,7 +373,7 @@ def backlog_tasks(backlog_path: str, root=None) -> list:
             text = f.read()
     except (OSError, UnicodeDecodeError) as e:
         raise ValueError(f"the backlog {backlog_path} cannot be read: {type(e).__name__}") from None
-    script = os.path.join(CHECKOUT if root is None else root, "skills", SUBTASK_SKILL, "scripts", "task.py")
+    script = isolated.skill_script(CHECKOUT if root is None else root, SUBTASK_SKILL, "task.py")
     ids = list(dict.fromkeys(BACKLOG_TASK_LINE.findall(text)))
     with concurrent.futures.ThreadPoolExecutor(max_workers=BACKLOG_JOBS) as pool:
         read = list(pool.map(lambda ident: _read_task(script, backlog_path, ident), ids))

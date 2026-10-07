@@ -218,7 +218,7 @@ def check_edit(root: str, project: str, entry: dict, rel: str, markdown) -> tupl
         with open(target, "wb") as f:
             f.write(data)
         for check in entry["checks"]:
-            script = os.path.join(root, "skills", entry["skill"], "scripts", check[0])
+            script = isolated.skill_script(root, entry["skill"], check[0])
             try:
                 done = isolated.run_script(script, [a.replace("{path}", rel) for a in check[1:]], cwd=scratch,
                                            timeout=CHECK_TIMEOUT)
