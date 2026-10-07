@@ -160,6 +160,14 @@ def test_an_effect_is_approved_in_the_terminal_and_never_from_the_conversation(t
     assert [c["argv"][0] for c in provider_calls(tree)].count("open-pr") == 1
 
 
+def test_an_effect_approved_with_no_channel_is_refused_and_nothing_is_executed(tree):  # noqa: F811
+    case = gate_project(tree)
+    item = case["item"]
+    with pytest.raises(ops.OpsError, match="an effect is approved in the terminal"):
+        ops.approve(case["path"], item["id"], item["payload_sha256"])
+    assert provider_calls(tree) == [] and ops.pending(case["path"], item["id"])["status"] == "open"
+
+
 def test_a_wrong_id_gets_the_same_refusal_from_the_terminal_and_the_conversation(tree, capsys):  # noqa: F811
     case = gate_project(tree)
     said = ops.say(case["path"], "/approve 9999")["reply"]
