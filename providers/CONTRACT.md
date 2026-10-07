@@ -74,7 +74,14 @@ A new class is added to `contracts/environment.md` and to the list in `resolve.p
 - PEP 723 inline dependencies pinned to exact versions (`==`); run with `uv run providers/<folder>/<impl>.py ...`. The header's `requires-python` is the oldest version the script really runs on (see "Python version").
 - Offline tests in `providers/<folder>/tests/` (no network, no real credentials: a fake service on 127.0.0.1 and fake tokens from the environment). The pre-commit hook runs them whenever the class changes, and refuses a commit that leaves an existing class without tests.
 
-## Python version
+## Calling a provider from code
+
+One function runs a provider's verb for every caller of the task runtime: `providers/resolve.py`, `call(cls, verb, args, *, root=None, implementation=None, platform=None, config=None, timeout=600, env=None)`. It resolves the class (as "Selection" says; `implementation` is the configuration's choice), starts the script, and returns the one JSON object it printed; nothing else of a caller builds a provider's command or chooses its interpreter.
+
+- **The interpreter** (`interpreter_for(path)`): a header with `# dependencies = []` runs on the caller's interpreter, any other header with `uv run`.
+- **The configuration**, when `config` is given, is written to a temporary file of mode 0600, passed after the verb as `--config-file`, and removed afterwards. `env`, when given, is the whole environment of the child; else the caller's is inherited. The function reads and passes no credential: a provider reads its own.
+- **The exit codes** are mapped to `ProviderCallError.kind`: 2 is `usage`, 3 is `not-configured` (a class that does not resolve is too, with no exit code), any other exit, a start that failed or output that is not one JSON object is `failed`, and a start over `timeout` is `timeout`. The error carries `reason`, `exit_code` and the last 300 characters of stderr (`stderr_tail`).
+- `invoke(path, verb, args, ...)` is the same call for a script already resolved (the effects, whose provider path the operations layer chose); `verb` may be `None` when `args` start with it.
 
 A scheduler starts its jobs with the system interpreter (`/usr/bin/python3`, Python 3.9 on macOS), because that path and its hash survive package upgrades and cache cleaning. So one set of scripts must run on Python 3.9, standard library only:
 
