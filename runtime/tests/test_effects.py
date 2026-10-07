@@ -177,6 +177,9 @@ def test_the_commit_is_one_made_by_the_code_provider_and_no_module_of_the_runtim
         for name in allowed.get(path.name, ()):
             text = re.sub(name + r' = """.*?"""', "", text, flags=re.S)  # the literal scripts of the copy
         code = "\n".join(line for line in text.split('"""')[0::2])
+        # the one closed table that maps the effect word `push` to the code provider's verb (WP-R.1): a word of the
+        # side-effect vocabulary as a dictionary key, no git command
+        code = re.sub(r"^POLICY_CALLS = \{.*$", "", code, flags=re.M)
         assert not re.search(r"""["']push["']|git[^\n]{0,40}\bpush\b""", code), path.name
         assert not re.search(r"""["']git["'][^\n]*["']commit["']""", code), path.name
     case = gate_project(tree)
@@ -259,7 +262,7 @@ def test_the_provider_is_found_by_its_class_never_by_a_path_built_here(tree):
     text = (st.REPO / "runtime" / "effects.py").read_text(encoding="utf-8") + \
         (st.REPO / "runtime" / "ops.py").read_text(encoding="utf-8")
     assert "vcs/github.py" not in text and '"vcs"' not in text
-    assert 'resolve("integration:vcs"' in text
+    assert '_provider_path(cfg, "integration:vcs")' in text and "resolve.resolve(cls, root=ROOT" in text
     case = gate_project(tree)
     found = ops._vcs_provider(ops.context(case["path"])["cfg"])
     assert found == str(provider(tree) / "github.py")

@@ -27,6 +27,7 @@ Usage:
   python3 runtime/cli.py approve-policy --project <dir> --file <docs/...> --agent <name> [--sha256 <hash> --expires <YYYY-MM-DD>] [--what <text>]
   python3 runtime/cli.py revoke-policy --project <dir> --id <approval id>
   python3 runtime/cli.py standing --project <dir> --policy <name>
+  python3 runtime/cli.py execute-under-policy --project <dir> --policy <name> --effect-file <path>
   python3 runtime/cli.py set-mode --project <dir> --agent <name> --mode stopped|supervised|milestones|autonomous|autonomous-with-policy
   python3 runtime/cli.py dispatch --project <dir>
   python3 runtime/cli.py poll     --project <dir>
@@ -110,6 +111,10 @@ approve-policy  approves a policy file for one area agent (a standing approval).
           covered by nothing until you approve it again. Only an agent in the mode autonomous-with-policy acts on it.
 revoke-policy  ends a standing approval; its row leaves the state file.
 standing  whether an active standing approval covers a policy now, and why not; it executes nothing.
+execute-under-policy  the one place an effect under a standing approval is executed: it checks the effect document a
+          handler wrote against the approval's bounds, holding the run lock, makes the provider's dry run and its
+          confirmed call, and records the action. {"executed": false, "why"} when the approval does not cover it:
+          nothing ran. A handler never confirms a provider verb itself.
 set-mode  sets one area agent's autonomy mode in docs/workbench/runtime.json (area_agents): stopped (it starts
           nothing), supervised (every delivery waits for you), milestones (the default: a milestone waits, the rest is
           released by the mode), autonomous (only what must reach you waits), autonomous-with-policy (as autonomous,
@@ -151,7 +156,7 @@ import ops  # noqa: E402  (the same folder)
 
 VERBS = ("request", "run-next", "pending", "answer", "release", "retry", "cancel", "status", "accept-config", "proof", "verdict",
          "route", "approve", "reject", "sync", "hand-over", "deps", "progress", "set-mode", "approve-policy",
-         "revoke-policy", "standing", "dispatch", "poll", "handler", "pin", "say")
+         "revoke-policy", "standing", "execute-under-policy", "dispatch", "poll", "handler", "pin", "say")
 
 
 class Usage(Exception):
@@ -212,6 +217,7 @@ def run(argv) -> dict:
     p.add_argument("--expires")
     p.add_argument("--what")
     p.add_argument("--policy")
+    p.add_argument("--effect-file")
     p.add_argument("--name")
     p.add_argument("--verb")
     p.add_argument("--arg", action="append", default=[])
@@ -259,6 +265,8 @@ def run(argv) -> dict:
         return ops.revoke_policy(project, need(a, "--id"))
     if a.verb == "standing":
         return ops.standing(project, need(a, "--policy"))
+    if a.verb == "execute-under-policy":
+        return ops.execute_under_policy(project, need(a, "--policy"), need(a, "--effect-file"))
     if a.verb == "dispatch":
         return ops.dispatch(project)
     if a.verb == "poll":

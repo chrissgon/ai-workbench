@@ -123,7 +123,7 @@ A pending decision is `open`, `resolved` or `cancelled`. A release by an autonom
 
 **The autonomy modes, from three facts.** Each area agent (an entry of `area_agents`) has one of five modes: `stopped`, `supervised`, `milestones` (default), `autonomous`, `autonomous-with-policy`. They rest on three facts: whether the agent is enabled, the checkpoints of its mode (`every-phase`, `milestones`, `end`) and whether a standing approval is in force; `mode_of` maps the facts back, so a policy mode whose approval expired acts as `autonomous`. **Daily caps**: runs per day on the reference model and dollars per day on the floor model; an absent cap is 0, and a floor run of unknown cost counts at `max_cost_usd_per_run` (default 0.5).
 
-**The handler.** A routine under `runtime/handlers/`, configured under `handlers` of the configuration, with its own verbs, started as a separate process with one JSON object out. One today: `published-posts` (verbs `tick`, `preview`).
+**The handler.** A routine under `runtime/handlers/`, configured under `handlers` of the configuration, with its own verbs, started as a separate process with one JSON object out. One today: `published-posts` (verbs `tick`, `preview`). A handler prepares an effect (a JSON document: policy, kind, target, files, items, idempotency key, payload hash, and the provider verb's own flags) and hands it to `ops.execute_under_policy` through `cli.py execute-under-policy`. That one operation holds limit L15 for policy effects: it checks the standing approval and every bound with `autonomy.covers`, holding the run lock and counting the day's actions again; it adds `--allow` for exactly the approval's file globs and the idempotency key, makes the provider's dry run and then its confirmed call (`effects.provider_call`), and records the action. A handler never passes the confirming flag, never re-reads the bounds and never records an action; a test keeps those words out of `runtime/handlers/`.
 
 **The mirror and its records.** The board mirror keeps a task's item (`remote_id`, `remote_version`, the hash last written); the person owns the title, the text, the state and the comments, the rest is shown. The documents mirror keeps one `document_records` row per document, with the status `mirrored`, `read_only` or `rejected` and a note. A saved comment is `open`, `used` (by one pending decision) or `dismissed`.
 
@@ -144,7 +144,7 @@ A pending decision is `open`, `resolved` or `cancelled`. A release by an autonom
 | The contracts | the state file's form, the approval scopes, the secrets lookup | the runtime writes into artifacts others own |
 | The secret store | `providers/secrets/resolver.py`, with `runtime/secrets.json` | the runtime's own floor key, by name only |
 
-**Who reads it.** The shells (`runtime/cli.py`, `runtime/chat.py`, later the local interface's service) through `runtime/ops.py` only; the scheduler's two jobs through `runtime/dispatcher.py`; the handlers read the store only through its provider's verbs and the approvals only through `cli.py standing`, and import nothing of `runtime/`.
+**Who reads it.** The shells (`runtime/cli.py`, `runtime/chat.py`, later the local interface's service) through `runtime/ops.py` only; the scheduler's two jobs through `runtime/dispatcher.py`; the handlers read the store only through its provider's verbs and hand an effect to `cli.py execute-under-policy` (they confirm no provider verb and read no bound themselves), and import nothing of `runtime/`.
 
 **The rules.**
 
@@ -176,7 +176,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 | L12 | What comes back never overwrites what changed at the origin | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_12_what_comes_back_never_overwrites_what_changed_at_the_origin` |
 | L13 | A record only grows | stage 4 (approvals); tasks, runs and pending decisions: migration 7 of the store | `providers/store/tests/test_sqlite_approvals.py`, `test_limit_13_an_approval_is_never_deleted_and_its_status_only_moves_forward` |
 | L14 | Everything passes the credential scan before it leaves | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_14_everything_passes_the_credential_scan_before_it_leaves` |
-| L15 | An external effect is executed by code, with the exact content approved or inside an approved policy | stage 4 (the exact content; a policy: stage 6) | `runtime/tests/test_effects.py`, `test_limit_15_the_effect_is_executed_by_code_with_exactly_the_approved_content` |
+| L15 | An external effect is executed by code, with the exact content approved or inside an approved policy; inside a policy, by one operation (`ops.execute_under_policy`) that checks every bound and records the action | stage 4 (the exact content; a policy: stage 6; the one operation: WP-R.1) | `runtime/tests/test_effects.py`, `test_limit_15_the_effect_is_executed_by_code_with_exactly_the_approved_content` |
 | L16 | A skill with a confirmation gate runs up to the gate; what it shows there is what the person approves | stage 4 | `runtime/tests/test_effects.py`, `test_limit_16_a_skill_with_a_gate_runs_up_to_the_gate_and_what_it_showed_is_what_the_person_approves` |
 | L17 | The approval lives in the approvals table; the rows in the state file are generated copies | stage 4 | `runtime/tests/test_effects.py`, `test_limit_17_the_approval_lives_in_the_table_and_the_state_file_row_is_a_generated_copy` |
 | L18 | A document bound to an approval by hash is a machine file | stage 6 | `runtime/tests/test_run_limits.py`, `test_limit_18_a_document_bound_to_an_approval_by_hash_is_a_machine_file` |
@@ -288,6 +288,7 @@ The limit's text and the stage that built it come from the contract's table; the
 | `approve-policy` | `--file` `--agent` `[--sha256]` `[--expires]` `[--what]` | `approve_policy` |
 | `revoke-policy` | `--id` | `revoke_policy` |
 | `standing` | `--policy` | `standing` |
+| `execute-under-policy` | `--policy` `--effect-file` | `execute_under_policy` |
 | `dispatch` | - | `dispatch` |
 | `poll` | - | `poll` |
 | `handler` | `[--arg]` `--name` `--verb` | `handler_call` |
@@ -338,6 +339,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `approve_policy` | `approve-policy` | A standing approval of a policy file for one area agent (limits L15, L17; contracts/environment.md, rule 7). |
 | `revoke_policy` | `revoke-policy` | End a standing approval: the row becomes revoked and its generated row leaves the state file. |
 | `standing` | `standing` | Whether an active standing approval covers a policy now: a read, it executes nothing. |
+| `execute_under_policy` | `execute-under-policy` | The one place an effect under a standing approval is executed (limit L15). |
 | `set_mode` | `set-mode` | Set one area agent's autonomy mode: only area_agents.<agent>.mode of runtime.json changes (decision P1: the mode is the configuration's word). |
 | `status` | `status` | {"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key", "skill", "state", "note"}]}], "pending": [...], "documents": [{"path", "status", "note", "on_platform"}], "board": {"left_out_final"} or None}: everything from the store's records. |
 | `progress` | `progress` | Where the work stands and what happened in a period, from the store's records only (runtime/progress.py): no model is called and no number is estimated. |

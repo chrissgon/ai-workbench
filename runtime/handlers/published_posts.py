@@ -35,17 +35,18 @@ the third field of the header line that holds the slot time ("- Slot: <time> · 
 date the day of the ledger's time in the slot's offset, the image the path of its "- Image: <path>" line, committed
 as assets/posts/<key>.<ext>; a post whose file is missing, or that states no language, is skipped with the reason.
 The target file is read with the code provider's read-file and parsed as data; posts whose address it already holds
-are not added. Nothing to add: the week's cursor is set, {"status": "none"}, nothing committed. (3) runtime/cli.py
-standing: not covered: {"status": "skipped", "why"}, the cursor stays. (4) The change is checked against the
-approval's bounds too (effect push, target <repo>@<branch>, every path inside the bounds' files, the number of
-posts, today's count): a broken bound is {"status": "skipped", "bound"}. (5) commit-files --dry-run, then
---confirmed, with --allow for exactly the bounds' files and the key published-posts-<week>. (6) The store's
-action-add (kind <policy>), then the cursor. (7) {"status": "committed", "added", "skipped", "commit"}.
+are not added. Nothing to add: the week's cursor is set, {"status": "none"}, nothing committed. (3) The effect is
+prepared and handed over: a JSON document (effect push, target <repo>@<branch>, the paths, the number of posts, the
+key published-posts-<week>, the hash of the new target text, and the commit-files flags) written to a temporary
+folder and given to runtime/cli.py execute-under-policy. The handler confirms no provider verb, re-reads no bound
+and records no action: the operations layer checks the standing approval and its bounds, makes the dry run and the
+confirmed commit-files, and records the action (limit L15). (4) Not executed: {"status": "skipped", "why"}, the
+cursor stays. (5) Executed: the cursor is set, {"status": "committed", "added", "skipped", "commit"}.
 
 The handler contract (platform plan, part 5): started with the interpreter that starts it and --project; one JSON
 object on stdout, diagnostics on stderr, exit 0 (done, nothing due, nothing to do or skipped), 1 (failed or
 stopped), 2 (usage), 3 (not configured); the store only through its provider's verbs, a provider only through
-providers/resolve.py, the approvals only through runtime/cli.py standing. It imports nothing of runtime/.
+providers/resolve.py, an effect only by handing it to runtime/cli.py execute-under-policy. It imports nothing of runtime/.
 
 The publisher's verb `posts` (read-only: no credential, no request, no write) is the interface this handler reads
 the ledger through (choice P8); the runtime never reads a provider's ledger itself. It is built
@@ -61,7 +62,6 @@ from __future__ import annotations
 
 import argparse
 import datetime
-import fnmatch
 import hashlib
 import json
 import os
@@ -324,37 +324,6 @@ def merge(posts_text: str, entries: list) -> tuple:
     return dump(items + added), added
 
 
-def _inside(path: str, globs: list) -> bool:
-    """A repository path inside one glob, part by part, as the code provider's --allow reads it."""
-    parts = path.split("/")
-
-    def part_matches(part: str, glob_part: str) -> bool:
-        hidden = part.startswith(".") and not glob_part.startswith(".")  # a glob never matches a leading dot
-        return fnmatch.fnmatchcase(part, glob_part) and not hidden
-
-    for glob in globs:
-        pattern = glob.split("/")
-        if len(pattern) == len(parts) and all(part_matches(p, g) for p, g in zip(parts, pattern)):
-            return True
-    return False
-
-
-def broken_bound(answer: dict, settings: dict, paths: list, count: int):
-    """The name of the first bound the change breaks, or None."""
-    bounds = (answer.get("approval") or {}).get("bounds") or {}
-    if EFFECT not in (bounds.get("effects") or []):
-        return "effects"
-    if f"{settings['repo']}@{settings['branch']}" not in (bounds.get("targets") or []):
-        return "targets"
-    if not all(_inside(path, bounds.get("files") or []) for path in paths):
-        return "files"
-    if not isinstance(bounds.get("max_items_per_run"), int) or count > bounds["max_items_per_run"]:
-        return "max_items_per_run"
-    if not isinstance(bounds.get("max_per_day"), int) or int(answer.get("executed_today") or 0) >= bounds["max_per_day"]:
-        return "max_per_day"
-    return None
-
-
 def _target(vcs: str, settings: dict) -> str:
     read = _call(["uv", "run", vcs, "read-file", "--repo", settings["repo"], "--path", settings["file"],
                   "--ref", settings["branch"]], "the code provider's read-file")
@@ -363,7 +332,9 @@ def _target(vcs: str, settings: dict) -> str:
     return read["content"]
 
 
-def _commit_argv(vcs: str, settings: dict, folder: str, text: str, images: list, globs: list, key: str, added: list):
+def _commit_args(settings: dict, folder: str, text: str, images: list, key: str, added: list) -> list:
+    """The flags of the code provider's commit-files that name the change: the repository, the branch, the message
+    and the files. Never the flags that bound, key or confirm the call: those belong to the operations layer."""
     local = os.path.join(folder, "target.json")
     with open(local, "w", encoding="utf-8") as f:
         f.write(text)
@@ -371,10 +342,16 @@ def _commit_argv(vcs: str, settings: dict, folder: str, text: str, images: list,
     with open(message, "w", encoding="utf-8") as f:
         f.write(f"Add the posts published in the week before {key[len(NAME) + 1:]}\n\n" +
                 "".join(f"- {entry['date']} {entry['url']}\n" for entry in added))
-    argv = ["uv", "run", vcs, "commit-files", "--repo", settings["repo"], "--branch", settings["branch"],
-            "--message-file", message, "--file", f"{settings['file']}={local}"]
+    args = ["--repo", settings["repo"], "--branch", settings["branch"], "--message-file", message,
+            "--file", f"{settings['file']}={local}"]
     for image in images:
-        argv += ["--file", f"{image['path']}={image['local']}"]
+        args += ["--file", f"{image['path']}={image['local']}"]
+    return args
+
+
+def _commit_argv(vcs: str, args: list, globs: list, key: str) -> list:
+    """A dry run only (preview): the verb with --allow for the paths it would commit and the key."""
+    argv = ["uv", "run", vcs, "commit-files", *args]
     for glob in globs:
         argv += ["--allow", glob]
     return argv + ["--idempotency-key", key]
@@ -391,7 +368,8 @@ def preview(project: str, now: datetime.datetime) -> dict:
     used = [image for image in images if image["path"] in {entry["image"] for entry in added}]
     paths = [settings["file"]] + [image["path"] for image in used]
     with tempfile.TemporaryDirectory(prefix="wb-published-posts-") as folder:
-        argv = _commit_argv(vcs, settings, folder, text, used, paths, f"{NAME}-{week_of(now)}", added)
+        key = f"{NAME}-{week_of(now)}"
+        argv = _commit_argv(vcs, _commit_args(settings, folder, text, used, key, added), paths, key)
         dry = _call(argv + ["--dry-run"], "the code provider's commit-files --dry-run")
     return {"status": "preview", "week": week_of(now), "added": added, "skipped": skipped, "dry_run": dry}
 
@@ -408,31 +386,24 @@ def tick(project: str, now: datetime.datetime) -> dict:
     if not added:
         store("cursor-set", "--name", CURSOR, "--value", week)
         return {"status": "none", "skipped": skipped}
-    answer = _call([sys.executable, os.path.join(ROOT, "runtime", "cli.py"), "standing", "--project", project,
-                    "--policy", settings["policy"]], "runtime/cli.py standing")
-    if answer.get("covered") is not True:
-        return {"status": "skipped", "why": answer.get("why") or "no standing approval covers the policy",
-                "skipped": skipped}
     used = [image for image in images if image["path"] in {entry["image"] for entry in added}]
     paths = [settings["file"]] + [image["path"] for image in used]
-    bound = broken_bound(answer, settings, paths, len(added))
-    if bound:
-        return {"status": "skipped", "bound": bound, "why": f"the change is outside the approved bounds: {bound}",
-                "skipped": skipped}
     key = f"{NAME}-{week}"
-    globs = list(answer["approval"]["bounds"]["files"])
     with tempfile.TemporaryDirectory(prefix="wb-published-posts-") as folder:
-        argv = _commit_argv(vcs, settings, folder, text, used, globs, key, added)
-        _call(argv + ["--dry-run"], "the code provider's commit-files --dry-run")
-        commit = _call(argv + ["--confirmed"], "the code provider's commit-files")
-        result = os.path.join(folder, "result.json")
-        with open(result, "w", encoding="utf-8") as f:
-            json.dump(commit, f)
-        store("action-add", "--kind", settings["policy"], "--idempotency-key", key, "--target",
-              f"{settings['repo']}@{settings['branch']}", "--payload-sha256",
-              hashlib.sha256(text.encode("utf-8")).hexdigest(), "--result-file", result)
+        effect = os.path.join(folder, "effect.json")
+        with open(effect, "w", encoding="utf-8") as f:
+            json.dump({"policy": settings["policy"], "kind": EFFECT, "target": f"{settings['repo']}@{settings['branch']}",
+                       "files": paths, "items": len(added), "idempotency_key": key,
+                       "payload_sha256": hashlib.sha256(text.encode("utf-8")).hexdigest(),
+                       "args": _commit_args(settings, folder, text, used, key, added)}, f)
+        answer = _call([sys.executable, os.path.join(ROOT, "runtime", "cli.py"), "execute-under-policy", "--project",
+                        project, "--policy", settings["policy"], "--effect-file", effect],
+                       "runtime/cli.py execute-under-policy")
+    if answer.get("executed") is not True:
+        return {"status": "skipped", "why": answer.get("why") or "no standing approval covers the policy",
+                "skipped": skipped}
     store("cursor-set", "--name", CURSOR, "--value", week)
-    return {"status": "committed", "added": len(added), "skipped": skipped, "commit": commit}
+    return {"status": "committed", "added": len(added), "skipped": skipped, "commit": answer.get("result")}
 
 
 class _Parser(argparse.ArgumentParser):

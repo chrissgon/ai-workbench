@@ -64,6 +64,9 @@ Operations of stage 6:
                                    file's ## Approvals its generated copy, the row the engagement gate reads
   revoke_policy(project, approval_id)   end a standing approval; its row leaves the state file
   standing(project, policy)        whether an active standing approval covers the policy now: a read
+  execute_under_policy(project, policy, effect_file)   the one place a policy effect is executed: checks the effect
+                                   document against the standing approval's bounds (autonomy.covers) holding the run
+                                   lock, makes the provider's dry run and its confirmed call, records the action
   set_mode(project, agent, mode)   set one area agent's autonomy mode in runtime.json (runtime/autonomy.py, the five
                                    modes); the person then accepts the new hash. accept_config rewrites the state
                                    file's Checkpoints line, a generated copy of the most careful enabled agent's mode
@@ -759,14 +762,20 @@ def _effect_or_review(ctx: dict, task: dict, request: dict, dest: str, decision:
             "payload": payload, "payload_sha256": digest}
 
 
-def _vcs_provider(cfg: dict) -> str:
-    """The code provider's script, found by its class (integration:vcs) through providers/resolve.py, with the
-    implementation the configuration names (code.provider); never a path built here."""
+def _provider_path(cfg: dict, cls: str) -> str:
+    """The provider script of a class, found through providers/resolve.py, with the implementation the configuration
+    names for the code provider (code.provider) when the class is integration:vcs; never a path built here."""
     resolve = _load("workbench_provider_resolve", os.path.join(ROOT, "providers", "resolve.py"))
+    implementation = cfg["code"]["provider"] if cls == "integration:vcs" and cfg.get("code") else None
     try:
-        return resolve.resolve("integration:vcs", root=ROOT, implementation=cfg["code"]["provider"])["path"]
+        return resolve.resolve(cls, root=ROOT, implementation=implementation)["path"]
     except (resolve.UnknownClass, resolve.Unresolved) as e:
-        raise OpsError(f"the code provider does not resolve: {e}", 3) from None
+        raise OpsError(f"the {'code ' if cls == 'integration:vcs' else ''}provider does not resolve: {e}", 3) from None
+
+
+def _vcs_provider(cfg: dict) -> str:
+    """The code provider's script (class integration:vcs)."""
+    return _provider_path(cfg, "integration:vcs")
 
 
 def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
@@ -1340,18 +1349,25 @@ def revoke_policy(project: str, approval_id: int) -> dict:
     return {**row, **_standing_rows(ctx)}
 
 
-def standing(project: str, policy: str) -> dict:
-    """Whether an active standing approval covers a policy now: a read, it executes nothing. covered is true only
-    when the row exists, its file hashes as approved, it has not expired and its agent acts in the mode
-    autonomous-with-policy. executed_today counts today's actions of kind <policy> (the store's action_count)."""
-    ctx = context(project)
+def _midnight() -> str:
+    """The start of today in local time, ISO-8601: the day a policy's count starts from."""
+    return datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+
+
+def _policy_hash(cfg: dict, approval: dict):
+    """The hash of the bounds file an approval was given to, as it is now (None when the file is gone)."""
+    rel = (approval.get("bounds") or {}).get("file")
+    return _sha256(os.path.join(cfg["project"], *rel.split("/"))) if rel else None
+
+
+def _standing(ctx: dict, policy: str) -> dict:
+    """The answer of standing(): whether an active standing approval covers a policy now. Reads, executes nothing."""
     cfg = ctx["cfg"]
     now = datetime.datetime.now(datetime.timezone.utc)
     active = _stored(ctx, ctx["store"].approvals_list, status="active", scope="standing")
     found = [row for row in active if (row.get("bounds") or {}).get("policy") == policy]
     approval = found[-1] if found else None
-    midnight = datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0)
-    executed = _stored(ctx, ctx["store"].action_count, kind=policy, since=midnight.isoformat())
+    executed = _stored(ctx, ctx["store"].action_count, kind=policy, since=_midnight())
     out = {"policy": policy, "covered": False, "why": "", "approval": None, "executed_today": executed, "mode": None}
     if approval is None:
         return {**out, "why": "no active standing approval names this policy"}
@@ -1359,15 +1375,107 @@ def standing(project: str, policy: str) -> dict:
     out["approval"] = {key: approval.get(key) for key in ("id", "expires_at", "policy_sha256", "bounds")}
     out["approval"]["agent"] = agent
     out["mode"] = autonomy.mode_of(autonomy.facts(agent, cfg["area_agents"], active, now))
-    rel = approval["bounds"].get("file")
-    current = _sha256(os.path.join(cfg["project"], *rel.split("/"))) if rel else None
-    if current != approval["policy_sha256"]:
+    if _policy_hash(cfg, approval) != approval["policy_sha256"]:
         return {**out, "why": "the policy file changed since it was approved, or is gone"}
     if datetime.datetime.fromisoformat(approval["expires_at"].replace("Z", "+00:00")) <= now:
         return {**out, "why": "the approval expired"}
     if out["mode"] != autonomy.POLICY_MODE:
         return {**out, "why": f"the agent {agent} acts in the mode {out['mode']}, not {autonomy.POLICY_MODE}"}
     return {**out, "covered": True}
+
+
+def standing(project: str, policy: str) -> dict:
+    """Whether an active standing approval covers a policy now: a read, it executes nothing. covered is true only
+    when the row exists, its file hashes as approved, it has not expired and its agent acts in the mode
+    autonomous-with-policy. executed_today counts today's actions of kind <policy> (the store's action_count)."""
+    return _standing(context(project), policy)
+
+
+POLICY_CALLS = {"push": ("integration:vcs", "commit-files")}  # kind -> (class, verb); a kind not here cannot run under a policy
+EFFECT_KEYS = ("policy", "kind", "target", "files", "items", "idempotency_key", "payload_sha256", "args")
+RESERVED_FLAGS = ("--confirmed", "--dry-run", "--allow", "--idempotency-key")  # the operation adds these, never a handler
+
+
+def _effect_document(path: str, policy: str) -> dict:
+    """The effect document a handler hands over, checked whole: exactly EFFECT_KEYS, the right types, the policy it
+    was called for, a kind of the side-effect vocabulary that POLICY_CALLS knows, no reserved flag among args."""
+    try:
+        with open(path, "rb") as f:
+            doc = json.loads(f.read().decode("utf-8"))
+    except (OSError, ValueError) as e:
+        raise OpsError(f"the effect file cannot be read: {type(e).__name__}", 2) from None
+    if not isinstance(doc, dict):
+        raise OpsError("an effect file holds one JSON object", 2)
+    for key in EFFECT_KEYS:
+        if key not in doc:
+            raise OpsError(f"the effect file lacks the key {key}", 2)
+    unknown = sorted(set(doc) - set(EFFECT_KEYS))
+    if unknown:
+        raise OpsError(f"the effect file has the unknown key {unknown[0]} (known: {', '.join(EFFECT_KEYS)})", 2)
+    for key in ("policy", "kind", "target", "idempotency_key", "payload_sha256"):
+        if not isinstance(doc[key], str) or not doc[key].strip():
+            raise OpsError(f"{key} of the effect file is a non-empty text", 2)
+    for key in ("files", "args"):
+        if not isinstance(doc[key], list) or not all(isinstance(v, str) for v in doc[key]):
+            raise OpsError(f"{key} of the effect file is a list of texts", 2)
+    if isinstance(doc["items"], bool) or not isinstance(doc["items"], int) or doc["items"] < 0:
+        raise OpsError("items of the effect file is a whole number", 2)
+    if len(doc["target"]) > 512 or len(doc["idempotency_key"]) > 512:  # what the store can record: refused before anything runs
+        raise OpsError("target and idempotency_key of the effect file are at most 512 characters", 2)
+    if not re.fullmatch(r"[0-9a-f]{64}", doc["payload_sha256"]):
+        raise OpsError("payload_sha256 of the effect file is 64 lowercase hexadecimal characters", 2)
+    if doc["policy"] != policy:
+        raise OpsError(f"the effect file is for the policy {doc['policy']!r}, not {policy!r}", 2)
+    if doc["kind"] not in _effect_words():
+        raise OpsError(f"kind of the effect file is one of {', '.join(_effect_words())}", 2)
+    if doc["kind"] not in POLICY_CALLS:
+        raise OpsError(f"the effect kind {doc['kind']!r} cannot run under a policy (it can: {', '.join(POLICY_CALLS)})", 2)
+    reserved = [a for a in doc["args"] if a in RESERVED_FLAGS]
+    if reserved:
+        raise OpsError(f"args of the effect file holds {reserved[0]}: the operation adds it, the handler never does", 2)
+    return doc
+
+
+def execute_under_policy(project: str, policy: str, effect_file: str) -> dict:
+    """The one place an effect under a standing approval is executed (limit L15). A handler prepares the effect
+    document and hands it over; it confirms nothing itself. The document is checked, the approval is checked
+    (_standing, then autonomy.covers on the whole row, the policy file's hash now, and today's count read again under
+    the run lock), and only then the provider's verb runs: a dry run, then the confirmed call, with --allow for
+    exactly the approval's file globs and the document's idempotency key; the action is recorded after it.
+    Returns {"executed": false, "policy", "why"} when the approval does not cover the effect (nothing ran), else
+    {"executed": true, "policy", "approval_id", "action": {"id", "created"}, "result": <what the provider printed>}."""
+    ctx = context(project)
+    cfg, store = ctx["cfg"], ctx["store"]
+    doc = _effect_document(effect_file, policy)
+    answer = _standing(ctx, policy)
+    if not answer["covered"]:
+        return {"executed": False, "policy": policy, "why": answer["why"]}
+    cls, verb = POLICY_CALLS[doc["kind"]]
+    with _run_lock(cfg):
+        row = _stored(ctx, store.approval_get, answer["approval"]["id"])
+        executed = _stored(ctx, store.action_count, kind=policy, since=_midnight())
+        effect = {"kind": doc["kind"], "target": doc["target"], "files": doc["files"], "items": doc["items"]}
+        ok, why = autonomy.covers(row, _policy_hash(cfg, row), effect, executed, datetime.datetime.now(datetime.timezone.utc))
+        if not ok:
+            return {"executed": False, "policy": policy, "why": why}
+        provider = _provider_path(cfg, cls)
+        argv = [verb, *doc["args"]]
+        for glob in row["bounds"]["files"]:
+            argv += ["--allow", glob]
+        argv += ["--idempotency-key", doc["idempotency_key"]]
+        try:
+            effects.provider_call(provider, argv + ["--dry-run"])
+        except effects.EffectError as e:
+            raise OpsError(f"nothing was executed: {e.reason}", 1) from None
+        try:
+            printed = effects.provider_call(provider, argv + ["--confirmed"])
+        except effects.EffectError as e:
+            raise OpsError(f"the provider failed after the dry run: {e.reason}; the idempotency key lets the next "
+                           f"call replay it", 1) from None
+        action = _stored(ctx, store.action_add, kind=policy, idempotency_key=doc["idempotency_key"],
+                         target=doc["target"], payload_sha256=doc["payload_sha256"], result=printed)
+    return {"executed": True, "policy": policy, "approval_id": row["id"],
+            "action": {"id": action["id"], "created": action["created"]}, "result": printed}
 
 
 def set_mode(project: str, agent: str, mode: str) -> dict:

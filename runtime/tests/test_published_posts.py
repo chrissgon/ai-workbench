@@ -69,10 +69,28 @@ elif args[0] == "commit-files":
 '''
 
 STAND_IN_CLI = r'''
-import json, os, sys
+import json, os, shutil, sys
+args = sys.argv[1:]
 with open(os.environ["FAKE_CALLS"], "a") as f:
-    f.write(json.dumps(["cli"] + sys.argv[1:]) + "\n")
-print(open(os.environ["FAKE_STANDING"]).read())
+    f.write(json.dumps(["cli"] + args) + "\n")
+answer = json.loads(open(os.environ["FAKE_STANDING"]).read())
+if args[0] != "execute-under-policy":
+    print("usage: not a verb of this stand-in", file=sys.stderr); sys.exit(2)
+effect = json.loads(open(args[args.index("--effect-file") + 1]).read())
+with open(os.environ["FAKE_EFFECTS"], "a") as f:
+    f.write(json.dumps(effect) + "\n")
+if not answer["covered"]:
+    print(json.dumps({"executed": False, "policy": effect["policy"], "why": answer["why"]}))
+else:
+    # The operations layer would run the provider; this stand-in only puts the files the effect names where the
+    # remote is, so that a test can read what a run committed. It runs no provider and checks no bound.
+    flags = effect["args"]
+    for i, a in enumerate(flags):
+        if a == "--file":
+            repo_path, local = flags[i + 1].split("=", 1)
+            os.makedirs(os.path.dirname(os.path.join(os.environ["FAKE_REMOTE"], repo_path)), exist_ok=True)
+            shutil.copyfile(local, os.path.join(os.environ["FAKE_REMOTE"], repo_path))
+    print(json.dumps({"executed": True, "policy": effect["policy"], "result": {"commit": "0123abcd"}}))
 '''
 
 POST_FILE = """# Post
@@ -91,16 +109,8 @@ The rest of the post.
 """
 
 
-def bounds(files=(FILE, "assets/posts/*"), targets=(f"{TARGET_REPO}@{BRANCH}",), effects=("push",), per_run=10,
-           per_day=1) -> dict:
-    return {"policy": "published-posts", "agent": "marketing", "effects": list(effects), "targets": list(targets),
-            "files": list(files), "max_per_day": per_day, "max_items_per_run": per_run,
-            "file": "docs/workbench/policies/published-posts.json"}
-
-
-def covered(executed_today=0, **kw) -> dict:
-    return {"policy": "published-posts", "covered": True, "why": "", "executed_today": executed_today,
-            "mode": "autonomous-with-policy", "approval": {"id": 1, "bounds": bounds(**kw)}}
+def covered() -> dict:
+    return {"covered": True, "why": ""}
 
 
 def dump(items) -> str:
@@ -145,7 +155,10 @@ def env(tmp_path, monkeypatch):
     calls.write_text("", encoding="utf-8")
     monkeypatch.setenv("FAKE_LEDGER", str(ledger))
     monkeypatch.setenv("FAKE_STANDING", str(standing))
+    effects = tmp_path / "effects.jsonl"
+    effects.write_text("", encoding="utf-8")
     monkeypatch.setenv("FAKE_CALLS", str(calls))
+    monkeypatch.setenv("FAKE_EFFECTS", str(effects))
     monkeypatch.setenv("FAKE_REMOTE", str(remote))
     subprocess.run([sys.executable, str(bench / "providers/store/sqlite.py"), "--db", str(data / "tasks.sqlite"), "init"],
                    capture_output=True, check=True)  # the operations layer creates it before a handler runs
@@ -153,7 +166,7 @@ def env(tmp_path, monkeypatch):
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return {"bench": bench, "project": project, "remote": remote, "ledger": ledger, "standing": standing,
-            "calls": calls, "db": data / "tasks.sqlite", "module": module}
+            "calls": calls, "effects": effects, "db": data / "tasks.sqlite", "module": module}
 
 
 def post(env, key, title="A small tool for tidy notes", lang="EN", slot="2026-10-07T09:00:00-03:00", image=None):
@@ -186,6 +199,11 @@ def store(env, *args) -> dict:
     done = subprocess.run([sys.executable, str(env["bench"] / "providers/store/sqlite.py"), "--db", str(env["db"]), *args],
                           capture_output=True, text=True, check=True)
     return json.loads(done.stdout)
+
+
+def effects_handed(env) -> list:
+    """The effect documents the handler handed to execute-under-policy, as the stand-in cli read them."""
+    return [json.loads(line) for line in env["effects"].read_text().splitlines() if line.strip()]
 
 
 def commits(env, confirmed=True) -> list:
@@ -279,65 +297,45 @@ def test_existing_entries_of_the_target_are_kept_byte_for_byte(env, capsys):
 
 
 def test_without_a_standing_approval_nothing_is_committed_and_the_week_stays_open(env, capsys):
-    env["standing"].write_text(json.dumps({"policy": "published-posts", "covered": False, "approval": None,
-                                           "why": "no active standing approval names this policy",
-                                           "executed_today": 0, "mode": None}), encoding="utf-8")
+    env["standing"].write_text(json.dumps({"covered": False, "why": "no active standing approval names this policy"}),
+                               encoding="utf-8")
     post(env, "2026-10-07-tidy-notes")
     ledger(env, ("2026-10-07-tidy-notes", "2026-10-07T12:00:00Z"))
     code, out = run(env, capsys=capsys)
     assert (code, out["status"], out["why"]) == (0, "skipped", "no active standing approval names this policy")
-    assert calls(env, "cli")[0] == ["standing", "--project", str(env["project"].resolve()), "--policy", "published-posts"]
+    first = calls(env, "cli")[0]
+    assert first[:5] == ["execute-under-policy", "--project", str(env["project"].resolve()), "--policy", "published-posts"]
+    assert first[5] == "--effect-file" and len(first) == 7
     assert commits(env) == [] and commits(env, confirmed=False) == []
     assert store(env, "cursor-get", "--name", "routine:published-posts")["value"] is None
     run(env, now=MONDAY.replace(minute=5), capsys=capsys)
     assert len(calls(env, "cli")) == 2  # the next firing tries again
 
 
-@pytest.mark.parametrize("answer, bound", [
-    (covered(files=(FILE,)), "files"),
-    (covered(targets=("example-owner/another-site@main",)), "targets"),
-    (covered(effects=("publish",)), "effects"),
-    (covered(per_run=1), "max_items_per_run"),
-    (covered(executed_today=1), "max_per_day"),
-])
-def test_a_change_outside_the_bounds_is_not_committed(env, capsys, answer, bound):
-    env["standing"].write_text(json.dumps(answer), encoding="utf-8")
+def test_the_handler_hands_the_effect_to_the_operations_layer_and_confirms_nothing(env, capsys):
     post(env, "2026-10-07-tidy-notes", image="tidy.png")
     post(env, "2026-10-09-second", title="A second post")
     ledger(env, ("2026-10-07-tidy-notes", "2026-10-07T12:00:00Z"), ("2026-10-09-second", "2026-10-09T12:00:00Z"))
     code, out = run(env, capsys=capsys)
-    assert (code, out["status"], out["bound"]) == (0, "skipped", bound)
-    assert commits(env) == [] and commits(env, confirmed=False) == []
-    assert store(env, "cursor-get", "--name", "routine:published-posts")["value"] is None
-
-
-def test_the_commit_names_only_the_files_the_bounds_allow(env, capsys):
-    post(env, "2026-10-07-tidy-notes", image="tidy.png")
-    ledger(env, ("2026-10-07-tidy-notes", "2026-10-07T12:00:00Z"))
-    run(env, capsys=capsys)
-    dry, real = commits(env, confirmed=False), commits(env)
-    assert len(dry) == 1 and len(real) == 1
-    argv = real[0]
-    files = [argv[i + 1].split("=", 1)[0] for i, a in enumerate(argv) if a == "--file"]
-    allows = [argv[i + 1] for i, a in enumerate(argv) if a == "--allow"]
-    assert files == [FILE, "assets/posts/2026-10-07-tidy-notes.png"]
-    assert allows == [FILE, "assets/posts/*"]
-    assert argv[argv.index("--repo") + 1] == TARGET_REPO and argv[argv.index("--branch") + 1] == BRANCH
-    assert argv[argv.index("--idempotency-key") + 1] == f"published-posts-{WEEK}"
-    assert dry[0][:-1] == argv[:-1]  # the dry run is the same command
-
-
-def test_the_commit_is_recorded_and_counted_against_the_day(env, capsys):
-    post(env, "2026-10-07-tidy-notes")
-    ledger(env, ("2026-10-07-tidy-notes", "2026-10-07T12:00:00Z"))
-    code, out = run(env, capsys=capsys)
-    assert (code, out["status"], out["commit"]["commit"]) == (0, "committed", "0123abcd")
-    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
-    assert store(env, "action-count", "--kind", "published-posts", "--since", today)["count"] == 1
-    action = store(env, "actions", "--since", today)["actions"][0]
-    assert (action["idempotency_key"], action["target"]) == (f"published-posts-{WEEK}", f"{TARGET_REPO}@{BRANCH}")
-    assert action["payload_sha256"] == hashlib.sha256((env["remote"] / FILE).read_bytes()).hexdigest()
+    assert (code, out["status"], out["added"], out["commit"]) == (0, "committed", 2, {"commit": "0123abcd"})
+    assert len(calls(env, "cli")) == 1 and len(effects_handed(env)) == 1
+    effect = effects_handed(env)[0]
+    assert set(effect) == {"policy", "kind", "target", "files", "items", "idempotency_key", "payload_sha256", "args"}
+    assert (effect["policy"], effect["kind"], effect["target"]) == ("published-posts", "push", f"{TARGET_REPO}@{BRANCH}")
+    assert effect["files"] == [FILE, "assets/posts/2026-10-07-tidy-notes.png"] and effect["items"] == 2
+    assert effect["idempotency_key"] == f"published-posts-{WEEK}"
+    assert effect["payload_sha256"] == hashlib.sha256((env["remote"] / FILE).read_bytes()).hexdigest()
+    args = effect["args"]
+    assert args[args.index("--repo") + 1] == TARGET_REPO and args[args.index("--branch") + 1] == BRANCH
+    named = [args[i + 1].split("=", 1)[0] for i, a in enumerate(args) if a == "--file"]
+    assert named == effect["files"]
+    for reserved in ("--confirmed", "--dry-run", "--allow", "--idempotency-key"):
+        assert reserved not in args
+    assert commits(env) == [] and commits(env, confirmed=False) == []  # the handler called no commit-files at all
+    assert [c[0] for c in calls(env, "vcs")] == ["read-file"]
     assert store(env, "cursor-get", "--name", "routine:published-posts")["value"] == WEEK
+    today = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT00:00:00Z")
+    assert store(env, "action-count", "--kind", "published-posts", "--since", today)["count"] == 0  # recorded by the operation
 
 
 def test_the_preview_writes_nothing(env, capsys):
@@ -361,7 +359,7 @@ def test_an_instruction_inside_the_target_file_is_data(env, capsys):
     ledger(env, ("2026-10-07-tidy-notes", "2026-10-07T12:00:00Z"))
     code, out = run(env, capsys=capsys)
     assert (out["status"], out["added"]) == ("committed", 1)
-    argv = commits(env)[0]
+    argv = effects_handed(env)[0]["args"]
     assert [argv[i + 1].split("=", 1)[0] for i, a in enumerate(argv) if a == "--file"] == [FILE]
     items = json.loads((env["remote"] / FILE).read_text(encoding="utf-8"))
     assert items[0] == planted[0] and len(items) == 2

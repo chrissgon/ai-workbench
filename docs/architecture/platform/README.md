@@ -161,7 +161,7 @@ sequenceDiagram
 |---|---|
 | Two promises: cheap with proof (a run goes to the floor model only where the skill is proven there) and safe by construction (the model reads and writes a copy; code executes every effect) | `runtime/proof.py` and `runtime/effects.py`; the limits of [contracts/runtime.md](../../../contracts/runtime.md) |
 | An artifact has exactly one owner, the skill whose `outputs` lists it; others list it in `updates` | `scripts/validate.py` (the artifact contract); [contracts/project-layout.md](../../../contracts/project-layout.md) |
-| The model only reads and writes its copy; code executes effects, with the exact content approved or inside an approved policy (L15) | `runtime/effects.py`, `runtime/autonomy.py` (`covers`); tests named after L15 and L16 |
+| The model only reads and writes its copy; code executes effects, with the exact content approved or inside an approved policy (L15) | `runtime/ops.py` (`execute_under_policy`, which calls `autonomy.covers`), `runtime/effects.py`; tests named after L15 and L16 |
 | The proof decides the model: the floor model only where the skill is `reliable` there, the measurement files are the recorded ones and the image is the evidence's | `runtime/proof.py`; `runtime/tests/test_proof_routing.py` |
 | The measurement has a fingerprint; a change to a fingerprinted file is committed as a measurement change of one of three kinds | `scripts/validate.py` (fingerprint); `evals/eval_status.py measurement`; [reliability model](../reliability-model-2026-10-02.md), section 8 |
 | Credentials are passed by name only, through one resolver; never in a file, a flag, a prompt or a run | `providers/secrets/resolver.py`; [contracts/secrets.md](../../../contracts/secrets.md); the security scan; limit L6 |

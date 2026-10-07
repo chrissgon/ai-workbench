@@ -29,7 +29,7 @@ STARTS = {
 # facade, runtime/lab.py, and are the lab's.
 PROGRAMS = ("git", "uv", "bash")
 # A start whose argument list is built elsewhere in the module: where it is built.
-BUILT_ELSEWHERE = {"runtime/board.py": "provider_argv", "runtime/effects.py": "_provider_call",
+BUILT_ELSEWHERE = {"runtime/board.py": "provider_argv", "runtime/effects.py": "def provider_call",
                    "runtime/handlers/published_posts.py": "def _call"}
 
 
