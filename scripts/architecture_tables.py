@@ -20,17 +20,19 @@ nothing outside them is touched, and a block is never edited by hand. Each table
                         no provider is imported or run
   limits                the limits table of contracts/runtime.md, and the test named after each limit
                         (test_limit_<nn>_...) found under runtime/tests/ and providers/store/tests/
-  operations            the public functions of runtime/ops.py, the first sentence of each docstring, and the
-                        verb of runtime/cli.py that calls each
-  cli-verbs             VERBS of runtime/cli.py, the flags each verb reads and the operation it calls
-  say-commands          SAY_COMMANDS of runtime/ops.py, with their line of SAY_HELP
+  operations            OPERATIONS of runtime/operations.py, the table of operations: each one's function, verb,
+                        channels, whether it calls a model, and what it does (its `help`)
+  cli-verbs             the same table: the verbs of runtime/cli.py, the flags each reads and the function it calls
+  say-commands          the same table: the conversation's commands (the rows that list the chat channel and
+                        CHAT_OWN), with their `help`
   dispatcher-jobs       ENTRY_VERBS and JOBS of runtime/dispatcher.py, with the usage lines of its docstring
   store-migrations      MIGRATIONS of providers/store/sqlite.py: number, description, what each creates
   task-runtime-tables   the tables migrations 2 and later create, with their columns
   gate-keys             the keys of evals/eval-gate.json and the measurement version; a value is shown only
                         when it is a number or a model or adapter id, never a text that could be a credential
 
-Every source is read as text or parsed with ast; nothing is executed but scripts/owner_table.py,
+Every source is read as text or parsed with ast (the table of operations is read with ast.literal_eval of its
+two literals); nothing is executed but scripts/owner_table.py,
 scripts/validate.py (the frontmatter parser) and providers/resolve.py (the class-to-folder rule), which read files
 only. scripts/validate.py reports a stale block as a warning (rule architecture-tables).
 
@@ -221,98 +223,63 @@ def limits(root):
     return _table(["#", "Limit", "Built by", "Test named after it"], rows)
 
 
-def _cli_map(root):
-    """{verb: (operation, [flags])} read from runtime/cli.py's run(): each `if a.verb == "<verb>":` block, the
-    ops.<operation> it calls and the flags it reads (need(a, "--x"), text_of(a), a.<attr>); the last return of
-    run() is the verb no block names."""
-    tree = _tree(root, "runtime/cli.py")
-    verbs = list(_constant(tree, "VERBS") or ())
-    run = next((n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "run"), None)
-    if run is None:
-        raise SourceError("runtime/cli.py: no function run")
-    found = {}
+def _operations_table(root):
+    """(OPERATIONS, CHAT_OWN) of runtime/operations.py, read with ast.literal_eval: nothing is executed."""
+    tree = _tree(root, "runtime/operations.py")
+    rows, own = _constant(tree, "OPERATIONS"), _constant(tree, "CHAT_OWN")
+    if not rows:
+        raise SourceError("runtime/operations.py: OPERATIONS is not a literal tuple of rows")
+    return rows, own or ()
 
-    def scan(nodes):
-        op, flags = None, []
 
-        class V(ast.NodeVisitor):
-            def visit_Call(self, node):
-                nonlocal op
-                f = node.func
-                if isinstance(f, ast.Attribute) and isinstance(f.value, ast.Name) and f.value.id == "ops" and op is None:
-                    op = f.attr
-                if isinstance(f, ast.Name) and f.id == "need" and len(node.args) > 1 \
-                        and isinstance(node.args[1], ast.Constant):
-                    flags.append(node.args[1].value)
-                if isinstance(f, ast.Name) and f.id == "text_of":
-                    flags.append("--text | --text-file")
-                self.generic_visit(node)
+def _flag(arg):
+    return arg.get("flag") or arg["name"].replace("_", "-")
 
-            def visit_Attribute(self, node):
-                if isinstance(node.value, ast.Name) and node.value.id == "a" and node.attr not in ("verb", "project"):
-                    flags.append(f"[--{node.attr.replace('_', '-')}]")
-                self.generic_visit(node)
-        for n in nodes:
-            V().visit(n)
-        seen = []
-        for f in flags:
-            if f not in seen and f"[{f}]" not in seen and not (f.startswith("[") and f[1:-1] in seen):
-                seen.append(f)
-        return op, seen
 
-    last = None
-    for node in run.body:
-        if isinstance(node, ast.If) and isinstance(node.test, ast.Compare) \
-                and isinstance(node.test.left, ast.Attribute) and node.test.left.attr == "verb" \
-                and isinstance(node.test.comparators[0], ast.Constant):
-            found[node.test.comparators[0].value] = scan(node.body)
-        elif isinstance(node, ast.Return):
-            last = scan([node])
-    for verb in verbs:
-        if verb not in found and last is not None:
-            found[verb] = last
-            last = None
-    return verbs, found
+def _flags(row):
+    """The flags a row's verb reads: required ones bare, optional ones in brackets; a text argument is the pair."""
+    out = []
+    for arg in row["args"]:
+        flag = "--text | --text-file" if arg["kind"] == "text" else "--" + _flag(arg)
+        out.append(flag if arg.get("required") else f"[{flag}]")
+    return out
 
 
 def cli_verbs(root):
-    verbs, found = _cli_map(root)
     rows = []
-    for verb in verbs:
-        op, flags = found.get(verb, (None, []))
-        rows.append([_code(verb), " ".join(_code(f) for f in flags) or NONE, _code(op) if op else NONE])
+    for row in _operations_table(root)[0]:
+        if "terminal" in row["channels"]:
+            rows.append([_code(row["name"]), " ".join(_code(f) for f in _flags(row)) or NONE, _code(row["call"])])
     return _table(["Verb", "Flags it reads", "Operation"], rows)
 
 
+def _model(value):
+    if value is True:
+        return "yes"
+    return f"yes, {value}" if value else "no"
+
+
 def operations(root):
-    tree = _tree(root, "runtime/ops.py")
-    verbs, found = _cli_map(root)
-    verb_of = {}
-    for verb in verbs:
-        op = found.get(verb, (None, []))[0]
-        if op:
-            verb_of.setdefault(op, []).append(verb)
-    rows = []
-    for node in tree.body:
-        if isinstance(node, ast.FunctionDef) and not node.name.startswith("_"):
-            rows.append([_code(node.name), ", ".join(_code(v) for v in verb_of.get(node.name, [])) or NONE,
-                         _first_sentence(ast.get_docstring(node)) or NONE])
-    return _table(["Operation", "Verb of `cli.py`", "What it does (first sentence of its docstring)"], rows)
+    rows = [[_code(r["call"]), _code(r["name"]), ", ".join(r["channels"]), _model(r["model"]), r["help"]]
+            for r in _operations_table(root)[0]]
+    return _table(["Operation", "Verb of `cli.py`", "Channels", "Calls a model", "What it does"], rows)
+
+
+def _usage(row):
+    parts = ["/" + row["name"]]
+    for arg in row["args"]:
+        if arg["kind"] in ("int", "str", "text"):
+            label = arg.get("label") or (_flag(arg) if arg["kind"] == "int" else arg["name"])
+            parts.append(f"<{label}>" if arg.get("required") else f"[{label}]")
+    return " ".join(parts)
 
 
 def say_commands(root):
-    tree = _tree(root, "runtime/ops.py")
-    commands, help_text = _constant(tree, "SAY_COMMANDS") or (), _constant(tree, "SAY_HELP") or ""
-    lines = help_text.splitlines()
-    rows = []
-    for cmd in commands:
-        line = next((l for l in lines if l == cmd or l.startswith(cmd + " ")), None)
-        if line is None:
-            rows.append([_code(cmd), "not in SAY_HELP"])
-            continue
-        parts = re.split(r"\s{2,}", line.strip(), maxsplit=1)
-        rows.append([_code(parts[0]), parts[1] if len(parts) > 1 else NONE])
-    return _table(["Command", "What it does (its line of `SAY_HELP`)"], rows)
+    rows, own = _operations_table(root)
+    first = [("/help" if not c.get("args") else f"/{c['name']} <{c['args']}>", c["help"]) for c in own if c.get("order") == "first"]
+    last = [("/help" if not c.get("args") else f"/{c['name']} <{c['args']}>", c["help"]) for c in own if c.get("order") != "first"]
+    chat = [(_usage(r), r["help"]) for r in rows if "chat" in r["channels"]]
+    return _table(["Command", "What it does (its `help` in the table)"], [[_code(u), h] for u, h in first + chat + last])
 
 
 def dispatcher_jobs(root):

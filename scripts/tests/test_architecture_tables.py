@@ -72,33 +72,19 @@ LIMIT_TESTS = """def test_limit_01_a_copy_is_new():
     pass
 """
 
-OPS = '''"""Operations."""
-SAY_COMMANDS = ("/help", "/go")
-SAY_HELP = """Commands:
-/help              this text
-/go <id>           go on with one task"""
-
-
-def go(project, ident):
-    """Go on with one task. More words."""
-
-
-def helper(project):
-    """A helper no verb calls."""
-
-
-def _private(project):
-    """Never listed."""
-'''
-
-CLI = '''VERBS = ("go", "status")
-
-
-def run(argv):
-    a = parse(argv)
-    if a.verb == "go":
-        return ops.go(project, need(a, "--id"), a.dry_run)
-    return ops.status(project)
+OPERATIONS_PY = '''"""The table of operations."""
+OPERATIONS = (
+    {"name": "go", "call": "go",
+     "args": ({"name": "task_id", "kind": "int", "required": True, "flag": "id", "label": "id"},
+              {"name": "dry_run", "kind": "flag", "flag": "dry-run"}),
+     "channels": ("terminal", "chat"), "model": False, "help": "go on with one task"},
+    {"name": "status", "call": "status", "args": (), "channels": ("terminal",), "model": "for a new request",
+     "help": "where things stand"},
+)
+CHAT_OWN = (
+    {"name": "help", "args": "", "help": "this text", "order": "first"},
+    {"name": "new", "args": "text", "help": "start a new request", "order": "last"},
+)
 '''
 
 DISPATCHER = '''"""The dispatcher.
@@ -139,8 +125,7 @@ def fixture(tmp_path):
         "providers/widget/auth.py": "VERBS = {'login': print}\n",
         "contracts/runtime.md": RUNTIME_CONTRACT,
         "runtime/tests/test_limits.py": LIMIT_TESTS,
-        "runtime/ops.py": OPS,
-        "runtime/cli.py": CLI,
+        "runtime/operations.py": OPERATIONS_PY,
         "runtime/dispatcher.py": DISPATCHER,
         "providers/store/sqlite.py": SQLITE,
         "evals/eval-gate.json": json.dumps(GATE),
@@ -193,10 +178,13 @@ def test_the_tables_have_their_shape(tmp_path):
     assert "| L1 | A copy is new | stage 2 | `runtime/tests/test_limits.py`, `test_limit_01_a_copy_is_new` |" in limits
     assert "| L2 | A record \\| only grows | stage 4 | no test named |" in limits
     ops = block(root, "operations")
-    assert "| `go` | `go` | Go on with one task. |" in ops and "| `helper` | - |" in ops and "_private" not in ops
+    assert "| `go` | `go` | terminal, chat | no | go on with one task |" in ops
+    assert "| `status` | `status` | terminal | yes, for a new request | where things stand |" in ops
     assert "| `go` | `--id` `[--dry-run]` | `go` |" in block(root, "cli-verbs")
     assert "| `status` | - | `status` |" in block(root, "cli-verbs")
-    assert "| `/go <id>` | go on with one task |" in block(root, "say-commands")
+    commands = block(root, "say-commands")
+    assert "| `/go <id>` | go on with one task |" in commands and "`/status`" not in commands
+    assert commands.index("`/help`") < commands.index("`/go <id>`") < commands.index("`/new <text>`")
     assert "| `tick` | `--project <dir>` | ops.tick: the job | 7 minutes |" in block(root, "dispatcher-jobs")
     migrations = block(root, "store-migrations")
     assert migrations.startswith("Schema version 3:")

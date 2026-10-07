@@ -56,7 +56,8 @@ Where: **repo** is this repository, **project** the target project, **data** the
 
 | Path | Where | Format | Written by | Read by | Lifecycle | Versioned | Generated |
 |---|---|---|---|---|---|---|---|
-| `runtime/cli.py` | repo | Python 3.9, standard library only; its docstring is the `--help` text | maintainers | the person, a handler (`cli.py standing`) | changed by pull request; edited by many packages, one after another | yes | no |
+| `runtime/operations.py` | repo | Python 3.9, standard library only; a pure literal (`OPERATIONS`, `CHAT_OWN`) and the pure functions that read it | maintainers | `ops.py` (which re-exports it), `effects.py`, the generator of the tables | changed by pull request: one row per operation | yes | no |
+| `runtime/cli.py` | repo | Python 3.9, standard library only; its docstring is the `--help` text; its parser is built from the table | maintainers | the person, a handler (`cli.py standing`, `execute-under-policy`) | changed by pull request | yes | no |
 | `runtime/chat.py` | repo | Python 3.9, standard library only | maintainers | the person | changed by pull request | yes | no |
 | `runtime/dispatcher.py` | repo | Python 3.9, standard library only; started alone, from a copy | maintainers | the scheduler (a copy in its job folder), the person (`check`, `command-file`) | changed by pull request; a scheduled copy changes only when the jobs are scheduled again | yes | no |
 | The scheduler's command files of the two jobs | data (the scheduler's job folder) | JSON: `argv` (starts with `/usr/bin/python3`), `cwd`, `snapshot` (the entry and the pin), `timeout_minutes` | `dispatcher.py command-file`, then the scheduler provider | the scheduler | replaced when the jobs are scheduled again | no | yes |
@@ -71,21 +72,21 @@ Planned (stage 9, nothing built): `runtime/service.py`, `interface/` (static pag
 
 **Shell.** A thin front over the operations layer: it parses, calls one operation, prints its result. It decides nothing a second shell would have to decide again (rule 3 of [the platform plan](../platform-plan-2026-10-05.md): there is one operations layer only). The terminal, the conversation and the scheduler's entry are shells today.
 
-**Operation.** One function of `runtime/ops.py`, taking the project folder first and returning a JSON-serialisable object, or raising `OpsError` with an exit code: 1 failed or refused, 2 usage, 3 not configured. Every operation but `accept_config` starts from `ops.context`, which loads `runtime.json`, refuses another checkout than the running one, opens the store and refuses a configuration whose hash is not the accepted one. The operations are listed on [the runtime's page](runtime.md), "Entry points".
+**Operation.** One function of `runtime/ops.py` and one row of the table of operations (`runtime/operations.py`: the verb, the function, the arguments, the channels that may call it, whether it calls a model), taking the project folder first and returning a JSON-serialisable object, or raising `OpsError` with an exit code: 1 failed or refused, 2 usage, 3 not configured. Every operation but `accept_config` starts from `ops.context`, which loads `runtime.json`, refuses another checkout than the running one, opens the store and refuses a configuration whose hash is not the accepted one. The operations are listed on [the runtime's page](runtime.md), "Entry points".
 
-**Verb.** One word of `cli.py` (`VERBS`, listed under "Entry points"), mapped to one operation. The flags are shared by every verb; a verb that needs a flag it was not given is a usage error (exit 2).
+**Verb.** One word of `cli.py`, which is the `name` of one row of the table of operations (`runtime/operations.py`, listed under "Entry points"). The parser is built from the table: every flag of every row, once; a verb that needs a flag it was not given is a usage error (exit 2).
 
 **The JSON a shell prints.** `cli.py` prints one JSON object on stdout (indented), diagnostics on stderr, nothing on stdout when it fails. `chat.py` prints each reply as text and a blank line, or with `--json` one object per line, `{"reply", "request_id", "pending_id", "ran"}`. `dispatcher.py` prints one JSON object for `poll`, `work`, `check` and `command-file`.
 
 **Pending decision, the unit a shell shows.** What a task waits for the person to decide, of six kinds (`plan`, `question`, `review`, `effect`, `acceptance`, `your_document`). Listed (`pending`) it shows `id`, `kind`, `title`, `task_id`, `created_at`, and for a plan its tasks and the hash to approve; whole (`pending --id`) it shows the body (the reply) and the payload. A shell resolves it with one of `answer`, `release`, `approve` (with the hash for a plan or an effect) or `reject`; the operation refuses a resolution the kind does not take. The planned page draws one card per kind, with a button for each word the operation lists in `actions` and no other.
 
-**Turn.** One line of the conversation, `ops.say`: a line that starts with `/` is one command of the closed list `SAY_COMMANDS`, which calls its operation once and no model; any other line answers the router's open question on the conversation's last request, or else is a new request, routed (a model call) only when the planning agent may start (its mode and its cap). A model's reply is stored and shown, never executed.
+**Turn.** One line of the conversation, `ops.say`: a line that starts with `/` is read by `operations.parse_chat`: it is `/help`, `/new <text>`, or one row of the table that lists the `chat` channel, which calls its operation once and no model (an operation the table does not list for chat gets the help); any other line answers the router's open question on the conversation's last request, or else is a new request, routed (a model call) only when the planning agent may start (its mode and its cap). A model's reply is stored and shown, never executed.
 
 **The conversation's memory and its place in a request.** `ops.chat_memory`: the plain lines and the router's replies after the newest reply whose request reached `planned`, `done` or `cancelled`; commands and their replies are left out; the newest 6 turns (`MEMORY_TURNS`), each cut to 600 characters (`MEMORY_CUT`), the whole cut to 4000 (`MEMORY_CHARS`) by dropping the oldest. It is written in front of the new line, under `Earlier in this conversation, oldest first:` and above `The request now:`, and that whole text becomes the request's text. The first line of an exchange reaches the router plain, as the router was measured. It is a bounded text because the floor model's adapter takes the request as one argument (workaround 2 of [backlog](../../backlog.md) T23, marked `T23:` in the code).
 
 **The scheduler's entry.** `dispatcher.py` in a second role: a copy kept in the scheduler's job folder, started with `/usr/bin/python3`, which checks `runtime.json` against the pin before it imports anything of the checkout, then loads that checkout's `ops.py` and calls `ops.poll` (the short job) or `ops.dispatch` (the worker). Its `decide` function, the dispatcher proper, is a pure function of the runtime's layer.
 
-**The channel rule (planned).** Through a chat channel (the MCP mode reached from a messaging app) only four things are allowed: make a request, ask, answer, and release a draft. Approving an external effect (a publication, a pull request, a message sent) needs the content's hash, typed or clicked in the local interface, and stays executed by code on the workbench's side: a chat message is a weaker trust surface than the person's own machine.
+**The channel rule.** Each row of the table of operations lists the channels that may call it (`terminal`, `chat`; `page` is reserved for the local interface). A row whose function takes the channel (`channel_arg`: `approve`) is told which one called, and `ops.approve` refuses an `effect` from any channel but the terminal (decision D8): an effect is approved in the terminal, with its hash. A chat message is a weaker trust surface than the person's own machine; the planned MCP mode reached from a messaging app stays under the same rule, and the local interface, when it exists, is a channel of its own. Planned: through a chat channel only a request, a question, an answer and the release of a draft.
 
 ## Dependencies
 
@@ -96,7 +97,7 @@ Planned (stage 9, nothing built): `runtime/service.py`, `interface/` (static pag
 **The rules.**
 
 - A shell imports only the operations layer. Guarded for `chat.py` by a test; for `cli.py` no guard found.
-- The operations layer never learns which shell called: no operation takes a caller argument. It does know the shells' syntax in its texts: the configuration refusal names the `cli.py accept-config` command, and `say` holds the conversation's command list and help text (`SAY_COMMANDS`, `SAY_HELP`). No guard found for either direction.
+- The operations layer never learns which shell called: no operation takes a caller argument. Its texts that name a command (the configuration refusal, the `next` of `set_mode`, the approve line of an effect, the conversation's `PLAN_NEXT` and `ASK_NEXT`) are built by `operations.command_line` and `operations.chat_line`, and the conversation's commands and help text are the table's (`chat_commands`, `chat_help`): `test_no_module_of_the_runtime_but_the_table_spells_the_terminals_command_outside_a_docstring`. The one channel it is told about is the argument of the rows that name it (`approve`).
 - A shell never reads the store, the lab facade, a provider or a project's file by itself ([runtime/README.md](../../../runtime/README.md), "Rules of the folder"). Guarded by the import tests above, where they exist.
 - The planned service reaches the store and the facade only through the operations layer, and a page imports neither (planned test `test_the_service_reaches_the_store_and_the_facade_only_through_the_operations_layer`).
 - The planned MCP mode exposes the same operations to any MCP client, a chat-first agent platform among them, as an option and never a requirement: the local interface stays the default shell, so that a person who installs the workbench needs nothing else.
@@ -122,7 +123,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 **The conversation.**
 
 - `chat.py` imports only the operations layer, reads standard input line by line and exits 0 at its end, 2 on usage, 3 when the project is not configured: `test_chat.py`, `test_the_shell_reads_lines_from_standard_input_and_imports_only_the_operations_layer`.
-- A command calls its operation once and no model; an unknown command, missing arguments and the commands left out on purpose (`/approve-policy`, `/set-mode`, `/pin`) get the help and run nothing: `test_a_command_calls_its_operation_once_and_no_model`; `test_an_unknown_command_gets_the_help_and_runs_nothing`. `accept-config` is not a command either (closed list `SAY_COMMANDS`; not in that test's lines).
+- A command calls its operation once and no model; an unknown command, missing arguments and the commands left out on purpose (`/approve-policy`, `/set-mode`, `/pin`) get the help and run nothing: `test_a_command_calls_its_operation_once_and_no_model`; `test_an_unknown_command_gets_the_help_and_runs_nothing`. `accept-config` and `execute-under-policy` are not commands either (the table lists them for the terminal only): `test_a_command_the_conversation_does_not_offer_gets_the_help_and_runs_nothing`.
 - A reply of the model is never read as a command: `test_a_reply_of_the_model_is_never_read_as_a_command`.
 - The planning agent stopped or at its cap runs nothing and says why: `test_the_planning_agent_at_its_cap_runs_nothing_and_says_why`.
 - The first line of an exchange reaches the router plain; the memory is the last turns within its budget: `test_the_first_line_of_an_exchange_reaches_the_router_without_memory`; `test_the_memory_is_the_last_turns_cut_to_its_budget_oldest_dropped_first`.
@@ -145,7 +146,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 - `approve` sends only the exact reply shown, once, and never one that holds a credential: `test_approve_sends_only_the_exact_reply_shown`; `test_approving_the_same_item_twice_sends_once`; `test_approve_refuses_a_reply_that_holds_a_credential`.
 - One tick at a time; a missing configuration is exit 3: `test_a_second_tick_while_one_runs_does_nothing`; `test_missing_config_exits_3`.
 
-**The channel rule** (planned): no guard yet. The plan's test list for the service holds `test_accepting_a_configuration_is_not_a_route` (a page never accepts a configuration hash; that stays in the terminal) and the effect approved only with its hash (limits L15 to L17, kept by `ops.approve`); a test that a chat channel cannot approve an effect is to be written with the MCP mode.
+**The channel rule**: an effect is approved only from the terminal, with its hash: `test_operations_table.py`, `test_an_effect_is_approved_in_the_terminal_and_never_from_the_conversation`. The plan's test list for the service holds `test_accepting_a_configuration_is_not_a_route` (a page never accepts a configuration hash; that stays in the terminal), planned with the local interface.
 
 ## Entry points
 
@@ -155,23 +156,23 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 | Verb | Flags it reads | Operation |
 |---|---|---|
 | `request` | `--text \| --text-file` `[--flow]` `[--title]` | `request` |
-| `run-next` | `[--tier]` | `run_next` |
+| `route` | `--request` `[--flow]` | `route` |
+| `status` | - | `status` |
+| `progress` | `[--since]` | `progress` |
 | `pending` | `[--id]` | `pending` |
 | `answer` | `--id` `--text \| --text-file` `[--with-comments]` | `answer` |
 | `release` | `--id` | `release` |
+| `approve` | `--id` `[--sha256]` | `approve` |
+| `reject` | `--id` `[--note]` | `reject` |
 | `retry` | `--task` | `retry` |
 | `cancel` | `--request` | `cancel` |
-| `status` | - | `status` |
+| `deps` | - | `deps` |
+| `run-next` | `[--tier]` | `run_next` |
 | `accept-config` | `--sha256` | `accept_config` |
 | `proof` | `[--skill]` | `proof` |
 | `verdict` | `--run` `--word` | `verdict` |
-| `route` | `--request` `[--flow]` | `route` |
-| `approve` | `--id` `[--sha256]` | `approve` |
-| `reject` | `--id` `[--note]` | `reject` |
 | `sync` | `[--dry-run]` `[--take]` `[--path]` | `sync` |
 | `hand-over` | `--task` `--file` | `hand_over` |
-| `deps` | - | `deps` |
-| `progress` | `[--since]` | `progress` |
 | `set-mode` | `--agent` `--mode` | `set_mode` |
 | `approve-policy` | `--file` `--agent` `[--sha256]` `[--expires]` `[--what]` | `approve_policy` |
 | `revoke-policy` | `--id` | `revoke_policy` |
@@ -179,7 +180,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 | `execute-under-policy` | `--policy` `--effect-file` | `execute_under_policy` |
 | `dispatch` | - | `dispatch` |
 | `poll` | - | `poll` |
-| `handler` | `[--arg]` `--name` `--verb` | `handler_call` |
+| `handler` | `--name` `--verb` `[--arg]` | `handler_call` |
 | `pin` | - | `pin` |
 | `say` | `--text \| --text-file` | `say` |
 <!-- /generated -->
@@ -189,7 +190,7 @@ Every verb also takes `--project <dir>`. The verbs that call a model: `route` (w
 **The conversation**, `python3 runtime/chat.py --project <dir> [--json]`. Exit 0 at the end of the input, 2 usage, 3 not configured; any other error is printed and the conversation goes on.
 
 <!-- generated: say-commands -->
-| Command | What it does (its line of `SAY_HELP`) |
+| Command | What it does (its `help` in the table) |
 |---|---|
 | `/help` | this text |
 | `/status` | requests, tasks and what waits for you |
@@ -197,7 +198,7 @@ Every verb also takes `--project <dir>`. The verbs that call a model: `route` (w
 | `/pending [id]` | what waits for you; with an id, that decision whole |
 | `/answer <id> <text>` | answer a pending decision |
 | `/release <id>` | release a delivery (it stays a draft) |
-| `/approve <id> [sha256]` | approve a plan, an acceptance, or an effect with its hash |
+| `/approve <id> [sha256]` | approve a plan or an acceptance; an effect is approved in the terminal, with its hash |
 | `/reject <id> [note]` | reject a plan, an acceptance or an effect |
 | `/retry <task id>` | make a failed or blocked task ready again |
 | `/cancel <request id>` | cancel a request |
@@ -228,12 +229,10 @@ Each command calls its operation of the same name once (`/progress` shows its `t
 | Limit or improvement | Where it is recorded |
 |---|---|
 | No local interface yet: every surface is a terminal | [the platform plan](../platform-plan-2026-10-05.md), stage 9 |
-| No MCP mode yet, and no channel rule in code | a maintainer's decision of 2026-10-06 that adds it to stage 9; not yet in the committed platform plan |
-| `cli.py` has no test of its imports; `chat.py` has one | `runtime/tests/test_chat.py` |
+| No MCP mode yet; the channel rule is in code for the effect (`approve`), and the `page` channel is reserved in the table | a maintainer's decision of 2026-10-06 that adds the MCP mode to stage 9; not yet in the committed platform plan |
+| `chat.py` imports are guarded by `test_chat.py`, those of `cli.py` by `test_runtime_rules.py` and the layer map | `runtime/tests/test_chat.py`, `scripts/tests/test_layer_map.py` |
 | The conversation's memory becomes the request's text, so it reaches every task of the request, not only the router's run | `ops.say`, `ops.task_prompt` |
 | One conversation per project (`CONVERSATION = "project"`); the plan's stage 9 names it `"main"` | `runtime/ops.py` |
-| The operations layer's texts name the shells' syntax (the `accept-config` command in a refusal, the conversation's commands in `say`), so a new shell inherits terminal wording | `runtime/ops.py`, `context`, `SAY_HELP`, `PLAN_NEXT` |
-| `/approve <id> <sha256>` in the conversation approves an effect today; that is safe on the person's own terminal, and is exactly what the channel rule must refuse once the conversation reaches a chat channel | `runtime/ops.py`, `_say_command` |
 | The scheduler's pin covers `runtime.json` and the entry, not the checkout's revision (open point O11) | [contracts/runtime.md](../../../contracts/runtime.md), "The dispatcher's two jobs" |
 | Two runtimes with two command sets and two pins side by side until stage 7 | [contracts/runtime.md](../../../contracts/runtime.md), "The first runtime (until stage 7)" |
 | `ops.py`'s module docstring still says the conversation and the local interface come "later", and [runtime/README.md](../../../runtime/README.md) lists only the stage 1 operations in its `ops.py` row | `runtime/ops.py`; `runtime/README.md` |
