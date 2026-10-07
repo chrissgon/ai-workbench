@@ -23,12 +23,23 @@ STARTS = {
     "runtime/plan.py": ["scripts/select_skills.py"],
     "runtime/isolated.py": ["<skill scripts>"],  # a manifest's checkers and the backlog reader, through run_script
     "runtime/handlers/published_posts.py": ["runtime/cli.py"],
+    # The ported social agent (WP-7.1): the parser, the store, the gate twice (record, decide); the vote step's
+    # checkers, the scheduler provider twice (dry run, then confirmed); the vote job's queue update.
+    "runtime/handlers/social.py": ["skills/mkt-engage/scripts/parse_notification.py", "providers/store/sqlite.py",
+                                   "skills/mkt-engage/scripts/policy_gate.py", "skills/mkt-engage/scripts/policy_gate.py"],
+    "runtime/handlers/social_vote.py": [
+        "skills/mkt-vote-round/scripts/vote_state.py", "skills/mkt-vote-round/scripts/vote_update.py",
+        "skills/mkt-social-copy/scripts/check_post.py", "skills/brand-identity/scripts/render.py",
+        "skills/mkt-publish/scripts/payload.py", "<scheduler provider>", "<scheduler provider>"],
+    "runtime/handlers/social_vote_job.py": ["skills/mkt-vote-round/scripts/vote_update.py"],
 }
 # The programs a module of the runtime starts by name; the lab's own starts (docker, the adapters) go through the
 # facade, runtime/lab.py, and are the lab's.
-PROGRAMS = ("git", "uv", "bash")
+PROGRAMS = ("git", "uv", "bash", "/usr/bin/osascript")  # osascript: the macOS notification the old script already sent
 # A start whose argument list is built elsewhere in the module: where it is built.
-BUILT_ELSEWHERE = {"runtime/effects.py": "def provider_call", "runtime/handlers/published_posts.py": "def _cli"}
+BUILT_ELSEWHERE = {"runtime/effects.py": "def provider_call", "runtime/handlers/published_posts.py": "def _cli",
+                   # the ported social agent (WP-7.1): its run() and call() take a list built by the callers
+                   "runtime/handlers/social.py": "def parser_cmd", "runtime/handlers/social_vote_job.py": "def main("}
 
 
 def system_list() -> list:
@@ -82,8 +93,10 @@ def test_what_does_not_run_on_the_system_python_is_started_through_uv():
         source = (REPO / module).read_text(encoding="utf-8")
         for call in re.finditer(r"subprocess\.(?:run|Popen|check_output|check_call|call)\(\s*([^,)]+)", source):
             first = call.group(1).strip()
-            if first.startswith("["):
-                head = first[1:].strip()
+            head = first[1:].strip() if first.startswith("[") else ""
+            # a list whose first element is a literal or sys.executable is checked here; one built from a
+            # comprehension (`[str(c) for c in cmd]`) is built elsewhere, like a name
+            if first.startswith("[") and (head.startswith('"') or head.startswith("sys.executable")):
                 assert head.startswith("sys.executable") or any(head.startswith(f'"{p}"') for p in PROGRAMS), \
                     f"{module} starts {first[:60]!r}: use the system interpreter, {', '.join(PROGRAMS)}, or the facade"
             else:
