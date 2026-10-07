@@ -51,7 +51,7 @@ ai-workbench is a workbench of skills that let a model build a digital solution 
 
 5. **Where to read next.** The runtime's page, [runtime.md](runtime.md); then [contracts/runtime.md](../../../contracts/runtime.md) for the contract and [AGENTS.md](../../../AGENTS.md) for the rules every file follows. The terminal conversation with the planning agent is `python3 runtime/chat.py --project <dir>` (`/help` lists its commands). Planned, with no command yet: the local interface (a page per surface over the same operations, starting with the pending decisions) and an MCP mode.
 
-6. **What is not yet a replaceable piece.** If you want to know which layers cannot yet be swapped on their own, read [the review of 2026-10-06](review-2026-10-06.md): sixteen findings, ranked, each with its state.
+6. **What is not yet a replaceable piece.** If you want to know which layers cannot yet be swapped on their own, read [the review of 2026-10-06](review-2026-10-06.md): seventeen findings, ranked, each with its state.
 
 ## Keeping the pages current
 
@@ -166,6 +166,7 @@ sequenceDiagram
 | The measurement has a fingerprint; a change to a fingerprinted file is committed as a measurement change of one of three kinds | `scripts/validate.py` (fingerprint); `evals/eval_status.py measurement`; [reliability model](../reliability-model-2026-10-02.md), section 8 |
 | Credentials are passed by name only, through one resolver; never in a file, a flag, a prompt or a run | `providers/secrets/resolver.py`; [contracts/secrets.md](../../../contracts/secrets.md); the security scan; limit L6 |
 | Principle 8: the repository holds no file of a project that uses it and names none of its people, accounts or hosts | [AGENTS.md](../../../AGENTS.md); the validator's `private-term` check where a maintainer keeps the local list |
+| A standing policy's bounds are enforced by the operations layer, a configuration refuses an unknown key, a skill enters the runtime by its manifest and `runtime/roles.json`, an effect kind is a module, and a provider verb is called by `resolve.call` | `runtime/ops.py`, `runtime/project_config.py`, `runtime/roles.json`, `runtime/effects.py`, `providers/resolve.py`; the status table of [review-2026-10-06.md](review-2026-10-06.md) |
 | Autonomy modes: five per area agent, from three facts; a mode never releases a question, an unclassified reply, a draft with open questions, a `done` with no change, a blocked change set, an unproven skill or a mandatory milestone, and never executes an effect outside an approved policy | `runtime/autonomy.py`; `runtime/tests/test_autonomy.py` |
 | One task at a time per project | the run lock in `ops.py`; the store's one running task per database; `runtime/tests/test_dispatcher.py` |
 | What enters a run (L1 to L6) and what comes back (L7, L8, L12, L14), each by one module | `runtime/workcopy.py`, `runtime/path_rule.py`; `runtime/tests/test_run_limits.py` |
@@ -231,7 +232,7 @@ The names fixed for this work. Use each exactly.
 | A board's own status property is not written; the runtime's states live in a property of its own | [backlog](../../backlog.md), R13 |
 | Eight workarounds wait for the next change of reference model (the dependency install step, the two `AGENTS.md` lines, the approvals copied into the state file, the manifest outside the frontmatter, a skill run up to its gate, among others) | [backlog](../../backlog.md), T23 |
 | The runtime contract lags the code in places (its module table, its migrations, the pending-decision kinds stage 1 opened) | [runtime.md](runtime.md), "Known limits and improvements" |
-| The review of 2026-10-06 ranks sixteen findings against the goal of replaceable layers; the lab and the runtime are not yet replaceable pieces | [review-2026-10-06.md](review-2026-10-06.md) |
+| The review of 2026-10-06 ranks seventeen findings against the goal of replaceable layers; nine are fixed (the store declared runtime-owned), one is partly fixed (skill code runs in an isolated host process, not yet a container) and seven wait for the next change of their layer | [review-2026-10-06.md](review-2026-10-06.md) |
 
 ## Changes
 
@@ -239,3 +240,4 @@ The names fixed for this work. Use each exactly.
 - 2026-10-06: the layer list links the page of every layer; the shells' and the target project's pages added.
 - 2026-10-06: the volatile tables of the layer pages are generated ("Keeping the pages current").
 - 2026-10-06: the architecture review and its status table (review-2026-10-06.md).
+- 2026-10-07: the close-out of the architecture fixes: the review's status table is final, and the cross-cutting rows and the known limits name what the fixes changed.

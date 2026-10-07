@@ -233,7 +233,7 @@ Every provider takes `--help` and `--check`. Side-effect verbs take `--dry-run` 
 | The platform's comment endpoint for a member is an undocumented path; its behaviour may change | [providers/publisher/README.md](../../../providers/publisher/README.md), "To verify on first use" |
 | `sender:email`, `generator:*`, `search:web` and `integration:design-tool` have no implementation | [providers/CONTRACT.md](../../../providers/CONTRACT.md), "Verbs per class" |
 | A password manager as a secrets backend | [backlog](../../backlog.md), S16 |
-| The store's README says the runtime calls the store only through its command line; the task runtime imports its functions | [providers/store/README.md](../../../providers/store/README.md), first paragraph; [providers/CONTRACT.md](../../../providers/CONTRACT.md), "Functions of the store" |
+| The store's task functions are the task runtime's own persistence, not a substitutable class; no second backend is promised and no suite checks one (decision D2); the first runtime still calls the verbs through the command line | [providers/store/README.md](../../../providers/store/README.md), first paragraph; [providers/CONTRACT.md](../../../providers/CONTRACT.md), "Functions of the store" |
 | Two README rows (N3 of the documents and the board) say the stand-in still moves the version on a comment; the stand-in no longer does | `providers/documents/tests/fake_notion.py`, its docstring and `comment()` |
 
 ## Changes
@@ -241,3 +241,4 @@ Every provider takes `--help` and `--check`. Side-effect verbs take `--dry-run` 
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
 - 2026-10-07: `resolve.call` (and `invoke`, `interpreter_for`, `ProviderCallError`): the call of a provider's verb exists once, and the board, the documents, the effects and the published-posts handler use it (WP-R.7).
 - 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the classes, implementations and verbs).
+- 2026-10-07: the store's task functions are declared runtime-owned persistence, not a substitutable class (decision D2).

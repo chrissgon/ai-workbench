@@ -49,6 +49,8 @@ while IFS= read -r -d '' f; do
     providers/*) d="scripts/tests" ;;  # providers/resolve.py: its tests are scripts/tests/test_provider_resolve.py
     scripts/*) d="scripts/tests" ;;
     .githooks/*|.github/*|packs/*|templates/*|agents/*) d="scripts/tests" ;;
+    evals/execution.py) d="evals/tests"  # the runtime's lab facade (runtime/lab.py) loads the execution kit
+      [[ " ${dirs[*]-} " != *" runtime/tests "* ]] && dirs+=("runtime/tests") ;;
     evals/*) d="evals/tests" ;;
     runtime/*|flows/*) d="runtime/tests" ;;  # a flow file is checked by the tests of the code that reads it
     skills/*/evals/runtime-manifest.json) d="runtime/tests" ;;  # read by runtime/manifest.py, before any skills/* pattern
