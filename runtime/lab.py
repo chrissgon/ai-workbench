@@ -264,6 +264,17 @@ def session():
             signal.signal(sig, handler)
 
 
+def stop_runs() -> dict:
+    """End every run this process started, by the lab's own stop and in the order session() ends them: every
+    container and process group is ended (after a short grace, killed), no new one starts, and the folders of a run in
+    progress go back to its run folder. Unlike session() it is not tied to the thread that started a run, and it
+    leaves the lab's stopping flag set: the process is ending, and the next session() clears it. Returns
+    {"stopped": True}; the kit does not say how many runs it ended."""
+    LAB.stop_all_groups(grace=2.0)
+    LAB.return_all_runs()
+    return {"stopped": True}
+
+
 def failure_kind(why, out_dir: str, refusal_markers, response: str, changed) -> tuple:
     """How one attempt failed, by the lab's own functions and in the lab's own order: (kind, detail). kind is
     "timeout", "refused", "auth", "adapter", "early_end", or None when the attempt is the run's result. why is what

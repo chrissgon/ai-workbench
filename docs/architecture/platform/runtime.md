@@ -146,7 +146,7 @@ A pending decision is `open`, `resolved` or `cancelled`. A release by an autonom
 | The contracts | the state file's form, the approval scopes, the secrets lookup | the runtime writes into artifacts others own |
 | The secret store | `providers/secrets/resolver.py`, with `runtime/secrets.json` | the runtime's own floor key, by name only |
 
-**Who reads it.** The shells (`runtime/cli.py`, `runtime/chat.py`, later the local interface's service) through `runtime/ops.py` only; the scheduler's two jobs through `runtime/dispatcher.py`; the handlers read the store only through its provider's verbs and hand an effect to `cli.py execute-under-policy` (they confirm no provider verb and read no bound themselves), and import nothing of `runtime/`.
+**Who reads it.** The shells (`runtime/cli.py`, `runtime/chat.py`, `runtime/service.py`) through `runtime/ops.py` only; the scheduler's two jobs through `runtime/dispatcher.py`; the handlers read the store only through its provider's verbs and hand an effect to `cli.py execute-under-policy` (they confirm no provider verb and read no bound themselves), and import nothing of `runtime/`.
 
 **The rules.**
 
@@ -271,6 +271,9 @@ The limit's text and the stage that built it come from the contract's table; the
 | `request` | `--text \| --text-file` `[--flow]` `[--title]` | `request` |
 | `route` | `--request` `[--flow]` | `route` |
 | `status` | - | `status` |
+| `task` | `--task` | `task` |
+| `flows` | - | `flows` |
+| `config` | - | `config` |
 | `progress` | `[--since]` | `progress` |
 | `pending` | `[--id]` | `pending` |
 | `answer` | `--id` `--text \| --text-file` `[--with-comments]` | `answer` |
@@ -297,6 +300,7 @@ The limit's text and the stage that built it come from the contract's table; the
 | `handler` | `--name` `--verb` `[--arg]` | `handler_call` |
 | `pin` | - | `pin` |
 | `say` | `--text \| --text-file` | `say` |
+| `stop-runs` | - | `stop_runs` |
 <!-- /generated -->
 
 The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`, and `say` for a new request.
@@ -312,7 +316,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `/pending [id]` | what waits for you; with an id, that decision whole |
 | `/answer <id> <text>` | answer a pending decision |
 | `/release <id>` | release a delivery (it stays a draft) |
-| `/approve <id> [sha256]` | approve a plan or an acceptance; an effect is approved in the terminal, with its hash |
+| `/approve <id> [sha256]` | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
 | `/reject <id> [note]` | reject a plan, an acceptance or an effect |
 | `/retry <task id>` | make a failed or blocked task ready again |
 | `/cancel <request id>` | cancel a request |
@@ -324,35 +328,39 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 <!-- generated: operations -->
 | Operation | Verb of `cli.py` | Channels | Calls a model | What it does |
 |---|---|---|---|---|
-| `request` | `request` | terminal | no | record what you want; with a flow, plan it from the flow file, else it waits for its route |
-| `route` | `route` | terminal | yes, without --flow | plan a request that waits for its route: one run of the router skill, or the plan of a flow file |
-| `status` | `status` | terminal, chat | no | requests, tasks and what waits for you |
-| `progress` | `progress` | terminal, chat | no | where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD) |
-| `pending` | `pending` | terminal, chat | no | what waits for you; with an id, that decision whole |
-| `answer` | `answer` | terminal, chat | no | answer a pending decision |
-| `release` | `release` | terminal, chat | no | release a delivery (it stays a draft) |
-| `approve` | `approve` | terminal, chat | no | approve a plan or an acceptance; an effect is approved in the terminal, with its hash |
-| `reject` | `reject` | terminal, chat | no | reject a plan, an acceptance or an effect |
-| `retry` | `retry` | terminal, chat | no | make a failed or blocked task ready again |
-| `cancel` | `cancel` | terminal, chat | no | cancel a request |
+| `request` | `request` | terminal, page | no | record what you want; with a flow, plan it from the flow file, else it waits for its route |
+| `route` | `route` | terminal, page | yes, without --flow | plan a request that waits for its route: one run of the router skill, or the plan of a flow file |
+| `status` | `status` | terminal, chat, page | no | requests, tasks and what waits for you |
+| `task` | `task` | terminal, page | no | one task or request with its runs and its pending decisions |
+| `flows` | `flows` | terminal, page | no | the flow files of this checkout, with their titles and how many tasks each holds |
+| `config` | `config` | terminal, page | no | the configuration's path and hash, whether you accepted it, and the data folder; it never refuses |
+| `progress` | `progress` | terminal, chat, page | no | where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD) |
+| `pending` | `pending` | terminal, chat, page | no | what waits for you; with an id, that decision whole |
+| `answer` | `answer` | terminal, chat, page | no | answer a pending decision |
+| `release` | `release` | terminal, chat, page | no | release a delivery (it stays a draft) |
+| `approve` | `approve` | terminal, chat, page | no | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
+| `reject` | `reject` | terminal, chat, page | no | reject a plan, an acceptance or an effect |
+| `retry` | `retry` | terminal, chat, page | no | make a failed or blocked task ready again |
+| `cancel` | `cancel` | terminal, chat, page | no | cancel a request |
 | `deps` | `deps` | terminal | no | install the dependency sets of runtime.json, by code |
 | `run_next` | `run-next` | terminal | yes | run the next ready task: one skill, once, on the model its proof gives |
 | `accept_config` | `accept-config` | terminal | no | record the hash of runtime.json you accept |
 | `proof` | `proof` | terminal | no | the model each skill in use would run on, with its bands and the two checks |
-| `verdict` | `verdict` | terminal | no | record your verdict on what one run delivered (worked, corrected or failed) |
-| `sync` | `sync` | terminal | no | mirror the tasks with the task board and the documents with the documents platform |
-| `hand_over` | `hand-over` | terminal | no | copy one file of yours into a task's file drop |
-| `set_mode` | `set-mode` | terminal | no | set one area agent's autonomy mode in runtime.json |
+| `verdict` | `verdict` | terminal, page | no | record your verdict on what one run delivered (worked, corrected or failed) |
+| `sync` | `sync` | terminal, page | no | mirror the tasks with the task board and the documents with the documents platform |
+| `hand_over` | `hand-over` | terminal, page | no | copy one file of yours into a task's file drop |
+| `set_mode` | `set-mode` | terminal, page | no | set one area agent's autonomy mode in runtime.json |
 | `approve_policy` | `approve-policy` | terminal | no | approve a policy file for one area agent (a standing approval) |
 | `revoke_policy` | `revoke-policy` | terminal | no | end a standing approval |
 | `standing` | `standing` | terminal | no | whether an active standing approval covers a policy now; it executes nothing |
 | `execute_under_policy` | `execute-under-policy` | terminal | no | execute an effect a handler wrote, inside the bounds of a standing approval |
 | `contained_run` | `contained-run` | terminal | yes | run one skill of an area agent's pack in the container on the artifacts it declares; only its reply comes out |
-| `dispatch` | `dispatch` | terminal | yes | one round of the dispatcher: the handlers' ticks, the releases by a mode, the next ready tasks |
+| `dispatch` | `dispatch` | terminal, page | yes | one round of the dispatcher: the handlers' ticks, the releases by a mode, the next ready tasks |
 | `poll` | `poll` | terminal | no | the short job: mirrors, expired approvals, the state file's generated lines, the releases |
 | `handler_call` | `handler` | terminal | no | start one verb of a handler that runtime.json names |
 | `pin` | `pin` | terminal | no | write the pin of the dispatcher's two jobs |
-| `say` | `say` | terminal | yes, for a new request | one turn of the conversation with the planning agent |
+| `say` | `say` | terminal, page | yes, for a new request | one turn of the conversation with the planning agent |
+| `stop_runs` | `stop-runs` | terminal | no | end the runs this process started (the local service calls it before it exits) |
 <!-- /generated -->
 
 **The dispatcher's jobs**, `/usr/bin/python3 runtime/dispatcher.py <verb> --project <dir> [--pin <file>]`, run by the scheduler from a copy kept in the job folder:

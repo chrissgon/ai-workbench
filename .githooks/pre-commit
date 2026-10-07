@@ -7,8 +7,8 @@
 #    (WB_BASE_REF), never against HEAD: an edit and its bump in two commits are read as one change.
 # 2. scripts/security_scan.py --strict: a security warning (hidden text, a shell run on a built string,
 #    an unguarded recursive delete, an unpinned dependency...) blocks the commit like an error does.
-# 3. The tests of providers/<class>/, scripts/, evals/, runtime/ (also when a flow file under flows/
-#    changed), shared/, an adapter or a skill's scripts/ (its scripts/tests/ folder, also when only a
+# 3. The tests of providers/<class>/, scripts/, evals/, runtime/ (also when a flow file under flows/ or a file
+#    under interface/ changed), shared/, an adapter or a skill's scripts/ (its scripts/tests/ folder, also when only a
 #    test changed) when the commit touches them; a provider
 #    class left without tests is refused. A commit that touches .githooks/, .github/, packs/, templates/
 #    or agents/ runs scripts/tests, where the tests of that wiring, of the installers and of the scaffold are.
@@ -52,7 +52,7 @@ while IFS= read -r -d '' f; do
     evals/execution.py) d="evals/tests"  # the runtime's lab facade (runtime/lab.py) loads the execution kit
       [[ " ${dirs[*]-} " != *" runtime/tests "* ]] && dirs+=("runtime/tests") ;;
     evals/*) d="evals/tests" ;;
-    runtime/*|flows/*) d="runtime/tests" ;;  # a flow file is checked by the tests of the code that reads it
+    runtime/*|flows/*|interface/*) d="runtime/tests" ;;  # a flow file, a page of the interface: checked by the tests of the code that reads it
     skills/*/evals/runtime-manifest.json) d="runtime/tests" ;;  # read by runtime/manifest.py, before any skills/* pattern
     skills/*/scripts/*) d="skills/$(echo "$f" | cut -d/ -f2)/scripts/tests" ;;
     adapters/*/*) d="adapters/$(echo "$f" | cut -d/ -f2)/tests" ;;

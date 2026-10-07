@@ -63,7 +63,7 @@ Where: **project** is the target project, **data** is the project's data folder 
 | `tick-pin.json`, `tick.lock`, `events/`, `runs/` | data | the first runtime's pin, lock, inbox files and run folders | `scripts/runtime.py` | `scripts/runtime.py` | until stage 7 | no | yes |
 | A local task board's folder (`task_board.dir`) | outside the project's `docs/` and the checkout | the local board provider's items | `runtime/board.py`, the person | `runtime/board.py` | mirrored at each `sync` | no | no |
 
-Planned (stage 9, nothing built): `<data_dir>/service.token` and `<data_dir>/uploads/`.
+The local service (stage 9) writes `<data_dir>/service.token` (mode 0600, new at every start, removed when it stops) and, for a file a page hands to a task, `<data_dir>/uploads/<random>/<name>` (removed right after the hand-over).
 
 **What a project versions.** The `Docs in git` decision of the state file, taken once per project: `all` (every workbench folder under `docs/` is committed), `code` (only `docs/product/`, `docs/design/`, `docs/engineering/`, `docs/ai/`, `docs/delivery/`; the work data in `docs/workbench/`, `docs/business/`, `docs/brand/`, `docs/marketing/`, `docs/security/` is ignored), `none`, or `undecided` (an open question; nothing is ignored, and a skill asks before the first commit that would include a workbench folder). The decision reaches a commit only through git: a `docs/` path git keeps out never enters a change set (L11), and a `docs/` path git versions travels in a code task's change set as `versioned`, not as a loose document.
 

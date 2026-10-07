@@ -310,7 +310,7 @@ def test_the_shell_prints_one_json_object_and_uses_the_documented_exit_codes(tre
 
 
 def test_every_script_of_the_runtime_prints_its_help_and_refuses_an_unknown_call():
-    for name in ("lab", "ops", "cli", "flow_files", "path_rule", "state_merge", "endings", "project_config", "skill_meta"):
+    for name in ("lab", "ops", "cli", "flow_files", "path_rule", "state_merge", "endings", "project_config", "skill_meta", "service"):
         script = str(st.REPO / "runtime" / f"{name}.py")
         helped = subprocess.run([sys.executable, script, "--help"], capture_output=True, text=True, timeout=60)
         assert helped.returncode == 0 and helped.stdout.strip() and "Traceback" not in helped.stderr, name
@@ -379,3 +379,186 @@ def test_a_failed_install_fails_the_run_before_any_model_call(tree, monkeypatch)
     assert st.calls(tree["adapter"]) == [] and out["task_state"] == "failed"
     with pytest.raises(ops.OpsError, match="no matching distribution"):
         ops.deps(project)
+
+
+# --- stage 9: what the local service asks of the operations layer -----------------------------------------------------
+
+
+def open_decision(tree, kind: str) -> int:
+    """The id of an open pending decision of this kind, made through the layer's own operations and the store's own
+    functions (no stand-in): a plan by routing a request to a flow, an acceptance on a request, and the other kinds as
+    the pending decision of a run that ended."""
+    path = project_of(tree)
+    ctx = ops.context(path)
+    store, conn = ctx["store"], ctx["conn"]
+    if kind == "plan":
+        tasks = [{"key": "market", "skill": "demo-asks", "title": "Market", "text": "Do it.", "depends_on": [], "milestone": False}]
+        payload = {"tasks": tasks, "plan_sha256": ops.plan.plan_hash(tasks), "flow": "demo"}
+        return store.plan_open(conn, ops.request(path, "Plan this.")["request"], title="Plan", body="The plan.",
+                               payload=payload)["pending_id"]
+    made = ops.request(path, f"A request that waits on a {kind}.", "demo")
+    if kind == "acceptance":
+        return store.acceptance_open(conn, task_id=made["request"], what="deliveries", title="Accept", body="Accept them.",
+                                     payload={})["pending_id"]
+    task = made["tasks"][0]["id"]
+    assert store.task_claim(conn, task)["task"]["id"] == task
+    run = store.task_run_start(conn, task, skill="demo-asks", model="m", adapter="h")["run_id"]
+    pending = {"kind": kind, "title": f"A {kind}", "body": "Decide.", "payload": {}}
+    return store.task_run_finish(conn, run, status="ok", task_state="waiting", pending=pending)["pending_id"]
+
+
+EXPECTED_ACTIONS = {"plan": ["approved", "rejected"], "question": ["answered"], "review": ["answered", "released"],
+                    "effect": ["approved", "rejected"], "acceptance": ["accepted", "rejected"], "your_document": []}
+
+
+def test_each_kind_of_pending_decision_lists_the_resolutions_the_store_allows_and_no_other(tree):
+    path = project_of(tree)
+    ctx = ops.context(path)
+    store, conn = ctx["store"], ctx["conn"]
+    assert set(EXPECTED_ACTIONS) == set(store.PENDING_KINDS)  # a kind the store gains is a kind this test must know
+    ids = {kind: open_decision(tree, kind) for kind in store.PENDING_KINDS}
+    listed = {item["kind"]: item for item in ops.pending(path)["pending"]}
+    assert {kind: item["actions"] for kind, item in listed.items()} == EXPECTED_ACTIONS
+    assert {item["kind"]: item["actions"] for item in ops.status(path)["pending"]} == EXPECTED_ACTIONS
+    whole = {kind: ops.pending(path, pending_id) for kind, pending_id in ids.items()}
+    assert {kind: item["actions"] for kind, item in whole.items()} == EXPECTED_ACTIONS and whole["review"]["body"] == "Decide."
+    # Built from the store's own tables: the words of a plan and an acceptance are its KIND_RESOLUTIONS, and every other
+    # word comes from RESOLUTIONS or EFFECT_RESOLUTIONS, in the store's order.
+    for kind in ("plan", "acceptance"):
+        assert listed[kind]["actions"] == [w for (of, w) in store.KIND_RESOLUTIONS if of == kind]
+    assert listed["question"]["actions"] == [w for w in store.RESOLUTIONS if w != "released"]
+    assert listed["review"]["actions"] == list(store.RESOLUTIONS) and "released" in store.RESOLUTIONS
+    assert set(listed["effect"]["actions"]) - {"approved"} <= set(store.EFFECT_RESOLUTIONS)
+    # No other: every resolution word the store knows and the decision does not list is refused by the store for that kind
+    # (an effect's comment, `answered`, is the one word the store takes that the page does not offer: decision of 2026-10-07).
+    words = {*store.RESOLUTIONS, *store.EFFECT_RESOLUTIONS, *(w for _, w in store.KIND_RESOLUTIONS)}
+    # (A `your_document` is not in this loop: nothing opens one before stage 10, which also gives it its delivery; the store
+    # would take `answered` for it today, and it lists no action until then.)
+    for kind in ("question", "review", "effect"):
+        for word in sorted(words - set(EXPECTED_ACTIONS[kind]) - ({"answered"} if kind == "effect" else set())):
+            fresh = open_decision(tree, kind)
+            with pytest.raises(store.StoreError):
+                store.pending_resolve(conn, fresh, resolution=word, by="user", answer="x")
+            assert store.pending_get(conn, fresh)["status"] == "open", (kind, word)
+    for kind, word in (("plan", "answered"), ("plan", "released"), ("acceptance", "approved"), ("acceptance", "answered")):
+        with pytest.raises(store.StoreError):
+            store.pending_resolve(conn, ids[kind], resolution=word, by="user", answer="x")
+    assert ops.approve(path, ids["plan"])["plan_sha256"] == ops.plan.plan_hash(whole["plan"]["payload"]["tasks"]) and ops.answer(path, ids["question"], "Portugal.")["task_state"] == "ready"
+    assert ops.release(path, ids["review"])["task_state"] == "done"
+    assert ops.approve(path, ids["acceptance"])["task_id"]                      # the page's `accepted` is approve
+    # a decision that is resolved lists none, in the task's own list
+    resolved = ops.task(path, store.pending_get(conn, ids["question"])["task_id"])["pending"]
+    assert [(p["id"], p["status"], p["actions"]) for p in resolved] == [(ids["question"], "resolved", [])]
+
+
+def test_the_config_operation_reports_the_hash_and_whether_it_was_accepted_and_never_refuses(tmp_path, monkeypatch):
+    built = st.build(tmp_path, monkeypatch, lab)
+    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    path = str(built["project"])
+    digest = ops.project_config.load(path)["sha256"]
+    before = ops.config(path)
+    assert before == {"path": os.path.join(path, "docs", "workbench", "runtime.json"), "sha256": digest, "accepted": False,
+                      "data_dir": str(built["data"])}
+    with pytest.raises(ops.OpsError) as refused:
+        ops.pending(path)
+    assert refused.value.code == 3
+    ops.accept_config(path, digest)
+    assert ops.config(path) == {**before, "accepted": True}
+    with open(before["path"], "ab") as f:
+        f.write(b" ")
+    assert ops.config(path)["accepted"] is False and ops.config(path)["sha256"] != digest
+    # what cannot be read at all is still refused, with the exit code every shell reads as "not configured"
+    with pytest.raises(ops.OpsError) as missing:
+        ops.config(str(tmp_path / "no-such-folder"))
+    assert missing.value.code == 3
+    monkeypatch.setattr(ops, "ROOT", str(tmp_path))
+    with pytest.raises(ops.OpsError) as other:
+        ops.config(path)
+    assert other.value.code == 3 and "names the workbench checkout" in str(other.value)
+
+
+def test_the_task_operation_returns_a_task_with_its_runs_and_pending_decisions(tree):
+    path = project_of(tree)
+    made = requested(tree)
+    first = ops.run_next(path)
+    request, task = made["request"], made["tasks"][0]["id"]
+    found = ops.task(path, task)
+    assert set(found) == {"task", "runs", "pending"} and found["task"]["id"] == task and found["task"]["state"] == "waiting"
+    assert [(r["id"], r["status"], r["ending"], r["model"]) for r in found["runs"]] == [(first["run_id"], "ok", "question", "m")]
+    assert set(found["runs"][0]) >= {"status", "failure", "ending", "attempts", "duration_ms", "tokens", "cost_usd", "model", "skill_version"}
+    assert [(p["id"], p["kind"], p["status"], p["actions"]) for p in found["pending"]] == [(first["pending_id"], "question", "open", ["answered"])]
+    ops.answer(path, first["pending_id"], "Portugal.")
+    after = ops.task(path, task)
+    assert [(p["status"], p["actions"]) for p in after["pending"]] == [("resolved", [])] and after["task"]["state"] == "ready"
+    assert ops.task(path, request)["task"]["parent_id"] is None and ops.task(path, request)["runs"] == []   # the request's own
+    with pytest.raises(ops.OpsError) as unknown:
+        ops.task(path, 9999)
+    assert unknown.value.code == 1
+    assert cli.run(["task", "--project", path, "--task", str(task)])["task"]["id"] == task
+
+
+def test_the_flows_operation_lists_the_flow_files_and_a_bad_one_with_its_error(tree):
+    path = project_of(tree)
+    listed = ops.flows(path)["flows"]
+    assert [(f["flow"], f["title"], f["tasks"]) for f in listed] == [
+        ("code-demo", "Code demo", 2), ("demo", "Demo flow", 2), ("gate-demo", "Gate demo", 2)] and "error" not in listed[0]
+    (tree["tree"] / "flows" / "broken.json").write_text('{"flow": "broken", "title": "Broken", "tasks": []}', encoding="utf-8")
+    (tree["tree"] / "flows" / "worse.json").write_text("not json", encoding="utf-8")
+    listed = {f["flow"]: f for f in ops.flows(path)["flows"]}
+    assert set(listed) == {"broken", "code-demo", "demo", "gate-demo", "worse"} and listed["demo"]["tasks"] == 2
+    assert listed["broken"]["title"] is None and listed["broken"]["tasks"] == 0 and "at least one task" in listed["broken"]["error"]
+    assert "not valid JSON" in listed["worse"]["error"]
+    ops.accept_config  # the configuration check still runs: an unaccepted project is refused
+    with open(ops.project_config.path(path), "ab") as f:
+        f.write(b" ")
+    with pytest.raises(ops.OpsError) as refused:
+        ops.flows(path)
+    assert refused.value.code == 3
+
+
+def test_an_effect_is_approved_from_the_terminal_and_the_page_and_from_no_other_channel(tree):
+    from test_effects import gate_project, provider_calls
+    case = gate_project(tree)
+    path, item = case["path"], case["item"]
+    for channel in ("chat", "mcp", "web", "", None, "Terminal", "PAGE"):
+        with pytest.raises(ops.OpsError, match="an effect is approved in the terminal"):
+            ops.approve(path, item["id"], item["payload_sha256"], channel=channel)
+    assert provider_calls(tree) == [] and ops.pending(path, item["id"])["status"] == "open"
+    with pytest.raises(ops.OpsError, match="--sha256"):
+        ops.approve(path, item["id"], None, channel="page")       # the hash is the person's; nothing fills it in
+    with pytest.raises(ops.OpsError, match="you typed"):
+        ops.approve(path, item["id"], "0" * 64, channel="page")
+    assert provider_calls(tree) == []
+    out = ops.approve(path, item["id"], item["payload_sha256"], channel="page")
+    assert out["pull_request"]["number"] == 7 and [c["argv"][0] for c in provider_calls(tree)].count("open-pr") == 1
+    assert ops.EFFECT_CHANNELS == ("terminal", "page")
+
+
+def test_stop_runs_ends_the_run_this_process_started_and_leaves_nothing_running(tree, monkeypatch):
+    import threading
+    import time
+    path = project_of(tree)
+    requested(tree)
+    st.fail(tree["adapter"], "timeout", 99)          # the stand-in adapter sleeps 30 s on every call
+    result = {}
+
+    def run():
+        result["out"] = ops.run_next(path)
+
+    runner = threading.Thread(target=run)
+    started = time.monotonic()
+    runner.start()
+    try:
+        deadline = time.monotonic() + 20
+        while not st.calls(tree["adapter"]) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert st.calls(tree["adapter"]), "the run did not start"
+        assert ops.stop_runs() == {"stopped": True} and ops.stop_runs(path) == {"stopped": True}
+        runner.join(20)
+        assert not runner.is_alive() and time.monotonic() - started < 25     # it did not wait out the 30 s
+    finally:
+        lab.LAB.STOPPING.clear()
+        runner.join(5)
+    assert result["out"]["status"] == "failed"
+    assert cli.run(["stop-runs", "--project", path]) == {"stopped": True}
+    lab.LAB.STOPPING.clear()
