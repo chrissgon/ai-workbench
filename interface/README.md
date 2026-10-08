@@ -9,13 +9,17 @@ returned and sends what the person typed or clicked.
 
 | Path | What |
 |---|---|
-| `index.html`, `style.css`, `favicon.svg` | The one page, its rules and its icon. No inline script, no inline style: every rule is in `style.css`, every script is a module. |
-| `js/main.js` | Draws the page by the hash: the token prompt, the project list (`#/`), a project's panel (`#/p/<id>`). |
-| `js/api.js` | The client of the service: one function per route of `ROUTES` in `runtime/service.py`, named after the operation (the reads of the views too: `agents`, `conversation`, `skills`, `costs`, `connections`, `artifacts`, `artifact`; no page calls them yet). |
-| `js/token.js` | The token for this session. |
-| `js/dom.js` | Building elements: strings become text, a style or an event attribute is refused. |
-| `js/views/` | One module per view (`token-prompt.js`, `projects.js`, `project.js`); the next packages add theirs here. |
-| `js/three.js` | The one place the 3D library is imported from (a relative re-export); the scene packages use it. |
+| `index.html`, `style.css`, `favicon.svg` | The one page, its rules and its icon. No inline script, no inline style: every rule is in `style.css`, every script is a module. `style.css` derives the page's own tokens (`--wb-raised`, `--wb-ground`, `--wb-elev`, ...) from the library's, with no colour literal. |
+| `icons/` | One clean SVG file per icon (13, from the Lucide set), drawn by a CSS mask in the colour of the text. |
+| `js/main.js` | The page: the token prompt, then the shared frame with the screen the hash names (`#/` is the City; the other screens are placeholders until their packages), and the poll (every 5 s while the document is visible, none while it is hidden). |
+| `js/router.js`, `js/format.js`, `js/model.js` | Pure functions: the hash forms, the display words and numbers, and what the City shows worked out from the service's bodies (floors, windows, waiting rows, the tracking bar). Tested under Node. |
+| `js/data.js` | What the City reads: `projects`, then `status` and `agents` of each accepted project, and the running task's `task` body. Reads only. |
+| `js/api.js` | The client of the service: one function per route of `ROUTES` in `runtime/service.py`, named after the operation. |
+| `js/token.js`, `js/dom.js` | The token for this session; building elements (strings become text, a style or an event attribute is refused). |
+| `js/frame/` | The shared frame of every scene screen: header (back, breadcrumbs, project switcher), KPI cards, waiting list, tracking bar, panel shell, sheet (a phone's lists), icons. |
+| `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `city.js` (the City's geometry), `labels.js`, `cull.js`, `fit.js`. |
+| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City) and `placeholder.js` (the Building, Floor, Lobby and Control room until their packages). |
+| `js/three.js` | The one place the 3D library is imported from (a relative re-export); the scene uses it. |
 | `vendor/three/`, `vendor/<library>/` | The two third-party libraries, copied unchanged, each folder with a README that records the package, the exact version, the licence and the sha256 of every file. |
 
 ## How to open it
@@ -28,9 +32,11 @@ It prints one JSON line with the page's `url` and the path of the `token_file`. 
 file in an editor or with `cat`, and paste its one line into the page. The page asks for it once per browser session: it
 is kept in memory and in the tab's `sessionStorage` (which the browser drops when the tab closes), and the button "Forget
 the token" clears both. The service writes a new token at every start, so after a restart the page asks again. Then the
-project list appears: for each project its name, whether its configuration is accepted (when it is not, the service's
-message says the command to type in the terminal), its open decisions and the task that runs; choosing one keeps its id
-in the hash (`#/p/<id>`) and shows its status counts. The scene comes with the next packages.
+City appears: a project whose configuration is not accepted shows the service's message (the command to type in the
+terminal) in a band under the header; choosing a building keeps its id
+in the hash (`#/p/<id>`). The first screen is the City: an isometric plot with one building per project, the three KPI
+cards, the waiting list, the project switcher and the tracking bar; choosing a building moves the camera in and opens the
+project's screen (a placeholder with the status counts until the Building screen is built).
 
 ## The rules of these files
 
@@ -59,11 +65,18 @@ folder under `vendor/` with the package's files exactly as its README lists them
 that README (`shasum -a 256 <file>`), and run `pytest -q runtime/tests/test_interface_files.py`. A vendored file is never
 edited by hand: a change to one fails that test.
 
-## What comes with the later packages
+## What the scene does and does not do
 
-The scene (the city of projects, the building of agents, the floor with its desk and inbox), the lobby's conversation and the
-control room (skills, costs, connections) are WP-9.2b and WP-9.3b to WP-9.5. They add modules under `js/` and `js/views/`
-and read more routes through `js/api.js`; they edit no vendored file.
+The scene is drawn only when something changed (data, camera, hover, size) or while a state animates: a running project's
+beacon (at most 30 frames a second), a decision's marker dropping in once, the camera moving in (600 ms). It draws nothing
+while the document is hidden, caps the pixel ratio at 2, stops its ambient animation under `prefers-reduced-motion`, and
+without WebGL shows one line of text and leaves every panel and action working. Its colours are read from the page's CSS
+custom properties when it is built and when the colour scheme changes. Nothing in it is decorative: no vehicles, people,
+birds or weather. `canvas.wbStats()` (a function on the canvas element) returns the frames drawn so far, for a check.
+
+The Building, the Floor, the Lobby and the Control room are WP-9.3b to WP-9.5. They add modules under `js/views/` and
+`js/scene/` (a builder per scene kind, registered in `BUILDERS` of `engine.js`) and read more routes through `js/api.js`;
+they edit no vendored file.
 
 ## How the service serves it
 
