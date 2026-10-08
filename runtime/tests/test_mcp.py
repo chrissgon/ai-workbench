@@ -1,5 +1,5 @@
 """Tests of the MCP mode (runtime/mcp.py): the protocol's handshake, the tools read from the table of operations, the
-channel rule (an effect is never approved from here), the jobs, the errors and the standard output. A stand-in
+channel rule (nothing is approved, rejected, cancelled or retried from here, as a tool or typed into say), the jobs, the errors and the standard output. A stand-in
 operations object records every call, so a test sees exactly what the shell asked the operations layer; the tests that
 need the real operations use the stand-in tree of standin_tree.py. The messages travel over in-process byte streams; the
 one subprocess test starts the command with a stand-in operations module and checks what reaches its standard output.
@@ -28,6 +28,7 @@ from test_service import Standin, WAIT
 mcp = st.load("mcp")
 ops = st.load("ops")
 operations = st.load("operations")
+plans = st.load("plan")
 service = st.load("service")
 
 STANDARD_LIBRARY = {"__future__", "datetime", "hashlib", "io", "json", "os", "signal", "sys", "threading", "time", "traceback"}
@@ -70,6 +71,14 @@ def result_of(answer):
     return json.loads(content["text"])
 
 
+def refusal_of(answer):
+    """The sentence of a tool result that is a refusal (isError true)."""
+    assert "error" not in answer, answer
+    [content] = answer["result"]["content"]
+    assert content["type"] == "text" and answer["result"]["isError"] is True
+    return content["text"]
+
+
 @pytest.fixture
 def world(tmp_path):
     fake = Standin(tmp_path / "data")
@@ -100,7 +109,7 @@ def test_the_handshake_negotiates_the_version_and_offers_the_tools_capability(wo
     assert first["jsonrpc"] == "2.0" and first["id"] == "a"
     found = first["result"]
     assert found["protocolVersion"] == "2025-06-18" and found["capabilities"] == {"tools": {"listChanged": False}}
-    assert found["serverInfo"]["name"] and "approve" in found["instructions"]
+    assert found["serverInfo"]["name"] and "terminal or on the local page" in found["instructions"]
     assert second == {"jsonrpc": "2.0", "id": 5, "result": {}}  # the notification got no answer
     older = talk(world.server, handshake=False, *[rpc("initialize", {**INIT, "protocolVersion": "2024-11-05"}, 1)])
     assert older[0]["result"]["protocolVersion"] == "2024-11-05"
@@ -130,12 +139,12 @@ def test_the_tools_are_the_rows_of_the_table_that_list_the_mcp_channel_and_the_t
     names = [t["name"] for t in answer["result"]["tools"]]
     rows = [r["name"] for r in operations.OPERATIONS if "mcp" in r["channels"]]
     assert names == rows + ["projects", "job"] and answer["id"] == 7
-    assert names == ["request", "route", "status", "task", "flows", "progress", "pending", "answer", "release", "approve", "say",
+    assert names == ["request", "route", "status", "task", "flows", "progress", "pending", "answer", "release", "say",
                      "agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact", "projects", "job"]
     # what the table does not list for the channel has no tool: the decisions of the terminal and the page
     for never in ("accept-config", "run-next", "deps", "proof", "approve-policy", "revoke-policy", "standing",
                   "execute-under-policy", "contained-run", "poll", "handler", "pin", "stop-runs", "set-mode", "hand-over",
-                  "verdict", "sync", "dispatch", "config", "reject", "cancel", "retry"):
+                  "verdict", "sync", "dispatch", "config", "approve", "reject", "cancel", "retry"):
         assert never not in names and "mcp" not in operations.by_name(never)["channels"], never
     by_name = {t["name"]: t for t in answer["result"]["tools"]}
     for row in operations.OPERATIONS:
@@ -147,8 +156,8 @@ def test_the_tools_are_the_rows_of_the_table_that_list_the_mcp_channel_and_the_t
         assert {a["name"] for a in row["args"] if a.get("required")} == set(schema["required"])
         assert ("tool job" in by_name[row["name"]]["description"]) == bool(row.get("job"))
     assert "channel" not in {p for t in by_name.values() for p in t["inputSchema"]["properties"]}  # a client names no channel
-    assert "required" in by_name["approve"]["inputSchema"] and "pending_id" in by_name["approve"]["inputSchema"]["required"]
-    assert "never approved from here" in by_name["approve"]["description"]
+    assert by_name["answer"]["inputSchema"]["required"] == ["pending_id", "text"]
+    assert "terminal or on the page" in by_name["say"]["description"] and "approve" not in names
     assert by_name["pending"]["inputSchema"]["properties"]["pending_id"] == {"type": "integer", "minimum": 0}
 
 
@@ -215,9 +224,11 @@ def test_request_route_answer_release_and_say_go_through_the_operations_layer(wo
     assert world.fake.calls[1] == ("answer", path, {"pending_id": 2, "text": "yes", "with_comments": True})
     assert sorted(c[0] for c in world.fake.calls[2:]) == ["release", "route", "say"]
     assert {c[0]: c[2] for c in world.fake.calls[2:]} == {"route": {"request_id": 5, "flow": "demo"}, "release": {"pending_id": 2},
-                                                          "say": {"text": "hello"}}
-    for name in ("request", "route", "answer", "release", "say", "approve"):
+                                                          "say": {"text": "hello", "channel": "mcp"}}
+    for name in ("request", "route", "answer", "release", "say"):
         assert "mcp" in operations.by_name(name)["channels"], name
+    for name in ("approve", "reject", "cancel", "retry"):
+        assert "mcp" not in operations.by_name(name)["channels"], name
 
 
 def test_a_bad_argument_is_an_invalid_parameter_and_calls_nothing(world):
@@ -238,11 +249,13 @@ def test_a_bad_argument_is_an_invalid_parameter_and_calls_nothing(world):
     assert world.fake.calls == []
 
 
-def test_an_error_of_the_operations_layer_is_the_protocols_error_with_the_services_word_and_status(world):
-    for code, word, status, protocol in ((1, "refused", 409, -32000), (2, "usage", 400, -32602), (3, "not_configured", 412, -32000)):
-        world.fake.answers["status"] = ops.OpsError(f"text {code}", code)
-        answer = tool(world.server, "status")
-        assert answer["error"] == {"code": protocol, "message": f"text {code}", "data": {"error": word, "status": status}}
+def test_a_refusal_is_a_tool_result_and_the_rest_is_the_protocols_error_with_the_services_word_and_status(world):
+    for code, sentence in ((1, "text 1"), (3, "text 3")):
+        world.fake.answers["status"] = ops.OpsError(sentence, code)
+        assert refusal_of(tool(world.server, "status")) == sentence
+    world.fake.answers["status"] = ops.OpsError("text 2", 2)
+    answer = tool(world.server, "status")
+    assert answer["error"] == {"code": -32602, "message": "text 2", "data": {"error": "usage", "status": 400}}
     world.fake.answers["status"] = RuntimeError("secret detail at /private/path")
     answer = tool(world.server, "status")
     assert answer["error"]["code"] == -32603 and answer["error"]["data"] == {"error": "internal", "status": 500}
@@ -252,44 +265,69 @@ def test_an_error_of_the_operations_layer_is_the_protocols_error_with_the_servic
 # --- the channel rule -------------------------------------------------------------------------------------------------
 
 
-def test_an_effect_is_never_approved_from_here_and_the_refusal_is_the_rules_sentence(tree):  # noqa: F811
+def test_nothing_is_approved_rejected_cancelled_or_retried_from_here_as_a_tool_or_typed_into_say(tree, monkeypatch):  # noqa: F811
+    monkeypatch.setattr(plans, "resolve_pack", lambda pack, root: ["demo-code", "demo-gate"])
     case = gate_project(tree)
-    path, item = case["path"], case["item"]
-    assert item["kind"] == "effect"
+    path, effect = case["path"], case["item"]
+    assert effect["kind"] == "effect"
+    request = ops.request(path, "Invented request.", title="Invented")["request"]
+    plan_id = ops.route(path, request, "gate-demo")["pending_id"]
+    plan = ops.pending(path, plan_id)
+    assert plan["kind"] == "plan"
     projects = [{"id": mcp.project_id(path), "name": "p", "path": path}]
     server = mcp.Server(ops, projects, log=lambda line: None, grace=WAIT)
-    answer = tool(server, "approve", {"pending_id": item["id"], "sha256": item["payload_sha256"]})
-    error = answer["error"]
-    assert error["message"].startswith(SENTENCE + ": ")
-    assert f"cli.py approve --project {path} --id {item['id']}" in error["message"]
-    assert error["data"] == {"error": "refused", "status": 409} and error["code"] == -32000
-    assert provider_calls(tree) == [] and ops.pending(path, item["id"])["status"] == "open"
-    # the exact hash, the wrong hash and no hash: the same refusal, before anything is read or sent
-    for arguments in ({"pending_id": item["id"]}, {"pending_id": item["id"], "sha256": "0" * 64}):
-        assert tool(server, "approve", arguments)["error"]["message"].startswith(SENTENCE)
-    assert provider_calls(tree) == [] and ops.pending(path, item["id"])["status"] == "open"
-    # a request cannot name another channel
-    assert tool(server, "approve", {"pending_id": item["id"], "sha256": item["payload_sha256"], "channel": "terminal"})[
-        "error"]["code"] == -32602
-    # through a line of the conversation it is the chat channel, and refused the same way
-    said = result_of(tool(server, "say", {"text": f"/approve {item['id']} {item['payload_sha256']}"}))
+    hash_ = effect["payload_sha256"]
+    before = (ops.status(path), ops.pending(path))
+    # there is no tool for any of them, and a request cannot name a channel on the tool that has one
+    for name in ("approve", "reject", "retry", "cancel"):
+        assert tool(server, name, {"pending_id": plan_id})["error"]["code"] == -32602
+    assert tool(server, "say", {"text": "x", "channel": "terminal"})["error"]["code"] == -32602
+    # typed into say, in every form: the channel mcp does not list the command, and nothing is done
+    commands = {"approve": [f"/approve {plan_id} {plan['payload']['plan_sha256']}", f"/approve {plan_id}",
+                            f"/approve {effect['id']} {hash_}", f"/approve {effect['id']}"],
+                "reject": [f"/reject {plan_id}", f"/reject {effect['id']} no", f"/reject {plan_id} with a reason"],
+                "retry": ["/retry 2", "/retry 3"], "cancel": [f"/cancel {request}"]}
+    for command, forms in commands.items():
+        for form in forms:
+            for prefix in ("", " ", "  ", "\x00", "\x00 ", "\t", "\n", "\r\n", "\x1b", " \x07 "):
+                said = result_of(tool(server, "say", {"text": prefix + form}))
+                deadline = time.monotonic() + WAIT
+                while said["state"] == "running" and time.monotonic() < deadline:
+                    said = result_of(tool(server, "job", {"job": said["job"]}))
+                assert said["state"] == "done" and said["result"]["reply"] == \
+                    f"error: /{command} is done in the terminal or on the page", (prefix, form)
+                assert said["result"]["ran"] is False and said["result"]["request_id"] is None
+    assert (ops.status(path), ops.pending(path)) == before
+    assert provider_calls(tree) == [] and ops.pending(path, effect["id"])["status"] == "open"
+    assert ops.pending(path, plan_id)["status"] == "open"
+    # what the channel lists still works through say: a read, and the help
+    shown = result_of(tool(server, "say", {"text": "/pending"}))
     deadline = time.monotonic() + WAIT
-    while said["state"] == "running" and time.monotonic() < deadline:
-        said = result_of(tool(server, "job", {"job": said["job"]}))
-    assert SENTENCE in json.dumps(said["result"]) and provider_calls(tree) == []
-    assert ops.pending(path, item["id"])["status"] == "open"
+    while shown["state"] == "running" and time.monotonic() < deadline:
+        shown = result_of(tool(server, "job", {"job": shown["job"]}))
+    assert shown["result"]["reply"].lstrip().startswith("{") and str(plan_id) in shown["result"]["reply"]
+    # the terminal and the page still approve a plan through say, and the conversation's own shell too
+    for channel in ("terminal", "page", None):
+        if channel is not None:
+            second = ops.route(path, ops.request(path, "Another.", title="Another")["request"], "gate-demo")["pending_id"]
+            hash2 = ops.pending(path, second)["payload"]["plan_sha256"]
+            ops.say(path, f"/approve {second} {hash2}", channel=channel)
+            assert ops.pending(path, second)["status"] == "resolved", channel
+    # an effect is still refused for them by the rule of ops.approve: a line is the conversation's channel
+    said = ops.say(path, f"/approve {effect['id']} {hash_}", channel="terminal")["reply"]
+    assert said.startswith("error: " + SENTENCE) and provider_calls(tree) == []
 
 
-def test_approve_is_called_as_the_channel_mcp_and_the_client_cannot_change_it(world):
-    result_of(tool(world.server, "approve", {"pending_id": 4, "sha256": "ab"}))
+def test_say_is_called_as_the_channel_mcp_and_the_client_cannot_change_it(world):
     deadline = time.monotonic() + WAIT
-    while not world.fake.named("approve") and time.monotonic() < deadline:
+    result_of(tool(world.server, "say", {"text": "hello"}))
+    while not world.fake.named("say") and time.monotonic() < deadline:
         time.sleep(0.01)
-    [(_, _, kwargs)] = world.fake.named("approve")
-    assert kwargs == {"pending_id": 4, "sha256": "ab", "channel": "mcp"}
+    [(_, _, kwargs)] = world.fake.named("say")
+    assert kwargs == {"text": "hello", "channel": "mcp"}
     assert "mcp" not in ops.EFFECT_CHANNELS  # the rule of the operations layer, which this shell does not restate
-    for row in operations.OPERATIONS:
-        assert ("channel_arg" in row) == (row["name"] == "approve"), row["name"]
+    assert [r["name"] for r in operations.OPERATIONS if r.get("channel_arg")] == ["approve", "say"]
+    assert "mcp" not in operations.by_name("approve")["channels"]
 
 
 # --- the jobs ---------------------------------------------------------------------------------------------------------
@@ -324,8 +362,7 @@ def test_a_job_that_ends_at_once_is_returned_ended_and_a_failure_is_the_error(wo
     done = result_of(tool(world.server, "release", {"pending_id": 1}))
     assert done["state"] == "done" and done["result"]["op"] == "release"
     world.fake.answers["release"] = ops.OpsError("nothing to release", 1)
-    failed = tool(world.server, "release", {"pending_id": 1})
-    assert failed["error"] == {"code": -32000, "message": "nothing to release", "data": {"error": "refused", "status": 409}}
+    assert refusal_of(tool(world.server, "release", {"pending_id": 1})) == "nothing to release"
     world.fake.answers["release"] = KeyError("boom at /private/path")
     crashed = tool(world.server, "release", {"pending_id": 1})
     assert crashed["error"]["data"] == {"error": "internal", "status": 500} and "boom" not in json.dumps(crashed)
@@ -345,7 +382,7 @@ def test_a_second_job_that_calls_a_model_waits_for_the_first(world):
     first = result_of(tool(world.server, "say", {"text": "one"}))
     assert entered.wait(WAIT)
     busy = tool(world.server, "say", {"text": "two"})
-    assert busy["error"]["data"] == {"error": "busy", "status": 409}
+    assert "job" in refusal_of(busy) and "is running for this project" in refusal_of(busy)
     assert [c[2]["text"] for c in world.fake.named("say")] == ["one"]
     release.set()
     deadline = time.monotonic() + WAIT
@@ -479,9 +516,13 @@ def test_a_folder_that_is_not_a_project_ends_the_start_and_an_unaccepted_configu
     [listed] = result_of(tool(server, "projects"))["projects"]
     assert listed["id"] == mcp.project_id(path) == service.project_id(path)
     assert listed["config"] == {"sha256": digest, "accepted": False} and "accept-config" in listed["message"]
-    for name, arguments in (("status", {}), ("pending", {}), ("request", {"text": "x"}), ("conversation", {})):
-        answer = tool(server, name, arguments)
-        assert answer["error"]["data"] == {"error": "not_configured", "status": 412} and digest in answer["error"]["message"], name
+    offered = [r for r in operations.OPERATIONS if "mcp" in r["channels"]]
+    assert len(offered) == 17
+    for row in offered:  # every tool of the table, reads and writes alike
+        arguments = {a["name"]: (1 if a["kind"] == "int" else "docs/x.md" if a["name"] == "path" else "x")
+                     for a in row["args"] if a.get("required")}
+        sentence = refusal_of(tool(server, row["name"], arguments))
+        assert digest in sentence and "accept-config" in sentence, row["name"]
     ops.accept_config(path, digest)
     [listed] = result_of(tool(server, "projects"))["projects"]
     assert listed["config"]["accepted"] is True and listed["open_pending"] == 0 and listed["running_task"] is None

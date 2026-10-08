@@ -23,7 +23,8 @@ Usage:
 The client starts this process and speaks to it on its standard input and output: one JSON-RPC 2.0 message per line,
 UTF-8, no line break inside a message (the protocol's stdio transport). Nothing but those messages is ever written to
 standard output; the log goes to standard error and holds the method, the tool, the outcome and the duration of a call,
-never an argument, a result or a secret. There is no token: the client that started the process is the only reader of its
+no argument and no result, and, when an operation fails in a way it did not expect (an internal failure), that failure's
+traceback, which may name a path or quote the failing value; it holds no secret of the shell, which has none. There is no token: the client that started the process is the only reader of its
 pipes. The process runs no background loop (`poll`, `dispatch`): the local service does, when the person starts it.
 
 What a client gets. The methods `initialize`, `ping`, `tools/list` and `tools/call`; the notifications it sends
@@ -39,19 +40,22 @@ operation that calls a model or a platform (the row's `job`) is started in a thr
 {"job": <n>} returns it again, "state" "done" or "failed" at the end. A job that ends within one second is returned
 ended. A job that calls a model is refused with "busy" while another such job of the project runs.
 
-What is refused. An operation whose row does not list `mcp` has no tool (the table is read, nothing is spelled here):
-accept-config, run-next, the standing approvals, reject, cancel, retry and the others stay in the terminal or on the
-page. The tool `approve` exists and passes the channel `mcp`; for a plan or an acceptance it does what the conversation's
-`/approve` does, and an effect is refused by the operations layer before anything is read or sent, with the sentence
-"an effect is approved in the terminal, with its hash: <the terminal's command>": the hash of an effect is typed in the
-terminal or clicked on the page, never sent from here.
+What is refused. A client of this channel may request, route, answer, release a draft and say, and read; nothing else.
+An operation whose row does not list `mcp` has no tool (the table is read, nothing is spelled here): approve, reject,
+cancel, retry, accept-config, run-next, the standing approvals and the others are done in the terminal or on the page,
+where the person is. The same holds for a command typed into the tool `say`: the tool is called as the channel `mcp`
+(a client cannot name another) and the operations layer does a command of a line only when its row lists that channel,
+so "/approve", "/reject", "/retry" and "/cancel" in a line are refused with "/<command> is done in the terminal or on the
+page". A model client must not authorise runs on its own request chain, and the hash of an effect is typed in the terminal
+or clicked on the page, never sent from here.
 
-Errors are the protocol's error object: the message is the operation's text and `data` is {"error": <word>, "status":
-<n>}, the words and statuses of the local service: 409 "refused" (code 1 of the operations layer), 400 "usage" (code 2,
-also an argument that does not fit the tool, with the code -32602), 412 "not_configured" (code 3), 404 "not_found", 409
-"busy", 500 "internal" (the traceback on standard error only). A message that is not JSON is -32700, one that is not a
-request is -32600, an unknown method -32601, an unknown tool or a bad argument -32602, a request before `initialize`
--32002.
+A refusal of the operations layer (409 "refused", 412 "not_configured", "busy") is a tool result with "isError": true and
+the sentence as its text content, as the protocol's tool-execution error. The protocol's error object is for the rest: its
+message is the text and `data` is {"error": <word>, "status": <n>}, the words and statuses of the local service: 400
+"usage" (code 2 of the operations layer, also an argument that does not fit the tool, with the code -32602), 404
+"not_found", 500 "internal" (-32603; the traceback on standard error only). A message that is not JSON is -32700, one that
+is not a request is -32600 (a batch is accepted, though the 2025-06-18 version dropped batches), an unknown method -32601,
+an unknown tool or a bad argument -32602, a request before `initialize` -32002.
 
 When it stops (standard input closed, SIGINT or SIGTERM) it ends the runs a job started (ops.stop_runs) and does not exit
 before that returns; a second signal while it stops is ignored.
@@ -89,9 +93,11 @@ OWN_TOOLS = ("projects", "job")
 INSTRUCTIONS = (
     "Tools of the ai-workbench task runtime. Read the project with status, pending, task, progress and the others; "
     "request, route, say, answer and release change the work. A tool that returns a job is polled with the tool job. "
-    "An effect (a publication, a pull request, a message sent) is approved only in the terminal or on the local page, "
-    "with the hash of its content: the tool approve refuses it, and that refusal is final."
+    "Approvals, rejections, cancellations and retries are made in the terminal or on the local page, where the person is "
+    "(an effect, a publication, a pull request or a message sent, only with the hash of its content): none is a tool "
+    "here, and a command of that kind typed into say is refused."
 )
+REFUSAL_WORDS = ("refused", "not_configured", "busy")  # returned as a tool result with isError, not as an error object
 STATUS_OF_CODE = {1: (409, "refused"), 2: (400, "usage"), 3: (412, "not_configured")}
 WORDS = {
     "usage": "the request is malformed", "refused": "the operation refused", "not_configured": "the project is not configured",
@@ -181,8 +187,8 @@ def tool_of(row: dict, ids: list) -> dict:
     if row.get("job"):
         text += ". Starts a job and returns it: poll it with the tool job"
     if row.get("channel_arg"):
-        text += ". Called as the channel mcp: the operations layer refuses what this channel may not do (an effect is " \
-                "never approved from here: its hash is typed in the terminal or clicked on the page)"
+        text += ". Called as the channel mcp: a command typed in the line (approve, reject, retry, cancel) is refused, " \
+                "it is done in the terminal or on the page"
     return {"name": row["name"], "description": text, "inputSchema": {"type": "object", "properties": properties,
                                                                       "required": required, "additionalProperties": False}}
 
@@ -408,18 +414,23 @@ def call_tool(server: Server, name, given) -> dict:
     function = getattr(server.ops, row["call"])
     call = lambda: function(project["path"], **args)  # noqa: E731
     try:
-        if not row.get("job"):
-            return _text(call())
-        job, thread = start_job(server, project["id"], row["name"], call)
-        thread.join(server.grace)
-        shown = _job_value(server, job)
-        if shown["state"] == "failed":  # refused at once (a refusal of the rule, a wrong hash): the refusal itself
-            e = shown["error"]
-            raise _fail_of(e["error"], e["status"], e["message"])
-        return _text(shown)
-    except server.ops.OpsError as e:
-        status, word = _word_of(e)
-        raise _fail_of(word, status, str(e)) from None
+        try:
+            if not row.get("job"):
+                return _text(call())
+            job, thread = start_job(server, project["id"], row["name"], call)
+            thread.join(server.grace)
+            shown = _job_value(server, job)
+            if shown["state"] == "failed":  # refused at once (a refusal of the rule, a wrong hash): the refusal itself
+                e = shown["error"]
+                raise _fail_of(e["error"], e["status"], e["message"])
+            return _text(shown)
+        except server.ops.OpsError as e:
+            status, word = _word_of(e)
+            raise _fail_of(word, status, str(e)) from None
+    except Fail as refusal:
+        if refusal.word in REFUSAL_WORDS:  # the operation's "no" is a result the model reads, not a fault of the protocol
+            return {"content": [{"type": "text", "text": str(refusal)}], "isError": True}
+        raise
 
 
 def _text(value) -> dict:

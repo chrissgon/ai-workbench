@@ -84,7 +84,7 @@ Operations of stage 6:
                                    releases a mode makes; it calls no model and starts no task
   handler_call(project, name, verb[, args])   one verb of a handler under runtime/handlers/, its JSON object
   pin(project)                     the pin of the dispatcher's two jobs: the accepted runtime.json's path and hash
-  say(project, text)               one turn of the conversation with the planning agent (runtime/chat.py is its shell):
+  say(project, text[, channel])    one turn of the conversation with the planning agent (runtime/chat.py is its shell):
                                    a command, the answer to the router's question, or a new request with the memory
   release(project, pending_id)     also starts what a release starts: the brief's delivery routed again (its tasks
                                    wait in an acceptance), and, when the released task returned the product backlog,
@@ -2658,14 +2658,16 @@ def chat_memory(messages: list, settled: set) -> str:
     return "\n".join([MEMORY_HEAD, *lines]) if lines else ""
 
 
-def say(project: str, text: str) -> dict:
+def say(project: str, text: str, channel: str | None = None) -> dict:
     """One turn of the conversation with the planning agent (decision D12), one more shell of this layer. The person's
     line is stored; a line that starts with "/" is one command of the table of operations (runtime/operations.py), which calls its operation once; a plain
     line answers the router's open question on the conversation's last request, or else is a new request routed with
     the conversation's memory in front of it (one or more runs of the router: a model call), refused when the planning
     agent may not start. The reply is stored too. A model's reply is shown, never executed. A line that would route
     while another run of the project holds the run lock is refused (code 1) before the line or a request is stored.
-    Returns {"reply", "request_id", "pending_id", "ran"}."""
+    `channel` is the shell that carries the line (the terminal, the local page, the MCP mode; the conversation's own
+    shell passes none and is `chat`): a command in the line is done only when its row lists that channel, so a shell
+    that may not approve, reject, retry or cancel cannot do it by typing the command here either. Returns {"reply", "request_id", "pending_id", "ran"}."""
     ctx = context(project)
     said = _text(text, "the line")
     store = ctx["store"]
@@ -2677,7 +2679,7 @@ def say(project: str, text: str) -> dict:
     _stored(ctx, store.message_add, conversation=CONVERSATION, role="user", text=said)
     request_id, pending_id, ran, run_id = None, None, False, None
     if said.startswith("/"):
-        reply, request_id, pending_id, ran, run_id = _say_command(project, ctx, said)
+        reply, request_id, pending_id, ran, run_id = _say_command(project, ctx, said, channel or "chat")
     else:
         last = _last_request(ctx)
         asked = _router_question(ctx, last)
@@ -2719,10 +2721,12 @@ def _router_question(ctx: dict, request_id):
     return open_items[-1]["id"] if open_items and open_items[-1]["kind"] == "question" else None
 
 
-def _say_command(project: str, ctx: dict, said: str) -> tuple:
+def _say_command(project: str, ctx: dict, said: str, channel: str = "chat") -> tuple:
     """(reply, request_id, pending_id, ran, run_id) of a command line: the table of operations reads it
-    (operations.parse_chat); an operation it names is called once with the arguments it read and the channel `chat`,
-    and a line it does not read gets the help."""
+    (operations.parse_chat); an operation it names is called once with the arguments it read and the channel `chat`
+    (so an effect is never approved from a line), when its row lists the channel that carries the line (`channel`):
+    a command that row does not list is refused with the place where it is done, and a line it does not read gets
+    the help."""
     parsed = operations.parse_chat(said)
     if parsed is None or parsed[0] == "help":
         return operations.chat_help(), None, None, False, None
@@ -2730,6 +2734,8 @@ def _say_command(project: str, ctx: dict, said: str) -> tuple:
     if name == "new":
         return _say_route(project, ctx, found)
     row = operations.by_name(name)
+    if channel not in row["channels"]:
+        return f"error: /{name} is done in the terminal or on the page", None, None, False, None
     if row.get("channel_arg"):
         found = dict(found, channel="chat")
     try:

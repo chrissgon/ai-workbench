@@ -345,7 +345,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `pending` | `pending` | terminal, chat, page, mcp | no | what waits for you; with an id, that decision whole |
 | `answer` | `answer` | terminal, chat, page, mcp | no | answer a pending decision |
 | `release` | `release` | terminal, chat, page, mcp | no | release a delivery (it stays a draft) |
-| `approve` | `approve` | terminal, chat, page, mcp | no | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
+| `approve` | `approve` | terminal, chat, page | no | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
 | `reject` | `reject` | terminal, chat, page | no | reject a plan, an acceptance or an effect |
 | `retry` | `retry` | terminal, chat, page | no | make a failed or blocked task ready again |
 | `cancel` | `cancel` | terminal, chat, page | no | cancel a request |

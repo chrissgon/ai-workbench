@@ -24,8 +24,9 @@ do, so that the generated tables and the shells cannot differ). A row:
                exists only for an operation whose row lists "page"; an operation that widens what an agent may do on
                its own, or that runs the next task by hand, lists "terminal" only), "mcp" (the MCP mode,
                runtime/mcp.py: a tool exists only for an operation whose row lists "mcp"; the reads, and the writes a
-               messaging channel may make: request, route, answer, release, say, and approve, which the operations
-               layer refuses for an effect)
+               model client may make: request, route, answer, release a draft and say; never approve, reject, cancel
+               or retry, as a tool or typed into `say`, whose row takes the channel and does a command only when
+               that command's row lists it)
   model        whether it calls a model: False, True, or the words that say when ("without --flow")
   help         one line: what it does
   channel_arg  (optional) the function takes `channel=<name>` and decides what that channel may do
@@ -87,7 +88,7 @@ OPERATIONS = (
      "help": "release a delivery (it stays a draft)"},
     {"name": "approve", "call": "approve",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"}, {"name": "sha256", "kind": "str"}),
-     "channels": ("terminal", "chat", "page", "mcp"), "model": False, "channel_arg": True, "job": True,
+     "channels": ("terminal", "chat", "page"), "model": False, "channel_arg": True, "job": True,
      "help": "approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash"},
     {"name": "reject", "call": "reject",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"}, {"name": "note", "kind": "str"}),
@@ -170,7 +171,7 @@ OPERATIONS = (
     {"name": "pin", "call": "pin", "args": (), "channels": ("terminal",), "model": False,
      "help": "write the pin of the dispatcher's two jobs"},
     {"name": "say", "call": "say", "args": ({"name": "text", "kind": "text", "required": True},),
-     "channels": ("terminal", "page", "mcp"), "model": "for a new request", "job": True,
+     "channels": ("terminal", "page", "mcp"), "model": "for a new request", "job": True, "channel_arg": True,
      "help": "one turn of the conversation with the planning agent"},
     {"name": "agents", "call": "agents", "args": (), "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "each area agent: its mode, its caps, what it used today and how many tasks wait for it"},
