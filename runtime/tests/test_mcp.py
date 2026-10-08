@@ -30,6 +30,7 @@ ops = st.load("ops")
 operations = st.load("operations")
 service = st.load("service")
 
+STANDARD_LIBRARY = {"__future__", "datetime", "hashlib", "io", "json", "os", "signal", "sys", "threading", "time", "traceback"}
 SENTENCE = "an effect is approved in the terminal, with its hash"
 INIT = {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "client", "version": "1"}}
 STATUS = {"requests": [{"id": 1, "tasks": [{"id": 2, "state": "running"}]}], "pending": [{"id": 1}], "documents": []}
@@ -524,7 +525,7 @@ def test_the_shell_imports_only_the_operations_layer_and_the_standard_library_an
         elif isinstance(node, ast.ImportFrom):
             imported.add((node.module or "").split(".")[0])
     local = {n[:-3] for n in os.listdir(st.RUNTIME) if n.endswith(".py")}
-    assert imported & local == {"ops"} and imported - local <= set(sys.stdlib_module_names) | {"__future__"}
+    assert imported & local == {"ops"} and imported - local <= STANDARD_LIBRARY
     assert "secrets" not in imported and "hmac" not in imported  # there is no token to make or compare
     assert "http" not in imported and "socket" not in imported  # a pipe, not a port
 
