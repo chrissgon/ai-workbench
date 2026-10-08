@@ -259,7 +259,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     const model = agent.update({ snapshot, tab });
     desk.update({ tab, ready: Boolean(snapshot.loaded && accepted) });
     if (tab === "tasks" && (accepted || frozen)) {
-      tasks.update({ tasks: model ? model.tasks : [], requests: status ? status.requests || [] : [], pending: status ? status.pending || [] : [], loading: !snapshot.loaded || !model, reload: reloaded });
+      tasks.update({ tasks: model ? model.tasks : [], requests: status ? status.requests || [] : [], pending: status ? status.pending || [] : [], loading: !snapshot.loaded || !model, reload: reloaded, unaccepted: frozen });
     }
     if (tab !== "inbox" && !leftInbox && !inbox.busy()) {      // a card whose job still runs keeps its state until it ends
       inbox.reset();
@@ -436,6 +436,10 @@ export function createLobbyView(frame, { project, onChanged }) {
       accepted = !snapshot.loaded || found.accepted;
       frozen = snapshot.loaded && !found.accepted && found.kept && loaded;
       const shown = accepted || frozen;
+      for (const part of [inbox, tasks]) {      // A-16: the cards and the tasks' buttons would only be refused
+        if (frozen) part.el.setAttribute("inert", "");
+        else part.el.removeAttribute("inert");
+      }
       const status = detail && detail.status;
       const tab = tabOf(route);
       panel.el.querySelector(".wb-panel-sub").textContent = `${projectName || ""} · floor 0`;

@@ -11,6 +11,7 @@ import { createViewer } from "../floor/viewer.js";
 import { chip } from "../floor/widgets.js";
 import { arrowNav, keepFocus } from "../frame/arrows.js";
 import { icon } from "../frame/icons.js";
+import { acceptance } from "../model.js";
 import * as router from "../router.js";
 import { NoWebGL } from "../scene/engine.js";
 import { floorCardNode, plateNode } from "../scene/plates.js";
@@ -315,7 +316,9 @@ export function createBuildingView(frame, env) {
       projectId = data.route.project;
       if (reloaded !== null && data.reload !== reloaded) documentsAt = 0;
       reloaded = data.reload;
-      if (documents === null || Date.now() - documentsAt > ARTIFACTS_EVERY_MS) readDocuments();
+      const listed = (data.snapshot.projects || []).find((p) => p.id === projectId);
+      const kept = Boolean(listed) && acceptance(listed, data.snapshot.details[projectId]).kept;
+      if (!kept && (documents === null || Date.now() - documentsAt > ARTIFACTS_EVERY_MS)) readDocuments();     // a refusing project is not asked again
       redraw();
     },
     dispose() {

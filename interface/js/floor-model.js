@@ -43,8 +43,6 @@ export const RESOLUTION = Object.freeze({
 });
 
 // The words of the two caps (A-20) are in format.js (the Control room's caps line and the KPI cards use them too).
-export const METER_WORDS = format.METER_WORDS;
-export const METER_TIPS = format.METER_TIPS;
 
 // What a held ready task is waiting for, in the words of the dispatcher's closed list of reasons (runtime/dispatcher.py REASONS). A reason the
 // page does not know is shown as it came.
@@ -348,11 +346,6 @@ export function buildingLabel(view) {
 
 // --- the Floor -------------------------------------------------------------------------------------------------------------
 
-/** The mode's option text for the select: "stopped · Off, starts nothing". */
-export function modeOption(mode) {
-  return `${mode} · ${MODE_LINES[mode]}`;
-}
-
 /** The three meters of the Agent tab. */
 export function meters(agent) {
   const runs = format.count(agent.runs_today);
@@ -361,8 +354,8 @@ export function meters(agent) {
   const usdCap = format.count(agent.max_usd_per_day);
   const unknown = format.count(agent.runs_without_cost);
   return {
-    runs: { label: METER_WORDS.runs, tip: METER_TIPS.runs, text: `${runs} / ${runsCap}`, share: format.share(runs, runsCap), full: runsCap > 0 && runs >= runsCap, name: `${METER_WORDS.runs} ${runs} / ${runsCap}` },
-    spend: { label: METER_WORDS.spend, tip: METER_TIPS.spend, text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "", name: `${METER_WORDS.spend} ${format.dollars(usd)} / ${format.dollars(usdCap)}` },
+    runs: { label: format.METER_WORDS.runs, tip: format.METER_TIPS.runs, text: `${runs} / ${runsCap}`, share: format.share(runs, runsCap), full: runsCap > 0 && runs >= runsCap, name: `${format.METER_WORDS.runs} ${runs} / ${runsCap}` },
+    spend: { label: format.METER_WORDS.spend, tip: format.METER_TIPS.spend, text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "", name: `${format.METER_WORDS.spend} ${format.dollars(usd)} / ${format.dollars(usdCap)}` },
     queued: { text: String(format.count(agent.queued)), name: `Queued ${format.count(agent.queued)}` },
   };
 }

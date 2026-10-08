@@ -17,6 +17,7 @@ import { createViewer } from "../floor/viewer.js";
 import { busyLine, createTabs, focusOpenLink } from "../floor/widgets.js";
 import { icon } from "../frame/icons.js";
 import * as origin from "../frame/origin.js";
+import { acceptance } from "../model.js";
 import * as router from "../router.js";
 import { NoWebGL } from "../scene/engine.js";
 import { worldModel } from "../world-model.js";
@@ -153,7 +154,7 @@ export function createFloorView(frame, env) {
   function readBodies(force = false) {
     if (!last || !project) return;
     const view = fm.floor(last.snapshot, project, agent, bodiesPlain());
-    if (!view || !view.found || view.notAccepted) return;
+    if (!view || !view.found || view.notAccepted || view.unaccepted) return;     // not accepted: the bodies read before stay, nothing is asked of a refusing project
     const wanted = new Map();
     if (view.current) wanted.set(view.current.id, view.current);
     const running = view.tasks.find((t) => t.state === "running");
@@ -257,6 +258,12 @@ export function createFloorView(frame, env) {
     }
     if (tab === "inbox") leftInbox = false;
 
+    // A-16: while the configuration is not accepted the cards and the tasks' buttons are inert (they would only be refused)
+    for (const part of [inbox, tasksTab]) {
+      if (model.unaccepted) part.el.setAttribute("inert", "");
+      else part.el.removeAttribute("inert");
+    }
+
     if (tab === "agent") agentTabLive.update(model);
     else if (model.notAccepted) {
       // the waiting line is already in place
@@ -265,7 +272,7 @@ export function createFloorView(frame, env) {
       inbox.update({ decisions: model.decisions, requests: snapshot.details[project].status.requests || [], resolved: fm.resolvedLines(bodiesPlain(), ids, last.now), selected: route.pending, loading: false });
     } else if (tab === "tasks") {
       const status = snapshot.details[project].status;
-      tasksTab.update({ tasks: model.tasks, requests: status.requests || [], pending: status.pending || [], loading: false, reload: last.reload });
+      tasksTab.update({ tasks: model.tasks, requests: status.requests || [], pending: status.pending || [], loading: false, reload: last.reload, unaccepted: model.unaccepted });
     } else {
       desk.update({ documents: documentsRows, truncated: Boolean(documents && documents.truncated), loading: documents === null && !documentsError, error: documentsError, elsewhere: documents ? documents.rows.length - documentsRows.length : 0 });
     }
@@ -327,18 +334,20 @@ export function createFloorView(frame, env) {
       last = data;
       project = data.route.project;
       agent = data.route.agent;
+      const listed = (data.snapshot.projects || []).find((p) => p.id === project);
+      const kept = Boolean(listed) && acceptance(listed, data.snapshot.details[project]).kept;
       origin.track(data.route);
       if (reloaded !== null && data.reload !== reloaded) {     // the store changed: the bodies and the documents are stale, whatever their age
         changes += 1;
         for (const entry of bodies.values()) entry.at = 0;
         documentsAt = 0;
-        if (viewerPath !== null) viewer.load(project, viewerPath, { quiet: true });
+        if (viewerPath !== null && !kept) viewer.load(project, viewerPath, { quiet: true });
       }
       reloaded = data.reload;
       if (data.snapshot.loaded) {
         readBodies();
         const stale = Date.now() - documentsAt > (data.route.tab === "desk" ? DOCS_OPEN_MS : DOCS_IDLE_MS);
-        if (documentsAt === 0 || stale) readDocuments();
+        if ((documentsAt === 0 || stale) && !kept) readDocuments();     // a project that refuses (412) is not asked again on every reload
       }
       redraw();
     },

@@ -331,6 +331,7 @@ def test_the_plates_say_why_a_ready_task_is_held_the_tooltip_counts_them_and_the
 METERS = r"""
 import { FakeNode, settle, find, all } from "@FAKE@";
 import * as fm from "@JS@/floor-model.js";
+import * as format from "@JS@/format.js";
 import * as control from "@JS@/views/control-model.js";
 import { createKpis } from "@JS@/frame/kpis.js";
 import { plateNode } from "@JS@/scene/plates.js";
@@ -339,7 +340,7 @@ const agent = (extra = {}) => ({ name: "engineering", pack: "x", enabled: true, 
 const out = {};
 const m = fm.meters(agent());
 out.agent = { runs: [m.runs.label, m.runs.text, m.runs.tip], spend: [m.spend.label, m.spend.text, m.spend.tip], names: [m.runs.name, m.spend.name] };
-out.words = fm.METER_WORDS;
+out.words = format.METER_WORDS;
 const row = fm.floorRow(agent({ runs_today: 3 }), null, { accepted: true, project: "p", number: 1 });
 out.card = fm.cardOf(row).runsLine;
 const plate = plateNode(fm.plateOf(row), {});
@@ -518,15 +519,17 @@ window.addEventListener = (type, fn) => { (listeners.window[type] ||= []).push(f
 window.removeEventListener = () => {};
 const store = { "workbench.session.credential": "t".repeat(40) };
 window.sessionStorage = { getItem: (k) => store[k] ?? null, setItem: (k, v) => { store[k] = v; }, removeItem: (k) => { delete store[k]; } };
-window.location.hash = "#/p/" + P + "/floor/marketing";
+window.location.hash = "#/p/" + P + "/floor/marketing@TAB@";
 window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
 globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 const root = new FakeNode("div");
 document.getElementById = () => root;
 document.hidden = false;
 const service = { version: 1, accepted: true };
+const seen = [];
 globalThis.fetch = async (url, init) => {
   const path = url.replace("/api/v1", "");
+  seen.push(path);
   if (path === "/versions") return { ok: true, status: 200, json: async () => ({ versions: { [P]: { version: service.version, changed_at: "x" } } }) };
   if (path === "/projects") return { ok: true, status: 200, json: async () => ({ projects: [service.accepted
     ? { id: P, name: "northwind-shop", config: { sha256: "a".repeat(64), accepted: true } }
@@ -547,7 +550,7 @@ const snap = () => ({
   kpis: text("wb-kpi-figure"), title: text("wb-panel-title"), sub: text("wb-panel-sub"),
   decisions: text("wb-badge") , track: classed("wb-track").length,
   band: text("wb-notice"), codes: classed("wb-command-code").map((n) => n.textContent), copies: classed("wb-copy").length,
-  skeleton: classed("wb-busy").length, tabs: classed("wb-tab").length, state: text("wb-state-row"), meters: text("wb-meter-cell"),
+  inert: classed("wb-inbox").concat(classed("wb-tasks-tab")).map((n) => "inert" in n.attrs), asked: seen.filter((p) => /\/(tasks|artifacts)/.test(p)).length, skeleton: classed("wb-busy").length, tabs: classed("wb-tab").length, state: text("wb-state-row"), meters: text("wb-meter-cell"),
 });
 const out = {};
 await import("@JS@/main.js");
@@ -558,9 +561,16 @@ service.accepted = false;
 service.version = 2;
 await clock.advance(1000);
 await clock.advance(1000);
-out.during = snap();
-service.accepted = true;
+const askedBefore = snap().asked;
 service.version = 3;
+await clock.advance(1000);
+await clock.advance(1000);
+await clock.advance(31000);
+out.during = snap();
+out.askedAgain = out.during.asked - askedBefore;
+service.version = 2;
+service.accepted = true;
+service.version = 5;
 await clock.advance(1000);
 await clock.advance(1000);
 out.after = snap();
@@ -571,7 +581,7 @@ process.exit(0);
 
 @needs_node
 def test_the_page_keeps_the_floor_dims_it_and_shows_the_command_in_the_band_while_the_configuration_is_not_accepted(tmp_path):
-    got = run_node(tmp_path, MAIN.replace("@REFUSAL@", json.dumps(REFUSAL)), SCENE_DOM)
+    got = run_node(tmp_path, MAIN.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@TAB@", ""), SCENE_DOM)
     before, during, after = got["before"], got["during"], got["after"]
     assert before["dimmed"] is False and before["codes"] == [] and before["title"] == "Marketing · Marketing agent"
     assert during["dimmed"] is True, "one class on the screen"
@@ -618,3 +628,14 @@ def test_every_notice_that_needs_the_terminal_uses_the_one_component_and_the_pag
         text = path.read_text(encoding="utf-8")
         assert "cli.py" not in text and "keyring" not in text and "accept-config --" not in text and "run-next --" not in text, f"{path.name}: a command is the service's, never built on the page"
     assert '"select"' not in (JS / "floor/agent-tab.js").read_text(encoding="utf-8"), "the mode select is gone"
+
+
+@needs_node
+def test_the_inbox_and_the_tasks_are_inert_while_not_accepted_and_a_refusing_project_is_not_asked_for_bodies_or_documents_again(tmp_path):
+    for tab in ("/inbox", "/tasks"):
+        got = run_node(tmp_path, MAIN.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@TAB@", tab), SCENE_DOM)
+        before, during, after = got["before"], got["during"], got["after"]
+        assert before["inert"] and not any(before["inert"]), f"{tab}: live while accepted"
+        assert during["inert"] and all(during["inert"]), f"{tab}: the cards and the buttons take no click while the configuration is not accepted"
+        assert after["inert"] and not any(after["inert"]), f"{tab}: live again once accepted"
+        assert got["askedAgain"] == 0, f"{tab}: no task body or document is asked of a project that answers 412"

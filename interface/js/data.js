@@ -56,6 +56,11 @@ export async function refresh(previous, followed, options = {}) {
   await Promise.all(wanted.map(async (w) => {
     const key = taskKey(w.project, w.id);
     const cached = previous.tasks[key];
+    const refusing = details[w.project] && details[w.project].error && details[w.project].error.status === 412;
+    if (refusing) {     // not accepted: the body read before stays, and the project is not asked again on every reload
+      if (cached) tasks[key] = cached;
+      return;
+    }
     if (!options.force && cached && cached.task && (w.state === undefined || cached.task.state === w.state)) {
       tasks[key] = cached;
       return;

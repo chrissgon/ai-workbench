@@ -193,7 +193,7 @@ out.openable = [fm.openable("docs/a.md"), fm.openable("notes/a.md"), fm.openable
 out.sizes = [fm.formatSize(12), fm.formatSize(1536), fm.formatSize(3 * 1024 * 1024), fm.formatSize(null), fm.formatDuration(42000), fm.formatDuration(125000), fm.formatDuration(null)];
 out.drawers = [0, 1, 4, 5, 9, 13].map(fm.drawersOf);
 out.tabs = [fm.tabNames(2, 12), fm.tabNames(0, 0)];
-out.modes = [fm.MODES.length, fm.PIPS["autonomous-with-policy"], fm.PIPS.stopped, fm.modeOption("supervised")];
+out.modes = [fm.MODES.length, fm.PIPS["autonomous-with-policy"], fm.PIPS.stopped];
 
 // the router's document form
 const hash = router.deskHash(P, "marketing", "docs/marketing/content/launch-post.md");
@@ -253,7 +253,7 @@ def test_the_floor_model_picks_the_current_task_the_other_tasks_the_hand_over_ta
     assert got["target"] == [8, 9, None]
     assert got["floorMissing"] is False and got["floorUnaccepted"] == [True, "northwind-shop · Waiting for the configuration to be accepted"]
     assert got["meters"]["runs"]["full"] is True and got["meters"]["spend"]["unknown"] == "(+2 of unknown cost)" and "share" not in got["meters"]["queued"]
-    assert got["modes"] == [5, 4, 0, "supervised · Every review reaches you"]
+    assert got["modes"] == [5, 4, 0]
 
 
 @needs_node
@@ -636,10 +636,15 @@ script = { setMode: async () => ({ agent: "engineering", mode: "stopped", config
 find(tab.el, "button[data-key=stop-agent]").click();
 await settle();
 out.setMode = { calls: calls.filter((c) => c[0] === "setMode"), refreshed: refreshed > 0, notice: find(tab.el, ".wb-result-box").textContent };
+// a result that was not accepted keeps its notice through the reads that follow, including those of a project not accepted, and goes once it is accepted again
+script = { setMode: async () => ({ agent: "engineering", mode: "stopped", accepted: false, next: "python3 /ck/runtime/cli.py accept-config --project p --sha256 " + "e".repeat(64) }) };
+find(tab.el, "button[data-key=stop-agent]").click();
+await settle();
+const kept = find(tab.el, ".wb-result-box").textContent !== "";
 tab.update(view(agent(), [], false));
-out.unaccepted = { line: find(tab.el, ".wb-empty-line").textContent, hiddenForm: find(tab.el, ".wb-mode-form").hidden };
+out.unaccepted = { line: find(tab.el, ".wb-empty-line").textContent, hiddenForm: find(tab.el, ".wb-mode-form").hidden, resultKept: kept && find(tab.el, ".wb-result-box").textContent !== "" };
 tab.update(view(agent({ mode: "autonomous", acting_mode: "autonomous" }), [task(4, "running"), task(5, "failed"), task(6, "blocked"), task(7, "waiting")]));
-out.accepted = { buttons: [find(tab.el, "button[data-key=stop-agent]").disabled, find(tab.el, "button[data-key=supervise]").disabled] };
+out.accepted = { buttons: [find(tab.el, "button[data-key=stop-agent]").disabled, find(tab.el, "button[data-key=supervise]").disabled], resultGone: find(tab.el, ".wb-result-box").textContent === "" };
 
 // a refused mode shows the operation's message under the row
 script = { setMode: async () => { throw Object.assign(new Error("a mode is one of stopped, supervised"), { name: "ApiError", status: 400, word: "usage" }); } };
@@ -707,8 +712,8 @@ def test_the_agent_tab_sends_set_mode_retry_and_the_hand_over_as_one_request_eac
     assert got["hint"] == "To task #6. At most 25 MiB.", "the hand-over target is the newest failed or blocked task, named in the hint"
     assert [c[1:] for c in got["setMode"]["calls"]] == [["p", "engineering", "stopped"]], "Stop agent sends its word, once"
     assert got["setMode"]["refreshed"] is True and got["setMode"]["notice"] == "Mode set to stopped."
-    assert got["unaccepted"] == {"line": "Waiting for the configuration to be accepted.", "hiddenForm": True}
-    assert got["accepted"] == {"buttons": [False, False]}, "an agent that acts autonomously can be stopped or supervised"
+    assert got["unaccepted"] == {"line": "Waiting for the configuration to be accepted.", "hiddenForm": True, "resultKept": True}
+    assert got["accepted"] == {"buttons": [False, False], "resultGone": True}, "an agent that acts autonomously can be stopped or supervised"
     assert got["refusedMode"] == "a mode is one of stopped, supervised"
     assert got["retryCalls"] == [["p", 5, 3]], "Retry sends the task's id and no body"
     assert "task 6 is not failed or blocked" in got["retryRefused"]
