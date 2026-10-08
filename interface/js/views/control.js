@@ -6,11 +6,13 @@
 import * as api from "../api.js";
 import { h } from "../dom.js";
 import { createPanel } from "../frame/panel.js";
+import { createEngine, NoWebGL } from "../scene/engine.js";
 import * as router from "../router.js";
 import { createConnectionsTab } from "./control-connections.js";
 import { createCostsTab } from "./control-costs.js";
 import * as model from "./control-model.js";
 import { emptyBlock, loadingCard } from "./control-parts.js";
+import "./control-scene.js";
 import { createSkillsTab } from "./control-skills.js";
 
 const SUBTITLE = "Skills, costs and connections of this machine";
@@ -48,6 +50,25 @@ export function createControlView(frame) {
   panel.body.append(h("div", { class: "wb-control-body" }, list, content));
   frame.main.append(panel.el);
 
+  // The small server-room scene: the racks are the Connections tab, the wall screen the Costs tab, the console the Skills tab.
+  let engine = null;
+  try {
+    engine = createEngine(frame.sceneHost, {
+      label: "Server room, loading",
+      getInsets: () => frame.insets(panel.el),
+      onOpen: (id) => go(model.OPENS[id] || "skills"),
+      onUnavailable: () => frame.sceneUnavailable(true),
+    });
+    frame.sceneUnavailable(false);
+  } catch (e) {
+    if (!(e instanceof NoWebGL)) throw e;
+    frame.sceneUnavailable(true);
+  }
+  // a panel or a band that changes size changes the free rectangle: one refit and one frame, never on a timer
+  const observer = new ResizeObserver(() => { if (engine) engine.refit(); });
+  observer.observe(panel.el);
+  observer.observe(frame.noticeBox);
+
   let projectId = null;
   let tab = "skills";
   let shown = "skills";     // the tab whose panel is on show, so that a newly chosen one starts at its top
@@ -57,10 +78,22 @@ export function createControlView(frame) {
   const aborter = new AbortController();
   const loads = { skills: { status: "loading" }, costs: { status: "loading", fieldValue: null, agents: null }, connections: { status: "loading" } };
   const generation = { skills: 0, costs: 0, connections: 0 };
+  let sceneCosts = null;    // the costs read with the operation's own window: the wall screen's bars do not follow the Since field
   let lastSince;            // the date the Costs tab asked for last (undefined: the operation's own default)
 
   function show(id) {
     tabs.get(id).set(loads[id]);
+    drawScene();
+  }
+
+  function drawScene() {
+    if (!engine) return;
+    const sceneModel = model.sceneModel({
+      accepted: !(message && message.kind === "text"),
+      connections: loads.connections.status === "ready" ? loads.connections.data : null,
+      costs: sceneCosts,
+    });
+    engine.show("server", sceneModel, sceneModel.label);
   }
 
   function select(id) {
@@ -143,6 +176,7 @@ export function createControlView(frame) {
       ]);
       if (disposed || mine !== generation.costs) return;
       loads.costs = { status: "ready", data, agents, fieldValue: typeof data.since === "string" ? data.since : String(since ?? "") };
+      if (since === undefined) sceneCosts = data;
     } catch (e) {
       if (disposed || mine !== generation.costs || (e && (e.name === "AbortError" || e.unauthorized))) return;
       const text = since === undefined ? loads.costs.fieldValue : since;
@@ -164,6 +198,7 @@ export function createControlView(frame) {
   function render() {
     waiting.replaceChildren(...(message ? [message.kind === "loading" ? loadingCard(model.LOADING) : message.text ? emptyBlock(message.text) : null] : []).filter(Boolean));
     select(tab);
+    drawScene();
   }
 
   function onVisible() {
@@ -211,6 +246,9 @@ export function createControlView(frame) {
       aborter.abort();
       document.removeEventListener("visibilitychange", onVisible);
       skills.dispose();
+      observer.disconnect();
+      if (engine) engine.dispose();
+      frame.sceneUnavailable(false);
       panel.el.remove();
     },
   };

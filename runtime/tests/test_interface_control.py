@@ -254,6 +254,7 @@ document.removeEventListener = (type, fn) => { docListeners[type] = (docListener
 document.fireVisible = () => (docListeners.visibilitychange || []).forEach((fn) => fn({}));
 globalThis.document = document;
 const media = { matches: false, addEventListener() {}, removeEventListener() {} };
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 globalThis.window = { matchMedia: () => media, location: { hash: "#/" }, sessionStorage: { getItem: () => "t".repeat(40), setItem() {} } };
 export const has = (n, cls) => n.cls().includes(cls);
 export { FakeNode };
@@ -508,12 +509,14 @@ answers["costs?since=2026-10-01"] = ok({ since: "2026-10-01", rows: [], caps: []
 answers.agents = ok({ agents: [{ name: "engineering", runs_today: 5, usd_today: 1.87 }] });
 answers.connections = { status: 500, body: { error: "internal", message: "connections: the secret store did not answer within 5 s" } };
 
-const frame = { main: new FakeNode("main") };
+const unavailable = [];
+const frame = { main: new FakeNode("main"), sceneHost: new FakeNode("div"), noticeBox: new FakeNode("div"), insets: () => ({}), sceneUnavailable: (on) => unavailable.push(on) };
 const view = createControlView(frame);
 const out = {};
 const tab = (id) => view.el.find((n) => n.attrs.id === `wb-tab-${id}`);
 const panel = (id) => view.el.find((n) => n.attrs.id === `wb-tabpanel-${id}`);
 out.mounted = frame.main.children.length;
+out.noWebGL = [unavailable.at(-1)];
 out.tablist = view.el.find((n) => n.attrs.role === "tablist").all((n) => n.attrs.role === "tab").map((n) => [n.textContent, n.attrs["aria-selected"], n.attrs.tabindex]);
 out.title = [text(view.el.find((n) => has(n, "wb-panel-title"))), text(view.el.find((n) => has(n, "wb-panel-sub")))];
 // before the page has read the project list: the loading line, and no read of the service
@@ -587,6 +590,7 @@ def test_the_control_view_reads_once_per_entry_and_shows_each_tabs_own_state(tmp
     fake.write_text(FAKE_DOM, encoding="utf-8")
     got = run_node(tmp_path, VIEW_SCRIPT.replace("@FAKE@", fake.as_uri()))
     assert got["mounted"] == 1
+    assert got["noWebGL"] == [True], "without WebGL the scene area says so and the tabs are the whole screen"
     assert got["tablist"] == [["Skills", "true", "0"], ["Costs", "false", "-1"], ["Connections", "false", "-1"]]
     assert got["title"] == ["Control room", "Skills, costs and connections of this machine"]
     assert got["unread"] == [0, 0]
@@ -648,3 +652,109 @@ def test_the_control_room_builds_the_chart_as_same_origin_svg_with_a_table_and_n
     root = re.findall(r"--wb-tint-series: ([^;]+);", css)
     assert root == ["color-mix(in oklab, var(--pui-theme) 45%, var(--wb-raised))"], "the second series is written once, from tokens"
     assert re.search(r"--wb-ink-error: color-mix\(in oklab, var\(--pui-error\), var\(--pui-text\) 25%\);", css)
+
+
+# --- the server-room scene ------------------------------------------------------------------------------------------------------
+
+SCENE_SCRIPT = r"""
+import * as THREE from "@JS@/three.js";
+import { createKit } from "@JS@/scene/kit.js";
+import { BUILDERS } from "@JS@/scene/engine.js";
+import { sceneModel, OPENS } from "@JS@/views/control-model.js";
+import { buildServer } from "@JS@/views/control-scene.js";
+
+const c = (hex) => new THREE.Color(hex);
+const T = { border: c(0x101010), theme: c(0x2020f0), success: c(0x10f010), error: c(0xf01010), emphasis: c(0x303030), text: c(0x404040), warn: c(0xf0a010), textMuted: c(0x505050) };
+const palette = { dark: false, T, mix: (a, b, t) => a.clone().lerp(b, t), bg: c(0xfafafa), shell: c(0xf8f8f8), ink: c(0x202020), metal: c(0x606060), deskTop: c(0xd0d0d0), screenOff: c(0x181818), leafA: c(0x80c080), trunk: c(0x806040) };
+const hex = (colour) => colour.getHex();
+
+const conn = (classes, secrets, image) => ({
+  classes: classes.map((found, i) => ({ class: `c${i}`, provider: found ? "p" : null, found, note: null, skills: [] })),
+  secrets: secrets.map((found, i) => ({ name: `S${i}`, found, where: found ? "env" : null })),
+  image: { name: "i", present: image, evidence: true }, platform: {},
+});
+const row = (day, runs) => ({ day, agent: "a", model: "m", adapter: "x", runs, tokens: null, recorded_usd: null, recomputed_usd: null, unknown_runs: 0, price: null });
+
+function count(model) {
+  const kit = createKit(palette);
+  const built = buildServer(kit, model);
+  const meshes = [];
+  built.group.traverse((o) => { if (o.isMesh) meshes.push(o); });
+  const basic = meshes.filter((m) => m.material.isMeshBasicMaterial);
+  const of = (colour) => basic.filter((m) => hex(m.material.color) === hex(colour));
+  const bars = of(T.theme).map((m) => ({ x: +m.position.x.toFixed(2), h: +m.scale.y.toFixed(4) })).sort((a, b) => a.x - b.x);
+  const out = { ok: of(T.success).length, bad: of(T.error).length, off: of(T.border).length, bars, hits: built.hits.map((h) => [h.id, h.tip]), labels: built.labels.length, beacons: built.beacons.length, markers: built.markers.length, meshes: meshes.length,
+    moving: built.group.children.length > 0 };
+  const box = new THREE.Box3().setFromObject(built.group);
+  out.size = [+(box.max.x - box.min.x).toFixed(1), +(box.max.y - box.min.y).toFixed(1), +(box.max.z - box.min.z).toFixed(1)];
+  kit.dispose();
+  return out;
+}
+
+const out = {};
+out.registered = BUILDERS.server === buildServer;
+// seven classes (two missing), three secrets (one missing), the image present: 11 facts
+const connections = conn([true, true, false, true, true, false, true], [true, false, true], true);
+const costs = { since: "2026-09-08", rows: [row("2026-10-01", 3), row("2026-10-01", 1), row("2026-10-02", 5), row("2026-10-04", 8), row("2026-10-07", 12)] };
+const full = sceneModel({ accepted: true, connections, costs });
+out.model = { ready: full.ready, facts: full.facts, missing: full.missing, leds: full.leds.join(","), racks: full.racks.map((r) => [r.name, r.missing, r.tip]), bars: full.bars.map((v) => +v.toFixed(4)), label: full.label };
+out.full = count(full);
+// 21 facts and more: only the slots exist, the missing count is still every fact's
+const many = sceneModel({ accepted: true, connections: conn(new Array(10).fill(true), new Array(13).fill(false), true), costs: null });
+out.many = { facts: many.facts, missing: many.missing, off: many.leds.filter((l) => l === "off").length, leds: many.leds.length, built: count(many) };
+// loading, then not accepted: every LED off, no bar, no read needed
+out.loading = count(sceneModel({ accepted: true, connections: null, costs: null }));
+out.loadingModel = (({ ready, label, facts }) => ({ ready, label, facts }))(sceneModel({ accepted: true }));
+out.notAccepted = (({ ready, label }) => ({ ready, label }))(sceneModel({ accepted: false, connections, costs }));
+out.notAcceptedBuilt = count(sceneModel({ accepted: false, connections, costs }));
+// a window of two days sits at the right end of the seven bars
+out.short = sceneModel({ accepted: true, connections, costs: { since: "2026-10-06", rows: [row("2026-10-06", 2), row("2026-10-07", 4)] } }).bars.map((v) => +v.toFixed(2));
+out.opens = OPENS;
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_server_room_has_one_led_per_connection_fact_and_one_bar_per_summed_day_and_nothing_else_on_it(tmp_path):
+    got = run_node(tmp_path, SCENE_SCRIPT)
+    assert got["registered"] is True, "the scene kind is registered through the engine's BUILDERS"
+    model = got["model"]
+    assert model["ready"] is True and model["facts"] == 11 and model["missing"] == 3
+    assert model["leds"] == ",".join(["ok", "ok", "bad", "ok", "ok", "bad", "ok", "ok", "bad", "ok", "ok"] + ["off"] * 10), \
+        "each class, then each secret, then the image; the slots left over are off"
+    assert model["racks"] == [["store · tasks", 2, "store · tasks · 2 missing · Connections tab"],
+                              ["integrations", 1, "integrations · 1 missing · Connections tab"],
+                              ["vcs · publishers", 0, "vcs · publishers · nothing read yet"]]
+    # days Oct 1 to Oct 7: 4, 5, 0, 8, 0, 0, 12 runs, each over the largest day
+    assert model["bars"] == [0.3333, 0.4167, 0, 0.6667, 0, 0, 1]
+    assert model["label"] == "Server room: 3 racks, 3 connections missing, runs of the last 7 days"
+    full = got["full"]
+    assert (full["ok"], full["bad"], full["off"]) == (8, 3, 10), "the LEDs drawn are the facts: 8 found, 3 missing, 10 slots with no fact"
+    assert [b["h"] for b in full["bars"]] == [round(1.05 * v, 4) for v in (0.3333, 0.4167, 0.6667, 1)], "a bar per day with runs, 1.05 high at most"
+    assert [b["x"] for b in full["bars"]] == [0, 0.4, 1.2, 2.4], "bars at 0.4 apart, an empty day draws none"
+    assert [h[0] for h in full["hits"]] == ["rack-1", "rack-2", "rack-3", "wall", "console"]
+    assert full["hits"][3][1] == "Runs by day · Costs tab" and full["hits"][4][1] == "Console · Skills tab"
+    assert full["labels"] == 0 and full["beacons"] == 0 and full["markers"] == 0, "no label, no beacon, no marker: nothing in it moves or says anything"
+    assert 80 < full["meshes"] < 400, "tens to a few hundred meshes"
+    assert got["many"]["facts"] == 24 and got["many"]["missing"] == 13 and got["many"]["leds"] == 21 and got["many"]["off"] == 0
+    assert (got["many"]["built"]["ok"], got["many"]["built"]["bad"], got["many"]["built"]["off"]) == (10, 11, 0), "21 slots, 24 facts: the first 21 are drawn"
+    assert (got["loading"]["ok"], got["loading"]["bad"], got["loading"]["off"], got["loading"]["bars"]) == (0, 0, 21, []), "loading: every LED off and no bar"
+    assert got["loadingModel"] == {"ready": False, "label": "Server room, loading", "facts": 0}
+    assert got["notAccepted"] == {"ready": False, "label": "Server room, waiting for the configuration to be accepted"}
+    assert (got["notAcceptedBuilt"]["ok"], got["notAcceptedBuilt"]["bad"], got["notAcceptedBuilt"]["bars"]) == (0, 0, []), "a project that is not accepted is dim"
+    assert got["short"] == [0, 0, 0, 0, 0, 0.5, 1]
+    assert got["opens"] == {"rack-1": "connections", "rack-2": "connections", "rack-3": "connections", "wall": "costs", "console": "skills"}
+
+
+def test_the_server_room_builder_draws_with_the_engines_kit_holds_no_colour_and_moves_nothing():
+    scene = (VIEWS / "control-scene.js").read_text(encoding="utf-8")
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|0x[0-9a-fA-F]{6}\b|\brgba?\(|\bhsla?\(", scene), "every colour is a token or a recipe of the palette"
+    assert not re.search(r"requestAnimationFrame|setInterval|setTimeout|Math\.random|Math\.sin|\.style\b|createElement|innerHTML", scene), \
+        "nothing moves, nothing random, no markup of its own, no style"
+    assert "BUILDERS.server = buildServer" in scene and "createKit" not in scene, "the engine's kit and registry are used, not copied"
+    for token in ("T.success", "T.error", "T.border", "T.theme", "palette.screenOff", "palette.ink"):
+        assert token in scene, f"the scene reads {token}"
+    engine = (JS / "scene" / "engine.js").read_text(encoding="utf-8")
+    assert "buildServer" not in engine and "server:" not in engine and '"server"' not in engine, "the engine is not edited: the scene registers itself"
+    control = (VIEWS / "control.js").read_text(encoding="utf-8")
+    assert 'engine.show("server"' in control and "NoWebGL" in control and "frame.sceneUnavailable" in control and "frame.insets(panel.el)" in control

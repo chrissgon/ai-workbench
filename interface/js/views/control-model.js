@@ -320,3 +320,50 @@ export function columnTitle(column) {
   const parts = column.segments.map((s) => `${s.label} ${s.runs}`).join(", ");
   return `${column.label}: ${column.total} ${column.total === 1 ? "run" : "runs"}${parts ? ` (${parts})` : ""}`;
 }
+
+// --- the small scene -----------------------------------------------------------------------------------------------------
+
+export const RACKS = Object.freeze([
+  { id: "rack-1", name: "store · tasks", z: -1.7 },
+  { id: "rack-2", name: "integrations", z: -0.6 },
+  { id: "rack-3", name: "vcs · publishers", z: 0.5 },
+]);
+export const UNITS = 7;
+export const SLOTS = RACKS.length * UNITS;
+export const OPENS = Object.freeze({ "rack-1": "connections", "rack-2": "connections", "rack-3": "connections", wall: "costs", console: "skills" });
+
+/**
+ * What the scene shows, from what the page has read: {ready, leds: [21 of "ok"|"bad"|"off"], facts, missing, racks: [{id, name,
+ * missing, tip}], bars: [7 numbers from 0 to 1], tips: {wall, console}, label}. `ready` is false while the proof is loading,
+ * for a project that is not accepted or before the connections have been read: every LED is then off and there are no bars.
+ * An LED has one fact: the first 21 facts fill the racks from the top unit down; `missing` counts every fact the operation gave.
+ */
+export function sceneModel({ accepted = true, connections = null, costs = null } = {}) {
+  const facts = [];
+  if (accepted && connections) {
+    for (const row of classRows(connections)) facts.push(row.found);
+    for (const row of secretRows(connections)) facts.push(row.found);
+    facts.push(Boolean(connections.image && connections.image.present));
+  }
+  const missing = facts.filter((ok) => !ok).length;
+  const leds = Array.from({ length: SLOTS }, (_, i) => (i < facts.length ? (facts[i] ? "ok" : "bad") : "off"));
+  const racks = RACKS.map((rack, r) => {
+    const here = facts.slice(r * UNITS, (r + 1) * UNITS);
+    const gone = here.filter((ok) => !ok).length;
+    const tip = !here.length ? `${rack.name} · nothing read yet` : gone ? `${rack.name} · ${gone} missing · Connections tab` : `${rack.name} · all found · Connections tab`;
+    return { id: rack.id, name: rack.name, missing: gone, tip };
+  });
+  const bars = Array.from({ length: 7 }, () => 0);
+  if (accepted && costs && Array.isArray(costs.rows)) {
+    const chart = chartOf(costs.rows, costs.since);
+    if (chart) {
+      const days = chart.days.slice(-7);
+      days.forEach((day, i) => { bars[7 - days.length + i] = chart.max > 0 ? day.total / chart.max : 0; });
+    }
+  }
+  const ready = Boolean(accepted && connections);
+  const label = ready
+    ? `Server room: ${RACKS.length} racks, ${missing} ${missing === 1 ? "connection" : "connections"} missing, runs of the last 7 days`
+    : accepted ? "Server room, loading" : "Server room, waiting for the configuration to be accepted";
+  return { ready, leds, facts: facts.length, missing, racks, bars, tips: { wall: "Runs by day · Costs tab", console: "Console · Skills tab" }, label };
+}
