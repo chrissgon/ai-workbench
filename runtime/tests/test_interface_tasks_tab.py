@@ -85,7 +85,8 @@ out.noRequest = lone.request;
 out.bareTitle = tm.rowOf(task(8, "ready", "engineering", { title: "" }), { requests, pending: [], body: null, now: NOW }).title;
 
 // the tab is named by the router
-out.route = [router.parse(router.floorHash("0123456789ab", "brand", "tasks")).tab, router.parse(router.lobbyHash("0123456789ab", "tasks")).tab, router.floorHash("0123456789ab", "brand", "tasks")];
+out.route = [router.parse(router.floorHash("0123456789ab", "brand", "tasks")).tab, router.parse(router.lobbyHash("0123456789ab", "tasks")).tab, router.floorHash("0123456789ab", "brand", "tasks"),
+  router.lobbyHash("0123456789ab", "inbox", null), router.floorHash("0123456789ab", "brand", "inbox", null)];
 console.log(JSON.stringify(out));
 """
 
@@ -153,7 +154,7 @@ def test_a_row_carries_the_number_the_title_the_skill_the_request_and_the_action
     assert row["note"] == "The run timed out" and row["actions"] == [{"kind": "retry"}]
     assert row["failure"] == {"failure": "Timed out", "ending": ""} and row["runs"] == [2, 1], "the runs are newest first"
     assert got["noRequest"] is None and got["bareTitle"] == "k8", "a task without a title shows its key"
-    assert got["route"] == ["tasks", "tasks", "#/p/0123456789ab/floor/brand/tasks"]
+    assert got["route"][:3] == ["tasks", "tasks", "#/p/0123456789ab/floor/brand/tasks"]
 
 
 # --- the tab under a fake document ------------------------------------------------------------------------------------------------
@@ -282,6 +283,10 @@ fresh.update({ tasks: [], requests: [], pending: [], loading: true });
 out.loading = [text(fresh.el), all(fresh.el, "details").length];
 fresh.update({ tasks: [], requests: [], pending: [], loading: false });
 out.none = [text(fresh.el), all(fresh.el, "details").length];
+// a task that waits with no decision found (the Lobby's too): the link is the bare Inbox, never an id of another task
+const lonely = createTasksTab(env);
+lonely.update({ tasks: [task(30, "waiting")], requests, pending: [{ id: 99, kind: "question", task_id: 31, agent: "engineering" }], loading: false });
+out.bareInbox = text(all(lonely.el, "a.wb-task-inbox")[0]) + " " + all(lonely.el, "a.wb-task-inbox")[0].attrs.href;
 console.log(JSON.stringify(out));
 """
 
@@ -341,6 +346,14 @@ def test_the_arrow_keys_move_between_the_rows_and_a_poll_never_takes_the_focus_o
 
 
 @needs_node
+def test_a_waiting_task_with_no_decision_of_its_own_links_to_the_bare_inbox(tmp_path):
+    got = run_node(tmp_path, TAB_MARKUP)
+    assert got["bareInbox"] == "Open in the Inbox #/p/0123456789ab/floor/engineering/inbox"
+    model = run_node(tmp_path, MODEL)
+    assert model["route"][3:] == ["#/p/0123456789ab/lobby/inbox", "#/p/0123456789ab/floor/brand/inbox"], "the Lobby's and the Floor's link builders give the bare Inbox for a null id"
+
+
+@needs_node
 def test_the_tab_says_loading_and_says_the_agent_has_no_task_yet(tmp_path):
     got = run_node(tmp_path, TAB_MARKUP)
     assert got["loading"] == ["Loading the tasks...", 0]
@@ -383,16 +396,52 @@ li(1).querySelector("button.wb-task-toggle").click();
 await settle();
 out.expand1Again = calls.filter((c) => c === "1").length;
 // a task whose state changed is read again
-draw(tasks.map((t) => (t.id === 14 ? { ...t, state: "running" } : t)));
+draw(tasks.map((t) => (t.id === 14 ? { ...t, state: "failed" } : t)));
 await settle();
 out.stateChange = calls.filter((c) => c === "14").length;
 // the page's refresh after an action reads the open rows again
-// the first twelve rows are the groups' first twelve: an old task that runs is read before newer done ones
+// the twelve are the failed rows, then the done rows, then the rest: thirteen done rows fill them and an old running task waits for its expand
 calls.length = 0;
 const second = createTasksTab(env);
 second.update({ tasks: [task(1, "running"), ...Array.from({ length: 13 }, (_, i) => task(i + 2, "done"))], requests: [], pending: [], loading: false });
 await settle();
-out.groupOrder = [calls.includes("1"), calls.length, calls.includes("2")];
+out.groupOrder = [calls.includes("1"), calls.length, calls.includes("2")];     // the oldest done row (2) is the thirteenth done row, the running one (1) is after them all
+
+// twenty rows where the failed ones come last (the oldest ids): the failed and the done are read first, then the rest, twelve in all
+calls.length = 0;
+const third = createTasksTab(env);
+const mixed = [task(1, "failed"), task(2, "failed"), task(3, "failed"), ...Array.from({ length: 4 }, (_, i) => task(i + 4, "done")), ...Array.from({ length: 13 }, (_, i) => task(i + 8, "ready"))];
+third.update({ tasks: mixed, requests: [], pending: [], loading: false });
+await settle();
+const asked = calls.map(Number);
+out.failedFirst = [asked.length, [1, 2, 3].every((id) => asked.includes(id)), [4, 5, 6, 7].every((id) => asked.includes(id)), asked.filter((id) => id >= 8).length];
+
+// the reload stamp: the same stamp reads nothing, a moved stamp reads every shown body again, a read that began before the move is read again
+calls.length = 0;
+let gate = null;
+const realFetch = globalThis.fetch;
+globalThis.fetch = async (url, init) => { if (gate) await gate; return realFetch(url, init); };
+const stamped = createTasksTab(env);
+const rows = Array.from({ length: 3 }, (_, i) => task(i + 1, "done"));
+const give = (reload) => stamped.update({ tasks: rows, requests: [], pending: [], loading: false, reload });
+give(1);
+await settle();
+const afterFirst = calls.length;
+give(1);
+await settle();
+const afterSame = calls.length;
+give(2);
+await settle();
+const afterMoved = calls.length;
+let release;
+gate = new Promise((r) => { release = r; });
+give(3);                                  // three reads begin and wait at the gate
+give(4);                                  // the stamp moves while they run
+release();
+gate = null;
+await settle();
+out.stamp = [afterFirst, afterSame - afterFirst, afterMoved - afterSame, calls.length - afterMoved];
+globalThis.fetch = realFetch;
 console.log(JSON.stringify(out));
 """
 
@@ -404,7 +453,9 @@ def test_the_tab_reads_the_first_twelve_bodies_once_and_a_row_beyond_them_only_w
     assert got["again"] == 12, "the same data within the stale time reads nothing"
     assert got["expand1"] == 1 and got["expand1Again"] == 1, "expanding a row beyond the twelve reads its body once"
     assert got["stateChange"] == 2, "a task whose state changed is read again"
-    assert got["groupOrder"] == [True, 12, False], "the twelve read are the first twelve rows as the groups list them, the running one first"
+    assert got["groupOrder"] == [False, 12, False], "failed rows are read first, then done rows, then the rest: of thirteen done rows and one running, twelve done rows are read"
+    assert got["failedFirst"] == [12, True, True, 5], "twenty rows with the failed ones last: the three failed and the four done are read first, then five of the rest"
+    assert got["stamp"] == [3, 0, 3, 6], "a stamp that did not move reads nothing, a moved one reads each shown body again, and the reads that began before a move are read again"
 
 
 # --- the shared run block and the files ----------------------------------------------------------------------------------------------

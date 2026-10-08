@@ -256,7 +256,7 @@ export function createFloorView(frame, env) {
       inbox.update({ decisions: model.decisions, requests: snapshot.details[project].status.requests || [], resolved: fm.resolvedLines(bodiesPlain(), ids, last.now), selected: route.pending, loading: false });
     } else if (tab === "tasks") {
       const status = snapshot.details[project].status;
-      tasksTab.update({ tasks: model.tasks, requests: status.requests || [], pending: status.pending || [], loading: false });
+      tasksTab.update({ tasks: model.tasks, requests: status.requests || [], pending: status.pending || [], loading: false, reload: last.reload });
     } else {
       desk.update({ documents: documentsRows, truncated: Boolean(documents && documents.truncated), loading: documents === null && !documentsError, error: documentsError, elsewhere: documents ? documents.rows.length - documentsRows.length : 0 });
     }

@@ -4,7 +4,8 @@
 // on a failed or blocked task, "Open in the Inbox" when a decision waits. A done task shows the paths it returned (each with
 // "Open" under docs/); a failed one its failure word and the ending of its last run. A row expands into the task's runs, the block
 // the Agent tab draws for its current task. The rows come from `status`; `task` is read for the first twelve rows while the tab is
-// open and for a row when it is expanded, and kept for a few seconds. Every value is text. The one write is Retry, sent through
+// open (the failed ones first, then the done ones, then the rest, since their failure and their paths are only in the body) and for a row
+// when it is expanded. A body is kept until the page's reload stamp moves (the store changed) or the task's state changes. Every value is text. The one write is Retry, sent through
 // the client the view hands in (floor/actions.js), never through a client of this file.
 
 import * as client from "../api.js";
@@ -14,8 +15,7 @@ import { runBlock } from "./run-block.js";
 import { groupTasks, rowOf } from "./tasks-model.js";
 import { busyLine, chip, errorText, notice, ring } from "./widgets.js";
 
-const FRESH_MS = 5000;      // a running task's body
-const STALE_MS = 15000;     // any other task's body
+const NO_STAMP_MS = 15000;  // how long a body is kept while the page gives no reload stamp (it does once the live sync is in)
 const MAX_READS = 12;       // the first rows read without being expanded (the Inbox reads twelve too)
 export const NONE_TEXT = "This agent has no task yet.";
 
@@ -47,32 +47,43 @@ export function createTasksTab(env) {
   const retrying = new Set();
   const retryError = new Map();
   let shown = "";
+  let reloaded = null;             // the page's reload stamp last seen; null until one is given
+  let changes = 0;                 // how many times it moved: a read that began before the last move is not fresh when it ends
 
   // --- reading ---------------------------------------------------------------------------------------------------------------
-  function ensure(task, maxAge) {
+  const fresh = (cached, task) => cached.state === task.state && cached.at !== 0 && (reloaded !== null || Date.now() - cached.at < NO_STAMP_MS);
+
+  function ensure(task) {
     const cached = bodies.get(task.id);
     if (reading.has(task.id)) return;
-    if (cached && cached.state === task.state && Date.now() - cached.at < maxAge) return;
+    if (cached && fresh(cached, task)) return;
     reading.add(task.id);
+    const began = changes;
+    const stamped = () => (began === changes ? Date.now() : 0);     // 0: the store changed meanwhile, read again at once
     client.task(env.project, task.id).then((body) => {
-      bodies.set(task.id, { body, state: task.state, at: Date.now() });
+      bodies.set(task.id, { body, state: task.state, at: stamped() });
     }).catch(() => {
-      bodies.set(task.id, { body: cached ? cached.body : null, state: task.state, at: Date.now() });
+      bodies.set(task.id, { body: cached ? cached.body : null, state: task.state, at: stamped() });
     }).finally(() => {
       reading.delete(task.id);
+      if (began !== changes) read();
       draw();
     });
   }
 
-  const maxAgeOf = (task) => (task.state === "running" ? FRESH_MS : STALE_MS);
+  // The rows whose body is read without being expanded: the failed ones first (their failure word and ending), then the done ones
+  // (their paths), then the rest in the groups' order, at most twelve; and every expanded row.
+  const READ_ORDER = ["failed", "done"];
 
   function read() {
     if (last.loading) return;
-    const shownFirst = groupTasks(last.tasks).flatMap((g) => g.tasks).slice(0, MAX_READS);   // the first twelve rows as the groups list them
-    for (const task of shownFirst) ensure(task, maxAgeOf(task));
+    const groups = groupTasks(last.tasks);
+    const first = READ_ORDER.map((id) => groups.find((g) => g.id === id)).filter(Boolean);
+    const rest = groups.filter((g) => !READ_ORDER.includes(g.id));
+    for (const task of [...first, ...rest].flatMap((g) => g.tasks).slice(0, MAX_READS)) ensure(task);
     for (const id of expanded) {
       const task = last.tasks.find((t) => t.id === id);
-      if (task) ensure(task, maxAgeOf(task));
+      if (task) ensure(task);
     }
   }
 
@@ -97,7 +108,7 @@ export function createTasksTab(env) {
   function toggleRow(task) {
     if (expanded.has(task.id)) expanded.delete(task.id);
     else expanded.add(task.id);
-    if (expanded.has(task.id)) ensure(task, maxAgeOf(task));
+    if (expanded.has(task.id)) ensure(task);
     draw();
   }
 
@@ -188,8 +199,15 @@ export function createTasksTab(env) {
 
   return {
     el,
-    /** data: {tasks, requests, pending, loading}. */
+    /** data: {tasks, requests, pending, loading, reload}; reload is the page's stamp, which moves when the store changed (optional). */
     update(data) {
+      if (data.reload !== undefined) {
+        if (reloaded !== null && data.reload !== reloaded) {     // the store changed: every body held is stale, whatever its age
+          changes += 1;
+          for (const entry of bodies.values()) entry.at = 0;
+        }
+        reloaded = data.reload;
+      }
       last = { tasks: data.tasks || [], requests: data.requests || [], pending: data.pending || [], loading: Boolean(data.loading) };
       read();
       draw();

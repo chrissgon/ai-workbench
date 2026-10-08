@@ -1378,6 +1378,6 @@ a.wb-now-title:hover { text-decoration: underline; }
 
 @media (max-width: 639px) {
   .wb-task-group-head, .wb-task-toggle, .wb-task-retry { min-height: 44px; }
-  .wb-task-inbox { display: inline-flex; align-items: center; min-height: 44px; }
+  .wb-task-inbox, .wb-task-request a, .wb-task-paths a { display: inline-flex; align-items: center; min-height: 44px; }
   .wb-task-toggle { align-items: center; }
 }
