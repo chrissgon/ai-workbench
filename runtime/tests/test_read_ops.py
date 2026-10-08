@@ -387,6 +387,76 @@ def test_artifacts_lists_only_documents_under_docs_with_their_owner_and_never_th
     assert ops.artifacts(path)["artifacts"] == []
 
 
+def without_area_agents(tree) -> None:
+    path = str(tree["project"])
+    raw = json.loads((tree["project"] / "docs" / "workbench" / "runtime.json").read_text(encoding="utf-8"))
+    del raw["area_agents"]
+    (tree["project"] / "docs" / "workbench" / "runtime.json").write_text(json.dumps(raw), encoding="utf-8")
+    ops.accept_config(path, ops.project_config.load(path)["sha256"])
+
+
+def test_the_status_task_rows_carry_their_title_and_agent(tree):
+    path = str(tree["project"])
+    request = planned(tree, "single")
+    row = next(r for r in ops.status(path)["requests"] if r["id"] == request)
+    assert [(t["key"], t["title"], t["agent"]) for t in row["tasks"]] == [("profile", "Profile", "business")]
+    # The additions are the store's own columns: a task row carries nothing else new, and a request row nothing at all.
+    assert set(row["tasks"][0]) == {"id", "key", "title", "agent", "skill", "state", "note", "on_board", "open_comments"}
+    assert set(row) == {"id", "title", "flow", "state", "on_board", "open_comments", "tasks"}
+    # Without area agents the agent of a task planned now is None; the title is still there.
+    without_area_agents(tree)
+    later = planned(tree, "single")
+    row = next(r for r in ops.status(path)["requests"] if r["id"] == later)
+    assert [(t["title"], t["agent"]) for t in row["tasks"]] == [("Profile", None)]
+
+
+def test_a_pending_decision_carries_the_agent_of_its_task_and_none_for_a_request_level_decision(tree):
+    path = str(tree["project"])
+    request = ops.request(path, "Invented request.", title="Invented")["request"]
+    plan_id = ops.route(path, request, "single")["pending_id"]
+    # A plan waits on the request itself: no agent, in the list, as one item and in the status.
+    assert [(p["id"], p["kind"], p["agent"]) for p in ops.pending(path)["pending"]] == [(plan_id, "plan", None)]
+    assert ops.pending(path, plan_id)["agent"] is None
+    assert [p["agent"] for p in ops.status(path)["pending"]] == [None]
+    assert [p["agent"] for p in ops.task(path, request)["pending"]] == [None]
+    ops.approve(path, plan_id, ops.pending(path, plan_id)["payload"]["plan_sha256"])
+    # A run of the task leaves a decision on the task: the agent of the task.
+    assert ops.run_next(path)["status"] == "ok"
+    waiting = ops.pending(path)["pending"]
+    assert len(waiting) == 1 and waiting[0]["task_id"] != request and waiting[0]["agent"] == "business"
+    assert ops.pending(path, waiting[0]["id"])["agent"] == "business"
+    assert [p["agent"] for p in ops.status(path)["pending"]] == ["business"]
+    assert [p["agent"] for p in ops.task(path, waiting[0]["task_id"])["pending"]] == ["business"]
+    # The request's own decisions, once resolved, still show no agent.
+    assert [(p["kind"], p["agent"]) for p in ops.task(path, request)["pending"]] == [("plan", None)]
+    # Without area agents a decision on a task planned now has no agent either.
+    without_area_agents(tree)
+    later = planned(tree, "single")
+    assert ops.run_next(path)["status"] == "ok"
+    newest = ops.pending(path)["pending"][-1]
+    assert newest["task_id"] != later and newest["agent"] is None
+
+
+def test_an_artifact_row_carries_the_agent_whose_pack_holds_its_owner(tree):
+    path = str(tree["project"])
+    write(tree, "docs/business/market.md", "# Market\n")
+    write(tree, "docs/business/icp.md", "# Profile\n")
+    write(tree, "docs/notes/readme.md", "# Notes\n")
+    by_path = {a["path"]: a for a in ops.artifacts(path)["artifacts"]}
+    assert (by_path["docs/business/market.md"]["owner"], by_path["docs/business/market.md"]["agent"]) == ("demo-asks", "business")
+    assert (by_path["docs/business/icp.md"]["owner"], by_path["docs/business/icp.md"]["agent"]) == ("demo-writes", "business")
+    # No owner, no agent. The key is always there.
+    assert (by_path["docs/notes/readme.md"]["owner"], by_path["docs/notes/readme.md"]["agent"]) == (None, None)
+    assert set(by_path["docs/notes/readme.md"]) == {"path", "owner", "agent", "size", "modified_at", "bound"}
+    # A skill in the pack of two enabled agents has no one agent: None, not a guess.
+    configure(tree, {**AGENTS, "assistant": {"pack": "biz", "mode": "supervised"}})
+    assert {a["path"]: a["agent"] for a in ops.artifacts(path)["artifacts"] if a["owner"]} == {
+        "docs/business/market.md": None, "docs/business/icp.md": None}
+    # Without area agents no row has an agent.
+    without_area_agents(tree)
+    assert {a["agent"] for a in ops.artifacts(path)["artifacts"]} == {None}
+
+
 def test_an_artifact_outside_docs_a_symlink_or_the_configuration_is_refused(tree, tmp_path):
     path = str(tree["project"])
     write(tree, "docs/business/market.md", "# Market\n\nUnicode: café.\n")

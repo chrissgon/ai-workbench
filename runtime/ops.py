@@ -1085,10 +1085,19 @@ def _actions(store, item: dict) -> list:
     return [word for word in store.RESOLUTIONS if word != "released" or kind in store.RELEASABLE_KINDS]
 
 
-def _listed(item: dict, store=None) -> dict:
+def _agent_by_task(rows: list) -> dict:
+    """{task id: the area agent the store recorded for it} for the tasks of a plan; a request has no agent, so it is
+    not in the map, and a task of a project without area agents has None."""
+    return {t["id"]: t.get("agent") for t in rows if t["parent_id"] is not None}
+
+
+def _listed(item: dict, store=None, agents: dict | None = None) -> dict:
     """One pending decision as a list shows it; a plan also shows its tasks and the hash the person approves. With the
-    store, also the words it may be resolved with (`actions`)."""
+    store, also the words it may be resolved with (`actions`). With agents (_agent_by_task), also `agent`: the area
+    agent of the decision's task, None for a decision on a request and when the project has no area agents."""
     out = {key: item[key] for key in ("id", "kind", "title", "task_id", "created_at")}
+    if agents is not None:
+        out["agent"] = agents.get(item["task_id"])
     if store is not None:
         out["actions"] = _actions(store, item)
     if item["kind"] == "plan":
@@ -1099,15 +1108,18 @@ def _listed(item: dict, store=None) -> dict:
 
 
 def pending(project: str, pending_id: int | None = None) -> dict:
-    """What waits for the person. Without an id: {"pending": [{"id", "kind", "title", "task_id", "created_at"}]},
-    oldest first, a plan with its tasks and its hash ("plan"). With one: that pending decision whole, with its body
-    (the reply, or the plan's table) and its payload. Either way each carries "actions", the resolution words the
-    store allows for it now (_actions)."""
+    """What waits for the person. Without an id: {"pending": [{"id", "kind", "title", "task_id", "agent",
+    "created_at"}]}, oldest first, a plan with its tasks and its hash ("plan"). With one: that pending decision whole,
+    with its body (the reply, or the plan's table) and its payload. Either way each carries "actions", the resolution
+    words the store allows for it now (_actions), and "agent", the area agent of its task as the store recorded it
+    (None for a decision on a request, such as a plan or a router question, and when the project has no area
+    agents)."""
     ctx = context(project)
+    agents = _agent_by_task(_stored(ctx, ctx["store"].tasks_list))
     if pending_id is not None:
         item = _stored(ctx, ctx["store"].pending_get, pending_id)
-        return {**item, "actions": _actions(ctx["store"], item)}
-    return {"pending": [_listed(item, ctx["store"]) for item in _stored(ctx, ctx["store"].pending_list)]}
+        return {**item, "agent": agents.get(item["task_id"]), "actions": _actions(ctx["store"], item)}
+    return {"pending": [_listed(item, ctx["store"], agents) for item in _stored(ctx, ctx["store"].pending_list)]}
 
 
 COMMENTS_LINE = "Comments left on the platform:"
@@ -1565,23 +1577,25 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
 
 
 def status(project: str) -> dict:
-    """{"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key",
-    "skill", "state", "note"}]}], "pending": [... each with "actions"], "documents": [{"path", "status", "note", "on_platform"}],
+    """{"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key", "title",
+    "agent", "skill", "state", "note"}]}], "pending": [... each with "agent" and "actions"], "documents": [{"path", "status", "note", "on_platform"}],
     "board": {"left_out_final"} or None}: everything from the store's records. "left_out_final" is the number of
-    tasks the board never mirrors because they were final when it was configured (runtime/board.py)."""
+    tasks the board never mirrors because they were final when it was configured (runtime/board.py). A task's "title"
+    and "agent" are the store's: the agent is None when the project has no area agents."""
     ctx = context(project)
     rows = _stored(ctx, ctx["store"].tasks_list)
+    agents = _agent_by_task(rows)
     comments = {}
     for c in _stored(ctx, ctx["store"].comments_list):
         if c.get("task_id") is not None:
             comments[c["task_id"]] = comments.get(c["task_id"], 0) + 1
     board_of = lambda t: {"on_board": bool(t.get("remote_id")), "open_comments": comments.get(t["id"], 0)}
     requests = [{**{key: r[key] for key in ("id", "title", "flow", "state")}, **board_of(r),
-                 "tasks": [{**{key: t[key] for key in ("id", "key", "skill", "state", "note")}, **board_of(t)}
+                 "tasks": [{**{key: t[key] for key in ("id", "key", "title", "agent", "skill", "state", "note")}, **board_of(t)}
                            for t in rows if t["parent_id"] == r["id"]]}
                 for r in rows if r["parent_id"] is None]
     return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": requests,
-            "pending": [_listed(item, ctx["store"]) for item in _stored(ctx, ctx["store"].pending_list)],
+            "pending": [_listed(item, ctx["store"], agents) for item in _stored(ctx, ctx["store"].pending_list)],
             "documents": [{"path": d["path"], "status": d["status"], "note": d["note"], "on_platform": bool(d["remote_id"])}
                           for d in _stored(ctx, ctx["store"].documents_list)],
             "board": ({"left_out_final": len(_stored(ctx, lambda _conn: board.left_out(ctx, rows)))}
@@ -1602,13 +1616,15 @@ def config(project: str) -> dict:
 
 def task(project: str, task_id: int) -> dict:
     """One task or request with what is known of it: {"task": the store's row, "runs": its runs oldest first,
-    "pending": its pending decisions of every status, oldest first, each with "actions"}. For a request the runs are
-    the router's and the decisions its plan's or its question's; for a task of a plan, its own."""
+    "pending": its pending decisions of every status, oldest first, each with "agent" (the task's own) and
+    "actions"}. For a request the runs are the router's and the decisions its plan's or its question's; for a task of
+    a plan, its own."""
     ctx = context(project)
     store = ctx["store"]
     found = _stored(ctx, store.task_get, task_id)
     return {"task": found, "runs": _stored(ctx, store.task_runs_list, task_id),
-            "pending": [{**item, "actions": _actions(store, item)}
+            "pending": [{**item, "agent": found["agent"] if found["parent_id"] is not None else None,
+                         "actions": _actions(store, item)}
                         for item in _stored(ctx, store.pending_list, "all", task_id)]}
 
 
@@ -3014,8 +3030,10 @@ def _owners() -> list:
 
 def artifacts(project: str) -> dict:
     """The files of the project under docs/ that the path rule calls a document or a machine file, sorted by path:
-    {"artifacts": [{"path", "owner", "size", "modified_at", "bound"}], "truncated"}. owner is the skill whose declared
-    outputs match the path (skill_meta.matches), or None. modified_at is ISO-8601 UTC. bound is true when a pending
+    {"artifacts": [{"path", "owner", "agent", "size", "modified_at", "bound"}], "truncated"}. owner is the skill whose
+    declared outputs match the path (skill_meta.matches), or None. agent is the area agent whose pack holds the owner
+    skill, as plan.agent_of decides it; None when there is no owner, the project has no area agents, or no one agent
+    (or several) owns the skill. modified_at is ISO-8601 UTC. bound is true when a pending
     decision still open lists the file among those a run returned or kept for it, or when its skill's runtime
     manifest binds it to an approval by its hash. Never docs/workbench/runtime.json, a link, a folder the path rule
     drops, or a file outside docs/. At most ARTIFACT_LIMIT files; truncated says whether more were left out."""
@@ -3023,6 +3041,11 @@ def artifacts(project: str) -> dict:
     root = ctx["cfg"]["project"]
     base = os.path.join(root, "docs")
     owners = _owners()
+    try:
+        packs = plan.agent_skills(ctx["cfg"], ROOT)
+    except plan.PlanError as e:
+        raise OpsError(f"the agents of the packs cannot be told: {e}", 1) from None
+    agent_by_owner = {}
     waiting = set()
     for item in _stored(ctx, ctx["store"].pending_list):
         payload = item.get("payload") or {}
@@ -3049,8 +3072,13 @@ def artifacts(project: str) -> dict:
                         bound_by_owner[owner] = manifest.load(ROOT, owner, whole=False) if owner else {}
                     except manifest.ManifestError:
                         bound_by_owner[owner] = {}
+                if owner not in agent_by_owner:
+                    try:
+                        agent_by_owner[owner] = plan.agent_of(owner, packs) if owner and packs else None
+                    except ValueError:
+                        agent_by_owner[owner] = None
                 found = os.lstat(full)
-                out.append({"path": rel, "owner": owner, "size": found.st_size, "modified_at": _utc(found.st_mtime),
+                out.append({"path": rel, "owner": owner, "agent": agent_by_owner[owner], "size": found.st_size, "modified_at": _utc(found.st_mtime),
                             "bound": rel in waiting or bool(manifest.bound_among(bound_by_owner[owner], [rel]))})
             if truncated:
                 break
