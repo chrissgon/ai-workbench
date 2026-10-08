@@ -71,17 +71,43 @@ class LabError(Exception):
         self.kind, self.reason = kind, reason
 
 
+_LOAD_LOCK = threading.RLock()  # one load of the kit at a time: the service answers requests on threads
+_KIT = None  # the kit once it is completely loaded; sys.modules holds the module from the start of its load
+
+
 def load():
     """evals/execution.py as a module, loaded once by path under the name the lab's runner gives it, so that both
-    hold one module object."""
-    if MODULE not in sys.modules:
-        if not os.path.isfile(RUNNER):
-            raise LabError("config", "evals/execution.py is missing: the runtime runs from a checkout of the workbench")
-        spec = importlib.util.spec_from_file_location(MODULE, RUNNER)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[MODULE] = module
+    hold one module object. Safe from several threads: the module is registered in sys.modules before its code runs
+    (the kit needs its own name while it loads), so a thread that finds it there may find it half made; every
+    caller therefore takes the module from _KIT, which is set only after the load has ended, and the load itself is
+    made once, under a lock, with the check made again after the lock is taken."""
+    kit = _KIT
+    if kit is not None and sys.modules.get(MODULE) is kit:
+        return kit
+    with _LOAD_LOCK:
+        return _load_locked()
+
+
+def _load_locked():
+    global _KIT
+    registered = sys.modules.get(MODULE)
+    if registered is not None and registered is _KIT:
+        return registered
+    if registered is not None:  # registered by the lab's runner in this process, and its load has ended
+        _KIT = registered
+        return registered
+    if not os.path.isfile(RUNNER):
+        raise LabError("config", "evals/execution.py is missing: the runtime runs from a checkout of the workbench")
+    spec = importlib.util.spec_from_file_location(MODULE, RUNNER)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[MODULE] = module
+    try:
         spec.loader.exec_module(module)
-    return sys.modules[MODULE]
+    except BaseException:
+        sys.modules.pop(MODULE, None)  # a failed load leaves nothing half made for the next caller
+        raise
+    _KIT = module
+    return module
 
 
 class Lab:
