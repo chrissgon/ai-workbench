@@ -85,11 +85,18 @@ export function placeBlocks(messages, requests) {
   return { byMessage, trailing };
 }
 
-/** The requests whose `task` body is read: the newest MAX_BODIES of the ones the conversation shows. */
-export function wantedBodies(placed, requests) {
-  const ids = new Set([...placed.byMessage.values(), ...placed.trailing]);
+/**
+ * The requests whose `task` body is read: every one that has an open decision in `pending` (by task_id: its card must be drawn
+ * so that it can be answered), then the newest of the rest the conversation shows, up to MAX_BODIES in all (more when more than
+ * MAX_BODIES have an open decision).
+ */
+export function wantedBodies(placed, requests, pending = []) {
   const known = new Set((requests || []).map((r) => r.id));
-  return [...ids].filter((id) => known.has(id)).sort((a, b) => b - a).slice(0, MAX_BODIES);
+  const shown = [...new Set([...placed.byMessage.values(), ...placed.trailing])].filter((id) => known.has(id));
+  const open = new Set((pending || []).map((p) => p.task_id));
+  const must = shown.filter((id) => open.has(id)).sort((a, b) => b - a);
+  const rest = shown.filter((id) => !open.has(id)).sort((a, b) => b - a);
+  return [...must, ...rest.slice(0, Math.max(0, MAX_BODIES - must.length))];
 }
 
 /** A change signature of one request in a status body: the state, the task count and the open decisions' ids. */

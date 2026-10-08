@@ -88,6 +88,8 @@ const placed = m.placeBlocks(merged, requests);
 out.placed = { byMessage: [...placed.byMessage.entries()], trailing: placed.trailing };
 out.wanted = m.wantedBodies(placed, requests);
 const many = Array.from({ length: 12 }, (_, i) => ({ id: 100 + i, title: "r", state: "planned", tasks: [] }));
+const older = Array.from({ length: 12 }, (_, i) => ({ id: 100 + i, title: "r", state: "planned", tasks: [] }));
+out.wantedOpen = m.wantedBodies(m.placeBlocks([], older), older, [{ id: 7, task_id: 100 }, { id: 8, task_id: 101 }]);
 out.wantedCap = m.wantedBodies(m.placeBlocks([], many), many).length;
 out.lobbyDecisions = m.lobbyDecisions({ pending: [{ id: 1, agent: null }, { id: 2, agent: "marketing" }, { id: 3, agent: "planning" }] }).map((p) => p.id);
 out.line = [m.requestLine(requests[1], 0), m.requestLine(requests[1], 1).routable, m.requestLine(requests[0], 0).cancellable, m.requestLine(requests[4], 0).routable];
@@ -136,6 +138,8 @@ def test_messages_are_merged_by_id_and_each_request_is_placed_under_the_newest_m
     # 20 and 22 are named by none (made from the form): after the last message, oldest first; 21 is final: no trailing block
     assert sorted(got["placed"]["byMessage"]) == [[5, 9], [6, 14]] and got["placed"]["trailing"] == [20, 22]
     assert got["wanted"] == [22, 20, 14, 9], "the bodies read are the newest requests the conversation shows"
+    assert got["wantedOpen"][:2] == [101, 100] and len(got["wantedOpen"]) == 8 and got["wantedOpen"][2:] == [111, 110, 109, 108, 107, 106], \
+        "a request with an open decision is always read, even when it is older than the newest eight"
     assert got["wantedCap"] == 8
     assert got["lobbyDecisions"] == [1, 3], "a decision on a request (no agent) and the planning agent's own belong to the Lobby"
 

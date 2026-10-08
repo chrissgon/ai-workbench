@@ -671,7 +671,6 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-card-meta { color: var(--pui-text-muted); font-size: 12px; }
 .wb-card-content { display: grid; gap: 10px; padding: 12px; }
 .wb-card-title { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
-.wb-card-title:focus-visible { outline: none; }
 .wb-card-note { margin: 0; color: var(--pui-text-muted); font-size: 12px; overflow-wrap: anywhere; }
 .wb-card-label { color: var(--pui-text-muted); font-size: 12px; }
 .wb-card-error { font-size: 13px; }
@@ -701,7 +700,6 @@ a.wb-now-title:hover { text-decoration: underline; }
 
 /* fields: the edge is the muted token, the ground the raised one (OPEN-2) */
 .wb-field { --pui-edge: var(--pui-muted); background-color: var(--wb-raised); }
-.wb-field:disabled { opacity: 1; }
 
 /* the footer: the "New request" disclosure, then the composer */
 .wb-lobby-footer { display: grid; grid-template-rows: minmax(0, auto) auto; gap: 8px; min-height: 0; padding: 10px 12px; overflow: hidden; border-top: var(--pui-border-width) solid var(--pui-border); }

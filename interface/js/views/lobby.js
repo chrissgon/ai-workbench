@@ -59,6 +59,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     invalidate();
     await onChanged();
     await readConversation();
+    await settled();      // the cards are drawn from the bodies read again before the caller goes on
   };
   const thread = createThread({
     api, project, signal, onChanged: refresh,
@@ -164,7 +165,7 @@ export function createLobbyView(frame, { project, onChanged }) {
 
   function readBodies(requests, pending) {
     const placed = placeBlocks(messages, requests);
-    for (const id of wantedBodies(placed, requests)) {
+    for (const id of wantedBodies(placed, requests, pending)) {
       const request = requests.find((r) => r.id === id);
       const sig = signatureOf(request, pending);
       const held = bodies.get(id);
