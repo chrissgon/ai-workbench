@@ -453,7 +453,7 @@ const tabButtons = find(tabs.el, (n) => n.attrs.role === "tab");
 out.tabs = { names: tabButtons.map((b) => b.attrs["aria-label"]), selected: tabButtons.map((b) => b.attrs["aria-selected"]), controls: tabButtons.map((b) => b.attrs["aria-controls"]), list: tabs.el.attrs.role };
 tabButtons[1].listeners.click[0]();
 out.clickHash = window.location.hash;
-document.activeElement = tabButtons[3];
+document.activeElement = tabButtons[4];      // the last tab, now that Tasks is the fourth
 press(tabs.el, { key: "ArrowRight" });
 out.wrap = window.location.hash;
 press(tabs.el, { key: "End" });
@@ -585,8 +585,8 @@ def test_the_new_request_form_is_closed_by_default_in_the_drawn_order_and_report
 def test_the_tab_list_names_the_tab_in_the_url_and_moves_with_the_arrows(tmp_path):
     got = run_node(tmp_path, CARD)
     t = got["tabs"]
-    assert t["list"] == "tablist" and t["names"] == ["Conversation", "Inbox, 2 waiting", "Desk", "Agent"]
-    assert t["selected"] == ["true", "false", "false", "false"] and len(set(t["controls"])) == 4
+    assert t["list"] == "tablist" and t["names"] == ["Conversation", "Inbox, 2 waiting", "Desk", "Tasks", "Agent"]
+    assert t["selected"] == ["true", "false", "false", "false", "false"] and len(set(t["controls"])) == 5
     assert got["clickHash"] == "#/p/aaaaaaaaaaaa/lobby/inbox" and got["wrap"] == "#/p/aaaaaaaaaaaa/lobby/conversation"
     assert got["end"] == "#/p/aaaaaaaaaaaa/lobby/agent" and got["home"] == "#/p/aaaaaaaaaaaa/lobby/conversation"
 

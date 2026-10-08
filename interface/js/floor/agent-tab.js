@@ -7,8 +7,9 @@
 
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
-import { MODES, MODE_LINES, PIPS, meters, modeOption, runRows, stateRow, stateTone, taskWord } from "../floor-model.js";
+import { MODES, MODE_LINES, PIPS, meters, modeOption, stateRow, stateTone, taskWord } from "../floor-model.js";
 import { pips } from "../scene/plates.js";
+import { runBlock } from "./run-block.js";
 import { busyLine, chip, errorText, notice, ring } from "./widgets.js";
 
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
@@ -147,14 +148,6 @@ export function createAgentTab(env) {
   function drawMeters(m) {
     fill(metersBox, meterCell("Runs today", m.runs.text, m.runs.share, m.runs.full), meterCell("Spend today", m.spend.text, m.spend.share, m.spend.full, m.spend.unknown),
       meterCell("Queued", m.queued.text, null, false));
-  }
-
-  function runBlock(run) {
-    const rows = runRows(run);
-    return h("dl", { class: "wb-run" }, rows.flatMap((r) => [
-      h("dt", { class: "wb-muted", text: r.label }),
-      h("dd", { class: r.kind === "code" || r.kind === "wrap" ? "mono" : null }, r.kind === "chip" ? chip(r.value, r.tone, "11") : r.value),
-    ]));
   }
 
   function drawCurrent(view) {

@@ -247,7 +247,7 @@ def test_the_floor_model_picks_the_current_task_the_other_tasks_the_hand_over_ta
     assert got["runRows"] == [["Run", "#2 s 1.0.0", "code"], ["Status", "Failed", "chip"], ["Failure", "Timed out", "text"], ["Attempt", "2", "text"],
                               ["Duration", "2 min 5 s", "text"], ["Tokens", "1,234", "text"], ["Cost", "$0.1000", "text"], ["Model", "m", "code"], ["Error", "<b>late</b>", "wrap"]], \
         "a failed run shows its failure word in place of its ending, and its error as text"
-    assert got["runRowsOk"][2] == ["Ending", "Stopped at its confirmation gate"] and ["Cost", "recorded: not available"] in got["runRowsOk"]
+    assert got["runRowsOk"][2] == ["Ending", "Stopped at its confirmation gate"] and ["Cost", "unknown"] in got["runRowsOk"]
     assert got["resolved"] == [["Review released", "pui-success pui-soft", "5 h"], ["Effect cancelled", "pui-muted pui-soft", "8 h"]][0:2] or got["resolved"][0][0] == "Review released"
     assert got["current"] == [3, 2, None], "running, else waiting, ready, blocked, failed (the newest of the first state present)"
     assert got["target"] == [8, 9, None]
