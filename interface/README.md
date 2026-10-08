@@ -17,7 +17,7 @@ returned and sends what the person typed or clicked.
 | `js/api.js` | The client of the service: one function per route of `ROUTES` in `runtime/service.py`, named after the operation. |
 | `js/token.js`, `js/dom.js` | The token for this session; building elements (strings become text, a style or an event attribute is refused). |
 | `js/frame/` | The shared frame of every scene screen: header (back, breadcrumbs, project switcher), KPI cards, waiting list, tracking bar, panel shell, sheet (a phone's lists), icons. |
-| `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `city.js` (the City's geometry), `labels.js`, `cull.js`, `fit.js`. |
+| `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `city.js` (the City's geometry), `labels.js`, `cull.js`, `fit.js`, `tween.js` (the camera move as a state machine). |
 | `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City) and `placeholder.js` (the Building, Floor, Lobby and Control room until their packages). |
 | `js/three.js` | The one place the 3D library is imported from (a relative re-export); the scene uses it. |
 | `vendor/three/`, `vendor/<library>/` | The two third-party libraries, copied unchanged, each folder with a README that records the package, the exact version, the licence and the sha256 of every file. |

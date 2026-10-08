@@ -34,6 +34,15 @@ export function createFrame(root, handlers) {
   const skipList = h("a", { class: "wb-skip", href: "#wb-scene-list", text: "Skip to the scene list" });
   const live = h("div", { class: "wb-sr", role: "status", "aria-live": "polite" });
   const heading = h("h1", { class: "wb-sr", tabindex: "-1", text: "City" });
+  // A skip link moves the focus to its target by id. It never changes the hash: the hash is the router's, and a fragment
+  // that is not a route would send the page back to the City.
+  for (const link of [skipPanel, skipList]) {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      const target = document.getElementById(link.getAttribute("href").slice(1)) || heading;
+      target.focus();
+    });
+  }
 
   const door = h("button", { class: "pui-btn pui-surface pui-outline wb-door", type: "button", "aria-label": "Control room" },
     icon("server", 16), h("span", { class: "wb-door-label", text: "Control room" }));
@@ -51,12 +60,14 @@ export function createFrame(root, handlers) {
 
   let doorTarget = null;
   let shownRoute = null;
+  let shownNotice = "null";
   door.addEventListener("click", () => {
     if (doorTarget) window.location.hash = doorTarget;
   });
-  document.addEventListener("keydown", (event) => {
+  const onKey = (event) => {
     if (event.key === "Escape") closeLists();
-  });
+  };
+  document.addEventListener("keydown", onKey);
 
   // The live region: one sentence per change, at most one per two seconds.
   const queue = [];
@@ -73,7 +84,16 @@ export function createFrame(root, handlers) {
   const phone = window.matchMedia("(max-width: 639px)");
 
   return {
-    el: frame, sceneHost, main, noticeBox, nav, switcher, kpis, waitingCard, waitingMenu, track, sheet, heading, closeLists,
+    el: frame, sceneHost, main, noticeBox, nav,
+    /** Take the frame down: the listeners it put on the document go, so that entering the token again does not stack them. */
+    destroy() {
+      document.removeEventListener("keydown", onKey);
+      switcher.destroy();
+      waitingMenu.destroy();
+      clearTimeout(announcing);
+      queue.length = 0;
+      frame.remove();
+    }, switcher, kpis, waitingCard, waitingMenu, track, sheet, heading, closeLists,
     /** Set the screen: route (router.parse), the project's name (or null), the agent's display name for a floor. */
     setScreen(route, { projectName, projectId, leaf }) {
       frame.dataset.screen = route.screen;
@@ -96,6 +116,11 @@ export function createFrame(root, handlers) {
     },
     /** A band under the header: spec {kind: "error"|"info", text, mono?, retry?} or null. */
     notice(spec) {
+      // Redrawn only when the notice changes: a poll that finds the same notice must not make a screen reader read an
+      // alert again, nor take the focus from its "Try again" button.
+      const key = JSON.stringify(spec);
+      if (key === shownNotice) return;
+      shownNotice = key;
       noticeBox.replaceChildren();
       noticeBox.hidden = !spec;
       if (!spec) return;

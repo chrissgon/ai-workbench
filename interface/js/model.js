@@ -227,3 +227,14 @@ export function sceneModel(buildings, selectedId, ready = true) {
     })),
   };
 }
+
+/** The state of a screen's data: "loading" before the first read has answered, "error" when it failed and nothing was ever read, else "ready" (a later failure keeps the last data, dimmed). */
+export function screenState(snapshot, failure) {
+  if (snapshot.loaded) return "ready";
+  return failure ? "error" : "loading";
+}
+
+/** Whether the City says the service has no project: only when a read answered and the list was empty. */
+export function emptyCityVisible(state, buildingCount) {
+  return state === "ready" && buildingCount === 0;
+}

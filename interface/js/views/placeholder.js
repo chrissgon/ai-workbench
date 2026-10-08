@@ -32,7 +32,7 @@ export function createPlaceholder(frame, route) {
         parts.push(h("p", { class: "notice error", role: "alert", text: snapshot.loaded ? "The service has no such project." : "Loading..." }));
       } else if (project.config && !project.config.accepted) {
         parts.push(h("p", { class: "notice error", text: project.message || "The project's configuration is not accepted yet." }));
-      } else if (detail && detail.error) {
+      } else if (detail && detail.error && !detail.status) {
         parts.push(h("p", { class: "notice error", role: "alert", text: detail.error.message }));
       } else if (detail && detail.status) {
         const pending = (detail.status.pending || []).length;

@@ -78,11 +78,13 @@ export function createWaitingMenu({ onOpen, onSheet }) {
       button.focus();
     }
   });
-  document.addEventListener("pointerdown", (event) => {
+  const onPointerDown = (event) => {
     if (open && !el.contains(event.target)) setOpen(false);
-  });
+  };
+  document.addEventListener("pointerdown", onPointerDown);
   return {
     el, button,
+    destroy() { document.removeEventListener("pointerdown", onPointerDown); },
     close() { if (open) setOpen(false); },
     set(rows, state) {
       const key = JSON.stringify([rows, state]);

@@ -83,6 +83,7 @@ function askForToken(message) {
   stopPolling();
   if (view) view.dispose();
   view = null;
+  if (frame) frame.destroy();
   frame = null;
   drawnKey = null;
   const holder = h("div", { class: "app-main" });
@@ -179,7 +180,8 @@ function render() {
   const now = new Date();
   const projects = snapshot.projects;
   const scope = route.project || null;
-  const loading = !snapshot.loaded && !failure;
+  const state = model.screenState(snapshot, failure);
+  const loading = state === "loading";
   const chosen = route.project || selected;
   const project = projects.find((p) => p.id === chosen) || null;
   const routeProject = route.project ? projects.find((p) => p.id === route.project) : null;
@@ -194,7 +196,6 @@ function render() {
   drawnKey = key;
   frame.el.classList.toggle("is-stale", Boolean(failure) && snapshot.loaded);
 
-  const state = loading ? "loading" : failure && !snapshot.loaded ? "error" : "ready";
   frame.switcher.update({
     projects: projects.map((p) => ({
       id: p.id, name: p.name, accepted: Boolean(p.config && p.config.accepted),
@@ -213,7 +214,7 @@ function render() {
   ensureView(route);
   if (view.screen === "city") {
     const city = model.city(snapshot, now);
-    view.city.update({ city, selectedId: chosen, state: loading ? "loading" : "ready" });
+    view.city.update({ city, selectedId: chosen, state });
   } else {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     view.placeholder.update(snapshot, route.project, route.agent ? `Floor of ${route.agent}` : "");
