@@ -738,7 +738,7 @@ def test_the_service_reaches_the_store_and_the_facade_only_through_the_operation
         elif isinstance(node, ast.ImportFrom):
             imported.add((node.module or "").split(".")[0])
     siblings = {p.stem for p in st.RUNTIME.glob("*.py")}
-    assert imported & siblings == {"ops"}, imported & siblings          # of the runtime, the operations layer only
+    assert imported & siblings == {"ops", "shell_kit"}, imported & siblings  # of the runtime, the operations layer and the shells' kit only
     assert not imported & {"providers", "evals", "adapters", "scripts", "sqlite3", "lab", "store"}
     used = {n.id for n in ast.walk(tree_) if isinstance(n, ast.Name)} | {n.attr for n in ast.walk(tree_) if isinstance(n, ast.Attribute)}
     assert not used & {"lab", "store", "store_module", "open_db", "init_db", "context", "project_config", "sqlite3", "stop_all_groups"}
@@ -751,10 +751,10 @@ def test_the_service_reaches_the_store_and_the_facade_only_through_the_operation
                 if name in ("open", "os.open", "os.fdopen"):
                     opens.setdefault(fn.name, set()).add(name)
     assert set(opens) == {"write_token", "_upload", "_static"}, opens
-    # the layer map allows it one arrow and no other
+    # the layer map allows it two arrows (the operations layer and the shells' kit) and no other
     sys.path.insert(0, str(st.REPO / "scripts" / "tests"))
     layer = __import__("test_layer_map")
-    assert layer.allowed("runtime/service.py", "runtime/ops.py")
+    assert layer.allowed("runtime/service.py", "runtime/ops.py") and layer.allowed("runtime/service.py", "runtime/shell_kit.py")
     for target in ("runtime/lab.py", "providers/store/sqlite.py", "runtime/plan.py", "providers/resolve.py", "evals/execution.py",
                    "runtime/operations.py"):
         assert not layer.allowed("runtime/service.py", target), target

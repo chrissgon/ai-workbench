@@ -242,3 +242,4 @@ The names fixed for this work. Use each exactly.
 - 2026-10-06: the architecture review and its status table (review-2026-10-06.md).
 - 2026-10-07: the close-out of the architecture fixes: the review's status table is final, and the cross-cutting rows and the known limits name what the fixes changed.
 - 2026-10-07: the local service (`runtime/service.py`, `interface/`) is a shell of layer 7, with its own arrow to `runtime/ops.py` in the layer map.
+- 2026-10-08: the layer map gives `runtime/service.py` and `runtime/mcp.py` an arrow to `runtime/shell_kit.py`, the kit they share (it imports nothing of the runtime); the other shells keep the one arrow to `runtime/ops.py`.
