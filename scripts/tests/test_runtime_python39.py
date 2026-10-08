@@ -45,6 +45,8 @@ ON_SYSTEM_PYTHON = [
     "runtime/service.py",
     # The MCP mode (stage 9): the same operations layer over standard input and output.
     "runtime/mcp.py",
+    # What the two shells share (stage 9, WP-9.9): the job registry, the status words, the project list.
+    "runtime/shell_kit.py",
     # The cost of a run recomputed from its token counts (stage 9): the operations layer imports it.
     "runtime/costs.py",
     # The roles of the runtime as data, and the isolated runner of skill code (WP-R.5).

@@ -97,8 +97,9 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 | `runtime/ops.py` | The operations layer: every operation a shell can perform (request, route, approve, reject, run the next task, pending, answer, release, retry, cancel, status, the configuration, the mirrors, the file drop, the dependencies, the standing approvals, the proof, the verdict, progress, the dispatcher's jobs, the conversation, the contained run, and what the local service reads: `config`, `task`, `flows`, `stop-runs`, and the reads of the views: `agents`, `conversation`, `skills`, `costs`, `connections`, `artifacts`, `artifact`; a pending decision carries `actions`). Every shell calls it; no shell reaches the store, the facade or a project's files by itself |
 | `runtime/operations.py` | The table of operations (a pure literal): one row per operation of `ops.py` with its verb, arguments, the channels that may call it (`terminal`, `chat`, `page`, `mcp`; an effect is approved only from the terminal or the local page, with its hash), whether it calls a model and, as `job`, whether the local service runs it as a job. Every shell derives what it accepts from it, and the texts that name a command are built from it |
 | `runtime/cli.py` | The terminal shell: its parser is built from the table, one command per operation, one JSON object printed |
-| `runtime/service.py` | The local service: the operations layer through an API on `127.0.0.1`, with a token and an origin check, and the static files of `interface/` ("The local service" below). It imports `ops.py` and nothing else of the runtime |
-| `runtime/mcp.py` | The MCP mode: the operations layer as tools of a Model Context Protocol server over standard input and output, one tool per row of the table that lists the `mcp` channel, with no token and no port ("The MCP mode" below). It imports `ops.py` and nothing else of the runtime |
+| `runtime/service.py` | The local service: the operations layer through an API on `127.0.0.1`, with a token and an origin check, and the static files of `interface/` ("The local service" below). It imports `ops.py`, `shell_kit.py` (shared with the MCP mode) and nothing else of the runtime |
+| `runtime/shell_kit.py` | What the local service and the MCP mode share, once: the project id and list, the mapping of an `OpsError` code to a status and a word, the argument kinds a shell carries in JSON and the job registry. It imports nothing of the runtime and holds no rule about the work |
+| `runtime/mcp.py` | The MCP mode: the operations layer as tools of a Model Context Protocol server over standard input and output, one tool per row of the table that lists the `mcp` channel, with no token and no port ("The MCP mode" below). It imports `ops.py`, `shell_kit.py` and nothing else of the runtime |
 | `interface/` | The static files the service serves: pages, modules and vendored libraries, no build step, nothing loaded from another host |
 | `runtime/flow_files.py` | Reads and checks a flow file, `flows/<name>.json` |
 | `runtime/skill_meta.py` | What a skill declares in its frontmatter (artifact lists, requirement classes, side effects, version) |
@@ -284,7 +285,7 @@ A route takes the query keys it names and no other (`400`). `conversation` retur
 
 **The shutdown.** On SIGINT or SIGTERM the service stops accepting requests, calls `ops.stop_runs()` (it ends the container and the process group of every run a job started, which has no signal handler of its own in a thread) and does not exit before that returns; a second signal while it stops is ignored. The token file is removed.
 
-**What it does not do.** It imports `ops.py` and nothing else of the runtime: no store, no lab facade, no provider, and it reads no file of a project; it writes the token file and an upload. It knows a project's data folder only through the `config` operation. Results pass through unchanged, host paths included (it is local); a page shows them as text.
+**What it does not do.** It imports `ops.py`, `shell_kit.py` (the pieces it shares with the MCP mode) and nothing else of the runtime: no store, no lab facade, no provider, and it reads no file of a project; it writes the token file and an upload. It knows a project's data folder only through the `config` operation. Results pass through unchanged, host paths included (it is local); a page shows them as text.
 
 ## The MCP mode
 
@@ -304,7 +305,7 @@ A route takes the query keys it names and no other (`400`). `conversation` retur
 
 **The shutdown.** When standard input closes, or on SIGINT or SIGTERM, it calls `ops.stop_runs()` and does not exit before that returns; a second signal while it stops is ignored.
 
-**What it does not do.** It imports `ops.py` and nothing else of the runtime (the layer map says so), reads no file of a project, opens no socket and holds no secret. Its tests are `runtime/tests/test_mcp.py`.
+**What it does not do.** It imports `ops.py`, `shell_kit.py` (the pieces it shares with the local service) and nothing else of the runtime (the layer map says so), reads no file of a project, opens no socket and holds no secret. Its tests are `runtime/tests/test_mcp.py`.
 
 ## What the proof covers
 
