@@ -662,3 +662,101 @@ def test_the_page_has_one_scene_container_and_an_html_equivalent_of_every_scene_
         assert needle in frame
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert '"aria-hidden": "true"' in engine and 'role: "img"' in engine, "the canvas is an image with a label; the overlay is hidden from the tree"
+
+
+# --- WP-9.5b: defects the end-to-end smoke found -------------------------------------------------------------------------------------
+
+
+def _calls_of(source: str, names) -> list[str]:
+    stripped = re.sub(r"//[^\n]*|/\*.*?\*/", "", source, flags=re.S)
+    stripped = re.sub(r'"(?:[^"\\\n]|\\.)*"', '""', stripped)
+    return [n for n in names if re.search(rf"(?<![\w.]){re.escape(n)}\(", stripped)]
+
+
+def test_every_name_the_scene_engine_calls_from_a_sibling_module_is_imported():
+    """`ease` was called by engine.js and exported by fit.js but never imported: a ReferenceError on every entry to the Building."""
+    engine = (SCENE / "engine.js").read_text(encoding="utf-8")
+    imports = {m.group(2): {n.strip().split(" as ")[-1] for n in m.group(1).split(",") if n.strip()}
+               for m in re.finditer(r'import \{([^}]*)\} from "\./([a-z-]+)\.js"', engine)}
+    checked = 0
+    for module in sorted(SCENE.glob("*.js")):
+        if module.name == "engine.js":
+            continue
+        exported = re.findall(r"export (?:function|const|class|let) ([A-Za-z_]\w*)", module.read_text(encoding="utf-8"))
+        for name in _calls_of(engine, exported):
+            checked += 1
+            assert name in imports.get(module.stem, set()), f"engine.js calls {name}() of {module.name} and does not import it"
+    assert checked >= 5, "the check found the engine's calls into its siblings"
+    assert "ease" in imports["fit"], "the opening animation and the work-order tag use ease"
+
+
+def test_the_notice_band_and_the_commands_it_shows_have_no_fixed_height_that_clips_them():
+    """The `accept-config` command is copied whole: the band's text, the Floor's notice card and its command wrap, never scroll."""
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    css = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    seen = set()
+    for selector, body in re.findall(r"([^{}]+)\{([^{}]*)\}", css):
+        names = {n for n in (".wb-notice-text", ".wb-notice-card", ".wb-command", ".wb-notice") if re.search(rf"{re.escape(n)}(?![\w-])", selector)}
+        if not names:
+            continue
+        seen |= names
+        assert not re.search(r"(?<![\w-])(?:max-)?height\s*:", body), f"{selector.strip()}: no height, so nothing is cut"
+        assert not re.search(r"overflow(?:-y)?\s*:\s*(?:auto|scroll|hidden)", body), f"{selector.strip()}: no inner scroll box"
+    assert seen == {".wb-notice-text", ".wb-notice-card", ".wb-command", ".wb-notice"}
+    assert re.search(r"\.wb-notice-text \{[^}]*overflow-wrap: anywhere", css), "a long hash breaks anywhere"
+    assert re.search(r"\.wb-command \{[^}]*overflow-wrap: anywhere", css)
+
+
+CITY_ARROWS = r"""
+import { FakeNode, settle } from "@FAKE@";
+import { createCityView } from "@JS@/views/city.js";
+
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+const el = () => new FakeNode("div");
+const frame = {
+  main: el(), sceneHost: el(), track: { el: el() }, noticeBox: el(),
+  waitingCard: { el: el(), set() {} },
+  insets: () => ({}), sceneUnavailable() {},
+};
+const view = createCityView(frame);
+const b = (id, name) => ({ id, name, accepted: true, decisions: 0, runningTask: null, sub: "" });
+view.update({ city: { buildings: [b("aaaaaaaaaaaa", "alpha"), b("bbbbbbbbbbbb", "beta"), b("cccccccccccc", "gamma")], waiting: [], canvasLabel: "City" }, selectedId: null, state: "ready" });
+const list = frame.main.querySelectorAll("ul.wb-building-list")[0];
+const links = frame.main.querySelectorAll("a.wb-building-link");
+const press = (key) => {
+  let prevented = false;
+  for (const fn of list.listeners.keydown || []) fn({ key, preventDefault() { prevented = true; } });
+  return prevented;
+};
+const out = { links: links.length, handlers: (list.listeners.keydown || []).length };
+links[0].focus();
+out.down = [press("ArrowDown"), links.indexOf(document.activeElement)];
+press("ArrowDown");
+out.down2 = links.indexOf(document.activeElement);
+press("ArrowDown");
+out.stopsAtEnd = links.indexOf(document.activeElement);
+press("ArrowUp");
+out.up = links.indexOf(document.activeElement);
+press("Home");
+out.home = links.indexOf(document.activeElement);
+press("End");
+out.end = links.indexOf(document.activeElement);
+out.otherKey = press("a");
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_cities_list_of_buildings_moves_the_focus_with_the_arrow_keys(tmp_path):
+    from test_interface_floor import FAKE_DOM as FLOOR_DOM
+    fake = tmp_path / "fake-dom.mjs"
+    fake.write_text(FLOOR_DOM + "\nglobalThis.__unused = 0;\n", encoding="utf-8")
+    script = tmp_path / "city.mjs"
+    script.write_text(CITY_ARROWS.replace("@JS@", JS.as_uri()).replace("@FAKE@", fake.as_uri()), encoding="utf-8")
+    done = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    got = json.loads(done.stdout.strip().splitlines()[-1])
+    assert got["links"] == 3 and got["handlers"] == 1, "one keydown handler on the list"
+    assert got["down"] == [True, 1] and got["down2"] == 2 and got["stopsAtEnd"] == 2, "ArrowDown moves down and stops at the last building"
+    assert got["up"] == 1 and got["home"] == 0 and got["end"] == 2
+    assert got["otherKey"] is False, "other keys are left alone"

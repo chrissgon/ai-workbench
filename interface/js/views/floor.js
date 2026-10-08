@@ -274,7 +274,7 @@ export function createFloorView(frame, env) {
       const ids = model.tasks.map((t) => t.id);
       inbox.update({ decisions: model.decisions, requests: snapshot.details[project].status.requests || [], resolved: fm.resolvedLines(bodiesPlain(), ids, last.now), selected: route.pending, loading: false });
     } else {
-      desk.update({ documents: documentsRows, truncated: Boolean(documents && documents.truncated), loading: documents === null && !documentsError, error: documentsError });
+      desk.update({ documents: documentsRows, truncated: Boolean(documents && documents.truncated), loading: documents === null && !documentsError, error: documentsError, elsewhere: documents ? documents.rows.length - documentsRows.length : 0 });
     }
     if (tab !== "agent") agentTabLive.update(model);   // keep the mode result notice and the state current while another tab is open
 
