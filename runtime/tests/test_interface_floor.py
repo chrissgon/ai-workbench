@@ -758,3 +758,34 @@ def test_the_viewer_shows_a_files_text_and_a_refusal_as_text_never_as_markup(tmp
     assert got["closed"] == 1
     assert got["refusal"]["title"] == "The file could not be opened" and got["refusal"]["markup"] == 0 and got["refusal"]["size"] is None
     assert "<img src=x onerror=alert(3)>" in got["refusal"]["text"], "the operation's refusal is shown whole, as text"
+
+
+# --- WP-9.5b: the Desk's empty wording for an agent with documents elsewhere ------------------------------------------------------
+
+DESK_EMPTY = r"""
+import { FakeNode } from "@FAKE@";
+import { createDeskTab, NONE_IN_PROJECT, NONE_OF_ITS_OWN } from "@JS@/floor/desk-tab.js";
+
+const tab = createDeskTab({ project: "p", agent: "engineering", open() {} });
+const say = () => tab.el.querySelectorAll(".wb-state-block").map((n) => n.textContent);
+const out = { constants: [NONE_IN_PROJECT, NONE_OF_ITS_OWN] };
+tab.update({ documents: [], truncated: false, loading: false, error: null });
+out.projectEmpty = say();
+tab.update({ documents: [], truncated: false, loading: false, error: null, elsewhere: 7 });
+out.elsewhere = say();
+out.filterHidden = tab.el.querySelectorAll("label")[0] ? tab.el.querySelectorAll("label")[0].hidden : null;
+tab.update({ documents: [{ path: "docs/a.md", owner: "s", size: "1 B", modified: "2026-10-03 09:05", bound: false }], truncated: false, loading: false, error: null, elsewhere: 7 });
+out.withDocuments = say();
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_an_agent_with_no_documents_of_its_own_is_not_told_the_project_has_none(tmp_path):
+    got = run_node(tmp_path, DESK_EMPTY)
+    assert got["constants"] == ["The project has no documents under docs/ yet.", "No documents of this agent. Documents with no owner are on the Lobby's desk."]
+    assert got["projectEmpty"] == [got["constants"][0]], "a project with no documents at all keeps the drawn sentence"
+    assert got["elsewhere"] == [got["constants"][1]], "documents that belong to no agent are on the Lobby's desk, and the Desk says so"
+    assert got["withDocuments"] == [], "an agent with documents shows its table, no empty block"
+    floor = (JS / "views" / "floor.js").read_text(encoding="utf-8")
+    assert "elsewhere: documents ? documents.rows.length - documentsRows.length : 0" in floor, "the Floor tells the Desk how many rows are not the agent's"

@@ -8,6 +8,10 @@ import { arrowNav } from "../frame/arrows.js";
 import { deskRows, pathParts } from "../floor-model.js";
 import { busyLine, field } from "./widgets.js";
 
+export const NONE_IN_PROJECT = "The project has no documents under docs/ yet.";
+// Assumption (WP-9.5b): the handoff has no wording for an agent with none of its own; documents with no owner are on the Lobby's desk (E-22).
+export const NONE_OF_ITS_OWN = "No documents of this agent. Documents with no owner are on the Lobby's desk.";
+
 /** A path as nodes with a `wbr` after each of "/", "-" and ".". */
 export function pathNodes(path) {
   const out = [];
@@ -23,8 +27,9 @@ export function whenParts(text) {
 }
 
 /**
- * Create the Desk. env: {project, agent, open(path)}. Returns {el, update({documents, truncated, loading, error}), filterText(),
- * focusRow(path)}; documents are the agent's rows of `artifacts`.
+ * Create the Desk. env: {project, agent, open(path)}. Returns {el, update({documents, truncated, loading, error, elsewhere}),
+ * filterText(), focusRow(path)}; documents are the agent's rows of `artifacts`; `elsewhere` (optional) is how many rows of the
+ * project are not this agent's, so that an agent with none of its own is not told that the project has none.
  */
 export function createDeskTab(env) {
   const el = h("div", { class: "wb-desk-tab" });
@@ -33,7 +38,7 @@ export function createDeskTab(env) {
   const states = h("div", { class: "wb-desk-states" });
   const tableBox = h("div", { class: "pui-card wb-desk-card" });
   fill(el, filterField, states, tableBox);
-  let last = { documents: [], truncated: false, loading: true, error: null };
+  let last = { documents: [], truncated: false, loading: true, error: null, elsewhere: 0 };
   let shown = "";
   input.addEventListener("input", () => draw(true));
 
@@ -61,7 +66,7 @@ export function createDeskTab(env) {
   function draw(force = false) {
     const text = input.value;
     const rows = deskRows(last.documents, text);
-    const key = JSON.stringify([rows, last.truncated, last.loading, last.error, last.documents.length]);
+    const key = JSON.stringify([rows, last.truncated, last.loading, last.error, last.documents.length, last.elsewhere]);
     if (!force && key === shown) return;
     shown = key;
     const active = document.activeElement;
@@ -80,7 +85,7 @@ export function createDeskTab(env) {
       return;
     }
     if (!last.documents.length && !last.truncated) {
-      fill(states, h("div", { class: "wb-state-block is-dashed wb-muted", text: "The project has no documents under docs/ yet." }));
+      fill(states, h("div", { class: "wb-state-block is-dashed wb-muted", text: last.elsewhere > 0 ? NONE_OF_ITS_OWN : NONE_IN_PROJECT }));
       tableBox.hidden = true;
       filterField.hidden = true;
       return;

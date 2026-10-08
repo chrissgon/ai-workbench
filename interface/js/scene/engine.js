@@ -10,7 +10,7 @@ import * as THREE from "../three.js";
 import { h } from "../dom.js";
 import { buildBuilding } from "./building.js";
 import { buildCity, pulseBeacon, restBeacon } from "./city.js";
-import { fitFrustum } from "./fit.js";
+import { ease, fitFrustum } from "./fit.js";
 import { createKit } from "./kit.js";
 import { mountLabels, placeLabels } from "./labels.js";
 import { createLoop } from "./loop.js";

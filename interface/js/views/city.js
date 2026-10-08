@@ -3,6 +3,7 @@
 // KPI cards, tracking bar) is filled by the page; this fills the scene and the City's own panels.
 
 import { h } from "../dom.js";
+import { arrowNav } from "../frame/arrows.js";
 import { icon } from "../frame/icons.js";
 import * as model from "../model.js";
 import * as router from "../router.js";
@@ -21,6 +22,7 @@ export function createCityView(frame) {
   const empty = h("div", { class: "pui-card wb-empty-card", hidden: true },
     h("div", { class: "pui-card-content" }, h("p", { text: "The service has no project. Start it with --project <folder>." })));
   frame.main.append(buildings, frame.waitingCard.el, empty);
+  arrowNav(list, "a.wb-building-link");   // SCREEN-2: arrows move between the buildings, Enter opens
 
   function open(id) {
     if (disposed || flying) return;
