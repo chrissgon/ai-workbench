@@ -677,6 +677,22 @@ def test_a_static_path_never_leaves_the_interface_folder(world):
     assert call(world, "GET", "/inner.js", auth=False)[0] == 200
 
 
+def test_favicon_ico_is_answered_with_the_favicon_svg_and_needs_no_token(world):
+    """Browsers ask for /favicon.ico by default; the page links ./favicon.svg. The static table answers the first with the
+    bytes of the second (no new file), as a static file: no token, the page's headers, and nothing else changes."""
+    svg = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>'
+    (world.interface / "favicon.svg").write_bytes(svg)
+    status, headers, payload = call(world, "GET", "/favicon.ico", auth=False)
+    assert (status, payload) == (200, svg)
+    assert headers["Content-Type"] == "image/svg+xml" and headers["Cache-Control"] == "no-store"
+    assert call(world, "GET", "/favicon.svg", auth=False)[2] == svg
+    assert call(world, "GET", "/favicon.ico", auth=False, extra={"Host": "evil.example"})[0] == 403   # the host rule still applies
+    assert call(world, "POST", "/favicon.ico", {}, auth=False)[0] == 405                              # GET only
+    assert call(world, "GET", "/api/v1/projects", auth=False)[0] == 401                               # the API still needs the token
+    (world.interface / "favicon.svg").unlink()
+    assert call(world, "GET", "/favicon.ico", auth=False)[0] == 404, "without the svg there is nothing to answer with"
+
+
 # --- the file route --------------------------------------------------------------------------------------------------
 
 
