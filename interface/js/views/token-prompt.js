@@ -1,4 +1,5 @@
-// The token prompt: asks the person to paste the service's token once per browser session.
+// The token prompt: asks the person to paste the service's token once per browser session. The field is a text field that the
+// stylesheet masks (`.wb-token-field`), not a password field: the token changes at every start, so the browser must not offer to save it.
 
 import { h, fill } from "../dom.js";
 import { looksLikeToken } from "../token.js";
@@ -9,7 +10,7 @@ import { looksLikeToken } from "../token.js";
  */
 export function showTokenPrompt(root, { message, onSubmit }) {
   const field = h("input", {
-    id: "token-field", class: "pui-input", type: "password", name: "service-token", autocomplete: "off",
+    id: "token-field", class: "pui-input wb-token-field", type: "text", name: "service-token", autocomplete: "off",
     autocapitalize: "off", spellcheck: "false", required: true, "aria-describedby": "token-help",
   });
   const problem = h("p", { class: "notice error", role: "alert", hidden: true });

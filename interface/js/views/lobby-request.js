@@ -8,7 +8,7 @@ import { failureText } from "../cards/plan-rows.js";
 import { h } from "../dom.js";
 import * as format from "../format.js";
 import * as router from "../router.js";
-import { ago, requestLine, resolvedWord } from "./lobby-model.js";
+import { ago, requestLine, requestWords, resolvedWord } from "./lobby-model.js";
 
 /** The line of a decision that is no longer open: a chip with "<kind> <resolution>" and the title and age. */
 function resolvedLine(item, now) {
@@ -41,12 +41,25 @@ function pointer(project, item, now) {
 /**
  * One request's block. options: {api, project, request (a row of status.requests), body (the `task` answer, or null while it is
  * read), open (open decisions on it in status), now, signal, onChanged(), onCancel(request), onRoute(request), announce(text),
- * viaMessage (a message of the planning agent names the request; false for a request made from the form, OPEN-24)}.
+ * viaMessage (a message of the planning agent names the request; false for a request made from the form, OPEN-24), routeNotice
+ * ({title, text} of a route that failed, or null: it sits under the request's line)}.
  * The plan card is drawn here only when a message names the request; otherwise its card is in the Inbox and this is a line that points at it.
  * Returns {el, focusCard(id)}.
  */
-export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce, viaMessage = true }) {
+export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce, viaMessage = true, routeNotice = null }) {
   const line = requestLine(request, open);
+  const words = requestWords(request, body);
+  const label = words.title ? `Request #${request.id}: ${words.title}` : `Request #${request.id}`;
+  const fullId = `wb-request-full-${request.id}`;
+  // one line: the title is cut with an ellipsis; its tooltip holds the whole text, and a click opens it under the line
+  const titleButton = h("button", { class: "pui-btn pui-link wb-lobby-request-title", type: "button", title: words.full || label, "aria-expanded": "false", "aria-controls": fullId, text: label });
+  const fullText = h("p", { class: "wb-lobby-request-full", id: fullId, hidden: true, text: words.full || label });
+  titleButton.addEventListener("click", () => {
+    fullText.hidden = !fullText.hidden;
+    titleButton.setAttribute("aria-expanded", fullText.hidden ? "false" : "true");
+  });
+  const notice = routeNotice
+    ? h("div", { class: "wb-lobby-notice-card", role: "alert" }, h("strong", { class: "wb-lobby-notice-title", text: routeNotice.title }), h("span", { text: routeNotice.text })) : null;
   const cancel = line.cancellable
     ? h("button", { class: "pui-btn pui-link pui-error wb-lobby-cancel-link", type: "button", text: "Cancel request", "aria-label": `Cancel request ${request.id}` }) : null;
   const route = line.routable
@@ -54,7 +67,7 @@ export function createBlock({ api, project, request, body, open, now, signal, on
       "aria-label": `Route request ${request.id}` }) : null;
   const row = h("div", { class: "wb-lobby-request-line", role: "group", "aria-label": line.name },
     h("span", { class: "pui-badge pui-muted pui-soft pui-rounded-full", text: `#${request.id}` }),
-    h("span", { class: "wb-lobby-request-title", text: `Request #${request.id}: ${line.title}` }),
+    titleButton,
     line.state ? h("span", { class: "pui-chip pui-muted pui-soft wb-chip-small", text: line.state }) : null,
     route, cancel);
   if (cancel) cancel.addEventListener("click", () => onCancel(request, cancel));
@@ -76,7 +89,7 @@ export function createBlock({ api, project, request, body, open, now, signal, on
       decisions.push(resolvedLine(item, now));
     }
   }
-  const el = h("div", { class: "wb-request-block" }, line.final ? null : row, ...decisions);
+  const el = h("div", { class: "wb-request-block" }, line.final ? null : row, line.final ? null : fullText, line.final ? null : notice, ...decisions);
   return {
     el,
     focusCard(id) {

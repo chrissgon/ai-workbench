@@ -379,7 +379,7 @@ out.cancelClicked = cancelled;
 const final = createBlock({ api, project: "p1", request: { id: 9, title: "Old", state: "done", tasks: [] }, body: { pending: [] }, open: 0, now: NOW, onChanged, onCancel: () => {}, onRoute: () => {}, routing: false });
 out.finalBlockButtons = buttons(final.el).length;
 const waiting = createBlock({ api, project: "p1", request: { id: 20, title: "From the form", state: "requested", tasks: [] }, body: { pending: [] }, open: 0, now: NOW, onChanged, onCancel: () => {}, onRoute: () => {}, routing: false });
-out.routeButton = buttons(waiting.el).map(textOf);
+out.routeButton = buttons(waiting.el).filter((b) => !b.cls().includes("wb-lobby-request-title")).map(textOf);   // the title is a button too (A-1: it opens the whole text); these are the line's actions
 const routingNow = createBlock({ api, project: "p1", request: { id: 20, title: "From the form", state: "requested", tasks: [] }, body: { pending: [] }, open: 0, now: NOW, onChanged, onCancel: () => {}, onRoute: () => {}, routing: true });
 out.routing = find(routingNow.el, (n) => n.tagName === "BUTTON" && textOf(n) === "Routing...").map((b) => "disabled" in b.attrs);
 
