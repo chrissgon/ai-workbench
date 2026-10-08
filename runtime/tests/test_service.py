@@ -173,7 +173,7 @@ def path_of(world, route):
 
 
 OP_ROUTES = [r for r in service.ROUTES if r["op"] and not r["upload"]]
-VIEW_READS = ("agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact")  # the reads of the views
+VIEW_READS = ("agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact", "version")  # the reads of the views
 READ_OPS = ("status", "pending", "flows", "task", "progress") + VIEW_READS
 
 

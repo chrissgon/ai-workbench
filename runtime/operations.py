@@ -192,6 +192,8 @@ OPERATIONS = (
      "args": ({"name": "path", "kind": "str", "required": True},),
      "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the text of one file under docs/ of the project, read-only"},
+    {"name": "version", "call": "version", "args": (), "channels": ("page", "mcp"), "model": False,
+     "help": "the change signal of the project's store: a number that grows on every write, and when the file was last written"},
     {"name": "stop-runs", "call": "stop_runs", "args": (), "channels": ("terminal",), "model": False,
      "help": "end the runs this process started (the local service calls it before it exits)"},
 )
