@@ -314,7 +314,9 @@ def test_the_connections_operation_never_returns_a_secrets_value(tree, monkeypat
     assert any(not s["found"] and s["where"] is None for s in found["secrets"])  # the providers' credentials, not set here
     assert os.environ["INVENTED_MODEL_KEY"] == PLANTED_TWO  # the environment is as it was
     assert found["image"] == {"name": "standin", "present": True, "evidence": True}
-    assert found["platform"] == {"machine": platform_module.machine(), "evidence": "linux/arm64"}
+    assert found["platform"] == ops._platform_row(platform_module.machine(), sys.platform, "linux/arm64")
+    assert set(found["platform"]) == {"machine", "evidence", "here", "same"}
+    assert found["platform"]["machine"] == platform_module.machine()
     # An image that is not the evidence's, and no image.
     monkeypatch.setattr(lab, "image", lambda: {"name": "standin", "digest": "sha256:" + "6" * 64, "platform": "linux/arm64",
                                                "evidence_platform": "linux/arm64"})
@@ -323,6 +325,24 @@ def test_the_connections_operation_never_returns_a_secrets_value(tree, monkeypat
     assert ops.connections(path)["image"] == {"name": None, "present": False, "evidence": None}
     assert ops.connections(path)["platform"]["evidence"] is None
     monkeypatch.delitem(sys.modules, "workbench_secret_resolver_runtime", raising=False)
+
+
+@pytest.mark.parametrize("machine,system,evidence,here,same", [
+    ("arm64", "darwin", "linux/arm64", "linux/arm64", True),     # a Mac runs the Linux image on its own architecture
+    ("aarch64", "linux", "linux/arm64", "linux/arm64", True),
+    ("x86_64", "linux", "linux/arm64", "linux/amd64", False),    # another architecture: the evidence is not this machine's
+    ("AMD64", "win32", "linux/amd64", "linux/amd64", True),
+    ("arm64", "linux", None, "linux/arm64", None),               # the evidence's platform is unknown
+    ("", "linux", "linux/arm64", None, None),                    # this machine's is unknown
+    ("riscv64", "linux", "linux/arm64", None, None),             # an architecture the executor does not name
+    ("arm64", "freebsd14", "linux/arm64", None, None),           # a system whose containers are not known
+])
+def test_the_platform_row_says_whether_this_machine_is_the_evidences(tree, monkeypatch, machine, system, evidence, here, same):
+    path = str(tree["project"])
+    monkeypatch.setattr(lab, "image", lambda: {"name": None, "digest": None, "platform": None, "evidence_platform": evidence})
+    monkeypatch.setattr(platform_module, "machine", lambda: machine)
+    monkeypatch.setattr(sys, "platform", system)
+    assert ops.connections(path)["platform"] == {"machine": machine or None, "evidence": evidence, "here": here, "same": same}
 
 
 def test_the_connections_operation_resolves_a_class_as_the_configuration_names_it(tree, monkeypatch):
