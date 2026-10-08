@@ -2968,17 +2968,42 @@ def _secret_rows() -> tuple:
     return sorted(rows, key=lambda row: row["name"]), "; ".join(notes) or None
 
 
+ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "arm64": "arm64", "aarch64": "arm64"}
+
+
+def _image_platform_here(machine: str, system: str) -> str | None:
+    """The platform the eval image runs as on a machine without emulation, in the os/arch form of the evidence
+    (executor.IMAGE_PLATFORM, such as linux/arm64): the image is a Linux image, so the os is linux on a Linux host and
+    on a host that runs containers in a Linux virtual machine of its own architecture (macOS, Windows); the arch is the
+    machine's, normalised (x86_64 and amd64 are amd64, arm64 and aarch64 are arm64). None when the arch is not one of
+    those or the system is not linux, darwin or win32: nothing is guessed."""
+    arch = ARCHITECTURES.get((machine or "").strip().lower())
+    if arch is None or not (system or "").startswith(("linux", "darwin", "win32")):
+        return None
+    return "linux/" + arch
+
+
+def _platform_row(machine: str, system: str, evidence: str | None) -> dict:
+    """The "platform" row of connections: see its docstring. same never compares an unknown value."""
+    here = _image_platform_here(machine, system)
+    return {"machine": machine or None, "evidence": evidence, "here": here,
+            "same": (here == evidence) if here and evidence else None}
+
+
 def connections(project: str) -> dict:
     """What the project's skills need from the machine and whether it is there, with no provider started and no
     network call: {"classes": [{"class", "provider", "found", "note", "skills"}], "secrets": [{"name", "found",
     "where"}], "secrets_note", "image": {"name", "present", "evidence": true, false or None}, "platform": {"machine",
-    "evidence"}}. classes: each requirement class the skills in scope declare, resolved by providers/resolve.py as the
+    "evidence", "here", "same"}}. classes: each requirement class the skills in scope declare, resolved by providers/resolve.py as the
     runtime resolves it (the implementation the configuration names for the code provider, the task board and the
     documents; else the environment, the platform default or the only implementation): provider is the
     implementation or None, found whether its file exists, note how it was chosen or why it was not. secrets: see
     _secret_rows; the names are the registry's, never a value. image: whether the eval image is on this machine and
     whether its digest is the one the evidence of the skills in scope was measured in (None when it is not
-    present). platform: the architecture of this machine and the platform the evidence was made on."""
+    present). platform: machine is the architecture of this machine as the system names it; evidence is the platform
+    the lab evidence was made on; here is the platform the eval image runs as on this machine without emulation, in
+    the evidence's os/arch form (see _image_platform_here); same is true when here equals evidence, false when both
+    are known and differ, None when either is unknown."""
     ctx = context(project)
     cfg = ctx["cfg"]
     needs, evidence = {}, set()
@@ -3014,7 +3039,7 @@ def connections(project: str) -> dict:
     return {"classes": classes, "secrets": secrets, "secrets_note": note,
             "image": {"name": seen.get("name"), "present": present,
                       "evidence": (seen["digest"] in evidence) if present else None},
-            "platform": {"machine": platform_module.machine() or None, "evidence": seen.get("evidence_platform")}}
+            "platform": _platform_row(platform_module.machine(), sys.platform, seen.get("evidence_platform"))}
 
 
 def _owners() -> list:
