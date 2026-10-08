@@ -22,6 +22,8 @@ autonomous-with-policy whose approval expired acts as autonomous: its effects as
   spend(runs, agent, reference_model, floor_model, per_run_usd)   a day's spend of one agent: runs on the reference
                                                 model, dollars on the floor model (a floor run of unknown cost counts
                                                 at per_run_usd)
+  spend_split(runs, agent, floor_model, per_run_usd)   the same day, for the meters: {"usd_recorded", "usd_reserved",
+                                                "runs_total"} (usd_recorded + usd_reserved is spend's usd_floor)
   may_start(name, agents, facts, spent, tier)   (True, "") or (False, why): stopped, or a cap reached
   review_action(task, pending, facts, proven, mandatory)   "release" or "hold": whether a mode releases a review
   covers(approval, policy_sha256, effect, executed_today, now)   (True, "") or (False, why): whether a standing
@@ -178,6 +180,24 @@ def spend(runs, agent: str, reference_model: str, floor_model: str, per_run_usd:
             out["runs_reference"] += 1
     out["usd_floor"] = round(out["usd_floor"], 6)
     return out
+
+
+def spend_split(runs, agent: str, floor_model: str, per_run_usd: float) -> dict:
+    """What spend counts as the floor model's dollars, split in two for a meter: {"usd_recorded": the sum of the
+    recorded costs of the agent's floor-model runs, "usd_reserved": per_run_usd for each such run with no cost, "runs_total":
+    every run of the agent, whatever the model}. Their sum is spend's usd_floor: no new rule, the same rows."""
+    recorded = reserved = 0.0
+    total = 0
+    for run in runs:
+        if run.get("agent") != agent:
+            continue
+        total += 1
+        if run.get("model") == floor_model:
+            if run.get("cost_usd") is None:
+                reserved += float(per_run_usd)
+            else:
+                recorded += float(run["cost_usd"])
+    return {"usd_recorded": round(recorded, 6), "usd_reserved": round(reserved, 6), "runs_total": total}
 
 
 def may_start(name: str, agents_checked: dict, f: dict, spent: dict, tier: str) -> tuple:

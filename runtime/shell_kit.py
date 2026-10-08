@@ -144,6 +144,8 @@ class Jobs:
             if isinstance(e, self.ops.OpsError):
                 status, word = status_of(e)
                 error = {"error": word, "message": str(e) if word != "internal" else INTERNAL, "status": status}
+                if word != "internal" and getattr(e, "next", None):
+                    error["next"] = e.next
             else:
                 self.log(f"job {job['job']} ({job['op']}) failed:\n" + traceback.format_exc())
                 error = {"error": "internal", "message": INTERNAL, "status": 500}

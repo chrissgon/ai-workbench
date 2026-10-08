@@ -245,9 +245,10 @@ class OpsError(Exception):
     """An operation that was refused: a message for the person and an exit code (1 failed, 2 usage,
     3 not configured)."""
 
-    def __init__(self, message: str, code: int = 1):
+    def __init__(self, message: str, code: int = 1, next: str | None = None):
         super().__init__(message)
         self.code = code
+        self.next = next   # the terminal command that gets past the refusal (the 412: accept-config), or None
 
 
 def _load(name: str, path: str):
@@ -293,9 +294,10 @@ def _config_of(project: str) -> dict:
 def _accepted(cfg: dict, accepted) -> None:
     """Refuse (code 3) a configuration whose hash is not the accepted one."""
     if accepted != cfg["sha256"]:
+        command = _command("accept-config", cfg["project"], sha256=cfg["sha256"])
         raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
                        f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
-                       f"want, run: {_command('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
+                       f"want, run: {command}", 3, next=command)
 
 
 def context(project: str, *, check_config: bool = True) -> dict:
@@ -2311,7 +2313,7 @@ def _midnight_utc() -> str:
 
 def _agents_of_the_day(ctx: dict) -> dict:
     """Each area agent's facts, a day's spend and entry, from the store and the configuration: {name: {"facts",
-    "entry", "spent"}}. The day starts at local midnight (_midnight_utc), as the caps count it, and a run of the router
+    "entry", "spent", "split"}} (split: autonomy.spend_split, for the meters). The day starts at local midnight (_midnight_utc), as the caps count it, and a run of the router
     (its task is a request, so its agent is None) counts against the planning agent. {} without area agents."""
     store, cfg = ctx["store"], ctx["cfg"]
     agents_checked = cfg["area_agents"]
@@ -2324,7 +2326,8 @@ def _agents_of_the_day(ctx: dict) -> dict:
     reference, floor = lab.reference("strong")["model"], lab.reference("floor")["model"]
     per_run = cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD)
     return {name: {"facts": autonomy.facts(name, agents_checked, standing_rows, now), "entry": entry,
-                   "spent": autonomy.spend(runs, name, reference, floor, per_run)}
+                   "spent": autonomy.spend(runs, name, reference, floor, per_run),
+                   "split": autonomy.spend_split(runs, name, floor, per_run)}
             for name, entry in agents_checked.items()}
 
 
@@ -2590,10 +2593,22 @@ def _held_listed(ctx: dict, rows: list) -> list:
 
 
 def _held_next(project: str, reason: str):
-    """The command that gets past a reason, or None when it is not a command (a cap, a credential, an agent that is
-    stopped are edits of the configuration or of the secret store)."""
+    """What gets past a reason, or None when nothing a command or a sentence can say does (a cap, an agent that is
+    stopped: edits of the configuration). `secret store`: the command that starts the service with the secret store's
+    library. `credential` (the store is readable, the key is not in it): a sentence that says where it is kept, with the
+    variable names of the reference model's credential (contracts/secrets.md, "Where to put a secret"); it gives
+    no value and invents none."""
     if reason == "secret store":
         return operations.service_line(ROOT, [project], uv=True)
+    if reason == "credential":
+        try:
+            names = ", ".join(lab.reference("strong")["pass_env"]) or "the reference model's credential"
+        except lab.LabError:
+            names = "the reference model's credential"
+        return (f"{names} is in neither the environment nor the secret store. Store it once, the value typed at a hidden "
+                f"prompt: uv run --with {operations.KEYRING_PIN} keyring set ai-workbench <username>, or export it in the shell "
+                f"that starts the service. The username of a secret is in the table of contracts/secrets.md; a model "
+                "provider's key is registered, with its username, by the adapter that reads it (the `secrets` list of its manifest).")
     return None
 
 
@@ -3058,14 +3073,18 @@ CONFIGURED_PROVIDER = {"integration:vcs": "code", "integration:issue-tracker": "
 
 def agents(project: str) -> dict:
     """The area agents of the configuration with their use of today: {"agents": [{"name", "pack", "enabled", "mode",
-    "acting_mode", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "queued",
-    "held"}]}
+    "acting_mode", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "usd_recorded", "usd_reserved",
+    "runs_total_today", "queued", "held", "wider"}]}
     in the order of the configuration. mode is the configured one; acting_mode the one the agent acts in now
     (autonomy.mode_of: an agent set to autonomous-with-policy whose approval expired acts as autonomous). The day is
     counted as the caps count it (_agents_of_the_day): runs_today is the runs on the reference model, usd_today the
     dollars of the floor model's runs (a run of unknown cost counts at max_cost_usd_per_run, and runs_without_cost
     says how many), and a router run counts for the planning agent. queued is the number of ready tasks of the agent;
-    held how many of them the last round held (status lists them with their reasons).
+    held how many of them the last round held (status lists them with their reasons). usd_today is split into
+    usd_recorded (the recorded costs of today's floor-model runs) and usd_reserved (max_cost_usd_per_run, else
+    PER_RUN_USD, for each such run with no cost yet: what the cap counts); runs_today stays the reference model's
+    runs and runs_total_today is every run of the agent today, whatever the model. wider lists, for every mode above
+    the agent's own, the absolute set-mode command (the page offers it with Copy and builds none).
     A project without area_agents: {"agents": []}."""
     ctx = context(project)
     day = _agents_of_the_day(ctx)
@@ -3079,9 +3098,25 @@ def agents(project: str) -> dict:
                     "acting_mode": autonomy.mode_of(found["facts"]), "max_runs_per_day": entry["max_runs_per_day"],
                     "max_usd_per_day": entry["max_usd_per_day"], "runs_today": spent["runs_reference"],
                     "usd_today": spent["usd_floor"], "runs_without_cost": spent["runs_without_cost"],
+                    **_spend_words(found["split"]),
                     "queued": sum(1 for t in ready if t.get("agent") == name),
-                    "held": sum(1 for h in held if h["agent"] == name)})
+                    "held": sum(1 for h in held if h["agent"] == name),
+                    "wider": _wider(ctx["cfg"]["project"], name, entry["mode"])})
     return {"agents": out}
+
+
+def _spend_words(split: dict) -> dict:
+    """The day's spend in the words a meter shows, the same in `agents` and in the caps of `costs`: usd_recorded,
+    usd_reserved (their sum is usd_today) and runs_total_today."""
+    return {"usd_recorded": split["usd_recorded"], "usd_reserved": split["usd_reserved"],
+            "runs_total_today": split["runs_total"]}
+
+
+def _wider(project: str, agent: str, mode: str) -> list:
+    """[{"mode", "command"}] for every mode above this one in the order of autonomy.MODES, each the absolute `set-mode`
+    command (a wider mode is accepted by the person in the terminal): the page shows it, it builds none."""
+    above = autonomy.MODES[autonomy.MODES.index(mode) + 1:]
+    return [{"mode": m, "command": _command("set-mode", project, agent=agent, mode=m)} for m in above]
 
 
 def conversation(project: str, conversation: str | None = CONVERSATION, after: int | None = 0) -> dict:
@@ -3150,7 +3185,8 @@ def skills(project: str) -> dict:
 def costs(project: str, since: str | None = None) -> dict:
     """The runs of the project from the day `since` (YYYY-MM-DD; default the last COST_DAYS days) by day, agent, model
     and adapter: {"since", "rows": [{"day", "agent", "model", "adapter", "runs", "tokens", "recorded_usd",
-    "recomputed_usd", "unknown_runs", "price"}], "caps": [{"agent", "max_runs_per_day", "max_usd_per_day"}]}. The runs
+    "recomputed_usd", "unknown_runs", "price"}], "caps": [{"agent", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "usd_recorded",
+    "usd_reserved", "runs_total_today"}]} (the caps carry the day's use in the words of `agents`). The runs
     are read task by task (the store's runs_since has no token count and no run folder) and the token counts of a
     run from its own folder (runtime/costs.py, usage_of): a folder outside <data_dir>/task-runs/ is not read, and the
     run is unknown. recomputed_usd is computed from the prices of the configuration's model_prices (price says their
@@ -3165,6 +3201,7 @@ def costs(project: str, since: str | None = None) -> dict:
             day = datetime.date.fromisoformat(str(since)).isoformat()
         except ValueError:
             raise OpsError("since is a day: YYYY-MM-DD", 2) from None
+    used = _agents_of_the_day(ctx)
     folder = os.path.realpath(os.path.join(cfg["data_dir"], RUNS_DIR)) + os.sep
     runs = []
     for task in _stored(ctx, store.tasks_list):
@@ -3177,7 +3214,10 @@ def costs(project: str, since: str | None = None) -> dict:
             runs.append(dict(run, agent=agent, run_dir=where if inside else None))
     return {"since": day, "rows": costs_calc.summary(runs, cfg["model_prices"], since=day),
             "caps": [{"agent": name, "max_runs_per_day": entry["max_runs_per_day"],
-                      "max_usd_per_day": entry["max_usd_per_day"]} for name, entry in cfg["area_agents"].items()]}
+                      "max_usd_per_day": entry["max_usd_per_day"],
+                      "runs_today": used[name]["spent"]["runs_reference"], "usd_today": used[name]["spent"]["usd_floor"],
+                      "runs_without_cost": used[name]["spent"]["runs_without_cost"], **_spend_words(used[name]["split"])}
+                     for name, entry in cfg["area_agents"].items()]}
 
 
 def _secret_rows() -> tuple:
