@@ -7,13 +7,13 @@ import { arrowNav } from "../frame/arrows.js";
 import { icon } from "../frame/icons.js";
 import * as model from "../model.js";
 import * as router from "../router.js";
-import { createEngine, NoWebGL } from "../scene/engine.js";
+import { NoWebGL } from "../scene/engine.js";
+import { worldModel } from "../world-model.js";
 
 /** Create the City screen in `frame`. Returns {update(data), dispose()}. */
 export function createCityView(frame) {
   let engine = null;
   let disposed = false;
-  let flying = false;
   let shown = "";
 
   const listHeading = h("div", { class: "pui-card-header wb-buildings-head", text: "Projects" });
@@ -24,19 +24,16 @@ export function createCityView(frame) {
   frame.main.append(buildings, frame.waitingCard.el, empty);
   arrowNav(list, "a.wb-building-link");   // SCREEN-2: arrows move between the buildings, Enter opens
 
+  // A click: the building opens where it stands and the camera starts at once (the world's own targets), and the route changes in the same
+  // moment, as the prototype's `go` does: the panels do not wait for the scene and the scene does not wait for them.
   function open(id) {
-    if (disposed || flying) return;
-    flying = true;
-    const go = () => {
-      flying = false;
-      if (!disposed) window.location.hash = router.buildingHash(id);
-    };
-    if (engine) engine.flyTo(id).then(go);
-    else go();
+    if (disposed) return;
+    if (engine) engine.flyTo(id);
+    window.location.hash = router.buildingHash(id);
   }
 
   try {
-    engine = createEngine(frame.sceneHost, {
+    engine = frame.acquireWorld({
       label: "City, loading",
       getInsets: () => frame.insets(frame.waitingCard.el),
       onOpen: open,
@@ -51,6 +48,7 @@ export function createCityView(frame) {
   // A panel that changes size changes the free rectangle: the scene is fitted again (one frame), never on a timer.
   const observer = new ResizeObserver(() => { if (engine) engine.refit(); });
   observer.observe(frame.track.el);
+  observer.observe(frame.kpis.el);
   observer.observe(frame.waitingCard.el);
   observer.observe(frame.noticeBox);
 
@@ -80,9 +78,9 @@ export function createCityView(frame) {
 
   return {
     /**
-     * data: {city (model.city), selectedId, state: "loading", "error" (the first read failed) or "ready"}.
+     * data: {city (model.city), selectedId, state: "loading", "error" (the first read failed) or "ready", snapshot, now}.
      */
-    update({ city, selectedId, state }) {
+    update({ city, selectedId, state, snapshot, now }) {
       const key = JSON.stringify([city.buildings.map((b) => [b.id, b.name, b.accepted, b.decisions, b.runningTask]), state]);
       if (key !== shown) {
         shown = key;
@@ -94,12 +92,11 @@ export function createCityView(frame) {
       // "No project" is said only when a read answered with an empty list, never while loading or after a failed first read.
       empty.hidden = !model.emptyCityVisible(state, city.buildings.length);
       frame.waitingCard.set(city.waiting, state);
-      if (engine) engine.show("city", model.sceneModel(city.buildings, null, state === "ready"), city.canvasLabel);
+      if (engine) engine.show("world", worldModel(snapshot, now, { selectedId: null, marked: selectedId, focus: null, ready: state === "ready" }), city.canvasLabel);
     },
     dispose() {
       disposed = true;
-      observer.disconnect();
-      if (engine) engine.dispose();
+      observer.disconnect();   // the scene is the frame's: the Building takes it over, or the frame takes it down
       buildings.remove();
       empty.remove();
       frame.waitingCard.el.remove();

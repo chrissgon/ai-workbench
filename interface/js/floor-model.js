@@ -278,18 +278,18 @@ export function cardOf(row) {
 }
 
 /**
- * The Building scene's model (scene/building.js): the floors from the bottom, the tag, the focused floor on a phone.
- * `view` is building(...); documents the rows of `artifacts` (or null while unread); `focus` the name drawn alone, or null.
+ * The floors of a building for the world (scene/world.js): from the bottom, each with the sheets of its documents (up to six, each opens its
+ * document), the drawers, the plate and the tooltip. `view` is building(...); documents the rows of `artifacts` (or null while unread).
  */
-export function buildingScene(view, documents, { focus = null, ready = true } = {}) {
+export function buildingScene(view, documents, { ready = true } = {}) {
   const selected = view.tag ? view.tag.floor : null;
   return {
-    ready, selected, focus: focus && view.rows.slice(0, MAX_FLOORS).some((r) => r.name === focus) ? focus : null, more: view.more, tag: view.tag,
+    ready, selected, more: view.more, tag: view.tag,
     floors: view.rows.slice(0, MAX_FLOORS).map((row) => {
       const docs = agentDocuments(documents, row.name, view.none);
       return {
         name: row.name, label: row.label, state: row.state, window: row.window, decisions: row.decisions, lobby: row.lobby,
-        sheets: Math.min(3, docs.length), drawers: drawersOf(docs.length), tip: row.tip, interactive: true, plate: plateOf(row, row.name === selected),
+        sheets: docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })), drawers: drawersOf(docs.length), tip: row.tip, interactive: true, plate: plateOf(row, row.name === selected),
       };
     }),
   };
@@ -415,7 +415,7 @@ export function boardOf(view) {
   return { title: current.title || current.key || `Task ${current.id}`, lines, dot: row.state === "off" ? "border" : row.dot };
 }
 
-/** The Floor scene's model (scene/room.js). `documents` are the agent's rows of `artifacts`, newest first. */
+/** The words of the Floor's room (the world's `room`: tips and board). `documents` are the agent's rows of `artifacts`, newest first. */
 export function roomScene(view, documents, ready = true) {
   const board = boardOf(view);
   const row = view.row;
@@ -425,7 +425,7 @@ export function roomScene(view, documents, ready = true) {
     ready, state: row.state, window: row.window, decisions: row.decisions, drawers: drawersOf(documents.length), sheets,
     tips: {
       agent: `${row.label} · ${row.state === "working" ? "working" : row.state === "waiting" ? "waiting for you" : row.state === "off" ? "off" : "idle"}`,
-      desk: tasks, tray: `Inbox · ${row.decisions} open · open the Inbox tab`, cabinet: `${documents.length} document${documents.length === 1 ? "" : "s"} · open the Desk tab`,
+      desk: tasks, tray: `Inbox · ${row.decisions} waiting`, cabinet: `${documents.length} document${documents.length === 1 ? "" : "s"} · open the Desk tab`,
       board: board.lines[0] || board.title,
     },
     board,

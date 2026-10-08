@@ -50,10 +50,15 @@ function placeColumn(plates, project, hidden, insets, size) {
   const top = ins.top;
   const bottom = size.h - ins.bottom;
   const measure = () => plates.map(({ entry }, i) => ({ want: points[i].y, height: entry.node.offsetHeight || 90 }));
-  for (const { entry } of plates) entry.node.classList.remove("is-compact");
+  // a plate shortens as the free height shrinks: the whole plate, then the name row and the meters, then the name row alone
+  for (const { entry } of plates) entry.node.classList.remove("is-compact", "is-tiny");
   let result = stackColumn(measure(), top, bottom, PLATE_GAP);
   if (!result.fits) {
     for (const { entry } of plates) entry.node.classList.add("is-compact");
+    result = stackColumn(measure(), top, bottom, PLATE_GAP);
+  }
+  if (!result.fits) {
+    for (const { entry } of plates) entry.node.classList.add("is-tiny");
     result = stackColumn(measure(), top, bottom, PLATE_GAP);
   }
   plates.forEach(({ entry }, i) => {

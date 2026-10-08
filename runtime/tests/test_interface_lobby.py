@@ -176,7 +176,7 @@ def test_a_refused_turn_shows_the_drawings_words_and_any_other_refusal_its_own_m
     shape = got["roomShape"]
     assert shape["door"] is True and shape["ready"] is True and shape["window"] == "grey" and shape["decisions"] == 2
     assert shape["board"] == {"title": "Spring campaign", "lines": ["request #14 · planned"], "dot": "warn"}
-    assert shape["tips"]["tray"] == "Inbox · 2 open · open the Inbox tab" and shape["tips"]["agent"] == "Planning agent · waiting for you"
+    assert shape["tips"]["tray"] == "Inbox · 2 waiting" and shape["tips"]["agent"] == "Planning agent · waiting for you"
     assert got["label"] == "Lobby of northwind-shop, planning agent waiting, 1 decision, door to the Control room"
 
 
@@ -655,8 +655,8 @@ def test_the_lobby_modules_take_no_style_and_no_colour_and_load_nothing_from_ano
 
 
 def test_the_room_builder_draws_the_lobbys_door_and_its_label_only_when_the_model_asks_for_one():
-    room = (JS / "scene" / "room.js").read_text(encoding="utf-8")
-    assert "if (model.door)" in room and 'id: "lobby-door"' in room and 'id: "door-label"' in room and "doorNode" in room
+    world = (JS / "scene" / "world.js").read_text(encoding="utf-8")
+    assert "room.door" in world and 'id: "lobby-door"' in world and 'id: "door-label"' in world and "doorNode" in world
     scene = (VIEWS / "lobby-scene.js").read_text(encoding="utf-8")
     assert 'id === "lobby-door"' in scene, "a click on the door goes to the Control room"
 
@@ -1019,7 +1019,8 @@ const agent = (name) => ({ name, pack: "x", enabled: true, mode: "supervised", a
 const snapshot = { loaded: true, projects: [{ id: P, name: "northwind-shop", config: { accepted: true } }], tasks: {},
   details: { [P]: { agents: [agent("planning")], status: { requests: [{ id: 2, title: "Sale page", state: "requested", tasks: [] }], pending: [{ id: 5, kind: "plan", title: "Plan: sale page", task_id: 2, agent: null, created_at: "2026-10-08T08:00:00Z" }] } } } };
 const makeFrame = () => ({ el: new FakeNode("div"), main: new FakeNode("main"), sceneHost: new FakeNode("div"), track: { el: new FakeNode("div") }, noticeBox: new FakeNode("div"),
-  insets: () => ({ left: 0, right: 0, top: 0, bottom: 0, pad: 1 }), sceneUnavailable() {}, announce(text) { announced.push(text); } });
+  insets: () => ({ left: 0, right: 0, top: 0, bottom: 0, pad: 1 }), sceneUnavailable() {}, announce(text) { announced.push(text); },
+  acquireWorld: () => ({ show() {}, setOptions() {}, flyTo: () => Promise.resolve(false), stats() { return {}; } }), kpis: { el: new FakeNode("div") } });
 const announced = [];
 const hashOf = () => window.location.hash;
 const route = (h) => router.parse(`#/p/${P}/lobby${h}`);
@@ -1082,24 +1083,12 @@ for (const id of ["tray", "cabinet", "agent", "board", "desk", "sheet:docs/notes
 }
 out.scene = opened;
 
-// 5. Escape closes an open document, and not while the person types, in a menu of the frame or with a dialog open
+// 5. a document takes the panel's place (Escape is the frame's one handler, tested in test_interface_scene_round3.py)
 view.update({ snapshot, route: route("/desk/" + encodeURIComponent("docs/notes/a.md")), now: NOW, projectName: "northwind-shop" });
 await new Promise((r) => setTimeout(r, 300));
 const panel = frame.main.querySelector(".wb-panel-lobby");
 const host = frame.main.querySelector(".wb-viewer-host");
 out.viewer = { inline: panel.cls().includes("is-viewing"), hostHidden: host.hidden, head: frame.main.querySelector(".wb-panel-head").hidden, tabsHidden: frame.main.querySelector(".wb-lobby-tabs").hidden, text: host.textContent.includes("<b>hi</b>"), artifactReads: sent.filter((s) => s.url.startsWith(A("/artifact") + "?")).length };
-window.location.hash = "#/keep";
-document.activeElement = { tagName: "TEXTAREA" };
-press("keydown", { key: "Escape" });
-const typing = hashOf();
-document.activeElement = { tagName: "BUTTON", closest: (sel) => (sel.includes("wb-switcher") ? {} : null) };
-press("keydown", { key: "Escape" });
-const menu = hashOf();
-document.activeElement = null;
-press("keydown", { key: "Enter" });
-const other = hashOf();
-press("keydown", { key: "Escape" });
-out.escape = { typing, menu, other, closes: hashOf() };
 view.update({ snapshot, route: route("/desk"), now: NOW, projectName: "northwind-shop" });
 out.closed = { inline: panel.cls().includes("is-viewing"), hostHidden: host.hidden, head: frame.main.querySelector(".wb-panel-head").hidden, tabs: frame.main.querySelector(".wb-lobby-tabs").hidden };
 view.dispose();
@@ -1148,12 +1137,11 @@ def test_before_the_conversation_is_read_no_plan_is_drawn_as_a_card_in_the_inbox
 
 
 @needs_node
-def test_a_click_in_the_room_opens_the_tab_the_handoff_names_and_escape_closes_a_document_only_when_nothing_else_wants_it(tmp_path):
+def test_a_click_in_the_room_opens_the_tab_the_handoff_names(tmp_path):
     got = run_view_node(tmp_path, VIEW)
     p = "#/p/0123456789ab/lobby"
     # one object per destination (WP-9.8): the tray the Inbox, the figure the Agent tab, the desk the Desk tab, a sheet its document; the cabinet and the board open nothing
     assert got["scene"] == [f"{p}/inbox", "#/", f"{p}/agent", "#/", f"{p}/desk", f"{p}/desk/docs%2Fnotes%2Fa.md", "#/", "#/"]
-    assert got["escape"] == {"typing": "#/keep", "menu": "#/keep", "other": "#/keep", "closes": f"{p}/desk"}
 
 
 @needs_node

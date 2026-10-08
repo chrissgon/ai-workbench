@@ -27,6 +27,7 @@ import { mountLobbyScene } from "./lobby-scene.js";
 import { createTabs } from "./lobby-tabs.js";
 import { createThread } from "./lobby-thread.js";
 import * as model from "../model.js";
+import { worldModel } from "../world-model.js";
 
 /**
  * Create the Lobby of `project` in `frame`. options: {project, onChanged(): Promise (the page reads the project again)}.
@@ -205,7 +206,11 @@ export function createLobbyView(frame, { project, onChanged }) {
       working: turn !== null || routing.size > 0, decisions: status ? lobbyDecisions(status).length : 0, hasMessages: messages.length > 0,
       accepted, request: requestRow, ready: Boolean(status), documents: desk.rows(),
     });
-    scene.update(room, canvasLabel(last.projectName, room));
+    const words = {
+      tips: room.tips, board: room.board, door: true, doorTip: room.tips.door, state: room.state, window: room.window, decisions: room.decisions,
+      sheets: room.sheets, drawers: room.drawers,
+    };
+    scene.update(worldModel(last.snapshot, last.now, { selectedId: project, focus: project, floor: "planning", room: words, ready: Boolean(status) }), canvasLabel(last.projectName, room));
   }
 
   function drawComposer() {
@@ -382,16 +387,6 @@ export function createLobbyView(frame, { project, onChanged }) {
   }
   document.addEventListener("visibilitychange", onVisibility);
 
-  // Escape closes an open document, unless the person is typing or a dialog is open (a draft is not thrown away by Escape)
-  const onKey = (event) => {
-    if (event.key !== "Escape" || disposed || !last.route || tabOf(last.route) !== "desk" || !last.route.path) return;
-    const a = document.activeElement;
-    if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.tagName === "SELECT")) return;
-    if ((a && a.closest && a.closest(".wb-switcher, .wb-wait-menu-wrap")) || document.querySelector("dialog[open].wb-dialog")) return;
-    window.location.hash = router.lobbyHash(project, "desk");
-  };
-  document.addEventListener("keydown", onKey);
-
   return {
     /** Called by the page after every read of the projects: snapshot (js/data.js), route (router.parse), now, the project's name. */
     update({ snapshot, route, now, projectName }) {
@@ -446,7 +441,6 @@ export function createLobbyView(frame, { project, onChanged }) {
       abort.abort();
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
-      document.removeEventListener("keydown", onKey);
       viewer.dispose();
       desk.dispose();
       agent.dispose();

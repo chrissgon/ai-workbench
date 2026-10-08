@@ -284,7 +284,7 @@ def test_the_screens_keep_no_state_in_a_global_and_the_token_stays_in_the_token_
 
 FLOOR_FILES = ("floor-model.js", "floor/actions.js", "floor/agent-tab.js", "floor/cards.js", "floor/desk-tab.js", "floor/inbox.js",
                "floor/viewer.js", "floor/widgets.js", "views/building.js", "views/floor.js",
-               "scene/building.js", "scene/room.js", "scene/figure.js", "scene/furniture.js", "scene/plates.js")
+               "scene/building.js", "scene/world.js", "scene/tower.js", "scene/figure.js", "scene/furniture.js", "scene/plates.js")
 
 
 def test_the_building_and_the_floor_are_files_of_the_page_and_the_page_routes_to_them():
@@ -325,14 +325,15 @@ def test_a_card_sends_the_hash_it_shows_read_back_from_its_own_text_and_nothing_
 
 
 def test_the_ids_the_scenes_register_are_the_ids_the_screens_open():
-    building = (INTERFACE / "js" / "scene" / "building.js").read_text(encoding="utf-8")
-    room = (INTERFACE / "js" / "scene" / "room.js").read_text(encoding="utf-8")
+    building = (INTERFACE / "js" / "scene" / "world.js").read_text(encoding="utf-8")   # the world draws the buildings: it registers the floors and the door
+    room = (INTERFACE / "js" / "scene" / "world.js").read_text(encoding="utf-8")
     floor_view = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
     building_view = (INTERFACE / "js" / "views" / "building.js").read_text(encoding="utf-8")
-    for hit in re.findall(r'id: "([a-z]+)"', room):
-        assert f'"{hit}"' in floor_view, f"the Floor opens something for the room's {hit}"
+    for hit in re.findall(r'hits\.push\(\{[^}]*id: "([a-z-]+)"', room):
+        if hit in ("agent", "desk", "tray"):
+            assert f'"{hit}"' in floor_view, f"the Floor opens something for the room's {hit}"
     assert "sheet:" in room and "sheet:" in floor_view
-    assert "floor:" in building and "floor:" in building_view and '"door"' in building and '"door"' in building_view
+    assert "floor:" in building and "floor:" in building_view and '"door"' in building and "door" in building_view
 
 
 def test_every_wb_class_the_new_modules_build_is_styled_or_a_hook_the_scripts_read():
@@ -351,8 +352,9 @@ def test_every_wb_class_the_new_modules_build_is_styled_or_a_hook_the_scripts_re
 
 def test_escape_leaves_a_draft_alone_and_leaving_the_inbox_keeps_a_card_whose_job_runs():
     floor = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
-    assert re.search(r'a\.tagName === "TEXTAREA" \|\| a\.tagName === "INPUT"[^\n]*\n?\s*\)? ?return|a\.tagName === "TEXTAREA"[^\n]*return;', floor), \
-        "Escape does nothing while the person types in a field"
+    escape = (INTERFACE / "js" / "frame" / "escape.js").read_text(encoding="utf-8")
+    assert 'if (field) return { step: "none" };' in escape, "Escape does nothing while the person types in a field (the frame's one handler)"
+    assert "Escape" not in floor, "the Floor has no Escape handler of its own"
     assert "!inbox.busy()" in floor, "the Inbox is reset only when no card has a request in flight"
     inbox = (INTERFACE / "js" / "floor" / "inbox.js").read_text(encoding="utf-8")
     cards = (INTERFACE / "js" / "floor" / "cards.js").read_text(encoding="utf-8")
@@ -533,5 +535,4 @@ def test_the_control_room_imports_the_client_only_as_a_namespace_and_escape_leav
         assert all(found == "* as api" for found in imports), f"{path.name} imports the client other than as `* as api`: {imports}"
         assert not re.search(r'import\s*\{[^}]*\}\s*from\s*"\.\./api\.js"|api\.js"\)', text), f"{path.name}: a named or dynamic import of the client would escape the read-only check"
     control = (INTERFACE / "js" / "views" / "control.js").read_text(encoding="utf-8")
-    assert re.search(r'target\.tagName === "INPUT" \|\| target\.tagName === "TEXTAREA" \|\| target\.tagName === "SELECT"\)+\s*return;', control), \
-        "Escape does nothing while the person types in a field"
+    assert "Escape" not in control, "the Control room has no Escape handler of its own (the frame's one goes up)"

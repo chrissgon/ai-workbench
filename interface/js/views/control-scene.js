@@ -32,8 +32,8 @@ function chair(kit, parent, x, z) {
     kit.mesh(new THREE.SphereGeometry(0.035, 6, 4), palette.ink, 0.3, 0.035, 0, { parent: arm });
   }
   kit.cyl(0.03, 0.03, 0.34, 6, palette.metal, 0, 0.08, 0, { parent: g });
-  kit.box(0.5, 0.08, 0.48, 0, 0.4, 0, palette.ink, { parent: g });
-  kit.box(0.46, 0.62, 0.08, 0, 0.48, 0.24, palette.ink, { parent: g });
+  kit.box(0.5, 0.08, 0.48, 0, 0.4, 0, palette.ink, { parent: g, shell: true });
+  kit.box(0.46, 0.62, 0.08, 0, 0.48, 0.24, palette.ink, { parent: g, shell: true });
   kit.box(0.05, 0.2, 0.05, 0, 0.4, 0.2, palette.metal, { parent: g });
   for (const sx of [-0.27, 0.27]) kit.box(0.05, 0.04, 0.32, sx, 0.62, 0, palette.ink, { parent: g });
   return g;
@@ -91,7 +91,7 @@ export function buildServer(kit, model) {
 
   const desk = new THREE.Group();
   room.add(desk);
-  kit.box(2.4, 0.06, 0.85, 1.2, 0.72, 0.55, palette.deskTop, { parent: desk, edges: true });
+  kit.box(2.4, 0.06, 0.85, 1.2, 0.72, 0.55, palette.deskTop, { parent: desk, edges: true, shell: true });
   kit.box(2.4, 0.72, 0.06, 1.2, 0, 0.55 - 0.4, palette.deskTop, { parent: desk });
   for (const lx of [0.08, 2.32]) kit.cyl(0.025, 0.025, 0.72, 6, palette.metal, lx, 0, 0.55 + 0.36, { parent: desk });
   for (const mx of [0.7, 1.7]) {

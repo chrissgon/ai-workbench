@@ -53,12 +53,13 @@ export function createKit(palette) {
       }
       return mesh;
     },
-    /** A mesh of a geometry made by the caller (tracked). */
+    /** A mesh of a geometry made by the caller (tracked). o: {unlit, flat, cast, shell, parent}. */
     mesh(geometry, colour, x, y, z, o = {}) {
       const mesh = new THREE.Mesh(track(geometry), o.unlit ? unlit(colour) : o.flat ? flat(colour) : lit(colour));
       mesh.position.set(x, y, z);
       mesh.castShadow = o.cast !== false;
       mesh.receiveShadow = true;
+      if (o.shell) mesh.userData.shell = true;
       o.parent.add(mesh);
       return mesh;
     },

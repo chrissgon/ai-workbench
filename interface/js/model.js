@@ -264,18 +264,6 @@ export function projectSub(snapshot, projectId) {
   return `Request #${request.id} · ${tasks.filter((t) => t.state === "done").length} of ${tasks.length} steps done`;
 }
 
-/** What the scene needs of the City: the first four buildings in a plain shape, with the id of the selected one; `ready` is false while the first read is loading (nothing arrives then). */
-export function sceneModel(buildings, selectedId, ready = true) {
-  return {
-    selectedId, outlined: null, ready,   // `outlined`: the lot the route selects (none on the City, so no lot line stands)
-    lots: buildings.slice(0, MAX_LOTS).map((b) => ({
-      id: b.id, name: b.name, accepted: b.accepted, decisions: b.decisions, runningTask: b.runningTask,
-      floors: b.floors.map((f) => ({ window: f.window, waits: f.waits })),
-      tip: tooltipOf(b), sub: subOf(b),
-    })),
-  };
-}
-
 /** The state of a screen's data: "loading" before the first read has answered, "error" when it failed and nothing was ever read, else "ready" (a later failure keeps the last data, dimmed). */
 export function screenState(snapshot, failure) {
   if (snapshot.loaded) return "ready";

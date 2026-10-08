@@ -5,11 +5,12 @@ import { h } from "../dom.js";
 import * as format from "../format.js";
 import { icon } from "./icons.js";
 
-function card(label, iconName, tone, withMeter) {
+// A card's label has a long and a short form: the tablet layout shows the short one ("Decisions", "Runs", "Spend"), the others the long one.
+function card(label, iconName, tone, withMeter, short) {
   const figure = h("strong", { class: "wb-kpi-figure", text: "..." });
   const unit = h("span", { class: "wb-kpi-unit", text: "" });
   const meterFill = h("span", { class: "wb-meter-fill" });
-  const body = [h("span", { class: "wb-kpi-label", text: label }), h("div", { class: "wb-kpi-row" }, figure, unit)];
+  const body = [h("span", { class: "wb-kpi-label" }, h("span", { class: "wb-kpi-long", text: label }), h("span", { class: "wb-kpi-short", text: short })), h("div", { class: "wb-kpi-row" }, figure, unit)];
   if (withMeter) body.push(h("span", { class: "wb-meter", "aria-hidden": "true" }, meterFill));
   const el = h("div", { class: "pui-card wb-kpi", role: "group", "aria-label": `${label}, loading` },
     h("span", { class: `wb-kpi-tile pui-soft pui-${tone}` }, icon(iconName, 16)),
@@ -18,9 +19,9 @@ function card(label, iconName, tone, withMeter) {
 }
 
 export function createKpis() {
-  const decisions = card("Open decisions", "inbox", "warn", false);
-  const runs = card("Runs today", "activity", "theme", true);
-  const spend = card("Spend today", "credit-card", "theme", true);
+  const decisions = card("Open decisions", "inbox", "warn", false, "Decisions");
+  const runs = card("Runs today", "activity", "theme", true, "Runs");
+  const spend = card("Spend today", "credit-card", "theme", true, "Spend");
   const el = h("div", { class: "wb-kpis" }, decisions.el, runs.el, spend.el);
 
   function meter(c, fraction) {

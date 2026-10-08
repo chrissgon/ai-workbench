@@ -589,12 +589,6 @@ const before = calls.length;
 document.fireVisible();
 await settle();
 out.visibleReads = calls.length - before;
-// Escape inside the panel goes up to the building
-window.location.hash = "";
-for (const tag of ["input", "textarea", "select"]) view.el.fire("keydown", { key: "Escape", target: new FakeNode(tag) });
-out.escapeInField = window.location.hash;
-view.el.fire("keydown", { key: "Escape" });
-out.escape = window.location.hash;
 view.dispose();
 out.disposed = [frame.main.children.length];
 const after = calls.length;
@@ -628,8 +622,6 @@ def test_the_control_view_reads_once_per_entry_and_shows_each_tabs_own_state(tmp
     assert got["emptyText"] is True
     assert got["costsCalls"][-2:] == ["costs?since=2026-13-07", "costs?since=2026-10-01"] and got["costsCalls"][0] == "costs"
     assert got["visibleReads"] == 4
-    assert got["escapeInField"] == "", "Escape in a field leaves the typed text alone"
-    assert got["escape"] == "#/p/aaaaaaaaaaaa"
     assert got["disposed"] == [0] and got["afterDispose"] == 0
 
 

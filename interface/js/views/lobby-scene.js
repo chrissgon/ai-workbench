@@ -1,15 +1,15 @@
-// The Lobby's room: the scene engine of the page showing the scene kind `room` (the Floor's scene with the planning agent and a
-// door). The room's builder belongs to the Floor package and is registered in `BUILDERS` of scene/engine.js; this file only mounts
-// the engine, hands it the plain model of lobby-model.js `roomModel` and frees it. Where the engine cannot draw (no WebGL, or no
-// builder registered for `room`) the panel has everything and the frame shows its one line.
+// The Lobby's room (WP-9.11): the world of the page (scene/world.js) with the planning floor of the project as its target. This file takes the
+// frame's world over for the Lobby's handlers and insets and hands it the world's model (world-model.js) the Lobby worked out; the world is
+// the frame's, so the Building takes it over again on Back. Where the engine cannot draw (no WebGL) the panel has everything and the frame
+// shows its one line.
 
-import { createEngine, NoWebGL } from "../scene/engine.js";
+import { NoWebGL } from "../scene/engine.js";
 
-/** Mount the room in the frame's scene host, fitted to the free rectangle the panel leaves. Returns {update(model, label), dispose()}. */
+/** Take the world over for the Lobby, fitted to the free rectangle the panel leaves. Returns {update(worldModel, label), dispose()}. */
 export function mountLobbyScene(frame, panelEl, { onDoor, onSelect } = {}) {
   let engine = null;
   try {
-    engine = createEngine(frame.sceneHost, {
+    engine = frame.acquireWorld({
       label: "Lobby, loading",
       getInsets: () => frame.insets(panelEl),
       onOpen: (id) => {
@@ -32,12 +32,11 @@ export function mountLobbyScene(frame, panelEl, { onDoor, onSelect } = {}) {
   observer.observe(panelEl);
   return {
     update(model, label) {
-      if (engine) engine.show("room", model, label);
+      if (engine) engine.show("world", model, label);
     },
     dispose() {
       observer.disconnect();
-      if (engine) engine.dispose();
-      engine = null;
+      engine = null;   // the scene is the frame's
       frame.sceneUnavailable(false);
     },
     stats() {

@@ -9,9 +9,8 @@
 import * as THREE from "../three.js";
 import { h } from "../dom.js";
 import { icon } from "../frame/icons.js";
-import { buildBuilding } from "./building.js";
 import { clampView, fitView, frustumOf, panBy, panPixels, pointerToNdc, zoomAt } from "./camera.js";
-import { buildCity, pulseBeacon, restBeacon } from "./city.js";
+import { pulseBeacon, restBeacon } from "./city.js";
 import { ease, fitFrustum } from "./fit.js";
 import { createKit } from "./kit.js";
 import { cornerPosition, fitInsets, mountLabels, placeLabels } from "./labels.js";
@@ -21,19 +20,19 @@ import { outlineGeometry } from "./outline.js";
 import { pickHit, pickList, visibleSamples } from "./pick.js";
 import { createPointer } from "./pointer.js";
 import { LIGHT_WHITE, readPalette } from "./palette.js";
-import { buildRoom } from "./room.js";
-import { contentBounds, createCamera } from "./rig.js";
+import { buildWorld } from "./world.js";
+import { boundsOfBox, contentBounds, createCamera } from "./rig.js";
 import { createTween } from "./tween.js";
-import { EXPLODE_RATE, createApproach, frameSeconds, smooth } from "./prototype-motion.js";
+import { frameSeconds } from "./prototype-motion.js";
 
-export const BUILDERS = { city: buildCity, building: buildBuilding, room: buildRoom };
+export const BUILDERS = { world: buildWorld };   // the Control room registers its own kind here (views/control-scene.js)
 // The motions of the prototype (WP-9.10: its own functions, prototype-motion.js, stepped frame by frame): the camera approaches its
 // goal by `1 - exp(-dt * 4.5)` a frame and the building opens by `1 - exp(-dt * 3.2)` read through a smoothstep. A move ends when it is
 // within one percent of its goal, which takes ln(100) over the rate: the two durations below are what that comes to, for the page's
 // checks, not times the engine counts.
 export const CAMERA_MS = 1023;    // A5: the camera moves in (ln 100 / 4.5 seconds)
 export const OPEN_MS = 1439;      // A5: the building opens, the floors separate once (ln 100 / 3.2 seconds)
-export const FLY_SETTLE_AT = 0.9; // the screen waits for the fly-in only until the move is nine tenths done (about 0.5 s)
+export const FLY_SETTLE_AT = 0.9; // the promise of a move resolves when it is nine tenths done (about 0.5 s); the route does not wait for it
 export const DROP_MS = 300;       // A3: a waiting marker drops in once
 export const TAG_MS = 600;        // A6: the work-order tag moves to the next floor once
 export const OUTLINE_PAD = 0.04;  // the hover outline stands this far off the object (the prototype's, for a piece of furniture)
@@ -102,8 +101,9 @@ export function createEngine(host, options) {
   let view = fitView();           // the person's zoom and pan on top of it (camera.js)
   const tween = createTween();    // the camera move in flight, if any
   let drops = [];                 // {marker, start}
-  let intro = null;               // {approach, last}: the building opening (A5), the floors separating
-  let introPlayed = false;
+  let worldLast = 0;              // the time of the last frame of the world's opening or closing
+  let cameraSet = false;          // the camera has been fitted once: later moves of the focus fly instead of cutting
+  let lotCount = 0;               // the lots the world had at the last show
   let tagRun = null;              // {group, from, to, start}: the work-order tag moving (A6)
   let previousTag = null;         // {y}: where the tag was on the build before
   let lastInsets = null;
@@ -111,6 +111,7 @@ export function createEngine(host, options) {
   let previousReady = false;      // the build before this one held real data: a marker not in it has arrived
   let previousDecisions = new Map();
   let outline = null;
+  let markedOutline = null;      // the thin outline the building of the chosen project keeps in the City (WP-9.11)
   let hoverId = null;
   let lostText = false;
   let disposed = false;
@@ -124,7 +125,7 @@ export function createEngine(host, options) {
   const outlineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
 
   // --- the world: lights and ground, rebuilt when the palette changes -----------------------------------------------------
-  function buildWorld() {
+  function buildSky() {
     if (worldKit) {
       const old = scene.children.filter((c) => c.userData.world);
       scene.remove(...old);
@@ -164,6 +165,11 @@ export function createEngine(host, options) {
       outline.geometry.dispose();
       outline = null;
     }
+    if (markedOutline) {
+      scene.remove(markedOutline);
+      markedOutline.geometry.dispose();
+      markedOutline = null;
+    }
     hoverId = null;
     if (content) scene.remove(content.group);
     if (contentKit) contentKit.dispose();
@@ -174,15 +180,16 @@ export function createEngine(host, options) {
   }
 
   function stopAnimations() {
-    for (const name of ["camera", "drops", "beacon", "intro", "tag"]) loop.stop(name);
+    for (const name of ["camera", "drops", "beacon", "tag", "world"]) loop.stop(name);
     tween.cancel();   // settles a waiting fly-in with false: nobody is left waiting for a move that will not finish
     drops = [];
-    intro = null;
     tagRun = null;
   }
 
-  function build() {
+  /** Build the scene again from the model. `keep`: the same scene again (a new palette): the open building stays open, no motion plays again. */
+  function build(keep = false) {
     builds += 1;
+    const playOpen = !keep && (!content || lotCount === 0);   // the first scene with buildings in it plays the opening; a rebuild of the same one does not
     clearContent();
     if (!model || !BUILDERS[kind]) return;
     contentKit = createKit(palette);
@@ -192,23 +199,62 @@ export function createEngine(host, options) {
     content.markers = content.markers || [];
     content.outlines = content.outlines || [];
     scene.add(content.group);
+    // The world opens the building the route names: the first time it plays (the floors separate while the camera is fitted on it), and
+    // never again for a rebuild of the same scene.
+    if (content.live) {
+      // a page opened on a floor shows the room at once; one opened on a building plays the opening
+      const instant = !playOpen || reducedQuery.matches || Boolean(model.floor);
+      content.setFocus(model.focus, instant);
+      content.setFloors(model.floor, model.frame, instant);
+      lotCount = model.lots.length;
+    }
     applyOutlines();
+    drawMarked();
+    const words = content.live ? content.text(model) : { labels: content.labels };
+    content.labels = words.labels;
     labelEntries = mountLabels(overlay, content.labels.map((l) => ({ ...l, anchor: l.anchor })), { popped: poppedOf(content.labels) });
     markLabels();
+    const fresh = trackMarkers();
+    renderer.shadowMap.needsUpdate = true;
+    fit();
+    cameraSet = Boolean(content.live ? lotCount > 0 : true);
+    dropMarkers(fresh);
+    startWorld();
+    syncSurroundings();
+    startTag();
+    syncBeacons();
+  }
+
+  // The markers that arrived since the last build or update: they drop in once (A3).
+  function trackMarkers() {
     const markerKeys = new Set(content.markers.map((m) => m.key));
     const fresh = previousReady ? content.markers.filter((m) => !previousMarkers.has(m.key)) : [];
     previousReady = Boolean(model.ready);
     previousMarkers = markerKeys;
-    renderer.shadowMap.needsUpdate = true;
-    fit();
-    if (fresh.length && !reducedQuery.matches) {
-      drops = fresh.map((marker) => ({ marker, start: clock() }));
-      for (const d of drops) d.marker.group.position.y = d.marker.restY + 1.5;
-      loop.start("drops", { ambient: false });
-    }
-    startIntro();
-    startTag();
-    syncBeacons();
+    return fresh;
+  }
+
+  function dropMarkers(fresh) {
+    if (!fresh.length || reducedQuery.matches) return;
+    drops = fresh.map((marker) => ({ marker, start: clock() }));
+    for (const d of drops) d.marker.group.position.y = d.marker.restY + 1.5;
+    loop.start("drops", { ambient: false });
+  }
+
+  // The Floor and the Lobby show the room alone once the camera and the floors have settled; any motion shows the city round it again.
+  function syncSurroundings() {
+    if (!content || !content.live) return;
+    const settled = !tween.active() && !content.moving();
+    content.hideSurroundings(settled && Boolean(model.floor));
+    pickCache = null;
+    loop.requestRender();
+  }
+
+  // The world's towers move toward their targets frame by frame (the prototype's `explode`): the loop runs while any is moving.
+  function startWorld() {
+    if (!content || !content.live || !content.moving()) return;
+    worldLast = clock();
+    loop.start("world", { ambient: false });
   }
 
   // The labels whose decisions went up since the last build pop once (the badge's A3).
@@ -250,26 +296,45 @@ export function createEngine(host, options) {
     if (content) applyOutlineVisibility(content.outlines, content.selected);
   }
 
-  // A5: a building opens (its floors separate) and a room is entered (the camera moves in), once; a cut under reduced motion.
-  function startIntro() {
-    if (!content.intro || !model.ready || introPlayed) return;
-    introPlayed = true;
-    if (reducedQuery.matches) return;
-    if (content.intro.apply) {
-      content.intro.apply(0);
-      intro = { approach: createApproach(EXPLODE_RATE), last: clock() };
-      loop.start("intro", { ambient: false });
-    } else if (content.intro.zoom && frustum) {
-      const k = content.intro.zoom;
-      const cx = (frustum.left + frustum.right) / 2;
-      const cy = (frustum.top + frustum.bottom) / 2;
-      const hw = ((frustum.right - frustum.left) / 2) * k;
-      const hh = ((frustum.top - frustum.bottom) / 2) * k;
-      const from = { left: cx - hw, right: cx + hw, top: cy + hh, bottom: cy - hh };
-      applyFrustum(from);
-      tween.start(from, { ...frustum }, clock());
-      loop.start("camera", { ambient: false });
+  // The world changes in place: a model of the same lots (another poll, another route: the focus) never builds the scene again. A tower
+  // whose floors changed is made again (tower by tower); the focus moves the camera; only another set of lots builds the world again.
+  function updateWorld(next) {
+    const sig = JSON.stringify(next);
+    if (sig === signature) return false;
+    const before = content.focusId();
+    const floorBefore = `${model.floor || ""}|${model.frame || ""}`;
+    const result = content.update(next);
+    model = next;
+    signature = sig;
+    if (result.rebuild) {
+      build();
+      return true;
     }
+    pickCache = null;
+    drawMarked();
+    const hadLots = lotCount > 0;
+    lotCount = next.lots.length;
+    relabel();
+    const fresh = trackMarkers();
+    dropMarkers(fresh);
+    applyOutlines();
+    if (hoverId && !content.hits.some((hit) => hit.id === hoverId)) {
+      hoverId = null;
+      setOutline(null);
+    }
+    renderer.shadowMap.needsUpdate = true;
+    if (result.focus || result.floors || (hadLots === false && lotCount > 0)) {
+      if (reducedQuery.matches) content.finish();
+      refocus(hadLots && (content.focusId() !== before || `${next.floor || ""}|${next.frame || ""}` !== floorBefore));
+    } else {
+      fit();
+    }
+    startWorld();
+    syncSurroundings();
+    startTag();
+    syncBeacons();
+    loop.requestRender();
+    return true;
   }
 
   // A6: the work-order tag moves from its old floor to its new one, once.
@@ -277,7 +342,7 @@ export function createEngine(host, options) {
     const tag = content.tag;
     const before = previousTag;
     previousTag = tag ? { y: tag.y } : null;
-    if (!tag || !before || before.y === tag.y || reducedQuery.matches || !model.ready || intro) return;
+    if (!tag || !before || before.y === tag.y || reducedQuery.matches || !model.ready || (content.live && content.moving())) return;
     tag.group.position.y = before.y;
     tagRun = { group: tag.group, from: before.y, to: tag.y, start: clock() };
     loop.start("tag", { ambient: false });
@@ -307,17 +372,50 @@ export function createEngine(host, options) {
     camera.updateProjectionMatrix();
   }
 
-  function fit() {
-    if (!content || !size.w || !size.h) return;
+  // The part of the scene the camera frames: the open building of a world (or one floor of it), else all of it.
+  function subjectBounds() {
+    return content.subject ? boundsOfBox(THREE, camera, content.subject()) : contentBounds(THREE, camera, content.group);
+  }
+
+  // The frustum the camera should show now: the subject fitted in the free rectangle the page's panels leave, the person's view on top.
+  function computeFit() {
     const insets = options.getInsets ? options.getInsets() : {};
     lastInsets = insets;
     tools.style.setProperty("--wb-y", `${Math.max(16, insets.bottom || 0)}px`);   // above the tracking bar, whatever its height
-    bounds = contentBounds(THREE, camera, content.group);
+    bounds = subjectBounds();
     frustum = fitFrustum(bounds, size, fitInsets(insets, corner ? corner.offsetHeight : 0), insets.pad || 1.04);   // below the corner card, when there is one
     view = clampView(view, frustum, bounds);   // the person's zoom and pan stay while they are inside the limits
-    if (!tween.active()) applyView();
+    return frustumOf(frustum, view);
+  }
+
+  function fit() {
+    if (!content || !size.w || !size.h) return;
+    const goal = computeFit();
+    if (tween.active()) tween.retarget(goal);   // a move in flight goes on from where the camera is, to where the panels now leave room
+    else applyView();
     positionLabels();
     loop.requestRender();
+  }
+
+  const cameraNow = () => ({ left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom });
+
+  // The subject changed (a building opens, Back, a floor framed): the camera goes to its new frame, flying when it was already framed on
+  // something (and the person allows motion), cutting otherwise. Returns the promise of the move (true when it is `settleAt` done).
+  function refocus(animate, settleAt = 1) {
+    if (!content || !size.w || !size.h) return Promise.resolve(false);
+    view = fitView();
+    const from = cameraNow();
+    const goal = computeFit();
+    positionLabels();
+    loop.requestRender();
+    if (animate && cameraSet && !reducedQuery.matches) {
+      const move = tween.start(from, goal, clock(), settleAt);
+      loop.start("camera", { ambient: false });
+      return move;
+    }
+    tween.cancel();
+    applyView();
+    return Promise.resolve(false);
   }
 
   function applyView() {
@@ -389,18 +487,9 @@ export function createEngine(host, options) {
     if (moved) {
       applyFrustum(moved);
       positionLabels();   // the labels ride along with the camera (the prototype projected them every frame)
-      if (!tween.active()) loop.stop("camera");
-    }
-    if (intro) {
-      const p = intro.approach.step(frameSeconds(now, intro.last));
-      intro.last = now;
-      content.intro.apply(smooth(p));
-      renderer.shadowMap.needsUpdate = true;
-      refreshOutline();   // the outline is in world space: it follows the floors while they separate
-      positionLabels();   // the plates ride along with their floors
-      if (intro.approach.done()) {
-        intro = null;
-        loop.stop("intro");
+      if (!tween.active()) {
+        loop.stop("camera");
+        syncSurroundings();
       }
     }
     if (tagRun) {
@@ -410,6 +499,18 @@ export function createEngine(host, options) {
       if (t >= 1) {
         tagRun = null;
         loop.stop("tag");
+      }
+    }
+    if (content && content.live && loop.isActive("world")) {
+      const moving = content.step(frameSeconds(now, worldLast));
+      worldLast = now;
+      pickCache = null;
+      renderer.shadowMap.needsUpdate = true;
+      positionLabels();   // the plates, the cards and the tag ride along with the floors
+      refreshOutline();
+      if (!moving) {
+        loop.stop("world");
+        syncSurroundings();
       }
     }
     if (drops.length) {
@@ -448,7 +549,7 @@ export function createEngine(host, options) {
     const y = event.clientY - rect.top;
     const ndc = pointerToNdc(event.clientX, event.clientY, rect);
     pointer.set(ndc.x, ndc.y);
-    if (!pickCache || pickCache.content !== content || intro || tagRun || drops.length) pickCache = { content, list: pickList(content.hits) };
+    if (!pickCache || pickCache.content !== content || tagRun || drops.length || (content.live && content.moving())) pickCache = { content, list: pickList(content.hits) };
     return { x, y, hit: pickHit(raycaster, camera, content.hits, pointer, pickCache.list) };
   }
 
@@ -470,11 +571,33 @@ export function createEngine(host, options) {
     loop.requestRender();
   }
 
+  // The building the person has chosen keeps a thin outline in the City, as the route-selected object; a hover outlines the hovered one in addition.
+  function drawMarked() {
+    const hit = content && content.marked ? content.hits.find((x) => x.id === content.marked) : null;
+    if (!hit) {
+      if (markedOutline) {
+        scene.remove(markedOutline);
+        markedOutline.geometry.dispose();
+        markedOutline = null;
+      }
+      return;
+    }
+    const geometry = outlineGeometry(THREE, hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
+    if (markedOutline) {
+      markedOutline.geometry.dispose();
+      markedOutline.geometry = geometry;
+    } else {
+      markedOutline = new THREE.LineSegments(geometry, outlineMaterial);
+      scene.add(markedOutline);
+    }
+  }
+
   const hoveredHit = () => (hoverId && content ? content.hits.find((x) => x.id === hoverId) || null : null);
 
   // The same outline made again from where the object is now (the opening moves a floor, typing moves a figure's arms): one geometry
   // swapped in place, nothing else touched.
   function refreshOutline() {
+    drawMarked();
     const hit = hoveredHit();
     if (!hit || !outline) return;
     outline.geometry.dispose();
@@ -561,15 +684,17 @@ export function createEngine(host, options) {
         applyView();
         loop.stop("camera");
       }
+      if (content && content.live) {
+        content.finish();
+        loop.stop("world");
+        syncSurroundings();
+        pickCache = null;
+        renderer.shadowMap.needsUpdate = true;
+        positionLabels();
+      }
       drops.forEach((d) => { d.marker.group.position.y = d.marker.restY; });
       drops = [];
       loop.stop("drops");
-      if (intro) {
-        content.intro.apply(1);
-        intro = null;
-        loop.stop("intro");
-        positionLabels();
-      }
       if (tagRun) {
         tagRun.group.position.y = tagRun.to;
         tagRun = null;
@@ -579,8 +704,8 @@ export function createEngine(host, options) {
     syncBeacons();
   };
   const onScheme = () => {
-    buildWorld();
-    build();
+    buildSky();
+    build(true);
   };
   const onLost = (event) => {
     event.preventDefault();
@@ -590,8 +715,8 @@ export function createEngine(host, options) {
   };
   const onRestored = () => {
     lostText = false;
-    buildWorld();
-    build();
+    buildSky();
+    build(true);
     if (options.onRestored) options.onRestored();
   };
   document.addEventListener("visibilitychange", onVisibility);
@@ -600,10 +725,10 @@ export function createEngine(host, options) {
   canvas.addEventListener("webglcontextlost", onLost);
   canvas.addEventListener("webglcontextrestored", onRestored);
 
-  buildWorld();
+  buildSky();
   measure();
   // The test hook of the acceptance (scene.md section 10): the frames drawn so far, read from the canvas element.
-  const stats = () => ({ ...loop.stats(), hover: hoverId, outline: outlineProbe(), view: { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom }, builds, relabels, zoom: view.zoom, panX: view.x, panY: view.y, frameMs, pixelRatio: renderer.getPixelRatio(), drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries });
+  const stats = () => ({ ...loop.stats(), hover: hoverId, outline: outlineProbe(), towers: content && content.towers ? Object.fromEntries([...content.towers].map(([id, t]) => [id, +t.open.toFixed(3)])) : null, view: { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom }, builds, relabels, zoom: view.zoom, panX: view.x, panY: view.y, frameMs, pixelRatio: renderer.getPixelRatio(), drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries });
   canvas.wbStats = stats;
   canvas.wbSamples = () => (content ? visibleSamples(THREE, camera, scene, content.hits, size) : []);
 
@@ -616,6 +741,7 @@ export function createEngine(host, options) {
      */
     show(nextKind, nextModel, label) {
       if (label) canvas.setAttribute("aria-label", label);
+      if (nextKind === "world" && content && content.live && kind === "world") return updateWorld(nextModel);
       const builder = BUILDERS[nextKind];
       const plan = showPlan({ signature, structure: structureSignature, built: Boolean(content && content.text) }, nextKind, nextModel, builder && builder.structure);
       if (plan.action === "none") return false;
@@ -641,8 +767,26 @@ export function createEngine(host, options) {
         setOutline(id);
       }
     },
-    /** Move the camera in on a building (A5, the prototype's curve); resolves true when it is nine tenths done, false when it was a cut. */
+    /** Move the camera in on a building (A5, the prototype's curve); resolves true when it is nine tenths done, false when it was a cut (the route does not wait for it). */
     flyTo(id) {
+      // A building of the world: it opens where it stands while the camera flies in (the prototype's one scene); the screen changes the route in
+      // the same moment and the scene goes on from where it is. A floor of the open building: the other floors shrink to nothing while the
+      // camera closes on it.
+      const floorName = content && content.live && String(id).startsWith("floor:") ? String(id).slice(6) : null;
+      if (content && content.live && (content.towers.has(id) || floorName !== null)) {
+        tooltip.hidden = true;
+        if (floorName !== null) content.setFloors(floorName, null, reducedQuery.matches);
+        else content.setFocus(id, reducedQuery.matches);
+        pickCache = null;
+        if (reducedQuery.matches) {
+          refocus(false);
+          return Promise.resolve(false);
+        }
+        const move = refocus(true, FLY_SETTLE_AT);
+        startWorld();
+        loop.requestRender();
+        return move;
+      }
       const hit = content && content.hits.find((x) => x.id === id);
       if (!hit || reducedQuery.matches || !frustum) return Promise.resolve(false);
       const insets = options.getInsets ? options.getInsets() : {};
@@ -652,6 +796,25 @@ export function createEngine(host, options) {
       positionLabels();
       loop.start("camera", { ambient: false });
       return move;
+    },
+    /** True while an object of the scene is outlined (hovered, or lit from the keyboard through the list). */
+    hasHover: () => hoverId !== null,
+    clearHover() {
+      if (hoverId === null) return false;
+      hoverId = null;
+      setOutline(null);
+      tooltip.hidden = true;
+      return true;
+    },
+    /** The page's next screen takes the scene over: its insets, its handlers; the hover of the screen before is gone. */
+    setOptions(next) {
+      options = next;
+      if (next.label) canvas.setAttribute("aria-label", next.label);
+      if (hoverId !== null) {
+        hoverId = null;
+        setOutline(null);
+      }
+      tooltip.hidden = true;
     },
     /** Put `node` (or nothing) in the corner slot: the top right of the free rectangle, over the scene, never over a panel. */
     setCorner(node) {

@@ -219,7 +219,7 @@ export function roomModel({ working, decisions, hasMessages, accepted, request, 
     sheets: docs ? docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })) : [], empty: !hasMessages,
     tips: {
       agent: `Planning agent · ${words}`, desk: request ? `Current task · ${request.title || `request #${request.id}`}` : "Current task · none yet",
-      tray: `Inbox · ${decisions} open · open the Inbox tab`,
+      tray: `Inbox · ${decisions} waiting`,
       cabinet: docs ? `${docs.length} document${docs.length === 1 ? "" : "s"} · open the Desk tab` : "Documents · open the Desk tab", board: board.lines[0] || board.title,
       door: "Control room · skills, costs, connections",
     },

@@ -154,8 +154,8 @@ out.facts = view.facts;
 out.plate = fm.plateOf(eng, true);
 out.card = fm.cardOf(eng);
 out.cardOff = fm.cardOf(view.rows.find((r) => r.name === "design"));
-const scene = fm.buildingScene(view, [{ path: "docs/a.md", agent: "marketing" }, { path: "docs/b.md", agent: "marketing" }, { path: "docs/c.md", agent: "marketing" }, { path: "docs/d.md", agent: "marketing" }, { path: "docs/e.md", agent: "marketing" }], { focus: "brand" });
-out.scene = { focus: scene.focus, selected: scene.selected, floors: scene.floors.map((f) => [f.name, f.sheets, f.drawers]), label: fm.buildingLabel(view) };
+const scene = fm.buildingScene(view, [{ path: "docs/a.md", agent: "marketing" }, { path: "docs/b.md", agent: "marketing" }, { path: "docs/c.md", agent: "marketing" }, { path: "docs/d.md", agent: "marketing" }, { path: "docs/e.md", agent: "marketing" }], {});
+out.scene = { selected: scene.selected, floors: scene.floors.map((f) => [f.name, f.sheets.length, f.drawers]), label: fm.buildingLabel(view) };
 
 // not accepted, no agents, more than eight floors
 const unaccepted = { ...snapshot, projects: [{ id: P, name: "northwind-shop", config: { accepted: false }, message: "nope" }], details: {} };
@@ -228,8 +228,8 @@ def test_the_model_derives_each_floors_state_and_facts_from_what_the_service_ret
                            "acting": "autonomous", "actingPips": 3, "runsLine": "runs 2 / 8 · $0.50 / $4.00", "off": False}, \
         "the compact card: name, state word, mode plate, one line of runs and spend"
     assert got["cardOff"]["off"] is True and got["cardOff"]["word"] == "Off, mode is stopped"
-    assert got["scene"] == {"focus": "brand", "selected": "engineering", "label": "Building of northwind-shop, 6 floors, 2 decisions waiting",
-                            "floors": [["planning", 0, 1], ["business", 0, 1], ["brand", 0, 1], ["design", 0, 1], ["engineering", 0, 1], ["marketing", 3, 2]]}
+    assert got["scene"] == {"selected": "engineering", "label": "Building of northwind-shop, 6 floors, 2 decisions waiting",
+                            "floors": [["planning", 0, 1], ["business", 0, 1], ["brand", 0, 1], ["design", 0, 1], ["engineering", 0, 1], ["marketing", 5, 2]]}
     assert got["unaccepted"] == {"accepted": False, "rows": 1, "window": "grey", "word": "Waiting for the configuration to be accepted.", "facts": "Not accepted"}
     assert got["lone"] == {"none": True, "rows": ["planning"], "decisions": 2 - 1}, "no area agents: the Lobby alone, with the decisions of the requests"
     assert got["many"] == {"rows": 11, "more": 3, "sceneFloors": 8}, "the list holds every floor, the scene draws eight"
@@ -334,12 +334,13 @@ def test_the_corner_card_and_every_row_of_the_floors_list_are_one_component_with
     assert "autonomous" in c["mode"]
     assert got["bare"] == {"runs": None, "mode": None, "badge": None}, "no mode, no decisions and no runs line leave out their parts"
     building = (JS / "views" / "building.js").read_text(encoding="utf-8")
-    assert "floorCardNode(card, { class: \"wb-floor-row\"" in building and "floorCardNode(card, { class: \"is-corner\"" in building, "the list and the corner draw the one component"
+    assert 'plateNode(fm.plateOf(row' in building and 'class: "wb-floor-row is-row"' in building and "floorCardNode(card, { class: \"is-corner\"" in building, \
+        "the list rows are the plate beside the floor (WP-9.11); the compact card is the phone's corner"
     for gone in ("wb-floor-text", "wb-floor-meters"):
         assert gone not in building, f"the Building no longer draws {gone}"
     # the corner card is the phone's only (WP-9.10): desktop and tablet keep the plates beside the floors
     assert "if (phone.matches && view && last.snapshot.loaded)" in building, "the corner card is drawn on the phone alone"
-    assert "PLATE_WIDTH" in building and "plateRight: base.right" in building, "the plates' column keeps its inset off the free rectangle"
+    assert "frame.plateWidth()" in building and "plateRight: base.right" in building, "the plates' column keeps its inset off the free rectangle"
 
 
 # --- the cards ---------------------------------------------------------------------------------------------------------------------
