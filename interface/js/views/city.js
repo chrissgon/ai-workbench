@@ -39,6 +39,7 @@ export function createCityView(frame) {
       getInsets: () => frame.insets(frame.waitingCard.el),
       onOpen: open,
       onUnavailable: () => frame.sceneUnavailable(true),
+      onRestored: () => frame.sceneUnavailable(false),   // the context came back: the host is shown again
     });
     frame.sceneUnavailable(false);
   } catch (e) {
@@ -77,20 +78,21 @@ export function createCityView(frame) {
 
   return {
     /**
-     * data: {city (model.city), selectedId, state: "loading"|"ready", dim: boolean (the last data after a failed read)}.
+     * data: {city (model.city), selectedId, state: "loading", "error" (the first read failed) or "ready"}.
      */
     update({ city, selectedId, state }) {
-      const loading = state === "loading";
-      const key = JSON.stringify([city.buildings.map((b) => [b.id, b.name, b.accepted, b.decisions, b.runningTask]), loading]);
+      const key = JSON.stringify([city.buildings.map((b) => [b.id, b.name, b.accepted, b.decisions, b.runningTask]), state]);
       if (key !== shown) {
         shown = key;
-        if (loading) list.replaceChildren(h("li", { class: "pui-list-item wb-empty", text: "Loading the projects..." }));
+        if (state === "loading") list.replaceChildren(h("li", { class: "pui-list-item wb-empty", text: "Loading the projects..." }));
+        else if (state === "error") list.replaceChildren(h("li", { class: "pui-list-item wb-empty", text: "The projects could not be read." }));
         else if (city.buildings.length === 0) list.replaceChildren(h("li", { class: "pui-list-item wb-empty", text: "The service has no project." }));
         else renderList(city.buildings);
       }
-      empty.hidden = loading || city.buildings.length > 0;
-      frame.waitingCard.set(city.waiting, loading ? "loading" : "ready");
-      if (engine) engine.show("city", model.sceneModel(city.buildings, selectedId, !loading), city.canvasLabel);
+      // "No project" is said only when a read answered with an empty list, never while loading or after a failed first read.
+      empty.hidden = !model.emptyCityVisible(state, city.buildings.length);
+      frame.waitingCard.set(city.waiting, state);
+      if (engine) engine.show("city", model.sceneModel(city.buildings, selectedId, state === "ready"), city.canvasLabel);
     },
     dispose() {
       disposed = true;
