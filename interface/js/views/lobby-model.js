@@ -156,14 +156,14 @@ export function requestLine(request, open) {
 }
 
 /**
- * The words of a request line and the whole text behind them: {title, full}. `title` is the request's own title, else the plan's title when
- * the service gives one (`plan_title`), else the request's text; line breaks are spaces, so it is one line. `full` is the request's text
- * (the `task` answer's, else the row's), else the title: what the tooltip and the expanded line show.
+ * The words of a request line and the whole text behind them: {title, full}. `title` is the request's own title (the runtime computes it
+ * when the person gives none), else the request's text; line breaks are spaces, so it is one line. `full` is the request's text (the
+ * `task` answer's, else the row's), else the title: what the tooltip and the expanded line show.
  */
 export function requestWords(request, body) {
   const one = (value) => String(value === undefined || value === null ? "" : value).replace(/\s+/g, " ").trim();
   const held = body && body.task && typeof body.task.text === "string" ? body.task.text : typeof request.text === "string" ? request.text : "";
-  const title = one(request.title) || one(request.plan_title) || one(held);
+  const title = one(request.title) || one(held);
   return { title, full: held.trim() || title };
 }
 

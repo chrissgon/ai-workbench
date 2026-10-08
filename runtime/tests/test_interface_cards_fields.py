@@ -111,14 +111,43 @@ def test_the_resolved_line_is_the_librarys_accordion_item_with_a_body():
     assert "wb-resolved-body" in inbox, "the body has its own class, so that it can be padded and never given a ground"
 
 
-def test_the_token_field_is_not_a_password_field_and_is_masked_by_the_stylesheet():
-    """A-11: type=password inside a form is what a browser offers to save; the token changes at every start and must not be saved."""
+def test_the_token_field_is_a_masked_text_field_where_the_browser_can_mask_it_and_never_named_password():
+    """A-11: type=password inside a form is what a browser offers to save; the token changes at every start and must not be saved.
+    Where the browser cannot mask a text field by CSS the field falls back to type=password (a token in clear is the worse failure)."""
     prompt = (JS / "views" / "token-prompt.js").read_text(encoding="utf-8")
-    assert 'type: "password"' not in prompt and "password" not in re.findall(r'name:\s*"([^"]+)"', prompt)
+    assert "password" not in re.findall(r'name:\s*"([^"]+)"', prompt)
     assert prompt.count('autocomplete: "off"') >= 2, "the form and the field both say so"
+    assert 'CSS.supports("-webkit-text-security", "disc")' in prompt, "the mask is feature-tested, not assumed"
     assert "wb-token-field" in prompt
     rule = next(d for s, d in css_rules() if ".wb-token-field" in s and ("-webkit-text-security" in d or "text-security" in d))
     assert rule.get("-webkit-text-security") == "disc", "the mask is drawn by the stylesheet, so the field keeps hiding the token"
+
+
+TOKEN = r"""
+import { FakeNode } from "@FAKE@";
+import { showTokenPrompt } from "@JS@/views/token-prompt.js";
+const out = {};
+const field = (supports) => {
+  if (supports === undefined) delete globalThis.CSS; else globalThis.CSS = { supports: (p, v) => supports && p === "-webkit-text-security" && v === "disc" };
+  const root = new FakeNode("div");
+  showTokenPrompt(root, { onSubmit() {} });
+  const f = [...root.walk()].find((n) => n.attrs.id === "token-field");
+  const form = [...root.walk()].find((n) => n.tagName === "FORM");
+  return { type: f.attrs.type, name: f.attrs.name, field: f.attrs.autocomplete, form: form.attrs.autocomplete };
+};
+out.masked = field(true);
+out.unsupported = field(false);
+out.noCss = field(undefined);
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_token_field_falls_back_to_a_password_field_where_the_browser_cannot_mask_text(tmp_path):
+    got = run_node(tmp_path, TOKEN)
+    assert got["masked"] == {"type": "text", "name": "service-token", "field": "off", "form": "off"}
+    assert got["unsupported"]["type"] == "password" and got["noCss"]["type"] == "password", "a browser without the mask would show the token in clear"
+    assert got["unsupported"]["name"] == "service-token" and got["unsupported"]["field"] == "off"
 
 
 def test_the_request_title_is_one_ellipsised_line():
@@ -153,7 +182,7 @@ let block = make(request, { body });
 const line = byClass(block.el, "wb-lobby-request-line")[0];
 out.order = line.children.map((n) => (n.cls().includes("pui-badge") ? "number" : n.cls().includes("wb-lobby-request-title") ? "title" : n.cls().includes("pui-chip") ? "state" : "action"));
 const title = byClass(block.el, "wb-lobby-request-title")[0];
-out.title = { tag: title.tagName, text: title.textContent, tip: title.attrs.title, expanded: title.attrs["aria-expanded"], type: title.attrs.type };
+out.title = { tag: title.tagName, text: title.textContent, tip: title.attrs.title, name: title.attrs["aria-label"], expanded: title.attrs["aria-expanded"], type: title.attrs.type };
 const full = byClass(block.el, "wb-lobby-request-full")[0];
 out.fullBefore = { hidden: full.hidden, text: full.textContent, after: block.el.children.indexOf(full) === block.el.children.indexOf(line) + 1 };
 click(title);
@@ -161,10 +190,19 @@ out.fullOpen = { hidden: full.hidden, expanded: title.attrs["aria-expanded"], te
 click(title);
 out.fullClosed = { hidden: full.hidden, expanded: title.attrs["aria-expanded"] };
 
+// 1b. a rebuilt block (a poll changed what it shows) keeps the text open when it was open
+const reopened = createBlock({ api: {}, project: "p1", request, body, open: 0, now: NOW, onChanged: async () => {}, onCancel: () => {}, onRoute: () => {}, routing: false, expanded: true });
+const reTitle = byClass(reopened.el, "wb-lobby-request-title")[0];
+out.reopened = { expanded: reTitle.attrs["aria-expanded"], hidden: byClass(reopened.el, "wb-lobby-request-full")[0].hidden };
+const toggles = [];
+const watched = createBlock({ api: {}, project: "p1", request, body, open: 0, now: NOW, onChanged: async () => {}, onCancel: () => {}, onRoute: () => {}, routing: false, onExpand: (open) => toggles.push(open) });
+click(byClass(watched.el, "wb-lobby-request-title")[0]); click(byClass(watched.el, "wb-lobby-request-title")[0]);
+out.toggles = toggles;
+
 // 2. what the title is: the request's title, else the plan title the service gives, else the text; never "Request 16: Request 16"
 const named = (r, b) => { const bl = make(r, { body: b }); return byClass(bl.el, "wb-lobby-request-title")[0]; };
 out.fromTitle = named({ id: 3, title: "Add a sale page", state: "requested", tasks: [] }, null).textContent;
-out.fromPlan = named({ id: 3, title: "", plan_title: "Plan: sale page", state: "planned", tasks: [] }, null).textContent;
+out.planTitleIgnored = named({ id: 3, title: "", plan_title: "Plan: sale page", state: "planned", tasks: [] }, null).textContent;
 out.fromText = named({ id: 3, title: "", state: "requested", tasks: [] }, { task: { id: 3, text: "Add a sale page\nwith a banner" }, pending: [] }).textContent;
 out.fromNothing = named({ id: 3, title: "", state: "requested", tasks: [] }, null).textContent;
 
@@ -189,20 +227,22 @@ def test_the_request_line_is_one_line_with_the_whole_text_on_a_tooltip_and_an_ex
     got = run_node(tmp_path, LINE)
     assert got["order"] == ["number", "title", "state", "action", "action"], "number, title, state chip, then the actions at the right"
     assert got["title"]["tag"] == "BUTTON" and got["title"]["type"] == "button", "the title is the control that toggles the full text"
-    assert got["title"]["text"].startswith("Request #16: Marlowe is the brand")
-    assert "A second paragraph" in got["title"]["tip"], "the tooltip holds the whole text of the request, not the title"
+    assert got["title"]["text"].startswith("Marlowe is the brand") and not got["title"]["text"].startswith("Request"), "the badge says the number: the visible text is the title alone"
+    assert got["title"]["name"].startswith("Request #16: Marlowe is the brand"), "the accessible name keeps the number and the word"
+    assert got["title"]["tip"].startswith("Request #16: Marlowe") and "A second paragraph" in got["title"]["tip"], "the tooltip holds the whole text of the request, not the title"
     assert got["fullBefore"]["hidden"] is True and got["fullBefore"]["after"] is True, "the full text is under the line, hidden until asked for"
     assert got["fullOpen"] == {"hidden": False, "expanded": "true", "text": "Marlowe is the brand of a small studio that makes calm, readable software for shops. It needs a name system, a voice, a logo brief and a launch plan that a weak model can follow without guessing, written as one request.\nA second paragraph that the title never holds."}
     assert got["fullClosed"] == {"hidden": True, "expanded": "false"}
+    assert got["reopened"] == {"expanded": "true", "hidden": False} and got["toggles"] == [True, False], "the thread keeps the open ids and gives them back to a rebuilt block"
 
 
 @needs_node
-def test_the_title_is_the_requests_title_else_the_plan_title_else_the_text(tmp_path):
+def test_the_title_is_the_requests_title_else_the_text_and_the_number_only_when_there_is_neither(tmp_path):
     got = run_node(tmp_path, LINE)
-    assert got["fromTitle"] == "Request #3: Add a sale page"
-    assert got["fromPlan"] == "Request #3: Plan: sale page"
-    assert got["fromText"] == "Request #3: Add a sale page with a banner", "the text's line breaks are spaces in the one-line title"
-    assert got["fromNothing"] == "Request #3", "no title, no plan title and no text: the number alone, never 'Request 3' twice"
+    assert got["fromTitle"] == "Add a sale page"
+    assert got["planTitleIgnored"] == "Request #3", "the runtime puts the computed title in `title`: no second field is read"
+    assert got["fromText"] == "Add a sale page with a banner", "the text's line breaks are spaces in the one-line title"
+    assert got["fromNothing"] == "Request #3", "no title and no text: the number alone, never 'Request 3' twice"
 
 
 @needs_node
@@ -387,6 +427,18 @@ click(s.closeButton(), s.errs);
 out.directClose = { hash: s.hash(), errors: s.errs.slice() };
 s.view.dispose();
 
+// 3b. from a selected decision, and from the Agent tab: back to exactly there
+s = await session(`${base}/inbox/7`);
+await s.go(s.openLink().attrs.href);
+click(s.closeButton(), s.errs);
+out.selectedClose = { hash: s.hash(), errors: s.errs.slice() };
+s.view.dispose();
+s = await session(`${base}/agent`);
+await s.go(docHash);
+click(s.closeButton(), s.errs);
+out.agentClose = { hash: s.hash(), errors: s.errs.slice() };
+s.view.dispose();
+
 // 4. on a phone the document is a dialog: its own close (Escape, or the dialog's cancel) goes where Close goes
 window.matchMedia = () => ({ matches: true, addEventListener() {} });
 s = await session(`${base}/inbox`);
@@ -426,6 +478,8 @@ def test_a_document_opened_by_a_direct_hash_closes_to_the_desk_and_a_phones_dial
     p = "#/p/0123456789ab/floor/engineering"
     assert got["directClose"] == {"hash": f"{p}/desk", "errors": []}
     assert got["phoneOpen"] is True and got["phoneClose"] == f"{p}/inbox", "the dialog's close goes back to the Inbox it was opened from"
+    assert got["selectedClose"] == {"hash": f"{p}/inbox/7", "errors": []}, "a document opened from a selected decision closes back to that decision"
+    assert got["agentClose"] == {"hash": f"{p}/agent", "errors": []}, "a document opened from the Agent tab closes back to the Agent tab"
 
 
 LOBBY = r"""
@@ -516,7 +570,19 @@ click(s.closeButton(), s.errs);
 out.directClose = { hash: s.hash(), errors: s.errs.slice() };
 s.view.dispose();
 
-// 4. a sheet clicked in the room, from the Conversation: the Desk
+// 3b. from a selected decision, and from the Agent tab: back to exactly there
+s = await session(`${base}/inbox/8`);
+await s.go(s.openLink().attrs.href);
+click(s.closeButton(), s.errs);
+out.selectedClose = { hash: s.hash(), errors: s.errs.slice() };
+s.view.dispose();
+s = await session(`${base}/agent`);
+await s.go(docHash);
+click(s.closeButton(), s.errs);
+out.agentClose = { hash: s.hash(), errors: s.errs.slice() };
+s.view.dispose();
+
+// 4. a sheet clicked in the room, from the Conversation: back to the Conversation
 s = await session(base);
 s.view.open(`sheet:${DOC}`);
 await s.go(window.location.hash);
@@ -545,7 +611,8 @@ def test_the_lobbys_close_goes_back_to_the_desk_from_a_row_a_direct_hash_or_a_sh
     p = "#/p/0123456789ab/lobby"
     assert got["deskClose"] == {"hash": f"{p}/desk", "errors": []} and got["deskFocus"] == "docs/notes/a.md"
     assert got["directClose"] == {"hash": f"{p}/desk", "errors": []}
-    assert got["sheetClose"] == f"{p}/desk", "a sheet of the room opens the document in the Desk, and Close returns to the Desk"
+    assert got["sheetClose"] == p, "a sheet of the room opens the document from the Conversation, and Close returns to the tab it was opened from"
+    assert got["selectedClose"] == {"hash": f"{p}/inbox/8", "errors": []} and got["agentClose"] == {"hash": f"{p}/agent", "errors": []}
 
 
 @needs_node
@@ -568,39 +635,53 @@ const P = "0123456789ab";
 const r = (h) => router.parse(`#/p/${P}${h}`);
 const DOC = encodeURIComponent("docs/a.md");
 const out = {};
-const seq = (list) => { const last = []; for (const h of list) { origin.track(r(h)); last.push(origin.current()); } return last; };
+const seq = (list) => { origin.reset(); const last = []; for (const h of list) { origin.track(r(h)); last.push(origin.current()); } return last; };
 
-out.fromInbox = seq([`/floor/engineering/inbox/7`, `/floor/engineering/desk/${DOC}`, `/floor/engineering/desk/${DOC}`, `/floor/engineering/desk`]);
+out.fromInbox = seq([`/floor/engineering/inbox`, `/floor/engineering/desk/${DOC}`, `/floor/engineering/desk/${DOC}`, `/floor/engineering/desk`]);
+out.fromSelected = seq([`/floor/engineering/inbox/7`, `/floor/engineering/desk/${DOC}`]);
+out.fromAgent = seq([`/floor/engineering/agent`, `/floor/engineering/desk/${DOC}`]);
+out.fromTasks = seq([`/floor/engineering/tasks`, `/floor/engineering/desk/${DOC}`]);
+out.fromFloorDefault = seq([`/floor/engineering`, `/floor/engineering/desk/${DOC}`]);
 out.fromDesk = seq([`/floor/engineering/desk`, `/floor/engineering/desk/${DOC}`]);
 out.direct = seq([`/floor/engineering/desk/${DOC}`]);
 out.otherAgent = seq([`/floor/marketing/inbox`, `/floor/engineering/desk/${DOC}`]);
 out.otherScreen = seq([`/lobby/inbox`, `/floor/engineering/desk/${DOC}`]);
-out.lobbyInbox = seq([`/lobby/inbox`, `/lobby/desk/${DOC}`]);
+out.lobbyInbox = seq([`/lobby/inbox/9`, `/lobby/desk/${DOC}`]);
 out.lobbyConversation = seq([`/lobby`, `/lobby/desk/${DOC}`]);
 out.cleared = seq([`/lobby/inbox`, `/lobby/desk/${DOC}`, `/lobby/inbox`, `/lobby/desk/${DOC}`]);
+const at = (screen, from) => origin.closeHash(r(screen === "lobby" ? `/lobby/desk/${DOC}` : `/floor/engineering/desk/${DOC}`), from);
 out.hashes = {
-  floorInbox: origin.closeHash(r(`/floor/engineering/desk/${DOC}`), "inbox"), floorDesk: origin.closeHash(r(`/floor/engineering/desk/${DOC}`), null),
-  lobbyInbox: origin.closeHash(r(`/lobby/desk/${DOC}`), "inbox"), lobbyDesk: origin.closeHash(r(`/lobby/desk/${DOC}`), "desk"), junk: origin.closeHash(r(`/lobby/desk/${DOC}`), "agent"),
+  floorInbox: at("floor", { tab: "inbox", pending: null }), floorSelected: at("floor", { tab: "inbox", pending: 7 }), floorAgent: at("floor", { tab: "agent", pending: null }),
+  floorTasks: at("floor", { tab: "tasks", pending: null }), floorDefault: at("floor", { tab: null, pending: null }), floorNone: at("floor", null),
+  lobbyInbox: at("lobby", { tab: "inbox", pending: 9 }), lobbyDesk: at("lobby", { tab: "desk", pending: null }), lobbyDefault: at("lobby", { tab: null, pending: null }), lobbyNone: at("lobby", null),
 };
+const doc = (screen) => r(screen === "lobby" ? `/lobby/desk/${DOC}` : `/floor/engineering/desk/${DOC}`);
 out.escape = {
-  floorInbox: escapeStep({ route: r(`/floor/engineering/desk/${DOC}`), origin: "inbox" }), floorDefault: escapeStep({ route: r(`/floor/engineering/desk/${DOC}`) }),
-  lobbyInbox: escapeStep({ route: r(`/lobby/desk/${DOC}`), origin: "inbox" }), dialogFirst: escapeStep({ route: r(`/lobby/desk/${DOC}`), origin: "inbox", dialog: true }),
-  pendingStill: escapeStep({ route: r(`/lobby/inbox/4`), origin: "inbox" }),
+  floorInbox: escapeStep({ route: doc("floor"), origin: { tab: "inbox", pending: null } }), floorDefault: escapeStep({ route: doc("floor") }),
+  lobbyInbox: escapeStep({ route: doc("lobby"), origin: { tab: "inbox", pending: 9 } }), dialogFirst: escapeStep({ route: doc("lobby"), origin: { tab: "inbox", pending: null }, dialog: true }),
+  pendingStill: escapeStep({ route: r(`/lobby/inbox/4`), origin: null }), floorAgent: escapeStep({ route: doc("floor"), origin: { tab: "agent", pending: null } }),
 };
 console.log(JSON.stringify(out));
 """
 
 
 @needs_node
-def test_a_documents_origin_is_the_inbox_only_when_the_route_before_it_was_the_same_rooms_inbox(tmp_path):
+def test_a_documents_origin_is_the_tab_and_the_decision_of_the_route_before_it_in_the_same_room(tmp_path):
     got = run_node(tmp_path, ORIGIN)
-    assert got["fromInbox"] == [None, "inbox", "inbox", None], "the origin survives a poll of the same route and goes with the document"
-    assert got["fromDesk"] == [None, None] and got["direct"] == [None]
-    assert got["otherAgent"] == [None, None] and got["otherScreen"] == [None, None], "an Inbox of another room is not this document's origin"
-    assert got["lobbyInbox"] == [None, "inbox"] and got["lobbyConversation"] == [None, None], "only the Inbox is remembered; any other place closes to the Desk"
-    assert got["cleared"] == [None, "inbox", None, "inbox"]
+    inbox = {"tab": "inbox", "pending": None}
+    assert got["fromInbox"] == [None, inbox, inbox, None], "the origin survives a poll of the same route and goes with the document"
+    assert got["fromSelected"] == [None, {"tab": "inbox", "pending": 7}], "a document opened from a selected decision remembers the decision"
+    assert got["fromAgent"][-1] == {"tab": "agent", "pending": None} and got["fromTasks"][-1] == {"tab": "tasks", "pending": None}, "any tab of the room is the origin"
+    assert got["fromFloorDefault"][-1] == {"tab": None, "pending": None}, "the room's default tab is an origin too"
+    assert got["fromDesk"][-1] == {"tab": "desk", "pending": None} and got["direct"] == [None]
+    assert got["otherAgent"] == [None, None] and got["otherScreen"] == [None, None], "a tab of another room is not this document's origin"
+    assert got["lobbyInbox"][-1] == {"tab": "inbox", "pending": 9} and got["lobbyConversation"][-1] == {"tab": None, "pending": None}
+    assert got["cleared"] == [None, {"tab": "inbox", "pending": None}, None, {"tab": "inbox", "pending": None}]
     p = "#/p/0123456789ab"
-    assert got["hashes"] == {"floorInbox": f"{p}/floor/engineering/inbox", "floorDesk": f"{p}/floor/engineering/desk", "lobbyInbox": f"{p}/lobby/inbox", "lobbyDesk": f"{p}/lobby/desk", "junk": f"{p}/lobby/desk"}
+    assert got["hashes"] == {
+        "floorInbox": f"{p}/floor/engineering/inbox", "floorSelected": f"{p}/floor/engineering/inbox/7", "floorAgent": f"{p}/floor/engineering/agent",
+        "floorTasks": f"{p}/floor/engineering/tasks", "floorDefault": f"{p}/floor/engineering", "floorNone": f"{p}/floor/engineering/desk",
+        "lobbyInbox": f"{p}/lobby/inbox/9", "lobbyDesk": f"{p}/lobby/desk", "lobbyDefault": f"{p}/lobby", "lobbyNone": f"{p}/lobby/desk"}
 
 
 @needs_node
@@ -608,8 +689,9 @@ def test_escape_goes_where_close_goes(tmp_path):
     got = run_node(tmp_path, ORIGIN)
     p = "#/p/0123456789ab"
     assert got["escape"]["floorInbox"] == {"step": "document", "hash": f"{p}/floor/engineering/inbox"}
+    assert got["escape"]["floorAgent"] == {"step": "document", "hash": f"{p}/floor/engineering/agent"}
     assert got["escape"]["floorDefault"] == {"step": "document", "hash": f"{p}/floor/engineering/desk"}
-    assert got["escape"]["lobbyInbox"] == {"step": "document", "hash": f"{p}/lobby/inbox"}
+    assert got["escape"]["lobbyInbox"] == {"step": "document", "hash": f"{p}/lobby/inbox/9"}
     assert got["escape"]["dialogFirst"] == {"step": "dialog"}, "a dialog still closes first"
     assert got["escape"]["pendingStill"] == {"step": "document", "hash": f"{p}/lobby/inbox"}, "a selected decision still closes back to the Inbox list"
 

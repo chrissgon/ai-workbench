@@ -13,7 +13,7 @@ import { actions } from "../floor/actions.js";
 import { createDeskTab } from "../floor/desk-tab.js";
 import { createInbox } from "../floor/inbox.js";
 import { createViewer } from "../floor/viewer.js";
-import { busyLine, createTabs } from "../floor/widgets.js";
+import { busyLine, createTabs, focusOpenLink } from "../floor/widgets.js";
 import { icon } from "../frame/icons.js";
 import * as origin from "../frame/origin.js";
 import * as router from "../router.js";
@@ -289,9 +289,10 @@ export function createFloorView(frame, env) {
         const back = viewerPath;
         viewerPath = null;
         if (phoneDialog.open) phoneDialog.close();
-        // the focus goes back to what opened the document: its row on the Desk, or the card's "Open" link in the Inbox
+        // the focus goes back to what opened the document: its row on the Desk, or the "Open" link in the Inbox or in another tab
         if (route.tab === "inbox" && inbox) inbox.focusOpen(back);
-        else if (desk) setTimeout(() => desk.focusRow(back), 0);
+        else if (route.tab === "desk" && desk) setTimeout(() => desk.focusRow(back), 0);
+        else focusOpenLink(tabpanel, back);
       }
       viewerHost.hidden = true;
       return;

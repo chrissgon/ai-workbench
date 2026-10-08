@@ -23,6 +23,7 @@ export function createInbox(env) {
   let last = null;
   let focused = null;
   let shown = "";
+  let ours = null;               // {link, until}: the "Open" link this module focused
   let wantOpen = null;           // {path, until}: the "Open" link of a document that was just closed, to take the focus when its card is drawn
 
   const cardEnv = {
@@ -100,7 +101,8 @@ export function createInbox(env) {
     const signature = key + [...cards.keys()].map((id) => (cards.get(id).isDone() ? id : "")).join(",");
     if (signature !== shown) {
       shown = signature;
-      const held = document.activeElement && el.contains(document.activeElement) ? document.activeElement : null;   // a card moved by this draw keeps the focus it had
+      // the "Open" link this module focused keeps the focus through the draws that move its card (for a few seconds); any other focus is the person's
+      const held = ours && Date.now() < ours.until && document.activeElement === ours.link ? ours.link : null;
       fill(el, empty ? h("p", { class: "wb-empty-line", text: last.loading ? "Loading the floor..." : last.emptyText || "Nothing waits for you on this floor." }) : h("div", { class: "wb-cards" }, keep, nodes), resolved);
       if (held && held.isConnected && document.activeElement !== held && held.focus) held.focus();
     }
@@ -131,6 +133,7 @@ export function createInbox(env) {
     if (link) {
       wantOpen = null;
       link.focus();
+      ours = { link, until: Date.now() + 5000 };
     }
   }
 
@@ -161,6 +164,7 @@ export function createInbox(env) {
     /** Forget what was read (the tab was left): a just-resolved card goes. */
     reset() {
       wantOpen = null;
+      ours = null;
       cards.clear();
       items.clear();
       failed.clear();

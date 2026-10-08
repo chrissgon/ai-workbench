@@ -12,6 +12,7 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
   const el = h("div", { class: "wb-thread", role: "log", "aria-live": "polite", "aria-label": "Conversation with the planning agent", tabindex: "0" });
   const messages = new Map();     // id -> {el, meta, message}
   const blocks = new Map();       // request id -> {el, sig, block}
+  const expanded = new Set();     // request ids whose whole text is open: a block rebuilt by a poll is given it back
   const empty = h("p", { class: "wb-empty", text: "" });
 
   function messageNode(message, now) {
@@ -43,7 +44,8 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
         const sig = `${signatureOf(request, pending)}|${bodySig}|${routing && routing.has(requestId) ? "r" : ""}|${viaMessage ? "m" : "t"}|${request.title}|${routeNotice ? `${routeNotice.title}:${routeNotice.text}` : ""}`;
         const held = blocks.get(requestId);
         if (held && held.sig === sig) return held.el;
-        const block = createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, announce, routing: routing && routing.has(requestId), viaMessage, routeNotice });
+        const block = createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, announce, routing: routing && routing.has(requestId), viaMessage, routeNotice,
+          expanded: expanded.has(requestId), onExpand: (open) => { if (open) expanded.add(requestId); else expanded.delete(requestId); } });
         blocks.set(requestId, { el: block.el, sig, block });
         return block.el;
       }

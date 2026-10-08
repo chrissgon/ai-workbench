@@ -42,21 +42,26 @@ function pointer(project, item, now) {
  * One request's block. options: {api, project, request (a row of status.requests), body (the `task` answer, or null while it is
  * read), open (open decisions on it in status), now, signal, onChanged(), onCancel(request), onRoute(request), announce(text),
  * viaMessage (a message of the planning agent names the request; false for a request made from the form, OPEN-24), routeNotice
- * ({title, text} of a route that failed, or null: it sits under the request's line)}.
+ * ({title, text} of a route that failed, or null: it sits under the request's line), expanded (the request's whole text is open) and
+ * onExpand(open) (told when the person opens or closes it, so a rebuilt block can be given the state back)}.
  * The plan card is drawn here only when a message names the request; otherwise its card is in the Inbox and this is a line that points at it.
  * Returns {el, focusCard(id)}.
  */
-export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce, viaMessage = true, routeNotice = null }) {
+export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce, viaMessage = true, routeNotice = null, expanded = false, onExpand = null }) {
   const line = requestLine(request, open);
   const words = requestWords(request, body);
-  const label = words.title ? `Request #${request.id}: ${words.title}` : `Request #${request.id}`;
+  const number = `Request #${request.id}`;
+  const named = words.title ? `${number}: ${words.title}` : number;
   const fullId = `wb-request-full-${request.id}`;
-  // one line: the title is cut with an ellipsis; its tooltip holds the whole text, and a click opens it under the line
-  const titleButton = h("button", { class: "pui-btn pui-link wb-lobby-request-title", type: "button", title: words.full || label, "aria-expanded": "false", "aria-controls": fullId, text: label });
-  const fullText = h("p", { class: "wb-lobby-request-full", id: fullId, hidden: true, text: words.full || label });
+  // one line: the badge says the number, so the visible text is the title alone (the number alone when there is none); its tooltip holds the
+  // whole text, its accessible name keeps the number, and a click opens the whole text under the line
+  const titleButton = h("button", { class: "pui-btn pui-link wb-lobby-request-title", type: "button", title: `${number}: ${words.full || words.title}`.replace(/: $/, ""),
+    "aria-label": named, "aria-expanded": expanded ? "true" : "false", "aria-controls": fullId, text: words.title || number });
+  const fullText = h("p", { class: "wb-lobby-request-full", id: fullId, hidden: !expanded, text: words.full || words.title || number });
   titleButton.addEventListener("click", () => {
     fullText.hidden = !fullText.hidden;
     titleButton.setAttribute("aria-expanded", fullText.hidden ? "false" : "true");
+    if (onExpand) onExpand(!fullText.hidden);
   });
   const notice = routeNotice
     ? h("div", { class: "wb-lobby-notice-card", role: "alert" }, h("strong", { class: "wb-lobby-notice-title", text: routeNotice.title }), h("span", { text: routeNotice.text })) : null;

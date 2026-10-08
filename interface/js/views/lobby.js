@@ -11,6 +11,7 @@ import * as api from "../api.js";
 import { failureText } from "../cards/plan-rows.js";
 import { h } from "../dom.js";
 import * as fm from "../floor-model.js";
+import { focusOpenLink } from "../floor/widgets.js";
 import * as origin from "../frame/origin.js";
 import { createPanel } from "../frame/panel.js";
 import * as router from "../router.js";
@@ -445,7 +446,8 @@ export function createLobbyView(frame, { project, onChanged }) {
       if (viewerWas && !showing && shownPath !== null) {     // the viewer was closed: the focus goes back to what opened it
         const back = shownPath;
         if (tab === "inbox") inbox.focusOpen(back);
-        else setTimeout(() => desk.focusRow(back), 0);
+        else if (tab === "desk") setTimeout(() => desk.focusRow(back), 0);
+        else focusOpenLink(panel.body, back);
       }
       viewerWas = Boolean(showing);
       shownPath = showing ? route.path : null;
