@@ -264,7 +264,16 @@ From stage 6 the task runtime runs unattended through two recurring jobs of the 
 | `POST /projects/{p}/conversation`, `/sync`, `/dispatch` | `say`, `sync`, `dispatch` |
 | `GET /jobs/{n}` | the service's own |
 
-**Reads with no route yet.** `agents`, `conversation`, `skills`, `costs`, `connections`, `artifacts` and `artifact` are operations of the layer (WP-9.3a) with a terminal verb each; their rows list the terminal only, and a row lists `page` together with its route, never before. `conversation` returns the messages of the project's conversation (named `project`) above an id; `costs` recomputes a run's cost from the token counts in its run folder and the configuration's `model_prices`, and a run without counts is `unknown`, counted, never priced; `connections` and `skills` start no provider and make no network call and return no secret's value; `artifact` reads only a regular UTF-8 file under `docs/` of the project, no link, never `docs/workbench/runtime.json`, at most 1 MiB.
+**The reads of the views** are GET routes that carry no job (their rows list `page` together with the route):
+
+| Route | Operation |
+|---|---|
+| `GET /projects/{p}/agents`, `/skills`, `/connections`, `/artifacts` | `agents`, `skills`, `connections`, `artifacts`; no query |
+| `GET /projects/{p}/conversation?after=&conversation=` | `conversation`; `after` a whole number, `conversation` text, both optional |
+| `GET /projects/{p}/costs?since=` | `costs`; `since` a day, `YYYY-MM-DD`, optional |
+| `GET /projects/{p}/artifact?path=` | `artifact`; `path` is required and at most 512 bytes (`400` otherwise); the operation refuses anything outside `docs/`, a link and the configuration |
+
+A route takes the query keys it names and no other (`400`). `conversation` returns the messages of the project's conversation (named `project`) above an id; `costs` recomputes a run's cost from the token counts in its run folder and the configuration's `model_prices`, and a run without counts is `unknown`, counted, never priced; `connections` and `skills` start no provider and make no network call and return no secret's value; `artifact` reads only a regular UTF-8 file under `docs/` of the project, no link, never `docs/workbench/runtime.json`, at most 1 MiB.
 
 **Not exposed, on purpose.** `accept-config` (a configuration hash is accepted in the terminal only, so a page can never accept the change that widens what an agent may do; after a `set-mode` from the page every route answers `412` until it is), `run-next` (the dispatcher decides what runs), `deps`, `proof`, the standing approvals, `contained-run`, `poll`, `handler`, `pin`. No cookie, no host option, no cross-origin header, no streaming.
 

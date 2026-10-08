@@ -173,6 +173,8 @@ def path_of(world, route):
 
 
 OP_ROUTES = [r for r in service.ROUTES if r["op"] and not r["upload"]]
+VIEW_READS = ("agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact")  # the reads of the views
+READ_OPS = ("status", "pending", "flows", "task", "progress") + VIEW_READS
 
 
 # --- rule 1: the loopback address -----------------------------------------------------------------------------------
@@ -489,7 +491,7 @@ def test_every_route_is_built_from_a_row_the_page_may_call_and_names_only_argume
         for name in (set(route["take"]) if route["take"] is not None else set(args) - set(route["bind"]) - set(route["hidden"])):
             assert args[name]["kind"] in service.EXPOSED_KINDS, (route["op"], name)
         names.append((route["method"], route["pattern"]))
-        assert (route["method"] == "GET") == (route["op"] in ("status", "pending", "flows", "task", "progress")), route["op"]
+        assert (route["method"] == "GET") == (route["op"] in READ_OPS), route["op"]
     assert len(names) == len(set(names))
     assert "channel" not in {a["name"] for row in operations.OPERATIONS for a in row["args"]}  # the channel is never an argument
 
@@ -509,6 +511,7 @@ def test_a_route_is_a_job_exactly_when_its_table_row_says_so(world):
     assert {"route", "release", "approve", "sync", "dispatch", "say"} <= jobs
     assert not {"status", "pending", "answer", "reject", "request", "cancel", "retry", "task", "flows", "progress", "verdict",
                 "set-mode"} & jobs
+    assert not set(VIEW_READS) & jobs and set(VIEW_READS) <= plain
     # The table is the one source: a row that calls a model or a platform has the key, and only a boolean.
     for row in operations.OPERATIONS:
         assert row.get("job", False) in (True, False)
@@ -755,6 +758,69 @@ def test_the_service_reaches_the_store_and_the_facade_only_through_the_operation
     for target in ("runtime/lab.py", "providers/store/sqlite.py", "runtime/plan.py", "providers/resolve.py", "evals/execution.py",
                    "runtime/operations.py"):
         assert not layer.allowed("runtime/service.py", target), target
+
+
+def test_the_read_routes_call_their_operations_with_the_query_they_take_and_refuse_any_other_key(world):
+    reads = {r["op"]: r for r in service.ROUTES if r["op"] in VIEW_READS}
+    assert set(reads) == set(VIEW_READS)
+    for name, route in reads.items():
+        assert route["method"] == "GET" and not operations.by_name(name).get("job"), name
+        assert "page" in operations.by_name(name)["channels"], name
+    project = world.projects[0]["path"]
+
+    def last():
+        return world.fake.calls[-1]
+
+    # the routes that take no query: called with none, refused with any
+    for name, tail in (("agents", "/agents"), ("skills", "/skills"), ("connections", "/connections"), ("artifacts", "/artifacts")):
+        world.fake.calls.clear()
+        status, _, body = call(world, "GET", api(world, tail))
+        assert status == 200 and body == {"op": name, "args": {}}, name
+        assert world.fake.calls == [(name, project, {})]
+        world.fake.calls.clear()
+        for query in ("?after=1", "?since=7d", "?path=docs/a.md", "?x=1"):
+            assert call(world, "GET", api(world, tail + query))[0] == 400, (tail, query)
+        assert world.fake.calls == []
+    # conversation: both keys optional
+    world.fake.calls.clear()
+    assert call(world, "GET", api(world, "/conversation"))[0] == 200 and last() == ("conversation", project, {})
+    assert call(world, "GET", api(world, "/conversation?after=0"))[0] == 200
+    assert last() == ("conversation", project, {"after": 0})
+    assert call(world, "GET", api(world, "/conversation?after=42&conversation=project"))[0] == 200
+    assert last() == ("conversation", project, {"after": 42, "conversation": "project"})
+    assert call(world, "GET", api(world, "/conversation?conversation=other"))[0] == 200
+    assert last() == ("conversation", project, {"conversation": "other"})
+    # costs: since is text, the operation checks it
+    assert call(world, "GET", api(world, "/costs"))[0] == 200 and last() == ("costs", project, {})
+    assert call(world, "GET", api(world, "/costs?since=2026-10-01"))[0] == 200
+    assert last() == ("costs", project, {"since": "2026-10-01"})
+    # artifact: the path in the query, required, passed through as it came (decoded)
+    assert call(world, "GET", api(world, "/artifact?path=docs/business/model.md"))[0] == 200
+    assert last() == ("artifact", project, {"path": "docs/business/model.md"})
+    assert call(world, "GET", api(world, "/artifact?path=docs%2Fa%20b.md"))[0] == 200
+    assert last() == ("artifact", project, {"path": "docs/a b.md"})
+    assert call(world, "GET", api(world, "/artifact?path=../etc/passwd"))[0] == 200  # the operation refuses it, not the service
+    assert last() == ("artifact", project, {"path": "../etc/passwd"})
+    assert call(world, "GET", api(world, "/artifact?path=" + "d" * 512))[0] == 200  # exactly 512 bytes
+    world.fake.calls.clear()
+    for tail in ("/artifact", "/artifact?path=docs/a.md&since=7d", "/artifact?other=1", "/artifact?path=a&path=b",
+                 "/artifact?path=" + "d" * 513, "/artifact?path=" + "%C3%A9" * 257, "/conversation?after=x",
+                 "/conversation?after=-1", "/conversation?after=1.5", "/conversation?after=1&after=2",
+                 "/conversation?since=7d", "/conversation?after=" + "9" * 13, "/costs?after=1", "/costs?since=a&since=b"):
+        status, _, body = call(world, "GET", api(world, tail))
+        assert (status, body["error"]) == (400, "usage"), tail
+    assert world.fake.calls == []
+    # an operation's refusal keeps its documented status; a read takes no body and no POST
+    world.fake.answers["artifact"] = ops.OpsError("docs/x.md is a link", 2)
+    assert call(world, "GET", api(world, "/artifact?path=docs/x.md"))[0] == 400
+    world.fake.answers["artifact"] = ops.OpsError("no file docs/x.md", 1)
+    assert call(world, "GET", api(world, "/artifact?path=docs/x.md"))[0] == 409
+    for tail in ("/agents", "/skills", "/costs", "/connections", "/artifacts", "/artifact"):
+        assert call(world, "POST", api(world, tail), {})[0] == 405, tail
+    assert call(world, "GET", api(world, "/artifacts/docs/a.md"))[0] == 404
+    # the token is needed, and an unknown project is not found
+    assert call(world, "GET", api(world, "/agents"), auth=False)[0] == 401
+    assert call(world, "GET", "/api/v1/projects/000000000000/agents")[0] == 404
 
 
 def test_accepting_a_configuration_is_not_a_route(world):

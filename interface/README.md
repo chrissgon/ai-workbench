@@ -11,7 +11,7 @@ returned and sends what the person typed or clicked.
 |---|---|
 | `index.html`, `style.css`, `favicon.svg` | The one page, its rules and its icon. No inline script, no inline style: every rule is in `style.css`, every script is a module. |
 | `js/main.js` | Draws the page by the hash: the token prompt, the project list (`#/`), a project's panel (`#/p/<id>`). |
-| `js/api.js` | The client of the service: one function per route of `ROUTES` in `runtime/service.py`, named after the operation. |
+| `js/api.js` | The client of the service: one function per route of `ROUTES` in `runtime/service.py`, named after the operation (the reads of the views too: `agents`, `conversation`, `skills`, `costs`, `connections`, `artifacts`, `artifact`; no page calls them yet). |
 | `js/token.js` | The token for this session. |
 | `js/dom.js` | Building elements: strings become text, a style or an event attribute is refused. |
 | `js/views/` | One module per view (`token-prompt.js`, `projects.js`, `project.js`); the next packages add theirs here. |

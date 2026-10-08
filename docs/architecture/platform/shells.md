@@ -70,7 +70,7 @@ Where: **repo** is this repository, **project** the target project, **data** the
 | `<data_dir>/service.token` | data | the token, 64 hexadecimal characters, mode 0600 | `runtime/service.py` | the person (pasted once per browser session) | new at every start, removed when the service stops | no | yes |
 | `<data_dir>/uploads/<random>/<name>` | data | a file a page handed to a task, in a folder of mode 0700 | `runtime/service.py` | `ops.hand_over` | removed right after the hand-over | no | yes |
 
-Built in stage 9 with the service: the operations `config`, `task`, `flows` and `stop-runs`, each with its terminal verb, and `actions` on every pending decision. Built for the views (WP-9.3a): the reads `agents`, `conversation`, `skills`, `costs`, `connections`, `artifacts` and `artifact`, each with its terminal verb; their rows list the terminal only, and each gets the `page` channel together with its route in the service. `say` refuses a line that would route while another run of the project holds the run lock, before it stores the line or a request.
+Built in stage 9 with the service: the operations `config`, `task`, `flows` and `stop-runs`, each with its terminal verb, and `actions` on every pending decision. Built for the views (WP-9.3a): the reads `agents`, `conversation`, `skills`, `costs`, `connections`, `artifacts` and `artifact`, each with its terminal verb and, since the service's read routes (WP-9.1b), each with its route and the `page` channel. `say` refuses a line that would route while another run of the project holds the run lock, before it stores the line or a request.
 
 ## Abstractions
 
@@ -249,7 +249,7 @@ Each command calls its operation of the same name once (`/progress` shows its `t
 | `chat.py` imports are guarded by `test_chat.py`, those of `cli.py` by `test_runtime_rules.py` and the layer map | `runtime/tests/test_chat.py`, `scripts/tests/test_layer_map.py` |
 | The conversation's memory becomes the request's text, so it reaches every task of the request, not only the router's run | `ops.say`, `ops.task_prompt` |
 | One conversation per project (`CONVERSATION = "project"`); the plan's stage 9 names it `"main"` | `runtime/ops.py` |
-| The seven read operations of the views list the terminal only: the service has no route for them yet, and a row lists `page` only with its route | `runtime/operations.py`, `runtime/tests/test_service.py` (`test_accepting_a_configuration_is_not_a_route`) |
+| The seven read operations of the views have a GET route each and list `page`; no page of `interface/` calls them yet | `runtime/service.py`, `runtime/tests/test_service.py` (`test_the_read_routes_call_their_operations_with_the_query_they_take_and_refuse_any_other_key`) |
 | The scheduler's pin covers `runtime.json` and the entry, not the checkout's revision (open point O11) | [contracts/runtime.md](../../../contracts/runtime.md), "The dispatcher's two jobs" |
 | Two runtimes with two command sets and two pins side by side until stage 7 | [contracts/runtime.md](../../../contracts/runtime.md), "The first runtime (until stage 7)" |
 | `ops.py`'s module docstring still says the conversation and the local interface come "later", and [runtime/README.md](../../../runtime/README.md) lists only the stage 1 operations in its `ops.py` row | `runtime/ops.py`; `runtime/README.md` |

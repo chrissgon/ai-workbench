@@ -58,6 +58,10 @@ The rules of a request, in this order, each a refusal unless the request satisfi
      token.
  12. Text a model or a stranger wrote leaves as a JSON string; the page shows it as text, never as markup.
 
+The reads of the interface are GET routes that carry no job: /projects/<id>/agents, /conversation?after=&conversation=,
+/skills, /costs?since=, /connections, /artifacts and /artifact?path= (the path is at most 512 bytes; the operation
+refuses anything outside docs/, a link and the configuration). Each takes the query keys it names and no other.
+
 Not exposed, on purpose: accept-config (a configuration hash is accepted in the terminal only, so a page can never accept
 the change that widens what an agent may do), run-next (the dispatcher decides what runs), deps, proof, the standing
 approvals, contained-run, poll, handler and pin. An effect is approved from here with the hash the page showed, as the
@@ -103,6 +107,7 @@ UPLOAD_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")  # a plain file nam
 UPLOADS = "uploads"                       # <data_dir>/uploads/<random>/<name>, removed after the hand-over
 TOKEN_NAME = "service.token"
 PATH_LIMIT = 2048
+QUERY_VALUE_LIMIT = 512                   # bytes of one query value on a route that names a project file (artifact?path=)
 STATIC_LIMIT = 16 * 1024 * 1024
 JOBS_KEPT = 200                           # finished jobs kept in memory
 STOP_WAIT = 120.0                         # seconds the shutdown waits for the threads of the jobs
@@ -156,9 +161,10 @@ class Usage(Exception):
 # is not written here: it is the row's `job` key. A route with "own" is the service's own.
 
 
-def _route(method, pattern, op=None, *, bind=None, take=None, hidden=(), own=None, upload=False):
+def _route(method, pattern, op=None, *, bind=None, take=None, hidden=(), own=None, upload=False, query_max=None):
     return {"method": method, "pattern": pattern, "op": op, "bind": dict(bind or {}), "take": take,
-            "hidden": tuple(hidden), "own": own, "upload": upload, "limit": FILE_LIMIT if upload else JSON_LIMIT}
+            "hidden": tuple(hidden), "own": own, "upload": upload, "limit": FILE_LIMIT if upload else JSON_LIMIT,
+            "query_max": query_max}
 
 
 ROUTES = (
@@ -180,6 +186,13 @@ ROUTES = (
     _route("POST", "/projects/{p}/runs/{id}/verdict", "verdict", bind={"run_id": "id"}),
     _route("POST", "/projects/{p}/agents/{name}/mode", "set-mode", bind={"agent": "name"}),
     _route("GET", "/projects/{p}/progress", "progress"),
+    _route("GET", "/projects/{p}/agents", "agents", take=()),
+    _route("GET", "/projects/{p}/conversation", "conversation", take=("conversation", "after")),
+    _route("GET", "/projects/{p}/skills", "skills", take=()),
+    _route("GET", "/projects/{p}/costs", "costs", take=("since",)),
+    _route("GET", "/projects/{p}/connections", "connections", take=()),
+    _route("GET", "/projects/{p}/artifacts", "artifacts", take=()),
+    _route("GET", "/projects/{p}/artifact", "artifact", take=("path",), query_max=QUERY_VALUE_LIMIT),
     _route("POST", "/projects/{p}/conversation", "say"),
     _route("POST", "/projects/{p}/sync", "sync"),
     _route("POST", "/projects/{p}/dispatch", "dispatch", take=()),
@@ -592,6 +605,10 @@ def _operation(service: Service, route: dict, params: dict, query: str, body: by
     if not from_query and query:
         raise Usage("this route takes no query")
     given = _query(route, query) if from_query else _body(body)
+    if route["query_max"] is not None:
+        for key, value in given.items():
+            if len(str(value).encode("utf-8")) > route["query_max"]:
+                raise Usage(f"the query value {key!r} is longer than {route['query_max']} bytes")
     if route["upload"]:
         return _upload(service, project, row, route, params, given)
     args = arguments(row, route, params, given, from_query)

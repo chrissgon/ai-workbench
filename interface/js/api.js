@@ -1,6 +1,6 @@
 // The client of the local service (runtime/service.py): one function per route of its ROUTES table, named after the
 // operation. Each sends the token as "Authorization: Bearer", a POST sends "Content-Type: application/json", and
-// only the route that takes a query (progress) is sent one. An error body {error, message} becomes an ApiError with
+// only a route that takes a query (progress, conversation, costs, artifact) is sent one. An error body {error, message} becomes an ApiError with
 // the status and the word. A route whose operation calls a model or a platform answers 202 with a job: the function
 // returns that job and pollJob(job.job, every) asks for it again until it is done or failed. The token is read from
 // token.js for each request and appears nowhere else here.
@@ -189,6 +189,41 @@ export function setMode(p, name, mode, options = {}) {
 /** GET /projects/{p}/progress?since=: the only route that takes a query. */
 export function progress(p, { since, signal } = {}) {
   return send("GET", `/projects/${enc(p)}/progress`, { query: { since }, signal });
+}
+
+/** GET /projects/{p}/agents: {agents: [{name, pack, enabled, mode, acting_mode, max_runs_per_day, max_usd_per_day, runs_today, usd_today, queued, ...}]}. */
+export function agents(p, options) {
+  return send("GET", `/projects/${enc(p)}/agents`, options);
+}
+
+/** GET /projects/{p}/conversation?after=&conversation=: {conversation, messages: [{id, role, text, ...}]}, oldest first. */
+export function conversation(p, { after, conversation: name, signal } = {}) {
+  return send("GET", `/projects/${enc(p)}/conversation`, { query: { after, conversation: name }, signal });
+}
+
+/** GET /projects/{p}/skills: the skills in scope with their proof on each model, and the two checks of the proof. */
+export function skills(p, options) {
+  return send("GET", `/projects/${enc(p)}/skills`, options);
+}
+
+/** GET /projects/{p}/costs?since=: {since, rows, caps}; since is a day, YYYY-MM-DD. */
+export function costs(p, { since, signal } = {}) {
+  return send("GET", `/projects/${enc(p)}/costs`, { query: { since }, signal });
+}
+
+/** GET /projects/{p}/connections: the providers, the secrets found (never a value), the image. */
+export function connections(p, options) {
+  return send("GET", `/projects/${enc(p)}/connections`, options);
+}
+
+/** GET /projects/{p}/artifacts: {artifacts: [{path, owner, size, modified_at, bound}], truncated}. */
+export function artifacts(p, options) {
+  return send("GET", `/projects/${enc(p)}/artifacts`, options);
+}
+
+/** GET /projects/{p}/artifact?path=: {path, text, size, modified_at} of one file under docs/ (at most 512 bytes of path). */
+export function artifact(p, path, { signal } = {}) {
+  return send("GET", `/projects/${enc(p)}/artifact`, { query: { path }, signal });
 }
 
 /** POST /projects/{p}/conversation (job): one turn with the planning agent, {text}. */
