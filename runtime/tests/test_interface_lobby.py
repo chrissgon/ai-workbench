@@ -706,7 +706,7 @@ const base = { working: false, decisions: 1, hasMessages: true, accepted: true, 
 const none = m.roomModel(base);
 const docs = Array.from({ length: 9 }, (_, i) => ({ path: `docs/n${i}.md` }));
 const withDocs = m.roomModel({ ...base, documents: docs });
-out.room = { none: [none.drawers, none.sheets.length, none.tips.cabinet], with: [withDocs.drawers, withDocs.sheets.length, withDocs.sheets[0], withDocs.tips.cabinet],
+out.room = { none: [none.drawers, none.sheets, none.tips.cabinet], with: [withDocs.drawers, withDocs.sheets.length, withDocs.sheets[0], withDocs.tips.cabinet],
   one: m.roomModel({ ...base, documents: [docs[0]] }).tips.cabinet, zero: [m.roomModel({ ...base, documents: [] }).drawers, m.roomModel({ ...base, documents: [] }).tips.cabinet] };
 
 // the Floor's model finds the planning agent only when the Lobby asks
@@ -753,7 +753,7 @@ def test_the_inbox_and_the_conversation_split_the_decisions_so_that_no_plan_card
 @needs_node
 def test_the_room_draws_the_desks_documents_and_the_floors_model_finds_the_planning_agent_only_for_the_lobby(tmp_path):
     got = run_node(tmp_path, TABS_MODEL)
-    assert got["room"]["none"] == [0, 0, "Documents · open the Desk tab"], "unread, the cabinet is empty as before"
+    assert got["room"]["none"] == [None, None, "Documents · open the Desk tab"], "unread: unknown (the world keeps what the table shows, an empty cabinet at first), never an empty list that would clear it"
     assert got["room"]["with"] == [3, 6, {"path": "docs/n0.md", "tip": "docs/n0.md"}, "9 documents · open the Desk tab"]
     assert got["room"]["one"] == "1 document · open the Desk tab" and got["room"]["zero"] == [1, "0 documents · open the Desk tab"]
     assert got["floorDefault"] is False, "the Floor's own call still finds no floor of the planning agent"

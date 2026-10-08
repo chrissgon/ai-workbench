@@ -96,7 +96,7 @@ export function createFrame(root, handlers) {
     const requestMenu = document.querySelector(".wb-req-menu:not([hidden])");
     const step = escapeStep({
       route: currentRoute, field: isField(document.activeElement), dialog: dialogs.length > 0,
-      menu: switcher.isOpen() || waitingMenu.isOpen() || Boolean(requestMenu), selection: Boolean(world && world.hasHover()), from: controlFrom,
+      menu: switcher.isOpen() || waitingMenu.isOpen() || Boolean(requestMenu), selection: Boolean(world && world.hasSelection()), from: controlFrom,
     });
     if (step.step === "none") return;
     event.preventDefault();
@@ -110,7 +110,7 @@ export function createFrame(root, handlers) {
       const chip = document.querySelector('.wb-req-chip[aria-expanded="true"]');
       if (chip) chip.click();
     } else if (step.step === "selection") {
-      world.clearHover();
+      world.clearSelection();
     } else {
       window.location.hash = step.hash;
     }

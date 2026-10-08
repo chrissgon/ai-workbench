@@ -258,7 +258,7 @@ def test_the_hover_outline_is_the_prototypes_thin_depth_tested_line_that_follows
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert "new THREE.LineBasicMaterial({ color: 0xffffff });" in engine, "a one-pixel line of the theme colour, full opacity, depth-tested (no depthTest: false, no renderOrder)"
     assert "depthTest: false" not in engine and "renderOrder" not in engine
-    assert "OUTLINE_PAD = 0.04" in engine and "outlineGeometry(THREE, hit.object" in engine, "every outline is the edges of the object's own meshes (outline.js), OUTLINE_PAD off"
+    assert "OUTLINE_PAD = 0.04" in engine and "outlineGeometry(THREE, hit.outline || hit.object" in engine, "every outline is the edges of the object's own meshes (outline.js), OUTLINE_PAD off"
     outline = (SCENE / "outline.js").read_text(encoding="utf-8")
     assert "EdgesGeometry(mesh.geometry" in outline and "userData.shell" in outline, "the edges of the meshes, the shell's when the object marks one"
     assert "Box3().setFromObject(hit.object).expandByScalar" not in engine, "no padded bounding box"

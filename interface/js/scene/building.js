@@ -32,22 +32,27 @@ export function seating(state) {
 /**
  * Draw the room of floor `f` into `parent` (a group at the floor's origin). f: {name, state, window, decisions, lobby, drawers, sheets: [{path, tip}]}.
  * ctx: {lot, selected, motions, markers, outlines}: `selected` is the floor the work order is on (its slab is lighter). Returns the parts a screen
- * points at: {agent, desk, tray, sheets: [{path, group}], door}.
+ * points at: {agent, desk, tray, sheets: [{path, group}], door, frame (the slab and the two walls: the floor's outline)} and the setters that change the room in place (WP-9.11: a poll or the arrival of the
+ * documents never builds a room again): setWindow(state), setDecisions(n, waiting), setSheets(list), setDrawers(n), setSelected(bool).
  */
 export function fillFloor(kit, parent, f, ctx) {
   const { THREE, palette } = kit;
   const T = palette.T;
   const wall = palette.dark ? palette.mix(T.emphasis, T.text, 0.1) : palette.shell;
-  kit.box(W, SLAB, D, 0, 0, 0, ctx.selected ? palette.bg : palette.mix(palette.bg, T.emphasis, 0.45), { parent, edges: true, shell: true });
+  // The floor's own enclosing parts (its slab and its back and left walls) are one group: what the outline of the floor is drawn from.
+  const frame = new THREE.Group();
+  parent.add(frame);
+  const slabColour = (selected) => (selected ? palette.bg : palette.mix(palette.bg, T.emphasis, 0.45));
+  const slab = kit.box(W, SLAB, D, 0, 0, 0, slabColour(ctx.selected), { parent: frame, edges: true, shell: true });
   // The theme line along the slab's front and right edges belongs to the floor's outline: drawn only for the floor the route selects (the Floor,
   // the Lobby), never as a standing line (WP-9.8).
   const edge = kit.line([[-W / 2, SLAB + 0.01, D / 2], [W / 2, SLAB + 0.01, D / 2], [W / 2, SLAB + 0.01, -D / 2]], kit.themeLine, parent);
   edge.visible = false;
   ctx.outlines.push({ id: `floor:${f.name}`, lines: [edge] });
-  kit.box(W, H, 0.14, 0, SLAB, -D / 2 + 0.07, wall, { parent, edges: true, shell: true });
-  kit.box(0.14, H, D, -W / 2 + 0.07, SLAB, 0, wall, { parent, edges: true, shell: true });
+  kit.box(W, H, 0.14, 0, SLAB, -D / 2 + 0.07, wall, { parent: frame, edges: true, shell: true });
+  kit.box(0.14, H, D, -W / 2 + 0.07, SLAB, 0, wall, { parent: frame, edges: true, shell: true });
   const glass = windowColour(palette, f.window);
-  for (const x of [0.5, 2.1]) kit.box(1.3, 1.0, 0.02, x, SLAB + 0.75, -D / 2 + 0.15, glass, { parent, cast: false, unlit: windowUnlit(f.window) });
+  const windows = [0.5, 2.1].map((x) => kit.box(1.3, 1.0, 0.02, x, SLAB + 0.75, -D / 2 + 0.15, glass, { parent, cast: false, unlit: windowUnlit(f.window) }));
   wallLamp(kit, parent, 1.3, SLAB + 2.55, -D / 2 + 0.16, true);
 
   const r = new THREE.Group();
@@ -65,15 +70,15 @@ export function fillFloor(kit, parent, f, ctx) {
   }
   if (state === "working") ctx.motions.push(workingMotion(who, d, palette));
   kit.box(1.4, 0.95, 0.04, -1.0, 0.775, -D / 2 + 0.16, palette.bg, { parent: r, edges: true });   // the wall board
-  cabinet(kit, r, -2.75, -1.75, f.drawers, Math.PI / 2);
+  const cab = cabinet(kit, r, -2.75, -1.75, f.drawers, Math.PI / 2);
   bookshelf(kit, r, -W / 2 + 0.3, -0.55);
   table(kit, r, -1.2, 1.05, 1.8, 0.9);
   const sheets = [];
-  (f.sheets || []).slice(0, 6).forEach((s, i) => {
+  const put = (s, i) => {
     const col = i % 3;
-    const g = sheet(kit, r, -1.75 + col * 0.5, 0, 0.85 + Math.floor(i / 3) * 0.46, 0.1 * (col - 1));
-    sheets.push({ path: s.path, group: g });
-  });
+    return { path: s.path, group: sheet(kit, r, -1.75 + col * 0.5, 0, 0.85 + Math.floor(i / 3) * 0.46, 0.1 * (col - 1)) };
+  };
+  (f.sheets || []).slice(0, 6).forEach((s, i) => sheets.push(put(s, i)));
   plant(kit, r, 2.75, 1.95, 1.15);
   plant(kit, r, 0.5, 2.0, 0.9);
   let doorGroup = null;
@@ -81,5 +86,30 @@ export function fillFloor(kit, parent, f, ctx) {
     counter(kit, r, -1.2, 1.55);
     doorGroup = door(kit, r, -W / 2 + 0.13, 1.2);
   }
-  return { agent: who ? who.group : null, desk: d.group, tray: t, sheets, door: doorGroup };
+  return {
+    agent: who ? who.group : null, desk: d.group, tray: t, sheets, door: doorGroup, frame,
+    setWindow(state) {
+      const colour = windowColour(palette, state);
+      for (const w of windows) w.material = windowUnlit(state) ? kit.unlit(colour) : kit.lit(colour);
+    },
+    setDecisions(count, waiting) {
+      t.userData.setSheets(count, waiting);
+    },
+    /** The sheets on the table become `list`: a sheet that is still there stays (the same group), one that is gone leaves, a new one comes. */
+    setSheets(list) {
+      const want = list.slice(0, 6);
+      want.forEach((s, i) => {
+        if (sheets[i] && sheets[i].path === s.path) return;
+        if (sheets[i]) r.remove(sheets[i].group);
+        sheets[i] = put(s, i);
+      });
+      for (const gone of sheets.splice(want.length)) r.remove(gone.group);
+    },
+    setDrawers(n) {
+      cab.userData.setDrawers(n);
+    },
+    setSelected(selected) {
+      slab.material = kit.lit(slabColour(selected));
+    },
+  };
 }

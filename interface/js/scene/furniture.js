@@ -79,14 +79,26 @@ export function tray(kit, parent, x, y, z, count, waiting) {
   parent.add(group);
   kit.box(0.5, 0.05, 0.38, 0, 0.69, 0, palette.metal, { parent: group, edges: true, shell: true });
   for (const [dx, dz, w, d] of [[-0.24, 0, 0.02, 0.38], [0.24, 0, 0.02, 0.38], [0, -0.18, 0.5, 0.02], [0, 0.18, 0.5, 0.02]]) kit.box(w, 0.07, d, dx, 0.69, dz, palette.metal, { parent: group });
+  // The sheets are a group of their own, so that a poll that changes the number of decisions changes the stack alone, in place.
+  const stack = new kit.THREE.Group();
+  group.add(stack);
+  group.userData.stack = stack;
+  group.userData.setSheets = (n, isWaiting) => fillTray(kit, stack, n, isWaiting);
+  fillTray(kit, stack, count, waiting);
+  return group;
+}
+
+/** The sheets of a tray's stack: one for each open decision up to five, then one thicker block; the top one warm when something waits. */
+function fillTray(kit, stack, count, waiting) {
+  const { palette } = kit;
+  stack.clear();
   const n = Math.max(0, count);
   const sheets = Math.min(5, n);
   for (let i = 0; i < sheets; i++) {
     const top = i === sheets - 1 && waiting;
-    kit.box(0.42, 0.024, 0.3, 0, 0.74 + i * 0.026, 0, top ? palette.T.warn : palette.bg, { parent: group, edges: true, cast: false });
+    kit.box(0.42, 0.024, 0.3, 0, 0.74 + i * 0.026, 0, top ? palette.T.warn : palette.bg, { parent: stack, edges: true, cast: false });
   }
-  if (n > 5) kit.box(0.42, 0.05 + 0.01 * Math.min(10, n - 5), 0.3, 0, 0.74, 0, palette.bg, { parent: group, edges: true, cast: false });
-  return group;
+  if (n > 5) kit.box(0.42, 0.05 + 0.01 * Math.min(10, n - 5), 0.3, 0, 0.74, 0, palette.bg, { parent: stack, edges: true, cast: false });
 }
 
 /** A sheet of paper lying at (x, z) at table height: a theme bar and four grey lines. Returns its group. */
@@ -121,12 +133,22 @@ export function cabinet(kit, parent, x, z, drawers, rotY = 0) {
   group.rotation.y = rotY;
   parent.add(group);
   kit.box(0.62, 1.3, 0.62, 0, 0, 0, palette.bg, { parent: group, edges: true, shell: true });
+  const fronts = new kit.THREE.Group();
+  group.add(fronts);
+  group.userData.setDrawers = (count) => fillDrawers(kit, fronts, count);
+  fillDrawers(kit, fronts, drawers);
+  return group;
+}
+
+/** The drawer fronts of a cabinet: one to three. */
+function fillDrawers(kit, fronts, drawers) {
+  const { palette } = kit;
+  fronts.clear();
   const n = Math.max(1, Math.min(3, drawers));
   for (let i = 0; i < n; i++) {
-    kit.box(0.54, 0.34, 0.02, 0, 0.1 + 0.4 * i, 0.32, palette.drawer, { parent: group });
-    kit.box(0.16, 0.03, 0.03, 0, 0.26 + 0.4 * i, 0.345, palette.metal, { parent: group });
+    kit.box(0.54, 0.34, 0.02, 0, 0.1 + 0.4 * i, 0.32, palette.drawer, { parent: fronts });
+    kit.box(0.16, 0.03, 0.03, 0, 0.26 + 0.4 * i, 0.345, palette.metal, { parent: fronts });
   }
-  return group;
 }
 
 /** A wall lamp, lit (unlit material), along x or along z. */

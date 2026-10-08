@@ -15,7 +15,7 @@ import { createTower, floorBox, towerBox, towerStructure } from "./tower.js";
 import { EXPLODE_RATE, approach } from "./prototype-motion.js";
 import { boardNode, doorNode, plateNode, tagNode } from "./plates.js";
 
-const SETTLED = 0.005;       // a tower's open progress that is this near 0 or 1 is there
+const SETTLED = 0.004;       // a tower's open progress that is this near 0 or 1 is there (the prototype's `explode` snap)
 const VIS_RATE = 8;          // the prototype's `f.vis += (target - vis) * (1 - exp(-dt * 8))`
 const VIS_SETTLED = 0.01;
 
@@ -47,6 +47,7 @@ export function buildWorld(kit, model) {
       tower.vis = lot.floors.map((f) => (old.vis[old.lot.floors.findIndex((o) => o.name === f.name)] !== undefined ? old.vis[old.lot.floors.findIndex((o) => o.name === f.name)] : 1));
       tower.visTarget = lot.floors.map((f) => (old.visTarget[old.lot.floors.findIndex((o) => o.name === f.name)] !== undefined ? old.visTarget[old.lot.floors.findIndex((o) => o.name === f.name)] : 1));
       group.remove(old.group);
+      old.dispose();
       if (old.interior) tower.ensureInterior();
     }
     towers.set(lot.id, tower);
@@ -95,10 +96,10 @@ export function buildWorld(kit, model) {
             if (parts.agent) hits.push({ object: parts.agent, id: "agent", tip: tips.agent || "", moves: f.state === "working" });
             hits.push({ object: parts.desk, id: "desk", tip: tips.desk || "", moves: f.state === "working" });
             hits.push({ object: parts.tray, id: "tray", tip: tips.tray || "" });
-            for (const s of parts.sheets) hits.push({ object: s.group, id: `sheet:${s.path}`, tip: (f.sheets.find((x) => x.path === s.path) || {}).tip || s.path });
+            for (const s of parts.sheets) hits.push({ object: s.group, id: `sheet:${s.path}`, tip: ((f.sheets || []).find((x) => x.path === s.path) || {}).tip || s.path });
             if (parts.door) hits.push({ object: parts.door, id: "lobby-door", tip: room.doorTip || "Control room · skills, costs, connections" });
           } else {
-            hits.push({ object: tower.floorGroups[k], id: `floor:${f.name}`, tip: f.tip });
+            hits.push({ object: tower.floorGroups[k], outline: parts.frame, id: `floor:${f.name}`, tip: f.tip });   // the pointer meets the whole floor; the line is its slab and walls
             if (parts.door) hits.push({ object: parts.door, id: "door", tip: "Control room · skills, costs, connections" });
           }
         });
@@ -137,7 +138,9 @@ export function buildWorld(kit, model) {
           tips.set("desk", tips2.desk || "");
           tips.set("tray", tips2.tray || "");
           tips.set("lobby-door", room.doorTip || "Control room · skills, costs, connections");
-          for (const s of lot.floors[index].sheets || []) tips.set(`sheet:${s.path}`, s.tip || s.path);
+          // the sheets the table shows (the lot's documents may be unread: then it keeps what it shows) and their words
+          const told = new Map((lot.floors[index].sheets || []).map((x) => [x.path, x.tip]));
+          for (const s of (tower.parts[index] && tower.parts[index].sheets) || []) tips.set(`sheet:${s.path}`, told.get(s.path) || s.path);
           if (room.board) labels.push({ id: "board-label", kind: "board", rank: 0, title: room.board.title, lines: room.board.lines, dot: room.board.dot, decisions: 0, running: false, anchor: tower.boardAnchors[index], make: boardNode });
           if (room.door) labels.push({ id: "door-label", kind: "door", rank: 5, text: "Control room", decisions: 0, running: false, anchor: tower.doorAnchors[index], make: doorNode });
         } else {
@@ -211,14 +214,16 @@ export function buildWorld(kit, model) {
   };
 
   /**
-   * Change the world to a model of the same lots, in place. Returns {rebuild, structure, focus, floors}: `rebuild` when the lots are not the
-   * same (the engine builds the world again), `structure` when a tower was made again, `focus` when the open building changed, `floors` when the
+   * Change the world to a model of the same lots, in place. Returns {rebuild, structure, inPlace, focus, floors}: `rebuild` when the lots are not the
+   * same (the engine builds the world again), `structure` when a tower was made again (only when its floors or its acceptance changed), `inPlace` when a
+   * tower's state, windows, decisions, sheets or drawers changed where they stand, `focus` when the open building changed, `floors` when the
    * floor the route is on (or a phone shows) changed.
    */
   content.update = (m) => {
     const same = m.lots.length === lots.length && m.lots.every((lot, i) => lot.id === lots[i].id);
     if (!same) return { rebuild: true };
     let structure = false;
+    let inPlace = false;
     m.lots.forEach((lot, i) => {
       const key = JSON.stringify(towerStructure(lot));
       lots[i] = lot;
@@ -227,7 +232,7 @@ export function buildWorld(kit, model) {
         structure = true;
       } else {
         const tower = towers.get(lot.id);
-        tower.lot = lot;
+        if (tower.sync(lot)) inPlace = true;
         tower.setTag(lot.tag);
       }
     });
@@ -244,7 +249,7 @@ export function buildWorld(kit, model) {
       aimFloors();
       collect();
     }
-    return { rebuild: false, structure, focus: focusChanged, floors: floorsChanged };
+    return { rebuild: false, structure, inPlace, focus: focusChanged, floors: floorsChanged };
   };
 
   /** The part of the world the camera frames: the floor the person is on, else the open building, else the whole City. */

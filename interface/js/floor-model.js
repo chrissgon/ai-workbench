@@ -289,7 +289,9 @@ export function buildingScene(view, documents, { ready = true } = {}) {
       const docs = agentDocuments(documents, row.name, view.none);
       return {
         name: row.name, label: row.label, state: row.state, window: row.window, decisions: row.decisions, lobby: row.lobby,
-        sheets: docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })), drawers: drawersOf(docs.length), tip: row.tip, interactive: true, plate: plateOf(row, row.name === selected),
+        // `null` while the documents are unread: the world keeps what the floor shows (an empty table on a first build) and changes it when they arrive
+        sheets: documents === null ? null : docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })), drawers: documents === null ? null : drawersOf(docs.length),
+        tip: row.tip, interactive: true, plate: plateOf(row, row.name === selected),
       };
     }),
   };

@@ -35,7 +35,7 @@ export function createKit(palette) {
   };
 
   const kit = {
-    palette, THREE, lit, flat, unlit, track, edgeMaterial, themeLine, unitEdges,
+    palette, THREE, lit, flat, unlit, track, edgeMaterial, themeLine, unitEdges, unitBox: unit,
     /** A box with its bottom face at y. o: {unlit, cast, edges, shell, parent}; `shell` marks a part of the object's outline (outline.js). */
     box(w, h, d, x, y, z, colour, o = {}) {
       const mesh = new THREE.Mesh(unit, o.unlit ? unlit(colour) : lit(colour));

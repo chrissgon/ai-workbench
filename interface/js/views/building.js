@@ -95,12 +95,12 @@ export function createBuildingView(frame, env) {
 
   // `fromScene`: the scene itself is the one hovered (its own pick already drew the outline): the engine is not told again, or a hover of
   // the door (not a floor, so name is null here) would clear the outline the scene just drew.
-  function highlightRow(name, fromScene = false) {
+  function highlightRow(name, fromScene = false, source = "pointer") {
     hover = name;
     for (const li of list.querySelectorAll ? list.querySelectorAll(".wb-floor-item") : []) {
       li.classList.toggle("is-hover", li.getAttribute("data-floor") === name);
     }
-    if (engine && !fromScene) engine.highlight(name ? `floor:${name}` : null);
+    if (engine && !fromScene) engine.highlight(name ? `floor:${name}` : null, source);
     drawCorner();
   }
 
@@ -222,8 +222,8 @@ export function createBuildingView(frame, env) {
     });
     link.addEventListener("pointerenter", () => highlightRow(row.name));
     link.addEventListener("pointerleave", () => highlightRow(null));
-    link.addEventListener("focus", () => highlightRow(row.name));
-    link.addEventListener("blur", () => highlightRow(null));
+    link.addEventListener("focus", () => highlightRow(row.name, false, "keyboard"));
+    link.addEventListener("blur", () => highlightRow(null, false, "keyboard"));
     return h("li", { class: "pui-list-item wb-floor-item", "data-floor": row.name }, link);
   }
 

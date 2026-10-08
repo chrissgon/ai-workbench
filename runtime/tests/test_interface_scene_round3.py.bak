@@ -193,7 +193,7 @@ function run(label, at, cap = 120) {
     const moving = world.step(1 / 30);
     frameNo += 1;
     reference = approach(reference, a.target, 1 / 30, EXPLODE_RATE);
-    if (Math.abs(reference - a.target) <= 0.004) reference = a.target;
+    if (Math.abs(reference - a.target) <= 0.005) reference = a.target;
     const now = meshesOf(a.group);
     for (const m of [...known]) if (!now.has(m)) { lost.push([label, frameNo]); known.delete(m); }
     for (const m of now) known.add(m);
@@ -539,19 +539,10 @@ world.setFloors("business", null, true);
 const out = { objects: {} };
 for (const hit of world.hits) {
   const meshes = outlineMeshes(hit.object);
-  const geometry = outlineGeometry(THREE, hit.outline || hit.object, 0.04);
+  const geometry = outlineGeometry(THREE, hit.object, 0.04);
   out.objects[hit.id] = { parts: meshes.length, allShell: meshes.every((m) => m.userData.shell === true), segments: geometry.getAttribute("position").count / 2 };
 }
-// the Building screen: a floor is outlined by its own room's slab and walls, never by the lines of the closed shell's floors
-world.setFloors(null, null, true);
-world.update(model({ focus: "a" }));
-out.floorHits = {};
-for (const hit of world.hits) {
-  if (!hit.id.startsWith("floor:")) continue;
-  const object = hit.outline || hit.object;   // as the engine draws it
-  out.floorHits[hit.id] = { parts: outlineMeshes(object).length, segments: outlineGeometry(THREE, object, 0.04).getAttribute("position").count / 2 };
-}
-// the City: a building is one enclosing body, its silhouette
+// the City: a building is its bodies and roof
 world.setFocus(null, true);
 world.setFloors(null, null, true);
 const tower = world.hits.find((h) => h.id === "a");
@@ -567,8 +558,7 @@ console.log(JSON.stringify(out));
         assert o["allShell"] is True and o["parts"] >= 1, f"{hit}: only parts marked as the outer shell"
         assert 0 < o["segments"] <= 160, f"{hit}: a handful of edges ({o['segments']}), not every edge of every part"
     assert got["objects"]["tray"]["parts"] == 1 and got["objects"]["desk"]["parts"] == 1, "the tray is its box, the desk its top"
-    assert got["city"]["allShell"] is True and got["city"]["parts"] == 1 and got["city"]["segments"] == 12, "a building's outline in the City is one body's twelve edges: no line at any floor boundary, none for the roof's parts or the windows"
-    assert got["floorHits"] and all(f["parts"] == 3 and f["segments"] <= 36 for f in got["floorHits"].values()), "a floor of the open building: its slab and its two walls, three boxes, and nothing of the closed shell"
+    assert got["city"]["allShell"] is True and got["city"]["segments"] <= 400
 
 
 @needs_node
@@ -623,6 +613,7 @@ out.lobbyUpWithTab = step(r("/lobby/inbox"));
 out.buildingUp = step(r(""));
 out.controlUp = step(r("/control"));
 out.controlFrom = step(r("/control/costs"), { from: `#/p/${P}/floor/marketing` });
+out.controlSelected = step(r("/control"), { selection: true });
 out.cityNothing = step(router.parse("#/"));
 console.log(JSON.stringify(out));
 """)
@@ -636,8 +627,7 @@ console.log(JSON.stringify(out));
     assert got["floorUp"] == {"step": "up", "hash": f"#/p/{p}"} and got["lobbyUp"] == {"step": "up", "hash": f"#/p/{p}"} and got["lobbyUpWithTab"] == {"step": "up", "hash": f"#/p/{p}"}, "the Floor and the Lobby go up to the Building"
     assert got["buildingUp"] == {"step": "up", "hash": "#/"}, "the Building goes up to the City"
     assert got["controlUp"] == {"step": "up", "hash": f"#/p/{p}"} and got["controlFrom"] == {"step": "up", "hash": f"#/p/{p}/floor/marketing"}, "the Control room goes back to where it was opened from, else the Building"
-    # In the Control room the frame holds no world (the room is its own scene): nothing there is a selection, so Escape goes straight up (the maintainer's
-    # complaint was that it did not): `controlUp` and `controlFrom` above are that case.
+    assert got["controlSelected"] == {"step": "selection"}, "after an object was used in the Control room the first Escape clears it, the next goes up"
     assert got["cityNothing"] == {"step": "none"}
 
 
@@ -750,13 +740,14 @@ globalThis.requestAnimationFrame = (fn) => { const id = clock.id++; clock.queue.
 globalThis.cancelAnimationFrame = (id) => { clock.queue = clock.queue.filter((e) => e[0] !== id); };
 export const frame = (ms) => { clock.t += ms; const run = clock.queue; clock.queue = []; for (const [, fn] of run) fn(clock.t); return run.length; };
 document.hidden = false;
+document.addEventListener = () => {};
+document.removeEventListener = () => {};
 const create = document.createElement;
 document.createElement = (tag) => {
   const n = create(tag);
   const style = {};
   n.style = { setProperty: (k, v) => { style[k] = v; } };
   n._style = style;
-  n.dataset = {};
   n.clientWidth = 1280; n.clientHeight = 720; n.offsetWidth = 200; n.offsetHeight = 90;
   n.getBoundingClientRect = () => ({ left: 0, top: 0, width: 1280, height: 720, right: 1280, bottom: 720 });
   n.appendChild = (c) => n.append(c);
@@ -830,136 +821,17 @@ console.log(JSON.stringify({ same: await sequence(0), panel: await sequence(420)
     same = of(got["same"], "open")
     for key in ("w", "cx", "cy"):
         s = steps(same, key)
-        moving_steps = [x for x in s if x > 0]
-        landing = moving_steps.pop()   # the frame that snaps onto the goal (under a quarter of a pixel is left there)
-        assert all(b <= a * 1.0001 + 1e-9 for a, b in zip(moving_steps, moving_steps[1:])), f"{key}: the camera's step falls frame after frame through the route change at frame 4 and the documents at 12: {[round(x, 4) for x in moving_steps][:14]}"
-        assert landing < 0.3 * (opening[-1]["w"] / 1280) + 1e-9 or landing < 0.02, f"{key}: and the last frame lands within a quarter of a pixel ({landing:.4f})"
-    # the panel appears at the route change: the goal moves by what it takes. The camera goes on from where it is: on every frame it covers at most one
-    # frame's share of the distance to the goal in force (the one before the route changed or the one after it), so it never jumps to the new place
+        assert all(b <= a * 1.0001 + 1e-9 for a, b in zip(s, s[1:])), f"{key}: the camera's step falls frame after frame through the route change at frame 4 and the documents at 12: {[round(x, 3) for x in s[:14]]}"
+        assert abs(s[1] / s[0] - (1 - k)) < 0.02 or s[0] < 1e-9, f"{key}: and it is the prototype's approach: each step is {1 - k:.3f} of the one before"
+    # the panel appears at the route change: the goal moves by what it takes; the camera still covers a share of the distance, never the distance
     moving = of(got["panel"], "open")
-    for key in ("zoom", "cx", "cy"):   # the camera approaches its centre and its zoom (the reciprocal of the width), each by the same share
-        read = (lambda f: 1 / f["w"]) if key == "zoom" else (lambda f, key=key: f[key])
-        goals = (read(got["same"]["open"]), read(got["panel"]["open"]))
-        last_move = max(i for i, (a, b) in enumerate(zip(moving, moving[1:])) if read(a) != read(b))   # the frame that lands is the one snapped to the goal
-        for i, (a, b) in enumerate(zip(moving, moving[1:])):
-            if i == last_move:
-                continue
-            far = max(abs(read(a) - g) for g in goals)
-            assert abs(read(b) - read(a)) <= k * far * 1.02 + 1e-9, f"{key}: with the panel appearing mid-flight, frame {b['i']} moved {abs(read(b) - read(a)):.5f} of {far:.5f} left"
+    spread = max(f["w"] for f in moving) - min(f["w"] for f in moving)
+    for key in ("w", "cx", "cy"):
+        spread = max(f[key] for f in moving) - min(f[key] for f in moving)
+        assert max(steps(moving, key)) <= 0.25 * spread + 1e-6, f"{key}: with the panel appearing mid-flight no frame jumps"
     floor = of(got["same"], "floor")
     assert all(b["w"] <= a["w"] + 1e-9 for a, b in zip(floor, floor[1:])), "closing on the chosen floor: only closer"
-    fs = [x for x in steps(floor, "w") if x > 0][:-1]   # without the frame that snaps onto the goal
+    fs = steps(floor, "w")
     assert all(b <= a * 1.0001 + 1e-9 for a, b in zip(fs, fs[1:])), "and its step falls frame after frame through the route change and the documents"
     back = of(got["same"], "backFloor") + of(got["same"], "backBuilding")
     assert all(b["w"] >= a["w"] - 1e-9 for a, b in zip(back, back[1:])), "Back opens the camera out, only out"
-
-
-@needs_node
-def test_the_camera_lands_when_what_is_left_is_under_a_quarter_of_a_pixel_never_with_a_visible_jump(tmp_path):
-    """Finding 6: the move used to snap within one percent of its first distance, a residual jump of several pixels on the last frame."""
-    got = run_node(tmp_path, r"""
-import { createTween } from "@JS@/scene/tween.js";
-const a = { left: -68.5, right: 68.5, top: 38.5, bottom: -38.5 };      // the City
-const b = { left: -33.2, right: 38.0, top: 33.9, bottom: -6.2 };       // a building
-const px = 1280;
-const t = createTween();
-t.start(a, b, 0, 1);
-const frames = [];
-let now = 0;
-for (let i = 0; i < 400 && (i === 0 || t.active()); i++) { now += 1000 / 30; frames.push(t.step(now, px)); }
-const scale = (f) => px / (f.right - f.left);
-const toPx = (f, g) => Math.max(...["left", "right", "top", "bottom"].map((k) => Math.abs(f[k] - g[k]))) * scale(g);
-const last = frames[frames.length - 1];
-const steps = frames.slice(1).map((f, i) => toPx(frames[i], f));
-console.log(JSON.stringify({ n: frames.length, landed: ["left", "right", "top", "bottom"].every((k) => Math.abs(last[k] - b[k]) < 1e-9), lastStep: steps[steps.length - 1], before: steps[steps.length - 2], falling: steps.slice(0, -1).every((s, i) => i === 0 || s <= steps[i - 1] * 1.0001 + 1e-9) }));
-""")
-    assert got["landed"] is True, "the move ends exactly on its goal"
-    assert got["lastStep"] < 0.3, f"the last frame, which snaps to the goal, moves the camera by about a quarter of a pixel at most ({got['lastStep']:.3f} px)"
-    assert got["falling"] is True, "every step before it is smaller than the one before: the approach, no residual jump"
-
-
-@needs_node
-def test_the_frames_escape_handler_acts_on_what_is_open_and_clears_a_keyboard_selection_never_a_pointer_hover(tmp_path):
-    """Findings 3 and 4 of the review of PR 252: the handler as wired in the frame (the real frame and the real engine under a fake document). A mouse
-    resting over the scene is not a selection: the first Escape goes up. Only the outline the keyboard's focus put on a list row is cleared first."""
-    got = run_node_engine(tmp_path, ENGINE_PAGE_JS + PRODUCT_JS + r"""
-import { createFrame } from "@JS@/frame/frame.js";
-import * as router from "@JS@/router.js";
-const root = document.createElement("div");
-const fr = createFrame(root, { onSelectProject() {}, onForgetToken() {}, onRetry() {} });
-const out = {};
-const press = (init = {}) => {
-  const ev = { key: "Escape", defaultPrevented: false, preventDefault() { ev.defaultPrevented = true; }, ...init };
-  for (const fn of document.listeners.keydown) fn(ev);
-  return ev.defaultPrevented;
-};
-const at = (hash) => { window.location.hash = hash; fr.setScreen(router.parse(hash), { projectName: "shop", projectId: A }); };
-const none = () => [];
-document.querySelectorAll = none;
-document.querySelector = () => null;
-document.activeElement = null;
-
-// a field has the focus: nothing happens
-at(`#/p/${A}/floor/marketing`);
-document.activeElement = { tagName: "TEXTAREA" };
-out.field = [press(), window.location.hash];
-document.activeElement = null;
-// a handler that already took the key
-out.taken = [press({ defaultPrevented: true }), window.location.hash];
-// a dialog: its `cancel` is dispatched as the browser does and it closes, unless it refuses; the page does not go up
-let events = [], closed = 0, refuse = false;
-const dialog = { dispatchEvent(ev) { events.push(ev.type); if (refuse) ev.preventDefault(); }, close() { closed += 1; } };
-document.querySelectorAll = (sel) => (String(sel).startsWith("dialog") ? [dialog] : []);
-out.dialog = [press(), events.slice(), closed, window.location.hash];
-refuse = true;
-out.dialogRefused = [press(), events.length, closed, window.location.hash];
-document.querySelectorAll = none;
-// the request list is open: Escape closes it (the chip is clicked, as a person would), the page stays
-let chipClicks = 0;
-document.querySelector = (sel) => (sel === ".wb-req-menu:not([hidden])" ? {} : String(sel).startsWith(".wb-req-chip") ? { click() { chipClicks += 1; } } : null);
-out.menu = [press(), chipClicks, window.location.hash];
-document.querySelector = () => null;
-// the Control room returns to the screen it was opened from
-at(`#/p/${A}/floor/marketing`);
-at(`#/p/${A}/control`);
-out.controlFloor = [press(), window.location.hash];
-at(`#/p/${A}`);
-at(`#/p/${A}/control/costs`);
-out.controlBuilding = [press(), window.location.hash];
-at(`#/p/${A}/control`);                      // opened with no screen before it of that project: the Building
-out.controlDirect = [press(), window.location.hash];
-// the Lobby goes up to the Building too
-at(`#/p/${A}/lobby`);
-out.lobby = [press(), window.location.hash];
-// the scene: a pointer hover is not a selection
-const engine = fr.acquireWorld({ getInsets: () => ({ left: 0, right: 0, top: 0, bottom: 0 }), onOpen() {}, onHover() {}, onUnavailable() {} });
-engine.show("world", models.city(), "City");
-at(`#/p/${A}`);
-engine.show("world", models.building(null), "Building");
-engine.highlight(`floor:engineering`, "pointer");
-out.pointer = [engine.hasHover(), engine.hasSelection(), press(), window.location.hash];
-at(`#/p/${A}`);
-engine.highlight(`floor:engineering`, "keyboard");
-out.keyboardFirst = [engine.hasSelection(), press(), window.location.hash, engine.hasHover()];
-out.keyboardSecond = [press(), window.location.hash];
-// a keyboard selection that the pointer then left alone: the pointer's outline replaces it, the first Escape goes up
-at(`#/p/${A}`);
-engine.highlight(`floor:engineering`, "keyboard");
-engine.highlight(`floor:design`, "pointer");
-out.replaced = [engine.hasSelection(), press(), window.location.hash];
-console.log(JSON.stringify(out));
-""")
-    a = "aaaaaaaaaaaa"
-    assert got["field"] == [False, f"#/p/{a}/floor/marketing"], "a field has the focus: Escape does nothing and the key is left to the field"
-    assert got["taken"] == [True, f"#/p/{a}/floor/marketing"], "a key another handler already took is not acted on again"
-    assert got["dialog"] == [True, ["cancel"], 1, f"#/p/{a}/floor/marketing"], "a dialog gets its cancel event and closes; the page stays"
-    assert got["dialogRefused"] == [True, 2, 1, f"#/p/{a}/floor/marketing"], "a dialog that refuses to be cancelled (a request in flight) stays open"
-    assert got["menu"] == [True, 1, f"#/p/{a}/floor/marketing"], "an open request list closes by its own chip; the page stays"
-    assert got["controlFloor"] == [True, f"#/p/{a}/floor/marketing"], "the Control room goes back to the Floor it was opened from"
-    assert got["controlBuilding"] == [True, f"#/p/{a}"], "or to the Building"
-    assert got["controlDirect"] == [True, f"#/p/{a}"], "and with nothing before it, to the Building of its project"
-    assert got["lobby"] == [True, f"#/p/{a}"], "the Lobby goes up to the Building"
-    assert got["pointer"] == [True, False, True, "#/"], "a pointer hover over the scene is not a selection: the first Escape goes up"
-    assert got["keyboardFirst"] == [True, True, f"#/p/{a}", False], "the outline the keyboard's focus put on a row is cleared first, and the page stays"
-    assert got["keyboardSecond"] == [True, "#/"], "the next Escape goes up"
-    assert got["replaced"] == [False, True, "#/"], "a keyboard selection the pointer's outline replaced is no selection: the first Escape goes up"

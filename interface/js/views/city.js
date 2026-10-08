@@ -69,8 +69,8 @@ export function createCityView(frame) {
       });
       link.addEventListener("pointerenter", () => engine && engine.highlight(b.id));
       link.addEventListener("pointerleave", () => engine && engine.highlight(null));
-      link.addEventListener("focus", () => engine && engine.highlight(b.id));
-      link.addEventListener("blur", () => engine && engine.highlight(null));
+      link.addEventListener("focus", () => engine && engine.highlight(b.id, "keyboard"));
+      link.addEventListener("blur", () => engine && engine.highlight(null, "keyboard"));
       return h("li", { class: "pui-list-item wb-building-item" }, link);
     });
     list.replaceChildren(...rows);

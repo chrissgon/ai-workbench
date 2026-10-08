@@ -15,10 +15,13 @@ import { smooth } from "./prototype-motion.js";
 
 const clamp01 = (t) => Math.max(0, Math.min(1, t));
 
-/** What a tower is made of, for a lot: everything but the words (names, tips, plates, the sub line). */
+/**
+ * What a tower is made of, for a lot: which floors it has and whether it is accepted and running. Everything else a poll or the arrival of the
+ * documents can change (the words, the state, the windows, the decisions, the sheets, the drawers, the floor the work order is on) changes the tower
+ * in place (`tower.sync`): the tower is built again only when the projects or the agents change (specification, section 2 of the round-3 authority).
+ */
 export function towerStructure(lot) {
-  return [lot.accepted, lot.runningTask !== null, lot.selected || null,
-    lot.floors.map((f) => [f.name, f.state, f.window, f.decisions, f.lobby, f.drawers, f.interactive, (f.sheets || []).map((s) => s.path)])];
+  return [lot.accepted, lot.runningTask !== null, lot.floors.map((f) => [f.name, f.lobby, f.interactive])];
 }
 
 /** The y of a tower's roof at open progress `s` (already read through the smoothstep). */
@@ -49,15 +52,31 @@ export function createTower(kit, lot, cx, cz) {
   group.position.set(cx, 0, cz);
   const floorGroups = [];
   const shells = [];
-  const outsideMarkers = [];
+  const outsideMarkers = [];   // the exclamation outside a floor with a decision waiting (or null)
+  const outsideEntries = [];   // the same, as the engine's marker entries
+  const shellGlass = [];       // the windows of each floor's closed shell: their material follows the state in place
+  const roomLists = [];        // each room's own motions, markers and outlines, so that one room can be made again alone
   const tower = {
     id: lot.id, lot, group, n, floorGroups, open: 0, target: 0, interior: false,
     vis: lot.floors.map(() => 1), visTarget: lot.floors.map(() => 1),
     motions: [], markers: [], outlines: [], inner: [], parts: [], beacon: null, tag: null,
+    shown: lot.floors.map((f) => ({ state: f.state, window: f.window, decisions: f.decisions, sheets: null, drawers: null, selected: lot.selected === f.name })),
     cardAnchor: new THREE.Vector3(cx, 0, cz), plateAnchors: [], boardAnchors: [], doorAnchors: [], tagAnchor: new THREE.Vector3(),
   };
   const fadeMats = [];
   const roofMats = [];
+
+  /** The exclamation outside floor i: there while a decision waits in an accepted project, gone when none does. */
+  function setOutside(i, on) {
+    if (on && !outsideMarkers[i]) {
+      outsideMarkers[i] = exclamation(kit, floorGroups[i], W / 2 + 0.9, 0.75, D / 2 - 0.4);
+      outsideEntries[i] = { key: `${lot.id}:${i}`, group: outsideMarkers[i], restY: 0.75 };
+    } else if (!on && outsideMarkers[i]) {
+      floorGroups[i].remove(outsideMarkers[i]);
+      outsideMarkers[i] = null;
+      outsideEntries[i] = null;
+    }
+  }
 
   // --- the closed shell of every floor --------------------------------------------------------------------------------------------
   lot.floors.forEach((f, i) => {
@@ -69,15 +88,17 @@ export function createTower(kit, lot, cx, cz) {
     fg.add(shell);
     shells.push(shell);
     kit.box(W + 0.2, SLAB, D + 0.2, 0, 0, 0, T.emphasis, { parent: shell, edges: true });
-    kit.box(W, H, 0.14, 0, SLAB, D / 2 - 0.07, palette.shell, { parent: shell, edges: true, shell: true });
-    kit.box(0.14, H, D, W / 2 - 0.07, SLAB, 0, palette.shell, { parent: shell, edges: true, shell: true });
+    kit.box(W, H, 0.14, 0, SLAB, D / 2 - 0.07, palette.shell, { parent: shell, edges: true });
+    kit.box(0.14, H, D, W / 2 - 0.07, SLAB, 0, palette.shell, { parent: shell, edges: true });
     const colour = windowColour(palette, f.window);
     const lit = windowUnlit(f.window);
+    const glassOf = [];
+    shellGlass[i] = glassOf;
     if (i === 0) {
       const glass = lit ? palette.warm : palette.glass;
-      kit.box(W - 1.4, H - 0.9, 0.06, 0, SLAB + 0.1, D / 2 + 0.02, glass, { cast: false, parent: shell, unlit: true });
+      glassOf.push(kit.box(W - 1.4, H - 0.9, 0.06, 0, SLAB + 0.1, D / 2 + 0.02, glass, { cast: false, parent: shell, unlit: true }));
       [-1.5, -0.55, 0.55, 1.5].forEach((dx) => kit.box(0.06, H - 0.9, 0.08, dx, SLAB + 0.1, D / 2 + 0.04, T.emphasis, { parent: shell }));
-      kit.box(0.06, H - 0.9, D - 0.8, W / 2 + 0.02, SLAB + 0.1, 0, glass, { cast: false, parent: shell, unlit: true });
+      glassOf.push(kit.box(0.06, H - 0.9, D - 0.8, W / 2 + 0.02, SLAB + 0.1, 0, glass, { cast: false, parent: shell, unlit: true }));
       kit.box(2.6, 0.14, 1.3, 0, P - 0.45, D / 2 + 0.65, T.emphasis, { parent: shell, edges: true });
       [-1.15, 1.15].forEach((dx) => kit.box(0.1, P - 0.6, 0.1, dx, 0, D / 2 + 1.2, palette.bg, { parent: shell, edges: true }));
       kit.box(1.0, 1.7, 0.08, 0, SLAB, D / 2 + 0.06, palette.pale, { cast: false, parent: shell, unlit: true });
@@ -89,27 +110,24 @@ export function createTower(kit, lot, cx, cz) {
       const wy = SLAB + 0.55;
       const wh = H - 1.1;
       [-2.4, -1.2, 0, 1.2, 2.4].forEach((dx) => {
-        kit.box(0.9, wh, 0.05, dx, wy, D / 2 + 0.02, colour, { cast: false, parent: shell, unlit: lit });
+        glassOf.push(kit.box(0.9, wh, 0.05, dx, wy, D / 2 + 0.02, colour, { cast: false, parent: shell, unlit: lit }));
         kit.box(0.04, wh, 0.07, dx, wy, D / 2 + 0.04, T.emphasis, { cast: false, parent: shell });
       });
       [-1.5, 0, 1.5].forEach((dz) => {
-        kit.box(0.05, wh, 0.9, W / 2 + 0.02, wy, dz, colour, { cast: false, parent: shell, unlit: lit });
+        glassOf.push(kit.box(0.05, wh, 0.9, W / 2 + 0.02, wy, dz, colour, { cast: false, parent: shell, unlit: lit }));
         kit.box(0.07, wh, 0.04, W / 2 + 0.04, wy, dz, T.emphasis, { cast: false, parent: shell });
       });
     }
-    if (f.decisions > 0 && lot.accepted) {
-      const marker = exclamation(kit, fg, W / 2 + 0.9, 0.75, D / 2 - 0.4);
-      outsideMarkers[i] = marker;
-      tower.markers.push({ key: `${lot.id}:${i}`, group: marker, restY: 0.75 });
-    }
+    outsideMarkers[i] = null;
+    if (f.decisions > 0 && lot.accepted) setOutside(i, true);
   });
 
   // --- the roof (it fades with the opening and does not come back: the top floor's room is open like the others) ----------------------------
   const roof = new THREE.Group();
   group.add(roof);
-  kit.box(W + 0.3, 0.3, D + 0.3, 0, 0, 0, T.emphasis, { parent: roof, edges: true, shell: true });
-  kit.box(W + 0.3, 0.3, 0.1, 0, 0.3, D / 2 + 0.1, palette.shell, { parent: roof, edges: true, shell: true });
-  kit.box(0.1, 0.3, D + 0.3, W / 2 + 0.1, 0.3, 0, palette.shell, { parent: roof, edges: true, shell: true });
+  kit.box(W + 0.3, 0.3, D + 0.3, 0, 0, 0, T.emphasis, { parent: roof, edges: true });
+  kit.box(W + 0.3, 0.3, 0.1, 0, 0.3, D / 2 + 0.1, palette.shell, { parent: roof, edges: true });
+  kit.box(0.1, 0.3, D + 0.3, W / 2 + 0.1, 0.3, 0, palette.shell, { parent: roof, edges: true });
   kit.box(1.6, 0.7, 1.2, -1.4, 0.3, -0.9, T.emphasis, { parent: roof, edges: true });
   kit.box(1.0, 0.5, 1.0, 0.4, 0.3, -1.0, palette.bg, { parent: roof, edges: true });
   if (lot.runningTask !== null && lot.accepted) {
@@ -122,18 +140,30 @@ export function createTower(kit, lot, cx, cz) {
     tower.beacon = { ring, material, id: lot.id, fade: 1 };
   }
 
+  // The building's outline is its silhouette: one enclosing body from the ground to the roof (a floor's walls, its windows and the roof's parts are
+  // inside the line, not drawn as lines of their own: the City's outline had a line at every floor boundary). The body is not drawn (its material is
+  // invisible); it follows the height of the stack. A floor of the open building is outlined by its own room's slab and walls (building.js).
+  const silhouette = new THREE.Mesh(kit.unitBox, kit.adopt(new THREE.MeshBasicMaterial({ visible: false })));
+  silhouette.userData.shell = true;
+  silhouette.castShadow = false;
+  group.add(silhouette);
+  tower.silhouette = silhouette;
+
   // The walls, the ring slabs, the awning and the roof fade as the building opens: each has materials of its own (a clone of the kit's shared
   // one, same tone), so fading this tower touches no other.
   const own = new Map();
-  const claim = (root, list) => root.traverse((node) => {
-    if (!node.material || node === (tower.beacon && tower.beacon.ring)) return;
-    if (!own.has(node.material)) {
-      const clone = node.material.clone();
+  const ownOf = (base, list) => {
+    if (!own.has(base)) {
+      const clone = kit.adopt(base.clone());   // the kit frees it with the rest
       clone.transparent = true;
-      own.set(node.material, clone);
+      own.set(base, clone);
       list.push(clone);
     }
-    node.material = own.get(node.material);
+    return own.get(base);
+  };
+  const claim = (root, list) => root.traverse((node) => {
+    if (!node.material || node === (tower.beacon && tower.beacon.ring)) return;
+    node.material = ownOf(node.material, list);
   });
   shells.forEach((shell) => claim(shell, fadeMats));
   claim(roof, roofMats);
@@ -170,20 +200,122 @@ export function createTower(kit, lot, cx, cz) {
     tower.apply();
   };
 
+  /** The room of floor i, from the lot as it is now (made once, or again when the agent's state changed: a figure sits or stands, a screen lights). */
+  function buildRoom(i) {
+    const L = tower.lot;
+    const f = L.floors[i];
+    const inner = tower.inner[i];
+    inner.clear();
+    const lists = { motions: [], markers: [], outlines: [] };
+    roomLists[i] = lists;
+    const drawn = { ...f, sheets: f.sheets || [], drawers: typeof f.drawers === "number" ? f.drawers : 1 };   // unread: one drawer, as the cabinet draws at least one
+    tower.parts[i] = fillFloor(kit, inner, drawn, { lot: L.id, selected: L.selected === f.name, ...lists });
+    Object.assign(tower.shown[i], { state: f.state, window: f.window, decisions: f.decisions, sheets: drawn.sheets.map((x) => x.path), drawers: drawn.drawers, selected: L.selected === f.name });
+    refreshLists();
+  }
+
+  /** The lists the engine reads (markers, motions, outlines) are the outside markers and each room's own. */
+  function refreshLists() {
+    tower.markers.length = 0;
+    tower.motions.length = 0;
+    tower.outlines.length = 0;
+    for (const entry of outsideEntries) if (entry) tower.markers.push(entry);
+    for (const lists of roomLists) {
+      if (!lists) continue;
+      tower.markers.push(...lists.markers);
+      tower.motions.push(...lists.motions);
+      tower.outlines.push(...lists.outlines);
+    }
+  }
+
   tower.ensureInterior = () => {
     if (tower.interior) return false;
     tower.interior = true;
-    lot.floors.forEach((f, i) => {
+    tower.lot.floors.forEach((f, i) => {
       const inner = new THREE.Group();
       inner.visible = tower.open > 0;
       floorGroups[i].add(inner);
       tower.inner[i] = inner;
-      if (!f.interactive) return;
-      tower.parts[i] = fillFloor(kit, inner, f, { lot: lot.id, selected: lot.selected === f.name, motions: tower.motions, markers: tower.markers, outlines: tower.outlines });
+      if (f.interactive) buildRoom(i);
     });
     tower.setTag(tower.lot.tag);
     tower.apply();
     return true;
+  };
+
+  /**
+   * The tower takes the words and the state of `next` (the same floors): everything a poll or the arrival of the documents changes is changed where
+   * it stands, never by building the tower again. A window changes its material, the tray its sheets, the cabinet its drawers, the table its
+   * sheets, a slab its tone, the outside exclamation comes or goes. Only a change of an agent's state makes that one room again (a figure sits
+   * or stands). A floor whose documents are not known yet (`sheets` or `drawers` null) keeps what it shows. Returns true when anything changed.
+   */
+  tower.sync = (next) => {
+    tower.lot = next;
+    let changed = false;
+    next.floors.forEach((f, i) => {
+      const shown = tower.shown[i];
+      const parts = tower.interior ? tower.parts[i] : null;
+      if (f.window !== shown.window) {
+        const colour = windowColour(palette, f.window);
+        const base = f.window === "lit" ? (i === 0 ? palette.warm : colour) : (i === 0 ? palette.glass : colour);
+        for (const mesh of shellGlass[i]) mesh.material = ownOf(windowUnlit(f.window) || i === 0 ? kit.unlit(base) : kit.lit(base), fadeMats);
+        if (parts) parts.setWindow(f.window);
+        shown.window = f.window;
+        changed = true;
+      }
+      const marker = f.decisions > 0 && next.accepted;
+      if (marker !== Boolean(outsideMarkers[i])) {
+        setOutside(i, marker);
+        refreshLists();
+        changed = true;
+      }
+      if (!parts) {
+        shown.state = f.state;
+        shown.decisions = f.decisions;
+        shown.selected = next.selected === f.name;
+        return;
+      }
+      if (f.state !== shown.state) {
+        buildRoom(i);
+        changed = true;
+        return;
+      }
+      if (f.decisions !== shown.decisions) {
+        parts.setDecisions(f.decisions, f.state === "waiting");
+        shown.decisions = f.decisions;
+        changed = true;
+      }
+      if (Array.isArray(f.sheets)) {
+        const paths = f.sheets.slice(0, 6).map((x) => x.path);
+        if (JSON.stringify(paths) !== JSON.stringify(shown.sheets)) {
+          parts.setSheets(f.sheets);
+          shown.sheets = paths;
+          changed = true;
+        }
+      }
+      if (typeof f.drawers === "number" && f.drawers !== shown.drawers) {
+        parts.setDrawers(f.drawers);
+        shown.drawers = f.drawers;
+        changed = true;
+      }
+      const selected = next.selected === f.name;
+      if (selected !== shown.selected) {
+        parts.setSelected(selected);
+        shown.selected = selected;
+        changed = true;
+      }
+    });
+    if (changed) tower.apply();
+    return changed;
+  };
+
+  /** Free what this tower made that the kit does not share (its materials, the beacon's ring). */
+  tower.dispose = () => {
+    for (const m of [...fadeMats, ...roofMats]) m.dispose();
+    if (tower.beacon) {
+      tower.beacon.material.dispose();
+      tower.beacon.ring.geometry.dispose();
+    }
   };
 
   // --- the opening: every position, every fade, from one number --------------------------------------------------------------------------
@@ -197,6 +329,9 @@ export function createTower(kit, lot, cx, cz) {
       g.visible = tower.vis[i] > 0.01;
     });
     roof.position.y = roofY(n, s);
+    const bodyTop = roofY(n, s) + 0.3;
+    silhouette.scale.set(W + 0.2, bodyTop - BASE, D + 0.2);
+    silhouette.position.set(0, BASE + (bodyTop - BASE) / 2, 0);
     const fade = 1 - clamp01(s / 0.55);
     const roofFade = 1 - clamp01(s / 0.7);
     setOpacity(fadeMats, fade);
@@ -226,6 +361,7 @@ export function createTower(kit, lot, cx, cz) {
 
   /** The y the work-order tag rests at when the building is open: where the tag goes to, whatever the progress now. */
   tower.tagRestY = () => (tower.tag ? floorY(tower.tag.index, P + GAP) + SLAB : null);
+  refreshLists();
   tower.apply();
   return tower;
 }

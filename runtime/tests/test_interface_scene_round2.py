@@ -121,7 +121,7 @@ for (const [width, height, left, top] of [[1280, 720, 0, 0], [375, 520, 13, 90]]
       // the outline of the picked object stands on that object: it holds the sample point on the screen and stays within the object's own bounds
       const hit = hits.find((h) => h.id === s.id);
       const pad = hit.pad !== undefined ? hit.pad : 0.04;
-      const geometry = outlineGeometry(THREE, hit.object, pad);
+      const geometry = outlineGeometry(THREE, hit.outline || hit.object, pad);
       geometry.computeBoundingBox();
       const lineBox = geometry.boundingBox;
       const objectBox = new THREE.Box3().setFromObject(hit.object).expandByScalar(pad * 1.5 + 1e-3);
@@ -162,7 +162,7 @@ def test_the_pick_the_tooltip_and_the_outline_name_the_object_at_its_drawn_centr
 
 def test_the_engine_picks_meshes_only_through_pick_js_and_the_outline_comes_from_outline_js():
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
-    assert "pickHit(raycaster, camera, content.hits" in engine and "outlineGeometry(THREE, hit.object" in engine
+    assert "pickHit(raycaster, camera, content.hits" in engine and "outlineGeometry(THREE, hit.outline || hit.object" in engine
     assert "intersectObjects(objects, true)" not in engine, "no recursive ray over the groups: their edge lines would be hit"
     assert "Box3().setFromObject(hit.object).expandByScalar" not in engine, "no padded bounding box as an outline"
     pick = (SCENE / "pick.js").read_text(encoding="utf-8")
@@ -242,8 +242,8 @@ console.log(JSON.stringify(out));
 def test_the_camera_moves_as_the_prototypes_loop_does_frame_by_frame_and_lands_exactly_on_its_goal(tmp_path):
     got = run_node(tmp_path, PROTOTYPE)
     cam = got["camera"]
-    assert cam["worst"] < 0.0105, "the product's camera follows the prototype's per-frame loop within one percent of the move, frame by frame"
-    assert 0.95 < cam["seconds"] < 1.2, "and ends when it is within one percent: ln(100) / 4.5 = 1.02 s"
+    assert cam["worst"] < 0.0105, "the product's camera follows the prototype's per-frame loop within one percent of the move, frame by frame (it only ends sooner or later than the prototype's, which never ends)"
+    assert 1.0 < cam["seconds"] < 2.5, "and ends when what is left is under a quarter of a pixel (WP-9.11: a landing at one percent left a jump of several pixels): about 1.7 s in a 1280 px view, the last second of it too small to see"
     assert [round(x, 9) for x in cam["landed"]] == [3, 9, 4.375, -0.625], "it lands exactly on its goal"
     assert got["zoomLinear"] is True and got["sidesNot"] is True, "the zoom (the reciprocal of the half width) is moved in a straight line, as `cam.zoom` was, not the frustum's sides"
     assert abs(got["fps"][0] - got["fps"][3]) < 1e-9 and abs(got["fps"][1] - got["fps"][3]) < 1e-9 and abs(got["fps"][2] - got["fps"][3]) < 1e-9, "the same progress at 30, 60 and 120 frames a second"
@@ -317,7 +317,7 @@ def test_the_building_has_a_plate_for_each_floor_and_no_control_room_label_and_t
     view = (JS / "views" / "building.js").read_text(encoding="utf-8")
     assert "cornerRight: 10" in view and "plateRight: base.right" in view and "frame.plateWidth()" in view
     assert "pointerover" in view and '.wb-plate' in view, "hovering a plate outlines its floor, a click opens it (as before WP-9.8)"
-    assert "function highlightRow(name, fromScene = false)" in view and "if (engine && !fromScene)" in view and ": null, true)," in view, \
+    assert 'function highlightRow(name, fromScene = false, source = "pointer")' in view and "if (engine && !fromScene)" in view and ": null, true)," in view, \
         "a hover that came from the scene never tells the engine again: hovering the door (no floor) used to clear the outline the pick had just drawn"
 
 

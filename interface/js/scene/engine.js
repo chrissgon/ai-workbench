@@ -113,6 +113,7 @@ export function createEngine(host, options) {
   let outline = null;
   let markedOutline = null;      // the thin outline the building of the chosen project keeps in the City (WP-9.11)
   let hoverId = null;
+  let hoverSource = null;        // who outlined it: "pointer" (over the scene or a list row) or "keyboard" (the focus on a list row): Escape clears only the second
   let lostText = false;
   let disposed = false;
   const epoch = clock();          // the ambient animations' clock: it is never restarted, so a rebuild cannot restart a motion
@@ -171,6 +172,7 @@ export function createEngine(host, options) {
       markedOutline = null;
     }
     hoverId = null;
+    hoverSource = null;
     if (content) scene.remove(content.group);
     if (contentKit) contentKit.dispose();
     for (const entry of labelEntries) entry.node.remove();
@@ -483,7 +485,7 @@ export function createEngine(host, options) {
   function draw(ts) {
     if (disposed || lostText) return;
     const now = clock();
-    const moved = tween.step(now);
+    const moved = tween.step(now, size.w);
     if (moved) {
       applyFrustum(moved);
       positionLabels();   // the labels ride along with the camera (the prototype projected them every frame)
@@ -565,7 +567,7 @@ export function createEngine(host, options) {
     applyOutlines();
     markLabels();
     if (hit) {
-      outline = new THREE.LineSegments(outlineGeometry(THREE, hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD), outlineMaterial);
+      outline = new THREE.LineSegments(outlineGeometry(THREE, hit.outline || hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD), outlineMaterial);
       scene.add(outline);
     }
     loop.requestRender();
@@ -582,7 +584,7 @@ export function createEngine(host, options) {
       }
       return;
     }
-    const geometry = outlineGeometry(THREE, hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
+    const geometry = outlineGeometry(THREE, hit.outline || hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
     if (markedOutline) {
       markedOutline.geometry.dispose();
       markedOutline.geometry = geometry;
@@ -601,7 +603,7 @@ export function createEngine(host, options) {
     const hit = hoveredHit();
     if (!hit || !outline) return;
     outline.geometry.dispose();
-    outline.geometry = outlineGeometry(THREE, hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
+    outline.geometry = outlineGeometry(THREE, hit.outline || hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
   }
 
   // What the page's checks read: the object the outline is drawn for and where its box is on the screen (CSS pixels of the canvas),
@@ -618,6 +620,7 @@ export function createEngine(host, options) {
     const id = result.hit ? result.hit.id : null;
     if (id !== hoverId) {
       hoverId = id;
+      hoverSource = id ? "pointer" : null;
       setOutline(id);
       if (options.onHover) options.onHover(id);
     }
@@ -760,8 +763,9 @@ export function createEngine(host, options) {
     refit() {
       if (!disposed && measure()) fit();
     },
-    /** Outline a building from the HTML list (hover or focus there), with no tooltip. */
-    highlight(id) {
+    /** Outline a building from the HTML list (hover or focus there), with no tooltip. `source` is "pointer" or "keyboard" (the list's focus). */
+    highlight(id, source = "pointer") {
+      hoverSource = id ? source : null;
       if (id !== hoverId) {
         hoverId = id;
         setOutline(id);
@@ -799,9 +803,21 @@ export function createEngine(host, options) {
     },
     /** True while an object of the scene is outlined (hovered, or lit from the keyboard through the list). */
     hasHover: () => hoverId !== null,
+    /** True while an object is outlined because the keyboard's focus is on it (a list row): the Escape key's "selection". The pointer's hover is never one. */
+    hasSelection: () => hoverId !== null && hoverSource === "keyboard",
+    /** Clear the outline the keyboard's focus put on an object; the pointer's hover stays. */
+    clearSelection() {
+      if (hoverId === null || hoverSource !== "keyboard") return false;
+      hoverId = null;
+      hoverSource = null;
+      setOutline(null);
+      tooltip.hidden = true;
+      return true;
+    },
     clearHover() {
       if (hoverId === null) return false;
       hoverId = null;
+      hoverSource = null;
       setOutline(null);
       tooltip.hidden = true;
       return true;

@@ -493,7 +493,7 @@ out.activeAfterStart = t.active();
 const mid = frames(t, 0, 10);
 out.midInside = mid.left > 0 && mid.left < 2;
 out.stillActive = t.active();
-const end = frames(t, 160, 100);
+const end = frames(t, 160, 300);   // lands when under a quarter of a pixel is left (WP-9.11), a little after the first one percent
 out.endFrustum = [end.left, end.right, end.top, end.bottom]; out.activeAtEnd = t.active();
 out.noStepWhenIdle = t.step(9000);
 // a move cut by a rebuild settles false, once
@@ -504,7 +504,7 @@ out.cancelReturned = t.cancel(); out.cancelAgain = t.cancel(); out.activeAfterCa
 t = createTween();
 const first = t.start(a, b, 0); first.then((v) => settled.push(["first", v]));
 const second = t.start(b, a, 0); second.then((v) => settled.push(["second", v]));
-frames(t, 0, 100);
+frames(t, 0, 300);
 await new Promise((r) => setTimeout(r, 10));
 out.settled = settled.sort((x, y) => x[0].localeCompare(y[0]));
 out.states = [model.screenState({ loaded: false }, null), model.screenState({ loaded: false }, new Error("x")), model.screenState({ loaded: true }, new Error("x")), model.screenState({ loaded: true }, null)];
