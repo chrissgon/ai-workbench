@@ -15,14 +15,16 @@ import * as router from "../router.js";
 import { createEngine, NoWebGL } from "../scene/engine.js";
 import { floorCardNode } from "../scene/plates.js";
 
+export const PLATE_WIDTH = 290;
+export const PLATE_GAP_X = 14;
 const STATE_PATH = "docs/workbench/state.md";
 const ARTIFACTS_EVERY_MS = 20000;
 
 /** The placeholder floors drawn while the first read is loading: empty slabs, nothing to point at. */
 function loadingScene() {
   return {
-    ready: false, selected: null, focus: null, more: 0, tag: null, doorText: "",
-    floors: [0, 1, 2].map((i) => ({ name: `loading-${i}`, label: "", state: "off", window: "grey", decisions: 0, lobby: i === 0, sheets: 0, drawers: 1, tip: "", plate: null })),
+    ready: false, selected: null, focus: null, more: 0, tag: null,
+    floors: [0, 1, 2].map((i) => ({ name: `loading-${i}`, label: "", state: "off", window: "grey", decisions: 0, lobby: i === 0, sheets: 0, drawers: 1, tip: "", plate: null, interactive: false })),
   };
 }
 
@@ -104,24 +106,26 @@ export function createBuildingView(frame, env) {
     else go();
   }
 
-  function highlightRow(name) {
+  // `fromScene`: the scene itself is the one hovered (its own pick already drew the outline): the engine is not told again, or a hover of
+  // the door (not a floor, so name is null here) would clear the outline the scene just drew.
+  function highlightRow(name, fromScene = false) {
     hover = name;
     for (const li of list.querySelectorAll ? list.querySelectorAll(".wb-floor-item") : []) {
       li.classList.toggle("is-hover", li.getAttribute("data-floor") === name);
     }
-    if (engine) engine.highlight(name ? `floor:${name}` : null);
+    if (engine && !fromScene) engine.highlight(name ? `floor:${name}` : null);
     drawCorner();
   }
 
-  // The floor card at the scene's top right: the floor the pointer or the focus is on, else the work order's floor (the selected one),
-  // else nothing. The same component as each row of the floors list.
+  // The phone's floor card at the scene's top right: the floor the pointer or the focus is on (the phone shows one floor at a time).
+  // Desktop and tablet keep the plates beside the floors (WP-9.10), so there is no card there. The same component as each row of the floors list.
   let cornerKey = "";
   function drawCorner() {
     if (!engine || !last) return;
     const view = fm.building(last.snapshot, projectId);
     let row = null;
-    if (view && last.snapshot.loaded) {
-      const wanted = hover || (phone.matches ? focusOf(view) : view.tag ? view.tag.floor : null);
+    if (phone.matches && view && last.snapshot.loaded) {
+      const wanted = hover || focusOf(view);
       row = view.rows.slice(0, 8).find((r) => r.name === wanted) || null;
     }
     const card = row ? fm.cardOf(row) : null;
@@ -136,11 +140,11 @@ export function createBuildingView(frame, env) {
       label: "Building, loading",
       getInsets: () => {
         const base = frame.insets(panel);
-        if (frame.isPhone()) return { left: 4, right: 70, top: base.top, bottom: 40, pad: 0.98 };
-        return base;
+        if (frame.isPhone()) return { left: 4, right: 70, top: base.top, bottom: 40, pad: 0.98, cornerRight: 10 };
+        return { ...base, right: base.right + PLATE_WIDTH + PLATE_GAP_X, plateRight: base.right };
       },
       onOpen: open,
-      onHover: (id) => highlightRow(id && String(id).startsWith("floor:") ? String(id).slice(6) : null),
+      onHover: (id) => highlightRow(id && String(id).startsWith("floor:") ? String(id).slice(6) : null, true),
       onUnavailable: () => frame.sceneUnavailable(true),
       onRestored: () => frame.sceneUnavailable(false),   // the context came back: the host is shown again
     });
@@ -156,6 +160,23 @@ export function createBuildingView(frame, env) {
   const phone = window.matchMedia("(max-width: 639px)");
   const onPhone = () => { shown = ""; redraw(); };
   phone.addEventListener("change", onPhone);
+
+  // plates in the overlay are pointer targets: hovering one outlines its floor, a click opens it
+  const overPlate = (event) => (event.target && event.target.closest ? event.target.closest(".wb-plate") : null);
+  const onOver = (event) => {
+    const plate = overPlate(event);
+    if (plate) highlightRow(plate.getAttribute("data-floor"));
+  };
+  const onOut = (event) => {
+    if (overPlate(event)) highlightRow(null);
+  };
+  const onClick = (event) => {
+    const plate = overPlate(event);
+    if (plate) open(`floor:${plate.getAttribute("data-floor")}`);
+  };
+  frame.sceneHost.addEventListener("pointerover", onOver);
+  frame.sceneHost.addEventListener("pointerout", onOut);
+  frame.sceneHost.addEventListener("click", onClick);
 
   const onKey = (event) => {
     if (event.key !== "Escape" || disposed) return;
@@ -320,6 +341,9 @@ export function createBuildingView(frame, env) {
       disposed = true;
       observer.disconnect();
       phone.removeEventListener("change", onPhone);
+      frame.sceneHost.removeEventListener("pointerover", onOver);
+      frame.sceneHost.removeEventListener("pointerout", onOut);
+      frame.sceneHost.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKey);
       viewer.close();
       if (engine) engine.dispose();

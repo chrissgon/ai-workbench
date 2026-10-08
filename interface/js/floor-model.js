@@ -252,6 +252,18 @@ export function drawersOf(count) {
   return Math.max(1, Math.min(3, Math.ceil(count / 4)));
 }
 
+/** The plain data the plate of a row needs. */
+export function plateOf(row, selected = false) {
+  return {
+    name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.plateWord,
+    done: row.done, left: row.left, queued: row.queued,
+    runsText: `${row.runs} / ${row.runsCap}`, runsShare: format.share(row.runs, row.runsCap),
+    usdText: `${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}`, usdShare: format.share(row.usd, row.usdCap),
+    unknown: row.unknown, mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
+    selected, off: row.state === "off",
+  };
+}
+
 /**
  * The compact floor card of a row (WP-9.8, the maintainer's design): the same fields in the same order for the card at the scene's
  * top right and for each row of the floors list: name (with its decisions badge), state word, mode plate, one line of runs and spend.
@@ -272,12 +284,12 @@ export function cardOf(row) {
 export function buildingScene(view, documents, { focus = null, ready = true } = {}) {
   const selected = view.tag ? view.tag.floor : null;
   return {
-    ready, selected, focus: focus && view.rows.slice(0, MAX_FLOORS).some((r) => r.name === focus) ? focus : null, more: view.more, tag: view.tag, doorText: "Control room →",
+    ready, selected, focus: focus && view.rows.slice(0, MAX_FLOORS).some((r) => r.name === focus) ? focus : null, more: view.more, tag: view.tag,
     floors: view.rows.slice(0, MAX_FLOORS).map((row) => {
       const docs = agentDocuments(documents, row.name, view.none);
       return {
         name: row.name, label: row.label, state: row.state, window: row.window, decisions: row.decisions, lobby: row.lobby,
-        sheets: Math.min(3, docs.length), drawers: drawersOf(docs.length), tip: row.tip, interactive: true,
+        sheets: Math.min(3, docs.length), drawers: drawersOf(docs.length), tip: row.tip, interactive: true, plate: plateOf(row, row.name === selected),
       };
     }),
   };

@@ -151,6 +151,7 @@ out.mkt = { unknown: mkt.unknown, done: mkt.done, left: mkt.left };
 out.lobby = { link: view.rows[0].link, label: view.rows[0].label, lobby: view.rows[0].lobby };
 out.tag = view.tag;
 out.facts = view.facts;
+out.plate = fm.plateOf(eng, true);
 out.card = fm.cardOf(eng);
 out.cardOff = fm.cardOf(view.rows.find((r) => r.name === "design"));
 const scene = fm.buildingScene(view, [{ path: "docs/a.md", agent: "marketing" }, { path: "docs/b.md", agent: "marketing" }, { path: "docs/c.md", agent: "marketing" }, { path: "docs/d.md", agent: "marketing" }, { path: "docs/e.md", agent: "marketing" }], { focus: "brand" });
@@ -221,6 +222,8 @@ def test_the_model_derives_each_floors_state_and_facts_from_what_the_service_ret
     assert got["tag"] == {"floor": "engineering", "text": "#1", "request": 1}, "the work-order tag rests on the floor of the request's current task"
     assert got["facts"] == {"configuration": "Accepted", "accepted": True, "request": {"id": 1, "title": "Spring"}, "waiting": 2,
                             "running": {"id": 4, "title": "Task 4", "link": "#/p/0123456789ab/floor/engineering"}}
+    assert got["plate"]["runsText"] == "2 / 8" and got["plate"]["usdText"] == "$0.50 / $4.00" and got["plate"]["acting"] == "autonomous" \
+        and got["plate"]["selected"] is True and got["plate"]["mode"] == "autonomous-with-policy" and got["plate"]["pips"] == 4, "the plate of the desktop and the tablet"
     assert got["card"] == {"name": "engineering", "label": "Engineering", "dot": "theme", "decisions": 0, "word": "Running", "mode": "autonomous-with-policy", "pips": 4,
                            "acting": "autonomous", "actingPips": 3, "runsLine": "runs 2 / 8 · $0.50 / $4.00", "off": False}, \
         "the compact card: name, state word, mode plate, one line of runs and spend"
@@ -269,6 +272,38 @@ def test_the_desk_lists_the_agents_documents_newest_first_filters_in_the_page_an
         "a document is one percent-encoded segment of the hash; a bad encoding is no path"
 
 
+# --- the stack of plates --------------------------------------------------------------------------------------------------------
+
+STACK = r"""
+import { stackColumn } from "@JS@/scene/plates.js";
+const overlap = (items, centres, gap) => { const order = items.map((it, i) => ({ top: centres[i] - it.height / 2, bottom: centres[i] + it.height / 2 })).sort((a, b) => a.top - b.top); return order.some((o, i) => i && o.top < order[i - 1].bottom + gap - 1e-6); };
+const out = {};
+const six = Array.from({ length: 6 }, (_, i) => ({ want: 100 + i * 60, height: 90 }));
+const a = stackColumn(six, 64, 564, 5);
+out.crowded = { fits: a.fits, overlap: overlap(six, a.centres, 5), inside: Math.min(...a.centres.map((c) => c - 45)) >= 64 };
+const compact = six.map((s) => ({ ...s, height: 56 }));
+const b = stackColumn(compact, 64, 564, 5);
+out.compact = { fits: b.fits, overlap: overlap(compact, b.centres, 5), top: Math.min(...b.centres) - 28 >= 64 - 1e-6, bottom: Math.max(...b.centres) + 28 <= 564 + 1e-6 };
+const lone = stackColumn([{ want: 300, height: 90 }], 64, 564, 5);
+out.alone = lone.centres[0];
+const low = stackColumn([{ want: 560, height: 90 }, { want: 570, height: 90 }], 64, 564, 5);
+out.pulledUp = { last: low.centres[1] + 45 <= 564 + 1e-6, order: low.centres[0] < low.centres[1] };
+const shuffled = stackColumn([{ want: 300, height: 40 }, { want: 100, height: 40 }], 0, 500, 5);
+out.keepsOrder = shuffled.centres[1] < shuffled.centres[0];
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_plates_stack_beside_the_building_with_no_overlap_and_go_compact_when_they_do_not_fit(tmp_path):
+    got = run_node(tmp_path, STACK)
+    assert got["crowded"] == {"fits": False, "overlap": False, "inside": True} or got["crowded"]["fits"] is False, "six full plates do not fit 500 px: the caller asks for compact ones"
+    assert got["compact"] == {"fits": True, "overlap": False, "top": True, "bottom": True}, "six compact plates fit the free height with a 5 px gap"
+    assert got["alone"] == 300, "a plate stays where its floor is when nothing is in its way"
+    assert got["pulledUp"] == {"last": True, "order": True}, "a plate that would pass the bottom is pulled up, not cut"
+    assert got["keepsOrder"] is True, "the floor higher on the screen keeps the higher plate"
+
+
 # --- the compact floor card ---------------------------------------------------------------------------------------------------
 
 FLOOR_CARD = r"""
@@ -300,8 +335,11 @@ def test_the_corner_card_and_every_row_of_the_floors_list_are_one_component_with
     assert got["bare"] == {"runs": None, "mode": None, "badge": None}, "no mode, no decisions and no runs line leave out their parts"
     building = (JS / "views" / "building.js").read_text(encoding="utf-8")
     assert "floorCardNode(card, { class: \"wb-floor-row\"" in building and "floorCardNode(card, { class: \"is-corner\"" in building, "the list and the corner draw the one component"
-    for gone in ("wb-floor-text", "wb-floor-meters", "wb-plate"):
+    for gone in ("wb-floor-text", "wb-floor-meters"):
         assert gone not in building, f"the Building no longer draws {gone}"
+    # the corner card is the phone's only (WP-9.10): desktop and tablet keep the plates beside the floors
+    assert "if (phone.matches && view && last.snapshot.loaded)" in building, "the corner card is drawn on the phone alone"
+    assert "PLATE_WIDTH" in building and "plateRight: base.right" in building, "the plates' column keeps its inset off the free rectangle"
 
 
 # --- the cards ---------------------------------------------------------------------------------------------------------------------

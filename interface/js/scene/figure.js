@@ -1,15 +1,16 @@
 // The agent figure (handoff scene.md 5.2): no face, no gender, a vest in the state's colour. Three poses: working
 // (seated, leaning forward, both forearms on the keyboard), waiting for the person (standing beside the desk, one arm
 // raised, the amber exclamation above the head) and idle (seated, leaning back, arms resting). An agent that is off has
-// no figure (nothing is built). The only motion is A1: the forearms alternate while a task of the agent runs, with the
-// prototype's numbers (0.22 rad at 11 rad/s, the second arm 2 rad behind: WP-9.8); `typing(seconds)` sets them and `rest()`
-// puts them back, so a still frame is the pose. Nothing else moves: no bobbing, no head turn (the prototype's fidgeting).
+// no figure (nothing is built). The only motion is A1, while a task of the agent runs, the prototype's own functions
+// (prototype-motion.js `workingPose`, WP-9.10): the forearms swing 0.22 rad at 11 rad/s with the second arm 2 rad behind, the body bobs
+// 0.01 at 6 rad/s and the upper body turns 0.12 rad at 1.3 rad/s. `typing(seconds)` sets them and `rest()` puts them back, so a still
+// frame is the pose. The prototype turned a head that had a visor; this head is a plain sphere (no face, scene.md 5.2), where a turn
+// would show nothing, so the turn is the upper body's. The waiting figure does not wave and the idle one does not nod: no idle fidgeting.
 
 import { exclamation } from "./props.js";
+import { TYPING_AMPLITUDE, TYPING_PHASE, TYPING_RATE, screenBright, workingPose } from "./prototype-motion.js";
 
-export const TYPING_RATE = 11;          // radians per second of the swing: sin(11 t), about 1.75 swings a second (the prototype's)
-export const TYPING_AMPLITUDE = 0.22;   // radians (the prototype's)
-export const TYPING_PHASE = 2;          // the second arm's lead, in radians (the prototype's)
+export { TYPING_AMPLITUDE, TYPING_PHASE, TYPING_RATE };   // the prototype's numbers, kept where the figure's tests look for them
 
 /** The vest colour of a state (DEVIATION-9): working theme, waiting warn, idle muted. */
 export function vestColour(palette, state) {
@@ -93,10 +94,15 @@ export function figure(kit, parent, state, x, z, rotY, key = "figure") {
   return {
     group, marker,
     typing(seconds) {
-      for (const e of elbows) e.elbow.rotation.x = e.base + TYPING_AMPLITUDE * Math.sin(seconds * TYPING_RATE + e.phase);
+      const pose = workingPose(seconds);
+      for (const e of elbows) e.elbow.rotation.x = e.base + (e.phase ? pose.right : pose.left);
+      group.position.y = pose.bob;
+      body.rotation.y = pose.turn;
     },
     rest() {
       for (const e of elbows) e.elbow.rotation.x = e.base;
+      group.position.y = 0;
+      body.rotation.y = 0;
     },
   };
 }
@@ -107,16 +113,26 @@ export function scanY(seconds) {
   return 0.95 + 0.2 + 0.16 * Math.sin((seconds / SCAN_PERIOD) * Math.PI * 2);
 }
 
-/** The working motion of one desk: the figure's forearms and the scan line, one tick and one rest for the engine's loop. */
-export function workingMotion(who, deskParts) {
+/** The screen's two tones while the agent works: the prototype flipped its emissive colour between two blues at `sin(9 t) > 0`. */
+export function screenTone(palette, seconds) {
+  return screenBright(seconds) ? palette.T.theme : palette.mix(palette.T.theme, palette.ink, 0.2);
+}
+
+/** The working motion of one desk: the figure, the screen's two tones and the scan line, one tick and one rest for the engine's loop. */
+export function workingMotion(who, deskParts, palette) {
+  const tone = (seconds) => {
+    if (deskParts.screen && palette) deskParts.screen.material.color.copy(screenTone(palette, seconds));
+  };
   return {
     tick(seconds) {
       if (who) who.typing(seconds);
       if (deskParts.scan) deskParts.scan.position.y = scanY(seconds);
+      tone(seconds);
     },
     rest() {
       if (who) who.rest();
       if (deskParts.scan) deskParts.scan.position.y = scanY(0);
+      if (deskParts.screen && palette) deskParts.screen.material.color.copy(palette.T.theme);
     },
   };
 }

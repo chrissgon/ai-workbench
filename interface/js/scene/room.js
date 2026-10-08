@@ -60,7 +60,7 @@ export function buildRoom(kit, model) {
     if (who.marker) markers.push(who.marker);
     hits.push({ object: who.group, id: "agent", tip: model.tips.agent, shape: true });
   }
-  if (state === "working") motions.push(workingMotion(who, d));
+  if (state === "working") motions.push(workingMotion(who, d, palette));
   // One object per destination (WP-9.8): the figure opens the Agent tab, the desk the Desk tab, the tray the Inbox and a sheet its
   // document. The wall board and the cabinet are scenery: no hit, no outline, no tooltip, nothing opens.
   kit.box(1.4, 0.95, 0.04, -1.0, 0.775, -D / 2 + 0.16, palette.bg, { parent: f, edges: true });

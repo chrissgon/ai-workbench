@@ -52,6 +52,8 @@ export function desk(kit, parent, x, z, state, w = 1.8) {
   kit.box(0.78, 0.46, 0.04, 0, 0.92, -0.26, palette.ink, { parent: group });
   const working = state === "working";
   const screen = kit.box(0.72, 0.4, 0.01, 0, 0.95, -0.235, screenColour(palette, state), { parent: group, unlit: true, cast: false });
+  // a working screen changes tone (the prototype's flip between two blues): it has a material of its own, since the kit shares one per colour
+  if (state === "working") screen.material = kit.adopt(screen.material.clone());
   const lines = [];
   if (working) {
     for (let i = 0; i < 4; i++) {

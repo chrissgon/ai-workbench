@@ -17,7 +17,25 @@ export function fitFrustum(bounds, size, insets, pad) {
   return { left: cx - (w / 2) * s, right: cx + (w / 2) * s, top: cy + (h / 2) * s, bottom: cy - (h / 2) * s };
 }
 
-/** A frustum between two, at t from 0 to 1. */
+/**
+ * The frustum of a camera move at progress `p` (0 to 1), the prototype's way: the centre is moved in a straight line and the ZOOM
+ * (the reciprocal of the frustum's half width, the prototype's `cam.zoom`) is moved in a straight line, not the frustum's sides.
+ * Moving the sides in a straight line made a fly-in start slowly and end fast; moving the zoom is what the prototype did.
+ */
+export function moveFrustum(a, b, p) {
+  const read = (f) => ({ x: (f.left + f.right) / 2, y: (f.top + f.bottom) / 2, zoom: 2 / (f.right - f.left), aspect: (f.top - f.bottom) / (f.right - f.left) });
+  const from = read(a);
+  const to = read(b);
+  const mix = (x, y) => x + (y - x) * p;
+  const zoom = mix(from.zoom, to.zoom);
+  const half = 1 / zoom;
+  const x = mix(from.x, to.x);
+  const y = mix(from.y, to.y);
+  const hh = half * mix(from.aspect, to.aspect);
+  return { left: x - half, right: x + half, top: y + hh, bottom: y - hh };
+}
+
+/** A frustum between two, at t from 0 to 1 (the sides moved in a straight line). */
 export function lerpFrustum(a, b, t) {
   const mix = (x, y) => x + (y - x) * t;
   return { left: mix(a.left, b.left), right: mix(a.right, b.right), top: mix(a.top, b.top), bottom: mix(a.bottom, b.bottom) };

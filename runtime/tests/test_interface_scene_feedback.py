@@ -285,13 +285,16 @@ def test_the_hover_outline_is_the_prototypes_thin_depth_tested_line_that_follows
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert "new THREE.LineBasicMaterial({ color: 0xffffff });" in engine, "a one-pixel line of the theme colour, full opacity, depth-tested (no depthTest: false, no renderOrder)"
     assert "depthTest: false" not in engine and "renderOrder" not in engine
-    assert "OUTLINE_PAD = 0.04" in engine and "SHAPE_GROW" in engine and "EdgesGeometry(node.geometry" in engine, "the outline of a figure, a desk, a tray, a sheet is the edges of its own meshes"
-    room = (SCENE / "room.js").read_text(encoding="utf-8")
-    assert len(re.findall(r"shape: true", room)) == 4, "the figure, the desk, the tray and each sheet are outlined by their shape"
+    assert "OUTLINE_PAD = 0.04" in engine and "outlineGeometry(THREE, hit.object" in engine, "every outline is the edges of the object's own meshes (outline.js), OUTLINE_PAD off"
+    outline = (SCENE / "outline.js").read_text(encoding="utf-8")
+    assert "EdgesGeometry(mesh.geometry" in outline and "userData.shell" in outline, "the edges of the meshes, the shell's when the object marks one"
+    assert "Box3().setFromObject(hit.object).expandByScalar" not in engine, "no padded bounding box"
     city = (SCENE / "city.js").read_text(encoding="utf-8")
     assert "kit.themeLine, group);" in city and "edge.visible = false" in city, "the lot line is built hidden"
     assert "beacon = null" in city and "lot.runningTask !== null && lot.accepted" in city, "the beacon ring exists only for a running task"
-    assert "Math.sin(seconds * 3)" in city and "0.12 * wave" in city and "0.35 + 0.3" in city, "the beacon is the prototype's: sin(3 t), scale 1 +- .12, opacity .35 to .65"
+    motion = (SCENE / "prototype-motion.js").read_text(encoding="utf-8")
+    assert "beaconPulse(seconds)" in city and "Math.sin(t * BEACON_RATE)" in motion and "BEACON_RATE = 3" in motion and "BEACON_SWING = 0.12" in motion and "0.35 + 0.3" in motion, \
+        "the beacon is the prototype's: sin(3 t), scale 1 +- .12, opacity .35 to .65"
 
 
 # --- one object per destination ------------------------------------------------------------------------------------------------------
@@ -428,13 +431,14 @@ out.beaconRest = [beacon.ring.scale.x, beacon.material.opacity];
 // a move may settle early (the screen is opened while the camera is still on its way) and still runs to its end
 const t = createTween();
 const a = { left: 0, right: 10, top: 10, bottom: 0 }; const b = { left: 2, right: 6, top: 8, bottom: 4 };
+const frames = (tween, from, count) => { let f = null; for (let i = 1; i <= count; i++) f = tween.step(from + i * 16) || f; return f; };
 const settled = [];
-const move = t.start(a, b, 0, 1000, 0.5); move.then((v) => settled.push(v));
-t.step(100); await new Promise((r) => setTimeout(r, 5)); out.early = [settled.slice(), t.active()];
-t.step(500); await new Promise((r) => setTimeout(r, 5)); out.atHalf = [settled.slice(), t.active()];
-const last = t.step(1000); out.end = [last.left, t.active()];
-const cut = t.start(a, b, 0, 1000, 0.5); const cutSettled = []; cut.then((v) => cutSettled.push(v)); t.cancel(); await new Promise((r) => setTimeout(r, 5)); out.cut = cutSettled;
-const late = t.start(a, b, 0, 1000, 0.5); const lateSettled = []; late.then((v) => lateSettled.push(v)); t.step(600); t.cancel(); await new Promise((r) => setTimeout(r, 5)); out.lateCancel = lateSettled;
+const move = t.start(a, b, 0, 0.9); move.then((v) => settled.push(v));
+frames(t, 0, 10); await new Promise((r) => setTimeout(r, 5)); out.early = [settled.slice(), t.active()];
+frames(t, 160, 25); await new Promise((r) => setTimeout(r, 5)); out.atNine = [settled.slice(), t.active()];
+const last = frames(t, 560, 80); out.end = [last.left, last.right, t.active()];
+const cut = t.start(a, b, 0, 0.9); const cutSettled = []; cut.then((v) => cutSettled.push(v)); t.cancel(); await new Promise((r) => setTimeout(r, 5)); out.cut = cutSettled;
+const late = t.start(a, b, 0, 0.9); const lateSettled = []; late.then((v) => lateSettled.push(v)); frames(t, 0, 60); t.cancel(); await new Promise((r) => setTimeout(r, 5)); out.lateCancel = lateSettled;
 console.log(JSON.stringify(out));
 """
 
@@ -449,18 +453,19 @@ def test_the_motions_are_the_prototypes_numbers_the_scan_line_never_jumps_and_a_
     assert abs(lo - 0.88) < 1e-3 and abs(hi - 1.12) < 1e-3 and flat is True, "scale 1 +- .12 in the ring's plane, the thickness stays"
     assert abs(olo - 0.35) < 1e-3 and abs(ohi - 0.65) < 1e-3 and got["period"] is True, "opacity .35 to .65, a cycle of 2 pi / 3 s"
     assert got["beaconRest"] == [1, 1]
-    assert got["early"] == [[], True] and got["atHalf"] == [[True], True], "settled at the hand-over fraction, still moving"
-    assert got["end"] == [2, False], "the move runs to its end"
+    assert got["early"] == [[], True] and got["atNine"][0] == [True] and got["atNine"][1] is True, "settled when the move is nine tenths done, still moving"
+    assert got["end"] == [2, 6, False], "the move runs to its end, exactly on its goal"
     assert got["cut"] == [False] and got["lateCancel"] == [True], "a cut before the hand-over settles false, after it stays true"
 
 
 def test_the_state_animations_keep_the_rules_of_the_scene_and_the_figure_does_not_fidget():
     figure = (SCENE / "figure.js").read_text(encoding="utf-8")
-    for fidget in ("position.y = Math.sin", "head.rotation", "rotation.y = t", "Math.random", "spark"):
-        assert fidget not in figure, f"the figure does not {fidget}: only the forearms type"
+    for fidget in ("Math.random", "spark", "wave", "nod"):
+        assert fidget not in figure.replace("does not wave and the idle one does not nod", ""), f"the figure has no {fidget}: it types, bobs and turns only while its agent works"
+    assert "workingPose(seconds)" in figure and "group.position.y = pose.bob" in figure and "body.rotation.y = pose.turn" in figure, "the prototype's working pose: arms, bob and turn"
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
-    assert re.search(r"export const CAMERA_MS = 1023;", engine) and "OPEN_MS = 1439" in engine and "FLY_SETTLE_AT = 0.5" in engine
-    assert "openEase(t)" in engine and "positionLabels();   // the labels ride along with the camera" in engine, "the labels follow the camera and the opening instead of vanishing"
+    assert re.search(r"export const CAMERA_MS = 1023;", engine) and "OPEN_MS = 1439" in engine and "FLY_SETTLE_AT = 0.9" in engine
+    assert "content.intro.apply(smooth(p))" in engine and "createApproach(EXPLODE_RATE)" in engine and "positionLabels();   // the labels ride along with the camera" in engine, "the labels follow the camera and the opening instead of vanishing"
     assert 'loop.start("beacon", { ambient: true })' in engine, "typing and the beacon are ambient: held to 30 frames a second"
     assert "pulseStart = clock()" not in engine
 
