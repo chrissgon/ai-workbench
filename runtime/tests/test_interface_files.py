@@ -235,3 +235,39 @@ def test_the_page_is_one_policy_safe_html_document_with_the_library_and_its_own_
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")
     assert "prefers-reduced-motion" in css and "16px" in css
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", css), "style.css sets no colour of its own: the library's tokens decide"
+
+
+# --- what the screens call, and when they read ---------------------------------------------------------------------------------
+
+
+def test_every_client_function_the_screens_call_exists_and_the_city_only_reads():
+    exported = set(re.findall(r"^export (?:async )?function (\w+)", CLIENT.read_text(encoding="utf-8"), re.M))
+    writes = {"answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"}
+    used = {}
+    for path in own_files():
+        if path.suffix != ".js" or path == CLIENT:
+            continue
+        for name in re.findall(r"\bapi\.(\w+)\(", path.read_text(encoding="utf-8")):
+            used.setdefault(name, set()).add(path.name)
+    assert {"projects", "status", "agents", "task"} <= set(used), "the City reads the project list, the status, the agents and one task"
+    for name, files in used.items():
+        assert name in exported or name == "onAuthFailure", f"{sorted(files)} call api.{name}, which api.js does not export"
+    assert not (set(used) & writes), f"the City and the frame only read: {sorted(set(used) & writes)}"
+
+
+def test_the_page_reads_every_five_seconds_while_visible_and_never_while_hidden():
+    main = (INTERFACE / "js" / "main.js").read_text(encoding="utf-8")
+    assert "const POLL_MS = 5000;" in main and "const RETRY_MS = 10000;" in main
+    assert re.search(r"function schedule\(ms\) \{[^}]*!document\.hidden", main, re.S), "a poll is scheduled only while the document is visible"
+    assert 'addEventListener("visibilitychange"' in main and "stopPolling()" in main, "hiding the document stops the poll; showing it reads once"
+    assert "setInterval" not in main
+
+
+def test_the_screens_keep_no_state_in_a_global_and_the_token_stays_in_the_token_module():
+    for path in own_files():
+        if path.suffix != ".js":
+            continue
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"\bwindow\.__|\bglobalThis\.\w+\s*=", text), f"{rel(path)} keeps state in a global"
+        if path.name not in ("token.js", "api.js", "main.js"):
+            assert not re.search(r"\b(?:getToken|setToken)\(", text), f"{rel(path)} touches the token"

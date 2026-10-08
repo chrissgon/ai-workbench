@@ -1,0 +1,31 @@
+// F-1 the back button and the breadcrumbs.
+
+import { h } from "../dom.js";
+import { icon } from "./icons.js";
+
+/** The back button and the breadcrumb trail. */
+export function createNav() {
+  const back = h("button", { class: "pui-btn pui-surface pui-outline wb-back", type: "button", "aria-label": "Back" }, icon("chevron-left", 16));
+  const list = h("ol", { class: "wb-crumbs" });
+  const nav = h("nav", { class: "wb-crumb-nav", "aria-label": "Breadcrumbs" }, list);
+  const el = h("div", { class: "wb-nav" }, back, nav);
+  let target = null;
+  back.addEventListener("click", () => {
+    if (target) window.location.hash = target;
+  });
+  return {
+    el,
+    /** items: [{label, href}] (the last is the current one, with no href); backHash: where Back goes, or null (disabled). */
+    set(items, backHash) {
+      target = backHash;
+      back.disabled = !backHash;
+      list.replaceChildren(...items.map((item, i) => {
+        const last = i === items.length - 1;
+        const label = last
+          ? h("span", { class: "wb-crumb is-current", "aria-current": "page", text: item.label })
+          : h("a", { class: "wb-crumb", href: item.href, text: item.label });
+        return h("li", { class: "wb-crumb-item" }, i > 0 ? h("span", { class: "wb-crumb-sep", "aria-hidden": "true", text: "/" }) : null, label);
+      }));
+    },
+  };
+}
