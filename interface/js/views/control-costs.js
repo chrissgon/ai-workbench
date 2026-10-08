@@ -4,7 +4,7 @@
 
 import { h } from "../dom.js";
 import * as model from "./control-model.js";
-import { cell, code, emptyBlock, failedCard, FAILED_TITLE, loadingCard, tableCard } from "./control-parts.js";
+import { cell, code, emptyBlock, failedCard, FAILED_TITLE, loadingCard, reconcile, tableCard } from "./control-parts.js";
 
 // The XML namespace of SVG is a name, not an address; it is written in parts because the file test refuses the text of one.
 const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
@@ -100,11 +100,11 @@ export function createCostsTab(handlers) {
       input.removeAttribute("aria-describedby");
       setCaps(state);
       if (state.status === "loading") {
-        el.replaceChildren(...[fieldShown ? row : null, loadingCard(model.LOADING)].filter(Boolean));
+        reconcile(el, [fieldShown ? row : null, loadingCard(model.LOADING)].filter(Boolean));
         return;
       }
       if (state.status === "failed") {
-        el.replaceChildren(...[fieldShown ? row : null, failedCard(FAILED_TITLE, state.error)].filter(Boolean));
+        reconcile(el, [fieldShown ? row : null, failedCard(FAILED_TITLE, state.error)].filter(Boolean));
         return;
       }
       if (state.status === "refused") {
@@ -112,17 +112,18 @@ export function createCostsTab(handlers) {
         input.setAttribute("aria-describedby", "wb-since-notice");
         const notice = failedCard("Date refused", state.error);
         notice.id = "wb-since-notice";
-        el.replaceChildren(row, notice);
+        reconcile(el, [row, notice]);
         return;
       }
       const data = state.data;
       const rows = Array.isArray(data.rows) ? data.rows : [];
       if (!rows.length) {
-        el.replaceChildren(row, emptyBlock(`No runs since ${data.since}.`));
+        reconcile(el, [row, emptyBlock(`No runs since ${data.since}.`)]);
         return;
       }
       const chart = model.chartOf(rows, data.since);
-      el.replaceChildren(...[
+      // the row stays in place: the field the person is typing in keeps its focus through a read
+      reconcile(el, [
         row,
         chart ? chartCard(chart, disclosure) : null,
         tableCard(runsTable(rows), "wb-costs-card"),

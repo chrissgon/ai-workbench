@@ -85,7 +85,6 @@ and a module under `js/views/`, read more routes through `js/api.js`, and edit n
 
 The Control room's three tabs (WP-9.5) read `skills`, `costs`, `connections` and `agents` through `js/api.js`, once on entering and once on return from a hidden tab (and `costs` again when the Since date changes), and write nothing. Its small server-room scene (racks: the connection facts as LEDs; wall screen: the runs of the last seven days; console) registers itself as the scene kind `server` and is static.
 
-
 ## What the Floor sends
 
 Only `js/floor/`, the Lobby's `views/lobby*.js` and `cards/` send a write, through `actions.js`: `answer`, `release`, `approve`, `reject`, `verdict`, `cancel`, `setMode`,

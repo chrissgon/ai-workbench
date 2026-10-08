@@ -207,7 +207,10 @@ export function createControlView(frame) {
   document.addEventListener("visibilitychange", onVisible);
 
   function onKey(event) {
-    // Escape goes up to the Building (the flows' keyboard path), unless something inside already used it
+    // Escape goes up to the Building (the flows' keyboard path), unless something inside already used it; in a field it does
+    // nothing, so that the date or the search the person typed is not thrown away
+    const target = event.target;
+    if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.tagName === "SELECT")) return;
     if (event.key === "Escape" && !event.defaultPrevented && projectId) window.location.hash = router.buildingHash(projectId);
   }
   panel.el.addEventListener("keydown", onKey);

@@ -5,7 +5,7 @@
 import { h } from "../dom.js";
 import { icon } from "../frame/icons.js";
 import * as model from "./control-model.js";
-import { cell, chip, code, emptyBlock, failedCard, FAILED_TITLE, loadingCard, tableCard } from "./control-parts.js";
+import { cell, chip, code, emptyBlock, failedCard, FAILED_TITLE, loadingCard, reconcile, tableCard } from "./control-parts.js";
 
 const PHONE = "(max-width: 639px)";
 
@@ -145,7 +145,7 @@ export function createSkillsTab() {
     fillAreas();
     renderResults();
     // the notice comes first: whether any skill runs as proven is decided by it (OPEN-26, recommended answer)
-    el.replaceChildren(...[spec ? notice(spec) : null, legend(), filters.box, results].filter(Boolean));
+    reconcile(el, [spec ? notice(spec) : null, legend(), filters.box, results].filter(Boolean));   // the filters stay attached: the search field keeps its focus
   }
 
   return {

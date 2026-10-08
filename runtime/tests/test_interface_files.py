@@ -445,3 +445,14 @@ def test_every_wb_class_the_control_room_builds_is_a_rule_of_the_stylesheet():
     assert 'import { createControlView } from "./views/control.js";' in main and 'route.screen === "control"' in main
     model = (INTERFACE / "js" / "views" / "control-model.js").read_text(encoding="utf-8")
     assert re.search(r'TABS = Object\.freeze\(\[\["skills", "Skills"\], \["costs", "Costs"\], \["connections", "Connections"\]\]\)', model)
+
+
+def test_the_control_room_imports_the_client_only_as_a_namespace_and_escape_leaves_a_typed_field_alone():
+    for path in control_modules():
+        text = path.read_text(encoding="utf-8")
+        imports = re.findall(r'^import\s+(.+?)\s+from\s+"\.\./api\.js";', text, re.M)
+        assert all(found == "* as api" for found in imports), f"{path.name} imports the client other than as `* as api`: {imports}"
+        assert not re.search(r'import\s*\{[^}]*\}\s*from\s*"\.\./api\.js"|api\.js"\)', text), f"{path.name}: a named or dynamic import of the client would escape the read-only check"
+    control = (INTERFACE / "js" / "views" / "control.js").read_text(encoding="utf-8")
+    assert re.search(r'target\.tagName === "INPUT" \|\| target\.tagName === "TEXTAREA" \|\| target\.tagName === "SELECT"\)+\s*return;', control), \
+        "Escape does nothing while the person types in a field"

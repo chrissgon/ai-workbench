@@ -233,8 +233,14 @@ class FakeNode {
   removeEventListener() {}
   fire(type, event = {}) { for (const fn of this.listeners[type] || []) fn({ preventDefault() {}, defaultPrevented: false, ...event }); }
   append(...items) { for (const it of items) { const n = it instanceof FakeNode || it instanceof FakeText ? it : new FakeText(it); if (n.parent) n.parent.children = n.parent.children.filter((c) => c !== n); n.parent = this; this.children.push(n); } }
-  replaceChildren(...items) { this.children.forEach((c) => { c.parent = null; }); this.children = []; this.append(...items); }
-  remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
+  replaceChildren(...items) { this.children.forEach((c) => { c.parent = null; c.dropped = (c.dropped || 0) + 1; }); this.children = []; this.append(...items); }
+  insertBefore(node, ref) {
+    if (node.parent) { node.parent.children = node.parent.children.filter((c) => c !== node); node.dropped = (node.dropped || 0) + 1; }
+    node.parent = this;
+    const at = ref ? this.children.indexOf(ref) : -1;
+    if (at < 0) this.children.push(node); else this.children.splice(at, 0, node);
+  }
+  remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; this.dropped = (this.dropped || 0) + 1; }
   focus() {}
   set textContent(v) { this.replaceChildren(String(v)); }
   get textContent() { return this.children.map((c) => (c.attrs && c.attrs["aria-hidden"] === "true" ? "" : c.textContent)).join(""); }
@@ -329,7 +335,11 @@ search.value = "zzz"; search.fire("input"); out.afterNothing = text(skills.el.fi
 search.value = ""; search.fire("input"); out.afterReset = names();
 // the notice: first, with both lines
 skills.set({ status: "ready", data: { ...skillsData, checks: { measurement: "ok", image: "the eval image is not on this machine" } } });
+out.searchKept = [search.parent !== null, search.dropped || 0];   // the search field was never taken out of the page by a redraw
 out.noticeFirst = skills.el.children[0].attrs.class;
+skills.set({ status: "ready", data: skillsData });
+skills.set({ status: "ready", data: { ...skillsData, checks: { measurement: "ok", image: "the eval image is not on this machine" } } });
+out.searchKeptAfterNotice = [search.dropped || 0, search.value];
 out.notice = skills.el.children[0].all((n) => n.tagName === "STRONG" || n.tagName === "SPAN").map(text);
 out.noticeRole = skills.el.children[0].attrs.role;
 skills.set({ status: "ready", data: { skills: [], checks: { measurement: "ok", image: "ok" } } });
@@ -382,6 +392,12 @@ costs.set({ status: "loading", fieldValue: null });
 out.costsLoadingNoField = costs.el.all((n) => n.tagName === "INPUT").length;
 costs.set({ status: "ready", data: costsData, agents: [{ name: "engineering", runs_today: 5, usd_today: 1.87 }], fieldValue: "2026-09-07" });
 const input = costs.el.find((n) => n.tagName === "INPUT");
+// a read in flight, a quiet re-read and a failed read redraw the tab without taking the field out of it
+costs.set({ status: "loading", data: costsData, agents: null, fieldValue: "2026-09-07" });
+costs.set({ status: "ready", data: costsData, agents: [{ name: "engineering", runs_today: 5, usd_today: 1.87 }], fieldValue: "2026-09-07" });
+costs.set({ status: "failed", error: "x", agents: null, fieldValue: "2026-09-07" });
+costs.set({ status: "ready", data: costsData, agents: [{ name: "engineering", runs_today: 5, usd_today: 1.87 }], fieldValue: "2026-09-07" });
+out.sinceKept = [input.dropped || 0, input.parent !== null];
 out.since = [input.value, input.getAttribute("type"), text(costs.el.find((n) => n.tagName === "LABEL"))];
 const caps = costs.el.find((n) => has(n, "wb-caps"));
 out.caps = [text(caps), caps.getAttribute("title")];
@@ -435,6 +451,7 @@ def test_the_three_tabs_show_what_the_operations_returned_in_the_columns_and_wor
     assert got["card"]["body"] == got["detailText"]
     assert got["afterArea"] == ["mkt-publish"] and got["afterBand"] == ["brand-voice", "brand-identity"] and got["afterName"] == ["brand-voice"]
     assert got["afterNothing"] == "No skill matches these filters." and got["afterReset"] == ["brand-voice", "brand-identity", "mkt-publish"]
+    assert got["searchKept"] == [True, 0] and got["searchKeptAfterNotice"] == [0, "" ], "a redraw of the Skills tab never takes the search field out of the page: it keeps its focus"
     assert got["noticeFirst"] == "wb-check-notice" and got["noticeRole"] == "alert"
     assert got["notice"] == ["A check of the proof failed", "These skills run as not proven: on the reference model and without autonomy.",
                              "Measurement check: ok", "Image check: the eval image is not on this machine"]
@@ -478,6 +495,7 @@ def test_the_three_tabs_show_what_the_operations_returned_in_the_columns_and_wor
         ["2026-10-06", "engineering", "reference-model-1", "adapter-a", "4", "340,100", "not recorded", "unknown (1 run)"],
     ], "newest day first; not recorded, no price and unknown (n run) are the cells' words"
     assert got["footnote"] == "Recomputed from token counts and the prices in the project's configuration (source: provider price page, 2026-09-30). A run whose usage is unknown shows unknown and is counted."
+    assert got["sinceKept"] == [0, True], "a read of the Costs tab never takes the Since field out of the page: it keeps its focus"
     assert got["sinceCalls"] == ["2026-10-01"], "a change of the field asks the page to read costs again with the typed text"
     assert got["refused"] == ["Date refused", "since is a day: YYYY-MM-DD", "2026-13-07", "true", 0]
     assert got["costsEmpty"] == ["No runs since 2026-09-07.", 0, None]
@@ -573,6 +591,8 @@ await settle();
 out.visibleReads = calls.length - before;
 // Escape inside the panel goes up to the building
 window.location.hash = "";
+for (const tag of ["input", "textarea", "select"]) view.el.fire("keydown", { key: "Escape", target: new FakeNode(tag) });
+out.escapeInField = window.location.hash;
 view.el.fire("keydown", { key: "Escape" });
 out.escape = window.location.hash;
 view.dispose();
@@ -608,6 +628,7 @@ def test_the_control_view_reads_once_per_entry_and_shows_each_tabs_own_state(tmp
     assert got["emptyText"] is True
     assert got["costsCalls"][-2:] == ["costs?since=2026-13-07", "costs?since=2026-10-01"] and got["costsCalls"][0] == "costs"
     assert got["visibleReads"] == 4
+    assert got["escapeInField"] == "", "Escape in a field leaves the typed text alone"
     assert got["escape"] == "#/p/aaaaaaaaaaaa"
     assert got["disposed"] == [0] and got["afterDispose"] == 0
 
@@ -710,6 +731,7 @@ out.notAcceptedBuilt = count(sceneModel({ accepted: false, connections, costs })
 // a window of two days sits at the right end of the seven bars
 out.short = sceneModel({ accepted: true, connections, costs: { since: "2026-10-06", rows: [row("2026-10-06", 2), row("2026-10-07", 4)] } }).bars.map((v) => +v.toFixed(2));
 out.opens = OPENS;
+out.unread = sceneModel({ accepted: true, connections: null }).racks.map((r) => r.tip);
 console.log(JSON.stringify(out));
 """
 
@@ -724,7 +746,7 @@ def test_the_server_room_has_one_led_per_connection_fact_and_one_bar_per_summed_
         "each class, then each secret, then the image; the slots left over are off"
     assert model["racks"] == [["store · tasks", 2, "store · tasks · 2 missing · Connections tab"],
                               ["integrations", 1, "integrations · 1 missing · Connections tab"],
-                              ["vcs · publishers", 0, "vcs · publishers · nothing read yet"]]
+                              ["vcs · publishers", 0, "vcs · publishers · no connection here"]]
     # days Oct 1 to Oct 7: 4, 5, 0, 8, 0, 0, 12 runs, each over the largest day
     assert model["bars"] == [0.3333, 0.4167, 0, 0.6667, 0, 0, 1]
     assert model["label"] == "Server room: 3 racks, 3 connections missing, runs of the last 7 days"
@@ -743,6 +765,7 @@ def test_the_server_room_has_one_led_per_connection_fact_and_one_bar_per_summed_
     assert got["notAccepted"] == {"ready": False, "label": "Server room, waiting for the configuration to be accepted"}
     assert (got["notAcceptedBuilt"]["ok"], got["notAcceptedBuilt"]["bad"], got["notAcceptedBuilt"]["bars"]) == (0, 0, []), "a project that is not accepted is dim"
     assert got["short"] == [0, 0, 0, 0, 0, 0.5, 1]
+    assert got["unread"] == ["store · tasks · nothing read yet", "integrations · nothing read yet", "vcs · publishers · nothing read yet"], "before the connections are read the racks say so"
     assert got["opens"] == {"rack-1": "connections", "rack-2": "connections", "rack-3": "connections", "wall": "costs", "console": "skills"}
 
 

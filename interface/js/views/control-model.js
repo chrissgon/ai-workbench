@@ -347,10 +347,11 @@ export function sceneModel({ accepted = true, connections = null, costs = null }
   }
   const missing = facts.filter((ok) => !ok).length;
   const leds = Array.from({ length: SLOTS }, (_, i) => (i < facts.length ? (facts[i] ? "ok" : "bad") : "off"));
+  const read = Boolean(accepted && connections);
   const racks = RACKS.map((rack, r) => {
     const here = facts.slice(r * UNITS, (r + 1) * UNITS);
     const gone = here.filter((ok) => !ok).length;
-    const tip = !here.length ? `${rack.name} · nothing read yet` : gone ? `${rack.name} · ${gone} missing · Connections tab` : `${rack.name} · all found · Connections tab`;
+    const tip = !here.length ? `${rack.name} · ${read ? "no connection here" : "nothing read yet"}` : gone ? `${rack.name} · ${gone} missing · Connections tab` : `${rack.name} · all found · Connections tab`;
     return { id: rack.id, name: rack.name, missing: gone, tip };
   });
   const bars = Array.from({ length: 7 }, () => 0);
