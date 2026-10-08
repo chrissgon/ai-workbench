@@ -6,6 +6,8 @@
 // "hit" the pointer when it was a unit away from it and, being nearer the camera, won over the mesh the pointer was on. That is
 // how the tooltip named the first of three racks while the pointer stood on the third. A line is never pickable; a hidden mesh
 // is not either; a mesh belongs to the nearest pickable group above it (the Lobby's door stands inside its floor and wins there).
+// A mesh that is not pickable never blocks the pick: a tree, a slab or another object's wall in front of a pickable object is ignored,
+// so the pointer on a tree in front of a lot names the lot behind it, by design (the HTML list has the same objects).
 
 /** The visible meshes under `object` (a hidden node hides its subtree), nearest-owner not decided here. */
 export function pickableMeshes(object) {

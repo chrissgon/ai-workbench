@@ -97,3 +97,14 @@ export function cornerPosition(size, insets) {
   const right = ins.cornerRight !== undefined ? ins.cornerRight : ins.right;
   return { x: Math.max(0, size.w - right), y: Math.max(0, ins.top) };
 }
+
+/**
+ * The insets the camera fits the scene into: when the page pins a card in the corner (`cornerRight` is given: the phone's floor
+ * card), the diorama is fitted below it, so the card sits over empty space and not over the back wall. `cornerHeight` is the card's
+ * measured height in pixels (0 when there is none).
+ */
+export function fitInsets(insets, cornerHeight, gap = 8) {
+  const ins = insets || {};
+  if (!cornerHeight || ins.cornerRight === undefined) return ins;
+  return { ...ins, top: (ins.top || 0) + cornerHeight + gap };
+}

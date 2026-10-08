@@ -337,3 +337,90 @@ def test_the_building_has_a_plate_for_each_floor_and_no_control_room_label_and_t
     assert "pointerover" in view and '.wb-plate' in view, "hovering a plate outlines its floor, a click opens it (as before WP-9.8)"
     assert "function highlightRow(name, fromScene = false)" in view and "if (engine && !fromScene)" in view and ": null, true)," in view, \
         "a hover that came from the scene never tells the engine again: hovering the door (no floor) used to clear the outline the pick had just drawn"
+
+
+# --- review fixes: the working motion, the hovered outline that moves with it, the phone card's room ----------------------------------
+
+WORKING = r"""
+import * as THREE from "@JS@/three.js";
+import { createKit } from "@JS@/scene/kit.js";
+import { figure, workingMotion, scanY } from "@JS@/scene/figure.js";
+import { desk } from "@JS@/scene/furniture.js";
+import { outlineGeometry } from "@JS@/scene/outline.js";
+import { buildRoom } from "@JS@/scene/room.js";
+import { workingPose, screenBright } from "@JS@/scene/prototype-motion.js";
+import { fitInsets, cornerPosition } from "@JS@/scene/labels.js";
+
+const c = (hex) => new THREE.Color(hex);
+const T = { border: c(0x101010), theme: c(0x2020f0), success: c(0x10f010), error: c(0xf01010), emphasis: c(0x303030), text: c(0x404040), warn: c(0xf0a010), textMuted: c(0x505050), mutedRole: c(0x707070) };
+const palette = { dark: false, T, mix: (a, b, t) => a.clone().lerp(b, t), bg: c(0xfafafa), shell: c(0xf8f8f8), ink: c(0x202020), metal: c(0x606060), deskTop: c(0xd0d0d0), screenOff: c(0x181818), leafA: c(0x80c080), leafB: c(0x70b070), trunk: c(0x806040),
+  lot: c(0xffffff), warm: c(0xf0c040), pale: c(0xd0d8f0), glass: c(0xd0e0f0), wood: c(0xc0a080), drawer: c(0x9090d0), skin: c(0xe0c0b0), windows: { lit: c(0xf0c040), grey: T.border } };
+const out = {};
+const kit = createKit(palette);
+const parent = new THREE.Group();
+const d = desk(kit, parent, 1.4, -1.35, "working", 1.8);
+const who = figure(kit, parent, "working", 1.5, -0.62, Math.PI);
+const motion = workingMotion(who, d, palette);
+parent.updateMatrixWorld(true);
+const [left, right] = who.parts.elbows;
+const hex = () => d.screen.material.color.getHex();
+const snap = () => ({ left: left.elbow.rotation.x, right: right.elbow.rotation.x, bob: who.group.position.y, turn: who.parts.body.rotation.y, scan: d.scan.position.y, screen: hex() });
+const flat = (g) => Array.from(g.getAttribute("position").array);
+out.rest0 = snap();
+out.outline0 = flat(outlineGeometry(THREE, who.group, 0.04));
+motion.tick(0.1);
+out.t01 = snap();
+out.p01 = workingPose(0.1);
+out.bright01 = screenBright(0.1);
+out.outline1 = flat(outlineGeometry(THREE, who.group, 0.04));
+motion.tick(0.5);
+out.t05 = snap();
+out.bright05 = screenBright(0.5);
+out.scan05 = scanY(0.5);
+out.scan0 = scanY(0);
+motion.rest();
+out.rest1 = snap();
+out.outline2 = flat(outlineGeometry(THREE, who.group, 0.04));
+out.theme = T.theme.getHex();
+out.dimmer = palette.mix(T.theme, palette.ink, 0.2).getHex();
+// the room: the working agent and desk move, a resting one does not
+const tips = { agent: "a", desk: "d", tray: "t", cabinet: "c", board: "b" };
+const room = (state) => buildRoom(kit, { ready: true, state, window: "grey", decisions: 0, drawers: 1, sheets: [{ path: "docs/a.md", tip: "a" }], tips, board: null, door: false });
+out.moves = Object.fromEntries(["working", "idle"].map((s) => [s, room(s).hits.map((h) => [h.id, Boolean(h.moves)])]));
+// the phone's card: the scene is fitted below it
+out.insets = [fitInsets({ top: 80, right: 70, cornerRight: 10 }, 78, 8), fitInsets({ top: 80, right: 70, cornerRight: 10 }, 0), fitInsets({ top: 64, right: 300 }, 90), fitInsets(undefined, 50)];
+out.corner = cornerPosition({ w: 375, h: 300 }, { top: 80, right: 70, cornerRight: 10 });
+kit.dispose();
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_a_working_figure_types_bobs_and_turns_its_screen_flips_and_rest_puts_the_pose_back(tmp_path):
+    got = run_node(tmp_path, WORKING)
+    r0, t1, t5, r1, p = got["rest0"], got["t01"], got["t05"], got["rest1"], got["p01"]
+    assert r0["left"] == r0["right"] == -1 and r0["bob"] == 0 and r0["turn"] == 0 and r0["screen"] == got["theme"], "the pose at rest"
+    assert abs(t1["left"] - (-1 + p["left"])) < 1e-9 and abs(t1["right"] - (-1 + p["right"])) < 1e-9 and t1["left"] != t1["right"], "the forearms swing, the second 2 rad behind"
+    assert abs(t1["bob"] - p["bob"]) < 1e-9 and abs(t1["turn"] - p["turn"]) < 1e-9 and t1["bob"] != 0 and t1["turn"] != 0, "the body bobs and the upper body turns"
+    assert got["bright01"] is True and t1["screen"] == got["theme"], "the screen on its bright tone at 0.1 s"
+    assert got["bright05"] is False and t5["screen"] == got["dimmer"] != got["theme"], "and on the dimmer one at 0.5 s: it flips"
+    assert abs(t5["scan"] - got["scan05"]) < 1e-9, "the scan line follows its slow sine"
+    assert {**r1, "scan": 0} == {**r0, "scan": 0} and abs(r1["scan"] - got["scan0"]) < 1e-9, "rest() restores the pose, the bob, the turn and the screen, and puts the scan line at its resting row"
+    assert got["outline0"] != got["outline1"], "the figure's outline made at rest is not the outline of the typing figure: it has to be made again while it works"
+    assert got["outline2"] == got["outline0"], "and it is the same again at rest"
+    assert got["moves"]["working"] == [["desk", True], ["tray", False], ["agent", True], ["sheet:docs/a.md", False]] and all(m is False for _, m in got["moves"]["idle"]), \
+        "only a working agent's figure and desk are marked as moving"
+    engine = (SCENE / "engine.js").read_text(encoding="utf-8")
+    assert "if (hoveredHit() && hoveredHit().moves) refreshOutline();" in engine and "refreshOutline();   // the outline is in world space" in engine, \
+        "the hovered outline is made again on a motion tick when the hovered object moves, and while the floors separate"
+
+
+@needs_node
+def test_the_phone_scene_is_fitted_below_the_corner_card_and_only_there(tmp_path):
+    got = run_node(tmp_path, WORKING)
+    assert got["insets"][0] == {"top": 166, "right": 70, "cornerRight": 10}, "card height 78 + 8 gap added under the card's top inset"
+    assert got["insets"][1] == {"top": 80, "right": 70, "cornerRight": 10}, "no card, nothing added"
+    assert got["insets"][2] == {"top": 64, "right": 300} and got["insets"][3] == {}, "desktop and tablet (no corner inset) are fitted as before"
+    assert got["corner"] == {"x": 365, "y": 80}
+    engine = (SCENE / "engine.js").read_text(encoding="utf-8")
+    assert "fitInsets(insets, corner ? corner.offsetHeight : 0)" in engine and "      fit();   // the scene is fitted below the card" in engine, "the card is measured and the scene refitted when it is put in or taken out"

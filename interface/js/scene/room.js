@@ -49,16 +49,16 @@ export function buildRoom(kit, model) {
   group.add(f);
   const state = model.state;
   const d = desk(kit, f, 1.4, -1.35, state, 1.8);
-  hits.push({ object: d.group, id: "desk", tip: model.tips.desk, shape: true });
+  hits.push({ object: d.group, id: "desk", tip: model.tips.desk, moves: state === "working" });
   const t = tray(kit, f, 2.05, 0, -1.3, model.decisions, state === "waiting");
-  hits.push({ object: t, id: "tray", tip: model.tips.tray, shape: true });
+  hits.push({ object: t, id: "tray", tip: model.tips.tray });
   const place = seating(state);
   chair(kit, f, place.chair[0], place.chair[1], place.chair[2]);
   let who = null;
   if (place.figure) {
     who = figure(kit, f, state, place.figure[0], place.figure[1], place.figure[2], "figure:marker");
     if (who.marker) markers.push(who.marker);
-    hits.push({ object: who.group, id: "agent", tip: model.tips.agent, shape: true });
+    hits.push({ object: who.group, id: "agent", tip: model.tips.agent, moves: state === "working" });
   }
   if (state === "working") motions.push(workingMotion(who, d, palette));
   // One object per destination (WP-9.8): the figure opens the Agent tab, the desk the Desk tab, the tray the Inbox and a sheet its
@@ -70,7 +70,7 @@ export function buildRoom(kit, model) {
   model.sheets.slice(0, 6).forEach((s, i) => {
     const col = i % 3;
     const g = sheet(kit, f, -1.75 + col * 0.5, 0, 0.85 + Math.floor(i / 3) * 0.46, 0.1 * (col - 1));
-    hits.push({ object: g, id: `sheet:${s.path}`, tip: s.tip, shape: true });
+    hits.push({ object: g, id: `sheet:${s.path}`, tip: s.tip });
   });
   plant(kit, f, 2.75, 1.95, 1.15);
   plant(kit, f, 0.5, 2.0, 0.9);

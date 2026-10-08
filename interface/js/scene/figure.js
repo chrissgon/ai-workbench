@@ -92,7 +92,7 @@ export function figure(kit, parent, state, x, z, rotY, key = "figure") {
     marker = { key, group: mark, restY: 1.92 };
   }
   return {
-    group, marker,
+    group, marker, parts: { body, elbows },   // the parts the working motion moves, for the page's checks and the motion's test
     typing(seconds) {
       const pose = workingPose(seconds);
       for (const e of elbows) e.elbow.rotation.x = e.base + (e.phase ? pose.right : pose.left);

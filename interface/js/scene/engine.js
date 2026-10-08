@@ -14,7 +14,7 @@ import { clampView, fitView, frustumOf, panBy, panPixels, pointerToNdc, zoomAt }
 import { buildCity, pulseBeacon, restBeacon } from "./city.js";
 import { ease, fitFrustum } from "./fit.js";
 import { createKit } from "./kit.js";
-import { cornerPosition, mountLabels, placeLabels } from "./labels.js";
+import { cornerPosition, fitInsets, mountLabels, placeLabels } from "./labels.js";
 import { applyOutlineVisibility, showPlan } from "./look.js";
 import { createLoop } from "./loop.js";
 import { outlineGeometry } from "./outline.js";
@@ -313,7 +313,7 @@ export function createEngine(host, options) {
     lastInsets = insets;
     tools.style.setProperty("--wb-y", `${Math.max(16, insets.bottom || 0)}px`);   // above the tracking bar, whatever its height
     bounds = contentBounds(THREE, camera, content.group);
-    frustum = fitFrustum(bounds, size, insets, insets.pad || 1.04);
+    frustum = fitFrustum(bounds, size, fitInsets(insets, corner ? corner.offsetHeight : 0), insets.pad || 1.04);   // below the corner card, when there is one
     view = clampView(view, frustum, bounds);   // the person's zoom and pan stay while they are inside the limits
     if (!tween.active()) applyView();
     positionLabels();
@@ -396,7 +396,7 @@ export function createEngine(host, options) {
       intro.last = now;
       content.intro.apply(smooth(p));
       renderer.shadowMap.needsUpdate = true;
-      if (hoverId) setOutline(hoverId);   // the outline is in world space: it follows the floors while they separate
+      refreshOutline();   // the outline is in world space: it follows the floors while they separate
       positionLabels();   // the plates ride along with their floors
       if (intro.approach.done()) {
         intro = null;
@@ -427,6 +427,7 @@ export function createEngine(host, options) {
       const seconds = (now - epoch) / 1000;
       content.beacons.forEach((b) => pulseBeacon(b, seconds));
       content.motions.forEach((m) => m.tick(seconds));
+      if (hoveredHit() && hoveredHit().moves) refreshOutline();   // a hovered figure or desk that is working moves: its outline moves with it
     }
     const started = clock();
     renderer.render(scene, camera);
@@ -467,6 +468,17 @@ export function createEngine(host, options) {
       scene.add(outline);
     }
     loop.requestRender();
+  }
+
+  const hoveredHit = () => (hoverId && content ? content.hits.find((x) => x.id === hoverId) || null : null);
+
+  // The same outline made again from where the object is now (the opening moves a floor, typing moves a figure's arms): one geometry
+  // swapped in place, nothing else touched.
+  function refreshOutline() {
+    const hit = hoveredHit();
+    if (!hit || !outline) return;
+    outline.geometry.dispose();
+    outline.geometry = outlineGeometry(THREE, hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
   }
 
   // What the page's checks read: the object the outline is drawn for and where its box is on the screen (CSS pixels of the canvas),
@@ -650,6 +662,7 @@ export function createEngine(host, options) {
         overlay.append(corner);
         placeCorner();
       }
+      fit();   // the scene is fitted below the card: its height is measured now
     },
     /** The person's camera, for the page's checks and the keyboard-free callers: zoom in, zoom out, fit, move. */
     zoomBy: (factor) => zoomBy(factor),
