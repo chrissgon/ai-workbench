@@ -50,6 +50,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   let flowsAsked = false;
   let accepted = true;
   let again = false;                  // a read of the conversation was asked for while one was running
+  let conversationRead = Promise.resolve();    // the read that is running, and the one more that was asked for
   let viewerWas = false;
   let lastOpened = null;              // the document the person opened last: the focus goes back to its row when the viewer closes
   let leftInbox = true;               // the Inbox was left since it was last drawn: a resolved card goes
@@ -113,12 +114,21 @@ export function createLobbyView(frame, { project, onChanged }) {
     thread.update({ messages, requests, pending, bodies: held, now: last.now, loading: !loaded, routing });
   }
 
-  async function readConversation() {
-    if (disposed) return;
+  /**
+   * Read the conversation after the newest message. A call made while a read runs asks for one more and returns the promise of the
+   * read that is running, which ends when that one more has been done too: the caller (the end of a route) then knows the messages.
+   */
+  function readConversation() {
+    if (disposed) return Promise.resolve();
     if (readingConversation) {
       again = true;
-      return;
+      return conversationRead;
     }
+    conversationRead = readOnce();
+    return conversationRead;
+  }
+
+  async function readOnce() {
     readingConversation = true;
     try {
       const got = await api.conversation(project, { after: lastId(messages), signal });
@@ -128,6 +138,7 @@ export function createLobbyView(frame, { project, onChanged }) {
       if (changed || !loaded) {
         loaded = true;
         redraw();
+        drawTabs();
         drawRoom();
       }
     } catch (e) {
@@ -226,13 +237,18 @@ export function createLobbyView(frame, { project, onChanged }) {
     if (tab !== "inbox") return;
     leftInbox = false;
     if (!accepted) return;
-    const parts = status ? inboxParts(status, messages) : { cards: [], pointers: [] };
+    // Which plans have their card under a message is known only once the conversation was read: until then no plan is drawn as a card
+    // (it would be drawn here, then be replaced by a line, and lose a note typed in it).
+    const whole = status ? inboxParts(status, messages) : { cards: [], pointers: [] };
+    const cards = loaded ? whole.cards : whole.cards.filter((item) => item.kind !== "plan");
+    const withheld = whole.cards.length - cards.length;
+    const parts = { cards, pointers: whole.pointers };
     const held = {};
     for (const [id, entry] of bodies) if (entry.body) held[id] = entry.body;
     const ids = [...(status ? status.requests || [] : []).map((r) => r.id), ...(model ? model.tasks.map((t) => t.id) : [])];
     inbox.update({
       cards: parts.cards, pointers: parts.pointers, requests: status ? status.requests || [] : [],
-      resolved: fm.resolvedLines({ ...held, ...agent.bodies() }, ids, now), selected: route.pending, loading: !snapshot.loaded,
+      resolved: fm.resolvedLines({ ...held, ...agent.bodies() }, ids, now), selected: route.pending, loading: !snapshot.loaded || (withheld > 0 && cards.length === 0),
     });
   }
 
@@ -371,7 +387,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     if (event.key !== "Escape" || disposed || !last.route || tabOf(last.route) !== "desk" || !last.route.path) return;
     const a = document.activeElement;
     if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.tagName === "SELECT")) return;
-    if (document.querySelector("dialog[open].wb-dialog")) return;
+    if ((a && a.closest && a.closest(".wb-switcher, .wb-wait-menu-wrap")) || document.querySelector("dialog[open].wb-dialog")) return;
     window.location.hash = router.lobbyHash(project, "desk");
   };
   document.addEventListener("keydown", onKey);
@@ -440,6 +456,10 @@ export function createLobbyView(frame, { project, onChanged }) {
     },
     stats() {
       return scene.stats();
+    },
+    /** What a click on an object of the room opens (also what a test presses): the tray, the cabinet, a sheet, the desk, the board, the figure. */
+    open(id) {
+      openFromScene(id);
     },
   };
 }

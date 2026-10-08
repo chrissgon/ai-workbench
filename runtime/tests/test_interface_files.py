@@ -455,3 +455,16 @@ def test_every_class_the_lobbys_tab_modules_build_is_styled_and_the_tab_files_ar
         assert re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css) and cls in lobby
     assert not missing, f"classes the Lobby's tab modules build that style.css never names: {missing}"
     assert "LATER" not in lobby and "comes with the Floor package" not in lobby, "no placeholder is left for the three tabs"
+
+
+def test_no_lobby_module_takes_a_write_out_of_the_client_by_name_or_by_destructuring():
+    writes = {"answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"}
+    for path in sorted((INTERFACE / "js" / "views").glob("lobby*.js")):
+        text = path.read_text(encoding="utf-8")
+        for names in re.findall(r"import\s*\{([^}]*)\}\s*from\s*[\"'][./]*api\.js[\"']", text):
+            assert not ({n.strip().split(" as ")[0] for n in names.split(",")} & writes), f"{path.name} imports a write of the client by name"
+        for names in re.findall(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*api\b", text):
+            assert not ({n.strip().split(":")[0].strip() for n in names.split(",")} & writes), f"{path.name} destructures a write out of the client"
+        assert not re.search(r"\bapi\s*\[", text), f"{path.name} picks an operation of the client by a computed name"
+        for name in writes:
+            assert not re.search(rf"=\s*api\.{name}\b(?!\()", text), f"{path.name} takes api.{name} as a value"
