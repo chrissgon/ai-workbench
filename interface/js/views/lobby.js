@@ -200,7 +200,7 @@ export function createLobbyView(frame, { project, onChanged }) {
 
   function drawRoom() {
     const status = last.snapshot && last.snapshot.details[project] && last.snapshot.details[project].status;
-    const requestRow = status ? model.openRequest(status) : null;
+    const requestRow = status ? model.pickRequest(status, model.requestChoice(project)) : null;
     const room = roomModel({
       working: turn !== null || routing.size > 0, decisions: status ? lobbyDecisions(status).length : 0, hasMessages: messages.length > 0,
       accepted, request: requestRow, ready: Boolean(status), documents: desk.rows(),
@@ -212,12 +212,12 @@ export function createLobbyView(frame, { project, onChanged }) {
     composer.set({ sending: turn !== null, notice, disabled: !accepted });
   }
 
-  /** A click in the room: the tray opens the Inbox, the cabinet the Desk, a sheet its document, the desk, the board and the figure the Agent tab. */
+  /** A click in the room: the tray opens the Inbox, the desk the Desk tab, a sheet its document, the figure the Agent tab. */
   function openFromScene(id) {
     if (disposed) return;
     if (id === "tray") window.location.hash = router.lobbyHash(project, "inbox");
-    else if (id === "cabinet") window.location.hash = router.lobbyHash(project, "desk");
-    else if (id === "board" || id === "agent" || id === "desk") window.location.hash = router.lobbyHash(project, "agent");
+    else if (id === "desk") window.location.hash = router.lobbyHash(project, "desk");
+    else if (id === "agent") window.location.hash = router.lobbyHash(project, "agent");
     else if (String(id).startsWith("sheet:")) window.location.hash = router.lobbyDeskHash(project, String(id).slice(6));
   }
 

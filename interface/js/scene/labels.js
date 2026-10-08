@@ -1,11 +1,11 @@
 // The HTML labels over the canvas (handoff scene.md 6): elements in an overlay, placed from a projected 3D anchor.
 // A position is written only through the CSS Object Model (`--wb-x` and `--wb-y`, read by a class as `translate`): the
 // page forbids an inline style attribute and style text, and a CSSOM write is neither. Positions are worked out on
-// demand (data, camera or size changed), never every frame; labels over the budget or overlapping are culled.
+// demand (data, camera or size changed: one frame each while the camera moves, none while it is still); labels over the budget or
+// overlapping are culled.
 
 import { h } from "../dom.js";
 import { cull, rankOf } from "./cull.js";
-import { stackColumn } from "./plates.js";
 
 /** The card of a building: a dot (theme when a task runs), the name, the decisions badge and a sub line. */
 export function cityCard(spec) {
@@ -33,53 +33,13 @@ export function mountLabels(overlay, specs, { popped = new Set() } = {}) {
   return entries;
 }
 
-/** The gap between two plates of the column, in pixels (the export's 5 px). */
-export const PLATE_GAP = 5;
-const PLATE_OFFSET = 14;
-
-/** Put the plates of a building in one column to the right of it, none over another; compact when they do not fit. */
-function placeColumn(plates, project, hidden, insets, size) {
-  for (const { entry } of plates) entry.node.classList.toggle("is-culled", hidden);
-  if (hidden || !plates.length || !size) return;
-  const ins = { top: 0, bottom: 0, plateRight: 0, ...(insets || {}) };
-  const points = plates.map(({ entry }) => project(entry.spec.anchor));
-  const plateWidth = plates[0].entry.node.offsetWidth || 290;
-  const edge = Math.max(...points.map((p) => p.x)) + PLATE_OFFSET;
-  const x = Math.max(0, Math.min(edge, size.w - ins.plateRight - plateWidth));
-  const top = ins.top;
-  const bottom = size.h - ins.bottom;
-  const measure = () => plates.map(({ entry }, i) => ({ want: points[i].y, height: entry.node.offsetHeight || 90 }));
-  for (const { entry } of plates) entry.node.classList.remove("is-compact");
-  let result = stackColumn(measure(), top, bottom, PLATE_GAP);
-  if (!result.fits) {
-    for (const { entry } of plates) entry.node.classList.add("is-compact");
-    result = stackColumn(measure(), top, bottom, PLATE_GAP);
-  }
-  plates.forEach(({ entry }, i) => {
-    entry.node.style.setProperty("--wb-x", `${x.toFixed(1)}px`);
-    entry.node.style.setProperty("--wb-y", `${result.centres[i].toFixed(1)}px`);
-  });
-}
-
 /**
- * Place the labels: project each anchor with the camera, write the position, and hide the ones the culling drops.
- * `project(anchor)` returns {x, y} in pixels of the scene area. `hidden` hides all (a camera move). A label with
- * `place: "column"` is a floor plate: the plates are stacked beside the building and never culled; one with `place: "dock"`
- * is placed by the stylesheet (the phone's one-floor view). `insets` and `size` are the free rectangle's (placeColumn).
+ * Place the labels: project each anchor with the camera, write the position, and hide the ones the culling drops. `project(anchor)`
+ * returns {x, y} in pixels of the scene area. `hidden` hides all.
  */
-export function placeLabels(entries, project, { hidden = false, insets = null, size = null } = {}) {
-  const plates = [];
+export function placeLabels(entries, project, { hidden = false } = {}) {
   const items = [];
   entries.forEach((entry, index) => {
-    const place = entry.spec.place;
-    if (place === "column") {
-      plates.push({ entry, index });
-      return;
-    }
-    if (place === "dock") {
-      entry.node.classList.toggle("is-culled", hidden);
-      return;
-    }
     const p = project(entry.spec.anchor);
     entry.node.style.setProperty("--wb-x", `${p.x.toFixed(1)}px`);
     entry.node.style.setProperty("--wb-y", `${p.y.toFixed(1)}px`);
@@ -90,5 +50,10 @@ export function placeLabels(entries, project, { hidden = false, insets = null, s
   });
   const kept = hidden ? new Set() : cull(items);
   for (const item of items) entries[item.id].node.classList.toggle("is-culled", !kept.has(item.id));
-  placeColumn(plates, project, hidden, insets, size);
+}
+
+/** The corner slot's position: the top right of the free rectangle the panels leave (`insets`), in pixels of the scene area. */
+export function cornerPosition(size, insets) {
+  const ins = { right: 0, top: 0, ...(insets || {}) };
+  return { x: Math.max(0, size.w - ins.right), y: Math.max(0, ins.top) };
 }

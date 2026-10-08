@@ -23,8 +23,29 @@ export function lerpFrustum(a, b, t) {
   return { left: mix(a.left, b.left), right: mix(a.right, b.right), top: mix(a.top, b.top), bottom: mix(a.bottom, b.bottom) };
 }
 
-/** Ease in and out (cubic) for t from 0 to 1. */
+/**
+ * The prototype's feel (its `scene.js`): the camera approached its goal exponentially, `1 - exp(-4.5 t)` a second (a fast start
+ * that settles softly), and the building opened with `1 - exp(-3.2 t)` read through a smoothstep. A move here runs for the time
+ * those take to settle to one percent (ln 100 over the rate) and the curve is normalised so it ends exactly on its goal.
+ */
+export const CAMERA_RATE = 4.5;
+export const OPEN_RATE = 3.2;
+const SETTLE = Math.log(100);
+
+/** Milliseconds a move of the prototype's rate takes to settle to one percent. */
+export function settleMs(rate) {
+  return Math.round((SETTLE / rate) * 1000);
+}
+
+const clamp01 = (t) => Math.max(0, Math.min(1, t));
+
+/** The prototype's exponential approach for t from 0 to 1: fast at first, soft at the end, exactly 1 at t = 1. */
 export function ease(t) {
-  const c = Math.max(0, Math.min(1, t));
-  return c < 0.5 ? 4 * c * c * c : 1 - Math.pow(-2 * c + 2, 3) / 2;
+  return (1 - Math.exp(-SETTLE * clamp01(t))) / (1 - Math.exp(-SETTLE));
+}
+
+/** The prototype's opening curve: the approach read through a smoothstep, so it also starts softly. */
+export function openEase(t) {
+  const e = ease(t);
+  return e * e * (3 - 2 * e);
 }

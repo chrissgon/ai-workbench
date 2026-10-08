@@ -28,7 +28,7 @@ const TABS = [{ id: "agent", label: "Agent" }, { id: "inbox", label: "Inbox" }, 
 
 /** The room the loading state draws: an empty desk, nothing to point at. */
 function loadingRoom() {
-  return { ready: false, state: "off", window: "dark", decisions: 0, drawers: 1, sheets: [], tips: { agent: "", desk: "", tray: "", cabinet: "", board: "" }, board: null };
+  return { ready: false, state: "off", window: "grey", decisions: 0, drawers: 1, sheets: [], tips: { agent: "", desk: "", tray: "", cabinet: "", board: "" }, board: null };
 }
 
 /** Create the Floor in `frame`. env: {refresh()}. Returns {update({snapshot, route, now}), dispose(), stats()}. */
@@ -94,9 +94,10 @@ export function createFloorView(frame, env) {
   // --- the scene ---------------------------------------------------------------------------------------------------------------
   function sceneOpen(id) {
     if (disposed || !project) return;
+    // one object per destination: the tray the Inbox, the desk the Desk tab, the figure the Agent tab, a sheet its document
     if (id === "tray") window.location.hash = router.floorHash(project, agent, "inbox");
-    else if (id === "cabinet") window.location.hash = router.floorHash(project, agent, "desk");
-    else if (id === "board" || id === "agent" || id === "desk") window.location.hash = router.floorHash(project, agent, "agent");
+    else if (id === "desk") window.location.hash = router.floorHash(project, agent, "desk");
+    else if (id === "agent") window.location.hash = router.floorHash(project, agent, "agent");
     else if (String(id).startsWith("sheet:")) window.location.hash = router.deskHash(project, agent, String(id).slice(6));
   }
 

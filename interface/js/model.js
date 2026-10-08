@@ -10,6 +10,7 @@
 
 import * as format from "./format.js";
 import * as router from "./router.js";
+import { windowState } from "./scene/look.js";
 
 export const MAX_LOTS = 4;       // at most four lots are drawn (EDGE-9); the rest are reached from the lists
 export const MAX_FLOORS = 8;
@@ -52,12 +53,57 @@ export function openRequest(status) {
   return open.reduce((a, b) => (b.id > a.id ? b : a));
 }
 
-/** The tasks whose `task` body the page needs: {project, id, state}. Only the running task of the followed project's open request (its run's start time). */
+/** The open (not final) requests of a status body, newest first. */
+export function openRequests(status) {
+  const open = (status && Array.isArray(status.requests) ? status.requests : []).filter((r) => !FINAL.has(r.state));
+  return open.sort((a, b) => b.id - a.id);
+}
+
+/**
+ * The request the tracking bar shows: the person's choice while that request is still open, else the newest open request that has a
+ * running task, else the newest open request, else null (WP-9.8, the maintainer's rule).
+ */
+export function pickRequest(status, choice = null) {
+  const open = openRequests(status);
+  if (!open.length) return null;
+  const chosen = choice === null || choice === undefined ? null : open.find((r) => r.id === choice);
+  if (chosen) return chosen;
+  return open.find((r) => (r.tasks || []).some((t) => t.state === "running")) || open[0];
+}
+
+/** The request after (delta 1) or before (delta -1) `currentId` in the newest-first list, wrapping round; null when none is open. */
+export function cycleRequest(status, currentId, delta) {
+  const open = openRequests(status);
+  if (!open.length) return null;
+  const at = open.findIndex((r) => r.id === currentId);
+  const next = at < 0 ? 0 : (at + delta + open.length) % open.length;
+  return open[next];
+}
+
+// The person's choice of request for each project, kept in memory for the session (nothing is stored).
+const choices = new Map();
+
+/** Remember which request the tracking bar shows for a project. */
+export function chooseRequest(projectId, requestId) {
+  choices.set(projectId, requestId);
+}
+
+/** The remembered choice for a project, or null. */
+export function requestChoice(projectId) {
+  return choices.has(projectId) ? choices.get(projectId) : null;
+}
+
+/** Forget every choice (a new session). */
+export function resetRequestChoices() {
+  choices.clear();
+}
+
+/** The tasks whose `task` body the page needs: {project, id, state}. Only the running task of the followed project's shown request (its run's start time). */
 export function neededTasks(projects, details, followed) {
   const wanted = [];
   for (const p of projects) {
     if (p.id !== followed) continue;
-    const request = openRequest(details[p.id] && details[p.id].status);
+    const request = pickRequest(details[p.id] && details[p.id].status, requestChoice(p.id));
     const running = request && (request.tasks || []).find((t) => t.state === "running");
     if (running) wanted.push({ project: p.id, id: running.id, state: running.state });
   }
@@ -82,10 +128,8 @@ export function buildingOf(project, detail) {
   }
   const waits = new Set(decided.map((d) => d.agent));
   const floors = (ordered.length ? ordered : [{ name: null, enabled: true, acting_mode: null }]).map((a) => {
-    let window = "pale";
-    if (!accepted) window = "dark";
-    else if (a.name && running.has(a.name)) window = "lit";
-    else if (a.enabled === false || a.acting_mode === "stopped") window = "dark";
+    // a window is warm when a task of the floor's agent runs and grey otherwise (waiting, idle, stopped, not accepted)
+    const window = windowState(accepted && Boolean(a.name) && running.has(a.name));
     return { agent: a.name, window, waits: accepted && (a.name ? waits.has(a.name) : decided.length > 0) };
   });
   const open = !accepted ? 0 : status ? decided.length : format.count(project.open_pending);
@@ -166,7 +210,7 @@ export function waitingRows(snapshot, now, only = null) {
 export function tracking(snapshot, projectId, now) {
   const project = (snapshot.projects || []).find((p) => p.id === projectId);
   const detail = project && snapshot.details[project.id];
-  const request = detail ? openRequest(detail.status) : null;
+  const request = detail ? pickRequest(detail.status, requestChoice(projectId)) : null;
   if (!project || !request) return null;
   const ordered = floorsOf(detail.agents);
   const tasks = request.tasks || [];
@@ -197,8 +241,12 @@ export function tracking(snapshot, projectId, now) {
       link: current.link,
     };
   }
+  const others = openRequests(detail.status).map((r) => ({
+    id: r.id, title: r.title || `Request ${r.id}`, state: r.state, running: (r.tasks || []).some((t) => t.state === "running"), selected: r.id === request.id,
+  }));
   return {
-    request: { id: request.id, title: request.title || "", state: request.state, project: project.name },
+    request: { id: request.id, title: request.title || "", state: request.state, project: project.name, projectId: project.id },
+    requests: others,
     steps, doneCount: tasks.filter((t) => t.state === "done").length, total: tasks.length, now: nowCard,
   };
 }
@@ -210,7 +258,7 @@ export function projectSub(snapshot, projectId) {
   if (!(project.config && project.config.accepted)) return "Not accepted";
   const detail = snapshot.details[projectId];
   if (!detail || !detail.status) return "...";
-  const request = openRequest(detail.status);
+  const request = pickRequest(detail.status, requestChoice(projectId));
   if (!request) return "No request is open";
   const tasks = request.tasks || [];
   return `Request #${request.id} · ${tasks.filter((t) => t.state === "done").length} of ${tasks.length} steps done`;
@@ -219,7 +267,7 @@ export function projectSub(snapshot, projectId) {
 /** What the scene needs of the City: the first four buildings in a plain shape, with the id of the selected one; `ready` is false while the first read is loading (nothing arrives then). */
 export function sceneModel(buildings, selectedId, ready = true) {
   return {
-    selectedId, ready,
+    selectedId, outlined: null, ready,   // `outlined`: the lot the route selects (none on the City, so no lot line stands)
     lots: buildings.slice(0, MAX_LOTS).map((b) => ({
       id: b.id, name: b.name, accepted: b.accepted, decisions: b.decisions, runningTask: b.runningTask,
       floors: b.floors.map((f) => ({ window: f.window, waits: f.waits })),
