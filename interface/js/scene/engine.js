@@ -9,11 +9,12 @@
 import * as THREE from "../three.js";
 import { h } from "../dom.js";
 import { buildCity, pulseBeacon, restBeacon } from "./city.js";
-import { ease, fitFrustum, lerpFrustum } from "./fit.js";
+import { fitFrustum } from "./fit.js";
 import { createKit } from "./kit.js";
 import { mountLabels, placeLabels } from "./labels.js";
 import { createLoop } from "./loop.js";
 import { LIGHT_WHITE, readPalette } from "./palette.js";
+import { createTween } from "./tween.js";
 
 export const BUILDERS = { city: buildCity };
 const DISTANCE = 150;
@@ -76,7 +77,7 @@ export function createEngine(host, options) {
   let signature = "";
   let size = { w: 0, h: 0 };
   let frustum = null;             // the resting frustum (fitted)
-  let tween = null;               // {from, to, start, ms, resolve}
+  const tween = createTween();    // the camera move in flight, if any
   let drops = [];                 // {marker, start}
   let previousMarkers = new Set();
   let previousReady = false;      // the build before this one held real data: a marker not in it has arrived
@@ -94,7 +95,9 @@ export function createEngine(host, options) {
   // --- the world: lights and ground, rebuilt when the palette changes -----------------------------------------------------
   function buildWorld() {
     if (worldKit) {
-      scene.remove(...scene.children.filter((c) => c.userData.world));
+      const old = scene.children.filter((c) => c.userData.world);
+      scene.remove(...old);
+      for (const light of old) if (light.shadow) light.shadow.dispose();   // the 2048 px shadow map of the sun being replaced
       worldKit.dispose();
     }
     palette = readPalette(host);
@@ -141,7 +144,7 @@ export function createEngine(host, options) {
 
   function stopAnimations() {
     for (const name of ["camera", "drops", "beacon"]) loop.stop(name);
-    tween = null;
+    tween.cancel();   // settles a waiting fly-in with false: nobody is left waiting for a move that will not finish
     drops = [];
   }
 
@@ -212,7 +215,7 @@ export function createEngine(host, options) {
     if (!content || !size.w || !size.h) return;
     const insets = options.getInsets ? options.getInsets() : {};
     frustum = fitFrustum(contentBounds(content.group), size, insets, insets.pad || 1.04);
-    if (!tween) applyFrustum(frustum);
+    if (!tween.active()) applyFrustum(frustum);
     positionLabels();
     loop.requestRender();
   }
@@ -224,7 +227,7 @@ export function createEngine(host, options) {
 
   function positionLabels() {
     if (!labelEntries.length) return;
-    placeLabels(labelEntries, project, { hidden: Boolean(tween) });
+    placeLabels(labelEntries, project, { hidden: tween.active() });
   }
 
   function measure() {
@@ -247,16 +250,11 @@ export function createEngine(host, options) {
   function draw(ts) {
     if (disposed || lostText) return;
     const now = clock();
-    if (tween) {
-      const t = Math.min(1, (now - tween.start) / tween.ms);
-      applyFrustum(lerpFrustum(tween.from, tween.to, ease(t)));
+    const moved = tween.step(now);
+    if (moved) {
+      applyFrustum(moved);
       positionLabels();
-      if (t >= 1) {
-        const done = tween.resolve;
-        tween = null;
-        loop.stop("camera");
-        done(true);
-      }
+      if (!tween.active()) loop.stop("camera");
     }
     if (drops.length) {
       renderer.shadowMap.needsUpdate = true;
@@ -373,12 +371,9 @@ export function createEngine(host, options) {
   };
   const onReduced = () => {
     if (reducedQuery.matches) {
-      if (tween) {
-        const done = tween.resolve;
-        tween = null;
+      if (tween.cancel()) {
         applyFrustum(frustum);
         loop.stop("camera");
-        done(false);
       }
       drops.forEach((d) => { d.marker.group.position.y = d.marker.restY; });
       drops = [];
@@ -444,12 +439,11 @@ export function createEngine(host, options) {
       if (!hit || reducedQuery.matches || !frustum) return Promise.resolve(false);
       const insets = options.getInsets ? options.getInsets() : {};
       const target = fitFrustum(contentBounds(hit.object), size, insets, 1.6);
-      return new Promise((resolve) => {
-        tween = { from: { ...frustum }, to: target, start: clock(), ms, resolve };
-        tooltip.hidden = true;
-        positionLabels();
-        loop.start("camera", { ambient: false });
-      });
+      const move = tween.start({ ...frustum }, target, clock(), ms);
+      tooltip.hidden = true;
+      positionLabels();
+      loop.start("camera", { ambient: false });
+      return move;
     },
     /** What the page can read to check the rules: frames drawn so far, animations running, hidden or not. */
     stats,
@@ -466,7 +460,6 @@ export function createEngine(host, options) {
       canvas.removeEventListener("webglcontextlost", onLost);
       canvas.removeEventListener("webglcontextrestored", onRestored);
       loop.dispose();
-      if (tween) tween.resolve(false);
       clearContent();
       if (worldKit) worldKit.dispose();
       outlineMaterial.dispose();

@@ -330,7 +330,7 @@ class FakeNode {
   replaceChildren(...items) { this.children.forEach((c) => { c.parent = null; }); this.children = []; this.append(...items); }
   remove() { if (this.parent) this.parent.children = this.parent.children.filter((c) => c !== this); this.parent = null; }
   contains(n) { for (let x = n; x; x = x.parent) if (x === this) return true; return false; }
-  focus() {}
+  focus() { globalThis.__focused = this; }
   set textContent(v) { this.replaceChildren(String(v)); }
   get textContent() { return this.children.map((c) => (c.attrs && c.attrs["aria-hidden"] === "true" ? "" : c.textContent)).join(""); }
   querySelectorAll() { return []; }
@@ -467,6 +467,108 @@ def test_every_control_of_the_frame_has_an_accessible_name_and_the_names_say_wha
     assert "Nothing waits for you." in got["empty"] and "Loading the request..." in got["empty"]
 
 
+# --- the camera move, the first-read state, the skip links and the notice -------------------------------------------------------
+
+TWEEN = r"""
+import { createTween } from "@JS@/scene/tween.js";
+import * as model from "@JS@/model.js";
+
+const out = {};
+const a = { left: 0, right: 10, top: 10, bottom: 0 }, b = { left: 2, right: 6, top: 8, bottom: 4 };
+const settled = [];
+let t = createTween();
+const move = t.start(a, b, 0, 600); move.then((v) => settled.push(["finished", v]));
+out.activeAfterStart = t.active();
+const mid = t.step(300);
+out.midInside = mid.left > 0 && mid.left < 2;
+out.stillActive = t.active();
+const end = t.step(600);
+out.endFrustum = [end.left, end.right, end.top, end.bottom]; out.activeAtEnd = t.active();
+out.noStepWhenIdle = t.step(900);
+// a move cut by a rebuild settles false, once
+t = createTween();
+const cut = t.start(a, b, 0, 600); cut.then((v) => settled.push(["cut", v]));
+out.cancelReturned = t.cancel(); out.cancelAgain = t.cancel(); out.activeAfterCancel = t.active();
+// a second move settles the first false
+t = createTween();
+const first = t.start(a, b, 0, 600); first.then((v) => settled.push(["first", v]));
+const second = t.start(b, a, 0, 600); second.then((v) => settled.push(["second", v]));
+t.step(700);
+await new Promise((r) => setTimeout(r, 10));
+out.settled = settled.sort((x, y) => x[0].localeCompare(y[0]));
+out.states = [model.screenState({ loaded: false }, null), model.screenState({ loaded: false }, new Error("x")), model.screenState({ loaded: true }, new Error("x")), model.screenState({ loaded: true }, null)];
+out.empty = [model.emptyCityVisible("ready", 0), model.emptyCityVisible("ready", 2), model.emptyCityVisible("loading", 0), model.emptyCityVisible("error", 0)];
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_a_camera_move_is_always_settled_and_the_empty_city_is_never_claimed_before_a_read_answered(tmp_path):
+    got = run_node(tmp_path, TWEEN)
+    assert got["activeAfterStart"] is True and got["midInside"] is True and got["stillActive"] is True
+    assert got["endFrustum"] == [2, 6, 8, 4] and got["activeAtEnd"] is False and got["noStepWhenIdle"] is None
+    assert got["cancelReturned"] is True and got["cancelAgain"] is False and got["activeAfterCancel"] is False
+    assert got["settled"] == [["cut", False], ["finished", True], ["first", False], ["second", True]], \
+        "a move that finishes settles true; one cancelled or replaced settles false, so a click never waits for nothing"
+    assert got["states"] == ["loading", "error", "ready", "ready"]
+    assert got["empty"] == [True, False, False, False], "no \"no project\" while loading or after a failed first read"
+
+
+NOTICE = r"""
+import { FakeNode } from "@FAKE@";
+import { createFrame } from "@JS@/frame/frame.js";
+import * as router from "@JS@/router.js";
+
+const root = new FakeNode("div");
+const frame = createFrame(root, { onSelectProject() {}, onForgetToken() {}, onRetry() {} });
+document.getElementById = (id) => [...root.walk()].find((n) => n.attrs.id === id) || null;
+frame.main.append(frame.waitingCard.el);
+const list = new FakeNode("section"); list.setAttribute("id", "wb-scene-list"); frame.main.append(list);   // the City view's list
+const out = {};
+// skip links: they act by id and never touch the hash
+window.location.hash = "#/p/0123456789ab/lobby";
+const skip = [...root.walk()].filter((n) => n.attrs.class === "wb-skip");
+const clicks = [];
+for (const link of skip) {
+  globalThis.__focused = null;
+  let prevented = false;
+  link.listeners.click.forEach((fn) => fn({ preventDefault() { prevented = true; } }));
+  clicks.push([link.attrs.href, prevented, globalThis.__focused && globalThis.__focused.attrs.id, window.location.hash]);
+}
+out.clicks = clicks;
+// the notice: a poll with the same spec leaves the band (and a focused button) alone; a different one replaces it
+const spec = { kind: "error", text: "could not be reached", retry: true };
+frame.notice(spec);
+const first = frame.noticeBox.children[0];
+frame.notice({ ...spec });
+out.sameKept = frame.noticeBox.children[0] === first;
+frame.notice({ ...spec, text: "another" });
+out.changedReplaced = frame.noticeBox.children[0] !== first && frame.noticeBox.children[0].textContent.includes("another");
+frame.notice(null);
+out.cleared = frame.noticeBox.hidden && frame.noticeBox.children.length === 0;
+frame.notice(null);
+out.clearedTwice = frame.noticeBox.hidden;
+// destroying the frame takes its document listeners off
+let removed = 0;
+document.removeEventListener = (type) => { removed += 1; };
+frame.destroy();
+out.removed = removed;
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_skip_links_focus_by_id_without_changing_the_hash_the_notice_is_redrawn_only_when_it_changes_and_the_frame_takes_its_listeners_off(tmp_path):
+    fake = tmp_path / "fake-dom.mjs"
+    fake.write_text(FAKE_DOM, encoding="utf-8")
+    got = run_node(tmp_path, NOTICE.replace("@FAKE@", fake.as_uri()))
+    assert got["clicks"] == [["#wb-panel", True, "wb-panel", "#/p/0123456789ab/lobby"],
+                             ["#wb-scene-list", True, "wb-scene-list", "#/p/0123456789ab/lobby"]], \
+        "a skip link prevents the fragment navigation, focuses its target and leaves the route alone"
+    assert got["sameKept"] is True and got["changedReplaced"] is True and got["cleared"] is True and got["clearedTwice"] is True
+    assert got["removed"] >= 3, "the frame, the switcher and the waiting menu each take their document listener off"
+
+
 # --- rules read from the files -------------------------------------------------------------------------------------------------
 
 
@@ -492,10 +594,13 @@ def test_the_engine_keeps_the_performance_rules_of_the_scene():
     assert "NoWebGL" in engine and "webglcontextlost" in engine and "webglcontextrestored" in engine, "the no-WebGL and lost-context paths"
     assert "forceContextLoss" in engine and "renderer.dispose()" in engine and "contentKit.dispose()" in engine, "the renderer and the geometry are freed on leaving"
     assert "ambient: true" in engine and "AMBIENT_FPS" not in engine, "the cap is the scheduler's, not repeated"
+    assert "tween.cancel()" in engine and "createTween()" in engine, "a rebuild settles the camera move in flight (the tween's own test is under Node)"
+    assert "light.shadow.dispose()" in engine, "the sun's shadow map is freed when the lights are replaced"
+    assert "onRestored" in (JS / "views" / "city.js").read_text(encoding="utf-8"), "the scene host is shown again after a restored context"
     assert "export const CAMERA_MS = 600" in engine, "the camera moves in 600 ms"
     for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js"):
         assert (SCENE / name).is_file()
-    assert len(list(SCENE.glob("*.js"))) == 9
+    assert len(list(SCENE.glob("*.js"))) == 10 and (SCENE / "tween.js").is_file()
 
 
 def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():

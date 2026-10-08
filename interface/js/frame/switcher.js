@@ -89,12 +89,14 @@ export function createSwitcher({ onSelect, onForgetToken, onOpen }) {
   });
   arrowNav(card, ".wb-forget");
   forget.addEventListener("click", () => onForgetToken());
-  document.addEventListener("pointerdown", (event) => {
+  const onPointerDown = (event) => {
     if (open && !el.contains(event.target)) setOpen(false, { focus: false });
-  });
+  };
+  document.addEventListener("pointerdown", onPointerDown);
 
   return {
     el,
+    destroy() { document.removeEventListener("pointerdown", onPointerDown); },
     close() { if (open) setOpen(false, { focus: false }); },
     /**
      * projects: [{id, name, badge, sub, accepted}]; selectedId; heading: the card's header text.

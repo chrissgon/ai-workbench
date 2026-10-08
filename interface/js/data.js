@@ -23,8 +23,9 @@ async function readProject(project, before) {
     return { status, agents: Array.isArray(agents.agents) ? agents.agents : [] };
   } catch (e) {
     if (e && e.name === "ApiError" && e.status !== 0 && e.status !== 401) {
-      if (e.status !== 412 && before && before.status) return before;
-      return { error: { status: e.status, word: e.word, message: e.message } };
+      const error = { status: e.status, word: e.word, message: e.message };
+      if (e.status !== 412 && before && before.status) return { ...before, error };   // the data stays, the page says it is stale
+      return { error };
     }
     throw e;
   }
