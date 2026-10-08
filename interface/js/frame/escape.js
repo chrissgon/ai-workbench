@@ -2,7 +2,8 @@
 // Escape did nothing after the person had used an object. One handler, one order, stopping at the first step that applies:
 //   1. a field has the focus: nothing (a draft is not thrown away);
 //   2. a dialog is open: it closes;
-//   3. a document or a selected decision is open in the Floor or the Lobby: it closes (back to the Desk or the Inbox list);
+//   3. a document or a selected decision is open in the Floor or the Lobby: it closes (a document back to the tab it was opened from, a
+//      decision to the Inbox list);
 //   4. a menu or a list is open (the project switcher, the waiting menu, the request list): it closes;
 //   5. a scene object is selected or hovered by the keyboard: the selection is cleared;
 //   6. else go up: the Floor and the Lobby to the Building, the Building to the City, the Control room to the screen it was opened from
@@ -10,16 +11,18 @@
 // Pure: no document and no window, so a test can run every step.
 
 import * as router from "../router.js";
+import { closeHash } from "./origin.js";
 
 /**
- * state: {route (router.parse), field, dialog, menu, selection: booleans, from: the hash the Control room was opened from, or null}.
+ * state: {route (router.parse), field, dialog, menu, selection: booleans, from: the hash the Control room was opened from, or null,
+ * origin: "inbox" when the open document came from the Inbox (frame/origin.js), else null}.
  * Returns {step, hash?}: step is "none", "dialog", "document", "menu", "selection" or "up"; `hash` is where the page goes for "document" and "up".
  */
-export function escapeStep({ route, field = false, dialog = false, menu = false, selection = false, from = null }) {
+export function escapeStep({ route, field = false, dialog = false, menu = false, selection = false, from = null, origin = null }) {
   if (field) return { step: "none" };
   if (dialog) return { step: "dialog" };
   const room = route.screen === "floor" || route.screen === "lobby";
-  if (room && route.path) return { step: "document", hash: route.screen === "lobby" ? router.lobbyHash(route.project, "desk") : router.floorHash(route.project, route.agent, "desk") };
+  if (room && route.path) return { step: "document", hash: closeHash(route, origin) };   // the same hash as the viewer's "Close"
   if (room && route.pending !== null && route.pending !== undefined) return { step: "document", hash: route.screen === "lobby" ? router.lobbyHash(route.project, "inbox") : router.floorHash(route.project, route.agent, "inbox") };
   if (menu) return { step: "menu" };
   if (selection) return { step: "selection" };

@@ -11,6 +11,8 @@ import * as api from "../api.js";
 import { failureText } from "../cards/plan-rows.js";
 import { h } from "../dom.js";
 import * as fm from "../floor-model.js";
+import { focusOpenLink } from "../floor/widgets.js";
+import * as origin from "../frame/origin.js";
 import { actions } from "../floor/actions.js";
 import { createTasksTab } from "../floor/tasks-tab.js";
 import { createPanel } from "../frame/panel.js";
@@ -48,7 +50,8 @@ export function createLobbyView(frame, { project, onChanged }) {
   const bodies = new Map();           // request id -> {sig, body}
   const reading = new Map();          // request id -> the read of its `task` body that is running
   let last = { snapshot: null, route: null, now: new Date(), projectName: "" };
-  let notice = null;
+  let notice = null;                  // the composer's: a turn that was not sent or failed
+  const routeNotices = new Map();     // request id -> {title, text}: a route that failed, shown under that request's line
   let timer = null;
   let readingConversation = false;
   let flowsAsked = false;
@@ -56,7 +59,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   let again = false;                  // a read of the conversation was asked for while one was running
   let conversationRead = Promise.resolve();    // the read that is running, and the one more that was asked for
   let viewerWas = false;
-  let lastOpened = null;              // the document the person opened last: the focus goes back to its row when the viewer closes
+  let shownPath = null;               // the document the viewer showed last: the focus goes back to what opened it when the viewer closes
   let leftInbox = true;               // the Inbox was left since it was last drawn: a resolved card goes
   let reloaded = null;                // the page's reload stamp last seen: when it moves the store changed, and everything shown is read again
   let changes = 0;                    // how many times it moved: a read that began before the last move is not fresh when it ends
@@ -82,7 +85,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   const waitingLine = () => h("p", { class: "wb-empty-line wb-lobby-waiting", hidden: true, text: NOT_ACCEPTED_TEXT });
   const inbox = createLobbyInbox({ project, now: () => new Date(), refresh: () => { refresh(); } });
   const desk = createLobbyDesk({
-    project, open: (path) => { lastOpened = path; window.location.hash = router.lobbyDeskHash(project, path); }, changed: () => { drawTabs(); drawRoom(); },
+    project, open: (path) => { window.location.hash = router.lobbyDeskHash(project, path); }, changed: () => { drawTabs(); drawRoom(); },
   });
   const agent = createLobbyAgent({ project, now: () => new Date(), refresh: () => { refresh(); }, changed: () => drawTabs() });
   const tasks = createTasksTab({
@@ -104,7 +107,8 @@ export function createLobbyView(frame, { project, onChanged }) {
   panel.el.insertBefore(tabs.el, panel.body);
   panel.el.append(footer);
   frame.main.append(panel.el, cancelDialog.el);
-  const viewer = createLobbyViewer({ frame, panel: panel.el, project, onClose: () => { window.location.hash = router.lobbyHash(project, "desk"); } });
+  // "Close" and a phone's dialog go to the one hash the frame's key handler also uses: the tab the document was opened from (frame/origin.js)
+  const viewer = createLobbyViewer({ frame, panel: panel.el, project, onClose: () => { origin.close(last.route || router.parse(window.location.hash)); } });
   const panelHead = panel.el.querySelector(".wb-panel-head");
   const scene = mountLobbyScene(frame, panel.el, { onDoor: () => { window.location.hash = router.controlHash(project); }, onSelect: (id) => openFromScene(id) });
 
@@ -121,7 +125,11 @@ export function createLobbyView(frame, { project, onChanged }) {
     const pending = status ? status.pending || [] : [];
     const held = {};
     for (const [id, entry] of bodies) held[id] = entry.body;
-    thread.update({ messages, requests, pending, bodies: held, now: last.now, loading: !loaded, routing });
+    for (const id of [...routeNotices.keys()]) {      // a request that is routed or cancelled has no failed route to show (one not read yet keeps its notice)
+      const row = requests.find((r) => r.id === id);
+      if (row && row.state !== "requested") routeNotices.delete(id);
+    }
+    thread.update({ messages, requests, pending, bodies: held, now: last.now, loading: !loaded, routing, notices: routeNotices });
   }
 
   /**
@@ -333,8 +341,9 @@ export function createLobbyView(frame, { project, onChanged }) {
     if (!problem && result && result.routed === false) {
       problem = (result.failure && result.failure.reason) ? `The router could not run: ${result.failure.reason}.` : "The request could not be planned.";
     }
-    notice = problem ? notRoutedNotice(id, problem) : null;
-    drawComposer();
+    if (problem) routeNotices.set(id, notRoutedNotice(id, problem));
+    else routeNotices.delete(id);
+    redraw();
     drawRoom();
     schedule();
     await refresh();
@@ -366,8 +375,8 @@ export function createLobbyView(frame, { project, onChanged }) {
     }
     if (values.flow) chosenFlow.set(result.request, values.flow);
     if (result.error) {
-      notice = notRoutedNotice(result.request, failureText(result.error));
-      drawComposer();
+      routeNotices.set(result.request, notRoutedNotice(result.request, failureText(result.error)));
+      redraw();
     } else {
       await followRoute(result.request, result.started);
     }
@@ -379,11 +388,11 @@ export function createLobbyView(frame, { project, onChanged }) {
 
   async function routeAgain(request) {
     if (routing.has(request.id)) return;
-    notice = null;
+    routeNotices.delete(request.id);
     const outcome = await routeRequest(api, project, request.id, chosenFlow.get(request.id), { signal });
     if (outcome.error) {
-      notice = notRoutedNotice(request.id, failureText(outcome.error));
-      drawComposer();
+      routeNotices.set(request.id, notRoutedNotice(request.id, failureText(outcome.error)));
+      redraw();
       return;
     }
     await followRoute(request.id, outcome.started);
@@ -409,6 +418,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     update({ snapshot, route, now, projectName, reload }) {
       if (disposed) return;
       last = { snapshot, route, now, projectName: projectName || "" };
+      origin.track(route);
       if (reloaded !== null && reload !== reloaded) {     // the store changed: everything shown is stale, whatever its age
         changes += 1;
         invalidate();
@@ -442,11 +452,14 @@ export function createLobbyView(frame, { project, onChanged }) {
       tabs.el.hidden = inline;
       panel.body.hidden = inline;
       footer.hidden = !onConversation || inline;
-      if (viewerWas && !showing && lastOpened !== null) {     // the viewer was closed: the focus goes back to the row that opened it
-        const back = lastOpened;
-        setTimeout(() => desk.focusRow(back), 0);
+      if (viewerWas && !showing && shownPath !== null) {     // the viewer was closed: the focus goes back to what opened it
+        const back = shownPath;
+        if (tab === "inbox") inbox.focusOpen(back);
+        else if (tab === "desk") setTimeout(() => desk.focusRow(back), 0);
+        else focusOpenLink(panel.body, back);
       }
       viewerWas = Boolean(showing);
+      shownPath = showing ? route.path : null;
       waiting.hidden = accepted;
       thread.el.hidden = !accepted;
       form.set({ disabled: !accepted });
@@ -464,6 +477,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     },
     dispose() {
       disposed = true;
+      origin.reset();
       abort.abort();
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);

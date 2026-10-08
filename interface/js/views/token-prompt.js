@@ -1,7 +1,18 @@
-// The token prompt: asks the person to paste the service's token once per browser session.
+// The token prompt: asks the person to paste the service's token once per browser session. The field is a text field that the
+// stylesheet masks (`.wb-token-field`) where the browser can, not a password field: the token changes at every start, so the browser
+// must not offer to save it.
 
 import { h, fill } from "../dom.js";
 import { looksLikeToken } from "../token.js";
+
+/**
+ * True when the browser can mask a text field by CSS (WebKit and Blink can; Firefox cannot). Where it cannot, the field is a password field:
+ * the browser may then offer to save the token, which is the lesser failure next to showing it in clear. That the masked text field stops the
+ * browser's offer rests on how browsers behave, not on a test.
+ */
+function masksText() {
+  return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("-webkit-text-security", "disc");
+}
 
 /**
  * Draw the prompt in `root`. onSubmit(token) is called with the pasted text when it has the shape of a token and
@@ -9,7 +20,7 @@ import { looksLikeToken } from "../token.js";
  */
 export function showTokenPrompt(root, { message, onSubmit }) {
   const field = h("input", {
-    id: "token-field", class: "pui-input", type: "password", name: "service-token", autocomplete: "off",
+    id: "token-field", class: "pui-input wb-token-field", type: masksText() ? "text" : "password", name: "service-token", autocomplete: "off",
     autocapitalize: "off", spellcheck: "false", required: true, "aria-describedby": "token-help",
   });
   const problem = h("p", { class: "notice error", role: "alert", hidden: true });

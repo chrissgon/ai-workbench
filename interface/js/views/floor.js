@@ -14,8 +14,9 @@ import { createDeskTab } from "../floor/desk-tab.js";
 import { createInbox } from "../floor/inbox.js";
 import { createTasksTab } from "../floor/tasks-tab.js";
 import { createViewer } from "../floor/viewer.js";
-import { busyLine, createTabs } from "../floor/widgets.js";
+import { busyLine, createTabs, focusOpenLink } from "../floor/widgets.js";
 import { icon } from "../frame/icons.js";
+import * as origin from "../frame/origin.js";
 import * as router from "../router.js";
 import { NoWebGL } from "../scene/engine.js";
 import { worldModel } from "../world-model.js";
@@ -43,7 +44,6 @@ export function createFloorView(frame, env) {
   const reading = new Set();
   let shownScene = "";
   let viewerPath = null;
-  let lastOpened = null;
   let leftInbox = true;
   let wasWorking = null;       // the live region says when the agent starts working, never on the first read
   let reloaded = null;         // the page's reload stamp last seen: when it moves the store changed, and everything shown is read again
@@ -62,12 +62,16 @@ export function createFloorView(frame, env) {
   const unknown = h("div", { class: "wb-floor-unknown", hidden: true }, h("p", { text: "This agent is not in the project's configuration." }), backLink);
   const waitingEl = h("p", { class: "wb-empty-line", text: "Waiting for the configuration to be accepted." });
   const viewer = createViewer({ onClose: () => closeViewer() });
+  // "Close" and a phone's dialog go to the one hash the frame's key handler also uses: the tab the document was opened from (frame/origin.js)
+  function closeViewer() {
+    if (last) origin.close(last.route);
+  }
   const viewerHost = h("div", { class: "wb-viewer-host", hidden: true }, viewer.el);
   const panel = h("section", { class: "pui-card wb-panel wb-panel-floor", role: "region", "aria-labelledby": "wb-floor-title", id: "wb-panel", tabindex: "-1" }, normal, unknown, viewerHost);
   frame.main.append(panel);
   const phoneDialog = h("dialog", { class: "pui-modal wb-viewer-dialog", "aria-label": "Document" });
   phoneDialog.addEventListener("close", () => {
-    if (viewerPath !== null && last && last.route.path) window.location.hash = router.deskHash(project, agent);
+    if (viewerPath !== null && last && last.route.path) closeViewer();
   });
   frame.el.append(phoneDialog);
   const phone = window.matchMedia("(max-width: 639px)");
@@ -88,7 +92,7 @@ export function createFloorView(frame, env) {
         open: (item, path) => (item.agent ? router.deskHash(project, item.agent, path) : `${router.lobbyHash(project, "desk")}/${encodeURIComponent(path)}`),
       },
     });
-    desk = createDeskTab({ project, agent, open: (path) => { lastOpened = path; window.location.hash = router.deskHash(project, agent, path); } });
+    desk = createDeskTab({ project, agent, open: (path) => { window.location.hash = router.deskHash(project, agent, path); } });
     tasksTab = createTasksTab({
       project, now: () => new Date(), refresh: () => env.refresh(), api: actions,
       links: { request: () => router.lobbyHash(project), inbox: (id) => router.floorHash(project, agent, "inbox", id), open: (path) => router.deskHash(project, agent, path) },
@@ -291,10 +295,13 @@ export function createFloorView(frame, env) {
     if (!viewing) {
       if (viewerPath !== null) {
         viewer.close();
+        const back = viewerPath;
         viewerPath = null;
         if (phoneDialog.open) phoneDialog.close();
-        const back = lastOpened;
-        if (back && desk) setTimeout(() => desk.focusRow(back), 0);
+        // the focus goes back to what opened the document: its row on the Desk, or the "Open" link in the Inbox or in another tab
+        if (route.tab === "inbox" && inbox) inbox.focusOpen(back);
+        else if (route.tab === "desk" && desk) setTimeout(() => desk.focusRow(back), 0);
+        else focusOpenLink(tabpanel, back);
       }
       viewerHost.hidden = true;
       return;
@@ -320,6 +327,7 @@ export function createFloorView(frame, env) {
       last = data;
       project = data.route.project;
       agent = data.route.agent;
+      origin.track(data.route);
       if (reloaded !== null && data.reload !== reloaded) {     // the store changed: the bodies and the documents are stale, whatever their age
         changes += 1;
         for (const entry of bodies.values()) entry.at = 0;
@@ -336,6 +344,7 @@ export function createFloorView(frame, env) {
     },
     dispose() {
       disposed = true;
+      origin.reset();
       observer.disconnect();
       viewer.close();
       // the scene is the frame's: the Building takes it over (the floors come back), or the frame takes it down

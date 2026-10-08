@@ -683,7 +683,7 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-tab.pui-btn { border-radius: 0; border-bottom: 2px solid transparent; color: var(--pui-text-muted); font-weight: 400; text-decoration: none; }
 .wb-tab.pui-btn.is-selected { border-bottom-color: var(--pui-theme); color: var(--pui-text); font-weight: 600; }
 
-.wb-field { --pui-edge: var(--pui-muted); background-color: var(--wb-raised); }
+.wb-field { --pui-edge: var(--pui-muted); }
 .pui-card.wb-sunken-card { border-color: transparent; background-color: var(--wb-sunken); }
 .wb-chip-s { padding: 0 7px; font-size: 11px; }
 .wb-chip-legend { padding: 0 8px; font-size: 12px; }
@@ -1012,7 +1012,7 @@ a.wb-now-title:hover { text-decoration: underline; }
 
 .wb-field { display: grid; gap: 4px; font-size: 13px; }
 .wb-field-label { font-size: 13px; }
-.wb-field-input, .wb-select, .wb-file { --pui-edge: var(--pui-muted); background-color: var(--wb-raised); }
+.wb-field-input, .wb-select, .wb-file { --pui-edge: var(--pui-muted); }
 .wb-hint { color: var(--pui-text-muted); font-size: 12px; }
 .wb-hint.is-error { color: var(--wb-ink-error); }
 .wb-small-button { padding: 4px 10px; gap: 6px; }
@@ -1084,10 +1084,14 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-plan-table { font-size: 12px; }
 .wb-plan-table th, .wb-plan-table td { padding: 4px; }
 .wb-skill { font-family: var(--wb-font-mono); font-size: 11px; overflow-wrap: normal; word-break: normal; }
-.wb-resolved { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--pui-radius); background-color: var(--wb-sunken); font-size: 12px; }
+.wb-resolved { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; }
 .wb-resolved-list { display: grid; gap: 6px; }
+/* the library's accordion item, one surface for the header and the body (A-5): the item holds the ground and the panel's radius, the header and the body paint nothing */
+.pui-accordion-item.wb-resolved-item, .pui-accordion-item.wb-resolved-item[open] { border-color: transparent; border-radius: var(--pui-radius); background-color: var(--wb-sunken); }
 .wb-resolved-item > summary { cursor: pointer; }
-.wb-resolved-title { overflow-wrap: anywhere; }
+.wb-resolved-body { padding: 0 12px 10px; }
+.wb-resolved-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.wb-resolved > .wb-muted { flex: none; white-space: nowrap; }
 .wb-card-done { margin: 0; }
 .wb-card-result { display: grid; gap: 2px; flex: 1 1 100%; font-size: 12px; }
 .wb-busy-card { padding: 12px; font-size: 13px; }
@@ -1192,17 +1196,20 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-lobby-tab-count { font-size: 12px; font-weight: 400; }
 
 /* the conversation */
-.wb-thread { display: grid; flex: 1 1 auto; gap: 10px; align-content: start; min-height: 0; padding: 12px; overflow-y: auto; }
+.wb-thread { display: grid; grid-template-columns: minmax(0, 1fr); flex: 1 1 auto; gap: 10px; align-content: start; min-height: 0; padding: 12px; overflow-y: auto; }
 .wb-msg { display: grid; justify-items: start; gap: 2px; max-width: 90%; }
 .wb-msg.is-user { justify-self: end; justify-items: end; max-width: 86%; }
 .wb-msg-meta { color: var(--pui-text-muted); font-size: 11px; }
 .wb-bubble { padding: 8px 12px; border-radius: calc(var(--pui-radius) * 1.5); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
 .wb-bubble.pui-soft { color: var(--pui-text); }
 .wb-bubble-agent { background-color: var(--wb-sunken); }
-.wb-request-block { display: grid; gap: 10px; }
+.wb-request-block { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; }
 .wb-lobby-request-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.wb-lobby-request-line > .pui-badge, .wb-lobby-request-line > .pui-chip, .wb-lobby-request-line > .pui-btn { flex: none; }
-.wb-lobby-request-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.wb-lobby-request-line > .pui-badge, .wb-lobby-request-line > .pui-chip, .wb-lobby-request-line > .pui-btn:not(.wb-lobby-request-title) { flex: none; }
+/* one line (A-1): the title is cut with an ellipsis, its tooltip holds the whole text and a click opens it under the line */
+.wb-lobby-request-title.pui-btn { display: block; flex: 1 1 0; min-width: 0; padding: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: left; color: var(--pui-text); font: inherit; text-decoration: none; }
+.wb-lobby-request-title.pui-btn:hover { text-decoration: underline; }
+.wb-lobby-request-full { margin: 0; color: var(--pui-text-muted); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .wb-lobby-cancel-link { padding: 0; white-space: nowrap; color: var(--wb-ink-error); font-size: 12px; text-decoration: none; }
 .wb-lobby-cancel-link:hover { text-decoration: underline; }
 .wb-route-button { padding: 2px 10px; font-size: 12px; }
@@ -1272,8 +1279,11 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-plan-stacked-skill { font-size: 11px; color: var(--pui-text-muted); }
 .wb-plan-stacked-skill code { font-size: 11px; }
 
-/* fields: the edge is the muted token, the ground the raised one (OPEN-2) */
-.wb-lobby-field { --pui-edge: var(--pui-muted); background-color: var(--wb-raised); }
+/* fields: the edge is the muted token; the ground is the library's own, never a `.wb-*` rule's (A-14) */
+.wb-lobby-field { --pui-edge: var(--pui-muted); }
+
+/* the token field: a text field the stylesheet masks, so that the browser does not read it as a login and offer to save the token (A-11) */
+.wb-token-field { -webkit-text-security: disc; text-security: disc; }
 
 /* the footer: the "New request" disclosure, then the composer */
 .wb-lobby-footer { display: grid; grid-template-rows: minmax(0, auto) auto; gap: 8px; min-height: 0; padding: 10px 12px; overflow: hidden; border-top: var(--pui-border-width) solid var(--pui-border); }

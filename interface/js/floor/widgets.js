@@ -24,6 +24,20 @@ export function notice(text, kind = "info", ...extra) {
   return h("div", { class: `wb-notice-card${kind === "error" ? " is-error" : kind === "warn" ? " is-warn" : ""}`, role }, h("span", { text }), ...extra);
 }
 
+/**
+ * Give the focus to the "Open <path>" link of the tab drawn in `root`, as soon as the tab has drawn it (a moment later, for a tab that reads
+ * first): the person closed a document and expects to be where the link was. Gives up after about three seconds.
+ */
+export function focusOpenLink(root, path, tries = 30) {
+  const label = `Open ${path}`;
+  const attempt = (left) => {
+    const link = root.querySelectorAll ? [...root.querySelectorAll("a")].find((a) => a.getAttribute("aria-label") === label) : null;
+    if (link) link.focus();
+    else if (left > 0) setTimeout(() => attempt(left - 1), 100);
+  };
+  setTimeout(() => attempt(tries), 0);
+}
+
 /** A labelled field group: the label's text, then the control. */
 export function field(label, control, hint) {
   return h("label", { class: "pui-field-group wb-field" }, h("span", { class: "wb-field-label", text: label }), control, hint || null);

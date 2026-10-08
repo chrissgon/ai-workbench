@@ -23,6 +23,8 @@ export function createInbox(env) {
   let last = null;
   let focused = null;
   let shown = "";
+  let ours = null;               // {link, until}: the "Open" link this module focused
+  let wantOpen = null;           // {path, until}: the "Open" link of a document that was just closed, to take the focus when its card is drawn
 
   const cardEnv = {
     project: env.project, now: env.now, api: env.api, links: env.links,
@@ -75,7 +77,7 @@ export function createInbox(env) {
     return h("div", { class: "wb-resolved-list" }, h("div", { class: "wb-section-label", text: "Resolved" }),
       lines.map((line) => h("details", { class: "pui-accordion-item wb-resolved-item" },
         h("summary", { class: "wb-resolved" }, chip(line.text, line.tone), h("span", { class: "wb-resolved-title", text: line.title }), h("span", { class: "wb-muted", text: line.age ? ` · ${line.age} ago` : "" })),
-        h("div", { class: "wb-card-hint", text: line.when ? `Resolved ${line.when}` : "Resolved" }))));
+        h("div", { class: "wb-card-hint wb-resolved-body", text: line.when ? `Resolved ${line.when}` : "Resolved" }))));
   }
 
   function draw() {
@@ -99,7 +101,10 @@ export function createInbox(env) {
     const signature = key + [...cards.keys()].map((id) => (cards.get(id).isDone() ? id : "")).join(",");
     if (signature !== shown) {
       shown = signature;
+      // the "Open" link this module focused keeps the focus through the draws that move its card (for a few seconds); any other focus is the person's
+      const held = ours && Date.now() < ours.until && document.activeElement === ours.link ? ours.link : null;
       fill(el, empty ? h("p", { class: "wb-empty-line", text: last.loading ? "Loading the floor..." : last.emptyText || "Nothing waits for you on this floor." }) : h("div", { class: "wb-cards" }, keep, nodes), resolved);
+      if (held && held.isConnected && document.activeElement !== held && held.focus) held.focus();
     }
     if (last.selected !== null && last.selected !== undefined && focused !== last.selected) {
       const card = cards.get(last.selected);
@@ -108,6 +113,27 @@ export function createInbox(env) {
         card.el.scrollIntoView ? card.el.scrollIntoView({ block: "nearest" }) : null;
         card.focusTitle();
       }
+    }
+    focusOpenLink();
+  }
+
+  /** Give the focus to the "Open" link of the document the person just closed, as soon as its card is drawn (a few seconds at most). */
+  function focusOpenLink() {
+    if (!wantOpen) return;
+    if (Date.now() > wantOpen.until) {
+      wantOpen = null;
+      return;
+    }
+    // only the cards that are drawn now: after a reset `el` still holds the old nodes until the next draw replaces them
+    const label = `Open ${wantOpen.path}`;
+    let link = null;
+    for (const card of cards.values()) {
+      if (!link && card.el.querySelectorAll) link = [...card.el.querySelectorAll("a")].find((a) => a.getAttribute("aria-label") === label) || null;
+    }
+    if (link) {
+      wantOpen = null;
+      link.focus();
+      ours = { link, until: Date.now() + 5000 };
     }
   }
 
@@ -126,12 +152,19 @@ export function createInbox(env) {
       }
       draw();
     },
+    /** The document at `path` was closed: the focus goes back to the "Open" link that opened it, when the card is (or gets) drawn. */
+    focusOpen(path) {
+      wantOpen = { path, until: Date.now() + 5000 };
+      focusOpenLink();
+    },
     /** True while any card has a request in flight. */
     busy() {
       return [...cards.values()].some((card) => card.isBusy());
     },
     /** Forget what was read (the tab was left): a just-resolved card goes. */
     reset() {
+      wantOpen = null;
+      ours = null;
       cards.clear();
       items.clear();
       failed.clear();
