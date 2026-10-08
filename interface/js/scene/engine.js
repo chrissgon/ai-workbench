@@ -12,28 +12,30 @@ import { icon } from "../frame/icons.js";
 import { buildBuilding } from "./building.js";
 import { clampView, fitView, frustumOf, panBy, panPixels, pointerToNdc, zoomAt } from "./camera.js";
 import { buildCity, pulseBeacon, restBeacon } from "./city.js";
-import { ease, fitFrustum, openEase } from "./fit.js";
+import { ease, fitFrustum } from "./fit.js";
 import { createKit } from "./kit.js";
-import { cornerPosition, mountLabels, placeLabels } from "./labels.js";
+import { cornerPosition, fitInsets, mountLabels, placeLabels } from "./labels.js";
 import { applyOutlineVisibility, showPlan } from "./look.js";
 import { createLoop } from "./loop.js";
+import { outlineGeometry } from "./outline.js";
+import { pickHit, pickList, visibleSamples } from "./pick.js";
 import { createPointer } from "./pointer.js";
 import { LIGHT_WHITE, readPalette } from "./palette.js";
 import { buildRoom } from "./room.js";
+import { contentBounds, createCamera } from "./rig.js";
 import { createTween } from "./tween.js";
+import { EXPLODE_RATE, createApproach, frameSeconds, smooth } from "./prototype-motion.js";
 
 export const BUILDERS = { city: buildCity, building: buildBuilding, room: buildRoom };
-const DISTANCE = 150;
-const AZIMUTH = (45 * Math.PI) / 180;
-const ELEVATION = (35 * Math.PI) / 180;
-// The motions of the prototype (WP-9.8): the camera approaches its goal as `1 - exp(-4.5 t)`, the building opens as
-// `1 - exp(-3.2 t)` read through a smoothstep; a move lasts until the curve has settled to one percent (ln 100 over the rate).
-export const CAMERA_MS = 1023;    // A5: the camera moves in (fit.js: settleMs(CAMERA_RATE))
-export const OPEN_MS = 1439;      // A5: the building opens, the floors separate once (fit.js: settleMs(OPEN_RATE))
-export const FLY_SETTLE_AT = 0.5; // the screen waits for the fly-in only until it is nine tenths done (about 0.5 s)
+// The motions of the prototype (WP-9.10: its own functions, prototype-motion.js, stepped frame by frame): the camera approaches its
+// goal by `1 - exp(-dt * 4.5)` a frame and the building opens by `1 - exp(-dt * 3.2)` read through a smoothstep. A move ends when it is
+// within one percent of its goal, which takes ln(100) over the rate: the two durations below are what that comes to, for the page's
+// checks, not times the engine counts.
+export const CAMERA_MS = 1023;    // A5: the camera moves in (ln 100 / 4.5 seconds)
+export const OPEN_MS = 1439;      // A5: the building opens, the floors separate once (ln 100 / 3.2 seconds)
+export const FLY_SETTLE_AT = 0.9; // the screen waits for the fly-in only until the move is nine tenths done (about 0.5 s)
 export const DROP_MS = 300;       // A3: a waiting marker drops in once
 export const TAG_MS = 600;        // A6: the work-order tag moves to the next floor once
-export const SHAPE_GROW = 1.03;   // an outline that follows an object's shape stands 3 percent off each of its parts
 export const OUTLINE_PAD = 0.04;  // the hover outline stands this far off the object (the prototype's, for a piece of furniture)
 
 
@@ -76,10 +78,7 @@ export function createEngine(host, options) {
   renderer.shadowMap.type = THREE.PCFShadowMap;   // the library's soft filter: the PCFSoft name was folded into it, and `shadow.radius` softens it
   renderer.shadowMap.autoUpdate = false;   // the sun does not move: shadows are drawn again only when the geometry changes
   const scene = new THREE.Scene();
-  const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 500);
-  camera.position.set(DISTANCE * Math.cos(ELEVATION) * Math.sin(AZIMUTH), DISTANCE * Math.sin(ELEVATION), DISTANCE * Math.cos(ELEVATION) * Math.cos(AZIMUTH));
-  camera.lookAt(0, 0, 0);
-  camera.updateMatrixWorld();
+  const camera = createCamera(THREE);
 
   const reducedQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
   const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -103,7 +102,7 @@ export function createEngine(host, options) {
   let view = fitView();           // the person's zoom and pan on top of it (camera.js)
   const tween = createTween();    // the camera move in flight, if any
   let drops = [];                 // {marker, start}
-  let intro = null;               // {start, ms}: the building opening (A5), the floors separating
+  let intro = null;               // {approach, last}: the building opening (A5), the floors separating
   let introPlayed = false;
   let tagRun = null;              // {group, from, to, start}: the work-order tag moving (A6)
   let previousTag = null;         // {y}: where the tag was on the build before
@@ -258,7 +257,7 @@ export function createEngine(host, options) {
     if (reducedQuery.matches) return;
     if (content.intro.apply) {
       content.intro.apply(0);
-      intro = { start: clock(), ms: OPEN_MS };
+      intro = { approach: createApproach(EXPLODE_RATE), last: clock() };
       loop.start("intro", { ambient: false });
     } else if (content.intro.zoom && frustum) {
       const k = content.intro.zoom;
@@ -268,7 +267,7 @@ export function createEngine(host, options) {
       const hh = ((frustum.top - frustum.bottom) / 2) * k;
       const from = { left: cx - hw, right: cx + hw, top: cy + hh, bottom: cy - hh };
       applyFrustum(from);
-      tween.start(from, { ...frustum }, clock(), CAMERA_MS);
+      tween.start(from, { ...frustum }, clock());
       loop.start("camera", { ambient: false });
     }
   }
@@ -300,20 +299,6 @@ export function createEngine(host, options) {
   }
 
   // --- layout and camera --------------------------------------------------------------------------------------------------
-  function contentBounds(object) {
-    const box = new THREE.Box3().setFromObject(object);
-    camera.updateMatrixWorld();
-    const inverse = camera.matrixWorldInverse;
-    const xs = [];
-    const ys = [];
-    for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) {
-      const p = new THREE.Vector3(x, y, z).applyMatrix4(inverse);
-      xs.push(p.x);
-      ys.push(p.y);
-    }
-    return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys) };
-  }
-
   function applyFrustum(f) {
     camera.left = f.left;
     camera.right = f.right;
@@ -327,8 +312,8 @@ export function createEngine(host, options) {
     const insets = options.getInsets ? options.getInsets() : {};
     lastInsets = insets;
     tools.style.setProperty("--wb-y", `${Math.max(16, insets.bottom || 0)}px`);   // above the tracking bar, whatever its height
-    bounds = contentBounds(content.group);
-    frustum = fitFrustum(bounds, size, insets, insets.pad || 1.04);
+    bounds = contentBounds(THREE, camera, content.group);
+    frustum = fitFrustum(bounds, size, fitInsets(insets, corner ? corner.offsetHeight : 0), insets.pad || 1.04);   // below the corner card, when there is one
     view = clampView(view, frustum, bounds);   // the person's zoom and pan stay while they are inside the limits
     if (!tween.active()) applyView();
     positionLabels();
@@ -368,7 +353,7 @@ export function createEngine(host, options) {
   function positionLabels() {
     placeCorner();
     if (!labelEntries.length) return;
-    placeLabels(labelEntries, project, { hidden: false });
+    placeLabels(labelEntries, project, { hidden: false, insets: lastInsets, size });
   }
 
   // The corner slot: one card the page puts at the top right of the free rectangle (the Building's floor card).
@@ -407,11 +392,13 @@ export function createEngine(host, options) {
       if (!tween.active()) loop.stop("camera");
     }
     if (intro) {
-      const t = Math.min(1, (now - intro.start) / intro.ms);
-      content.intro.apply(openEase(t));
+      const p = intro.approach.step(frameSeconds(now, intro.last));
+      intro.last = now;
+      content.intro.apply(smooth(p));
       renderer.shadowMap.needsUpdate = true;
+      refreshOutline();   // the outline is in world space: it follows the floors while they separate
       positionLabels();   // the plates ride along with their floors
-      if (t >= 1) {
+      if (intro.approach.done()) {
         intro = null;
         loop.stop("intro");
       }
@@ -440,6 +427,7 @@ export function createEngine(host, options) {
       const seconds = (now - epoch) / 1000;
       content.beacons.forEach((b) => pulseBeacon(b, seconds));
       content.motions.forEach((m) => m.tick(seconds));
+      if (hoveredHit() && hoveredHit().moves) refreshOutline();   // a hovered figure or desk that is working moves: its outline moves with it
     }
     const started = clock();
     renderer.render(scene, camera);
@@ -450,6 +438,9 @@ export function createEngine(host, options) {
   const raycaster = new THREE.Raycaster();
   const pointer = new THREE.Vector2();
 
+  // The pick (pick.js): the mesh under the pointer among the meshes of the pickable objects, never a line. The list is made again
+  // when the content is built or an object moved, not on every pointer move.
+  let pickCache = null;
   function pick(event) {
     if (!content) return { x: 0, y: 0, hit: null };
     const rect = canvas.getBoundingClientRect();
@@ -457,33 +448,12 @@ export function createEngine(host, options) {
     const y = event.clientY - rect.top;
     const ndc = pointerToNdc(event.clientX, event.clientY, rect);
     pointer.set(ndc.x, ndc.y);
-    raycaster.setFromCamera(pointer, camera);
-    const objects = content.hits.map((hit) => hit.object);
-    const found = raycaster.intersectObjects(objects, true);
-    if (!found.length) return { x, y, hit: null };
-    let object = found[0].object;
-    while (object && !objects.includes(object)) object = object.parent;
-    return { x, y, hit: content.hits.find((hit) => hit.object === object) || null };
+    if (!pickCache || pickCache.content !== content || intro || tagRun || drops.length) pickCache = { content, list: pickList(content.hits) };
+    return { x, y, hit: pickHit(raycaster, camera, content.hits, pointer, pickCache.list) };
   }
 
-  // The outline of an object that is not a box (a figure, a desk, a tray, a sheet): the edges of the object's own meshes, a little
-  // off the surface so they are not lost in it, in world space. A box-shaped object (a building, a floor) keeps the box.
-  function shapeGeometry(object) {
-    object.updateWorldMatrix(true, true);
-    const points = [];
-    object.traverse((node) => {
-      if (!node.isMesh || !node.visible) return;
-      const edges = new THREE.EdgesGeometry(node.geometry, 35);
-      edges.scale(SHAPE_GROW, SHAPE_GROW, SHAPE_GROW);
-      edges.applyMatrix4(node.matrixWorld);
-      points.push(...edges.getAttribute("position").array);
-      edges.dispose();
-    });
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
-    return geometry;
-  }
-
+  // The outline of the hovered object (outline.js): the edges of its own meshes, OUTLINE_PAD off the surface; its pad is the hit's own
+  // when it has one. It is made in world space, so it is made again while the object moves (the building opening).
   function setOutline(id) {
     if (outline) {
       scene.remove(outline);
@@ -493,20 +463,32 @@ export function createEngine(host, options) {
     const hit = id && content ? content.hits.find((x) => x.id === id) : null;
     applyOutlines();
     markLabels();
-    if (hit && hit.shape) {
-      outline = new THREE.LineSegments(shapeGeometry(hit.object), outlineMaterial);
-      scene.add(outline);
-    } else if (hit) {
-      const box = new THREE.Box3().setFromObject(hit.object).expandByScalar(hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
-      const dims = box.getSize(new THREE.Vector3());
-      const centre = box.getCenter(new THREE.Vector3());
-      const boxGeometry = new THREE.BoxGeometry(dims.x, dims.y, dims.z);
-      outline = new THREE.LineSegments(new THREE.EdgesGeometry(boxGeometry), outlineMaterial);
-      boxGeometry.dispose();
-      outline.position.copy(centre);
+    if (hit) {
+      outline = new THREE.LineSegments(outlineGeometry(THREE, hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD), outlineMaterial);
       scene.add(outline);
     }
     loop.requestRender();
+  }
+
+  const hoveredHit = () => (hoverId && content ? content.hits.find((x) => x.id === hoverId) || null : null);
+
+  // The same outline made again from where the object is now (the opening moves a floor, typing moves a figure's arms): one geometry
+  // swapped in place, nothing else touched.
+  function refreshOutline() {
+    const hit = hoveredHit();
+    if (!hit || !outline) return;
+    outline.geometry.dispose();
+    outline.geometry = outlineGeometry(THREE, hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
+  }
+
+  // What the page's checks read: the object the outline is drawn for and where its box is on the screen (CSS pixels of the canvas),
+  // so a test can put the pointer at an object's drawn centre and compare the tooltip, the pick and the outline.
+  function outlineProbe() {
+    if (!outline || !outline.geometry) return null;
+    outline.geometry.computeBoundingBox();
+    const box = outline.geometry.boundingBox.clone().applyMatrix4(outline.matrixWorld);
+    const at = project(box.getCenter(new THREE.Vector3()));
+    return { id: hoverId, x: Math.round(at.x * 10) / 10, y: Math.round(at.y * 10) / 10 };
   }
 
   function showHover(result) {
@@ -621,8 +603,9 @@ export function createEngine(host, options) {
   buildWorld();
   measure();
   // The test hook of the acceptance (scene.md section 10): the frames drawn so far, read from the canvas element.
-  const stats = () => ({ ...loop.stats(), builds, relabels, zoom: view.zoom, panX: view.x, panY: view.y, frameMs, pixelRatio: renderer.getPixelRatio(), drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries });
+  const stats = () => ({ ...loop.stats(), hover: hoverId, outline: outlineProbe(), view: { left: camera.left, right: camera.right, top: camera.top, bottom: camera.bottom }, builds, relabels, zoom: view.zoom, panX: view.x, panY: view.y, frameMs, pixelRatio: renderer.getPixelRatio(), drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries });
   canvas.wbStats = stats;
+  canvas.wbSamples = () => (content ? visibleSamples(THREE, camera, scene, content.hits, size) : []);
 
   return {
     canvas,
@@ -659,12 +642,12 @@ export function createEngine(host, options) {
       }
     },
     /** Move the camera in on a building (A5, the prototype's curve); resolves true when it is nine tenths done, false when it was a cut. */
-    flyTo(id, ms = CAMERA_MS) {
+    flyTo(id) {
       const hit = content && content.hits.find((x) => x.id === id);
       if (!hit || reducedQuery.matches || !frustum) return Promise.resolve(false);
       const insets = options.getInsets ? options.getInsets() : {};
-      const target = fitFrustum(contentBounds(hit.object), size, insets, 1.6);
-      const move = tween.start(frustumOf(frustum, view), target, clock(), ms, FLY_SETTLE_AT);
+      const target = fitFrustum(contentBounds(THREE, camera, hit.object), size, insets, 1.6);
+      const move = tween.start(frustumOf(frustum, view), target, clock(), FLY_SETTLE_AT);
       tooltip.hidden = true;
       positionLabels();
       loop.start("camera", { ambient: false });
@@ -679,6 +662,7 @@ export function createEngine(host, options) {
         overlay.append(corner);
         placeCorner();
       }
+      fit();   // the scene is fitted below the card: its height is measured now
     },
     /** The person's camera, for the page's checks and the keyboard-free callers: zoom in, zoom out, fit, move. */
     zoomBy: (factor) => zoomBy(factor),

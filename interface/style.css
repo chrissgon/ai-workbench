@@ -39,6 +39,7 @@
   --wb-panel-wide: 700px;
   --wb-pip: 5px;
   --wb-card-w: 290px;
+  --wb-plate-w: 290px;
   --wb-ring: 14px;
   --wb-font-system: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --wb-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -242,7 +243,7 @@ code, .mono {
 .wb-chip-small { padding: 2px 8px; font-size: 12px; }
 
 /* a decision arriving: the badge scales 1, 1.15, 1 once in 300 ms (none under reduced motion, below) */
-.wb-label.is-pop .pui-badge, .wb-tab .pui-badge.is-pop { animation: wb-pop 0.3s ease-out 1; }
+.wb-label.is-pop .pui-badge, .wb-plate.is-pop .pui-badge, .wb-tab .pui-badge.is-pop { animation: wb-pop 0.3s ease-out 1; }
 @keyframes wb-pop {
   0% { scale: 1; }
   50% { scale: 1.15; }
@@ -868,7 +869,41 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-chip-12 { padding: 0 8px; font-size: 12px; }
 .wb-chip-11 { padding: 0 6px; font-size: 11px; }
 
-/* the compact floor card (WP-9.8): one component for the card at the scene's top right and for each row of the floors list */
+/* a floor's plate (building.md "Floor plate"): at the floor's right edge, stacked beside the building */
+.wb-plate {
+  position: absolute;
+  top: 0;
+  left: 0;
+  translate: var(--wb-x, 0px) var(--wb-y, 0px);
+  transform: translate(0, -50%);
+  display: grid;
+  gap: 6px;
+  width: var(--wb-plate-w);
+  padding: 8px 12px;
+  border: 1px solid var(--pui-border);
+  border-radius: calc(var(--pui-radius) * 1.5);
+  background-color: var(--wb-raised);
+  box-shadow: var(--wb-elev);
+  font-size: 12px;
+  line-height: 1.25;
+  pointer-events: auto;
+  cursor: pointer;
+}
+.wb-plate.is-culled { visibility: hidden; }
+.wb-plate.is-selected { border-color: var(--pui-theme); }
+.wb-plate.is-off .wb-plate-name { color: var(--pui-text-muted); }
+.wb-plate-row { display: flex; align-items: center; gap: 8px; }
+.wb-plate-name { font-size: 13px; font-weight: 600; }
+.wb-plate-state { margin-left: auto; color: var(--pui-text-muted); }
+.wb-plate-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.wb-plate-meters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+.wb-plate-meter { display: grid; gap: 3px; }
+.wb-plate-note { color: var(--pui-text-muted); font-size: 11px; }
+/* the compact plate (the stack would not fit): the name row and the meters only */
+.wb-plate.is-compact { gap: 4px; padding: 6px 12px; }
+.wb-plate.is-compact .wb-plate-chips { display: none; }
+
+/* the compact floor card (WP-9.8): one component for the phone's card at the top right of the scene and for each row of the floors list */
 .wb-floor-card {
   display: grid;
   gap: 4px;
@@ -1080,7 +1115,7 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-viewer-dialog .wb-viewer { max-height: calc(100dvh - 16px); }
 
 @media (max-width: 1023px) {
-  :root { --wb-card-w: 250px; }
+  :root { --wb-card-w: 250px; --wb-plate-w: 250px; }
 }
 
 @media (max-width: 639px) {

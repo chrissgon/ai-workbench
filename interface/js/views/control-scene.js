@@ -46,7 +46,7 @@ function rack(kit, parent, spec, model, r) {
   const g = new THREE.Group();
   g.position.set(x, 0, spec.z);
   parent.add(g);
-  kit.box(0.9, 2.2, 1.0, 0, 0, 0, palette.bg, { parent: g, edges: true });
+  kit.box(0.9, 2.2, 1.0, 0, 0, 0, palette.bg, { parent: g, edges: true, shell: true });
   kit.box(0.02, 2.0, 0.86, 0.46, 0.1, 0, palette.ink, { parent: g });
   const unit = palette.mix(palette.ink, palette.bg, 0.15);
   for (let u = 0; u < UNITS; u++) {
@@ -83,7 +83,7 @@ export function buildServer(kit, model) {
   const wall = new THREE.Group();
   room.add(wall);
   const sz = -D / 2 + 0.17;
-  kit.box(3.0, 1.4, 0.06, 1.2, 1.05, sz, palette.ink, { parent: wall });
+  kit.box(3.0, 1.4, 0.06, 1.2, 1.05, sz, palette.ink, { parent: wall, shell: true });
   model.bars.forEach((v, i) => {
     if (v > 0) kit.box(0.26, 1.05 * v, 0.02, i * 0.4, 1.17, sz + 0.04, T.theme, { parent: wall, cast: false, unlit: true });
   });

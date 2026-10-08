@@ -4,6 +4,7 @@
 // project name is written here: colours come from the palette, names from the model.
 
 import { windowColour, windowUnlit } from "./look.js";
+import { beaconPulse } from "./prototype-motion.js";
 import { exclamation, plant, tree } from "./props.js";
 
 export const LOT = 13;
@@ -31,8 +32,8 @@ function building(kit, lot, cx, cz, group) {
     const y = BASE + f * P;
     const state = floor.window;
     const colour = windowColour(palette, state);
-    kit.box(W + 0.2, 0.24, D + 0.2, 0, y, 0, T.emphasis, { parent: g, edges: true });
-    kit.box(W, P - 0.24, D, 0, y + 0.24, 0, palette.shell, { parent: g, edges: true });
+    kit.box(W + 0.2, 0.24, D + 0.2, 0, y, 0, T.emphasis, { parent: g, edges: true, shell: true });
+    kit.box(W, P - 0.24, D, 0, y + 0.24, 0, palette.shell, { parent: g, edges: true, shell: true });
     if (f === 0) {
       const glass = windowUnlit(state) ? palette.warm : palette.glass;
       kit.box(W - 0.6, P - 0.7, 0.06, 0, y + 0.34, D / 2 + 0.02, glass, { cast: false, parent: g, unlit: true });
@@ -65,11 +66,11 @@ function building(kit, lot, cx, cz, group) {
     }
   });
   const top = roofHeight(lot.floors.length);
-  kit.box(W + 0.36, 0.32, D + 0.36, 0, top, 0, T.emphasis, { parent: g, edges: true });
-  kit.box(W + 0.36, 0.3, 0.1, 0, top + 0.32, D / 2 + 0.13, palette.shell, { parent: g, edges: true });
-  kit.box(0.1, 0.3, D + 0.36, W / 2 + 0.13, top + 0.32, 0, palette.shell, { parent: g, edges: true });
-  kit.box(1.2, 0.6, 0.9, -1.2, top + 0.32, -0.7, T.emphasis, { parent: g, edges: true });
-  kit.box(0.8, 0.45, 0.8, 0.2, top + 0.32, -0.8, palette.bg, { parent: g, edges: true });
+  kit.box(W + 0.36, 0.32, D + 0.36, 0, top, 0, T.emphasis, { parent: g, edges: true, shell: true });
+  kit.box(W + 0.36, 0.3, 0.1, 0, top + 0.32, D / 2 + 0.13, palette.shell, { parent: g, edges: true, shell: true });
+  kit.box(0.1, 0.3, D + 0.36, W / 2 + 0.13, top + 0.32, 0, palette.shell, { parent: g, edges: true, shell: true });
+  kit.box(1.2, 0.6, 0.9, -1.2, top + 0.32, -0.7, T.emphasis, { parent: g, edges: true, shell: true });
+  kit.box(0.8, 0.45, 0.8, 0.2, top + 0.32, -0.8, palette.bg, { parent: g, edges: true, shell: true });
   let beacon = null;
   if (lot.runningTask !== null && lot.accepted) {
     const material = kit.adopt(new THREE.MeshBasicMaterial({ color: T.theme, transparent: true, opacity: 1 }));
@@ -118,7 +119,7 @@ export function buildCity(kit, model) {
     edge.visible = false;
     outlines.push({ id: lot.id, lines: [edge] });
     TREES.forEach(([dx, dz], k) => tree(kit, group, cx + dx, cz + dz, k % 3 ? 1.15 : 1.35));
-    hits.push({ object: built.group, id: lot.id, tip: lot.tip, pad: 0.1 });
+    hits.push({ object: built.group, id: lot.id, tip: lot.tip, pad: 0.06 });
     anchors.push(new THREE.Vector3(cx, built.top + 1.8, cz - 0.6));
     if (built.beacon) beacons.push(built.beacon);
     markers.push(...built.markers);
@@ -146,14 +147,13 @@ buildCity.structure = (model) => ({
 });
 
 /**
- * The beacon's pulse at `seconds`, the prototype's: `sin(3 t)` (a 2.09 s cycle), scale 1 plus or minus .12 in the ring's own
- * plane (its thickness stays), opacity .35 to .65. Ambient, held to 30 frames a second by the scheduler.
+ * The beacon's pulse at `seconds`, the prototype's (prototype-motion.js `beaconPulse`): `sin(3 t)` (a 2.09 s cycle), scale 1 plus or minus .12
+ * in the ring's own plane (its thickness stays), opacity .35 to .65. Ambient, held to 30 frames a second by the scheduler.
  */
 export function pulseBeacon(beacon, seconds) {
-  const wave = Math.sin(seconds * 3);
-  const s = 1 + 0.12 * wave;
-  beacon.ring.scale.set(s, s, 1);
-  beacon.material.opacity = 0.35 + 0.3 * (0.5 + 0.5 * wave);
+  const pulse = beaconPulse(seconds);
+  beacon.ring.scale.set(pulse.scale, pulse.scale, 1);
+  beacon.material.opacity = pulse.opacity;
 }
 
 /** The beacon at rest (no ambient animation): full size and opaque. */

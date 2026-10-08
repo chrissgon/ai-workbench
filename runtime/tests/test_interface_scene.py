@@ -484,24 +484,25 @@ import * as model from "@JS@/model.js";
 const out = {};
 const a = { left: 0, right: 10, top: 10, bottom: 0 }, b = { left: 2, right: 6, top: 8, bottom: 4 };
 const settled = [];
+const frames = (tween, from, count) => { let f = null; for (let i = 1; i <= count; i++) f = tween.step(from + i * 16) || f; return f; };
 let t = createTween();
-const move = t.start(a, b, 0, 600); move.then((v) => settled.push(["finished", v]));
+const move = t.start(a, b, 0); move.then((v) => settled.push(["finished", v]));
 out.activeAfterStart = t.active();
-const mid = t.step(300);
+const mid = frames(t, 0, 10);
 out.midInside = mid.left > 0 && mid.left < 2;
 out.stillActive = t.active();
-const end = t.step(600);
+const end = frames(t, 160, 100);
 out.endFrustum = [end.left, end.right, end.top, end.bottom]; out.activeAtEnd = t.active();
-out.noStepWhenIdle = t.step(900);
+out.noStepWhenIdle = t.step(9000);
 // a move cut by a rebuild settles false, once
 t = createTween();
-const cut = t.start(a, b, 0, 600); cut.then((v) => settled.push(["cut", v]));
+const cut = t.start(a, b, 0); cut.then((v) => settled.push(["cut", v]));
 out.cancelReturned = t.cancel(); out.cancelAgain = t.cancel(); out.activeAfterCancel = t.active();
 // a second move settles the first false
 t = createTween();
-const first = t.start(a, b, 0, 600); first.then((v) => settled.push(["first", v]));
-const second = t.start(b, a, 0, 600); second.then((v) => settled.push(["second", v]));
-t.step(700);
+const first = t.start(a, b, 0); first.then((v) => settled.push(["first", v]));
+const second = t.start(b, a, 0); second.then((v) => settled.push(["second", v]));
+frames(t, 0, 100);
 await new Promise((r) => setTimeout(r, 10));
 out.settled = settled.sort((x, y) => x[0].localeCompare(y[0]));
 out.states = [model.screenState({ loaded: false }, null), model.screenState({ loaded: false }, new Error("x")), model.screenState({ loaded: true }, new Error("x")), model.screenState({ loaded: true }, null)];
@@ -514,7 +515,7 @@ console.log(JSON.stringify(out));
 def test_a_camera_move_is_always_settled_and_the_empty_city_is_never_claimed_before_a_read_answered(tmp_path):
     got = run_node(tmp_path, TWEEN)
     assert got["activeAfterStart"] is True and got["midInside"] is True and got["stillActive"] is True
-    assert got["endFrustum"] == [2, 6, 8, 4] and got["activeAtEnd"] is False and got["noStepWhenIdle"] is None
+    assert [round(x, 9) for x in got["endFrustum"]] == [2, 6, 8, 4] and got["activeAtEnd"] is False and got["noStepWhenIdle"] is None
     assert got["cancelReturned"] is True and got["cancelAgain"] is False and got["activeAfterCancel"] is False
     assert got["settled"] == [["cut", False], ["finished", True], ["first", False], ["second", True]], \
         "a move that finishes settles true; one cancelled or replaced settles false, so a click never waits for nothing"
@@ -609,7 +610,7 @@ def test_the_engine_keeps_the_performance_rules_of_the_scene():
     for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js",
                  "building.js", "room.js", "figure.js", "furniture.js", "plates.js"):   # the last five: WP-9.3b
         assert (SCENE / name).is_file()
-    assert len(list(SCENE.glob("*.js"))) == 18 and (SCENE / "tween.js").is_file()
+    assert len(list(SCENE.glob("*.js"))) == 22 and (SCENE / "tween.js").is_file()
 
 
 def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():
