@@ -83,8 +83,9 @@ export function createLobbyView(frame, { project, onChanged }) {
   const scene = mountLobbyScene(frame, panel.el);
 
   // --- reading ------------------------------------------------------------------------------------------------------------
+  /** A body that was drawn stays drawn (a card keeps its note and its focus) but is read again: its signature no longer matches. */
   function invalidate() {
-    bodies.clear();
+    for (const entry of bodies.values()) entry.sig = null;
   }
 
   function redraw() {
@@ -318,7 +319,8 @@ export function createLobbyView(frame, { project, onChanged }) {
       last = { snapshot, route, now, projectName: projectName || "" };
       const listed = (snapshot.projects || []).find((p) => p.id === project);
       const detail = snapshot.details[project];
-      accepted = Boolean(listed && listed.config && listed.config.accepted) && !(detail && detail.error && detail.error.status === 412);
+      // Before the first read nothing is known: the screen is not declared unaccepted until the projects came.
+      accepted = !snapshot.loaded || (Boolean(listed && listed.config && listed.config.accepted) && !(detail && detail.error && detail.error.status === 412));
       const status = detail && detail.status;
       const tab = tabOf(route);
       panel.el.querySelector(".wb-panel-sub").textContent = `${projectName || ""} · floor 0`;

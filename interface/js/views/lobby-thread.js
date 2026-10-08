@@ -15,7 +15,7 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
   const empty = h("p", { class: "wb-empty", text: "" });
 
   function messageNode(message, now) {
-    const meta = h("span", { class: "wb-msg-meta", text: metaOf(message, now) });
+    const meta = h("time", { class: "wb-msg-meta", datetime: message.created_at || false, title: message.created_at || false, text: metaOf(message, now) });
     const bubble = h("div", { class: `wb-bubble ${message.role === "user" ? "pui-soft pui-theme" : "wb-bubble-agent"}`, text: message.text });
     const node = h("div", { class: `wb-msg ${message.role === "user" ? "is-user" : "is-agent"}`, role: "article", "aria-label": nameOf(message, now) }, meta, bubble);
     return { el: node, meta, message };
