@@ -1,7 +1,8 @@
 // What the scene shows for a state, as plain choices with no three.js and no document, so a test can run them:
 //   - a window is warm and unlit when the agent of its floor works, grey otherwise (the maintainer's rule of 2026-10-08;
 //     there is no in-between state any more);
-//   - an outline of the theme colour is drawn only for the object the pointer is on or the route selected.
+//   - a line of the theme colour (the lot's, a floor's, the room's floor) is drawn only for the object the route selected: a hovered
+//     object has the outline of its box or its shape (the engine's), never a standing line.
 
 /** The window state of a floor: "lit" when its agent works, "grey" in every other case (waiting, idle, off, not accepted). */
 export function windowState(working) {
@@ -18,15 +19,15 @@ export function windowUnlit(state) {
   return state === "lit";
 }
 
-/** True when the outline lines of object `id` are drawn: it is hovered or it is the one the route selected. */
-export function outlineVisible(id, hoverId, selectedId) {
-  return id !== null && id !== undefined && (id === hoverId || id === selectedId);
+/** True when the lines of object `id` are drawn: it is the one the route selected (the maintainer's rule: hover is the box alone). */
+export function outlineVisible(id, selectedId) {
+  return id !== null && id !== undefined && id === selectedId;
 }
 
-/** Show the outline lines of the registered objects ({id, lines}) that are hovered or selected and hide all the others. */
-export function applyOutlineVisibility(outlines, hoverId, selectedId) {
+/** Show the lines of the registered objects ({id, lines}) that the route selected and hide all the others. */
+export function applyOutlineVisibility(outlines, selectedId) {
   for (const o of outlines) {
-    const on = outlineVisible(o.id, hoverId, selectedId);
+    const on = outlineVisible(o.id, selectedId);
     for (const line of o.lines) line.visible = on;
   }
 }

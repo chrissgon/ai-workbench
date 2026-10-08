@@ -29,7 +29,6 @@
   --wb-kpi-top: 62px;
   --wb-wait-w: 380px;
   --wb-wait-bottom: 150px;
-  --wb-camera-bottom: 156px;
   --wb-menu-w: 372px;
   --wb-side-card: 290px;
   --wb-listbox-min: 260px;
@@ -208,9 +207,9 @@ code, .mono {
 .wb-overlay { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 
 /* the camera's buttons (zoom in, zoom out, fit): the HTML equivalent of the wheel, the pinch and the double click */
-.wb-camera-tools { position: absolute; left: var(--wb-edge); bottom: var(--wb-camera-bottom); z-index: 2; display: flex; gap: 4px; }
+/* placed above the tracking bar: the scene writes the bar's measured height as --wb-y (the same measure as the camera's free rectangle) */
+.wb-camera-tools { position: absolute; left: var(--wb-edge); bottom: 0; translate: 0 calc(0px - var(--wb-y, var(--wb-edge))); z-index: 2; display: flex; gap: 4px; }
 .wb-camera-btn { padding: 8px; background-color: var(--wb-raised); box-shadow: var(--wb-elev); }
-.wb-frame[data-screen="control"] .wb-camera-tools, .wb-frame:has(.wb-track[hidden]) .wb-camera-tools { bottom: var(--wb-edge); }
 .wb-frame.no-scene .wb-camera-tools { display: none; }
 
 /* labels over the canvas: their position is two custom properties written by the scene */
@@ -234,7 +233,7 @@ code, .mono {
   font-size: 12px;
   line-height: 1.25;
 }
-.wb-label-card.is-selected { border-color: var(--pui-theme); }
+.wb-label-card.is-selected { border-color: var(--pui-theme); }   /* the project the person has: hovered or chosen by the route, never the tracking bar's default */
 .wb-label-row { display: flex; align-items: center; gap: 6px; }
 .wb-label-name { font-size: 13px; font-weight: 600; }
 .wb-label-sub { color: var(--pui-text-muted); }
@@ -602,8 +601,7 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-track-now-text { display: grid; min-width: 0; text-align: left; }
   .wb-scene-area { position: relative; inset: auto; grid-area: scene; overflow: hidden; }
   .wb-kpis { top: 10px; right: 10px; left: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; width: auto; }
-  .wb-camera-tools { left: 10px; bottom: 10px; }
-  .wb-frame[data-screen="control"] .wb-camera-tools { bottom: 10px; }
+  .wb-camera-tools { left: 10px; bottom: 10px; translate: none; }
   .wb-kpi { grid-template-columns: minmax(0, 1fr); padding: 8px; }
   .wb-kpi-tile { display: none; }
   .wb-kpi-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

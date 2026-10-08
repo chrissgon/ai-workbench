@@ -103,7 +103,12 @@ export function buildServer(kit, model) {
   hits.push({ object: desk, id: "console", tip: model.tips.console });
   plant(kit, room, 2.75, 1.95, 1.15);
 
-  return { group, hits, labels: [], beacons: [], markers: [], outlines: [{ id: "room", lines: [edge] }], selected: "room" };
+  // the words (the tooltips; there is no label): a model with the same structure changes them without building the room again
+  const text = (m) => ({ labels: [], tips: new Map([...m.racks.map((rack) => [rack.id, rack.tip]), ["wall", m.tips.wall], ["console", m.tips.console]]) });
+  return { group, hits, labels: [], beacons: [], markers: [], outlines: [{ id: "room", lines: [edge] }], selected: "room", text };
 }
+
+/** What the room is made of, for a model: the LEDs and the bars; the tooltips and the label are words. */
+buildServer.structure = (model) => ({ ready: model.ready, leds: model.leds, bars: model.bars });
 
 BUILDERS.server = buildServer;

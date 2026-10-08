@@ -609,7 +609,7 @@ def test_the_engine_keeps_the_performance_rules_of_the_scene():
     for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js",
                  "building.js", "room.js", "figure.js", "furniture.js", "plates.js"):   # the last five: WP-9.3b
         assert (SCENE / name).is_file()
-    assert len(list(SCENE.glob("*.js"))) == 17 and (SCENE / "tween.js").is_file()
+    assert len(list(SCENE.glob("*.js"))) == 18 and (SCENE / "tween.js").is_file()
 
 
 def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():

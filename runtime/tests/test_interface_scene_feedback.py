@@ -137,16 +137,18 @@ def test_the_keys_and_the_wheel_of_the_camera_and_the_pointer_maps_to_the_canvas
                            {"pan": [0, 0.1]}, {"pan": [0, -0.1]}, None]
     assert got["wheel"] == [True] * 5
     corner, centre, far, inner = got["ndc"]
-    assert corner == {"x": -1, "y": 1} and centre == {"x": 0, "y": -0} or centre == {"x": 0, "y": 0}, "the top left is (-1, 1), the middle is (0, 0)"
+    assert corner == {"x": -1, "y": 1} and centre == {"x": 0, "y": 0}, "the top left is (-1, 1), the middle is (0, 0)"
     assert far == {"x": 1, "y": -1} and inner == {"x": -0.5, "y": 0.5}, "a canvas scaled by CSS maps by its box"
-    assert got["ndcBuffer"] in ({"x": 0, "y": 0}, {"x": 0, "y": -0}), "the drawing buffer of a 2x display does not enter the mapping"
+    assert got["ndcBuffer"] == {"x": 0, "y": 0}, "the drawing buffer of a 2x display does not enter the mapping"
 
 
 def test_the_engine_moves_the_camera_on_demand_only_and_offers_the_buttons_the_keys_the_wheel_the_pinch_and_the_double_click():
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     for needle in ('"wheel", onWheel, { passive: false }', '"dblclick", onDoubleClick', '"keydown", onKeyDown', '"pointerdown", onDown',
-                   'aria-label": label', "Zoom in", "Zoom out", "Fit the scene", "pinch", "setPointerCapture", "isDrag("):
+                   'aria-label": label', "Zoom in", "Zoom out", "Fit the scene", "setPointerCapture", "createPointer("):
         assert needle in engine, f"engine.js has {needle}"
+    pointer = (SCENE / "pointer.js").read_text(encoding="utf-8")
+    assert "isDrag(" in pointer and "pinch" in pointer
     set_view = re.search(r"function setView\(next\) \{(.*?)\n  \}", engine, re.S).group(1)
     assert "loop.requestRender()" in set_view and "requestAnimationFrame" not in engine.replace("raf: (fn) => requestAnimationFrame(fn)", ""), \
         "a camera change asks for one frame; there is no loop for it"
@@ -229,7 +231,7 @@ const palette = { dark: false, T, mix, bg, shell: c(0xf8f8f8), ink: c(0x202020),
   lot: c(0xffffff), warm: c(0xf0c040), pale: c(0xd0d8f0), glass: c(0xd0e0f0), wood: c(0xc0a080), drawer: c(0x9090d0), skin: c(0xe0c0b0), windows: { lit: c(0xf0c040), grey: T.border } };
 
 const out = {};
-out.rule = [outlineVisible("a", null, null), outlineVisible("a", "a", null), outlineVisible("a", null, "a"), outlineVisible("a", "b", "c"), outlineVisible(null, null, null), outlineVisible("a", "a", "a")];
+out.rule = [outlineVisible("a", null), outlineVisible("a", "a"), outlineVisible("a", "b"), outlineVisible(null, null), outlineVisible(undefined, undefined)];
 const visible = (built) => built.outlines.flatMap((o) => o.lines.map((l) => [o.id, l.visible]));
 
 // the City: no lot line stands; only the hovered lot's shows
@@ -237,10 +239,10 @@ const lots = [0, 1].map((i) => ({ id: `lot${i}`, name: `p${i}`, accepted: true, 
 let kit = createKit(palette);
 const city = buildCity(kit, { selectedId: "lot0", outlined: null, ready: true, lots });
 out.cityBuilt = visible(city);
-applyOutlineVisibility(city.outlines, null, city.selected);
+applyOutlineVisibility(city.outlines, city.selected);
 out.cityNothing = visible(city);
-applyOutlineVisibility(city.outlines, "lot1", city.selected);
-out.cityHover = visible(city);
+applyOutlineVisibility(city.outlines, "lot1");
+out.cityRoute = visible(city);
 out.citySelected = city.selected;
 kit.dispose();
 
@@ -248,10 +250,8 @@ kit.dispose();
 kit = createKit(palette);
 const mk = (name, extra = {}) => ({ name, label: name, state: "idle", window: "grey", decisions: 0, lobby: name === "planning", sheets: 0, drawers: 1, tip: `${name} tip`, interactive: true, ...extra });
 const building = buildBuilding(kit, { ready: true, selected: "b", focus: null, more: 0, tag: { floor: "b", text: "#1" }, doorText: "Control room", floors: [mk("planning"), mk("b", { state: "working", window: "lit" })] });
-applyOutlineVisibility(building.outlines, null, building.selected);
+applyOutlineVisibility(building.outlines, building.selected);
 out.buildingNothing = visible(building);
-applyOutlineVisibility(building.outlines, "floor:b", building.selected);
-out.buildingHover = visible(building);
 out.buildingSelected = building.selected;
 kit.dispose();
 
@@ -259,10 +259,10 @@ kit.dispose();
 kit = createKit(palette);
 const tips = { agent: "a", desk: "d", tray: "t", cabinet: "c", board: "b" };
 const room = buildRoom(kit, { ready: true, state: "working", window: "lit", decisions: 1, drawers: 1, sheets: [{ path: "docs/a.md", tip: "docs/a.md" }], tips, board: { title: "t", lines: [], dot: "theme" }, door: false });
-applyOutlineVisibility(room.outlines, null, room.selected);
+applyOutlineVisibility(room.outlines, room.selected);
 out.room = [visible(room), room.selected];
 const server = buildServer(kit, serverModel({ accepted: true, connections: null, costs: null }));
-applyOutlineVisibility(server.outlines, null, server.selected);
+applyOutlineVisibility(server.outlines, server.selected);
 out.server = [visible(server), server.selected];
 kit.dispose();
 console.log(JSON.stringify(out));
@@ -272,12 +272,12 @@ console.log(JSON.stringify(out));
 @needs_node
 def test_no_outline_line_is_drawn_without_a_hover_or_a_selection_and_the_route_selects_the_room(tmp_path):
     got = run_node(tmp_path, OUTLINES)
-    assert got["rule"] == [False, True, True, False, False, True], "an outline shows for the hovered or the selected object, never otherwise"
+    assert got["rule"] == [False, True, False, False, False], "a line shows only for the object the route selected: a hovered object has its box, no lot or floor line"
     assert got["cityBuilt"] == [["lot0", False], ["lot1", False]], "built hidden: no standing lot line"
     assert got["cityNothing"] == [["lot0", False], ["lot1", False]] and got["citySelected"] is None, "the City selects nothing (the route has no project)"
-    assert got["cityHover"] == [["lot0", False], ["lot1", True]], "only the hovered lot's line"
-    assert got["buildingNothing"] == [["floor:planning", False], ["floor:b", False]], "no floor line stands, not even for the work order's floor"
-    assert got["buildingHover"] == [["floor:planning", False], ["floor:b", True]] and got["buildingSelected"] is None
+    assert got["cityRoute"] == [["lot0", False], ["lot1", True]], "the line stays for the object a route selects"
+    assert got["buildingNothing"] == [["floor:planning", False], ["floor:b", False]], "no floor line stands, not even for the work order's floor, and none on hover"
+    assert got["buildingSelected"] is None
     assert got["room"] == [[["room", True]], "room"] and got["server"] == [[["room", True]], "room"], "the room the route selects keeps its floor line"
 
 
@@ -338,6 +338,8 @@ def test_a_room_has_one_object_for_each_destination_and_the_cabinet_and_the_boar
 REBUILD = r"""
 import { showPlan } from "@JS@/scene/look.js";
 import { BUILDERS } from "@JS@/scene/engine.js";
+import "@JS@/views/control-scene.js";
+import { sceneModel as serverModel } from "@JS@/views/control-model.js";
 
 const lot = (extra = {}) => ({ id: "a", name: "shop", accepted: true, decisions: 1, runningTask: 5, floors: [{ window: "lit", waits: false }, { window: "grey", waits: true }], tip: "shop: 1 decision waiting, task #5 running", sub: "task #5 running", ...extra });
 const city = (l) => ({ selectedId: "a", outlined: null, ready: true, lots: [l] });
@@ -362,6 +364,9 @@ out.building = sequence("building", [building(floor()), building(floor()), build
   building(floor({ state: "idle", window: "grey" })), building(floor({ state: "idle", window: "grey" }), { tag: { floor: "eng", text: "#2" } }), building(floor({ state: "idle", window: "grey" }), { tag: null })]);
 out.room = sequence("room", [room(), room(), room({ board: { title: "A", lines: ["run #1 Running · 1m 02s"], dot: "theme" }, tips: { agent: "a", desk: "Current task · A", tray: "t", cabinet: "c", board: "bb" } }),
   room({ decisions: 2 }), room({ decisions: 2, sheets: [{ path: "docs/b.md", tip: "docs/b.md" }] })]);
+const conn = (found) => ({ classes: found.map((f, i) => ({ class: `c${i}`, provider: f ? "p" : null, found: f, note: null, skills: [] })), secrets: [], image: { name: "i", present: true, evidence: true }, platform: {} });
+const srv = (found, extra = {}) => serverModel({ accepted: true, connections: conn(found), costs: null, ...extra });
+out.server = sequence("server", [srv([true, false]), srv([true, false]), srv([true, false], { accepted: true }), srv([true, true]), srv([true, true])]);
 out.unknownKind = sequence("nowhere", [{ a: 1 }, { a: 1 }, { a: 2 }]);
 console.log(JSON.stringify(out));
 """
@@ -374,6 +379,7 @@ def test_a_poll_that_found_the_same_state_or_only_other_words_does_not_build_the
     assert got["building"] == ["build", "none", "relabel", "relabel", "build", "relabel", "build"], \
         "a meter or a tip is words; a state, a window or the work order's floor is structure"
     assert got["room"] == ["build", "none", "relabel", "build", "build"], "the board's lines and the tooltips are words; the decisions and the sheets are structure"
+    assert got["server"] == ["build", "none", "none", "build", "none"], "the Control room is built again only when an LED or a bar changes"
     assert got["unknownKind"] == ["build", "none", "build"], "a scene with no builder is its own structure"
 
 
@@ -559,9 +565,238 @@ def test_the_request_selector_opens_a_list_chooses_steps_both_ways_and_the_bar_h
 
 # --- the pointer's pick is never dropped --------------------------------------------------------------------------------------------------
 
-def test_the_last_move_of_a_motion_is_always_picked_and_the_pick_runs_again_when_the_camera_moves_under_a_still_mouse():
+def test_the_engine_hands_the_pointer_to_the_state_machine_and_maps_the_pointer_by_the_canvas_box():
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
-    assert "pendingTimer = setTimeout(runPending, wait)" in engine, "a move that comes too soon is picked when the interval is over"
     assert "pointerToNdc(event.clientX, event.clientY, rect)" in engine and "pointerToNdc(clientX, clientY, canvas.getBoundingClientRect())" in engine
-    assert re.search(r"hoverAt\(lastMouse\)", engine), "the camera moved under a still mouse: the object under it is picked again"
-    assert "clearTimeout(pendingTimer)" in engine, "the timer goes with the engine"
+    assert "pointerControl.again()" in engine and "pointerControl.dispose()" in engine, "the camera moved under a still mouse: the object under it is picked again; the timer goes with the engine"
+    assert "pendingTimer" not in engine, "the throttle lives in pointer.js, where a test drives it"
+
+
+# --- the pointer's state machine, driven with fake events and a fake clock ---------------------------------------------------------------
+
+POINTER = r"""
+import { createPointer, PICK_EVERY_MS, CLICK_AFTER_DRAG_MS } from "@JS@/scene/pointer.js";
+
+function harness({ hitAt = () => null } = {}) {
+  let now = 1000;
+  const timers = [];
+  const log = { hovers: [], opens: [], pans: [], zooms: [], moves: [], fits: 0, dragging: [], picks: 0, captures: [] };
+  let hovering = false; let disposed = false; let movable = true;
+  const env = {
+    clock: () => now,
+    setTimer: (fn, ms) => { timers.push({ fn, at: now + ms, live: true }); return timers.length - 1; },
+    clearTimer: (id) => { if (timers[id]) timers[id].live = false; },
+    pick: (e) => { log.picks += 1; const hit = hitAt(e); return { x: e.clientX, y: e.clientY, hit }; },
+    showHover: (r) => { hovering = Boolean(r.hit); log.hovers.push(r.hit ? r.hit.id : null); },
+    open: (id) => log.opens.push(id), canMove: () => movable,
+    pan: (dx, dy) => log.pans.push([dx, dy]), zoomBy: (f, x, y) => log.zooms.push([+f.toFixed(3), x, y]), moveBy: (fx, fy) => log.moves.push([fx, fy]), resetView: () => { log.fits += 1; },
+    dragging: (on) => log.dragging.push(on), capture: (id, on) => log.captures.push([id, on]), hovering: () => hovering, disposed: () => disposed,
+  };
+  const p = createPointer(env);
+  const advance = (ms) => { now += ms; for (const t of timers.filter((t) => t.live && t.at <= now)) { t.live = false; t.fn(); } };
+  const ev = (type, x, y, extra = {}) => ({ type, clientX: x, clientY: y, pointerId: 1, pointerType: "mouse", button: 0, preventDefault() { this.prevented = true; }, ...extra });
+  return { p, log, advance, ev, set: { movable: (v) => { movable = v; }, disposed: () => { disposed = true; } }, now: () => now };
+}
+const left = { id: "left" }; const right = { id: "right" };
+const by = (e) => (e.clientX < 100 ? left : e.clientX < 200 ? right : null);
+const out = {};
+
+// 1. a press that moves up to 5 px is a click; beyond it a pan, and the click that follows a pan is ignored for 60 ms
+{
+  const h = harness({ hitAt: by });
+  h.p.down(h.ev("pointerdown", 50, 50)); h.p.move(h.ev("pointermove", 53, 54)); h.p.up(h.ev("pointerup", 53, 54)); h.p.click(h.ev("click", 53, 54));
+  out.click = [h.log.opens.slice(), h.log.pans.length, h.log.dragging.slice()];
+  const g = harness({ hitAt: by });
+  g.p.down(g.ev("pointerdown", 50, 50)); g.p.move(g.ev("pointermove", 58, 50)); g.p.move(g.ev("pointermove", 70, 52)); g.p.up(g.ev("pointerup", 70, 52));
+  g.advance(10); g.p.click(g.ev("click", 70, 52));
+  out.drag = [g.log.opens.slice(), g.log.pans.slice(), g.log.dragging.slice()];
+  g.advance(CLICK_AFTER_DRAG_MS + 5); g.p.click(g.ev("click", 70, 52));
+  out.afterDrag = g.log.opens;
+  // exactly 5 px is still a click (the rule is "more than")
+  const e = harness({ hitAt: by });
+  e.p.down(e.ev("pointerdown", 50, 50)); e.p.move(e.ev("pointermove", 55, 50)); e.p.up(e.ev("pointerup", 55, 50)); e.p.click(e.ev("click", 55, 50));
+  out.edge = [e.log.opens, e.log.pans.length];
+  // a pan stops when the camera cannot move (a move in flight)
+  const m = harness({ hitAt: by }); m.set.movable(false);
+  m.p.down(m.ev("pointerdown", 50, 50)); m.p.move(m.ev("pointermove", 80, 50));
+  out.blocked = m.log.pans.length;
+}
+
+// 2. the pick is throttled, but the last move is picked when the interval ends; and never after the pointer left
+{
+  const h = harness({ hitAt: by });
+  h.p.move(h.ev("pointermove", 50, 50));                       // picked at once
+  h.advance(5); h.p.move(h.ev("pointermove", 150, 50));         // held back
+  const during = h.log.hovers.slice();
+  h.advance(PICK_EVERY_MS);                                     // the trailing pick
+  out.trailing = [during, h.log.hovers.slice(), h.p.state().pending];
+  const l = harness({ hitAt: by });
+  l.p.move(l.ev("pointermove", 50, 50)); l.advance(5); l.p.move(l.ev("pointermove", 150, 50));
+  out.pendingBeforeLeave = l.p.state().pending;
+  l.p.leave();                                                  // the pointer left the canvas
+  l.advance(PICK_EVERY_MS * 3);
+  out.afterLeave = [l.log.hovers.slice(), l.p.state().pending, l.log.picks];
+  // the camera moved under a still mouse: pick again there; but not after the pointer left
+  const a = harness({ hitAt: by });
+  a.p.move(a.ev("pointermove", 50, 50)); a.advance(PICK_EVERY_MS + 1); a.p.again(); const picks = a.log.picks; a.p.leave(); a.advance(100); a.p.again(); a.advance(100);
+  out.again = [picks, a.log.picks];
+  // a dispose clears the held move
+  const d = harness({ hitAt: by });
+  d.p.move(d.ev("pointermove", 50, 50)); d.advance(5); d.p.move(d.ev("pointermove", 150, 50)); d.p.dispose(); d.advance(200);
+  out.disposed = [d.log.hovers, d.p.state().pending];
+}
+
+// 3. touch: the first tap outlines, the second opens; two fingers pinch; the wheel (with ctrl, a trackpad pinch) is prevented; keys; double click
+{
+  const t = harness({ hitAt: by });
+  const tap = (type, x) => t.ev(type, x, 50, { pointerType: "touch" });
+  t.p.down(tap("pointerdown", 50)); t.p.up(tap("pointerup", 50)); t.p.click(tap("click", 50));
+  const first = [t.log.opens.slice(), t.log.hovers.slice()];
+  t.advance(100);
+  t.p.down(tap("pointerdown", 50)); t.p.up(tap("pointerup", 50)); t.p.click(tap("click", 50));
+  out.tap = [first, t.log.opens.slice()];
+  const q = harness({ hitAt: by });
+  q.p.down(q.ev("pointerdown", 100, 100, { pointerId: 1, pointerType: "touch" })); q.p.down(q.ev("pointerdown", 200, 100, { pointerId: 2, pointerType: "touch" }));
+  q.p.move(q.ev("pointermove", 50, 100, { pointerId: 1, pointerType: "touch" }));
+  q.p.move(q.ev("pointermove", 250, 100, { pointerId: 2, pointerType: "touch" }));
+  q.p.up(q.ev("pointerup", 50, 100, { pointerId: 1, pointerType: "touch" })); q.p.up(q.ev("pointerup", 250, 100, { pointerId: 2, pointerType: "touch" }));
+  q.advance(1); q.p.click(q.ev("click", 150, 100));
+  out.pinch = [q.log.zooms.map((z) => z[0]), q.log.zooms.length > 0 && q.log.zooms.every((z) => z[2] === 100), q.log.opens, q.log.pans.length];
+  const w = harness({ hitAt: by });
+  const wheel = w.ev("wheel", 150, 80, { deltaY: -120, deltaMode: 0, ctrlKey: true });
+  w.p.wheel(wheel);
+  const plain = w.ev("wheel", 150, 80, { deltaY: 120, deltaMode: 0 });
+  w.p.wheel(plain);
+  w.set.movable(false);
+  const blocked = w.ev("wheel", 150, 80, { deltaY: 120, deltaMode: 0 });
+  w.p.wheel(blocked);
+  out.wheel = [wheel.prevented === true, plain.prevented === true, blocked.prevented === true, w.log.zooms.length, w.log.zooms[0][0] > 1, w.log.zooms[1][0] < 1];
+  const k = harness({ hitAt: by });
+  const keys = ["+", "-", "0", "ArrowLeft", "x"].map((key) => { const e = k.ev("keydown", 0, 0, { key }); k.p.key(e); return e.prevented === true; });
+  const withCtrl = k.ev("keydown", 0, 0, { key: "+", ctrlKey: true }); k.p.key(withCtrl);
+  out.keys = [keys, withCtrl.prevented === true, k.log.zooms.map((z) => z[0]), k.log.fits, k.log.moves];
+  const dc = harness({ hitAt: by });
+  dc.p.doubleClick(dc.ev("dblclick", 50, 50)); dc.p.doubleClick(dc.ev("dblclick", 500, 50));
+  out.doubleClick = dc.log.fits;
+}
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_a_press_is_a_click_up_to_five_pixels_and_a_pan_beyond_and_the_click_after_a_pan_is_ignored(tmp_path):
+    got = run_node(tmp_path, POINTER)
+    assert got["click"] == [["left"], 0, []], "3 px and 4 px: a click, no pan"
+    assert got["drag"] == [[], [[8, 0], [12, 2]], [True, False]], "beyond 5 px a pan (the pan follows the pointer), no click 10 ms after it ended"
+    assert got["afterDrag"] == ["left"], "a click 65 ms later is a click again"
+    assert got["edge"] == [["left"], 0], "exactly 5 px is still a click"
+    assert got["blocked"] == 0, "no pan while the camera moves on its own"
+
+
+@needs_node
+def test_the_last_move_of_a_motion_is_picked_when_the_throttle_ends_and_never_after_the_pointer_left(tmp_path):
+    got = run_node(tmp_path, POINTER)
+    assert got["trailing"] == [["left"], ["left", "right"], False], "the held move is picked once the 40 ms are over"
+    assert got["pendingBeforeLeave"] is True
+    assert got["afterLeave"][0] == ["left", None] and got["afterLeave"][1] is False and got["afterLeave"][2] == 1, \
+        "after the pointer left, the held move is dropped: no pick, no outline or tooltip coming back"
+    assert got["again"][1] == got["again"][0], "the camera moving under a mouse that left picks nothing"
+    assert got["disposed"] == [["left"], False]
+
+
+@needs_node
+def test_touch_taps_pinch_the_wheel_the_keys_and_the_double_click(tmp_path):
+    got = run_node(tmp_path, POINTER)
+    assert got["tap"] == [[[], ["left"]], ["left"]], "the first tap outlines, the second opens"
+    zooms, midpoint, opens, pans = got["pinch"]
+    assert zooms == [1.5, 1.333], "two fingers zoom by the change of their distance (100 -> 150 -> 200 px)"
+    assert midpoint is True and opens == [] and pans == 0, "a pinch pans nothing and opens nothing"
+    assert got["wheel"] == [True, True, False, 2, True, True], "ctrl + wheel (a trackpad pinch) is zoomed and prevented like the wheel; nothing is prevented while the camera moves"
+    prevented, with_ctrl, zooms, fits, moves = got["keys"]
+    assert prevented == [True, True, True, True, False] and with_ctrl is False, "the keys the camera owns are taken; ctrl + key is the browser's"
+    assert zooms == [1.25, 0.8] and fits == 1 and moves == [[0.1, 0]]
+    assert got["doubleClick"] == 1, "a double click on the ground fits, on an object it does not"
+
+
+SERVER_WORDS = r"""
+import * as THREE from "@JS@/three.js";
+import { createKit } from "@JS@/scene/kit.js";
+import { buildServer } from "@JS@/views/control-scene.js";
+import { sceneModel } from "@JS@/views/control-model.js";
+const c = (hex) => new THREE.Color(hex);
+const T = { border: c(0x101010), theme: c(0x2020f0), success: c(0x10f010), error: c(0xf01010), emphasis: c(0x303030), text: c(0x404040), warn: c(0xf0a010), textMuted: c(0x505050) };
+const palette = { dark: false, T, mix: (a, b, t) => a.clone().lerp(b, t), bg: c(0xfafafa), shell: c(0xf8f8f8), ink: c(0x202020), metal: c(0x606060), deskTop: c(0xd0d0d0), screenOff: c(0x181818), leafA: c(0x80c080), trunk: c(0x806040) };
+const kit = createKit(palette);
+const conn = (n) => ({ classes: Array.from({ length: n }, (_, i) => ({ class: `c${i}`, provider: "p", found: i % 2 === 0, note: null, skills: [] })), secrets: [], image: { name: "i", present: true, evidence: true }, platform: {} });
+const built = buildServer(kit, sceneModel({ accepted: true, connections: conn(3), costs: null }));
+const words = built.text(sceneModel({ accepted: true, connections: conn(3), costs: null }));
+console.log(JSON.stringify({ tips: [...words.tips.entries()].map(([k]) => k), labels: words.labels.length, hits: built.hits.map((h) => h.id) }));
+"""
+
+
+@needs_node
+def test_the_control_room_has_its_words_apart_so_a_model_that_changes_only_words_does_not_build_it_again(tmp_path):
+    got = run_node(tmp_path, SERVER_WORDS)
+    assert sorted(got["tips"]) == sorted(got["hits"]) and got["labels"] == 0, "a tooltip for every hit, no label"
+
+
+# --- the City's card, the camera buttons ---------------------------------------------------------------------------------------------------
+
+def test_the_citys_card_shows_its_theme_border_only_for_a_project_the_person_has_and_the_buttons_follow_the_measured_bar():
+    engine = (SCENE / "engine.js").read_text(encoding="utf-8")
+    city_view = (JS / "views" / "city.js").read_text(encoding="utf-8")
+    assert "model.sceneModel(city.buildings, null, state === \"ready\")" in city_view, "the tracking bar's default project is not marked on the scene"
+    assert 'classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId)' in engine, "hovered (the scene or the list) or chosen by the route"
+    assert engine.count("markLabels();") >= 3, "marked on every hover change, build and relabel"
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    assert ".wb-label-card.is-selected" in css and "wb-camera-bottom" not in css and "156px" not in css.split(".wb-camera-tools")[1].split("}")[0]
+    assert 'tools.style.setProperty("--wb-y"' in engine and "insets.bottom" in engine, "the buttons sit above the bar by the height the frame measured"
+    assert "translate: 0 calc(0px - var(--wb-y" in css
+
+
+# --- the request list stays open across a poll ---------------------------------------------------------------------------------------------------
+
+POLL = r"""
+import * as model from "@JS@/model.js";
+import { FakeNode, find, all } from "@FAKE@";
+import { createTrack } from "@JS@/frame/track.js";
+FakeNode.prototype.getBoundingClientRect = () => ({ left: 10, top: 500 });
+const task = (id, state) => ({ id, key: `k${id}`, title: `Task ${id}`, state, agent: "engineering" });
+const reqs = (extra = 0) => ({ requests: [{ id: 2, title: "Spring", state: "ready", tasks: [task(2, "done"), task(3, "running")] }, { id: 3, title: "Cart", state: "ready", tasks: [task(4, "waiting")] }], pending: [] });
+const snapshot = (status) => ({ projects: [{ id: "p1", name: "shop", config: { accepted: true }, running_task: 3 }], details: { p1: { status, agents: [{ name: "engineering", enabled: true }] } }, tasks: {}, loaded: true });
+const bar = (status) => model.tracking(snapshot(status), "p1", new Date("2026-10-08T12:00:00Z"));
+model.resetRequestChoices();
+const track = createTrack({ onOpenSteps() {}, onSelectRequest() {} });
+const first = bar(reqs());
+track.set(first, "ready");
+const desktop = () => find(track.el, ".wb-track-desktop");
+const chip = () => find(desktop(), ".wb-req-chip");
+chip().click();
+const option3 = () => find(desktop(), '.wb-req-option[data-request="3"]');
+option3().focus();
+const out = { before: [chip().attrs["aria-expanded"], document.activeElement === option3()] };
+// a poll that changes the bar (a task ends): drawn again, the list stays open on the same row
+const changed = reqs(); changed.requests[0].tasks[1].state = "done";
+const second = bar(changed);
+track.set(second, "ready");
+out.after = [chip().attrs["aria-expanded"], find(desktop(), ".wb-req-menu").hidden, document.activeElement === option3(), document.activeElement.attrs["data-request"]];
+// a poll that changes nothing does not draw it again
+const node = find(desktop(), ".wb-req-menu");
+track.set(bar(changed), "ready");
+out.same = find(desktop(), ".wb-req-menu") === node;
+// a closed list stays closed; the focus on the chip stays on the chip
+find(desktop(), ".wb-req-menu").hidden = true; chip().attrs["aria-expanded"] = "false"; chip().focus();
+const third = reqs(); third.requests[0].tasks[1].state = "failed";
+track.set(bar(third), "ready");
+out.closed = [chip().attrs["aria-expanded"], find(desktop(), ".wb-req-menu").hidden, document.activeElement === chip()];
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_request_list_stays_open_on_the_same_row_when_a_poll_draws_the_bar_again(tmp_path):
+    got = run_node(tmp_path, POLL)
+    assert got["before"] == ["true", True]
+    assert got["after"] == ["true", False, True, "3"], "open, and the focus on the row it was on"
+    assert got["same"] is True, "a poll that found the same bar draws nothing"
+    assert got["closed"] == ["false", True, True], "a closed list stays closed and the chip keeps the focus"

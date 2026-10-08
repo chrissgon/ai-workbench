@@ -10,13 +10,14 @@ import * as THREE from "../three.js";
 import { h } from "../dom.js";
 import { icon } from "../frame/icons.js";
 import { buildBuilding } from "./building.js";
-import { clampView, fitView, frustumOf, isDrag, keyAction, panBy, panPixels, pointerToNdc, wheelFactor, zoomAt } from "./camera.js";
+import { clampView, fitView, frustumOf, panBy, panPixels, pointerToNdc, zoomAt } from "./camera.js";
 import { buildCity, pulseBeacon, restBeacon } from "./city.js";
 import { ease, fitFrustum, openEase } from "./fit.js";
 import { createKit } from "./kit.js";
 import { cornerPosition, mountLabels, placeLabels } from "./labels.js";
 import { applyOutlineVisibility, showPlan } from "./look.js";
 import { createLoop } from "./loop.js";
+import { createPointer } from "./pointer.js";
 import { LIGHT_WHITE, readPalette } from "./palette.js";
 import { buildRoom } from "./room.js";
 import { createTween } from "./tween.js";
@@ -35,8 +36,6 @@ export const TAG_MS = 600;        // A6: the work-order tag moves to the next fl
 export const SHAPE_GROW = 1.03;   // an outline that follows an object's shape stands 3 percent off each of its parts
 export const OUTLINE_PAD = 0.04;  // the hover outline stands this far off the object (the prototype's, for a piece of furniture)
 
-const PICK_EVERY_MS = 40;
-const CLICK_AFTER_DRAG_MS = 60;   // a click this soon after a drag ended is the drag's, not a click
 
 export class NoWebGL extends Error {
   constructor() {
@@ -114,18 +113,12 @@ export function createEngine(host, options) {
   let previousDecisions = new Map();
   let outline = null;
   let hoverId = null;
-  let stickyId = null;
   let lostText = false;
   let disposed = false;
-  let lastPick = 0;
   const epoch = clock();          // the ambient animations' clock: it is never restarted, so a rebuild cannot restart a motion
   let structureSignature = "";
-  let dragEndedAt = -Infinity;
-  let lastMouse = null;           // where the mouse last was over the canvas, to pick again when the camera moves under it
   let builds = 0;                 // how many times the scene was built and how many times only its words changed: the page's check that a poll does not rebuild
   let relabels = 0;
-  let pendingMove = null;         // the latest pointer move the throttle held back
-  let pendingTimer = null;
   let frameMs = 0;                // the browser-side cost of the last frame (submitting the draw calls)
   // The hover outline is the prototype's: a one-pixel line of the theme colour, full opacity, tested against the depth so the
   // edges behind the object stay hidden, standing OUTLINE_PAD off the object.
@@ -202,6 +195,7 @@ export function createEngine(host, options) {
     scene.add(content.group);
     applyOutlines();
     labelEntries = mountLabels(overlay, content.labels.map((l) => ({ ...l, anchor: l.anchor })), { popped: poppedOf(content.labels) });
+    markLabels();
     const markerKeys = new Set(content.markers.map((m) => m.key));
     const fresh = previousReady ? content.markers.filter((m) => !previousMarkers.has(m.key)) : [];
     previousReady = Boolean(model.ready);
@@ -238,14 +232,23 @@ export function createEngine(host, options) {
     const popped = poppedOf(words.labels);
     for (const entry of labelEntries) entry.node.remove();
     labelEntries = mountLabels(overlay, words.labels.map((l) => ({ ...l, anchor: l.anchor })), { popped });
+    markLabels();
     positionLabels();
     const hit = hoverId ? content.hits.find((x) => x.id === hoverId) : null;
     if (hit && !tooltip.hidden) tooltip.textContent = hit.tip;
   }
 
   // The outline lines of the lot, the floor or the room are drawn only for the object that is hovered or selected by the route.
+  // A building's card is drawn with the theme border while the person has that project: hovered (on the scene or in the list) or
+  // chosen by the route. The tracking bar's default project does not count.
+  function markLabels() {
+    for (const entry of labelEntries) {
+      if (entry.spec.kind === "card") entry.node.classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId);
+    }
+  }
+
   function applyOutlines() {
-    if (content) applyOutlineVisibility(content.outlines, hoverId, content.selected);
+    if (content) applyOutlineVisibility(content.outlines, content.selected);
   }
 
   // A5: a building opens (its floors separate) and a room is entered (the camera moves in), once; a cut under reduced motion.
@@ -323,6 +326,7 @@ export function createEngine(host, options) {
     if (!content || !size.w || !size.h) return;
     const insets = options.getInsets ? options.getInsets() : {};
     lastInsets = insets;
+    tools.style.setProperty("--wb-y", `${Math.max(16, insets.bottom || 0)}px`);   // above the tracking bar, whatever its height
     bounds = contentBounds(content.group);
     frustum = fitFrustum(bounds, size, insets, insets.pad || 1.04);
     view = clampView(view, frustum, bounds);   // the person's zoom and pan stay while they are inside the limits
@@ -341,7 +345,7 @@ export function createEngine(host, options) {
     applyView();
     positionLabels();
     loop.requestRender();
-    if (lastMouse && !stickyId && !(press && press.dragging)) hoverAt(lastMouse);   // the scene moved under a still mouse
+    pointerControl.again();   // the scene moved under a still mouse
   }
   const canMove = () => Boolean(content && frustum && bounds && !tween.active());
   const ndcOf = (clientX, clientY) => pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
@@ -488,6 +492,7 @@ export function createEngine(host, options) {
     }
     const hit = id && content ? content.hits.find((x) => x.id === id) : null;
     applyOutlines();
+    markLabels();
     if (hit && hit.shape) {
       outline = new THREE.LineSegments(shapeGeometry(hit.object), outlineMaterial);
       scene.add(outline);
@@ -522,134 +527,32 @@ export function createEngine(host, options) {
     }
   }
 
-  // Pointers down on the canvas: one is a pan (a press that moves more than a few pixels), two are a pinch. A press that does
-  // not move is a click: it opens what is under it.
-  const down = new Map();   // pointerId -> {x, y}
-  let press = null;         // {x, y, dragging}
-  let pinch = null;         // {distance}
-
-  const onDown = (event) => {
-    if (event.pointerType === "mouse" && event.button !== 0) return;
-    down.set(event.pointerId, { x: event.clientX, y: event.clientY });
-    if (canvas.setPointerCapture) {
-      try { canvas.setPointerCapture(event.pointerId); } catch (e) { /* a pointer that is already gone */ }
-    }
-    if (down.size === 1) press = { x: event.clientX, y: event.clientY, dragging: false };
-    else if (down.size === 2) {
-      const [a, b] = [...down.values()];
-      pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y) };
-      if (press) press.dragging = true;
-    }
-  };
-
-  const onMove = (event) => {
-    const was = down.get(event.pointerId);
-    if (was) {
-      const dx = event.clientX - was.x;
-      const dy = event.clientY - was.y;
-      down.set(event.pointerId, { x: event.clientX, y: event.clientY });
-      if (down.size >= 2 && pinch) {
-        const [a, b] = [...down.values()];
-        const distance = Math.hypot(a.x - b.x, a.y - b.y);
-        if (pinch.distance > 0 && distance > 0) zoomBy(distance / pinch.distance, ndcOf((a.x + b.x) / 2, (a.y + b.y) / 2));
-        pinch.distance = distance;
-        return;
-      }
-      if (press) {
-        if (!press.dragging && isDrag(event.clientX - press.x, event.clientY - press.y)) {
-          press.dragging = true;
-          tooltip.hidden = true;
-          canvas.classList.add("is-dragging");
-          if (hoverId !== null && !stickyId) showHover({ hit: null });
-        }
-        if (press.dragging && canMove()) setView(panPixels(view, frustum, bounds, dx, dy, size));
-      }
-      return;
-    }
-    if (event.pointerType === "touch" || stickyId) return;
-    lastMouse = { clientX: event.clientX, clientY: event.clientY };
-    hoverAt(event);
-  };
-
-  // The pick is throttled, but the last move of a motion is never dropped: a move that comes too soon is picked once more when
-  // the interval is over, with the pointer's latest position. (A dropped last move left the outline on the object the pointer
-  // had just left: "the cursor was over the third rack and the second was still selected".)
-  function hoverAt(event) {
-    const wait = PICK_EVERY_MS - (clock() - lastPick);
-    if (wait > 0) {
-      pendingMove = event;
-      if (pendingTimer === null) pendingTimer = setTimeout(runPending, wait);
-      return;
-    }
-    runPending(event);
-  }
-
-  function runPending(event) {
-    const move = event && event.clientX !== undefined ? event : pendingMove;
-    pendingMove = null;
-    pendingTimer = null;
-    if (!move || disposed || stickyId || down.size > 0) return;
-    lastPick = clock();
-    showHover(pick(move));
-  }
-
-  const onUp = (event) => {
-    if (!down.has(event.pointerId)) return;
-    down.delete(event.pointerId);
-    if (canvas.releasePointerCapture) {
-      try { canvas.releasePointerCapture(event.pointerId); } catch (e) { /* already released */ }
-    }
-    if (down.size < 2) pinch = null;
-    if (down.size === 0) {
-      if (press && press.dragging) dragEndedAt = clock();   // the click that follows is the drag's end, not a click
-      press = null;
-      canvas.classList.remove("is-dragging");
-    }
-  };
-
-  const onLeave = () => {
-    lastMouse = null;
-    if (!stickyId && down.size === 0) showHover({ hit: null });
-  };
-
-  const onClick = (event) => {
-    if (clock() - dragEndedAt < CLICK_AFTER_DRAG_MS) return;
-    const result = pick(event);
-    if (!result.hit) {
-      stickyId = null;
-      showHover(result);
-      return;
-    }
-    if (event.pointerType === "touch" && stickyId !== result.hit.id) {
-      stickyId = result.hit.id;
-      showHover(result);
-      return;
-    }
-    stickyId = null;
-    showHover({ hit: null });
-    if (options.onOpen) options.onOpen(result.hit.id);
-  };
-
-  const onDoubleClick = (event) => {
-    if (!pick(event).hit) resetView();   // on the ground: the whole scene again (a double click on a building opens it)
-  };
-
-  const onWheel = (event) => {
-    if (!canMove()) return;
-    event.preventDefault();
-    zoomBy(wheelFactor(event.deltaY, event.deltaMode), ndcOf(event.clientX, event.clientY));
-  };
-
-  const onKeyDown = (event) => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const action = keyAction(event.key);
-    if (!action) return;
-    event.preventDefault();
-    if (action.fit) resetView();
-    else if (action.zoom) zoomBy(action.zoom);
-    else if (action.pan) moveBy(action.pan[0], action.pan[1]);
-  };
-
+  // The pointer and the keys (pointer.js): a pan, a click, a pinch, the wheel, the keys; the hover pick is never stale.
+  const pointerControl = createPointer({
+    clock, setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (id) => clearTimeout(id),
+    pick, showHover, open: (id) => { if (options.onOpen) options.onOpen(id); }, canMove,
+    pan: (dx, dy) => setView(panPixels(view, frustum, bounds, dx, dy, size)),
+    zoomBy: (factor, x, y) => zoomBy(factor, x === null || x === undefined ? { x: 0, y: 0 } : ndcOf(x, y)),
+    moveBy, resetView,
+    dragging: (on) => {
+      if (on) tooltip.hidden = true;
+      canvas.classList.toggle("is-dragging", on);
+    },
+    capture: (id, on) => {
+      const call = on ? canvas.setPointerCapture : canvas.releasePointerCapture;
+      if (!call) return;
+      try { call.call(canvas, id); } catch (e) { /* a pointer that is already gone */ }
+    },
+    hovering: () => hoverId !== null, disposed: () => disposed,
+  });
+  const onDown = (event) => pointerControl.down(event);
+  const onMove = (event) => pointerControl.move(event);
+  const onUp = (event) => pointerControl.up(event);
+  const onLeave = () => pointerControl.leave();
+  const onClick = (event) => pointerControl.click(event);
+  const onDoubleClick = (event) => pointerControl.doubleClick(event);
+  const onWheel = (event) => pointerControl.wheel(event);
+  const onKeyDown = (event) => pointerControl.key(event);
   canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
   canvas.addEventListener("pointerup", onUp);
@@ -786,7 +689,7 @@ export function createEngine(host, options) {
     dispose() {
       if (disposed) return;
       disposed = true;
-      if (pendingTimer !== null) clearTimeout(pendingTimer);
+      pointerControl.dispose();
       observer.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
       reducedQuery.removeEventListener("change", onReduced);

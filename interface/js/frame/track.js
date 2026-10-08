@@ -51,13 +51,14 @@ function selector(model, onSelect) {
     chip.setAttribute("aria-expanded", "false");
     if (refocus) chip.focus();
   };
-  const open = () => {
+  const open = (focusRequest = null) => {
     const box = chip.getBoundingClientRect();
     list.style.setProperty("--wb-x", `${box.left.toFixed(1)}px`);
     list.style.setProperty("--wb-y", `${(box.top - 6).toFixed(1)}px`);
     list.hidden = false;
     chip.setAttribute("aria-expanded", "true");
-    (list.querySelector(".is-selected") || list.querySelector("button")).focus();
+    const target = focusRequest !== null ? list.querySelector(`[data-request="${focusRequest}"]`) : null;
+    (target || list.querySelector(".is-selected") || list.querySelector("button")).focus();
   };
   chip.addEventListener("click", () => (list.hidden ? open() : close(true)));
   list.addEventListener("mousedown", (event) => event.preventDefault());   // Safari does not focus a clicked button: keep the focus where it is so the list stays open for the click
@@ -81,6 +82,16 @@ function selector(model, onSelect) {
   wrap.addEventListener("focusout", (event) => {
     if (!list.hidden && !(event.relatedTarget && wrap.contains(event.relatedTarget))) close(false);   // focus left: the list closes
   });
+  // A poll that changes the bar draws it again: the open list and the focused row (or the chip) are put back by the caller.
+  wrap.wbState = () => {
+    const active = document.activeElement;
+    const option = active && list.contains(active) && active.getAttribute ? active.getAttribute("data-request") : null;
+    return { open: !list.hidden, option, chip: active === chip };
+  };
+  wrap.wbRestore = (state) => {
+    if (state.open) open(state.option);
+    else if (state.chip) chip.focus({ preventScroll: true });
+  };
   return wrap;
 }
 
@@ -155,7 +166,9 @@ export function createTrack({ onOpenSteps, onSelectRequest = () => {} }) {
       const key = JSON.stringify([model, state]);
       if (key === shown) return;
       shown = key;
+      const before = [...el.querySelectorAll(".wb-req-select")].map((w) => w.wbState());
       keepFocus(el, () => draw(model, state));
+      [...el.querySelectorAll(".wb-req-select")].forEach((w, i) => { if (before[i]) w.wbRestore(before[i]); });   // the list stays open across a poll
     },
   };
 }
