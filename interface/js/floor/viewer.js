@@ -9,33 +9,16 @@ import * as api from "../api.js";
 import { fill, h } from "../dom.js";
 import { formatSize, formatWhen } from "../floor-model.js";
 import { icon } from "../frame/icons.js";
-import { renderMarkdown } from "../markdown.js";
+import { markdownView } from "../markdown-view.js";
 import { busyLine } from "./widgets.js";
 
 const MARKDOWN_FILE = /\.(md|markdown)$/i;
-let plainChosen = false;      // the person's last choice of the toggle, kept until the page is reloaded
 
-/** The body of a loaded document: for Markdown the toggle, the rendered view and the plain `pre` (one of the two hidden), else the `pre`. */
+/** The body of a loaded document: a Markdown file gets the rendered view, the plain `pre` and the toggle; any other file, the `pre`. */
 function documentBody(doc, path) {
   const name = doc.path || path;
-  const text = String(doc.text);
-  const pre = h("pre", { class: "wb-viewer-text", tabindex: "0", "aria-label": `Text of ${name}` }, text);
-  if (!MARKDOWN_FILE.test(name)) return [pre];
-  const rendered = renderMarkdown(text);
-  rendered.setAttribute("tabindex", "0");
-  rendered.setAttribute("aria-label", `Document ${name}`);
-  const toggle = h("button", { class: "pui-btn pui-surface pui-outline wb-small-button", type: "button", "data-key": "plain", "aria-pressed": String(plainChosen), text: "Plain text" });
-  const show = () => {
-    rendered.hidden = plainChosen;
-    pre.hidden = !plainChosen;
-    toggle.setAttribute("aria-pressed", String(plainChosen));
-  };
-  toggle.addEventListener("click", () => {
-    plainChosen = !plainChosen;
-    show();
-  });
-  show();
-  return [h("div", { class: "wb-viewer-tools" }, toggle), rendered, pre];
+  if (MARKDOWN_FILE.test(name)) return markdownView(doc.text, { name, renderedLabel: `Document ${name}`, plainClass: "wb-viewer-text" });
+  return [h("pre", { class: "wb-viewer-text", tabindex: "0", "aria-label": `Text of ${name}` }, String(doc.text))];
 }
 
 /** Create a viewer. Returns {el, load(project, path, {quiet}), close(), focus()}; onClose is called by "Close". `quiet`: read the file again without the loading line (the page reloaded: the text stays until the new one arrives). */

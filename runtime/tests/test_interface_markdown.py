@@ -29,7 +29,6 @@ needs_node = floor_tests.needs_node
 HEAD = r"""
 import { FakeNode, settle, find, all } from "@FAKE@";
 globalThis.location = new URL("http://127.0.0.1:8765/");
-const ORIGIN = "http://127.0.0.1:8765";
 const markdown = await import("@JS@/markdown.js").catch((e) => ({ failure: e }));
 if (markdown.failure && !globalThis.NAIVE_ONLY) throw markdown.failure;
 const { renderMarkdown, RENDER_LIMIT } = markdown;
@@ -44,7 +43,7 @@ function ser(node) {
 }
 const tree = (md) => renderMarkdown(md).children.map(ser).join(",");
 
-// What a rendered tree may hold: these elements, the attribute class, and an href that is a same-origin address of this page.
+// What a rendered tree may hold: these elements, the attribute class, and an href that is a route of this page (it starts with #/).
 const ALLOWED = new Set(["DIV", "P", "H1", "H2", "H3", "H4", "UL", "OL", "LI", "BLOCKQUOTE", "PRE", "CODE", "TABLE", "THEAD", "TBODY", "TR", "TH", "TD", "HR", "BR", "STRONG", "EM", "A"]);
 function violations(root) {
   const bad = [];
@@ -52,7 +51,7 @@ function violations(root) {
     if (!ALLOWED.has(n.tagName)) bad.push(`element ${n.tagName}`);
     for (const [k, v] of Object.entries(n.attrs)) {
       if (k === "class") { if (!/^[A-Za-z0-9 _.+-]*$/.test(v)) bad.push(`class ${v}`); }
-      else if (k === "href" && n.tagName === "A" && v.startsWith(ORIGIN + "/")) { /* a same-origin address */ }
+      else if (k === "href" && n.tagName === "A" && /^#\/\S*$/.test(v)) { /* a route of this page */ }
       else bad.push(`attribute ${k} on ${n.tagName}`);
     }
   }
@@ -139,9 +138,9 @@ def test_a_naive_renderer_fails_every_hostile_case_so_the_safety_check_can_see_t
 
 
 @needs_node
-def test_hostile_markdown_produces_no_element_of_those_kinds_and_no_attribute_but_class_and_a_same_origin_href(tmp_path):
+def test_hostile_markdown_produces_no_element_of_those_kinds_and_no_attribute_but_class_and_a_route_of_the_page(tmp_path):
     got = floor_tests.run_node(tmp_path, SECURITY)
-    assert got["real"] == {name: [] for name in got["real"]}, "no element outside the subset and no attribute but class or a same-origin href"
+    assert got["real"] == {name: [] for name in got["real"]}, "no element outside the subset and no attribute but class or a route of the page"
     assert got["whole"] == [], "nor in one document that holds every sample and the whole subset"
     assert got["noScriptText"] == "a <script>alert(1)</script> b", "raw HTML stays in the page as the text that was typed"
 
@@ -160,7 +159,7 @@ def test_what_cannot_be_an_element_is_still_there_to_read_as_text(tmp_path):
     assert text["protocol_relative"] == "x (//other.host/p)"
     assert text["backslash_host"] == "x (/\\other.host/p)"
     assert text["data_link"].startswith("x (data:text/html;base64,")
-    assert text["title_attr"] == "x", "a link title is dropped: it would be an attribute"
+    assert text["title_attr"] == "x (/a)", "a link title is dropped: it would be an attribute; the address is not a route of the page, so it is text"
 
 
 # --- 2. the subset: each element renders the nodes it should (CommonMark reading of the subset) -------------------------------------------
@@ -191,7 +190,8 @@ const cases = {
   tablePipe: "| a\\|b | c |\n|---|---|\n| x | y |",
   notTable: "a | b\n\n| c |\n| d |",
   rules: "---\n\n***\n\n___\n\n- - -\n\ntext",
-  linkLocal: "[t](/docs/a.md) [h](#/p/1) [abs](http://127.0.0.1:8765/x) [t2](/x \"a title\") [**b**](/y)",
+  linkRoute: "[h](#/p/1) [t2](#/x \"a title\") [**b**](#/y) [enc](#/d/a%2Fb.md)",
+  linkNotRoute: "[rel](docs/a.md) [path](/docs/a.md) [api](/api/projects) [abs](http://127.0.0.1:8765/x) [abs2](http://127.0.0.1:8765/#/p/1) [top](#top) [js](#javascript:x) [empty]()",
   linkOther: "[t](http://other.host/x) [**b**](https://other.host/y) [http://o.h/x](http://o.h/x)",
   bareUrl: "see http://o.h/x and <http://o.h/y>",
   image: "![alt text](http://other.host/i.png) ![a](/i.png)",
@@ -234,7 +234,8 @@ EXPECTED = {
     "tablePipe": 'table[thead[tr[th["a|b"],th["c"]]],tbody[tr[td["x"],td["y"]]]]',
     "notTable": 'p["a | b"],p["| c |\\n| d |"]',
     "rules": 'hr,hr,hr,hr,p["text"]',
-    "linkLocal": 'p[a.pui-link.pui-theme{http://127.0.0.1:8765/docs/a.md}["t"]," ",a.pui-link.pui-theme{http://127.0.0.1:8765/#/p/1}["h"]," ",a.pui-link.pui-theme{http://127.0.0.1:8765/x}["abs"]," ",a.pui-link.pui-theme{http://127.0.0.1:8765/x}["t2"]," ",a.pui-link.pui-theme{http://127.0.0.1:8765/y}[strong["b"]]]',
+    "linkRoute": 'p[a.pui-link.pui-theme{#/p/1}["h"]," ",a.pui-link.pui-theme{#/x}["t2"]," ",a.pui-link.pui-theme{#/y}[strong["b"]]," ",a.pui-link.pui-theme{#/d/a%2Fb.md}["enc"]]',
+    "linkNotRoute": 'p["rel (docs/a.md) path (/docs/a.md) api (/api/projects) abs (http://127.0.0.1:8765/x) abs2 (http://127.0.0.1:8765/#/p/1) top (#top) js (#javascript:x) empty"]',
     "linkOther": 'p["t (http://other.host/x) ",strong["b"]," (https://other.host/y) http://o.h/x"]',
     "bareUrl": 'p["see http://o.h/x and <http://o.h/y>"]',
     "image": 'p["alt text (http://other.host/i.png) a (/i.png)"]',
@@ -291,6 +292,8 @@ out.shapes = {
   hashes: timed("#".repeat(N)),
   tabs: timed("\t".repeat(N) + "x"),
   hardBreaks: timed("a  \n".repeat(N / 4)),
+  fourParagraphs: timed(["[".repeat(M), "[a](".repeat(M / 4), "![".repeat(M / 2), "[a](<".repeat(M / 5)].join("\n\n")),
+  fourParagraphsB: timed(["[a]".repeat(M / 3), "[a](b ".repeat(M / 6), "[a](<b ".repeat(M / 7), "[a](" + " ".repeat(M - 10)].join("\n\n")),
   manyParagraphs: timed("p\n\n".repeat(N / 3)),
 };
 console.log(JSON.stringify(out));
@@ -314,7 +317,7 @@ def test_hostile_shapes_of_200_kb_end_quickly_and_neither_nest_deeply_nor_build_
     got = floor_tests.run_node(tmp_path, SIZE)
     for name, shape in got["shapes"].items():
         assert shape["bad"] == 0, name
-        assert shape["ms"] < 3000, f"{name} took {shape['ms']} ms in the fake document"
+        assert shape["ms"] < (100 if name.startswith("fourParagraphs") else 3000), f"{name} took {shape['ms']} ms in the fake document"
         assert shape["depth"] <= 80, f"{name} nests {shape['depth']} levels deep"
 
 
@@ -411,6 +414,13 @@ out.effect = { strong: strong(effect), pre: effect.el.querySelector("pre").textC
 const planBody = "Source: the router\n\n| # | Task |\n|---|---|\n| 1 | build |\n\nPlan hash: " + "b".repeat(64);
 const plan = createCard(item("plan", ["approved", "rejected"], { body: planBody, payload: { tasks: [], limits: {}, plan_sha256: "b".repeat(64) } }), env());
 out.plan = { tables: all(plan.el, ".wb-md table").length, hash: plan.el.querySelector("[data-hash=plan]").textContent, cells: all(plan.el, ".wb-md td").map((n) => n.textContent) };
+const toggle = plan.el.querySelector("button[data-key=plain]");
+const view = () => ({ md: !plan.el.querySelector(".wb-md").hidden, pre: !plan.el.querySelector("details pre").hidden, text: plan.el.querySelector("details pre").textContent === planBody, pressed: toggle.attrs["aria-pressed"] });
+out.planToggle = { before: view() };
+toggle.click();
+out.planToggle.after = view();
+toggle.click();
+out.planToggle.again = view();
 console.log(JSON.stringify(out));
 """
 
@@ -429,6 +439,10 @@ def test_question_review_and_acceptance_bodies_render_as_markdown_and_the_effect
         "what will be sent is shown exactly as it is: it is the content that is approved"
     assert got["plan"]["tables"] == 1 and got["plan"]["cells"] == ["1", "build"]
     assert got["plan"]["hash"] == "b" * 64, "the plan hash is the card's own text and is never rendered"
+    assert got["planToggle"] == {"before": {"md": True, "pre": False, "text": True, "pressed": "false"},
+                                 "after": {"md": False, "pre": True, "text": True, "pressed": "true"},
+                                 "again": {"md": True, "pre": False, "text": True, "pressed": "false"}}, \
+        "the plan's body has the viewer's Plain text toggle: the exact text is one click away"
 
 
 # --- 6. the conversation and the Lobby's plan card ---------------------------------------------------------------------------------------
@@ -454,6 +468,12 @@ const hash = "ab".repeat(32);
 const plan = createPlanCard({ api, project: "p1", now: NOW, onChanged: async () => {}, item: { id: 22, kind: "plan", title: "Plan", body: "Source: **router**\n\n| # | Task |\n|---|---|\n| 1 | build |", task_id: 14, agent: null, status: "open",
   created_at: "2026-10-08T08:00:00Z", actions: ["approved", "rejected"], payload: { plan_sha256: hash, tasks: [], limits: {}, estimate: {} } } });
 out.plan = { cells: find(plan.el, (x) => x.tagName === "TD").map(textOf).filter((t) => t === "build"), strong: strongs(plan.el), hash: textOf(byClass(plan.el, "wb-plan-hash")[0]) };
+const lobbyToggle = find(plan.el, (x) => x.tagName === "BUTTON" && x.attrs["data-key"] === "plain")[0];
+const lobbyView = () => ({ md: !byClass(plan.el, "wb-md")[0].hidden, pre: !byClass(plan.el, "wb-plan-pre")[0].hidden, text: textOf(byClass(plan.el, "wb-plan-pre")[0]) });
+out.lobbyToggle = { before: lobbyView() };
+lobbyToggle.listeners.click[0]();
+out.lobbyToggle.after = lobbyView();
+lobbyToggle.listeners.click[0]();
 console.log(JSON.stringify(out));
 """
 
@@ -466,6 +486,8 @@ def test_the_planning_agents_reply_renders_as_markdown_and_the_persons_message_s
     assert got["agent"]["bad"] == 0 and got["agent"]["text"], "raw HTML in a reply is text"
     assert got["plan"]["cells"] == ["build"] and got["plan"]["strong"] == ["router"], "the Lobby's plan card draws its stored body with the renderer"
     assert got["plan"]["hash"] == "ab" * 32, "the hash is never rendered"
+    text = "Source: **router**\n\n| # | Task |\n|---|---|\n| 1 | build |"
+    assert got["lobbyToggle"] == {"before": {"md": True, "pre": False, "text": text}, "after": {"md": False, "pre": True, "text": text}}, "the Lobby's plan card has the toggle too"
 
 
 # --- 7. the files: one renderer, and what it may not contain ----------------------------------------------------------------------------------
@@ -477,26 +499,32 @@ def own_js():
 def test_markdown_js_builds_nodes_only_and_nothing_else_in_the_page_renders_markdown():
     text = MARKDOWN.read_text(encoding="utf-8")
     for word in ("innerHTML", "outerHTML", "insertAdjacentHTML", "createContextualFragment", "DOMParser", "document.write", "srcdoc", "Function(", "eval(",  # security-scan: allow dynamic-eval -- a word the renderer's file must not hold; nothing runs it
-                 "setAttribute(\"style\"", ".style", "createElement(\"img\"", "createElement(\"script\"", "createElement(\"iframe\"", "localStorage", "sessionStorage", "fetch("):
+                 "setAttributeNS", "setAttributeNode", ".attributes", ".style", "createElement(\"img\"", "createElement(\"script\"", "createElement(\"iframe\"", "localStorage", "sessionStorage", "fetch("):
         assert word not in text, f"markdown.js holds {word}"
-    assert not re.search(r"https?:", text.replace('"http:"', "").replace('"https:"', "")), "no address of another host (the two scheme names are compared, never fetched)"
-    attributes = set(re.findall(r"setAttribute\(\s*\"([a-z-]+)\"", text))
-    assert attributes <= {"class", "href"}, f"markdown.js sets only class and href, not {sorted(attributes - {'class', 'href'})}"
-    callers = {"floor/viewer.js", "floor/cards.js", "cards/plan.js", "views/lobby-thread.js"}
+    assert not re.search(r"https?:", text), "no address of any host, and no scheme name: nothing in the file is fetched or compared with one"
+    assert not re.search(r"\.(?:href|src|srcset|id|title|className|outerText|textContent\s*=|on[a-z]+)\s*=[^=]", text), "no property assignment that would set an attribute"
+    calls = re.findall(r"setAttribute\(\s*([^,)]*)", text)
+    assert calls and all(arg in ('"class"', '"href"') for arg in calls), f"every setAttribute call names class or href as a literal: {calls}"
+    assert not re.search(r"setAttribute\(\s*(?!\"class\"|\"href\")", text)
+    # who imports the renderer: the file that places it with its toggle, the cards' text and the conversation; who imports that
+    # file: the viewer and the two plan cards. No other own file may import either.
+    importers = {"markdown.js": set(), "markdown-view.js": set()}
     for path in own_js():
         name = str(path.relative_to(JS))
-        if path == MARKDOWN:
-            continue
         body = path.read_text(encoding="utf-8")
-        assert "blockquote" not in body and "language-" not in body, f"{name} renders Markdown itself: the renderer is markdown.js alone"
-        imported = re.search(r"from\s+\"(?:\./|\.\./)markdown\.js\"", body) is not None
-        assert imported == (name in callers), f"{name}: only {sorted(callers)} import the renderer"
+        for target in importers:
+            if re.search(r"(?:from\s+|import\s*\(\s*|import\s+)[\"'][^\"']*" + re.escape(target) + r"[\"']", body):
+                importers[target].add(name)
+        if path != MARKDOWN:
+            assert "blockquote" not in body and "language-" not in body, f"{name} renders Markdown itself"
+    assert importers["markdown.js"] == {"markdown-view.js", "floor/cards.js", "views/lobby-thread.js"}, importers
+    assert importers["markdown-view.js"] == {"floor/viewer.js", "floor/cards.js", "cards/plan.js"}, importers
 
 
 def test_every_class_markdown_js_builds_is_a_rule_of_the_stylesheet_and_none_sets_a_colour_of_its_own():
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")
-    classes = set(re.findall(r"\bwb-md[a-z0-9-]*", MARKDOWN.read_text(encoding="utf-8")))
-    assert "wb-md" in classes
+    classes = set(re.findall(r"\bwb-md[a-z0-9-]*", MARKDOWN.read_text(encoding="utf-8") + (JS / "markdown-view.js").read_text(encoding="utf-8")))
+    assert {"wb-md", "wb-md-tools"} <= classes
     for cls in classes:
         assert re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css), f".{cls} has no rule in style.css"
     block = "\n".join(line for line in css.splitlines() if ".wb-md" in line)

@@ -323,7 +323,7 @@ const api = {
 };
 const changed = [];
 const onChanged = async () => { changed.push(1); };
-const buttons = (root) => find(root, (n) => n.tagName === "BUTTON");
+const buttons = (root) => find(root, (n) => n.tagName === "BUTTON" && n.attrs["data-key"] !== "plain");   // the plan body's "Plain text" toggle (WP-9.17) is a view switch, not a word of `actions`
 
 // the plan card: one button per word of `actions`, the whole hash shown, text as text, the hash sent is the hash shown
 let card = createPlanCard({ api, project: "p1", item: item(), now: NOW, onChanged });

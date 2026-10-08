@@ -3,15 +3,14 @@
 //   - blocks: headings 1 to 4, paragraphs, fenced and indented code, bullet and numbered lists (nested), quotes, tables
 //     (GitHub style), rules; inline: bold, italic, code, links, line breaks, backslash escapes;
 //   - everything else is text: a raw tag, a comment, an entity and a footnote show as typed; an image is its alt text and its
-//     address as text (nothing is fetched); a link is its text followed by its address in parentheses, unless the address is of
-//     this page's own origin, which becomes a plain anchor;
+//     address as text (nothing is fetched); a link is its text followed by its address in parentheses, unless the address is a
+//     route of this page (it starts with `#/`), which becomes a plain anchor, so that a click never leaves the page;
 //   - the only attributes ever set are `class` (a fixed name, or `language-` and a name cleaned to letters, digits, `_`, `+`, `-`)
-//     and the `href` of such an anchor, which is the address as the URL parser resolved it, and only for the two web schemes
-//     on this origin. Nothing here reads or writes a style, an event handler, a source or a title.
+//     and the `href` of such an anchor. Nothing here reads or writes a style, an event handler, a source or a title.
 // Bounded work: a document over RENDER_LIMIT characters renders its first part and shows the rest as one plain block; quotes
 // and lists nest MAX_DEPTH levels, a paragraph over MAX_INLINE characters stays text, a paragraph keeps at most MAX_DELIMS
-// emphasis marks, and a bracket pair, an address and a title are searched only within a fixed span, so no input costs more than
-// a few passes over its text.
+// emphasis marks, at most MAX_LINKS bracket pairs are tried in a paragraph, and an address, a title and the spaces between are
+// searched only within a fixed span, so no input costs more than a few passes over its text.
 
 /** The most characters of a document rendered as Markdown; the rest is shown as one plain block. */
 export const RENDER_LIMIT = 200000;
@@ -20,6 +19,8 @@ const MAX_INLINE = 50000;
 const MAX_DELIMS = 200;
 const MAX_BRACKET = 1000;
 const MAX_URL = 2000;
+const MAX_LINKS = 500;      // bracket pairs tried in one paragraph; the next ones stay text
+const MAX_SPACE = 100;      // spaces skipped between the parts of a link
 const ALIGN_CLASS = Object.freeze({ left: "wb-md-left", center: "wb-md-center", right: "wb-md-right" });
 const ESCAPABLE = "!\"#$%&'()*+,-./:;<=>?@[\\]^_`{|}~";
 
@@ -34,26 +35,16 @@ function appendAll(parent, list) {
   return parent;
 }
 
-// --- the page's own origin ----------------------------------------------------------------------------------------------------
+// --- the page's own routes ----------------------------------------------------------------------------------------------------
 
-function pageAddress() {
-  const where = typeof location !== "undefined" ? location : (typeof window !== "undefined" ? window.location : null);
-  return where && typeof where.href === "string" ? where.href : null;
-}
-
-/** The address as the URL parser resolved it when it is a web address of this page's origin, else null. */
-function sameOriginHref(dest) {
-  const base = pageAddress();
-  if (!base || !dest.trim() || dest.length > MAX_URL) return null;
-  try {
-    const page = new URL(base);
-    const url = new URL(dest, page);
-    if (url.protocol !== "http:" && url.protocol !== "https:") return null;
-    if (page.origin === "null" || url.origin !== page.origin) return null;
-    return url.href;
-  } catch (e) {
-    return null;
-  }
+/**
+ * The hash of an address that is a route of this page (`#/...`), else null. Only such an address becomes an anchor: a click on it
+ * stays in the page (a typed answer and the open card stay where they are). Every other address, of this origin or not, is shown as
+ * text, so a click never leaves the single page.
+ */
+function routeHref(dest) {
+  const text = dest.trim();
+  return text.length <= MAX_URL && /^#\/\S*$/.test(text) ? text : null;
 }
 
 // --- inline -------------------------------------------------------------------------------------------------------------------
@@ -143,6 +134,12 @@ function closingRun(runs, length, from) {
   return held.at < held.starts.length ? held.starts[held.at] : -1;
 }
 
+function skipSpace(src, at) {
+  let k = at;
+  while ((src[k] === " " || src[k] === "\n" || src[k] === "\t") && k - at < MAX_SPACE) k++;
+  return k;
+}
+
 /** `[label](destination "title")` at `at` (the position of the bracket): {label, dest, end} or null. */
 function linkAt(src, at) {
   const limit = Math.min(src.length, at + MAX_BRACKET);
@@ -158,14 +155,13 @@ function linkAt(src, at) {
     }
   }
   if (j >= limit || src[j] !== "]" || src[j + 1] !== "(") return null;
-  let k = j + 2;
-  while (src[k] === " " || src[k] === "\n" || src[k] === "\t") k++;
+  let k = skipSpace(src, j + 2);
   let dest;
   if (src[k] === "<") {
-    const close = src.indexOf(">", k + 1);
-    if (close < 0 || close - k > MAX_URL || src.slice(k, close).includes("\n")) return null;
-    dest = src.slice(k + 1, close);
-    k = close + 1;
+    const close = src.slice(k + 1, k + 2 + MAX_URL).indexOf(">");
+    if (close < 0 || src.slice(k, k + 1 + close).includes("\n")) return null;
+    dest = src.slice(k + 1, k + 1 + close);
+    k = k + 1 + close + 1;
   } else {
     const start = k;
     let parens = 0;
@@ -182,7 +178,7 @@ function linkAt(src, at) {
     if (k - start >= MAX_URL) return null;
     dest = src.slice(start, k).replace(/\\([!-/:-@[-`{-~])/g, "$1");
   }
-  while (src[k] === " " || src[k] === "\n" || src[k] === "\t") k++;
+  k = skipSpace(src, k);
   const quote = src[k];
   if (quote === "\"" || quote === "'" || quote === "(") {
     const end = quote === "(" ? ")" : quote;
@@ -192,15 +188,14 @@ function linkAt(src, at) {
       else if (src[m] === end) break;
     }
     if (src[m] !== end) return null;
-    k = m + 1;
-    while (src[k] === " " || src[k] === "\n" || src[k] === "\t") k++;
+    k = skipSpace(src, m + 1);
   }
   if (src[k] !== ")") return null;
   return { label: src.slice(at + 1, j), dest, end: k + 1 };
 }
 
 /** The strings and nodes of an inline text: the paragraph, a heading, a table cell, a link's label. */
-function inlineNodes(src, inLink) {
+function inlineNodes(src, inLink, budget = { links: MAX_LINKS }) {
   if (src.length > MAX_INLINE) return [src];
   const out = [];
   let buf = "";
@@ -244,23 +239,23 @@ function inlineNodes(src, inLink) {
         i = close + length;
       }
     } else if (c === "!" && src[i + 1] === "[") {
-      const link = linkAt(src, i + 1);
+      const link = budget.links-- > 0 ? linkAt(src, i + 1) : null;
       if (!link) {
         buf += c;
         i++;
       } else {
-        const alt = plainText(inlineNodes(link.label, true));
+        const alt = plainText(inlineNodes(link.label, true, budget));
         buf += alt ? `${alt} (${link.dest})` : link.dest;
         i = link.end;
       }
     } else if (c === "[") {
-      const link = linkAt(src, i);
+      const link = budget.links-- > 0 ? linkAt(src, i) : null;
       if (!link) {
         buf += c;
         i++;
       } else {
-        const label = inlineNodes(link.label, true);
-        const href = inLink ? null : sameOriginHref(link.dest);
+        const label = inlineNodes(link.label, true, budget);
+        const href = inLink ? null : routeHref(link.dest);
         flush();
         if (href) {
           const anchor = appendAll(el("a", "pui-link pui-theme"), label);

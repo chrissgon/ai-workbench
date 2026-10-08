@@ -1264,8 +1264,9 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-md th.wb-md-right, .wb-md td.wb-md-right { text-align: right; }
 .wb-md-note { color: var(--pui-text-muted); font-size: 12px; }
 .wb-md-rest { padding: 12px; border-radius: var(--pui-radius); background-color: var(--wb-sunken); font-family: var(--wb-font-mono); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; white-space: pre-wrap; }
-.wb-viewer-tools { display: flex; justify-content: flex-end; margin-bottom: 8px; }
-.wb-viewer-tools .pui-btn[aria-pressed="true"] { background-color: var(--wb-tint-selected); }
+.wb-md-tools { display: flex; justify-content: flex-end; margin-bottom: 8px; }
+.wb-md-tools .pui-btn[aria-pressed="true"] { background-color: var(--wb-tint-selected); }
+.wb-plan-pre { margin: 0; font-family: var(--wb-font-mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
 .wb-plan-stack { display: none; margin: 0; padding: 0; list-style: none; }
 .wb-plan-stacked { display: grid; gap: 2px; padding: 6px 0; border-bottom: var(--pui-border-width) solid var(--pui-border); }
 .wb-plan-stacked-skill { font-size: 11px; color: var(--pui-text-muted); }

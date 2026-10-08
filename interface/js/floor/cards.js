@@ -17,6 +17,7 @@ import { fill, h } from "../dom.js";
 import * as format from "../format.js";
 import { ENDING, openable } from "../floor-model.js";
 import { renderMarkdown } from "../markdown.js";
+import { markdownView } from "../markdown-view.js";
 import { agoText, chip, errorText, field, isGone, jobText, notice, ring } from "./widgets.js";
 
 // The buttons of each kind, in the drawn order, by the word of `actions` they send, with their "-ing" word.
@@ -258,7 +259,7 @@ export function createCard(item, env) {
       h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "Plan tasks" }, table),
       h("div", { class: "wb-card-hint", text: limitsLine(payload) }),
       h("div", { class: "wb-card-hint", text: "Plan hash" }), hash,
-      h("details", { class: "pui-accordion-item wb-verdict" }, h("summary", { class: "wb-summary", text: "Plan as text" }), h("div", { class: "wb-card-body wb-scroll", tabindex: "0", "aria-label": "Plan as text" }, renderMarkdown(it.body || ""))),
+      h("details", { class: "pui-accordion-item wb-verdict" }, h("summary", { class: "wb-summary", text: "Plan as text" }), h("div", { class: "wb-card-body wb-scroll" }, markdownView(it.body || "", { name: "the plan", renderedLabel: "Plan as text", plainClass: "wb-pre" }))),
       noteInput(), message(), buttons(),
     ];
   }
