@@ -1068,7 +1068,8 @@ def test_the_start_is_refused_for_a_bad_project_a_bad_port_and_a_bad_command_lin
     parsed = service.parse(["--project", "a", "--project", "b", "--port", "0", "--poll-every", "0", "--dispatch-every", "30",
                             "--token-file", "t"])
     assert parsed == {"projects": ["a", "b"], "port": 0, "poll_every": 0.0, "dispatch_every": 30.0, "token_file": "t"}
-    assert service.parse(["--project", "a"])["dispatch_every"] is None and service.parse(["--project", "a"])["poll_every"] == 60.0
+    assert service.parse(["--project", "a"])["dispatch_every"] == 30.0 and service.parse(["--project", "a"])["poll_every"] == 60.0  # dispatch is on by default (WP-9.14)
+    assert service.parse(["--project", "a", "--no-dispatch"])["dispatch_every"] is None
 
 
 def test_the_command_prints_its_help_and_refuses_an_unknown_call_and_a_missing_project(tmp_path):

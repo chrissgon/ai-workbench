@@ -7,6 +7,8 @@
 function from a snapshot of the store.
 
 decide(snapshot, review_action, may_start) -> {"release": [pending ids], "start": task id or None, "held": [...]}
+held_of(snapshot, decided, blocked=None) -> [{"task_id", "agent", "reason"}]: every ready task a round did not start,
+                with the reason, in the words of REASONS (the record `status` shows, runtime/ops.py)
 
   snapshot      {"running": <task or None>, "ready": [tasks, oldest first], "reviews": [{"pending", "task", "agent",
                 "proven", "mandatory"}], "agents": {"<name>": {"facts", "spent", "entry"}}, "tier": {"<task id>":
@@ -56,7 +58,14 @@ import shutil
 import sys
 
 ONE_AT_A_TIME = "one task at a time per project"
-NO_AGENT = "no area agent owns this task"
+NO_AGENT = "no enabled agent owns the task"
+JOB_RUNNING = "job running"          # a task of the project runs: the one-at-a-time rule holds every ready task
+DISPATCH_OFF = "dispatch off"        # the service dispatches nothing (runtime/ops.py, service_check)
+# The words a held ready task carries (contracts/runtime.md, "The local service"): the three of runtime/autonomy.py
+# (may_start), those of this file, those of a round's checks before a start (runtime/ops.py) and the service's.
+OTHER = "other"                      # any reason a rule function gives that is not in the list: free text never reaches a page
+REASONS = ("stopped", "cap: runs per day", "cap: usd per day", "credential", "secret store", "image", DISPATCH_OFF,
+           JOB_RUNNING, NO_AGENT, OTHER)
 
 
 def decide(snapshot: dict, review_action, may_start) -> dict:
@@ -90,6 +99,22 @@ def decide(snapshot: dict, review_action, may_start) -> dict:
         start = task["id"]
         break
     return {"release": release, "start": start, "held": held}
+
+
+def held_of(snapshot: dict, decided: dict, blocked=None) -> list:
+    """The ready tasks a round held, as [{"task_id", "agent", "reason"}] in the order of the snapshot's ready tasks.
+    Pure. While a task of the project runs every ready task is held with JOB_RUNNING (decide itself lists only the
+    running one); otherwise a task decide held has its reason (stopped, a cap, NO_AGENT). blocked is {task id: reason}
+    for a task decide chose to start that a check made before the start stopped (credential, secret store, image)."""
+    ready = snapshot.get("ready") or []
+    if snapshot.get("running") is not None:
+        why = {task["id"]: JOB_RUNNING for task in ready}
+    else:
+        why = {h["task_id"]: h["why"] for h in decided.get("held") or []}
+        why.update(blocked or {})
+    return [{"task_id": task["id"], "agent": task.get("agent"),
+             "reason": why[task["id"]] if why[task["id"]] in REASONS else OTHER}
+            for task in ready if task["id"] in why]
 
 
 # --- the entry for the scheduler --------------------------------------------------------------------------------------
@@ -170,11 +195,12 @@ def store_readable():
     return "ok"
 
 
-def check(project: str) -> tuple:
-    """(report, exit code) of the check verb. It imports, it starts nothing (no docker, no model, no provider)."""
+def inspect(ops) -> dict:
+    """What this interpreter and this checkout can do, as a report: {"python", "executable", "modules", "lab",
+    "secret_store", "credential", "tools"}. ops is the operations layer of the checkout. It imports, it starts
+    nothing (no docker, no model, no provider). The report check prints and the local service reads at its start."""
     report = {"python": sys.version.split()[0], "executable": sys.executable, "modules": {}, "lab": None,
               "secret_store": store_readable(), "credential": None, "tools": {}}
-    ops = bootstrap(project)
     workbench = os.path.dirname(os.path.dirname(os.path.realpath(ops.__file__)))
     runtime = os.path.join(workbench, "runtime")
     for folder, prefix in ((runtime, ""), (os.path.join(runtime, "handlers"), "handlers/")):
@@ -204,6 +230,16 @@ def check(project: str) -> tuple:
         if report["credential"] is None:
             report["credential"] = "not checked: the lab could not be loaded"
     report["tools"] = {tool: shutil.which(tool) for tool in TOOLS}
+    return report
+
+
+def check(project: str) -> tuple:
+    """(report, exit code) of the check verb: inspect() of the checkout the project names. It imports, it starts
+    nothing (no docker, no model, no provider)."""
+    secret_store = store_readable()
+    ops = bootstrap(project)
+    report = inspect(ops)
+    report["secret_store"] = secret_store
     ok = all(v == "ok" for v in report["modules"].values()) and report["lab"] == "ok" and \
         report["credential"] == "ok" and report["tools"]["docker"] and report["tools"]["uv"]
     return report, 0 if ok else 1

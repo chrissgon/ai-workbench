@@ -41,11 +41,15 @@ The functions are pure and use the standard library only. Runs on Python 3.9: py
 """
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import sys
 
-TERMINAL = "python3 runtime/cli.py"
+TERMINAL = "python3 runtime/cli.py"             # the relative form, in a text stored before it is shown (no checkout to name)
+KEYRING_PIN = "keyring==25.7.0"                 # the secret-store library the providers pin (providers/secrets/resolver.py)
+UV_PREFIX = f"uv run --with {KEYRING_PIN}"
+UV_MARK = "WORKBENCH_STARTED_WITH_UV"           # "1" or "0" says how the process was started, over what its interpreter shows
 HELP_HEAD = "Commands, one per line; any other line is a request for the planning agent, or the answer to its question:"
 HELP_WIDTH = 27
 
@@ -196,6 +200,9 @@ OPERATIONS = (
      "help": "the change signal of the project's store: a number that grows on every write, and when the file was last written"},
     {"name": "stop-runs", "call": "stop_runs", "args": (), "channels": ("terminal",), "model": False,
      "help": "end the runs this process started (the local service calls it before it exits)"},
+    {"name": "service-check", "call": "service_check", "args": ({"name": "dispatch_every", "kind": "int", "flag": "dispatch-every"},),
+     "channels": ("terminal",), "model": False,
+     "help": "what the local service checks at its start: the secret store, the credential, docker, the eval image and whether it dispatches (the service calls it for each project)"},
 )
 
 # What the conversation answers itself, with no operation: the help, and a new request whatever is open.
@@ -295,20 +302,51 @@ def parse_chat(line: str):
     return (name, kwargs)
 
 
+def started_with_uv() -> bool:
+    """Whether this process was started through `uv run`: uv sets UV_RUN_RECURSION_DEPTH for what it starts (whatever
+    environment it made: its cache, a project's .venv, a custom UV_CACHE_DIR); or, failing that, the interpreter lives
+    in an environment uv built in its cache (a folder `builds-v<n>` or `environments-v<n>` under a folder named uv or
+    under UV_CACHE_DIR). The environment variable WORKBENCH_STARTED_WITH_UV ("1" or "0") says it outright and wins."""
+    marked = os.environ.get(UV_MARK)
+    if marked in ("0", "1"):
+        return marked == "1"
+    if os.environ.get("UV_RUN_RECURSION_DEPTH"):
+        return True
+    prefix = os.path.realpath(sys.prefix)
+    cache = os.environ.get("UV_CACHE_DIR")
+    if cache and prefix.startswith(os.path.realpath(cache) + os.sep):
+        return True
+    parts = prefix.split(os.sep)
+    return "uv" in parts and any(p.startswith(("builds-v", "environments-v")) for p in parts)
+
+
 def _word(value) -> str:
     text = str(value)
     return text if re.fullmatch(r"<[^<>]*>", text) else shlex.quote(text)
 
 
-def command_line(name: str, project: str, /, **args) -> str:
+def _runner(checkout, script: str, uv) -> str:
+    """The start of a command: `python3 <checkout>/runtime/<script>` (the checkout's absolute path, quoted), or, with
+    no checkout, the relative TERMINAL (the terminal's script only); and, for an absolute command run through uv (uv
+    true, or uv None and this process started through uv), the prefix `uv run --with keyring==...`."""
+    if checkout is None:
+        return TERMINAL
+    use_uv = started_with_uv() if uv is None else bool(uv)
+    return (UV_PREFIX + " " if use_uv else "") + "python3 " + _word(os.path.join(checkout, "runtime", script))
+
+
+def command_line(name: str, project: str, /, *, checkout=None, uv=None, **args) -> str:
     """The terminal's form of one operation: the one place that spells the terminal's syntax. An argument that is
-    None or False is left out; a value written as <placeholder> is kept as it is."""
+    None or False is left out; a value written as <placeholder> is kept as it is. With checkout (the absolute path
+    of the running checkout, which the operations layer and the service know), the command is absolute, so it runs
+    from any folder, and it carries the uv prefix when this process was started through uv (or when uv is true:
+    an operation that needs the secret store). Without checkout it is the relative form of a stored text."""
     row = by_name(name)
     known = {a["name"] for a in row["args"]}
     unknown = sorted(set(args) - known)
     if unknown:
         raise ValueError(f"{name} has no argument {', '.join(unknown)}")
-    parts = [TERMINAL, name, "--project", _word(project)]
+    parts = [_runner(checkout, "cli.py", uv), name, "--project", _word(project)]
     for arg in row["args"]:
         value = args.get(arg["name"])
         if value is None or value is False:
@@ -324,6 +362,18 @@ def command_line(name: str, project: str, /, **args) -> str:
                 parts += [flag, _word(item)]
         else:
             parts += [flag, _word(value)]
+    return " ".join(parts)
+
+
+def service_line(checkout: str, projects, *, uv=None, port=None) -> str:
+    """The command that starts the local service on these project folders: `python3 <checkout>/runtime/service.py
+    --project <dir> ...`, with the uv prefix when uv is true (the service needs the secret store to dispatch) or,
+    when uv is None, when this process was started through uv. The one place that spells it."""
+    parts = [_runner(checkout, "service.py", uv)]
+    for project in projects:
+        parts += ["--project", _word(project)]
+    if port is not None:
+        parts += ["--port", str(int(port))]
     return " ".join(parts)
 
 

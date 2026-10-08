@@ -65,7 +65,7 @@ The task runtime's tables, those that migration 2 and later create, with their c
 | `conversation_messages` | 6 | id, conversation, role, text, task_id, run_id, created_at |
 <!-- /generated -->
 
-The cursors the runtime writes: `config:accepted-sha256` (the accepted configuration, written only by `accept_config`), `board:configured` (when the board was first written), `use:<run id>` (the recorded use of a run), and each handler's own (`routine:published-posts`).
+The cursors the runtime writes: `config:accepted-sha256` (the accepted configuration, written only by `ops._record_acceptance`, which `accept_config` calls for the person and `set_mode` calls for a move down the order of the modes), `config:accepted-by` (`person` or `code:narrowing`), `dispatch:held` (the ready tasks the last dispatcher round did not start, with their reasons, JSON, at most 20), `board:configured` (when the board was first written), `use:<run id>` (the recorded use of a run), and each handler's own (`routine:published-posts`).
 
 **The project configuration's keys** (`runtime/project_config.py`; the keys are closed: an unknown key is refused (exit 3) with the nearest known name, and the first runtime's keys, a second closed tuple that leaves with stage 7, stay valid in the same file): `workbench`, `data_dir`, `store_db` (required, absolute); `area_agents` (`pack`, `enabled`, `mode`, `max_runs_per_day`, `max_usd_per_day`); `protected_paths`; `task_board` and `documents` (`provider`, and `expires` for a provider other than `local`, plus the provider's own keys); `code` (`provider`, `repo`, `base`, `branch_prefix`); `dependencies` (`recipe`, `file`); `handlers`; `path`; `max_cost_usd_per_run`; `model_prices` (`{"<model id>": {"input_usd_per_mtok", "output_usd_per_mtok", "cache_read_usd_per_mtok", "cache_write_usd_per_mtok", "source", "date"}}`, typed by the person from the provider's price page; `runtime/costs.py` recomputes a run's cost from its token counts with it).
 
@@ -308,6 +308,7 @@ The limit's text and the stage that built it come from the contract's table; the
 | `artifacts` | - | `artifacts` |
 | `artifact` | `--path` | `artifact` |
 | `stop-runs` | - | `stop_runs` |
+| `service-check` | `[--dispatch-every]` | `service_check` |
 <!-- /generated -->
 
 The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`, and `say` for a new request.
@@ -376,6 +377,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `artifact` | `artifact` | terminal, page, mcp | no | the text of one file under docs/ of the project, read-only |
 | `version` | `version` | page, mcp | no | the change signal of the project's store: a number that grows on every write, and when the file was last written |
 | `stop_runs` | `stop-runs` | terminal | no | end the runs this process started (the local service calls it before it exits) |
+| `service_check` | `service-check` | terminal | no | what the local service checks at its start: the secret store, the credential, docker, the eval image and whether it dispatches (the service calls it for each project) |
 <!-- /generated -->
 
 **The dispatcher's jobs**, `/usr/bin/python3 runtime/dispatcher.py <verb> --project <dir> [--pin <file>]`, run by the scheduler from a copy kept in the job folder:
