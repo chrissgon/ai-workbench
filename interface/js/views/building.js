@@ -20,7 +20,7 @@ export const PLATE_GAP_X = 14;
 const STATE_PATH = "docs/workbench/state.md";
 const ARTIFACTS_EVERY_MS = 20000;
 
-/** Create the Building in `frame`. env: {refresh()}. Returns {update({snapshot, route, now}), dispose(), stats()}. */
+/** Create the Building in `frame`. env: {refresh()}. Returns {update({snapshot, route, now, reload}), dispose(), stats()}. */
 export function createBuildingView(frame, env) {
   let engine = null;
   let disposed = false;
@@ -33,6 +33,7 @@ export function createBuildingView(frame, env) {
   let shown = "";
   let listShown = "";
   let projectId = null;
+  let reloaded = null;   // the page's reload stamp last seen: when it moves the store changed, and the documents are read again
 
   // --- the panel ---------------------------------------------------------------------------------------------------------------
   const title = h("strong", { class: "wb-panel-title", id: "wb-building-title", text: "" });
@@ -312,6 +313,8 @@ export function createBuildingView(frame, env) {
     update(data) {
       last = data;
       projectId = data.route.project;
+      if (reloaded !== null && data.reload !== reloaded) documentsAt = 0;
+      reloaded = data.reload;
       if (documents === null || Date.now() - documentsAt > ARTIFACTS_EVERY_MS) readDocuments();
       redraw();
     },

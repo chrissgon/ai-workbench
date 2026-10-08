@@ -17,7 +17,7 @@ export const NO_AGENT_TEXT = "This project has no agents in its configuration.";
 
 /**
  * Create the Agent tab. env: {project, now() (a Date), refresh() (read the screen's data again), changed() (a task was read)}.
- * Returns {el, update({snapshot, tab}) -> the Floor's model of the planning agent or null, bodies() -> {task id: body}, dispose()}.
+ * Returns {el, update({snapshot, tab}) -> the Floor's model of the planning agent or null, bodies() -> {task id: body}, reload(), dispose()}.
  */
 export function createLobbyAgent(env) {
   const { project } = env;
@@ -79,6 +79,10 @@ export function createLobbyAgent(env) {
       return model;
     },
     bodies: plain,
+    /** The store changed: the bodies held are stale, whatever their age; the next update reads those it shows. */
+    reload() {
+      for (const entry of bodies.values()) entry.at = 0;
+    },
     dispose() {
       disposed = true;
     },

@@ -2,7 +2,8 @@
 // holds the messages, each request's line and its decisions (the plan card under the message that produced it), and at the bottom
 // the "New request" disclosure and the composer. The page decides nothing: it sends what the person typed (`say`, or `request`
 // then `route`), reads `conversation` and `task` and draws what came. The conversation is read every 2 seconds while a job of
-// this screen runs and every 10 seconds otherwise, never while the document is hidden. The Inbox, Desk and Agent tabs are the
+// this screen runs, never while the document is hidden, and again, with the request bodies, the documents and the planning agent's
+// task bodies, whenever the page reloads because the store changed (the stamp `reload` of what `update` is given). The Inbox, Desk and Agent tabs are the
 // Floor's modules (floor/inbox.js, desk-tab.js, viewer.js, agent-tab.js) given the planning agent: lobby-inbox.js, lobby-desk.js
 // and lobby-agent.js hand them their data, and every write they send goes through floor/actions.js.
 
@@ -31,7 +32,7 @@ import { worldModel } from "../world-model.js";
 
 /**
  * Create the Lobby of `project` in `frame`. options: {project, onChanged(): Promise (the page reads the project again)}.
- * Returns {update({snapshot, route, now, projectName}), dispose()}.
+ * Returns {update({snapshot, route, now, projectName, reload}), dispose()}.
  */
 export function createLobbyView(frame, { project, onChanged }) {
   const abort = new AbortController();
@@ -55,6 +56,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   let viewerWas = false;
   let lastOpened = null;              // the document the person opened last: the focus goes back to its row when the viewer closes
   let leftInbox = true;               // the Inbox was left since it was last drawn: a resolved card goes
+  let reloaded = null;                // the page's reload stamp last seen: when it moves the store changed, and everything shown is read again
 
   // --- the pieces ---------------------------------------------------------------------------------------------------------
   const panel = createPanel({ title: "Lobby · Planning agent", subtitle: "", icon: "message-square", tone: "theme", width: "lobby" });
@@ -382,16 +384,23 @@ export function createLobbyView(frame, { project, onChanged }) {
       clearTimeout(timer);
       timer = null;
     } else {
-      tick();
+      schedule();       // the busy poll of a job that still runs; the page reloads on return, which reads the rest
     }
   }
   document.addEventListener("visibilitychange", onVisibility);
 
   return {
     /** Called by the page after every read of the projects: snapshot (js/data.js), route (router.parse), now, the project's name. */
-    update({ snapshot, route, now, projectName }) {
+    update({ snapshot, route, now, projectName, reload }) {
       if (disposed) return;
       last = { snapshot, route, now, projectName: projectName || "" };
+      if (reloaded !== null && reload !== reloaded) {     // the store changed: everything shown is stale, whatever its age
+        invalidate();
+        desk.reload();
+        agent.reload();
+        readConversation();
+      }
+      reloaded = reload;
       const listed = (snapshot.projects || []).find((p) => p.id === project);
       const detail = snapshot.details[project];
       // Before the first read nothing is known: the screen is not declared unaccepted until the projects came.

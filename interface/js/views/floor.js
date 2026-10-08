@@ -27,7 +27,7 @@ const DOCS_IDLE_MS = 30000;
 const MAX_TASK_READS = 12;
 const TABS = [{ id: "agent", label: "Agent" }, { id: "inbox", label: "Inbox" }, { id: "desk", label: "Desk" }];
 
-/** Create the Floor in `frame`. env: {refresh()}. Returns {update({snapshot, route, now}), dispose(), stats()}. */
+/** Create the Floor in `frame`. env: {refresh()}. Returns {update({snapshot, route, now, reload}), dispose(), stats()}. */
 export function createFloorView(frame, env) {
   let engine = null;
   let disposed = false;
@@ -45,6 +45,7 @@ export function createFloorView(frame, env) {
   let lastOpened = null;
   let leftInbox = true;
   let wasWorking = null;       // the live region says when the agent starts working, never on the first read
+  let reloaded = null;         // the page's reload stamp last seen: when it moves the store changed, and everything shown is read again
 
   // --- the panel ---------------------------------------------------------------------------------------------------------------
   const tile = h("span", { class: "wb-tile pui-soft pui-warn" });
@@ -306,6 +307,11 @@ export function createFloorView(frame, env) {
       last = data;
       project = data.route.project;
       agent = data.route.agent;
+      if (reloaded !== null && data.reload !== reloaded) {     // the store changed: the bodies and the documents are stale, whatever their age
+        for (const entry of bodies.values()) entry.at = 0;
+        documentsAt = 0;
+      }
+      reloaded = data.reload;
       if (data.snapshot.loaded) {
         readBodies();
         const stale = Date.now() - documentsAt > (data.route.tab === "desk" ? DOCS_OPEN_MS : DOCS_IDLE_MS);

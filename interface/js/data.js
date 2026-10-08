@@ -33,9 +33,10 @@ async function readProject(project, before) {
 
 /**
  * Read everything again and return the new snapshot. `previous` is the last one (its task bodies are reused while a task's
- * state is unchanged); `followed` is the id of the project the tracking bar follows.
+ * state is unchanged, unless `options.force` is set: the page reloads because the store changed, and a running task's runs
+ * change while its state does not); `followed` is the id of the project the tracking bar follows.
  */
-export async function refresh(previous, followed) {
+export async function refresh(previous, followed, options = {}) {
   const listed = await api.projects();
   const projects = Array.isArray(listed.projects) ? listed.projects : [];
   const accepted = projects.filter((p) => p.config && p.config.accepted);
@@ -47,7 +48,7 @@ export async function refresh(previous, followed) {
   await Promise.all(wanted.map(async (w) => {
     const key = taskKey(w.project, w.id);
     const cached = previous.tasks[key];
-    if (cached && cached.task && (w.state === undefined || cached.task.state === w.state)) {
+    if (!options.force && cached && cached.task && (w.state === undefined || cached.task.state === w.state)) {
       tasks[key] = cached;
       return;
     }
@@ -60,4 +61,14 @@ export async function refresh(previous, followed) {
     }
   }));
   return { projects, details, tasks, loaded: true };
+}
+
+/**
+ * The change signal of every project, as one string that is equal while nothing was written: the numbers the service answers to
+ * `GET /versions` (or, for a project it could not read, its sentence). One request whatever the number of projects.
+ */
+export async function versionKey() {
+  const got = await api.versions();
+  const entries = Object.entries((got && got.versions) || {}).map(([id, v]) => [id, v && v.version !== undefined ? v.version : (v && v.error) || null]);
+  return JSON.stringify(entries.sort((a, b) => (a[0] < b[0] ? -1 : 1)));
 }

@@ -2807,6 +2807,42 @@ def _say_route(project: str, ctx: dict, said: str, answer_to=None) -> tuple:
 # --- stage 9: the local service --------------------------------------------------------------------------------------
 
 
+def version(project: str) -> dict:
+    """The change signal of a project's store: {"version", "changed_at"}. "version" is a whole number that grows on every
+    write transaction that changed a row (providers/store/sqlite.py, `change_counter`: the database file's header),
+    whoever wrote it: this process, a loop's thread, the terminal. A page asks it every second and reads everything
+    again when it moved. It is the cheapest read there is: the header, and the cursor that holds the accepted
+    configuration's hash (one row by its key); no migration is run (every other operation runs one at its start), and
+    a configuration nobody accepted is refused as every operation refuses it. "changed_at" is the time the store's file
+    was last written (UTC, as the store writes times). A project whose store does not exist yet gets it made, as every
+    other operation does."""
+    try:
+        cfg = project_config.load(project)
+    except project_config.ConfigError as e:
+        raise OpsError(str(e), 3) from None
+    store = store_module()
+    db = cfg["store_db"]
+    if not os.path.isfile(db):
+        context(project, check_config=False)
+    conn = store.connect(db)
+    try:
+        accepted = store.cursor_get(conn, project_config.ACCEPTED)
+        number = store.change_counter(conn)
+    except store.StoreError as e:
+        raise OpsError(f"the store at {db}: {e}", e.code) from None
+    except Exception as e:  # sqlite3.Error: the file is not a database, or is locked past the timeout
+        raise OpsError(f"the store at {db}: {e}", 1) from None
+    finally:
+        conn.close()
+    if accepted != cfg["sha256"]:
+        raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
+                       f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
+                       f"want, run: {operations.command_line('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
+    stamps = [os.stat(path).st_mtime for path in (db, db + "-wal") if os.path.exists(path)]
+    changed = datetime.datetime.fromtimestamp(max(stamps), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {"version": number, "changed_at": changed}
+
+
 def stop_runs(project: str | None = None) -> dict:
     """End every run this process started, through the lab's own stop (lab.stop_runs): the container and the process
     group of each run are ended and the folders of a run in progress go back to its run folder. The local service

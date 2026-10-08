@@ -74,6 +74,8 @@ export function createControlView(frame) {
   let shown = "skills";     // the tab whose panel is on show, so that a newly chosen one starts at its top
   let disposed = false;
   let started = false;
+  let reloaded = null;      // the page's reload stamp last seen: when it moves the store changed
+  const stale = new Set();  // the tabs the store changed under while they were not open: read when they are opened
   let message = null;       // what the content shows instead of the tabs: loading, or not accepted
   const aborter = new AbortController();
   const loads = { skills: { status: "loading" }, costs: { status: "loading", fieldValue: null, agents: null }, connections: { status: "loading" } };
@@ -201,17 +203,12 @@ export function createControlView(frame) {
     drawScene();
   }
 
-  function onVisible() {
-    if (!document.hidden && started && !disposed) readAll();
-  }
-  document.addEventListener("visibilitychange", onVisible);
-
   select("skills");
   for (const id of tabs.keys()) show(id);
 
   return {
     el: panel.el,
-    /** state: {loaded, known, accepted, projectId, tab}; called on every poll, so it only reconciles. */
+    /** state: {loaded, known, accepted, projectId, tab, reload}; called on every render, so it only reconciles; when `reload` moves the store changed. */
     update(state) {
       projectId = state.projectId;
       const wanted = model.tabOf(state.tab);
@@ -226,9 +223,23 @@ export function createControlView(frame) {
         tab = wanted;
         render();
       }
+      const moved = reloaded !== null && state.reload !== reloaded;
+      reloaded = state.reload;
       if (!message && !started) {
         started = true;
         readAll();
+      } else if (!message && moved) {
+        // The store changed. The open tab is read again, and the costs (which feed the room and are cheap); the two other
+        // tabs are 0.8 s of work each: they are marked, and read when they are opened.
+        stale.add("skills");
+        stale.add("connections");
+        stale.delete(wanted);
+        if (wanted === "skills") readSkills();
+        else if (wanted === "connections") readConnections();
+        readCosts(lastSince, true);
+      } else if (!message && changed && stale.delete(wanted) && wanted !== "costs") {
+        if (wanted === "skills") readSkills();
+        else readConnections();
       } else if (!message && changed && loads[wanted].status === "failed") {
         if (wanted === "skills") readSkills();
         else if (wanted === "connections") readConnections();
@@ -238,7 +249,6 @@ export function createControlView(frame) {
     dispose() {
       disposed = true;
       aborter.abort();
-      document.removeEventListener("visibilitychange", onVisible);
       skills.dispose();
       observer.disconnect();
       if (engine) engine.dispose();

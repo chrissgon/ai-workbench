@@ -558,17 +558,37 @@ def connect(path: Path) -> sqlite3.Connection:
     return conn
 
 
+CHANGE_COUNTER_MAX = 2 ** 31 - 1   # the header's user-version field is a signed 32-bit integer
+
+
 @contextmanager
 def write(conn: sqlite3.Connection):
     """One write transaction. BEGIN IMMEDIATE takes the write lock up front, so a read inside
-    the transaction cannot be overtaken by another writer before its update."""
+    the transaction cannot be overtaken by another writer before its update.
+
+    The change counter: a transaction that changed at least one row raises the number kept in the database file's
+    header (`PRAGMA user_version`, which nothing else here uses), in the same transaction, so that a reader learns
+    with one cheap read that something was written (change_counter). One that changed nothing, such as a
+    dispatcher tick with no task ready, and one that is rolled back leave it alone. After the largest value it
+    starts again at 1: a reader compares two numbers for difference only."""
     conn.execute("BEGIN IMMEDIATE")
+    changes = conn.total_changes
     try:
         yield
+        if conn.total_changes != changes:
+            raised = change_counter(conn) + 1
+            # A pragma takes no parameter; the value is an integer computed here, never text from outside.
+            conn.execute(f"PRAGMA user_version = {raised if raised <= CHANGE_COUNTER_MAX else 1}")
     except BaseException:
         conn.execute("ROLLBACK")
         raise
     conn.execute("COMMIT")
+
+
+def change_counter(conn: sqlite3.Connection) -> int:
+    """The number of write transactions that changed a row, kept in the database file's header (0 for a database
+    that never had one). One read of the header, no table."""
+    return conn.execute("PRAGMA user_version").fetchone()[0]
 
 
 def enable_wal(conn: sqlite3.Connection) -> str:
