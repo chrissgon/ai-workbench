@@ -109,7 +109,8 @@ costs     the runs from a day on (--since YYYY-MM-DD, default the last 30 days) 
           model with no price, has no recomputed cost; the row counts such runs as unknown_runs. Also the daily caps.
 connections  which provider each requirement class of the skills in scope resolves to (providers/resolve.py), which
           secrets are found and where (the environment or the secret store; never a value), whether the eval image is on
-          this machine and is the evidence's, and the machine's platform and the evidence's. It starts no provider and
+          this machine and is the evidence's, and the platform: the machine's architecture, the evidence's platform, the one the eval image runs as here
+          (here) and whether the two are the same (same: true, false, or null when unknown). It starts no provider and
           makes no network call.
 artifacts the project's files under docs/ that are documents or machine files, each with its owner skill (the skill whose
           outputs name it), the area agent whose pack holds that skill, size, modification time and whether a pending decision binds it. Never the runtime's
