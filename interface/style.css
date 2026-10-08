@@ -38,7 +38,7 @@
   --wb-panel-lobby: 420px;
   --wb-panel-wide: 700px;
   --wb-pip: 5px;
-  --wb-plate-w: 290px;
+  --wb-card-w: 290px;
   --wb-ring: 14px;
   --wb-font-system: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --wb-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -167,8 +167,10 @@ code, .mono {
 .wb-icon-credit-card { -webkit-mask-image: url("./icons/credit-card.svg"); mask-image: url("./icons/credit-card.svg"); }
 .wb-icon-file-text { -webkit-mask-image: url("./icons/file-text.svg"); mask-image: url("./icons/file-text.svg"); }
 .wb-icon-inbox { -webkit-mask-image: url("./icons/inbox.svg"); mask-image: url("./icons/inbox.svg"); }
+.wb-icon-maximize { -webkit-mask-image: url("./icons/maximize.svg"); mask-image: url("./icons/maximize.svg"); }
 .wb-icon-message-square { -webkit-mask-image: url("./icons/message-square.svg"); mask-image: url("./icons/message-square.svg"); }
 .wb-icon-minus { -webkit-mask-image: url("./icons/minus.svg"); mask-image: url("./icons/minus.svg"); }
+.wb-icon-plus { -webkit-mask-image: url("./icons/plus.svg"); mask-image: url("./icons/plus.svg"); }
 .wb-icon-send { -webkit-mask-image: url("./icons/send.svg"); mask-image: url("./icons/send.svg"); }
 .wb-icon-server { -webkit-mask-image: url("./icons/server.svg"); mask-image: url("./icons/server.svg"); }
 .wb-icon-x { -webkit-mask-image: url("./icons/x.svg"); mask-image: url("./icons/x.svg"); }
@@ -188,8 +190,10 @@ code, .mono {
 
 .wb-scene-area { position: absolute; inset: 0; }
 .wb-scene { position: absolute; inset: 0; }
-.wb-canvas { display: block; width: 100%; height: 100%; }
+.wb-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }   /* a drag on the ground pans: the page does not scroll from here */
 .wb-canvas.is-pointer { cursor: pointer; }
+.wb-canvas.is-dragging { cursor: grabbing; }
+.wb-canvas:focus-visible { outline: 2px solid var(--pui-theme); outline-offset: -2px; }
 .wb-scene-fallback {
   position: absolute;
   top: 50%;
@@ -201,6 +205,12 @@ code, .mono {
   text-align: center;
 }
 .wb-overlay { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
+
+/* the camera's buttons (zoom in, zoom out, fit): the HTML equivalent of the wheel, the pinch and the double click */
+/* placed above the tracking bar: the scene writes the bar's measured height as --wb-y (the same measure as the camera's free rectangle) */
+.wb-camera-tools { position: absolute; left: var(--wb-edge); bottom: 0; translate: 0 calc(0px - var(--wb-y, var(--wb-edge))); z-index: 2; display: flex; gap: 4px; }
+.wb-camera-btn { padding: 8px; background-color: var(--wb-raised); box-shadow: var(--wb-elev); }
+.wb-frame.no-scene .wb-camera-tools { display: none; }
 
 /* labels over the canvas: their position is two custom properties written by the scene */
 .wb-label {
@@ -223,7 +233,7 @@ code, .mono {
   font-size: 12px;
   line-height: 1.25;
 }
-.wb-label-card.is-selected { border-color: var(--pui-theme); }
+.wb-label-card.is-selected { border-color: var(--pui-theme); }   /* the project the person has: hovered or chosen by the route, never the tracking bar's default */
 .wb-label-row { display: flex; align-items: center; gap: 6px; }
 .wb-label-name { font-size: 13px; font-weight: 600; }
 .wb-label-sub { color: var(--pui-text-muted); }
@@ -232,7 +242,7 @@ code, .mono {
 .wb-chip-small { padding: 2px 8px; font-size: 12px; }
 
 /* a decision arriving: the badge scales 1, 1.15, 1 once in 300 ms (none under reduced motion, below) */
-.wb-label.is-pop .pui-badge, .wb-plate.is-pop .pui-badge, .wb-tab .pui-badge.is-pop { animation: wb-pop 0.3s ease-out 1; }
+.wb-label.is-pop .pui-badge, .wb-tab .pui-badge.is-pop { animation: wb-pop 0.3s ease-out 1; }
 @keyframes wb-pop {
   0% { scale: 1; }
   50% { scale: 1.15; }
@@ -504,6 +514,35 @@ a.wb-crumb:hover { text-decoration: underline; }
 .wb-track-phone { display: none; }
 .wb-track-left { display: grid; gap: 8px; min-width: 0; padding: 12px 18px; }
 .wb-track-head { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.wb-track[hidden] { display: none; }
+/* the request selector: the number as a chip that opens a list of the open requests, with a previous and a next button */
+.wb-req-select { position: relative; display: inline-flex; align-items: center; gap: 4px; flex: none; }
+.wb-req-chip { display: inline-flex; align-items: center; gap: 4px; padding: 0 8px; min-height: 24px; font-size: 12px; font-weight: 600; }
+.wb-req-step { display: inline-flex; align-items: center; justify-content: center; padding: 0; width: 24px; min-height: 24px; }
+.wb-req-menu {
+  position: fixed;   /* the bar clips what overflows it: the list is placed over the page from the chip's own box */
+  top: 0;
+  left: 0;
+  translate: var(--wb-x, 0px) var(--wb-y, 0px);
+  transform: translate(0, -100%);
+  z-index: 5;
+  display: grid;
+  gap: 2px;
+  min-width: 18rem;
+  max-width: min(26rem, 90vw);
+  margin: 0;
+  padding: 4px;
+  list-style: none;
+  border: 1px solid var(--pui-border);
+  border-radius: calc(var(--pui-radius) * 1.5);
+  background-color: var(--wb-raised);
+  box-shadow: var(--wb-elev);
+}
+.wb-req-menu[hidden] { display: none; }
+.wb-req-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--pui-radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.wb-req-option:hover, .wb-req-option.is-selected { background-color: var(--wb-sunken); }
+.wb-req-option-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.wb-req-option-state { color: var(--pui-text-muted); font-size: 11px; white-space: nowrap; }
 .wb-track-title { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-track-project { color: var(--pui-text-muted); font-size: 12px; white-space: nowrap; }
 .wb-track-count { margin-left: auto; color: var(--pui-text-muted); font-size: 12px; white-space: nowrap; }
@@ -562,6 +601,7 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-track-now-text { display: grid; min-width: 0; text-align: left; }
   .wb-scene-area { position: relative; inset: auto; grid-area: scene; overflow: hidden; }
   .wb-kpis { top: 10px; right: 10px; left: 10px; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; width: auto; }
+  .wb-camera-tools { left: 10px; bottom: 10px; translate: none; }
   .wb-kpi { grid-template-columns: minmax(0, 1fr); padding: 8px; }
   .wb-kpi-tile { display: none; }
   .wb-kpi-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -828,39 +868,37 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-chip-12 { padding: 0 8px; font-size: 12px; }
 .wb-chip-11 { padding: 0 6px; font-size: 11px; }
 
-/* a floor's plate (building.md "Floor plate"): at the floor's right edge, stacked beside the building */
-.wb-plate {
-  position: absolute;
-  top: 0;
-  left: 0;
-  translate: var(--wb-x, 0px) var(--wb-y, 0px);
-  transform: translate(0, -50%);
+/* the compact floor card (WP-9.8): one component for the card at the scene's top right and for each row of the floors list */
+.wb-floor-card {
   display: grid;
-  gap: 6px;
-  width: var(--wb-plate-w);
+  gap: 4px;
   padding: 8px 12px;
   border: 1px solid var(--pui-border);
   border-radius: calc(var(--pui-radius) * 1.5);
   background-color: var(--wb-raised);
   box-shadow: var(--wb-elev);
+  color: inherit;
   font-size: 12px;
   line-height: 1.25;
-  pointer-events: auto;
-  cursor: pointer;
+  text-decoration: none;
 }
-.wb-plate.is-culled { visibility: hidden; }
-.wb-plate.is-selected { border-color: var(--pui-theme); }
-.wb-plate.is-off .wb-plate-name { color: var(--pui-text-muted); }
-.wb-plate-row { display: flex; align-items: center; gap: 8px; }
-.wb-plate-name { font-size: 13px; font-weight: 600; }
-.wb-plate-state { margin-left: auto; color: var(--pui-text-muted); }
-.wb-plate-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.wb-plate-meters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
-.wb-plate-meter { display: grid; gap: 3px; }
-.wb-plate-note { color: var(--pui-text-muted); font-size: 11px; }
-/* the compact plate (the stack would not fit): the name row and the meters only */
-.wb-plate.is-compact { gap: 4px; padding: 6px 12px; }
-.wb-plate.is-compact .wb-plate-chips { display: none; }
+.wb-floor-card.is-off .wb-fc-name { color: var(--pui-text-muted); }
+.wb-fc-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.wb-fc-name { font-size: 13px; font-weight: 600; overflow-wrap: anywhere; }
+.wb-fc-status { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 4px 8px; }
+.wb-fc-state { color: var(--pui-text-muted); }
+.wb-fc-runs { color: var(--pui-text-muted); font-size: 11px; overflow-wrap: anywhere; }
+/* in the corner of the scene: over the canvas at the top right of the free rectangle, never over a panel */
+.wb-corner-card {
+  position: absolute;
+  top: 0;
+  left: 0;
+  translate: var(--wb-x, 0px) var(--wb-y, 0px);
+  transform: translate(-100%, 0);
+  width: var(--wb-card-w);
+  pointer-events: none;
+}
+.wb-corner-card.wb-floor-card { display: grid; }
 
 .wb-label-tag {
   padding: 1px 6px;
@@ -900,23 +938,7 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-floor-list { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
 .wb-floor-item { padding: 0; background-color: var(--wb-sunken); border-radius: var(--pui-radius); }
 .wb-floor-item:hover, .wb-floor-item.is-hover { background-color: var(--wb-ground); }
-.wb-floor-row {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: start;
-  gap: 10px;
-  padding: 8px 12px;
-  border-radius: var(--pui-radius);
-  color: inherit;
-  text-decoration: none;
-}
-.wb-floor-row > .wb-dot { margin-top: 6px; }
-.wb-floor-text { display: grid; gap: 2px; min-width: 0; }
-.wb-floor-name { display: flex; align-items: center; gap: 8px; font-size: 13px; }
-.wb-floor-state { font-size: 12px; }
-.wb-floor-meters { font-size: 12px; overflow-wrap: anywhere; }
-.wb-floor-mode { align-self: start; }
-.wb-floor-mode .wb-mode-wrap { flex-direction: column; align-items: flex-end; gap: 4px; }
+.wb-floor-row { padding: 8px 12px; border: 0; border-radius: var(--pui-radius); background-color: transparent; box-shadow: none; }
 .wb-floor-steps { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: none; gap: 4px; justify-items: center; }
 .wb-floor-step { padding: 10px; background-color: var(--wb-raised); box-shadow: var(--wb-elev); }
 .wb-floor-step.is-above .wb-icon { rotate: 180deg; }
@@ -1058,16 +1080,14 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-viewer-dialog .wb-viewer { max-height: calc(100dvh - 16px); }
 
 @media (max-width: 1023px) {
-  :root { --wb-plate-w: 250px; }
+  :root { --wb-card-w: 250px; }
 }
 
 @media (max-width: 639px) {
   .wb-floor-steps { display: grid; }
   .wb-floor-steps[hidden] { display: none; }
-  .wb-plate { top: auto; left: auto; right: 62px; bottom: 10px; translate: none; transform: none; width: 230px; }
   .wb-building-body { padding: 12px 16px; }
-  .wb-floor-row { grid-template-columns: auto minmax(0, 1fr); min-height: 44px; }
-  .wb-floor-row .wb-floor-mode { grid-column: 2; justify-self: start; }
+  .wb-floor-row { min-height: 44px; }
   .wb-panel-floor, .wb-panel-building { height: auto; }
   .wb-floor-normal { display: block; height: auto; }
   .wb-tabpanel { overflow: visible; }

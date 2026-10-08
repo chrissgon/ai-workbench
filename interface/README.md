@@ -17,7 +17,7 @@ returned and sends what the person typed or clicked.
 | `js/api.js` | The client of the service: one function per route of `ROUTES` in `runtime/service.py`, named after the operation. |
 | `js/token.js`, `js/dom.js` | The token for this session; building elements (strings become text, a style or an event attribute is refused). |
 | `js/frame/` | The shared frame of every scene screen: header (back, breadcrumbs, project switcher), KPI cards, waiting list, tracking bar, panel shell, sheet (a phone's lists), icons. |
-| `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time, the opening of a building, the camera moving into a room, the work-order tag moving), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `labels.js`, `cull.js`, `fit.js`, `tween.js` (the camera move as a state machine), and one builder per scene kind: `city.js`, `building.js` (the cutaway), `room.js` (the Floor's room), with `furniture.js` (desk, chair, tray, sheet, table, cabinet, lamp, bookshelf, door), `figure.js` (the agent in its three poses and the typing motion) and `plates.js` (the floor plates, the board, tag and door labels, and the arithmetic that stacks the plates). |
+| `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time, the opening of a building, the camera moving into a room, the work-order tag moving), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `labels.js`, `cull.js`, `fit.js` (the fitted camera and the prototype's two curves), `camera.js` (the person's zoom and pan with limits, the pointer's mapping), `look.js` (the window colour, which outline lines show, what a `show` must do), `tween.js` (the camera move as a state machine), and one builder per scene kind: `city.js`, `building.js` (the cutaway), `room.js` (the Floor's room), with `furniture.js` (desk, chair, tray, sheet, table, cabinet, lamp, bookshelf, door), `figure.js` (the agent in its three poses and the typing motion) and `plates.js` (the compact floor card, the board, tag and door labels). |
 | `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City), `lobby.js` with `lobby-*.js` (the Lobby: the conversation, the request form, the composer, the tab list, the cancel dialog, the room; `lobby-inbox.js`, `lobby-desk.js` and `lobby-agent.js` hand the Floor's Inbox, Desk and viewer, and Agent tab the planning agent: its decisions, its documents (those with `agent` "planning" or none) and its tasks), `building.js` (the Building: the cutaway, the floors list, the project's facts), `floor.js` (the Floor: the room and the panel with the tabs Agent, Inbox and Desk) and the Control room: `control.js` (the panel, the tabs, the reads, the server-room scene), `control-skills.js`, `control-costs.js` and `control-connections.js` (one per tab), `control-scene.js` (the server-room builder), `control-model.js` (the pure part: chips, filters, the chart, the cost words and the scene's model, tested under Node) and `control-parts.js` (the loading line, the failed-read notice, the empty block); `placeholder.js` stays as the fallback of an unknown screen. |
 | `js/floor/` | The Floor's panel and the decision cards, the only files that send a write: `cards.js` (effect, acceptance, question, review and plan cards, the request line and the cancel dialog), `inbox.js`, `agent-tab.js` (set mode, retry, hand a file over), `desk-tab.js`, `viewer.js` (a document as plain text), `widgets.js`, and `actions.js`, the one object that names every write of the client; the cards and the tab are handed it, so a test can give them a fake client. |
 | `js/cards/` | The decision cards the Lobby draws under a message: `plan.js` (the plan card: the table of tasks, the limits, the whole hash, "Approve this plan" sending exactly the hash it shows) and `plan-rows.js` (what it shows, worked out from the decision's payload). |
@@ -38,7 +38,7 @@ City appears: a project whose configuration is not accepted shows the service's 
 terminal) in a band under the header; choosing a building keeps its id
 in the hash (`#/p/<id>`). The first screen is the City: an isometric plot with one building per project, the three KPI
 cards, the waiting list, the project switcher and the tracking bar; choosing a building moves the camera in and opens the
-project's screen: the Building, a cutaway with one floor for each area agent, its plates, and in the panel the project's facts and the floors list; choosing a floor moves the camera in and opens the Floor, the agent at its desk, with the panel's tabs Agent, Inbox and Desk.
+project's screen: the Building, a cutaway with one floor for each area agent, one compact floor card at the scene's top right for the floor that is hovered or selected, and in the panel the project's facts and the floors list; choosing a floor moves the camera in and opens the Floor, the agent at its desk, with the panel's tabs Agent, Inbox and Desk.
 
 ## The rules of these files
 
@@ -70,17 +70,19 @@ edited by hand: a change to one fails that test.
 ## What the scene does and does not do
 
 The scene is drawn only when something changed (data, camera, hover, size) or while a state animates: a running project's
-beacon (at most 30 frames a second), a decision's marker dropping in once, the camera moving in (600 ms). It draws nothing
+beacon (at most 30 frames a second), a decision's marker dropping in once, the camera moving in (the prototype's curve, about 1 s). It draws nothing
 while the document is hidden, caps the pixel ratio at 2, stops its ambient animation under `prefers-reduced-motion`, and
 without WebGL shows one line of text and leaves every panel and action working. Its colours are read from the page's CSS
 custom properties when it is built and when the colour scheme changes. Nothing in it is decorative: no vehicles, people,
 birds or weather. `canvas.wbStats()` (a function on the canvas element) returns the frames drawn so far, for a check.
 
-The Building (the floors separate once when it opens, the figure of a working agent types at 3 Hz, the work-order tag moves
+The Building (the floors separate once when it opens, the figure of a working agent types, the work-order tag moves
 to the next floor once) and the Floor (the camera moves into the room once, the typing, a waiting marker dropping in) follow
-the same rules. The plates beside the building are stacked so none overlaps another and none is cut by the tracking bar; when
-six or more would not fit the free height they all become the compact form (the name row and the meters) and the list in the
-panel keeps every fact. The Lobby (WP-9.4: its room is the Floor's `room` scene with a door) and the Control room (WP-9.5) add a builder to `BUILDERS` of `engine.js`
+the same rules; the motions are the prototype's (WP-9.8). A poll that finds the same state, or only other words, does not build the scene
+again (`canvas.wbStats()` has `builds` and `relabels`). Windows are warm when the floor's agent works and grey otherwise; no outline
+line stands: a hovered or selected object has one. The wheel and a pinch zoom (up to 3 times), a drag pans, a double click on the
+ground, the Fit button or the key 0 fit the whole scene, + and - and the arrow keys work with the focus on the scene. The compact floor card
+of the corner and each row of the floors list are one component (`floorCardNode`). The Lobby (WP-9.4: its room is the Floor's `room` scene with a door) and the Control room (WP-9.5) add a builder to `BUILDERS` of `engine.js`
 and a module under `js/views/`, read more routes through `js/api.js`, and edit no vendored file.
 
 The Control room's three tabs (WP-9.5) read `skills`, `costs`, `connections` and `agents` through `js/api.js`, once on entering and once on return from a hidden tab (and `costs` again when the Since date changes), and write nothing. Its small server-room scene (racks: the connection facts as LEDs; wall screen: the runs of the last seven days; console) registers itself as the scene kind `server` and is static.

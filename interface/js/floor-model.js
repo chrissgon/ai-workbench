@@ -8,7 +8,8 @@
 
 import * as format from "./format.js";
 import * as router from "./router.js";
-import { MAX_FLOORS, floorNumber, openRequest } from "./model.js";
+import { MAX_FLOORS, floorNumber, pickRequest, requestChoice } from "./model.js";
+import { windowState } from "./scene/look.js";
 
 export const PLANNING = "planning";
 
@@ -130,7 +131,6 @@ export function stateOf(agent, status, accepted = true) {
 }
 
 const STATE_WORDS = { working: "Running", waiting: "Waiting for you", idle: "Idle", off: "Off, mode is stopped" };
-const WINDOW = { working: "lit", waiting: "pale", idle: "pale", off: "dark" };
 const DOT = { working: "theme", waiting: "warn", idle: "muted", off: "border" };
 
 /** The words of an agent's state, as the floors list reads them. */
@@ -151,9 +151,9 @@ export function floorAgents(detail) {
   return ordered.length ? { list: ordered, none: false } : { list: [stub(PLANNING)], none: true };
 }
 
-/** The tasks of the newest open request: the work order's, used for each floor's done and left counts. */
-function orderTasks(status) {
-  const request = openRequest(status);
+/** The tasks of the request the tracking bar shows (the person's choice, else the newest with a running task, else the newest open): the work order's, used for each floor's done and left counts. */
+function orderTasks(status, project = null) {
+  const request = pickRequest(status, requestChoice(project));
   return request ? request.tasks || [] : [];
 }
 
@@ -164,7 +164,7 @@ export function floorRow(agent, status, context) {
   const accepted = context.accepted;
   const state = stateOf(agent, status, accepted);
   const decisions = accepted ? agentDecisions(status, name).length : 0;
-  const work = orderTasks(status).filter((t) => agentOf(t) === name);
+  const work = orderTasks(status, context.project).filter((t) => agentOf(t) === name);
   const done = work.filter((t) => t.state === "done").length;
   const left = work.filter((t) => t.state !== "done" && t.state !== "cancelled").length;
   const queued = format.count(agent.queued);
@@ -182,7 +182,7 @@ export function floorRow(agent, status, context) {
   const counts = `${done} done, ${left} left${queued > 0 ? `, ${queued} queued` : ""}`;
   return {
     name, label, lobby, number: context.number, state, stateWord, accepted,
-    window: accepted ? WINDOW[state] : "dark", dot: DOT[state], decisions, queued, done, left,
+    window: windowState(accepted && state === "working"), dot: DOT[state], decisions, queued, done, left,
     runs, runsCap, usd, usdCap, unknown, mode, acting, pips: mode ? PIPS[mode] || 0 : 0, actingPips: acting ? PIPS[acting] || 0 : 0,
     actingDiffers: Boolean(mode && acting && mode !== acting),
     link: lobby ? router.lobbyHash(context.project) : router.floorHash(context.project, name),
@@ -205,13 +205,13 @@ export function building(snapshot, projectId) {
   const rows = ordered.map((agent) => floorRow(agent, status, { accepted, project: projectId, number: floorNumber(ordered, agent.name || PLANNING) }));
   return {
     id: projectId, name: project.name, accepted, none: none && accepted && Boolean(status), rows, more: Math.max(0, rows.length - MAX_FLOORS), loaded: Boolean(status),
-    tag: workOrder(status, rows), facts: facts(project, status, accepted),
+    tag: workOrder(status, rows, projectId), facts: facts(project, status, accepted),
   };
 }
 
 /** The floor of the request's current task and the request's number: where the work-order tag rests (A6), or null. */
-export function workOrder(status, rows) {
-  const request = status ? openRequest(status) : null;
+export function workOrder(status, rows, projectId = null) {
+  const request = status ? pickRequest(status, requestChoice(projectId)) : null;
   if (!request) return null;
   const tasks = request.tasks || [];
   const current = tasks.find((t) => t.state === "running") || tasks.find((t) => t.state === "waiting") || null;
@@ -225,7 +225,7 @@ export function workOrder(status, rows) {
 export function facts(project, status, accepted) {
   const out = { configuration: accepted ? "Accepted" : "Not accepted", accepted, running: null, request: null, waiting: 0 };
   if (!accepted || !status) return out;
-  const open = openRequest(status);
+  const open = pickRequest(status, requestChoice(project.id));
   if (open) out.request = { id: open.id, title: open.title || "" };
   out.waiting = (status.pending || []).length;
   const id = project.running_task;
@@ -252,15 +252,16 @@ export function drawersOf(count) {
   return Math.max(1, Math.min(3, Math.ceil(count / 4)));
 }
 
-/** The plain data the plate of a row needs. */
-export function plateOf(row, selected = false) {
+/**
+ * The compact floor card of a row (WP-9.8, the maintainer's design): the same fields in the same order for the card at the scene's
+ * top right and for each row of the floors list: name (with its decisions badge), state word, mode plate, one line of runs and spend.
+ */
+export function cardOf(row) {
+  const runsLine = `runs ${row.runs} / ${row.runsCap} · ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}${row.unknown > 0 ? ` (+${row.unknown} of unknown cost)` : ""}`;
   return {
-    name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.plateWord,
-    done: row.done, left: row.left, queued: row.queued,
-    runsText: `${row.runs} / ${row.runsCap}`, runsShare: format.share(row.runs, row.runsCap),
-    usdText: `${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}`, usdShare: format.share(row.usd, row.usdCap),
-    unknown: row.unknown, mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
-    selected, off: row.state === "off",
+    name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.stateWord,
+    mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
+    runsLine: row.accepted ? runsLine : "", off: row.state === "off",
   };
 }
 
@@ -276,7 +277,7 @@ export function buildingScene(view, documents, { focus = null, ready = true } = 
       const docs = agentDocuments(documents, row.name, view.none);
       return {
         name: row.name, label: row.label, state: row.state, window: row.window, decisions: row.decisions, lobby: row.lobby,
-        sheets: Math.min(3, docs.length), drawers: drawersOf(docs.length), tip: row.tip, plate: plateOf(row, row.name === selected),
+        sheets: Math.min(3, docs.length), drawers: drawersOf(docs.length), tip: row.tip, interactive: true,
       };
     }),
   };

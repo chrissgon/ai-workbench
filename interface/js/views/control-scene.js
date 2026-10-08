@@ -68,7 +68,9 @@ export function buildServer(kit, model) {
   const group = new THREE.Group();
   const shell = palette.dark ? palette.mix(T.emphasis, T.text, 0.1) : palette.shell;
   kit.box(W, 0.2, D, 0, 0, 0, palette.mix(palette.bg, T.emphasis, 0.45), { parent: group, edges: true });
-  kit.line([[-W / 2, 0.21, D / 2], [W / 2, 0.21, D / 2], [W / 2, 0.21, -D / 2]], kit.themeLine, group);
+  // the room's outline: the route selects the Control room, so the engine draws it while the room is on screen (WP-9.8)
+  const edge = kit.line([[-W / 2, 0.21, D / 2], [W / 2, 0.21, D / 2], [W / 2, 0.21, -D / 2]], kit.themeLine, group);
+  edge.visible = false;
   kit.box(W, H, 0.14, 0, 0.2, -D / 2 + 0.07, shell, { parent: group, edges: true });
   kit.box(0.14, H, D, -W / 2 + 0.07, 0.2, 0, shell, { parent: group, edges: true });
   const room = new THREE.Group();
@@ -101,7 +103,12 @@ export function buildServer(kit, model) {
   hits.push({ object: desk, id: "console", tip: model.tips.console });
   plant(kit, room, 2.75, 1.95, 1.15);
 
-  return { group, hits, labels: [], beacons: [], markers: [] };
+  // the words (the tooltips; there is no label): a model with the same structure changes them without building the room again
+  const text = (m) => ({ labels: [], tips: new Map([...m.racks.map((rack) => [rack.id, rack.tip]), ["wall", m.tips.wall], ["console", m.tips.console]]) });
+  return { group, hits, labels: [], beacons: [], markers: [], outlines: [{ id: "room", lines: [edge] }], selected: "room", text };
 }
+
+/** What the room is made of, for a model: the LEDs and the bars; the tooltips and the label are words. */
+buildServer.structure = (model) => ({ ready: model.ready, leds: model.leds, bars: model.bars });
 
 BUILDERS.server = buildServer;

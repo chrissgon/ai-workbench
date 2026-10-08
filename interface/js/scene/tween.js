@@ -1,6 +1,8 @@
 // The camera move as a small state machine, with no import and no document, so a test can run it. One move at a time: a
 // new move, a cancel (the scene was rebuilt, the preference changed, the screen was left) settles the one in flight
-// with `false`, so whoever waits for it is never left hanging; finishing settles it with `true`.
+// with `false`, so whoever waits for it is never left hanging; finishing settles it with `true`. A move may settle with
+// `true` earlier, at a fraction of its time (`settleAt`): the screen that waits for it can be opened while the camera is still
+// on its way, as the prototype's one camera did, and the move still runs to its end.
 
 import { ease, lerpFrustum } from "./fit.js";
 
@@ -8,10 +10,10 @@ export function createTween() {
   let current = null;   // {from, to, start, ms, resolve}
   return {
     /** Start a move from one frustum to another; settles an earlier move with false. Returns a promise of the move. */
-    start(from, to, start, ms) {
+    start(from, to, start, ms, settleAt = 1) {
       this.cancel();
       return new Promise((resolve) => {
-        current = { from, to, start, ms, resolve };
+        current = { from, to, start, ms, resolve, settleAt, settled: false };
       });
     },
     active() {
@@ -22,19 +24,20 @@ export function createTween() {
       if (!current) return null;
       const t = Math.min(1, (now - current.start) / current.ms);
       const frustum = lerpFrustum(current.from, current.to, ease(t));
-      if (t >= 1) {
-        const done = current.resolve;
-        current = null;
-        done(true);
+      if (!current.settled && t >= current.settleAt) {
+        current.settled = true;
+        current.resolve(true);
       }
+      if (t >= 1) current = null;
       return frustum;
     },
     /** Stop the move and settle it with false (a cut). */
     cancel() {
       if (!current) return false;
       const done = current.resolve;
+      const settled = current.settled;
       current = null;
-      done(false);
+      if (!settled) done(false);   // a move already settled with true stays true
       return true;
     },
   };

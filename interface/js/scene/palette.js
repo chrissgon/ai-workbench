@@ -56,6 +56,8 @@ export function readPalette(host) {
     hemiIntensity: dark ? 1.15 : 1.85,
     sunIntensity: dark ? 0.9 : 1.45,
   };
-  palette.windows = { lit: palette.warm, pale: palette.pale, dark: T.border };
+  // A window is warm when its floor's agent works and the border tone otherwise, in light and in dark (WP-9.8); `pale` stays
+  // the front door's colour only.
+  palette.windows = { lit: palette.warm, grey: T.border };
   return palette;
 }

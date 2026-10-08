@@ -94,7 +94,7 @@ export function createCityView(frame) {
       // "No project" is said only when a read answered with an empty list, never while loading or after a failed first read.
       empty.hidden = !model.emptyCityVisible(state, city.buildings.length);
       frame.waitingCard.set(city.waiting, state);
-      if (engine) engine.show("city", model.sceneModel(city.buildings, selectedId, state === "ready"), city.canvasLabel);
+      if (engine) engine.show("city", model.sceneModel(city.buildings, null, state === "ready"), city.canvasLabel);
     },
     dispose() {
       disposed = true;

@@ -1,13 +1,15 @@
 // The agent figure (handoff scene.md 5.2): no face, no gender, a vest in the state's colour. Three poses: working
 // (seated, leaning forward, both forearms on the keyboard), waiting for the person (standing beside the desk, one arm
 // raised, the amber exclamation above the head) and idle (seated, leaning back, arms resting). An agent that is off has
-// no figure (nothing is built). The only motion is A1: the forearms alternate by about 0.04 rad at about 3 Hz while a
-// task of the agent runs; `typing(seconds)` sets them and `rest()` puts them back, so a still frame is the pose.
+// no figure (nothing is built). The only motion is A1: the forearms alternate while a task of the agent runs, with the
+// prototype's numbers (0.22 rad at 11 rad/s, the second arm 2 rad behind: WP-9.8); `typing(seconds)` sets them and `rest()`
+// puts them back, so a still frame is the pose. Nothing else moves: no bobbing, no head turn (the prototype's fidgeting).
 
 import { exclamation } from "./props.js";
 
-export const TYPING_HZ = 3;
-export const TYPING_AMPLITUDE = 0.04;   // radians (the scene package's choice, scene.md section 11)
+export const TYPING_RATE = 11;          // radians per second of the swing: sin(11 t), about 1.75 swings a second (the prototype's)
+export const TYPING_AMPLITUDE = 0.22;   // radians (the prototype's)
+export const TYPING_PHASE = 2;          // the second arm's lead, in radians (the prototype's)
 
 /** The vest colour of a state (DEVIATION-9): working theme, waiting warn, idle muted. */
 export function vestColour(palette, state) {
@@ -68,7 +70,7 @@ export function figure(kit, parent, state, x, z, rotY, key = "figure") {
     if (state === "working") {
       shoulder.rotation.x = -0.55;
       elbow.rotation.x = -1.0;
-      elbows.push({ elbow, base: -1.0, phase: side > 0 ? 0 : Math.PI });
+      elbows.push({ elbow, base: -1.0, phase: side > 0 ? TYPING_PHASE : 0 });
     } else if (state === "waiting") {
       if (side > 0) {
         shoulder.rotation.z = side * 2.75;
@@ -91,10 +93,30 @@ export function figure(kit, parent, state, x, z, rotY, key = "figure") {
   return {
     group, marker,
     typing(seconds) {
-      for (const e of elbows) e.elbow.rotation.x = e.base + TYPING_AMPLITUDE * Math.sin(seconds * TYPING_HZ * Math.PI * 2 + e.phase);
+      for (const e of elbows) e.elbow.rotation.x = e.base + TYPING_AMPLITUDE * Math.sin(seconds * TYPING_RATE + e.phase);
     },
     rest() {
       for (const e of elbows) e.elbow.rotation.x = e.base;
+    },
+  };
+}
+
+/** The monitor's scan line: a slow sine between the screen's lower and upper text rows, a calm 3.2 s round trip (no jump). */
+export const SCAN_PERIOD = 3.2;
+export function scanY(seconds) {
+  return 0.95 + 0.2 + 0.16 * Math.sin((seconds / SCAN_PERIOD) * Math.PI * 2);
+}
+
+/** The working motion of one desk: the figure's forearms and the scan line, one tick and one rest for the engine's loop. */
+export function workingMotion(who, deskParts) {
+  return {
+    tick(seconds) {
+      if (who) who.typing(seconds);
+      if (deskParts.scan) deskParts.scan.position.y = scanY(seconds);
+    },
+    rest() {
+      if (who) who.rest();
+      if (deskParts.scan) deskParts.scan.position.y = scanY(0);
     },
   };
 }

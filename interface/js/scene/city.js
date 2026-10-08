@@ -3,6 +3,7 @@
 // objects (a building), the HTML labels' anchors, the running buildings' beacons and the waiting markers. No colour and no
 // project name is written here: colours come from the palette, names from the model.
 
+import { windowColour, windowUnlit } from "./look.js";
 import { exclamation, plant, tree } from "./props.js";
 
 export const LOT = 13;
@@ -29,11 +30,11 @@ function building(kit, lot, cx, cz, group) {
   lot.floors.forEach((floor, f) => {
     const y = BASE + f * P;
     const state = floor.window;
-    const colour = palette.windows[state];
+    const colour = windowColour(palette, state);
     kit.box(W + 0.2, 0.24, D + 0.2, 0, y, 0, T.emphasis, { parent: g, edges: true });
     kit.box(W, P - 0.24, D, 0, y + 0.24, 0, palette.shell, { parent: g, edges: true });
     if (f === 0) {
-      const glass = state === "lit" ? palette.warm : palette.glass;
+      const glass = windowUnlit(state) ? palette.warm : palette.glass;
       kit.box(W - 0.6, P - 0.7, 0.06, 0, y + 0.34, D / 2 + 0.02, glass, { cast: false, parent: g, unlit: true });
       [-1.3, -0.45, 0.45, 1.3].forEach((dx) => kit.box(0.06, P - 0.7, 0.08, dx, y + 0.34, D / 2 + 0.04, T.emphasis, { parent: g }));
       kit.box(0.06, P - 0.7, D - 0.6, W / 2 + 0.02, y + 0.34, 0, glass, { cast: false, parent: g, unlit: true });
@@ -47,7 +48,7 @@ function building(kit, lot, cx, cz, group) {
     } else {
       const wy = y + 0.24 + 0.5;
       const wh = P - 1.1;
-      const isLit = state === "lit";
+      const isLit = windowUnlit(state);
       [-1.5, -0.5, 0.5, 1.5].forEach((dx) => {
         kit.box(0.78, wh, 0.05, dx, wy, D / 2 + 0.02, colour, { cast: false, parent: g, unlit: isLit });
         kit.box(0.03, wh, 0.07, dx, wy, D / 2 + 0.04, T.emphasis, { cast: false, parent: g });
@@ -83,8 +84,10 @@ function building(kit, lot, cx, cz, group) {
 }
 
 /**
- * Build the City. model: {selectedId, lots: [{id, name, accepted, decisions, runningTask, floors: [{window, waits}], tip, sub}]}.
- * Returns {group, hits, labels, beacons, markers, extraDisposables}; the engine adds the group to the scene.
+ * Build the City. model: {selectedId, outlined, lots: [{id, name, accepted, decisions, runningTask, floors: [{window, waits}], tip,
+ * sub}]}. `selectedId` is the project the tracking bar follows (its card is drawn selected); `outlined` is the lot the route
+ * selects, none on the City. Returns {group, hits, labels, beacons, markers, outlines, selected, text, bounds}; the engine adds
+ * the group to the scene. `text(model)` rebuilds the labels and tooltips alone, for a model of the same structure.
  */
 export function buildCity(kit, model) {
   const { THREE, palette } = kit;
@@ -99,36 +102,57 @@ export function buildCity(kit, model) {
   }
   for (let k = -8; k <= 8; k++) kit.box(0.9, 0.045, 0.12, k * 2.4, 0, LOT / 2 + STREET / 2, palette.bg, { cast: false, parent: group });
   const hits = [];
-  const labels = [];
+  const anchors = [];
   const beacons = [];
   const markers = [];
+  const outlines = [];
   lots.forEach((lot, i) => {
     const cx = x0 + i * STEP;
     const cz = 0;
     kit.box(LOT, 0.12, LOT, cx, 0, cz, palette.lot, { cast: false, parent: group, edges: true });
     kit.box(1.4, 0.13, LOT / 2 - 2.6, cx, 0, cz + (LOT / 2 + 2.6) / 2, T.emphasis, { cast: false, parent: group });
     const built = building(kit, lot, cx, cz - 0.6, group);
-    if (lot.id === model.selectedId) {
-      const h = LOT / 2 + 0.05;
-      kit.line([[cx - h, 0.14, cz - h], [cx + h, 0.14, cz - h], [cx + h, 0.14, cz + h], [cx - h, 0.14, cz + h], [cx - h, 0.14, cz - h]], kit.themeLine, group);
-    }
+    // the lot's outline (a theme line at its edge): drawn only while the lot is hovered or selected, never as a standing line
+    const h = LOT / 2 + 0.05;
+    const edge = kit.line([[cx - h, 0.14, cz - h], [cx + h, 0.14, cz - h], [cx + h, 0.14, cz + h], [cx - h, 0.14, cz + h], [cx - h, 0.14, cz - h]], kit.themeLine, group);
+    edge.visible = false;
+    outlines.push({ id: lot.id, lines: [edge] });
     TREES.forEach(([dx, dz], k) => tree(kit, group, cx + dx, cz + dz, k % 3 ? 1.15 : 1.35));
-    hits.push({ object: built.group, id: lot.id, tip: lot.tip });
-    labels.push({
-      id: lot.id, kind: "card", name: lot.name, decisions: lot.decisions, running: lot.runningTask !== null, sub: lot.sub,
-      selected: lot.id === model.selectedId, accepted: lot.accepted, anchor: new THREE.Vector3(cx, built.top + 1.8, cz - 0.6),
-    });
+    hits.push({ object: built.group, id: lot.id, tip: lot.tip, pad: 0.1 });
+    anchors.push(new THREE.Vector3(cx, built.top + 1.8, cz - 0.6));
     if (built.beacon) beacons.push(built.beacon);
     markers.push(...built.markers);
   });
-  return { group, hits, labels, beacons, markers, bounds: new THREE.Box3().setFromObject(group) };
+  function text(m) {
+    return {
+      tips: new Map(m.lots.map((lot) => [lot.id, lot.tip])),
+      labels: m.lots.map((lot, i) => ({
+        id: lot.id, kind: "card", name: lot.name, decisions: lot.decisions, running: lot.runningTask !== null, sub: lot.sub,
+        selected: lot.id === m.selectedId, accepted: lot.accepted, anchor: anchors[i],
+      })),
+    };
+  }
+  const words = text(model);
+  return {
+    group, hits, labels: words.labels, beacons, markers, outlines, selected: model.outlined || null, text,
+    bounds: new THREE.Box3().setFromObject(group),
+  };
 }
 
-/** The beacon's pulse at `seconds`: a 2 s cycle, scale 1 +/- .12, opacity .35 to .65 (the prototype's numbers). */
+/** What the City is made of, for a model: everything but the words (names, counts, the sub line, the tooltip). */
+buildCity.structure = (model) => ({
+  ready: model.ready, outlined: model.outlined || null,
+  lots: model.lots.map((lot) => [lot.id, lot.accepted, lot.runningTask !== null, lot.floors.map((f) => [f.window, f.waits])]),
+});
+
+/**
+ * The beacon's pulse at `seconds`, the prototype's: `sin(3 t)` (a 2.09 s cycle), scale 1 plus or minus .12 in the ring's own
+ * plane (its thickness stays), opacity .35 to .65. Ambient, held to 30 frames a second by the scheduler.
+ */
 export function pulseBeacon(beacon, seconds) {
-  const wave = Math.sin(seconds * Math.PI);
+  const wave = Math.sin(seconds * 3);
   const s = 1 + 0.12 * wave;
-  beacon.ring.scale.set(s, s, s);
+  beacon.ring.scale.set(s, s, 1);
   beacon.material.opacity = 0.35 + 0.3 * (0.5 + 0.5 * wave);
 }
 
