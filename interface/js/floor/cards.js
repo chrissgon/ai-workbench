@@ -2,7 +2,9 @@
 // line and the cancel dialog. A card shows what the service returned for one decision, draws one button per word of its
 // `actions` (and none for a word it does not know), and sends exactly what the person typed or clicked: the page decides
 // nothing. An effect or a plan is approved only with the hash the card shows, read back from the page's own text at the moment
-// of the click. Text from a model, a path or a reason is put in with textContent (through h()), never as markup.
+// of the click. Text from a model, a path or a reason is put in with textContent (through h()), never as markup; the bodies of a
+// question, an acceptance, a review and a plan are drawn by the page's own Markdown renderer (markdown.js), which builds nodes and
+// leaves raw HTML as text. The exact content of an effect is never rendered: it is what will be sent.
 //
 // The card is a small state machine over one decision: open, in flight (the control that sent the request reads its "-ing"
 // word, every button is disabled, "Working..." shows for a job), failed (the message above the buttons, the typed text
@@ -14,6 +16,8 @@
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
 import { ENDING, openable } from "../floor-model.js";
+import { renderMarkdown } from "../markdown.js";
+import { markdownView } from "../markdown-view.js";
 import { agoText, chip, errorText, field, isGone, jobText, notice, ring } from "./widgets.js";
 
 // The buttons of each kind, in the drawn order, by the word of `actions` they send, with their "-ing" word.
@@ -102,7 +106,7 @@ export function createCard(item, env) {
     return h("div", { class: "wb-card-head" }, h("span", { class: "pui-badge pui-warn pui-soft", text: format.kindWord(it.kind) }), meta);
   }
 
-  const text = (value, cls = "wb-card-body") => h("div", { class: cls, text: value || "" });
+  const text = (value, cls = "wb-card-body") => h("div", { class: cls }, renderMarkdown(value || ""));
 
   function block(label, value, name) {
     const pre = h("pre", { class: "wb-pre", tabindex: "0", "aria-label": name }, value || "");
@@ -208,7 +212,7 @@ export function createCard(item, env) {
     const returned = Array.isArray(payload.returned) ? payload.returned : [];
     const kept = Array.isArray(payload.kept) ? payload.kept : [];
     const parts = [h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }),
-      h("div", { class: "wb-card-body wb-scroll", tabindex: "0", "aria-label": "Text of the review", text: it.body || "" })];
+      h("div", { class: "wb-card-body wb-scroll", tabindex: "0", "aria-label": "Text of the review" }, renderMarkdown(it.body || ""))];
     if (returned.length) parts.push(h("div", { class: "wb-card-hint", text: "Returned" }), h("ul", { class: "wb-paths" }, returned.map((f) => pathRow(f, true))));
     if (kept.length) parts.push(h("div", { class: "wb-card-hint", text: "Kept" }), h("ul", { class: "wb-paths" }, kept.map((f) => pathRow(f, false))));
     if (payload.ending) parts.push(h("div", { class: "wb-card-line" }, h("span", { class: "wb-muted", text: "Ending: " }), ENDING[payload.ending] || String(payload.ending)));
@@ -255,7 +259,7 @@ export function createCard(item, env) {
       h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "Plan tasks" }, table),
       h("div", { class: "wb-card-hint", text: limitsLine(payload) }),
       h("div", { class: "wb-card-hint", text: "Plan hash" }), hash,
-      h("details", { class: "pui-accordion-item wb-verdict" }, h("summary", { class: "wb-summary", text: "Plan as text" }), h("pre", { class: "wb-pre", text: it.body || "" })),
+      h("details", { class: "pui-accordion-item wb-verdict" }, h("summary", { class: "wb-summary", text: "Plan as text" }), h("div", { class: "wb-card-body wb-scroll" }, markdownView(it.body || "", { name: "the plan", renderedLabel: "Plan as text", plainClass: "wb-pre" }))),
       noteInput(), message(), buttons(),
     ];
   }
