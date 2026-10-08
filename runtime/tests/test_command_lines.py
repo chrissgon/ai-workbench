@@ -47,6 +47,8 @@ def test_a_process_started_through_uv_gets_the_prefix_and_one_started_without_it
 
 def test_uv_is_told_from_the_interpreter_when_no_mark_says(monkeypatch):
     monkeypatch.delenv(operations.UV_MARK)
+    monkeypatch.delenv("UV_RUN_RECURSION_DEPTH", raising=False)
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
     monkeypatch.setattr(sys, "prefix", "/home/u/.cache/uv/builds-v0/.tmpAbC")
     assert operations.started_with_uv() is True
     monkeypatch.setattr(sys, "prefix", "/home/u/.cache/uv/environments-v2/abc123")
@@ -100,3 +102,20 @@ def test_no_sentence_of_the_operations_layer_builds_a_command_but_through_the_on
     calls = [n for n in ast.walk(tree_) if isinstance(n, ast.Call) and ast.unparse(n.func) == "operations.command_line"]
     assert calls and all(id(c) in inside for c in calls), [c.lineno for c in calls if id(c) not in inside]
     assert any(isinstance(n, ast.keyword) and n.arg == "checkout" for c in calls for n in c.keywords)
+
+
+def test_uv_is_told_from_the_variable_uv_sets_for_a_project_environment_and_a_custom_cache(monkeypatch, tmp_path):
+    monkeypatch.delenv(operations.UV_MARK)
+    monkeypatch.delenv("UV_RUN_RECURSION_DEPTH", raising=False)
+    monkeypatch.delenv("UV_CACHE_DIR", raising=False)
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "project" / ".venv"))  # a uv project's own environment
+    assert operations.started_with_uv() is False
+    monkeypatch.setenv("UV_RUN_RECURSION_DEPTH", "1")  # `uv run` sets it for what it starts, whatever the environment
+    assert operations.started_with_uv() is True
+    monkeypatch.delenv("UV_RUN_RECURSION_DEPTH")
+    cache = tmp_path / "mycache"
+    monkeypatch.setenv("UV_CACHE_DIR", str(cache))
+    monkeypatch.setattr(sys, "prefix", str(cache / "builds-v0" / ".tmpX"))  # a cache folder that is not named uv
+    assert operations.started_with_uv() is True
+    monkeypatch.setattr(sys, "prefix", str(tmp_path / "elsewhere" / "builds-v0"))
+    assert operations.started_with_uv() is False

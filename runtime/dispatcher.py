@@ -63,8 +63,9 @@ JOB_RUNNING = "job running"          # a task of the project runs: the one-at-a-
 DISPATCH_OFF = "dispatch off"        # the service dispatches nothing (runtime/ops.py, service_check)
 # The words a held ready task carries (contracts/runtime.md, "The local service"): the three of runtime/autonomy.py
 # (may_start), those of this file, those of a round's checks before a start (runtime/ops.py) and the service's.
+OTHER = "other"                      # any reason a rule function gives that is not in the list: free text never reaches a page
 REASONS = ("stopped", "cap: runs per day", "cap: usd per day", "credential", "secret store", "image", DISPATCH_OFF,
-           JOB_RUNNING, NO_AGENT)
+           JOB_RUNNING, NO_AGENT, OTHER)
 
 
 def decide(snapshot: dict, review_action, may_start) -> dict:
@@ -111,7 +112,8 @@ def held_of(snapshot: dict, decided: dict, blocked=None) -> list:
     else:
         why = {h["task_id"]: h["why"] for h in decided.get("held") or []}
         why.update(blocked or {})
-    return [{"task_id": task["id"], "agent": task.get("agent"), "reason": why[task["id"]]}
+    return [{"task_id": task["id"], "agent": task.get("agent"),
+             "reason": why[task["id"]] if why[task["id"]] in REASONS else OTHER}
             for task in ready if task["id"] in why]
 
 

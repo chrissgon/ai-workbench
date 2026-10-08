@@ -19,7 +19,7 @@ ops = st.load("ops")
 operations = st.load("operations")
 
 WORDS = ("stopped", "cap: runs per day", "cap: usd per day", "credential", "secret store", "image", "dispatch off",
-         "job running", "no enabled agent owns the task")
+         "job running", "no enabled agent owns the task", "other")
 
 
 @pytest.fixture(autouse=True)
@@ -209,3 +209,55 @@ def test_the_page_reads_the_held_tasks_and_the_count_per_agent_through_the_servi
     assert [h["reason"] for h in held] == ["dispatch off"] and "run-next --project" in held[0]["next"]
     connections = ts.call(world, "GET", ts.api(world, "/connections"))
     assert connections[0] == 200 and connections[2]["service"]["dispatch"] == "off"
+
+
+# --- review of WP-9.14 -----------------------------------------------------------------------------------------------
+
+
+def test_an_unchanged_set_of_held_tasks_writes_nothing_and_keeps_its_time(tree):
+    path = str(tree["project"])
+    planned(tree, "chain")
+    configure(tree, {"business": dict(AGENTS["business"], mode="stopped")})
+    ops.dispatch(path)
+    ctx = ops.context(path)
+    first = ctx["store"].cursor_get(ctx["conn"], ops.HELD_CURSOR)
+    before = ctx["store"].change_counter(ctx["conn"])
+    for _ in range(3):
+        ops.dispatch(path)
+    assert ctx["store"].cursor_get(ctx["conn"], ops.HELD_CURSOR) == first  # `at` is when the set began
+    assert ctx["store"].change_counter(ctx["conn"]) == before  # nothing a page would reload for
+    configure(tree, {"business": dict(AGENTS["business"], max_runs_per_day=0)})
+    ops.dispatch(path)
+    assert ctx["store"].cursor_get(ctx["conn"], ops.HELD_CURSOR) != first  # another reason: written
+
+
+def test_the_vocabulary_of_the_held_reasons_is_closed():
+    free_text = lambda name, entries, f, spent, tier: (False, f"unknown tier {tier!r}")  # noqa: E731
+    snapshot = {"running": None, "ready": [ready(4, "a")], "reviews": [], "agents": {"a": agent()}, "tier": {4: "weird"}}
+    decided = dispatcher.decide(snapshot, autonomy.review_action, free_text)
+    assert dispatcher.held_of(snapshot, decided) == [{"task_id": 4, "agent": "a", "reason": "other"}]
+    assert "other" in dispatcher.REASONS
+    got = dispatcher.held_of(snapshot, decided, {4: "image"})
+    assert got[0]["reason"] == "image"
+    assert all(r in dispatcher.REASONS for r in (dispatcher.NO_AGENT, dispatcher.JOB_RUNNING, dispatcher.DISPATCH_OFF))
+
+
+def test_a_narrowing_accepted_in_the_middle_of_a_round_stops_the_next_start(tree, monkeypatch):
+    path = str(tree["project"])
+    planned(tree, "chain")
+    configure(tree, {"business": dict(AGENTS["business"], mode="autonomous")})
+    real = ops._claim_and_run
+    done = []
+
+    def run_then_narrow(ctx, tier=None, task_id=None):
+        out = real(ctx, tier, task_id)
+        done.append(task_id)
+        if len(done) == 1:  # the person (or the page) stops the agent while the round goes on
+            assert ops.set_mode(path, "business", "stopped")["accepted"] is True
+        return out
+
+    monkeypatch.setattr(ops, "_claim_and_run", run_then_narrow)
+    out = ops.dispatch(path)
+    assert len(out["ran"]) == 1 and len(done) == 1
+    assert "configuration" in out["stopped"] and "changed" in out["stopped"]
+    assert [t["state"] for t in store_rows(tree) if t["parent_id"]].count("done") + [t["state"] for t in store_rows(tree) if t["parent_id"]].count("waiting") >= 1

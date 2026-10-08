@@ -29,7 +29,9 @@ serves the pages and the reads all the same.
                    the next ready tasks: model calls); default 30; 0 turns it off. A project that has a job running is
                    skipped. The daily caps and the modes of the area agents are what limits it
   --no-dispatch    do not dispatch: nothing starts a task but `run-next` in the terminal; `status` then says `dispatch off`
-                   for every ready task. It cannot be given with --dispatch-every
+                   for every ready task (this service's own fact: it does not know of a scheduler job that dispatches).
+                   Give it when the project already has the scheduler's two jobs (contracts/runtime.md, "The
+                   dispatcher's two jobs"), so that two dispatchers do not run. It cannot be given with --dispatch-every
   --token-file     where the token is written (default: service.token in the data folder of the first project)
 
 It prints one JSON line, {"url", "token_file", "projects": [{"id", "name"}]}, and never the token. After it, on
@@ -69,8 +71,10 @@ The rules of a request, in this order, each a refusal unless the request satisfi
  12. Text a model or a stranger wrote leaves as a JSON string; the page shows it as text, never as markup.
 
 The reads of the interface are GET routes that carry no job: /projects/<id>/agents, /conversation?after=&conversation=,
-/skills, /costs?since=, /connections, /artifacts and /artifact?path= (the path is at most 512 bytes; the operation
-refuses anything outside docs/, a link and the configuration). Each takes the query keys it names and no other.
+/skills, /costs?since=, /connections, /artifacts, /artifact?path= (the path is at most 512 bytes; the operation
+refuses anything outside docs/, a link and the configuration) and /version (the change signal of the project's store: a
+number that grows on every write). Each takes the query keys it names and no other. The service's own GET /versions answers
+the /version of every project in one request, so that a page that shows several asks once a second whatever their number.
 
 Not exposed, on purpose: accept-config (a configuration hash is accepted in the terminal only, so a page can never accept
 the change that widens what an agent may do), run-next (the dispatcher decides what runs), deps, proof, the standing
@@ -196,6 +200,8 @@ ROUTES = (
     _route("GET", "/projects/{p}/connections", "connections", take=()),
     _route("GET", "/projects/{p}/artifacts", "artifacts", take=()),
     _route("GET", "/projects/{p}/artifact", "artifact", take=("path",), query_max=QUERY_VALUE_LIMIT),
+    _route("GET", "/projects/{p}/version", "version", take=()),
+    _route("GET", "/versions", own="versions"),
     _route("POST", "/projects/{p}/conversation", "say"),
     _route("POST", "/projects/{p}/sync", "sync"),
     _route("POST", "/projects/{p}/dispatch", "dispatch", take=()),
@@ -461,6 +467,19 @@ def _job_get(service: Service, params: dict) -> tuple:
     return _json(200, shown) if shown else _error(404, "not_found", "no such job")
 
 
+def _versions(service: Service) -> dict:
+    """{"versions": {project id: {"version", "changed_at"}}}: the `version` operation of every project, so that a page that
+    shows several asks once a second whatever their number. A project the operation cannot read is {"error": the word of the
+    refusal, such as not_configured} (the sentence is in the project's own routes) and hides none of the others."""
+    out = {}
+    for project in service.projects:
+        try:
+            out[project["id"]] = service.ops.version(project["path"])
+        except service.ops.OpsError as e:
+            out[project["id"]] = {"error": status_of(e)[1]}
+    return {"versions": out}
+
+
 def _upload(service: Service, project: dict, row: dict, route: dict, params: dict, given: dict) -> tuple:
     """The file route: the body is {"name", "content_base64"}. The service writes the bytes to
     <data_dir>/uploads/<random>/<name> (a plain file name, mode 0600), hands that file to the operation and removes the
@@ -570,6 +589,10 @@ def handle(service: Service, method: str, path: str, headers: dict, body: bytes)
             if query:
                 raise Usage("this route takes no query")
             return _json(200, service.projects_list())
+        if route["own"] == "versions":
+            if query:
+                raise Usage("this route takes no query")
+            return _json(200, _versions(service))
         if route["own"] == "job":
             if query:
                 raise Usage("this route takes no query")

@@ -219,6 +219,8 @@ EFFECTS_DIR = "effects"  # <data_dir>/effects/<pending id>/: the files code hand
 RUNS_DIR = "task-runs"
 CONTAINED_DIR = "contained-runs"  # <data_dir>/contained-runs/<n>/: the run folder of one contained run; no file of it ever comes back
 LOCK_NAME = "run.lock"
+CONFIG_LOCK_NAME = "config.lock"   # <data_dir>/config.lock: one change of the accepted configuration at a time
+CONFIG_LOCK_WAIT = 10.0            # seconds a change waits for another to finish
 NOTE_LIMIT = 1000        # characters of a failure's reason kept on a task and on a run row
 PREPARED_DIR = "prepared"  # <data_dir>/prepared/<run id>/: files written for one run before they enter its copy
 USE_ID = re.compile(r"[0-9a-f]{8}")
@@ -275,10 +277,9 @@ def _command(name: str, project: str, **args) -> str:
     return operations.command_line(name, project, checkout=ROOT, **args)
 
 
-def context(project: str, *, check_config: bool = True) -> dict:
-    """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
-    (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
-    operation but accept_config), the configuration's hash must be the one the person accepted last."""
+def _config_of(project: str) -> dict:
+    """The project's configuration, refused when it cannot be read or names another workbench checkout than the one
+    this process runs from: what every operation checks first."""
     try:
         cfg = project_config.load(project)
     except project_config.ConfigError as e:
@@ -286,6 +287,22 @@ def context(project: str, *, check_config: bool = True) -> dict:
     if cfg["workbench"] != os.path.realpath(ROOT):
         raise OpsError(f"{cfg['path']} names the workbench checkout {cfg['workbench']}, and this command runs from "
                        f"{os.path.realpath(ROOT)}: run it from the checkout the project names, or correct the file", 3)
+    return cfg
+
+
+def _accepted(cfg: dict, accepted) -> None:
+    """Refuse (code 3) a configuration whose hash is not the accepted one."""
+    if accepted != cfg["sha256"]:
+        raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
+                       f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
+                       f"want, run: {_command('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
+
+
+def context(project: str, *, check_config: bool = True) -> dict:
+    """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
+    (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
+    operation but accept_config), the configuration's hash must be the one the person accepted last."""
+    cfg = _config_of(project)
     store = store_module()
     try:
         store.init_db(cfg["store_db"])
@@ -297,10 +314,7 @@ def context(project: str, *, check_config: bool = True) -> dict:
             accepted = store.cursor_get(conn, project_config.ACCEPTED)
         except store.StoreError as e:
             raise OpsError(f"the store at {cfg['store_db']}: {e}", e.code) from None
-        if accepted != cfg["sha256"]:
-            raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
-                           f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
-                           f"want, run: {_command('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
+        _accepted(cfg, accepted)
     return {"cfg": cfg, "store": store, "conn": conn, "root": ROOT}
 
 
@@ -597,6 +611,29 @@ def _push_after_run(ctx: dict, out: dict) -> dict:
         return documents.push(ctx, rels)
     except Exception as e:  # a failed push never fails the task; the next sync tries again
         return {**documents.result(), "failed": [{"path": rel, "reason": f"{type(e).__name__}: {e}"} for rel in rels]}
+
+
+@contextlib.contextmanager
+def _config_lock(cfg: dict):
+    """The project's configuration lock (<data_dir>/config.lock), held while the configuration file is changed or
+    accepted: set_mode and accept_config of every process (the service's threads, the terminal) take it one after the
+    other, so that a change made from a copy of the file read before another one finished can be found out (set_mode
+    re-reads the file and the accepted hash under it). Waits up to CONFIG_LOCK_WAIT seconds, then refuses."""
+    os.makedirs(cfg["data_dir"], mode=0o700, exist_ok=True)
+    lock = os.open(os.path.join(cfg["data_dir"], CONFIG_LOCK_NAME), os.O_WRONLY | os.O_CREAT, 0o600)
+    try:
+        deadline = time.monotonic() + CONFIG_LOCK_WAIT
+        while True:
+            try:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except OSError:
+                if time.monotonic() >= deadline:
+                    raise OpsError("another change of the configuration is in progress: try again in a moment", 1) from None
+                time.sleep(0.05)
+        yield
+    finally:
+        os.close(lock)
 
 
 @contextlib.contextmanager
@@ -1299,9 +1336,11 @@ def accept_config(project: str, sha256: str) -> dict:
     one that runs on a configuration that was not accepted. Returns {"accepted", "previous", "path", "checkpoints"}."""
     ctx = context(project, check_config=False)
     cfg = ctx["cfg"]
-    if sha256 != cfg["sha256"]:
-        raise OpsError(f"the file's hash is {cfg['sha256']} and you typed {sha256}: nothing was accepted", 1)
-    done = _record_acceptance(ctx, cfg, sha256, "person")
+    with _config_lock(cfg):
+        cfg = _config_of(project)  # the file as it is now, under the lock
+        if sha256 != cfg["sha256"]:
+            raise OpsError(f"the file's hash is {cfg['sha256']} and you typed {sha256}: nothing was accepted", 1)
+        done = _record_acceptance(ctx, cfg, sha256, "person")
     return {"accepted": sha256, "previous": done["previous"], "path": cfg["path"], "checkpoints": done["checkpoints"]}
 
 
@@ -1589,7 +1628,9 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
     acceptance made by code. A move up leaves the hash unaccepted: every operation then refuses until the person
     accepts it (accept-config), and `next` is the command. The same mode changes nothing. Returns {"agent", "mode",
     "config_sha256", "accepted", "by" ("code:narrowing" or None), "next" (the command, or None)}, with "checkpoints"
-    after a narrowing and "unchanged" true when the mode was the one set."""
+    after a narrowing and "unchanged" true when the mode was the one set. Two calls at once, or a call and the
+    terminal, never overlap (_config_lock), and a call that finds the file or the accepted hash moved since it began
+    writes nothing and is refused (code 1): code never accepts a widening that a stale copy of the file would bring."""
     ctx = context(project)
     cfg = ctx["cfg"]
     if mode not in autonomy.MODES:
@@ -1597,26 +1638,35 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
     if agent not in cfg["area_agents"]:
         raise OpsError(f"{agent!r} is not an agent of area_agents in {cfg['path']}", 2)
     old = cfg["area_agents"][agent]["mode"]
-    if old == mode:
-        return {"agent": agent, "mode": mode, "config_sha256": cfg["sha256"], "accepted": True, "by": None,
-                "next": None, "unchanged": True}
-    raw = json.loads(json.dumps(cfg["raw"]))
-    raw["area_agents"][agent]["mode"] = mode
-    temporary = f"{cfg['path']}.{os.getpid()}.tmp"
-    with open(temporary, "w", encoding="utf-8") as f:
-        f.write(json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
-    os.replace(temporary, cfg["path"])
-    new = _sha256(cfg["path"])
-    out = {"agent": agent, "mode": mode, "config_sha256": new, "accepted": False, "by": None,
-           "next": _command("accept-config", cfg["project"], sha256=new)}
-    if autonomy.narrows(old, mode):
-        try:
-            written = project_config.load(project)
-        except project_config.ConfigError as e:
-            raise OpsError(str(e), 3) from None
-        if written["sha256"] == new:  # nothing else changed the file between the write and this read
-            done = _record_acceptance(ctx, written, new, "code:narrowing")
-            out.update(accepted=True, by="code:narrowing", next=None, checkpoints=done["checkpoints"])
+    with _config_lock(cfg):
+        # Under the lock, the file and the accepted hash are read again: another change (a request at the same time, the
+        # terminal) may have finished since context() read them. This call writes the accepted copy plus its one word,
+        # so it goes on only when the file is still that accepted copy; else it writes nothing, and the caller asks again.
+        fresh = _config_of(project)
+        accepted = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+        if fresh["sha256"] != cfg["sha256"] or accepted != cfg["sha256"]:
+            raise OpsError("the configuration changed while this call was running: nothing was written; read it, "
+                           "and ask again", 1)
+        if old == mode:
+            return {"agent": agent, "mode": mode, "config_sha256": cfg["sha256"], "accepted": True, "by": None,
+                    "next": None, "unchanged": True}
+        raw = json.loads(json.dumps(fresh["raw"]))
+        raw["area_agents"][agent]["mode"] = mode
+        temporary = f"{cfg['path']}.{os.getpid()}.tmp"
+        with open(temporary, "w", encoding="utf-8") as f:
+            f.write(json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
+        os.replace(temporary, cfg["path"])
+        new = _sha256(cfg["path"])
+        out = {"agent": agent, "mode": mode, "config_sha256": new, "accepted": False, "by": None,
+               "next": _command("accept-config", cfg["project"], sha256=new)}
+        if autonomy.narrows(old, mode):
+            try:
+                written = project_config.load(project)
+            except project_config.ConfigError as e:
+                raise OpsError(str(e), 3) from None
+            if written["sha256"] == new:  # nothing else changed the file between the write and this read
+                done = _record_acceptance(ctx, written, new, "code:narrowing")
+                out.update(accepted=True, by="code:narrowing", next=None, checkpoints=done["checkpoints"])
     return out
 
 
@@ -2384,6 +2434,10 @@ def dispatch(project: str, budget_seconds=None) -> dict:
     key = _floor_key()
     released, checked, held = [], {}, []
     while out["stopped"] is None:
+        if _configuration_moved(ctx):  # accepted again, or edited, since the round began: a mode may have been narrowed
+            out["stopped"] = ("the configuration changed during the round (a mode, a cap or an agent): no new run "
+                              "starts; the next round reads it")
+            break
         snapshot = _snapshot(ctx, key)
         decided = dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)
         out["held"] = decided["held"]
@@ -2446,6 +2500,18 @@ def pin(project: str) -> dict:
                     "each with the scheduler provider"}
 
 
+def _configuration_moved(ctx: dict) -> bool:
+    """Whether the configuration this round loaded is no longer the file or no longer the accepted one: the file's hash
+    or the accepted hash differs from the one the round started with. The round then ends, so that a narrowing accepted
+    in the middle of it (the page stopped an agent) stops the next start."""
+    try:
+        now = _config_of(ctx["cfg"]["project"])
+    except OpsError:
+        return True
+    accepted = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+    return now["sha256"] != ctx["cfg"]["sha256"] or accepted != ctx["cfg"]["sha256"]
+
+
 def _credential_stop():
     """(reason, why) no run on the reference model can start from this process, or None: its credential is neither set
     nor found in the secret store (lab.credential_missing). The reason is `secret store` when this interpreter cannot
@@ -2473,6 +2539,7 @@ def _image_stop():
 
 HELD_CURSOR = "dispatch:held"   # the store's cursor that holds the last round's held tasks (JSON), per project
 HELD_KEPT = 20                  # tasks kept in the record: a cursor value is at most 4 KiB
+SERVICE_TEXT = 300              # characters of one verdict of service_check: an exception's text is bounded
 SERVICE = {}                    # the local service's facts, by project folder: set by service_check in the service's process only
 
 
@@ -2481,9 +2548,17 @@ def _now_iso() -> str:
 
 
 def _record_held(ctx: dict, held: list) -> None:
-    """Keep the last round's held tasks, [{"task_id", "agent", "reason"}], with the time of the round, as the cursor
-    HELD_CURSOR (replacing the record of the round before). At most HELD_KEPT tasks; "more" counts the rest."""
-    record = {"at": _now_iso(), "held": held[:HELD_KEPT], "more": max(0, len(held) - HELD_KEPT)}
+    """Keep the last round's held tasks, [{"task_id", "agent", "reason"}], as the cursor HELD_CURSOR with the time they
+    began to be held (at). At most HELD_KEPT tasks; "more" counts the rest. A round that holds the same tasks for the
+    same reasons writes nothing: a write moves the store's change counter, and every open page reloads for it."""
+    kept, more = held[:HELD_KEPT], max(0, len(held) - HELD_KEPT)
+    try:
+        before = json.loads(_stored(ctx, ctx["store"].cursor_get, HELD_CURSOR) or "null")
+    except ValueError:
+        before = None
+    if isinstance(before, dict) and before.get("held") == kept and before.get("more") == more:
+        return
+    record = {"at": _now_iso(), "held": kept, "more": more}
     _stored(ctx, ctx["store"].cursor_set, HELD_CURSOR, json.dumps(record, separators=(",", ":")))
 
 
@@ -2930,6 +3005,37 @@ def _say_route(project: str, ctx: dict, said: str, answer_to=None) -> tuple:
 # --- stage 9: the local service --------------------------------------------------------------------------------------
 
 
+def version(project: str) -> dict:
+    """The change signal of a project's store: {"version", "changed_at"}. "version" is a whole number that grows on every
+    write transaction that changed a row (providers/store/sqlite.py, `change_counter`: the database file's header),
+    whoever wrote it: this process, a loop's thread, the terminal. A page asks it every second and reads everything
+    again when it moved. It is the cheapest read there is: the configuration file and its hash, then on the store four
+    statements (two pragmas of the connection, one plain SELECT of the cursor that holds the accepted configuration's hash,
+    the header) with no transaction and so no write lock; no migration is run (every other operation runs one at its
+    start), and a configuration nobody accepted, or one that names another checkout, is refused as every operation refuses it. "changed_at" is the time the store's file
+    was last written (UTC, as the store writes times). A project whose store does not exist yet gets it made, as every
+    other operation does."""
+    cfg = _config_of(project)
+    store = store_module()
+    db = cfg["store_db"]
+    if not os.path.isfile(db):
+        context(project, check_config=False)
+    conn = store.connect(db)
+    try:
+        accepted = store.cursor_peek(conn, project_config.ACCEPTED)      # a plain read: no write lock, no queue behind a writer
+        number = store.change_counter(conn)
+    except store.StoreError as e:
+        raise OpsError(f"the store at {db}: {e}", e.code) from None
+    except Exception as e:  # sqlite3.Error: the file is not a database, or is locked past the timeout
+        raise OpsError(f"the store at {db}: {e}", 1) from None
+    finally:
+        conn.close()
+    _accepted(cfg, accepted)
+    stamps = [os.stat(path).st_mtime for path in (db, db + "-wal") if os.path.exists(path)]
+    changed = datetime.datetime.fromtimestamp(max(stamps), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {"version": number, "changed_at": changed}
+
+
 def stop_runs(project: str | None = None) -> dict:
     """End every run this process started, through the lab's own stop (lab.stop_runs): the container and the process
     group of each run are ended and the folders of a run in progress go back to its run folder. The local service
@@ -3197,10 +3303,11 @@ def service_check(project: str, dispatch_every=None) -> dict:
         image = f"the eval image {seen['name']} is not on this machine"
     else:
         image = "ok"
-    problems = [f"{name}: {why}" for name, why in sorted(found["modules"].items()) if why != "ok"]
+    bounded = lambda text: CONTROL.sub(" ", str(text))[:SERVICE_TEXT]  # noqa: E731  (an exception's text, bounded)
+    problems = [bounded(f"{name}: {why}") for name, why in sorted(found["modules"].items()) if why != "ok"]
     if found["lab"] != "ok":
-        problems.append(f"lab: {found['lab']}")
-    report = {"secret_store": found["secret_store"], "credential": found["credential"],
+        problems.append(bounded(f"lab: {found['lab']}"))
+    report = {"secret_store": bounded(found["secret_store"]), "credential": bounded(found["credential"]),
               "docker": "ok" if found["tools"].get("docker") else "docker is not on the PATH of this process",
               "image": image,
               "dispatch": ("not a service" if dispatch_every is None else

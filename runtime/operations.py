@@ -196,6 +196,8 @@ OPERATIONS = (
      "args": ({"name": "path", "kind": "str", "required": True},),
      "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the text of one file under docs/ of the project, read-only"},
+    {"name": "version", "call": "version", "args": (), "channels": ("page", "mcp"), "model": False,
+     "help": "the change signal of the project's store: a number that grows on every write, and when the file was last written"},
     {"name": "stop-runs", "call": "stop_runs", "args": (), "channels": ("terminal",), "model": False,
      "help": "end the runs this process started (the local service calls it before it exits)"},
     {"name": "service-check", "call": "service_check", "args": ({"name": "dispatch_every", "kind": "int", "flag": "dispatch-every"},),
@@ -301,13 +303,20 @@ def parse_chat(line: str):
 
 
 def started_with_uv() -> bool:
-    """Whether this process was started through `uv run --with keyring...`: its interpreter lives in an environment
-    uv built in its cache (a folder `builds-v<n>` or `environments-v<n>` under a folder named uv). The environment
-    variable WORKBENCH_STARTED_WITH_UV ("1" or "0") says it outright and wins."""
+    """Whether this process was started through `uv run`: uv sets UV_RUN_RECURSION_DEPTH for what it starts (whatever
+    environment it made: its cache, a project's .venv, a custom UV_CACHE_DIR); or, failing that, the interpreter lives
+    in an environment uv built in its cache (a folder `builds-v<n>` or `environments-v<n>` under a folder named uv or
+    under UV_CACHE_DIR). The environment variable WORKBENCH_STARTED_WITH_UV ("1" or "0") says it outright and wins."""
     marked = os.environ.get(UV_MARK)
     if marked in ("0", "1"):
         return marked == "1"
-    parts = os.path.realpath(sys.prefix).split(os.sep)
+    if os.environ.get("UV_RUN_RECURSION_DEPTH"):
+        return True
+    prefix = os.path.realpath(sys.prefix)
+    cache = os.environ.get("UV_CACHE_DIR")
+    if cache and prefix.startswith(os.path.realpath(cache) + os.sep):
+        return True
+    parts = prefix.split(os.sep)
     return "uv" in parts and any(p.startswith(("builds-v", "environments-v")) for p in parts)
 
 

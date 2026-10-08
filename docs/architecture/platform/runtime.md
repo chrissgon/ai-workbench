@@ -375,6 +375,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `connections` | `connections` | terminal, page, mcp | no | which provider each requirement class resolves to, which secrets are found (never a value), the image |
 | `artifacts` | `artifacts` | terminal, page, mcp | no | the project's files under docs/ with their owner skill, size and time |
 | `artifact` | `artifact` | terminal, page, mcp | no | the text of one file under docs/ of the project, read-only |
+| `version` | `version` | page, mcp | no | the change signal of the project's store: a number that grows on every write, and when the file was last written |
 | `stop_runs` | `stop-runs` | terminal | no | end the runs this process started (the local service calls it before it exits) |
 | `service_check` | `service-check` | terminal | no | what the local service checks at its start: the secret store, the credential, docker, the eval image and whether it dispatches (the service calls it for each project) |
 <!-- /generated -->

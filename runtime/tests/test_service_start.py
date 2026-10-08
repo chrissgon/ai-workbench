@@ -152,3 +152,23 @@ def test_the_check_verb_of_the_scheduler_entry_reports_what_the_service_reads(tm
     report = dispatcher.inspect(ops)
     assert set(report) == {"python", "executable", "modules", "lab", "secret_store", "credential", "tools"}
     assert report["modules"]["ops.py"] == "ok" and set(report["tools"]) == {"docker", "uv", "git"}
+
+
+def test_the_documents_say_what_the_review_asked(capsys):
+    assert service.main(["--help"]) == 0
+    said = capsys.readouterr().out
+    assert "scheduler's two jobs" in said and "this service's own fact" in said
+    readme = (st.REPO / "runtime" / "README.md").read_text(encoding="utf-8")
+    assert "should be served with `--no-dispatch`" in readme
+    contract = (st.REPO / "contracts" / "runtime.md").read_text(encoding="utf-8")
+    assert "dispatch off in this service" in contract
+    assert "token-gated page only" in contract and "never carries a secret's value" in contract
+
+
+def test_a_verdict_of_the_service_check_is_bounded(tree, monkeypatch):  # noqa: F811
+    path = str(tree["project"])
+    monkeypatch.setattr(dispatcher, "inspect", lambda module: {
+        "secret_store": "x" * 5000 + "\n", "credential": "ok", "tools": {"docker": "/bin/docker"},
+        "modules": {"mcp.py": "y" * 5000}, "lab": "ok"})
+    got = ops.service_check(path, 30)
+    assert len(got["secret_store"]) <= 300 and "\n" not in got["secret_store"] and len(got["problems"][0]) <= 300

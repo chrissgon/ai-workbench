@@ -107,7 +107,7 @@ def test_a_narrowing_that_finds_the_file_changed_under_it_is_not_accepted(tree, 
 
     def load(path):
         calls["n"] += 1
-        if calls["n"] == 2:  # the read after the write: someone else edited the file in between
+        if calls["n"] == 3:  # the read after the write (1: context, 2: under the lock): someone edited the file in between
             raw = json.loads(config_path(tree).read_text(encoding="utf-8"))
             raw["area_agents"]["brand"]["max_runs_per_day"] = 99
             config_path(tree).write_text(json.dumps(raw), encoding="utf-8")
@@ -159,3 +159,85 @@ def test_from_the_page_a_narrowing_is_accepted_and_the_next_read_succeeds_and_a_
     status, _, refused = ts.call(world, "GET", ts.api(world, "/status"))
     assert status == 412 and body["next"] in refused["message"]  # the refusal names the same absolute command
     assert body["next"].startswith(f"python3 {tree['tree']}/runtime/cli.py accept-config")
+
+
+# --- review of WP-9.14: two calls at once never make code accept a widening ------------------------------------------
+
+
+def test_two_set_modes_at_once_never_make_code_accept_a_widening(tree, monkeypatch):
+    """B loads the accepted configuration; A (another request) narrows brand to stopped and code accepts it; B then
+    writes its own change. B must not write its stale copy over A's (that would put brand back to autonomous and have
+    code accept the widening): it finds the file moved and refuses, writing nothing."""
+    project = str(tree["project"])
+    real = ops.context
+    state = {"n": 0}
+
+    def context(p, **kw):
+        out = real(p, **kw)
+        state["n"] += 1
+        if state["n"] == 1:  # B has loaded the accepted configuration; A runs to the end now
+            monkeypatch.setattr(ops, "context", real)
+            a = ops.set_mode(project, "brand", "stopped")
+            assert a["accepted"] is True
+            monkeypatch.setattr(ops, "context", context)
+        return out
+
+    monkeypatch.setattr(ops, "context", context)
+    with pytest.raises(ops.OpsError) as refused:
+        ops.set_mode(project, "planning", "stopped")
+    assert refused.value.code == 1 and "changed" in str(refused.value)
+    monkeypatch.setattr(ops, "context", real)
+    modes = {k: v["mode"] for k, v in json.loads(config_path(tree).read_text(encoding="utf-8"))["area_agents"].items()}
+    assert modes == {"planning": "supervised", "brand": "stopped"}  # A's change stands, B wrote nothing
+    assert cursor(tree, project_config.ACCEPTED) == project_config.load(project)["sha256"]
+
+
+def test_a_file_changed_by_hand_between_the_read_and_the_lock_is_not_accepted_by_a_narrowing(tree, monkeypatch):
+    project = str(tree["project"])
+    real = ops.context
+
+    def context(p, **kw):
+        out = real(p, **kw)
+        raw = json.loads(config_path(tree).read_text(encoding="utf-8"))
+        raw["area_agents"]["brand"]["max_runs_per_day"] = 99
+        config_path(tree).write_text(json.dumps(raw), encoding="utf-8")
+        return out
+
+    monkeypatch.setattr(ops, "context", context)
+    accepted = cursor(tree, project_config.ACCEPTED)
+    with pytest.raises(ops.OpsError):
+        ops.set_mode(project, "planning", "stopped")
+    assert cursor(tree, project_config.ACCEPTED) == accepted
+
+
+def test_changes_of_the_configuration_take_a_lock_and_give_up_when_another_holds_it(tree, monkeypatch):
+    import fcntl
+    project = str(tree["project"])
+    cfg = project_config.load(project)
+    monkeypatch.setattr(ops, "CONFIG_LOCK_WAIT", 0.2)
+    fd = __import__("os").open(__import__("os").path.join(cfg["data_dir"], ops.CONFIG_LOCK_NAME), __import__("os").O_WRONLY | __import__("os").O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        with pytest.raises(ops.OpsError, match="in progress"):
+            ops.set_mode(project, "brand", "stopped")
+        with pytest.raises(ops.OpsError, match="in progress"):
+            ops.accept_config(project, cfg["sha256"])
+    finally:
+        __import__("os").close(fd)
+    assert ops.set_mode(project, "brand", "stopped")["accepted"] is True  # the lock is released with the file
+
+
+def test_the_accepted_hash_and_its_author_are_written_nowhere_but_the_one_function():
+    """Textual, over every module that could write a cursor: the two names appear as literals only where they are
+    defined, and no handler or script names a cursor that starts with `config:`."""
+    import re
+    holders = {}
+    for folder in (st.RUNTIME, st.RUNTIME / "handlers", st.REPO / "scripts"):
+        for path in sorted(folder.glob("*.py")):
+            text = path.read_text(encoding="utf-8")
+            for literal in ("config:accepted-sha256", "config:accepted-by"):
+                if literal in text:
+                    holders.setdefault(literal, set()).add(path.name)
+            for name in re.findall(r'cursor-set",\s*"--name",\s*f?"([^"]*)"', text):
+                assert not name.startswith("config:"), (path.name, name)
+    assert holders == {"config:accepted-sha256": {"project_config.py"}, "config:accepted-by": {"ops.py"}}, holders
