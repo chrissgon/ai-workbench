@@ -10,15 +10,16 @@ returned and sends what the person typed or clicked.
 | Path | What |
 |---|---|
 | `index.html`, `style.css`, `favicon.svg` | The one page, its rules and its icon. No inline script, no inline style: every rule is in `style.css`, every script is a module. `style.css` derives the page's own tokens (`--wb-raised`, `--wb-ground`, `--wb-elev`, ...) from the library's, with no colour literal. |
-| `icons/` | One clean SVG file per icon (13, from the Lucide set), drawn by a CSS mask in the colour of the text. |
-| `js/main.js` | The page: the token prompt, then the shared frame with the screen the hash names (`#/` is the City; the other screens are placeholders until their packages), and the poll (every 5 s while the document is visible, none while it is hidden). |
-| `js/router.js`, `js/format.js`, `js/model.js` | Pure functions: the hash forms, the display words and numbers, and what the City shows worked out from the service's bodies (floors, windows, waiting rows, the tracking bar). Tested under Node. |
+| `icons/` | One clean SVG file per icon (15, from the Lucide set), drawn by a CSS mask in the colour of the text. |
+| `js/main.js` | The page: the token prompt, then the shared frame with the screen the hash names (`#/` is the City, `#/p/<id>` the Building, `#/p/<id>/floor/<agent>` the Floor; the Lobby and the Control room are placeholders until their packages), and the poll (every 5 s while the document is visible, none while it is hidden). |
+| `js/router.js`, `js/format.js`, `js/model.js`, `js/floor-model.js` | Pure functions: the hash forms (a document of the desk is `/desk/<percent-encoded path>`), the display words and numbers, what the City shows worked out from the service's bodies (floors, windows, waiting rows, the tracking bar), and what the Building and the Floor show (each floor's state, plate and list row, the current task, the run block, the desk rows, the resolved lines). Tested under Node. |
 | `js/data.js` | What the City reads: `projects`, then `status` and `agents` of each accepted project, and the running task's `task` body. Reads only. |
 | `js/api.js` | The client of the service: one function per route of `ROUTES` in `runtime/service.py`, named after the operation. |
 | `js/token.js`, `js/dom.js` | The token for this session; building elements (strings become text, a style or an event attribute is refused). |
 | `js/frame/` | The shared frame of every scene screen: header (back, breadcrumbs, project switcher), KPI cards, waiting list, tracking bar, panel shell, sheet (a phone's lists), icons. |
-| `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `city.js` (the City's geometry), `labels.js`, `cull.js`, `fit.js`, `tween.js` (the camera move as a state machine). |
-| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City), `placeholder.js` (the Building, Floor and Lobby until their packages) and the Control room: `control.js` (the panel, the tabs, the reads), `control-skills.js`, `control-costs.js` and `control-connections.js` (one per tab), `control-model.js` (the pure part: chips, filters, the chart and the cost words, tested under Node) and `control-parts.js` (the loading line, the failed-read notice, the empty block). |
+| `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time, the opening of a building, the camera moving into a room, the work-order tag moving), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `labels.js`, `cull.js`, `fit.js`, `tween.js` (the camera move as a state machine), and one builder per scene kind: `city.js`, `building.js` (the cutaway), `room.js` (the Floor's room), with `furniture.js` (desk, chair, tray, sheet, table, cabinet, lamp, bookshelf, door), `figure.js` (the agent in its three poses and the typing motion) and `plates.js` (the floor plates, the board, tag and door labels, and the arithmetic that stacks the plates). |
+| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City), `building.js` (the Building: the cutaway, the floors list, the project's facts), `floor.js` (the Floor: the room and the panel with the tabs Agent, Inbox and Desk) `placeholder.js` (the Lobby until its package) and the Control room: `control.js` (the panel, the tabs, the reads, the server-room scene), `control-skills.js`, `control-costs.js` and `control-connections.js` (one per tab), `control-scene.js` (the server-room builder), `control-model.js` (the pure part: chips, filters, the chart, the cost words and the scene's model, tested under Node) and `control-parts.js` (the loading line, the failed-read notice, the empty block). |
+| `js/floor/` | The Floor's panel and the decision cards, the only files that send a write: `cards.js` (effect, acceptance, question, review and plan cards, the request line and the cancel dialog), `inbox.js`, `agent-tab.js` (set mode, retry, hand a file over), `desk-tab.js`, `viewer.js` (a document as plain text), `widgets.js`, and `actions.js`, the one object that names every write of the client; the cards and the tab are handed it, so a test can give them a fake client. |
 | `js/three.js` | The one place the 3D library is imported from (a relative re-export); the scene uses it. |
 | `vendor/three/`, `vendor/<library>/` | The two third-party libraries, copied unchanged, each folder with a README that records the package, the exact version, the licence and the sha256 of every file. |
 
@@ -36,7 +37,7 @@ City appears: a project whose configuration is not accepted shows the service's 
 terminal) in a band under the header; choosing a building keeps its id
 in the hash (`#/p/<id>`). The first screen is the City: an isometric plot with one building per project, the three KPI
 cards, the waiting list, the project switcher and the tracking bar; choosing a building moves the camera in and opens the
-project's screen (a placeholder with the status counts until the Building screen is built).
+project's screen: the Building, a cutaway with one floor for each area agent, its plates, and in the panel the project's facts and the floors list; choosing a floor moves the camera in and opens the Floor, the agent at its desk, with the panel's tabs Agent, Inbox and Desk.
 
 ## The rules of these files
 
@@ -74,11 +75,24 @@ without WebGL shows one line of text and leaves every panel and action working. 
 custom properties when it is built and when the colour scheme changes. Nothing in it is decorative: no vehicles, people,
 birds or weather. `canvas.wbStats()` (a function on the canvas element) returns the frames drawn so far, for a check.
 
-The Control room's three tabs (WP-9.5) read `skills`, `costs`, `connections` and `agents` through `js/api.js`, once on entering and once on return from a hidden tab (and `costs` again when the Since date changes), and write nothing. Its small server-room scene is not built yet.
+The Building (the floors separate once when it opens, the figure of a working agent types at 3 Hz, the work-order tag moves
+to the next floor once) and the Floor (the camera moves into the room once, the typing, a waiting marker dropping in) follow
+the same rules. The plates beside the building are stacked so none overlaps another and none is cut by the tracking bar; when
+six or more would not fit the free height they all become the compact form (the name row and the meters) and the list in the
+panel keeps every fact. The Lobby (WP-9.4) adds a builder to `BUILDERS` of `engine.js`
+and a module under `js/views/`, reads more routes through `js/api.js`, and edits no vendored file.
 
-The Building, the Floor and the Lobby (WP-9.3b and WP-9.4) add modules under `js/views/` and
-`js/scene/` (a builder per scene kind, registered in `BUILDERS` of `engine.js`) and read more routes through `js/api.js`;
-they edit no vendored file.
+The Control room's three tabs (WP-9.5) read `skills`, `costs`, `connections` and `agents` through `js/api.js`, once on entering and once on return from a hidden tab (and `costs` again when the Since date changes), and write nothing. Its small server-room scene (racks: the connection facts as LEDs; wall screen: the runs of the last seven days; console) registers itself as the scene kind `server` and is static.
+
+## What the Floor sends
+
+Only `js/floor/` sends a write, through `actions.js`: `answer`, `release`, `approve`, `reject`, `verdict`, `cancel`, `setMode`,
+`retry` and `handOver` (with `pollJob` for a job). A card draws one button per word of its decision's `actions` and none for a
+word it does not know; an effect or a plan is approved with the hash the card shows, read back from the page's own text at the
+click, and a hash that is not the decision's is refused before any request; a blocked change set cannot send a release from
+the page. A failure is written above the buttons of the control that sent it, the buttons are enabled again and what the
+person typed stays; the card is read again, never changed by the page itself. `runtime/tests/test_interface_floor.py` builds
+the cards and the Agent tab under a fake document and a fake client and checks what each button sends.
 
 ## How the service serves it
 
