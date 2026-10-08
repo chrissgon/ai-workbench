@@ -552,7 +552,7 @@ def test_a_refused_operation_becomes_its_documented_status(world):
 
 def test_a_route_that_calls_a_model_returns_a_job_and_the_job_ends_with_the_operations_result(world):
     gate = threading.Event()
-    world.fake.answers["say"] = lambda project, text: gate.wait(WAIT) and {"reply": "ok: " + text, "ran": True}
+    world.fake.answers["say"] = lambda project, text, channel=None: gate.wait(WAIT) and {"reply": "ok: " + text, "ran": True}
     status, _, job = call(world, "POST", api(world, "/conversation"), {"text": "a new request"})
     assert status == 202
     assert set(job) == {"job", "op", "project", "state", "result", "error", "started_at", "ended_at"}
@@ -572,7 +572,7 @@ def test_a_route_that_calls_a_model_returns_a_job_and_the_job_ends_with_the_oper
 
 def test_a_second_turn_while_a_job_that_calls_a_model_runs_is_refused_by_the_service(world):
     gate = threading.Event()
-    world.fake.answers["say"] = lambda project, text: gate.wait(WAIT) and {"reply": "ok"}
+    world.fake.answers["say"] = lambda project, text, channel=None: gate.wait(WAIT) and {"reply": "ok"}
     first = call(world, "POST", api(world, "/conversation"), {"text": "one"})
     assert first[0] == 202
     status, _, body = call(world, "POST", api(world, "/conversation"), {"text": "two"})
@@ -622,7 +622,7 @@ def test_the_dispatch_loop_calls_the_dispatcher_for_each_project_and_survives_an
 
 def test_the_dispatch_loop_skips_a_project_that_has_a_job_running_and_the_poll_loop_calls_poll(world):
     gate = threading.Event()
-    world.fake.answers["say"] = lambda project, text: gate.wait(WAIT) and {"reply": "ok"}
+    world.fake.answers["say"] = lambda project, text, channel=None: gate.wait(WAIT) and {"reply": "ok"}
     job = call(world, "POST", api(world, "/conversation", 1), {"text": "busy"})[2]
     assert job["state"] == "running"
     seen = threading.Event()
@@ -1000,7 +1000,7 @@ def test_the_service_ends_the_runs_it_started_before_it_exits(tmp_path):
     server = FakeServer.instances[-1]
     assert server.requested == ("127.0.0.1", 0)                              # the only address it ever asks for
     # a job is running, and it ends only when the runs are ended
-    fake.answers["say"] = lambda project, text: fake.job_stop.wait(WAIT) and {"reply": "ended"}
+    fake.answers["say"] = lambda project, text, channel=None: fake.job_stop.wait(WAIT) and {"reply": "ended"}
     fake.stop_release.clear()                                                # stop_runs will take a while
     headers = {"Host": "127.0.0.1:4321", "Authorization": f"Bearer {svc.token}", "Origin": "http://127.0.0.1:4321",
                "Content-Type": "application/json"}

@@ -1,6 +1,7 @@
 """The table of operations: the one place that says what the operations layer (runtime/ops.py) offers to a shell.
 
-A shell (the terminal's runtime/cli.py, the conversation's runtime/chat.py, the local service's runtime/service.py) derives what it accepts from
+A shell (the terminal's runtime/cli.py, the conversation's runtime/chat.py, the local service's runtime/service.py, the MCP
+mode's runtime/mcp.py) derives what it accepts from
 this table and spells nothing of its own: one row per operation, with its arguments, the channels that may call it
 and whether it calls a model. Adding an operation adds one row here and one function in ops.py; adding a shell adds a
 file. The channel rule is a column: a row lists the channels that may call it, and a row whose function takes the
@@ -21,7 +22,11 @@ do, so that the generated tables and the shells cannot differ). A row:
                the list
   channels     which channels may call it: "terminal", "chat", "page" (the local service, runtime/service.py: a route
                exists only for an operation whose row lists "page"; an operation that widens what an agent may do on
-               its own, or that runs the next task by hand, lists "terminal" only)
+               its own, or that runs the next task by hand, lists "terminal" only), "mcp" (the MCP mode,
+               runtime/mcp.py: a tool exists only for an operation whose row lists "mcp"; the reads, and the writes a
+               model client may make: request, route, answer, release a draft and say; never approve, reject, cancel
+               or retry, as a tool or typed into `say`, whose row takes the channel and does a command only when
+               that command's row lists it)
   model        whether it calls a model: False, True, or the words that say when ("without --flow")
   help         one line: what it does
   channel_arg  (optional) the function takes `channel=<name>` and decides what that channel may do
@@ -48,38 +53,38 @@ OPERATIONS = (
     {"name": "request", "call": "request",
      "args": ({"name": "text", "kind": "text", "required": True}, {"name": "flow", "kind": "str"},
               {"name": "title", "kind": "str"}),
-     "channels": ("terminal", "page"), "model": False,
+     "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "record what you want; with a flow, plan it from the flow file, else it waits for its route"},
     {"name": "route", "call": "route",
      "args": ({"name": "request_id", "kind": "int", "required": True, "flag": "request"}, {"name": "flow", "kind": "str"}),
-     "channels": ("terminal", "page"), "model": "without --flow", "job": True,
+     "channels": ("terminal", "page", "mcp"), "model": "without --flow", "job": True,
      "help": "plan a request that waits for its route: one run of the router skill, or the plan of a flow file"},
-    {"name": "status", "call": "status", "args": (), "channels": ("terminal", "chat", "page"), "model": False,
+    {"name": "status", "call": "status", "args": (), "channels": ("terminal", "chat", "page", "mcp"), "model": False,
      "help": "requests, tasks and what waits for you"},
     {"name": "task", "call": "task",
      "args": ({"name": "task_id", "kind": "int", "required": True, "flag": "task", "label": "task id"},),
-     "channels": ("terminal", "page"), "model": False,
+     "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "one task or request with its runs and its pending decisions"},
-    {"name": "flows", "call": "flows", "args": (), "channels": ("terminal", "page"), "model": False,
+    {"name": "flows", "call": "flows", "args": (), "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the flow files of this checkout, with their titles and how many tasks each holds"},
     {"name": "config", "call": "config", "args": (), "channels": ("terminal", "page"), "model": False,
      "help": "the configuration's path and hash, whether you accepted it, and the data folder; it never refuses"},
     {"name": "progress", "call": "progress", "args": ({"name": "since", "kind": "str"},),
-     "channels": ("terminal", "chat", "page"), "model": False, "chat_reply": "text",
+     "channels": ("terminal", "chat", "page", "mcp"), "model": False, "chat_reply": "text",
      "help": "where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD)"},
     {"name": "pending", "call": "pending",
      "args": ({"name": "pending_id", "kind": "int", "flag": "id"},),
-     "channels": ("terminal", "chat", "page"), "model": False,
+     "channels": ("terminal", "chat", "page", "mcp"), "model": False,
      "help": "what waits for you; with an id, that decision whole"},
     {"name": "answer", "call": "answer",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"},
               {"name": "text", "kind": "text", "required": True},
               {"name": "with_comments", "kind": "flag", "flag": "with-comments"}),
-     "channels": ("terminal", "chat", "page"), "model": False,
+     "channels": ("terminal", "chat", "page", "mcp"), "model": False,
      "help": "answer a pending decision"},
     {"name": "release", "call": "release",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"},),
-     "channels": ("terminal", "chat", "page"), "model": False, "job": True,
+     "channels": ("terminal", "chat", "page", "mcp"), "model": False, "job": True,
      "help": "release a delivery (it stays a draft)"},
     {"name": "approve", "call": "approve",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"}, {"name": "sha256", "kind": "str"}),
@@ -166,26 +171,26 @@ OPERATIONS = (
     {"name": "pin", "call": "pin", "args": (), "channels": ("terminal",), "model": False,
      "help": "write the pin of the dispatcher's two jobs"},
     {"name": "say", "call": "say", "args": ({"name": "text", "kind": "text", "required": True},),
-     "channels": ("terminal", "page"), "model": "for a new request", "job": True,
+     "channels": ("terminal", "page", "mcp"), "model": "for a new request", "job": True, "channel_arg": True,
      "help": "one turn of the conversation with the planning agent"},
-    {"name": "agents", "call": "agents", "args": (), "channels": ("terminal", "page"), "model": False,
+    {"name": "agents", "call": "agents", "args": (), "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "each area agent: its mode, its caps, what it used today and how many tasks wait for it"},
     {"name": "conversation", "call": "conversation",
      "args": ({"name": "conversation", "kind": "str"}, {"name": "after", "kind": "int"}),
-     "channels": ("terminal", "page"), "model": False,
+     "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the messages of the project's conversation above a message id, oldest first"},
-    {"name": "skills", "call": "skills", "args": (), "channels": ("terminal", "page"), "model": False,
+    {"name": "skills", "call": "skills", "args": (), "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the skills in scope with their proof on each model, their runs here and the two checks of the proof"},
     {"name": "costs", "call": "costs", "args": ({"name": "since", "kind": "str"},),
-     "channels": ("terminal", "page"), "model": False,
+     "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the runs by day, agent, model and adapter, with the recorded cost and the cost recomputed from the prices"},
-    {"name": "connections", "call": "connections", "args": (), "channels": ("terminal", "page"), "model": False,
+    {"name": "connections", "call": "connections", "args": (), "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "which provider each requirement class resolves to, which secrets are found (never a value), the image"},
-    {"name": "artifacts", "call": "artifacts", "args": (), "channels": ("terminal", "page"), "model": False,
+    {"name": "artifacts", "call": "artifacts", "args": (), "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the project's files under docs/ with their owner skill, size and time"},
     {"name": "artifact", "call": "artifact",
      "args": ({"name": "path", "kind": "str", "required": True},),
-     "channels": ("terminal", "page"), "model": False,
+     "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the text of one file under docs/ of the project, read-only"},
     {"name": "stop-runs", "call": "stop_runs", "args": (), "channels": ("terminal",), "model": False,
      "help": "end the runs this process started (the local service calls it before it exits)"},

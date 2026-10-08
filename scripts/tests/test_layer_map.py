@@ -222,6 +222,7 @@ ALLOWED = (
     ("runtime/cli.py", ("runtime/ops.py",)),
     ("runtime/chat.py", ("runtime/ops.py",)),
     ("runtime/service.py", ("runtime/ops.py",)),
+    ("runtime/mcp.py", ("runtime/ops.py",)),
     # the handlers: the resolver of providers and the shell's verbs, nothing imported from runtime/
     # a handler reaches the resolver, the terminal shell, the shared credential formats and its sibling handlers
     ("runtime/handlers/*.py", ("providers/resolve.py", "runtime/cli.py", "scripts/redact.py", "runtime/handlers/")),
@@ -357,7 +358,7 @@ def test_the_rules_the_diagram_states_hold_for_the_code_as_it_is():
             assert not target.startswith("runtime/"), (file, target)
         if file.startswith("runtime/") and target.startswith("evals/"):
             assert file == "runtime/lab.py", (file, target)
-        if file in ("runtime/cli.py", "runtime/chat.py", "runtime/service.py"):
+        if file in ("runtime/cli.py", "runtime/chat.py", "runtime/service.py", "runtime/mcp.py"):
             assert target == "runtime/ops.py", (file, target)
         if file.startswith("runtime/handlers/") and (file, target) not in TOLERATED:
             assert target in ("providers/resolve.py", "runtime/cli.py", "scripts/redact.py") \
@@ -428,6 +429,8 @@ def test_the_allowed_rules_say_what_the_diagram_says():
     assert allowed("runtime/cli.py", "runtime/ops.py") and not allowed("runtime/cli.py", "runtime/plan.py")
     assert allowed("runtime/service.py", "runtime/ops.py") and not allowed("runtime/service.py", "providers/store/sqlite.py")
     assert not allowed("runtime/service.py", "runtime/lab.py") and not allowed("runtime/service.py", "runtime/plan.py")
+    assert allowed("runtime/mcp.py", "runtime/ops.py") and not allowed("runtime/mcp.py", "runtime/service.py")
+    assert not allowed("runtime/mcp.py", "providers/store/sqlite.py") and not allowed("runtime/mcp.py", "runtime/lab.py")
     assert allowed("runtime/handlers/h.py", "runtime/cli.py") and not allowed("runtime/handlers/h.py", "runtime/ops.py")
     assert not allowed("scripts/doctor.py", "runtime/ops.py")
     assert allowed("scripts/runtime.py", "adapters/api/run-agent.sh")

@@ -61,7 +61,7 @@ A table that changes with the code is generated, never edited by hand: it sits b
 
 ```mermaid
 flowchart TB
-    L7["7 Shells<br/>terminal, conversation<br/>(local service; MCP mode: planned)"]
+    L7["7 Shells<br/>terminal, conversation<br/>(local service, MCP mode)"]
     L6["6 Runtime<br/>runtime/, flows/ as data"]
     L5["5 Adapters<br/>adapters/&lt;harness&gt;/"]
     L4["4 Lab<br/>evals/"]
@@ -94,7 +94,7 @@ An arrow is "may read or call". Nothing points into the shells, and nothing in l
 | 4 | The lab | The eval runner, the container, the measurement, the status script and the evidence (`evals/`, `skills/<name>/evals/`) | [lab.md](lab.md) |
 | 5 | Adapters | Everything specific to one AI tool: installers, the eval entry `run-prompt.sh`, overrides (`adapters/<harness>/`) | [adapters.md](adapters.md) |
 | 6 | The runtime | The task runtime under `runtime/`: requests, tasks, runs in the container, pending decisions, approvals, mirrors, the dispatcher | [runtime.md](runtime.md) |
-| 7 | The shells | Thin fronts over the operations layer: the terminal (`runtime/cli.py`), the conversation (`runtime/chat.py`) and the local service (`runtime/service.py`, with `interface/`); the MCP mode planned | [shells.md](shells.md) |
+| 7 | The shells | Thin fronts over the operations layer: the terminal (`runtime/cli.py`), the conversation (`runtime/chat.py`), the local service (`runtime/service.py`, with `interface/`) and the MCP mode (`runtime/mcp.py`) | [shells.md](shells.md) |
 | 8 | The target project | The project a person works on: its documents, its state file, its configuration, its work data; never a file of this repository | [project.md](project.md) |
 
 **The direction rules.**

@@ -43,6 +43,8 @@ ON_SYSTEM_PYTHON = [
     "runtime/progress.py", "runtime/autonomy.py", "runtime/dispatcher.py", "runtime/chat.py", "runtime/operations.py",
     # The local service (stage 9): it serves the operations layer, so it runs where the layer runs.
     "runtime/service.py",
+    # The MCP mode (stage 9): the same operations layer over standard input and output.
+    "runtime/mcp.py",
     # The cost of a run recomputed from its token counts (stage 9): the operations layer imports it.
     "runtime/costs.py",
     # The roles of the runtime as data, and the isolated runner of skill code (WP-R.5).
