@@ -19,6 +19,7 @@ import pytest
 
 import standin_tree as st
 from test_interface_floor import FAKE_DOM
+from test_interface_scene_round3 import WORLD_JS
 
 INTERFACE = st.REPO / "interface"
 JS = INTERFACE / "js"
@@ -211,87 +212,60 @@ def test_a_window_is_warm_when_its_agent_works_and_grey_in_every_other_state_and
 
 # --- outlines ----------------------------------------------------------------------------------------------------------------------
 
-OUTLINES = r"""
-import * as THREE from "@JS@/three.js";
-import { createKit } from "@JS@/scene/kit.js";
+OUTLINES = WORLD_JS + r"""
 import { outlineVisible, applyOutlineVisibility } from "@JS@/scene/look.js";
-import { buildCity } from "@JS@/scene/city.js";
-import { buildBuilding } from "@JS@/scene/building.js";
-import { buildRoom } from "@JS@/scene/room.js";
 import { buildServer } from "@JS@/views/control-scene.js";
 import { sceneModel as serverModel } from "@JS@/views/control-model.js";
-import * as model from "@JS@/model.js";
-import * as fm from "@JS@/floor-model.js";
-
-const c = (hex) => new THREE.Color(hex);
-const T = { border: c(0x101010), theme: c(0x2020f0), success: c(0x10f010), error: c(0xf01010), emphasis: c(0x303030), text: c(0x404040), warn: c(0xf0a010), textMuted: c(0x505050), mutedRole: c(0x707070) };
-const mix = (a, b, t) => a.clone().lerp(b, t);
-const bg = c(0xfafafa);
-const palette = { dark: false, T, mix, bg, shell: c(0xf8f8f8), ink: c(0x202020), metal: c(0x606060), deskTop: c(0xd0d0d0), screenOff: c(0x181818), leafA: c(0x80c080), leafB: c(0x70b070), trunk: c(0x806040),
-  lot: c(0xffffff), warm: c(0xf0c040), pale: c(0xd0d8f0), glass: c(0xd0e0f0), wood: c(0xc0a080), drawer: c(0x9090d0), skin: c(0xe0c0b0), windows: { lit: c(0xf0c040), grey: T.border } };
 
 const out = {};
 out.rule = [outlineVisible("a", null), outlineVisible("a", "a"), outlineVisible("a", "b"), outlineVisible(null, null), outlineVisible(undefined, undefined)];
 const visible = (built) => built.outlines.flatMap((o) => o.lines.map((l) => [o.id, l.visible]));
-
-// the City: no lot line stands; only the hovered lot's shows
-const lots = [0, 1].map((i) => ({ id: `lot${i}`, name: `p${i}`, accepted: true, decisions: 0, runningTask: i === 0 ? 5 : null, floors: [{ window: "grey", waits: false }, { window: "lit", waits: false }], tip: "t", sub: "s" }));
-let kit = createKit(palette);
-const city = buildCity(kit, { selectedId: "lot0", outlined: null, ready: true, lots });
-out.cityBuilt = visible(city);
-applyOutlineVisibility(city.outlines, city.selected);
-out.cityNothing = visible(city);
-applyOutlineVisibility(city.outlines, "lot1");
-out.cityRoute = visible(city);
-out.citySelected = city.selected;
-kit.dispose();
-
-// the Building: no floor line without a hover
-kit = createKit(palette);
-const mk = (name, extra = {}) => ({ name, label: name, state: "idle", window: "grey", decisions: 0, lobby: name === "planning", sheets: 0, drawers: 1, tip: `${name} tip`, interactive: true, ...extra });
-const building = buildBuilding(kit, { ready: true, selected: "b", focus: null, more: 0, tag: { floor: "b", text: "#1" }, doorText: "Control room", floors: [mk("planning"), mk("b", { state: "working", window: "lit" })] });
-applyOutlineVisibility(building.outlines, building.selected);
-out.buildingNothing = visible(building);
-out.buildingSelected = building.selected;
-kit.dispose();
-
-// the room (the Floor, the Lobby) and the Control room: the route selects them, so their floor line is drawn
-kit = createKit(palette);
-const tips = { agent: "a", desk: "d", tray: "t", cabinet: "c", board: "b" };
-const room = buildRoom(kit, { ready: true, state: "working", window: "lit", decisions: 1, drawers: 1, sheets: [{ path: "docs/a.md", tip: "docs/a.md" }], tips, board: { title: "t", lines: [], dot: "theme" }, door: false });
-applyOutlineVisibility(room.outlines, room.selected);
-out.room = [visible(room), room.selected];
+const { kit, world } = make();
+// the City: no lot line stands; only the object the route selects shows its line
+out.cityBuilt = visible(world).filter((x) => ["a", "b", "c"].includes(x[0]));
+applyOutlineVisibility(world.outlines, world.selected);
+out.cityNothing = visible(world).filter((x) => ["a", "b", "c"].includes(x[0]));
+applyOutlineVisibility(world.outlines, "b");
+out.cityRoute = visible(world).filter((x) => ["a", "b", "c"].includes(x[0]));
+out.citySelected = world.selected;
+// a floor of the open building: its line is drawn only when the route selects the floor (the Floor, the Lobby)
+world.setFocus("a", true);
+world.setFloors("business", null, true);
+applyOutlineVisibility(world.outlines, world.selected);
+out.floorsNothing = visible(world).filter((x) => String(x[0]).startsWith("floor:")).every((x) => x[1] === false);
+applyOutlineVisibility(world.outlines, "floor:business");
+out.floorRoute = visible(world).filter((x) => x[1] === true);
 const server = buildServer(kit, serverModel({ accepted: true, connections: null, costs: null }));
 applyOutlineVisibility(server.outlines, server.selected);
 out.server = [visible(server), server.selected];
-kit.dispose();
 console.log(JSON.stringify(out));
 """
 
 
 @needs_node
-def test_no_outline_line_is_drawn_without_a_hover_or_a_selection_and_the_route_selects_the_room(tmp_path):
+def test_no_outline_line_is_drawn_without_a_hover_or_a_selection_and_the_route_selects_the_floor(tmp_path):
     got = run_node(tmp_path, OUTLINES)
     assert got["rule"] == [False, True, False, False, False], "a line shows only for the object the route selected: a hovered object has its box, no lot or floor line"
-    assert got["cityBuilt"] == [["lot0", False], ["lot1", False]], "built hidden: no standing lot line"
-    assert got["cityNothing"] == [["lot0", False], ["lot1", False]] and got["citySelected"] is None, "the City selects nothing (the route has no project)"
-    assert got["cityRoute"] == [["lot0", False], ["lot1", True]], "the line stays for the object a route selects"
-    assert got["buildingNothing"] == [["floor:planning", False], ["floor:b", False]], "no floor line stands, not even for the work order's floor, and none on hover"
-    assert got["buildingSelected"] is None
-    assert got["room"] == [[["room", True]], "room"] and got["server"] == [[["room", True]], "room"], "the room the route selects keeps its floor line"
+    assert got["cityBuilt"] == [["a", False], ["b", False], ["c", False]], "built hidden: no standing lot line"
+    assert got["cityNothing"] == got["cityBuilt"] and got["citySelected"] is None, "the City selects nothing by itself"
+    assert got["cityRoute"] == [["a", False], ["b", True], ["c", False]], "the line stays for the object a route selects"
+    assert got["floorsNothing"] is True, "no floor line stands, not even for the work order's floor"
+    assert got["floorRoute"] == [["b", True], ["floor:business", True]] or ["floor:business", True] in got["floorRoute"], "the floor the route selects keeps its line"
+    assert got["server"] == [[["room", True]], "room"], "the Control room the route selects keeps its floor line"
 
 
 def test_the_hover_outline_is_the_prototypes_thin_depth_tested_line_that_follows_a_shape_where_the_object_is_not_a_box():
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert "new THREE.LineBasicMaterial({ color: 0xffffff });" in engine, "a one-pixel line of the theme colour, full opacity, depth-tested (no depthTest: false, no renderOrder)"
     assert "depthTest: false" not in engine and "renderOrder" not in engine
-    assert "OUTLINE_PAD = 0.04" in engine and "outlineGeometry(THREE, hit.object" in engine, "every outline is the edges of the object's own meshes (outline.js), OUTLINE_PAD off"
+    assert "OUTLINE_PAD = 0.04" in engine and "outlineGeometry(THREE, hit.outline || hit.object" in engine, "every outline is the edges of the object's own meshes (outline.js), OUTLINE_PAD off"
     outline = (SCENE / "outline.js").read_text(encoding="utf-8")
     assert "EdgesGeometry(mesh.geometry" in outline and "userData.shell" in outline, "the edges of the meshes, the shell's when the object marks one"
     assert "Box3().setFromObject(hit.object).expandByScalar" not in engine, "no padded bounding box"
     city = (SCENE / "city.js").read_text(encoding="utf-8")
+    tower = (SCENE / "tower.js").read_text(encoding="utf-8")
     assert "kit.themeLine, group);" in city and "edge.visible = false" in city, "the lot line is built hidden"
-    assert "beacon = null" in city and "lot.runningTask !== null && lot.accepted" in city, "the beacon ring exists only for a running task"
+    assert "lot.runningTask !== null && lot.accepted" in tower, "the beacon ring exists only for a running task"
     motion = (SCENE / "prototype-motion.js").read_text(encoding="utf-8")
     assert "beaconPulse(seconds)" in city and "Math.sin(t * BEACON_RATE)" in motion and "BEACON_RATE = 3" in motion and "BEACON_SWING = 0.12" in motion and "0.35 + 0.3" in motion, \
         "the beacon is the prototype's: sin(3 t), scale 1 +- .12, opacity .35 to .65"
@@ -299,34 +273,31 @@ def test_the_hover_outline_is_the_prototypes_thin_depth_tested_line_that_follows
 
 # --- one object per destination ------------------------------------------------------------------------------------------------------
 
-HITS = r"""
-import * as THREE from "@JS@/three.js";
-import { createKit } from "@JS@/scene/kit.js";
-import { buildRoom } from "@JS@/scene/room.js";
-
-const c = (hex) => new THREE.Color(hex);
-const T = { border: c(0x101010), theme: c(0x2020f0), success: c(0x10f010), error: c(0xf01010), emphasis: c(0x303030), text: c(0x404040), warn: c(0xf0a010), textMuted: c(0x505050), mutedRole: c(0x707070) };
-const palette = { dark: false, T, mix: (a, b, t) => a.clone().lerp(b, t), bg: c(0xfafafa), shell: c(0xf8f8f8), ink: c(0x202020), metal: c(0x606060), deskTop: c(0xd0d0d0), screenOff: c(0x181818), leafA: c(0x80c080), leafB: c(0x70b070), trunk: c(0x806040),
-  lot: c(0xffffff), warm: c(0xf0c040), pale: c(0xd0d8f0), glass: c(0xd0e0f0), wood: c(0xc0a080), drawer: c(0x9090d0), skin: c(0xe0c0b0), windows: { lit: c(0xf0c040), grey: T.border } };
-const tips = { agent: "a", desk: "d", tray: "t", cabinet: "cab", board: "board" };
+HITS = WORLD_JS + r"""
+const tips = { agent: "a", desk: "d", tray: "t" };
 const out = {};
-for (const [state, door] of [["working", false], ["waiting", false], ["idle", true], ["off", false]]) {
-  const kit = createKit(palette);
-  const room = buildRoom(kit, { ready: true, state, window: "grey", decisions: 2, drawers: 3, sheets: [{ path: "docs/a.md", tip: "a" }, { path: "docs/b.md", tip: "b" }], tips, board: { title: "t", lines: ["x"], dot: "theme" }, door });
-  out[`${state}${door ? "+door" : ""}`] = room.hits.map((h) => h.id);
+for (const [state, name] of [["working", "business"], ["waiting", "business"], ["idle", "planning"], ["off", "business"]]) {
+  const { world, kit } = make();
+  const m = model({ lots: [lot("a", { floors: [floor2("planning"), floor2("business", { state })] }), lot("b"), lot("c")], focus: "a", floor: name, room: { tips, board: { title: "t", lines: ["x"], dot: "theme" }, door: name === "planning" } });
+  world.setFocus("a", true);
+  world.update(m);
+  world.setFloors(name, null, true);
+  out[`${state}@${name}`] = world.hits.map((h) => h.id);
   kit.dispose();
 }
 console.log(JSON.stringify(out));
+function floor2(n, extra = {}) { return lot("a").floors.find((f) => f.name === "planning" && n === "planning") || { ...lot("a").floors[1], name: n, label: n, lobby: false, ...extra }; }
 """
 
 
 @needs_node
 def test_a_room_has_one_object_for_each_destination_and_the_cabinet_and_the_board_are_only_scenery(tmp_path):
     got = run_node(tmp_path, HITS)
-    assert got["working"] == ["desk", "tray", "agent", "sheet:docs/a.md", "sheet:docs/b.md"], "figure -> Agent, desk -> Desk, tray -> Inbox, a sheet -> its document"
-    assert got["waiting"] == got["working"]
-    assert got["off"] == ["desk", "tray", "sheet:docs/a.md", "sheet:docs/b.md"], "no figure, no agent hit"
-    assert got["idle+door"][-1] == "lobby-door" and "cabinet" not in got["idle+door"] and "board" not in got["idle+door"]
+    sheets = ["sheet:docs/a.md", "sheet:docs/b.md"]
+    assert got["working@business"] == ["agent", "desk", "tray", *sheets], "figure -> Agent, desk -> Desk, tray -> Inbox, a sheet -> its document"
+    assert got["waiting@business"] == got["working@business"]
+    assert got["off@business"] == ["desk", "tray", *sheets], "no figure, no agent hit"
+    assert got["idle@planning"][-1] == "lobby-door" and "cabinet" not in got["idle@planning"] and "board" not in got["idle@planning"]
     for ids in got.values():
         assert "cabinet" not in ids and "board" not in ids, "nothing opens from the cabinet or the board, and they get no outline"
     for name, tab_by_id in (("floor.js", {"tray": "inbox", "desk": "desk", "agent": "agent"}), ("lobby.js", {"tray": "inbox", "desk": "desk", "agent": "agent"})):
@@ -344,12 +315,6 @@ import { BUILDERS } from "@JS@/scene/engine.js";
 import "@JS@/views/control-scene.js";
 import { sceneModel as serverModel } from "@JS@/views/control-model.js";
 
-const lot = (extra = {}) => ({ id: "a", name: "shop", accepted: true, decisions: 1, runningTask: 5, floors: [{ window: "lit", waits: false }, { window: "grey", waits: true }], tip: "shop: 1 decision waiting, task #5 running", sub: "task #5 running", ...extra });
-const city = (l) => ({ selectedId: "a", outlined: null, ready: true, lots: [l] });
-const floor = (extra = {}) => ({ name: "eng", label: "Engineering", state: "working", window: "lit", decisions: 0, lobby: false, sheets: 2, drawers: 1, tip: "Engineering: working, 2 of 8 runs", interactive: true, ...extra });
-const building = (f, extra = {}) => ({ ready: true, selected: "eng", focus: null, more: 0, tag: { floor: "eng", text: "#1" }, doorText: "Control room →", floors: [f], ...extra });
-const room = (extra = {}) => ({ ready: true, state: "working", window: "lit", decisions: 1, drawers: 1, sheets: [{ path: "docs/a.md", tip: "docs/a.md" }], tips: { agent: "a", desk: "Current task · A", tray: "t", cabinet: "c", board: "b" }, board: { title: "A", lines: ["run #1 Running"], dot: "theme" }, door: false, ...extra });
-
 // a sequence of polls, as the engine's show() sees them: the plan each one gets
 function sequence(kind, models) {
   const structureOf = (BUILDERS[kind] || {}).structure;
@@ -361,12 +326,6 @@ function sequence(kind, models) {
   });
 }
 const out = {};
-out.city = sequence("city", [city(lot()), city(lot()), city(lot({ decisions: 3, tip: "x", sub: "task #6 running", name: "shop2" })), city(lot({ runningTask: null })), city(lot({ runningTask: null })),
-  city(lot({ runningTask: null, floors: [{ window: "grey", waits: false }, { window: "grey", waits: true }] }))]);
-out.building = sequence("building", [building(floor()), building(floor()), building(floor({ tip: "Engineering: working, 3 of 8 runs" })), building(floor(), { doorText: "Control room" }),
-  building(floor({ state: "idle", window: "grey" })), building(floor({ state: "idle", window: "grey" }), { tag: { floor: "eng", text: "#2" } }), building(floor({ state: "idle", window: "grey" }), { tag: null })]);
-out.room = sequence("room", [room(), room(), room({ board: { title: "A", lines: ["run #1 Running · 1m 02s"], dot: "theme" }, tips: { agent: "a", desk: "Current task · A", tray: "t", cabinet: "c", board: "bb" } }),
-  room({ decisions: 2 }), room({ decisions: 2, sheets: [{ path: "docs/b.md", tip: "docs/b.md" }] })]);
 const conn = (found) => ({ classes: found.map((f, i) => ({ class: `c${i}`, provider: f ? "p" : null, found: f, note: null, skills: [] })), secrets: [], image: { name: "i", present: true, evidence: true }, platform: {} });
 const srv = (found, extra = {}) => serverModel({ accepted: true, connections: conn(found), costs: null, ...extra });
 out.server = sequence("server", [srv([true, false]), srv([true, false]), srv([true, false], { accepted: true }), srv([true, true]), srv([true, true])]);
@@ -376,12 +335,8 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_a_poll_that_found_the_same_state_or_only_other_words_does_not_build_the_scene_again(tmp_path):
+def test_a_poll_that_found_the_same_state_does_not_build_the_control_room_again_and_the_world_changes_in_place(tmp_path):
     got = run_node(tmp_path, REBUILD)
-    assert got["city"] == ["build", "none", "relabel", "build", "none", "build"], "the same model: nothing; other words: the labels only; a task that stopped or a window that changed: build"
-    assert got["building"] == ["build", "none", "relabel", "relabel", "build", "relabel", "build"], \
-        "a meter or a tip is words; a state, a window or the work order's floor is structure"
-    assert got["room"] == ["build", "none", "relabel", "build", "build"], "the board's lines and the tooltips are words; the decisions and the sheets are structure"
     assert got["server"] == ["build", "none", "none", "build", "none"], "the Control room is built again only when an LED or a bar changes"
     assert got["unknownKind"] == ["build", "none", "build"], "a scene with no builder is its own structure"
 
@@ -390,9 +345,8 @@ def test_the_engine_never_restarts_a_motion_when_it_rebuilds_and_every_builder_t
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert "const epoch = clock();" in engine and "(now - epoch) / 1000" in engine and "pulseStart" not in engine, "the ambient clock is the engine's, never reset by a rebuild"
     assert "showPlan(" in engine and "relabel();" in engine and "content.text(model)" in engine
-    for name, builder in (("city.js", "buildCity"), ("building.js", "buildBuilding"), ("room.js", "buildRoom")):
-        text = (SCENE / name).read_text(encoding="utf-8")
-        assert f"{builder}.structure = " in text and "function text(" in text and " text," in text, f"{name}: the structure and the words are apart"
+    world = (SCENE / "world.js").read_text(encoding="utf-8")
+    assert "buildWorld.structure = " in world and "content.text = (m) =>" in world and "content.update = (m) =>" in world, "world.js: the structure and the words are apart, a poll updates in place"
     for name in ("views/city.js", "views/building.js", "views/floor.js", "views/lobby-scene.js"):
         text = (JS / name).read_text(encoding="utf-8")
         assert "engine.show(" in text or "engine.show" in text, f"{name} shows the scene through the engine"
@@ -465,7 +419,7 @@ def test_the_state_animations_keep_the_rules_of_the_scene_and_the_figure_does_no
     assert "workingPose(seconds)" in figure and "group.position.y = pose.bob" in figure and "body.rotation.y = pose.turn" in figure, "the prototype's working pose: arms, bob and turn"
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert re.search(r"export const CAMERA_MS = 1023;", engine) and "OPEN_MS = 1439" in engine and "FLY_SETTLE_AT = 0.9" in engine
-    assert "content.intro.apply(smooth(p))" in engine and "createApproach(EXPLODE_RATE)" in engine and "positionLabels();   // the labels ride along with the camera" in engine, "the labels follow the camera and the opening instead of vanishing"
+    assert "content.step(frameSeconds(now, worldLast))" in engine and "positionLabels();   // the labels ride along with the camera" in engine and "positionLabels();   // the plates, the cards and the tag ride along with the floors" in engine, "the labels follow the camera and the opening instead of vanishing"
     assert 'loop.start("beacon", { ambient: true })' in engine, "typing and the beacon are ambient: held to 30 frames a second"
     assert "pulseStart = clock()" not in engine
 
@@ -750,7 +704,7 @@ def test_the_control_room_has_its_words_apart_so_a_model_that_changes_only_words
 def test_the_citys_card_shows_its_theme_border_only_for_a_project_the_person_has_and_the_buttons_follow_the_measured_bar():
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     city_view = (JS / "views" / "city.js").read_text(encoding="utf-8")
-    assert "model.sceneModel(city.buildings, null, state === \"ready\")" in city_view, "the tracking bar's default project is not marked on the scene"
+    assert "worldModel(snapshot, now, { selectedId: null, marked: selectedId, focus: null" in city_view, "the tracking bar's default project is not marked on the scene; the chosen project keeps its outline"
     assert 'classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId)' in engine, "hovered (the scene or the list) or chosen by the route"
     assert engine.count("markLabels();") >= 3, "marked on every hover change, build and relabel"
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")

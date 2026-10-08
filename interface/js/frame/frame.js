@@ -8,10 +8,32 @@ import * as router from "../router.js";
 import { createKpis } from "./kpis.js";
 import { createNav } from "./header.js";
 import { icon } from "./icons.js";
+import { createEngine } from "../scene/engine.js";
+import { escapeStep, isField } from "./escape.js";
 import { createSheet } from "./sheet.js";
 import { createSwitcher } from "./switcher.js";
 import { createTrack } from "./track.js";
 import { createWaitingCard, createWaitingMenu } from "./waiting.js";
+
+/**
+ * What a rectangle that lies over the scene takes from it: {side, amount} or null. A tall part (the KPI column, the panel) is fixed to the
+ * left or the right, a wide one (the header, the KPI row, the tracking bar) to the top or the bottom; the side is the nearer one.
+ */
+export function obstacleInset(rect, scene) {
+  if (!(rect.width > 0 && rect.height > 0)) return null;
+  const left = Math.max(rect.left, scene.left);
+  const right = Math.min(rect.right, scene.right);
+  const top = Math.max(rect.top, scene.top);
+  const bottom = Math.min(rect.bottom, scene.bottom);
+  if (right <= left || bottom <= top) return null;   // it does not touch the scene
+  const wide = rect.width / scene.width > rect.height / scene.height;
+  if (wide) {
+    const nearTop = rect.top + rect.height / 2 < scene.top + scene.height / 2;
+    return nearTop ? { side: "top", amount: rect.bottom - scene.top + 12 } : { side: "bottom", amount: scene.bottom - rect.top + 16 };
+  }
+  const nearLeft = rect.left + rect.width / 2 < scene.left + scene.width / 2;
+  return nearLeft ? { side: "left", amount: rect.right - scene.left + 16 } : { side: "right", amount: scene.right - rect.left + 16 };
+}
 
 const SCREEN_NAMES = { city: "City", building: "Building", floor: "Floor", lobby: "Lobby", control: "Control room" };
 const ANNOUNCE_EVERY_MS = 2000;
@@ -64,8 +86,34 @@ export function createFrame(root, handlers) {
   door.addEventListener("click", () => {
     if (doorTarget) window.location.hash = doorTarget;
   });
+  // Escape: the one handler (escape.js), in its order. The frame knows the route, what is open and where the Control room was opened from.
+  let currentRoute = null;
+  let currentHash = null;
+  let controlFrom = null;
   const onKey = (event) => {
-    if (event.key === "Escape") closeLists();
+    if (event.key !== "Escape" || event.defaultPrevented || !currentRoute) return;
+    const dialogs = [...document.querySelectorAll("dialog[open]")];
+    const requestMenu = document.querySelector(".wb-req-menu:not([hidden])");
+    const step = escapeStep({
+      route: currentRoute, field: isField(document.activeElement), dialog: dialogs.length > 0,
+      menu: switcher.isOpen() || waitingMenu.isOpen() || Boolean(requestMenu), selection: Boolean(world && world.hasSelection()), from: controlFrom,
+    });
+    if (step.step === "none") return;
+    event.preventDefault();
+    if (step.step === "dialog") {
+      const dialog = dialogs[dialogs.length - 1];
+      const cancel = new Event("cancel", { cancelable: true });
+      dialog.dispatchEvent(cancel);   // as the browser does: a dialog that refuses to be cancelled (a request in flight) stays
+      if (!cancel.defaultPrevented) dialog.close();
+    } else if (step.step === "menu") {
+      closeLists();
+      const chip = document.querySelector('.wb-req-chip[aria-expanded="true"]');
+      if (chip) chip.click();
+    } else if (step.step === "selection") {
+      world.clearSelection();
+    } else {
+      window.location.hash = step.hash;
+    }
   };
   document.addEventListener("keydown", onKey);
 
@@ -83,10 +131,20 @@ export function createFrame(root, handlers) {
 
   const phone = window.matchMedia("(max-width: 639px)");
 
+  // The one scene of the City, the Building, the Floor and the Lobby (WP-9.11): it is made when the first of the screens asks for it, handed from one
+  // to the next with its state (the building that is open, the floor, the camera) and taken down when the route leaves them all.
+  let world = null;
+  function releaseWorld() {
+    if (!world) return;
+    world.dispose();
+    world = null;
+  }
+
   return {
     el: frame, sceneHost, main, noticeBox, nav,
     /** Take the frame down: the listeners it put on the document go, so that entering the token again does not stack them. */
     destroy() {
+      releaseWorld();
       document.removeEventListener("keydown", onKey);
       switcher.destroy();
       waitingMenu.destroy();
@@ -94,10 +152,28 @@ export function createFrame(root, handlers) {
       queue.length = 0;
       frame.remove();
     }, switcher, kpis, waitingCard, waitingMenu, track, sheet, heading, closeLists,
+    /**
+     * The world's engine for the City, the Building, the Floor or the Lobby screen: the one that is already drawing (its handlers become the screen's), else a new
+     * one. It throws NoWebGL when the browser cannot draw the scene.
+     */
+    acquireWorld(options) {
+      if (world) world.setOptions(options);
+      else world = createEngine(sceneHost, options);
+      return world;
+    },
     /** Set the screen: route (router.parse), the project's name (or null), the agent's display name for a floor. */
     setScreen(route, { projectName, projectId, leaf }) {
       frame.dataset.screen = route.screen;
       heading.textContent = SCREEN_NAMES[route.screen] || "City";
+      const hash = window.location.hash;
+      if (hash !== currentHash) {
+        // the Control room remembers the screen of the same project it was opened from (Escape goes back there)
+        if (route.screen === "control" && currentRoute && currentRoute.screen !== "control" && currentRoute.project === route.project && currentRoute.screen !== "city") controlFrom = currentHash;
+        else if (route.screen !== "control") controlFrom = null;
+        currentHash = hash;
+      }
+      currentRoute = route;
+      if (!["city", "building", "floor", "lobby"].includes(route.screen)) releaseWorld();   // the Control room draws its own scene
       const items = [{ label: "City", href: router.cityHash() }];
       if (route.screen !== "city" && projectName) {
         items.push({ label: projectName, href: router.buildingHash(route.project) });
@@ -147,24 +223,31 @@ export function createFrame(root, handlers) {
       sceneHost.hidden = on;
       frame.classList.toggle("no-scene", on);
     },
-    /** The free rectangle for the scene, in pixels from the scene area's edges, measured from what is on the page now. */
+    /**
+     * The free rectangle for the scene, in pixels from the scene area's edges, measured from what is on the page now: every part of the page that
+     * lies over the scene (the KPI cards, the header, the notice, the panel or the waiting card at the right, the tracking bar) takes the
+     * side it is fixed to, so the scene's objects are fitted into what none of them covers. A part that does not touch the scene (the panel
+     * docked below it on a narrow screen) takes nothing.
+     */
     insets(rightEl) {
       const scene = sceneArea.getBoundingClientRect();
-      const kpiRect = kpis.el.getBoundingClientRect();
       if (phone.matches) {
+        const kpiRect = kpis.el.getBoundingClientRect();
         return { left: 8, right: 8, top: Math.max(8, kpiRect.bottom - scene.top + 12), bottom: 6, pad: 1.02 };
       }
-      const headerRect = header.getBoundingClientRect();
-      const noticeRect = noticeBox.hidden ? null : noticeBox.getBoundingClientRect();
-      const trackRect = track.el.getBoundingClientRect();
-      const right = rightEl && !rightEl.hidden ? rightEl.getBoundingClientRect() : null;
-      return {
-        left: kpiRect.right - scene.left + 16,
-        right: right && right.width > 0 ? scene.right - right.left + 16 : 16,
-        top: Math.max(headerRect.bottom, noticeRect ? noticeRect.bottom : 0) - scene.top + 12,
-        bottom: trackRect.height > 0 ? scene.bottom - trackRect.top + 16 : 16,
-        pad: 1.04,
-      };
+      const out = { left: 16, right: 16, top: 16, bottom: 16, pad: 1.04 };
+      const parts = [kpis.el, header, actions, noticeBox.hidden ? null : noticeBox, track.el, rightEl && !rightEl.hidden ? rightEl : null];
+      for (const part of parts) {
+        if (!part) continue;
+        const take = obstacleInset(part.getBoundingClientRect(), scene);
+        if (take) out[take.side] = Math.max(out[take.side], take.amount);
+      }
+      return out;
+    },
+    /** The width of a floor's plate in the stylesheet now (it narrows on a tablet). */
+    plateWidth() {
+      const value = parseFloat(getComputedStyle(frame).getPropertyValue("--wb-plate-w"));
+      return Number.isFinite(value) && value > 0 ? value : 290;
     },
     /** Move the keyboard focus to the screen's first heading (a screen opened by keyboard). */
     focusHeading() {

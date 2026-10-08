@@ -74,6 +74,7 @@ export function createWaitingMenu({ onOpen, onSheet }) {
   });
   el.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && open) {
+      event.stopPropagation();   // the page's one Escape handler must not go up as well
       setOpen(false);
       button.focus();
     }
@@ -86,6 +87,7 @@ export function createWaitingMenu({ onOpen, onSheet }) {
     el, button,
     destroy() { document.removeEventListener("pointerdown", onPointerDown); },
     close() { if (open) setOpen(false); },
+    isOpen: () => open,
     set(rows, state) {
       const key = JSON.stringify([rows, state]);
       if (key === shownMenu) return;

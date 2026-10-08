@@ -90,6 +90,10 @@ export function createLoop({ raf, caf, render, hidden = () => false, reduced = (
     isRunning() {
       return animations.size > 0;
     },
+    /** True while the animation `name` is started and not stopped. */
+    isActive(name) {
+      return animations.has(name);
+    },
     stats() {
       return { renders, scheduled: handle !== null, animations: animations.size, hidden: isHidden };
     },

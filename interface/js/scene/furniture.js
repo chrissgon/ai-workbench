@@ -28,8 +28,8 @@ export function chair(kit, parent, x, z, rotY = 0, pushed = false) {
     kit.mesh(new THREE.SphereGeometry(0.035, 6, 4), ink, lx, 0.035, lz, { parent: group });
   }
   kit.cyl(0.03, 0.03, 0.34, 6, palette.metal, 0, 0.06, 0, { parent: group });
-  kit.box(0.5, 0.08, 0.48, 0, 0.4, 0, ink, { parent: group });
-  kit.box(0.46, 0.62, 0.08, 0, 0.48, -0.24, ink, { parent: group });
+  kit.box(0.5, 0.08, 0.48, 0, 0.4, 0, ink, { parent: group, shell: true });
+  kit.box(0.46, 0.62, 0.08, 0, 0.48, -0.24, ink, { parent: group, shell: true });
   kit.box(0.05, 0.1, 0.05, 0, 0.38, -0.2, palette.metal, { parent: group });
   for (const side of [-1, 1]) kit.box(0.05, 0.04, 0.32, side * 0.27, 0.62, -0.02, ink, { parent: group });
   return group;
@@ -44,7 +44,7 @@ export function desk(kit, parent, x, z, state, w = 1.8) {
   const group = new THREE.Group();
   group.position.set(x, 0, z);
   parent.add(group);
-  kit.box(w, 0.05, 0.8, 0, 0.66, 0, palette.deskTop, { parent: group, edges: true });
+  kit.box(w, 0.05, 0.8, 0, 0.66, 0, palette.deskTop, { parent: group, edges: true, shell: true });
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) kit.cyl(0.025, 0.025, 0.66, 6, palette.metal, sx * (w / 2 - 0.08), 0, sz * 0.32, { parent: group });
   kit.box(w - 0.2, 0.2, 0.03, 0, 0.42, -0.36, palette.metal, { parent: group });
   kit.box(0.22, 0.02, 0.16, 0, 0.71, -0.22, palette.ink, { parent: group });
@@ -68,19 +68,37 @@ export function desk(kit, parent, x, z, state, w = 1.8) {
   return { group, screen, lines, scan };
 }
 
-/** The inbox tray: a base and up to six sheets, the top one in the warn colour when something waits. */
+/**
+ * The inbox tray, the Inbox's object (WP-9.11): a metal tray on the corner of the desk with one sheet in it for each open decision (up to five,
+ * then a thicker stack), the top one in the warn colour when something waits. With no decision it is there and empty.
+ */
 export function tray(kit, parent, x, y, z, count, waiting) {
   const { palette } = kit;
   const group = new kit.THREE.Group();
   group.position.set(x, y, z);
   parent.add(group);
-  kit.box(0.42, 0.05, 0.32, 0, 0.69, 0, palette.metal, { parent: group });
-  const n = Math.min(6, Math.max(0, count));
-  for (let i = 0; i < n; i++) {
-    const top = i === n - 1 && waiting;
-    kit.box(0.36, 0.018, 0.27, 0, 0.74 + i * 0.022, 0, top ? palette.T.warn : palette.bg, { parent: group, edges: true, cast: false });
-  }
+  kit.box(0.5, 0.05, 0.38, 0, 0.69, 0, palette.metal, { parent: group, edges: true, shell: true });
+  for (const [dx, dz, w, d] of [[-0.24, 0, 0.02, 0.38], [0.24, 0, 0.02, 0.38], [0, -0.18, 0.5, 0.02], [0, 0.18, 0.5, 0.02]]) kit.box(w, 0.07, d, dx, 0.69, dz, palette.metal, { parent: group });
+  // The sheets are a group of their own, so that a poll that changes the number of decisions changes the stack alone, in place.
+  const stack = new kit.THREE.Group();
+  group.add(stack);
+  group.userData.stack = stack;
+  group.userData.setSheets = (n, isWaiting) => fillTray(kit, stack, n, isWaiting);
+  fillTray(kit, stack, count, waiting);
   return group;
+}
+
+/** The sheets of a tray's stack: one for each open decision up to five, then one thicker block; the top one warm when something waits. */
+function fillTray(kit, stack, count, waiting) {
+  const { palette } = kit;
+  stack.clear();
+  const n = Math.max(0, count);
+  const sheets = Math.min(5, n);
+  for (let i = 0; i < sheets; i++) {
+    const top = i === sheets - 1 && waiting;
+    kit.box(0.42, 0.024, 0.3, 0, 0.74 + i * 0.026, 0, top ? palette.T.warn : palette.bg, { parent: stack, edges: true, cast: false });
+  }
+  if (n > 5) kit.box(0.42, 0.05 + 0.01 * Math.min(10, n - 5), 0.3, 0, 0.74, 0, palette.bg, { parent: stack, edges: true, cast: false });
 }
 
 /** A sheet of paper lying at (x, z) at table height: a theme bar and four grey lines. Returns its group. */
@@ -90,7 +108,7 @@ export function sheet(kit, parent, x, y, z, rotY = 0) {
   group.position.set(x, y, z);
   group.rotation.y = rotY;
   parent.add(group);
-  kit.box(0.34, 0.01, 0.44, 0, 0.715, 0, palette.bg, { parent: group, edges: true, cast: false });
+  kit.box(0.34, 0.01, 0.44, 0, 0.715, 0, palette.bg, { parent: group, edges: true, cast: false, shell: true });
   kit.box(0.2, 0.004, 0.03, -0.04, 0.726, -0.15, palette.T.theme, { parent: group, unlit: true, cast: false });
   for (let i = 0; i < 4; i++) kit.box(0.26, 0.004, 0.015, 0, 0.726, -0.07 + i * 0.07, palette.T.border, { parent: group, unlit: true, cast: false });
   return group;
@@ -102,7 +120,7 @@ export function table(kit, parent, x, z, w, d) {
   const group = new kit.THREE.Group();
   group.position.set(x, 0, z);
   parent.add(group);
-  kit.box(w, 0.06, d, 0, 0.64, 0, palette.wood, { parent: group, edges: true });
+  kit.box(w, 0.06, d, 0, 0.64, 0, palette.wood, { parent: group, edges: true, shell: true });
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) kit.box(0.06, 0.64, 0.06, sx * (w / 2 - 0.08), 0, sz * (d / 2 - 0.08), palette.metal, { parent: group });
   return group;
 }
@@ -114,13 +132,23 @@ export function cabinet(kit, parent, x, z, drawers, rotY = 0) {
   group.position.set(x, 0, z);
   group.rotation.y = rotY;
   parent.add(group);
-  kit.box(0.62, 1.3, 0.62, 0, 0, 0, palette.bg, { parent: group, edges: true });
+  kit.box(0.62, 1.3, 0.62, 0, 0, 0, palette.bg, { parent: group, edges: true, shell: true });
+  const fronts = new kit.THREE.Group();
+  group.add(fronts);
+  group.userData.setDrawers = (count) => fillDrawers(kit, fronts, count);
+  fillDrawers(kit, fronts, drawers);
+  return group;
+}
+
+/** The drawer fronts of a cabinet: one to three. */
+function fillDrawers(kit, fronts, drawers) {
+  const { palette } = kit;
+  fronts.clear();
   const n = Math.max(1, Math.min(3, drawers));
   for (let i = 0; i < n; i++) {
-    kit.box(0.54, 0.34, 0.02, 0, 0.1 + 0.4 * i, 0.32, palette.drawer, { parent: group });
-    kit.box(0.16, 0.03, 0.03, 0, 0.26 + 0.4 * i, 0.345, palette.metal, { parent: group });
+    kit.box(0.54, 0.34, 0.02, 0, 0.1 + 0.4 * i, 0.32, palette.drawer, { parent: fronts });
+    kit.box(0.16, 0.03, 0.03, 0, 0.26 + 0.4 * i, 0.345, palette.metal, { parent: fronts });
   }
-  return group;
 }
 
 /** A wall lamp, lit (unlit material), along x or along z. */
@@ -134,7 +162,7 @@ export function bookshelf(kit, parent, x, z) {
   const group = new kit.THREE.Group();
   group.position.set(x, 0, z);
   parent.add(group);
-  kit.box(0.36, 1.7, 1.2, 0, 0, 0, palette.bg, { parent: group, edges: true });
+  kit.box(0.36, 1.7, 1.2, 0, 0, 0, palette.bg, { parent: group, edges: true, shell: true });
   const colours = [palette.drawer, palette.T.border, palette.wood];
   for (let k = 0; k < 3; k++) {
     kit.box(0.4, 0.04, 1.2, 0.02, 0.06 + 0.55 * k, 0, palette.T.emphasis, { parent: group });
@@ -149,7 +177,7 @@ export function door(kit, parent, x, z) {
   const group = new kit.THREE.Group();
   group.position.set(x, 0, z);
   parent.add(group);
-  kit.box(0.06, 2.1, 1.1, 0, 0, 0, palette.T.emphasis, { parent: group, edges: true });
+  kit.box(0.06, 2.1, 1.1, 0, 0, 0, palette.T.emphasis, { parent: group, edges: true, shell: true });
   for (const dz of [-0.62, 0.62]) kit.box(0.08, 2.22, 0.08, 0, 0, dz, palette.T.theme, { parent: group, unlit: true });
   kit.box(0.08, 0.08, 1.24, 0, 2.22, 0, palette.T.theme, { parent: group, unlit: true });
   kit.box(0.04, 0.04, 0.16, 0.05, 1.0, 0.4, palette.metal, { parent: group });
@@ -158,5 +186,5 @@ export function door(kit, parent, x, z) {
 
 /** A reception counter (the Lobby floor of the cutaway). */
 export function counter(kit, parent, x, z) {
-  return kit.box(1.6, 0.95, 0.55, x, 0, z, kit.palette.bg, { parent, edges: true });
+  return kit.box(1.6, 0.95, 0.55, x, 0, z, kit.palette.bg, { parent, edges: true, shell: true });
 }

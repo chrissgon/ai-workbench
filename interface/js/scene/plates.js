@@ -35,9 +35,10 @@ function meter(label, text, share, full, note) {
 
 /**
  * A floor plate. p: {name, label, dot, decisions, word, done, left, queued, runsText, runsShare, usdText, usdShare,
- * unknown, mode, pips, acting, actingPips, selected, off}. Returns the element; the caller toggles `is-compact`.
+ * unknown, mode, pips, acting, actingPips, selected, off}. Returns the element; the caller toggles `is-compact`. The same component is the plate
+ * beside a floor (a `div`) and each row of the floors list (`tag` "a", `attrs` {class: "wb-floor-row is-row", href, aria-label}): one design, two places.
  */
-export function plateNode(p) {
+export function plateNode(p, attrs = {}, tag = "div") {
   const row1 = h("div", { class: "wb-plate-row" },
     h("span", { class: `wb-dot is-${p.dot}` }),
     h("strong", { class: "wb-plate-name", text: p.label }),
@@ -51,7 +52,7 @@ export function plateNode(p) {
   const meters = h("div", { class: "wb-plate-meters" },
     meter("runs", p.runsText, p.runsShare, p.runsShare >= 1),
     meter("", p.usdText, p.usdShare, p.usdShare >= 1, p.unknown > 0 ? `(+${p.unknown} of unknown cost)` : ""));
-  const node = h("div", { class: `wb-plate${p.selected ? " is-selected" : ""}${p.off ? " is-off" : ""}`, "data-floor": p.name }, row1, chips, meters);
+  const node = h(tag, { ...attrs, class: `wb-plate${p.selected ? " is-selected" : ""}${p.off ? " is-off" : ""}${attrs.class ? ` ${attrs.class}` : ""}`, "data-floor": p.name }, row1, chips, meters);
   return node;
 }
 

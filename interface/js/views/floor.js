@@ -16,7 +16,8 @@ import { createViewer } from "../floor/viewer.js";
 import { busyLine, createTabs } from "../floor/widgets.js";
 import { icon } from "../frame/icons.js";
 import * as router from "../router.js";
-import { createEngine, NoWebGL } from "../scene/engine.js";
+import { NoWebGL } from "../scene/engine.js";
+import { worldModel } from "../world-model.js";
 import { pips } from "../scene/plates.js";
 
 const TASK_FRESH_MS = 5000;
@@ -25,11 +26,6 @@ const DOCS_OPEN_MS = 5000;
 const DOCS_IDLE_MS = 30000;
 const MAX_TASK_READS = 12;
 const TABS = [{ id: "agent", label: "Agent" }, { id: "inbox", label: "Inbox" }, { id: "desk", label: "Desk" }];
-
-/** The room the loading state draws: an empty desk, nothing to point at. */
-function loadingRoom() {
-  return { ready: false, state: "off", window: "grey", decisions: 0, drawers: 1, sheets: [], tips: { agent: "", desk: "", tray: "", cabinet: "", board: "" }, board: null };
-}
 
 /** Create the Floor in `frame`. env: {refresh()}. Returns {update({snapshot, route, now}), dispose(), stats()}. */
 export function createFloorView(frame, env) {
@@ -102,7 +98,7 @@ export function createFloorView(frame, env) {
   }
 
   try {
-    engine = createEngine(frame.sceneHost, {
+    engine = frame.acquireWorld({
       label: "Floor, loading",
       getInsets: () => {
         const base = frame.insets(panel);
@@ -122,28 +118,6 @@ export function createFloorView(frame, env) {
   observer.observe(frame.track.el);
   observer.observe(panel);
   observer.observe(frame.noticeBox);
-
-  // --- the keyboard --------------------------------------------------------------------------------------------------------------
-  function closeViewer() {
-    if (!project) return;
-    window.location.hash = router.deskHash(project, agent);
-  }
-  const onKey = (event) => {
-    if (event.key !== "Escape" || disposed || !last) return;
-    const a = document.activeElement;
-    if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.tagName === "SELECT")) return;   // a draft in a field is not thrown away by Escape
-    if ((a && a.closest && a.closest(".wb-switcher, .wb-wait-menu-wrap")) || document.querySelector("dialog[open].wb-cancel-dialog")) return;
-    const route = last.route;
-    if (route.path) {
-      if (phoneDialog.open) phoneDialog.close();
-      else closeViewer();
-    } else if (route.pending !== null) {
-      window.location.hash = router.floorHash(project, agent, "inbox");
-    } else {
-      window.location.hash = router.buildingHash(project);
-    }
-  };
-  document.addEventListener("keydown", onKey);
 
   // --- reading -----------------------------------------------------------------------------------------------------------------
   function ensureBody(task, maxAge) {
@@ -235,7 +209,7 @@ export function createFloorView(frame, env) {
     if (missing) {
       backLink.setAttribute("href", router.buildingHash(project));
       title.textContent = format_title(agent);
-      showScene(null, "Floor, agent not in the configuration");
+      showScene(null, "Floor, agent not in the configuration", false);
       return;
     }
     if (loading || !model) {
@@ -244,7 +218,7 @@ export function createFloorView(frame, env) {
       modeChip.hidden = true;
       tabs.set(tab, {}, {});
       fill(tabpanel, busyLine("Loading the floor..."));
-      showScene(loadingRoom(), "Floor, loading");
+      showScene(null, "Floor, loading", false);
       return;
     }
 
@@ -281,19 +255,21 @@ export function createFloorView(frame, env) {
 
     const documentsFor = model.notAccepted ? [] : documentsRows;
     const scene = fm.roomScene(model, documentsFor, true);
-    showScene(scene, model.canvasLabel);
+    showScene({ tips: scene.tips, board: scene.board, door: false }, model.canvasLabel, true);
   }
 
   function format_title(name) {
     return name ? `${name.charAt(0).toUpperCase()}${name.slice(1)} · ${name.charAt(0).toUpperCase()}${name.slice(1)} agent` : "";
   }
 
-  function showScene(model, label) {
-    if (!engine) return;
-    const key = JSON.stringify([model, label]);
+  // The scene is the world with this agent's floor as the target: the building stays open, the other floors are gone, the camera is on the room.
+  function showScene(room, label, onFloor) {
+    if (!engine || !last) return;
+    const world = worldModel(last.snapshot, last.now, { selectedId: project, focus: project, floor: onFloor ? agent : null, room, documents: documents ? documents.rows : null, ready: true });
+    const key = JSON.stringify([world, label]);
     if (key === shownScene) return;
     shownScene = key;
-    engine.show(model ? "room" : "none", model || {}, label);
+    engine.show("world", world, label);
   }
 
   function drawViewer(route, viewing) {
@@ -340,9 +316,8 @@ export function createFloorView(frame, env) {
     dispose() {
       disposed = true;
       observer.disconnect();
-      document.removeEventListener("keydown", onKey);
       viewer.close();
-      if (engine) engine.dispose();
+      // the scene is the frame's: the Building takes it over (the floors come back), or the frame takes it down
       panel.remove();
       phoneDialog.remove();
       frame.sceneUnavailable(false);

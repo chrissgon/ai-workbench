@@ -38,6 +38,7 @@
   --wb-panel-lobby: 420px;
   --wb-panel-wide: 700px;
   --wb-pip: 5px;
+  --wb-req-row: 2.25rem;
   --wb-card-w: 290px;
   --wb-plate-w: 290px;
   --wb-ring: 14px;
@@ -381,6 +382,7 @@ a.wb-crumb:hover { text-decoration: underline; }
 .wb-kpi-tile.pui-theme, .wb-tile.pui-theme { color: var(--wb-ink-theme); }
 .wb-kpi-body { display: grid; min-width: 0; }
 .wb-kpi-label { color: var(--pui-text-muted); font-size: 11px; line-height: 1.3; }
+.wb-kpi-short { display: none; }   /* the tablet layout shows the short form of a card's label */
 .wb-kpi-row { display: flex; align-items: baseline; gap: 6px; min-width: 0; }
 .wb-kpi-figure { font-size: 17px; font-weight: 600; line-height: 1.15; }
 .wb-kpi-unit { overflow: hidden; color: var(--pui-text-muted); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
@@ -528,9 +530,14 @@ a.wb-crumb:hover { text-decoration: underline; }
   transform: translate(0, -100%);
   z-index: 5;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);   /* one column that the box limits: a long title never widens it (the rows would reach their text's width) */
   gap: 2px;
   min-width: 18rem;
-  max-width: min(26rem, 90vw);
+  max-width: min(28rem, 90vw);   /* a long title is cut with an ellipsis (its whole text is the tooltip) */
+  max-height: min(calc(6 * var(--wb-req-row) + 5 * 2px + 8px), 60vh);   /* about six rows, then the list scrolls */
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  align-content: start;
   margin: 0;
   padding: 4px;
   list-style: none;
@@ -540,7 +547,7 @@ a.wb-crumb:hover { text-decoration: underline; }
   box-shadow: var(--wb-elev);
 }
 .wb-req-menu[hidden] { display: none; }
-.wb-req-option { display: flex; align-items: center; gap: 8px; width: 100%; padding: 6px 8px; border: 0; border-radius: var(--pui-radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.wb-req-option { display: flex; align-items: center; gap: 8px; width: 100%; min-height: var(--wb-req-row); padding: 6px 8px; border: 0; border-radius: var(--pui-radius); background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .wb-req-option:hover, .wb-req-option.is-selected { background-color: var(--wb-sunken); }
 .wb-req-option-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .wb-req-option-state { color: var(--pui-text-muted); font-size: 11px; white-space: nowrap; }
@@ -902,6 +909,9 @@ a.wb-now-title:hover { text-decoration: underline; }
 /* the compact plate (the stack would not fit): the name row and the meters only */
 .wb-plate.is-compact { gap: 4px; padding: 6px 12px; }
 .wb-plate.is-compact .wb-plate-chips { display: none; }
+/* the plate at its shortest (the stack would not fit even so): the name row alone */
+.wb-plate.is-tiny { gap: 0; padding: 5px 12px; }
+.wb-plate.is-tiny .wb-plate-chips, .wb-plate.is-tiny .wb-plate-meters { display: none; }
 
 /* the compact floor card (WP-9.8): one component for the phone's card at the top right of the scene and for each row of the floors list */
 .wb-floor-card {
@@ -974,6 +984,9 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-floor-item { padding: 0; background-color: var(--wb-sunken); border-radius: var(--pui-radius); }
 .wb-floor-item:hover, .wb-floor-item.is-hover { background-color: var(--wb-ground); }
 .wb-floor-row { padding: 8px 12px; border: 0; border-radius: var(--pui-radius); background-color: transparent; box-shadow: none; }
+/* a row of the floors list is the plate beside the floor (WP-9.11): the same markup, set in the list instead of over the scene */
+.wb-plate.is-row { position: static; translate: none; transform: none; width: auto; color: inherit; text-decoration: none; background-color: var(--wb-raised); border: 1px solid var(--pui-border); border-radius: calc(var(--pui-radius) * 1.5); box-shadow: none; }
+.wb-plate.is-row.is-selected { border-color: var(--pui-theme); }
 .wb-floor-steps { position: absolute; right: 10px; bottom: 10px; z-index: 2; display: none; gap: 4px; justify-items: center; }
 .wb-floor-step { padding: 10px; background-color: var(--wb-raised); box-shadow: var(--wb-elev); }
 .wb-floor-step.is-above .wb-icon { rotate: 180deg; }
@@ -1290,4 +1303,50 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-plan-stack { display: grid; }
   .wb-card-buttons .pui-btn, .wb-dialog-buttons .pui-btn { flex: 1 1 100%; min-height: 44px; }
   .wb-send { min-height: 44px; }
+}
+
+/* --- the in-between layout (WP-9.11; the specification's tablet layout, OPEN-12, built): 640 to 1099 px ------------------------------
+   The KPI cards are one row with short labels, the header's buttons are icons with their counts, the plates keep the name, the mode pips and
+   the meters, the tracking bar scrolls sideways, and the panel is 340 px. The scene is fitted in what none of them covers (the engine measures the
+   rectangles, frame.insets). */
+@media (min-width: 640px) and (max-width: 1099px) {
+  :root { --wb-panel-narrow: 340px; --wb-wait-w: 340px; --wb-side-card: 220px; --wb-plate-w: 230px; --wb-card-w: 250px; --wb-panel-lobby: 360px; }
+  .wb-kpis { display: flex; gap: 8px; width: auto; }
+  .wb-kpi { flex: none; min-width: 9.5rem; }
+  .wb-kpi-long { display: none; }
+  .wb-kpi-short { display: inline; }
+  .wb-door-label, .wb-wait-btn-label { display: none; }
+  .wb-door, .wb-wait-btn { padding: 8px 10px; gap: 6px; }
+  .wb-switch-name { display: inline-block; max-width: 9rem; overflow: hidden; text-overflow: ellipsis; vertical-align: bottom; white-space: nowrap; }
+  .wb-crumb-nav { max-width: 22rem; overflow: hidden; }
+  .wb-crumbs { overflow: hidden; }
+  .wb-crumb-item { overflow: hidden; text-overflow: ellipsis; }
+  .wb-plate:not(.is-row) .wb-plate-chips > .pui-badge { display: none; }
+  .wb-track-left .wb-steps { overflow-x: auto; }
+  .wb-track-left .wb-step { flex: 0 0 9rem; }
+  .wb-notice-box { top: calc(var(--wb-kpi-top) + 66px); left: var(--wb-edge); right: calc(var(--wb-panel-narrow) + var(--wb-edge) * 2); }
+  .wb-frame[data-screen="control"] .wb-notice-box { right: calc(min(var(--wb-panel-wide), 100vw - 340px - var(--wb-edge) * 3) + var(--wb-edge) * 2); }
+  .wb-frame[data-screen="control"] .wb-panel-wide { top: calc(var(--wb-kpi-top) + 66px); width: min(var(--wb-panel-wide), calc(100vw - 340px - var(--wb-edge) * 3)); }   /* under the KPI row, which the wide panel would cover */
+}
+
+/* below 900 px the scene would get less than 40 percent of the width beside a 340 px panel and the plates: the panel docks below the scene */
+@media (min-width: 640px) and (max-width: 899px) {
+  :root { --wb-dock-h: 34dvh; }
+  .wb-frame { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, var(--wb-dock-h)) auto; grid-template-areas: "scene" "content" "track"; }
+  .wb-scene-area { position: relative; inset: auto; grid-area: scene; overflow: hidden; }
+  .wb-main { position: static; z-index: auto; grid-area: content; display: grid; align-content: start; gap: 12px; padding: 0 var(--wb-edge) var(--wb-edge); overflow-y: auto; pointer-events: auto; }
+  .wb-main > .wb-waiting, .wb-main > .wb-panel, .wb-main > .wb-buildings, .wb-main > .wb-empty-card, .wb-notice-box {
+    position: static; width: auto; height: auto; max-width: none; translate: none; margin: 0; overflow: visible; clip-path: none;
+  }
+  .wb-buildings:focus-within { width: auto; }
+  .wb-panel-wide, .wb-panel, .wb-panel-lobby { width: auto; }
+  .wb-wait-list { max-height: none; }
+  .wb-track { position: static; grid-area: track; margin: 0 var(--wb-edge) var(--wb-edge); }
+  .wb-panel-floor, .wb-panel-building { height: auto; }
+  .wb-floor-normal { display: block; height: auto; }
+  .wb-tabpanel { overflow: visible; }
+  .wb-frame[data-screen="control"] .wb-panel-body { overflow: visible; }
+  .wb-control-body { height: auto; }
+  .wb-control-content { overflow: visible; }
+  .wb-frame[data-screen="lobby"] .wb-main > .wb-panel-lobby { height: auto; min-height: 30rem; }
 }

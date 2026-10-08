@@ -42,8 +42,8 @@ function selector(model, onSelect) {
   const options = requests.map((q) => h("li", { role: "none" },
     h("button", {
       class: `wb-req-option${q.selected ? " is-selected" : ""}`, type: "button", role: "option", "aria-selected": q.selected ? "true" : "false", "data-request": String(q.id),
-      "aria-label": `Request ${q.id}, ${q.title}, ${q.running ? "running" : q.state}`,
-    }, h("span", { class: "pui-badge pui-muted pui-soft pui-rounded-full", text: `#${q.id}` }), h("span", { class: "wb-req-option-title", text: q.title }),
+      "aria-label": `Request ${q.id}, ${q.title}, ${q.running ? "running" : q.state}`, title: q.title,   // a long title is cut with an ellipsis: the whole of it is the tooltip
+    }, h("span", { class: "pui-badge pui-muted pui-soft pui-rounded-full", text: `#${q.id}` }), h("span", { class: "wb-req-option-title", text: q.title, title: q.title }),
     h("span", { class: "wb-req-option-state", text: q.running ? "running" : q.state }))));
   const list = h("ul", { class: "wb-req-menu", role: "listbox", "aria-label": "Open requests", hidden: true }, options);
   const close = (refocus) => {
@@ -71,8 +71,13 @@ function selector(model, onSelect) {
   list.addEventListener("keydown", (event) => {
     const buttons = [...list.querySelectorAll("button")];
     const here = buttons.indexOf(document.activeElement);
-    if (event.key === "ArrowDown") buttons[Math.min(buttons.length - 1, here + 1)].focus();
-    else if (event.key === "ArrowUp") buttons[Math.max(0, here - 1)].focus();
+    const go = (index) => {
+      const button = buttons[index];
+      button.focus();
+      if (button.scrollIntoView) button.scrollIntoView({ block: "nearest" });   // the list is bounded and scrolls: the row the arrow reached is in view
+    };
+    if (event.key === "ArrowDown") go(Math.min(buttons.length - 1, here + 1));
+    else if (event.key === "ArrowUp") go(Math.max(0, here - 1));
     else if (event.key === "Escape") close(true);
     else return;
     event.preventDefault();

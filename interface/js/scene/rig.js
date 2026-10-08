@@ -17,7 +17,11 @@ export function createCamera(THREE) {
 
 /** The bounds of `object` in camera space: {x0, x1, y0, y1}. */
 export function contentBounds(THREE, camera, object) {
-  const box = new THREE.Box3().setFromObject(object);
+  return boundsOfBox(THREE, camera, new THREE.Box3().setFromObject(object));
+}
+
+/** The bounds of a world-space box (THREE.Box3) in camera space: {x0, x1, y0, y1}. */
+export function boundsOfBox(THREE, camera, box) {
   camera.updateMatrixWorld();
   const inverse = camera.matrixWorldInverse;
   const xs = [];

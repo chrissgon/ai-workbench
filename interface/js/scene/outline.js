@@ -2,27 +2,23 @@
 // geometry in world space. Nothing here is a bounding box: a box was drawn around the City's building and took in its porch, its
 // plants and its roof units, so the outline was a giant rectangle that did not follow the building (the maintainer, 2026-10-08).
 //
-// Which meshes make the outline: those of the object marked `userData.shell` (the building's slabs, bodies and roof, a rack's cabinet,
-// a floor's slab and walls, the wall screen); an object with none marked uses all of its visible meshes (the figure, the desk, the
-// tray, a sheet, the console). The offset is in world units on each axis of the part, so a thin sheet and a tall building both stand
-// `pad` off their surface.
+// Which meshes make the outline: the object's enclosing parts only, marked `userData.shell` (WP-9.11, the maintainer: "only the outer lines"):
+// a building's bodies and roof, a floor's slab and walls, a rack's cabinet, the wall screen's panel, a desk's top, a chair's seat and back, the
+// figure's torso and head, a tray's box, a sheet. Never the inner parts (drawers, monitors, keyboards, legs, handles), and an object that marks no
+// part has no outline. The offset is in world units on each axis of the part, so a thin sheet and a tall building both stand `pad` off.
 
 export const EDGE_ANGLE = 35;   // degrees: the angle between two faces above which their shared edge is drawn
 
-/** The meshes that make an object's outline. */
+/** The meshes that make an object's outline: its visible shell parts, and no others. */
 export function outlineMeshes(object) {
-  const all = [];
   const shell = [];
   const walk = (node) => {
     if (!node.visible) return;
-    if (node.isMesh) {
-      all.push(node);
-      if (node.userData && node.userData.shell) shell.push(node);
-    }
+    if (node.isMesh && node.userData && node.userData.shell) shell.push(node);
     for (const child of node.children) walk(child);
   };
   walk(object);
-  return shell.length ? shell : all;
+  return shell;
 }
 
 /** The outline's line geometry (world space) for `object`, `pad` world units off each part. Free it with dispose(). */

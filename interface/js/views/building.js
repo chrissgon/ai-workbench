@@ -12,27 +12,18 @@ import { chip } from "../floor/widgets.js";
 import { arrowNav, keepFocus } from "../frame/arrows.js";
 import { icon } from "../frame/icons.js";
 import * as router from "../router.js";
-import { createEngine, NoWebGL } from "../scene/engine.js";
-import { floorCardNode } from "../scene/plates.js";
+import { NoWebGL } from "../scene/engine.js";
+import { floorCardNode, plateNode } from "../scene/plates.js";
+import { worldModel } from "../world-model.js";
 
-export const PLATE_WIDTH = 290;
 export const PLATE_GAP_X = 14;
 const STATE_PATH = "docs/workbench/state.md";
 const ARTIFACTS_EVERY_MS = 20000;
-
-/** The placeholder floors drawn while the first read is loading: empty slabs, nothing to point at. */
-function loadingScene() {
-  return {
-    ready: false, selected: null, focus: null, more: 0, tag: null,
-    floors: [0, 1, 2].map((i) => ({ name: `loading-${i}`, label: "", state: "off", window: "grey", decisions: 0, lobby: i === 0, sheets: 0, drawers: 1, tip: "", plate: null, interactive: false })),
-  };
-}
 
 /** Create the Building in `frame`. env: {refresh()}. Returns {update({snapshot, route, now}), dispose(), stats()}. */
 export function createBuildingView(frame, env) {
   let engine = null;
   let disposed = false;
-  let flying = false;
   let last = null;
   let documents = null;
   let documentsAt = 0;
@@ -88,7 +79,7 @@ export function createBuildingView(frame, env) {
 
   // --- the scene -----------------------------------------------------------------------------------------------------------------
   function open(id) {
-    if (disposed || flying || !last) return;
+    if (disposed || !last) return;
     if (id === "door") {
       window.location.hash = router.controlHash(projectId);
       return;
@@ -97,23 +88,19 @@ export function createBuildingView(frame, env) {
     const view = fm.building(last.snapshot, projectId);
     const row = view && view.rows.find((r) => r.name === name);
     if (!row) return;
-    flying = true;
-    const go = () => {
-      flying = false;
-      if (!disposed) window.location.hash = row.link;
-    };
-    if (engine) engine.flyTo(id).then(go);
-    else go();
+    // The floor goes on as the click lands: the other floors shrink while the camera closes on it, and the route changes in the same moment.
+    if (engine) engine.flyTo(id);
+    window.location.hash = row.link;
   }
 
   // `fromScene`: the scene itself is the one hovered (its own pick already drew the outline): the engine is not told again, or a hover of
   // the door (not a floor, so name is null here) would clear the outline the scene just drew.
-  function highlightRow(name, fromScene = false) {
+  function highlightRow(name, fromScene = false, source = "pointer") {
     hover = name;
     for (const li of list.querySelectorAll ? list.querySelectorAll(".wb-floor-item") : []) {
       li.classList.toggle("is-hover", li.getAttribute("data-floor") === name);
     }
-    if (engine && !fromScene) engine.highlight(name ? `floor:${name}` : null);
+    if (engine && !fromScene) engine.highlight(name ? `floor:${name}` : null, source);
     drawCorner();
   }
 
@@ -136,12 +123,12 @@ export function createBuildingView(frame, env) {
   }
 
   try {
-    engine = createEngine(frame.sceneHost, {
+    engine = frame.acquireWorld({
       label: "Building, loading",
       getInsets: () => {
         const base = frame.insets(panel);
         if (frame.isPhone()) return { left: 4, right: 70, top: base.top, bottom: 40, pad: 0.98, cornerRight: 10 };
-        return { ...base, right: base.right + PLATE_WIDTH + PLATE_GAP_X, plateRight: base.right };
+        return { ...base, right: base.right + frame.plateWidth() + PLATE_GAP_X, plateRight: base.right };
       },
       onOpen: open,
       onHover: (id) => highlightRow(id && String(id).startsWith("floor:") ? String(id).slice(6) : null, true),
@@ -155,6 +142,7 @@ export function createBuildingView(frame, env) {
   }
   const observer = new ResizeObserver(() => { if (engine) engine.refit(); });
   observer.observe(frame.track.el);
+  observer.observe(frame.kpis.el);
   observer.observe(panel);
   observer.observe(frame.noticeBox);
   const phone = window.matchMedia("(max-width: 639px)");
@@ -177,14 +165,6 @@ export function createBuildingView(frame, env) {
   frame.sceneHost.addEventListener("pointerover", onOver);
   frame.sceneHost.addEventListener("pointerout", onOut);
   frame.sceneHost.addEventListener("click", onClick);
-
-  const onKey = (event) => {
-    if (event.key !== "Escape" || disposed) return;
-    const a = document.activeElement;
-    if (stateDialog.open || (a && a.closest && a.closest(".wb-switcher, .wb-wait-menu-wrap"))) return;
-    window.location.hash = router.cityHash();
-  };
-  document.addEventListener("keydown", onKey);
 
   // --- reading the documents ------------------------------------------------------------------------------------------------------
   async function readDocuments() {
@@ -233,8 +213,8 @@ export function createBuildingView(frame, env) {
   }
 
   function floorItem(row, view) {
-    const card = fm.cardOf(row);
-    const link = floorCardNode(card, { class: "wb-floor-row", href: row.link, "aria-label": row.linkName }, "a");
+    // the plate beside the floor, as it is: one component in two places (the phone's corner card is the compact one)
+    const link = plateNode(fm.plateOf(row, view.tag ? view.tag.floor === row.name : false), { class: "wb-floor-row is-row", href: row.link, "aria-label": row.linkName }, "a");
     link.addEventListener("click", (event) => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
       event.preventDefault();
@@ -242,8 +222,8 @@ export function createBuildingView(frame, env) {
     });
     link.addEventListener("pointerenter", () => highlightRow(row.name));
     link.addEventListener("pointerleave", () => highlightRow(null));
-    link.addEventListener("focus", () => highlightRow(row.name));
-    link.addEventListener("blur", () => highlightRow(null));
+    link.addEventListener("focus", () => highlightRow(row.name, false, "keyboard"));
+    link.addEventListener("blur", () => highlightRow(null, false, "keyboard"));
     return h("li", { class: "pui-list-item wb-floor-item", "data-floor": row.name }, link);
   }
 
@@ -287,7 +267,7 @@ export function createBuildingView(frame, env) {
     if (!loading) {
       title.textContent = view.name;
       drawFacts(view);
-      const sig = JSON.stringify(view.rows.map((r) => [fm.cardOf(r), r.link, r.linkName]));
+      const sig = JSON.stringify(view.rows.map((r) => [fm.plateOf(r, false), r.link, r.linkName]));
       if (sig !== listShown) {
         listShown = sig;
         drawList(view, false);
@@ -298,19 +278,16 @@ export function createBuildingView(frame, env) {
       drawList(null, true);
     }
     if (!engine) return;
-    let model;
     let label = "Building, loading";
-    if (loading) {
-      model = loadingScene();
-    } else {
+    let frameFloor = null;
+    if (!loading) {
       const isPhone = phone.matches;
-      const focus = isPhone ? focusOf(view) : null;
-      model = fm.buildingScene(view, documents, { focus, ready: true });
+      frameFloor = isPhone ? focusOf(view) : null;
       label = fm.buildingLabel(view);
       if (isPhone) {
         const names = view.rows.slice(0, 8).map((r) => r.name);
-        const at = names.indexOf(focus);
-        const row = view.rows.find((r) => r.name === focus);
+        const at = names.indexOf(frameFloor);
+        const row = view.rows.find((r) => r.name === frameFloor);
         steps.hidden = names.length < 2;
         above.disabled = at >= names.length - 1;
         below.disabled = at <= 0;
@@ -320,12 +297,13 @@ export function createBuildingView(frame, env) {
         below.onclick = () => stepFloor(-1, view);
       }
     }
+    const model = worldModel(snapshot, last.now, { selectedId: projectId, focus: projectId, frame: frameFloor, documents, ready: !loading });
     if (!loading) announceWork(view);
     drawCorner();
     const key = JSON.stringify([model, label]);
     if (key !== shown) {
       shown = key;
-      engine.show("building", model, label);
+      engine.show("world", model, label);
     }
   }
 
@@ -344,10 +322,8 @@ export function createBuildingView(frame, env) {
       frame.sceneHost.removeEventListener("pointerover", onOver);
       frame.sceneHost.removeEventListener("pointerout", onOut);
       frame.sceneHost.removeEventListener("click", onClick);
-      document.removeEventListener("keydown", onKey);
       viewer.close();
-      if (engine) engine.dispose();
-      panel.remove();
+      panel.remove();   // the scene is the frame's: the City takes it over (the building closes), or the frame takes it down
       stateDialog.remove();
       steps.remove();
       frame.sceneUnavailable(false);

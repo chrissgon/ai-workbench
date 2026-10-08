@@ -1,183 +1,115 @@
-// The Building scene (handoff scene.md 5.4): a cutaway stack of rooms, one floor per agent, the planning agent (the Lobby)
-// at the bottom, at most eight, a ground slab, a roof and five trees. It builds a group from a plain model and returns
-// what the engine needs around it: the hit objects (a floor and, in the Lobby, the door), the HTML labels' anchors (the
-// floor plates, the work-order tag), the markers of the waiting figures, the figures' typing motion and the
-// opening (A5: the floors separate by GAP, once). No colour and no name is written here.
+// The room of a floor (handoff scene.md 5.4 and 5.5): the same room in the City's building, in the Building's cutaway and on the Floor and in
+// the Lobby, because it is the same meshes (WP-9.11). A room is the floor's slab, its back wall and its left wall with the windows and the lamp,
+// the desk with the agent, the inbox tray on the desk's corner, a table with up to six sheets (each opens its document), a cabinet whose drawers
+// follow the documents, a bookshelf, two plants and, in the Lobby, the counter and the door. The tower (tower.js) puts a room in each of its floors
+// and closes the building round them with the walls the City shows. No colour and no name is written here.
 
-import { chair, counter, cabinet, desk, door, sheet, table, tray, wallLamp } from "./furniture.js";
+import { chair, counter, cabinet, desk, door, bookshelf, sheet, table, tray, wallLamp } from "./furniture.js";
 import { figure, workingMotion } from "./figure.js";
 import { windowColour, windowUnlit } from "./look.js";
-import { plant, tree } from "./props.js";
-import { plateNode, tagNode } from "./plates.js";
+import { plant } from "./props.js";
 
 export const W = 6.4;
-export const D = 4.4;
-export const P = 2.6;
-export const GAP = 1.0;
-const BASE = 0.16;
-const TREES = [[-5.4, 3.4], [5.0, -3.4], [-5.0, -3.2], [4.5, 4.3], [-3, 4.6]];
+export const D = 4.8;
+export const SLAB = 0.2;
+export const H = 2.8;
+export const P = SLAB + H;   // one floor, closed: the slab and its walls
+export const GAP = 1.0;      // the floors open by this much
+export const BASE = 0.2;
 
 /** The y of floor i for a pitch (P + GAP when open). */
 export function floorY(i, pitch = P + GAP) {
   return BASE + i * pitch;
 }
 
-/** Where a figure and its chair stand on a floor of the building, by state (scene.md 5.2). */
+/** Where a figure and its chair stand in the room, by state (scene.md 5.2). */
 export function seating(state) {
-  if (state === "waiting") return { chair: [1.4, -0.2, Math.PI + 0.4], figure: [2.35, -0.25, -0.5] };
-  if (state === "off") return { chair: [1.4, -0.5, Math.PI], figure: null };
-  return { chair: [1.4, -0.2, Math.PI], figure: [1.4, -0.32, Math.PI] };
-}
-
-function floor(kit, parent, f, y, selected, motions, markers, outlines) {
-  const { THREE, palette } = kit;
-  const T = palette.T;
-  const g = new THREE.Group();
-  g.position.set(0, y, 0);
-  parent.add(g);
-  kit.box(W, 0.18, D, 0, 0, 0, selected ? palette.bg : palette.mix(palette.bg, T.emphasis, 0.5), { parent: g, edges: true, shell: true });
-  // The theme line along the slab's front and right edges belongs to the floor's outline: drawn only while the floor is hovered
-  // or selected (the route selects the project here, not a floor), never as a standing line (WP-9.8).
-  const front = [[-W / 2, 0.19, D / 2], [W / 2, 0.19, D / 2], [W / 2, 0.19, -D / 2]];
-  const edge = kit.line(front, kit.themeLine, g);
-  edge.visible = false;
-  outlines.push({ id: `floor:${f.name}`, lines: [edge] });
-  const c = new THREE.Group();
-  c.position.y = 0.18;
-  g.add(c);
-  kit.box(W, P - 0.18, 0.1, 0, 0, -D / 2 + 0.05, palette.shell, { parent: c, edges: true, shell: true });
-  kit.box(0.1, P - 0.18, D, -W / 2 + 0.05, 0, 0, palette.shell, { parent: c, edges: true, shell: true });
-  const glass = windowColour(palette, f.window);
-  for (const x of [-1.7, 0.3, 2.1]) kit.box(1.3, 0.85, 0.02, x, 0.9, -D / 2 + 0.11, glass, { parent: c, cast: false, unlit: windowUnlit(f.window) });
-  wallLamp(kit, c, 1.3, 2.05, -D / 2 + 0.14, true);
-
-  const state = f.state;
-  const place = seating(state);
-  const d = desk(kit, c, 1.3, -1.05, state, 1.8);
-  tray(kit, c, 1.85, 0, -1.1, f.decisions, state === "waiting");
-  chair(kit, c, place.chair[0], place.chair[1], place.chair[2]);
-  let who = null;
-  if (place.figure) {
-    who = figure(kit, c, state, place.figure[0], place.figure[1], place.figure[2], `${f.name}:marker`);
-    if (who.marker) markers.push({ key: who.marker.key, group: who.marker.group, restY: who.marker.restY });
-  }
-  if (state === "working") motions.push(workingMotion(who, d, palette));
-  table(kit, c, -1.4, 0.4, 1.5, 0.75);
-  for (let i = 0; i < Math.min(3, f.sheets); i++) sheet(kit, c, -1.4 + (i - 1) * 0.45, 0, 0.4, 0.1 * (i - 1) + 0.05);
-  cabinet(kit, c, -2.75, -1.65, f.drawers, Math.PI / 2);
-  plant(kit, c, W / 2 - 0.35, D / 2 - 0.35, 0.9);
-  let doorGroup = null;
-  if (f.lobby) {
-    counter(kit, c, -1.2, 1.55);
-    doorGroup = door(kit, c, -W / 2 + 0.13, 1.2);
-  }
-  return { group: g, door: doorGroup };
+  if (state === "waiting") return { chair: [1.5, -0.5, Math.PI + 0.4], figure: [2.55, -0.45, -0.5] };
+  if (state === "off") return { chair: [1.5, -0.8, Math.PI], figure: null };
+  return { chair: [1.5, -0.5, Math.PI], figure: [1.5, -0.62, Math.PI] };
 }
 
 /**
- * Build the Building. model: {ready, selected, focus, more, tag: {floor, text}|null, floors: [{name, label, state,
- * window, decisions, sheets, drawers, lobby, tip, interactive}]} in order from the bottom. Returns {group, hits, labels, beacons,
- * markers, motions, tag, intro, outlines, selected, text, bounds}. `text(model)` rebuilds the labels and the tips alone, for a
- * model whose `structure` is the same (a floor's meters change on a poll: the scene itself is not built again).
+ * Draw the room of floor `f` into `parent` (a group at the floor's origin). f: {name, state, window, decisions, lobby, drawers, sheets: [{path, tip}]}.
+ * ctx: {lot, selected, motions, markers, outlines}: `selected` is the floor the work order is on (its slab is lighter). Returns the parts a screen
+ * points at: {agent, desk, tray, sheets: [{path, group}], door, frame (the slab and the two walls: the floor's outline)} and the setters that change the room in place (WP-9.11: a poll or the arrival of the
+ * documents never builds a room again): setWindow(state), setDecisions(n, waiting), setSheets(list), setDrawers(n), setSelected(bool).
  */
-export function buildBuilding(kit, model) {
+export function fillFloor(kit, parent, f, ctx) {
   const { THREE, palette } = kit;
   const T = palette.T;
-  const group = new THREE.Group();
-  const shownOf = (m) => (m.focus ? m.floors.filter((f) => f.name === m.focus) : m.floors);
-  const shown = shownOf(model);
-  const hits = [];
-  const markers = [];
-  const motions = [];
-  const outlines = [];
-  const floorGroups = [];
-  const tagAnchor = new THREE.Vector3();
-  const plateAnchors = [];   // where each floor's plate hangs: the floor's right edge, riding along while the floors separate
-  const lobbyShown = shown.some((f) => f.lobby);
-  if (!model.focus || lobbyShown) kit.box(W + 3, 0.16, D + 3, 0, 0, 0, palette.lot, { parent: group, edges: true });
-  let tagMesh = null;
-  let tagIndex = -1;
-  shown.forEach((f, i) => {
-    const y = floorY(i);
-    const built = floor(kit, group, { ...f }, y, model.selected === f.name, motions, markers, outlines);
-    floorGroups.push(built.group);
-    if (!f.interactive) return;   // a placeholder floor while the data is loading: slabs only, nothing to point at
-    hits.push({ object: built.group, id: `floor:${f.name}`, tip: f.tip });
-    plateAnchors[i] = new THREE.Vector3(W / 2 + 0.2, y + 1.2, -D / 2);
-    if (built.door) {
-      hits.push({ object: built.door, id: "door", tip: "Control room · skills, costs, connections" });
-    }
-    if (model.tag && model.tag.floor === f.name) tagIndex = i;
-  });
-  if (tagIndex >= 0) {
-    const y = floorY(tagIndex) + 0.18;
-    tagMesh = new THREE.Group();
-    tagMesh.position.set(-W / 2 + 0.6, y, D / 2 - 0.5);
-    group.add(tagMesh);
-    kit.box(0.5, 0.03, 0.34, 0, 0, 0, palette.bg, { parent: tagMesh });
-    const outline = new THREE.LineSegments(kit.unitEdges, kit.adopt(new THREE.LineBasicMaterial({ color: T.text })));
-    outline.scale.set(0.5, 0.03, 0.34);
-    outline.position.y = 0.015;
-    tagMesh.add(outline);
-    tagAnchor.set(-W / 2 + 0.6, y + 0.45, D / 2 - 0.5);
-  }
-  if (!model.focus) {
-    const top = BASE + (shown.length - 1) * (P + GAP) + P;
-    const roof = kit.box(W + 0.2, 0.25, D + 0.2, 0, top, 0, T.emphasis, { parent: group, edges: true });
-    TREES.forEach(([x, z], k) => tree(kit, group, x, z, k % 3 ? 1.15 : 1.35));
-    group.userData.roof = roof;
-  }
+  const wall = palette.dark ? palette.mix(T.emphasis, T.text, 0.1) : palette.shell;
+  // The floor's own enclosing parts (its slab and its back and left walls) are one group: what the outline of the floor is drawn from.
+  const frame = new THREE.Group();
+  parent.add(frame);
+  const slabColour = (selected) => (selected ? palette.bg : palette.mix(palette.bg, T.emphasis, 0.45));
+  const slab = kit.box(W, SLAB, D, 0, 0, 0, slabColour(ctx.selected), { parent: frame, edges: true, shell: true });
+  // The theme line along the slab's front and right edges belongs to the floor's outline: drawn only for the floor the route selects (the Floor,
+  // the Lobby), never as a standing line (WP-9.8).
+  const edge = kit.line([[-W / 2, SLAB + 0.01, D / 2], [W / 2, SLAB + 0.01, D / 2], [W / 2, SLAB + 0.01, -D / 2]], kit.themeLine, parent);
+  edge.visible = false;
+  ctx.outlines.push({ id: `floor:${f.name}`, lines: [edge] });
+  kit.box(W, H, 0.14, 0, SLAB, -D / 2 + 0.07, wall, { parent: frame, edges: true, shell: true });
+  kit.box(0.14, H, D, -W / 2 + 0.07, SLAB, 0, wall, { parent: frame, edges: true, shell: true });
+  const glass = windowColour(palette, f.window);
+  const windows = [0.5, 2.1].map((x) => kit.box(1.3, 1.0, 0.02, x, SLAB + 0.75, -D / 2 + 0.15, glass, { parent, cast: false, unlit: windowUnlit(f.window) }));
+  wallLamp(kit, parent, 1.3, SLAB + 2.55, -D / 2 + 0.16, true);
 
-  // the words: the plates, the tag's label and the tooltips; worked out from a model of the same structure. There is no "Control room" label here: it is
-  // drawn in the Lobby's room only, the header button is the Building's way to the Control room (WP-9.10).
-  function text(m) {
-    const labels = [];
-    const tips = new Map();
-    shownOf(m).forEach((f, i) => {
-      if (!f.interactive) return;
-      tips.set(`floor:${f.name}`, f.tip);
-      // a plate for each floor beside the building (desktop and tablet); the phone shows one floor at a time and has the compact card in the
-      // corner of the scene instead, which is the page's (WP-9.10: the maintainer's change of the plates was for the phone only)
-      if (!m.focus && f.plate) {
-        labels.push({
-          id: `floor:${f.name}`, kind: "plate", place: "column", plate: f.plate, selected: m.selected === f.name,
-          decisions: f.decisions, running: f.state === "working", anchor: plateAnchors[i], make: () => plateNode(f.plate),
-        });
-      }
-    });
-    if (tagMesh && m.tag) {
-      labels.push({ id: "tag", kind: "tag", rank: 1, text: m.tag.text, decisions: 0, running: false, anchor: tagAnchor, make: tagNode });
-    }
-    return { labels, tips };
+  const r = new THREE.Group();
+  r.position.y = SLAB;
+  parent.add(r);
+  const state = f.state;
+  const d = desk(kit, r, 1.4, -1.35, state, 1.8);
+  const t = tray(kit, r, 2.05, 0, -1.3, f.decisions, state === "waiting");
+  const place = seating(state);
+  chair(kit, r, place.chair[0], place.chair[1], place.chair[2]);
+  let who = null;
+  if (place.figure) {
+    who = figure(kit, r, state, place.figure[0], place.figure[1], place.figure[2], `${ctx.lot}:${f.name}:marker`);
+    if (who.marker) ctx.markers.push({ key: who.marker.key, group: who.marker.group, restY: who.marker.restY });
   }
-
-  // A5: the floors separate, `t` from 0 (stacked) to 1 (open); the tag rides along with them
-  const intro = model.focus || shown.length < 2 ? null : {
-    apply(t) {
-      const pitch = P + GAP * t;
-      floorGroups.forEach((g, i) => {
-        g.position.y = floorY(i, pitch);
-        if (plateAnchors[i]) plateAnchors[i].y = floorY(i, pitch) + 1.2;
+  if (state === "working") ctx.motions.push(workingMotion(who, d, palette));
+  kit.box(1.4, 0.95, 0.04, -1.0, 0.775, -D / 2 + 0.16, palette.bg, { parent: r, edges: true });   // the wall board
+  const cab = cabinet(kit, r, -2.75, -1.75, f.drawers, Math.PI / 2);
+  bookshelf(kit, r, -W / 2 + 0.3, -0.55);
+  table(kit, r, -1.2, 1.05, 1.8, 0.9);
+  const sheets = [];
+  const put = (s, i) => {
+    const col = i % 3;
+    return { path: s.path, group: sheet(kit, r, -1.75 + col * 0.5, 0, 0.85 + Math.floor(i / 3) * 0.46, 0.1 * (col - 1)) };
+  };
+  (f.sheets || []).slice(0, 6).forEach((s, i) => sheets.push(put(s, i)));
+  plant(kit, r, 2.75, 1.95, 1.15);
+  plant(kit, r, 0.5, 2.0, 0.9);
+  let doorGroup = null;
+  if (f.lobby) {
+    counter(kit, r, -1.2, 1.55);
+    doorGroup = door(kit, r, -W / 2 + 0.13, 1.2);
+  }
+  return {
+    agent: who ? who.group : null, desk: d.group, tray: t, sheets, door: doorGroup, frame,
+    setWindow(state) {
+      const colour = windowColour(palette, state);
+      for (const w of windows) w.material = windowUnlit(state) ? kit.unlit(colour) : kit.lit(colour);
+    },
+    setDecisions(count, waiting) {
+      t.userData.setSheets(count, waiting);
+    },
+    /** The sheets on the table become `list`: a sheet that is still there stays (the same group), one that is gone leaves, a new one comes. */
+    setSheets(list) {
+      const want = list.slice(0, 6);
+      want.forEach((s, i) => {
+        if (sheets[i] && sheets[i].path === s.path) return;
+        if (sheets[i]) r.remove(sheets[i].group);
+        sheets[i] = put(s, i);
       });
-      const roof = group.userData.roof;
-      if (roof) roof.position.y = BASE + (shown.length - 1) * pitch + P + 0.125;
-      if (tagMesh) {
-        tagMesh.position.y = floorY(tagIndex, pitch) + 0.18;
-        tagAnchor.y = tagMesh.position.y + 0.45;
-      }
+      for (const gone of sheets.splice(want.length)) r.remove(gone.group);
+    },
+    setDrawers(n) {
+      cab.userData.setDrawers(n);
+    },
+    setSelected(selected) {
+      slab.material = kit.lit(slabColour(selected));
     },
   };
-  const words = text(model);
-  for (const hit of hits) hit.tip = words.tips.get(hit.id) !== undefined ? words.tips.get(hit.id) : hit.tip;
-  return {
-    group, hits, labels: words.labels, beacons: [], markers, motions, intro, outlines, selected: null, text,
-    tag: tagMesh ? { group: tagMesh, floor: model.tag.floor, y: tagMesh.position.y } : null,
-    bounds: new THREE.Box3().setFromObject(group),
-  };
 }
-
-/** What the scene is made of, for a model: everything but the words (the tips, the tag's text). */
-buildBuilding.structure = (model) => ({
-  ready: model.ready, selected: model.selected, focus: model.focus, tag: model.tag ? model.tag.floor : null,
-  floors: model.floors.map((f) => [f.name, f.state, f.window, f.decisions, f.lobby, f.sheets, f.drawers, f.interactive]),
-});

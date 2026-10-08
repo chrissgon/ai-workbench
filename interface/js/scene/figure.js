@@ -50,12 +50,12 @@ export function figure(kit, parent, state, x, z, rotY, key = "figure") {
   body.position.y = standing ? 0.7 : 0.56;
   body.rotation.x = state === "working" ? 0.18 : state === "idle" ? -0.28 : 0;
   group.add(body);
-  const torso = kit.mesh(new THREE.CylinderGeometry(0.19, 0.17, 0.5, 4), vest, 0, 0.25, 0, { parent: body, flat: true });
+  const torso = kit.mesh(new THREE.CylinderGeometry(0.19, 0.17, 0.5, 4), vest, 0, 0.25, 0, { parent: body, flat: true, shell: true });
   torso.rotation.y = Math.PI / 4;
   torso.scale.set(1.25, 1, 0.85);
-  kit.box(0.44, 0.08, 0.24, 0, 0.46, 0, vest, { parent: body });
+  kit.box(0.44, 0.08, 0.24, 0, 0.46, 0, vest, { parent: body, shell: true });
   kit.cyl(0.06, 0.07, 0.08, 8, palette.skin, 0, 0.5, 0, { parent: body });
-  kit.mesh(new THREE.SphereGeometry(0.22, 18, 14), palette.skin, 0, 0.78, 0, { parent: body });
+  kit.mesh(new THREE.SphereGeometry(0.22, 18, 14), palette.skin, 0, 0.78, 0, { parent: body, shell: true });
 
   const elbows = [];
   for (const side of [-1, 1]) {

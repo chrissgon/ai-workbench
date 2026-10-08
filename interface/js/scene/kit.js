@@ -35,7 +35,7 @@ export function createKit(palette) {
   };
 
   const kit = {
-    palette, THREE, lit, flat, unlit, track, edgeMaterial, themeLine, unitEdges,
+    palette, THREE, lit, flat, unlit, track, edgeMaterial, themeLine, unitEdges, unitBox: unit,
     /** A box with its bottom face at y. o: {unlit, cast, edges, shell, parent}; `shell` marks a part of the object's outline (outline.js). */
     box(w, h, d, x, y, z, colour, o = {}) {
       const mesh = new THREE.Mesh(unit, o.unlit ? unlit(colour) : lit(colour));
@@ -53,12 +53,13 @@ export function createKit(palette) {
       }
       return mesh;
     },
-    /** A mesh of a geometry made by the caller (tracked). */
+    /** A mesh of a geometry made by the caller (tracked). o: {unlit, flat, cast, shell, parent}. */
     mesh(geometry, colour, x, y, z, o = {}) {
       const mesh = new THREE.Mesh(track(geometry), o.unlit ? unlit(colour) : o.flat ? flat(colour) : lit(colour));
       mesh.position.set(x, y, z);
       mesh.castShadow = o.cast !== false;
       mesh.receiveShadow = true;
+      if (o.shell) mesh.userData.shell = true;
       o.parent.add(mesh);
       return mesh;
     },

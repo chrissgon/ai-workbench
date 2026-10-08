@@ -236,7 +236,7 @@ function render() {
   ensureView(route);
   if (view.screen === "city") {
     const city = model.city(snapshot, now);
-    view.city.update({ city, selectedId: chosen, state });
+    view.city.update({ city, selectedId: chosen, state, snapshot, now });
   } else if (view.screen === "control") {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     const detail = routeProject ? snapshot.details[routeProject.id] : null;

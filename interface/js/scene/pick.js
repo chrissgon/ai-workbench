@@ -58,7 +58,7 @@ export function pickHit(raycaster, camera, hits, ndc, list = pickList(hits)) {
  * Points on the drawn objects for the page's checks and the offline test: for each hit, the screen position (CSS pixels of a
  * canvas of `size` {w, h}) of the centre of each of its meshes that is the nearest thing under that point, among the meshes of
  * the whole `scene` that are drawn, and of the centre of the object's bounding box when that point is on the object too.
- * Returns [{id, x, y, kind}] with kind "mesh" or "box".
+ * Returns [{id, x, y, kind, shell}] with kind "mesh" or "box"; `shell` tells a mesh that makes the object's outline.
  */
 export function visibleSamples(THREE, camera, scene, hits, size) {
   scene.updateMatrixWorld(true);
@@ -83,12 +83,12 @@ export function visibleSamples(THREE, camera, scene, hits, size) {
   };
   for (const hit of hits) {
     const own = list.meshes.filter((mesh) => list.owner.get(mesh) === hit);
-    const centres = own.map((mesh) => ({ kind: "mesh", point: new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3()) }));
+    const centres = own.map((mesh) => ({ kind: "mesh", shell: Boolean(mesh.userData && mesh.userData.shell), point: new THREE.Box3().setFromObject(mesh).getCenter(new THREE.Vector3()) }));
     centres.push({ kind: "box", point: new THREE.Box3().setFromObject(hit.object).getCenter(new THREE.Vector3()) });
-    for (const { kind, point } of centres) {
+    for (const { kind, point, shell } of centres) {
       const at = project(point);
       if (at.ndc.x < -1 || at.ndc.x > 1 || at.ndc.y < -1 || at.ndc.y > 1) continue;
-      if (nearestOwner(at.ndc) === hit) samples.push({ id: hit.id, x: at.x, y: at.y, kind });
+      if (nearestOwner(at.ndc) === hit) samples.push({ id: hit.id, x: at.x, y: at.y, kind, shell: Boolean(shell) });
     }
   }
   return samples;

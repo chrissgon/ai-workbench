@@ -203,6 +203,7 @@ def test_the_router_reads_every_hash_form_and_falls_back_to_the_city_and_the_for
 
 MODEL = r"""
 import * as model from "@JS@/model.js";
+import { worldModel } from "@JS@/world-model.js";
 
 const NOW = new Date("2026-10-08T12:00:00Z");
 const ago = (hours) => new Date(NOW.getTime() - hours * 3600e3).toISOString();
@@ -251,9 +252,10 @@ out.tracking = (() => {
 })();
 out.noRequest = model.tracking(snapshot, b, NOW);
 out.subLines = [model.projectSub(snapshot, a), model.projectSub(snapshot, b), model.projectSub(snapshot, c), model.projectSub({ ...snapshot, details: {} }, a)];
-const scene = model.sceneModel(city.buildings, a);
-out.scene = { selected: scene.selectedId, ready: scene.ready, lots: scene.lots.map((l) => [l.id === a ? "a" : l.id === b ? "b" : "c", l.floors.length, l.tip]) };
-out.maxLots = model.sceneModel(Array.from({ length: 6 }, (_, i) => ({ ...shop, id: String(i) })), a).lots.length;
+const scene = worldModel(snapshot, NOW, { selectedId: a, marked: a });
+out.scene = { selected: scene.selectedId, marked: scene.marked, ready: scene.ready, lots: scene.lots.map((l) => [l.id === a ? "a" : l.id === b ? "b" : "c", l.floors.length, l.tip]) };
+const six = { ...snapshot, projects: Array.from({ length: 6 }, (_, i) => ({ ...snapshot.projects[0], id: String(i).repeat(12) })), details: Object.fromEntries(Array.from({ length: 6 }, (_, i) => [String(i).repeat(12), snapshot.details[a]])) };
+out.maxLots = worldModel(six, NOW, {}).lots.length;
 out.openRequest = [model.openRequest({ requests: [{ id: 1, state: "done" }, { id: 4, state: "ready" }, { id: 9, state: "cancelled" }, { id: 7, state: "running" }] }).id, model.openRequest({ requests: [] })];
 const bare = { ...snapshot, tasks: {} };
 out.noTasks = { windows: model.city(bare, NOW).buildings[0].floors.map((f) => [f.agent, f.window, f.waits]), links: model.city(bare, NOW).waiting.map((r) => r.link.replace(a, "A").replace(b, "B")), now: model.tracking(bare, a, NOW).now.sub };
@@ -298,7 +300,7 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
     assert tracking["now"]["state"] == "Running" and tracking["now"]["sub"].startswith("task #5 · since ") and tracking["now"]["link"] == "#/p/A/floor/engineering"
     assert got["noRequest"] is None
     assert got["subLines"] == ["Request #1 · 2 of 5 steps done", "No request is open", "Not accepted", "..."]
-    assert got["scene"]["ready"] is True and got["scene"]["selected"] == a
+    assert got["scene"]["ready"] is True and got["scene"]["selected"] == a and got["scene"]["marked"] == a, "the chosen project keeps its outline in the City"
     assert got["scene"]["lots"] == [["a", 5, got["tips"][0]], ["b", 1, got["tips"][1]], ["c", 1, got["tips"][2]]]
     assert got["maxLots"] == 4, "at most four lots are drawn"
     assert got["openRequest"] == [7, None]
@@ -491,7 +493,7 @@ out.activeAfterStart = t.active();
 const mid = frames(t, 0, 10);
 out.midInside = mid.left > 0 && mid.left < 2;
 out.stillActive = t.active();
-const end = frames(t, 160, 100);
+const end = frames(t, 160, 300);   // lands when under a quarter of a pixel is left (WP-9.11), a little after the first one percent
 out.endFrustum = [end.left, end.right, end.top, end.bottom]; out.activeAtEnd = t.active();
 out.noStepWhenIdle = t.step(9000);
 // a move cut by a rebuild settles false, once
@@ -502,7 +504,7 @@ out.cancelReturned = t.cancel(); out.cancelAgain = t.cancel(); out.activeAfterCa
 t = createTween();
 const first = t.start(a, b, 0); first.then((v) => settled.push(["first", v]));
 const second = t.start(b, a, 0); second.then((v) => settled.push(["second", v]));
-frames(t, 0, 100);
+frames(t, 0, 300);
 await new Promise((r) => setTimeout(r, 10));
 out.settled = settled.sort((x, y) => x[0].localeCompare(y[0]));
 out.states = [model.screenState({ loaded: false }, null), model.screenState({ loaded: false }, new Error("x")), model.screenState({ loaded: true }, new Error("x")), model.screenState({ loaded: true }, null)];
@@ -608,9 +610,9 @@ def test_the_engine_keeps_the_performance_rules_of_the_scene():
     assert "onRestored" in (JS / "views" / "city.js").read_text(encoding="utf-8"), "the scene host is shown again after a restored context"
     assert "export const CAMERA_MS = 1023" in engine and "export const OPEN_MS = 1439" in engine, "the prototype's durations: ln(100) over 4.5 and 3.2 a second"
     for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js",
-                 "building.js", "room.js", "figure.js", "furniture.js", "plates.js"):   # the last five: WP-9.3b
+                 "building.js", "world.js", "tower.js", "figure.js", "furniture.js", "plates.js"):   # the last five: WP-9.3b
         assert (SCENE / name).is_file()
-    assert len(list(SCENE.glob("*.js"))) == 22 and (SCENE / "tween.js").is_file()
+    assert len(list(SCENE.glob("*.js"))) == 23 and (SCENE / "tween.js").is_file()
 
 
 def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():
@@ -723,13 +725,14 @@ import { createCityView } from "@JS@/views/city.js";
 globalThis.ResizeObserver = class { observe() {} disconnect() {} };
 const el = () => new FakeNode("div");
 const frame = {
-  main: el(), sceneHost: el(), track: { el: el() }, noticeBox: el(),
+  main: el(), sceneHost: el(), track: { el: el() }, kpis: { el: el() }, noticeBox: el(),
   waitingCard: { el: el(), set() {} },
   insets: () => ({}), sceneUnavailable() {},
+  acquireWorld: () => ({ highlight() {}, show() {}, flyTo: () => Promise.resolve(false), setOptions() {}, stats() { return {}; } }),
 };
 const view = createCityView(frame);
 const b = (id, name) => ({ id, name, accepted: true, decisions: 0, runningTask: null, sub: "" });
-view.update({ city: { buildings: [b("aaaaaaaaaaaa", "alpha"), b("bbbbbbbbbbbb", "beta"), b("cccccccccccc", "gamma")], waiting: [], canvasLabel: "City" }, selectedId: null, state: "ready" });
+view.update({ city: { buildings: [b("aaaaaaaaaaaa", "alpha"), b("bbbbbbbbbbbb", "beta"), b("cccccccccccc", "gamma")], waiting: [], canvasLabel: "City" }, selectedId: null, state: "ready", snapshot: { projects: [], details: {}, tasks: {}, loaded: true }, now: new Date("2026-10-08T12:00:00Z") });
 const list = frame.main.querySelectorAll("ul.wb-building-list")[0];
 const links = frame.main.querySelectorAll("a.wb-building-link");
 const press = (key) => {

@@ -202,7 +202,7 @@ const DOT = { working: "theme", waiting: "warn", idle: "muted", off: "border" };
  * `window`, `decisions`, `drawers`, `sheets`, `tips`, `board`) with `door: true` for the door to the Control room. The planning agent
  * works while a turn or a route of this screen runs, waits when a decision of the Lobby waits, is off when the project is not
  * accepted and is idle otherwise. `documents` are the Desk's rows (see lobbyDocuments), as the Floor takes them: the sheets and the cabinet's
- * drawers; null while they are unread (an empty cabinet).
+ * drawers; null while they are unread (the world keeps what the table shows: an empty cabinet at first).
  */
 export function roomModel({ working, decisions, hasMessages, accepted, request, ready = true, documents = null }) {
   let state = "idle";
@@ -215,11 +215,11 @@ export function roomModel({ working, decisions, hasMessages, accepted, request, 
     ? { title: request.title || `Request ${request.id}`, lines: [`request #${request.id} · ${request.state}`], dot: DOT[state] }
     : { title: accepted ? "No request is open" : NOT_ACCEPTED_TEXT, lines: [], dot: DOT[state] };
   return {
-    kind: "room", ready, door: true, state, window: windowState(state === "working"), decisions, drawers: docs ? drawersOf(docs.length) : 0,
-    sheets: docs ? docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })) : [], empty: !hasMessages,
+    kind: "room", ready, door: true, state, window: windowState(state === "working"), decisions, drawers: docs ? drawersOf(docs.length) : null,
+    sheets: docs ? docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })) : null, empty: !hasMessages,
     tips: {
       agent: `Planning agent · ${words}`, desk: request ? `Current task · ${request.title || `request #${request.id}`}` : "Current task · none yet",
-      tray: `Inbox · ${decisions} open · open the Inbox tab`,
+      tray: `Inbox · ${decisions} waiting`,
       cabinet: docs ? `${docs.length} document${docs.length === 1 ? "" : "s"} · open the Desk tab` : "Documents · open the Desk tab", board: board.lines[0] || board.title,
       door: "Control room · skills, costs, connections",
     },
