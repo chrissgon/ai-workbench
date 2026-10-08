@@ -105,7 +105,7 @@ function askForToken(message) {
 
 api.onAuthFailure(() => {
   clearToken();
-  pendingMessage = "The service did not accept the token. It makes a new one every time it starts: paste the current one.";
+  pendingMessage = "The token was not accepted. The service writes a new token every time it starts: read the token file again.";
   askForToken();
 });
 

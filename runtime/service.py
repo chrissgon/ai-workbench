@@ -53,7 +53,7 @@ The rules of a request, in this order, each a refusal unless the request satisfi
   9. Every response: Cache-Control no-store and X-Content-Type-Options nosniff; a page also a Content-Security-Policy of
      "default-src 'self'; frame-ancestors 'none'" and Referrer-Policy no-referrer.
  10. A static path is served only when its real path is inside the interface folder, with a known extension, no
-     dotfile and no listing.
+     dotfile and no listing. /favicon.ico (which browsers ask for by default) is answered with /favicon.svg.
  11. The log line is the method, the path (never the query), the status and the duration. Never a header, a body or the
      token.
  12. Text a model or a stranger wrote leaves as a JSON string; the page shows it as text, never as markup.
@@ -514,6 +514,8 @@ def _static(service: Service, method: str, bare: str) -> tuple:
     rel = urllib.parse.unquote(bare)
     if rel == "/":
         rel = "/index.html"
+    elif rel == "/favicon.ico":                  # browsers ask for it by default; the page's icon is the svg
+        rel = "/favicon.svg"
     parts = rel.split("/")[1:]
     if "\x00" in rel or "\\" in rel or not service.interface_dir \
             or any(p in ("", ".", "..") or p.startswith(".") for p in parts):

@@ -266,14 +266,42 @@ function sleep(ms, signal) {
   });
 }
 
+/** Resolves at once when the tab is visible (or there is no document); else when it becomes visible. An abort rejects. */
+function untilVisible(signal) {
+  if (typeof document === "undefined" || !document.hidden) return Promise.resolve();
+  return new Promise((resolve, reject) => {
+    const done = () => {
+      document.removeEventListener("visibilitychange", onChange);
+      if (signal) signal.removeEventListener("abort", onAbort);
+    };
+    const onChange = () => {
+      if (document.hidden) return;
+      done();
+      resolve();
+    };
+    const onAbort = () => {
+      done();
+      reject(new DOMException("aborted", "AbortError"));
+    };
+    if (signal && signal.aborted) {
+      reject(new DOMException("aborted", "AbortError"));
+      return;
+    }
+    document.addEventListener("visibilitychange", onChange);
+    if (signal) signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
 /**
  * Ask for a job every `every` milliseconds (at least 200) until its state is "done" or "failed", and return that last
  * job: job.result holds the operation's result when done, job.error the reason when failed. onUpdate is called with
- * each answer. An ApiError from the poll (a 404 for a job the service forgot, a lost connection) is thrown.
+ * each answer. An ApiError from the poll (a 404 for a job the service forgot, a lost connection) is thrown. While the tab
+ * is hidden nothing is asked; the first poll after the tab is visible again happens at once, then the period continues.
  */
 export async function pollJob(id, every = 1000, { signal, onUpdate } = {}) {
   const wait = Math.max(200, Number(every) || 1000);
   for (;;) {
+    await untilVisible(signal);
     const current = await job(id, { signal });
     if (onUpdate) onUpdate(current);
     if (current.state === "done" || current.state === "failed") return current;
