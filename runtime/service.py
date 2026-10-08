@@ -7,7 +7,7 @@
 an origin check, and the static files of the interface/ folder of the checkout. A shell like the terminal's: it parses
 a request, calls one operation and returns what it returned. It holds no rule of its own about the work (which words a
 decision takes, what a state leads to, what a hash must equal are the operations layer's and the store's), reads no
-project file, and imports only the operations layer.
+project file, and imports only the operations layer and the kit it shares with the MCP mode (shell_kit.py).
 
 Usage:
   python3 runtime/service.py --project <dir> [--project <dir>]... [--port 8765] [--poll-every 60]
@@ -77,8 +77,6 @@ from __future__ import annotations
 
 import base64
 import binascii
-import datetime
-import hashlib
 import hmac
 import http.server
 import json
@@ -96,7 +94,9 @@ import urllib.parse
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
-import ops  # noqa: E402  (the same folder: the operations layer, the only module of the runtime this one imports)
+import ops  # noqa: E402  (the same folder: the operations layer)
+import shell_kit  # noqa: E402  (the same folder: what this shell shares with the MCP mode; with ops, the only modules of the runtime this one imports)
+from shell_kit import EXPOSED_KINDS, Busy, Stopping, project_id, status_of  # noqa: E402,F401
 
 HOST = "127.0.0.1"
 PREFIX = "/api/v1"
@@ -109,8 +109,6 @@ TOKEN_NAME = "service.token"
 PATH_LIMIT = 2048
 QUERY_VALUE_LIMIT = 512                   # bytes of one query value on a route that names a project file (artifact?path=)
 STATIC_LIMIT = 16 * 1024 * 1024
-JOBS_KEPT = 200                           # finished jobs kept in memory
-STOP_WAIT = 120.0                         # seconds the shutdown waits for the threads of the jobs
 ONCE = ("host", "origin", "authorization", "content-type", "content-length", "transfer-encoding")
 CSP = "default-src 'self'; frame-ancestors 'none'"
 # What a static file is served as. An extension not here is not served (the rule fails closed).
@@ -136,18 +134,9 @@ WORDS = {
     "not_configured": "the project is not configured",
     "busy": "a job that calls a model is running for this project",
     "stopping": "the service is stopping",
-    "internal": "internal error",
+    "internal": shell_kit.INTERNAL,
 }
-STATUS_OF_CODE = {1: (409, "refused"), 2: (400, "usage"), 3: (412, "not_configured")}
 CONTROL = re.compile(r"[\x00-\x1f\x7f]")
-
-
-class Busy(Exception):
-    """A job that calls a model is already running for the project."""
-
-
-class Stopping(Exception):
-    """The service is stopping: no job starts."""
 
 
 class Usage(Exception):
@@ -201,7 +190,6 @@ ROUTES = (
 PARTS = {"p": "[0-9a-f]{12}", "id": "[0-9]{1,9}", "name": "[A-Za-z0-9][A-Za-z0-9._-]{0,63}"}
 COMPILED = tuple((re.compile(PREFIX + re.sub(r"\{(\w+)\}", lambda m: f"(?P<{m.group(1)}>{PARTS[m.group(1)]})", r["pattern"])), r)
                  for r in ROUTES)
-EXPOSED_KINDS = ("int", "str", "text", "flag", "choice")  # the argument kinds a route can carry in JSON
 
 
 def match(method: str, path: str):
@@ -220,12 +208,6 @@ def known_path(path: str) -> bool:
 
 
 # --- the rules of a request ------------------------------------------------------------------------------------------
-
-
-def project_id(path: str) -> str:
-    """The id a project has in a URL: the first 12 hexadecimal characters of the sha256 of its real path. A path never
-    appears in a URL."""
-    return hashlib.sha256(os.path.realpath(path).encode("utf-8")).hexdigest()[:12]
 
 
 def new_token() -> str:
@@ -322,7 +304,7 @@ def _error(status: int, word: str, message: str | None = None) -> tuple:
 
 
 def _ops_error(error) -> tuple:
-    status, word = STATUS_OF_CODE.get(getattr(error, "code", None), (500, "internal"))
+    status, word = status_of(error)
     return _error(status, word, str(error) if word != "internal" else None)
 
 
@@ -410,92 +392,21 @@ def arguments(row: dict, route: dict, params: dict, given: dict, from_query: boo
 # --- the service object, the jobs and the loops ----------------------------------------------------------------------
 
 
-def _default_log(line: str) -> None:
-    print(line, file=sys.stderr, flush=True)
-
-
-class Service:
+class Service(shell_kit.Jobs):
     """What a request is served from: the operations object (the module ops, or a stand-in), the projects, the token,
-    the port, the folder of the static files, the jobs. Holds the token without ever showing it."""
+    the port, the folder of the static files, the jobs (shell_kit.Jobs). Holds the token without ever showing it."""
 
     def __init__(self, ops_module, projects, token: str, port: int, interface_dir=None, log=None):
         if not isinstance(token, str) or len(token) < 32:
             raise ValueError("the token is at least 32 characters")
-        self.ops = ops_module
-        self.projects = [dict(p) for p in projects]
-        self.by_id = {p["id"]: p for p in self.projects}
+        super().__init__(ops_module, projects, log)
         self.token = token
         self.port = int(port)
         self.interface_dir = interface_dir
-        self.log = log or _default_log
         self.address = None      # (host, port) the socket is bound to, set by serve()
-        self.lock = threading.Lock()
-        self.jobs = {}
-        self.counter = 0
-        self.exclusive = {}      # project id -> what holds the project's model slot
-        self.threads = []
-        self.stopping = threading.Event()
 
     def __repr__(self) -> str:
         return f"<Service port={self.port} projects={len(self.projects)}>"
-
-    def running(self, project: str) -> bool:
-        """True when a job of the project is running."""
-        with self.lock:
-            return any(j["state"] == "running" and j["project"] == project for j in self.jobs.values())
-
-
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-
-def _public(job: dict) -> dict:
-    return {key: job[key] for key in ("job", "op", "project", "state", "result", "error", "started_at", "ended_at")}
-
-
-def _run_job(service: Service, job: dict, call, exclusive: bool) -> None:
-    result, error, state = None, None, "done"
-    try:
-        result = call()
-    except Exception as e:  # a job never takes the service down; its failure is the job's
-        state = "failed"
-        if isinstance(e, service.ops.OpsError):
-            status, word = STATUS_OF_CODE.get(getattr(e, "code", None), (500, "internal"))
-            error = {"error": word, "message": str(e) if word != "internal" else WORDS["internal"], "status": status}
-        else:
-            service.log(f"job {job['job']} ({job['op']}) failed:\n" + traceback.format_exc())
-            error = {"error": "internal", "message": WORDS["internal"], "status": 500}
-    with service.lock:
-        job.update(state=state, result=result, error=error, ended_at=_now())
-        if exclusive and service.exclusive.get(job["project"]) == f"job {job['job']}":
-            del service.exclusive[job["project"]]
-        finished = [n for n, j in service.jobs.items() if j["state"] != "running"]
-        for n in finished[:-JOBS_KEPT]:
-            del service.jobs[n]
-
-
-def start_job(service: Service, project: str, op: str, call) -> dict:
-    """Start an operation that calls a model or a platform in a thread and return its job (the public form of rule 8).
-    `project` is the project's id, `op` the verb of its row, `call` a function with no argument that makes the one call.
-    An operation whose row says it calls a model (`model` not false) takes the project's model slot: Busy when another
-    job or the dispatch loop holds it. Stopping when the service is shutting down."""
-    exclusive = bool(service.ops.operations.by_name(op)["model"])
-    with service.lock:
-        if service.stopping.is_set():
-            raise Stopping()
-        if exclusive and project in service.exclusive:
-            raise Busy(f"{service.exclusive[project]} is running for this project: a second one starts when it ends")
-        service.counter += 1
-        job = {"job": service.counter, "op": op, "project": project, "state": "running", "result": None, "error": None,
-               "started_at": _now(), "ended_at": None}
-        service.jobs[job["job"]] = job
-        if exclusive:
-            service.exclusive[project] = f"job {job['job']}"
-        thread = threading.Thread(target=_run_job, args=(service, job, call, exclusive), daemon=True)
-        service.threads = [t for t in service.threads if t.is_alive()] + [thread]
-        shown = _public(job)
-    thread.start()
-    return shown
 
 
 def dispatch_loop(service: Service, every: float, stop, op: str = "dispatch") -> None:
@@ -531,36 +442,8 @@ def dispatch_loop(service: Service, every: float, stop, op: str = "dispatch") ->
 # --- one request -----------------------------------------------------------------------------------------------------
 
 
-def _projects_list(service: Service) -> tuple:
-    """The service's own list: each project with its configuration's hash and whether it was accepted, and, when it was,
-    the number of pending decisions and the task that runs. A project whose configuration is not accepted (or cannot be
-    read) is listed with accepted false, the operation's refusal as `message` and no counts: never refused."""
-    out = []
-    for project in service.projects:
-        entry = {"id": project["id"], "name": project["name"], "config": {"accepted": False}}
-        try:
-            found = service.ops.config(project["path"])
-        except service.ops.OpsError as e:
-            entry["message"] = str(e)
-            out.append(entry)
-            continue
-        entry["config"] = {"sha256": found["sha256"], "accepted": bool(found["accepted"])}
-        try:
-            state = service.ops.status(project["path"])
-        except service.ops.OpsError as e:
-            entry["message"] = str(e)
-        else:
-            entry["open_pending"] = len(state["pending"])
-            entry["running_task"] = next((t["id"] for r in state["requests"] for t in r["tasks"] if t["state"] == "running"),
-                                         None)
-        out.append(entry)
-    return _json(200, {"projects": out})
-
-
 def _job_get(service: Service, params: dict) -> tuple:
-    with service.lock:
-        job = service.jobs.get(int(params["id"]))
-        shown = _public(job) if job else None
+    shown = service.job_shown(int(params["id"]))
     return _json(200, shown) if shown else _error(404, "not_found", "no such job")
 
 
@@ -617,7 +500,7 @@ def _operation(service: Service, route: dict, params: dict, query: str, body: by
     call = lambda: getattr(service.ops, row["call"])(project["path"], **args)  # noqa: E731
     if row.get("job"):
         try:
-            return _json(202, start_job(service, project["id"], row["name"], call))
+            return _json(202, service.start_job(project["id"], row["name"], call)[2])
         except Busy as e:
             return _error(409, "busy", str(e))
         except Stopping:
@@ -670,7 +553,7 @@ def handle(service: Service, method: str, path: str, headers: dict, body: bytes)
         if route["own"] == "projects":
             if query:
                 raise Usage("this route takes no query")
-            return _projects_list(service)
+            return _json(200, service.projects_list())
         if route["own"] == "job":
             if query:
                 raise Usage("this route takes no query")
@@ -764,22 +647,6 @@ class Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
 
-def _projects_of(paths, ops_module):
-    """[{"id", "name", "path", "data_dir"}] for the project folders, each checked with the `config` operation (an
-    unaccepted configuration is not a refusal). Raises the operations layer's OpsError for a folder that is not a
-    configured project."""
-    out, seen = [], set()
-    for given in paths:
-        path = os.path.abspath(given)
-        if project_id(path) in seen:
-            continue
-        found = ops_module.config(path)
-        seen.add(project_id(path))
-        out.append({"id": project_id(path), "name": os.path.basename(os.path.realpath(path)) or path, "path": path,
-                    "data_dir": found["data_dir"]})
-    return out
-
-
 def serve(projects, port=8765, poll_every=60.0, dispatch_every=None, token_file=None, interface_dir=None,
           ops_module=None, stop=None, ready=None, log=None, out=None, server_class=None) -> int:
     """Check every project with the `config` operation, bind 127.0.0.1:<port>, write the token file, print the one
@@ -788,10 +655,10 @@ def serve(projects, port=8765, poll_every=60.0, dispatch_every=None, token_file=
     (0: not at all), the `dispatch` loop every `dispatch_every` seconds when it is given. Returns the exit code.
     `ready(service)` is called once the socket listens, `server_class` replaces the HTTP server (both are the tests')."""
     ops_module = ops_module or ops
-    log = log or _default_log
+    log = log or shell_kit.default_log
     out = out or sys.stdout
     try:
-        found = _projects_of(projects, ops_module)
+        found = shell_kit.projects_of(projects, ops_module)
         if not found:
             raise ops_module.OpsError("no project was given", 2)
     except ops_module.OpsError as e:
@@ -845,7 +712,7 @@ def serve(projects, port=8765, poll_every=60.0, dispatch_every=None, token_file=
         if serving.ident is not None:  # shutdown() waits for serve_forever, which must have been started
             server.shutdown()
         server.server_close()
-        left = _end_runs(service, threads)
+        left = service.end_runs(threads)
         if left:
             log(f"stopped with {left} job thread(s) still ending")
         try:
@@ -855,24 +722,6 @@ def serve(projects, port=8765, poll_every=60.0, dispatch_every=None, token_file=
         for sig, handler in previous.items():
             signal.signal(sig, handler)
     return 0
-
-
-def _end_runs(service: Service, threads, wait: float = STOP_WAIT) -> int:
-    """End the runs this process started and wait for the threads that held them; the number still alive after `wait`
-    seconds. ops.stop_runs is called at least once and is waited for; it is called again while a thread lives, because a
-    job that was starting its run when the first call ended may have begun one."""
-    deadline = time.monotonic() + wait
-    while True:
-        try:
-            service.ops.stop_runs()
-        except Exception:
-            service.log("stop_runs failed:\n" + traceback.format_exc())
-        with service.lock:
-            alive = [t for t in threads + service.threads if t.is_alive() and t is not threading.current_thread()]
-        if not alive or time.monotonic() > deadline:
-            return len(alive)
-        for thread in alive:
-            thread.join(0.5)
 
 
 # --- the command -----------------------------------------------------------------------------------------------------

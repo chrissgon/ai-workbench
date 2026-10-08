@@ -218,11 +218,13 @@ ALLOWED = (
     ("evals/**", NOT_RUNTIME),
     # layer 5, adapters: never the runtime, never the lab
     ("adapters/**", NOT_RUNTIME_OR_LAB),
-    # layer 7, the shells: the operations layer only
+    # layer 7, the shells: the operations layer only; the two network-free shells (the local service and the MCP mode)
+    # may also import the kit they share, which is handed the operations object and imports nothing of runtime/
     ("runtime/cli.py", ("runtime/ops.py",)),
     ("runtime/chat.py", ("runtime/ops.py",)),
-    ("runtime/service.py", ("runtime/ops.py",)),
-    ("runtime/mcp.py", ("runtime/ops.py",)),
+    ("runtime/service.py", ("runtime/ops.py", "runtime/shell_kit.py")),
+    ("runtime/mcp.py", ("runtime/ops.py", "runtime/shell_kit.py")),
+    ("runtime/shell_kit.py", ()),
     # the handlers: the resolver of providers and the shell's verbs, nothing imported from runtime/
     # a handler reaches the resolver, the terminal shell, the shared credential formats and its sibling handlers
     ("runtime/handlers/*.py", ("providers/resolve.py", "runtime/cli.py", "scripts/redact.py", "runtime/handlers/")),
@@ -358,8 +360,12 @@ def test_the_rules_the_diagram_states_hold_for_the_code_as_it_is():
             assert not target.startswith("runtime/"), (file, target)
         if file.startswith("runtime/") and target.startswith("evals/"):
             assert file == "runtime/lab.py", (file, target)
-        if file in ("runtime/cli.py", "runtime/chat.py", "runtime/service.py", "runtime/mcp.py"):
+        if file in ("runtime/cli.py", "runtime/chat.py"):
             assert target == "runtime/ops.py", (file, target)
+        if file in ("runtime/service.py", "runtime/mcp.py"):  # a shell imports only ops.py and shell_kit.py
+            assert target in ("runtime/ops.py", "runtime/shell_kit.py"), (file, target)
+        if file == "runtime/shell_kit.py":  # the kit imports nothing of the runtime: it is handed the operations object
+            assert not target.startswith("runtime/"), (file, target)
         if file.startswith("runtime/handlers/") and (file, target) not in TOLERATED:
             assert target in ("providers/resolve.py", "runtime/cli.py", "scripts/redact.py") \
                 or target.startswith("runtime/handlers/"), (file, target)
@@ -430,6 +436,9 @@ def test_the_allowed_rules_say_what_the_diagram_says():
     assert allowed("runtime/service.py", "runtime/ops.py") and not allowed("runtime/service.py", "providers/store/sqlite.py")
     assert not allowed("runtime/service.py", "runtime/lab.py") and not allowed("runtime/service.py", "runtime/plan.py")
     assert allowed("runtime/mcp.py", "runtime/ops.py") and not allowed("runtime/mcp.py", "runtime/service.py")
+    assert allowed("runtime/mcp.py", "runtime/shell_kit.py") and allowed("runtime/service.py", "runtime/shell_kit.py")
+    assert not allowed("runtime/cli.py", "runtime/shell_kit.py") and not allowed("runtime/chat.py", "runtime/shell_kit.py")
+    assert not allowed("runtime/shell_kit.py", "runtime/ops.py") and not allowed("runtime/shell_kit.py", "providers/store/sqlite.py")
     assert not allowed("runtime/mcp.py", "providers/store/sqlite.py") and not allowed("runtime/mcp.py", "runtime/lab.py")
     assert allowed("runtime/handlers/h.py", "runtime/cli.py") and not allowed("runtime/handlers/h.py", "runtime/ops.py")
     assert not allowed("scripts/doctor.py", "runtime/ops.py")

@@ -7,7 +7,8 @@
 standard input and output. A shell like the terminal's and the local service's: it parses a message, calls one
 operation and returns what it returned. It holds no rule of its own about the work (which words a decision takes, what
 a state leads to, what a hash must equal, which channel may approve an effect are the operations layer's and the
-store's), reads no project file, and imports only the operations layer. It is a client's tool, not a person's: the
+store's), reads no project file, and imports only the operations layer and the kit it shares with the local service
+(shell_kit.py). It is a client's tool, not a person's: the
 messaging apps an MCP client brings are the weaker trust surface the channel rule exists for.
 
 Usage:
@@ -65,8 +66,6 @@ Standard library only. Runs on Python 3.9.
 """
 from __future__ import annotations
 
-import datetime
-import hashlib
 import io
 import json
 import os
@@ -78,7 +77,9 @@ import traceback
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
-import ops  # noqa: E402  (the same folder: the operations layer, the only module of the runtime this one imports)
+import ops  # noqa: E402  (the same folder: the operations layer)
+import shell_kit  # noqa: E402  (the same folder: what this shell shares with the local service; with ops, the only modules of the runtime this one imports)
+from shell_kit import EXPOSED_KINDS, project_id, projects_of as _projects_of  # noqa: E402,F401
 
 CHANNEL = "mcp"
 SERVER_NAME = "workbench-runtime"
@@ -86,9 +87,6 @@ SERVER_VERSION = "1"
 PROTOCOLS = ("2025-06-18", "2025-03-26", "2024-11-05")  # newest first; the client's is answered when it is one of these
 LINE_LIMIT = 1024 * 1024                                # bytes of one message (the service's body limit)
 GRACE = 1.0                                             # seconds a started job is waited for before the job is returned
-JOBS_KEPT = 200                                         # finished jobs kept in memory
-STOP_WAIT = 120.0                                       # seconds the shutdown waits for the threads of the jobs
-EXPOSED_KINDS = ("int", "str", "text", "flag", "choice")  # the argument kinds a tool can carry in JSON
 OWN_TOOLS = ("projects", "job")
 INSTRUCTIONS = (
     "Tools of the ai-workbench task runtime. Read the project with status, pending, task, progress and the others; "
@@ -98,11 +96,10 @@ INSTRUCTIONS = (
     "here, and a command of that kind typed into say is refused."
 )
 REFUSAL_WORDS = ("refused", "not_configured", "busy")  # returned as a tool result with isError, not as an error object
-STATUS_OF_CODE = {1: (409, "refused"), 2: (400, "usage"), 3: (412, "not_configured")}
 WORDS = {
     "usage": "the request is malformed", "refused": "the operation refused", "not_configured": "the project is not configured",
     "not_found": "no such tool, project or job", "busy": "a job that calls a model is running for this project",
-    "stopping": "the server is stopping", "internal": "internal error",
+    "stopping": "the server is stopping", "internal": shell_kit.INTERNAL,
 }
 # JSON-RPC error codes (the specification's), and the one the MCP specification adds.
 PARSE_ERROR, INVALID_REQUEST, METHOD_NOT_FOUND, INVALID_PARAMS, INTERNAL_ERROR = -32700, -32600, -32601, -32602, -32603
@@ -134,20 +131,6 @@ class Fail(Exception):
 
 def usage(message: str) -> Fail:
     return Fail(INVALID_PARAMS, message, "usage", 400)
-
-
-def project_id(path: str) -> str:
-    """The id a project has here: the first 12 hexadecimal characters of the sha256 of its real path (the local
-    service's, so the two shells name a project alike). A path is never an argument of a tool."""
-    return hashlib.sha256(os.path.realpath(path).encode("utf-8")).hexdigest()[:12]
-
-
-def _now() -> str:
-    return datetime.datetime.now(datetime.timezone.utc).isoformat()
-
-
-def _default_log(line: str) -> None:
-    print(line, file=sys.stderr, flush=True)
 
 
 # --- the tools, read from the table ----------------------------------------------------------------------------------
@@ -208,26 +191,23 @@ def own_tools() -> list:
 # --- the server object, the jobs -------------------------------------------------------------------------------------
 
 
-class Server:
-    """What a message is served from: the operations object (the module ops, or a stand-in), the projects, the jobs.
-    Holds no token: a pipe has one reader."""
+class Server(shell_kit.Jobs):
+    """What a message is served from: the operations object (the module ops, or a stand-in), the projects, the jobs
+    (shell_kit.Jobs). Holds no token: a pipe has one reader."""
 
     def __init__(self, ops_module, projects, log=None, grace: float = GRACE):
-        self.ops = ops_module
-        self.projects = [dict(p) for p in projects]
-        self.by_id = {p["id"]: p for p in self.projects}
-        self.log = log or _default_log
+        super().__init__(ops_module, projects, log)
         self.grace = grace
-        self.lock = threading.Lock()
-        self.jobs = {}
-        self.counter = 0
-        self.exclusive = {}      # project id -> the job that holds the project's model slot
-        self.threads = []
-        self.stopping = threading.Event()
         self.initialized = False
 
     def __repr__(self) -> str:
         return f"<McpServer projects={len(self.projects)}>"
+
+    def public(self, job: dict) -> dict:
+        out = super().public(job)
+        if job["state"] == "running":
+            out["poll"] = {"tool": "job", "arguments": {"job": job["job"]}}
+        return out
 
     def ids(self) -> list:
         return [p["id"] for p in self.projects]
@@ -235,66 +215,6 @@ class Server:
     def tools(self) -> list:
         ids = self.ids()
         return [tool_of(r, ids) for r in operation_rows(self.ops)] + own_tools()
-
-
-def _public(job: dict) -> dict:
-    out = {key: job[key] for key in ("job", "op", "project", "state", "result", "error", "started_at", "ended_at")}
-    if job["state"] == "running":
-        out["poll"] = {"tool": "job", "arguments": {"job": job["job"]}}
-    return out
-
-
-def _word_of(error) -> tuple:
-    """(status, word) of an exception of the operations layer: its code, as the local service maps it."""
-    return STATUS_OF_CODE.get(getattr(error, "code", None), (500, "internal"))
-
-
-def _run_job(server: Server, job: dict, call, exclusive: bool) -> None:
-    result, error, state = None, None, "done"
-    try:
-        result = call()
-    except Exception as e:  # a job never takes the server down; its failure is the job's
-        state = "failed"
-        if isinstance(e, server.ops.OpsError):
-            status, word = _word_of(e)
-            error = {"error": word, "message": str(e) if word != "internal" else WORDS["internal"], "status": status}
-        else:
-            server.log(f"job {job['job']} ({job['op']}) failed:\n" + traceback.format_exc())
-            error = {"error": "internal", "message": WORDS["internal"], "status": 500}
-    with server.lock:
-        job.update(state=state, result=result, error=error, ended_at=_now())
-        if exclusive and server.exclusive.get(job["project"]) == job["job"]:
-            del server.exclusive[job["project"]]
-        finished = [n for n, j in server.jobs.items() if j["state"] != "running"]
-        for n in finished[:-JOBS_KEPT]:
-            del server.jobs[n]
-
-
-def start_job(server: Server, project: str, op: str, call) -> tuple:
-    """Start an operation that calls a model or a platform in a thread; return (its public job, its thread). An
-    operation whose row says it calls a model takes the project's model slot: `busy` while another job holds it."""
-    exclusive = bool(server.ops.operations.by_name(op)["model"])
-    with server.lock:
-        if server.stopping.is_set():
-            raise Fail(SERVER_ERROR, WORDS["stopping"], "stopping", 503)
-        if exclusive and project in server.exclusive:
-            raise Fail(SERVER_ERROR, f"job {server.exclusive[project]} is running for this project: a second one starts when "
-                                     "it ends", "busy", 409)
-        server.counter += 1
-        job = {"job": server.counter, "op": op, "project": project, "state": "running", "result": None, "error": None,
-               "started_at": _now(), "ended_at": None}
-        server.jobs[job["job"]] = job
-        if exclusive:
-            server.exclusive[project] = job["job"]
-        thread = threading.Thread(target=_run_job, args=(server, job, call, exclusive), daemon=True)
-        server.threads = [t for t in server.threads if t.is_alive()] + [thread]
-    thread.start()
-    return job, thread
-
-
-def _job_value(server: Server, job: dict) -> dict:
-    with server.lock:
-        return _public(job)
 
 
 # --- one tool call ---------------------------------------------------------------------------------------------------
@@ -347,32 +267,6 @@ def _project_of(server: Server, given: dict) -> dict:
     return server.by_id[wanted]
 
 
-def _projects_list(server: Server) -> dict:
-    """The server's own list: each project with its configuration's hash and whether it was accepted, and, when it was,
-    the number of pending decisions and the task that runs. A project whose configuration is not accepted (or cannot be
-    read) is listed with accepted false and the operation's refusal as `message`: never refused."""
-    out = []
-    for project in server.projects:
-        entry = {"id": project["id"], "name": project["name"], "config": {"accepted": False}}
-        try:
-            found = server.ops.config(project["path"])
-        except server.ops.OpsError as e:
-            entry["message"] = str(e)
-            out.append(entry)
-            continue
-        entry["config"] = {"sha256": found["sha256"], "accepted": bool(found["accepted"])}
-        try:
-            state = server.ops.status(project["path"])
-        except server.ops.OpsError as e:
-            entry["message"] = str(e)
-        else:
-            entry["open_pending"] = len(state["pending"])
-            entry["running_task"] = next((t["id"] for r in state["requests"] for t in r["tasks"] if t["state"] == "running"),
-                                         None)
-        out.append(entry)
-    return {"projects": out}
-
-
 def _fail_of(word: str, status: int, message: str) -> Fail:
     """The protocol error of a word of the service: usage is an invalid parameter, internal an internal error, any other
     refusal a server error; the word and the status travel in `data`."""
@@ -389,16 +283,14 @@ def call_tool(server: Server, name, given) -> dict:
     if name == "projects":
         if given:
             raise usage("this tool takes no argument")
-        return _text(_projects_list(server))
+        return _text(server.projects_list())
     if name == "job":
         if set(given) != {"job"}:
             raise usage("this tool takes job, a whole number")
         number = given["job"]
         if type(number) is not int or number < 0:
             raise usage("job must be a whole number of 0 or more")
-        with server.lock:
-            job = server.jobs.get(number)
-            shown = _public(job) if job else None
+        shown = server.job_shown(number)
         if shown is None:
             raise Fail(SERVER_ERROR, "no such job", "not_found", 404)
         return _text(shown)
@@ -417,15 +309,20 @@ def call_tool(server: Server, name, given) -> dict:
         try:
             if not row.get("job"):
                 return _text(call())
-            job, thread = start_job(server, project["id"], row["name"], call)
+            try:
+                job, thread, _ = server.start_job(project["id"], row["name"], call)
+            except shell_kit.Stopping:
+                raise Fail(SERVER_ERROR, WORDS["stopping"], "stopping", 503) from None
+            except shell_kit.Busy as e:
+                raise Fail(SERVER_ERROR, str(e), "busy", 409) from None
             thread.join(server.grace)
-            shown = _job_value(server, job)
+            shown = server.job_shown(job["job"])
             if shown["state"] == "failed":  # refused at once (a refusal of the rule, a wrong hash): the refusal itself
                 e = shown["error"]
                 raise _fail_of(e["error"], e["status"], e["message"])
             return _text(shown)
         except server.ops.OpsError as e:
-            status, word = _word_of(e)
+            status, word = shell_kit.status_of(e)
             raise _fail_of(word, status, str(e)) from None
     except Fail as refusal:
         if refusal.word in REFUSAL_WORDS:  # the operation's "no" is a result the model reads, not a fault of the protocol
@@ -571,45 +468,12 @@ def serve_stream(server: Server, stdin, stdout) -> None:
 # --- the process -----------------------------------------------------------------------------------------------------
 
 
-def _projects_of(paths, ops_module):
-    """[{"id", "name", "path"}] for the project folders, each checked with the `config` operation (an unaccepted
-    configuration is not a refusal). Raises the operations layer's OpsError for a folder that is not a configured
-    project."""
-    out, seen = [], set()
-    for given in paths:
-        path = os.path.abspath(given)
-        if project_id(path) in seen:
-            continue
-        ops_module.config(path)
-        seen.add(project_id(path))
-        out.append({"id": project_id(path), "name": os.path.basename(os.path.realpath(path)) or path, "path": path})
-    return out
-
-
-def _end_runs(server: Server, wait: float = STOP_WAIT) -> int:
-    """End the runs this process started and wait for the threads that held them; the number still alive after `wait`
-    seconds. ops.stop_runs is called at least once and is waited for; it is called again while a thread lives, because a
-    job that was starting its run when the first call ended may have begun one."""
-    deadline = time.monotonic() + wait
-    while True:
-        try:
-            server.ops.stop_runs()
-        except Exception:
-            server.log("stop_runs failed:\n" + traceback.format_exc())
-        with server.lock:
-            alive = [t for t in server.threads if t.is_alive() and t is not threading.current_thread()]
-        if not alive or time.monotonic() > deadline:
-            return len(alive)
-        for thread in alive:
-            thread.join(0.5)
-
-
 def serve(projects, stdin=None, stdout=None, ops_module=None, log=None, grace: float = GRACE) -> int:
     """Check every project with the `config` operation, then answer messages from `stdin` on `stdout` until the input ends
     or a signal arrives (Stop); then end the runs the jobs started (ops.stop_runs, which is waited for). Returns the exit
     code. Nothing is written to `stdout` but JSON-RPC messages."""
     ops_module = ops_module or ops
-    log = log or _default_log
+    log = log or shell_kit.default_log
     try:
         found = _projects_of(projects, ops_module)
         if not found:
@@ -626,7 +490,7 @@ def serve(projects, stdin=None, stdout=None, ops_module=None, log=None, grace: f
     finally:
         ENDING.set()
         server.stopping.set()
-        left = _end_runs(server)
+        left = server.end_runs()
         if left:
             log(f"stopped with {left} job thread(s) still ending")
     return 0

@@ -556,7 +556,7 @@ def test_the_start_ends_the_runs_the_jobs_started_before_it_returns(world):
 # --- the file itself --------------------------------------------------------------------------------------------------
 
 
-def test_the_shell_imports_only_the_operations_layer_and_the_standard_library_and_holds_no_token():
+def test_the_shell_imports_only_the_operations_layer_the_shell_kit_and_the_standard_library_and_holds_no_token():
     source = (st.RUNTIME / "mcp.py").read_text(encoding="utf-8")
     tree_ = ast.parse(source)
     imported = set()
@@ -566,7 +566,7 @@ def test_the_shell_imports_only_the_operations_layer_and_the_standard_library_an
         elif isinstance(node, ast.ImportFrom):
             imported.add((node.module or "").split(".")[0])
     local = {n[:-3] for n in os.listdir(st.RUNTIME) if n.endswith(".py")}
-    assert imported & local == {"ops"} and imported - local <= STANDARD_LIBRARY
+    assert imported & local == {"ops", "shell_kit"} and imported - local <= STANDARD_LIBRARY
     assert "secrets" not in imported and "hmac" not in imported  # there is no token to make or compare
     assert "http" not in imported and "socket" not in imported  # a pipe, not a port
 
