@@ -18,8 +18,9 @@ returned and sends what the person typed or clicked.
 | `js/token.js`, `js/dom.js` | The token for this session; building elements (strings become text, a style or an event attribute is refused). |
 | `js/frame/` | The shared frame of every scene screen: header (back, breadcrumbs, project switcher), KPI cards, waiting list, tracking bar, panel shell, sheet (a phone's lists), icons. |
 | `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time, the opening of a building, the camera moving into a room, the work-order tag moving), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `labels.js`, `cull.js`, `fit.js`, `tween.js` (the camera move as a state machine), and one builder per scene kind: `city.js`, `building.js` (the cutaway), `room.js` (the Floor's room), with `furniture.js` (desk, chair, tray, sheet, table, cabinet, lamp, bookshelf, door), `figure.js` (the agent in its three poses and the typing motion) and `plates.js` (the floor plates, the board, tag and door labels, and the arithmetic that stacks the plates). |
-| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City), `building.js` (the Building: the cutaway, the floors list, the project's facts), `floor.js` (the Floor: the room and the panel with the tabs Agent, Inbox and Desk) and `placeholder.js` (the Lobby and the Control room until their packages). |
+| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City), `lobby.js` with `lobby-*.js` (the Lobby: the conversation, the request form, the composer, the tabs, the cancel dialog, the room), `building.js` (the Building: the cutaway, the floors list, the project's facts), `floor.js` (the Floor: the room and the panel with the tabs Agent, Inbox and Desk) and `placeholder.js` (the Lobby and the Control room until their packages). |
 | `js/floor/` | The Floor's panel and the decision cards, the only files that send a write: `cards.js` (effect, acceptance, question, review and plan cards, the request line and the cancel dialog), `inbox.js`, `agent-tab.js` (set mode, retry, hand a file over), `desk-tab.js`, `viewer.js` (a document as plain text), `widgets.js`, and `actions.js`, the one object that names every write of the client; the cards and the tab are handed it, so a test can give them a fake client. |
+| `js/cards/` | The decision cards the Lobby draws under a message: `plan.js` (the plan card: the table of tasks, the limits, the whole hash, "Approve this plan" sending exactly the hash it shows) and `plan-rows.js` (what it shows, worked out from the decision's payload). |
 | `js/three.js` | The one place the 3D library is imported from (a relative re-export); the scene uses it. |
 | `vendor/three/`, `vendor/<library>/` | The two third-party libraries, copied unchanged, each folder with a README that records the package, the exact version, the licence and the sha256 of every file. |
 
@@ -79,12 +80,12 @@ The Building (the floors separate once when it opens, the figure of a working ag
 to the next floor once) and the Floor (the camera moves into the room once, the typing, a waiting marker dropping in) follow
 the same rules. The plates beside the building are stacked so none overlaps another and none is cut by the tracking bar; when
 six or more would not fit the free height they all become the compact form (the name row and the meters) and the list in the
-panel keeps every fact. The Lobby and the Control room are WP-9.4 and WP-9.5: they add a builder to `BUILDERS` of `engine.js`
+panel keeps every fact. The Lobby (WP-9.4: its room is the Floor's `room` scene with a door) and the Control room (WP-9.5) add a builder to `BUILDERS` of `engine.js`
 and a module under `js/views/`, read more routes through `js/api.js`, and edit no vendored file.
 
 ## What the Floor sends
 
-Only `js/floor/` sends a write, through `actions.js`: `answer`, `release`, `approve`, `reject`, `verdict`, `cancel`, `setMode`,
+Only `js/floor/`, the Lobby's `views/lobby*.js` and `cards/` send a write, through `actions.js`: `answer`, `release`, `approve`, `reject`, `verdict`, `cancel`, `setMode`,
 `retry` and `handOver` (with `pollJob` for a job). A card draws one button per word of its decision's `actions` and none for a
 word it does not know; an effect or a plan is approved with the hash the card shows, read back from the page's own text at the
 click, and a hash that is not the decision's is refused before any request; a blocked change set cannot send a release from
