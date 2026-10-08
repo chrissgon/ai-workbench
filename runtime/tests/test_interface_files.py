@@ -257,7 +257,9 @@ def test_every_client_function_the_screens_call_exists_and_the_city_only_reads()
         assert name in exported or name == "onAuthFailure", f"{sorted(files)} call api.{name}, which api.js does not export"
     # WP-9.3b: the decision cards, the Agent tab and the request line send the page's writes, and they live in js/floor/ (their
     # client is handed to them through their environment); the City, the Building, the frame and the views only read.
-    assert not (set(used_outside_floor) & writes), f"only js/floor/ writes: {sorted(set(used_outside_floor) & writes)}"
+    LOBBY_WRITERS = {p.name for p in (INTERFACE / "js" / "views").glob("lobby*.js")} | {p.name for p in (INTERFACE / "js" / "cards").glob("*.js")}
+    lobby_only = {n: {f for f in files if f not in LOBBY_WRITERS} for n, files in used_outside_floor.items()}
+    assert not ({n for n, files in lobby_only.items() if files} & writes), f"only js/floor/ and the Lobby's modules write: {sorted(n for n, f in lobby_only.items() if f and n in writes)}"
 
 
 def test_the_page_reads_every_five_seconds_while_visible_and_never_while_hidden():
@@ -355,6 +357,38 @@ def test_escape_leaves_a_draft_alone_and_leaving_the_inbox_keeps_a_card_whose_jo
     inbox = (INTERFACE / "js" / "floor" / "inbox.js").read_text(encoding="utf-8")
     cards = (INTERFACE / "js" / "floor" / "cards.js").read_text(encoding="utf-8")
     assert "isBusy()" in inbox and "isBusy()" in cards
+
+
+# --- the Lobby (WP-9.4): its own checks are in test_interface_lobby.py; these are the rules read from the files --------------------
+
+
+def test_the_lobby_calls_only_routes_of_the_service_and_every_hash_it_links_to_is_a_form_of_the_router():
+    names = ("lobby.js", "lobby-actions.js", "lobby-request.js", "plan.js")
+    files = [p for p in own_files() if p.name in names]
+    assert {p.name for p in files} == set(names), "the Lobby's modules are where the package puts them"
+    exported = set(re.findall(r"^export (?:async )?function (\w+)", CLIENT.read_text(encoding="utf-8"), re.M))
+    wanted = {"say", "conversation", "request", "route", "cancel", "approve", "reject", "flows", "task", "pollJob"}
+    assert wanted <= exported, "the client has the Lobby's calls"
+    routes = {(r["method"], r["pattern"]) for r in service.ROUTES}
+    for route in (("POST", "/projects/{p}/conversation"), ("GET", "/projects/{p}/conversation"), ("POST", "/projects/{p}/requests"),
+                  ("POST", "/projects/{p}/requests/{id}/route"), ("POST", "/projects/{p}/requests/{id}/cancel"), ("GET", "/projects/{p}/flows"),
+                  ("GET", "/projects/{p}/tasks/{id}"), ("POST", "/projects/{p}/pending/{id}/approve"), ("POST", "/projects/{p}/pending/{id}/reject")):
+        assert route in routes, f"{route} is not a route of the service"
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for target in re.findall(r'href: ([^,}]+)', text):
+            assert target.strip().startswith("router.") or target.strip().startswith('"#'), f"{path.name}: a link that is not built by the router: {target}"
+
+
+def test_the_lobby_shows_what_came_as_text_only_and_keeps_no_state_outside_its_view():
+    for name in ("lobby.js", "lobby-thread.js", "lobby-request.js", "lobby-composer.js", "lobby-form.js", "plan.js"):
+        path = next(p for p in own_files() if p.name == name)
+        text = path.read_text(encoding="utf-8")
+        assert "innerHTML" not in text and "insertAdjacentHTML" not in text and "createContextualFragment" not in text, name
+        assert not re.search(r"\.style\b|setAttribute\(\s*[\"']style", text), f"{name} writes no style"
+    lobby = (INTERFACE / "js" / "views" / "lobby.js").read_text(encoding="utf-8")
+    assert "setInterval" not in lobby, "the conversation is read by a timeout that the visibility rule can stop"
+    assert "localStorage" not in lobby and "sessionStorage" not in lobby
 
 
 # --- the Control room (WP-9.5): what it calls, and that every class it uses is drawn by the stylesheet ---------------------------

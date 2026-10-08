@@ -3,10 +3,10 @@
 // a lamp and the wall board. It builds a group from a plain model and returns the hits (the agent, the desk, the tray, the
 // cabinet, the board and each sheet), the board's label anchor, the marker of a waiting figure and the typing motion.
 
-import { chair, cabinet, desk, bookshelf, sheet, table, tray, wallLamp } from "./furniture.js";
+import { chair, cabinet, desk, door, bookshelf, sheet, table, tray, wallLamp } from "./furniture.js";
 import { figure } from "./figure.js";
 import { plant } from "./props.js";
-import { boardNode } from "./plates.js";
+import { boardNode, doorNode } from "./plates.js";
 
 export const W = 6.4;
 export const D = 4.8;
@@ -82,6 +82,10 @@ export function buildRoom(kit, model) {
   plant(kit, f, 0.5, 2.0, 0.9);
 
   const labels = [];
+  if (model.door) {   // the Lobby's room: the door to the Control room on the left wall (scene.md 5.1)
+    hits.push({ object: door(kit, f, -W / 2 + 0.13, 1.2), id: "lobby-door", tip: model.tips.door || "Control room · skills, costs, connections" });
+    labels.push({ id: "door-label", kind: "door", rank: 5, text: "Control room", decisions: 0, running: false, anchor: new THREE.Vector3(-W / 2 + 0.2, 3.0, 1.2), make: doorNode });
+  }
   if (model.board) {
     labels.push({
       id: "board-label", kind: "board", rank: 0, title: model.board.title, lines: model.board.lines, dot: model.board.dot, decisions: 0, running: false,

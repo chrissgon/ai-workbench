@@ -13,6 +13,7 @@ import { createBuildingView } from "./views/building.js";
 import { createCityView } from "./views/city.js";
 import { createControlView } from "./views/control.js";
 import { createFloorView } from "./views/floor.js";
+import { createLobbyView } from "./views/lobby.js";
 import { createPlaceholder } from "./views/placeholder.js";
 import { showTokenPrompt } from "./views/token-prompt.js";
 
@@ -180,6 +181,9 @@ function ensureView(route) {
   } else if (route.screen === "control") {
     const control = createControlView(frame);
     view = { key, screen: "control", control, dispose: () => control.dispose() };
+  } else if (route.screen === "lobby") {
+    const lobby = createLobbyView(frame, { project: route.project, onChanged: () => poll() });
+    view = { key, screen: "lobby", lobby, dispose: () => lobby.dispose() };
   } else {
     const placeholder = createPlaceholder(frame, route);
     view = { key, screen: route.screen, placeholder, dispose: () => placeholder.el.remove() };
@@ -232,6 +236,10 @@ function render() {
     const detail = routeProject ? snapshot.details[routeProject.id] : null;
     const accepted = Boolean(routeProject && routeProject.config && routeProject.config.accepted) && !(detail && detail.error && detail.error.status === 412);
     view.control.update({ loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted, projectId: route.project, tab: route.tab });
+  } else if (view.screen === "lobby") {
+    frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
+    view.lobby.update({ snapshot, route, now, projectName: routeProject ? routeProject.name : "" });
+    if (!known) frame.notice({ kind: "error", text: "The service has no such project." });
   } else {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     if (view.screen === "building") view.building.update({ snapshot, route, now });
