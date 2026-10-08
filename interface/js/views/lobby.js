@@ -57,6 +57,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   let lastOpened = null;              // the document the person opened last: the focus goes back to its row when the viewer closes
   let leftInbox = true;               // the Inbox was left since it was last drawn: a resolved card goes
   let reloaded = null;                // the page's reload stamp last seen: when it moves the store changed, and everything shown is read again
+  let changes = 0;                    // how many times it moved: a read that began before the last move is not fresh when it ends
 
   // --- the pieces ---------------------------------------------------------------------------------------------------------
   const panel = createPanel({ title: "Lobby · Planning agent", subtitle: "", icon: "message-square", tone: "theme", width: "lobby" });
@@ -171,16 +172,21 @@ export function createLobbyView(frame, { project, onChanged }) {
 
   function readBody(id, sig) {
     if (reading.has(id)) return;
+    const began = changes;
     const run = (async () => {
       try {
         const body = await api.task(project, id, { signal });
-        bodies.set(id, { sig, body });
+        bodies.set(id, { sig: began === changes ? sig : null, body });     // null: the store changed meanwhile, read again below
         redraw();
       } catch (e) {
         if (e && e.name === "AbortError") return;
         if (e && e.status === 404) bodies.delete(id);
       } finally {
         reading.delete(id);
+        if (began !== changes && !disposed) {
+          const status = last.snapshot && last.snapshot.details[project] && last.snapshot.details[project].status;
+          if (status) readBodies(status.requests || [], status.pending || []);
+        }
       }
     })();
     reading.set(id, run);
@@ -395,9 +401,11 @@ export function createLobbyView(frame, { project, onChanged }) {
       if (disposed) return;
       last = { snapshot, route, now, projectName: projectName || "" };
       if (reloaded !== null && reload !== reloaded) {     // the store changed: everything shown is stale, whatever its age
+        changes += 1;
         invalidate();
         desk.reload();
         agent.reload();
+        viewer.reload();
         readConversation();
       }
       reloaded = reload;

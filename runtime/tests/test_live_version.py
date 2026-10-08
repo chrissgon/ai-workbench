@@ -46,8 +46,7 @@ def test_reading_changes_nothing_so_the_number_stays_while_nobody_writes(tree):
     first = ops.version(path)
     for read in (ops.status, ops.agents, ops.pending, ops.flows, ops.artifacts, ops.conversation, ops.config, ops.skills):
         read(path)
-    again = ops.version(path)
-    assert again["version"] == first["version"] and again["changed_at"] == first["changed_at"]
+    assert ops.version(path)["version"] == first["version"]     # changed_at is the file's time: a checkpoint can move it, so it is not compared
 
 
 def test_the_number_grows_on_every_kind_of_write(tree):
@@ -103,24 +102,54 @@ def test_it_refuses_a_configuration_nobody_accepted_yet_as_every_operation_does(
     assert type(ops.version(path)["version"]) is int
 
 
-def test_it_reads_the_accepted_hash_and_the_header_and_nothing_else(tree, monkeypatch):
+def test_it_takes_no_write_lock_and_runs_four_statements_from_connecting_to_the_answer(tree, monkeypatch):
     path = str(tree["project"])
     planned(tree, "single")
     store = ops.store_module()
     statements = []
-    real = store.connect
+    real = store.sqlite3.connect
 
-    def traced(db_path):
-        conn = real(db_path)
+    def traced(*args, **kwargs):          # the trace is set before the store's own pragmas run: the whole call is seen
+        conn = real(*args, **kwargs)
         conn.set_trace_callback(statements.append)
         return conn
 
-    monkeypatch.setattr(store, "connect", traced)
+    monkeypatch.setattr(store.sqlite3, "connect", traced)
     monkeypatch.setattr(store, "init_db", lambda *a, **k: pytest.fail("a read at rest migrates nothing"))
     ops.version(path)
-    reads = [s for s in statements if s not in ("BEGIN IMMEDIATE", "COMMIT")]
-    assert len(reads) == 2 and reads[0].startswith("SELECT value FROM cursors") and reads[1] == "PRAGMA user_version", reads
-    assert not any(s.split()[0] in ("INSERT", "UPDATE", "DELETE", "CREATE", "ALTER") for s in statements)
+    assert [s.split(" '")[0] for s in statements] == ["PRAGMA busy_timeout = 10000", "PRAGMA foreign_keys = ON",
+                                                      "SELECT value FROM cursors WHERE name =", "PRAGMA user_version"], statements
+    assert not any(s.startswith(("BEGIN", "COMMIT", "INSERT", "UPDATE", "DELETE", "CREATE", "ALTER")) for s in statements), "no write lock"
+
+
+def test_it_works_on_a_store_that_is_read_only_because_it_never_writes(tree):
+    path = str(tree["project"])
+    planned(tree, "single")
+    db = ops.project_config.load(path)["store_db"]
+    held = ops.store_module().connect(db)
+    held.execute("BEGIN IMMEDIATE")        # a writer that holds the write lock: a read of the signal does not queue behind it
+    try:
+        import time
+        started = time.monotonic()
+        assert type(ops.version(path)["version"]) is int
+        assert time.monotonic() - started < 2, "no wait for the writer's transaction"
+    finally:
+        held.execute("ROLLBACK")
+        held.close()
+
+
+def test_it_refuses_a_project_that_names_another_checkout_as_every_operation_does(tree):
+    path = str(tree["project"])
+    runtime = tree["project"] / "docs" / "workbench" / "runtime.json"
+    raw = json.loads(runtime.read_text(encoding="utf-8"))
+    raw["workbench"] = str(tree["project"].parent / "another-checkout")
+    runtime.write_text(json.dumps(raw), encoding="utf-8")
+    with pytest.raises(ops.OpsError) as status_refused:
+        ops.status(path)
+    with pytest.raises(ops.OpsError) as version_refused:
+        ops.version(path)
+    assert version_refused.value.code == status_refused.value.code == 3
+    assert "another-checkout" in str(version_refused.value)
 
 
 def test_a_project_whose_store_does_not_exist_yet_gets_one_made_and_must_accept_its_configuration_again(tree):
@@ -196,4 +225,4 @@ def test_one_project_that_cannot_be_read_does_not_hide_the_others(world):
     status, _, body = call(world, "GET", "/api/v1/versions")
     assert status == 200
     assert body["versions"][world.projects[0]["id"]]["version"] == 5
-    assert body["versions"][world.projects[1]["id"]] == {"error": "the configuration names another checkout"}
+    assert body["versions"][world.projects[1]["id"]] == {"error": "not_configured"}, "the word of the refusal, not its long sentence"

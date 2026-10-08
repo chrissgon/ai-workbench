@@ -46,6 +46,7 @@ export function createFloorView(frame, env) {
   let leftInbox = true;
   let wasWorking = null;       // the live region says when the agent starts working, never on the first read
   let reloaded = null;         // the page's reload stamp last seen: when it moves the store changed, and everything shown is read again
+  let changes = 0;             // how many times it moved: a read that began before the last move is not fresh when it ends
 
   // --- the panel ---------------------------------------------------------------------------------------------------------------
   const tile = h("span", { class: "wb-tile pui-soft pui-warn" });
@@ -126,12 +127,15 @@ export function createFloorView(frame, env) {
     if (reading.has(task.id)) return;
     if (cached && cached.state === task.state && Date.now() - cached.at < maxAge) return;
     reading.add(task.id);
+    const began = changes;
+    const stamped = () => (began === changes ? Date.now() : 0);     // 0: stale, read again at once
     api.task(project, task.id).then((body) => {
-      bodies.set(task.id, { body, state: task.state, at: Date.now() });
+      bodies.set(task.id, { body, state: task.state, at: stamped() });
     }).catch(() => {
-      bodies.set(task.id, { body: cached ? cached.body : null, state: task.state, at: Date.now() });
+      bodies.set(task.id, { body: cached ? cached.body : null, state: task.state, at: stamped() });
     }).finally(() => {
       reading.delete(task.id);
+      if (began !== changes) readBodies();
       redraw();
     });
   }
@@ -308,8 +312,10 @@ export function createFloorView(frame, env) {
       project = data.route.project;
       agent = data.route.agent;
       if (reloaded !== null && data.reload !== reloaded) {     // the store changed: the bodies and the documents are stale, whatever their age
+        changes += 1;
         for (const entry of bodies.values()) entry.at = 0;
         documentsAt = 0;
+        if (viewerPath !== null) viewer.load(project, viewerPath, { quiet: true });
       }
       reloaded = data.reload;
       if (data.snapshot.loaded) {

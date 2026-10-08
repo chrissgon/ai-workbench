@@ -100,3 +100,15 @@ def test_a_database_that_never_had_a_counter_reads_zero_and_still_works(tmp_path
     plain.commit()
     plain.close()
     assert store.change_counter(store.connect(db)) == 0
+
+
+def test_cursor_peek_reads_a_cursor_without_a_write_lock_and_raises_nothing(path):
+    writer, reader = store.open_db(path), store.open_db(path)
+    store.cursor_set(writer, "seen", "abc")
+    before = store.change_counter(reader)
+    writer.execute("BEGIN IMMEDIATE")                  # a writer that holds the lock: cursor_get would wait for it, cursor_peek does not
+    try:
+        assert store.cursor_peek(reader, "seen") == "abc" and store.cursor_peek(reader, "never") is None
+    finally:
+        writer.execute("ROLLBACK")
+    assert store.cursor_get(reader, "seen") == "abc" and store.change_counter(reader) == before

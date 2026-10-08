@@ -453,14 +453,14 @@ def _job_get(service: Service, params: dict) -> tuple:
 
 def _versions(service: Service) -> dict:
     """{"versions": {project id: {"version", "changed_at"}}}: the `version` operation of every project, so that a page that
-    shows several asks once a second whatever their number. A project the operation cannot read is {"error": its sentence}
-    and hides none of the others."""
+    shows several asks once a second whatever their number. A project the operation cannot read is {"error": the word of the
+    refusal, such as not_configured} (the sentence is in the project's own routes) and hides none of the others."""
     out = {}
     for project in service.projects:
         try:
             out[project["id"]] = service.ops.version(project["path"])
         except service.ops.OpsError as e:
-            out[project["id"]] = {"error": str(e)}
+            out[project["id"]] = {"error": status_of(e)[1]}
     return {"versions": out}
 
 

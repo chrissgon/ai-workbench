@@ -67,11 +67,17 @@ async function poll() {
     failure = e;
     render();
   }
-  if (watcher) watcher.reloaded(failure ? null : key);     // a reload that failed read nothing: it rebases nothing
+  // A project that refused its read (not "not accepted", which stays until the terminal accepts it) is a reload that failed as well.
+  const refused = Object.values(snapshot.details).some((d) => d && d.error && d.error.status !== 412);
+  const ok = !failure && !refused;
+  if (watcher) watcher.reloaded(ok ? key : null);      // a reload that failed read nothing: it rebases nothing
+  return ok;                              // false: the page says what failed and the watcher reads again after 10 s
 }
 
 /** Reload, one at a time: a request made while one is running makes one more after it, and its caller waits for that one. */
 const reload = coalesce(() => poll());
+/** What a screen calls after its own write: the reload that write already asked for (api.onWrite), or one. */
+const reloaded = () => reload.join("screen");
 
 /** The project the tracking bar follows when none was chosen: the first with a request open, else the first. */
 function chooseDefault() {
@@ -190,16 +196,16 @@ function ensureView(route) {
     const city = createCityView(frame);
     view = { key, screen: "city", city, dispose: () => city.dispose() };
   } else if (route.screen === "building") {
-    const building = createBuildingView(frame, { refresh: () => reload() });
+    const building = createBuildingView(frame, { refresh: () => reloaded() });
     view = { key, screen: "building", building, dispose: () => building.dispose() };
   } else if (route.screen === "floor") {
-    const floor = createFloorView(frame, { refresh: () => reload() });
+    const floor = createFloorView(frame, { refresh: () => reloaded() });
     view = { key, screen: "floor", floor, dispose: () => floor.dispose() };
   } else if (route.screen === "control") {
     const control = createControlView(frame);
     view = { key, screen: "control", control, dispose: () => control.dispose() };
   } else if (route.screen === "lobby") {
-    const lobby = createLobbyView(frame, { project: route.project, onChanged: () => reload() });
+    const lobby = createLobbyView(frame, { project: route.project, onChanged: () => reloaded() });
     view = { key, screen: "lobby", lobby, dispose: () => lobby.dispose() };
   } else {
     const placeholder = createPlaceholder(frame, route);

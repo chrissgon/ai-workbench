@@ -20,7 +20,7 @@ export function coalesce(run) {
   function begin(reason) {
     const mine = (async () => {
       try {
-        await run(reason);
+        return await run(reason);
       } finally {
         running = null;
         if (queued) {
@@ -33,7 +33,7 @@ export function coalesce(run) {
     running = mine;
     return mine;
   }
-  return function call(reason) {
+  function call(reason) {
     if (!running) return begin(reason);
     if (!queued) {
       queued = { reason, promise: null, resolve: null };
@@ -41,11 +41,18 @@ export function coalesce(run) {
     }
     queued.reason = reason;
     return queued.promise;
-  };
+  }
+  /**
+   * Wait for the run that covers a change made just before: the one that is queued, else the one in progress, else a new one. A
+   * view that was told to reload after a write the page's client already asked a reload for (api.onWrite) joins it, and the
+   * button press makes one reload, not two.
+   */
+  call.join = (reason) => (queued ? queued.promise : (running || begin(reason)));
+  return call;
 }
 
 /**
- * options: {read() -> Promise<string> (the signal, equal while nothing was written), reload(reason) -> Promise, hidden() -> boolean,
+ * options: {read() -> Promise<string> (the signal, equal while nothing was written), reload(reason) -> Promise (false: it failed), hidden() -> boolean,
  * setTimer(fn, ms) -> id, clearTimer(id), now() -> ms, every, safety, retry}. Returns {start() -> Promise (the first read, the
  * baseline), stop(), visibilityChanged(), reloaded(key)}; `reloaded(key)` is called by the page after any reload, whatever asked for it,
  * so that the safety net counts from the last one; `key` is the signal the reload read before it read its data, which becomes the
@@ -74,10 +81,11 @@ export function createWatcher(options) {
     timer = options.setTimer(() => { timer = null; tick(); }, ms);
   }
 
+  /** Ask for a reload. One that answers `false` (a refusal that is not a lost connection: the page says so) is a failure, read again after 10 s. */
   async function trigger(reason) {
     lastReload = options.now();
     try {
-      await options.reload(reason);
+      if ((await options.reload(reason)) === false) failed = true;
     } catch (e) {
       // the page says what failed; the watcher goes on
     }
@@ -109,7 +117,7 @@ export function createWatcher(options) {
     failed = false;
     baseline = key;
     if (reason) await trigger(reason);
-    if (mine === generation) schedule(every);
+    if (mine === generation) schedule(failed ? retry : every);
   }
 
   /** On return to a visible tab: take the signal as the new baseline, then reload once, whatever moved while hidden. */

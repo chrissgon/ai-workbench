@@ -77,11 +77,13 @@ seconds (one second of waiting for the next read and the time the reads take). A
 accepted project and the followed request's running task (`js/data.js`, never from a cache), then each screen's own reads, which it
 makes when the stamp it is given moves: the Floor the bodies of the agent's tasks and the documents, the Building the documents, the
 Lobby the conversation (above its newest message), the bodies of the requests it shows, the documents and the planning agent's tasks,
-the Control room the open tab and `costs`; the City, the frame and the scene are drawn from the snapshot. The scene's state (the
+the Control room `costs` and, when older than 30 s, the open tab; the Floor and the Lobby also the document that is open; the City, the frame and the scene are drawn from the snapshot. The scene's state (the
 figure's pose, the lit windows, the beacon, the badges, the tracking bar) follows the same reload, because it is drawn from the same
 data. After any write the page sends it reloads at once, when the answer returns (`api.onWrite`), and a job it started keeps its fast
-poll; the page's own write is not reloaded twice, because a reload reads the signal before its data and the watcher takes that as its
-baseline. With nothing changing, the page makes one small request a second, plus one full reload after 30 quiet seconds as a safety net;
+poll; a button press is one reload: the screen's own call to read again after its write joins the reload the client already asked for
+(`coalesce.join`), and the page's own write is not reloaded again by the next read of the signal, because a reload reads the signal before
+its data and the watcher takes that as its baseline. A body whose read began before a later change is read again when it ends. A reload
+that one project refused (not "not accepted") is read again after 10 seconds, not left to the safety net. With nothing changing, the page makes one small request a second, plus one full reload after 30 quiet seconds as a safety net;
 while the tab is hidden it asks nothing, and when it is visible again it reloads once. A server push would save the second a poll waits;
 the service sends one response per request and holds no connection (`contracts/runtime.md`, "The change signal"), so it is not built.
 
@@ -102,7 +104,7 @@ line stands: a hovered or selected object has one. The wheel and a pinch zoom (u
 ground, the Fit button or the key 0 fit the whole scene, + and - and the arrow keys work with the focus on the scene. The pointer picks meshes only (`pick.js`) and the outline is the edges of the picked object's own meshes (`outline.js`: a building's slabs, bodies and roof, a rack's cabinet, a floor's slab and walls, the figure's parts): the tooltip, the click and the outline name one object. The floors of the Building have a plate each beside them on the desktop and the tablet, stacked; on the phone one compact floor card is pinned at the top right of the scene, and each row of the floors list is that same card (`floorCardNode`). The Building has no "Control room" label (the header button is its way there; the Lobby's room keeps its door label). The Lobby (WP-9.4: its room is the Floor's `room` scene with a door) and the Control room (WP-9.5) add a builder to `BUILDERS` of `engine.js`
 and a module under `js/views/`, read more routes through `js/api.js`, and edit no vendored file.
 
-The Control room's three tabs (WP-9.5) read `skills`, `costs`, `connections` and `agents` through `js/api.js`: all three on entering, then, whenever the page reloads, the open tab and `costs` (the other two tabs, which cost about 0.8 s of work each, when they are opened) and `costs` again when the Since date changes; they write nothing. Its small server-room scene (racks: the connection facts as LEDs; wall screen: the runs of the last seven days; console) registers itself as the scene kind `server` and is static.
+The Control room's three tabs (WP-9.5) read `skills`, `costs`, `connections` and `agents` through `js/api.js`: all three on entering, then, whenever the page reloads, `costs` (cheap, and it feeds the room); the Skills and Connections tabs, about 0.8 s of server work each, are read again only when their data is older than 30 s (the open one on a reload, the safety net's included, the other when it is opened), so a runtime that writes every few seconds does not keep them busy; `costs` is read again when the Since date changes; they write nothing. Its small server-room scene (racks: the connection facts as LEDs; wall screen: the runs of the last seven days; console) registers itself as the scene kind `server` and is static.
 
 ## What the Floor sends
 

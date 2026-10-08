@@ -78,7 +78,7 @@ export function createLobbyDesk(env) {
 
 /**
  * The viewer of a document of the Desk. It takes the whole panel's place (`host` inside the panel), or on a phone a dialog. env: {frame,
- * panel (the element the host goes in), project, onClose()}. Returns {show(path) -> "inline" | "dialog" | null, dispose()}.
+ * panel (the element the host goes in), project, onClose()}. Returns {show(path) -> "inline" | "dialog" | null, reload(), dispose()}.
  */
 export function createLobbyViewer(env) {
   const viewer = createViewer({ onClose: () => env.onClose() });
@@ -117,6 +117,10 @@ export function createLobbyViewer(env) {
       if (viewer.el.parentNode !== host) host.append(viewer.el);
       host.hidden = false;
       return "inline";
+    },
+    /** The store changed: the document that is open is read again, and stays on show until the new text arrives. */
+    reload() {
+      if (current !== null) viewer.load(env.project, current, { quiet: true });
     },
     dispose() {
       viewer.close();

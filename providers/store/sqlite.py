@@ -2188,6 +2188,14 @@ def cursor_get(conn: sqlite3.Connection, name: str) -> str | None:
     return row["value"] if row else None
 
 
+def cursor_peek(conn: sqlite3.Connection, name: str) -> str | None:
+    """The value of a cursor as cursor_get reads it, with one plain SELECT and no transaction of its own: it takes no write
+    lock, so it never queues behind a writer and works on a store opened read-only. For a reader that asks every second."""
+    name = text_arg(name, "name", LABEL_MAX)
+    row = conn.execute("SELECT value FROM cursors WHERE name = ?", (name,)).fetchone()
+    return row["value"] if row else None
+
+
 def cursor_set(conn: sqlite3.Connection, name: str, value: str) -> dict:
     """Insert or replace a cursor: the cursor-set verb, in process, with the same limits. Returns {"name",
     "value", "updated_at"}."""
