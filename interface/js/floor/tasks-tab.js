@@ -15,7 +15,6 @@ import { runBlock } from "./run-block.js";
 import { groupTasks, rowOf } from "./tasks-model.js";
 import { busyLine, chip, errorText, notice, ring } from "./widgets.js";
 
-const NO_STAMP_MS = 15000;  // how long a body is kept while the page gives no reload stamp (it does once the live sync is in)
 const MAX_READS = 12;       // the first rows read without being expanded (the Inbox reads twelve too)
 export const NONE_TEXT = "This agent has no task yet.";
 
@@ -51,7 +50,7 @@ export function createTasksTab(env) {
   let changes = 0;                 // how many times it moved: a read that began before the last move is not fresh when it ends
 
   // --- reading ---------------------------------------------------------------------------------------------------------------
-  const fresh = (cached, task) => cached.state === task.state && cached.at !== 0 && (reloaded !== null || Date.now() - cached.at < NO_STAMP_MS);
+  const fresh = (cached, task) => cached.state === task.state && cached.at !== 0;     // at 0: the store changed since it was read
 
   function ensure(task) {
     const cached = bodies.get(task.id);
@@ -199,7 +198,7 @@ export function createTasksTab(env) {
 
   return {
     el,
-    /** data: {tasks, requests, pending, loading, reload}; reload is the page's stamp, which moves when the store changed (optional). */
+    /** data: {tasks, requests, pending, loading, reload}; reload is the page's stamp, which moves when the store changed. */
     update(data) {
       if (data.reload !== undefined) {
         if (reloaded !== null && data.reload !== reloaded) {     // the store changed: every body held is stale, whatever its age

@@ -573,6 +573,7 @@ def test_the_tasks_tab_is_the_fourth_tab_of_a_floor_and_a_tab_of_the_lobby_and_e
     assert '["desk", "Desk"], ["tasks", "Tasks"], ["agent", "Agent"]' in lobby_model, "the Lobby's Tasks tab is beside its Desk tab"
     lobby = (INTERFACE / "js" / "views" / "lobby.js").read_text(encoding="utf-8")
     assert 'import { createTasksTab } from "../floor/tasks-tab.js";' in lobby and "createTasksTab({" in lobby
+    assert "reload: last.reload" in floor_view and "reload: reloaded" in lobby, "each view gives the tab the page's reload stamp (WP-9.13)"
     for name, text in (("floor.js", floor_view), ("lobby.js", lobby)):
         call = text[text.index("createTasksTab({"):]
         call = call[:call.index("});") + 3]

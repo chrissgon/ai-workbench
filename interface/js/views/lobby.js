@@ -250,7 +250,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     const model = agent.update({ snapshot, tab });
     desk.update({ tab, ready: Boolean(snapshot.loaded && accepted) });
     if (tab === "tasks" && accepted) {
-      tasks.update({ tasks: model ? model.tasks : [], requests: status ? status.requests || [] : [], pending: status ? status.pending || [] : [], loading: !snapshot.loaded || !model });
+      tasks.update({ tasks: model ? model.tasks : [], requests: status ? status.requests || [] : [], pending: status ? status.pending || [] : [], loading: !snapshot.loaded || !model, reload: reloaded });
     }
     if (tab !== "inbox" && !leftInbox && !inbox.busy()) {      // a card whose job still runs keeps its state until it ends
       inbox.reset();
