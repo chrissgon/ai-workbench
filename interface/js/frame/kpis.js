@@ -3,6 +3,7 @@
 
 import { h } from "../dom.js";
 import * as format from "../format.js";
+import { METER_TIPS, METER_WORDS } from "../format.js";
 import { icon } from "./icons.js";
 
 // A card's label has a long and a short form: the tablet layout shows the short one ("Decisions", "Runs", "Spend"), the others the long one.
@@ -20,8 +21,8 @@ function card(label, iconName, tone, withMeter, short) {
 
 export function createKpis() {
   const decisions = card("Open decisions", "inbox", "warn", false, "Decisions");
-  const runs = card("Runs today", "activity", "theme", true, "Runs");
-  const spend = card("Spend today", "credit-card", "theme", true, "Spend");
+  const runs = card(METER_WORDS.runs, "activity", "theme", true, "Runs");
+  const spend = card(METER_WORDS.spend, "credit-card", "theme", true, "Spend");
   const el = h("div", { class: "wb-kpis" }, decisions.el, runs.el, spend.el);
 
   function meter(c, fraction) {
@@ -50,13 +51,13 @@ export function createKpis() {
       decisions.el.setAttribute("aria-label", `Open decisions ${sums.decisions} waiting for you`);
       runs.figure.textContent = String(sums.runs);
       runs.unit.textContent = `of ${sums.runsCap}`;
-      runs.el.title = `of ${sums.runsCap} · reference model`;
-      runs.el.setAttribute("aria-label", `Runs today ${sums.runs} of ${sums.runsCap}, reference model`);
+      runs.el.title = `of ${sums.runsCap} · ${METER_TIPS.runs}`;
+      runs.el.setAttribute("aria-label", `${METER_WORDS.runs} ${sums.runs} of ${sums.runsCap}`);
       meter(runs, format.share(sums.runs, sums.runsCap));
       spend.figure.textContent = format.dollars(sums.usd);
       spend.unit.textContent = `of ${format.dollars(sums.usdCap)}`;
-      spend.el.title = `of ${format.dollars(sums.usdCap)} cap · floor model dollars`;
-      spend.el.setAttribute("aria-label", `Spend today ${format.dollars(sums.usd)} of ${format.dollars(sums.usdCap)} cap, floor model dollars`);
+      spend.el.title = `of ${format.dollars(sums.usdCap)} cap · ${METER_TIPS.spend}`;
+      spend.el.setAttribute("aria-label", `${METER_WORDS.spend} ${format.dollars(sums.usd)} of ${format.dollars(sums.usdCap)} cap`);
       meter(spend, format.share(sums.usd, sums.usdCap));
     },
   };

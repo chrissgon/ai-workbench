@@ -878,7 +878,7 @@ await clock.advance(2000);
 taken();
 // one button press on the Floor: the Agent tab sends the mode, the client asks for a reload when the answer returns, and the
 // tab asks the page to read again; the two are one reload
-const button = [...root.walk()].find((n) => n.attrs && n.attrs["data-key"] === "set-mode");
+const button = [...root.walk()].find((n) => n.attrs && n.attrs["data-key"] === "stop-agent");
 service.version = 9;
 (button.listeners.click || []).forEach((fn) => fn({ preventDefault() {} }));
 await clock.advance(0);

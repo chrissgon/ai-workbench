@@ -190,6 +190,12 @@ code, .mono {
 
 .wb-frame.is-stale .wb-kpis, .wb-frame.is-stale .wb-waiting, .wb-frame.is-stale .wb-track { opacity: 0.6; }
 
+/* A-16: the configuration is not accepted; the last data read stays, dimmed, and the band on top says why. The band is never dimmed; the City
+   dims its cards and its bar only (its other buildings stay clickable); a project's screens also dim the scene (no pointer actions) and the panel. */
+.wb-frame.is-unaccepted .wb-kpis, .wb-frame.is-unaccepted .wb-track { opacity: 0.55; }
+.wb-frame.is-unaccepted:not([data-screen="city"]) .wb-panel { opacity: 0.55; }
+.wb-frame.is-unaccepted:not([data-screen="city"]) .wb-scene { opacity: 0.55; pointer-events: none; }
+
 .wb-scene-area { position: absolute; inset: 0; }
 .wb-scene { position: absolute; inset: 0; }
 .wb-canvas { display: block; width: 100%; height: 100%; cursor: grab; touch-action: none; }   /* a drag on the ground pans: the page does not scroll from here */
@@ -612,7 +618,7 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-camera-tools { left: 10px; bottom: 10px; translate: none; }
   .wb-kpi { grid-template-columns: minmax(0, 1fr); padding: 8px; }
   .wb-kpi-tile { display: none; }
-  .wb-kpi-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .wb-kpi-label { overflow-wrap: anywhere; }   /* A-20: the labels say which model they count, so they wrap instead of being cut */
   .wb-kpi-figure { font-size: 16px; }
   .wb-meter { height: 3px; }
   .wb-main { position: static; z-index: auto; grid-area: content; display: grid; align-content: start; gap: 12px; padding: 12px; overflow-y: auto; border-bottom: var(--pui-border-width) solid var(--pui-border); pointer-events: auto; }
@@ -903,7 +909,7 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-plate-name { font-size: 13px; font-weight: 600; }
 .wb-plate-state { margin-left: auto; color: var(--pui-text-muted); }
 .wb-plate-chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
-.wb-plate-meters { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 12px; }
+.wb-plate-meters { display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; }
 .wb-plate-meter { display: grid; gap: 3px; }
 .wb-plate-note { color: var(--pui-text-muted); font-size: 11px; }
 /* the compact plate (the stack would not fit): the name row and the meters only */
@@ -1038,6 +1044,19 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-notice-card.is-warn { border-color: var(--pui-warn); }
 .wb-notice-card.is-error { border-color: var(--pui-error); }
 .wb-command { font-size: 12px; overflow-wrap: anywhere; user-select: all; white-space: pre-wrap; }
+/* A-18: the terminal command, in one component: the sentence, the command wrapped whole and selectable, a Copy button */
+.wb-command-block { display: grid; flex: 1 1 100%; gap: 6px; min-width: 0; }
+.wb-command-sentence { margin: 0; overflow-wrap: anywhere; }
+.wb-command-row { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.wb-command-code { flex: 1 1 auto; min-width: 0; padding: 6px 8px; border: var(--pui-border-width) solid var(--pui-border); border-radius: var(--pui-radius); background-color: var(--wb-sunken); font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; user-select: all; white-space: pre-wrap; }
+.wb-copy { flex: none; }
+.wb-copy-status { font-size: 12px; }
+.wb-copy-status:empty { display: none; }
+.wb-wider { margin: 0; font-size: 12px; }
+.wb-held { display: grid; gap: 6px; }
+.wb-held-line { margin: 0; font-size: 13px; }
+.wb-service-card { display: grid; gap: 8px; }
+.wb-service-row { display: grid; gap: 4px; min-width: 0; }
 .wb-result-box:empty, .wb-form-error:empty, .wb-hand-result:empty { display: none; }
 .wb-meters { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
 .wb-meter-cell { display: grid; gap: 2px; align-content: start; min-width: 0; }

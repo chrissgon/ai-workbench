@@ -56,6 +56,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   let readingConversation = false;
   let flowsAsked = false;
   let accepted = true;
+  let frozen = false;                 // not accepted, but the thread was read before: it stays on the screen, dimmed, and does nothing (A-16)
   let again = false;                  // a read of the conversation was asked for while one was running
   let conversationRead = Promise.resolve();    // the read that is running, and the one more that was asked for
   let viewerWas = false;
@@ -257,7 +258,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     const status = detail && detail.status;
     const model = agent.update({ snapshot, tab });
     desk.update({ tab, ready: Boolean(snapshot.loaded && accepted) });
-    if (tab === "tasks" && accepted) {
+    if (tab === "tasks" && (accepted || frozen)) {
       tasks.update({ tasks: model ? model.tasks : [], requests: status ? status.requests || [] : [], pending: status ? status.pending || [] : [], loading: !snapshot.loaded || !model, reload: reloaded });
     }
     if (tab !== "inbox" && !leftInbox && !inbox.busy()) {      // a card whose job still runs keeps its state until it ends
@@ -266,7 +267,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     }
     if (tab !== "inbox") return;
     leftInbox = false;
-    if (!accepted) return;
+    if (!accepted && !frozen) return;
     // Which plans have their card under a message is known only once the conversation was read: until then no plan is drawn as a card
     // (it would be drawn here, then be replaced by a line, and lose a note typed in it).
     const whole = status ? inboxParts(status, messages) : { cards: [], pointers: [] };
@@ -431,7 +432,10 @@ export function createLobbyView(frame, { project, onChanged }) {
       const listed = (snapshot.projects || []).find((p) => p.id === project);
       const detail = snapshot.details[project];
       // Before the first read nothing is known: the screen is not declared unaccepted until the projects came.
-      accepted = !snapshot.loaded || (Boolean(listed && listed.config && listed.config.accepted) && !(detail && detail.error && detail.error.status === 412));
+      const found = model.acceptance(listed, detail);
+      accepted = !snapshot.loaded || found.accepted;
+      frozen = snapshot.loaded && !found.accepted && found.kept && loaded;
+      const shown = accepted || frozen;
       const status = detail && detail.status;
       const tab = tabOf(route);
       panel.el.querySelector(".wb-panel-sub").textContent = `${projectName || ""} · floor 0`;
@@ -441,8 +445,8 @@ export function createLobbyView(frame, { project, onChanged }) {
       conversationPanel.setAttribute("aria-labelledby", tabs.tabId("conversation"));
       for (const [id, part] of Object.entries(sections)) {
         tabPanels[id].hidden = tab !== id;
-        part.waiting.hidden = accepted;
-        part.body.hidden = !accepted;
+        part.waiting.hidden = shown;
+        part.body.hidden = !shown;
       }
       // a document opened on the Desk takes the panel's place (a phone: a dialog)
       const showing = tab === "desk" && accepted && route.path ? viewer.show(route.path) : viewer.show(null);
@@ -460,8 +464,8 @@ export function createLobbyView(frame, { project, onChanged }) {
       }
       viewerWas = Boolean(showing);
       shownPath = showing ? route.path : null;
-      waiting.hidden = accepted;
-      thread.el.hidden = !accepted;
+      waiting.hidden = shown;
+      thread.el.hidden = !shown;
       form.set({ disabled: !accepted });
       drawComposer();
       if (accepted && !flowsAsked) {

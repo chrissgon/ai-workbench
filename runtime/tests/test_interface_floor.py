@@ -213,11 +213,11 @@ def test_the_model_derives_each_floors_state_and_facts_from_what_the_service_ret
         "a window is warm when the floor's agent works and grey in every other state: there is no pale"
     assert got["decisions"] == {"planning": 1, "business": 0, "brand": 1, "design": 0, "engineering": 0, "marketing": 0}, \
         "a decision on a request (no agent) is the Lobby's"
-    assert got["eng"] == {"done": 0, "left": 3, "queued": 1, "acting": True, "word": "working",
+    assert got["eng"] == {"done": 0, "left": 1, "queued": 1, "acting": True, "word": "working",
                           "tip": "Engineering: autonomous-with-policy, working, 2 of 8 runs",
                           "name": "Engineering, working, autonomous-with-policy mode, 2 of 8 runs, $0.50 of $4.00",
-                          "meters": "runs 2 / 8 · $0.50 of $4.00", "counts": "0 done, 3 left, 1 queued"}
-    assert got["mkt"] == {"unknown": 2, "done": 1, "left": 1}
+                          "meters": "runs 2 / 8 · $0.50 of $4.00", "counts": "0 done, 1 running, 1 queued, 1 left"}   # A-12: done, running, queued, left (planned or blocked)
+    assert got["mkt"] == {"unknown": 2, "done": 1, "left": 0}
     assert got["lobby"] == {"link": "#/p/0123456789ab/lobby", "label": "Lobby", "lobby": True}
     assert got["tag"] == {"floor": "engineering", "text": "#1", "request": 1}, "the work-order tag rests on the floor of the request's current task"
     assert got["facts"] == {"configuration": "Accepted", "accepted": True, "request": {"id": 1, "title": "Spring"}, "waiting": 2,
@@ -225,7 +225,7 @@ def test_the_model_derives_each_floors_state_and_facts_from_what_the_service_ret
     assert got["plate"]["runsText"] == "2 / 8" and got["plate"]["usdText"] == "$0.50 / $4.00" and got["plate"]["acting"] == "autonomous" \
         and got["plate"]["selected"] is True and got["plate"]["mode"] == "autonomous-with-policy" and got["plate"]["pips"] == 4, "the plate of the desktop and the tablet"
     assert got["card"] == {"name": "engineering", "label": "Engineering", "dot": "theme", "decisions": 0, "word": "Running", "mode": "autonomous-with-policy", "pips": 4,
-                           "acting": "autonomous", "actingPips": 3, "runsLine": "runs 2 / 8 · $0.50 / $4.00", "off": False}, \
+                           "acting": "autonomous", "actingPips": 3, "runsLine": "reference-model runs 2 / 8 · floor-model spend $0.50 / $4.00", "off": False}, \
         "the compact card: name, state word, mode plate, one line of runs and spend"
     assert got["cardOff"]["off"] is True and got["cardOff"]["word"] == "Off, mode is stopped"
     assert got["scene"] == {"selected": "engineering", "label": "Building of northwind-shop, 6 floors, 2 decisions waiting",
@@ -623,8 +623,7 @@ out.loading = find(tab.el, ".wb-busy").textContent;
 tab.update(view(agent(), [task(4, "running"), task(5, "failed"), task(6, "blocked"), task(7, "waiting")]));
 out.state = find(tab.el, ".wb-state-row").textContent;
 out.plate = find(tab.el, ".wb-mode-row").textContent;
-out.options = all(tab.el, "option").map((o) => o.textContent);
-out.selected = find(tab.el, "select").value;
+out.options = all(tab.el, "option").length;      // A-17: the select is gone; Stop agent and Supervise are tested in test_interface_plates_meters.py
 out.standing = find(tab.el, ".wb-notice-card").textContent === STANDING;
 out.meters = all(tab.el, ".wb-meter-cell").map((c) => [c.attrs["aria-label"], c.querySelectorAll(".wb-meter-track").length]);
 out.current = find(tab.el, ".wb-current").textContent;
@@ -632,25 +631,19 @@ out.others = all(tab.el, ".wb-other").map((o) => o.textContent);
 out.retry = all(tab.el, "button[data-key]").map((b) => [b.attrs["aria-label"], b.textContent]).filter((x) => x[0] && x[0].startsWith("Retry"));
 out.hint = find(tab.el, ".wb-hint").textContent;
 
-// Set mode sends one request with the selected word and shows the exact command the service gave
-const select = find(tab.el, "select");
-select.value = "autonomous";
-select.listeners.change[0]();
-script = { setMode: async () => ({ agent: "engineering", mode: "autonomous", config_sha256: "f".repeat(64), accepted: false, next: "python3 runtime/cli.py accept-config --project demo --sha256 " + "f".repeat(64) }) };
-find(tab.el, "button.wb-set-mode").click();
+// Stop agent sends one request with its word, the page reloads and no command is shown (the runtime accepts a narrowing at once)
+script = { setMode: async () => ({ agent: "engineering", mode: "stopped", config_sha256: "f".repeat(64), accepted: true, by: "code:narrowing", next: null }) };
+find(tab.el, "button[data-key=stop-agent]").click();
 await settle();
-out.setMode = { calls: calls.filter((c) => c[0] === "setMode"), refreshed: refreshed > 0, notice: find(tab.el, ".wb-result-box").textContent, command: find(tab.el, ".wb-command").textContent, role: find(tab.el, ".is-warn").attrs.role };
-// the notice stays through reads that still say accepted, and while the configuration is unaccepted, and goes once it is accepted again
-tab.update(view(agent(), [task(4, "running")]));
-const stays = find(tab.el, ".wb-result-box").textContent !== "";
+out.setMode = { calls: calls.filter((c) => c[0] === "setMode"), refreshed: refreshed > 0, notice: find(tab.el, ".wb-result-box").textContent };
 tab.update(view(agent(), [], false));
-out.unaccepted = { line: find(tab.el, ".wb-empty-line").textContent, hiddenForm: find(tab.el, ".wb-mode-form").hidden, still: find(tab.el, ".wb-result-box").textContent !== "", stays };
+out.unaccepted = { line: find(tab.el, ".wb-empty-line").textContent, hiddenForm: find(tab.el, ".wb-mode-form").hidden };
 tab.update(view(agent({ mode: "autonomous", acting_mode: "autonomous" }), [task(4, "running"), task(5, "failed"), task(6, "blocked"), task(7, "waiting")]));
-out.accepted = { gone: find(tab.el, ".wb-result-box").textContent === "", select: find(tab.el, "select").value };
+out.accepted = { buttons: [find(tab.el, "button[data-key=stop-agent]").disabled, find(tab.el, "button[data-key=supervise]").disabled] };
 
 // a refused mode shows the operation's message under the row
 script = { setMode: async () => { throw Object.assign(new Error("a mode is one of stopped, supervised"), { name: "ApiError", status: 400, word: "usage" }); } };
-find(tab.el, "button.wb-set-mode").click();
+find(tab.el, "button[data-key=stop-agent]").click();
 await settle();
 out.refusedMode = find(tab.el, ".wb-form-error").textContent;
 
@@ -671,8 +664,6 @@ calls.length = 0;
 tab.update(view(agent({ mode: "stopped", acting_mode: "stopped" }), [task(5, "failed")]));
 const off = find(tab.el, ".wb-state-row");
 out.off = { text: off.textContent, button: all(off, "button").length };
-all(off, "button")[0].click();
-out.offFocus = [find(tab.el, "select").focused, calls.length];
 
 // hand a file over: nothing is sent when no file was chosen; one call with the file's own name, to the task the hint named when the
 // file was chosen, even when a poll draws another target while the file is being read
@@ -707,27 +698,21 @@ def test_the_agent_tab_sends_set_mode_retry_and_the_hand_over_as_one_request_eac
     assert got["loading"] == "Loading the floor..."
     assert got["state"] == "WorkingRunning since 11:30" or got["state"].startswith("WorkingRunning since ")
     assert got["plate"].startswith("supervised") and got["plate"].endswith("Every review reaches you."), "the plate says the mode and its one line"
-    assert got["options"] == ["stopped · Off, starts nothing", "supervised · Every review reaches you",
-                              "milestones · Reviews reach you at milestones, the rest are released when the skill is proven",
-                              "autonomous · Reviews are released when the skill is proven, effects still ask you",
-                              "autonomous-with-policy · Like autonomous, and an effect inside an approved policy runs without asking"]
-    assert got["selected"] == "supervised", "the select starts on the agent's current mode"
+    assert got["options"] == 0, "A-17: no select; the mode is changed by Stop agent and Supervise"
     assert got["standing"] is True
-    assert got["meters"] == [["Runs today 5 / 12", 1], ["Spend today $1.87 / $4.00", 1], ["Queued 0", 0]], "Queued has no cap, so no track"
+    assert got["meters"] == [["Reference-model runs today 5 / 12", 1], ["Floor-model spend today $1.87 / $4.00", 1], ["Queued 0", 0]], "Queued has no cap, so no track; A-20: the meters say which model they count"
     assert got["current"].startswith("#4 Task 4Running") and "skill s" in got["current"] and "Run#1 s 1.0.0" in got["current"]
     assert [o.split("Retry")[0] for o in got["others"]] == ["#7 Task 7Waiting for you", "#6 Task 6Blocked", "#5 Task 5Failed"], "other tasks, newest first"
     assert got["retry"] == [["Retry task 6", "Retry"], ["Retry task 5", "Retry"]], "Retry only on a failed or blocked task, named by its task"
     assert got["hint"] == "To task #6. At most 25 MiB.", "the hand-over target is the newest failed or blocked task, named in the hint"
-    assert [c[1:] for c in got["setMode"]["calls"]] == [["p", "engineering", "autonomous"]], "Set mode sends the selected word, once"
-    assert got["setMode"]["refreshed"] is True and got["setMode"]["role"] == "status"
-    assert got["setMode"]["notice"].startswith("Mode set to autonomous. Nothing works on this page until you accept the new configuration.")
-    assert got["setMode"]["command"] == "python3 runtime/cli.py accept-config --project demo --sha256 " + "f" * 64, "the command is the service's, verbatim"
-    assert got["unaccepted"] == {"line": "Waiting for the configuration to be accepted.", "hiddenForm": True, "still": True, "stays": True}
-    assert got["accepted"] == {"gone": True, "select": "autonomous"}, "the notice goes when the configuration is accepted again, and the select follows the mode"
+    assert [c[1:] for c in got["setMode"]["calls"]] == [["p", "engineering", "stopped"]], "Stop agent sends its word, once"
+    assert got["setMode"]["refreshed"] is True and got["setMode"]["notice"] == "Mode set to stopped."
+    assert got["unaccepted"] == {"line": "Waiting for the configuration to be accepted.", "hiddenForm": True}
+    assert got["accepted"] == {"buttons": [False, False]}, "an agent that acts autonomously can be stopped or supervised"
     assert got["refusedMode"] == "a mode is one of stopped, supervised"
     assert got["retryCalls"] == [["p", 5, 3]], "Retry sends the task's id and no body"
     assert "task 6 is not failed or blocked" in got["retryRefused"]
-    assert got["off"]["text"].startswith("OffOff, mode is stopped") and got["off"]["button"] == 1 and got["offFocus"] == [True, 0], "the Off row's button moves the focus and sends nothing"
+    assert got["off"]["text"].startswith("OffOff, mode is stopped") and got["off"]["button"] == 0, "the Off row has no button: a wider mode is the terminal's"
     assert got["files"] == ["", "The file name may hold letters, digits, ., _ and -, at most 100 characters.", "The file name may hold letters, digits, ., _ and -, at most 100 characters.",
                             "A file handed to a task is at most 25 MiB.", "", "The file name may hold letters, digits, ., _ and -, at most 100 characters."]
     assert got["handNoFile"] == 0, "nothing is sent when no file was chosen"

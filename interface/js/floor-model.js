@@ -8,7 +8,7 @@
 
 import * as format from "./format.js";
 import * as router from "./router.js";
-import { MAX_FLOORS, floorNumber, pickRequest, requestChoice } from "./model.js";
+import { MAX_FLOORS, acceptance, floorNumber, pickRequest, requestChoice } from "./model.js";
 import { windowState } from "./scene/look.js";
 
 export const PLANNING = "planning";
@@ -41,6 +41,30 @@ export const RUN_STATUS = Object.freeze({ running: "Running", ok: "Done", failed
 export const RESOLUTION = Object.freeze({
   approved: "approved", accepted: "accepted", released: "released", answered: "answered", rejected: "rejected", cancelled: "cancelled",
 });
+
+// The words of the two caps (A-20) are in format.js (the Control room's caps line and the KPI cards use them too).
+export const METER_WORDS = format.METER_WORDS;
+export const METER_TIPS = format.METER_TIPS;
+
+// What a held ready task is waiting for, in the words of the dispatcher's closed list of reasons (runtime/dispatcher.py REASONS). A reason the
+// page does not know is shown as it came.
+export const HELD_SENTENCES = Object.freeze({
+  stopped: "The agent is stopped, so it starts nothing.",
+  "cap: runs per day": "The agent used all its reference-model runs for today.",
+  "cap: usd per day": "The agent used all its floor-model spend for today.",
+  credential: "The reference model's credential is not set.",
+  "secret store": "The service cannot read the secret store.",
+  image: "The eval image is not on this machine.",
+  "dispatch off": "The service is not dispatching tasks.",
+  "job running": "Another task of this project is running; one runs at a time.",
+  "no enabled agent owns the task": "No enabled agent owns this task.",
+  other: "The dispatcher held this task for a reason the page does not know.",
+});
+
+/** The sentence of a held reason. */
+export function heldSentence(reason) {
+  return HELD_SENTENCES[reason] !== undefined ? HELD_SENTENCES[reason] : String(reason || "");
+}
 
 const word = (table, key) => (table[key] !== undefined ? table[key] : (typeof key === "string" && key ? key : ""));
 
@@ -157,17 +181,27 @@ function orderTasks(status, project = null) {
   return request ? request.tasks || [] : [];
 }
 
+/** The held ready tasks of an agent, from the status body's `held` ([{task_id, agent, reason, at, next}]); a task with no agent is the planning agent's. */
+export function heldOf(status, name) {
+  return (status && Array.isArray(status.held) ? status.held : []).filter((h) => (h.agent || PLANNING) === name);
+}
+
 /** One floor's row: every fact the plate, the list row and the tooltip show. */
 export function floorRow(agent, status, context) {
   const name = agent.name || PLANNING;
   const lobby = name === PLANNING;
-  const accepted = context.accepted;
+  const configured = context.accepted;
+  const unaccepted = !configured && Boolean(context.kept);      // not accepted, and the last data read is shown (A-16)
+  const accepted = configured || unaccepted;                      // whether there is data to show
   const state = stateOf(agent, status, accepted);
   const decisions = accepted ? agentDecisions(status, name).length : 0;
   const work = orderTasks(status, context.project).filter((t) => agentOf(t) === name);
   const done = work.filter((t) => t.state === "done").length;
-  const left = work.filter((t) => t.state !== "done" && t.state !== "cancelled").length;
+  const running = work.filter((t) => t.state === "running").length;
+  const left = work.filter((t) => t.state === "planned" || t.state === "blocked").length;       // A-12: not started and not ready
   const queued = format.count(agent.queued);
+  const heldTasks = accepted ? heldOf(status, name) : [];
+  const heldReason = heldTasks.length ? heldTasks[0].reason : null;
   const runs = format.count(agent.runs_today);
   const runsCap = format.count(agent.max_runs_per_day);
   const usd = format.count(agent.usd_today);
@@ -177,19 +211,22 @@ export function floorRow(agent, status, context) {
   const mode = agent.mode || null;
   const acting = agent.acting_mode || null;
   const stateWord = accepted ? STATE_WORDS[state] : "Waiting for the configuration to be accepted.";
+  const plateWord = !configured ? "not accepted"
+    : state === "working" ? "working" : state === "off" ? "Off, mode is stopped" : heldReason ? `held: ${heldReason}` : "resting";
   const lower = state === "working" ? "working" : state === "waiting" ? "waiting for you" : state === "idle" ? "idle" : "off";
   const meters = `runs ${runs} / ${runsCap} · ${format.dollars(usd)} of ${format.dollars(usdCap)}`;
-  const counts = `${done} done, ${left} left${queued > 0 ? `, ${queued} queued` : ""}`;
+  const counts = [`${done} done`, running > 0 ? `${running} running` : "", queued > 0 ? `${queued} queued` : "", `${left} left`].filter(Boolean).join(", ");
   return {
     name, label, lobby, number: context.number, state, stateWord, accepted,
-    window: windowState(accepted && state === "working"), dot: DOT[state], decisions, queued, done, left,
+    unaccepted, held: heldTasks.length, heldReason,
+    window: windowState(configured && state === "working"), dot: DOT[state], decisions, queued, done, running, left,
     runs, runsCap, usd, usdCap, unknown, mode, acting, pips: mode ? PIPS[mode] || 0 : 0, actingPips: acting ? PIPS[acting] || 0 : 0,
     actingDiffers: Boolean(mode && acting && mode !== acting),
     link: lobby ? router.lobbyHash(context.project) : router.floorHash(context.project, name),
     meters, counts,
     tip: `${label}: ${mode ? `${mode}, ` : ""}${lower}, ${runs} of ${runsCap} runs`,
-    linkName: `${label}, ${accepted ? lower : "waiting for the configuration to be accepted"}${mode ? `, ${mode} mode` : ""}, ${runs} of ${runsCap} runs, ${format.dollars(usd)} of ${format.dollars(usdCap)}${decisions ? `, ${format.decisions(decisions)} waiting` : ""}`,
-    plateWord: !accepted ? "not accepted" : state === "working" ? "working" : state === "off" ? "Off, mode is stopped" : "resting",
+    linkName: `${label}, ${unaccepted ? `not accepted, ${lower}` : accepted ? lower : "waiting for the configuration to be accepted"}${heldReason ? `, held: ${heldReason}` : ""}${mode ? `, ${mode} mode` : ""}, ${runs} of ${runsCap} runs, ${format.dollars(usd)} of ${format.dollars(usdCap)}${decisions ? `, ${format.decisions(decisions)} waiting` : ""}`,
+    plateWord,
   };
 }
 
@@ -198,14 +235,14 @@ export function building(snapshot, projectId) {
   const project = (snapshot.projects || []).find((p) => p.id === projectId) || null;
   if (!project) return null;
   const detail = snapshot.details[projectId] || null;
-  const accepted = Boolean(project.config && project.config.accepted) && !(detail && detail.error && detail.error.status === 412);
+  const { accepted, kept } = acceptance(project, detail);
   const status = detail && detail.status ? detail.status : null;
   const { list, none } = floorAgents(detail);
   const ordered = list;
-  const rows = ordered.map((agent) => floorRow(agent, status, { accepted, project: projectId, number: floorNumber(ordered, agent.name || PLANNING) }));
+  const rows = ordered.map((agent) => floorRow(agent, status, { accepted, kept, project: projectId, number: floorNumber(ordered, agent.name || PLANNING) }));
   return {
-    id: projectId, name: project.name, accepted, none: none && accepted && Boolean(status), rows, more: Math.max(0, rows.length - MAX_FLOORS), loaded: Boolean(status),
-    tag: workOrder(status, rows, projectId), facts: facts(project, status, accepted),
+    id: projectId, name: project.name, accepted, kept, none: none && (accepted || kept) && Boolean(status), rows, more: Math.max(0, rows.length - MAX_FLOORS), loaded: Boolean(status),
+    tag: workOrder(status, rows, projectId), facts: facts(project, status, accepted, kept),
   };
 }
 
@@ -222,13 +259,19 @@ export function workOrder(status, rows, projectId = null) {
 }
 
 /** The panel's facts: Configuration, Running now, Request, Waiting for you. */
-export function facts(project, status, accepted) {
+export function facts(project, status, accepted, kept = false) {
   const out = { configuration: accepted ? "Accepted" : "Not accepted", accepted, running: null, request: null, waiting: 0 };
-  if (!accepted || !status) return out;
+  if (kept) out.kept = true;
+  if (!(accepted || kept) || !status) return out;
   const open = pickRequest(status, requestChoice(project.id));
   if (open) out.request = { id: open.id, title: open.title || "" };
   out.waiting = (status.pending || []).length;
-  const id = project.running_task;
+  let id = project.running_task;
+  if ((id === null || id === undefined) && kept) {
+    // not accepted: the project list no longer says which task runs; the last status does
+    const running = (status.requests || []).flatMap((r) => r.tasks || []).find((t) => t.state === "running");
+    id = running ? running.id : null;
+  }
   if (id !== null && id !== undefined) {
     let found = null;
     for (const request of status.requests || []) {
@@ -256,7 +299,7 @@ export function drawersOf(count) {
 export function plateOf(row, selected = false) {
   return {
     name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.plateWord,
-    done: row.done, left: row.left, queued: row.queued,
+    done: row.done, running: row.running, left: row.left, queued: row.queued,
     runsText: `${row.runs} / ${row.runsCap}`, runsShare: format.share(row.runs, row.runsCap),
     usdText: `${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}`, usdShare: format.share(row.usd, row.usdCap),
     unknown: row.unknown, mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
@@ -269,7 +312,7 @@ export function plateOf(row, selected = false) {
  * top right and for each row of the floors list: name (with its decisions badge), state word, mode plate, one line of runs and spend.
  */
 export function cardOf(row) {
-  const runsLine = `runs ${row.runs} / ${row.runsCap} · ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}${row.unknown > 0 ? ` (+${row.unknown} of unknown cost)` : ""}`;
+  const runsLine = `reference-model runs ${row.runs} / ${row.runsCap} · floor-model spend ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}${row.unknown > 0 ? ` (+${row.unknown} of unknown cost)` : ""}`;
   return {
     name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.stateWord,
     mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
@@ -318,8 +361,8 @@ export function meters(agent) {
   const usdCap = format.count(agent.max_usd_per_day);
   const unknown = format.count(agent.runs_without_cost);
   return {
-    runs: { text: `${runs} / ${runsCap}`, share: format.share(runs, runsCap), full: runsCap > 0 && runs >= runsCap, name: `Runs today ${runs} / ${runsCap}` },
-    spend: { text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "", name: `Spend today ${format.dollars(usd)} / ${format.dollars(usdCap)}` },
+    runs: { label: METER_WORDS.runs, tip: METER_TIPS.runs, text: `${runs} / ${runsCap}`, share: format.share(runs, runsCap), full: runsCap > 0 && runs >= runsCap, name: `${METER_WORDS.runs} ${runs} / ${runsCap}` },
+    spend: { label: METER_WORDS.spend, tip: METER_TIPS.spend, text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "", name: `${METER_WORDS.spend} ${format.dollars(usd)} / ${format.dollars(usdCap)}` },
     queued: { text: String(format.count(agent.queued)), name: `Queued ${format.count(agent.queued)}` },
   };
 }
@@ -366,7 +409,7 @@ export function floor(snapshot, projectId, name, bodies = {}, options = {}) {
   const view = building(snapshot, projectId);
   if (!view) return null;
   const label = format.agentWord(name);
-  if (!view.accepted) {
+  if (!view.accepted && !view.kept) {
     const row = floorRow(stub(name), null, { accepted: false, project: projectId, number: null });
     return {
       found: true, notAccepted: true, view, row, tasks: [], others: [], decisions: [], runs: [], current: null, currentBody: null, target: null, runningBody: null,
@@ -385,15 +428,18 @@ export function floor(snapshot, projectId, name, bodies = {}, options = {}) {
   const currentBody = current ? bodies[current.id] || null : null;
   const runs = currentBody && Array.isArray(currentBody.runs) ? [...currentBody.runs].reverse() : [];
   const runningTask = tasks.find((t) => t.state === "running") || null;
-  const subParts = [view.name, row.number === null ? null : `floor ${row.number}`, row.stateWord];
+  const subParts = [view.name, row.number === null ? null : `floor ${row.number}`, row.unaccepted ? "not accepted" : row.stateWord];
+  const holding = current && status ? heldOf(status, name).find((h) => h.task_id === current.id) : null;
   return {
     found: true, view, row, agent, tasks, current, others: tasks.filter((t) => !current || t.id !== current.id), decisions, runs, currentBody,
+    unaccepted: Boolean(row.unaccepted),
+    heldCurrent: holding ? { task_id: holding.task_id, reason: holding.reason, sentence: heldSentence(holding.reason), next: typeof holding.next === "string" && holding.next ? holding.next : null } : null,
     target: handOverTarget(tasks, current), runningBody: runningTask ? bodies[runningTask.id] || null : null,
     header: {
       title: `${row.label} · ${row.label} agent`, sub: subParts.filter((p) => p !== null).join(" · "),
       icon: name === "marketing" ? "send" : "building-2",
     },
-    canvasLabel: `${row.label} floor of ${view.name}, ${row.label} agent ${row.accepted ? { working: "working", waiting: "waiting", idle: "idle", off: "off" }[row.state] : "not accepted"}, ${format.decisions(decisions.length)}`,
+    canvasLabel: `${row.label} floor of ${view.name}, ${row.label} agent ${row.accepted && !row.unaccepted ? { working: "working", waiting: "waiting", idle: "idle", off: "off" }[row.state] : "not accepted"}, ${format.decisions(decisions.length)}`,
   };
 }
 

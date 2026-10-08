@@ -204,9 +204,9 @@ export function createBuildingView(frame, env) {
     const running = f.running ? h("a", { class: "pui-link pui-theme", href: f.running.link, text: `task #${f.running.id}${f.running.title ? ` · ${f.running.title}` : ""}` }) : "Nothing is running";
     fill(factsBox,
       factRow("Configuration", chip(f.configuration, f.accepted ? "pui-success pui-soft" : "pui-warn pui-soft")),
-      f.accepted ? factRow("Running now", running) : null,
-      f.accepted ? factRow("Request", f.request ? `#${f.request.id} ${f.request.title}` : "No request is open") : null,
-      f.accepted ? factRow("Waiting for you", format_decisions(f.waiting)) : null);
+      f.accepted || f.kept ? factRow("Running now", running) : null,
+      f.accepted || f.kept ? factRow("Request", f.request ? `#${f.request.id} ${f.request.title}` : "No request is open") : null,
+      f.accepted || f.kept ? factRow("Waiting for you", format_decisions(f.waiting)) : null);
   }
 
   function format_decisions(n) {

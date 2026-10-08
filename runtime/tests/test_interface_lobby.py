@@ -865,11 +865,8 @@ out.agent = {
   reads: sent.filter((s) => s.url.includes("/tasks/")).map((s) => s.url.split("/").pop()), changed: changed > 0, hand: find(agent.el, ".wb-hint").textContent,
   none: find(agent.el, ".wb-lobby-none").hidden, form: find(agent.el, "button.wb-set-mode").textContent,
 };
-// Set mode sends one request, for the planning agent, with the word that was selected
-const select = find(agent.el, "select");
-select.value = "milestones";
-select.listeners.change[0]();
-find(agent.el, "button.wb-set-mode").click();
+// Stop agent sends one request, for the planning agent, with its word (A-17)
+find(agent.el, "button[data-key=stop-agent]").click();
 await settle();
 out.setMode = sent.filter((s) => s.method === "POST").map((s) => [s.url, s.body]);
 sent.length = 0;
@@ -923,11 +920,11 @@ def test_the_lobbys_agent_tab_is_the_floors_for_the_planning_agent_and_sends_one
     assert agent["model"] == [True, [12, 13], [5, 4]], "its decisions are those on a request and its own; the engineering agent's task is not its task"
     assert agent["state"].startswith("Waiting for you") and "2 decisions in the Inbox" in agent["state"]
     assert agent["plate"].startswith("supervised") and "Every review reaches you" in agent["plate"]
-    assert agent["meters"] == ["Runs today 3 / 12", "Spend today $0.25 / $2.00", "Queued 1"]
+    assert agent["meters"] == ["Reference-model runs today 3 / 12", "Floor-model spend today $0.25 / $2.00", "Queued 1"]
     assert agent["current"].startswith("#4 Task 4Running") and agent["others"] == ["#5 Task 5FailedRetry"]
     assert agent["reads"] == ["4"], "the running task's body is read; the others' only while the Inbox is open"
-    assert agent["changed"] is True and agent["none"] is True and agent["form"] == "Set mode"
-    assert got["setMode"] == [["/api/v1/projects/0123456789ab/agents/planning/mode", {"mode": "milestones"}]]
+    assert agent["changed"] is True and agent["none"] is True and agent["form"] == "Stop agent"
+    assert got["setMode"] == [["/api/v1/projects/0123456789ab/agents/planning/mode", {"mode": "stopped"}]]
     assert got["retry"] == [["/api/v1/projects/0123456789ab/tasks/5/retry", {}]]
     assert got["bare"] == [False, True, True], "a project with no agent in its configuration says so and shows no form"
     assert got["unaccepted"] == [True, [["This project has no agents in its configuration.", True], ["Waiting for the configuration to be accepted.", False]]], \

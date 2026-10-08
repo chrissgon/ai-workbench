@@ -64,3 +64,11 @@ export function clock(stamp) {
 export function decisions(n) {
   return `${n} decision${n === 1 ? "" : "s"}`;
 }
+
+// The words of the two caps (A-20), and the sentence that says what each one counts: the runs cap counts the reference model's runs, the
+// dollar cap the floor model's spend, so the two never read as one.
+export const METER_WORDS = Object.freeze({ runs: "Reference-model runs today", spend: "Floor-model spend today" });
+export const METER_TIPS = Object.freeze({
+  runs: "Counted against the cap of runs per day: only runs on the reference model. Runs on the floor model are not counted here.",
+  spend: "Counted against the cap of dollars per day: only the floor model's spend. A run whose cost is not recorded yet counts at the per-run limit.",
+});

@@ -115,9 +115,24 @@ function decisionsOf(status) {
   return (Array.isArray(status && status.pending) ? status.pending : []).map((item) => ({ item, agent: item.agent || "planning" }));
 }
 
+/**
+ * Whether a project's configuration is accepted, and whether the page still holds data it read before it stopped being accepted (A-16):
+ * {accepted, kept}. `kept` is true only when it is not accepted and a status was read; the screens then show that data, dimmed.
+ */
+export function acceptance(project, detail) {
+  const accepted = Boolean(project && project.config && project.config.accepted) && !(detail && detail.error && detail.error.status === 412);
+  return { accepted, kept: !accepted && Boolean(detail && detail.status) };
+}
+
+/** The number of ready tasks the last dispatcher round held, from the status body (`held`: [{task_id, agent, reason, ...}]). */
+export function heldCount(status) {
+  return status && Array.isArray(status.held) ? status.held.length : 0;
+}
+
 /** One building of the City from a project, its status, its agents and the loaded tasks. */
 export function buildingOf(project, detail) {
-  const accepted = Boolean(project.config && project.config.accepted) && !(detail && detail.error && detail.error.status === 412);
+  const { accepted, kept } = acceptance(project, detail);
+  const shown = accepted || kept;     // a project that is not accepted keeps the floors and the windows it had
   const ordered = floorsOf(detail && detail.agents);
   const status = detail && detail.status;
   const decided = decisionsOf(status);
@@ -129,19 +144,19 @@ export function buildingOf(project, detail) {
   const waits = new Set(decided.map((d) => d.agent));
   const floors = (ordered.length ? ordered : [{ name: null, enabled: true, acting_mode: null }]).map((a) => {
     // a window is warm when a task of the floor's agent runs and grey otherwise (waiting, idle, stopped, not accepted)
-    const window = windowState(accepted && Boolean(a.name) && running.has(a.name));
-    return { agent: a.name, window, waits: accepted && (a.name ? waits.has(a.name) : decided.length > 0) };
+    const window = windowState(accepted && Boolean(a.name) && running.has(a.name));     // grey in every state but a running one of an accepted project
+    return { agent: a.name, window, waits: shown && (a.name ? waits.has(a.name) : decided.length > 0) };
   });
-  const open = !accepted ? 0 : status ? decided.length : format.count(project.open_pending);
-  const runningTask = accepted && project.running_task !== null && project.running_task !== undefined ? project.running_task : null;
-  return { id: project.id, name: project.name, accepted, floors, decisions: open, runningTask, message: project.message || "" };
+  const open = !shown ? 0 : status ? decided.length : format.count(project.open_pending);
+  const runningTask = shown && project.running_task !== null && project.running_task !== undefined ? project.running_task : null;
+  return { id: project.id, name: project.name, accepted, kept, floors, decisions: open, runningTask, held: shown ? heldCount(status) : 0, message: project.message || "" };
 }
 
 /** The tooltip sentence of a building (the specification's). */
 export function tooltipOf(building) {
   if (!building.accepted) return `${building.name}: not accepted yet`;
   const running = building.runningTask === null ? "no task running" : `task #${building.runningTask} running`;
-  return `${building.name}: ${format.decisions(building.decisions)} waiting, ${running}`;
+  return `${building.name}: ${format.decisions(building.decisions)} waiting, ${running}${building.held > 0 ? `, ${building.held} held` : ""}`;
 }
 
 /** The sub line of a building's label card. */
@@ -153,7 +168,7 @@ export function subOf(building) {
 /** The name a link to a building carries for a screen reader. */
 export function linkNameOf(building) {
   if (!building.accepted) return `${building.name}, not accepted yet`;
-  return `${building.name}, ${format.decisions(building.decisions)} waiting, ${building.runningTask === null ? "no task running" : `task #${building.runningTask} running`}`;
+  return `${building.name}, ${format.decisions(building.decisions)} waiting, ${building.runningTask === null ? "no task running" : `task #${building.runningTask} running`}${building.held > 0 ? `, ${building.held} held` : ""}`;
 }
 
 /** The City's data in one value: its buildings, the waiting rows and the canvas label. */

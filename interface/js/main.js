@@ -234,6 +234,10 @@ function render() {
   });
   drawnKey = key;
   frame.el.classList.toggle("is-stale", Boolean(failure) && snapshot.loaded);
+  // A-16: a project whose configuration is not accepted keeps the last data read on every screen of it, dimmed (one class); the band says why.
+  // The City dims for the project the tracking bar follows.
+  const dimmed = route.project ? routeProject : project;
+  frame.el.classList.toggle("is-unaccepted", state === "ready" && Boolean(dimmed) && model.acceptance(dimmed, snapshot.details[dimmed.id]).kept);
 
   frame.switcher.update({
     projects: projects.map((p) => ({
@@ -257,8 +261,8 @@ function render() {
   } else if (view.screen === "control") {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     const detail = routeProject ? snapshot.details[routeProject.id] : null;
-    const accepted = Boolean(routeProject && routeProject.config && routeProject.config.accepted) && !(detail && detail.error && detail.error.status === 412);
-    view.control.update({ reload: reloads, loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted, projectId: route.project, tab: route.tab });
+    const found = model.acceptance(routeProject, detail);
+    view.control.update({ reload: reloads, loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted: found.accepted, kept: found.kept, projectId: route.project, tab: route.tab });
   } else if (view.screen === "lobby") {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     view.lobby.update({ reload: reloads, snapshot, route, now, projectName: routeProject ? routeProject.name : "" });

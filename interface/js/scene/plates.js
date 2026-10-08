@@ -6,6 +6,7 @@
 // change was for the phone only).
 
 import { h } from "../dom.js";
+import { METER_TIPS, METER_WORDS } from "../format.js";
 
 /** The mode's pips: four 5 px squares, as many filled as the mode counts. */
 export function pips(count) {
@@ -24,17 +25,23 @@ export function modePlate(mode, pipCount, acting, actingPips) {
   return wrap;
 }
 
-function meter(label, text, share, full, note) {
+function meter(label, text, share, full, note, tip) {
   const fill = h("span", { class: `wb-meter-fill${full ? " is-full" : ""}` });
   fill.style.setProperty("--wb-share", `${Math.round(share * 100)}%`);
-  return h("div", { class: "wb-plate-meter" },
+  return h("div", { class: "wb-plate-meter", title: tip || null },
     h("span", { class: "wb-plate-meter-text" }, label ? h("span", { class: "wb-muted", text: `${label} ` }) : null, h("span", { text })),
     h("span", { class: "wb-meter", "aria-hidden": "true" }, fill),
     note ? h("span", { class: "wb-plate-note", text: note }) : null);
 }
 
+/** The chips of a plate (A-12), in this order and each only when its count is not zero: done, running, queued, left (planned or blocked). */
+export function chipNodes(p) {
+  const chips = [["done", p.done, "pui-success"], ["running", p.running, "pui-theme"], ["queued", p.queued, "pui-surface"], ["left", p.left, "pui-muted"]];
+  return chips.filter(([, count]) => count > 0).map(([word, count, tone]) => h("span", { class: `pui-badge ${tone} pui-soft pui-rounded-full`, text: `${count} ${word}` }));
+}
+
 /**
- * A floor plate. p: {name, label, dot, decisions, word, done, left, queued, runsText, runsShare, usdText, usdShare,
+ * A floor plate. p: {name, label, dot, decisions, word, done, running, left, queued, runsText, runsShare, usdText, usdShare,
  * unknown, mode, pips, acting, actingPips, selected, off}. Returns the element; the caller toggles `is-compact`. The same component is the plate
  * beside a floor (a `div`) and each row of the floors list (`tag` "a", `attrs` {class: "wb-floor-row is-row", href, aria-label}): one design, two places.
  */
@@ -44,14 +51,10 @@ export function plateNode(p, attrs = {}, tag = "div") {
     h("strong", { class: "wb-plate-name", text: p.label }),
     p.decisions > 0 ? h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(p.decisions) }) : null,
     h("span", { class: "wb-plate-state", text: p.word }));
-  const chips = h("div", { class: "wb-plate-chips" },
-    h("span", { class: "pui-badge pui-success pui-soft pui-rounded-full", text: `${p.done} done` }),
-    h("span", { class: "pui-badge pui-surface pui-soft pui-rounded-full", text: `${p.left} left` }),
-    h("span", { class: "pui-badge pui-theme pui-soft pui-rounded-full", text: `${p.queued} queued` }),
-    p.mode ? modePlate(p.mode, p.pips, p.acting, p.actingPips) : null);
+  const chips = h("div", { class: "wb-plate-chips" }, chipNodes(p), p.mode ? modePlate(p.mode, p.pips, p.acting, p.actingPips) : null);
   const meters = h("div", { class: "wb-plate-meters" },
-    meter("runs", p.runsText, p.runsShare, p.runsShare >= 1),
-    meter("", p.usdText, p.usdShare, p.usdShare >= 1, p.unknown > 0 ? `(+${p.unknown} of unknown cost)` : ""));
+    meter(METER_WORDS.runs, p.runsText, p.runsShare, p.runsShare >= 1, "", METER_TIPS.runs),
+    meter(METER_WORDS.spend, p.usdText, p.usdShare, p.usdShare >= 1, p.unknown > 0 ? `(+${p.unknown} of unknown cost)` : "", METER_TIPS.spend));
   const node = h(tag, { ...attrs, class: `wb-plate${p.selected ? " is-selected" : ""}${p.off ? " is-off" : ""}${attrs.class ? ` ${attrs.class}` : ""}`, "data-floor": p.name }, row1, chips, meters);
   return node;
 }
