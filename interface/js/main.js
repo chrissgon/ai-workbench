@@ -115,11 +115,17 @@ function start() {
     return;
   }
   snapshot = emptySnapshot();
+  model.resetRequestChoices();
   selected = null;
   failure = null;
   knownDecisions = null;
   frame = createFrame(root, {
     onSelectProject: selectProject,
+    onSelectRequest: (project, id) => {
+      model.chooseRequest(project, id);   // kept in memory for the session
+      render();
+      poll();   // the running task's start time of the request now shown
+    },
     onForgetToken: () => {
       clearToken();
       askForToken();

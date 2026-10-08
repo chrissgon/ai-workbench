@@ -16,7 +16,7 @@ import { createWaitingCard, createWaitingMenu } from "./waiting.js";
 const SCREEN_NAMES = { city: "City", building: "Building", floor: "Floor", lobby: "Lobby", control: "Control room" };
 const ANNOUNCE_EVERY_MS = 2000;
 
-/** Create the frame in `root` and return its parts and methods. handlers: {onSelectProject(id), onForgetToken(), onRetry()}. */
+/** Create the frame in `root` and return its parts and methods. handlers: {onSelectProject(id), onSelectRequest(project, request), onForgetToken(), onRetry()}. */
 export function createFrame(root, handlers) {
   const sheet = createSheet();
   const closeLists = () => {
@@ -28,7 +28,7 @@ export function createFrame(root, handlers) {
   const waitingCard = createWaitingCard();
   const nav = createNav();
   const kpis = createKpis();
-  const track = createTrack({ onOpenSteps: (title, body, opener) => sheet.open(title, body, opener) });
+  const track = createTrack({ onOpenSteps: (title, body, opener) => sheet.open(title, body, opener), onSelectRequest: (project, id) => handlers.onSelectRequest(project, id) });
 
   const skipPanel = h("a", { class: "wb-skip", href: "#wb-panel", text: "Skip to the panel" });
   const skipList = h("a", { class: "wb-skip", href: "#wb-scene-list", text: "Skip to the scene list" });

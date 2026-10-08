@@ -1,6 +1,6 @@
-// The Building screen (handoff building.md): the cutaway of a project, one floor per area agent from the lobby up, each with
-// its plate (name, open decisions, state word, done, left and queued, the mode plate, runs and spend), and in the panel the
-// project's facts and the floors list, the HTML twin of the scene. It owns the scene engine for as long as the screen is
+// The Building screen (handoff building.md): the cutaway of a project, one floor per area agent from the lobby up, one compact
+// floor card at the scene's top right for the floor that is hovered or selected (name, state word, mode plate, runs and spend), and
+// in the panel the project's facts and the floors list, the HTML twin of the scene, whose rows are the same card. It owns the scene engine for as long as the screen is
 // shown. What the frame holds (header, KPI cards, tracking bar) is filled by the page; this fills the scene and the panel.
 // It only reads: `artifacts` (for the sheets and drawers of each floor) and, for "Project state", one file under docs/.
 
@@ -13,10 +13,8 @@ import { arrowNav, keepFocus } from "../frame/arrows.js";
 import { icon } from "../frame/icons.js";
 import * as router from "../router.js";
 import { createEngine, NoWebGL } from "../scene/engine.js";
-import { modePlate } from "../scene/plates.js";
+import { floorCardNode } from "../scene/plates.js";
 
-export const PLATE_WIDTH = 290;
-export const PLATE_GAP_X = 14;
 const STATE_PATH = "docs/workbench/state.md";
 const ARTIFACTS_EVERY_MS = 20000;
 
@@ -24,7 +22,7 @@ const ARTIFACTS_EVERY_MS = 20000;
 function loadingScene() {
   return {
     ready: false, selected: null, focus: null, more: 0, tag: null, doorText: "",
-    floors: [0, 1, 2].map((i) => ({ name: `loading-${i}`, label: "", state: "off", window: "dark", decisions: 0, lobby: i === 0, sheets: 0, drawers: 1, tip: "", plate: null })),
+    floors: [0, 1, 2].map((i) => ({ name: `loading-${i}`, label: "", state: "off", window: "grey", decisions: 0, lobby: i === 0, sheets: 0, drawers: 1, tip: "", plate: null })),
   };
 }
 
@@ -112,6 +110,25 @@ export function createBuildingView(frame, env) {
       li.classList.toggle("is-hover", li.getAttribute("data-floor") === name);
     }
     if (engine) engine.highlight(name ? `floor:${name}` : null);
+    drawCorner();
+  }
+
+  // The floor card at the scene's top right: the floor the pointer or the focus is on, else the work order's floor (the selected one),
+  // else nothing. The same component as each row of the floors list.
+  let cornerKey = "";
+  function drawCorner() {
+    if (!engine || !last) return;
+    const view = fm.building(last.snapshot, projectId);
+    let row = null;
+    if (view && last.snapshot.loaded) {
+      const wanted = hover || (phone.matches ? focusOf(view) : view.tag ? view.tag.floor : null);
+      row = view.rows.slice(0, 8).find((r) => r.name === wanted) || null;
+    }
+    const card = row ? fm.cardOf(row) : null;
+    const key = JSON.stringify(card);
+    if (key === cornerKey) return;
+    cornerKey = key;
+    engine.setCorner(card ? floorCardNode(card, { class: "is-corner", "aria-hidden": "true" }) : null);
   }
 
   try {
@@ -120,7 +137,7 @@ export function createBuildingView(frame, env) {
       getInsets: () => {
         const base = frame.insets(panel);
         if (frame.isPhone()) return { left: 4, right: 70, top: base.top, bottom: 40, pad: 0.98 };
-        return { ...base, right: base.right + PLATE_WIDTH + PLATE_GAP_X, plateRight: base.right };
+        return base;
       },
       onOpen: open,
       onHover: (id) => highlightRow(id && String(id).startsWith("floor:") ? String(id).slice(6) : null),
@@ -139,23 +156,6 @@ export function createBuildingView(frame, env) {
   const phone = window.matchMedia("(max-width: 639px)");
   const onPhone = () => { shown = ""; redraw(); };
   phone.addEventListener("change", onPhone);
-
-  // plates in the overlay are pointer targets: hovering one outlines its floor, a click opens it
-  const overPlate = (event) => (event.target && event.target.closest ? event.target.closest(".wb-plate") : null);
-  const onOver = (event) => {
-    const plate = overPlate(event);
-    if (plate) highlightRow(plate.getAttribute("data-floor"));
-  };
-  const onOut = (event) => {
-    if (overPlate(event)) highlightRow(null);
-  };
-  const onClick = (event) => {
-    const plate = overPlate(event);
-    if (plate) open(`floor:${plate.getAttribute("data-floor")}`);
-  };
-  frame.sceneHost.addEventListener("pointerover", onOver);
-  frame.sceneHost.addEventListener("pointerout", onOut);
-  frame.sceneHost.addEventListener("click", onClick);
 
   const onKey = (event) => {
     if (event.key !== "Escape" || disposed) return;
@@ -212,14 +212,8 @@ export function createBuildingView(frame, env) {
   }
 
   function floorItem(row, view) {
-    const sub = !row.accepted ? "Waiting for the configuration to be accepted." : row.stateWord;
-    const link = h("a", { class: "wb-floor-row", href: row.link, "aria-label": row.linkName },
-      h("span", { class: `wb-dot is-${row.dot}` }),
-      h("span", { class: "wb-floor-text" },
-        h("span", { class: "wb-floor-name" }, h("strong", { text: row.label }), row.decisions > 0 ? h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(row.decisions) }) : null),
-        h("span", { class: "wb-floor-state", text: sub }),
-        row.accepted ? h("span", { class: "wb-floor-meters wb-muted", text: `${row.meters} · ${row.counts}${row.unknown > 0 ? ` (+${row.unknown} of unknown cost)` : ""}` }) : null),
-      row.mode ? h("span", { class: "wb-floor-mode" }, modePlate(row.mode, row.pips, row.actingDiffers ? row.acting : null, row.actingPips)) : null);
+    const card = fm.cardOf(row);
+    const link = floorCardNode(card, { class: "wb-floor-row", href: row.link, "aria-label": row.linkName }, "a");
     link.addEventListener("click", (event) => {
       if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
       event.preventDefault();
@@ -272,7 +266,7 @@ export function createBuildingView(frame, env) {
     if (!loading) {
       title.textContent = view.name;
       drawFacts(view);
-      const sig = JSON.stringify(view.rows.map((r) => [r.name, r.state, r.decisions, r.runs, r.usd, r.queued, r.done, r.left, r.mode, r.acting, r.unknown]));
+      const sig = JSON.stringify(view.rows.map((r) => [fm.cardOf(r), r.link, r.linkName]));
       if (sig !== listShown) {
         listShown = sig;
         drawList(view, false);
@@ -306,6 +300,7 @@ export function createBuildingView(frame, env) {
       }
     }
     if (!loading) announceWork(view);
+    drawCorner();
     const key = JSON.stringify([model, label]);
     if (key !== shown) {
       shown = key;
@@ -325,9 +320,6 @@ export function createBuildingView(frame, env) {
       disposed = true;
       observer.disconnect();
       phone.removeEventListener("change", onPhone);
-      frame.sceneHost.removeEventListener("pointerover", onOver);
-      frame.sceneHost.removeEventListener("pointerout", onOut);
-      frame.sceneHost.removeEventListener("click", onClick);
       document.removeEventListener("keydown", onKey);
       viewer.close();
       if (engine) engine.dispose();

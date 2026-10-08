@@ -8,11 +8,14 @@
 
 import * as THREE from "../three.js";
 import { h } from "../dom.js";
+import { icon } from "../frame/icons.js";
 import { buildBuilding } from "./building.js";
+import { clampView, fitView, frustumOf, isDrag, keyAction, panBy, panPixels, pointerToNdc, wheelFactor, zoomAt } from "./camera.js";
 import { buildCity, pulseBeacon, restBeacon } from "./city.js";
-import { ease, fitFrustum } from "./fit.js";
+import { ease, fitFrustum, openEase } from "./fit.js";
 import { createKit } from "./kit.js";
-import { mountLabels, placeLabels } from "./labels.js";
+import { cornerPosition, mountLabels, placeLabels } from "./labels.js";
+import { applyOutlineVisibility, showPlan } from "./look.js";
 import { createLoop } from "./loop.js";
 import { LIGHT_WHITE, readPalette } from "./palette.js";
 import { buildRoom } from "./room.js";
@@ -22,11 +25,18 @@ export const BUILDERS = { city: buildCity, building: buildBuilding, room: buildR
 const DISTANCE = 150;
 const AZIMUTH = (45 * Math.PI) / 180;
 const ELEVATION = (35 * Math.PI) / 180;
-export const CAMERA_MS = 600;     // A5: the camera moves in over 600 ms
+// The motions of the prototype (WP-9.8): the camera approaches its goal as `1 - exp(-4.5 t)`, the building opens as
+// `1 - exp(-3.2 t)` read through a smoothstep; a move lasts until the curve has settled to one percent (ln 100 over the rate).
+export const CAMERA_MS = 1023;    // A5: the camera moves in (fit.js: settleMs(CAMERA_RATE))
+export const OPEN_MS = 1439;      // A5: the building opens, the floors separate once (fit.js: settleMs(OPEN_RATE))
+export const FLY_SETTLE_AT = 0.5; // the screen waits for the fly-in only until it is nine tenths done (about 0.5 s)
 export const DROP_MS = 300;       // A3: a waiting marker drops in once
 export const TAG_MS = 600;        // A6: the work-order tag moves to the next floor once
+export const SHAPE_GROW = 1.03;   // an outline that follows an object's shape stands 3 percent off each of its parts
+export const OUTLINE_PAD = 0.04;  // the hover outline stands this far off the object (the prototype's, for a piece of furniture)
 
 const PICK_EVERY_MS = 40;
+const CLICK_AFTER_DRAG_MS = 60;   // a click this soon after a drag ended is the drag's, not a click
 
 export class NoWebGL extends Error {
   constructor() {
@@ -40,7 +50,8 @@ export class NoWebGL extends Error {
  * options: {label, getInsets() -> {left, right, top, bottom, pad}, onOpen(id), onHover(id|null), onUnavailable()}.
  */
 export function createEngine(host, options) {
-  const canvas = h("canvas", { class: "wb-canvas", role: "img", "aria-label": options.label || "Scene" });
+  const canvas = h("canvas", { class: "wb-canvas", role: "img", tabindex: "0", "aria-label": options.label || "Scene" });
+  canvas.setAttribute("aria-describedby", "wb-camera-help");
   let renderer;
   try {
     renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -51,7 +62,15 @@ export function createEngine(host, options) {
   const overlay = h("div", { class: "wb-overlay", "aria-hidden": "true" });
   const tooltip = h("div", { class: "pui-tooltip wb-tooltip", role: "tooltip", hidden: true });
   overlay.append(tooltip);
-  host.append(canvas, overlay);
+  // The HTML equivalent of the camera: zoom in, zoom out and fit, in reach of the keyboard. With the focus on the scene, + and -
+  // zoom, the arrows pan and 0 fits; the wheel and a pinch zoom, a drag pans, a double click on the ground fits.
+  const cameraButton = (label, name) => h("button", { class: "pui-btn pui-surface pui-outline wb-camera-btn", type: "button", "aria-label": label, title: label }, icon(name, 16));
+  const zoomInButton = cameraButton("Zoom in", "plus");
+  const zoomOutButton = cameraButton("Zoom out", "minus");
+  const fitButton = cameraButton("Fit the scene", "maximize");
+  const tools = h("div", { class: "wb-camera-tools", role: "group", "aria-label": "Scene view" }, zoomInButton, zoomOutButton, fitButton,
+    h("span", { class: "wb-sr", id: "wb-camera-help", text: "Scene view: plus and minus zoom, the arrow keys move, zero fits the whole scene." }));
+  host.append(canvas, overlay, tools);
 
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.shadowMap.enabled = true;
@@ -80,7 +99,9 @@ export function createEngine(host, options) {
   let kind = null;
   let signature = "";
   let size = { w: 0, h: 0 };
-  let frustum = null;             // the resting frustum (fitted)
+  let frustum = null;             // the fitted frustum: the whole diorama in the free rectangle
+  let bounds = null;              // the diorama's bounds in camera space
+  let view = fitView();           // the person's zoom and pan on top of it (camera.js)
   const tween = createTween();    // the camera move in flight, if any
   let drops = [];                 // {marker, start}
   let intro = null;               // {start, ms}: the building opening (A5), the floors separating
@@ -97,9 +118,18 @@ export function createEngine(host, options) {
   let lostText = false;
   let disposed = false;
   let lastPick = 0;
-  let pulseStart = 0;
+  const epoch = clock();          // the ambient animations' clock: it is never restarted, so a rebuild cannot restart a motion
+  let structureSignature = "";
+  let dragEndedAt = -Infinity;
+  let lastMouse = null;           // where the mouse last was over the canvas, to pick again when the camera moves under it
+  let builds = 0;                 // how many times the scene was built and how many times only its words changed: the page's check that a poll does not rebuild
+  let relabels = 0;
+  let pendingMove = null;         // the latest pointer move the throttle held back
+  let pendingTimer = null;
   let frameMs = 0;                // the browser-side cost of the last frame (submitting the draw calls)
-  const outlineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true });
+  // The hover outline is the prototype's: a one-pixel line of the theme colour, full opacity, tested against the depth so the
+  // edges behind the object stay hidden, standing OUTLINE_PAD off the object.
+  const outlineMaterial = new THREE.LineBasicMaterial({ color: 0xffffff });
 
   // --- the world: lights and ground, rebuilt when the palette changes -----------------------------------------------------
   function buildWorld() {
@@ -160,6 +190,7 @@ export function createEngine(host, options) {
   }
 
   function build() {
+    builds += 1;
     clearContent();
     if (!model || !BUILDERS[kind]) return;
     contentKit = createKit(palette);
@@ -167,13 +198,10 @@ export function createEngine(host, options) {
     content.beacons = content.beacons || [];
     content.motions = content.motions || [];
     content.markers = content.markers || [];
+    content.outlines = content.outlines || [];
     scene.add(content.group);
-    const popped = new Set();
-    for (const label of content.labels) {
-      if (previousDecisions.has(label.id) && label.decisions > previousDecisions.get(label.id)) popped.add(label.id);
-    }
-    previousDecisions = new Map(content.labels.map((l) => [l.id, l.decisions]));
-    labelEntries = mountLabels(overlay, content.labels.map((l) => ({ ...l, anchor: l.anchor })), { popped: reducedQuery.matches ? new Set() : popped });
+    applyOutlines();
+    labelEntries = mountLabels(overlay, content.labels.map((l) => ({ ...l, anchor: l.anchor })), { popped: poppedOf(content.labels) });
     const markerKeys = new Set(content.markers.map((m) => m.key));
     const fresh = previousReady ? content.markers.filter((m) => !previousMarkers.has(m.key)) : [];
     previousReady = Boolean(model.ready);
@@ -190,14 +218,44 @@ export function createEngine(host, options) {
     syncBeacons();
   }
 
-  // A5: a building opens (its floors separate) and a room is entered (the camera moves in), once, 600 ms; a cut under reduced motion.
+  // The labels whose decisions went up since the last build pop once (the badge's A3).
+  function poppedOf(labels) {
+    const popped = new Set();
+    for (const label of labels) {
+      if (previousDecisions.has(label.id) && label.decisions > previousDecisions.get(label.id)) popped.add(label.id);
+    }
+    previousDecisions = new Map(labels.map((l) => [l.id, l.decisions]));
+    return reducedQuery.matches ? new Set() : popped;
+  }
+
+  // The same scene, other words (a meter moved, a title changed on a poll): the labels and tooltips are made again and nothing
+  // else is touched, so no motion restarts, no shadow is drawn again and the camera stays where it is.
+  function relabel() {
+    relabels += 1;
+    const words = content.text(model);
+    for (const hit of content.hits) if (words.tips.has(hit.id)) hit.tip = words.tips.get(hit.id);
+    content.labels = words.labels;
+    const popped = poppedOf(words.labels);
+    for (const entry of labelEntries) entry.node.remove();
+    labelEntries = mountLabels(overlay, words.labels.map((l) => ({ ...l, anchor: l.anchor })), { popped });
+    positionLabels();
+    const hit = hoverId ? content.hits.find((x) => x.id === hoverId) : null;
+    if (hit && !tooltip.hidden) tooltip.textContent = hit.tip;
+  }
+
+  // The outline lines of the lot, the floor or the room are drawn only for the object that is hovered or selected by the route.
+  function applyOutlines() {
+    if (content) applyOutlineVisibility(content.outlines, hoverId, content.selected);
+  }
+
+  // A5: a building opens (its floors separate) and a room is entered (the camera moves in), once; a cut under reduced motion.
   function startIntro() {
     if (!content.intro || !model.ready || introPlayed) return;
     introPlayed = true;
     if (reducedQuery.matches) return;
     if (content.intro.apply) {
       content.intro.apply(0);
-      intro = { start: clock(), ms: CAMERA_MS };
+      intro = { start: clock(), ms: OPEN_MS };
       loop.start("intro", { ambient: false });
     } else if (content.intro.zoom && frustum) {
       const k = content.intro.zoom;
@@ -233,8 +291,8 @@ export function createEngine(host, options) {
       content.beacons.forEach(restBeacon);
       content.motions.forEach((m) => m.rest());
       loop.requestRender();
-    } else if (loop.start("beacon", { ambient: true })) {
-      pulseStart = clock();
+    } else {
+      loop.start("beacon", { ambient: true });
     }
   }
 
@@ -265,10 +323,37 @@ export function createEngine(host, options) {
     if (!content || !size.w || !size.h) return;
     const insets = options.getInsets ? options.getInsets() : {};
     lastInsets = insets;
-    frustum = fitFrustum(contentBounds(content.group), size, insets, insets.pad || 1.04);
-    if (!tween.active()) applyFrustum(frustum);
+    bounds = contentBounds(content.group);
+    frustum = fitFrustum(bounds, size, insets, insets.pad || 1.04);
+    view = clampView(view, frustum, bounds);   // the person's zoom and pan stay while they are inside the limits
+    if (!tween.active()) applyView();
     positionLabels();
     loop.requestRender();
+  }
+
+  function applyView() {
+    if (frustum) applyFrustum(frustumOf(frustum, view));
+  }
+
+  // The camera on the person's command (wheel, pinch, drag, keys, buttons): one frame on demand per change, never a loop.
+  function setView(next) {
+    view = next;
+    applyView();
+    positionLabels();
+    loop.requestRender();
+    if (lastMouse && !stickyId && !(press && press.dragging)) hoverAt(lastMouse);   // the scene moved under a still mouse
+  }
+  const canMove = () => Boolean(content && frustum && bounds && !tween.active());
+  const ndcOf = (clientX, clientY) => pointerToNdc(clientX, clientY, canvas.getBoundingClientRect());
+  function zoomBy(factor, ndc = { x: 0, y: 0 }) {
+    if (canMove()) setView(zoomAt(view, frustum, bounds, factor, ndc));
+  }
+  function moveBy(fx, fy) {
+    if (canMove()) setView(panBy(view, frustum, bounds, fx, fy));
+  }
+  function resetView() {
+    if (!frustum) return;
+    setView(fitView());
   }
 
   function project(anchor) {
@@ -277,8 +362,18 @@ export function createEngine(host, options) {
   }
 
   function positionLabels() {
+    placeCorner();
     if (!labelEntries.length) return;
-    placeLabels(labelEntries, project, { hidden: tween.active() || Boolean(intro), insets: lastInsets, size });
+    placeLabels(labelEntries, project, { hidden: false });
+  }
+
+  // The corner slot: one card the page puts at the top right of the free rectangle (the Building's floor card).
+  let corner = null;
+  function placeCorner() {
+    if (!corner || !lastInsets) return;
+    const at = cornerPosition(size, lastInsets);
+    corner.style.setProperty("--wb-x", `${at.x.toFixed(1)}px`);
+    corner.style.setProperty("--wb-y", `${at.y.toFixed(1)}px`);
   }
 
   function measure() {
@@ -304,20 +399,17 @@ export function createEngine(host, options) {
     const moved = tween.step(now);
     if (moved) {
       applyFrustum(moved);
-      positionLabels();
-      if (!tween.active()) {
-        loop.stop("camera");
-        positionLabels();
-      }
+      positionLabels();   // the labels ride along with the camera (the prototype projected them every frame)
+      if (!tween.active()) loop.stop("camera");
     }
     if (intro) {
       const t = Math.min(1, (now - intro.start) / intro.ms);
-      content.intro.apply(ease(t));
+      content.intro.apply(openEase(t));
       renderer.shadowMap.needsUpdate = true;
+      positionLabels();   // the plates ride along with their floors
       if (t >= 1) {
         intro = null;
         loop.stop("intro");
-        positionLabels();
       }
     }
     if (tagRun) {
@@ -341,7 +433,7 @@ export function createEngine(host, options) {
       }
     }
     if (content && (content.beacons.length || content.motions.length) && !reducedQuery.matches) {
-      const seconds = (now - pulseStart) / 1000;
+      const seconds = (now - epoch) / 1000;
       content.beacons.forEach((b) => pulseBeacon(b, seconds));
       content.motions.forEach((m) => m.tick(seconds));
     }
@@ -359,7 +451,8 @@ export function createEngine(host, options) {
     const rect = canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
-    pointer.set((x / rect.width) * 2 - 1, -(y / rect.height) * 2 + 1);
+    const ndc = pointerToNdc(event.clientX, event.clientY, rect);
+    pointer.set(ndc.x, ndc.y);
     raycaster.setFromCamera(pointer, camera);
     const objects = content.hits.map((hit) => hit.object);
     const found = raycaster.intersectObjects(objects, true);
@@ -369,6 +462,24 @@ export function createEngine(host, options) {
     return { x, y, hit: content.hits.find((hit) => hit.object === object) || null };
   }
 
+  // The outline of an object that is not a box (a figure, a desk, a tray, a sheet): the edges of the object's own meshes, a little
+  // off the surface so they are not lost in it, in world space. A box-shaped object (a building, a floor) keeps the box.
+  function shapeGeometry(object) {
+    object.updateWorldMatrix(true, true);
+    const points = [];
+    object.traverse((node) => {
+      if (!node.isMesh || !node.visible) return;
+      const edges = new THREE.EdgesGeometry(node.geometry, 35);
+      edges.scale(SHAPE_GROW, SHAPE_GROW, SHAPE_GROW);
+      edges.applyMatrix4(node.matrixWorld);
+      points.push(...edges.getAttribute("position").array);
+      edges.dispose();
+    });
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(points, 3));
+    return geometry;
+  }
+
   function setOutline(id) {
     if (outline) {
       scene.remove(outline);
@@ -376,15 +487,18 @@ export function createEngine(host, options) {
       outline = null;
     }
     const hit = id && content ? content.hits.find((x) => x.id === id) : null;
-    if (hit) {
-      const box = new THREE.Box3().setFromObject(hit.object).expandByScalar(0.08);
+    applyOutlines();
+    if (hit && hit.shape) {
+      outline = new THREE.LineSegments(shapeGeometry(hit.object), outlineMaterial);
+      scene.add(outline);
+    } else if (hit) {
+      const box = new THREE.Box3().setFromObject(hit.object).expandByScalar(hit.pad !== undefined ? hit.pad : OUTLINE_PAD);
       const dims = box.getSize(new THREE.Vector3());
       const centre = box.getCenter(new THREE.Vector3());
       const boxGeometry = new THREE.BoxGeometry(dims.x, dims.y, dims.z);
       outline = new THREE.LineSegments(new THREE.EdgesGeometry(boxGeometry), outlineMaterial);
       boxGeometry.dispose();
       outline.position.copy(centre);
-      outline.renderOrder = 10;
       scene.add(outline);
     }
     loop.requestRender();
@@ -408,17 +522,98 @@ export function createEngine(host, options) {
     }
   }
 
+  // Pointers down on the canvas: one is a pan (a press that moves more than a few pixels), two are a pinch. A press that does
+  // not move is a click: it opens what is under it.
+  const down = new Map();   // pointerId -> {x, y}
+  let press = null;         // {x, y, dragging}
+  let pinch = null;         // {distance}
+
+  const onDown = (event) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    down.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (canvas.setPointerCapture) {
+      try { canvas.setPointerCapture(event.pointerId); } catch (e) { /* a pointer that is already gone */ }
+    }
+    if (down.size === 1) press = { x: event.clientX, y: event.clientY, dragging: false };
+    else if (down.size === 2) {
+      const [a, b] = [...down.values()];
+      pinch = { distance: Math.hypot(a.x - b.x, a.y - b.y) };
+      if (press) press.dragging = true;
+    }
+  };
+
   const onMove = (event) => {
+    const was = down.get(event.pointerId);
+    if (was) {
+      const dx = event.clientX - was.x;
+      const dy = event.clientY - was.y;
+      down.set(event.pointerId, { x: event.clientX, y: event.clientY });
+      if (down.size >= 2 && pinch) {
+        const [a, b] = [...down.values()];
+        const distance = Math.hypot(a.x - b.x, a.y - b.y);
+        if (pinch.distance > 0 && distance > 0) zoomBy(distance / pinch.distance, ndcOf((a.x + b.x) / 2, (a.y + b.y) / 2));
+        pinch.distance = distance;
+        return;
+      }
+      if (press) {
+        if (!press.dragging && isDrag(event.clientX - press.x, event.clientY - press.y)) {
+          press.dragging = true;
+          tooltip.hidden = true;
+          canvas.classList.add("is-dragging");
+          if (hoverId !== null && !stickyId) showHover({ hit: null });
+        }
+        if (press.dragging && canMove()) setView(panPixels(view, frustum, bounds, dx, dy, size));
+      }
+      return;
+    }
     if (event.pointerType === "touch" || stickyId) return;
-    const now = clock();
-    if (now - lastPick < PICK_EVERY_MS) return;
-    lastPick = now;
-    showHover(pick(event));
+    lastMouse = { clientX: event.clientX, clientY: event.clientY };
+    hoverAt(event);
   };
+
+  // The pick is throttled, but the last move of a motion is never dropped: a move that comes too soon is picked once more when
+  // the interval is over, with the pointer's latest position. (A dropped last move left the outline on the object the pointer
+  // had just left: "the cursor was over the third rack and the second was still selected".)
+  function hoverAt(event) {
+    const wait = PICK_EVERY_MS - (clock() - lastPick);
+    if (wait > 0) {
+      pendingMove = event;
+      if (pendingTimer === null) pendingTimer = setTimeout(runPending, wait);
+      return;
+    }
+    runPending(event);
+  }
+
+  function runPending(event) {
+    const move = event && event.clientX !== undefined ? event : pendingMove;
+    pendingMove = null;
+    pendingTimer = null;
+    if (!move || disposed || stickyId || down.size > 0) return;
+    lastPick = clock();
+    showHover(pick(move));
+  }
+
+  const onUp = (event) => {
+    if (!down.has(event.pointerId)) return;
+    down.delete(event.pointerId);
+    if (canvas.releasePointerCapture) {
+      try { canvas.releasePointerCapture(event.pointerId); } catch (e) { /* already released */ }
+    }
+    if (down.size < 2) pinch = null;
+    if (down.size === 0) {
+      if (press && press.dragging) dragEndedAt = clock();   // the click that follows is the drag's end, not a click
+      press = null;
+      canvas.classList.remove("is-dragging");
+    }
+  };
+
   const onLeave = () => {
-    if (!stickyId) showHover({ hit: null });
+    lastMouse = null;
+    if (!stickyId && down.size === 0) showHover({ hit: null });
   };
+
   const onClick = (event) => {
+    if (clock() - dragEndedAt < CLICK_AFTER_DRAG_MS) return;
     const result = pick(event);
     if (!result.hit) {
       stickyId = null;
@@ -434,9 +629,41 @@ export function createEngine(host, options) {
     showHover({ hit: null });
     if (options.onOpen) options.onOpen(result.hit.id);
   };
+
+  const onDoubleClick = (event) => {
+    if (!pick(event).hit) resetView();   // on the ground: the whole scene again (a double click on a building opens it)
+  };
+
+  const onWheel = (event) => {
+    if (!canMove()) return;
+    event.preventDefault();
+    zoomBy(wheelFactor(event.deltaY, event.deltaMode), ndcOf(event.clientX, event.clientY));
+  };
+
+  const onKeyDown = (event) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const action = keyAction(event.key);
+    if (!action) return;
+    event.preventDefault();
+    if (action.fit) resetView();
+    else if (action.zoom) zoomBy(action.zoom);
+    else if (action.pan) moveBy(action.pan[0], action.pan[1]);
+  };
+
+  canvas.addEventListener("pointerdown", onDown);
   canvas.addEventListener("pointermove", onMove);
+  canvas.addEventListener("pointerup", onUp);
+  canvas.addEventListener("pointercancel", onUp);
   canvas.addEventListener("pointerleave", onLeave);
   canvas.addEventListener("click", onClick);
+  canvas.addEventListener("dblclick", onDoubleClick);
+  canvas.addEventListener("wheel", onWheel, { passive: false });
+  canvas.addEventListener("keydown", onKeyDown);
+  const onZoomIn = () => zoomBy(1.25);
+  const onZoomOut = () => zoomBy(1 / 1.25);
+  zoomInButton.addEventListener("click", onZoomIn);
+  zoomOutButton.addEventListener("click", onZoomOut);
+  fitButton.addEventListener("click", resetView);
 
   // --- the page's own signals: visibility, reduced motion, colour scheme, context loss ---------------------------------------
   const onVisibility = () => {
@@ -446,7 +673,7 @@ export function createEngine(host, options) {
   const onReduced = () => {
     if (reducedQuery.matches) {
       if (tween.cancel()) {
-        applyFrustum(frustum);
+        applyView();
         loop.stop("camera");
       }
       drops.forEach((d) => { d.marker.group.position.y = d.marker.restY; });
@@ -491,20 +718,30 @@ export function createEngine(host, options) {
   buildWorld();
   measure();
   // The test hook of the acceptance (scene.md section 10): the frames drawn so far, read from the canvas element.
-  const stats = () => ({ ...loop.stats(), frameMs, pixelRatio: renderer.getPixelRatio(), drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries });
+  const stats = () => ({ ...loop.stats(), builds, relabels, zoom: view.zoom, panX: view.x, panY: view.y, frameMs, pixelRatio: renderer.getPixelRatio(), drawCalls: renderer.info.render.calls, geometries: renderer.info.memory.geometries });
   canvas.wbStats = stats;
 
   return {
     canvas,
-    /** Show a scene: `kind` names a builder, `model` is its plain data. The same model is not built twice. */
+    /**
+     * Show a scene: `kind` names a builder, `model` is its plain data. The same model is not built twice, and a model that
+     * differs only in its words (the builder's `structure` is the same) changes the labels and tooltips alone: nothing that moves
+     * is built again, so no motion restarts on a poll that found the same state.
+     */
     show(nextKind, nextModel, label) {
       if (label) canvas.setAttribute("aria-label", label);
-      const next = JSON.stringify([nextKind, nextModel]);
-      if (next === signature) return false;
+      const builder = BUILDERS[nextKind];
+      const plan = showPlan({ signature, structure: structureSignature, built: Boolean(content && content.text) }, nextKind, nextModel, builder && builder.structure);
+      if (plan.action === "none") return false;
       kind = nextKind;
       model = nextModel;
+      signature = plan.signature;
+      if (plan.action === "relabel") {
+        relabel();
+        return true;
+      }
+      structureSignature = plan.structure;
       build();
-      signature = next;
       return true;
     },
     /** Measure the insets again and refit (a panel changed size). */
@@ -518,30 +755,54 @@ export function createEngine(host, options) {
         setOutline(id);
       }
     },
-    /** Move the camera in on a building over CAMERA_MS (A5); resolves true when it ended, false when it was a cut. */
+    /** Move the camera in on a building (A5, the prototype's curve); resolves true when it is nine tenths done, false when it was a cut. */
     flyTo(id, ms = CAMERA_MS) {
       const hit = content && content.hits.find((x) => x.id === id);
       if (!hit || reducedQuery.matches || !frustum) return Promise.resolve(false);
       const insets = options.getInsets ? options.getInsets() : {};
       const target = fitFrustum(contentBounds(hit.object), size, insets, 1.6);
-      const move = tween.start({ ...frustum }, target, clock(), ms);
+      const move = tween.start(frustumOf(frustum, view), target, clock(), ms, FLY_SETTLE_AT);
       tooltip.hidden = true;
       positionLabels();
       loop.start("camera", { ambient: false });
       return move;
     },
-    /** What the page can read to check the rules: frames drawn so far, animations running, hidden or not. */
+    /** Put `node` (or nothing) in the corner slot: the top right of the free rectangle, over the scene, never over a panel. */
+    setCorner(node) {
+      if (corner) corner.remove();
+      corner = node || null;
+      if (corner) {
+        corner.classList.add("wb-corner-card");
+        overlay.append(corner);
+        placeCorner();
+      }
+    },
+    /** The person's camera, for the page's checks and the keyboard-free callers: zoom in, zoom out, fit, move. */
+    zoomBy: (factor) => zoomBy(factor),
+    resetView,
+    moveBy,
+    /** What the page can read to check the rules: frames drawn so far, animations running, hidden or not, the zoom and pan. */
     stats,
     dispose() {
       if (disposed) return;
       disposed = true;
+      if (pendingTimer !== null) clearTimeout(pendingTimer);
       observer.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
       reducedQuery.removeEventListener("change", onReduced);
       darkQuery.removeEventListener("change", onScheme);
+      canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
+      canvas.removeEventListener("pointerup", onUp);
+      canvas.removeEventListener("pointercancel", onUp);
       canvas.removeEventListener("pointerleave", onLeave);
       canvas.removeEventListener("click", onClick);
+      canvas.removeEventListener("dblclick", onDoubleClick);
+      canvas.removeEventListener("wheel", onWheel);
+      canvas.removeEventListener("keydown", onKeyDown);
+      zoomInButton.removeEventListener("click", onZoomIn);
+      zoomOutButton.removeEventListener("click", onZoomOut);
+      fitButton.removeEventListener("click", resetView);
       canvas.removeEventListener("webglcontextlost", onLost);
       canvas.removeEventListener("webglcontextrestored", onRestored);
       loop.dispose();
@@ -552,6 +813,8 @@ export function createEngine(host, options) {
       renderer.forceContextLoss();
       canvas.remove();
       overlay.remove();
+      tools.remove();
+      corner = null;
     },
   };
 }

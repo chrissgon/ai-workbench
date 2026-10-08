@@ -117,7 +117,7 @@ def test_the_scheduler_draws_nothing_while_nothing_changed_and_at_most_thirty_fr
 # --- the camera, the culling, the router ------------------------------------------------------------------------------------
 
 PURE = r"""
-import { fitFrustum, lerpFrustum, ease } from "@JS@/scene/fit.js";
+import { fitFrustum, lerpFrustum, ease, openEase, settleMs, CAMERA_RATE, OPEN_RATE } from "@JS@/scene/fit.js";
 import { cull, rankOf, MAX_LABELS } from "@JS@/scene/cull.js";
 import * as router from "@JS@/router.js";
 import * as format from "@JS@/format.js";
@@ -136,6 +136,10 @@ const g = fitFrustum(bounds, size, insets, 1.04);
 out.padWider = (g.right - g.left) > (f.right - f.left);
 const mid = lerpFrustum(f, g, 0.5); out.lerp = Math.abs(mid.left - (f.left + g.left) / 2) < 1e-9;
 out.ease = [ease(0), ease(0.5), ease(1), ease(-1), ease(2)];
+out.easeOpen = [openEase(0), openEase(0.05), openEase(1)];
+out.easeEarly = ease(0.05);
+out.easeMonotone = Array.from({ length: 100 }, (_, i) => i / 99).every((t, i, a) => i === 0 || (ease(t) >= ease(a[i - 1]) && openEase(t) >= openEase(a[i - 1])));
+out.settle = [settleMs(CAMERA_RATE), settleMs(OPEN_RATE)];
 
 const r = (id, rank, l, t, w, h) => ({ id, rank, rect: { left: l, top: t, right: l + w, bottom: t + h } });
 out.cull = [...cull([r("a", 3, 0, 0, 50, 20), r("b", 0, 40, 5, 50, 20), r("c", 1, 200, 0, 50, 20)])].sort();
@@ -167,7 +171,11 @@ console.log(JSON.stringify(out));
 def test_the_camera_fits_the_subject_in_the_free_rectangle_and_the_labels_are_culled_by_rank_and_overlap(tmp_path):
     got = run_node(tmp_path, PURE)
     assert got["inside"] and got["square"] and got["padWider"] and got["lerp"], "the subject sits inside the rectangle the panels leave"
-    assert got["ease"] == [0, 0.5, 1, 0, 1]
+    # the prototype's exponential approach, normalised to land on 1: fast at first (nine tenths of the way at half the time), soft at the end
+    assert got["ease"][0] == 0 and got["ease"][2] == 1 and got["ease"][3] == 0 and got["ease"][4] == 1, "clamped to 0 and 1"
+    assert abs(got["ease"][1] - 0.9090909090909092) < 1e-9 and got["easeOpen"][1] < got["easeEarly"], "the opening starts softer than the camera (the smoothstep on top of the approach)"
+    assert got["easeMonotone"], "never goes back"
+    assert got["settle"] == [1023, 1439], "ln(100) over the prototype's rates 4.5 and 3.2"
     assert got["cull"] == ["b", "c"], "the lower rank is kept and the label that overlaps it is dropped"
     assert got["cullMargin"] == ["a"], "two labels 1 px apart (inside the 2 px margin) overlap"
     assert got["cullMax"] == got["maxLabels"] == 12, "at most 12 labels are drawn"
@@ -259,13 +267,13 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
     a = "aaaaaaaaaaaa"
     # planning is floor 0, then the agents in the order given
     assert got["floorsOrder"] == ["planning", "engineering", "marketing", "brand", "design"]
-    # a floor is lit when a task of its agent runs, dark when stopped or off, pale otherwise; a decision's floor waits
-    assert got["shop"]["windows"] == [["planning", "pale", True], ["engineering", "lit", False], ["marketing", "pale", True],
-                                      ["brand", "dark", True], ["design", "dark", False]]
+    # a floor's windows are lit when a task of its agent runs and grey in every other case (WP-9.8: no pale state); a decision's floor waits
+    assert got["shop"]["windows"] == [["planning", "grey", True], ["engineering", "lit", False], ["marketing", "grey", True],
+                                      ["brand", "grey", True], ["design", "grey", False]]
     assert got["shop"]["decisions"] == 3 and got["shop"]["running"] == 5 and got["shop"]["accepted"] is True
-    assert got["docs"] == {"floors": [{"agent": None, "window": "pale", "waits": True}], "decisions": 1, "running": None}, \
+    assert got["docs"] == {"floors": [{"agent": None, "window": "grey", "waits": True}], "decisions": 1, "running": None}, \
         "a project with no agents is one floor, which waits when a decision does"
-    assert got["lab"] == {"accepted": False, "windows": ["dark"], "decisions": 0, "message": "run: python"}
+    assert got["lab"] == {"accepted": False, "windows": ["grey"], "decisions": 0, "message": "run: python"}
     assert got["tips"] == ["shop: 3 decisions waiting, task #5 running", "docs: 1 decision waiting, no task running", "lab: not accepted yet"]
     assert got["subs"] == ["task #5 running", "no task running", "not accepted yet"]
     assert got["linkNames"][0] == "shop, 3 decisions waiting, task #5 running"
@@ -283,7 +291,7 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
     assert got["kpi"][1] == {"decisions": 1, "runs": 0, "runsCap": 0, "usd": 0, "usdCap": 0}
     # the tracking bar: titles from the task, the agent from the task, the running run's start, floor numbers from the agents
     tracking = got["tracking"]
-    assert tracking["request"] == {"id": 1, "title": "Spring", "state": "ready", "project": "shop"}
+    assert tracking["request"] == {"id": 1, "title": "Spring", "state": "ready", "project": "shop", "projectId": "aaaaaaaaaaaa"}
     assert (tracking["done"], tracking["total"]) == (2, 5)
     assert tracking["steps"][3] == ["Order page", "running", "Engineering · running", "#/p/A/floor/engineering", "Order page, Engineering, running"]
     assert tracking["now"]["where"] == "Now on floor 1 · engineering" and tracking["now"]["title"] == "Order page"
@@ -597,11 +605,11 @@ def test_the_engine_keeps_the_performance_rules_of_the_scene():
     assert "tween.cancel()" in engine and "createTween()" in engine, "a rebuild settles the camera move in flight (the tween's own test is under Node)"
     assert "light.shadow.dispose()" in engine, "the sun's shadow map is freed when the lights are replaced"
     assert "onRestored" in (JS / "views" / "city.js").read_text(encoding="utf-8"), "the scene host is shown again after a restored context"
-    assert "export const CAMERA_MS = 600" in engine, "the camera moves in 600 ms"
+    assert "export const CAMERA_MS = 1023" in engine and "export const OPEN_MS = 1439" in engine, "the prototype's durations: ln(100) over 4.5 and 3.2 a second"
     for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js",
                  "building.js", "room.js", "figure.js", "furniture.js", "plates.js"):   # the last five: WP-9.3b
         assert (SCENE / name).is_file()
-    assert len(list(SCENE.glob("*.js"))) == 15 and (SCENE / "tween.js").is_file()
+    assert len(list(SCENE.glob("*.js"))) == 17 and (SCENE / "tween.js").is_file()
 
 
 def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():

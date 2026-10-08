@@ -22,7 +22,69 @@ function badge(request) {
   return h("span", { class: "pui-badge pui-muted pui-soft pui-rounded-full wb-req-id", text: `#${request.id}` });
 }
 
-export function createTrack({ onOpenSteps }) {
+// The request selector (WP-9.8): the request's number as a chip. With more than one open request the chip opens a small list of them
+// (number, title, state), and a previous and a next button sit beside it; with one it stays a plain badge. Keyboard: the chip opens
+// the list, Up and Down move through it, Enter chooses, Escape closes and the focus returns to the chip.
+function selector(model, onSelect) {
+  const r = model.request;
+  const requests = model.requests || [];
+  if (requests.length < 2) return badge(r);
+  const at = requests.findIndex((q) => q.selected);
+  const move = (delta) => onSelect(r.projectId, requests[(at + delta + requests.length) % requests.length].id);
+  const prev = h("button", { class: "pui-btn pui-surface pui-outline wb-req-step", type: "button", "aria-label": "Previous request" }, icon("chevron-left", 14));
+  const next = h("button", { class: "pui-btn pui-surface pui-outline wb-req-step", type: "button", "aria-label": "Next request" }, icon("chevron-right", 14));
+  prev.addEventListener("click", () => move(-1));
+  next.addEventListener("click", () => move(1));
+  const chip = h("button", {
+    class: "pui-btn pui-surface pui-outline wb-req-chip", type: "button", "aria-haspopup": "listbox", "aria-expanded": "false",
+    "aria-label": `Request ${r.id}, ${requests.length} open. Choose a request`,
+  }, h("span", { text: `#${r.id}` }), icon("chevron-down", 12));
+  const options = requests.map((q) => h("li", { role: "none" },
+    h("button", {
+      class: `wb-req-option${q.selected ? " is-selected" : ""}`, type: "button", role: "option", "aria-selected": q.selected ? "true" : "false", "data-request": String(q.id),
+      "aria-label": `Request ${q.id}, ${q.title}, ${q.running ? "running" : q.state}`,
+    }, h("span", { class: "pui-badge pui-muted pui-soft pui-rounded-full", text: `#${q.id}` }), h("span", { class: "wb-req-option-title", text: q.title }),
+    h("span", { class: "wb-req-option-state", text: q.running ? "running" : q.state }))));
+  const list = h("ul", { class: "wb-req-menu", role: "listbox", "aria-label": "Open requests", hidden: true }, options);
+  const close = (refocus) => {
+    list.hidden = true;
+    chip.setAttribute("aria-expanded", "false");
+    if (refocus) chip.focus();
+  };
+  const open = () => {
+    const box = chip.getBoundingClientRect();
+    list.style.setProperty("--wb-x", `${box.left.toFixed(1)}px`);
+    list.style.setProperty("--wb-y", `${(box.top - 6).toFixed(1)}px`);
+    list.hidden = false;
+    chip.setAttribute("aria-expanded", "true");
+    (list.querySelector(".is-selected") || list.querySelector("button")).focus();
+  };
+  chip.addEventListener("click", () => (list.hidden ? open() : close(true)));
+  list.addEventListener("mousedown", (event) => event.preventDefault());   // Safari does not focus a clicked button: keep the focus where it is so the list stays open for the click
+  for (const button of list.querySelectorAll("button")) {
+    button.addEventListener("click", () => {
+      close(true);
+      onSelect(r.projectId, Number(button.getAttribute("data-request")));
+    });
+  }
+  list.addEventListener("keydown", (event) => {
+    const buttons = [...list.querySelectorAll("button")];
+    const here = buttons.indexOf(document.activeElement);
+    if (event.key === "ArrowDown") buttons[Math.min(buttons.length - 1, here + 1)].focus();
+    else if (event.key === "ArrowUp") buttons[Math.max(0, here - 1)].focus();
+    else if (event.key === "Escape") close(true);
+    else return;
+    event.preventDefault();
+    event.stopPropagation();
+  });
+  const wrap = h("span", { class: "wb-req-select" }, prev, chip, next, list);
+  wrap.addEventListener("focusout", (event) => {
+    if (!list.hidden && !(event.relatedTarget && wrap.contains(event.relatedTarget))) close(false);   // focus left: the list closes
+  });
+  return wrap;
+}
+
+export function createTrack({ onOpenSteps, onSelectRequest = () => {} }) {
   const desktop = h("div", { class: "wb-track-desktop" });
   const phone = h("div", { class: "wb-track-phone" });
   const el = h("section", { class: "pui-card wb-track", role: "region", "aria-label": "Tracking bar" }, desktop, phone);
@@ -52,17 +114,21 @@ export function createTrack({ onOpenSteps }) {
   }
 
   function draw(model, state) {
-    if (state === "loading" || !model) {
-      const text = state === "loading" ? "Loading the request..." : "No request is open";
-      desktop.replaceChildren(h("div", { class: "wb-track-left" }, h("p", { class: "wb-empty", text })));
-      phone.replaceChildren(h("p", { class: "wb-empty", text }));
+    if (state === "loading") {
+      desktop.replaceChildren(h("div", { class: "wb-track-left" }, h("p", { class: "wb-empty", text: "Loading the request..." })));
+      phone.replaceChildren(h("p", { class: "wb-empty", text: "Loading the request..." }));
+      return;
+    }
+    if (!model) {   // no open request: the bar is hidden (set() below), nothing is drawn in it
+      desktop.replaceChildren();
+      phone.replaceChildren();
       return;
     }
     const r = model.request;
     const countText = `${model.doneCount} of ${model.total} steps done`;
     desktop.replaceChildren(
       h("div", { class: "wb-track-left" },
-        h("div", { class: "wb-track-head" }, badge(r), h("strong", { class: "wb-track-title", text: r.title || `Request ${r.id}` }),
+        h("div", { class: "wb-track-head" }, selector(model, onSelectRequest), h("strong", { class: "wb-track-title", text: r.title || `Request ${r.id}` }),
           h("span", { class: "wb-track-project", text: r.project }), h("span", { class: "wb-track-count", text: countText })),
         model.steps.length ? stepsList(model, 13) : h("p", { class: "wb-empty", text: `Request ${r.id} has no steps yet (${r.state}).` })),
       nowCard(model));
@@ -74,7 +140,7 @@ export function createTrack({ onOpenSteps }) {
         h("span", { class: "wb-step-sub", text: current ? `${current.where.replace(/^Now on |^Waiting on /, "")} · ${current.state.toLowerCase()}` : r.state })));
     open.addEventListener("click", () => onOpenSteps(`Request ${r.id}, ${r.title || ""}`, model.steps.length ? stepsList(model, 13, true) : h("p", { class: "wb-empty", text: "No steps yet." }), open));
     phone.replaceChildren(
-      h("div", { class: "wb-track-head" }, badge(r), h("strong", { class: "wb-track-title", text: r.title || `Request ${r.id}` }),
+      h("div", { class: "wb-track-head" }, selector(model, onSelectRequest), h("strong", { class: "wb-track-title", text: r.title || `Request ${r.id}` }),
         h("span", { class: "wb-track-count", text: `${model.doneCount} of ${model.total} done` })),
       open);
   }
@@ -85,6 +151,7 @@ export function createTrack({ onOpenSteps }) {
     /** model: model.tracking(...) or null; state: "ready", "loading" or "empty"; stale: dim it (the last data after a failed read). */
     set(model, state, stale = false) {
       el.classList.toggle("is-stale", stale);
+      el.hidden = !model && state !== "loading";   // the bar hides when the project has no open request
       const key = JSON.stringify([model, state]);
       if (key === shown) return;
       shown = key;

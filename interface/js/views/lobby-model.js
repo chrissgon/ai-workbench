@@ -3,6 +3,7 @@
 
 import * as format from "../format.js";
 import { PLANNING, drawersOf } from "../floor-model.js";
+import { windowState } from "../scene/look.js";
 
 export const POLL_BUSY_MS = 2000;     // the conversation is read every 2 seconds while a `say` job runs
 export const POLL_IDLE_MS = 10000;    // and every 10 seconds otherwise
@@ -194,7 +195,6 @@ export function notRoutedNotice(id, reason) {
   return { title: "Not routed yet", text: `Request #${id} was created. ${reason} Use "Route it" on its request line.` };
 }
 
-const WINDOW = { working: "lit", waiting: "pale", idle: "pale", off: "dark" };
 const DOT = { working: "theme", waiting: "warn", idle: "muted", off: "border" };
 
 /**
@@ -215,7 +215,7 @@ export function roomModel({ working, decisions, hasMessages, accepted, request, 
     ? { title: request.title || `Request ${request.id}`, lines: [`request #${request.id} · ${request.state}`], dot: DOT[state] }
     : { title: accepted ? "No request is open" : NOT_ACCEPTED_TEXT, lines: [], dot: DOT[state] };
   return {
-    kind: "room", ready, door: true, state, window: WINDOW[state], decisions, drawers: docs ? drawersOf(docs.length) : 0,
+    kind: "room", ready, door: true, state, window: windowState(state === "working"), decisions, drawers: docs ? drawersOf(docs.length) : 0,
     sheets: docs ? docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })) : [], empty: !hasMessages,
     tips: {
       agent: `Planning agent · ${words}`, desk: request ? `Current task · ${request.title || `request #${request.id}`}` : "Current task · none yet",
