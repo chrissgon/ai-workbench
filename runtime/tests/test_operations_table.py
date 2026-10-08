@@ -26,7 +26,7 @@ effects = st.load("effects")
 # Public functions of ops.py that are not an operation of a shell: what the other modules and the tests use.
 NOT_OPERATIONS = {"store_module", "context", "task_prompt", "code_task", "chat_memory"}
 KINDS = ("int", "str", "text", "file", "list", "flag", "choice", "pairs")
-CHANNELS = ("terminal", "chat", "page")
+CHANNELS = ("terminal", "chat", "page", "mcp")
 # Modules that still hold the terminal's command as a string, outside the operations layer's own texts.
 HOLDS_THE_COMMAND = {"lab.py": "an error message of the lab facade, in the region of the execution kit's move (WP-R.8)"}
 

@@ -335,17 +335,17 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 <!-- generated: operations -->
 | Operation | Verb of `cli.py` | Channels | Calls a model | What it does |
 |---|---|---|---|---|
-| `request` | `request` | terminal, page | no | record what you want; with a flow, plan it from the flow file, else it waits for its route |
-| `route` | `route` | terminal, page | yes, without --flow | plan a request that waits for its route: one run of the router skill, or the plan of a flow file |
-| `status` | `status` | terminal, chat, page | no | requests, tasks and what waits for you |
-| `task` | `task` | terminal, page | no | one task or request with its runs and its pending decisions |
-| `flows` | `flows` | terminal, page | no | the flow files of this checkout, with their titles and how many tasks each holds |
+| `request` | `request` | terminal, page, mcp | no | record what you want; with a flow, plan it from the flow file, else it waits for its route |
+| `route` | `route` | terminal, page, mcp | yes, without --flow | plan a request that waits for its route: one run of the router skill, or the plan of a flow file |
+| `status` | `status` | terminal, chat, page, mcp | no | requests, tasks and what waits for you |
+| `task` | `task` | terminal, page, mcp | no | one task or request with its runs and its pending decisions |
+| `flows` | `flows` | terminal, page, mcp | no | the flow files of this checkout, with their titles and how many tasks each holds |
 | `config` | `config` | terminal, page | no | the configuration's path and hash, whether you accepted it, and the data folder; it never refuses |
-| `progress` | `progress` | terminal, chat, page | no | where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD) |
-| `pending` | `pending` | terminal, chat, page | no | what waits for you; with an id, that decision whole |
-| `answer` | `answer` | terminal, chat, page | no | answer a pending decision |
-| `release` | `release` | terminal, chat, page | no | release a delivery (it stays a draft) |
-| `approve` | `approve` | terminal, chat, page | no | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
+| `progress` | `progress` | terminal, chat, page, mcp | no | where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD) |
+| `pending` | `pending` | terminal, chat, page, mcp | no | what waits for you; with an id, that decision whole |
+| `answer` | `answer` | terminal, chat, page, mcp | no | answer a pending decision |
+| `release` | `release` | terminal, chat, page, mcp | no | release a delivery (it stays a draft) |
+| `approve` | `approve` | terminal, chat, page, mcp | no | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
 | `reject` | `reject` | terminal, chat, page | no | reject a plan, an acceptance or an effect |
 | `retry` | `retry` | terminal, chat, page | no | make a failed or blocked task ready again |
 | `cancel` | `cancel` | terminal, chat, page | no | cancel a request |
@@ -366,14 +366,14 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`,
 | `poll` | `poll` | terminal | no | the short job: mirrors, expired approvals, the state file's generated lines, the releases |
 | `handler_call` | `handler` | terminal | no | start one verb of a handler that runtime.json names |
 | `pin` | `pin` | terminal | no | write the pin of the dispatcher's two jobs |
-| `say` | `say` | terminal, page | yes, for a new request | one turn of the conversation with the planning agent |
-| `agents` | `agents` | terminal, page | no | each area agent: its mode, its caps, what it used today and how many tasks wait for it |
-| `conversation` | `conversation` | terminal, page | no | the messages of the project's conversation above a message id, oldest first |
-| `skills` | `skills` | terminal, page | no | the skills in scope with their proof on each model, their runs here and the two checks of the proof |
-| `costs` | `costs` | terminal, page | no | the runs by day, agent, model and adapter, with the recorded cost and the cost recomputed from the prices |
-| `connections` | `connections` | terminal, page | no | which provider each requirement class resolves to, which secrets are found (never a value), the image |
-| `artifacts` | `artifacts` | terminal, page | no | the project's files under docs/ with their owner skill, size and time |
-| `artifact` | `artifact` | terminal, page | no | the text of one file under docs/ of the project, read-only |
+| `say` | `say` | terminal, page, mcp | yes, for a new request | one turn of the conversation with the planning agent |
+| `agents` | `agents` | terminal, page, mcp | no | each area agent: its mode, its caps, what it used today and how many tasks wait for it |
+| `conversation` | `conversation` | terminal, page, mcp | no | the messages of the project's conversation above a message id, oldest first |
+| `skills` | `skills` | terminal, page, mcp | no | the skills in scope with their proof on each model, their runs here and the two checks of the proof |
+| `costs` | `costs` | terminal, page, mcp | no | the runs by day, agent, model and adapter, with the recorded cost and the cost recomputed from the prices |
+| `connections` | `connections` | terminal, page, mcp | no | which provider each requirement class resolves to, which secrets are found (never a value), the image |
+| `artifacts` | `artifacts` | terminal, page, mcp | no | the project's files under docs/ with their owner skill, size and time |
+| `artifact` | `artifact` | terminal, page, mcp | no | the text of one file under docs/ of the project, read-only |
 | `stop_runs` | `stop-runs` | terminal | no | end the runs this process started (the local service calls it before it exits) |
 <!-- /generated -->
 

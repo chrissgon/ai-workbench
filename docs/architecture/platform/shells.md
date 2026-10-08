@@ -19,7 +19,7 @@ flowchart TB
     DISP["runtime/dispatcher.py<br/>poll, work, check, command-file"]
     H["runtime/handlers/*.py<br/>(calls cli.py standing)"]
     SVC["runtime/service.py<br/>serves interface/ and /api/v1"]
-    MCP["MCP mode of the service<br/>(planned, stage 9)"]
+    MCP["runtime/mcp.py<br/>tools over stdio"]
     C(["Any MCP client<br/>(optional)"])
     OPS["runtime/ops.py<br/>the operations layer"]
     ST[("Store<br/>store:runtime")]
@@ -90,7 +90,7 @@ Built in stage 9 with the service: the operations `config`, `task`, `flows` and 
 
 **The scheduler's entry.** `dispatcher.py` in a second role: a copy kept in the scheduler's job folder, started with `/usr/bin/python3`, which checks `runtime.json` against the pin before it imports anything of the checkout, then loads that checkout's `ops.py` and calls `ops.poll` (the short job) or `ops.dispatch` (the worker). Its `decide` function, the dispatcher proper, is a pure function of the runtime's layer.
 
-**The channel rule.** Each row of the table of operations lists the channels that may call it (`terminal`, `chat`, `page`). A row whose function takes the channel (`channel_arg`: `approve`) is told which one called, and `ops.approve` refuses an `effect` from any channel but the terminal and the page (decision D8, extended on 2026-10-07): an effect is approved in the terminal or on the local page, with the content's hash typed or clicked there. A chat message is a weaker trust surface than the person's own machine; the planned MCP mode reached from a messaging app stays under the same rule, and the local page is a channel of its own, which the service passes itself (a request cannot name one). A row exists as a route only when it lists `page`; the ones that widen what an agent may do on its own (`accept-config`, the standing approvals) or run the next task by hand (`run-next`) are terminal only. Planned: through a chat channel only a request, a question, an answer and the release of a draft.
+**The channel rule.** Each row of the table of operations lists the channels that may call it (`terminal`, `chat`, `page`, `mcp`). A row whose function takes the channel (`channel_arg`: `approve`) is told which one called, and `ops.approve` refuses an `effect` from any channel but the terminal and the page (decision D8, extended on 2026-10-07): an effect is approved in the terminal or on the local page, with the content's hash typed or clicked there. A chat message is a weaker trust surface than the person's own machine; the MCP mode (`runtime/mcp.py`), reached from a messaging app, is under the same rule: its tool `approve` passes the channel `mcp` and an effect is refused, and the local page is a channel of its own, which the service passes itself (a request cannot name one). A row exists as a route only when it lists `page`; the ones that widen what an agent may do on its own (`accept-config`, the standing approvals) or run the next task by hand (`run-next`) are terminal only. The `mcp` rows are the reads, `request`, `route`, `answer`, `release`, `say` and `approve`; `reject`, `cancel` and `retry` are not offered there.
 
 ## Dependencies
 
@@ -245,7 +245,7 @@ Each command calls its operation of the same name once (`/progress` shows its `t
 | Limit or improvement | Where it is recorded |
 |---|---|
 | The service is built and `interface/` holds no page yet: the pages come with the next packages of stage 9 | [the platform plan](../platform-plan-2026-10-05.md), stage 9 |
-| No MCP mode yet; the channel rule is in code for the effect (`approve`: `terminal` and `page` approve, any other channel is refused) | a maintainer's decision of 2026-10-06 that adds the MCP mode to stage 9; not yet in the committed platform plan |
+| The MCP mode approves a plan or an acceptance as the conversation does (`approve` lists `mcp`); only an effect is refused by the rule | `runtime/operations.py`, `runtime/tests/test_mcp.py` |
 | `chat.py` imports are guarded by `test_chat.py`, those of `cli.py` by `test_runtime_rules.py` and the layer map | `runtime/tests/test_chat.py`, `scripts/tests/test_layer_map.py` |
 | The conversation's memory becomes the request's text, so it reaches every task of the request, not only the router's run | `ops.say`, `ops.task_prompt` |
 | One conversation per project (`CONVERSATION = "project"`); the plan's stage 9 names it `"main"` | `runtime/ops.py` |
@@ -259,3 +259,4 @@ Each command calls its operation of the same name once (`/progress` shows its `t
 - 2026-10-06: first version, written from the code at the central branch's head of that day.
 - 2026-10-06: the volatile tables are generated from the code by `scripts/architecture_tables.py` (the verbs, the conversation's commands, the dispatcher's jobs).
 - 2026-10-07: the local service is built (`runtime/service.py`): the shell, its artifacts, the channel rule with the page, and what stays planned (the pages, the MCP mode).
+- 2026-10-08: the MCP mode is built (`runtime/mcp.py`): the rows of the table that list the `mcp` channel as tools over standard input and output; `approve` refuses an effect.
