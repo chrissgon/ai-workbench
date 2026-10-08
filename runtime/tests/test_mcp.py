@@ -140,7 +140,7 @@ def test_the_tools_are_the_rows_of_the_table_that_list_the_mcp_channel_and_the_t
     rows = [r["name"] for r in operations.OPERATIONS if "mcp" in r["channels"]]
     assert names == rows + ["projects", "job"] and answer["id"] == 7
     assert names == ["request", "route", "status", "task", "flows", "progress", "pending", "answer", "release", "say",
-                     "agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact", "projects", "job"]
+                     "agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact", "version", "projects", "job"]
     # what the table does not list for the channel has no tool: the decisions of the terminal and the page
     for never in ("accept-config", "run-next", "deps", "proof", "approve-policy", "revoke-policy", "standing",
                   "execute-under-policy", "contained-run", "poll", "handler", "pin", "stop-runs", "set-mode", "hand-over",
@@ -176,7 +176,7 @@ def test_with_two_projects_the_project_is_required_and_listed_in_the_schema(worl
 
 def test_every_read_tool_returns_what_the_operation_returned_with_the_arguments_it_was_given(world):
     cases = {
-        "status": {}, "flows": {}, "agents": {}, "skills": {}, "connections": {}, "artifacts": {},
+        "status": {}, "flows": {}, "agents": {}, "skills": {}, "connections": {}, "artifacts": {}, "version": {},
         "task": {"task_id": 4}, "progress": {"since": "7d"}, "pending": {"pending_id": 3},
         "conversation": {"conversation": "project", "after": 12}, "costs": {"since": "2026-10-01"},
         "artifact": {"path": "docs/business/icp.md"},
@@ -517,7 +517,7 @@ def test_a_folder_that_is_not_a_project_ends_the_start_and_an_unaccepted_configu
     assert listed["id"] == mcp.project_id(path) == service.project_id(path)
     assert listed["config"] == {"sha256": digest, "accepted": False} and "accept-config" in listed["message"]
     offered = [r for r in operations.OPERATIONS if "mcp" in r["channels"]]
-    assert len(offered) == 17
+    assert len(offered) == 18
     for row in offered:  # every tool of the table, reads and writes alike
         arguments = {a["name"]: (1 if a["kind"] == "int" else "docs/x.md" if a["name"] == "path" else "x")
                      for a in row["args"] if a.get("required")}

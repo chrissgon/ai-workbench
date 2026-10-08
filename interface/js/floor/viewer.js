@@ -9,7 +9,7 @@ import { formatSize, formatWhen } from "../floor-model.js";
 import { icon } from "../frame/icons.js";
 import { busyLine } from "./widgets.js";
 
-/** Create a viewer. Returns {el, load(project, path), close(), focus()}; onClose is called by "Close". */
+/** Create a viewer. Returns {el, load(project, path, {quiet}), close(), focus()}; onClose is called by "Close". `quiet`: read the file again without the loading line (the page reloaded: the text stays until the new one arrives). */
 export function createViewer({ onClose }) {
   const titleId = "wb-viewer-title";
   const el = h("div", { class: "pui-card wb-viewer", role: "region", "aria-labelledby": titleId });
@@ -26,11 +26,11 @@ export function createViewer({ onClose }) {
 
   return {
     el,
-    async load(project, path) {
+    async load(project, path, { quiet = false } = {}) {
       if (controller) controller.abort();
       controller = new AbortController();
       const mine = controller;
-      fill(el, head(path, ""), h("div", { class: "wb-viewer-body" }, busyLine("Loading the floor...")));
+      if (!quiet) fill(el, head(path, ""), h("div", { class: "wb-viewer-body" }, busyLine("Loading the floor...")));
       try {
         const doc = await api.artifact(project, path, { signal: mine.signal });
         if (mine.signal.aborted) return;

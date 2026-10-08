@@ -262,10 +262,9 @@ def store_module():
     return _load("workbench_store_" + found["implementation"], found["path"])
 
 
-def context(project: str, *, check_config: bool = True) -> dict:
-    """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
-    (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
-    operation but accept_config), the configuration's hash must be the one the person accepted last."""
+def _config_of(project: str) -> dict:
+    """The project's configuration, refused when it cannot be read or names another workbench checkout than the one
+    this process runs from: what every operation checks first."""
     try:
         cfg = project_config.load(project)
     except project_config.ConfigError as e:
@@ -273,6 +272,22 @@ def context(project: str, *, check_config: bool = True) -> dict:
     if cfg["workbench"] != os.path.realpath(ROOT):
         raise OpsError(f"{cfg['path']} names the workbench checkout {cfg['workbench']}, and this command runs from "
                        f"{os.path.realpath(ROOT)}: run it from the checkout the project names, or correct the file", 3)
+    return cfg
+
+
+def _accepted(cfg: dict, accepted) -> None:
+    """Refuse (code 3) a configuration whose hash is not the accepted one."""
+    if accepted != cfg["sha256"]:
+        raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
+                       f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
+                       f"want, run: {operations.command_line('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
+
+
+def context(project: str, *, check_config: bool = True) -> dict:
+    """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
+    (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
+    operation but accept_config), the configuration's hash must be the one the person accepted last."""
+    cfg = _config_of(project)
     store = store_module()
     try:
         store.init_db(cfg["store_db"])
@@ -284,10 +299,7 @@ def context(project: str, *, check_config: bool = True) -> dict:
             accepted = store.cursor_get(conn, project_config.ACCEPTED)
         except store.StoreError as e:
             raise OpsError(f"the store at {cfg['store_db']}: {e}", e.code) from None
-        if accepted != cfg["sha256"]:
-            raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
-                           f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
-                           f"want, run: {operations.command_line('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
+        _accepted(cfg, accepted)
     return {"cfg": cfg, "store": store, "conn": conn, "root": ROOT}
 
 
@@ -2805,6 +2817,37 @@ def _say_route(project: str, ctx: dict, said: str, answer_to=None) -> tuple:
 
 
 # --- stage 9: the local service --------------------------------------------------------------------------------------
+
+
+def version(project: str) -> dict:
+    """The change signal of a project's store: {"version", "changed_at"}. "version" is a whole number that grows on every
+    write transaction that changed a row (providers/store/sqlite.py, `change_counter`: the database file's header),
+    whoever wrote it: this process, a loop's thread, the terminal. A page asks it every second and reads everything
+    again when it moved. It is the cheapest read there is: the configuration file and its hash, then on the store four
+    statements (two pragmas of the connection, one plain SELECT of the cursor that holds the accepted configuration's hash,
+    the header) with no transaction and so no write lock; no migration is run (every other operation runs one at its
+    start), and a configuration nobody accepted, or one that names another checkout, is refused as every operation refuses it. "changed_at" is the time the store's file
+    was last written (UTC, as the store writes times). A project whose store does not exist yet gets it made, as every
+    other operation does."""
+    cfg = _config_of(project)
+    store = store_module()
+    db = cfg["store_db"]
+    if not os.path.isfile(db):
+        context(project, check_config=False)
+    conn = store.connect(db)
+    try:
+        accepted = store.cursor_peek(conn, project_config.ACCEPTED)      # a plain read: no write lock, no queue behind a writer
+        number = store.change_counter(conn)
+    except store.StoreError as e:
+        raise OpsError(f"the store at {db}: {e}", e.code) from None
+    except Exception as e:  # sqlite3.Error: the file is not a database, or is locked past the timeout
+        raise OpsError(f"the store at {db}: {e}", 1) from None
+    finally:
+        conn.close()
+    _accepted(cfg, accepted)
+    stamps = [os.stat(path).st_mtime for path in (db, db + "-wal") if os.path.exists(path)]
+    changed = datetime.datetime.fromtimestamp(max(stamps), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return {"version": number, "changed_at": changed}
 
 
 def stop_runs(project: str | None = None) -> dict:

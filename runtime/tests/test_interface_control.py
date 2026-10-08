@@ -584,7 +584,7 @@ input.value = "2026-10-01"; input.fire("change");
 await settle();
 out.emptyText = text(panel("costs")).includes("No runs since 2026-10-01.");
 out.costsCalls = calls.filter((c) => c[1].startsWith("costs")).map((c) => c[1]);
-// return from a hidden tab: one read of each, the data stays on show while it is read
+// return from a hidden tab: the view reads nothing by itself (WP-9.13: the page reloads on return and gives the view a new stamp)
 const before = calls.length;
 document.fireVisible();
 await settle();
@@ -621,7 +621,7 @@ def test_the_control_view_reads_once_per_entry_and_shows_each_tabs_own_state(tmp
     assert got["refusedText"] == [True, True, "2026-13-07"]
     assert got["emptyText"] is True
     assert got["costsCalls"][-2:] == ["costs?since=2026-13-07", "costs?since=2026-10-01"] and got["costsCalls"][0] == "costs"
-    assert got["visibleReads"] == 4
+    assert got["visibleReads"] == 0
     assert got["disposed"] == [0] and got["afterDispose"] == 0
 
 
