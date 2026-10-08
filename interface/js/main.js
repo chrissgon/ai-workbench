@@ -11,6 +11,7 @@ import * as router from "./router.js";
 import { clearToken, getToken, setToken } from "./token.js";
 import { createBuildingView } from "./views/building.js";
 import { createCityView } from "./views/city.js";
+import { createControlView } from "./views/control.js";
 import { createFloorView } from "./views/floor.js";
 import { createLobbyView } from "./views/lobby.js";
 import { createPlaceholder } from "./views/placeholder.js";
@@ -177,6 +178,9 @@ function ensureView(route) {
   } else if (route.screen === "floor") {
     const floor = createFloorView(frame, { refresh: () => poll() });
     view = { key, screen: "floor", floor, dispose: () => floor.dispose() };
+  } else if (route.screen === "control") {
+    const control = createControlView(frame);
+    view = { key, screen: "control", control, dispose: () => control.dispose() };
   } else if (route.screen === "lobby") {
     const lobby = createLobbyView(frame, { project: route.project, onChanged: () => poll() });
     view = { key, screen: "lobby", lobby, dispose: () => lobby.dispose() };
@@ -227,6 +231,11 @@ function render() {
   if (view.screen === "city") {
     const city = model.city(snapshot, now);
     view.city.update({ city, selectedId: chosen, state });
+  } else if (view.screen === "control") {
+    frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
+    const detail = routeProject ? snapshot.details[routeProject.id] : null;
+    const accepted = Boolean(routeProject && routeProject.config && routeProject.config.accepted) && !(detail && detail.error && detail.error.status === 412);
+    view.control.update({ loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted, projectId: route.project, tab: route.tab });
   } else if (view.screen === "lobby") {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     view.lobby.update({ snapshot, route, now, projectName: routeProject ? routeProject.name : "" });
