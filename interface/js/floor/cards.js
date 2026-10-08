@@ -422,6 +422,9 @@ export function createCard(item, env) {
     isDone() {
       return Boolean(state.done);
     },
+    isBusy() {
+      return Boolean(state.busy);
+    },
     outcome() {
       return state.done;
     },

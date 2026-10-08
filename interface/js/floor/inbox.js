@@ -125,6 +125,10 @@ export function createInbox(env) {
       }
       draw();
     },
+    /** True while any card has a request in flight. */
+    busy() {
+      return [...cards.values()].some((card) => card.isBusy());
+    },
     /** Forget what was read (the tab was left): a just-resolved card goes. */
     reset() {
       cards.clear();

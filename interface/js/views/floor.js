@@ -130,6 +130,7 @@ export function createFloorView(frame, env) {
   const onKey = (event) => {
     if (event.key !== "Escape" || disposed || !last) return;
     const a = document.activeElement;
+    if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.tagName === "SELECT")) return;   // a draft in a field is not thrown away by Escape
     if ((a && a.closest && a.closest(".wb-switcher, .wb-wait-menu-wrap")) || document.querySelector("dialog[open].wb-cancel-dialog")) return;
     const route = last.route;
     if (route.path) {
@@ -260,7 +261,7 @@ export function createFloorView(frame, env) {
     drawViewer(route, viewing);
     const selected = model.notAccepted && tab !== "agent" ? { el: waitingEl } : { agent: agentTabLive, inbox, desk }[tab];
     if (tabpanel.children[0] !== selected.el) fill(tabpanel, selected.el);
-    if (tab !== "inbox" && !leftInbox) {
+    if (tab !== "inbox" && !leftInbox && !inbox.busy()) {   // a card whose job still runs keeps its state until it ends
       inbox.reset();
       leftInbox = true;
     }

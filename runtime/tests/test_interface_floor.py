@@ -628,6 +628,26 @@ out.off = { text: off.textContent, button: all(off, "button").length };
 all(off, "button")[0].click();
 out.offFocus = [find(tab.el, "select").focused, calls.length];
 
+// hand a file over: nothing is sent when no file was chosen; one call with the file's own name, to the task the hint named when the
+// file was chosen, even when a poll draws another target while the file is being read
+calls.length = 0;
+script = { handOver: async () => ({ path: ".workbench-local/drop/5/notes.txt", bytes: 3 }) };
+const fileInput = find(tab.el, "input.wb-file");
+out.handHint = find(tab.el, ".wb-hint").textContent;
+fileInput.files = [];
+await fileInput.listeners.change[0]();
+out.handNoFile = calls.length;
+let release;
+const gate = new Promise((r) => { release = r; });
+fileInput.files = [{ name: "notes.txt", size: 3, arrayBuffer: async () => { await gate; return new Uint8Array([97, 98, 99]).buffer; } }];
+const sending = fileInput.listeners.change[0]();
+tab.update(view(agent({ mode: "stopped", acting_mode: "stopped" }), [task(5, "failed"), task(9, "blocked")]));
+out.handHintAfterPoll = find(tab.el, ".wb-hint").textContent;
+release();
+await sending;
+await settle();
+out.hand = { calls: calls.filter((c) => c[0] === "handOver").map((c) => c.slice(1)), result: find(tab.el, ".wb-hand-result").textContent };
+
 // the file rules, before anything is sent
 out.files = [fileRefusal("ok-file_1.txt", 10), fileRefusal("a/b.txt", 10), fileRefusal("x".repeat(101), 10), fileRefusal("big.bin", MAX_FILE_BYTES + 1), fileRefusal("exact.bin", MAX_FILE_BYTES), fileRefusal("sp ace.txt", 1)];
 out.base64 = [toBase64(new Uint8Array([104, 105])), toBase64(new Uint8Array(70000)).length];
@@ -664,6 +684,10 @@ def test_the_agent_tab_sends_set_mode_retry_and_the_hand_over_as_one_request_eac
     assert got["off"]["text"].startswith("OffOff, mode is stopped") and got["off"]["button"] == 1 and got["offFocus"] == [True, 0], "the Off row's button moves the focus and sends nothing"
     assert got["files"] == ["", "The file name may hold letters, digits, ., _ and -, at most 100 characters.", "The file name may hold letters, digits, ., _ and -, at most 100 characters.",
                             "A file handed to a task is at most 25 MiB.", "", "The file name may hold letters, digits, ., _ and -, at most 100 characters."]
+    assert got["handNoFile"] == 0, "nothing is sent when no file was chosen"
+    assert got["handHint"] == "To task #5. At most 25 MiB." and got["handHintAfterPoll"] == "To task #9. At most 25 MiB."
+    assert got["hand"] == {"calls": [["p", 5, "notes.txt", "YWJj"]], "result": "Handed over: .workbench-local/drop/5/notes.txt (3 bytes)"}, \
+        "one call, the file's own name, to the task the hint named when the file was chosen (a poll during the read does not change it)"
     assert got["base64"] == ["aGk=", 93336]
 
 
@@ -685,3 +709,52 @@ def test_the_word_tables_are_the_services_closed_lists():
     for word in ("approved", "accepted", "rejected", "answered", "released"):
         assert f"'{word}'" in store or f'"{word}"' in store, f"{word} is a resolution word of the store"
         assert f'"{word}"' in cards, f"cards.js draws a button for {word}"
+
+
+# --- the viewer shows a file as text ----------------------------------------------------------------------------------------------
+
+VIEWER = r"""
+import { FakeNode, settle, find, all } from "@FAKE@";
+import { setToken } from "@JS@/token.js";
+import { createViewer } from "@JS@/floor/viewer.js";
+
+setToken("t".repeat(40));
+const asked = [];
+let answer;
+globalThis.fetch = async (url) => { asked.push(url); return answer; };
+const reply = (status, body) => ({ ok: status === 200, status, json: async () => body });
+let closed = 0;
+const viewer = createViewer({ onClose: () => { closed += 1; } });
+const out = {};
+
+answer = reply(200, { path: "docs/a.md", text: "<script>alert(1)</script>\n<b>bold</b> <img src=x onerror=alert(2)>", size: 70, modified_at: "2026-10-03T09:05:00Z" });
+const loading = viewer.load("p", "docs/a.md");
+out.loading = find(viewer.el, ".wb-busy").textContent;
+await loading;
+const pre = find(viewer.el, "pre.wb-viewer-text");
+const tags = [...viewer.el.walk()].map((n) => n.tagName);
+out.text = { value: pre.textContent, children: pre.children.length, markup: tags.filter((t) => ["SCRIPT", "B", "IMG"].includes(t)).length, name: pre.attrs["aria-label"], tabindex: pre.attrs.tabindex };
+out.head = { path: find(viewer.el, ".wb-viewer-path").textContent, line: find(viewer.el, ".wb-viewer-line").textContent.replace(/modified .*/, "modified"), region: viewer.el.attrs.role };
+out.url = asked[0].replace(/^.*\/artifact/, "/artifact");
+find(viewer.el, "button[data-key=close]").click();
+out.closed = closed;
+
+answer = reply(400, { error: "usage", message: "an artifact is a file under docs/ <img src=x onerror=alert(3)>" });
+await viewer.load("p", "../.env");
+const refusal = find(viewer.el, ".wb-refusal");
+out.refusal = { text: refusal.textContent, markup: [...viewer.el.walk()].filter((n) => n.tagName === "IMG").length, title: find(viewer.el, ".wb-refusal-title").textContent, size: find(viewer.el, ".wb-viewer-line") };
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_viewer_shows_a_files_text_and_a_refusal_as_text_never_as_markup(tmp_path):
+    got = run_node(tmp_path, VIEWER)
+    assert got["loading"] == "Loading the floor..."
+    assert got["text"] == {"value": "<script>alert(1)</script>\n<b>bold</b> <img src=x onerror=alert(2)>", "children": 1, "markup": 0,
+                           "name": "Text of docs/a.md", "tabindex": "0"}, "the text is one text node: a script or a tag in a document shows as typed"
+    assert got["head"] == {"path": "docs/a.md", "line": "70 B, modified", "region": "region"}
+    assert got["url"].startswith("/artifact?path=docs%2Fa.md") or "/artifact?path=docs%2Fa.md" in got["url"]
+    assert got["closed"] == 1
+    assert got["refusal"]["title"] == "The file could not be opened" and got["refusal"]["markup"] == 0 and got["refusal"]["size"] is None
+    assert "<img src=x onerror=alert(3)>" in got["refusal"]["text"], "the operation's refusal is shown whole, as text"

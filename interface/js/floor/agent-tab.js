@@ -223,7 +223,8 @@ export function createAgentTab(env) {
   let target = null;
   fileInput.addEventListener("change", async () => {
     const file = fileInput.files && fileInput.files[0];
-    if (!file || !target) return;
+    const to = target;   // the task the hint named when the file was chosen: a poll may draw another target while the file is read
+    if (!file || !to) return;
     const refusal = fileRefusal(file.name, file.size);
     if (refusal) {
       fill(handResult, notice(refusal, "error"));
@@ -234,7 +235,7 @@ export function createAgentTab(env) {
     fill(handResult, busyLine("Sending..."));
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const result = await env.api.handOver(env.project, target.id, file.name, toBase64(bytes));
+      const result = await env.api.handOver(env.project, to.id, file.name, toBase64(bytes));
       fill(handResult, h("p", { class: "wb-card-line", role: "status", text: `Handed over: ${result.path} (${result.bytes} bytes)` }));
       env.refresh();
     } catch (e) {

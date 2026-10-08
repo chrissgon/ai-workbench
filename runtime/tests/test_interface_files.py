@@ -303,6 +303,9 @@ def test_only_the_floor_folder_sends_a_write_and_it_takes_every_write_from_one_o
         text = (INTERFACE / "js" / name).read_text(encoding="utf-8")
         if name.startswith(("views/", "scene/")) or name == "floor-model.js":
             assert not (set(re.findall(r"\bapi\.(\w+)\(", text)) & writes), f"{name} only reads"
+        if name.startswith("floor/") and name not in ("floor/actions.js", "floor/cards.js", "floor/agent-tab.js"):
+            sends = re.findall(r"(?:\bapi\(\)|\bapi|\bactions)\.(\w+)\(", text)
+            assert not (set(sends) & writes), f"{name} sends no write: only cards.js and agent-tab.js do, through their environment ({sorted(set(sends) & writes)})"
         if name in ("floor/cards.js", "floor/agent-tab.js"):
             assert 'from "../api.js"' not in text, f"{name} sends through its environment (a client it is given), not through a client of its own"
             assert set(re.findall(r"\bapi\(?\)?\.(\w+)\(", text)) <= writes | {"pollJob"}, f"{name} calls only the operations of its panel"
@@ -342,3 +345,13 @@ def test_every_wb_class_the_new_modules_build_is_styled_or_a_hook_the_scripts_re
             if not re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css) and f'"{cls}"' not in text.replace("class:", ""):
                 missing.setdefault(cls, []).append(name)
     assert not missing, f"classes the modules build that style.css never names: {missing}"
+
+
+def test_escape_leaves_a_draft_alone_and_leaving_the_inbox_keeps_a_card_whose_job_runs():
+    floor = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
+    assert re.search(r'a\.tagName === "TEXTAREA" \|\| a\.tagName === "INPUT"[^\n]*\n?\s*\)? ?return|a\.tagName === "TEXTAREA"[^\n]*return;', floor), \
+        "Escape does nothing while the person types in a field"
+    assert "!inbox.busy()" in floor, "the Inbox is reset only when no card has a request in flight"
+    inbox = (INTERFACE / "js" / "floor" / "inbox.js").read_text(encoding="utf-8")
+    cards = (INTERFACE / "js" / "floor" / "cards.js").read_text(encoding="utf-8")
+    assert "isBusy()" in inbox and "isBusy()" in cards
