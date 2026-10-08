@@ -18,7 +18,7 @@ returned and sends what the person typed or clicked.
 | `js/token.js`, `js/dom.js` | The token for this session; building elements (strings become text, a style or an event attribute is refused). |
 | `js/frame/` | The shared frame of every scene screen: header (back, breadcrumbs, project switcher), KPI cards, waiting list, tracking bar, panel shell, sheet (a phone's lists), icons. |
 | `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `city.js` (the City's geometry), `labels.js`, `cull.js`, `fit.js`, `tween.js` (the camera move as a state machine). |
-| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City) and `placeholder.js` (the Building, Floor, Lobby and Control room until their packages). |
+| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City), `placeholder.js` (the Building, Floor and Lobby until their packages) and the Control room: `control.js` (the panel, the tabs, the reads), `control-skills.js`, `control-costs.js` and `control-connections.js` (one per tab), `control-model.js` (the pure part: chips, filters, the chart and the cost words, tested under Node) and `control-parts.js` (the loading line, the failed-read notice, the empty block). |
 | `js/three.js` | The one place the 3D library is imported from (a relative re-export); the scene uses it. |
 | `vendor/three/`, `vendor/<library>/` | The two third-party libraries, copied unchanged, each folder with a README that records the package, the exact version, the licence and the sha256 of every file. |
 
@@ -74,7 +74,9 @@ without WebGL shows one line of text and leaves every panel and action working. 
 custom properties when it is built and when the colour scheme changes. Nothing in it is decorative: no vehicles, people,
 birds or weather. `canvas.wbStats()` (a function on the canvas element) returns the frames drawn so far, for a check.
 
-The Building, the Floor, the Lobby and the Control room are WP-9.3b to WP-9.5. They add modules under `js/views/` and
+The Control room's three tabs (WP-9.5) read `skills`, `costs`, `connections` and `agents` through `js/api.js`, once on entering and once on return from a hidden tab (and `costs` again when the Since date changes), and write nothing. Its small server-room scene is not built yet.
+
+The Building, the Floor and the Lobby (WP-9.3b and WP-9.4) add modules under `js/views/` and
 `js/scene/` (a builder per scene kind, registered in `BUILDERS` of `engine.js`) and read more routes through `js/api.js`;
 they edit no vendored file.
 

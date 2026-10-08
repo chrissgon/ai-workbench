@@ -10,6 +10,7 @@ import * as model from "./model.js";
 import * as router from "./router.js";
 import { clearToken, getToken, setToken } from "./token.js";
 import { createCityView } from "./views/city.js";
+import { createControlView } from "./views/control.js";
 import { createPlaceholder } from "./views/placeholder.js";
 import { showTokenPrompt } from "./views/token-prompt.js";
 
@@ -168,6 +169,9 @@ function ensureView(route) {
   if (route.screen === "city") {
     const city = createCityView(frame);
     view = { key, screen: "city", city, dispose: () => city.dispose() };
+  } else if (route.screen === "control") {
+    const control = createControlView(frame);
+    view = { key, screen: "control", control, dispose: () => control.dispose() };
   } else {
     const placeholder = createPlaceholder(frame, route);
     view = { key, screen: route.screen, placeholder, dispose: () => placeholder.el.remove() };
@@ -215,6 +219,11 @@ function render() {
   if (view.screen === "city") {
     const city = model.city(snapshot, now);
     view.city.update({ city, selectedId: chosen, state });
+  } else if (view.screen === "control") {
+    frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
+    const detail = routeProject ? snapshot.details[routeProject.id] : null;
+    const accepted = Boolean(routeProject && routeProject.config && routeProject.config.accepted) && !(detail && detail.error && detail.error.status === 412);
+    view.control.update({ loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted, projectId: route.project, tab: route.tab });
   } else {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     view.placeholder.update(snapshot, route.project, route.agent ? `Floor of ${route.agent}` : "");

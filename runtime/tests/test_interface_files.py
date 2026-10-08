@@ -271,3 +271,59 @@ def test_the_screens_keep_no_state_in_a_global_and_the_token_stays_in_the_token_
         assert not re.search(r"\bwindow\.__|\bglobalThis\.\w+\s*=", text), f"{rel(path)} keeps state in a global"
         if path.name not in ("token.js", "api.js", "main.js"):
             assert not re.search(r"\b(?:getToken|setToken)\(", text), f"{rel(path)} touches the token"
+
+
+# --- the Control room (WP-9.5): what it calls, and that every class it uses is drawn by the stylesheet ---------------------------
+
+
+def control_modules():
+    return sorted((INTERFACE / "js" / "views").glob("control*.js"))
+
+
+def client_functions():
+    """{function name: (method, path template)} of every exported function of the client that makes one call."""
+    source = CLIENT.read_text(encoding="utf-8")
+    out = {}
+    for found in re.finditer(r"export (?:async )?function (\w+)\([^)]*\)\s*\{\s*return send\(\s*\"(GET|POST)\"\s*,\s*(?:\"|`)([^\"`]*)", source):
+        out[found.group(1)] = (found.group(2), found.group(3))
+    return out
+
+
+def test_the_control_room_calls_only_the_four_reads_it_needs_and_each_is_a_get_route_of_the_service():
+    files = control_modules()
+    assert len(files) >= 6, "the Control room's modules are there"
+    used = set()
+    for path in files:
+        used |= set(re.findall(r"\bapi\.(\w+)\(", path.read_text(encoding="utf-8")))
+    assert used == {"skills", "costs", "connections", "agents"}, f"the Control room reads skills, costs, connections and agents: {sorted(used)}"
+    functions = client_functions()
+    routes = [(r["method"], shape(r["pattern"]), r) for r in service.ROUTES]
+    for name in sorted(used):
+        method, template = functions[name]
+        assert method == "GET", f"api.{name} is a read"
+        found = [r for m, s, r in routes if m == method and s == shape(template)]
+        assert found, f"api.{name} calls {template}, which is not a route of the service"
+        assert found[0]["pattern"].rsplit("/", 1)[-1] == name, f"api.{name} is the route of the operation of the same name"
+    assert "since" in re.search(r"export function costs\([^)]*\)", CLIENT.read_text(encoding="utf-8")).group(0), "the Costs tab sends the date through the client's one query"
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"\bfetch\(|XMLHttpRequest|\bEventSource\b|\bsendBeacon\b", text), f"{path.name} has a second way to reach the service"
+        assert not re.search(r"\bapi\.(?:%s)\(" % "|".join(sorted(["answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"])), text), f"{path.name} writes"
+
+
+def test_every_wb_class_the_control_room_builds_is_a_rule_of_the_stylesheet():
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    defined = set(re.findall(r"\.(wb-[a-z0-9-]+)", css))
+    markers = {"is-open", "is-wide", "is-selected"}  # state words, not classes of their own
+    for path in control_modules():
+        text = path.read_text(encoding="utf-8")
+        for group in re.findall(r"class: `?\"?([^\"`]+)[\"`]", text):
+            for name in re.findall(r"\bwb-[a-z0-9-]+", group.split("${")[0]):
+                if name.endswith("-"):
+                    continue
+                assert name in defined or name in markers, f"{path.name} builds the class {name}, which style.css does not draw"
+    # the three tab words the hash carries are the router's, and the page reaches the screen from its one router
+    main = (INTERFACE / "js" / "main.js").read_text(encoding="utf-8")
+    assert 'import { createControlView } from "./views/control.js";' in main and 'route.screen === "control"' in main
+    model = (INTERFACE / "js" / "views" / "control-model.js").read_text(encoding="utf-8")
+    assert re.search(r'TABS = Object\.freeze\(\[\["skills", "Skills"\], \["costs", "Costs"\], \["connections", "Connections"\]\]\)', model)

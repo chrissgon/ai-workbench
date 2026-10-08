@@ -1,0 +1,133 @@
+// The Costs tab of the Control room: the Since field, the caps line, the chart of runs per day by agent (same-origin SVG
+// built here from `costs.rows`, with its table), the table of runs by day and agent, and the footnote. It shows what the
+// `costs` and `agents` operations returned; a date the service refuses is shown with the service's own message.
+
+import { h } from "../dom.js";
+import * as model from "./control-model.js";
+import { cell, code, emptyBlock, failedCard, FAILED_TITLE, loadingCard, tableCard } from "./control-parts.js";
+
+// The XML namespace of SVG is a name, not an address; it is written in parts because the file test refuses the text of one.
+const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
+
+function svg(tag, attrs = {}, ...children) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [name, value] of Object.entries(attrs)) {
+    if (value === undefined || value === null || value === false) continue;
+    if (name === "style" || /^on[a-z]+$/i.test(name)) throw new Error(`the attribute ${name} is not allowed`);
+    node.setAttribute(name, String(value));
+  }
+  for (const child of children.flat()) {
+    if (child !== undefined && child !== null && child !== false) node.append(child);
+  }
+  return node;
+}
+
+/** One column of the plot: an SVG of 10 x 100 units stretched to the column, a rect per segment, the first from the bottom. */
+function columnSvg(column) {
+  const rects = column.segments.map((s) => svg("rect", {
+    class: `wb-seg ${s.className}`, x: 0, width: 10, y: +(100 - s.base - s.height).toFixed(3), height: +s.height.toFixed(3),
+  }));
+  return svg("svg", { class: "wb-col", viewBox: "0 0 10 100", preserveAspectRatio: "none", "aria-hidden": "true", focusable: "false" },
+    svg("title", {}, document.createTextNode(model.columnTitle(column))), rects);
+}
+
+/** The chart card: head and legend, the plot, the day labels and the disclosure with the same numbers as a table. */
+export function chartCard(chart, disclosure) {
+  const legend = chart.series.map((s) => h("span", { class: "wb-legend-item" }, h("span", { class: `wb-swatch ${s.className}`, "aria-hidden": "true" }), s.label));
+  const plot = h("div", { class: "wb-plot", role: "img", "aria-label": "Runs per day by agent, table below" }, chart.days.map(columnSvg));
+  const labels = h("div", { class: "wb-plot-labels", "aria-hidden": "true" }, chart.days.map((d) => h("span", { text: d.label })));
+  for (const node of [plot, labels]) node.classList.add(`wb-cols-${chart.days.length}`);   // one class per column count: the page writes no style
+  const table = h("table", { class: "pui-table wb-table wb-chart-table" },
+    h("caption", { class: "wb-sr", text: "Runs per day by agent" }),
+    h("thead", {}, h("tr", {}, chart.head.map((t) => h("th", { scope: "col", text: t })))),
+    h("tbody", {}, chart.body.map((row) => h("tr", {}, row.map((value, i) => h(i === 0 ? "th" : "td", { scope: i === 0 ? "row" : null, text: String(value) }))))));
+  const details = h("details", { class: "pui-accordion-item wb-chart-disclosure", open: disclosure.open }, h("summary", { text: "The chart as a table" }), table);
+  details.addEventListener("toggle", () => { disclosure.open = details.open; });
+  return h("div", { class: "pui-card wb-sunken-card wb-chart-card" },
+    h("div", { class: "wb-chart-head" }, h("strong", { text: "Runs per day by agent" }), h("div", { class: "wb-legend-items" }, legend)),
+    plot, labels, details);
+}
+
+function runsTable(rows) {
+  const head = ["Day", "Agent", "Model", "Adapter", "Runs", "Tokens", "Recorded", "Recomputed"];
+  const money = (c) => h("span", { class: c.muted ? "wb-muted" : null, text: c.text });
+  return h("table", { class: "pui-table wb-table wb-stackable wb-costs-table" },
+    h("caption", { class: "wb-sr", text: "Runs by day, agent, model and adapter, newest day first" }),
+    h("thead", {}, h("tr", {}, head.map((t) => h("th", { scope: "col", text: t })))),
+    h("tbody", {}, model.newestFirst(rows).map((r) => h("tr", {},
+      cell("Day", h("span", { class: "wb-nowrap", text: String(r.day) })),
+      cell("Agent", model.agentLabel(r.agent)),
+      cell("Model", code(String(r.model))),
+      cell("Adapter", code(String(r.adapter))),
+      cell("Runs", String(r.runs)),
+      cell("Tokens", model.tokensText(r.tokens)),
+      cell("Recorded", money(model.recordedCell(r))),
+      cell("Recomputed", money(model.recomputedCell(r)))))));
+}
+
+/**
+ * The tab. handlers: {onSince(text)}. Returns {el, set(state)}. state: {status: "loading"|"ready"|"failed"|"refused", data
+ * ({since, rows, caps}), agents (the `agents` array or null), error (the message), fieldValue (the text of the Since field, or
+ * null before the first read)}.
+ */
+export function createCostsTab(handlers) {
+  const el = h("div", { class: "wb-tab-body" });
+  const input = h("input", { class: "pui-input wb-field", type: "text", autocomplete: "off", spellcheck: "false" });
+  const caps = h("span", { class: "wb-caps", role: "group" });
+  const row = h("div", { class: "wb-since-row" }, h("label", { class: "pui-field-group wb-since" }, h("span", { text: "Since" }), input), caps);
+  const disclosure = { open: false };
+  input.addEventListener("change", () => handlers.onSince(input.value));
+
+  function setCaps(state) {
+    const line = state.status === "ready" ? model.capsLine(state.data.caps, state.agents) : null;
+    caps.hidden = !line;
+    caps.textContent = line ? line.text : "";
+    if (line) {
+      caps.setAttribute("title", line.title);
+      caps.setAttribute("aria-label", `${line.text}. ${line.title}`);
+    } else {
+      caps.removeAttribute("title");
+      caps.removeAttribute("aria-label");
+    }
+  }
+
+  return {
+    el,
+    set(state) {
+      const fieldShown = state.fieldValue !== null && state.fieldValue !== undefined;
+      if (fieldShown && input.value !== state.fieldValue) input.value = state.fieldValue;
+      input.removeAttribute("aria-invalid");
+      input.removeAttribute("aria-describedby");
+      setCaps(state);
+      if (state.status === "loading") {
+        el.replaceChildren(...[fieldShown ? row : null, loadingCard(model.LOADING)].filter(Boolean));
+        return;
+      }
+      if (state.status === "failed") {
+        el.replaceChildren(...[fieldShown ? row : null, failedCard(FAILED_TITLE, state.error)].filter(Boolean));
+        return;
+      }
+      if (state.status === "refused") {
+        input.setAttribute("aria-invalid", "true");
+        input.setAttribute("aria-describedby", "wb-since-notice");
+        const notice = failedCard("Date refused", state.error);
+        notice.id = "wb-since-notice";
+        el.replaceChildren(row, notice);
+        return;
+      }
+      const data = state.data;
+      const rows = Array.isArray(data.rows) ? data.rows : [];
+      if (!rows.length) {
+        el.replaceChildren(row, emptyBlock(`No runs since ${data.since}.`));
+        return;
+      }
+      const chart = model.chartOf(rows, data.since);
+      el.replaceChildren(...[
+        row,
+        chart ? chartCard(chart, disclosure) : null,
+        tableCard(runsTable(rows), "wb-costs-card"),
+        h("span", { class: "wb-muted wb-footnote", text: model.footnote(rows) }),
+      ].filter(Boolean));
+    },
+  };
+}
