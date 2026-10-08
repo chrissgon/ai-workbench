@@ -508,7 +508,7 @@ out.limits = [limitsLine(payload), limitsLine({ limits: { timeout_seconds: 5, re
 script = { approve: async () => ({ job: 3 }), pollJob: async () => ({ state: "done", result: { request: 1, tasks: 3, ready: 1, plan_sha256: PLAN_HASH } }) };
 const plan = createCard(item("plan", ["approved", "rejected"], { id: 8, task_id: 1, agent: null, payload, body: "Plan for request 1\n| # | Task |", title: "Plan: spring (3 tasks)" }), env());
 out.plan = { columns: all(plan.el, "th").map((t) => t.textContent), cells: all(plan.el, "tbody tr").length, hash: find(plan.el, "[data-hash=plan]").textContent, line: all(plan.el, ".wb-card-hint").map((n) => n.textContent),
-  asText: find(plan.el, "details pre").textContent, noteLabel: find(plan.el, ".wb-field-label").textContent, skillCell: all(plan.el, "td")[2].cls() };
+  asText: find(plan.el, "details .wb-md").textContent, noteLabel: find(plan.el, ".wb-field-label").textContent, skillCell: all(plan.el, "td")[2].cls() };
 find(plan.el, "button[data-word=approved]").click();
 await settle();
 out.planApprove = { calls: calls.filter((c) => c[0] === "approve").map((c) => [c[1], c[2], c[3]]), done: find(plan.el, ".wb-card-done").textContent };

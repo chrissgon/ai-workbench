@@ -6,6 +6,7 @@
 
 import { h } from "../dom.js";
 import * as format from "../format.js";
+import { renderMarkdown } from "../markdown.js";
 import * as router from "../router.js";
 import { COLUMNS, failureText, limitsLine, planHash, planText, stackedRow, taskRows } from "./plan-rows.js";
 
@@ -57,7 +58,7 @@ export function createPlanCard({ api, project, item, now, onChanged, signal, ann
     : h("p", { class: "wb-card-note", text: "This plan carries no hash, so it cannot be approved from here." });
   const text = planText(item);
   const asText = text
-    ? h("details", { class: "pui-accordion-item wb-plan-text" }, h("summary", { text: "Plan as text" }), h("pre", { class: "wb-plan-body", text }))
+    ? h("details", { class: "pui-accordion-item wb-plan-text" }, h("summary", { text: "Plan as text" }), h("div", { class: "wb-plan-body", tabindex: "0", "aria-label": "Plan as text" }, renderMarkdown(text)))
     : null;
 
   const noteId = `${titleId}-note`;
