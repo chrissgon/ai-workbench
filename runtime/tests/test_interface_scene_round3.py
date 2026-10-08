@@ -679,7 +679,7 @@ def test_the_route_changes_at_the_click_and_never_waits_for_the_scene():
 
 @needs_node
 def test_each_thing_a_poll_or_the_documents_change_changes_where_it_stands(tmp_path):
-    """Root cause of PR 252 finding 1 (docs/engineering/plans/tower-rebuilt-on-the-route-path.md): `towerStructure` held the state, window, decisions,
+    """Root cause of PR 252 finding 1 (the package's plan, outside the repository: tower-rebuilt-on-the-route-path): `towerStructure` held the state, window, decisions,
     sheets, drawers and the work-order floor, so any of them built the whole tower again. Each is now changed in place; a floor whose documents are
     unread (`null`) keeps what it shows."""
     got = run_node(tmp_path, WORLD_JS + SNAP_JS + r"""
