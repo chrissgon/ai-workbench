@@ -352,7 +352,7 @@ export function runRows(run) {
   const duration = formatDuration(run.duration_ms);
   rows.push({ label: "Duration", value: duration || "-", kind: "text" });
   rows.push({ label: "Tokens", value: typeof run.tokens === "number" ? run.tokens.toLocaleString("en-US") : "-", kind: "text" });
-  rows.push({ label: "Cost", value: typeof run.cost_usd === "number" ? `$${run.cost_usd.toFixed(4)}` : "recorded: not available", kind: "text" });
+  rows.push({ label: "Cost", value: typeof run.cost_usd === "number" ? `$${run.cost_usd.toFixed(4)}` : "unknown", kind: "text" });   // an unknown cost is never shown as a number (A-20)
   rows.push({ label: "Model", value: run.model || "-", kind: "code" });
   if (failed && run.error) rows.push({ label: "Error", value: String(run.error), kind: "wrap" });
   return rows;
