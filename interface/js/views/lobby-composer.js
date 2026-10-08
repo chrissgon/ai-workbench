@@ -8,17 +8,17 @@ import { HINT, SENDING_TEXT } from "./lobby-model.js";
 
 /** Create the composer. options: {onSend(text)}. Returns {el, set(state), focus(), text(), clear()}. */
 export function createComposer({ onSend }) {
-  const busy = h("div", { class: "wb-busy", role: "status", "aria-busy": "true", hidden: true }, h("span", { class: "wb-ring", "aria-hidden": "true" }), h("span", { text: SENDING_TEXT }));
-  const noticeTitle = h("strong", { class: "wb-notice-title", text: "" });
+  const busy = h("div", { class: "wb-lobby-busy", role: "status", "aria-busy": "true", hidden: true }, h("span", { class: "wb-lobby-ring", "aria-hidden": "true" }), h("span", { text: SENDING_TEXT }));
+  const noticeTitle = h("strong", { class: "wb-lobby-notice-title", text: "" });
   const noticeText = h("span", { text: "" });
-  const notice = h("div", { class: "wb-notice-card", role: "alert", hidden: true }, noticeTitle, noticeText);
-  const field = h("textarea", { class: "pui-input wb-field", id: "wb-say", rows: "1", placeholder: "Describe what you want done", autocomplete: "off" });
+  const notice = h("div", { class: "wb-lobby-notice-card", role: "alert", hidden: true }, noticeTitle, noticeText);
+  const field = h("textarea", { class: "pui-input wb-lobby-field", id: "wb-say", rows: "1", placeholder: "Describe what you want done", autocomplete: "off" });
   const group = h("label", { class: "pui-field-group wb-composer-field", for: "wb-say" }, h("span", { text: "Message to the planning agent" }), field);
   const sendIcon = icon("send", 14);
   const word = document.createTextNode("Send");
   const button = h("button", { class: "pui-btn pui-theme pui-outline wb-send", type: "submit" }, sendIcon, word);
   const form = h("form", { class: "wb-composer" }, group, button);
-  const hint = h("p", { class: "wb-hint", id: "wb-say-hint", text: HINT });
+  const hint = h("p", { class: "wb-lobby-hint", id: "wb-say-hint", text: HINT });
   field.setAttribute("aria-describedby", "wb-say-hint");
   const el = h("div", { class: "wb-composer-wrap" }, busy, notice, form, hint);
   let sending = false;

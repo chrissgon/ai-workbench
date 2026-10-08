@@ -5,6 +5,7 @@
 
 import { h } from "../dom.js";
 import { cull, rankOf } from "./cull.js";
+import { stackColumn } from "./plates.js";
 
 /** The card of a building: a dot (theme when a task runs), the name, the decisions badge and a sub line. */
 export function cityCard(spec) {
@@ -21,7 +22,7 @@ export function cityCard(spec) {
 /** Create the nodes of a built scene's labels in `overlay`: [{spec, node, width, height}]. */
 export function mountLabels(overlay, specs, { popped = new Set() } = {}) {
   const entries = specs.map((spec) => {
-    const node = cityCard(spec);
+    const node = spec.make ? spec.make(spec) : cityCard(spec);
     if (popped.has(spec.id)) {
       node.classList.add("is-pop");
       node.addEventListener("animationend", () => node.classList.remove("is-pop"), { once: true });
@@ -32,20 +33,62 @@ export function mountLabels(overlay, specs, { popped = new Set() } = {}) {
   return entries;
 }
 
+/** The gap between two plates of the column, in pixels (the export's 5 px). */
+export const PLATE_GAP = 5;
+const PLATE_OFFSET = 14;
+
+/** Put the plates of a building in one column to the right of it, none over another; compact when they do not fit. */
+function placeColumn(plates, project, hidden, insets, size) {
+  for (const { entry } of plates) entry.node.classList.toggle("is-culled", hidden);
+  if (hidden || !plates.length || !size) return;
+  const ins = { top: 0, bottom: 0, plateRight: 0, ...(insets || {}) };
+  const points = plates.map(({ entry }) => project(entry.spec.anchor));
+  const plateWidth = plates[0].entry.node.offsetWidth || 290;
+  const edge = Math.max(...points.map((p) => p.x)) + PLATE_OFFSET;
+  const x = Math.max(0, Math.min(edge, size.w - ins.plateRight - plateWidth));
+  const top = ins.top;
+  const bottom = size.h - ins.bottom;
+  const measure = () => plates.map(({ entry }, i) => ({ want: points[i].y, height: entry.node.offsetHeight || 90 }));
+  for (const { entry } of plates) entry.node.classList.remove("is-compact");
+  let result = stackColumn(measure(), top, bottom, PLATE_GAP);
+  if (!result.fits) {
+    for (const { entry } of plates) entry.node.classList.add("is-compact");
+    result = stackColumn(measure(), top, bottom, PLATE_GAP);
+  }
+  plates.forEach(({ entry }, i) => {
+    entry.node.style.setProperty("--wb-x", `${x.toFixed(1)}px`);
+    entry.node.style.setProperty("--wb-y", `${result.centres[i].toFixed(1)}px`);
+  });
+}
+
 /**
  * Place the labels: project each anchor with the camera, write the position, and hide the ones the culling drops.
- * `project(anchor)` returns {x, y} in pixels of the scene area. `hidden` hides all (a camera move).
+ * `project(anchor)` returns {x, y} in pixels of the scene area. `hidden` hides all (a camera move). A label with
+ * `place: "column"` is a floor plate: the plates are stacked beside the building and never culled; one with `place: "dock"`
+ * is placed by the stylesheet (the phone's one-floor view). `insets` and `size` are the free rectangle's (placeColumn).
  */
-export function placeLabels(entries, project, { hidden = false } = {}) {
-  const items = entries.map((entry, index) => {
+export function placeLabels(entries, project, { hidden = false, insets = null, size = null } = {}) {
+  const plates = [];
+  const items = [];
+  entries.forEach((entry, index) => {
+    const place = entry.spec.place;
+    if (place === "column") {
+      plates.push({ entry, index });
+      return;
+    }
+    if (place === "dock") {
+      entry.node.classList.toggle("is-culled", hidden);
+      return;
+    }
     const p = project(entry.spec.anchor);
     entry.node.style.setProperty("--wb-x", `${p.x.toFixed(1)}px`);
     entry.node.style.setProperty("--wb-y", `${p.y.toFixed(1)}px`);
-    return {
-      id: index, rank: rankOf(entry.spec),
+    items.push({
+      id: index, rank: entry.spec.rank !== undefined ? entry.spec.rank : rankOf(entry.spec),
       rect: { left: p.x - entry.width / 2, right: p.x + entry.width / 2, top: p.y - entry.height, bottom: p.y },
-    };
+    });
   });
   const kept = hidden ? new Set() : cull(items);
-  entries.forEach((entry, index) => entry.node.classList.toggle("is-culled", !kept.has(index)));
+  for (const item of items) entries[item.id].node.classList.toggle("is-culled", !kept.has(item.id));
+  placeColumn(plates, project, hidden, insets, size);
 }

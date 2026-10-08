@@ -14,17 +14,17 @@ import { ago, requestLine, resolvedWord } from "./lobby-model.js";
 function resolvedLine(item, now) {
   const good = item.status === "resolved" && item.resolution !== "rejected";
   const when = ago(item.resolved_at || item.created_at, now);
-  return h("div", { class: "wb-resolved" },
+  return h("div", { class: "wb-lobby-resolved" },
     h("span", { class: `pui-chip pui-soft ${good ? "pui-success" : "pui-muted"} wb-chip-small`, text: resolvedWord(item) }),
-    h("span", { class: "wb-resolved-text", text: `${item.title || ""}${when ? ` · ${when}` : ""}` }));
+    h("span", { class: "wb-lobby-resolved-text", text: `${item.title || ""}${when ? ` · ${when}` : ""}` }));
 }
 
 /** An open decision whose card is not the plan card: its kind, title and a link to the Inbox where its card is. */
 function pointer(project, item, now) {
   const when = ago(item.created_at, now);
-  return h("div", { class: "wb-resolved wb-pointer" },
+  return h("div", { class: "wb-lobby-resolved wb-pointer" },
     h("span", { class: "pui-badge pui-warn pui-soft", text: format.kindWord(item.kind) }),
-    h("span", { class: "wb-resolved-text", text: `${item.title || ""}${when ? ` · ${when}` : ""}` }),
+    h("span", { class: "wb-lobby-resolved-text", text: `${item.title || ""}${when ? ` · ${when}` : ""}` }),
     h("a", { class: "pui-link pui-theme", href: router.lobbyHash(project, "inbox", item.id), text: "Open in the Inbox", "aria-label": `Open ${format.kindWord(item.kind)} ${item.id} in the Inbox` }));
 }
 
@@ -36,13 +36,13 @@ function pointer(project, item, now) {
 export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce }) {
   const line = requestLine(request, open);
   const cancel = line.cancellable
-    ? h("button", { class: "pui-btn pui-link pui-error wb-cancel-link", type: "button", text: "Cancel request", "aria-label": `Cancel request ${request.id}` }) : null;
+    ? h("button", { class: "pui-btn pui-link pui-error wb-lobby-cancel-link", type: "button", text: "Cancel request", "aria-label": `Cancel request ${request.id}` }) : null;
   const route = line.routable
     ? h("button", { class: "pui-btn pui-surface pui-outline wb-route-button", type: "button", text: routing ? "Routing..." : "Route it", disabled: Boolean(routing),
       "aria-label": `Route request ${request.id}` }) : null;
-  const row = h("div", { class: "wb-request-line", role: "group", "aria-label": line.name },
+  const row = h("div", { class: "wb-lobby-request-line", role: "group", "aria-label": line.name },
     h("span", { class: "pui-badge pui-muted pui-soft pui-rounded-full", text: `#${request.id}` }),
-    h("span", { class: "wb-request-title", text: `Request #${request.id}: ${line.title}` }),
+    h("span", { class: "wb-lobby-request-title", text: `Request #${request.id}: ${line.title}` }),
     line.state ? h("span", { class: "pui-chip pui-muted pui-soft wb-chip-small", text: line.state }) : null,
     route, cancel);
   if (cancel) cancel.addEventListener("click", () => onCancel(request, cancel));

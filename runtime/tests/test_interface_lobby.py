@@ -371,8 +371,8 @@ const body = { task: request, runs: [], pending: [item(), { id: 21, kind: "quest
 const cancelled = [];
 const block = createBlock({ api, project: "p1", request, body, open: 2, now: NOW, onChanged, onCancel: (r) => cancelled.push(r.id), onRoute: () => {}, routing: false });
 const names = (root, name) => byClass(root, name).map(textOf);
-out.block = { line: names(block.el, "wb-request-line")[0], group: byClass(block.el, "wb-request-line")[0].attrs["aria-label"], plans: byClass(block.el, "wb-plan-card").length,
-  resolved: names(block.el, "wb-resolved"), pointerLink: find(block.el, (n) => n.tagName === "A").map((n) => n.attrs.href).filter((h) => h.includes("inbox")) };
+out.block = { line: names(block.el, "wb-lobby-request-line")[0], group: byClass(block.el, "wb-lobby-request-line")[0].attrs["aria-label"], plans: byClass(block.el, "wb-plan-card").length,
+  resolved: names(block.el, "wb-lobby-resolved"), pointerLink: find(block.el, (n) => n.tagName === "A").map((n) => n.attrs.href).filter((h) => h.includes("inbox")) };
 click(find(block.el, (n) => n.tagName === "BUTTON" && textOf(n) === "Cancel request")[0]);
 out.cancelClicked = cancelled;
 const final = createBlock({ api, project: "p1", request: { id: 9, title: "Old", state: "done", tasks: [] }, body: { pending: [] }, open: 0, now: NOW, onChanged, onCancel: () => {}, onRoute: () => {}, routing: false });
@@ -410,15 +410,15 @@ const field = find(composer.el, (n) => n.tagName === "TEXTAREA")[0];
 field.value = "  /help me  ";
 const stopped = [press(field, { key: "Enter", shiftKey: false }), press(field, { key: "Enter", shiftKey: true }), press(field, { key: "Enter", isComposing: true }), press(field, { key: "a" })];
 const submitButton = () => find(composer.el, (n) => n.tagName === "BUTTON")[0];
-out.composer = { sent: sentTexts.slice(), stopped, label: find(composer.el, (n) => n.tagName === "SPAN").map(textOf).filter((t) => t.startsWith("Message")), hint: byClass(composer.el, "wb-hint")[0].textContent,
+out.composer = { sent: sentTexts.slice(), stopped, label: find(composer.el, (n) => n.tagName === "SPAN").map(textOf).filter((t) => t.startsWith("Message")), hint: byClass(composer.el, "wb-lobby-hint")[0].textContent,
   button: submitButton().textContent, type: submitButton().attrs.type, placeholder: field.attrs.placeholder, described: field.attrs["aria-describedby"] };
 composer.set({ sending: true, notice: null, disabled: false });
-out.sending = { field: field.disabled, button: submitButton().disabled, word: submitButton().textContent, busyAttr: submitButton().attrs["aria-busy"], busyLine: byClass(composer.el, "wb-busy")[0].hidden, busyText: byClass(composer.el, "wb-busy")[0].textContent,
-  busyAria: byClass(composer.el, "wb-busy")[0].attrs["aria-busy"], iconHidden: byClass(composer.el, "wb-icon")[0].hidden };
+out.sending = { field: field.disabled, button: submitButton().disabled, word: submitButton().textContent, busyAttr: submitButton().attrs["aria-busy"], busyLine: byClass(composer.el, "wb-lobby-busy")[0].hidden, busyText: byClass(composer.el, "wb-lobby-busy")[0].textContent,
+  busyAria: byClass(composer.el, "wb-lobby-busy")[0].attrs["aria-busy"], iconHidden: byClass(composer.el, "wb-icon")[0].hidden };
 press(field, { key: "Enter", shiftKey: false });
 out.sendingSentMore = sentTexts.length;
 composer.set({ sending: false, notice: { title: "Not sent", text: "A run is in progress for this project. Your message was not stored." }, disabled: false });
-const notice = byClass(composer.el, "wb-notice-card")[0];
+const notice = byClass(composer.el, "wb-lobby-notice-card")[0];
 out.refusedNotice = { text: notice.textContent, hidden: notice.hidden, role: notice.attrs.role, field: field.disabled, button: submitButton().textContent, kept: field.value };
 composer.set({ sending: false, notice: null, disabled: true });
 out.notAccepted = { field: field.disabled, button: submitButton().disabled, notice: notice.hidden };
@@ -437,7 +437,7 @@ select.value = "design";
 (find(form.el, (n) => n.tagName === "FORM")[0].listeners.submit || []).forEach((fn) => fn({ preventDefault() {} }));
 out.created = created;
 form.set({ creating: true });
-out.creating = { button: find(form.el, (n) => n.tagName === "BUTTON")[0].textContent, disabled: [textarea.disabled, select.disabled], busy: byClass(form.el, "wb-busy")[0].hidden };
+out.creating = { button: find(form.el, (n) => n.tagName === "BUTTON")[0].textContent, disabled: [textarea.disabled, select.disabled], busy: byClass(form.el, "wb-lobby-busy")[0].hidden };
 (find(form.el, (n) => n.tagName === "FORM")[0].listeners.submit || []).forEach((fn) => fn({ preventDefault() {} }));
 out.createdWhileCreating = created.length;
 form.set({ creating: false, error: "the request's text is empty" });
@@ -495,7 +495,7 @@ const card = byClass(thread.el, "wb-plan-card")[0];
 thread.update(state());
 out.cardKept = byClass(thread.el, "wb-plan-card")[0] === card;
 thread.update(state({ pending: [], bodies: { 14: { pending: [{ ...plan, status: "resolved", resolution: "approved", resolved_at: ago(0) }] } } }));
-out.afterApprove = { cards: byClass(thread.el, "wb-plan-card").length, resolved: byClass(thread.el, "wb-resolved").map(textOf) };
+out.afterApprove = { cards: byClass(thread.el, "wb-plan-card").length, resolved: byClass(thread.el, "wb-lobby-resolved").map(textOf) };
 // a new message arrives: appended, the earlier nodes stay
 const before = [...thread.el.children].slice(0, 2);
 thread.update(state({ messages: [...messages, { id: 3, role: "user", text: "And a banner?", created_at: ago(0) }], pending: [], bodies: { 14: { pending: [] } } }));
@@ -651,3 +651,10 @@ def test_the_lobby_modules_take_no_style_and_no_colour_and_load_nothing_from_ano
     for path in lobby_files():
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"https?://|\sstyle\s*[:=]", text) and "innerHTML" not in text, f"{path.name}"
+
+
+def test_the_room_builder_draws_the_lobbys_door_and_its_label_only_when_the_model_asks_for_one():
+    room = (JS / "scene" / "room.js").read_text(encoding="utf-8")
+    assert "if (model.door)" in room and 'id: "lobby-door"' in room and 'id: "door-label"' in room and "doorNode" in room
+    scene = (VIEWS / "lobby-scene.js").read_text(encoding="utf-8")
+    assert 'id === "lobby-door"' in scene, "a click on the door goes to the Control room"

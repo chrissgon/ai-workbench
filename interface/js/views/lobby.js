@@ -67,10 +67,10 @@ export function createLobbyView(frame, { project, onChanged }) {
     onRoute: (request) => routeAgain(request), announce: (text) => frame.announce(text),
   });
   const waiting = h("p", { class: "wb-empty wb-lobby-waiting", hidden: true, text: NOT_ACCEPTED_TEXT });
-  const conversationPanel = h("div", { class: "wb-tabpanel", role: "tabpanel", id: tabs.panelId("conversation"), "aria-labelledby": tabs.tabId("conversation") }, waiting, thread.el);
+  const conversationPanel = h("div", { class: "wb-lobby-tabpanel", role: "tabpanel", id: tabs.panelId("conversation"), "aria-labelledby": tabs.tabId("conversation") }, waiting, thread.el);
   const laterNote = h("p", { class: "wb-empty" });
   const laterLink = h("a", { class: "pui-link pui-theme", href: router.lobbyHash(project, "conversation"), text: "Back to the Conversation" });
-  const laterPanel = h("div", { class: "wb-tabpanel wb-tabpanel-later", role: "tabpanel", hidden: true }, laterNote, laterLink);
+  const laterPanel = h("div", { class: "wb-lobby-tabpanel wb-lobby-tabpanel-later", role: "tabpanel", hidden: true }, laterNote, laterLink);
   const form = createForm({ onCreate: (values) => create(values) });
   const composer = createComposer({ onSend: (text) => send(text) });
   // The keyboard order is the field, "Send", then the "New request" summary (lobby.md, Keyboard); the form is drawn above the field by the grid.
@@ -81,7 +81,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   panel.el.insertBefore(tabs.el, panel.body);
   panel.el.append(footer);
   frame.main.append(panel.el, cancelDialog.el);
-  const scene = mountLobbyScene(frame, panel.el);
+  const scene = mountLobbyScene(frame, panel.el, { onDoor: () => { window.location.hash = router.controlHash(project); } });
 
   // --- reading ------------------------------------------------------------------------------------------------------------
   /** A body that was drawn stays drawn (a card keeps its note and its focus) but is read again: its signature no longer matches. */

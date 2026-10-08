@@ -7,15 +7,15 @@ import { TABS } from "./lobby-model.js";
 
 /** Create the tab list. Returns {el, set({project, selected, counts}), panelId(id)}. */
 export function createTabs() {
-  const el = h("div", { class: "wb-tabs", role: "tablist", "aria-label": "Lobby" });
+  const el = h("div", { class: "wb-lobby-tabs", role: "tablist", "aria-label": "Lobby" });
   const buttons = new Map();
   let project = null;
   const panelId = (id) => `wb-lobby-panel-${id}`;
   const tabId = (id) => `wb-lobby-tab-${id}`;
 
   for (const [id, label] of TABS) {
-    const count = h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full wb-tab-count", hidden: true, text: "" });
-    const button = h("button", { class: "wb-tab", type: "button", role: "tab", id: tabId(id), "aria-controls": panelId(id), tabindex: "-1" },
+    const count = h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full wb-lobby-tab-count", hidden: true, text: "" });
+    const button = h("button", { class: "wb-lobby-tab", type: "button", role: "tab", id: tabId(id), "aria-controls": panelId(id), tabindex: "-1" },
       h("span", { text: label }), count);
     button.addEventListener("click", () => {
       if (project) window.location.hash = router.lobbyHash(project, id);

@@ -10,12 +10,12 @@ export function createForm({ onCreate }) {
   const textId = "wb-new-text";
   const flowId = "wb-new-flow";
   const titleId = "wb-new-title";
-  const text = h("textarea", { class: "pui-input wb-field", id: textId, rows: "3", autocomplete: "off" });
-  const flow = h("select", { class: "pui-input wb-field", id: flowId }, h("option", { value: "", text: AUTO_FLOW }));
-  const title = h("input", { class: "pui-input wb-field", id: titleId, type: "text", autocomplete: "off" });
+  const text = h("textarea", { class: "pui-input wb-lobby-field", id: textId, rows: "3", autocomplete: "off" });
+  const flow = h("select", { class: "pui-input wb-lobby-field", id: flowId }, h("option", { value: "", text: AUTO_FLOW }));
+  const title = h("input", { class: "pui-input wb-lobby-field", id: titleId, type: "text", autocomplete: "off" });
   const create = h("button", { class: "pui-btn pui-theme pui-outline", type: "submit", text: "Create request" });
   const error = h("div", { class: "notice error wb-card-error", role: "alert", hidden: true });
-  const busy = h("div", { class: "wb-busy", role: "status", hidden: true }, h("span", { class: "wb-ring", "aria-hidden": "true" }), h("span", { text: "Creating the request..." }));
+  const busy = h("div", { class: "wb-lobby-busy", role: "status", hidden: true }, h("span", { class: "wb-lobby-ring", "aria-hidden": "true" }), h("span", { text: "Creating the request..." }));
   const body = h("form", { class: "wb-form-body" },
     h("label", { class: "pui-field-group", for: textId }, h("span", { text: "What do you want done?" }), text),
     h("label", { class: "pui-field-group", for: flowId }, h("span", { text: "Flow" }), flow),

@@ -61,10 +61,10 @@ export function createPlanCard({ api, project, item, now, onChanged, signal, ann
     : null;
 
   const noteId = `${titleId}-note`;
-  const note = h("input", { class: "pui-input wb-field", id: noteId, type: "text", autocomplete: "off" });
+  const note = h("input", { class: "pui-input wb-lobby-field", id: noteId, type: "text", autocomplete: "off" });
   const noteGroup = h("label", { class: "pui-field-group", for: noteId }, h("span", { text: "Note (optional, used when you reject)" }), note);
   const error = h("div", { class: "notice error wb-card-error", role: "alert", hidden: true });
-  const working = h("span", { class: "wb-working", hidden: true, text: "Working..." });
+  const working = h("span", { class: "wb-lobby-working", hidden: true, text: "Working..." });
   const approve = actions.includes("approved") && shown
     ? h("button", { class: "pui-btn pui-theme pui-outline", type: "button", text: "Approve this plan" }) : null;
   const reject = actions.includes("rejected")

@@ -6,13 +6,13 @@
 import { createEngine, NoWebGL } from "../scene/engine.js";
 
 /** Mount the room in the frame's scene host, fitted to the free rectangle the panel leaves. Returns {update(model, label), dispose()}. */
-export function mountLobbyScene(frame, panelEl) {
+export function mountLobbyScene(frame, panelEl, { onDoor } = {}) {
   let engine = null;
   try {
     engine = createEngine(frame.sceneHost, {
       label: "Lobby, loading",
       getInsets: () => frame.insets(panelEl),
-      onOpen: () => {},
+      onOpen: (id) => { if (id === "lobby-door" && onDoor) onDoor(); },
       onUnavailable: () => frame.sceneUnavailable(true),
     });
     frame.sceneUnavailable(false);
