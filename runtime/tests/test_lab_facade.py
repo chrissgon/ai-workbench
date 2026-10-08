@@ -9,6 +9,9 @@ from __future__ import annotations
 import ast
 import os
 import re
+import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -185,6 +188,67 @@ def test_the_facade_reads_only_names_of_the_kits_all_and_of_status_names_and_eve
     assert not [name for name in RUNNER_ONLY if name in vars(kit)], "the kit holds a name of the event runner"
     with pytest.raises(AttributeError):
         getattr(lab.LAB, "die")  # a helper of the kit that is not in its __all__
+
+
+def _slow_counting_spec(monkeypatch, calls, fail_first=False):
+    """Make the kit's load slow and counted, on a fresh state: no kit in sys.modules and none cached by the facade."""
+    import importlib.util
+    monkeypatch.delitem(sys.modules, lab.MODULE, raising=False)
+    monkeypatch.setattr(lab, "_KIT", None, raising=False)
+    real = importlib.util.spec_from_file_location
+
+    def spec_from_file_location(*args, **kwargs):
+        spec = real(*args, **kwargs)
+        real_exec = spec.loader.exec_module
+
+        def exec_module(module):
+            calls.append(module)
+            time.sleep(0.2)  # long enough for every other thread to reach load() while this one is inside it
+            if fail_first and len(calls) == 1:
+                raise RuntimeError("the first load fails")
+            real_exec(module)
+        spec.loader.exec_module = exec_module
+        return spec
+    monkeypatch.setattr(importlib.util, "spec_from_file_location", spec_from_file_location)
+
+
+def test_the_kit_is_loaded_once_when_several_threads_ask_for_it_at_the_same_time(monkeypatch):
+    calls, results, errors = [], [], []
+    _slow_counting_spec(monkeypatch, calls)
+    start = threading.Barrier(8)
+
+    def ask(use_facade):
+        try:
+            start.wait()
+            if use_facade:  # the path of the 500: a name read through the facade while another thread loads
+                results.append(lab.LAB.load_status)
+                results.append(lab.load())
+            else:
+                results.append(lab.load())
+        except BaseException as e:  # noqa: BLE001 - the test reports whatever a thread raised
+            errors.append(e)
+
+    threads = [threading.Thread(target=ask, args=(i % 2 == 0,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert errors == []
+    assert len(calls) == 1, "the kit's code ran more than once"
+    modules = [r for r in results if hasattr(r, "__all__")]
+    assert len(modules) == 8 and all(m is modules[0] for m in modules)
+    assert sys.modules[lab.MODULE] is modules[0] and hasattr(modules[0], "__all__")
+
+
+def test_a_failed_load_leaves_nothing_half_made_and_the_next_call_loads_again(monkeypatch):
+    calls = []
+    _slow_counting_spec(monkeypatch, calls, fail_first=True)
+    with pytest.raises(RuntimeError):
+        lab.load()
+    assert lab.MODULE not in sys.modules
+    kit = lab.load()
+    assert len(calls) == 2 and hasattr(kit, "__all__") and sys.modules[lab.MODULE] is kit
+    assert lab.load() is kit and len(calls) == 2
 
 
 def test_no_other_module_of_the_runtime_reads_the_lab():
