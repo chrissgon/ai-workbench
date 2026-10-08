@@ -1,0 +1,102 @@
+"""Tests of the one source of terminal commands (WP-9.14, items A-15 and A-18): `operations.command_line` takes the
+checkout the process runs from and gives an absolute command, with the uv prefix when the process was started through
+uv, and every sentence the operations layer returns that names a command is built by it. Offline; invented names.
+
+Run: uv run --with pytest==9.1.1 pytest runtime/tests/test_command_lines.py
+"""
+from __future__ import annotations
+
+import ast
+import sys
+
+import pytest
+
+import standin_tree as st
+from test_autonomy import tree  # noqa: F401  (a project whose configuration is accepted)
+
+operations = st.load("operations")
+ops = st.load("ops")
+
+CHECKOUT = "/work/ai workbench"
+UV = "uv run --with keyring==25.7.0 "
+
+
+@pytest.fixture(autouse=True)
+def plain_start(monkeypatch):
+    """The tests run under uv themselves; a test says how the process started."""
+    monkeypatch.setenv(operations.UV_MARK, "0")
+
+
+def test_a_command_with_the_checkout_is_absolute_and_quotes_what_needs_it():
+    got = operations.command_line("accept-config", "/p q", checkout=CHECKOUT, sha256="ab")
+    assert got == "python3 '/work/ai workbench/runtime/cli.py' accept-config --project '/p q' --sha256 ab"
+    assert operations.command_line("run-next", "/p", checkout="/w", tier="strong") == \
+        "python3 /w/runtime/cli.py run-next --project /p --tier strong"
+    assert operations.command_line("accept-config", "/p", sha256="ab") == "python3 runtime/cli.py accept-config --project /p --sha256 ab"
+
+
+def test_a_process_started_through_uv_gets_the_prefix_and_one_started_without_it_does_not(monkeypatch):
+    assert operations.command_line("status", "/p", checkout="/w") == "python3 /w/runtime/cli.py status --project /p"
+    monkeypatch.setenv(operations.UV_MARK, "1")
+    assert operations.command_line("status", "/p", checkout="/w") == UV + "python3 /w/runtime/cli.py status --project /p"
+    assert operations.command_line("status", "/p") == "python3 runtime/cli.py status --project /p"  # a stored text names no checkout
+    assert operations.command_line("status", "/p", checkout="/w", uv=False).startswith("python3 /w/")
+    monkeypatch.setenv(operations.UV_MARK, "0")
+    assert operations.command_line("run-next", "/p", checkout="/w", uv=True).startswith(UV + "python3 /w/")
+
+
+def test_uv_is_told_from_the_interpreter_when_no_mark_says(monkeypatch):
+    monkeypatch.delenv(operations.UV_MARK)
+    monkeypatch.setattr(sys, "prefix", "/home/u/.cache/uv/builds-v0/.tmpAbC")
+    assert operations.started_with_uv() is True
+    monkeypatch.setattr(sys, "prefix", "/home/u/.cache/uv/environments-v2/abc123")
+    assert operations.started_with_uv() is True
+    monkeypatch.setattr(sys, "prefix", "/home/u/.pyenv/versions/3.11.6")
+    assert operations.started_with_uv() is False
+    monkeypatch.setattr(sys, "prefix", "/home/u/builds-v0/project")  # a folder of that name that is not uv's
+    assert operations.started_with_uv() is False
+
+
+def test_the_pin_is_the_one_the_providers_pin():
+    assert operations.KEYRING_PIN in (st.REPO / "providers" / "secrets" / "resolver.py").read_text(encoding="utf-8")
+
+
+def test_the_service_start_line_is_spelled_here(monkeypatch):
+    assert operations.service_line("/w", ["/p one", "/q"], uv=True, port=8765) == \
+        UV + "python3 /w/runtime/service.py --project '/p one' --project /q --port 8765"
+    assert operations.service_line("/w", ["/p"], uv=False) == "python3 /w/runtime/service.py --project /p"
+    monkeypatch.setenv(operations.UV_MARK, "1")
+    assert operations.service_line("/w", ["/p"]).startswith(UV)
+
+
+def test_the_refusal_of_an_unaccepted_configuration_names_the_command_to_run_from_any_folder(tree, monkeypatch):
+    project = str(tree["project"])
+    config = tree["project"] / "docs" / "workbench" / "runtime.json"
+    config.write_text(config.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+    with pytest.raises(ops.OpsError) as refused:
+        ops.status(project)
+    sha = ops.project_config.load(project)["sha256"]
+    assert refused.value.code == 3
+    assert f"run: python3 {tree['tree']}/runtime/cli.py accept-config --project {project} --sha256 {sha}" in str(refused.value)
+    monkeypatch.setenv(operations.UV_MARK, "1")
+    with pytest.raises(ops.OpsError) as refused:
+        ops.status(project)
+    assert f"run: {UV}python3 {tree['tree']}/runtime/cli.py accept-config" in str(refused.value)
+
+
+def test_the_next_of_a_widened_mode_is_absolute_too(tree):
+    project = str(tree["project"])
+    out = ops.set_mode(project, "planning", "autonomous")
+    assert out["next"] == (f"python3 {tree['tree']}/runtime/cli.py accept-config --project {project} "
+                           f"--sha256 {out['config_sha256']}")
+
+
+def test_no_sentence_of_the_operations_layer_builds_a_command_but_through_the_one_helper():
+    """ops.py spells a command in one function, _command, which adds the checkout the process runs from: a relative
+    command in a returned sentence would fail from any other folder. (The text of an effect, stored before it is
+    approved and naming no checkout, is built in effect_pull_request.py.)"""
+    tree_ = ast.parse((st.RUNTIME / "ops.py").read_text(encoding="utf-8"))
+    inside = {id(n) for f in ast.walk(tree_) if isinstance(f, ast.FunctionDef) and f.name == "_command" for n in ast.walk(f)}
+    calls = [n for n in ast.walk(tree_) if isinstance(n, ast.Call) and ast.unparse(n.func) == "operations.command_line"]
+    assert calls and all(id(c) in inside for c in calls), [c.lineno for c in calls if id(c) not in inside]
+    assert any(isinstance(n, ast.keyword) and n.arg == "checkout" for c in calls for n in c.keywords)

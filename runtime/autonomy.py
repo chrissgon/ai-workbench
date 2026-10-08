@@ -12,7 +12,8 @@ the checkpoints of its mode (every-phase, milestones, end) and whether a standin
 mapping (mode_of) turns the facts back into the mode the agent acts in now, so an agent set to
 autonomous-with-policy whose approval expired acts as autonomous: its effects ask again.
 
-  MODES, DEFAULT_MODE, CHECKPOINTS
+  MODES, DEFAULT_MODE, CHECKPOINTS             MODES is also the order of autonomy, the least first
+  narrows(old, new)                             whether a move from mode old to mode new is down that order
   agents(raw)                                   the checked "area_agents" ({} when absent; an absent cap is 0)
   facts(name, agents, standing, now)            {"enabled", "checkpoints", "standing"} of one agent
   mode_of(facts)                                the mode the agent acts in now
@@ -45,6 +46,9 @@ import math
 import re
 import sys
 
+# The modes in the order of how much an agent may do on its own, the least first: this order is data, and "narrowing" is
+# a move down it. A narrowing widens nothing, so code may accept the configuration it changes (runtime/ops.py, set_mode);
+# a move up never is accepted by code.
 MODES = ("stopped", "supervised", "milestones", "autonomous", "autonomous-with-policy")
 DEFAULT_MODE = "milestones"
 CHECKPOINTS = {"stopped": "every-phase", "supervised": "every-phase", "milestones": "milestones", "autonomous": "end",
@@ -55,6 +59,15 @@ POLICY_MODE = "autonomous-with-policy"
 NO_CHANGE = "no file changed"  # the start of the classifier's reason for a `done` that wrote nothing (runtime/endings.py)
 BOUNDS_KEYS = ("policy", "agent", "effects", "targets", "files", "max_per_day", "max_items_per_run")
 POLICY_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+
+
+def narrows(old: str, new: str) -> bool:
+    """True when mode new is lower than mode old in the order of MODES: a move that lets the agent do less on its own.
+    The same mode, or a higher one, is False. A word that is not a mode: ValueError."""
+    for word in (old, new):
+        if word not in MODES:
+            raise ValueError(f"{word!r} is not one of {', '.join(MODES)}")
+    return MODES.index(new) < MODES.index(old)
 
 
 def agents(raw) -> dict:

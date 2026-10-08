@@ -16,6 +16,11 @@ Functions:
   from_flow(flow, root, pack)               the tasks of a loaded flow file, as plan tasks
   from_skill(skill, title, root)            a plan of one task, with an empty text: its prompt is the plain request
   plan_hash(tasks)                          the sha256 of the tasks, the hash the person approves
+  title_of(text, title=None)                the title of a request: the one given, else the first sentence of the
+                                            text when it fits TITLE_CHARS, else the first line cut at a word
+  request_title(row)                        the title shown for a request row of the store, whatever rule made its
+                                            stored title (the plan's first line and the rows of `status` use it)
+  scope_refusal(flow, outside, root)        the sentence of a flow whose skills no enabled area agent has
   build(request, tasks, route, source, limits, past, flow=None, deliveries=None, unrouted=None)
                                             the title, the body and the payload of the plan
 
@@ -64,6 +69,10 @@ import roles  # noqa: E402
 import skill_meta  # noqa: E402
 
 DEFAULT_PACK = "default"
+CATCH_ALL_PACKS = ("default", "all")  # packs that hold nearly every skill: never the pack a refusal tells the person to add
+PACKS_DIR = "packs"
+TITLE_CHARS = 120                # the longest title a request gets from its text, the ellipsis included
+SENTENCE_ENDS = (". ", "! ", "? ", "\n")
 SELECT_TIMEOUT = 60
 PLANNING = "planning"            # the planning agent: the entry of area_agents with this name (part 0, F.6)
 MAX_DELIVERIES = 8               # each delivery costs one run of the router
@@ -177,12 +186,60 @@ def _task_facts(skill: str, root: str) -> dict:
     return {"mandatory_milestone": mandatory(skill, root), "web": bool(meta["web"])}
 
 
+def _packs_holding(skills: list, root: str) -> dict:
+    """{skill: the narrowest pack of <root>/packs/*.txt that holds it, or None}: the pack with the fewest skills
+    (then the first by name), the catch-all packs `default` and `all` left out. A pack that does not resolve is
+    skipped: the refusal is worded with the packs that do."""
+    folder = os.path.join(root, PACKS_DIR)
+    names = sorted(f[:-4] for f in os.listdir(folder) if f.endswith(".txt")) if os.path.isdir(folder) else []
+    sized = []
+    for name in names:
+        if name in CATCH_ALL_PACKS:
+            continue
+        try:
+            sized.append((name, set(resolve_pack(name, root))))
+        except PlanError:
+            continue
+    out = {}
+    for skill in skills:
+        holding = [(len(held), name) for name, held in sized if skill in held]
+        out[skill] = min(holding)[1] if holding else None
+    return out
+
+
+def scope_refusal(flow_name: str, outside: list, root: str) -> str:
+    """The sentence of a flow whose skills (outside, in the flow's order) no enabled area agent has: the pack each
+    one belongs to, the skills of each pack, and the line to add to runtime.json. A skill in no pack of packs/ is
+    said to be in none. The pack is read from <root>/packs/*.txt through resolve_pack, the resolver the plan uses."""
+    found = _packs_holding(outside, root)
+    by_pack = {}
+    for skill in outside:
+        if found[skill] is not None:
+            by_pack.setdefault(found[skill], []).append(skill)
+    orphans = [skill for skill in outside if found[skill] is None]
+    parts = []
+    if by_pack:
+        named = [f"{pack} (skills {', '.join(skills)})" for pack, skills in by_pack.items()]
+        needs = (f"needs the pack {named[0]}" if len(named) == 1
+                 else f"needs the packs {', '.join(named[:-1])} and {named[-1]}")
+        quoted = [f'"pack": "{pack}"' for pack in by_pack]
+        add = (f"add an area agent with {quoted[0]}" if len(quoted) == 1
+               else f"add area agents with {', '.join(quoted[:-1])} and {quoted[-1]}")
+        parts.append(f"the flow {flow_name} {needs}, and no enabled area agent of runtime.json has "
+                     f"{'it' if len(named) == 1 else 'them'}; {add} to area_agents and accept the configuration")
+    if orphans:
+        one = len(orphans) == 1
+        parts.append(f"in the flow {flow_name}, {', '.join(orphans)} {'is' if one else 'are'} in no pack of packs/: add "
+                     f"{'it' if one else 'them'} to a pack, give an area agent that pack and accept the configuration")
+    return "; and ".join(parts)
+
+
 def from_flow(flow: dict, root: str, pack) -> list:
     """The tasks of a flow file (flow_files.load()) as plan tasks, in its order. A task whose skill is not in pack
-    raises PlanError naming it."""
+    raises PlanError saying which pack of packs/ holds the skills and what to add to runtime.json (scope_refusal)."""
     outside = [t["skill"] for t in flow["tasks"] if t["skill"] not in list(pack)]
     if outside:
-        raise PlanError(f"the flow {flow['flow']} names skills outside the pack in scope: {', '.join(outside)}")
+        raise PlanError(scope_refusal(flow["flow"], outside, root))
     tasks = []
     for t in flow["tasks"]:
         try:
@@ -204,6 +261,40 @@ def from_skill(skill: str, title: str, root: str) -> list:
         raise PlanError(str(e)) from None
     return [{"key": skill, "skill": skill, "title": title, "text": "", "depends_on": [],
              "milestone": facts["mandatory_milestone"], **facts}]
+
+
+def title_of(text: str, title=None) -> str:
+    """The title of a request. The one given, when there is one; else the first sentence of the text (up to the first
+    ". ", "! ", "? " or line end, its closing mark kept) when it is at most TITLE_CHARS characters; else the first
+    line cut at the last word that fits, with "…" (TITLE_CHARS in all). A word longer than the limit is cut inside."""
+    if isinstance(title, str) and title.strip():
+        return " ".join(title.split())
+    text = (text or "").strip()
+    ends = [(text.find(mark), len(mark.strip())) for mark in SENTENCE_ENDS if text.find(mark) >= 0]
+    sentence = text
+    if ends:
+        at, mark = min(ends)
+        sentence = text[:at + mark]
+    sentence = " ".join(sentence.split())
+    if len(sentence) <= TITLE_CHARS:
+        return sentence
+    line = " ".join(text.split("\n", 1)[0].split())
+    room = TITLE_CHARS - 1
+    cut = line[:room]
+    if line[room:room + 1] != " ":
+        boundary = cut.rfind(" ")
+        cut = cut[:boundary] if boundary > 0 else cut
+    return cut.rstrip(" ,;:-") + "…"
+
+
+def request_title(row: dict) -> str:
+    """The title shown for a request row of the store ({"title", "text"}). A row whose stored title is the first line
+    of its text cut at TITLE_CHARS is one that no person titled (the rule before title_of): it is titled again by
+    title_of. Any other stored title was given, or is a flow's, and is kept."""
+    stored, text = row.get("title") or "", row.get("text") or ""
+    if text and stored == text.split("\n", 1)[0][:TITLE_CHARS].strip():
+        return title_of(text)
+    return stored
 
 
 def plan_hash(tasks: list) -> str:
@@ -240,7 +331,7 @@ def build(request: dict, tasks: list, route, source: str, limits: dict, past: li
     else:
         said = ('the router, ' + route['line'] if source == 'router' and route else 'the flow you named') + \
                (f"; flow file flows/{flow}.json" if flow and flow != DELIVERIES_FLOW else "")
-    lines = [f"Plan for request {request['id']}: {request['title']}", f"Source: {said}", ""]
+    lines = [f"Plan for request {request['id']}: {request_title(request)}", f"Source: {said}", ""]
     if several:
         lines += ["Deliveries, in the order listed (each starts after the one before it):"]
         lines += [f"- {d['item']}: {d['route']} -> {', '.join(d['tasks'])}"
@@ -317,7 +408,7 @@ def combine(request: dict, routed: list, flows: dict, agent_skills: dict, root: 
             why = checked.get("why") or (route or {}).get("why") or "the router asked or named no route"
             unrouted.append({"item": entry["item"], "why": why, "reply": entry.get("reply") or ""})
             continue
-        route = dict(route, title=request["title"] if not several else entry["item"][:120])
+        route = dict(route, title=request_title(request) if not several else title_of(entry["item"]))
         mine = delivery_tasks(route, k, flows, root, pack, prefix=several)
         inside = {t["key"] for t in mine}
         for t in mine:

@@ -44,6 +44,7 @@ Usage:
   python3 runtime/cli.py poll     --project <dir>
   python3 runtime/cli.py handler  --project <dir> --name <handler> --verb <verb> [--arg <flag>=<value>]...
   python3 runtime/cli.py stop-runs --project <dir>
+  python3 runtime/cli.py service-check --project <dir> [--dispatch-every <seconds>]
   python3 runtime/cli.py pin      --project <dir>
   python3 runtime/cli.py say      --project <dir> (--text <line> | --text-file <file or ->)
 
@@ -165,8 +166,10 @@ set-mode  sets one area agent's autonomy mode in docs/workbench/runtime.json (ar
           nothing), supervised (every delivery waits for you), milestones (the default: a milestone waits, the rest is
           released by the mode), autonomous (only what must reach you waits), autonomous-with-policy (as autonomous,
           and an effect inside a policy you approved runs without asking). A question, an unclassified reply, a
-          draft with open questions and a mandatory milestone always wait for you. Then accept the new hash with
-          accept-config, which also rewrites the Checkpoints line of the state file.
+          draft with open questions and a mandatory milestone always wait for you. The modes are in that order, the
+          least first. A move down it (stop, supervise) widens nothing: code accepts the new hash at once and says
+          `code:narrowing`, so nothing refuses afterwards. A move up never is accepted by code: accept the new hash
+          with accept-config, after reading the file; it also rewrites the Checkpoints line of the state file.
 contained-run  one run of one skill of an area agent's pack, once, in the eval container, on a copy that holds only the
           artifacts the skill declares (never runtime.json, never a versioned file the skill does not declare), on the
           model the skill's proof gives, with no credential but the model's own, no open network and no retry, within
@@ -192,6 +195,11 @@ say       one turn of the conversation with the planning agent (the same as one 
 handler   starts one verb of a handler (runtime/handlers/) that handlers in runtime.json names, and prints its result.
 stop-runs ends the runs this process started (the container and the process group of each run). The local service
           calls it before it exits; started on its own it has no run to end.
+service-check  what the local service checks at its start, for this project: whether this interpreter can read the
+          secret store, whether the reference model's credential is set or in it, docker on the PATH, the eval image on
+          this machine, and whether a service dispatches (--dispatch-every <seconds>; absent: "not a service"). It starts
+          nothing and remembers nothing when run here: the service calls it, and `connections` and `status` show its
+          answer.
 accept-config  records the hash of docs/workbench/runtime.json you accept. Type the hash the refusal shows, after
           reading the file. Every other command refuses a file with another hash.
 

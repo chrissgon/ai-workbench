@@ -71,8 +71,10 @@ Operations of stage 6:
                                    document against the standing approval's bounds (autonomy.covers) holding the run
                                    lock, makes the provider's dry run and its confirmed call, records the action
   set_mode(project, agent, mode)   set one area agent's autonomy mode in runtime.json (runtime/autonomy.py, the five
-                                   modes); the person then accepts the new hash. accept_config rewrites the state
-                                   file's Checkpoints line, a generated copy of the most careful enabled agent's mode
+                                   modes, in the order stopped < supervised < milestones < autonomous < autonomous-with-policy).
+                                   A move down that order is accepted by code at once (`code:narrowing`); a move up
+                                   is accepted by the person (accept_config). Either rewrites the state file's
+                                   Checkpoints line, a generated copy of the most careful enabled agent's mode
   route(project, request_id)       a request whose lines starting with "- " list several deliveries gets one router
                                    run per delivery and one plan of them all, chained in the order listed
                                    (runtime/plan.py, combine); a route to the brief skill plans one brief task, and
@@ -108,7 +110,11 @@ Operations of stage 9 (the local service, runtime/service.py, is one more shell 
   approve(..., channel)            an effect is approved from the terminal and from the local page, with its hash; any
                                    other channel, or none, is refused
   agents(project)                  each area agent: its configuration, the mode it acts in now, its use of today, the
-                                   tasks queued for it
+                                   tasks queued for it and how many of them the last round held
+  status(project)                  also "held": the ready tasks the last round did not start, each with its reason
+                                   (runtime/dispatcher.py, REASONS), or "dispatch off" while the local service dispatches nothing
+  service_check(project[, dispatch_every])   what the local service checks at its start (secret store, credential,
+                                   docker, image, dispatch) and remembers for connections and status
   conversation(project[, conversation, after])   the messages of the project's conversation above an id, oldest first
   skills(project)                  the skills in scope with their version, area, whether they have a runtime manifest,
                                    their proof as runtime/proof.py gives it and their runs here, and the two checks
@@ -116,7 +122,8 @@ Operations of stage 9 (the local service, runtime/service.py, is one more shell 
                                    cost recomputed from the token counts and model_prices (runtime/costs.py)
   connections(project)             which provider each requirement class of the skills in scope resolves to, which
                                    secrets are found and where (never a value), the eval image and the platform; no
-                                   provider is started and nothing goes over the network
+                                   provider is started and nothing goes over the network; "service": what the local
+                                   service found at its start, null in any other process
   artifacts(project), artifact(project, path)   the project's files under docs/ with their owner skill, and the text
                                    of one of them, read-only
   say                              refuses a turn that would route while another run of the project holds the run lock
@@ -224,7 +231,6 @@ RECORDER_TIMEOUT = 60
 # The one secret the runtime owns: its own key for the floor model's provider, with a spend cap set there. When it
 # is not stored, a floor run uses the lab's key for the floor model (_floor_key).
 FLOOR_KEY = "WB_RUNTIME_FLOOR_KEY"
-TITLE_CHARS = 120  # a request's title taken from its first line, when the person gives none
 ROUTE_KEPT = "a route-only run returns no file"
 HANDED_LINE = "The user handed over these files for this task. They are in the project at:"
 # One line per document the mirror imported from the platform since the task's last run (decision of 2026-10-06).
@@ -262,6 +268,13 @@ def store_module():
     return _load("workbench_store_" + found["implementation"], found["path"])
 
 
+def _command(name: str, project: str, **args) -> str:
+    """The terminal's command for one operation, as a sentence of this layer names it: absolute, from the checkout
+    this process runs from (ROOT), with the uv prefix when it was started through uv (operations.command_line, the
+    one place that spells the syntax)."""
+    return operations.command_line(name, project, checkout=ROOT, **args)
+
+
 def context(project: str, *, check_config: bool = True) -> dict:
     """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
     (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
@@ -287,7 +300,7 @@ def context(project: str, *, check_config: bool = True) -> dict:
         if accepted != cfg["sha256"]:
             raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
                            f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
-                           f"want, run: {operations.command_line('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
+                           f"want, run: {_command('accept-config', cfg['project'], sha256=cfg['sha256'])}", 3)
     return {"cfg": cfg, "store": store, "conn": conn, "root": ROOT}
 
 
@@ -498,11 +511,12 @@ def request(project: str, text: str, flow: str | None = None, title: str | None 
     """Record a request. With a flow, plan it from the flow file the person names (flows/<flow>.json): the tasks
     without a dependency are ready at once, and it returns {"request", "flow", "state", "tasks": [{"id", "key",
     "skill", "state"}]}. Without one, the request waits for its route (route()): {"request", "state": "requested",
-    "next": "route"}; its title, when none is given, is the first line of the text, cut to TITLE_CHARS."""
+    "next": "route"}; its title, when none is given, is plan.title_of(text): the first sentence, else the first line cut at
+    a word."""
     ctx = context(project)
     if flow is None:
         said = _text(text, "the request's text")
-        out = _stored(ctx, ctx["store"].request_add, title=_text(title or said.split("\n", 1)[0][:TITLE_CHARS],
+        out = _stored(ctx, ctx["store"].request_add, title=_text(plan.title_of(said, title),
                                                                  "the title").replace("\n", " "), text=said)
         return {"request": out["request"], "state": out["state"], "next": "route"}
     try:
@@ -1265,17 +1279,30 @@ def verdict(project: str, run_id: int, word: str) -> dict:
     return {"run_id": run_id, "use": use, "verdict": word}
 
 
+ACCEPTED_BY = "config:accepted-by"  # the store's cursor that says who accepted the hash in ACCEPTED: "person" or "code:narrowing"
+
+
+def _record_acceptance(ctx: dict, cfg: dict, sha256: str, by: str) -> dict:
+    """Record sha256 as the accepted hash of cfg's file, and who accepted it, and rewrite the state file's Checkpoints
+    line. The one writer of the accepted hash: accept_config (the person, in the terminal) and set_mode (code, for a
+    move down the order of the modes, which widens nothing) call it, and nothing else does. Returns {"previous",
+    "checkpoints"}."""
+    previous = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+    _stored(ctx, ctx["store"].cursor_set, ACCEPTED_BY, by)
+    _stored(ctx, ctx["store"].cursor_set, project_config.ACCEPTED, sha256)
+    return {"previous": previous, "checkpoints": _write_checkpoints(cfg)}
+
+
 def accept_config(project: str, sha256: str) -> dict:
     """Record the hash of the project's configuration that the person accepts, after reading the file. The only
-    operation that writes it, and the only one that runs on a configuration that was not accepted. Returns
-    {"accepted", "previous", "path"}."""
+    operation that accepts any change of it (set_mode accepts only a move down the order of the modes), and the only
+    one that runs on a configuration that was not accepted. Returns {"accepted", "previous", "path", "checkpoints"}."""
     ctx = context(project, check_config=False)
     cfg = ctx["cfg"]
     if sha256 != cfg["sha256"]:
         raise OpsError(f"the file's hash is {cfg['sha256']} and you typed {sha256}: nothing was accepted", 1)
-    previous = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
-    _stored(ctx, ctx["store"].cursor_set, project_config.ACCEPTED, sha256)
-    return {"accepted": sha256, "previous": previous, "path": cfg["path"], "checkpoints": _write_checkpoints(cfg)}
+    done = _record_acceptance(ctx, cfg, sha256, "person")
+    return {"accepted": sha256, "previous": done["previous"], "path": cfg["path"], "checkpoints": done["checkpoints"]}
 
 
 def _write_checkpoints(cfg: dict):
@@ -1556,15 +1583,23 @@ def execute_under_policy(project: str, policy: str, effect_file: str) -> dict:
 
 def set_mode(project: str, agent: str, mode: str) -> dict:
     """Set one area agent's autonomy mode: only area_agents.<agent>.mode of runtime.json changes (decision P1: the
-    mode is the configuration's word). Every operation then refuses until the person accepts the new hash
-    (accept-config), which also rewrites the state file's Checkpoints line. Returns {"agent", "mode",
-    "config_sha256", "accepted": false, "next"}."""
+    mode is the configuration's word). A move down the order of the modes (autonomy.MODES: stopped < supervised <
+    milestones < autonomous < autonomous-with-policy) widens nothing, so code accepts the new hash at once, as the
+    acceptance accept-config writes, recorded `code:narrowing`, and no operation refuses afterwards; this is the only
+    acceptance made by code. A move up leaves the hash unaccepted: every operation then refuses until the person
+    accepts it (accept-config), and `next` is the command. The same mode changes nothing. Returns {"agent", "mode",
+    "config_sha256", "accepted", "by" ("code:narrowing" or None), "next" (the command, or None)}, with "checkpoints"
+    after a narrowing and "unchanged" true when the mode was the one set."""
     ctx = context(project)
     cfg = ctx["cfg"]
     if mode not in autonomy.MODES:
         raise OpsError(f"a mode is one of {', '.join(autonomy.MODES)}", 2)
     if agent not in cfg["area_agents"]:
         raise OpsError(f"{agent!r} is not an agent of area_agents in {cfg['path']}", 2)
+    old = cfg["area_agents"][agent]["mode"]
+    if old == mode:
+        return {"agent": agent, "mode": mode, "config_sha256": cfg["sha256"], "accepted": True, "by": None,
+                "next": None, "unchanged": True}
     raw = json.loads(json.dumps(cfg["raw"]))
     raw["area_agents"][agent]["mode"] = mode
     temporary = f"{cfg['path']}.{os.getpid()}.tmp"
@@ -1572,16 +1607,29 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
         f.write(json.dumps(raw, indent=2, ensure_ascii=False) + "\n")
     os.replace(temporary, cfg["path"])
     new = _sha256(cfg["path"])
-    return {"agent": agent, "mode": mode, "config_sha256": new, "accepted": False,
-            "next": operations.command_line("accept-config", cfg["project"], sha256=new)}
+    out = {"agent": agent, "mode": mode, "config_sha256": new, "accepted": False, "by": None,
+           "next": _command("accept-config", cfg["project"], sha256=new)}
+    if autonomy.narrows(old, mode):
+        try:
+            written = project_config.load(project)
+        except project_config.ConfigError as e:
+            raise OpsError(str(e), 3) from None
+        if written["sha256"] == new:  # nothing else changed the file between the write and this read
+            done = _record_acceptance(ctx, written, new, "code:narrowing")
+            out.update(accepted=True, by="code:narrowing", next=None, checkpoints=done["checkpoints"])
+    return out
 
 
 def status(project: str) -> dict:
     """{"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key", "title",
     "agent", "skill", "state", "note"}]}], "pending": [... each with "agent" and "actions"], "documents": [{"path", "status", "note", "on_platform"}],
-    "board": {"left_out_final"} or None}: everything from the store's records. "left_out_final" is the number of
-    tasks the board never mirrors because they were final when it was configured (runtime/board.py). A task's "title"
-    and "agent" are the store's: the agent is None when the project has no area agents."""
+    "board": {"left_out_final"} or None, "held": [{"task_id", "agent", "reason", "at", "next"}]}: everything from the
+    store's records. "left_out_final" is the number of tasks the board never mirrors because they were final when it
+    was configured (runtime/board.py). A task's "title" and "agent" are the store's: the agent is None when the project
+    has no area agents. A request's "title" is plan.request_title: the one given, else its first sentence, else its
+    first line cut at a word. "held" lists the ready tasks the last dispatcher round did not start, each with its
+    reason (runtime/dispatcher.py, REASONS) and "at", the time of the round; while the local service dispatches nothing
+    every ready task is held with `dispatch off`; "next" is the command that gets past the reason, or None."""
     ctx = context(project)
     rows = _stored(ctx, ctx["store"].tasks_list)
     agents = _agent_by_task(rows)
@@ -1590,7 +1638,7 @@ def status(project: str) -> dict:
         if c.get("task_id") is not None:
             comments[c["task_id"]] = comments.get(c["task_id"], 0) + 1
     board_of = lambda t: {"on_board": bool(t.get("remote_id")), "open_comments": comments.get(t["id"], 0)}
-    requests = [{**{key: r[key] for key in ("id", "title", "flow", "state")}, **board_of(r),
+    requests = [{**{key: r[key] for key in ("id", "flow", "state")}, "title": plan.request_title(r), **board_of(r),
                  "tasks": [{**{key: t[key] for key in ("id", "key", "title", "agent", "skill", "state", "note")}, **board_of(t)}
                            for t in rows if t["parent_id"] == r["id"]]}
                 for r in rows if r["parent_id"] is None]
@@ -1599,7 +1647,8 @@ def status(project: str) -> dict:
             "documents": [{"path": d["path"], "status": d["status"], "note": d["note"], "on_platform": bool(d["remote_id"])}
                           for d in _stored(ctx, ctx["store"].documents_list)],
             "board": ({"left_out_final": len(_stored(ctx, lambda _conn: board.left_out(ctx, rows)))}
-                      if board.enabled(ctx["cfg"]) else None)}
+                      if board.enabled(ctx["cfg"]) else None),
+            "held": _held_listed(ctx, rows)}
 
 
 def config(project: str) -> dict:
@@ -1997,7 +2046,7 @@ def _reroute(ctx: dict, task: dict, returned: list, k: int, delivery: dict, appr
         else:
             try:
                 flows = {checked["flow"]: flow_files.load(checked["flow"], ROOT)} if "flow" in checked else {}
-                tasks = plan.delivery_tasks(dict(route_read, title=delivery["item"][:120]), k, flows, ROOT,
+                tasks = plan.delivery_tasks(dict(route_read, title=plan.title_of(delivery["item"])), k, flows, ROOT,
                                             plan.pack_skills(ctx["cfg"], ROOT), prefix=True)
                 skills = plan.agent_skills(ctx["cfg"], ROOT)
                 inside = {t["key"] for t in tasks}
@@ -2094,8 +2143,7 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
     item = _stored(ctx, ctx["store"].pending_get, pending_id)
     if item["kind"] == "effect" and channel not in EFFECT_CHANNELS:
         raise OpsError("an effect is approved in the terminal, with its hash: "
-                       + operations.command_line("approve", ctx["cfg"]["project"], pending_id=pending_id,
-                                                 sha256="<hash>"), 1)
+                       + _command("approve", ctx["cfg"]["project"], pending_id=pending_id, sha256="<hash>"), 1)
     if item["kind"] == "plan":
         payload = item.get("payload") or {}
         stated = payload.get("plan_sha256")
@@ -2319,20 +2367,27 @@ def dispatch(project: str, budget_seconds=None) -> dict:
     their tick; then, until nothing may start: the reviews each agent's mode releases are released (with what a release
     starts), and the oldest ready task whose agent may start (its mode, its daily caps on the tier its proof gives) runs,
     as run_next runs a task. No new run starts once budget_seconds (default DISPATCH_BUDGET) have passed, and a failure
-    the next run would repeat stops the round. Returns {"handlers", "released", "ran", "held", "stopped"}."""
+    the next run would repeat stops the round. Returns {"handlers", "released", "ran", "held", "stopped"}. Before a
+    run starts, the reference model's credential (for a run on it) and the eval image are checked: a round that cannot
+    start for either stops, and no task fails for it. The ready tasks the round held, each with its reason
+    (dispatcher.held_of), are kept for `status` (HELD_CURSOR)."""
     started = time.monotonic()
     ctx = context(project)
     cfg = ctx["cfg"]
     budget = DISPATCH_BUDGET if budget_seconds is None else budget_seconds
     if not cfg["area_agents"]:
+        rows = _stored(ctx, ctx["store"].tasks_list)
+        _record_held(ctx, [{"task_id": t["id"], "agent": t.get("agent"), "reason": dispatcher.NO_AGENT}
+                           for t in rows if t["state"] == "ready" and t["parent_id"] is not None])
         return {"stopped": "no area agent is configured"}
     out = {"handlers": _ticks(ctx, project), "released": [], "ran": [], "held": [], "stopped": None}
     key = _floor_key()
-    released, checked = [], {}
+    released, checked, held = [], {}, []
     while out["stopped"] is None:
         snapshot = _snapshot(ctx, key)
         decided = dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)
         out["held"] = decided["held"]
+        held = dispatcher.held_of(snapshot, decided)
         did = _mode_releases(ctx, released, snapshot, decided)
         out["released"] += did
         if decided["start"] is None:
@@ -2343,12 +2398,15 @@ def dispatch(project: str, budget_seconds=None) -> dict:
         if time.monotonic() - started > budget:
             out["stopped"] = f"the round's budget of {budget} s is spent: no new run starts"
             break
-        if snapshot["tier"].get(decided["start"]) == "strong":
-            if "credential" not in checked:
-                checked["credential"] = _credential_stop()
-            if checked["credential"]:
-                out["stopped"] = checked["credential"]
-                break
+        if snapshot["tier"].get(decided["start"]) == "strong" and "credential" not in checked:
+            checked["credential"] = _credential_stop()
+        if "image" not in checked:
+            checked["image"] = _image_stop()
+        stopper = (checked["credential"] if snapshot["tier"].get(decided["start"]) == "strong" else None) or checked["image"]
+        if stopper:
+            reason, out["stopped"] = stopper
+            held = dispatcher.held_of(snapshot, decided, {decided["start"]: reason})
+            break
         try:
             ran = _claim_and_run(ctx, None, decided["start"])
         except OpsError as e:
@@ -2360,6 +2418,7 @@ def dispatch(project: str, budget_seconds=None) -> dict:
         out["ran"].append({"task_id": ran["ran"], "run_id": ran["run_id"], "status": ran["status"],
                            "ending": ran["ending"], "model": (ran.get("routing") or {}).get("model")})
         out["stopped"] = _stops_the_round(ran)
+    _record_held(ctx, held)
     return out
 
 
@@ -2388,15 +2447,79 @@ def pin(project: str) -> dict:
 
 
 def _credential_stop():
-    """Why no run on the reference model can start from this process, or None: its credential is neither set nor
-    found in the secret store (lab.credential_missing). Named with the interpreter, since a scheduled job's
-    interpreter may not read the store (open point O1)."""
+    """(reason, why) no run on the reference model can start from this process, or None: its credential is neither set
+    nor found in the secret store (lab.credential_missing). The reason is `secret store` when this interpreter cannot
+    read the store at all (the library is missing), else `credential`. Named with the interpreter, since a scheduled
+    job's interpreter may not read the store (open point O1)."""
     missing = lab.credential_missing("strong")
     if not missing:
         return None
-    return (f"the reference model's credential ({', '.join(missing)}) is neither set nor found in the secret store "
-            f"from {sys.executable} (Python {sys.version.split()[0]}): no run starts. See contracts/runtime.md, "
-            "\"The dispatcher's two jobs\"")
+    reason = "credential" if dispatcher.store_readable() == "ok" else "secret store"
+    return reason, (f"the reference model's credential ({', '.join(missing)}) is neither set nor found in the secret store "
+                    f"from {sys.executable} (Python {sys.version.split()[0]}): no run starts. See contracts/runtime.md, "
+                    "\"The dispatcher's two jobs\"")
+
+
+def _image_stop():
+    """("image", why) when the eval image is not on this machine although the lab runs in a container (a run would
+    fail for it), else None. A machine the lab cannot look at (no container executor, no docker) says nothing."""
+    seen = lab.image()
+    if seen.get("name") and not seen.get("digest"):
+        return "image", f"the eval image {seen['name']} is not on this machine: no run starts, and no task fails for it. See connections"
+    return None
+
+
+# --- why a ready task did not start (WP-9.14, A-10) ---------------------------------------------------------------
+
+HELD_CURSOR = "dispatch:held"   # the store's cursor that holds the last round's held tasks (JSON), per project
+HELD_KEPT = 20                  # tasks kept in the record: a cursor value is at most 4 KiB
+SERVICE = {}                    # the local service's facts, by project folder: set by service_check in the service's process only
+
+
+def _now_iso() -> str:
+    return datetime.datetime.now(datetime.timezone.utc).isoformat()
+
+
+def _record_held(ctx: dict, held: list) -> None:
+    """Keep the last round's held tasks, [{"task_id", "agent", "reason"}], with the time of the round, as the cursor
+    HELD_CURSOR (replacing the record of the round before). At most HELD_KEPT tasks; "more" counts the rest."""
+    record = {"at": _now_iso(), "held": held[:HELD_KEPT], "more": max(0, len(held) - HELD_KEPT)}
+    _stored(ctx, ctx["store"].cursor_set, HELD_CURSOR, json.dumps(record, separators=(",", ":")))
+
+
+def _held_listed(ctx: dict, rows: list) -> list:
+    """The held tasks `status` and `agents` show: [{"task_id", "agent", "reason", "at", "next"}] for the ready tasks
+    among rows (the store's tasks). While the local service dispatches nothing, every ready task is held with `dispatch
+    off`; otherwise the last round's record, kept only for tasks still ready. `next` is the command that gets past the
+    reason, or None."""
+    ready = [t for t in rows if t["state"] == "ready" and t["parent_id"] is not None]
+    if not ready:
+        return []
+    project = ctx["cfg"]["project"]
+    service = SERVICE.get(os.path.realpath(project))
+    if service is not None and service["dispatch"] == "off":
+        return [{"task_id": t["id"], "agent": t.get("agent"), "reason": dispatcher.DISPATCH_OFF, "at": service["at"],
+                 "next": _command("run-next", project, uv=True)} for t in ready]
+    try:
+        record = json.loads(_stored(ctx, ctx["store"].cursor_get, HELD_CURSOR) or "null")
+    except ValueError:
+        record = None
+    if not isinstance(record, dict):
+        return []
+    ids = {t["id"] for t in ready}
+    out = []
+    for h in record.get("held") or []:
+        if h.get("task_id") in ids:
+            out.append({**h, "at": record.get("at"), "next": _held_next(project, h["reason"])})
+    return out
+
+
+def _held_next(project: str, reason: str):
+    """The command that gets past a reason, or None when it is not a command (a cap, a credential, an agent that is
+    stopped are edits of the configuration or of the secret store)."""
+    if reason == "secret store":
+        return operations.service_line(ROOT, [project], uv=True)
+    return None
 
 
 def _ticks(ctx: dict, project: str) -> dict:
@@ -2782,7 +2905,7 @@ def _say_route(project: str, ctx: dict, said: str, answer_to=None) -> tuple:
                    if t["parent_id"] is None and t["state"] in ("planned", "done", "cancelled")}
         remembered = chat_memory(messages, settled)
         text = f"{remembered}\n\n{MEMORY_TAIL}\n{said}" if remembered else said
-        request_id = request(project, text, title=said.split("\n", 1)[0][:TITLE_CHARS])["request"]
+        request_id = request(project, text, title=plan.title_of(said))["request"]
     routed = route(project, request_id)
     item = _stored(ctx, ctx["store"].pending_get, routed["pending_id"]) if routed.get("pending_id") else None
     if item is None:
@@ -2829,16 +2952,20 @@ CONFIGURED_PROVIDER = {"integration:vcs": "code", "integration:issue-tracker": "
 
 def agents(project: str) -> dict:
     """The area agents of the configuration with their use of today: {"agents": [{"name", "pack", "enabled", "mode",
-    "acting_mode", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "queued"}]}
+    "acting_mode", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "queued",
+    "held"}]}
     in the order of the configuration. mode is the configured one; acting_mode the one the agent acts in now
     (autonomy.mode_of: an agent set to autonomous-with-policy whose approval expired acts as autonomous). The day is
     counted as the caps count it (_agents_of_the_day): runs_today is the runs on the reference model, usd_today the
     dollars of the floor model's runs (a run of unknown cost counts at max_cost_usd_per_run, and runs_without_cost
-    says how many), and a router run counts for the planning agent. queued is the number of ready tasks of the agent.
+    says how many), and a router run counts for the planning agent. queued is the number of ready tasks of the agent;
+    held how many of them the last round held (status lists them with their reasons).
     A project without area_agents: {"agents": []}."""
     ctx = context(project)
     day = _agents_of_the_day(ctx)
-    ready = [t for t in _stored(ctx, ctx["store"].tasks_list) if t["state"] == "ready" and t["parent_id"] is not None]
+    rows = _stored(ctx, ctx["store"].tasks_list)
+    ready = [t for t in rows if t["state"] == "ready" and t["parent_id"] is not None]
+    held = _held_listed(ctx, rows)
     out = []
     for name, found in day.items():
         entry, spent = found["entry"], found["spent"]
@@ -2846,7 +2973,8 @@ def agents(project: str) -> dict:
                     "acting_mode": autonomy.mode_of(found["facts"]), "max_runs_per_day": entry["max_runs_per_day"],
                     "max_usd_per_day": entry["max_usd_per_day"], "runs_today": spent["runs_reference"],
                     "usd_today": spent["usd_floor"], "runs_without_cost": spent["runs_without_cost"],
-                    "queued": sum(1 for t in ready if t.get("agent") == name)})
+                    "queued": sum(1 for t in ready if t.get("agent") == name),
+                    "held": sum(1 for h in held if h["agent"] == name)})
     return {"agents": out}
 
 
@@ -3000,7 +3128,8 @@ def connections(project: str) -> dict:
     """What the project's skills need from the machine and whether it is there, with no provider started and no
     network call: {"classes": [{"class", "provider", "found", "note", "skills"}], "secrets": [{"name", "found",
     "where"}], "secrets_note", "image": {"name", "present", "evidence": true, false or None}, "platform": {"machine",
-    "evidence", "here", "same"}}. classes: each requirement class the skills in scope declare, resolved by providers/resolve.py as the
+    "evidence", "here", "same"}, "service": {"secret_store", "credential", "docker", "image", "dispatch", "problems",
+    "start", "at"} or None}. classes: each requirement class the skills in scope declare, resolved by providers/resolve.py as the
     runtime resolves it (the implementation the configuration names for the code provider, the task board and the
     documents; else the environment, the platform default or the only implementation): provider is the
     implementation or None, found whether its file exists, note how it was chosen or why it was not. secrets: see
@@ -3009,7 +3138,8 @@ def connections(project: str) -> dict:
     present). platform: machine is the architecture of this machine as the system names it; evidence is the platform
     the lab evidence was made on; here is the platform the eval image runs as on this machine without emulation, in
     the evidence's os/arch form (see _image_platform_here); same is true when here equals evidence, false when both
-    are known and differ, None when either is unknown."""
+    are known and differ, None when either is unknown. service: what the local service found at its start
+    (service_check), null in any other process."""
     ctx = context(project)
     cfg = ctx["cfg"]
     needs, evidence = {}, set()
@@ -3045,7 +3175,40 @@ def connections(project: str) -> dict:
     return {"classes": classes, "secrets": secrets, "secrets_note": note,
             "image": {"name": seen.get("name"), "present": present,
                       "evidence": (seen["digest"] in evidence) if present else None},
-            "platform": _platform_row(platform_module.machine(), sys.platform, seen.get("evidence_platform"))}
+            "platform": _platform_row(platform_module.machine(), sys.platform, seen.get("evidence_platform")),
+            "service": dict(SERVICE[os.path.realpath(cfg["project"])]) if os.path.realpath(cfg["project"]) in SERVICE else None}
+
+
+def service_check(project: str, dispatch_every=None) -> dict:
+    """What the local service checks for one project at its start, and remembers (SERVICE) for `connections`, `status`
+    and `agents` while the process lives: {"secret_store", "credential", "docker", "image", "dispatch", "problems",
+    "start", "at"}. Each verdict is "ok" or one sentence saying what is missing. secret_store and credential are the
+    scheduler entry's check (dispatcher.inspect: can this interpreter read the secret store, is the reference model's
+    credential set or in it), docker whether it is on PATH, image whether the eval image is on this machine,
+    dispatch "every <n> s" or "off" (dispatch_every in seconds; 0 is off; None says the process is no service), problems
+    the modules or the lab that did not load, start the command that starts the service with the secret store's
+    library (uv run --with keyring==..., operations.service_line). It starts nothing and makes no network call."""
+    ctx = context(project, check_config=False)
+    found = dispatcher.inspect(sys.modules[__name__])
+    seen = lab.image()
+    if not seen.get("name"):
+        image = "not looked at: the lab does not run in a container, or docker cannot be reached"
+    elif not seen.get("digest"):
+        image = f"the eval image {seen['name']} is not on this machine"
+    else:
+        image = "ok"
+    problems = [f"{name}: {why}" for name, why in sorted(found["modules"].items()) if why != "ok"]
+    if found["lab"] != "ok":
+        problems.append(f"lab: {found['lab']}")
+    report = {"secret_store": found["secret_store"], "credential": found["credential"],
+              "docker": "ok" if found["tools"].get("docker") else "docker is not on the PATH of this process",
+              "image": image,
+              "dispatch": ("not a service" if dispatch_every is None else
+                           f"every {dispatch_every:g} s" if dispatch_every else "off"),
+              "problems": problems, "start": operations.service_line(ROOT, [ctx["cfg"]["project"]], uv=True), "at": _now_iso()}
+    if dispatch_every is not None:
+        SERVICE[os.path.realpath(ctx["cfg"]["project"])] = dict(report)
+    return report
 
 
 def _owners() -> list:

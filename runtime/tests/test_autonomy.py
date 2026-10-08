@@ -209,11 +209,11 @@ def test_set_mode_changes_one_word_of_the_configuration_and_asks_for_acceptance(
     project = str(tree["project"])
     config = tree["project"] / "docs" / "workbench" / "runtime.json"
     before = json.loads(config.read_text())
-    out = ops.set_mode(project, "brand", "milestones")
+    out = ops.set_mode(project, "brand", "autonomous-with-policy")  # a move up the order: the person accepts it
     after = json.loads(config.read_text())
-    before["area_agents"]["brand"]["mode"] = "milestones"
+    before["area_agents"]["brand"]["mode"] = "autonomous-with-policy"
     assert after == before and config.read_text().endswith("}\n")
-    assert out["agent"] == "brand" and out["mode"] == "milestones" and out["accepted"] is False
+    assert out["agent"] == "brand" and out["mode"] == "autonomous-with-policy" and out["accepted"] is False
     assert out["config_sha256"] == ops.project_config.load(project)["sha256"]
     assert "accept-config" in out["next"] and out["config_sha256"] in out["next"]
     with pytest.raises(ops.OpsError) as refused:

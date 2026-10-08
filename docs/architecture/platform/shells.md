@@ -121,7 +121,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 
 **Every operation behind every shell.**
 
-- The configuration's hash is checked by every operation but `accept_config`, which accepts only the hash the person typed: `test_config_hash.py`, `test_no_operation_runs_before_the_person_accepted_the_configuration`, `test_accepting_takes_the_hash_the_person_typed_and_refuses_another`, `test_a_configuration_that_changed_after_it_was_accepted_stops_every_operation_and_names_both_hashes`.
+- The configuration's hash is checked by every operation but `accept_config`, which accepts only the hash the person typed (and `set_mode`, which accepts by code only the hash of a move down the order of the modes: `test_mode_narrowing.py`): `test_config_hash.py`, `test_no_operation_runs_before_the_person_accepted_the_configuration`, `test_accepting_takes_the_hash_the_person_typed_and_refuses_another`, `test_a_configuration_that_changed_after_it_was_accepted_stops_every_operation_and_names_both_hashes`.
 - A configuration that names another checkout, or puts the data inside the project or the checkout, is refused: `test_a_project_that_is_not_configured_or_names_another_checkout_is_refused`.
 - An effect is approved only with its hash, and an approval word typed as an answer is refused, whatever shell sent it: `test_an_approval_with_another_hash_executes_nothing`; `test_answering_an_effect_with_only_an_approval_word_is_refused`.
 
@@ -200,6 +200,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 | `artifacts` | - | `artifacts` |
 | `artifact` | `--path` | `artifact` |
 | `stop-runs` | - | `stop_runs` |
+| `service-check` | `[--dispatch-every]` | `service_check` |
 <!-- /generated -->
 
 Every verb also takes `--project <dir>`. The verbs that call a model: `route` (without `--flow`), `run-next`, `dispatch`, and `say` for a new request or an answer to the router.
@@ -239,7 +240,7 @@ Each command calls its operation of the same name once (`/progress` shows its `t
 
 **The first runtime** (until stage 7), `python3 scripts/runtime.py <verb> --project <dir>`: `tick [--dry-run] [--pin]`, `pin`, `add-comment --link --commenter --text-file`, `status`, `inbox`, `approve --id [--confirmed --sha256]`, `reject --id [--note]`; exit 0 ok, 1 a step failed, 2 usage, 3 not configured. `scripts/vote_job.py` is started by the scheduler at a vote post's slot, never by hand (exit 0, 1, 2).
 
-**The local service (stage 9, built).** `python3 runtime/service.py --project <dir> [--project <dir>]... [--port 8765] [--poll-every 60] [--dispatch-every <seconds>] [--token-file <path>]`: bound to `127.0.0.1` only (no option for another address), a token in a file for its owner, the `Host` and `Origin` checked, no cross-origin header, one route per operation that lists the `page` channel (`/api/v1/...`), a route whose operation's row has `job` returning a job to ask for again. It runs `poll` every 60 s and `dispatch` only when `--dispatch-every` is given. `accept_config` and `run_next` are not routes, on purpose. The rules of a request and the routes are in [contracts/runtime.md](../../../contracts/runtime.md), "The local service". Planned: the pages in `interface/` (the scene, then its views) and the MCP mode.
+**The local service (stage 9, built).** `uv run --with keyring==25.7.0 python3 runtime/service.py --project <dir> [--project <dir>]... [--port 8765] [--poll-every 60] [--dispatch-every 30 | --no-dispatch] [--token-file <path>]`: bound to `127.0.0.1` only (no option for another address), a token in a file for its owner, the `Host` and `Origin` checked, no cross-origin header, one route per operation that lists the `page` channel (`/api/v1/...`), a route whose operation's row has `job` returning a job to ask for again. It runs `poll` every 60 s and `dispatch` every 30 s unless `--no-dispatch` (or `--dispatch-every 0`) says otherwise, and at its start logs what `service_check` found (secret store, credential, docker, image, dispatch). `accept_config` and `run_next` are not routes, on purpose; `set_mode` is, and from the page it only narrows: a move down the order of the modes is accepted by code (`code:narrowing`), a move up waits for the person's `accept_config`. The rules of a request and the routes are in [contracts/runtime.md](../../../contracts/runtime.md), "The local service". Planned: the pages in `interface/` (the scene, then its views) and the MCP mode.
 
 ## Known limits and improvements
 

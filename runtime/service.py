@@ -10,9 +10,13 @@ decision takes, what a state leads to, what a hash must equal are the operations
 project file, and imports only the operations layer and the kit it shares with the MCP mode (shell_kit.py).
 
 Usage:
-  python3 runtime/service.py --project <dir> [--project <dir>]... [--port 8765] [--poll-every 60]
-                             [--dispatch-every <seconds>] [--token-file <path>]
+  uv run --with keyring==25.7.0 python3 runtime/service.py --project <dir> [--project <dir>]... [--port 8765]
+                             [--poll-every 60] [--dispatch-every 30 | --no-dispatch] [--token-file <path>]
   python3 runtime/service.py --help
+
+Start it with the `uv run --with keyring==25.7.0` form: the secret store is read through that library, and a service
+started without it finds no credential and starts no task (it says so at its start). A plain `python3 runtime/service.py`
+serves the pages and the reads all the same.
 
   --project        a project folder (runtime/project_config.py); repeat for several. Each is checked at start with the
                    `config` operation: a folder that is not a configured project ends the start (exit 3), a configuration
@@ -22,10 +26,16 @@ Usage:
   --poll-every     seconds between two runs of `poll` for each project (mirrors, expired approvals, releases by a mode; no
                    model); default 60; 0 turns it off
   --dispatch-every seconds between two rounds of `dispatch` for each project (the handlers' ticks, the releases by a mode,
-                   the next ready tasks: model calls); off unless given. A project that has a job running is skipped
+                   the next ready tasks: model calls); default 30; 0 turns it off. A project that has a job running is
+                   skipped. The daily caps and the modes of the area agents are what limits it
+  --no-dispatch    do not dispatch: nothing starts a task but `run-next` in the terminal; `status` then says `dispatch off`
+                   for every ready task. It cannot be given with --dispatch-every
   --token-file     where the token is written (default: service.token in the data folder of the first project)
 
-It prints one JSON line, {"url", "token_file", "projects": [{"id", "name"}]}, and never the token. The token is
+It prints one JSON line, {"url", "token_file", "projects": [{"id", "name"}]}, and never the token. After it, on
+standard error, it says what it found at its start for each project (operation `service-check`: the secret store, the
+credential, docker, the eval image, whether it dispatches); when the secret store cannot be read, the first lines give
+the `uv run --with keyring==25.7.0` command that starts the service. The token is
 `secrets.token_hex(32)`, new at every start, in a file readable by its owner only, removed when the service stops. The page
 asks the person to paste it once per browser session; it is never in a URL, a log line or a page.
 
@@ -64,8 +74,11 @@ refuses anything outside docs/, a link and the configuration). Each takes the qu
 
 Not exposed, on purpose: accept-config (a configuration hash is accepted in the terminal only, so a page can never accept
 the change that widens what an agent may do), run-next (the dispatcher decides what runs), deps, proof, the standing
-approvals, contained-run, poll, handler and pin. An effect is approved from here with the hash the page showed, as the
-channel "page" (the service passes it itself; a request cannot name a channel).
+approvals, contained-run, poll, handler, pin and service-check (the service calls it itself, at its start). An effect is
+approved from here with the hash the page showed, as the channel "page" (the service passes it itself; a request cannot
+name a channel). The route of set-mode may narrow autonomy and never widen it: a move down the order of the modes
+(stopped < supervised < milestones < autonomous < autonomous-with-policy) is accepted by code at once, a move up leaves
+the configuration unaccepted (every route then answers 412 with the command that accepts it, in the terminal).
 
 When it stops (SIGINT or SIGTERM) it ends the runs a job started (ops.stop_runs) and does not exit before that returns;
 a second signal while it stops is ignored.
@@ -99,6 +112,7 @@ import shell_kit  # noqa: E402  (the same folder: what this shell shares with th
 from shell_kit import EXPOSED_KINDS, Busy, Stopping, project_id, status_of  # noqa: E402,F401
 
 HOST = "127.0.0.1"
+DISPATCH_EVERY = 30.0                     # seconds between two rounds of `dispatch` unless --dispatch-every or --no-dispatch says otherwise
 PREFIX = "/api/v1"
 JSON_LIMIT = 1024 * 1024                  # bytes of a request body
 FILE_LIMIT = 34 * 1024 * 1024             # the file route: the base64 of 25 MiB is about 33.4 MiB
@@ -649,12 +663,43 @@ class Server(http.server.ThreadingHTTPServer):
     daemon_threads = True
 
 
-def serve(projects, port=8765, poll_every=60.0, dispatch_every=None, token_file=None, interface_dir=None,
+LABELS = (("secret_store", "secret store"), ("credential", "credential"), ("docker", "docker"), ("image", "image"),
+          ("dispatch", "dispatch"))
+
+
+def check_projects(ops_module, projects, dispatch_every, log) -> None:
+    """What each project's check found at the start (the operation `service-check`, which also remembers it for
+    `connections` and `status`), one line each on the log, which is standard error. When the secret store cannot be
+    read, the first lines say how to start the service (`uv run --with keyring==...`); a project whose check fails is
+    logged and the start goes on."""
+    for project in projects:
+        try:
+            report = ops_module.service_check(project["path"], dispatch_every=dispatch_every or 0)
+        except Exception as e:  # a check that fails never stops the service
+            log(f"service check of {project['name']}: {type(e).__name__}: {CONTROL.sub(' ', str(e))[:300]}")
+            continue
+        if not isinstance(report, dict):
+            continue
+        shown = lambda key: CONTROL.sub(" ", str(report.get(key)))[:400]  # noqa: E731
+        if report.get("secret_store") not in (None, "ok"):
+            log(f"service check of {project['name']}: the secret store cannot be read from this interpreter, so no run "
+                "starts from this service; start it with:")
+            log("  " + shown("start"))
+        log(f"service check of {project['name']}:")
+        for key, label in LABELS:
+            if key in report:
+                log(f"  {label:<13}{shown(key)}")
+        for problem in report.get("problems") or []:
+            log("  problem      " + CONTROL.sub(" ", str(problem))[:300])
+
+
+def serve(projects, port=8765, poll_every=60.0, dispatch_every=DISPATCH_EVERY, token_file=None, interface_dir=None,
           ops_module=None, stop=None, ready=None, log=None, out=None, server_class=None) -> int:
     """Check every project with the `config` operation, bind 127.0.0.1:<port>, write the token file, print the one
     JSON line, and serve until a signal (or `stop`, an Event, is set); then end the runs the jobs started
     (ops.stop_runs, which is waited for) and remove the token file. The `poll` loop runs every `poll_every` seconds
-    (0: not at all), the `dispatch` loop every `dispatch_every` seconds when it is given. Returns the exit code.
+    (0: not at all), the `dispatch` loop every `dispatch_every` seconds (30 unless told; None or 0: not at all). After
+    the JSON line it logs what each project's check found (check_projects). Returns the exit code.
     `ready(service)` is called once the socket listens, `server_class` replaces the HTTP server (both are the tests')."""
     ops_module = ops_module or ops
     log = log or shell_kit.default_log
@@ -704,6 +749,7 @@ def serve(projects, port=8765, poll_every=60.0, dispatch_every=None, token_file=
             thread.start()
         print(json.dumps({"url": f"http://{HOST}:{service.port}/", "token_file": target,
                           "projects": [{"id": p["id"], "name": p["name"]} for p in found]}), file=out, flush=True)
+        check_projects(ops_module, found, dispatch_every, log)
         if ready:
             ready(service)
         while not stop.wait(0.5):
@@ -744,14 +790,18 @@ def _number(text: str, flag: str, low: float, high: float) -> float:
 
 
 def parse(argv) -> dict:
-    """The command line as {"projects", "port", "poll_every", "dispatch_every", "token_file"}. Refused (Refused) for an
-    unknown flag, a flag without its value, a number out of range or no project. There is no flag for another
-    address."""
-    out = {"projects": [], "port": 8765, "poll_every": 60.0, "dispatch_every": None, "token_file": None}
+    """The command line as {"projects", "port", "poll_every", "dispatch_every", "token_file"}. dispatch_every is
+    DISPATCH_EVERY unless --dispatch-every gives another or --no-dispatch makes it None. Refused (Refused) for an
+    unknown flag, a flag without its value, a number out of range, no project, or --no-dispatch with --dispatch-every.
+    There is no flag for another address."""
+    out = {"projects": [], "port": 8765, "poll_every": 60.0, "dispatch_every": DISPATCH_EVERY, "token_file": None}
     flags = {"--project", "--port", "--poll-every", "--dispatch-every", "--token-file"}
-    args = list(argv)
+    args, said_every, no_dispatch = list(argv), False, False
     while args:
         flag = args.pop(0)
+        if flag == "--no-dispatch":
+            no_dispatch = True
+            continue
         if flag not in flags:
             raise Refused(f"unknown argument {flag!r}")
         if not args:
@@ -766,10 +816,15 @@ def parse(argv) -> dict:
             if 0 < seconds < 1:
                 raise Refused(f"{flag} is 0 (off) or at least 1 second")
             out[flag[2:].replace("-", "_")] = seconds
+            said_every = said_every or flag == "--dispatch-every"
         else:
             out["token_file"] = value
     if not out["projects"]:
         raise Refused("give at least one --project <dir>")
+    if no_dispatch:
+        if said_every:
+            raise Refused("--no-dispatch and --dispatch-every exclude each other")
+        out["dispatch_every"] = None
     return out
 
 
