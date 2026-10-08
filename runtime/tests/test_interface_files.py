@@ -468,3 +468,70 @@ def test_no_lobby_module_takes_a_write_out_of_the_client_by_name_or_by_destructu
         assert not re.search(r"\bapi\s*\[", text), f"{path.name} picks an operation of the client by a computed name"
         for name in writes:
             assert not re.search(rf"=\s*api\.{name}\b(?!\()", text), f"{path.name} takes api.{name} as a value"
+
+
+# --- the Control room (WP-9.5): what it calls, and that every class it uses is drawn by the stylesheet ---------------------------
+
+
+def control_modules():
+    return sorted((INTERFACE / "js" / "views").glob("control*.js"))
+
+
+def client_functions():
+    """{function name: (method, path template)} of every exported function of the client that makes one call."""
+    source = CLIENT.read_text(encoding="utf-8")
+    out = {}
+    for found in re.finditer(r"export (?:async )?function (\w+)\([^)]*\)\s*\{\s*return send\(\s*\"(GET|POST)\"\s*,\s*(?:\"|`)([^\"`]*)", source):
+        out[found.group(1)] = (found.group(2), found.group(3))
+    return out
+
+
+def test_the_control_room_calls_only_the_four_reads_it_needs_and_each_is_a_get_route_of_the_service():
+    files = control_modules()
+    assert len(files) >= 6, "the Control room's modules are there"
+    used = set()
+    for path in files:
+        used |= set(re.findall(r"\bapi\.(\w+)\(", path.read_text(encoding="utf-8")))
+    assert used == {"skills", "costs", "connections", "agents"}, f"the Control room reads skills, costs, connections and agents: {sorted(used)}"
+    functions = client_functions()
+    routes = [(r["method"], shape(r["pattern"]), r) for r in service.ROUTES]
+    for name in sorted(used):
+        method, template = functions[name]
+        assert method == "GET", f"api.{name} is a read"
+        found = [r for m, s, r in routes if m == method and s == shape(template)]
+        assert found, f"api.{name} calls {template}, which is not a route of the service"
+        assert found[0]["pattern"].rsplit("/", 1)[-1] == name, f"api.{name} is the route of the operation of the same name"
+    assert "since" in re.search(r"export function costs\([^)]*\)", CLIENT.read_text(encoding="utf-8")).group(0), "the Costs tab sends the date through the client's one query"
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        assert not re.search(r"\bfetch\(|XMLHttpRequest|\bEventSource\b|\bsendBeacon\b", text), f"{path.name} has a second way to reach the service"
+        assert not re.search(r"\bapi\.(?:%s)\(" % "|".join(sorted(["answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"])), text), f"{path.name} writes"
+
+
+def test_every_wb_class_the_control_room_builds_is_a_rule_of_the_stylesheet():
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    defined = set(re.findall(r"\.(wb-[a-z0-9-]+)", css))
+    markers = {"is-open", "is-wide", "is-selected"}  # state words, not classes of their own
+    for path in control_modules():
+        text = path.read_text(encoding="utf-8")
+        for group in re.findall(r"class: `?\"?([^\"`]+)[\"`]", text):
+            for name in re.findall(r"\bwb-[a-z0-9-]+", group.split("${")[0]):
+                if name.endswith("-"):
+                    continue
+                assert name in defined or name in markers, f"{path.name} builds the class {name}, which style.css does not draw"
+    # the three tab words the hash carries are the router's, and the page reaches the screen from its one router
+    main = (INTERFACE / "js" / "main.js").read_text(encoding="utf-8")
+    assert 'import { createControlView } from "./views/control.js";' in main and 'route.screen === "control"' in main
+    model = (INTERFACE / "js" / "views" / "control-model.js").read_text(encoding="utf-8")
+    assert re.search(r'TABS = Object\.freeze\(\[\["skills", "Skills"\], \["costs", "Costs"\], \["connections", "Connections"\]\]\)', model)
+
+
+def test_the_control_room_imports_the_client_only_as_a_namespace_and_escape_leaves_a_typed_field_alone():
+    for path in control_modules():
+        text = path.read_text(encoding="utf-8")
+        imports = re.findall(r'^import\s+(.+?)\s+from\s+"\.\./api\.js";', text, re.M)
+        assert all(found == "* as api" for found in imports), f"{path.name} imports the client other than as `* as api`: {imports}"
+        assert not re.search(r'import\s*\{[^}]*\}\s*from\s*"\.\./api\.js"|api\.js"\)', text), f"{path.name}: a named or dynamic import of the client would escape the read-only check"
+    control = (INTERFACE / "js" / "views" / "control.js").read_text(encoding="utf-8")
+    assert re.search(r'target\.tagName === "INPUT" \|\| target\.tagName === "TEXTAREA" \|\| target\.tagName === "SELECT"\)+\s*return;', control), \
+        "Escape does nothing while the person types in a field"
