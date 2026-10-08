@@ -10,7 +10,7 @@ export const POLL_IDLE_MS = 10000;    // and every 10 seconds otherwise
 export const JOB_EVERY_MS = 1000;     // pollJob's period
 export const MAX_BODIES = 8;          // the requests whose decisions are read with `task`: the newest few
 
-export const TABS = Object.freeze([["conversation", "Conversation"], ["inbox", "Inbox"], ["desk", "Desk"], ["agent", "Agent"]]);
+export const TABS = Object.freeze([["conversation", "Conversation"], ["inbox", "Inbox"], ["desk", "Desk"], ["tasks", "Tasks"], ["agent", "Agent"]]);
 
 export const HINT = "A line that starts with / is a command; /help lists them.";
 export const SENDING_TEXT = "The planning agent is working on this turn. It can take minutes.";
