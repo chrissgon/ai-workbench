@@ -15,6 +15,7 @@ import { emptyBlock, loadingCard } from "./control-parts.js";
 import "./control-scene.js";
 import { createSkillsTab } from "./control-skills.js";
 
+const AGE_MS = 30000;      // the Skills and Connections tabs are read again, on a change or on opening, when their data is this old
 const SUBTITLE = "Skills, costs and connections of this machine";
 
 /** The text of a failure: the service's own message for a refusal, the client's sentence for a lost connection. */
@@ -74,6 +75,8 @@ export function createControlView(frame) {
   let shown = "skills";     // the tab whose panel is on show, so that a newly chosen one starts at its top
   let disposed = false;
   let started = false;
+  let reloaded = null;      // the page's reload stamp last seen: when it moves the store changed
+  const readAt = { skills: 0, connections: 0 };   // when each of the two dear tabs was last read (ms): they are read again when the data is older than 30 s
   let message = null;       // what the content shows instead of the tabs: loading, or not accepted
   const aborter = new AbortController();
   const loads = { skills: { status: "loading" }, costs: { status: "loading", fieldValue: null, agents: null }, connections: { status: "loading" } };
@@ -131,12 +134,15 @@ export function createControlView(frame) {
     return true;
   }
 
+  const aged = (id) => Date.now() - readAt[id] >= AGE_MS;
+
   async function readSkills() {
     const mine = ++generation.skills;
     try {
       const data = await api.skills(projectId, { signal: aborter.signal });
       if (disposed || mine !== generation.skills) return;
       loads.skills = { status: "ready", data };
+      readAt.skills = Date.now();
     } catch (e) {
       if (mine !== generation.skills || !fail("skills", e)) return;
     }
@@ -149,6 +155,7 @@ export function createControlView(frame) {
       const data = await api.connections(projectId, { signal: aborter.signal });
       if (disposed || mine !== generation.connections) return;
       loads.connections = { status: "ready", data };
+      readAt.connections = Date.now();
     } catch (e) {
       if (mine !== generation.connections || !fail("connections", e)) return;
     }
@@ -201,17 +208,12 @@ export function createControlView(frame) {
     drawScene();
   }
 
-  function onVisible() {
-    if (!document.hidden && started && !disposed) readAll();
-  }
-  document.addEventListener("visibilitychange", onVisible);
-
   select("skills");
   for (const id of tabs.keys()) show(id);
 
   return {
     el: panel.el,
-    /** state: {loaded, known, accepted, projectId, tab}; called on every poll, so it only reconciles. */
+    /** state: {loaded, known, accepted, projectId, tab, reload}; called on every render, so it only reconciles; when `reload` moves the store changed. */
     update(state) {
       projectId = state.projectId;
       const wanted = model.tabOf(state.tab);
@@ -226,9 +228,21 @@ export function createControlView(frame) {
         tab = wanted;
         render();
       }
+      const moved = reloaded !== null && state.reload !== reloaded;
+      reloaded = state.reload;
       if (!message && !started) {
         started = true;
         readAll();
+      } else if (!message && moved) {
+        // The store changed. The costs are read again (they feed the room and are cheap). The Skills and Connections tabs are
+        // about 0.8 s of server work each and a dispatcher writes every few seconds: the open one is read again only when its data
+        // is older than 30 s (so the safety net's reload does it), and the other when it is opened.
+        if (wanted === "skills" && aged("skills")) readSkills();
+        else if (wanted === "connections" && aged("connections")) readConnections();
+        readCosts(lastSince, true);
+      } else if (!message && changed && (wanted === "skills" || wanted === "connections") && aged(wanted)) {
+        if (wanted === "skills") readSkills();
+        else readConnections();
       } else if (!message && changed && loads[wanted].status === "failed") {
         if (wanted === "skills") readSkills();
         else if (wanted === "connections") readConnections();
@@ -238,7 +252,6 @@ export function createControlView(frame) {
     dispose() {
       disposed = true;
       aborter.abort();
-      document.removeEventListener("visibilitychange", onVisible);
       skills.dispose();
       observer.disconnect();
       if (engine) engine.dispose();

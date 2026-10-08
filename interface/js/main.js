@@ -1,14 +1,16 @@
 // The page: the token prompt, then the shared frame with the screen the hash names (#/ is the City, the Building and the Floor
-// follow; the Lobby and the control room are placeholders until their packages). One poll reads what the City needs every 5 seconds while the document is
-// visible (10 seconds after a failed read), none while it is hidden, and one read when it becomes visible again.
+// follow; the Lobby and the control room are placeholders until their packages). The page is kept current by a watcher (watch.js): while the
+// document is visible it reads the service's change signal every second and, when a number moved (or after 30 quiet seconds, or after any
+// write the page sent), reloads everything it shows; it reads nothing while the document is hidden and reloads once when it becomes visible.
 
 import * as api from "./api.js";
-import { emptySnapshot, refresh } from "./data.js";
+import { emptySnapshot, refresh, versionKey } from "./data.js";
 import { h } from "./dom.js";
 import { createFrame } from "./frame/frame.js";
 import * as model from "./model.js";
 import * as router from "./router.js";
 import { clearToken, getToken, setToken } from "./token.js";
+import { coalesce, createWatcher } from "./watch.js";
 import { createBuildingView } from "./views/building.js";
 import { createCityView } from "./views/city.js";
 import { createControlView } from "./views/control.js";
@@ -18,8 +20,6 @@ import { createPlaceholder } from "./views/placeholder.js";
 import { showTokenPrompt } from "./views/token-prompt.js";
 
 const root = document.getElementById("app");
-const POLL_MS = 5000;
-const RETRY_MS = 10000;
 const NETWORK_TEXT = "The service could not be reached. Is it still running?";
 
 let frame = null;
@@ -27,8 +27,9 @@ let view = null;           // {key, screen, update(...), dispose()}
 let snapshot = emptySnapshot();
 let selected = null;       // the project the tracking bar follows on the City (memory only)
 let failure = null;        // the last failed read, or null
-let generation = 0;        // a newer poll makes an older one stop
-let timer = null;
+let generation = 0;        // a reload that was left behind (the document was hidden, the token asked for again) stops
+let reloads = 0;           // the stamp every screen is given: it moves when a reload has read everything again
+let watcher = null;
 let drawnKey = null;
 let knownDecisions = null; // ids of the decisions seen, to announce a new one
 let pendingMessage = null;
@@ -44,36 +45,39 @@ function followed(route) {
 
 function stopPolling() {
   generation += 1;
-  clearTimeout(timer);
-  timer = null;
 }
 
-function schedule(ms) {
-  clearTimeout(timer);
-  timer = null;
-  if (!document.hidden && frame) timer = setTimeout(poll, ms);
-}
-
+/** One full read of everything the page shows, drawn. A reload that was left behind by stopPolling() ends without drawing. */
 async function poll() {
   const mine = ++generation;
-  clearTimeout(timer);
+  let key = null;
   try {
+    key = await versionKey();        // the signal first, then the data: what is written after this read is read by the next one
     lastFollowed = followed(currentRoute());
-    const next = await refresh(snapshot, lastFollowed);
+    const next = await refresh(snapshot, lastFollowed, { force: true });
     if (mine !== generation || !frame) return;
     snapshot = next;
     failure = null;
+    reloads += 1;
     chooseDefault();
     render();
-    schedule(POLL_MS);
   } catch (e) {
     if (mine !== generation || !frame) return;
     if (e && e.unauthorized) return;      // the client already sent the page back to the token prompt
     failure = e;
     render();
-    schedule(RETRY_MS);
   }
+  // A project that refused its read (not "not accepted", which stays until the terminal accepts it) is a reload that failed as well.
+  const refused = Object.values(snapshot.details).some((d) => d && d.error && d.error.status !== 412);
+  const ok = !failure && !refused;
+  if (watcher) watcher.reloaded(ok ? key : null);      // a reload that failed read nothing: it rebases nothing
+  return ok;                              // false: the page says what failed and the watcher reads again after 10 s
 }
+
+/** Reload, one at a time: a request made while one is running makes one more after it, and its caller waits for that one. */
+const reload = coalesce(() => poll());
+/** What a screen calls after its own write: the reload that write already asked for (api.onWrite), or one. */
+const reloaded = () => reload.join("screen");
 
 /** The project the tracking bar follows when none was chosen: the first with a request open, else the first. */
 function chooseDefault() {
@@ -85,6 +89,8 @@ function chooseDefault() {
 
 function askForToken(message) {
   stopPolling();
+  if (watcher) watcher.stop();
+  watcher = null;
   if (view) view.dispose();
   view = null;
   if (frame) frame.destroy();
@@ -102,6 +108,12 @@ function askForToken(message) {
   });
   pendingMessage = null;
 }
+
+// Any write the page sends is answered by a reload at once: it may have changed what every screen shows. (The fast poll of a job the
+// write started is api.pollJob's, as before; the signal catches the job's own writes when it ends.)
+api.onWrite(() => {
+  if (frame) reload();
+});
 
 api.onAuthFailure(() => {
   clearToken();
@@ -124,17 +136,22 @@ function start() {
     onSelectRequest: (project, id) => {
       model.chooseRequest(project, id);   // kept in memory for the session
       render();
-      poll();   // the running task's start time of the request now shown
+      reload();   // the running task's start time of the request now shown
     },
     onForgetToken: () => {
       clearToken();
       askForToken();
     },
-    onRetry: () => poll(),
+    onRetry: () => reload(),
   });
   drawnKey = null;
   render();
-  poll();
+  // The signal is read first (the baseline), then everything: a write that lands in between is seen by the next read.
+  watcher = createWatcher({
+    read: versionKey, reload, hidden: () => document.hidden,
+    setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (id) => clearTimeout(id), now: () => Date.now(),
+  });
+  watcher.start().then(() => reload());
 }
 
 function selectProject(id) {
@@ -142,7 +159,7 @@ function selectProject(id) {
   if (route.screen === "city") {
     selected = id;
     render();
-    poll();
+    reload();
     return;
   }
   const hash = { building: router.buildingHash(id), floor: route.agent ? router.floorHash(id, route.agent) : router.buildingHash(id),
@@ -179,16 +196,16 @@ function ensureView(route) {
     const city = createCityView(frame);
     view = { key, screen: "city", city, dispose: () => city.dispose() };
   } else if (route.screen === "building") {
-    const building = createBuildingView(frame, { refresh: () => poll() });
+    const building = createBuildingView(frame, { refresh: () => reloaded() });
     view = { key, screen: "building", building, dispose: () => building.dispose() };
   } else if (route.screen === "floor") {
-    const floor = createFloorView(frame, { refresh: () => poll() });
+    const floor = createFloorView(frame, { refresh: () => reloaded() });
     view = { key, screen: "floor", floor, dispose: () => floor.dispose() };
   } else if (route.screen === "control") {
     const control = createControlView(frame);
     view = { key, screen: "control", control, dispose: () => control.dispose() };
   } else if (route.screen === "lobby") {
-    const lobby = createLobbyView(frame, { project: route.project, onChanged: () => poll() });
+    const lobby = createLobbyView(frame, { project: route.project, onChanged: () => reloaded() });
     view = { key, screen: "lobby", lobby, dispose: () => lobby.dispose() };
   } else {
     const placeholder = createPlaceholder(frame, route);
@@ -241,15 +258,15 @@ function render() {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     const detail = routeProject ? snapshot.details[routeProject.id] : null;
     const accepted = Boolean(routeProject && routeProject.config && routeProject.config.accepted) && !(detail && detail.error && detail.error.status === 412);
-    view.control.update({ loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted, projectId: route.project, tab: route.tab });
+    view.control.update({ reload: reloads, loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted, projectId: route.project, tab: route.tab });
   } else if (view.screen === "lobby") {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
-    view.lobby.update({ snapshot, route, now, projectName: routeProject ? routeProject.name : "" });
+    view.lobby.update({ reload: reloads, snapshot, route, now, projectName: routeProject ? routeProject.name : "" });
     if (!known) frame.notice({ kind: "error", text: "The service has no such project." });
   } else {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
-    if (view.screen === "building") view.building.update({ snapshot, route, now });
-    else if (view.screen === "floor") view.floor.update({ snapshot, route, now });
+    if (view.screen === "building") view.building.update({ snapshot, route, now, reload: reloads });
+    else if (view.screen === "floor") view.floor.update({ snapshot, route, now, reload: reloads });
     else view.placeholder.update(snapshot, route.project, route.agent ? `Floor of ${route.agent}` : "");
     if (!known) frame.notice({ kind: "error", text: "The service has no such project." });
   }
@@ -267,15 +284,12 @@ function render() {
 window.addEventListener("hashchange", () => {
   if (!frame) return;
   render();
-  if (followed(currentRoute()) !== lastFollowed) poll();
+  if (followed(currentRoute()) !== lastFollowed) reload();
 });
 document.addEventListener("visibilitychange", () => {
   if (!frame) return;
-  if (document.hidden) {
-    stopPolling();
-  } else {
-    poll();
-  }
+  if (document.hidden) stopPolling();     // a reload still running is left behind; the watcher keeps no timer while hidden
+  if (watcher) watcher.visibilityChanged();    // visible again: one reload
 });
 
 start();

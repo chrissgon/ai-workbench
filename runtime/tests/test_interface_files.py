@@ -262,12 +262,33 @@ def test_every_client_function_the_screens_call_exists_and_the_city_only_reads()
     assert not ({n for n, files in lobby_only.items() if files} & writes), f"only js/floor/ and the Lobby's modules write: {sorted(n for n, f in lobby_only.items() if f and n in writes)}"
 
 
-def test_the_page_reads_every_five_seconds_while_visible_and_never_while_hidden():
+def test_the_page_is_kept_current_by_the_watcher_and_asks_nothing_while_hidden():
+    # WP-9.13: the 5 s poll of WP-9.2a is gone; the watcher (watch.js, tested with a fake clock in test_interface_live.py) reads the
+    # change signal every second while the document is visible, and the page reloads when a number moved, after any write, and once on return.
     main = (INTERFACE / "js" / "main.js").read_text(encoding="utf-8")
-    assert "const POLL_MS = 5000;" in main and "const RETRY_MS = 10000;" in main
-    assert re.search(r"function schedule\(ms\) \{[^}]*!document\.hidden", main, re.S), "a poll is scheduled only while the document is visible"
-    assert 'addEventListener("visibilitychange"' in main and "stopPolling()" in main, "hiding the document stops the poll; showing it reads once"
-    assert "setInterval" not in main
+    assert "POLL_MS" not in main and "RETRY_MS" not in main and "setInterval" not in main
+    assert 'from "./watch.js"' in main and "createWatcher({" in main and "read: versionKey" in main
+    assert re.search(r"hidden: \(\) => document\.hidden", main), "the watcher is told whether the document is hidden"
+    assert 'addEventListener("visibilitychange"' in main and "watcher.visibilityChanged()" in main and "stopPolling()" in main
+    assert re.search(r"api\.onWrite\(\(\) => \{\s*if \(frame\) reload\(\);", main), "any write the page sends is answered by a reload at once"
+    for view in ("building", "floor", "lobby", "control"):
+        assert re.search(rf"view\.{view}\.update\(\{{[^}}]*reload: reloads", main), f"the {view} is given the reload stamp"
+    assert "refresh(snapshot, lastFollowed, { force: true })" in main, "a reload ignores the cached task bodies"
+    watch = (INTERFACE / "js" / "watch.js").read_text(encoding="utf-8")
+    assert "setInterval" not in watch and not re.search(r"\bfetch\(|import .* from \"\./(api|views)", watch), "the watcher reads and keeps time only through what it is given"
+    assert "const EVERY_MS = 1000;" in watch and "const SAFETY_MS = 30000;" in watch
+
+
+def test_every_screen_that_reads_takes_the_reload_stamp_and_none_polls_on_its_own():
+    views = INTERFACE / "js" / "views"
+    for name in ("floor.js", "building.js", "lobby.js", "control.js"):
+        text = (views / name).read_text(encoding="utf-8")
+        assert re.search(r"reloaded !== null && (data\.reload|reload|state\.reload) !== reloaded", text), f"{name} reads again when the stamp moves"
+    for name in ("lobby-desk.js", "lobby-agent.js"):
+        assert re.search(r"reload\(\) \{", (views / name).read_text(encoding="utf-8")), f"{name} marks what it holds stale on a reload"
+    assert "visibilitychange" not in (views / "control.js").read_text(encoding="utf-8"), "the page reloads on return; the control room does not read by itself"
+    for path in sorted(views.glob("*.js")):
+        assert "setInterval" not in path.read_text(encoding="utf-8"), path.name
 
 
 def test_the_screens_keep_no_state_in_a_global_and_the_token_stays_in_the_token_module():
