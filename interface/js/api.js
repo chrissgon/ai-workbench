@@ -47,6 +47,17 @@ export function onAuthFailure(fn) {
   authFailure = fn;
 }
 
+let writeHook = null;
+
+/**
+ * Register the one function called after the service answered a POST, whatever it answered ({method, path, status}): a
+ * write the page sent may have changed what every screen shows, so the page reloads at once. It is not called for a request
+ * that got no answer, nor for a GET.
+ */
+export function onWrite(fn) {
+  writeHook = fn;
+}
+
 const enc = (part) => encodeURIComponent(String(part));
 
 async function send(method, path, options = {}) {
@@ -86,6 +97,13 @@ async function send(method, path, options = {}) {
   } catch (e) {
     data = null;
   }
+  if (method === "POST" && writeHook) {
+    try {
+      writeHook({ method, path, status: response.status });
+    } catch (e) {
+      // the hook is the page's; a failure there never changes what the caller gets
+    }
+  }
   if (!response.ok) {
     const word = (data && typeof data.error === "string" && data.error) || WORD_OF_STATUS[response.status] || "internal";
     const message = (data && typeof data.message === "string" && data.message) || word;
@@ -104,6 +122,16 @@ async function send(method, path, options = {}) {
 /** GET /projects: {projects: [{id, name, config: {sha256, accepted}, message?, open_pending?, running_task?}]}. */
 export function projects(options) {
   return send("GET", "/projects", options);
+}
+
+/** GET /projects/{p}/version: {version, changed_at}, a number that grows on every write to the project's store. */
+export function version(p, options) {
+  return send("GET", `/projects/${enc(p)}/version`, options);
+}
+
+/** GET /versions: {versions: {<project id>: {version, changed_at} | {error}}}, the same for every project in one request. */
+export function versions(options) {
+  return send("GET", "/versions", options);
 }
 
 /** GET /projects/{p}/status: the requests with their tasks, the open decisions, the documents. */

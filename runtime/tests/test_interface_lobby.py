@@ -120,9 +120,9 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_the_lobby_reads_every_two_seconds_while_a_job_runs_and_every_ten_otherwise_and_never_while_hidden(tmp_path):
+def test_the_lobby_reads_every_two_seconds_while_a_job_runs_and_never_otherwise_nor_while_hidden(tmp_path):
     got = run_node(tmp_path, MODEL)
-    assert got["poll"] == [2000, 10000, None, None]
+    assert got["poll"] == [2000, None, None, None], "WP-9.13: no standing poll; the page reloads when the store changes"
     assert got["tabs"] == ["inbox", "conversation", "conversation", "conversation"]
     source = (VIEWS / "lobby.js").read_text(encoding="utf-8")
     assert re.search(r"pollInterval\(\{ jobRunning: [^}]*hidden: document\.hidden \}\)", source), "the interval is chosen from the document's visibility"

@@ -17,7 +17,7 @@ export const NO_AGENT_TEXT = "This project has no agents in its configuration.";
 
 /**
  * Create the Agent tab. env: {project, now() (a Date), refresh() (read the screen's data again), changed() (a task was read)}.
- * Returns {el, update({snapshot, tab}) -> the Floor's model of the planning agent or null, bodies() -> {task id: body}, dispose()}.
+ * Returns {el, update({snapshot, tab}) -> the Floor's model of the planning agent or null, bodies() -> {task id: body}, reload(), dispose()}.
  */
 export function createLobbyAgent(env) {
   const { project } = env;
@@ -27,6 +27,7 @@ export function createLobbyAgent(env) {
   const bodies = new Map();      // task id -> {body, state, at}
   const reading = new Set();
   let disposed = false;
+  let changes = 0;               // how many times the store changed: a read that began before the last change is not fresh when it ends
 
   const plain = () => {
     const out = {};
@@ -39,10 +40,12 @@ export function createLobbyAgent(env) {
     if (reading.has(task.id)) return;
     if (cached && cached.state === task.state && Date.now() - cached.at < maxAge) return;
     reading.add(task.id);
+    const began = changes;
+    const stamped = () => (began === changes ? Date.now() : 0);     // 0: stale, read again by the next update
     api.task(project, task.id).then((body) => {
-      bodies.set(task.id, { body, state: task.state, at: Date.now() });
+      bodies.set(task.id, { body, state: task.state, at: stamped() });
     }).catch(() => {
-      bodies.set(task.id, { body: cached ? cached.body : null, state: task.state, at: Date.now() });
+      bodies.set(task.id, { body: cached ? cached.body : null, state: task.state, at: stamped() });
     }).finally(() => {
       reading.delete(task.id);
       if (!disposed) env.changed();
@@ -79,6 +82,11 @@ export function createLobbyAgent(env) {
       return model;
     },
     bodies: plain,
+    /** The store changed: the bodies held are stale, whatever their age; the next update reads those it shows. */
+    reload() {
+      changes += 1;
+      for (const entry of bodies.values()) entry.at = 0;
+    },
     dispose() {
       disposed = true;
     },

@@ -5,8 +5,7 @@ import * as format from "../format.js";
 import { PLANNING, drawersOf } from "../floor-model.js";
 import { windowState } from "../scene/look.js";
 
-export const POLL_BUSY_MS = 2000;     // the conversation is read every 2 seconds while a `say` job runs
-export const POLL_IDLE_MS = 10000;    // and every 10 seconds otherwise
+export const POLL_BUSY_MS = 2000;     // the conversation is read every 2 seconds while a `say` job runs; otherwise only when the page reloads
 export const JOB_EVERY_MS = 1000;     // pollJob's period
 export const MAX_BODIES = 8;          // the requests whose decisions are read with `task`: the newest few
 
@@ -27,10 +26,10 @@ export function tabOf(route) {
   return TABS.some(([id]) => id === wanted) ? wanted : "conversation";
 }
 
-/** How long to wait before the next read of the conversation: null while the document is hidden. */
+/** How long to wait before the next read of the conversation: null while the document is hidden, and null when no job of this screen runs (the page reloads when the store changes). */
 export function pollInterval({ jobRunning, hidden }) {
-  if (hidden) return null;
-  return jobRunning ? POLL_BUSY_MS : POLL_IDLE_MS;
+  if (hidden || !jobRunning) return null;
+  return POLL_BUSY_MS;
 }
 
 /** The messages `have` plus the ones `got`, one per id, oldest first. */
