@@ -51,6 +51,10 @@ export function createLobbyInbox(env) {
     busy() {
       return inbox.busy();
     },
+    /** A document was closed: the focus goes back to the "Open" link of the card that opened it. */
+    focusOpen(path) {
+      inbox.focusOpen(path);
+    },
     reset() {
       inbox.reset();
     },

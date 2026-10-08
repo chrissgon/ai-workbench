@@ -10,6 +10,7 @@ import { createNav } from "./header.js";
 import { icon } from "./icons.js";
 import { createEngine } from "../scene/engine.js";
 import { escapeStep, isField } from "./escape.js";
+import { current as documentOrigin } from "./origin.js";
 import { createSheet } from "./sheet.js";
 import { createSwitcher } from "./switcher.js";
 import { createTrack } from "./track.js";
@@ -96,7 +97,7 @@ export function createFrame(root, handlers) {
     const requestMenu = document.querySelector(".wb-req-menu:not([hidden])");
     const step = escapeStep({
       route: currentRoute, field: isField(document.activeElement), dialog: dialogs.length > 0,
-      menu: switcher.isOpen() || waitingMenu.isOpen() || Boolean(requestMenu), selection: Boolean(world && world.hasSelection()), from: controlFrom,
+      menu: switcher.isOpen() || waitingMenu.isOpen() || Boolean(requestMenu), selection: Boolean(world && world.hasSelection()), from: controlFrom, origin: documentOrigin(),
     });
     if (step.step === "none") return;
     event.preventDefault();

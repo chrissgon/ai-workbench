@@ -379,7 +379,7 @@ out.cancelClicked = cancelled;
 const final = createBlock({ api, project: "p1", request: { id: 9, title: "Old", state: "done", tasks: [] }, body: { pending: [] }, open: 0, now: NOW, onChanged, onCancel: () => {}, onRoute: () => {}, routing: false });
 out.finalBlockButtons = buttons(final.el).length;
 const waiting = createBlock({ api, project: "p1", request: { id: 20, title: "From the form", state: "requested", tasks: [] }, body: { pending: [] }, open: 0, now: NOW, onChanged, onCancel: () => {}, onRoute: () => {}, routing: false });
-out.routeButton = buttons(waiting.el).map(textOf);
+out.routeButton = buttons(waiting.el).filter((b) => !b.cls().includes("wb-lobby-request-title")).map(textOf);   // the title is a button too (A-1: it opens the whole text); these are the line's actions
 const routingNow = createBlock({ api, project: "p1", request: { id: 20, title: "From the form", state: "requested", tasks: [] }, body: { pending: [] }, open: 0, now: NOW, onChanged, onCancel: () => {}, onRoute: () => {}, routing: true });
 out.routing = find(routingNow.el, (n) => n.tagName === "BUTTON" && textOf(n) === "Routing...").map((b) => "disabled" in b.attrs);
 
@@ -536,7 +536,7 @@ def test_the_request_line_the_open_card_the_pointer_and_the_resolved_line_and_th
     got = run_node(tmp_path, CARD)
     block = got["block"]
     assert block["group"] == "Request 14, Spring campaign, planned" and block["plans"] == 1
-    assert block["line"].startswith("#14Request #14: Spring campaignPlanned") and block["line"].endswith("Cancel request")
+    assert block["line"].startswith("#14Spring campaignPlanned") and block["line"].endswith("Cancel request")
     assert block["resolved"][-1] == "Plan rejected" or any(t.startswith("Plan rejected") for t in block["resolved"])
     assert any(t.startswith("Question") and "Which audience?" in t for t in block["resolved"]), "another open kind is a line that points at the Inbox"
     assert block["pointerLink"] == ["#/p/p1/lobby/inbox/21"]

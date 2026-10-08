@@ -14,6 +14,7 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
   const el = h("div", { class: "wb-thread", role: "log", "aria-live": "polite", "aria-label": "Conversation with the planning agent", tabindex: "0" });
   const messages = new Map();     // id -> {el, meta, message}
   const blocks = new Map();       // request id -> {el, sig, block}
+  const expanded = new Set();     // request ids whose whole text is open: a block rebuilt by a poll is given it back
   const empty = h("p", { class: "wb-empty", text: "" });
 
   function messageNode(message, now) {
@@ -28,9 +29,9 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
     el,
     /**
      * state: {messages, requests (status.requests), pending (status.pending), bodies ({[requestId]: task answer}), now,
-     * loading, routing (a Set of request ids being routed)}.
+     * loading, routing (a Set of request ids being routed), notices (a Map of request id -> {title, text}, a route that failed)}.
      */
-    update({ messages: list, requests, pending, bodies, now, loading, routing }) {
+    update({ messages: list, requests, pending, bodies, now, loading, routing, notices }) {
       const nearEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
       const placed = placeBlocks(list, requests);
       const desired = [];
@@ -42,10 +43,12 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
         const body = bodies[requestId] || null;
         const bodySig = body ? (body.pending || []).map((p) => `${p.id}:${p.status}:${p.resolution || ""}`).join(",") : "-";
         const open = (pending || []).filter((p) => p.task_id === requestId).length;
-        const sig = `${signatureOf(request, pending)}|${bodySig}|${routing && routing.has(requestId) ? "r" : ""}|${viaMessage ? "m" : "t"}|${request.title}`;
+        const routeNotice = (notices && notices.get(requestId)) || null;
+        const sig = `${signatureOf(request, pending)}|${bodySig}|${routing && routing.has(requestId) ? "r" : ""}|${viaMessage ? "m" : "t"}|${request.title}|${routeNotice ? `${routeNotice.title}:${routeNotice.text}` : ""}`;
         const held = blocks.get(requestId);
         if (held && held.sig === sig) return held.el;
-        const block = createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, announce, routing: routing && routing.has(requestId), viaMessage });
+        const block = createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, announce, routing: routing && routing.has(requestId), viaMessage, routeNotice,
+          expanded: expanded.has(requestId), onExpand: (open) => { if (open) expanded.add(requestId); else expanded.delete(requestId); } });
         blocks.set(requestId, { el: block.el, sig, block });
         return block.el;
       }

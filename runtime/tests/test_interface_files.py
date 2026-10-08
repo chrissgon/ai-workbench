@@ -559,6 +559,131 @@ def test_the_control_room_imports_the_client_only_as_a_namespace_and_escape_leav
     assert "Escape" not in control, "the Control room has no Escape handler of its own (the frame's one goes up)"
 
 
+# --- a function that is called must be declared, imported or global (WP-9.15a: the Floor's Close called a function a refactor had deleted) ---
+
+# The globals a page module may call without declaring them: the language's, the browser's. A name that is not here and not declared in
+# the file is a call to nothing.
+KNOWN_GLOBALS = frozenset("""
+Array Boolean Date Error Event Map Number Object Promise RangeError RegExp Set String Symbol TypeError Uint8Array Float32Array Float64Array
+Uint16Array Uint32Array Int32Array ArrayBuffer WeakMap WeakSet BigInt Intl JSON Math Reflect Proxy
+AbortController CustomEvent KeyboardEvent MouseEvent MutationObserver ResizeObserver IntersectionObserver URL URLSearchParams Image TextEncoder TextDecoder
+fetch setTimeout clearTimeout setInterval clearInterval requestAnimationFrame cancelAnimationFrame requestIdleCallback queueMicrotask structuredClone
+parseInt parseFloat isNaN isFinite encodeURIComponent decodeURIComponent atob btoa getComputedStyle matchMedia
+if for while switch catch function async return typeof await new import super delete void yield do else DOMException
+""".split())
+
+_CALL = re.compile(r"(?<![\w$.])([A-Za-z_$][\w$]*)\s*\(")
+_WORD = re.compile(r"(?<![\w$])([A-Za-z_$][\w$]*)(?![\w$])")
+
+
+def strip_js(source: str) -> str:
+    """The code of a module with its comments removed, its strings and regular expressions emptied, and each template literal reduced to the
+    code of its `${}` parts: what is left is only what can name something."""
+    out: list[str] = []
+    i, n = 0, len(source)
+
+    def scan_template(at: int) -> int:
+        nonlocal out
+        at += 1
+        while at < n and source[at] != "`":
+            if source[at] == "\\":
+                at += 2
+            elif source.startswith("${", at):
+                depth, start = 1, at + 2
+                at = start
+                while at < n and depth:
+                    depth += {"{": 1, "}": -1}.get(source[at], 0)
+                    at += 1
+                out.append(" (" + strip_js(source[start:at - 1]) + ") ")
+            else:
+                at += 1
+        return at + 1
+
+    while i < n:
+        c = source[i]
+        if source.startswith("//", i):
+            i = source.find("\n", i)
+            i = n if i < 0 else i
+        elif source.startswith("/*", i):
+            i = source.find("*/", i)
+            i = n if i < 0 else i + 2
+        elif c in "\"'":
+            j = i + 1
+            while j < n and source[j] != c:
+                j += 2 if source[j] == "\\" else 1
+            out.append('""')
+            i = j + 1
+        elif c == "`":
+            i = scan_template(i)
+        elif c == "/" and re.search(r"[(,=:\[!&|?{};]\s*$|^\s*$|\breturn\s*$", "".join(out)[-40:]):
+            j, in_class = i + 1, False
+            while j < n and (source[j] != "/" or in_class):
+                if source[j] == "\\":
+                    j += 1
+                elif source[j] == "[":
+                    in_class = True
+                elif source[j] == "]":
+                    in_class = False
+                j += 1
+            out.append("/r/")
+            i = j + 1
+        else:
+            out.append(c)
+            i += 1
+    return "".join(out)
+
+
+def undeclared_calls(source: str) -> list[str]:
+    """Names that the module calls and never mentions otherwise (not declared, imported, a parameter, a property or a known global)."""
+    code = strip_js(source)
+    calls, others = set(), set()
+    for match in _WORD.finditer(code):
+        name, start = match.group(1), match.start(1)
+        before = code[:start].rstrip()
+        if before.endswith(".") or before.endswith("..."):
+            if before.endswith("...") and not code[match.end():].lstrip().startswith("("):
+                others.add(name)
+            continue
+        after = code[match.end():]
+        if after.lstrip().startswith("(") and not before.endswith(("function", "function*", "get", "set")):
+            depth, k = 0, match.end() + len(after) - len(after.lstrip())
+            while k < len(code):
+                depth += {"(": 1, ")": -1}.get(code[k], 0)
+                k += 1
+                if depth == 0:
+                    break
+            if code[k:].lstrip().startswith("{"):      # a definition: method shorthand, `if (...) {`, `for (...) {`
+                others.add(name)
+            else:
+                calls.add(name)
+        else:
+            others.add(name)
+    return sorted(calls - others - KNOWN_GLOBALS)
+
+
+def test_the_scan_for_calls_to_nothing_finds_one_and_passes_what_is_declared():
+    bad = 'import { a } from "./a.js";\nconst viewer = createViewer({ onClose: () => closeViewer() });\n'
+    assert undeclared_calls(bad) == ["closeViewer", "createViewer"]
+    good = '''import { createViewer } from "./v.js";
+function closeViewer() { go(); }
+const go = () => {};
+export function make({ onClose }, items) {
+  const text = `${items.map((x) => fmt(x)).join(",")} and ${onClose()}`;
+  for (const item of items) { if (item) { run(item); } }
+  return { start() { setTimeout(run, 0); }, run(x) { return /["']\\//.test(x); } };
+  function fmt(x) { return String(x); }
+  function run(x) { return x; }
+}
+const viewer = createViewer({ onClose: () => closeViewer() });
+'''
+    assert undeclared_calls(good) == []
+
+
+def test_no_module_of_the_page_calls_a_function_it_does_not_declare_import_or_get_from_the_browser():
+    found = {rel(path): names for path in own_files() if path.suffix == ".js" for names in [undeclared_calls(path.read_text(encoding="utf-8"))] if names}
+    assert found == {}, f"called and never declared, imported or known as a global: {found}"
+
+
 # --- WP-9.16: the Tasks tab of a floor ------------------------------------------------------------------------------------------
 
 TASKS_TAB_FILES = ("floor/tasks-model.js", "floor/tasks-tab.js", "floor/run-block.js")
