@@ -682,3 +682,41 @@ const viewer = createViewer({ onClose: () => closeViewer() });
 def test_no_module_of_the_page_calls_a_function_it_does_not_declare_import_or_get_from_the_browser():
     found = {rel(path): names for path in own_files() if path.suffix == ".js" for names in [undeclared_calls(path.read_text(encoding="utf-8"))] if names}
     assert found == {}, f"called and never declared, imported or known as a global: {found}"
+
+
+# --- WP-9.16: the Tasks tab of a floor ------------------------------------------------------------------------------------------
+
+TASKS_TAB_FILES = ("floor/tasks-model.js", "floor/tasks-tab.js", "floor/run-block.js")
+
+
+def test_the_tasks_tab_is_the_fourth_tab_of_a_floor_and_a_tab_of_the_lobby_and_each_view_gives_it_the_floors_client_and_router_links():
+    floor_view = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
+    assert re.search(r'TABS = \[\{ id: "agent", label: "Agent" \}, \{ id: "inbox", label: "Inbox" \}, \{ id: "desk", label: "Desk" \}, \{ id: "tasks", label: "Tasks" \}\]', floor_view), \
+        "the Floor's tabs are Agent, Inbox, Desk and Tasks, in that order"
+    assert 'import { createTasksTab } from "../floor/tasks-tab.js";' in floor_view and "createTasksTab({" in floor_view
+    lobby_model = (INTERFACE / "js" / "views" / "lobby-model.js").read_text(encoding="utf-8")
+    assert '["desk", "Desk"], ["tasks", "Tasks"], ["agent", "Agent"]' in lobby_model, "the Lobby's Tasks tab is beside its Desk tab"
+    lobby = (INTERFACE / "js" / "views" / "lobby.js").read_text(encoding="utf-8")
+    assert 'import { createTasksTab } from "../floor/tasks-tab.js";' in lobby and "createTasksTab({" in lobby
+    assert "reload: last.reload" in floor_view and "reload: reloaded" in lobby, "each view gives the tab the page's reload stamp (WP-9.13)"
+    for name, text in (("floor.js", floor_view), ("lobby.js", lobby)):
+        call = text[text.index("createTasksTab({"):]
+        call = call[:call.index("});") + 3]
+        assert re.search(r"\bapi: actions\b", call), f"{name} hands the tab the Floor's one object of writes"
+        for target in re.findall(r"\b(?:request|inbox|open): \([^)]*\) => ([^,}]+)", call):
+            assert target.strip().startswith("router."), f"{name} builds the tab's links with the router: {target}"
+
+
+def test_every_class_the_tasks_tab_builds_is_styled_and_the_block_uses_tokens_and_no_literal_colour():
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    missing = {}
+    for name in TASKS_TAB_FILES:
+        assert (INTERFACE / "js" / name).is_file()
+        for cls in set(re.findall(r"\bwb-[a-z0-9]+(?:-[a-z0-9]+)*", (INTERFACE / "js" / name).read_text(encoding="utf-8"))):
+            if not re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css):
+                missing.setdefault(cls, []).append(name)
+    assert not missing, f"classes the Tasks tab builds that style.css never names: {missing}"
+    start = css.index("/* --- the Tasks tab (WP-9.16)")
+    block = css[start:]
+    assert "wb-task" in block
+    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", block), "the Tasks tab's rules name colours by token"

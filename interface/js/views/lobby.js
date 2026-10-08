@@ -13,6 +13,8 @@ import { h } from "../dom.js";
 import * as fm from "../floor-model.js";
 import { focusOpenLink } from "../floor/widgets.js";
 import * as origin from "../frame/origin.js";
+import { actions } from "../floor/actions.js";
+import { createTasksTab } from "../floor/tasks-tab.js";
 import { createPanel } from "../frame/panel.js";
 import * as router from "../router.js";
 import { createRequest, routeRequest, sendTurn, waitFor, worthSending } from "./lobby-actions.js";
@@ -86,7 +88,11 @@ export function createLobbyView(frame, { project, onChanged }) {
     project, open: (path) => { window.location.hash = router.lobbyDeskHash(project, path); }, changed: () => { drawTabs(); drawRoom(); },
   });
   const agent = createLobbyAgent({ project, now: () => new Date(), refresh: () => { refresh(); }, changed: () => drawTabs() });
-  const sections = { inbox: { waiting: waitingLine(), body: inbox.el }, desk: { waiting: waitingLine(), body: desk.el }, agent: { waiting: waitingLine(), body: agent.el } };
+  const tasks = createTasksTab({
+    project, now: () => new Date(), refresh: () => { refresh(); }, api: actions,
+    links: { request: () => router.lobbyHash(project), inbox: (id) => router.lobbyHash(project, "inbox", id), open: (path) => router.lobbyDeskHash(project, path) },
+  });
+  const sections = { inbox: { waiting: waitingLine(), body: inbox.el }, desk: { waiting: waitingLine(), body: desk.el }, tasks: { waiting: waitingLine(), body: tasks.el }, agent: { waiting: waitingLine(), body: agent.el } };
   const tabPanels = {};
   for (const [id, part] of Object.entries(sections)) {
     tabPanels[id] = h("div", { class: "wb-lobby-tabpanel wb-lobby-scroll", role: "tabpanel", id: tabs.panelId(id), "aria-labelledby": tabs.tabId(id), hidden: true }, part.waiting, part.body);
@@ -97,7 +103,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   const footer = h("div", { class: "wb-lobby-footer" }, composer.el, h("div", { class: "wb-form-scroll" }, form.el));
   const cancelDialog = createCancelDialog({ api, project, onChanged: refresh });
   panel.body.classList.add("wb-lobby-body");
-  panel.body.append(conversationPanel, tabPanels.inbox, tabPanels.desk, tabPanels.agent);
+  panel.body.append(conversationPanel, tabPanels.inbox, tabPanels.desk, tabPanels.tasks, tabPanels.agent);
   panel.el.insertBefore(tabs.el, panel.body);
   panel.el.append(footer);
   frame.main.append(panel.el, cancelDialog.el);
@@ -251,6 +257,9 @@ export function createLobbyView(frame, { project, onChanged }) {
     const status = detail && detail.status;
     const model = agent.update({ snapshot, tab });
     desk.update({ tab, ready: Boolean(snapshot.loaded && accepted) });
+    if (tab === "tasks" && accepted) {
+      tasks.update({ tasks: model ? model.tasks : [], requests: status ? status.requests || [] : [], pending: status ? status.pending || [] : [], loading: !snapshot.loaded || !model, reload: reloaded });
+    }
     if (tab !== "inbox" && !leftInbox && !inbox.busy()) {      // a card whose job still runs keeps its state until it ends
       inbox.reset();
       leftInbox = true;

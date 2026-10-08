@@ -1,7 +1,7 @@
 // The Floor screen (handoff floor.md and cards.md): one agent in its room (the figure at its desk, the wall board, the inbox
-// tray, a table of sheets, a cabinet) and a side panel with three tabs: Agent (state, mode, meters, the current task and its
-// runs, other tasks, "Hand a file over"), Inbox (one card per open decision of the agent, then the resolved ones) and Desk (the
-// agent's documents and the viewer). It owns the scene engine for as long as the screen is shown. The page decides nothing:
+// tray, a table of sheets, a cabinet) and a side panel with four tabs: Agent (state, mode, meters, the current task and its
+// runs, other tasks, "Hand a file over"), Inbox (one card per open decision of the agent, then the resolved ones), Desk (the
+// agent's documents and the viewer) and Tasks (every task of the agent by state, floor/tasks-tab.js). It owns the scene engine for as long as the screen is shown. The page decides nothing:
 // every panel shows what an operation returned, and each control sends one request (the cards, the Agent tab). This module
 // reads (the status and agents the page already holds, a task's body, the documents) and arranges.
 
@@ -12,6 +12,7 @@ import { createAgentTab } from "../floor/agent-tab.js";
 import { actions } from "../floor/actions.js";
 import { createDeskTab } from "../floor/desk-tab.js";
 import { createInbox } from "../floor/inbox.js";
+import { createTasksTab } from "../floor/tasks-tab.js";
 import { createViewer } from "../floor/viewer.js";
 import { busyLine, createTabs, focusOpenLink } from "../floor/widgets.js";
 import { icon } from "../frame/icons.js";
@@ -26,7 +27,7 @@ const TASK_STALE_MS = 15000;
 const DOCS_OPEN_MS = 5000;
 const DOCS_IDLE_MS = 30000;
 const MAX_TASK_READS = 12;
-const TABS = [{ id: "agent", label: "Agent" }, { id: "inbox", label: "Inbox" }, { id: "desk", label: "Desk" }];
+const TABS = [{ id: "agent", label: "Agent" }, { id: "inbox", label: "Inbox" }, { id: "desk", label: "Desk" }, { id: "tasks", label: "Tasks" }];
 
 /** Create the Floor in `frame`. env: {refresh()}. Returns {update({snapshot, route, now, reload}), dispose(), stats()}. */
 export function createFloorView(frame, env) {
@@ -79,6 +80,7 @@ export function createFloorView(frame, env) {
   let inbox = null;
   let desk = null;
   let agentTabLive = null;
+  let tasksTab = null;
 
   function makeTabs() {
     if (inbox) return;
@@ -91,6 +93,10 @@ export function createFloorView(frame, env) {
       },
     });
     desk = createDeskTab({ project, agent, open: (path) => { window.location.hash = router.deskHash(project, agent, path); } });
+    tasksTab = createTasksTab({
+      project, now: () => new Date(), refresh: () => env.refresh(), api: actions,
+      links: { request: () => router.lobbyHash(project), inbox: (id) => router.floorHash(project, agent, "inbox", id), open: (path) => router.deskHash(project, agent, path) },
+    });
   }
 
   // --- the scene ---------------------------------------------------------------------------------------------------------------
@@ -243,7 +249,7 @@ export function createFloorView(frame, env) {
 
     const viewing = Boolean(route.path) && tab === "desk" && !model.notAccepted;
     drawViewer(route, viewing);
-    const selected = model.notAccepted && tab !== "agent" ? { el: waitingEl } : { agent: agentTabLive, inbox, desk }[tab];
+    const selected = model.notAccepted && tab !== "agent" ? { el: waitingEl } : { agent: agentTabLive, inbox, desk, tasks: tasksTab }[tab];
     if (tabpanel.children[0] !== selected.el) fill(tabpanel, selected.el);
     if (tab !== "inbox" && !leftInbox && !inbox.busy()) {   // a card whose job still runs keeps its state until it ends
       inbox.reset();
@@ -257,6 +263,9 @@ export function createFloorView(frame, env) {
     } else if (tab === "inbox") {
       const ids = model.tasks.map((t) => t.id);
       inbox.update({ decisions: model.decisions, requests: snapshot.details[project].status.requests || [], resolved: fm.resolvedLines(bodiesPlain(), ids, last.now), selected: route.pending, loading: false });
+    } else if (tab === "tasks") {
+      const status = snapshot.details[project].status;
+      tasksTab.update({ tasks: model.tasks, requests: status.requests || [], pending: status.pending || [], loading: false, reload: last.reload });
     } else {
       desk.update({ documents: documentsRows, truncated: Boolean(documents && documents.truncated), loading: documents === null && !documentsError, error: documentsError, elsewhere: documents ? documents.rows.length - documentsRows.length : 0 });
     }
