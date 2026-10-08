@@ -317,6 +317,9 @@ def call_tool(server: Server, name, given) -> dict:
                 raise Fail(SERVER_ERROR, str(e), "busy", 409) from None
             thread.join(server.grace)
             shown = server.job_shown(job["job"])
+            if shown is None:  # the registry pruned it already (it ended long ago): the job itself holds its final state
+                with server.lock:
+                    shown = server.public(job)
             if shown["state"] == "failed":  # refused at once (a refusal of the rule, a wrong hash): the refusal itself
                 e = shown["error"]
                 raise _fail_of(e["error"], e["status"], e["message"])

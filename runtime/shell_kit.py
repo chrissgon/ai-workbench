@@ -68,7 +68,7 @@ def projects_of(paths, ops_module) -> list:
         found = ops_module.config(path)
         seen.add(project_id(path))
         out.append({"id": project_id(path), "name": os.path.basename(os.path.realpath(path)) or path, "path": path,
-                    "data_dir": found["data_dir"]})
+                    "data_dir": found.get("data_dir")})
     return out
 
 

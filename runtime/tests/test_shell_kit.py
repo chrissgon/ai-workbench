@@ -56,6 +56,8 @@ def _imports(path):
 def test_each_shared_name_is_defined_in_the_kit_and_in_no_other_module_of_the_runtime():
     owners = {}
     for path in sorted(st.RUNTIME.rglob("*.py")):
+        if "tests" in path.relative_to(st.RUNTIME).parts:
+            continue
         for name in _definitions(path):
             if name in OWNED:
                 owners.setdefault(name, []).append(path.relative_to(st.RUNTIME).as_posix())
@@ -240,3 +242,24 @@ def test_the_shells_registries_differ_only_by_what_each_shell_adds():
     assert "poll" not in svc.public(job) and server.public(job)["poll"] == {"tool": "job", "arguments": {"job": 4}}
     job["state"] = "done"
     assert svc.public(job) == server.public(job)
+
+
+def test_a_job_the_registry_pruned_before_the_mcp_tool_reads_it_is_still_shown_or_refused_as_itself():
+    class Pruned(mcp.Server):
+        def job_shown(self, number):
+            return None
+
+    standin = Ops()
+    standin.route = lambda project, **kwargs: {"done": True}
+
+    def refuse(project, **kwargs):
+        raise ops.OpsError("wrong hash", 1)
+
+    for function, expected in ((standin.route, None), (refuse, "wrong hash")):
+        standin.route = function
+        server = Pruned(standin, [{"id": "aaaaaaaaaaaa", "name": "p", "path": "/p"}], grace=2.0)
+        result = mcp.call_tool(server, "route", {"request_id": 1})
+        if expected is None:
+            assert '"state": "done"' in result["content"][0]["text"] and result["isError"] is False
+        else:
+            assert result["isError"] is True and expected in result["content"][0]["text"]

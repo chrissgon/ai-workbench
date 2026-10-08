@@ -99,7 +99,7 @@ The modules of the task runtime that exist, and what each owns. A later stage ad
 | `runtime/cli.py` | The terminal shell: its parser is built from the table, one command per operation, one JSON object printed |
 | `runtime/service.py` | The local service: the operations layer through an API on `127.0.0.1`, with a token and an origin check, and the static files of `interface/` ("The local service" below). It imports `ops.py`, `shell_kit.py` (shared with the MCP mode) and nothing else of the runtime |
 | `runtime/shell_kit.py` | What the local service and the MCP mode share, once: the project id and list, the mapping of an `OpsError` code to a status and a word, the argument kinds a shell carries in JSON and the job registry. It imports nothing of the runtime and holds no rule about the work |
-| `runtime/mcp.py` | The MCP mode: the operations layer as tools of a Model Context Protocol server over standard input and output, one tool per row of the table that lists the `mcp` channel, with no token and no port ("The MCP mode" below). It imports `ops.py` and nothing else of the runtime |
+| `runtime/mcp.py` | The MCP mode: the operations layer as tools of a Model Context Protocol server over standard input and output, one tool per row of the table that lists the `mcp` channel, with no token and no port ("The MCP mode" below). It imports `ops.py`, `shell_kit.py` and nothing else of the runtime |
 | `interface/` | The static files the service serves: pages, modules and vendored libraries, no build step, nothing loaded from another host |
 | `runtime/flow_files.py` | Reads and checks a flow file, `flows/<name>.json` |
 | `runtime/skill_meta.py` | What a skill declares in its frontmatter (artifact lists, requirement classes, side effects, version) |
