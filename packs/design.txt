@@ -1,0 +1,6 @@
+# The design chain: the scope of the task runtime's design area agent (runtime/manifest.py, PACKS_IN_USE).
+# The four skills of flows/design.json. design-execute and design-handoff are left out: they run in a design tool and are not steps of that flow.
+product-feature-spec
+design-ux-flows
+design-system
+design-brief
