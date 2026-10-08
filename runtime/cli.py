@@ -83,8 +83,8 @@ release   releases a delivery (a pending decision of kind review): the task is d
           questions left in it, or answer it. A run that wrote nothing and asks opens a question: answer it.
 retry     makes a failed or blocked task ready again.
 cancel    cancels a request, its tasks that are not done and their open pending decisions.
-status    requests, tasks and pending decisions (each with "actions", the words it may be resolved with), from the
-          store's records; for each request and task, whether it is
+status    requests, tasks (each with its title and area agent) and pending decisions (each with its task's "agent" and
+          "actions", the words it may be resolved with), from the store's records; for each request and task, whether it is
           on the task board and how many comments saved from there are open; each mirrored document, its status
           and its note.
 task      one task or request: its row, its runs (status, failure, ending, attempts, duration, tokens, cost, model) and
@@ -112,7 +112,7 @@ connections  which provider each requirement class of the skills in scope resolv
           this machine and is the evidence's, and the machine's platform and the evidence's. It starts no provider and
           makes no network call.
 artifacts the project's files under docs/ that are documents or machine files, each with its owner skill (the skill whose
-          outputs name it), size, modification time and whether a pending decision binds it. Never the runtime's
+          outputs name it), the area agent whose pack holds that skill, size, modification time and whether a pending decision binds it. Never the runtime's
           configuration.
 artifact  the text of one file under docs/ of the project (--path, relative to the project), read-only. Refused for a path
           outside docs/, a link, the runtime's configuration, a file over 1 MiB or one that is not UTF-8 text.
