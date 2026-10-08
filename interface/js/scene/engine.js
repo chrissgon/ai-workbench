@@ -8,20 +8,24 @@
 
 import * as THREE from "../three.js";
 import { h } from "../dom.js";
+import { buildBuilding } from "./building.js";
 import { buildCity, pulseBeacon, restBeacon } from "./city.js";
 import { fitFrustum } from "./fit.js";
 import { createKit } from "./kit.js";
 import { mountLabels, placeLabels } from "./labels.js";
 import { createLoop } from "./loop.js";
 import { LIGHT_WHITE, readPalette } from "./palette.js";
+import { buildRoom } from "./room.js";
 import { createTween } from "./tween.js";
 
-export const BUILDERS = { city: buildCity };
+export const BUILDERS = { city: buildCity, building: buildBuilding, room: buildRoom };
 const DISTANCE = 150;
 const AZIMUTH = (45 * Math.PI) / 180;
 const ELEVATION = (35 * Math.PI) / 180;
 export const CAMERA_MS = 600;     // A5: the camera moves in over 600 ms
 export const DROP_MS = 300;       // A3: a waiting marker drops in once
+export const TAG_MS = 600;        // A6: the work-order tag moves to the next floor once
+
 const PICK_EVERY_MS = 40;
 
 export class NoWebGL extends Error {
@@ -79,6 +83,11 @@ export function createEngine(host, options) {
   let frustum = null;             // the resting frustum (fitted)
   const tween = createTween();    // the camera move in flight, if any
   let drops = [];                 // {marker, start}
+  let intro = null;               // {start, ms}: the building opening (A5), the floors separating
+  let introPlayed = false;
+  let tagRun = null;              // {group, from, to, start}: the work-order tag moving (A6)
+  let previousTag = null;         // {y}: where the tag was on the build before
+  let lastInsets = null;
   let previousMarkers = new Set();
   let previousReady = false;      // the build before this one held real data: a marker not in it has arrived
   let previousDecisions = new Map();
@@ -143,9 +152,11 @@ export function createEngine(host, options) {
   }
 
   function stopAnimations() {
-    for (const name of ["camera", "drops", "beacon"]) loop.stop(name);
+    for (const name of ["camera", "drops", "beacon", "intro", "tag"]) loop.stop(name);
     tween.cancel();   // settles a waiting fly-in with false: nobody is left waiting for a move that will not finish
     drops = [];
+    intro = null;
+    tagRun = null;
   }
 
   function build() {
@@ -153,6 +164,9 @@ export function createEngine(host, options) {
     if (!model || !BUILDERS[kind]) return;
     contentKit = createKit(palette);
     content = BUILDERS[kind](contentKit, model);
+    content.beacons = content.beacons || [];
+    content.motions = content.motions || [];
+    content.markers = content.markers || [];
     scene.add(content.group);
     const popped = new Set();
     for (const label of content.labels) {
@@ -171,17 +185,53 @@ export function createEngine(host, options) {
       for (const d of drops) d.marker.group.position.y = d.marker.restY + 1.5;
       loop.start("drops", { ambient: false });
     }
+    startIntro();
+    startTag();
     syncBeacons();
   }
 
+  // A5: a building opens (its floors separate) and a room is entered (the camera moves in), once, 600 ms; a cut under reduced motion.
+  function startIntro() {
+    if (!content.intro || !model.ready || introPlayed) return;
+    introPlayed = true;
+    if (reducedQuery.matches) return;
+    if (content.intro.apply) {
+      content.intro.apply(0);
+      intro = { start: clock(), ms: CAMERA_MS };
+      loop.start("intro", { ambient: false });
+    } else if (content.intro.zoom && frustum) {
+      const k = content.intro.zoom;
+      const cx = (frustum.left + frustum.right) / 2;
+      const cy = (frustum.top + frustum.bottom) / 2;
+      const hw = ((frustum.right - frustum.left) / 2) * k;
+      const hh = ((frustum.top - frustum.bottom) / 2) * k;
+      const from = { left: cx - hw, right: cx + hw, top: cy + hh, bottom: cy - hh };
+      applyFrustum(from);
+      tween.start(from, { ...frustum }, clock(), CAMERA_MS);
+      loop.start("camera", { ambient: false });
+    }
+  }
+
+  // A6: the work-order tag moves from its old floor to its new one, once.
+  function startTag() {
+    const tag = content.tag;
+    const before = previousTag;
+    previousTag = tag ? { y: tag.y } : null;
+    if (!tag || !before || before.y === tag.y || reducedQuery.matches || !model.ready || intro) return;
+    tag.group.position.y = before.y;
+    tagRun = { group: tag.group, from: before.y, to: tag.y, start: clock() };
+    loop.start("tag", { ambient: false });
+  }
+
   function syncBeacons() {
-    if (!content || !content.beacons.length) {
+    if (!content || (!content.beacons.length && !content.motions.length)) {
       loop.stop("beacon");
       return;
     }
     if (reducedQuery.matches) {
       loop.stop("beacon");
       content.beacons.forEach(restBeacon);
+      content.motions.forEach((m) => m.rest());
       loop.requestRender();
     } else if (loop.start("beacon", { ambient: true })) {
       pulseStart = clock();
@@ -214,6 +264,7 @@ export function createEngine(host, options) {
   function fit() {
     if (!content || !size.w || !size.h) return;
     const insets = options.getInsets ? options.getInsets() : {};
+    lastInsets = insets;
     frustum = fitFrustum(contentBounds(content.group), size, insets, insets.pad || 1.04);
     if (!tween.active()) applyFrustum(frustum);
     positionLabels();
@@ -227,7 +278,7 @@ export function createEngine(host, options) {
 
   function positionLabels() {
     if (!labelEntries.length) return;
-    placeLabels(labelEntries, project, { hidden: tween.active() });
+    placeLabels(labelEntries, project, { hidden: tween.active() || Boolean(intro), insets: lastInsets, size });
   }
 
   function measure() {
@@ -254,7 +305,29 @@ export function createEngine(host, options) {
     if (moved) {
       applyFrustum(moved);
       positionLabels();
-      if (!tween.active()) loop.stop("camera");
+      if (!tween.active()) {
+        loop.stop("camera");
+        positionLabels();
+      }
+    }
+    if (intro) {
+      const t = Math.min(1, (now - intro.start) / intro.ms);
+      content.intro.apply(ease(t));
+      renderer.shadowMap.needsUpdate = true;
+      if (t >= 1) {
+        intro = null;
+        loop.stop("intro");
+        positionLabels();
+      }
+    }
+    if (tagRun) {
+      const t = Math.min(1, (now - tagRun.start) / TAG_MS);
+      tagRun.group.position.y = tagRun.from + (tagRun.to - tagRun.from) * ease(t);
+      renderer.shadowMap.needsUpdate = true;
+      if (t >= 1) {
+        tagRun = null;
+        loop.stop("tag");
+      }
     }
     if (drops.length) {
       renderer.shadowMap.needsUpdate = true;
@@ -267,9 +340,10 @@ export function createEngine(host, options) {
         loop.stop("drops");
       }
     }
-    if (content && content.beacons.length && !reducedQuery.matches) {
+    if (content && (content.beacons.length || content.motions.length) && !reducedQuery.matches) {
       const seconds = (now - pulseStart) / 1000;
       content.beacons.forEach((b) => pulseBeacon(b, seconds));
+      content.motions.forEach((m) => m.tick(seconds));
     }
     const started = clock();
     renderer.render(scene, camera);
@@ -378,6 +452,17 @@ export function createEngine(host, options) {
       drops.forEach((d) => { d.marker.group.position.y = d.marker.restY; });
       drops = [];
       loop.stop("drops");
+      if (intro) {
+        content.intro.apply(1);
+        intro = null;
+        loop.stop("intro");
+        positionLabels();
+      }
+      if (tagRun) {
+        tagRun.group.position.y = tagRun.to;
+        tagRun = null;
+        loop.stop("tag");
+      }
     }
     syncBeacons();
   };

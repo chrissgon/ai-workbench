@@ -1,7 +1,7 @@
 // The hash router: a pure parser and the builders of every link the frame draws. The hash forms are the flows' IA-4:
 //   #/                                   the City
 //   #/p/<id>                             a project's building
-//   #/p/<id>/floor/<agent>[/<tab>[/<pending id>]]   an agent's floor (tab: agent, desk, inbox)
+//   #/p/<id>/floor/<agent>[/<tab>[/<pending id>]]   an agent's floor (tab: agent, desk, inbox; the desk takes a document: /desk/<percent-encoded path>)
 //   #/p/<id>/lobby[/<tab>[/<pending id>]]            the conversation with the planning agent (tab: chat, inbox)
 //   #/p/<id>/control[/<tab>]             the control room (tab: skills, costs, connections)
 // <id> is the 12-character id the service gives a project. An unknown hash is the City. Nothing here touches the document.
@@ -42,8 +42,18 @@ export function parse(hash) {
 }
 
 function finish(route, tail) {
+  route.path = null;
   if (tail.length && WORD.test(tail[0])) route.tab = tail[0];
   if (tail.length > 1 && NUMBER.test(tail[1])) route.pending = Number(tail[1]);
+  if (route.tab === "desk" && tail.length > 1) {
+    // a document: the percent-encoded path of a file under docs/ (never a slash, so it is one segment)
+    try {
+      const path = decodeURIComponent(tail[1]);
+      if (path && path.length <= 512) route.path = path;
+    } catch (e) {
+      route.path = null;
+    }
+  }
   return route;
 }
 
@@ -60,6 +70,11 @@ export function buildingHash(project) {
 /** The hash of an agent's floor, optionally on a tab and at a decision. */
 export function floorHash(project, agent, tab, pending) {
   return `#/p/${project}/floor/${agent}` + (tab ? `/${tab}` : "") + (tab && pending !== undefined && pending !== null ? `/${pending}` : "");
+}
+
+/** The hash of a document in an agent's desk: the path is one percent-encoded segment. */
+export function deskHash(project, agent, path) {
+  return `#/p/${project}/floor/${agent}/desk` + (path ? `/${encodeURIComponent(path)}` : "");
 }
 
 /** The hash of the lobby, optionally on a tab and at a decision. */

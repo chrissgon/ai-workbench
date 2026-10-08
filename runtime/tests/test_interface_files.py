@@ -244,15 +244,20 @@ def test_every_client_function_the_screens_call_exists_and_the_city_only_reads()
     exported = set(re.findall(r"^export (?:async )?function (\w+)", CLIENT.read_text(encoding="utf-8"), re.M))
     writes = {"answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"}
     used = {}
+    used_outside_floor = {}
     for path in own_files():
         if path.suffix != ".js" or path == CLIENT:
             continue
         for name in re.findall(r"\bapi\.(\w+)\(", path.read_text(encoding="utf-8")):
             used.setdefault(name, set()).add(path.name)
+            if "floor" not in path.relative_to(INTERFACE / "js").parts[:-1]:
+                used_outside_floor.setdefault(name, set()).add(path.name)
     assert {"projects", "status", "agents", "task"} <= set(used), "the City reads the project list, the status, the agents and one task"
     for name, files in used.items():
         assert name in exported or name == "onAuthFailure", f"{sorted(files)} call api.{name}, which api.js does not export"
-    assert not (set(used) & writes), f"the City and the frame only read: {sorted(set(used) & writes)}"
+    # WP-9.3b: the decision cards, the Agent tab and the request line send the page's writes, and they live in js/floor/ (their
+    # client is handed to them through their environment); the City, the Building, the frame and the views only read.
+    assert not (set(used_outside_floor) & writes), f"only js/floor/ writes: {sorted(set(used_outside_floor) & writes)}"
 
 
 def test_the_page_reads_every_five_seconds_while_visible_and_never_while_hidden():
@@ -271,3 +276,82 @@ def test_the_screens_keep_no_state_in_a_global_and_the_token_stays_in_the_token_
         assert not re.search(r"\bwindow\.__|\bglobalThis\.\w+\s*=", text), f"{rel(path)} keeps state in a global"
         if path.name not in ("token.js", "api.js", "main.js"):
             assert not re.search(r"\b(?:getToken|setToken)\(", text), f"{rel(path)} touches the token"
+
+
+# --- WP-9.3b: the Building and the Floor ----------------------------------------------------------------------------------------
+
+FLOOR_FILES = ("floor-model.js", "floor/actions.js", "floor/agent-tab.js", "floor/cards.js", "floor/desk-tab.js", "floor/inbox.js",
+               "floor/viewer.js", "floor/widgets.js", "views/building.js", "views/floor.js",
+               "scene/building.js", "scene/room.js", "scene/figure.js", "scene/furniture.js", "scene/plates.js")
+
+
+def test_the_building_and_the_floor_are_files_of_the_page_and_the_page_routes_to_them():
+    for name in FLOOR_FILES:
+        assert (INTERFACE / "js" / name).is_file(), f"interface/js/{name} is a file of the page"
+    main = (INTERFACE / "js" / "main.js").read_text(encoding="utf-8")
+    assert "createBuildingView" in main and "createFloorView" in main, "the page opens the Building and the Floor, not a placeholder"
+    router = (INTERFACE / "js" / "router.js").read_text(encoding="utf-8")
+    assert "deskHash" in router and "/desk/" in router, "a document of the desk has a hash of its own"
+    assert 'import("' not in main and "import(" not in "".join((INTERFACE / "js" / n).read_text(encoding="utf-8") for n in FLOOR_FILES), "no dynamic import: every file is a static module of the page"
+
+
+def test_only_the_floor_folder_sends_a_write_and_it_takes_every_write_from_one_object():
+    writes = {"answer", "release", "approve", "reject", "verdict", "cancel", "setMode", "retry", "handOver"}
+    actions = (INTERFACE / "js" / "floor" / "actions.js").read_text(encoding="utf-8")
+    assert set(re.findall(r"^\s+(\w+): api\.(\w+),$", actions, re.M)) == {(w, w) for w in writes | {"pollJob"}}, "actions.js names each write once"
+    for name in FLOOR_FILES:
+        text = (INTERFACE / "js" / name).read_text(encoding="utf-8")
+        if name.startswith(("views/", "scene/")) or name == "floor-model.js":
+            assert not (set(re.findall(r"\bapi\.(\w+)\(", text)) & writes), f"{name} only reads"
+        if name.startswith("floor/") and name not in ("floor/actions.js", "floor/cards.js", "floor/agent-tab.js"):
+            sends = re.findall(r"(?:\bapi\(\)|\bapi|\bactions)\.(\w+)\(", text)
+            assert not (set(sends) & writes), f"{name} sends no write: only cards.js and agent-tab.js do, through their environment ({sorted(set(sends) & writes)})"
+        if name in ("floor/cards.js", "floor/agent-tab.js"):
+            assert 'from "../api.js"' not in text, f"{name} sends through its environment (a client it is given), not through a client of its own"
+            assert set(re.findall(r"\bapi\(?\)?\.(\w+)\(", text)) <= writes | {"pollJob"}, f"{name} calls only the operations of its panel"
+
+
+def test_a_card_sends_the_hash_it_shows_read_back_from_its_own_text_and_nothing_decides_for_the_person():
+    cards = (INTERFACE / "js" / "floor" / "cards.js").read_text(encoding="utf-8")
+    assert cards.count("state.hashNode.textContent") >= 2, "an effect and a plan are approved with the hash read from the page's own text"
+    assert re.search(r"shown !== it\.payload_sha256", cards) and re.search(r"shown !== \(it\.payload && it\.payload\.plan_sha256\)", cards), \
+        "a hash that is not the decision's is refused before any request"
+    assert "api().approve(env.project, it.id, shown)" in cards and "api().approve(env.project, it.id)" in cards, "an acceptance sends no hash"
+    assert not re.search(r"\.trim\(\)\s*\)\s*return\s+refuse", cards) or "typed.answer.trim()" in cards, "an empty answer is not sent"
+    for forbidden in ("innerHTML", "insertAdjacentHTML", "document.write", "eval("):  # security-scan: allow dynamic-eval -- a pattern that forbids a call; nothing runs it
+        assert forbidden not in cards, f"cards.js builds text with textContent only: {forbidden}"
+
+
+def test_the_ids_the_scenes_register_are_the_ids_the_screens_open():
+    building = (INTERFACE / "js" / "scene" / "building.js").read_text(encoding="utf-8")
+    room = (INTERFACE / "js" / "scene" / "room.js").read_text(encoding="utf-8")
+    floor_view = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
+    building_view = (INTERFACE / "js" / "views" / "building.js").read_text(encoding="utf-8")
+    for hit in re.findall(r'id: "([a-z]+)"', room):
+        assert f'"{hit}"' in floor_view, f"the Floor opens something for the room's {hit}"
+    assert "sheet:" in room and "sheet:" in floor_view
+    assert "floor:" in building and "floor:" in building_view and '"door"' in building and '"door"' in building_view
+
+
+def test_every_wb_class_the_new_modules_build_is_styled_or_a_hook_the_scripts_read():
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    hooks = {"wb-tabpanel", "wb-floor-normal", "wb-label-name", "wb-label-sub", "wb-state-box", "wb-cancel-dialog", "wb-share", "wb-request", "wb-chip"}   # a prefix of a built name, or a custom property
+    missing = {}
+    for name in FLOOR_FILES:
+        text = (INTERFACE / "js" / name).read_text(encoding="utf-8")
+        for cls in set(re.findall(r"\bwb-[a-z0-9]+(?:-[a-z0-9]+)*", text)):
+            if cls.startswith(("wb-icon", "wb-i1")) or cls in hooks:
+                continue
+            if not re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css) and f'"{cls}"' not in text.replace("class:", ""):
+                missing.setdefault(cls, []).append(name)
+    assert not missing, f"classes the modules build that style.css never names: {missing}"
+
+
+def test_escape_leaves_a_draft_alone_and_leaving_the_inbox_keeps_a_card_whose_job_runs():
+    floor = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
+    assert re.search(r'a\.tagName === "TEXTAREA" \|\| a\.tagName === "INPUT"[^\n]*\n?\s*\)? ?return|a\.tagName === "TEXTAREA"[^\n]*return;', floor), \
+        "Escape does nothing while the person types in a field"
+    assert "!inbox.busy()" in floor, "the Inbox is reset only when no card has a request in flight"
+    inbox = (INTERFACE / "js" / "floor" / "inbox.js").read_text(encoding="utf-8")
+    cards = (INTERFACE / "js" / "floor" / "cards.js").read_text(encoding="utf-8")
+    assert "isBusy()" in inbox and "isBusy()" in cards

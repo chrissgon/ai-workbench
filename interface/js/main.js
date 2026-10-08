@@ -1,5 +1,5 @@
-// The page: the token prompt, then the shared frame with the screen the hash names (#/ is the City; the other screens
-// are placeholders until their packages). One poll reads what the City needs every 5 seconds while the document is
+// The page: the token prompt, then the shared frame with the screen the hash names (#/ is the City, the Building and the Floor
+// follow; the Lobby and the control room are placeholders until their packages). One poll reads what the City needs every 5 seconds while the document is
 // visible (10 seconds after a failed read), none while it is hidden, and one read when it becomes visible again.
 
 import * as api from "./api.js";
@@ -9,7 +9,9 @@ import { createFrame } from "./frame/frame.js";
 import * as model from "./model.js";
 import * as router from "./router.js";
 import { clearToken, getToken, setToken } from "./token.js";
+import { createBuildingView } from "./views/building.js";
 import { createCityView } from "./views/city.js";
+import { createFloorView } from "./views/floor.js";
 import { createPlaceholder } from "./views/placeholder.js";
 import { showTokenPrompt } from "./views/token-prompt.js";
 
@@ -168,6 +170,12 @@ function ensureView(route) {
   if (route.screen === "city") {
     const city = createCityView(frame);
     view = { key, screen: "city", city, dispose: () => city.dispose() };
+  } else if (route.screen === "building") {
+    const building = createBuildingView(frame, { refresh: () => poll() });
+    view = { key, screen: "building", building, dispose: () => building.dispose() };
+  } else if (route.screen === "floor") {
+    const floor = createFloorView(frame, { refresh: () => poll() });
+    view = { key, screen: "floor", floor, dispose: () => floor.dispose() };
   } else {
     const placeholder = createPlaceholder(frame, route);
     view = { key, screen: route.screen, placeholder, dispose: () => placeholder.el.remove() };
@@ -217,7 +225,9 @@ function render() {
     view.city.update({ city, selectedId: chosen, state });
   } else {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
-    view.placeholder.update(snapshot, route.project, route.agent ? `Floor of ${route.agent}` : "");
+    if (view.screen === "building") view.building.update({ snapshot, route, now });
+    else if (view.screen === "floor") view.floor.update({ snapshot, route, now });
+    else view.placeholder.update(snapshot, route.project, route.agent ? `Floor of ${route.agent}` : "");
     if (!known) frame.notice({ kind: "error", text: "The service has no such project." });
   }
 
