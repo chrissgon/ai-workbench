@@ -10,6 +10,7 @@ import * as model from "./model.js";
 import * as router from "./router.js";
 import { clearToken, getToken, setToken } from "./token.js";
 import { createCityView } from "./views/city.js";
+import { createLobbyView } from "./views/lobby.js";
 import { createPlaceholder } from "./views/placeholder.js";
 import { showTokenPrompt } from "./views/token-prompt.js";
 
@@ -167,6 +168,9 @@ function ensureView(route) {
   if (route.screen === "city") {
     const city = createCityView(frame);
     view = { key, screen: "city", city, dispose: () => city.dispose() };
+  } else if (route.screen === "lobby") {
+    const lobby = createLobbyView(frame, { project: route.project, onChanged: () => poll() });
+    view = { key, screen: "lobby", lobby, dispose: () => lobby.dispose() };
   } else {
     const placeholder = createPlaceholder(frame, route);
     view = { key, screen: route.screen, placeholder, dispose: () => placeholder.el.remove() };
@@ -214,6 +218,10 @@ function render() {
   if (view.screen === "city") {
     const city = model.city(snapshot, now);
     view.city.update({ city, selectedId: chosen, state: loading ? "loading" : "ready" });
+  } else if (view.screen === "lobby") {
+    frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
+    view.lobby.update({ snapshot, route, now, projectName: routeProject ? routeProject.name : "" });
+    if (!known) frame.notice({ kind: "error", text: "The service has no such project." });
   } else {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     view.placeholder.update(snapshot, route.project, route.agent ? `Floor of ${route.agent}` : "");

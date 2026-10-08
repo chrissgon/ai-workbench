@@ -248,11 +248,13 @@ def test_every_client_function_the_screens_call_exists_and_the_city_only_reads()
         if path.suffix != ".js" or path == CLIENT:
             continue
         for name in re.findall(r"\bapi\.(\w+)\(", path.read_text(encoding="utf-8")):
-            used.setdefault(name, set()).add(path.name)
+            used.setdefault(name, set()).add(str(path.relative_to(INTERFACE / "js")))
     assert {"projects", "status", "agents", "task"} <= set(used), "the City reads the project list, the status, the agents and one task"
     for name, files in used.items():
         assert name in exported or name == "onAuthFailure", f"{sorted(files)} call api.{name}, which api.js does not export"
-    assert not (set(used) & writes), f"the City and the frame only read: {sorted(set(used) & writes)}"
+    # Only the modules of a screen that acts (the Lobby's views and the decision cards) write; the City, the frame and the page read.
+    writers = {f for name in writes for f in used.get(name, set())}
+    assert all(f.startswith(("views/lobby", "cards/")) for f in writers), f"a module that only reads calls a route that writes: {sorted(writers)}"
 
 
 def test_the_page_reads_every_five_seconds_while_visible_and_never_while_hidden():
@@ -271,3 +273,35 @@ def test_the_screens_keep_no_state_in_a_global_and_the_token_stays_in_the_token_
         assert not re.search(r"\bwindow\.__|\bglobalThis\.\w+\s*=", text), f"{rel(path)} keeps state in a global"
         if path.name not in ("token.js", "api.js", "main.js"):
             assert not re.search(r"\b(?:getToken|setToken)\(", text), f"{rel(path)} touches the token"
+
+
+# --- the Lobby (WP-9.4): its own checks are in test_interface_lobby.py; these are the rules read from the files --------------------
+
+
+def test_the_lobby_calls_only_routes_of_the_service_and_every_hash_it_links_to_is_a_form_of_the_router():
+    names = ("lobby.js", "lobby-actions.js", "lobby-request.js", "plan.js")
+    files = [p for p in own_files() if p.name in names]
+    assert {p.name for p in files} == set(names), "the Lobby's modules are where the package puts them"
+    exported = set(re.findall(r"^export (?:async )?function (\w+)", CLIENT.read_text(encoding="utf-8"), re.M))
+    wanted = {"say", "conversation", "request", "route", "cancel", "approve", "reject", "flows", "task", "pollJob"}
+    assert wanted <= exported, "the client has the Lobby's calls"
+    routes = {(r["method"], r["pattern"]) for r in service.ROUTES}
+    for route in (("POST", "/projects/{p}/conversation"), ("GET", "/projects/{p}/conversation"), ("POST", "/projects/{p}/requests"),
+                  ("POST", "/projects/{p}/requests/{id}/route"), ("POST", "/projects/{p}/requests/{id}/cancel"), ("GET", "/projects/{p}/flows"),
+                  ("GET", "/projects/{p}/tasks/{id}"), ("POST", "/projects/{p}/pending/{id}/approve"), ("POST", "/projects/{p}/pending/{id}/reject")):
+        assert route in routes, f"{route} is not a route of the service"
+    for path in files:
+        text = path.read_text(encoding="utf-8")
+        for target in re.findall(r'href: ([^,}]+)', text):
+            assert target.strip().startswith("router.") or target.strip().startswith('"#'), f"{path.name}: a link that is not built by the router: {target}"
+
+
+def test_the_lobby_shows_what_came_as_text_only_and_keeps_no_state_outside_its_view():
+    for name in ("lobby.js", "lobby-thread.js", "lobby-request.js", "lobby-composer.js", "lobby-form.js", "plan.js"):
+        path = next(p for p in own_files() if p.name == name)
+        text = path.read_text(encoding="utf-8")
+        assert "innerHTML" not in text and "insertAdjacentHTML" not in text and "createContextualFragment" not in text, name
+        assert not re.search(r"\.style\b|setAttribute\(\s*[\"']style", text), f"{name} writes no style"
+    lobby = (INTERFACE / "js" / "views" / "lobby.js").read_text(encoding="utf-8")
+    assert "setInterval" not in lobby, "the conversation is read by a timeout that the visibility rule can stop"
+    assert "localStorage" not in lobby and "sessionStorage" not in lobby

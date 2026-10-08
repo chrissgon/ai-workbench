@@ -10,7 +10,7 @@ returned and sends what the person typed or clicked.
 | Path | What |
 |---|---|
 | `index.html`, `style.css`, `favicon.svg` | The one page, its rules and its icon. No inline script, no inline style: every rule is in `style.css`, every script is a module. `style.css` derives the page's own tokens (`--wb-raised`, `--wb-ground`, `--wb-elev`, ...) from the library's, with no colour literal. |
-| `icons/` | One clean SVG file per icon (13, from the Lucide set), drawn by a CSS mask in the colour of the text. |
+| `icons/` | One clean SVG file per icon (15, from the Lucide set), drawn by a CSS mask in the colour of the text. |
 | `js/main.js` | The page: the token prompt, then the shared frame with the screen the hash names (`#/` is the City; the other screens are placeholders until their packages), and the poll (every 5 s while the document is visible, none while it is hidden). |
 | `js/router.js`, `js/format.js`, `js/model.js` | Pure functions: the hash forms, the display words and numbers, and what the City shows worked out from the service's bodies (floors, windows, waiting rows, the tracking bar). Tested under Node. |
 | `js/data.js` | What the City reads: `projects`, then `status` and `agents` of each accepted project, and the running task's `task` body. Reads only. |
@@ -18,7 +18,8 @@ returned and sends what the person typed or clicked.
 | `js/token.js`, `js/dom.js` | The token for this session; building elements (strings become text, a style or an event attribute is refused). |
 | `js/frame/` | The shared frame of every scene screen: header (back, breadcrumbs, project switcher), KPI cards, waiting list, tracking bar, panel shell, sheet (a phone's lists), icons. |
 | `js/scene/` | The scene engine: `engine.js` (one renderer, orthographic camera, picking, labels, tokens read at run time), `loop.js` (the render scheduler: a frame only when asked, at most 30 a second while an ambient animation runs, none while hidden), `palette.js`, `kit.js`, `props.js`, `city.js` (the City's geometry), `labels.js`, `cull.js`, `fit.js`. |
-| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City) and `placeholder.js` (the Building, Floor, Lobby and Control room until their packages). |
+| `js/views/` | One module per screen: `token-prompt.js`, `city.js` (the City), `lobby.js` with `lobby-*.js` (the Lobby: the conversation, the request form, the composer, the tabs, the cancel dialog, the room) and `placeholder.js` (the Building, Floor and Control room until their packages). `lobby-model.js` and `lobby-actions.js` are pure (tested under Node). |
+| `js/cards/` | The decision cards the Lobby draws under a message: `plan.js` (the plan card: the table of tasks, the limits, the whole hash, "Approve this plan" sending exactly the hash it shows) and `plan-rows.js` (what it shows, worked out from the decision's payload). |
 | `js/three.js` | The one place the 3D library is imported from (a relative re-export); the scene uses it. |
 | `vendor/three/`, `vendor/<library>/` | The two third-party libraries, copied unchanged, each folder with a README that records the package, the exact version, the licence and the sha256 of every file. |
 
@@ -74,7 +75,7 @@ without WebGL shows one line of text and leaves every panel and action working. 
 custom properties when it is built and when the colour scheme changes. Nothing in it is decorative: no vehicles, people,
 birds or weather. `canvas.wbStats()` (a function on the canvas element) returns the frames drawn so far, for a check.
 
-The Building, the Floor, the Lobby and the Control room are WP-9.3b to WP-9.5. They add modules under `js/views/` and
+The Building, the Floor and the Control room are WP-9.3b and WP-9.5; the Lobby is WP-9.4 (its room is the Floor's `room` scene, registered in `BUILDERS` by the Floor package). They add modules under `js/views/` and
 `js/scene/` (a builder per scene kind, registered in `BUILDERS` of `engine.js`) and read more routes through `js/api.js`;
 they edit no vendored file.
 

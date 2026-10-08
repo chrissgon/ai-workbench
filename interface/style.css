@@ -18,6 +18,8 @@
   /* DEVIATION-3: the library's own fallback mix for an ink colour, named for icons. */
   --wb-ink-theme: color-mix(in oklab, var(--pui-theme), var(--pui-text) 25%);
   --wb-ink-warn: color-mix(in oklab, var(--pui-warn), var(--pui-text) 25%);
+  /* DEVIATION-12: the same recipe for an error ink (the title of a refusal, "Cancel request"). */
+  --wb-ink-error: color-mix(in oklab, var(--pui-error), var(--pui-text) 25%);
   /* DEVIATION-10: the selected door's tint is 12 percent, the library's soft is 15. */
   --wb-tint-selected: color-mix(in oklab, var(--pui-theme) 12%, var(--wb-raised));
   /* DEVIATION-11: layout constants that are not tokens, one place each. */
@@ -33,6 +35,7 @@
   --wb-kind-col: 92px;
   --wb-scene-phone: 300px;
   --wb-panel-narrow: 400px;
+  --wb-panel-lobby: 420px;
   --wb-panel-wide: 700px;
   --wb-pip: 5px;
   --wb-font-system: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
@@ -161,7 +164,9 @@ code, .mono {
 .wb-icon-clock { -webkit-mask-image: url("./icons/clock.svg"); mask-image: url("./icons/clock.svg"); }
 .wb-icon-credit-card { -webkit-mask-image: url("./icons/credit-card.svg"); mask-image: url("./icons/credit-card.svg"); }
 .wb-icon-inbox { -webkit-mask-image: url("./icons/inbox.svg"); mask-image: url("./icons/inbox.svg"); }
+.wb-icon-message-square { -webkit-mask-image: url("./icons/message-square.svg"); mask-image: url("./icons/message-square.svg"); }
 .wb-icon-minus { -webkit-mask-image: url("./icons/minus.svg"); mask-image: url("./icons/minus.svg"); }
+.wb-icon-send { -webkit-mask-image: url("./icons/send.svg"); mask-image: url("./icons/send.svg"); }
 .wb-icon-server { -webkit-mask-image: url("./icons/server.svg"); mask-image: url("./icons/server.svg"); }
 .wb-icon-x { -webkit-mask-image: url("./icons/x.svg"); mask-image: url("./icons/x.svg"); }
 
@@ -604,4 +609,149 @@ a.wb-now-title:hover { text-decoration: underline; }
     transition: none !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* --- the Lobby (handoff lobby.md, cards.md): the panel with its tabs, the conversation, the cards and the composer ----------------- */
+.wb-panel-lobby { width: var(--wb-panel-lobby); grid-template-rows: auto auto minmax(120px, 1fr) minmax(0, auto); }
+.wb-lobby-body { display: block; padding: 0; overflow: hidden; }
+.wb-tabpanel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.wb-tabpanel-later { padding: 16px; gap: 12px; }
+.wb-lobby-waiting { padding: 16px; }
+
+/* the tab list: the scrollbar is hidden, the list still scrolls (DIFF-24) */
+.wb-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 12px;
+  overflow-x: auto;
+  border-bottom: var(--pui-border-width) solid var(--pui-border);
+  scrollbar-width: none;
+}
+.wb-tabs::-webkit-scrollbar { display: none; }
+.wb-tab {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--pui-text-muted);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+.wb-tab:hover { color: var(--pui-text); }
+.wb-tab.is-selected { border-bottom-color: var(--pui-theme); color: var(--pui-text); font-weight: 600; }
+.wb-tab-count { font-size: 12px; font-weight: 400; }
+
+/* the conversation */
+.wb-thread { display: grid; flex: 1 1 auto; gap: 10px; align-content: start; min-height: 0; padding: 12px; overflow-y: auto; }
+.wb-msg { display: grid; justify-items: start; gap: 2px; max-width: 90%; }
+.wb-msg.is-user { justify-self: end; justify-items: end; max-width: 86%; }
+.wb-msg-meta { color: var(--pui-text-muted); font-size: 11px; }
+.wb-bubble { padding: 8px 12px; border-radius: calc(var(--pui-radius) * 1.5); font-size: 13px; line-height: 1.5; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wb-bubble.pui-soft { color: var(--pui-text); }
+.wb-bubble-agent { background-color: var(--wb-sunken); }
+.wb-request-block { display: grid; gap: 10px; }
+.wb-request-line { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+.wb-request-line > .pui-badge, .wb-request-line > .pui-chip, .wb-request-line > .pui-btn { flex: none; }
+.wb-request-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.wb-cancel-link { padding: 0; white-space: nowrap; color: var(--wb-ink-error); font-size: 12px; text-decoration: none; }
+.wb-cancel-link:hover { text-decoration: underline; }
+.wb-route-button { padding: 2px 10px; font-size: 12px; }
+.wb-resolved { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--pui-radius); background-color: var(--wb-sunken); color: var(--pui-text-muted); font-size: 12px; }
+.wb-resolved-text { min-width: 0; overflow-wrap: anywhere; }
+.wb-pointer .pui-link { margin-left: auto; }
+
+/* a decision card (cards.md): the shell and the plan card */
+.wb-card { display: grid; background-color: var(--wb-sunken); border-color: transparent; }
+.wb-card-head { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; border-bottom: var(--pui-border-width) solid var(--pui-border); }
+.wb-card-meta { color: var(--pui-text-muted); font-size: 12px; }
+.wb-card-content { display: grid; gap: 10px; padding: 12px; }
+.wb-card-title { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.wb-card-title:focus-visible { outline: none; }
+.wb-card-note { margin: 0; color: var(--pui-text-muted); font-size: 12px; overflow-wrap: anywhere; }
+.wb-card-label { color: var(--pui-text-muted); font-size: 12px; }
+.wb-card-error { font-size: 13px; }
+.wb-card-buttons { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.wb-card .pui-btn.pui-surface { background-color: var(--wb-raised); }
+.wb-working { color: var(--pui-text-muted); font-size: 12px; }
+.wb-plan-table { width: 100%; font-size: 12px; }
+.wb-plan-table th, .wb-plan-table td { padding: 4px 3px; text-align: left; vertical-align: top; overflow-wrap: normal; }
+.wb-plan-table .wb-cell-skill { font-family: var(--wb-font-mono); font-size: 11px; }
+.wb-plan-hash-block { display: grid; gap: 4px; }
+.wb-plan-hash {
+  display: block;
+  padding: 8px 10px;
+  border: 1px dashed var(--pui-muted);
+  border-radius: var(--pui-radius);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.wb-plan-text { background-color: var(--wb-raised); border-radius: var(--pui-radius); }
+.wb-plan-body { margin: 0; padding: 8px 12px; font-family: var(--wb-font-mono); font-size: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.wb-plan-stack { display: none; margin: 0; padding: 0; list-style: none; }
+.wb-plan-stacked { display: grid; gap: 2px; padding: 6px 0; border-bottom: var(--pui-border-width) solid var(--pui-border); }
+.wb-plan-stacked-skill { font-size: 11px; color: var(--pui-text-muted); }
+.wb-plan-stacked-skill code { font-size: 11px; }
+
+/* fields: the edge is the muted token, the ground the raised one (OPEN-2) */
+.wb-field { --pui-edge: var(--pui-muted); background-color: var(--wb-raised); }
+.wb-field:disabled { opacity: 1; }
+
+/* the footer: the "New request" disclosure, then the composer */
+.wb-lobby-footer { display: grid; grid-template-rows: minmax(0, auto) auto; gap: 8px; min-height: 0; padding: 10px 12px; overflow: hidden; border-top: var(--pui-border-width) solid var(--pui-border); }
+.wb-form-scroll { grid-row: 1; min-height: 0; overflow-y: auto; }
+.wb-lobby-footer > .wb-composer-wrap { grid-row: 2; }
+.wb-new-request { border-color: transparent; border-radius: var(--pui-radius); background-color: var(--wb-sunken); }
+.wb-new-request > summary { font-size: 13px; font-weight: 600; }
+.wb-form-body { display: grid; gap: 10px; padding: 0 12px 12px; }
+.wb-form-row { display: flex; align-items: center; gap: 10px; }
+.wb-form-hint { margin: 0; color: var(--pui-text-muted); font-size: 12px; }
+.wb-composer-wrap { display: grid; gap: 8px; }
+.wb-composer { display: flex; align-items: flex-end; gap: 8px; }
+.wb-composer-field { flex: 1 1 auto; min-width: 0; }
+.wb-composer-field > span { font-size: 13px; }
+.wb-composer .pui-input { resize: vertical; min-height: 36px; }
+.wb-composer .pui-input:disabled::placeholder { color: transparent; }
+.wb-composer-wrap.is-sending .wb-composer-field > span { opacity: 0.5; }
+.wb-send { gap: 8px; flex: none; }
+.wb-hint { margin: 0; color: var(--pui-text-muted); font-size: 11px; }
+.wb-busy { display: flex; align-items: center; gap: 8px; color: var(--pui-text-muted); font-size: 13px; }
+.wb-ring { flex: none; width: 12px; height: 12px; border: 2px solid var(--pui-bg-emphasis); border-top-color: var(--pui-theme); border-radius: 9999px; }
+.wb-notice-card {
+  display: grid;
+  gap: 2px;
+  padding: 10px 12px;
+  border: var(--pui-border-width) solid var(--pui-error);
+  border-radius: calc(var(--pui-radius) * 1.5);
+  background-color: var(--wb-sunken);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+}
+.wb-notice-title { color: var(--wb-ink-error); font-weight: 600; }
+
+/* the dialog "Cancel this request and what is still open under it?" */
+.wb-dialog { width: min(26rem, calc(100vw - 32px)); }
+.wb-dialog-card { background-color: var(--wb-raised); box-shadow: var(--wb-elev); }
+.wb-dialog-content { display: grid; gap: 12px; padding: 16px; }
+.wb-dialog-buttons { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+
+@media (max-width: 1023px) {
+  :root { --wb-panel-lobby: min(420px, 46vw); }
+}
+
+@media (max-width: 639px) {
+  :root { --wb-panel-lobby: auto; }
+  .wb-frame[data-screen="lobby"] .wb-main { grid-template-rows: minmax(0, 1fr); padding: 12px; }
+  .wb-frame[data-screen="lobby"] .wb-main > .wb-panel-lobby { height: 100%; min-height: 34rem; }
+  .wb-frame[data-screen="lobby"] .wb-notice-box { position: static; }
+  .wb-plan-wide { display: none; }
+  .wb-plan-stack { display: grid; }
+  .wb-card-buttons .pui-btn, .wb-dialog-buttons .pui-btn { flex: 1 1 100%; min-height: 44px; }
+  .wb-send { min-height: 44px; }
 }
