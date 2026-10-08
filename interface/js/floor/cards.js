@@ -1,0 +1,507 @@
+// The decision cards of the Inbox (handoff cards.md and floor.md): effect, acceptance, question, review and plan, the request
+// line and the cancel dialog. A card shows what the service returned for one decision, draws one button per word of its
+// `actions` (and none for a word it does not know), and sends exactly what the person typed or clicked: the page decides
+// nothing. An effect or a plan is approved only with the hash the card shows, read back from the page's own text at the moment
+// of the click. Text from a model, a path or a reason is put in with textContent (through h()), never as markup.
+//
+// The card is a small state machine over one decision: open, in flight (the control that sent the request reads its "-ing"
+// word, every button is disabled, "Working..." shows for a job), failed (the message above the buttons, the typed text
+// stays, the card is read again) and done (a resolved line, with the result of an approved effect as text). It is built with
+// an environment so a test can run it with a fake document and a fake client:
+//   env = {project, now(), api: {answer, release, approve, reject, verdict, cancel, pollJob}, requestIds: Set of request ids,
+//          links: {floor(agent), lobby(), open(item, path)}, reread(id) -> item, changed(id, outcome), gone(id)}
+
+import { fill, h } from "../dom.js";
+import * as format from "../format.js";
+import { ENDING, openable } from "../floor-model.js";
+import { agoText, chip, errorText, field, isGone, jobText, notice, ring } from "./widgets.js";
+
+// The buttons of each kind, in the drawn order, by the word of `actions` they send, with their "-ing" word.
+export const BUTTONS = Object.freeze({
+  question: [["answered", "Send answer", "Sending..."]],
+  acceptance: [["accepted", "Accept", "Accepting..."], ["rejected", "Reject", "Rejecting..."]],
+  review: [["released", "Release (stays a draft)", "Releasing..."], ["answered", "Send back with a comment", "Sending..."]],
+  plan: [["approved", "Approve this plan", "Approving..."], ["rejected", "Reject", "Rejecting..."]],
+  effect: [["approved", "Approve this exact content", "Approving..."], ["rejected", "Reject", "Rejecting..."]],
+});
+
+const RESOLVED = { approved: "approved", accepted: "accepted", rejected: "rejected", answered: "answered", released: "released" };
+const NOTE_LABEL = "Note (optional, used when you reject)";
+
+/** The buttons a card draws: for each word of the kind's list that is in `actions`, in order. An unknown word is not drawn. */
+export function buttonsFor(item) {
+  const words = Array.isArray(item.actions) ? item.actions : [];
+  return (BUTTONS[item.kind] || []).filter(([word]) => words.includes(word));
+}
+
+/** The limits line of a plan, in the words of plan.build: the first clause only when one task runs at a time. */
+export function limitsLine(payload) {
+  const limits = (payload && payload.limits) || {};
+  const runs = payload && payload.estimate ? payload.estimate.runs_at_least : undefined;
+  const parts = [];
+  if (limits.one_task_at_a_time === true) parts.push("One task at a time;");
+  parts.push(`${parts.length ? "each" : "Each"} run at most ${limits.timeout_seconds} s, retried at most ${limits.retries} times.`);
+  if (runs !== undefined) parts.push(`At least ${runs} runs.`);
+  return parts.join(" ");
+}
+
+/** The rows of a plan's table from `payload.tasks`: positions from 1, `depends_on` keys turned into positions. */
+export function planRows(payload) {
+  const tasks = (payload && Array.isArray(payload.tasks)) ? payload.tasks : [];
+  const place = new Map(tasks.map((t, i) => [t.key, i + 1]));
+  return tasks.map((t, i) => ({
+    n: String(i + 1), title: t.title || "", skill: t.skill || "", agent: t.agent || "-",
+    after: (Array.isArray(t.depends_on) && t.depends_on.length) ? t.depends_on.map((k) => place.get(k)).filter((n) => n !== undefined).join(", ") || "-" : "-",
+    milestone: t.mandatory_milestone ? "yes (mandatory)" : t.milestone ? "yes" : "no", web: t.web ? "yes" : "no",
+  }));
+}
+
+const PLAN_COLUMNS = [["n", "#"], ["title", "Task"], ["skill", "Skill"], ["agent", "Agent"], ["after", "After"], ["milestone", "Milestone"], ["web", "Web"]];
+
+/** The count line of the cancel dialog, built from the request's tasks (display words, never a guess). */
+export function cancelCount(tasks) {
+  const list = Array.isArray(tasks) ? tasks : [];
+  if (!list.length) return "No task has been created yet.";
+  const started = list.filter((t) => !["planned", "ready", "requested"].includes(t.state)).length;
+  return `${list.length} task${list.length === 1 ? "" : "s"}, ${started ? `${started} started` : "none started"}`;
+}
+
+let counter = 0;
+
+/**
+ * A decision card. `item` is the body of `pendingItem` (id, kind, title, body, payload, payload_sha256, status, actions, agent,
+ * task_id, created_at, run_id). Returns {el, id, update(item), focusTitle(), isDone(), outcome()}.
+ */
+export function createCard(item, env) {
+  counter += 1;
+  const uid = `wb-card-${counter}`;
+  const titleId = `${uid}-title`;
+  const root = h("article", { class: "pui-card wb-card", "aria-labelledby": titleId });
+  const state = { item, busy: null, error: null, done: null, verdict: null, empty: null, typed: { answer: "", comment: "", note: "" } };
+  let inputs = {};
+
+  const api = () => env.api;
+
+  // --- the shell -------------------------------------------------------------------------------------------------------------
+
+  function taskLink() {
+    const it = state.item;
+    const request = env.requestIds && env.requestIds.has(it.task_id);
+    if (request || it.kind === "plan" || it.kind === "acceptance") return h("a", { class: "pui-link pui-theme", href: env.links.lobby(), text: `request #${it.task_id}` });
+    const agent = it.agent;
+    return h("a", { class: "pui-link pui-theme", href: agent ? env.links.floor(agent) : env.links.lobby(), text: `task #${it.task_id}` });
+  }
+
+  function header() {
+    const it = state.item;
+    const request = (env.requestIds && env.requestIds.has(it.task_id)) || it.kind === "plan" || it.kind === "acceptance";
+    const where = request ? "Lobby" : (it.agent ? format.agentWord(it.agent) : "");
+    const ago = agoText(it.created_at, env.now());
+    const meta = h("span", { class: "wb-card-meta" }, `#${it.id} · `, taskLink(), where ? ` · ${where}` : "", ago ? ` · ${ago}` : "");
+    if (it.created_at) meta.setAttribute("title", it.created_at);
+    return h("div", { class: "wb-card-head" }, h("span", { class: "pui-badge pui-warn pui-soft", text: format.kindWord(it.kind) }), meta);
+  }
+
+  const text = (value, cls = "wb-card-body") => h("div", { class: cls, text: value || "" });
+
+  function block(label, value, name) {
+    const pre = h("pre", { class: "wb-pre", tabindex: "0", "aria-label": name }, value || "");
+    return [label ? h("div", { class: "wb-card-hint", text: label }) : null, pre];
+  }
+
+  // --- the controls ----------------------------------------------------------------------------------------------------------
+
+  function buttons(extra) {
+    const row = h("div", { class: "wb-card-actions" });
+    const drawn = buttonsFor(state.item);
+    drawn.forEach(([word, label, busyLabel], i) => {
+      const blocked = state.item.kind === "review" && word === "released" && blockedChange(state.item);
+      const mine = state.busy === word;
+      const button = h("button", {
+        class: `pui-btn ${i === 0 ? "pui-theme" : "pui-surface"} pui-outline wb-card-button`, type: "button", "data-word": word,
+        "aria-busy": mine ? "true" : null, "aria-disabled": blocked ? "true" : null, "aria-describedby": blocked ? `${uid}-blocked` : null,
+      }, mine ? ring(true) : null, mine ? busyLabel : label);
+      button.disabled = Boolean(state.busy) || Boolean(state.done);
+      button.addEventListener("click", () => press(word));
+      row.append(button);
+    });
+    if (extra) row.append(extra);
+    if (state.busy && isJob(state.busy)) row.append(h("span", { class: "wb-working", role: "status", text: "Working..." }));
+    return row;
+  }
+
+  function isJob(word) {
+    const kind = state.item.kind;
+    return (kind === "effect" && word === "approved") || (kind === "plan" && word === "approved") || (kind === "acceptance" && word === "accepted") || (kind === "review" && word === "released");
+  }
+
+  function message() {
+    if (!state.error) return null;
+    const extra = state.error.gone ? h("a", { class: "pui-link pui-theme", href: env.links.parent ? env.links.parent() : "#/", text: "Back" }) : null;
+    return notice(state.error.text, "error", extra);
+  }
+
+  function textarea(key, label, rows, hint, invalid) {
+    const control = h("textarea", { class: "pui-input wb-field-input", rows: String(rows), "aria-keyshortcuts": key === "answer" ? "Control+Enter Meta+Enter" : null, "aria-invalid": invalid ? "true" : null });
+    control.value = state.typed[key];
+    control.disabled = Boolean(state.busy) || Boolean(state.done);
+    control.addEventListener("input", () => { state.typed[key] = control.value; });
+    control.addEventListener("keydown", (event) => {
+      if (key === "answer" && (event.ctrlKey || event.metaKey) && event.key === "Enter") {
+        event.preventDefault();
+        press("answered");
+      }
+    });
+    inputs[key] = control;
+    return field(label, control, hint);
+  }
+
+  function noteInput() {
+    const control = h("input", { class: "pui-input wb-field-input", type: "text" });
+    control.value = state.typed.note;
+    control.disabled = Boolean(state.busy) || Boolean(state.done);
+    control.addEventListener("input", () => { state.typed.note = control.value; });
+    inputs.note = control;
+    return field(NOTE_LABEL, control);
+  }
+
+  function blockedChange(it) {
+    const change = it.payload && it.payload.changeset;
+    return Boolean(change && change.blocked);
+  }
+
+  // --- the kinds -------------------------------------------------------------------------------------------------------------
+
+  function effectBody() {
+    const it = state.item;
+    const hash = h("code", { class: "wb-hash", "data-hash": "effect" }, it.payload_sha256 || "");
+    state.hashNode = hash;
+    return [
+      h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }),
+      h("div", { class: "wb-card-hint", text: "Exact content of the publish (what will be sent):" }),
+      h("pre", { class: "wb-pre", tabindex: "0", "aria-label": "Exact content of the publish" }, it.body || ""),
+      h("div", { class: "wb-card-hint", text: "Hash of this content" }), hash,
+      h("p", { class: "wb-card-line", text: "Nothing is sent before you approve this exact content." }),
+      noteInput(), message(), buttons(),
+    ];
+  }
+
+  function acceptanceBody() {
+    return [h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: state.item.title }), text(state.item.body), message(), buttons()];
+  }
+
+  function questionBody() {
+    const it = state.item;
+    return [h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }), text(it.body),
+      textarea("answer", "Your answer", 2, h("small", { class: state.empty === "answer" ? "wb-hint is-error" : "wb-hint", text: state.empty === "answer" ? "Type an answer." : "Ctrl or Cmd plus Enter sends." }), state.empty === "answer"),
+      message(), buttons()];
+  }
+
+  function pathRow(file, withOpen) {
+    const link = withOpen && openable(file.path) ? h("a", { class: "pui-link pui-theme", href: env.links.open(state.item, file.path), "aria-label": `Open ${file.path}`, text: "Open" }) : null;
+    return h("li", { class: "wb-path-row" }, h("code", { class: "wb-path", text: file.path }), file.reason ? h("span", { class: "wb-card-hint", text: String(file.reason) }) : null, link);
+  }
+
+  function reviewBody() {
+    const it = state.item;
+    const payload = it.payload || {};
+    const returned = Array.isArray(payload.returned) ? payload.returned : [];
+    const kept = Array.isArray(payload.kept) ? payload.kept : [];
+    const parts = [h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }),
+      h("div", { class: "wb-card-body wb-scroll", tabindex: "0", "aria-label": "Text of the review", text: it.body || "" })];
+    if (returned.length) parts.push(h("div", { class: "wb-card-hint", text: "Returned" }), h("ul", { class: "wb-paths" }, returned.map((f) => pathRow(f, true))));
+    if (kept.length) parts.push(h("div", { class: "wb-card-hint", text: "Kept" }), h("ul", { class: "wb-paths" }, kept.map((f) => pathRow(f, false))));
+    if (payload.ending) parts.push(h("div", { class: "wb-card-line" }, h("span", { class: "wb-muted", text: "Ending: " }), ENDING[payload.ending] || String(payload.ending)));
+    if (payload.why) parts.push(h("div", { class: "wb-card-body wb-muted", text: String(payload.why) }));
+    const change = payload.changeset || {};
+    if (change.error) parts.push(notice(String(change.error), "error"));
+    if (change.blocked) {
+      parts.push(h("div", { class: "wb-blocked", id: `${uid}-blocked` },
+        h("strong", { class: "wb-blocked-title", text: "The change set is blocked: release refused" }),
+        (change.refused || []).map((r) => h("div", { class: "wb-path-row" }, h("code", { class: "wb-path", text: r.path || "the whole set" }), h("span", { class: "wb-card-hint", text: String(r.reason || "") }))),
+        h("span", { class: "wb-card-line", text: "Answer the review with a comment, or cancel the request." })));
+    }
+    parts.push(textarea("comment", "Comment", 2, state.empty === "comment" ? h("small", { class: "wb-hint is-error", text: "Type a comment." }) : null, state.empty === "comment"), message());
+    let disclosure = null;
+    if (it.run_id !== null && it.run_id !== undefined) disclosure = verdictDisclosure(it.run_id);
+    parts.push(buttons(), disclosure);
+    return parts;
+  }
+
+  function verdictDisclosure(runId) {
+    const row = h("div", { class: "wb-verdicts" });
+    for (const word of ["worked", "corrected", "failed"]) {
+      const button = h("button", { class: "pui-btn pui-surface pui-outline wb-verdict-button", type: "button", "data-verdict": word, text: word });
+      button.disabled = Boolean(state.busy) || Boolean(state.done) || Boolean(state.verdict && state.verdict.done);
+      button.addEventListener("click", () => sendVerdict(word, runId));
+      row.append(button);
+    }
+    return h("details", { class: "pui-accordion-item wb-verdict" },
+      h("summary", { class: "wb-summary", text: "Record a verdict" }), row,
+      state.verdict ? (state.verdict.error ? notice(state.verdict.text, "error") : h("p", { class: "wb-card-line", role: "status", text: state.verdict.text })) : null);
+  }
+
+  function planBody() {
+    const it = state.item;
+    const payload = it.payload || {};
+    const rows = planRows(payload);
+    const hash = h("code", { class: "wb-hash", "data-hash": "plan" }, payload.plan_sha256 || "");
+    state.hashNode = hash;
+    const table = h("table", { class: "pui-table wb-plan-table" },
+      h("thead", {}, h("tr", {}, PLAN_COLUMNS.map(([, label]) => h("th", { scope: "col", text: label })))),
+      h("tbody", {}, rows.map((r) => h("tr", {}, PLAN_COLUMNS.map(([key, label]) => h("td", { "data-label": label, class: key === "skill" ? "wb-skill" : null, text: r[key] }))))));
+    return [
+      h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }),
+      h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "Plan tasks" }, table),
+      h("div", { class: "wb-card-hint", text: limitsLine(payload) }),
+      h("div", { class: "wb-card-hint", text: "Plan hash" }), hash,
+      h("details", { class: "pui-accordion-item wb-verdict" }, h("summary", { class: "wb-summary", text: "Plan as text" }), h("pre", { class: "wb-pre", text: it.body || "" })),
+      noteInput(), message(), buttons(),
+    ];
+  }
+
+  function unknownBody() {
+    const it = state.item;
+    return [h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }), text(it.body),
+      it.kind === "your_document" ? h("p", { class: "wb-card-line", text: "Delivering a document is not available on this page yet." }) : null];
+  }
+
+  function doneBody() {
+    const done = state.done;
+    const result = done.result && typeof done.result === "object" ? done.result : null;
+    const lines = [];
+    if (result) {
+      if (result.commit) lines.push(`commit: ${result.commit}`);
+      if (result.pull_request) lines.push(`pull request: ${typeof result.pull_request === "object" ? JSON.stringify(result.pull_request) : result.pull_request}`);
+      if (state.item.kind === "question" && result.state && result.state.written === false && result.state.reason) lines.push(String(result.state.reason));
+    }
+    return h("div", { class: "wb-resolved wb-card-done", role: "status", tabindex: "-1" },
+      chip(done.text, "pui-success pui-soft"), h("span", { class: "wb-muted", text: state.item.title }),
+      lines.length ? h("div", { class: "wb-card-result" }, lines.map((l) => h("div", { class: "mono", text: l }))) : null);
+  }
+
+  function render() {
+    const active = document.activeElement;
+    const word = active && root.contains(active) && active.getAttribute ? active.getAttribute("data-word") : null;
+    inputs = {};
+    const it = state.item;
+    let body;
+    if (state.done) body = [doneBody()];
+    else if (it.kind === "effect") body = effectBody();
+    else if (it.kind === "acceptance") body = acceptanceBody();
+    else if (it.kind === "question") body = questionBody();
+    else if (it.kind === "review") body = reviewBody();
+    else if (it.kind === "plan") body = planBody();
+    else body = unknownBody();
+    if (state.done) fill(root, h("div", { class: "pui-card-content wb-card-content" }, h("h3", { class: "wb-sr", id: titleId, text: it.title }), body));
+    else fill(root, header(), h("div", { class: "pui-card-content wb-card-content" }, body));
+    root.setAttribute("aria-busy", state.busy ? "true" : "false");
+    if (word) {
+      const next = root.querySelector ? root.querySelector(`[data-word="${word}"]`) : null;
+      if (next && !next.disabled) next.focus();
+    }
+  }
+
+  // --- the actions -----------------------------------------------------------------------------------------------------------
+
+  async function press(word) {
+    if (state.busy || state.done) return;
+    const it = state.item;
+    state.empty = null;
+    let run;
+    if (it.kind === "question" && word === "answered") {
+      if (!state.typed.answer.trim()) return refuse("answer");
+      run = () => api().answer(env.project, it.id, state.typed.answer);
+    } else if (it.kind === "review" && word === "answered") {
+      if (!state.typed.comment.trim()) return refuse("comment");
+      run = () => api().answer(env.project, it.id, state.typed.comment);
+    } else if (it.kind === "review" && word === "released") {
+      if (blockedChange(it)) return;   // the operation would refuse: nothing is sent from the page (the 409 stays the backstop)
+      run = () => api().release(env.project, it.id);
+    } else if (it.kind === "effect" && word === "approved") {
+      const shown = state.hashNode ? state.hashNode.textContent : "";
+      if (!shown || shown !== it.payload_sha256) {
+        state.error = { text: "The hash shown is not the hash of this decision. Nothing was sent; the card is read again." };
+        render();
+        return reread();
+      }
+      run = () => api().approve(env.project, it.id, shown);
+    } else if (it.kind === "plan" && word === "approved") {
+      const shown = state.hashNode ? state.hashNode.textContent : "";
+      if (!shown || shown !== (it.payload && it.payload.plan_sha256)) {
+        state.error = { text: "The hash shown is not the hash of this plan. Nothing was sent; the card is read again." };
+        render();
+        return reread();
+      }
+      run = () => api().approve(env.project, it.id, shown);
+    } else if (it.kind === "acceptance" && word === "accepted") {
+      run = () => api().approve(env.project, it.id);
+    } else if (word === "rejected") {
+      const note = state.typed.note.trim() ? state.typed.note : undefined;
+      run = () => api().reject(env.project, it.id, it.kind === "acceptance" ? undefined : note);
+    } else {
+      return;
+    }
+    state.busy = word;
+    state.error = null;
+    render();
+    try {
+      let result = await run();
+      if (isJob(word) && result && typeof result === "object" && result.job) {
+        const finished = await api().pollJob(result.job, 1000);
+        if (finished.state === "failed") throw Object.assign(new Error(jobText(finished)), { job: true });
+        result = finished.result;
+      }
+      state.busy = null;
+      state.done = { text: `${format.kindWord(it.kind)} ${RESOLVED[word]}`, result, word };
+      render();
+      if (env.changed) env.changed(it.id, state.done);
+    } catch (e) {
+      state.busy = null;
+      state.error = { text: errorText(e), gone: isGone(e) };
+      render();
+      if (isGone(e)) {
+        if (env.gone) env.gone(it.id);
+      } else {
+        await reread();
+      }
+    }
+  }
+
+  function refuse(key) {
+    state.empty = key;
+    render();
+    if (inputs[key] && inputs[key].focus) inputs[key].focus();
+  }
+
+  async function sendVerdict(word, runId) {
+    if (state.busy || state.done || (state.verdict && state.verdict.done)) return;
+    state.busy = "verdict";
+    render();
+    try {
+      await api().verdict(env.project, runId, word);
+      state.verdict = { text: `Verdict recorded: ${word}.`, done: true };
+    } catch (e) {
+      state.verdict = { text: errorText(e), error: true };
+    }
+    state.busy = null;
+    render();
+    const details = root.querySelector ? root.querySelector("details.wb-verdict") : null;
+    if (details && details.setAttribute) details.setAttribute("open", "");
+  }
+
+  async function reread() {
+    if (!env.reread) return;
+    try {
+      const fresh = await env.reread(state.item.id);
+      if (fresh && fresh.status && fresh.status !== "open") {
+        state.item = fresh;
+        if (env.changed) env.changed(fresh.id, null);
+        return;
+      }
+      if (fresh) state.item = fresh;
+      render();
+    } catch (e) {
+      if (isGone(e) && env.gone) env.gone(state.item.id);
+    }
+  }
+
+  render();
+  return {
+    el: root, id: item.id,
+    /** Draw a fresher body of the same decision (typed text stays); a card in flight is not touched. */
+    update(next) {
+      if (state.busy || state.done) return;
+      state.item = next;
+      render();
+    },
+    focusTitle() {
+      const node = root.querySelector ? root.querySelector(`#${titleId}`) : null;
+      if (node && node.focus) node.focus();
+    },
+    isDone() {
+      return Boolean(state.done);
+    },
+    outcome() {
+      return state.done;
+    },
+    item() {
+      return state.item;
+    },
+  };
+}
+
+/**
+ * The request line (a badge, "Request #16: title", its state chip, and "Cancel request") and its dialog. request is a row of
+ * `status.requests[]` {id, title, state, tasks}; env as above plus {words(state)}. Returns {el, dialog, update(request)}.
+ */
+export function createRequestLine(request, env) {
+  counter += 1;
+  const uid = `wb-request-${counter}`;
+  let current = request;
+  let busy = false;
+  let error = null;
+  const el = h("div", { class: "wb-request-line" });
+  const dialog = h("dialog", { class: "pui-modal wb-cancel-dialog", "aria-labelledby": `${uid}-title` });
+  let opener = null;
+  dialog.addEventListener("close", () => {
+    if (opener && opener.isConnected) opener.focus();
+  });
+
+  function drawDialog() {
+    const keep = h("button", { class: "pui-btn pui-surface pui-outline", type: "button", text: "Keep it" });
+    const go = h("button", { class: "pui-btn pui-error pui-outline", type: "button", "aria-busy": busy ? "true" : null }, busy ? ring(true) : null, busy ? "Cancelling..." : "Cancel request");
+    keep.disabled = busy;
+    go.disabled = busy;
+    keep.addEventListener("click", () => dialog.close());
+    go.addEventListener("click", async () => {
+      if (busy) return;
+      busy = true;
+      error = null;
+      drawDialog();
+      try {
+        await env.api.cancel(env.project, current.id);
+        busy = false;
+        dialog.close();
+        if (env.changed) env.changed(current.id, { text: `Request ${current.id} cancelled` });
+      } catch (e) {
+        busy = false;
+        error = errorText(e);
+        drawDialog();
+      }
+    });
+    fill(dialog, h("div", { class: "pui-card wb-card" },
+      h("div", { class: "pui-card-content wb-card-content" },
+        h("strong", { class: "wb-card-title", id: `${uid}-title`, text: "Cancel this request and what is still open under it?" }),
+        h("div", { class: "wb-card-hint", text: `Request #${current.id}: ${current.title || ""} · ${cancelCount(current.tasks)}` }),
+        error ? notice(error, "error") : null,
+        h("div", { class: "wb-card-actions is-end" }, keep, go))));
+    if (dialog.open && keep.focus) keep.focus();
+  }
+
+  function draw() {
+    const open = h("button", { class: "pui-btn pui-link pui-error wb-cancel-link", type: "button", text: "Cancel request" });
+    open.addEventListener("click", () => {
+      opener = open;
+      error = null;
+      drawDialog();
+      dialog.showModal();
+      const keep = dialog.querySelector ? dialog.querySelector("button") : null;
+      if (keep && keep.focus) keep.focus();
+    });
+    fill(el, h("span", { class: "pui-badge pui-muted pui-soft pui-rounded-full", text: `#${current.id}` }),
+      h("span", { text: `Request #${current.id}: ${current.title || ""}` }), chip(env.words ? env.words(current.state) : current.state, "pui-muted pui-soft", "11"),
+      open, dialog);
+    el.hidden = current.state === "done" || current.state === "cancelled";
+  }
+
+  draw();
+  return {
+    el, dialog,
+    update(next) {
+      if (dialog.open) return;
+      current = next;
+      draw();
+    },
+  };
+}

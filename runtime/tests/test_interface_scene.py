@@ -598,9 +598,10 @@ def test_the_engine_keeps_the_performance_rules_of_the_scene():
     assert "light.shadow.dispose()" in engine, "the sun's shadow map is freed when the lights are replaced"
     assert "onRestored" in (JS / "views" / "city.js").read_text(encoding="utf-8"), "the scene host is shown again after a restored context"
     assert "export const CAMERA_MS = 600" in engine, "the camera moves in 600 ms"
-    for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js"):
+    for name in ("palette.js", "kit.js", "props.js", "city.js", "labels.js", "cull.js", "fit.js",
+                 "building.js", "room.js", "figure.js", "furniture.js", "plates.js"):   # the last five: WP-9.3b
         assert (SCENE / name).is_file()
-    assert len(list(SCENE.glob("*.js"))) == 10 and (SCENE / "tween.js").is_file()
+    assert len(list(SCENE.glob("*.js"))) == 15 and (SCENE / "tween.js").is_file()
 
 
 def test_the_scene_draws_nothing_decorative_and_holds_no_colour_of_its_own():

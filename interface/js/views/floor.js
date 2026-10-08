@@ -1,0 +1,353 @@
+// The Floor screen (handoff floor.md and cards.md): one agent in its room (the figure at its desk, the wall board, the inbox
+// tray, a table of sheets, a cabinet) and a side panel with three tabs: Agent (state, mode, meters, the current task and its
+// runs, other tasks, "Hand a file over"), Inbox (one card per open decision of the agent, then the resolved ones) and Desk (the
+// agent's documents and the viewer). It owns the scene engine for as long as the screen is shown. The page decides nothing:
+// every panel shows what an operation returned, and each control sends one request (the cards, the Agent tab). This module
+// reads (the status and agents the page already holds, a task's body, the documents) and arranges.
+
+import * as api from "../api.js";
+import { fill, h } from "../dom.js";
+import * as fm from "../floor-model.js";
+import { createAgentTab } from "../floor/agent-tab.js";
+import { actions } from "../floor/actions.js";
+import { createDeskTab } from "../floor/desk-tab.js";
+import { createInbox } from "../floor/inbox.js";
+import { createViewer } from "../floor/viewer.js";
+import { busyLine, createTabs } from "../floor/widgets.js";
+import { icon } from "../frame/icons.js";
+import * as router from "../router.js";
+import { createEngine, NoWebGL } from "../scene/engine.js";
+import { pips } from "../scene/plates.js";
+
+const TASK_FRESH_MS = 5000;
+const TASK_STALE_MS = 15000;
+const DOCS_OPEN_MS = 5000;
+const DOCS_IDLE_MS = 30000;
+const MAX_TASK_READS = 12;
+const TABS = [{ id: "agent", label: "Agent" }, { id: "inbox", label: "Inbox" }, { id: "desk", label: "Desk" }];
+
+/** The room the loading state draws: an empty desk, nothing to point at. */
+function loadingRoom() {
+  return { ready: false, state: "off", window: "dark", decisions: 0, drawers: 1, sheets: [], tips: { agent: "", desk: "", tray: "", cabinet: "", board: "" }, board: null };
+}
+
+/** Create the Floor in `frame`. env: {refresh()}. Returns {update({snapshot, route, now}), dispose(), stats()}. */
+export function createFloorView(frame, env) {
+  let engine = null;
+  let disposed = false;
+  let last = null;
+  let project = null;
+  let agent = null;
+  let documents = null;
+  let documentsAt = 0;
+  let documentsError = null;
+  let readingDocuments = false;
+  const bodies = new Map();       // task id -> {body, state, at}
+  const reading = new Set();
+  let shownScene = "";
+  let viewerPath = null;
+  let lastOpened = null;
+  let leftInbox = true;
+  let wasWorking = null;       // the live region says when the agent starts working, never on the first read
+
+  // --- the panel ---------------------------------------------------------------------------------------------------------------
+  const tile = h("span", { class: "wb-tile pui-soft pui-warn" });
+  const title = h("strong", { class: "wb-panel-title", id: "wb-floor-title", text: "" });
+  const sub = h("span", { class: "wb-panel-sub", text: "" });
+  const modeChip = h("span", { class: "pui-chip pui-muted pui-outline pui-rounded-full wb-mode-plate wb-header-mode", hidden: true });
+  const head = h("div", { class: "wb-panel-head wb-floor-head" }, tile, h("div", { class: "wb-panel-titles" }, title, sub, modeChip));
+  const tabs = createTabs("Floor", TABS, (id) => { window.location.hash = router.floorHash(project, agent, id); });
+  const tabpanel = h("div", { class: "wb-panel-body wb-tabpanel", id: "wb-tabpanel", role: "tabpanel" });
+  const normal = h("div", { class: "wb-floor-normal" }, head, tabs.el, tabpanel);
+  const backLink = h("a", { class: "pui-link pui-theme", href: "#/", text: "Back to the building" });
+  const unknown = h("div", { class: "wb-floor-unknown", hidden: true }, h("p", { text: "This agent is not in the project's configuration." }), backLink);
+  const waitingEl = h("p", { class: "wb-empty-line", text: "Waiting for the configuration to be accepted." });
+  const viewer = createViewer({ onClose: () => closeViewer() });
+  const viewerHost = h("div", { class: "wb-viewer-host", hidden: true }, viewer.el);
+  const panel = h("section", { class: "pui-card wb-panel wb-panel-floor", role: "region", "aria-labelledby": "wb-floor-title", id: "wb-panel", tabindex: "-1" }, normal, unknown, viewerHost);
+  frame.main.append(panel);
+  const phoneDialog = h("dialog", { class: "pui-modal wb-viewer-dialog", "aria-label": "Document" });
+  phoneDialog.addEventListener("close", () => {
+    if (viewerPath !== null && last && last.route.path) window.location.hash = router.deskHash(project, agent);
+  });
+  frame.el.append(phoneDialog);
+  const phone = window.matchMedia("(max-width: 639px)");
+
+  // the tab components need the project and the agent, known at the first update: they are made then
+  let inbox = null;
+  let desk = null;
+  let agentTabLive = null;
+
+  function makeTabs() {
+    if (inbox) return;
+    agentTabLive = createAgentTab({ project, agent, api: actions, refresh: () => env.refresh(), now: () => new Date() });
+    inbox = createInbox({
+      project, now: () => new Date(), api: actions, refresh: () => { env.refresh(); readBodies(true); },
+      links: {
+        floor: (a) => router.floorHash(project, a), lobby: () => router.lobbyHash(project), parent: () => router.buildingHash(project),
+        open: (item, path) => (item.agent ? router.deskHash(project, item.agent, path) : `${router.lobbyHash(project, "desk")}/${encodeURIComponent(path)}`),
+      },
+    });
+    desk = createDeskTab({ project, agent, open: (path) => { lastOpened = path; window.location.hash = router.deskHash(project, agent, path); } });
+  }
+
+  // --- the scene ---------------------------------------------------------------------------------------------------------------
+  function sceneOpen(id) {
+    if (disposed || !project) return;
+    if (id === "tray") window.location.hash = router.floorHash(project, agent, "inbox");
+    else if (id === "cabinet") window.location.hash = router.floorHash(project, agent, "desk");
+    else if (id === "board" || id === "agent" || id === "desk") window.location.hash = router.floorHash(project, agent, "agent");
+    else if (String(id).startsWith("sheet:")) window.location.hash = router.deskHash(project, agent, String(id).slice(6));
+  }
+
+  try {
+    engine = createEngine(frame.sceneHost, {
+      label: "Floor, loading",
+      getInsets: () => {
+        const base = frame.insets(panel);
+        if (frame.isPhone()) return { ...base, left: 8, right: 8, bottom: 6, pad: 1.02 };
+        return base;
+      },
+      onOpen: sceneOpen,
+      onUnavailable: () => frame.sceneUnavailable(true),
+      onRestored: () => frame.sceneUnavailable(false),   // the context came back: the host is shown again
+    });
+    frame.sceneUnavailable(false);
+  } catch (e) {
+    if (!(e instanceof NoWebGL)) throw e;
+    frame.sceneUnavailable(true);
+  }
+  const observer = new ResizeObserver(() => { if (engine) engine.refit(); });
+  observer.observe(frame.track.el);
+  observer.observe(panel);
+  observer.observe(frame.noticeBox);
+
+  // --- the keyboard --------------------------------------------------------------------------------------------------------------
+  function closeViewer() {
+    if (!project) return;
+    window.location.hash = router.deskHash(project, agent);
+  }
+  const onKey = (event) => {
+    if (event.key !== "Escape" || disposed || !last) return;
+    const a = document.activeElement;
+    if ((a && a.closest && a.closest(".wb-switcher, .wb-wait-menu-wrap")) || document.querySelector("dialog[open].wb-cancel-dialog")) return;
+    const route = last.route;
+    if (route.path) {
+      if (phoneDialog.open) phoneDialog.close();
+      else closeViewer();
+    } else if (route.pending !== null) {
+      window.location.hash = router.floorHash(project, agent, "inbox");
+    } else {
+      window.location.hash = router.buildingHash(project);
+    }
+  };
+  document.addEventListener("keydown", onKey);
+
+  // --- reading -----------------------------------------------------------------------------------------------------------------
+  function ensureBody(task, maxAge) {
+    const cached = bodies.get(task.id);
+    if (reading.has(task.id)) return;
+    if (cached && cached.state === task.state && Date.now() - cached.at < maxAge) return;
+    reading.add(task.id);
+    api.task(project, task.id).then((body) => {
+      bodies.set(task.id, { body, state: task.state, at: Date.now() });
+    }).catch(() => {
+      bodies.set(task.id, { body: cached ? cached.body : null, state: task.state, at: Date.now() });
+    }).finally(() => {
+      reading.delete(task.id);
+      redraw();
+    });
+  }
+
+  function readBodies(force = false) {
+    if (!last || !project) return;
+    const view = fm.floor(last.snapshot, project, agent, bodiesPlain());
+    if (!view || !view.found || view.notAccepted) return;
+    const wanted = new Map();
+    if (view.current) wanted.set(view.current.id, view.current);
+    const running = view.tasks.find((t) => t.state === "running");
+    if (running) wanted.set(running.id, running);
+    if (last.route.tab === "inbox") for (const t of view.tasks.slice(0, MAX_TASK_READS)) wanted.set(t.id, t);
+    for (const t of wanted.values()) {
+      if (force) bodies.delete(t.id);
+      ensureBody(t, t.state === "running" ? TASK_FRESH_MS : TASK_STALE_MS);
+    }
+  }
+
+  function bodiesPlain() {
+    const out = {};
+    for (const [id, entry] of bodies) if (entry.body) out[id] = entry.body;
+    return out;
+  }
+
+  async function readDocuments() {
+    if (readingDocuments || disposed || !project) return;
+    readingDocuments = true;
+    try {
+      const body = await api.artifacts(project);
+      documents = { rows: Array.isArray(body.artifacts) ? body.artifacts : [], truncated: Boolean(body.truncated) };
+      documentsError = null;
+    } catch (e) {
+      if (e && e.name === "ApiError" && e.status === 412) {
+        // not accepted: the page shows its waiting line
+      } else {
+        documentsError = (e && e.message) || "The documents could not be read.";
+      }
+      if (!documents) documents = null;
+    }
+    documentsAt = Date.now();
+    readingDocuments = false;
+    redraw();
+  }
+
+  // --- drawing -----------------------------------------------------------------------------------------------------------------
+  function drawHeader(model, tab) {
+    const header = model.header;
+    title.textContent = header.title;
+    sub.textContent = header.sub;
+    fill(tile, icon(header.icon, 18));
+    const warn = model.row && model.row.state === "waiting";
+    tile.className = `wb-tile pui-soft pui-${warn ? "warn" : "theme"}`;
+    const showMode = tab !== "agent" && model.row && model.row.mode && !model.notAccepted;
+    modeChip.hidden = !showMode;
+    if (showMode) fill(modeChip, h("span", { text: model.row.mode }), pips(model.row.pips));
+  }
+
+  function redraw() {
+    if (disposed || !last) return;
+    const { snapshot, route } = last;
+    makeTabs();
+    const loading = !snapshot.loaded;
+    const model = loading ? null : fm.floor(snapshot, project, agent, bodiesPlain());
+    const tab = TABS.some((t) => t.id === route.tab) ? route.tab : "agent";
+    const missing = !loading && model && !model.found;
+    unknown.hidden = !missing;
+    normal.hidden = Boolean(missing);
+    if (missing) {
+      panel.removeAttribute("aria-labelledby");
+      panel.setAttribute("aria-label", "Agent not found");
+    } else {
+      panel.removeAttribute("aria-label");
+      panel.setAttribute("aria-labelledby", "wb-floor-title");
+    }
+    if (missing) {
+      backLink.setAttribute("href", router.buildingHash(project));
+      title.textContent = format_title(agent);
+      showScene(null, "Floor, agent not in the configuration");
+      return;
+    }
+    if (loading || !model) {
+      title.textContent = format_title(agent);
+      sub.textContent = "Loading the floor...";
+      modeChip.hidden = true;
+      tabs.set(tab, {}, {});
+      fill(tabpanel, busyLine("Loading the floor..."));
+      showScene(loadingRoom(), "Floor, loading");
+      return;
+    }
+
+    if (model.row && !model.notAccepted) {
+      if (wasWorking === false && model.row.state === "working") frame.announce(`${model.row.label} agent started working`);
+      wasWorking = model.row.state === "working";
+    }
+    drawHeader(model, tab);
+    const documentsRows = documents ? fm.agentDocuments(documents.rows, agent, model.view.none) : [];
+    const names = fm.tabNames(model.decisions.length, documentsRows.length);
+    tabs.set(tab, { inbox: { count: model.decisions.length, tone: "pui-warn pui-soft" }, desk: { count: documentsRows.length, tone: "pui-muted pui-soft" } }, names);
+    tabpanel.setAttribute("aria-labelledby", `wb-tab-${tab}`);
+
+    const viewing = Boolean(route.path) && tab === "desk" && !model.notAccepted;
+    drawViewer(route, viewing);
+    const selected = model.notAccepted && tab !== "agent" ? { el: waitingEl } : { agent: agentTabLive, inbox, desk }[tab];
+    if (tabpanel.children[0] !== selected.el) fill(tabpanel, selected.el);
+    if (tab !== "inbox" && !leftInbox) {
+      inbox.reset();
+      leftInbox = true;
+    }
+    if (tab === "inbox") leftInbox = false;
+
+    if (tab === "agent") agentTabLive.update(model);
+    else if (model.notAccepted) {
+      // the waiting line is already in place
+    } else if (tab === "inbox") {
+      const ids = model.tasks.map((t) => t.id);
+      inbox.update({ decisions: model.decisions, requests: snapshot.details[project].status.requests || [], resolved: fm.resolvedLines(bodiesPlain(), ids, last.now), selected: route.pending, loading: false });
+    } else {
+      desk.update({ documents: documentsRows, truncated: Boolean(documents && documents.truncated), loading: documents === null && !documentsError, error: documentsError });
+    }
+    if (tab !== "agent") agentTabLive.update(model);   // keep the mode result notice and the state current while another tab is open
+
+    const documentsFor = model.notAccepted ? [] : documentsRows;
+    const scene = fm.roomScene(model, documentsFor, true);
+    showScene(scene, model.canvasLabel);
+  }
+
+  function format_title(name) {
+    return name ? `${name.charAt(0).toUpperCase()}${name.slice(1)} · ${name.charAt(0).toUpperCase()}${name.slice(1)} agent` : "";
+  }
+
+  function showScene(model, label) {
+    if (!engine) return;
+    const key = JSON.stringify([model, label]);
+    if (key === shownScene) return;
+    shownScene = key;
+    engine.show(model ? "room" : "none", model || {}, label);
+  }
+
+  function drawViewer(route, viewing) {
+    const isPhone = phone.matches;
+    if (!viewing) {
+      if (viewerPath !== null) {
+        viewer.close();
+        viewerPath = null;
+        if (phoneDialog.open) phoneDialog.close();
+        const back = lastOpened;
+        if (back && desk) setTimeout(() => desk.focusRow(back), 0);
+      }
+      viewerHost.hidden = true;
+      return;
+    }
+    if (viewerPath !== route.path) {
+      viewerPath = route.path;
+      viewer.load(project, route.path).then(() => viewer.focus());
+    }
+    if (isPhone) {
+      if (viewer.el.parentNode !== phoneDialog) phoneDialog.append(viewer.el);
+      if (!phoneDialog.open) phoneDialog.showModal();
+      viewerHost.hidden = true;
+    } else {
+      if (viewer.el.parentNode !== viewerHost) viewerHost.append(viewer.el);
+      viewerHost.hidden = false;
+      normal.hidden = true;
+    }
+  }
+
+  return {
+    /** data: {snapshot, route, now}. */
+    update(data) {
+      last = data;
+      project = data.route.project;
+      agent = data.route.agent;
+      if (data.snapshot.loaded) {
+        readBodies();
+        const stale = Date.now() - documentsAt > (data.route.tab === "desk" ? DOCS_OPEN_MS : DOCS_IDLE_MS);
+        if (documentsAt === 0 || stale) readDocuments();
+      }
+      redraw();
+    },
+    dispose() {
+      disposed = true;
+      observer.disconnect();
+      document.removeEventListener("keydown", onKey);
+      viewer.close();
+      if (engine) engine.dispose();
+      panel.remove();
+      phoneDialog.remove();
+      frame.sceneUnavailable(false);
+    },
+    /** For the page's checks: the engine's counters, or null without WebGL. */
+    stats() {
+      return engine ? engine.stats() : null;
+    },
+  };
+}
