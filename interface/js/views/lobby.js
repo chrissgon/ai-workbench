@@ -2,31 +2,31 @@
 // holds the messages, each request's line and its decisions (the plan card under the message that produced it), and at the bottom
 // the "New request" disclosure and the composer. The page decides nothing: it sends what the person typed (`say`, or `request`
 // then `route`), reads `conversation` and `task` and draws what came. The conversation is read every 2 seconds while a job of
-// this screen runs and every 10 seconds otherwise, never while the document is hidden.
+// this screen runs and every 10 seconds otherwise, never while the document is hidden. The Inbox, Desk and Agent tabs are the
+// Floor's modules (floor/inbox.js, desk-tab.js, viewer.js, agent-tab.js) given the planning agent: lobby-inbox.js, lobby-desk.js
+// and lobby-agent.js hand them their data, and every write they send goes through floor/actions.js.
 
 import * as api from "../api.js";
 import { failureText } from "../cards/plan-rows.js";
 import { h } from "../dom.js";
+import * as fm from "../floor-model.js";
 import { createPanel } from "../frame/panel.js";
 import * as router from "../router.js";
 import { createRequest, routeRequest, sendTurn, waitFor, worthSending } from "./lobby-actions.js";
+import { createLobbyAgent } from "./lobby-agent.js";
 import { createComposer } from "./lobby-composer.js";
+import { createLobbyDesk, createLobbyViewer } from "./lobby-desk.js";
 import { createForm } from "./lobby-form.js";
+import { createLobbyInbox } from "./lobby-inbox.js";
 import {
-  NOT_ACCEPTED_TEXT, cancelCount, canvasLabel, lastId, lobbyDecisions, mergeMessages, noticeFor, notRoutedNotice, placeBlocks, pollInterval,
-  roomModel, signatureOf, tabOf, wantedBodies,
+  NOT_ACCEPTED_TEXT, cancelCount, canvasLabel, inboxParts, isNamed, lastId, lobbyDecisions, mergeMessages, noticeFor, notRoutedNotice, placeBlocks,
+  pollInterval, roomModel, signatureOf, tabOf, wantedBodies,
 } from "./lobby-model.js";
 import { createCancelDialog } from "./lobby-request.js";
 import { mountLobbyScene } from "./lobby-scene.js";
 import { createTabs } from "./lobby-tabs.js";
 import { createThread } from "./lobby-thread.js";
 import * as model from "../model.js";
-
-const LATER = {
-  inbox: "The Inbox comes with the Floor package. A plan or a question on a request is under its message in the Conversation tab.",
-  desk: "The Desk comes with the Floor package.",
-  agent: "The Agent tab comes with the Floor package.",
-};
 
 /**
  * Create the Lobby of `project` in `frame`. options: {project, onChanged(): Promise (the page reads the project again)}.
@@ -50,6 +50,9 @@ export function createLobbyView(frame, { project, onChanged }) {
   let flowsAsked = false;
   let accepted = true;
   let again = false;                  // a read of the conversation was asked for while one was running
+  let viewerWas = false;
+  let lastOpened = null;              // the document the person opened last: the focus goes back to its row when the viewer closes
+  let leftInbox = true;               // the Inbox was left since it was last drawn: a resolved card goes
 
   // --- the pieces ---------------------------------------------------------------------------------------------------------
   const panel = createPanel({ title: "Lobby · Planning agent", subtitle: "", icon: "message-square", tone: "theme", width: "lobby" });
@@ -68,20 +71,31 @@ export function createLobbyView(frame, { project, onChanged }) {
   });
   const waiting = h("p", { class: "wb-empty wb-lobby-waiting", hidden: true, text: NOT_ACCEPTED_TEXT });
   const conversationPanel = h("div", { class: "wb-lobby-tabpanel", role: "tabpanel", id: tabs.panelId("conversation"), "aria-labelledby": tabs.tabId("conversation") }, waiting, thread.el);
-  const laterNote = h("p", { class: "wb-empty" });
-  const laterLink = h("a", { class: "pui-link pui-theme", href: router.lobbyHash(project, "conversation"), text: "Back to the Conversation" });
-  const laterPanel = h("div", { class: "wb-lobby-tabpanel wb-lobby-tabpanel-later", role: "tabpanel", hidden: true }, laterNote, laterLink);
+  // the Inbox, Desk and Agent tabs: the Floor's modules with the planning agent (lobby-inbox.js, lobby-desk.js, lobby-agent.js)
+  const waitingLine = () => h("p", { class: "wb-empty-line wb-lobby-waiting", hidden: true, text: NOT_ACCEPTED_TEXT });
+  const inbox = createLobbyInbox({ project, now: () => new Date(), refresh: () => { refresh(); } });
+  const desk = createLobbyDesk({
+    project, open: (path) => { lastOpened = path; window.location.hash = router.lobbyDeskHash(project, path); }, changed: () => { drawTabs(); drawRoom(); },
+  });
+  const agent = createLobbyAgent({ project, now: () => new Date(), refresh: () => { refresh(); }, changed: () => drawTabs() });
+  const sections = { inbox: { waiting: waitingLine(), body: inbox.el }, desk: { waiting: waitingLine(), body: desk.el }, agent: { waiting: waitingLine(), body: agent.el } };
+  const tabPanels = {};
+  for (const [id, part] of Object.entries(sections)) {
+    tabPanels[id] = h("div", { class: "wb-lobby-tabpanel wb-lobby-scroll", role: "tabpanel", id: tabs.panelId(id), "aria-labelledby": tabs.tabId(id), hidden: true }, part.waiting, part.body);
+  }
   const form = createForm({ onCreate: (values) => create(values) });
   const composer = createComposer({ onSend: (text) => send(text) });
   // The keyboard order is the field, "Send", then the "New request" summary (lobby.md, Keyboard); the form is drawn above the field by the grid.
   const footer = h("div", { class: "wb-lobby-footer" }, composer.el, h("div", { class: "wb-form-scroll" }, form.el));
   const cancelDialog = createCancelDialog({ api, project, onChanged: refresh });
   panel.body.classList.add("wb-lobby-body");
-  panel.body.append(conversationPanel, laterPanel);
+  panel.body.append(conversationPanel, tabPanels.inbox, tabPanels.desk, tabPanels.agent);
   panel.el.insertBefore(tabs.el, panel.body);
   panel.el.append(footer);
   frame.main.append(panel.el, cancelDialog.el);
-  const scene = mountLobbyScene(frame, panel.el, { onDoor: () => { window.location.hash = router.controlHash(project); } });
+  const viewer = createLobbyViewer({ frame, panel: panel.el, project, onClose: () => { window.location.hash = router.lobbyHash(project, "desk"); } });
+  const panelHead = panel.el.querySelector(".wb-panel-head");
+  const scene = mountLobbyScene(frame, panel.el, { onDoor: () => { window.location.hash = router.controlHash(project); }, onSelect: (id) => openFromScene(id) });
 
   // --- reading ------------------------------------------------------------------------------------------------------------
   /** A body that was drawn stays drawn (a card keeps its note and its focus) but is read again: its signature no longer matches. */
@@ -178,13 +192,48 @@ export function createLobbyView(frame, { project, onChanged }) {
     const requestRow = status ? model.openRequest(status) : null;
     const room = roomModel({
       working: turn !== null || routing.size > 0, decisions: status ? lobbyDecisions(status).length : 0, hasMessages: messages.length > 0,
-      accepted, request: requestRow, ready: Boolean(status),
+      accepted, request: requestRow, ready: Boolean(status), documents: desk.rows(),
     });
     scene.update(room, canvasLabel(last.projectName, room));
   }
 
   function drawComposer() {
     composer.set({ sending: turn !== null, notice, disabled: !accepted });
+  }
+
+  /** A click in the room: the tray opens the Inbox, the cabinet the Desk, a sheet its document, the desk, the board and the figure the Agent tab. */
+  function openFromScene(id) {
+    if (disposed) return;
+    if (id === "tray") window.location.hash = router.lobbyHash(project, "inbox");
+    else if (id === "cabinet") window.location.hash = router.lobbyHash(project, "desk");
+    else if (id === "board" || id === "agent" || id === "desk") window.location.hash = router.lobbyHash(project, "agent");
+    else if (String(id).startsWith("sheet:")) window.location.hash = router.lobbyDeskHash(project, String(id).slice(6));
+  }
+
+  /** The Inbox, Desk and Agent tabs from what the page last read. Each module redraws only what changed. */
+  function drawTabs() {
+    if (disposed || !last.snapshot) return;
+    const { snapshot, route, now } = last;
+    const tab = tabOf(route);
+    const detail = snapshot.details[project];
+    const status = detail && detail.status;
+    const model = agent.update({ snapshot, tab });
+    desk.update({ tab, ready: Boolean(snapshot.loaded && accepted) });
+    if (tab !== "inbox" && !leftInbox && !inbox.busy()) {      // a card whose job still runs keeps its state until it ends
+      inbox.reset();
+      leftInbox = true;
+    }
+    if (tab !== "inbox") return;
+    leftInbox = false;
+    if (!accepted) return;
+    const parts = status ? inboxParts(status, messages) : { cards: [], pointers: [] };
+    const held = {};
+    for (const [id, entry] of bodies) if (entry.body) held[id] = entry.body;
+    const ids = [...(status ? status.requests || [] : []).map((r) => r.id), ...(model ? model.tasks.map((t) => t.id) : [])];
+    inbox.update({
+      cards: parts.cards, pointers: parts.pointers, requests: status ? status.requests || [] : [],
+      resolved: fm.resolvedLines({ ...held, ...agent.bodies() }, ids, now), selected: route.pending, loading: !snapshot.loaded,
+    });
   }
 
   // --- what the person does -------------------------------------------------------------------------------------------------
@@ -253,7 +302,11 @@ export function createLobbyView(frame, { project, onChanged }) {
     await refresh();
     await settled();
     if (!problem && result && result.pending_id) frame.announce(`A decision waits for you: request ${id}`);
-    if (!disposed && result && result.pending_id) thread.focusDecision(id, result.pending_id);
+    if (!disposed && result && result.pending_id) {
+      // a request a message names has its plan under that message; one made from the form has its card in the Inbox (OPEN-24)
+      if (isNamed(messages, id)) thread.focusDecision(id, result.pending_id);
+      else window.location.hash = router.lobbyHash(project, "inbox", result.pending_id);
+    }
     return result;
   }
 
@@ -313,6 +366,16 @@ export function createLobbyView(frame, { project, onChanged }) {
   }
   document.addEventListener("visibilitychange", onVisibility);
 
+  // Escape closes an open document, unless the person is typing or a dialog is open (a draft is not thrown away by Escape)
+  const onKey = (event) => {
+    if (event.key !== "Escape" || disposed || !last.route || tabOf(last.route) !== "desk" || !last.route.path) return;
+    const a = document.activeElement;
+    if (a && (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.tagName === "SELECT")) return;
+    if (document.querySelector("dialog[open].wb-dialog")) return;
+    window.location.hash = router.lobbyHash(project, "desk");
+  };
+  document.addEventListener("keydown", onKey);
+
   return {
     /** Called by the page after every read of the projects: snapshot (js/data.js), route (router.parse), now, the project's name. */
     update({ snapshot, route, now, projectName }) {
@@ -328,13 +391,25 @@ export function createLobbyView(frame, { project, onChanged }) {
       tabs.set({ project, selected: tab, counts: { inbox: status ? lobbyDecisions(status).length : 0 } });
       const onConversation = tab === "conversation";
       conversationPanel.hidden = !onConversation;
-      laterPanel.hidden = onConversation;
-      if (!onConversation) {
-        laterPanel.setAttribute("id", tabs.panelId(tab));
-        laterPanel.setAttribute("aria-labelledby", tabs.tabId(tab));
-        laterNote.textContent = LATER[tab] || "";
+      conversationPanel.setAttribute("aria-labelledby", tabs.tabId("conversation"));
+      for (const [id, part] of Object.entries(sections)) {
+        tabPanels[id].hidden = tab !== id;
+        part.waiting.hidden = accepted;
+        part.body.hidden = !accepted;
       }
-      footer.hidden = !onConversation;
+      // a document opened on the Desk takes the panel's place (a phone: a dialog)
+      const showing = tab === "desk" && accepted && route.path ? viewer.show(route.path) : viewer.show(null);
+      const inline = showing === "inline";
+      panel.el.classList.toggle("is-viewing", inline);
+      panelHead.hidden = inline;
+      tabs.el.hidden = inline;
+      panel.body.hidden = inline;
+      footer.hidden = !onConversation || inline;
+      if (viewerWas && !showing && lastOpened !== null) {     // the viewer was closed: the focus goes back to the row that opened it
+        const back = lastOpened;
+        setTimeout(() => desk.focusRow(back), 0);
+      }
+      viewerWas = Boolean(showing);
       waiting.hidden = accepted;
       thread.el.hidden = !accepted;
       form.set({ disabled: !accepted });
@@ -345,6 +420,7 @@ export function createLobbyView(frame, { project, onChanged }) {
       }
       if (status) readBodies(status.requests || [], status.pending || []);
       redraw();
+      drawTabs();
       drawRoom();
       if (!loaded && accepted) tick();
       else if (timer === null) schedule();
@@ -354,6 +430,10 @@ export function createLobbyView(frame, { project, onChanged }) {
       abort.abort();
       clearTimeout(timer);
       document.removeEventListener("visibilitychange", onVisibility);
+      document.removeEventListener("keydown", onKey);
+      viewer.dispose();
+      desk.dispose();
+      agent.dispose();
       scene.dispose();
       panel.el.remove();
       cancelDialog.el.remove();

@@ -2,7 +2,7 @@
 //   #/                                   the City
 //   #/p/<id>                             a project's building
 //   #/p/<id>/floor/<agent>[/<tab>[/<pending id>]]   an agent's floor (tab: agent, desk, inbox; the desk takes a document: /desk/<percent-encoded path>)
-//   #/p/<id>/lobby[/<tab>[/<pending id>]]            the conversation with the planning agent (tab: chat, inbox)
+//   #/p/<id>/lobby[/<tab>[/<pending id>]]            the planning agent's floor (tab: conversation, inbox, desk, agent; the desk takes a document like a floor's)
 //   #/p/<id>/control[/<tab>]             the control room (tab: skills, costs, connections)
 // <id> is the 12-character id the service gives a project. An unknown hash is the City. Nothing here touches the document.
 
@@ -80,6 +80,11 @@ export function deskHash(project, agent, path) {
 /** The hash of the lobby, optionally on a tab and at a decision. */
 export function lobbyHash(project, tab, pending) {
   return `#/p/${project}/lobby` + (tab ? `/${tab}` : "") + (tab && pending !== undefined && pending !== null ? `/${pending}` : "");
+}
+
+/** The hash of a document in the Lobby's desk: the path is one percent-encoded segment. */
+export function lobbyDeskHash(project, path) {
+  return `#/p/${project}/lobby/desk` + (path ? `/${encodeURIComponent(path)}` : "");
 }
 
 /** The hash of the control room. */

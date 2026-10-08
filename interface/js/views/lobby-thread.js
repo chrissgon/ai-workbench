@@ -33,16 +33,16 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
       const desired = [];
       const byId = new Map((requests || []).map((r) => [r.id, r]));
 
-      function blockFor(requestId) {
+      function blockFor(requestId, viaMessage) {
         const request = byId.get(requestId);
         if (!request) return null;
         const body = bodies[requestId] || null;
         const bodySig = body ? (body.pending || []).map((p) => `${p.id}:${p.status}:${p.resolution || ""}`).join(",") : "-";
         const open = (pending || []).filter((p) => p.task_id === requestId).length;
-        const sig = `${signatureOf(request, pending)}|${bodySig}|${routing && routing.has(requestId) ? "r" : ""}|${request.title}`;
+        const sig = `${signatureOf(request, pending)}|${bodySig}|${routing && routing.has(requestId) ? "r" : ""}|${viaMessage ? "m" : "t"}|${request.title}`;
         const held = blocks.get(requestId);
         if (held && held.sig === sig) return held.el;
-        const block = createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, announce, routing: routing && routing.has(requestId) });
+        const block = createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, announce, routing: routing && routing.has(requestId), viaMessage });
         blocks.set(requestId, { el: block.el, sig, block });
         return block.el;
       }
@@ -59,12 +59,12 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
         desired.push(held.el);
         const request = placed.byMessage.get(message.id);
         if (request !== undefined) {
-          const node = blockFor(request);
+          const node = blockFor(request, true);
           if (node) desired.push(node);
         }
       }
       for (const request of placed.trailing) {
-        const node = blockFor(request);
+        const node = blockFor(request, false);
         if (node) desired.push(node);
       }
       for (const [id, held] of blocks) {

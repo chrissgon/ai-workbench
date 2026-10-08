@@ -1011,6 +1011,17 @@ a.wb-now-title:hover { text-decoration: underline; }
 }
 .wb-lobby-notice-title { color: var(--wb-ink-error); font-weight: 600; }
 
+/* the Inbox, Desk and Agent tabs: the Floor's modules inside the Lobby's panel (WP-9.4b); the viewer takes the whole panel */
+.wb-lobby-scroll { overflow-y: auto; }
+.wb-lobby-scroll > * { flex: none; }
+.wb-lobby-inbox { display: grid; align-content: start; }
+.wb-lobby-pointers { display: grid; gap: 8px; padding: 12px 12px 0; }
+.wb-lobby-pointers:empty { display: none; }
+.wb-lobby-agent { display: block; }
+.wb-lobby-none { padding: 16px; }
+.wb-panel-lobby.is-viewing { grid-template-rows: minmax(0, 1fr); }
+.wb-panel-lobby > .wb-viewer-host { min-height: 0; }
+
 /* the dialog "Cancel this request and what is still open under it?" */
 .wb-dialog { width: min(26rem, calc(100vw - 32px)); }
 .wb-dialog-card { background-color: var(--wb-raised); box-shadow: var(--wb-elev); }

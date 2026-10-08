@@ -343,8 +343,11 @@ export function runRows(run) {
   return rows;
 }
 
-/** The Floor's data for an agent: null when the project is unknown, {found: false} when the agent is not in `agents`. */
-export function floor(snapshot, projectId, name, bodies = {}) {
+/**
+ * The Floor's data for an agent: null when the project is unknown, {found: false} when the agent is not in `agents`. The planning
+ * agent has no floor of its own (its floor is the Lobby): it is found only when `options.lobby` is true, which the Lobby's tabs set.
+ */
+export function floor(snapshot, projectId, name, bodies = {}, options = {}) {
   const view = building(snapshot, projectId);
   if (!view) return null;
   const label = format.agentWord(name);
@@ -359,7 +362,7 @@ export function floor(snapshot, projectId, name, bodies = {}) {
   const row = view.rows.find((r) => r.name === name);
   const detail = snapshot.details[projectId] || null;
   const status = detail && detail.status ? detail.status : null;
-  if (!row || (name === PLANNING)) return { found: false, view };
+  if (!row || (name === PLANNING && !options.lobby)) return { found: false, view };
   const agent = (detail.agents || []).find((a) => a.name === name) || stub(name);
   const tasks = status ? agentTasks(status, name) : [];
   const current = pickCurrent(tasks);

@@ -2,6 +2,7 @@
 // they run under a test. Nothing is decided here: a request's state and a decision's actions are the service's own words.
 
 import * as format from "../format.js";
+import { PLANNING, drawersOf } from "../floor-model.js";
 
 export const POLL_BUSY_MS = 2000;     // the conversation is read every 2 seconds while a `say` job runs
 export const POLL_IDLE_MS = 10000;    // and every 10 seconds otherwise
@@ -110,6 +111,33 @@ export function lobbyDecisions(status) {
   return (Array.isArray(status && status.pending) ? status.pending : []).filter((p) => !p.agent || p.agent === "planning");
 }
 
+/**
+ * The Lobby's open decisions split between the Inbox's cards and the lines that point at the Conversation (OPEN-24). A plan on a
+ * request that a message of the planning agent names has its card under that message, so the Inbox shows a line that points to it;
+ * every other decision (a plan on a request made from the form, a question, an acceptance, a decision on the planning agent's own
+ * task) has its card in the Inbox. Returns {cards, pointers}, each in the order of `status.pending`.
+ */
+export function inboxParts(status, messages) {
+  const requests = Array.isArray(status && status.requests) ? status.requests : [];
+  const named = new Set(placeBlocks(messages, requests).byMessage.values());
+  const cards = [];
+  const pointers = [];
+  for (const item of lobbyDecisions(status)) {
+    (item.kind === "plan" && named.has(item.task_id) ? pointers : cards).push(item);
+  }
+  return { cards, pointers };
+}
+
+/** True when a message of the planning agent names the request: its plan card is in the Conversation, not in the Inbox. */
+export function isNamed(messages, requestId) {
+  return (messages || []).some((m) => m.role === "assistant" && m.task_id === requestId);
+}
+
+/** The documents of the Lobby's Desk: the rows of `artifacts` whose agent is the planning agent or none (no owner, or no single agent owns the skill). */
+export function lobbyDocuments(rows) {
+  return (Array.isArray(rows) ? rows : []).filter((d) => d && (!d.agent || d.agent === PLANNING));
+}
+
 /** The words of a request's state for its chip. */
 export function stateWord(state) {
   if (typeof state !== "string" || !state) return "";
@@ -173,22 +201,26 @@ const DOT = { working: "theme", waiting: "warn", idle: "muted", off: "border" };
  * What the Lobby's room needs, as the plain model of the room scene (the shape the Floor's room builder reads: `ready`, `state`,
  * `window`, `decisions`, `drawers`, `sheets`, `tips`, `board`) with `door: true` for the door to the Control room. The planning agent
  * works while a turn or a route of this screen runs, waits when a decision of the Lobby waits, is off when the project is not
- * accepted and is idle otherwise. The documents (the cabinet, the sheets) are the Desk's and come with it: none here.
+ * accepted and is idle otherwise. `documents` are the Desk's rows (see lobbyDocuments), as the Floor takes them: the sheets and the cabinet's
+ * drawers; null while they are unread (an empty cabinet).
  */
-export function roomModel({ working, decisions, hasMessages, accepted, request, ready = true }) {
+export function roomModel({ working, decisions, hasMessages, accepted, request, ready = true, documents = null }) {
   let state = "idle";
   if (!accepted) state = "off";
   else if (working) state = "working";
   else if (decisions > 0) state = "waiting";
   const words = { working: "working", waiting: "waiting for you", idle: "idle", off: "off" }[state];
+  const docs = Array.isArray(documents) ? documents : null;
   const board = request
     ? { title: request.title || `Request ${request.id}`, lines: [`request #${request.id} · ${request.state}`], dot: DOT[state] }
     : { title: accepted ? "No request is open" : NOT_ACCEPTED_TEXT, lines: [], dot: DOT[state] };
   return {
-    kind: "room", ready, door: true, state, window: WINDOW[state], decisions, drawers: 0, sheets: [], empty: !hasMessages,
+    kind: "room", ready, door: true, state, window: WINDOW[state], decisions, drawers: docs ? drawersOf(docs.length) : 0,
+    sheets: docs ? docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })) : [], empty: !hasMessages,
     tips: {
       agent: `Planning agent · ${words}`, desk: request ? `Current task · ${request.title || `request #${request.id}`}` : "Current task · none yet",
-      tray: `Inbox · ${decisions} open · open the Inbox tab`, cabinet: "Documents · open the Desk tab", board: board.lines[0] || board.title,
+      tray: `Inbox · ${decisions} open · open the Inbox tab`,
+      cabinet: docs ? `${docs.length} document${docs.length === 1 ? "" : "s"} · open the Desk tab` : "Documents · open the Desk tab", board: board.lines[0] || board.title,
       door: "Control room · skills, costs, connections",
     },
     board,
