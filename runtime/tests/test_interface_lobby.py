@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 import standin_tree as st
+from test_interface_floor import FAKE_DOM as FLOOR_DOM
 from test_interface_scene import FAKE_DOM
 
 INTERFACE = st.REPO / "interface"
@@ -658,3 +659,506 @@ def test_the_room_builder_draws_the_lobbys_door_and_its_label_only_when_the_mode
     assert "if (model.door)" in room and 'id: "lobby-door"' in room and 'id: "door-label"' in room and "doorNode" in room
     scene = (VIEWS / "lobby-scene.js").read_text(encoding="utf-8")
     assert 'id === "lobby-door"' in scene, "a click on the door goes to the Control room"
+
+
+# --- WP-9.4b: the Inbox, Desk and Agent tabs are the Floor's modules with the planning agent ---------------------------------------
+
+
+def run_floor_node(tmp_path: Path, body: str) -> dict:
+    """Like run_node, with the Floor's fake document (it can look nodes up by selector, which the Floor's modules need)."""
+    fake = tmp_path / "fake-dom.mjs"
+    fake.write_text(FLOOR_DOM, encoding="utf-8")
+    script = tmp_path / "check.mjs"
+    script.write_text(body.replace("@JS@", JS.as_uri()).replace("@FAKE@", fake.as_uri()), encoding="utf-8")
+    done = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=60)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+TABS_MODEL = r"""
+import * as m from "@JS@/views/lobby-model.js";
+import * as fm from "@JS@/floor-model.js";
+import * as router from "@JS@/router.js";
+
+const P = "0123456789ab";
+const out = {};
+
+// the Desk's filter: no agent and the planning agent in, every other agent out
+const rows = [{ path: "a", agent: null }, { path: "b", agent: "planning" }, { path: "c", agent: "marketing" }, { path: "d" }, { path: "e", agent: "brand" }];
+out.documents = m.lobbyDocuments(rows).map((d) => d.path);
+out.documentsOf = [m.lobbyDocuments(undefined), m.lobbyDocuments(null), m.lobbyDocuments([null, { path: "x", agent: null }]).length];
+
+// the Inbox's split: request 1 is named by a message of the planning agent, request 2 was made from the form, request 3 holds a question
+const messages = [{ id: 1, role: "user", text: "x" }, { id: 2, role: "assistant", text: "y", task_id: 1 }];
+const status = {
+  requests: [{ id: 1, title: "Spring", state: "planned", tasks: [] }, { id: 2, title: "Sale page", state: "requested", tasks: [] }, { id: 3, title: "Refresh", state: "ready", tasks: [{ id: 6, agent: "planning", state: "waiting" }] }],
+  pending: [{ id: 10, kind: "plan", task_id: 1, agent: null }, { id: 11, kind: "plan", task_id: 2, agent: null }, { id: 12, kind: "question", task_id: 3, agent: null },
+            { id: 13, kind: "review", task_id: 6, agent: "planning" }, { id: 14, kind: "effect", task_id: 7, agent: "marketing" }, { id: 15, kind: "plan", task_id: 1, agent: null }],
+};
+const parts = m.inboxParts(status, messages);
+out.parts = { cards: parts.cards.map((p) => p.id), pointers: parts.pointers.map((p) => p.id) };
+out.noMessages = m.inboxParts(status, []).pointers.length;
+out.named = [m.isNamed(messages, 1), m.isNamed(messages, 2), m.isNamed([{ role: "user", task_id: 2 }], 2)];
+out.partsOfNothing = [m.inboxParts(null, []).cards.length, m.inboxParts({}, messages).pointers.length];
+
+// the room: the Desk's documents are the sheets and the drawers; unread, the cabinet is empty as before
+const base = { working: false, decisions: 1, hasMessages: true, accepted: true, request: null };
+const none = m.roomModel(base);
+const docs = Array.from({ length: 9 }, (_, i) => ({ path: `docs/n${i}.md` }));
+const withDocs = m.roomModel({ ...base, documents: docs });
+out.room = { none: [none.drawers, none.sheets.length, none.tips.cabinet], with: [withDocs.drawers, withDocs.sheets.length, withDocs.sheets[0], withDocs.tips.cabinet],
+  one: m.roomModel({ ...base, documents: [docs[0]] }).tips.cabinet, zero: [m.roomModel({ ...base, documents: [] }).drawers, m.roomModel({ ...base, documents: [] }).tips.cabinet] };
+
+// the Floor's model finds the planning agent only when the Lobby asks
+const task = (id, state, agent) => ({ id, key: `k${id}`, title: `Task ${id}`, skill: "core-clarify", state, note: null, agent });
+const st = { requests: [{ id: 3, title: "Refresh", state: "ready", tasks: [task(4, "running", "planning"), task(5, "failed", "planning"), task(6, "ready", "engineering")] }],
+  pending: [{ id: 12, kind: "question", task_id: 3, agent: null, created_at: "2026-10-08T10:00:00Z", actions: ["answered"] }, { id: 13, kind: "review", task_id: 4, agent: "planning", created_at: "2026-10-08T10:00:00Z", actions: ["released"] },
+            { id: 14, kind: "effect", task_id: 6, agent: "engineering", created_at: "2026-10-08T10:00:00Z", actions: ["approved"] }], documents: [] };
+const agent = (name, mode = "supervised") => ({ name, pack: "x", enabled: true, mode, acting_mode: mode, max_runs_per_day: 8, max_usd_per_day: 4, runs_today: 2, usd_today: 0.5, runs_without_cost: 0, queued: 0 });
+const snapshot = { projects: [{ id: P, name: "northwind-shop", config: { accepted: true } }], details: { [P]: { status: st, agents: [agent("planning"), agent("engineering")] } }, tasks: {}, loaded: true };
+out.floorDefault = fm.floor(snapshot, P, "planning", {}).found;
+const lobby = fm.floor(snapshot, P, "planning", {}, { lobby: true });
+out.floorLobby = { found: lobby.found, tasks: lobby.tasks.map((t) => t.id), decisions: lobby.decisions.map((d) => d.id), current: lobby.current.id, target: lobby.target.id, state: lobby.row.state, mode: lobby.agent.mode, none: lobby.view.none };
+out.floorOthers = [fm.floor(snapshot, P, "engineering", {}).found, fm.floor(snapshot, P, "engineering", {}, { lobby: true }).decisions.map((d) => d.id), fm.floor(snapshot, P, "nobody", {}, { lobby: true }).found];
+const bare = fm.floor({ ...snapshot, details: { [P]: { status: st, agents: [] } } }, P, "planning", {}, { lobby: true });
+out.floorNoAgents = [bare.found, bare.view.none, bare.agent.mode];
+out.unaccepted = fm.floor({ ...snapshot, projects: [{ id: P, name: "northwind-shop", config: { accepted: false } }], details: {} }, P, "planning", {}, { lobby: true }).notAccepted;
+
+// the hash of a document of the Lobby's Desk
+const hash = router.lobbyDeskHash(P, "docs/notes/kickoff.md");
+const parsed = router.parse(hash);
+out.hash = [hash, parsed.screen, parsed.tab, parsed.path, parsed.pending, router.lobbyDeskHash(P), router.parse(router.lobbyDeskHash(P)).path];
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_desk_shows_the_documents_of_no_agent_and_of_the_planning_agent_and_no_other(tmp_path):
+    got = run_node(tmp_path, TABS_MODEL)
+    assert got["documents"] == ["a", "b", "d"], "an agent of null (no owner, or no single agent owns the skill) and the planning agent's own"
+    assert got["documentsOf"] == [[], [], 1], "an unread list is empty, and a row that is not an object is dropped"
+
+
+@needs_node
+def test_the_inbox_and_the_conversation_split_the_decisions_so_that_no_plan_card_is_drawn_twice(tmp_path):
+    got = run_node(tmp_path, TABS_MODEL)
+    # the plan of request 1 is under the message that names it: the Inbox points there (10 and 15); the plan of request 2 (made from the
+    # form) has its card in the Inbox, with the question on a request and the planning agent's own review; another agent's effect is not the Lobby's
+    assert got["parts"] == {"cards": [11, 12, 13], "pointers": [10, 15]}
+    assert got["noMessages"] == 0, "with no message naming a request, every plan has its card in the Inbox"
+    assert got["named"] == [True, False, False], "only a message of the planning agent names a request"
+    assert got["partsOfNothing"] == [0, 0]
+
+
+@needs_node
+def test_the_room_draws_the_desks_documents_and_the_floors_model_finds_the_planning_agent_only_for_the_lobby(tmp_path):
+    got = run_node(tmp_path, TABS_MODEL)
+    assert got["room"]["none"] == [0, 0, "Documents · open the Desk tab"], "unread, the cabinet is empty as before"
+    assert got["room"]["with"] == [3, 6, {"path": "docs/n0.md", "tip": "docs/n0.md"}, "9 documents · open the Desk tab"]
+    assert got["room"]["one"] == "1 document · open the Desk tab" and got["room"]["zero"] == [1, "0 documents · open the Desk tab"]
+    assert got["floorDefault"] is False, "the Floor's own call still finds no floor of the planning agent"
+    assert got["floorLobby"] == {"found": True, "tasks": [5, 4], "decisions": [12, 13], "current": 4, "target": 5, "state": "waiting", "mode": "supervised", "none": False}, \
+        "the planning agent's decisions are those on a request and its own; another agent's tasks are not its tasks"
+    assert got["floorOthers"] == [True, [14], False], "an area agent is read as before, with or without the option"
+    assert got["floorNoAgents"] == [True, True, None] and got["unaccepted"] is True
+    assert got["hash"][:5] == ["#/p/0123456789ab/lobby/desk/docs%2Fnotes%2Fkickoff.md", "lobby", "desk", "docs/notes/kickoff.md", None]
+    assert got["hash"][5:] == ["#/p/0123456789ab/lobby/desk", None]
+
+
+TABS_MARKUP = r"""
+import { FakeNode, settle, find, all } from "@FAKE@";
+import { setToken } from "@JS@/token.js";
+import { createLobbyInbox } from "@JS@/views/lobby-inbox.js";
+import { createLobbyDesk } from "@JS@/views/lobby-desk.js";
+import { createLobbyAgent, NO_AGENT_TEXT } from "@JS@/views/lobby-agent.js";
+import * as fm from "@JS@/floor-model.js";
+
+setToken("t".repeat(40));
+const P = "0123456789ab";
+const NOW = new Date("2026-10-08T12:00:00Z");
+const sent = [];
+const answers = new Map();
+globalThis.fetch = async (url, init) => {
+  sent.push({ method: init.method, url, body: init.body === undefined ? null : JSON.parse(init.body) });
+  const key = `${init.method} ${url}`;
+  const answer = answers.get(key) || { status: 200, body: {} };
+  return { ok: answer.status < 400, status: answer.status, json: async () => answer.body };
+};
+const out = {};
+const hash = "cd".repeat(32);
+const plan = (id, task_id, over = {}) => ({ id, kind: "plan", title: `Plan: <i>${id}</i>`, body: "text", task_id, agent: null, status: "open", created_at: "2026-10-08T08:00:00Z", actions: ["approved", "rejected"],
+  payload: { plan_sha256: hash, tasks: [{ key: "a", title: "Build", skill: "eng-implement", depends_on: [] }], limits: { one_task_at_a_time: true, timeout_seconds: 60, retries: 1 }, estimate: { runs_at_least: 1 } }, ...over });
+const question = { id: 12, kind: "question", title: "Which pages?", body: "Order list or detail?", task_id: 3, agent: null, status: "open", created_at: "2026-10-08T08:00:00Z", actions: ["answered"], payload: {} };
+answers.set(`GET /api/v1/projects/${P}/pending/11`, { status: 200, body: plan(11, 2) });
+answers.set(`GET /api/v1/projects/${P}/pending/12`, { status: 200, body: question });
+answers.set(`POST /api/v1/projects/${P}/pending/11/approve`, { status: 202, body: { job: 9 } });
+answers.set(`GET /api/v1/jobs/9`, { status: 200, body: { job: 9, state: "done", result: {} } });
+
+// --- the Inbox: the Floor's cards for the decisions it was given, a line for a plan that lives in the Conversation ---
+let refreshed = 0;
+const inbox = createLobbyInbox({ project: P, now: () => NOW, refresh: () => { refreshed += 1; } });
+const pointer = plan(10, 1);
+const data = (over = {}) => ({ cards: [plan(11, 2), question], pointers: [pointer], requests: [{ id: 2 }, { id: 3 }], resolved: [], selected: null, loading: false, ...over });
+inbox.update(data());
+await settle();
+inbox.update(data());
+const cards = all(inbox.el, "article");
+out.inbox = {
+  cards: cards.map((c) => c.querySelector(".wb-card-head").textContent.replace(/ ·.*/, "")), planTables: all(inbox.el, "table.wb-plan-table").length, lobbyPlanCards: all(inbox.el, ".wb-plan-card").length,
+  pointer: all(inbox.el, ".wb-pointer").map((n) => n.textContent), pointerLinks: all(inbox.el, ".wb-pointer a").map((a) => a.attrs.href),
+  hashShown: find(inbox.el, "[data-hash=plan]").textContent, links: all(inbox.el, ".wb-card-head a").map((a) => a.attrs.href),
+  markup: [...inbox.el.walk()].filter((n) => ["I", "B", "SCRIPT"].includes(n.tagName)).length,
+};
+// the approve button of the Floor's card, pressed in the Lobby, sends exactly the hash the card shows, through the one client
+find(inbox.el, "button[data-word=approved]").click();
+await new Promise((r) => setTimeout(r, 1300));
+out.approve = { sent: sent.filter((s) => s.method === "POST"), refreshed: refreshed > 0 };
+sent.length = 0;
+// when only the pointer remains, the empty line says so
+const lone = createLobbyInbox({ project: P, now: () => NOW, refresh: () => {} });
+lone.update(data({ cards: [] }));
+out.onlyPointer = [find(lone.el, ".wb-empty-line").textContent, all(lone.el, "article").length, all(lone.el, ".wb-pointer").length];
+const empty = createLobbyInbox({ project: P, now: () => NOW, refresh: () => {} });
+empty.update(data({ cards: [], pointers: [] }));
+out.empty = [find(empty.el, ".wb-empty-line").textContent, all(empty.el, ".wb-pointer").length];
+
+// --- the Desk: the Floor's table over what `artifacts` returned for the planning agent and for no agent ---
+const doc = (path, agent, owner = null) => ({ path, owner, agent, size: 12, modified_at: "2026-10-08T09:00:00Z", bound: false });
+answers.set(`GET /api/v1/projects/${P}/artifacts`, { status: 200, body: { artifacts: [doc("docs/notes/kickoff.md", null), doc("docs/workbench/briefs/a.md", "planning", "core-clarify"), doc("docs/brand/voice.md", "brand", "brand-voice"), doc("docs/marketing/x.md", "marketing", "mkt-x")], truncated: false } });
+let read = 0;
+const opened = [];
+const desk = createLobbyDesk({ project: P, open: (p) => opened.push(p), changed: () => { read += 1; } });
+desk.update({ tab: "desk", ready: true });
+out.deskBefore = find(desk.el, ".wb-desk-states").textContent;
+await settle();
+out.desk = { read, rows: all(desk.el, "button.wb-path-button").map((b) => b.attrs["data-path"]), owners: all(desk.el, ".wb-desk-owner").map((n) => n.textContent), rowsOf: desk.rows().map((d) => d.path) };
+find(desk.el, "button.wb-path-button").click();
+out.opened = opened;
+desk.update({ tab: "desk", ready: true });
+out.askedOnce = sent.filter((s) => s.url.endsWith("/artifacts")).length;
+const failing = createLobbyDesk({ project: P, open: () => {}, changed: () => {} });
+answers.set(`GET /api/v1/projects/${P}/artifacts`, { status: 500, body: { error: "internal", message: "the documents could not be listed" } });
+failing.update({ tab: "desk", ready: true });
+await settle();
+out.deskError = find(failing.el, ".wb-desk-states").textContent;
+
+// --- the Agent tab: the Floor's, for the planning agent ---
+const agentRow = (name, mode = "supervised") => ({ name, pack: "x", enabled: true, mode, acting_mode: mode, max_runs_per_day: 12, max_usd_per_day: 2, runs_today: 3, usd_today: 0.25, runs_without_cost: 0, queued: 1 });
+const task = (id, state, agent = "planning", extra = {}) => ({ id, key: `k${id}`, title: `Task ${id}`, skill: "core-clarify", state, note: null, agent, ...extra });
+const status = { requests: [{ id: 3, title: "Refresh", state: "ready", tasks: [task(4, "running"), task(5, "failed"), task(6, "ready", "engineering")] }], pending: [{ id: 12, kind: "question", task_id: 3, agent: null }, { id: 13, kind: "review", task_id: 4, agent: "planning" }], documents: [] };
+const snapshot = (agents, accepted = true) => ({ projects: [{ id: P, name: "northwind-shop", config: { accepted } }], details: accepted ? { [P]: { status, agents } } : {}, tasks: {}, loaded: true });
+answers.set(`GET /api/v1/projects/${P}/tasks/4`, { status: 200, body: { task: task(4, "running"), runs: [{ id: 1, skill: "core-clarify", skill_version: "1.0.0", model: "m", status: "running", attempts: 1, started_at: "2026-10-08T10:30:00Z" }], pending: [] } });
+answers.set(`GET /api/v1/projects/${P}/tasks/5`, { status: 200, body: { task: task(5, "failed"), runs: [], pending: [] } });
+answers.set(`POST /api/v1/projects/${P}/agents/planning/mode`, { status: 200, body: { agent: "planning", mode: "milestones", config_sha256: "f".repeat(64), accepted: false, next: "accept-config --project demo" } });
+answers.set(`POST /api/v1/projects/${P}/tasks/5/retry`, { status: 200, body: {} });
+let changed = 0;
+const agent = createLobbyAgent({ project: P, now: () => NOW, refresh: () => {}, changed: () => { changed += 1; } });
+const snap = snapshot([agentRow("planning"), agentRow("engineering")]);
+agent.update({ snapshot: { ...snap, loaded: false }, tab: "agent" });
+out.agentLoading = find(agent.el, ".wb-busy").textContent;
+const model = agent.update({ snapshot: snap, tab: "agent" });
+await settle();
+agent.update({ snapshot: snap, tab: "agent" });
+out.agent = {
+  model: [model.found, model.decisions.map((d) => d.id), model.tasks.map((t) => t.id)], state: find(agent.el, ".wb-state-row").textContent, plate: find(agent.el, ".wb-mode-row").textContent,
+  meters: all(agent.el, ".wb-meter-cell").map((c) => c.attrs["aria-label"]), current: find(agent.el, ".wb-current").textContent.slice(0, 60), others: all(agent.el, ".wb-other").map((o) => o.textContent),
+  reads: sent.filter((s) => s.url.includes("/tasks/")).map((s) => s.url.split("/").pop()), changed: changed > 0, hand: find(agent.el, ".wb-hint").textContent,
+  none: find(agent.el, ".wb-lobby-none").hidden, form: find(agent.el, "button.wb-set-mode").textContent,
+};
+// Set mode sends one request, for the planning agent, with the word that was selected
+const select = find(agent.el, "select");
+select.value = "milestones";
+select.listeners.change[0]();
+find(agent.el, "button.wb-set-mode").click();
+await settle();
+out.setMode = sent.filter((s) => s.method === "POST").map((s) => [s.url, s.body]);
+sent.length = 0;
+find(agent.el, "button[data-key=retry-5]").click();
+await settle();
+out.retry = sent.filter((s) => s.method === "POST").map((s) => [s.url, s.body]);
+// a project with no agent in its configuration, and one that is not accepted
+const bare = createLobbyAgent({ project: P, now: () => NOW, refresh: () => {}, changed: () => {} });
+bare.update({ snapshot: snapshot([]), tab: "agent" });
+out.bare = [find(bare.el, ".wb-lobby-none").hidden, find(bare.el, ".wb-lobby-none").textContent === NO_AGENT_TEXT, find(bare.el, ".wb-agent-tab").hidden];
+const unaccepted = createLobbyAgent({ project: P, now: () => NOW, refresh: () => {}, changed: () => {} });
+out.unaccepted = [unaccepted.update({ snapshot: snapshot([], false), tab: "agent" }) !== null, all(unaccepted.el, ".wb-empty-line").map((n) => [n.textContent, n.hidden])];
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_lobbys_inbox_draws_the_floors_cards_for_its_decisions_and_a_line_for_the_plan_kept_in_the_conversation(tmp_path):
+    got = run_floor_node(tmp_path, TABS_MARKUP)
+    inbox = got["inbox"]
+    assert inbox["cards"] == ["Plan#11", "Question#12"] and inbox["planTables"] == 1 and inbox["lobbyPlanCards"] == 0, "the Floor's cards, one card for each decision it was given: the plan of a request made from the form and the question"
+    assert len(inbox["pointer"]) == 1 and inbox["pointer"][0].startswith("PlanPlan: <i>10</i>") and inbox["pointer"][0].endswith("Open in the Conversation")
+    assert inbox["pointerLinks"] == ["#/p/0123456789ab/lobby"], "the line points at the Conversation, where that plan's card is"
+    assert inbox["hashShown"] == "cd" * 32 and inbox["markup"] == 0, "the whole hash, and a title with markup is text"
+    assert inbox["links"][:2] == ["#/p/0123456789ab/lobby", "#/p/0123456789ab/lobby"], "a decision on a request links to the Lobby, not to a floor"
+    approve = got["approve"]
+    assert approve["sent"] == [{"method": "POST", "url": "/api/v1/projects/0123456789ab/pending/11/approve", "body": {"sha256": "cd" * 32}}], \
+        "the Floor's card sends the hash it shows, through the one client"
+    assert approve["refreshed"] is True, "the Lobby is asked to read again"
+    assert got["onlyPointer"] == ["Nothing else waits for you here.", 0, 1], "a plan kept in the Conversation is not a card here and the empty line does not say that nothing waits"
+    assert got["empty"] == ["Nothing waits for you on this floor.", 0]
+
+
+@needs_node
+def test_the_lobbys_desk_is_the_floors_table_over_the_documents_of_no_agent_and_of_the_planning_agent(tmp_path):
+    got = run_floor_node(tmp_path, TABS_MARKUP)
+    assert got["deskBefore"] == "Loading the floor..."
+    assert got["desk"]["rows"] == ["docs/notes/kickoff.md", "docs/workbench/briefs/a.md"], "the brand's and the marketing agent's documents are not on this desk"
+    assert got["desk"]["rowsOf"] == ["docs/notes/kickoff.md", "docs/workbench/briefs/a.md"] and got["desk"]["read"] == 1
+    assert got["desk"]["owners"] == ["", "core-clarify"]
+    assert got["opened"] == ["docs/notes/kickoff.md"], "a row asks to open its path; the viewer reads the file"
+    assert got["askedOnce"] == 1, "a second update inside the period reads nothing"
+    assert got["deskError"] == "The documents could not be readthe documents could not be listed"
+
+
+@needs_node
+def test_the_lobbys_agent_tab_is_the_floors_for_the_planning_agent_and_sends_one_request_for_it(tmp_path):
+    got = run_floor_node(tmp_path, TABS_MARKUP)
+    agent = got["agent"]
+    assert got["agentLoading"] == "Loading the floor..."
+    assert agent["model"] == [True, [12, 13], [5, 4]], "its decisions are those on a request and its own; the engineering agent's task is not its task"
+    assert agent["state"].startswith("Waiting for you") and "2 decisions in the Inbox" in agent["state"]
+    assert agent["plate"].startswith("supervised") and "Every review reaches you" in agent["plate"]
+    assert agent["meters"] == ["Runs today 3 / 12", "Spend today $0.25 / $2.00", "Queued 1"]
+    assert agent["current"].startswith("#4 Task 4Running") and agent["others"] == ["#5 Task 5FailedRetry"]
+    assert agent["reads"] == ["4"], "the running task's body is read; the others' only while the Inbox is open"
+    assert agent["changed"] is True and agent["none"] is True and agent["form"] == "Set mode"
+    assert got["setMode"] == [["/api/v1/projects/0123456789ab/agents/planning/mode", {"mode": "milestones"}]]
+    assert got["retry"] == [["/api/v1/projects/0123456789ab/tasks/5/retry", {}]]
+    assert got["bare"] == [False, True, True], "a project with no agent in its configuration says so and shows no form"
+    assert got["unaccepted"] == [True, [["This project has no agents in its configuration.", True], ["Waiting for the configuration to be accepted.", False]]], \
+        "a project that is not accepted shows the waiting line and not the line about agents"
+
+
+BLOCKS = r"""
+import { FakeNode, find, byClass, textOf } from "@FAKE@";
+import { createBlock } from "@JS@/views/lobby-request.js";
+
+const NOW = new Date("2026-10-08T12:00:00Z");
+const hash = "ab".repeat(32);
+const plan = { id: 22, kind: "plan", title: "Plan: x", body: "t", task_id: 14, agent: null, status: "open", created_at: "2026-10-08T08:00:00Z", actions: ["approved", "rejected"],
+  payload: { plan_sha256: hash, tasks: [{ key: "a", title: "Build", skill: "eng-implement", depends_on: [] }], limits: { timeout_seconds: 60, retries: 1 }, estimate: { runs_at_least: 1 } } };
+const api = { approve: async () => ({ job: 1 }), reject: async () => ({}), pollJob: async () => ({ state: "done" }), cancel: async () => ({}) };
+const request = { id: 14, title: "Spring", state: "planned", tasks: [] };
+const make = (viaMessage) => createBlock({ api, project: "p1", request, body: { pending: [plan] }, open: 1, now: NOW, onChanged: async () => {}, onCancel: () => {}, onRoute: () => {}, routing: false, viaMessage });
+const out = {};
+const under = make(true);
+const form = make(false);
+const dflt = createBlock({ api, project: "p1", request, body: { pending: [plan] }, open: 1, now: NOW, onChanged: async () => {}, onCancel: () => {}, onRoute: () => {}, routing: false });
+out.underMessage = { cards: byClass(under.el, "wb-plan-card").length, pointers: byClass(under.el, "wb-pointer").length };
+out.fromForm = { cards: byClass(form.el, "wb-plan-card").length, pointers: byClass(form.el, "wb-pointer").map(textOf), links: find(form.el, (n) => n.tagName === "A").map((a) => a.attrs.href), line: byClass(form.el, "wb-lobby-request-line").length };
+out.default = byClass(dflt.el, "wb-plan-card").length;
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_a_plan_has_its_card_under_the_message_that_names_its_request_and_in_the_inbox_for_a_request_made_from_the_form(tmp_path):
+    got = run_node(tmp_path, BLOCKS)
+    assert got["underMessage"] == {"cards": 1, "pointers": 0}
+    assert got["fromForm"]["cards"] == 0 and got["fromForm"]["line"] == 1, "the request line stays; the card is in the Inbox"
+    assert got["fromForm"]["pointers"] == ["PlanPlan: x · 4 h agoOpen in the Inbox"] and got["fromForm"]["links"] == ["#/p/p1/lobby/inbox/22"]
+    assert got["default"] == 1, "a block drawn with no placement is the one under a message, as before"
+
+
+# --- the Lobby's view itself, under a fake document and a frame of stand-ins: the wiring of the tabs, the route's end, the room's clicks ----
+
+VIEW_EXTRA = r"""
+const define = (name, desc) => { if (!(name in FakeNode.prototype)) Object.defineProperty(FakeNode.prototype, name, desc); };
+define("dataset", { get() { return this._ds || (this._ds = {}); } });
+define("lastElementChild", { get() { return this.children[this.children.length - 1]; } });
+define("options", { get() { return this.children; } });
+if (!FakeNode.prototype.insertBefore) FakeNode.prototype.insertBefore = function (node, ref) {
+  if (node.parent) node.parent.children = node.parent.children.filter((c) => c !== node);
+  node.parent = this;
+  const at = ref ? this.children.indexOf(ref) : -1;
+  if (at < 0) this.children.push(node); else this.children.splice(at, 0, node);
+};
+if (!FakeNode.prototype.toggleAttribute) FakeNode.prototype.toggleAttribute = function (n, on) { if (on) this.attrs[n] = ""; else delete this.attrs[n]; };
+"""
+
+VIEW = r"""
+import { FakeNode, settle, find, all } from "@FAKE@";
+import { setToken } from "@JS@/token.js";
+import * as router from "@JS@/router.js";
+import { createLobbyView } from "@JS@/views/lobby.js";
+
+setToken("t".repeat(40));
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+document.removeEventListener = (type, fn) => { document.listeners[type] = (document.listeners[type] || []).filter((f) => f !== fn); };   // the fake's is empty
+const P = "0123456789ab";
+const NOW = new Date("2026-10-08T12:00:00Z");
+const sent = [];
+const answers = new Map();
+let conversation = () => ({ messages: [] });
+globalThis.fetch = async (url, init) => {
+  sent.push({ method: init.method, url, body: init.body === undefined ? null : JSON.parse(init.body) });
+  let answer;
+  if (url.includes("/conversation")) answer = { status: 200, body: await conversation() };
+  else answer = answers.get(`${init.method} ${url.split("?")[0]}`) || { status: 200, body: {} };
+  return { ok: answer.status < 400, status: answer.status, json: async () => answer.body };
+};
+const hash = "cd".repeat(32);
+const plan = { id: 5, kind: "plan", title: "Plan: sale page", body: "text", task_id: 2, agent: null, status: "open", created_at: "2026-10-08T08:00:00Z", actions: ["approved", "rejected"],
+  payload: { plan_sha256: hash, tasks: [{ key: "a", title: "Build", skill: "eng-implement", depends_on: [] }], limits: { timeout_seconds: 60, retries: 1 }, estimate: { runs_at_least: 1 } } };
+const A = (path) => `/api/v1/projects/${P}${path}`;
+answers.set(`GET ${A("/flows")}`, { status: 200, body: { flows: [{ flow: "design", title: "Design", tasks: 3 }] } });
+answers.set(`GET ${A("/tasks/2")}`, { status: 200, body: { task: { id: 2 }, runs: [], pending: [plan] } });
+answers.set(`GET ${A("/pending/5")}`, { status: 200, body: plan });
+answers.set(`POST ${A("/requests")}`, { status: 200, body: { request: 2, state: "requested", next: "route" } });
+answers.set(`POST ${A("/requests/2/route")}`, { status: 202, body: { job: 7 } });
+answers.set(`GET /api/v1/jobs/7`, { status: 200, body: { job: 7, state: "done", result: { routed: true, pending_id: 5 } } });
+answers.set(`GET ${A("/artifacts")}`, { status: 200, body: { artifacts: [{ path: "docs/notes/a.md", owner: null, agent: null, size: 4, modified_at: "2026-10-08T09:00:00Z", bound: false }], truncated: false } });
+answers.set(`GET ${A("/artifact")}`, { status: 200, body: { path: "docs/notes/a.md", text: "<b>hi</b>", size: 4, modified_at: "2026-10-08T09:00:00Z" } });
+
+const agent = (name) => ({ name, pack: "x", enabled: true, mode: "supervised", acting_mode: "supervised", max_runs_per_day: 8, max_usd_per_day: 4, runs_today: 1, usd_today: 0.1, runs_without_cost: 0, queued: 0 });
+const snapshot = { loaded: true, projects: [{ id: P, name: "northwind-shop", config: { accepted: true } }], tasks: {},
+  details: { [P]: { agents: [agent("planning")], status: { requests: [{ id: 2, title: "Sale page", state: "requested", tasks: [] }], pending: [{ id: 5, kind: "plan", title: "Plan: sale page", task_id: 2, agent: null, created_at: "2026-10-08T08:00:00Z" }] } } } };
+const makeFrame = () => ({ el: new FakeNode("div"), main: new FakeNode("main"), sceneHost: new FakeNode("div"), track: { el: new FakeNode("div") }, noticeBox: new FakeNode("div"),
+  insets: () => ({ left: 0, right: 0, top: 0, bottom: 0, pad: 1 }), sceneUnavailable() {}, announce(text) { announced.push(text); } });
+const announced = [];
+const hashOf = () => window.location.hash;
+const route = (h) => router.parse(`#/p/${P}/lobby${h}`);
+const press = (type, init) => (document.listeners[type] || []).forEach((fn) => fn({ preventDefault() {}, ...init }));
+const submit = (root) => (find(root, "form").listeners.submit || []).forEach((fn) => fn({ preventDefault() {} }));
+const out = {};
+
+async function create(frame, view, route0) {
+  const textarea = frame.main.querySelector(".wb-new-request textarea");
+  textarea.value = "Add a sale page, linked from the home page.";
+  submit(frame.main.querySelector(".wb-new-request"));
+  await new Promise((r) => setTimeout(r, 250));
+}
+const fresh = () => { announced.length = 0; sent.length = 0; window.location.hash = `#/p/${P}/lobby`; };
+
+// 1. a request made from the form: when its route ends, no message names it, so its plan card is in the Inbox and the page opens it
+conversation = () => ({ messages: [] });
+fresh();
+let frame = makeFrame();
+let view = createLobbyView(frame, { project: P, onChanged: async () => {} });
+view.update({ snapshot, route: route(""), now: NOW, projectName: "northwind-shop" });
+await settle();
+await create(frame, view);
+out.fromForm = { hash: hashOf(), requestBody: sent.filter((s) => s.method === "POST" && s.url === A("/requests")).map((s) => s.body), routeBody: sent.filter((s) => s.url === A("/requests/2/route")).map((s) => s.body) };
+view.dispose();
+
+// 2. the same end while a read of the conversation is running: the router's message is read before the place is chosen, so a named plan stays in the Conversation
+let calls = 0;
+conversation = async () => {
+  calls += 1;
+  if (calls === 1) { await new Promise((r) => setTimeout(r, 1200)); return { messages: [] }; }
+  return { messages: [{ id: 1, role: "assistant", text: "I can plan it.", task_id: 2, created_at: "2026-10-08T08:00:00Z" }] };
+};
+fresh();
+frame = makeFrame();
+view = createLobbyView(frame, { project: P, onChanged: async () => {} });
+view.update({ snapshot, route: route(""), now: NOW, projectName: "northwind-shop" });     // the first read starts here and is slow
+await create(frame, view);
+await new Promise((r) => setTimeout(r, 2500));
+out.named = { hash: hashOf(), planCards: all(frame.main, ".wb-plan-card").length, conversationReads: calls };
+view.dispose();
+
+// 3. before the conversation was read no plan is drawn as a card in the Inbox; once it was, the plan with no message is the Inbox's card
+conversation = async () => { await new Promise((r) => setTimeout(r, 600)); return { messages: [] }; };
+fresh();
+frame = makeFrame();
+view = createLobbyView(frame, { project: P, onChanged: async () => {} });
+view.update({ snapshot, route: route("/inbox"), now: NOW, projectName: "northwind-shop" });
+await new Promise((r) => setTimeout(r, 150));
+out.beforeRead = { cards: all(frame.main, ".wb-lobby-inbox article").length, text: frame.main.querySelector(".wb-lobby-inbox").textContent };
+await new Promise((r) => setTimeout(r, 1200));
+out.afterRead = { cards: all(frame.main, ".wb-lobby-inbox article").length };
+
+// 4. the room's clicks open the tabs
+const opened = [];
+for (const id of ["tray", "cabinet", "agent", "board", "desk", "sheet:docs/notes/a.md", "lobby-door", "nonsense"]) {
+  window.location.hash = "#/";
+  view.open(id);
+  opened.push(hashOf());
+}
+out.scene = opened;
+
+// 5. Escape closes an open document, and not while the person types, in a menu of the frame or with a dialog open
+view.update({ snapshot, route: route("/desk/" + encodeURIComponent("docs/notes/a.md")), now: NOW, projectName: "northwind-shop" });
+await new Promise((r) => setTimeout(r, 300));
+const panel = frame.main.querySelector(".wb-panel-lobby");
+const host = frame.main.querySelector(".wb-viewer-host");
+out.viewer = { inline: panel.cls().includes("is-viewing"), hostHidden: host.hidden, head: frame.main.querySelector(".wb-panel-head").hidden, tabsHidden: frame.main.querySelector(".wb-lobby-tabs").hidden, text: host.textContent.includes("<b>hi</b>"), artifactReads: sent.filter((s) => s.url.startsWith(A("/artifact") + "?")).length };
+window.location.hash = "#/keep";
+document.activeElement = { tagName: "TEXTAREA" };
+press("keydown", { key: "Escape" });
+const typing = hashOf();
+document.activeElement = { tagName: "BUTTON", closest: (sel) => (sel.includes("wb-switcher") ? {} : null) };
+press("keydown", { key: "Escape" });
+const menu = hashOf();
+document.activeElement = null;
+press("keydown", { key: "Enter" });
+const other = hashOf();
+press("keydown", { key: "Escape" });
+out.escape = { typing, menu, other, closes: hashOf() };
+view.update({ snapshot, route: route("/desk"), now: NOW, projectName: "northwind-shop" });
+out.closed = { inline: panel.cls().includes("is-viewing"), hostHidden: host.hidden, head: frame.main.querySelector(".wb-panel-head").hidden, tabs: frame.main.querySelector(".wb-lobby-tabs").hidden };
+view.dispose();
+out.disposed = (document.listeners.keydown || []).length;
+
+// 6. on a phone the document is a dialog and the panel keeps its tabs
+window.matchMedia = () => ({ matches: true, addEventListener() {} });
+frame = makeFrame();
+view = createLobbyView(frame, { project: P, onChanged: async () => {} });
+view.update({ snapshot, route: route("/desk/" + encodeURIComponent("docs/notes/a.md")), now: NOW, projectName: "northwind-shop" });
+await new Promise((r) => setTimeout(r, 300));
+const dialog = frame.el.querySelector("dialog.wb-viewer-dialog");
+out.phone = { dialogOpen: dialog.open, inline: frame.main.querySelector(".wb-panel-lobby").cls().includes("is-viewing"), tabsHidden: frame.main.querySelector(".wb-lobby-tabs").hidden };
+view.dispose();
+console.log(JSON.stringify(out));
+process.exit(0);
+"""
+
+
+def run_view_node(tmp_path: Path, body: str) -> dict:
+    fake = tmp_path / "fake-dom.mjs"
+    fake.write_text(FLOOR_DOM + VIEW_EXTRA, encoding="utf-8")
+    script = tmp_path / "check.mjs"
+    script.write_text(body.replace("@JS@", JS.as_uri()).replace("@FAKE@", fake.as_uri()), encoding="utf-8")
+    done = subprocess.run([NODE, str(script)], capture_output=True, text=True, timeout=90)
+    assert done.returncode == 0, done.stderr
+    return json.loads(done.stdout.strip().splitlines()[-1])
+
+
+@needs_node
+def test_the_lobby_view_opens_the_inbox_for_a_plan_from_the_form_and_keeps_a_named_plan_in_the_conversation(tmp_path):
+    got = run_view_node(tmp_path, VIEW)
+    form = got["fromForm"]
+    assert form["requestBody"] == [{"text": "Add a sale page, linked from the home page."}] and form["routeBody"] == [{}], "request without a flow, then route"
+    assert form["hash"] == "#/p/0123456789ab/lobby/inbox/5", "no message names the request: its plan card is in the Inbox, which opens on it"
+    named = got["named"]
+    assert named["hash"] == "#/p/0123456789ab/lobby", "the router's message was read before the place was chosen: the plan stays under it"
+    assert named["planCards"] == 1 and named["conversationReads"] >= 2
+
+
+@needs_node
+def test_before_the_conversation_is_read_no_plan_is_drawn_as_a_card_in_the_inbox(tmp_path):
+    got = run_view_node(tmp_path, VIEW)
+    assert got["beforeRead"]["cards"] == 0 and "Loading" in got["beforeRead"]["text"]
+    assert got["afterRead"]["cards"] == 1, "a plan no message names is the Inbox's card once the conversation is known"
+
+
+@needs_node
+def test_a_click_in_the_room_opens_the_tab_the_handoff_names_and_escape_closes_a_document_only_when_nothing_else_wants_it(tmp_path):
+    got = run_view_node(tmp_path, VIEW)
+    p = "#/p/0123456789ab/lobby"
+    assert got["scene"] == [f"{p}/inbox", f"{p}/desk", f"{p}/agent", f"{p}/agent", f"{p}/agent", f"{p}/desk/docs%2Fnotes%2Fa.md", "#/", "#/"]
+    assert got["escape"] == {"typing": "#/keep", "menu": "#/keep", "other": "#/keep", "closes": f"{p}/desk"}
+
+
+@needs_node
+def test_a_document_takes_the_panels_place_and_gives_it_back_and_on_a_phone_it_is_a_dialog(tmp_path):
+    got = run_view_node(tmp_path, VIEW)
+    assert got["viewer"] == {"inline": True, "hostHidden": False, "head": True, "tabsHidden": True, "text": True, "artifactReads": 1}, "the file is read once and shown as text"
+    assert got["closed"] == {"inline": False, "hostHidden": True, "head": False, "tabs": False}
+    assert got["disposed"] == 0, "the view takes its keyboard listener away"
+    assert got["phone"] == {"dialogOpen": True, "inline": False, "tabsHidden": False}

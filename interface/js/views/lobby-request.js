@@ -1,6 +1,6 @@
 // A request's block in the Lobby's conversation: the request line (its id, title and state, "Cancel request", and "Route it" when
-// the request waits for a route nobody is asking for), then the request's decisions: an open plan as the plan card, another open
-// kind as a line that points at the Inbox (its card is the Floor's pattern), a decision no longer open as a resolved line. And the
+// the request waits for a route nobody is asking for), then the request's decisions: an open plan under the message that produced it as
+// the plan card, any other open decision as a line that points at the Inbox (its card is the Floor's pattern), a decision no longer open as a resolved line. And the
 // dialog that asks before a request is cancelled. Text from the service goes in as text.
 
 import { createPlanCard } from "../cards/plan.js";
@@ -19,21 +19,33 @@ function resolvedLine(item, now) {
     h("span", { class: "wb-lobby-resolved-text", text: `${item.title || ""}${when ? ` · ${when}` : ""}` }));
 }
 
-/** An open decision whose card is not the plan card: its kind, title and a link to the Inbox where its card is. */
-function pointer(project, item, now) {
+/**
+ * A line that points at the place where a decision's card is: its kind, title and age, then `link` (an anchor the caller builds with
+ * the router). The Conversation uses it for a card that lives in the Inbox and the Inbox for a plan card that lives in the
+ * Conversation, so a card is drawn in one place only.
+ */
+export function pointerLine(item, now, link) {
   const when = ago(item.created_at, now);
   return h("div", { class: "wb-lobby-resolved wb-pointer" },
     h("span", { class: "pui-badge pui-warn pui-soft", text: format.kindWord(item.kind) }),
     h("span", { class: "wb-lobby-resolved-text", text: `${item.title || ""}${when ? ` · ${when}` : ""}` }),
-    h("a", { class: "pui-link pui-theme", href: router.lobbyHash(project, "inbox", item.id), text: "Open in the Inbox", "aria-label": `Open ${format.kindWord(item.kind)} ${item.id} in the Inbox` }));
+    link);
+}
+
+/** An open decision whose card is in the Inbox: a line that points at it. */
+function pointer(project, item, now) {
+  return pointerLine(item, now, h("a", { class: "pui-link pui-theme", href: router.lobbyHash(project, "inbox", item.id), text: "Open in the Inbox",
+    "aria-label": `Open ${format.kindWord(item.kind)} ${item.id} in the Inbox` }));
 }
 
 /**
  * One request's block. options: {api, project, request (a row of status.requests), body (the `task` answer, or null while it is
- * read), open (open decisions on it in status), now, signal, onChanged(), onCancel(request), onRoute(request), announce(text)}.
+ * read), open (open decisions on it in status), now, signal, onChanged(), onCancel(request), onRoute(request), announce(text),
+ * viaMessage (a message of the planning agent names the request; false for a request made from the form, OPEN-24)}.
+ * The plan card is drawn here only when a message names the request; otherwise its card is in the Inbox and this is a line that points at it.
  * Returns {el, focusCard(id)}.
  */
-export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce }) {
+export function createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, routing, announce, viaMessage = true }) {
   const line = requestLine(request, open);
   const cancel = line.cancellable
     ? h("button", { class: "pui-btn pui-link pui-error wb-lobby-cancel-link", type: "button", text: "Cancel request", "aria-label": `Cancel request ${request.id}` }) : null;
@@ -53,7 +65,7 @@ export function createBlock({ api, project, request, body, open, now, signal, on
   const items = body && Array.isArray(body.pending) ? body.pending : [];
   for (const item of items) {
     if (item.status === "open") {
-      if (item.kind === "plan") {
+      if (item.kind === "plan" && viaMessage) {
         const card = createPlanCard({ api, project, item, now, onChanged, signal, announce });
         cards.set(item.id, card);
         decisions.push(card.el);

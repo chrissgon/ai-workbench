@@ -391,6 +391,85 @@ def test_the_lobby_shows_what_came_as_text_only_and_keeps_no_state_outside_its_v
     assert "localStorage" not in lobby and "sessionStorage" not in lobby
 
 
+# --- WP-9.4b: the Lobby's Inbox, Desk and Agent tabs reuse the Floor's modules ---------------------------------------------------
+
+LOBBY_TAB_FILES = ("views/lobby-inbox.js", "views/lobby-desk.js", "views/lobby-agent.js")
+
+
+def test_the_lobbys_tabs_are_the_floors_modules_with_no_card_of_their_own_and_no_write_path_of_their_own():
+    texts = {name: (INTERFACE / "js" / name).read_text(encoding="utf-8") for name in LOBBY_TAB_FILES}
+    assert 'from "../floor/inbox.js"' in texts["views/lobby-inbox.js"] and 'from "../floor/actions.js"' in texts["views/lobby-inbox.js"]
+    assert 'from "../floor/desk-tab.js"' in texts["views/lobby-desk.js"] and 'from "../floor/viewer.js"' in texts["views/lobby-desk.js"]
+    assert 'from "../floor/agent-tab.js"' in texts["views/lobby-agent.js"] and 'from "../floor/actions.js"' in texts["views/lobby-agent.js"]
+    writes = {"answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"}
+    for name, text in texts.items():
+        assert not (set(re.findall(r"\bapi\.(\w+)\(", text)) & writes), f"{name} sends no write: the Floor's modules do, through floor/actions.js"
+        assert not re.search(r"\bfetch\(|createCard\(|createPlanCard\(", text), f"{name} has no client and no card of its own"
+        assert not re.search(r"innerHTML|insertAdjacentHTML|\.style\b", text), name
+    reads = set()
+    for text in texts.values():
+        reads |= set(re.findall(r"\bapi\.(\w+)\(", text))
+    assert reads == {"artifacts", "task"}, f"the tabs read only the documents and a task's body: {sorted(reads)}"
+    assert {"artifacts", "artifact", "task", "pendingItem"} <= set(re.findall(r"^export (?:async )?function (\w+)", CLIENT.read_text(encoding="utf-8"), re.M))
+    routes = {(r["method"], r["pattern"]) for r in service.ROUTES}
+    for route in (("GET", "/projects/{p}/artifacts"), ("GET", "/projects/{p}/artifact"), ("GET", "/projects/{p}/pending/{id}"), ("GET", "/projects/{p}/tasks/{id}"),
+                  ("POST", "/projects/{p}/agents/{name}/mode")):
+        assert route in routes, f"{route} is not a route of the service"
+
+
+def test_the_lobbys_tabs_link_only_through_the_router_and_the_floors_modules_change_only_by_a_parameter():
+    inbox = (INTERFACE / "js" / "views" / "lobby-inbox.js").read_text(encoding="utf-8")
+    for target in re.findall(r"href: ([^,}]+)", inbox):
+        assert target.strip().startswith("router."), f"lobby-inbox.js links without the router: {target}"
+    assert "router.lobbyDeskHash(project, path)" in inbox, 'a returned path opens in the Lobby\'s Desk, never in a floor "planning"'
+    # the Floor's own view calls the model, the Inbox and the Agent tab as it did: no option, no emptyText
+    floor_view = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
+    assert "lobby: true" not in floor_view and "emptyText" not in floor_view
+    model = (INTERFACE / "js" / "floor-model.js").read_text(encoding="utf-8")
+    assert "name === PLANNING && !options.lobby" in model, "the planning agent is found only when the Lobby asks"
+    inbox_module = (INTERFACE / "js" / "floor" / "inbox.js").read_text(encoding="utf-8")
+    assert 'last.emptyText || "Nothing waits for you on this floor."' in inbox_module, "the Floor's empty line is the default"
+
+
+def test_the_lobby_draws_a_plan_card_in_one_place_and_a_line_in_the_other():
+    request = (INTERFACE / "js" / "views" / "lobby-request.js").read_text(encoding="utf-8")
+    assert 'item.kind === "plan" && viaMessage' in request, "a plan under a message that names its request is the plan card; otherwise a line points at the Inbox"
+    thread = (INTERFACE / "js" / "views" / "lobby-thread.js").read_text(encoding="utf-8")
+    assert "blockFor(request, true)" in thread and "blockFor(request, false)" in thread, "a block under a message and a trailing one are told apart"
+    lobby = (INTERFACE / "js" / "views" / "lobby.js").read_text(encoding="utf-8")
+    assert "inboxParts(status, messages)" in lobby and 'router.lobbyHash(project, "inbox", result.pending_id)' in lobby, \
+        "a request made from the form opens its plan in the Inbox when its route ends"
+
+
+def test_every_class_the_lobbys_tab_modules_build_is_styled_and_the_tab_files_are_files_of_the_page():
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    missing = {}
+    for name in LOBBY_TAB_FILES:
+        assert (INTERFACE / "js" / name).is_file()
+        text = (INTERFACE / "js" / name).read_text(encoding="utf-8")
+        for cls in set(re.findall(r"\bwb-[a-z0-9]+(?:-[a-z0-9]+)*", text)):
+            if not re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css):
+                missing.setdefault(cls, []).append(name)
+    lobby = (INTERFACE / "js" / "views" / "lobby.js").read_text(encoding="utf-8")
+    for cls in ("wb-lobby-scroll",):
+        assert re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css) and cls in lobby
+    assert not missing, f"classes the Lobby's tab modules build that style.css never names: {missing}"
+    assert "LATER" not in lobby and "comes with the Floor package" not in lobby, "no placeholder is left for the three tabs"
+
+
+def test_no_lobby_module_takes_a_write_out_of_the_client_by_name_or_by_destructuring():
+    writes = {"answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"}
+    for path in sorted((INTERFACE / "js" / "views").glob("lobby*.js")):
+        text = path.read_text(encoding="utf-8")
+        for names in re.findall(r"import\s*\{([^}]*)\}\s*from\s*[\"'][./]*api\.js[\"']", text):
+            assert not ({n.strip().split(" as ")[0] for n in names.split(",")} & writes), f"{path.name} imports a write of the client by name"
+        for names in re.findall(r"(?:const|let|var)\s*\{([^}]*)\}\s*=\s*api\b", text):
+            assert not ({n.strip().split(":")[0].strip() for n in names.split(",")} & writes), f"{path.name} destructures a write out of the client"
+        assert not re.search(r"\bapi\s*\[", text), f"{path.name} picks an operation of the client by a computed name"
+        for name in writes:
+            assert not re.search(rf"=\s*api\.{name}\b(?!\()", text), f"{path.name} takes api.{name} as a value"
+
+
 # --- the Control room (WP-9.5): what it calls, and that every class it uses is drawn by the stylesheet ---------------------------
 
 

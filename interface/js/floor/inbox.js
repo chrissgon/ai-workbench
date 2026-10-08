@@ -10,7 +10,8 @@ import { chip } from "./widgets.js";
 
 /**
  * Create the Inbox. env: {project, links, now(), refresh() (read the screen's data again), api (the client's actions, see cards.js)}.
- * Returns {el, update({decisions, requests, bodies, resolved, selected, loading})}.
+ * Returns {el, update({decisions, requests, bodies, resolved, selected, loading, emptyText})}; emptyText replaces the empty line's words
+ * (the Lobby says so when the plan it keeps in the Conversation is the only decision that waits).
  */
 export function createInbox(env) {
   const el = h("div", { class: "wb-inbox" });
@@ -94,11 +95,11 @@ export function createInbox(env) {
     }
     const empty = !nodes.length && !keep.length;
     const resolved = resolvedList(last.resolved || []);
-    const key = JSON.stringify([open, keep.length, empty, (last.resolved || []).map((r) => r.id), last.loading]) + nodes.map((n, i) => (n.tagName === "ARTICLE" ? "a" : n.textContent)).join("|");
+    const key = JSON.stringify([open, keep.length, empty, (last.resolved || []).map((r) => r.id), last.loading, last.emptyText || ""]) + nodes.map((n, i) => (n.tagName === "ARTICLE" ? "a" : n.textContent)).join("|");
     const signature = key + [...cards.keys()].map((id) => (cards.get(id).isDone() ? id : "")).join(",");
     if (signature !== shown) {
       shown = signature;
-      fill(el, empty ? h("p", { class: "wb-empty-line", text: last.loading ? "Loading the floor..." : "Nothing waits for you on this floor." }) : h("div", { class: "wb-cards" }, keep, nodes), resolved);
+      fill(el, empty ? h("p", { class: "wb-empty-line", text: last.loading ? "Loading the floor..." : last.emptyText || "Nothing waits for you on this floor." }) : h("div", { class: "wb-cards" }, keep, nodes), resolved);
     }
     if (last.selected !== null && last.selected !== undefined && focused !== last.selected) {
       const card = cards.get(last.selected);
