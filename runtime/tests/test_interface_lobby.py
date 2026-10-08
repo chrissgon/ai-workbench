@@ -323,7 +323,7 @@ const api = {
 };
 const changed = [];
 const onChanged = async () => { changed.push(1); };
-const buttons = (root) => find(root, (n) => n.tagName === "BUTTON");
+const buttons = (root) => find(root, (n) => n.tagName === "BUTTON" && n.attrs["data-key"] !== "plain");   // the plan body's "Plain text" toggle (WP-9.17) is a view switch, not a word of `actions`
 
 // the plan card: one button per word of `actions`, the whole hash shown, text as text, the hash sent is the hash shown
 let card = createPlanCard({ api, project: "p1", item: item(), now: NOW, onChanged });
@@ -331,7 +331,7 @@ const words = buttons(card.el).map(textOf);
 const shown = byClass(card.el, "wb-plan-hash")[0].textContent;
 out.card = { words, shown, head: byClass(card.el, "wb-card-head")[0].textContent, title: byClass(card.el, "wb-card-title")[0].textContent,
   named: card.el.attrs["aria-labelledby"] === byClass(card.el, "wb-card-title")[0].attrs.id, caption: find(card.el, (n) => n.tagName === "CAPTION").map(textOf),
-  headers: find(card.el, (n) => n.tagName === "TH").map(textOf), asText: find(card.el, (n) => n.tagName === "PRE").map(textOf),
+  headers: find(card.el, (n) => n.tagName === "TH").map(textOf), asText: find(card.el, (n) => (n.attrs.class || "").split(/\s+/).includes("wb-md")).map(textOf),
   elements: [...card.el.walk()].filter((n) => ["B", "I", "SCRIPT", "IMG"].includes(n.tagName)).length,
   taskCell: byClass(card.el, "wb-cell-task")[0].textContent, note: find(card.el, (n) => n.tagName === "SPAN" && textOf(n).startsWith("Note")).map(textOf) };
 click(buttons(card.el)[0]);

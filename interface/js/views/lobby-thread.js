@@ -1,9 +1,11 @@
 // The conversation's log: the messages, oldest first (the person's on the right, the planning agent's on the left, each with
 // its age), and under the message that produced a request that request's block. It is drawn by keys, not wholesale: a message
 // is built once, a block again only when what it shows changed, so a poll that changed nothing touches no element and the focus
-// and a typed note stay where they are. The message text is text, never markup.
+// and a typed note stay where they are. The person's message is text, never markup; the agent's reply is drawn by the Markdown
+// renderer, which builds nodes and leaves raw HTML as text.
 
 import { h } from "../dom.js";
+import { renderMarkdown } from "../markdown.js";
 import { createBlock } from "./lobby-request.js";
 import { EMPTY_TEXT, metaOf, nameOf, placeBlocks, signatureOf } from "./lobby-model.js";
 
@@ -16,7 +18,8 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
 
   function messageNode(message, now) {
     const meta = h("time", { class: "wb-msg-meta", datetime: message.created_at || false, title: message.created_at || false, text: metaOf(message, now) });
-    const bubble = h("div", { class: `wb-bubble ${message.role === "user" ? "pui-soft pui-theme" : "wb-bubble-agent"}`, text: message.text });
+    const mine = message.role === "user";     // what the person typed is shown as typed; the agent's reply is drawn as Markdown
+    const bubble = mine ? h("div", { class: "wb-bubble pui-soft pui-theme", text: message.text }) : h("div", { class: "wb-bubble wb-bubble-agent" }, renderMarkdown(message.text));
     const node = h("div", { class: `wb-msg ${message.role === "user" ? "is-user" : "is-agent"}`, role: "article", "aria-label": nameOf(message, now) }, meta, bubble);
     return { el: node, meta, message };
   }
