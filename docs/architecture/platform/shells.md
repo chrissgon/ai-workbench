@@ -256,7 +256,7 @@ The words a held ready task carries, from `REASONS` of `runtime/dispatcher.py`:
 | `approve-policy` | `--file` `--agent` `[--sha256]` `[--expires]` `[--what]` | `approve_policy` |
 | `revoke-policy` | `--id` | `revoke_policy` |
 | `standing` | `--policy` | `standing` |
-| `execute-under-policy` | `--policy` `--effect-file` | `execute_under_policy` |
+| `execute-under-policy` | `--policy` `--effect-file` `[--replay-log]` | `execute_under_policy` |
 | `contained-run` | `--skill` `--prompt-file` `--out` `[--platform]` `[--timeout-seconds]` | `contained_run` |
 | `dispatch` | - | `dispatch` |
 | `poll` | - | `poll` |

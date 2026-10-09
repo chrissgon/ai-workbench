@@ -43,6 +43,19 @@ What a kind module exposes, in two groups:
                        policy_argv(doc)                  the verb and the document's args, without the flags in
                                                          RESERVED_FLAGS: the operation adds --allow per bound glob,
                                                          --idempotency-key, then --dry-run or --confirmed
+                       resolve_targets(cfg, doc, resolve_call)   optional. For a kind whose bounds name a class of
+                                                         targets (autonomy.TARGET_CLASSES): {class word: the set of
+                                                         targets it holds now}, read from a recorded fact through
+                                                         resolve_call(class, verb, args), the read-only call of a
+                                                         provider; EffectError when the fact cannot be read. The
+                                                         operation calls it before the run lock and hands the sets
+                                                         to autonomy.covers; a kind without it resolves no class
+                       policy_judgement(root, project, doc, run_script, policy_file, log=None)
+                                                         optional. (True, "") or (False, why): the checks a kind owns
+                                                         that are not bounds, made after covers and before any
+                                                         provider call, on the exact content (the engagement gate, run
+                                                         through run_script, the credential scan); `log` is None except
+                                                         in a replay, which names a copy of the log the gate reads
 
 A kind of one path alone has only that path's names. EFFECT_KEYS and RESERVED_FLAGS are the common shape of a
 document a handler hands over and the flags the operation adds and a handler never may.
@@ -127,7 +140,7 @@ def recover_payload(reply: str, tmp_dir, readable) -> dict:
 # The registry of the kinds of effect: a word of the side-effect vocabulary -> the module of runtime/ that holds the
 # kind. For the gate path the word is the one a skill's manifest names in its gate (gate.effect); a word not here
 # opens a review, never an effect. For the policy path it is the kind of the document a handler hands over.
-KINDS = {"create": "effect_pull_request", "push": "effect_commit"}
+KINDS = {"create": "effect_pull_request", "push": "effect_commit", "publish": "effect_reply"}
 
 # The keys of the effect document a handler hands to ops.execute_under_policy, and no others; and the flags only the
 # operation adds to the provider's verb, never a handler.

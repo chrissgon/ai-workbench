@@ -1,8 +1,11 @@
-"""Offline tests of scripts/runtime.py with a fake workbench.
+"""Offline tests of runtime/handlers/social.py with a fake workbench.
 
-The mailbox, the notification parser, the contained run (a stand-in runtime/cli.py) and the publisher are fakes; the store, the policy
-gate and the sensitive-topics lock are the real scripts, copied into the fake workbench. No network, no
-model, no credential.
+The mailbox, the notification parser, the contained run (a stand-in runtime/cli.py) and the publisher are fakes; the
+store, the policy gate and the sensitive-topics lock are the real scripts, copied into the fake workbench. The auto
+reply is handed to `cli.py execute-under-policy` (CONS-2a): by default the stand-in forwards it to a copy of the real
+operations layer in the fake workbench, so that the bound, the ledger, the gate and the call are the real ones; with
+FAKE_OPERATION=stub it records the document it was handed and answers what a test says. No network, no model, no
+credential.
 """
 import hashlib
 import json
@@ -55,20 +58,46 @@ if c and os.environ.get("FAKE_PARSER_GENERIC"):
 print(json.dumps({"parsed": True, **c} if c else {"parsed": False, "reason": "not a comment notification"}))
 '''
 
-FAKE_PUBLISHER = r'''
+FAKE_PUBLISHER = r'''# /// script
+# requires-python = ">=3.9"
+# dependencies = []
+# ///
 import json, os, sys
 PLATFORMS = ("linkedin",)
 with open(os.environ["FAKE_CALLS"], "a") as f:
     f.write(json.dumps(sys.argv[1:]) + "\n")
-if os.environ.get("FAKE_PUBLISHER_FAIL"):
+if sys.argv[1] == "posts":
+    urns = json.loads(open(os.environ["FAKE_LEDGER"]).read())
+    print(json.dumps({"platform": "linkedin", "since": sys.argv[sys.argv.index("--since") + 1], "ledger": "fake",
+                      "undated": [], "posts": [{"idempotency_key": "p%d" % n, "published_at": "2026-09-01T00:00:00+00:00",
+                                                 "post_url": "https://www.linkedin.com/feed/update/%s/" % u}
+                                                for n, u in enumerate(urns)]}))
+    sys.exit(0)
+if os.environ.get("FAKE_PUBLISHER_FAIL") and "--confirmed" in sys.argv:
     print("403 not enough permissions", file=sys.stderr); sys.exit(1)
 print(json.dumps({"comment_urn": "urn:li:comment:(urn:li:activity:111,999)", "replayed": False}))
 '''
 
 FAKE_CLI = r'''
-import os, shutil, sys
+import json, os, shutil, subprocess, sys
+if sys.argv[1:2] == ["execute-under-policy"]:
+    if os.environ.get("FAKE_OPERATION", "real") == "real":  # the real operations layer, copied beside this file
+        here = os.path.dirname(os.path.abspath(__file__))
+        sys.exit(subprocess.call([sys.executable, os.path.join(here, "cli_real.py"), *sys.argv[1:]]))
+    args = sys.argv[2:]
+    path = args[args.index("--effect-file") + 1]
+    doc = json.loads(open(path).read())
+    files = {os.path.basename(p): open(p).read() for p in doc["files"]}
+    with open(os.environ["FAKE_CALLS"] + ".operation", "a") as f:
+        f.write(json.dumps({"argv": sys.argv[1:], "doc": doc, "files": files, "effect_file": path}) + "\n")
+    if os.environ.get("FAKE_OPERATION_EXIT"):
+        print("error: the stand-in operation failed", file=sys.stderr)
+        sys.exit(int(os.environ["FAKE_OPERATION_EXIT"]))
+    print(os.environ.get("FAKE_OPERATION_ANSWER") or json.dumps(
+        {"executed": True, "policy": doc["policy"], "approval_id": 1, "action": {"id": 1, "created": True}, "result": {}}))
+    sys.exit(0)
 if sys.argv[1:2] != ["contained-run"]:
-    print("error: the stand-in takes only contained-run", file=sys.stderr)
+    print("error: the stand-in takes only contained-run and execute-under-policy", file=sys.stderr)
     sys.exit(2)
 args = sys.argv[2:]
 out = args[args.index("--out") + 1]
@@ -114,6 +143,32 @@ def message(n, text="Great post, thanks!", commenter="Ana Lima"):
                              "received_at": f"2026-09-29T10:0{n}:00Z"}}
 
 
+LEDGER = ["urn:li:activity:111", "urn:li:activity:7400000000000000001"]  # the posts the fake publisher's ledger records
+REAL_RUNTIME = [p.name for p in sorted((REPO / "runtime").glob("*")) if p.is_file() and p.name != "cli.py"]
+
+
+def cli_real(env, *args):
+    """A verb of the real operations layer copied into the fake workbench; returns the printed JSON."""
+    r = subprocess.run([sys.executable, str(env["wb"] / "runtime" / "cli_real.py"), *args, "--project", str(env["proj"])],
+                       capture_output=True, text=True, timeout=300, env=os.environ.copy())
+    assert r.returncode == 0, r.stderr
+    return json.loads(r.stdout)
+
+
+def accept(env):
+    """The person accepts runtime.json as it is now (the operations layer refuses a configuration that was not)."""
+    cli_real(env, "accept-config", "--sha256", hashlib.sha256((env["proj"] / "docs/workbench/runtime.json").read_bytes()).hexdigest())
+
+
+def approve_engagement_policy(env, days=30):
+    """The standing approval of the engagement policy for the area agent, as the person gives it."""
+    import datetime
+    file = "docs/marketing/engagement-policy.md"
+    digest = hashlib.sha256((env["proj"] / file).read_bytes()).hexdigest()
+    return cli_real(env, "approve-policy", "--file", file, "--agent", "social-manager", "--sha256", digest,
+                    "--expires", (datetime.date.today() + datetime.timedelta(days=days)).isoformat())
+
+
 @pytest.fixture()
 def env(tmp_path, monkeypatch):
     wb = tmp_path / "wb"
@@ -126,35 +181,62 @@ def env(tmp_path, monkeypatch):
         p = wb / rel
         p.parent.mkdir(parents=True, exist_ok=True)
         p.write_text(text)
-    for rel in ("providers/store/sqlite.py", "scripts/redact.py", "skills/mkt-engage/scripts/policy_gate.py",
-                "skills/brand-profile/scripts/sensitive_topics.py", "shared/references/platforms/linkedin.json"):
+    for rel in ("providers/store/sqlite.py", "providers/resolve.py", "scripts/redact.py", "scripts/validate.py",
+                "skills/mkt-engage/scripts/policy_gate.py", "skills/brand-profile/scripts/sensitive_topics.py",
+                "shared/references/platforms/linkedin.json", "runtime/cli.py"):
         (wb / rel).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy(REPO / rel, wb / rel)
+        shutil.copy(REPO / rel, wb / (rel if rel != "runtime/cli.py" else "runtime/cli_real.py"))
+    for name in REAL_RUNTIME:  # the real operations layer, behind the stand-in cli.py
+        shutil.copy(REPO / "runtime" / name, wb / "runtime" / name)
+    roles = json.loads((REPO / "runtime" / "roles.json").read_text())  # which it checks against the skills and packs it names
+    for skill in (roles["router"], roles["brief"], roles["subtask"]):
+        (wb / "skills" / skill).mkdir(parents=True, exist_ok=True)
+        (wb / "skills" / skill / "SKILL.md").write_text(f"---\nname: {skill}\n---\n")
+    (wb / "packs").mkdir()
+    for pack in roles["packs_in_use"]:
+        shutil.copy(REPO / "packs" / f"{pack}.txt", wb / "packs" / f"{pack}.txt")
     proj = tmp_path / "proj"
     (proj / "docs/workbench").mkdir(parents=True)
     (proj / "docs/marketing").mkdir(parents=True)
     (proj / "docs/brand").mkdir(parents=True)
     (proj / "docs/brand/profile.md").write_text(PROFILE)
     (proj / "docs/marketing/engagement-policy.md").write_text(POLICY)
-    phash = hashlib.sha256((proj / "docs/marketing/engagement-policy.md").read_bytes()).hexdigest()
     (proj / "docs/workbench/state.md").write_text(
-        "## Approvals\n\n| Scope | What | Payload hash | Approved | Expires | Status |\n|---|---|---|---|---|---|\n"
-        f"| standing | engagement | policy:{phash} | 2026-09-29 | 2099-01-01 | active |\n")
+        "## Approvals\n\n| Scope | What | Payload hash | Approved | Expires | Status |\n|---|---|---|---|---|---|\n")
     data = tmp_path / "data"
     (proj / "docs/workbench/runtime.json").write_text(json.dumps({
         "agent": "social-manager", "workbench": str(wb), "data_dir": str(data),
         "store_db": str(data / "store.sqlite"), "mailbox": "gmail", "publisher": "linkedin",
-        "notification_query": "from:notifications", "daily_cost_cap_usd": 1}))
+        "notification_query": "from:notifications", "daily_cost_cap_usd": 1,
+        "area_agents": {"social-manager": {"pack": "default", "mode": "autonomous-with-policy"}}}))
     calls = tmp_path / "calls.jsonl"
     msgs = tmp_path / "messages.json"
     resp = tmp_path / "response.md"
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(json.dumps(LEDGER))
     monkeypatch.setenv("FAKE_CALLS", str(calls))
     monkeypatch.setenv("FAKE_MESSAGES", str(msgs))
     monkeypatch.setenv("FAKE_RESPONSE", str(resp))
-    return {"proj": proj, "calls": calls, "msgs": msgs, "resp": resp, "data": data, "wb": wb}
+    monkeypatch.setenv("FAKE_LEDGER", str(ledger))
+    monkeypatch.delenv("FAKE_OPERATION", raising=False)
+    # The person's acceptance of runtime.json and the standing approval of the policy are given when the first
+    # tick runs (ensure_operation), so that a test of a dry run or of a refused tick sees no store, as before.
+    return {"proj": proj, "calls": calls, "msgs": msgs, "resp": resp, "data": data, "wb": wb, "ledger": ledger,
+            "operation": True, "ready": False}
+
+
+def ensure_operation(env):
+    """Give the operations layer what it needs before the first auto reply: the accepted configuration and the
+    standing approval of the engagement policy as it is now. Once; a test that edits the policy calls it first."""
+    if env["operation"] and not env["ready"]:
+        accept(env)
+        approve_engagement_policy(env)
+        env["ready"] = True
 
 
 def rt(env, *args):
+    if args[:1] == ("tick",) and "--dry-run" not in args:
+        ensure_operation(env)
     r = subprocess.run([sys.executable, str(RUNTIME), *args, "--project", str(env["proj"])],
                        capture_output=True, text=True, timeout=300, env=os.environ.copy())
     return r.returncode, (json.loads(r.stdout) if r.stdout.strip() else None), r.stderr
@@ -165,10 +247,15 @@ def set_case(env, messages, response):
     env["resp"].write_text(response)
 
 
-def publisher_calls(env):
+def all_publisher_calls(env):
     if not env["calls"].exists():
         return []
     return [json.loads(line) for line in env["calls"].read_text().splitlines()]
+
+
+def publisher_calls(env):
+    """What went out: the publisher's confirmed calls (its ledger reads and dry runs send nothing)."""
+    return [c for c in all_publisher_calls(env) if c[:1] == ["comment"] and "--confirmed" in c]
 
 
 def log_entries(env):
@@ -303,21 +390,20 @@ def test_malformed_proposal_goes_to_the_inbox(env):
 
 
 def test_edited_policy_stops_automatic_replies(env):
+    ensure_operation(env)  # the policy as the person approved it
     p = env["proj"] / "docs/marketing/engagement-policy.md"
     p.write_text(p.read_text().replace('"max_replies_per_day": 10', '"max_replies_per_day": 50'))
     set_case(env, [message(1)], decision())
     code, out, _ = rt(env, "tick")
     assert out["handled"][0]["status"] == "to_inbox"
-    assert "no standing approval" in out["handled"][0]["note"]
+    assert "changed since it was approved" in out["handled"][0]["note"]  # the operation: the approval binds the file
     assert publisher_calls(env) == []
 
 
 def test_daily_cost_cap_stops_new_runs(env, monkeypatch):
     monkeypatch.setenv("FAKE_COST", "0.6")
     set_case(env, [message(1), message(2, commenter="Bruno"), message(3, commenter="Carla")], decision())
-    cfg = json.loads((env["proj"] / "docs/workbench/runtime.json").read_text())
-    cfg["max_events_per_tick"] = 5
-    (env["proj"] / "docs/workbench/runtime.json").write_text(json.dumps(cfg))
+    edit_config(env, max_events_per_tick=5)
     code, out, _ = rt(env, "tick")
     handled = [h for h in out["handled"] if "event" in h]
     assert len(handled) == 2
@@ -424,8 +510,10 @@ def test_publisher_failure_goes_to_the_inbox(env, monkeypatch):
     set_case(env, [message(1)], decision())
     code, out, _ = rt(env, "tick")
     assert out["handled"][0]["status"] == "to_inbox"
-    assert "publisher exited 1" in out["handled"][0]["note"]
+    assert "the policy operation exited 1" in out["handled"][0]["note"]
+    assert "403 not enough permissions" in out["handled"][0]["note"]  # the operation names what the provider said
     assert [e["action"] for e in log_entries(env)] == ["failed", "to_inbox"]
+    assert len(all_publisher_calls(env)) == 3  # the ledger read, the dry run, the confirmed call that failed
 
 
 def test_an_unexpected_error_fails_the_event_and_the_run_and_the_tick_goes_on(env):
@@ -563,6 +651,7 @@ def test_a_second_tick_while_one_runs_does_nothing(env):
     # Test gap of the report: "another tick is running" appeared in no test.
     import fcntl
     set_case(env, [message(1)], decision())
+    env["operation"] = False  # nothing is set up: the tick must not even reach the store
     env["data"].mkdir(parents=True, exist_ok=True)
     with open(env["data"] / "tick.lock", "w") as held:
         fcntl.flock(held, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -627,7 +716,7 @@ def test_pasted_comment_without_a_mailbox_is_answered(env, tmp_path):
     cfg = json.loads(cfg_path.read_text())
     cfg["mailbox"] = "none"
     cfg.pop("notification_query")
-    cfg_path.write_text(json.dumps(cfg))
+    save_config(env, cfg)
     (env["wb"] / "providers/mailbox/gmail.py").unlink()
     text = tmp_path / "comment.txt"
     text.write_text("Nice, I will try it!")
@@ -693,7 +782,14 @@ def edit_config(env, **changes):
     path = env["proj"] / "docs/workbench/runtime.json"
     cfg = json.loads(path.read_text())
     cfg.update(changes)
-    path.write_text(json.dumps(cfg))
+    save_config(env, cfg)
+
+
+def save_config(env, cfg):
+    """Write runtime.json and accept the new hash, as the person does after reading a change."""
+    (env["proj"] / "docs/workbench/runtime.json").write_text(json.dumps(cfg))
+    if env["ready"]:
+        accept(env)
 
 
 def test_store_is_resolved_by_class_not_a_hardcoded_path(env, monkeypatch):
@@ -924,6 +1020,7 @@ def test_a_pinned_tick_refuses_when_the_configuration_or_the_gate_changed(env):
 
 
 def test_a_pin_that_cannot_be_read_stops_the_tick_and_pin_goes_with_tick_only(env, tmp_path):
+    env["operation"] = False  # nothing is set up: the refused tick must not even reach the store
     set_case(env, [message(1)], decision())
     code, _, err = rt(env, "tick", "--pin", str(tmp_path / "missing.json"))
     assert code == 3 and "nothing ran" in err
@@ -974,3 +1071,254 @@ def test_the_environment_contract_says_where_each_approval_is_recorded():
     for words in ("docs/workbench/state.md", "inbox item", "action row", "writes nothing to the state file",
                   "policy:<sha256>", "never executed on the strength of the other"):
         assert words in paragraph, words
+
+
+# --- CONS-2a: the auto reply goes through the policy operation ------------------------------------------------------
+
+
+def operation_calls(env):
+    """What the stub operation was handed: one {"argv", "doc", "files", "effect_file"} per call."""
+    path = Path(str(env["calls"]) + ".operation")
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.exists() else []
+
+
+def actions_of(env):
+    import sqlite3
+    with sqlite3.connect(str(env["data"] / "store.sqlite")) as db:
+        return db.execute("SELECT kind, target, idempotency_key FROM actions ORDER BY id").fetchall()
+
+
+def effect_keys():
+    sys.path.insert(0, str(REPO / "runtime"))
+    import effects
+    return effects.EFFECT_KEYS, effects.RESERVED_FLAGS
+
+
+def test_the_auto_reply_is_handed_to_the_operation_as_one_document_and_the_handler_confirms_and_records_nothing(env, monkeypatch):
+    monkeypatch.setenv("FAKE_OPERATION", "stub")
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "done" and out["handled"][0]["note"] == \
+        f"replied ({reply_key('urn:li:comment:(urn:li:activity:111,1)')})"
+    (call,) = operation_calls(env)
+    keys, reserved = effect_keys()
+    run_dir = next((env["data"] / "runs").iterdir())
+    assert call["argv"] == ["execute-under-policy", "--project", str(env["proj"].resolve()), "--policy", "engagement-policy",
+                            "--effect-file", str(run_dir / "effect.json")]
+    doc = call["doc"]
+    assert tuple(sorted(doc)) == tuple(sorted(keys))  # the closed shape, no other key
+    key = reply_key("urn:li:comment:(urn:li:activity:111,1)")
+    reply = "Thanks, Ana. Glad it helped.\n"
+    assert doc["policy"] == "engagement-policy" and doc["kind"] == "publish" and doc["items"] == 1
+    assert doc["target"] == "urn:li:activity:111" and doc["idempotency_key"] == key
+    assert doc["payload_sha256"] == hashlib.sha256(reply.encode()).hexdigest()
+    assert doc["args"] == ["--platform", "linkedin", "--post-id", "urn:li:activity:111", "--parent-comment-id",
+                           "urn:li:comment:(urn:li:activity:111,1)", "--text-file", str(run_dir / "reply.txt")]
+    assert not [a for a in doc["args"] if a in reserved]  # the operation adds its flags, the handler never does
+    assert sorted(Path(p).name for p in doc["files"]) == ["comment.json", "decision.json", "reply.txt", "sources.json"]
+    assert all(Path(p).parent == run_dir and Path(p).is_absolute() for p in doc["files"])
+    assert call["files"]["reply.txt"] == reply and json.loads(call["files"]["decision.json"]) == \
+        {"category": "thanks_or_praise", "language": "EN"}
+    assert json.loads(call["files"]["comment.json"])["post_urn"] == "urn:li:activity:111"
+    assert all_publisher_calls(env) == []                  # the handler called no provider
+    assert actions_of(env) == []                           # and recorded no action
+    assert [e["action"] for e in log_entries(env)] == ["auto_replied"]
+    entry = log_entries(env)[0]
+    assert entry["idempotency_key"] == key and entry["reply_sha256"] == doc["payload_sha256"]
+    assert entry["comment_urn"] == "urn:li:comment:(urn:li:activity:111,1)" and entry["run_id"] == int(run_dir.name)
+
+
+def test_the_handler_no_longer_asks_the_gate_on_the_auto_path(env, monkeypatch):
+    monkeypatch.setenv("FAKE_OPERATION", "stub")
+    gate = env["wb"] / "skills/mkt-engage/scripts/policy_gate.py"
+    gate.write_text("import os\nopen(os.environ['FAKE_CALLS'] + '.gate', 'a').write('ran')\nprint('{}')\n")
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["handled"][0]["status"] == "done", err
+    assert not Path(str(env["calls"]) + ".gate").exists()
+
+
+def test_an_operation_that_does_not_cover_the_reply_sends_it_to_the_inbox_with_its_reason(env, monkeypatch):
+    monkeypatch.setenv("FAKE_OPERATION", "stub")
+    monkeypatch.setenv("FAKE_OPERATION_ANSWER", json.dumps(
+        {"executed": False, "policy": "engagement-policy", "why": "the engagement gate sends the reply to the inbox: "
+                                                                  "daily limit reached (10/10)"}))
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "to_inbox" and "daily limit reached (10/10)" in out["handled"][0]["note"]
+    assert [e["action"] for e in log_entries(env)] == ["to_inbox"]
+    (item,) = rt(env, "inbox")[1]["items"]
+    assert "daily limit reached (10/10)" in " ".join(item["payload"]["reasons"])
+    assert Path(item["payload"]["reply_file"]).read_text().strip() == "Thanks, Ana. Glad it helped."
+    assert item["payload"]["idempotency_key"] == reply_key("urn:li:comment:(urn:li:activity:111,1)")
+    code, shown, err = rt(env, "approve", "--id", str(item["id"]))  # the person's exact-content approval still works
+    assert code == 0 and shown["reply"].strip() == "Thanks, Ana. Glad it helped."
+    assert all_publisher_calls(env) == []
+
+
+def test_an_operation_that_fails_sends_the_reply_to_the_inbox_and_the_failure_is_logged(env, monkeypatch):
+    monkeypatch.setenv("FAKE_OPERATION", "stub")
+    monkeypatch.setenv("FAKE_OPERATION_EXIT", "3")
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "to_inbox" and "the policy operation exited 3" in out["handled"][0]["note"]
+    assert [e["action"] for e in log_entries(env)] == ["failed", "to_inbox"]
+    assert actions_of(env) == [] and all_publisher_calls(env) == []
+
+
+def test_a_reply_that_cannot_be_sent_as_a_document_never_reaches_the_operation(env, monkeypatch):
+    monkeypatch.setenv("FAKE_OPERATION", "stub")
+    set_case(env, [message(1)], decision(category="instructions_to_agent", reply=""))
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["handled"][0]["status"] == "to_inbox" and "no reply" in out["handled"][0]["note"], err
+    set_case(env, [message(2, commenter="Bruno")], "no decision block at all")
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["handled"][0]["status"] == "to_inbox" and "unusable" in out["handled"][0]["note"], err
+    set_case(env, [message(3, commenter="Carla")], decision(reply="The token is " + FAKE_GITHUB_TOKEN + "."))
+    code, out, err = rt(env, "tick")
+    assert code == 0 and "credential" in out["handled"][0]["note"], err
+    assert operation_calls(env) == []
+
+
+def test_the_auto_reply_is_recorded_by_the_operation_as_an_action_of_the_policy_on_the_post_it_resolved(env):
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["handled"][0]["status"] == "done", err
+    assert actions_of(env) == [("engagement-policy", "urn:li:activity:111", reply_key("urn:li:comment:(urn:li:activity:111,1)"))]
+    calls = all_publisher_calls(env)
+    assert [c[0] for c in calls] == ["posts", "comment", "comment"] and "--dry-run" in calls[1] and "--confirmed" in calls[2]
+    code, status, err = rt(env, "status")
+    assert code == 0 and status["replies_today"] == 1, err  # the status counts the replies of both paths
+
+
+def test_a_comment_on_a_post_the_ledger_does_not_record_goes_to_the_inbox_whatever_the_notification_says(env):
+    env["ledger"].write_text(json.dumps(["urn:li:activity:5"]))
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert out["handled"][0]["status"] == "to_inbox" and "comment-on-published-post" in out["handled"][0]["note"]
+    assert publisher_calls(env) == [] and actions_of(env) == []
+    env["ledger"].write_text(json.dumps(["urn:li:activity:111"]))
+    set_case(env, [message(2, commenter="Bruno")], decision())
+    assert rt(env, "tick")[1]["handled"][0]["status"] == "done" and len(publisher_calls(env)) == 1
+
+
+def test_a_standing_approval_that_does_not_cover_sends_every_reply_to_the_inbox_with_a_line_in_the_log(env):
+    ensure_operation(env)
+    cli_real(env, "set-mode", "--agent", "social-manager", "--mode", "autonomous")
+    accept(env)  # the person accepts the narrower mode: the approval no longer covers
+    set_case(env, [message(1)], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0 and out["handled"][0]["status"] == "to_inbox", err
+    assert "autonomous-with-policy" in out["handled"][0]["note"] and publisher_calls(env) == []
+    assert [e["action"] for e in log_entries(env)] == ["to_inbox"]
+
+
+def test_the_log_entry_the_handler_writes_is_the_line_the_gates_record_command_writes(env, tmp_path):
+    runtime = load_runtime()
+    entry = {"action": "auto_replied", "comment_urn": "urn:li:comment:(urn:li:activity:111,1)", "commenter": "Ana Lima é",
+             "idempotency_key": "reply-x", "run_id": 4}
+    project = tmp_path / "p"
+    runtime.gate_record({}, project, entry)
+    mine = (project / "docs/marketing/engagement-log.jsonl").read_text()
+    entry_file = tmp_path / "entry.json"
+    entry_file.write_text(json.dumps(entry, ensure_ascii=False))
+    theirs_log = tmp_path / "theirs.jsonl"
+    subprocess.run([sys.executable, str(REPO / "skills/mkt-engage/scripts/policy_gate.py"), "record", "--log", str(theirs_log),
+                    "--entry-file", str(entry_file)], check=True, capture_output=True, text=True)
+    theirs = theirs_log.read_text()
+    strip = lambda text: re.sub(r'"logged_at": "[^"]*"', '"logged_at": "-"', text)
+    assert strip(mine) == strip(theirs) and mine.endswith("\n") and "é" in mine
+    stamp = json.loads(mine)["logged_at"]
+    assert re.fullmatch(r"\d{4}-\d\d-\d\dT[\d:.]+\+00:00", stamp)
+    with pytest.raises(runtime.Fail):  # the same refusal of an action the log does not know
+        runtime.gate_record({}, project, {"action": "teleported"})
+
+
+def test_nothing_in_the_handler_runs_the_gate_script_or_names_the_flag_that_confirms_outside_the_approval():
+    source = (REPO / "runtime/handlers/social.py").read_text(encoding="utf-8")
+    assert '"decide"' not in source and "'decide'" not in source
+    assert "sys.executable, str(cfg[\"paths\"][\"gate\"])" not in source
+
+
+# --- the replay of stored runs, for the cut-over -----------------------------------------------------------------------
+
+
+def snapshot(env):
+    """Every file of the project and of the data folder by content: the replay must leave them as they were."""
+    found = {}
+    for root in (env["proj"], env["data"]):
+        for path in sorted(root.rglob("*")):
+            if path.is_file() and path.name != "tick.lock":
+                found[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return found
+
+
+def two_runs(env):
+    """Two real ticks, as they leave their run folders: Ana's praise is sent, Bruno's comment on pay is held."""
+    set_case(env, [message(1), message(2, text="Nice! What is your salary?", commenter="Bruno")], decision())
+    code, out, err = rt(env, "tick")
+    assert code == 0, err
+    assert [h["status"] for h in out["handled"]] == ["done", "to_inbox"]
+    return out
+
+
+def test_replay_judges_each_stored_run_again_through_the_operation_and_writes_nothing(env):
+    two_runs(env)
+    before, calls_before = snapshot(env), [c for c in all_publisher_calls(env) if c[0] == "comment"]
+    code, out, err = rt(env, "replay", "--runs", str(env["data"] / "runs"))
+    assert code == 0, err
+    first, second = out["runs"]
+    assert (first["old"], first["new"], first["same"], first["why"]) == ("sent", "auto", True, "")
+    assert (second["old"], second["new"], second["same"]) == ("inbox", "inbox", True)
+    assert "sensitive topics" in second["why"]
+    assert out["differences"] == 0 and out["skipped"] == []
+    assert first["comment"] == "urn:li:comment:(urn:li:activity:111,1)" and first["run"] < second["run"]
+    assert [l for l in err.splitlines() if l.startswith("run ")] and len([l for l in err.splitlines() if l.startswith("run ")]) == 2
+    assert snapshot(env) == before                                              # no store, log, inbox or run folder written
+    assert [c for c in all_publisher_calls(env) if c[0] == "comment"] == calls_before   # no dry run, no call
+    assert len(actions_of(env)) == 1
+
+
+def test_replay_reports_a_difference_before_the_switch_never_after(env):
+    two_runs(env)
+    policy = env["proj"] / "docs/marketing/engagement-policy.md"
+    policy.write_text(policy.read_text().replace('"max_replies_per_day": 10', '"max_replies_per_day": 11'))
+    code, out, err = rt(env, "replay", "--runs", str(env["data"] / "runs"))
+    assert code == 0, err
+    first, second = out["runs"]
+    assert (first["old"], first["new"], first["same"]) == ("sent", "inbox", False)
+    assert "changed since it was approved" in first["why"]
+    assert out["differences"] == 1 and second["same"] is True
+
+
+def test_replay_reads_the_ledger_but_never_sends_and_the_ledger_decides_the_class(env):
+    two_runs(env)
+    env["ledger"].write_text(json.dumps(["urn:li:activity:77"]))
+    code, out, err = rt(env, "replay", "--runs", str(env["data"] / "runs"))
+    assert code == 0, err
+    first = out["runs"][0]
+    assert (first["old"], first["new"], first["same"]) == ("sent", "inbox", False)
+    assert "comment-on-published-post" in first["why"] and len(publisher_calls(env)) == 1
+
+
+def test_replay_takes_a_start_time_and_names_the_folders_it_cannot_replay(env, tmp_path):
+    two_runs(env)
+    runs = env["data"] / "runs"
+    (runs / "99").mkdir()
+    (runs / "99" / "comment.json").write_text("{}")  # a run that never drafted a reply
+    code, out, err = rt(env, "replay", "--runs", str(runs))
+    assert code == 0 and len(out["runs"]) == 2 and out["skipped"] == [{"run": 99, "why": "no reply.txt"}]
+    code, out, err = rt(env, "replay", "--runs", str(runs), "--since", "2999-01-01T00:00:00+00:00")
+    assert code == 0 and out["runs"] == [] and out["differences"] == 0
+    code, out, err = rt(env, "replay", "--runs", str(runs), "--since", "2000-01-01T00:00:00+00:00")
+    assert code == 0 and len(out["runs"]) == 2
+    code, _, err = rt(env, "replay", "--runs", str(runs), "--since", "yesterday")
+    assert code == 2 and "--since" in err
+    code, _, err = rt(env, "replay", "--runs", str(tmp_path / "missing"))
+    assert code == 2 and "--runs" in err
+    code, _, err = rt(env, "replay")
+    assert code == 2 and "--runs" in err

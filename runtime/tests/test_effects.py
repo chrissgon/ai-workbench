@@ -336,7 +336,7 @@ def vocabulary() -> tuple:
 
 def test_the_registry_holds_every_kind_keyed_by_a_word_of_the_side_effect_vocabulary():
     assert set(effects.KINDS) <= set(vocabulary())
-    assert effects.KINDS == {"create": "effect_pull_request", "push": "effect_commit"}
+    assert effects.KINDS == {"create": "effect_pull_request", "push": "effect_commit", "publish": "effect_reply"}
 
 
 def test_every_kind_exposes_describe_and_the_policy_names_when_it_may_run_under_a_policy():
@@ -348,14 +348,15 @@ def test_every_kind_exposes_describe_and_the_policy_names_when_it_may_run_under_
             for name in ("policy_platform", "policy_effect", "policy_argv"):
                 assert callable(getattr(kind, name)), f"{word} runs under a policy and lacks {name}"
     assert effects.module_for("create").POLICY is False and effects.module_for("push").POLICY is True
-    assert effects.policy_kinds() == ["push"]
+    assert effects.module_for("publish").POLICY is True and effects.module_for("publish").GATE is False
+    assert effects.policy_kinds() == ["publish", "push"]
 
 
-@pytest.mark.parametrize("word", ["nothing", "publish", "", None, 7])
+@pytest.mark.parametrize("word", ["nothing", "schedule", "", None, 7])
 def test_a_word_with_no_kind_is_a_usage_error_naming_the_kinds(word):
     with pytest.raises(effects.EffectError) as unknown:
         effects.module_for(word)
-    assert unknown.value.kind == "usage" and "create, push" in unknown.value.reason
+    assert unknown.value.kind == "usage" and "create, publish, push" in unknown.value.reason
 
 
 def test_the_shape_of_a_handed_over_document_and_the_operations_own_flags_live_in_the_registry_module():

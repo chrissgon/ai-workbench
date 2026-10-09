@@ -179,7 +179,8 @@ def test_args_holding_a_reserved_flag_are_refused_and_nothing_runs(tree, flag):
 @pytest.mark.parametrize("changes", [
     {"idempotency_key": None},           # a missing key
     {"colour": "red"},                   # an extra key
-    {"kind": "publish"},                 # a word of the vocabulary with no kind of effect
+    {"kind": "publish"},                 # a kind of effect (a reply) whose document this one is not
+    {"kind": "schedule"},                # a word of the vocabulary with no kind of effect
     {"kind": "teleport"},                # not a word of the vocabulary
     {"policy": "another-policy"},        # not the policy the call is for
     {"items": "1"},                      # a wrong type
@@ -268,7 +269,7 @@ def test_a_kind_of_the_gate_path_cannot_run_under_a_policy_and_the_refusal_names
     with pytest.raises(ops.OpsError) as refused:
         execute(tree, kind="create")
     assert refused.value.code == 2
-    assert str(refused.value) == "the effect kind 'create' cannot run under a policy (it can: push)"
+    assert str(refused.value) == "the effect kind 'create' cannot run under a policy (it can: publish, push)"
     assert calls(tree) == [] and executed_today(tree) == 0
 
 

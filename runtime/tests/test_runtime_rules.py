@@ -58,21 +58,69 @@ def test_no_module_of_the_runtime_and_no_flow_file_names_a_model_id():
     assert found == [], "the model comes from evals/eval-gate.json, never from a literal in the runtime"
 
 
-# 2026-10-07: the social handler was ported unchanged (stage 7, WP-7.1) and still confirms its publisher call and
-# records its action through its own gate, the engagement policy's. WP-7.6 hands them to execute-under-policy and
-# removes this exemption.
-PORTED = ("social.py", "social_vote.py", "social_vote_job.py")
+# 2026-10-09 (CONS-2a): the social agent's auto reply goes through the operation (execute-under-policy), so the
+# exemption is no longer a list of files: it is the functions that confirm an exact content the person approved by its
+# hash, checked by code (the inbox reply of social.py, the vote post of social_vote.py and its job). `main` of
+# social.py only declares the flag that cmd_approve reads. CONS-2b hands these to the operation too and empties this table.
+EXACT_CONTENT_PORTS = {"social.py": ("cmd_approve", "main"), "social_vote.py": ("vote_approve", "_action"),
+                       "social_vote_job.py": ("main",)}
+EFFECT_WORDS = ("--confirmed", "action-add", "action_add")
+
+
+def effect_occurrences(path) -> list:
+    """(enclosing function or None, word, line) of each place a handler's code names the flag that confirms a provider
+    verb or the record of an action: a text in the code and a name, never a docstring; each attributed with ast to the
+    function it is inside, the innermost."""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    docstrings = {id(n.body[0].value) for n in ast.walk(tree)
+                  if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body
+                  and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+    found = []
+
+    def visit(node, function):
+        for child in ast.iter_child_nodes(node):
+            inside = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else function
+            texts = []
+            if isinstance(child, ast.Constant) and isinstance(child.value, str) and id(child) not in docstrings:
+                texts.append(child.value)
+            elif isinstance(child, ast.Name):
+                texts.append(child.id)
+            elif isinstance(child, ast.Attribute):
+                texts.append(child.attr)
+            found.extend((function, word, child.lineno) for text in texts for word in EFFECT_WORDS if word in text)
+            visit(child, inside)
+
+    visit(tree, None)
+    return found
 
 
 def test_no_handler_executes_an_effect_itself():
     """Limit L15 lives in one operation (ops.execute_under_policy): a handler prepares an effect and hands it over,
-    it never confirms a provider verb and never records an action."""
+    it never confirms a provider verb and never records an action. The one exemption is EXACT_CONTENT_PORTS, by
+    function: any other place a handler names the confirming flag or the record of an action fails, in the files
+    that were exempt before as in the others."""
+    seen = {}
     for handler in sorted((RUNTIME / "handlers").glob("*.py")):
-        if handler.name in PORTED:
-            continue
-        text = handler.read_text(encoding="utf-8")
-        for word in ("--confirmed", "action-add", "action_add"):
-            assert word not in text, f"{handler.name} holds {word!r}: hand the effect to execute-under-policy"
+        allowed = EXACT_CONTENT_PORTS.get(handler.name, ())
+        for function, word, line in effect_occurrences(handler):
+            seen.setdefault(handler.name, set()).add(function)
+            assert function in allowed, \
+                f"{handler.name}:{line} names {word!r} in {function or 'the module'}: hand the effect to execute-under-policy"
+    # a row that names no occurrence is a row to remove: the table only shrinks
+    for name, functions in EXACT_CONTENT_PORTS.items():
+        assert set(functions) <= seen.get(name, set()), f"{name}: {sorted(set(functions) - seen.get(name, set()))} hold no such name"
+
+
+def test_the_social_agents_auto_reply_path_names_neither_the_flag_nor_the_record():
+    in_reply_path = {f for f, _, _ in effect_occurrences(RUNTIME / "handlers" / "social.py")}
+    assert not ({"handle_event", "hand_over", "cmd_replay", "cmd_tick"} & in_reply_path)
+
+
+def test_the_attribution_sees_a_name_inside_a_function_and_leaves_a_docstring_alone(tmp_path):
+    sample = tmp_path / "sample.py"
+    sample.write_text('"""Run with --confirmed."""\n\ndef a():\n    """Mentions action-add."""\n    return ["--confirmed"]\n\n'
+                      'def b():\n    def inner():\n        return store.action_add\n    return inner\n')
+    assert effect_occurrences(sample) == [("a", "--confirmed", 5), ("inner", "action_add", 9)]
 
 
 def test_the_terminal_shell_imports_only_the_operations_layer():

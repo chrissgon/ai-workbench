@@ -203,7 +203,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 | `python3 runtime/cli.py verdict --project <dir> --run <id> --word ...` | the same verdict, on the use a runtime run recorded |
 | `python3 runtime/cli.py hand-over --project <dir> --task <id> --file <path>` | puts a file in the task's drop |
 
-The handler that carries the first runtime's steps, `runtime/handlers/social.py`, is ticked by a round of the dispatcher when `runtime.json` names it with `dispatch` true, can be started by hand with `cli.py handler`, and has an entry of its own, `python3 runtime/handlers/social.py tick --project <dir>`, beside `python3 scripts/runtime.py tick --project <dir>`; both read the same `runtime.json`.
+The handler that carries the first runtime's steps, `runtime/handlers/social.py`, is ticked by a round of the dispatcher when `runtime.json` names it with `dispatch` true, can be started by hand with `cli.py handler`, and has an entry of its own, `python3 runtime/handlers/social.py tick --project <dir>`, beside `python3 scripts/runtime.py tick --project <dir>`; both read the same `runtime.json`. Since CONS-2a the handler's auto reply is executed by `cli.py execute-under-policy`, so a project that wants it needs the configuration accepted, an entry of `area_agents` in the mode `autonomous-with-policy` for the agent that carries the handler, and a standing approval of `docs/marketing/engagement-policy.md` for that agent (`approve-policy`); without them, or when the approval does not cover the reply, the tick writes an inbox item and never only a log line (`contracts/runtime.md`, "The social agent's auto reply").
 
 ## Known limits and improvements
 

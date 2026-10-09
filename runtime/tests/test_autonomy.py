@@ -184,6 +184,89 @@ def test_a_policy_covers_an_effect_only_inside_every_bound():
         assert allowed is False and why, case
 
 
+CLASS_BOUNDS = dict(BOUNDS, effects=["publish"], targets=["comment-on-published-post"], files=[], max_per_day=5,
+                    max_items_per_run=1)
+POST = "urn:li:share:7400000000000000001"
+REPLY = {"kind": "publish", "target": POST, "files": [], "items": 1}
+
+
+def test_limit_15_a_class_bound_covers_only_a_target_the_operation_resolved_from_a_recorded_fact():
+    """A class word in the bounds' targets is no literal target: the effect's target must be in the set the operation
+    resolved for that class before the call (the publisher's ledger), and nothing a document or a notification says
+    makes it so. The class is closed (autonomy.TARGET_CLASSES)."""
+    approval = dict(standing(), bounds=CLASS_BOUNDS)
+    assert autonomy.TARGET_CLASSES == ("comment-on-published-post",)
+    resolved = {"comment-on-published-post": {POST, "urn:li:share:7400000000000000002"}}
+    assert autonomy.covers(approval, HASH, REPLY, 0, NOW, resolved=resolved) == (True, "")
+    allowed, why = autonomy.covers(approval, HASH, dict(REPLY, target="urn:li:share:7400000000000000009"), 0, NOW,
+                                   resolved=resolved)
+    assert allowed is False and "comment-on-published-post" in why  # a post the ledger does not record
+    allowed, why = autonomy.covers(approval, HASH, dict(REPLY, target="comment-on-published-post"), 0, NOW,
+                                   resolved={"comment-on-published-post": set()})
+    assert allowed is False  # the class word is never a literal target, whatever the effect says
+    assert autonomy.covers(approval, HASH, REPLY, 1, NOW, resolved={"comment-on-published-post": {POST}}) == \
+        (True, "")  # the other bounds are read as before (5 a day)
+    assert autonomy.covers(approval, HASH, REPLY, 5, NOW, resolved={"comment-on-published-post": {POST}})[0] is False
+
+
+def test_a_class_word_with_no_resolution_covers_nothing():
+    approval = dict(standing(), bounds=CLASS_BOUNDS)
+    for resolved in (None, {}, {"another-class": {POST}}, {"comment-on-published-post": None},
+                     {"comment-on-published-post": POST}):  # a text is no set: "in" would read a substring
+        allowed, why = autonomy.covers(approval, HASH, REPLY, 0, NOW, resolved=resolved)
+        assert allowed is False and "comment-on-published-post" in why, resolved
+    assert autonomy.covers(approval, HASH, REPLY, 0, NOW)[0] is False  # the argument is optional and fails closed
+
+
+def test_a_class_word_with_an_empty_resolution_covers_nothing():
+    approval = dict(standing(), bounds=CLASS_BOUNDS)
+    for empty in (set(), frozenset(), [], ()):
+        allowed, why = autonomy.covers(approval, HASH, REPLY, 0, NOW, resolved={"comment-on-published-post": empty})
+        assert allowed is False and "comment-on-published-post" in why
+
+
+def test_literal_targets_work_as_before_beside_a_class_word_and_without_resolution():
+    literal = dict(standing(), bounds=dict(BOUNDS))
+    assert autonomy.covers(literal, HASH, EFFECT, 0, NOW) == (True, "")
+    assert autonomy.covers(literal, HASH, EFFECT, 0, NOW, resolved={"comment-on-published-post": {POST}}) == (True, "")
+    both = dict(standing(), bounds=dict(BOUNDS, targets=[*BOUNDS["targets"], "comment-on-published-post"]))
+    assert autonomy.covers(both, HASH, EFFECT, 0, NOW) == (True, "")  # the literal one needs no resolution
+    allowed, _ = autonomy.covers(both, HASH, dict(EFFECT, target="example-owner/another@main"), 0, NOW)
+    assert allowed is False
+
+
+ENGAGEMENT = """# Engagement policy
+
+```engagement-policy
+{"auto_reply_categories": ["thanks_or_praise"], "languages": ["EN"], "max_replies_per_day": 7,
+ "max_auto_replies_per_person_per_post": 1, "reply_rules": {"max_sentences": 3}, "never_in_replies": []}
+```
+"""
+
+
+def test_the_bounds_of_an_engagement_policy_are_read_from_its_block_by_code():
+    bounds = autonomy.block_bounds("engagement-policy", ENGAGEMENT, "social")
+    assert bounds == {"policy": "engagement-policy", "agent": "social", "effects": ["publish"],
+                      "targets": ["comment-on-published-post"], "files": [], "max_per_day": 7, "max_items_per_run": 1}
+    assert set(bounds) == set(autonomy.BOUNDS_KEYS)
+    assert autonomy.block_bounds("engagement-policy", "# A policy with no block\n", "social") is None
+
+
+@pytest.mark.parametrize("edit", [
+    lambda t: t.replace('"max_replies_per_day": 7,', ""),                  # no daily key
+    lambda t: t.replace('"max_replies_per_day": 7', '"max_replies_per_day": 0'),
+    lambda t: t.replace('"max_replies_per_day": 7', '"max_replies_per_day": "7"'),
+    lambda t: t.replace('"max_replies_per_day": 7', '"max_replies_per_day": true'),
+    lambda t: t.replace('"max_replies_per_day": 7', '"max_replies_per_day": 7.5'),
+    lambda t: t.replace('{"auto_reply_categories"', '["auto_reply_categories"'),  # not an object
+    lambda t: t.replace('"languages": ["EN"]', '"languages": ["EN"'),            # not JSON
+])
+def test_a_block_without_a_usable_daily_cap_is_refused(edit):
+    with pytest.raises(ValueError) as refused:
+        autonomy.block_bounds("engagement-policy", edit(ENGAGEMENT), "social")
+    assert "max_replies_per_day" in str(refused.value) or "engagement-policy" in str(refused.value)
+
+
 def test_an_edited_bounds_file_covers_nothing_until_it_is_approved_again():
     approval = standing()
     edited = "f" * 64

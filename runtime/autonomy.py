@@ -27,10 +27,13 @@ autonomous-with-policy whose approval expired acts as autonomous: its effects as
                                                 spend reads it (usd_floor = usd_recorded + usd_reserved, exactly)
   may_start(name, agents, facts, spent, tier)   (True, "") or (False, why): stopped, or a cap reached
   review_action(task, pending, facts, proven, mandatory)   "release" or "hold": whether a mode releases a review
-  covers(approval, policy_sha256, effect, executed_today, now)   (True, "") or (False, why): whether a standing
-                                                approval covers one effect, inside every bound
+  covers(approval, policy_sha256, effect, executed_today, now, resolved=None)   (True, "") or (False, why): whether a
+                                                standing approval covers one effect, inside every bound; a target
+                                                that is a class word is covered only by what the caller resolved
   bounds_of(data, agent, effects)               a policy's bounds file, checked (docs/workbench/policies/<policy>.json);
                                                 effects is the closed vocabulary of side effects, given by the caller
+  block_bounds(policy, text, agent)             the bounds of a Markdown engagement policy, derived from its
+                                                ```engagement-policy block (None when the text holds none)
 
 A mode never releases a question; it releases a review only when the run ended `done` and wrote something (never a
 `draft_with_questions`, an `unclassified` reply, a `done` whose reason says no file changed, or a blocked change set),
@@ -45,6 +48,7 @@ from __future__ import annotations
 
 import datetime
 import fnmatch
+import json
 import math
 import re
 import sys
@@ -62,6 +66,13 @@ POLICY_MODE = "autonomous-with-policy"
 NO_CHANGE = "no file changed"  # the start of the classifier's reason for a `done` that wrote nothing (runtime/endings.py)
 BOUNDS_KEYS = ("policy", "agent", "effects", "targets", "files", "max_per_day", "max_items_per_run")
 POLICY_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
+# A word of a bounds' "targets" that names a class of targets instead of one target. The class is closed, here, and its
+# members are never read from the effect document or from external content: the caller (ops.execute_under_policy)
+# resolves them from a recorded fact before the call and hands them to covers (a class with no resolution covers
+# nothing). A class word is never a literal target.
+COMMENT_ON_PUBLISHED_POST = "comment-on-published-post"  # a post the publisher's ledger records as published
+TARGET_CLASSES = (COMMENT_ON_PUBLISHED_POST,)
+ENGAGEMENT_BLOCK = re.compile(r"```engagement-policy\s*\n(.*?)\n```", re.S)  # the block mkt-engage's gate reads
 
 
 def narrows(old: str, new: str) -> bool:
@@ -245,12 +256,23 @@ def _path_matches(path: str, pattern: str) -> bool:
     return len(parts) == len(globs) and all(fnmatch.fnmatchcase(p, g) for p, g in zip(parts, globs))
 
 
-def covers(approval: dict, policy_sha256: str, effect: dict, executed_today: int, now) -> tuple:
+def _resolved(resolved, word: str):
+    """The set the caller resolved for a class word, or None: only a set, a frozenset, a list or a tuple counts, so
+    that `in` never reads a substring of a text."""
+    found = (resolved or {}).get(word) if isinstance(resolved, dict) else None
+    return found if isinstance(found, (set, frozenset, list, tuple)) else None
+
+
+def covers(approval: dict, policy_sha256: str, effect: dict, executed_today: int, now, resolved=None) -> tuple:
     """(True, "") when a standing approval covers one effect now, else (False, why). Every bound must hold: the
     approval is active and not past its expiry; it was given to the bounds file as it is now (its hash); the effect's
     kind is in bounds["effects"], its target in bounds["targets"], every path of its files matches a glob of
     bounds["files"]; its number of items is at most bounds["max_items_per_run"]; fewer than bounds["max_per_day"]
-    were executed today. effect is {"kind", "target", "files", "items"}."""
+    were executed today. effect is {"kind", "target", "files", "items"}.
+    A word of bounds["targets"] that is in TARGET_CLASSES is a class, not a target: the effect's target is covered by
+    it only when it is in resolved[<the word>], the set the operation resolved from a recorded fact before this call
+    (resolved is {word: set of targets}). A class word with no entry in resolved, with an entry that is no set, or with
+    an empty set covers nothing; a word of the list that is not a class is a literal target, compared as before."""
     bounds = approval.get("bounds") or {}
     if approval.get("status") != "active":
         return False, f"the approval is {approval.get('status')}, not active"
@@ -261,8 +283,18 @@ def covers(approval: dict, policy_sha256: str, effect: dict, executed_today: int
         return False, "the bounds file changed since it was approved"
     if effect.get("kind") not in (bounds.get("effects") or []):
         return False, f"the effect {effect.get('kind')!r} is not in the policy's effects"
-    if effect.get("target") not in (bounds.get("targets") or []):
-        return False, f"the target {effect.get('target')!r} is not in the policy's targets"
+    targets = bounds.get("targets") or []
+    target = effect.get("target")
+    classes = [word for word in targets if word in TARGET_CLASSES]
+    if target not in [word for word in targets if word not in TARGET_CLASSES]:
+        if not classes:
+            return False, f"the target {target!r} is not in the policy's targets"
+        sets = [_resolved(resolved, word) for word in classes]
+        if not any(found and target in found for found in sets):
+            kind = ", ".join(classes)
+            if not any(sets):
+                return False, f"the target class {kind} could not be resolved to any target now: nothing is covered"
+            return False, f"the target {target!r} is not one of the {kind} the operation resolved"
     for path in effect.get("files") or []:
         if not any(_path_matches(path, glob) for glob in bounds.get("files") or []):
             return False, f"the file {path} is outside the policy's files"
@@ -273,6 +305,28 @@ def covers(approval: dict, policy_sha256: str, effect: dict, executed_today: int
     if not isinstance(per_day, int) or executed_today >= per_day:
         return False, f"{executed_today} executed today is at the policy's {per_day} per day"
     return True, ""
+
+
+def block_bounds(policy: str, text: str, agent: str):
+    """The bounds of a Markdown engagement policy, derived by code from its ```engagement-policy JSON block, or None
+    when the text holds no such block: {"policy": policy, "agent": agent, "effects": ["publish"], "targets":
+    [COMMENT_ON_PUBLISHED_POST], "files": [], "max_per_day": the block's max_replies_per_day, "max_items_per_run": 1}.
+    The one thing read from the block is its daily cap; ValueError when the block is not a JSON object or has no
+    whole number of 1 or more under max_replies_per_day (a policy that sets no daily cap approves no automatic reply).
+    The caller adds "file"; the hash of the file binds the block, so a changed block is approved and derived again."""
+    found = ENGAGEMENT_BLOCK.search(text or "")
+    if not found:
+        return None
+    try:
+        block = json.loads(found.group(1))
+    except ValueError as e:
+        raise ValueError(f"the engagement-policy block is not valid JSON: {e}") from None
+    cap = block.get("max_replies_per_day") if isinstance(block, dict) else None
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap < 1:
+        raise ValueError("the engagement-policy block needs max_replies_per_day, a whole number of 1 or more: it is the "
+                         "daily cap of the standing approval")
+    return {"policy": policy, "agent": agent, "effects": ["publish"], "targets": [COMMENT_ON_PUBLISHED_POST], "files": [],
+            "max_per_day": cap, "max_items_per_run": 1}
 
 
 def bounds_of(data, agent: str, effects) -> dict:

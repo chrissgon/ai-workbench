@@ -13,6 +13,7 @@ Usage:
   python3 runtime/handlers/social.py inbox   --project <dir>
   python3 runtime/handlers/social.py approve --project <dir> --id <n> [--confirmed --sha256 <hash>]
   python3 runtime/handlers/social.py reject  --project <dir> --id <n> [--note <text>]
+  python3 runtime/handlers/social.py replay  --project <dir> --runs <data_dir>/runs [--since <ISO-8601 with an offset>]
 
 Contract: contracts/runtime.md. Configuration: <project>/docs/workbench/runtime.json (no secrets):
   {"agent": "social-manager",
@@ -50,10 +51,17 @@ tick     1. Reads new notification e-mails since the store's cursor (mailbox pro
             parse_notification.py (--platform <publisher> --platform-file <the platform's data file,
             <workbench>/shared/references/platforms/<publisher>.json>); runs the agent as a contained run (runtime/cli.py contained-run, skill
             mkt-engage: in the eval container, on a copy of the artifacts the skill declares, only its reply comes
-            out); takes the engage-decision block of its answer; runs mkt-engage's policy_gate.py; on
-            "auto" sends the reply with the publisher's comment verb and an idempotency key; otherwise adds
-            an inbox item. A reply in which the credential formats of scripts/redact.py match is never sent
-            (not by approve either): it goes to the inbox with the value masked. Every step is recorded in the store and in docs/marketing/engagement-log.jsonl.
+            out); takes the engage-decision block of its answer; writes the reply, the comment, the sources and the
+            decision into the run's folder and hands them, as one effect document, to runtime/cli.py
+            execute-under-policy (policy engagement-policy, effect kind publish). That operation, not this script,
+            decides and sends: the standing approval of the engagement policy and the comment's post (one the
+            publisher's ledger records) are the bound, mkt-engage's policy_gate.py is the judgement, run isolated, and
+            both must hold; the publisher's comment verb runs there, with the idempotency key, and the action is
+            recorded there. This script confirms nothing and records no action on this path: on "executed" it writes
+            the engagement log entry, otherwise it adds an inbox item with the operation's reason among its reasons.
+            A reply in which the credential formats of scripts/redact.py match is never handed over (nor sent by
+            approve): it goes to the inbox with the value masked. Every step is recorded in the store and in
+            docs/marketing/engagement-log.jsonl.
          3. Stops starting runs once today's agent spend reaches daily_cost_cap_usd. A run whose cost is
             unknown (no price for the model, a timeout, a run that never ended) counts as
             max_cost_usd_per_run; the output says how many there were (runs_without_cost_today).
@@ -77,6 +85,13 @@ approve  Without --confirmed: prints the item's exact reply, where it goes, its 
          sends that reply only if all of them still have that hash, then records it. The person runs this.
 reject   Closes an item without sending anything. On a vote item it also clears the round's cursor, so the next
          tick redoes the round (a new agent run and a new item).
+replay   For the cut-over onto the operation: judges the stored run folders under --runs again (each that holds
+         comment.json, reply.txt and the agent's response), through the same operation with --replay-log, which does
+         every check and executes and records nothing. The engagement log it is judged against is a copy of the project's,
+         cut before the run, so that a run the old path sent is not refused for having been sent. Prints one JSON
+         object ("runs": run, comment, old outcome sent|inbox|unknown, new decision auto|inbox|error, why, same;
+         "skipped"; "differences") and one line per run on stderr. Writes nothing to the project, the store or the log.
+         Run it after `standing --policy engagement-policy` answers covered, and read a difference before the switch.
 
 Weekly vote (docs/architecture/weekly-vote.md), when runtime.json has a "vote" section:
   "vote": {"repo": "<owner>/<name>", "branch": "<branch>", "pillars": ["<pillar>", ...],
@@ -101,6 +116,7 @@ import importlib.util
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -119,7 +135,12 @@ CATEGORIES = {"thanks_or_praise", "question_answerable_from_sources", "criticism
 TIMEOUT = 120
 MAILBOX_PAGE = 50        # messages asked of the mailbox per search
 MAILBOX_MAX_PAGES = 20   # searches per tick while the mailbox says older messages were left out
-VERBS = ("tick", "pin", "add-comment", "status", "inbox", "approve", "reject")
+VERBS = ("tick", "pin", "add-comment", "status", "inbox", "approve", "reject", "replay")
+POLICY = "engagement-policy"   # the policy the auto reply is executed under (the stem of docs/marketing/engagement-policy.md)
+EFFECT_KIND = "publish"        # the word of the side-effect vocabulary the reply is (runtime/effect_reply.py)
+EFFECT_FILES = ("comment.json", "sources.json", "decision.json", "reply.txt")  # what the operation's judgement reads
+LOG_ACTIONS = ("auto_replied", "replied", "to_inbox", "skipped", "failed")   # what policy_gate.py record accepts
+OPERATION_TIMEOUT = 900  # seconds the operation may take: the ledger read, the gate, the dry run and the call
 
 
 class Fail(Exception):
@@ -504,10 +525,16 @@ def append_inbox_md(project: Path, item_id, comment: dict, decision: dict | None
 
 
 def gate_record(cfg: dict, project: Path, entry: dict) -> None:
-    with tempfile.TemporaryDirectory() as tmp:
-        f = write_private(Path(tmp), "entry.json", json.dumps(entry, ensure_ascii=False))
-        run_json([sys.executable, str(cfg["paths"]["gate"]), "record", "--log",
-                  str(project / "docs/marketing/engagement-log.jsonl"), "--entry-file", str(f)])
+    """Append one entry to the engagement log, the line mkt-engage's `policy_gate.py record` writes: the same check of
+    the action, the time it was logged, one JSON line. This handler runs no skill script (the gate runs inside the
+    operations layer, through runtime/isolated.py, which a handler may not reach), so the append is made here; a test
+    holds the two lines equal. The log is the gate's daily count and its record of the comments answered."""
+    if entry.get("action") not in LOG_ACTIONS:
+        raise Fail(f"a log entry's action is one of {', '.join(LOG_ACTIONS)}", 2)
+    log = project / "docs" / "marketing" / "engagement-log.jsonl"
+    log.parent.mkdir(parents=True, exist_ok=True)
+    with log.open("a", encoding="utf-8") as f:
+        f.write(json.dumps({**entry, "logged_at": now().isoformat()}, ensure_ascii=False) + "\n")
 
 
 def today_spend(cfg: dict, store: Store) -> tuple[float, int]:
@@ -611,8 +638,8 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
         decision = parse_decision(response, cfg["limits"]["reply"])
     except (ValueError, json.JSONDecodeError) as e:
         reasons.append(f"agent proposal unusable: {e}")
-    comment_file = write_private(run_dir, "comment.json", json.dumps(comment, ensure_ascii=False))
-    reply_file, sha, gate = None, None, None
+    write_private(run_dir, "comment.json", json.dumps(comment, ensure_ascii=False))
+    reply_file, sha = None, None
     if decision:
         held = credential_in(cfg, decision["reply"])
         if held:
@@ -621,42 +648,28 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
             decision["reply"] = masked(cfg, decision["reply"])
             reasons.append(f"the drafted reply holds what looks like a credential ({held}); it is masked here and "
                            "cannot be sent: answer the comment yourself")
-        if decision["reply"].strip() and not held:
+        elif not decision["reply"].strip():
+            reasons.append(f"no reply was drafted (category {decision['category']}): there is nothing to send")
+        else:
             reply_file = write_private(run_dir, "reply.txt", decision["reply"].strip() + "\n")
             sha = sha256_file(reply_file)
-        gcmd = [sys.executable, str(paths["gate"]), "decide", "--policy", "docs/marketing/engagement-policy.md",
-                "--state", "docs/workbench/state.md", "--log", "docs/marketing/engagement-log.jsonl",
-                "--comment-file", str(comment_file), "--category", decision["category"],
-                "--language", decision["language"], "--profile", "docs/brand/profile.md",
-                "--skills-dir", str(paths["skills"])]
-        if reply_file:
-            gcmd += ["--reply-file", str(reply_file)]
-        sources = decision.get("sources") if isinstance(decision.get("sources"), list) else []
-        gcmd += ["--sources-file", str(write_private(run_dir, "sources.json", json.dumps([str(x) for x in sources][:20])))]
-        try:
-            gate = run_json(gcmd, cwd=project)
-            reasons += gate["reasons"]
-        except Fail as e:
-            reasons.append(f"gate failed: {e}")
 
     base = {"comment_urn": comment["comment_urn"], "post_urn": comment["post_urn"], "commenter": comment["commenter"],
             "category": (decision or {}).get("category"), "run_id": run_id}
-    if gate and gate["decision"] == "auto" and reply_file and sha256_file(reply_file) == sha:
-        pcmd = ["uv", "run", str(paths["publisher"]), "comment", "--platform", cfg["publisher"],
-                "--post-id", comment["post_urn"], "--parent-comment-id", comment["parent_comment_urn"],
-                "--text-file", str(reply_file), "--idempotency-key", gate["idempotency_key"], "--confirmed"]
-        code, out, err = run(pcmd)
-        if code == 0:
-            result = write_private(run_dir, "publisher.json", out)
-            store("action-add", "--kind", "reply", "--idempotency-key", gate["idempotency_key"],
-                  "--target", comment["comment_urn"], "--payload-sha256", sha, "--result-file", result)
-            gate_record(cfg, project, {**base, "action": "auto_replied", "idempotency_key": gate["idempotency_key"],
-                                       "reply_sha256": sha})
-            return {"status": "done", "note": f"replied ({gate['idempotency_key']})"}
-        reasons.append(f"publisher exited {code}: {err.strip()[-300:]}")
-        gate_record(cfg, project, {**base, "action": "failed", "note": reasons[-1]})
+    key = reply_key(comment["comment_urn"])
+    if reply_file:
+        # The bound and the judgement are the operation's (contracts/runtime.md, L15): it checks the standing approval,
+        # that the post is one the publisher's ledger records, the gate and the credential scan, then sends and
+        # records. The handler confirms nothing and records no action.
+        handed = hand_over(cfg, project, run_dir, comment, decision, sha)
+        if handed["executed"]:
+            write_private(run_dir, "publisher.json", json.dumps(handed.get("result") or {}))
+            gate_record(cfg, project, {**base, "action": "auto_replied", "idempotency_key": key, "reply_sha256": sha})
+            return {"status": "done", "note": f"replied ({key})"}
+        reasons.append(handed["why"])
+        if handed.get("failed"):
+            gate_record(cfg, project, {**base, "action": "failed", "note": reasons[-1]})
 
-    key = (gate or {}).get("idempotency_key") or reply_key(comment["comment_urn"])
     item = {"comment": comment, "decision": decision, "reasons": reasons, "reply_file": str(reply_file) if reply_file else None,
             "idempotency_key": key}
     item_file = write_private(run_dir, "inbox.json", json.dumps(item, ensure_ascii=False))
@@ -668,6 +681,50 @@ def handle_event(cfg: dict, project: Path, store: Store, event: dict) -> dict:
     append_inbox_md(project, item_id, comment, decision, reasons, sha)
     gate_record(cfg, project, {**base, "action": "to_inbox", "inbox_id": item_id, "reasons": reasons})
     return {"status": "to_inbox", "note": "; ".join(reasons)[:1000]}
+
+
+def effect_document(cfg: dict, folder: Path, comment: dict, sha: str) -> dict:
+    """The effect document of an auto reply (runtime/effects.py EFFECT_KEYS, kind publish): the policy, the post the
+    comment is on as the target, the four files of the judgement in `folder`, the key the gate derives from the
+    comment's identifier, the hash of the reply text and the publisher's own flags. Nothing the operation adds."""
+    return {"policy": POLICY, "kind": EFFECT_KIND, "target": comment["post_urn"],
+            "files": [str(folder / name) for name in EFFECT_FILES], "items": 1,
+            "idempotency_key": reply_key(comment["comment_urn"]), "payload_sha256": sha,
+            "args": ["--platform", cfg["publisher"], "--post-id", comment["post_urn"], "--parent-comment-id",
+                     comment["parent_comment_urn"], "--text-file", str(folder / "reply.txt")]}
+
+
+def hand_over(cfg: dict, project: Path, run_dir: Path, comment: dict, decision: dict, sha: str) -> dict:
+    """Write the files the judgement reads (the sources the agent cited and its category and language) beside the
+    reply and the comment in the run's folder, write the effect document, and hand it to the operations layer. Returns
+    {"executed": True, "result"} when the operation executed it, else {"executed": False, "why", "failed"} with the
+    operation's reason; "failed" is true when the operation itself broke (it exited non-zero, or printed no object)."""
+    sources = decision.get("sources") if isinstance(decision.get("sources"), list) else []
+    write_private(run_dir, "sources.json", json.dumps([str(x) for x in sources][:20]))
+    write_private(run_dir, "decision.json", json.dumps({"category": decision["category"], "language": decision["language"]}))
+    effect = write_private(run_dir, "effect.json", json.dumps(effect_document(cfg, run_dir, comment, sha), ensure_ascii=False))
+    answer, why = operation(cfg, project, effect)
+    if answer is None:
+        return {"executed": False, "failed": True, "why": why}
+    if answer.get("executed") is True:
+        return {"executed": True, "result": answer.get("result")}
+    return {"executed": False, "why": str(answer.get("why") or "the policy operation did not execute it")}
+
+
+def operation(cfg: dict, project: Path, effect: Path, *more) -> tuple:
+    """Start runtime/cli.py execute-under-policy on an effect file (the one place an effect under a policy is
+    executed). Returns (the one JSON object it printed, "") or (None, why) when it exited non-zero or printed none."""
+    code, out, err = run([sys.executable, str(cfg["paths"]["run_agent"]), "execute-under-policy", "--project", str(project),
+                          "--policy", POLICY, "--effect-file", str(effect), *more], timeout=OPERATION_TIMEOUT)
+    if code != 0:
+        return None, f"the policy operation exited {code}: {err.strip()[-300:]}"
+    try:
+        answer = json.loads(out)
+    except json.JSONDecodeError:
+        answer = None
+    if not isinstance(answer, dict):
+        return None, "the policy operation printed no JSON object"
+    return answer, ""
 
 
 def notify(cfg: dict, results: list) -> None:
@@ -907,9 +964,102 @@ def cmd_add_comment(a, cfg: dict, project: Path) -> dict:
     return {"event": out, "comment_urn": parsed["comment_urn"], "post_urn": parsed["post_urn"]}
 
 
+def parse_since(text: str | None):
+    """--since as an aware time, or None when it is not given; Fail 2 when it is not ISO-8601 with an offset."""
+    if text is None:
+        return None
+    try:
+        moment = datetime.fromisoformat(text.strip().replace("Z", "+00:00"))
+    except ValueError:
+        moment = None
+    if moment is None or moment.tzinfo is None:
+        raise Fail("--since must be an ISO-8601 time with an offset, such as 2026-10-01T00:00:00+00:00", 2)
+    return moment
+
+
+def log_before(project: Path, run_id, written: datetime) -> list:
+    """The lines of the engagement log as they stood before a run: those logged before the run's own first entry (the
+    entry that carries its run id), else before the time its answer was written. Lines that are not JSON are left out."""
+    path = project / "docs" / "marketing" / "engagement-log.jsonl"
+    if not path.is_file():
+        return []
+    entries = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            entry = json.loads(line)
+            when = datetime.fromisoformat(str(entry["logged_at"]).replace("Z", "+00:00"))
+        except (ValueError, KeyError, TypeError):
+            continue
+        if isinstance(entry, dict) and when.tzinfo:
+            entries.append((when, entry, line))
+    own = [when for when, entry, _ in entries if entry.get("run_id") == run_id]
+    limit = min(own) if own else written
+    return [line for when, _, line in entries if when < limit]
+
+
+def replay_one(cfg: dict, project: Path, folder: Path, run_id: int, response: Path) -> dict:
+    """One stored run through the operation as a check. Returns the line of the report, or {"skipped": why}."""
+    comment = json.loads((folder / "comment.json").read_text(encoding="utf-8"))
+    try:
+        decision = parse_decision(response.read_text(encoding="utf-8"), cfg["limits"]["reply"])
+    except (ValueError, json.JSONDecodeError, OSError) as e:
+        return {"skipped": f"the agent's answer is unusable: {e}"}
+    old = "sent" if (folder / "publisher.json").is_file() else "inbox" if (folder / "inbox.json").is_file() else "unknown"
+    written = datetime.fromtimestamp(response.stat().st_mtime, timezone.utc)
+    with tempfile.TemporaryDirectory(prefix="wb-replay-") as tmp:
+        scratch = Path(tmp)
+        for name in ("comment.json", "reply.txt"):
+            shutil.copyfile(folder / name, scratch / name)
+        sources = folder / "sources.json"
+        write_private(scratch, "sources.json", sources.read_text(encoding="utf-8") if sources.is_file() else
+                      json.dumps([str(x) for x in (decision.get("sources") if isinstance(decision.get("sources"), list) else [])][:20]))
+        write_private(scratch, "decision.json", json.dumps({"category": decision["category"], "language": decision["language"]}))
+        effect = write_private(scratch, "effect.json", json.dumps(effect_document(cfg, scratch, comment, sha256_file(scratch / "reply.txt")),
+                                                                  ensure_ascii=False))
+        log = write_private(scratch, "engagement-log.jsonl", "".join(line + "\n" for line in log_before(project, run_id, written)))
+        answer, why = operation(cfg, project, effect, "--replay-log", str(log))
+    if answer is None:
+        new, why = "error", why
+    elif answer.get("would_execute") is True:
+        new, why = "auto", ""
+    else:
+        new, why = "inbox", str(answer.get("why") or "")
+    return {"run": run_id, "comment": comment.get("comment_urn"), "old": old, "new": new, "why": why,
+            "same": None if old == "unknown" else (old, new) in (("sent", "auto"), ("inbox", "inbox"))}
+
+
+def cmd_replay(a, cfg: dict, project: Path) -> dict:
+    """Replay the stored runs of --runs (see the module text). Reads the project and the run folders and writes
+    nothing to them; the operation runs with --replay-log, so it executes and records nothing."""
+    if not a.runs or not Path(a.runs).is_dir():
+        raise Fail(f"--runs must name the folder of the stored runs (<data_dir>/runs): {a.runs!r} is not one", 2)
+    since = parse_since(a.since)
+    runs, skipped, folders = [], [], sorted((p for p in Path(a.runs).iterdir() if p.is_dir() and p.name.isdigit()),
+                                           key=lambda p: int(p.name))
+    for folder in folders:
+        run_id = int(folder.name)
+        response = next((p for p in (folder / "out" / "response.md", folder / "response.md") if p.is_file()), None)
+        if not (folder / "comment.json").is_file():
+            continue  # not the run of a comment (a vote round's, for one)
+        if since and response and datetime.fromtimestamp(response.stat().st_mtime, timezone.utc) < since:
+            continue
+        missing = next((name for name, there in (("reply.txt", (folder / "reply.txt").is_file()), ("response.md", bool(response)))
+                        if not there), None)
+        if missing:
+            skipped.append({"run": run_id, "why": f"no {missing}"})
+            continue
+        line = replay_one(cfg, project, folder, run_id, response)
+        if "skipped" in line:
+            skipped.append({"run": run_id, "why": line["skipped"]})
+            continue
+        runs.append(line)
+        log(f"run {run_id}: old {line['old']}, new {line['new']}" + (f": {line['why']}" if line["why"] else ""))
+    return {"replay": True, "runs": runs, "skipped": skipped, "differences": sum(1 for r in runs if r["same"] is False)}
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("verb", choices=["tick", "pin", "add-comment", "status", "inbox", "approve", "reject"])
+    p.add_argument("verb", choices=["tick", "pin", "add-comment", "status", "inbox", "approve", "reject", "replay"])
     p.add_argument("--pin", help="with tick: the pin file whose hashes runtime.json and the gate must still have")
     p.add_argument("--link")
     p.add_argument("--commenter")
@@ -920,6 +1070,8 @@ def main(argv=None) -> int:
     p.add_argument("--confirmed", action="store_true")
     p.add_argument("--sha256")
     p.add_argument("--note", default="-")
+    p.add_argument("--runs", help="with replay: the folder of the stored runs (<data_dir>/runs)")
+    p.add_argument("--since", help="with replay: only runs answered at or after this time (ISO-8601 with an offset)")
     a = p.parse_args(argv)
     project = Path(a.project).resolve()
     try:
@@ -950,6 +1102,8 @@ def main(argv=None) -> int:
             out = cmd_add_comment(a, cfg, project)
         elif a.verb == "approve":
             out = cmd_approve(a, cfg, project)
+        elif a.verb == "replay":
+            out = cmd_replay(a, cfg, project)
         elif a.verb == "reject":
             store = Store(cfg)
             item = open_item(store, a.id)
@@ -967,8 +1121,10 @@ def main(argv=None) -> int:
             out = {"runs": store("runs", "--limit", "10").get("runs", []),
                    "open_inbox": len(store("inbox-list", "--status", "open").get("items", [])),
                    "spend_today_usd": round(spend, 4), "runs_without_cost_today": unknown,
-                   "replies_today": store("action-count", "--kind", "reply", "--since",
-                                          now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()).get("count")}
+                   # the replies of both paths: sent by approve (kind reply) and by the operation (the policy's kind)
+                   "replies_today": sum(store("action-count", "--kind", kind, "--since",
+                                              now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()).get("count")
+                                        for kind in ("reply", POLICY))}
     except Fail as e:
         log(f"error: {e}")
         return e.code

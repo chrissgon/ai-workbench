@@ -67,9 +67,11 @@ Operations of stage 6:
                                    file's ## Approvals its generated copy, the row the engagement gate reads
   revoke_policy(project, approval_id)   end a standing approval; its row leaves the state file
   standing(project, policy)        whether an active standing approval covers the policy now: a read
-  execute_under_policy(project, policy, effect_file)   the one place a policy effect is executed: checks the effect
-                                   document against the standing approval's bounds (autonomy.covers) holding the run
-                                   lock, makes the provider's dry run and its confirmed call, records the action
+  execute_under_policy(project, policy, effect_file[, replay_log])   the one place a policy effect is executed:
+                                   checks the effect document against the standing approval's bounds (autonomy.covers,
+                                   a class of targets resolved from a recorded fact first) holding the run lock, runs
+                                   the kind's judgement, makes the provider's dry run and its confirmed call, records
+                                   the action; with replay_log it does every check and nothing else
   set_mode(project, agent, mode)   set one area agent's autonomy mode in runtime.json (runtime/autonomy.py, the five
                                    modes, in the order stopped < supervised < milestones < autonomous < autonomous-with-policy).
                                    A move down that order is accepted by code at once (`code:narrowing`); a move up
@@ -202,6 +204,7 @@ import drop  # noqa: E402
 import effects  # noqa: E402
 import endings  # noqa: E402
 import flow_files  # noqa: E402
+import isolated  # noqa: E402
 import lab  # noqa: E402
 import manifest  # noqa: E402
 from operations import CHAT_OWN, OPERATIONS  # noqa: E402,F401  (re-exported: a shell reads the table through this module)
@@ -1216,9 +1219,12 @@ def _effect_words() -> tuple:
 
 
 def _policy_bounds(rel: str, real: str, agent: str) -> dict:
-    """The bounds an approval of this file stores: a bounds file (.json) checked whole, else {"policy": <file name
-    without extension>, "agent"} (a file a skill's own gate reads, such as an engagement policy); with "file", the
-    path the approval binds."""
+    """The bounds an approval of this file stores: a bounds file (.json) checked whole; else, for a Markdown policy that
+    holds an ```engagement-policy block, the bounds derived from that block by code (autonomy.block_bounds: effects
+    publish, the class of own published posts, the block's daily cap, one item a run); else {"policy": <file name
+    without extension>, "agent"} (a file a skill's own gate reads). With "file", the path the approval binds: the
+    file's hash binds the block too, so a changed block is derived again at the next approval."""
+    name = os.path.splitext(os.path.basename(rel))[0]
     if rel.endswith(".json"):
         try:
             with open(real, encoding="utf-8") as f:
@@ -1227,7 +1233,11 @@ def _policy_bounds(rel: str, real: str, agent: str) -> dict:
         except (OSError, ValueError) as e:
             raise core.OpsError(f"{rel} is not a bounds file: {e}", 2) from None
     else:
-        bounds = {"policy": os.path.splitext(os.path.basename(rel))[0], "agent": agent}
+        try:
+            bounds = autonomy.block_bounds(name, _read(real) or "", agent)
+        except ValueError as e:
+            raise core.OpsError(f"{rel}: {e}", 2) from None
+        bounds = bounds or {"policy": name, "agent": agent}
     return dict(bounds, file=rel)
 
 
@@ -1386,36 +1396,73 @@ def _effect_document(path: str, policy: str) -> dict:
     reserved = [a for a in doc["args"] if a in effects.RESERVED_FLAGS]
     if reserved:
         raise core.OpsError(f"args of the effect file holds {reserved[0]}: the operation adds it, the handler never does", 2)
+    module = effects.module_for(doc["kind"])
+    try:  # the kind reads its own document: one that does not fit it is refused before anything else is checked
+        module.policy_platform(doc), module.policy_effect(doc), module.policy_argv(doc)
+    except effects.EffectError as e:
+        raise core.OpsError(f"the effect file does not fit the effect kind {doc['kind']!r}: {e.reason}", 2) from None
     return doc
 
 
-def execute_under_policy(project: str, policy: str, effect_file: str) -> dict:
+def _resolve_call(cls: str, verb: str, args: list) -> dict:
+    """What a kind's resolve_targets is handed to read a recorded fact: one verb of the provider of a class, through
+    providers/resolve.py, the one JSON object it printed; effects.EffectError when it fails."""
+    resolve = core._load("workbench_provider_resolve", os.path.join(core.ROOT, "providers", "resolve.py"))
+    try:
+        return resolve.call(cls, verb, args, root=core.ROOT)
+    except resolve.ProviderCallError as e:
+        raise effects.EffectError("provider", f"{verb}: {e.reason}") from None
+
+
+def execute_under_policy(project: str, policy: str, effect_file: str, replay_log: str | None = None) -> dict:
     """The one place an effect under a standing approval is executed (limit L15). A handler prepares the effect
     document and hands it over; it confirms nothing itself. The document is checked, the approval is checked
-    (_standing, then autonomy.covers on the whole row, the policy file's hash now, and today's count read again under
-    the run lock), and only then the provider's verb runs: a dry run, then the confirmed call, with --allow for
-    exactly the approval's file globs and the document's idempotency key; the action is recorded after it.
+    (_standing; a class of targets in its bounds resolved from the kind's recorded fact, before the lock; then
+    autonomy.covers on the whole row, the policy file's hash now, and today's count read again under the run lock),
+    the kind's judgement is made on the exact content (policy_judgement), and only then the provider's verb runs: a
+    dry run, then the confirmed call, with --allow for exactly the approval's file globs and the document's idempotency
+    key; the action is recorded after it, with the target the kind resolved.
     Returns {"executed": false, "policy", "why"} when the approval does not cover the effect (nothing ran), else
-    {"executed": true, "policy", "approval_id", "action": {"id", "created"}, "result": <what the provider printed>}."""
+    {"executed": true, "policy", "approval_id", "action": {"id", "created"}, "result": <what the provider printed>}.
+    replay_log (the path of a copy of the engagement log, for the replay of stored runs before a cut-over) makes the
+    call a check: every step up to the provider runs, the kind's judgement reads that copy, and nothing is executed or
+    recorded, whatever the answer; it returns {"executed": false, "policy", "checked": true, "would_execute", "why"}."""
     ctx = core.context(project)
     cfg, store = ctx["cfg"], ctx["store"]
     doc = _effect_document(effect_file, policy)
+    checked = {"checked": True} if replay_log is not None else {}
+    refuse = lambda why: {"executed": False, "policy": policy, "why": why, **checked, **({"would_execute": False} if checked else {})}
     answer = _standing(ctx, policy)
     if not answer["covered"]:
-        return {"executed": False, "policy": policy, "why": answer["why"]}
+        return refuse(answer["why"])
     module = effects.module_for(doc["kind"])  # _effect_document accepted the kind: its module may run under a policy
+    resolved = None
+    if any(word in autonomy.TARGET_CLASSES for word in answer["approval"]["bounds"].get("targets") or []) \
+            and hasattr(module, "resolve_targets"):
+        try:  # a class of targets is a fact the operation reads, not a word of the document
+            resolved = module.resolve_targets(cfg, doc, _resolve_call)
+        except effects.EffectError as e:
+            return refuse(f"the target class could not be resolved, so nothing is covered: {e.reason}")
     with core._run_lock(cfg):
         row = core._stored(ctx, store.approval_get, answer["approval"]["id"])
         executed = core._stored(ctx, store.action_count, kind=policy, since=core._midnight())
         effect = module.policy_effect(doc)
-        ok, why = autonomy.covers(row, _policy_hash(cfg, row), effect, executed, datetime.datetime.now(datetime.timezone.utc))
+        ok, why = autonomy.covers(row, _policy_hash(cfg, row), effect, executed, datetime.datetime.now(datetime.timezone.utc),
+                                  resolved=resolved)
         if not ok:
-            return {"executed": False, "policy": policy, "why": why}
+            return refuse(why)
+        if hasattr(module, "policy_judgement"):  # the checks the kind owns beyond the bounds, on the exact content
+            ok, why = module.policy_judgement(core.ROOT, cfg["project"], doc, isolated.run_script, row["bounds"]["file"],
+                                              log=replay_log)
+            if not ok:
+                return refuse(why)
         provider = _provider_path(cfg, module.PROVIDER_CLASS, platform=module.policy_platform(doc))
         argv = list(module.policy_argv(doc))
         added = [a for a in argv if a in effects.RESERVED_FLAGS]
         if added:  # exact equality is the rule, as for the document's args; the kind's own arguments never carry what only the operation adds (the bounds' globs, the key, the flag)
             raise core.OpsError(f"the arguments of the effect kind {doc['kind']!r} hold {added[0]}: the operation adds it", 1)
+        if replay_log is not None:
+            return {"executed": False, "policy": policy, "checked": True, "would_execute": True, "why": ""}
         for glob in row["bounds"]["files"]:
             argv += ["--allow", glob]
         argv += ["--idempotency-key", doc["idempotency_key"]]

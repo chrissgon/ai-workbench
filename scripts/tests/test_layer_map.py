@@ -252,8 +252,6 @@ TOLERATED = {
         "Y change of mkt-engage)",
     ("runtime/handlers/social.py", "skills/mkt-engage/scripts/parse_notification.py"):
         "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
-    ("runtime/handlers/social.py", "skills/mkt-engage/scripts/policy_gate.py"):
-        "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
     ("runtime/handlers/social_vote.py", "skills/brand-identity/scripts/render.py"):
         "finding 9 (skill code on the host; removed by stage 7, WP-7.6, through runtime/isolated.py)",
     ("runtime/handlers/social_vote.py", "skills/mkt-publish/scripts/payload.py"):
@@ -271,6 +269,10 @@ NOT_A_DEPENDENCY = {
     ("skills/mkt-publish/scripts/payload.py", "providers/secrets/resolver.py"):
         "the script hashes that file into the scheduled job's snapshot (the integrity record of what the job will "
         "run); nothing is loaded or run",
+    ("runtime/handlers/social.py", "skills/mkt-engage/scripts/policy_gate.py"):
+        "the handler hashes that file into the scheduled tick's pin (the integrity record of what the tick will run) "
+        "and checks that it exists; nothing is loaded or run: the engagement gate runs inside the operations layer, "
+        "through runtime/isolated.py (CONS-2a)",
     ("providers/secrets/resolver.py", "runtime/effects.py"):
         "a row of the secrets table names the module that reads the secret; nothing is loaded",
     ("scripts/architecture_tables.py", "runtime/operations.py"):
