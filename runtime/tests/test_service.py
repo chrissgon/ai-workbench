@@ -395,11 +395,11 @@ def test_every_response_carries_the_cache_and_sniffing_headers_and_a_page_the_po
         status, headers, _ = call(world, method, path, body, auth=auth, raw=b"" if body is None and method == "POST" else None)
         assert headers["Cache-Control"] == "no-store" and headers["X-Content-Type-Options"] == "nosniff", (path, status)
         page = headers["Content-Type"].startswith("text/html")
-        assert (headers.get("Content-Security-Policy") == "default-src 'self'; frame-ancestors 'none'") == page, path
+        assert (headers.get("Content-Security-Policy") == "default-src 'self'; img-src 'self' blob:; frame-ancestors 'none'") == page, path
         assert (headers.get("Referrer-Policy") == "no-referrer") == page, path
     (world.interface / "logo.svg").write_text("<svg xmlns='http://www.w3.org/2000/svg'/>")
     headers = call(world, "GET", "/logo.svg", auth=False)[1]
-    assert headers["Content-Security-Policy"] == "default-src 'self'; frame-ancestors 'none'"  # an svg can hold a script
+    assert headers["Content-Security-Policy"] == "default-src 'self'; img-src 'self' blob:; frame-ancestors 'none'"  # an svg can hold a script
 
 
 def test_a_post_needs_json_a_known_length_and_a_body_the_route_takes(world):
@@ -1125,3 +1125,14 @@ def test_the_command_prints_its_help_and_refuses_an_unknown_call_and_a_missing_p
     assert subprocess.run([sys.executable, script], capture_output=True, text=True, timeout=60).returncode == 2
     missing = subprocess.run([sys.executable, script, "--project", str(tmp_path / "nothing")], capture_output=True, text=True, timeout=60)
     assert missing.returncode == 3 and str(tmp_path / "nothing") in missing.stderr and missing.stdout == ""
+
+
+def test_the_policy_of_a_page_is_exactly_three_directives_and_never_allows_data():
+    """The header is a security decision: `blob:` is there so that the page can show an image it fetched with the token
+    (contracts/runtime.md, "The local service"); `default-src` and `frame-ancestors` are as they were."""
+    assert service.CSP == "default-src 'self'; img-src 'self' blob:; frame-ancestors 'none'"
+    assert [d.split()[0] for d in service.CSP.split("; ")] == ["default-src", "img-src", "frame-ancestors"]
+    assert "data:" not in service.CSP and "unsafe" not in service.CSP and "http" not in service.CSP
+    contract = (st.REPO / "contracts" / "runtime.md").read_text(encoding="utf-8")
+    assert f"`Content-Security-Policy: {service.CSP}`" in contract
+    assert all(d in contract for d in ("`default-src 'self'`", "`frame-ancestors 'none'`", "`img-src 'self' blob:`"))

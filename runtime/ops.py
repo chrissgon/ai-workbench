@@ -1605,21 +1605,24 @@ def _plan_pending(ctx: dict, request: dict, tasks: list, route_read, source: str
     return {"kind": "plan", **built}
 
 
-def route(project: str, request_id: int, flow: str | None = None) -> dict:
+def route(project: str, request_id: int, flow: str | None = None, channel: str | None = None) -> dict:
     """Plan a request that waits for its route. With flow, the flow the person names: its plan is opened at once,
     with no run and no run lock (it only opens a plan; an open question of the router is cancelled). Without, one run
     of the router skill (router.ROUTER_SKILL), as it is, asked only for the route: the reply's route line is checked
     against the flow files and the pack in scope, and a valid route becomes a plan; a reply that asks becomes a
     question; a direct turn (route none, shape direct) opens nothing and returns kind "direct" with the router's
     "next"; anything else opens a question with a sentence and the reply whole in its payload. While another run of
-    the project holds the run lock the request is queued, not refused: {"routed": false, "queued": true}, routed by
-    route_queued when the lock is free. Nothing the router's run left comes back. No task is created before the
+    the project holds the run lock the request is queued, not refused, when `channel` is one that drains the queue
+    (ops_say.QUEUING_CHANNELS, the local service): {"routed": false, "queued": true}, routed by route_queued when the
+    lock is free; any other channel is refused (RunBusy) as it always was. Nothing the router's run left comes back. No task is created before the
     person approves the plan (approve()). Returns {"routed": true or false, "pending_id", "source", ...}."""
     ctx = core.context(project)
     if flow is None:
         try:
             return _route_request(ctx, request_id)
         except core.RunBusy:
+            if channel not in ops_say.QUEUING_CHANNELS:
+                raise
             _routable(ctx, request_id)
             return ops_say.queue_route(ctx, request_id)
     _routable(ctx, request_id)
@@ -2691,7 +2694,6 @@ OpsError = core.OpsError  # a shell catches ops.OpsError; the class has one home
 # The conversation (runtime/ops_say.py): the two operations, and the constants the shells and the tests read.
 from ops_say import chat_memory, route_queued, say  # noqa: E402,F401
 from ops_say import ASK_NEXT, CONVERSATION, MEMORY_CHARS, MEMORY_CUT, MEMORY_HEAD, MEMORY_TAIL, MEMORY_TURNS, PLAN_NEXT  # noqa: E402,F401
-from ops_say import QUEUED_LINE  # noqa: E402,F401
 # The reads of the local interface (runtime/ops_reads.py): the operations, and the one constant a test reads.
 from ops_reads import agents, artifact, artifact_raw, artifacts, connections, conversation, costs, service_check, skills  # noqa: E402,F401
 from ops_reads import stop_runs, version  # noqa: E402,F401

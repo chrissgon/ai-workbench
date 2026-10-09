@@ -59,9 +59,10 @@ NOT_NAMED_ACTIONS = ["choose-flow", "cancel"]    # the words of the payload's `a
 NOT_NAMED_NEXT = ("Cancel it with " + operations.chat_line("cancel", request_id="{request}") + ", name a flow in the "
                   "terminal with: {route}, or start again with " + operations.chat_line("new", text="<text>"))
 RAW_MAX = 32 * 1024                              # bytes of the router's block kept in the payload's `raw`
-QUEUED_LINE = "Queued: a run of this project is in progress. The planning agent answers when it ends."
+QUEUING_CHANNELS = ("page",)  # the shells that drain the queue: only the local service runs `route_queued` on a loop
 QUEUED_REQUEST = "Recorded as request {request}. The planning agent routes it when the run ends."
 PROPOSES = "The planning agent proposes: "
+RUN_BUSY = "another run of this project is in progress: one task at a time per project"
 
 # The queue: lines of the person and requests that wait for the planning agent while a run holds the project's run
 # lock. One cursor of the store holds it (JSON, oldest first), changed under a file lock of the data folder so that
@@ -120,8 +121,10 @@ def say(project: str, text: str, channel: str | None = None) -> dict:
     no model, no request; any other plain line answers the router's open question on the conversation's last request,
     or else is a new request routed with the conversation's memory in front of it (one or more runs of the router: a
     model call), refused when the planning agent may not start. A line that would route while another run of the
-    project holds the run lock is queued, not refused: it is stored, its reply is pending (`queued` true, `reply`
-    None), and `route_queued` answers it when the lock is free. A reply of the router that is a direct turn is answered
+    project holds the run lock is queued, not refused, when the shell that carries it drains the queue (QUEUING_CHANNELS:
+    the local service): it is stored, its reply is pending (`queued` true, `reply` None), and `route_queued` answers it
+    when the lock is free. A shell that drains nothing (the terminal, the conversation's own shell, the MCP mode) is
+    refused (RunBusy, code 1) before anything is stored, as it always was. A reply of the router that is a direct turn is answered
     by code too, and the request the line recorded is cancelled by code. The reply is stored too. A model's reply is
     shown, never executed.
     `channel` is the shell that carries the line (the terminal, the local page, the MCP mode; the conversation's own
@@ -131,12 +134,15 @@ def say(project: str, text: str, channel: str | None = None) -> dict:
     ctx = core.context(project)
     said = core._text(text, "the line")
     store = ctx["store"]
+    channel = channel or "chat"
     if _turn_routes(said) and not state_question(said) and run_busy(ctx):
+        if channel not in QUEUING_CHANNELS:
+            raise core.RunBusy(RUN_BUSY, 1)
         stored = _enqueue_line(ctx, said)
         return {"reply": None, "request_id": None, "pending_id": None, "ran": False, "queued": True,
                 "message_id": stored["id"]}
     stored = core._stored(ctx, store.message_add, conversation=CONVERSATION, role="user", text=said)
-    reply, request_id, pending_id, ran, run_id = _turn(project, ctx, said, channel or "chat", stored["id"])
+    reply, request_id, pending_id, ran, run_id = _turn(project, ctx, said, channel, stored["id"])
     core._stored(ctx, store.message_add, conversation=CONVERSATION, role="assistant", text=reply or "(no reply)",
                  task_id=request_id, run_id=run_id)
     return {"reply": reply, "request_id": request_id, "pending_id": pending_id, "ran": ran, "queued": False}
@@ -151,7 +157,7 @@ def _turn(project: str, ctx: dict, said: str, channel: str, line_id: int) -> tup
     if state_question(said):
         return state_reply(project), None, None, False, None
     asked = _router_question(ctx, _last_request(ctx))
-    return _say_route(project, ctx, said, line_id, answer_to=asked)
+    return _say_route(project, ctx, said, line_id, channel, answer_to=asked)
 
 
 def _turn_routes(said: str) -> bool:
@@ -384,7 +390,7 @@ def _drain_line(project: str, ctx: dict, message_id: int) -> dict:
              if m["id"] == message_id]
     if not found:
         raise core.OpsError(f"message {message_id} is not in the conversation", 1)
-    reply, request_id, pending_id, ran, run_id = _turn(project, ctx, found[0]["text"], "chat", message_id)
+    reply, request_id, pending_id, ran, run_id = _turn(project, ctx, found[0]["text"], QUEUING_CHANNELS[0], message_id)
     core._stored(ctx, ctx["store"].message_add, conversation=CONVERSATION, role="assistant", text=reply or "(no reply)",
                  task_id=request_id, run_id=run_id)
     return {"routed": "line", "message_id": message_id, "request_id": request_id, "pending_id": pending_id, "ran": ran}
@@ -426,7 +432,7 @@ def _say_command(project: str, ctx: dict, said: str, channel: str, line_id: int)
         return operations.chat_help(), None, None, False, None
     name, found = parsed
     if name == "new":
-        return _say_route(project, ctx, found, line_id)
+        return _say_route(project, ctx, found, line_id, channel)
     row = operations.by_name(name)
     if channel not in row["channels"]:
         return f"error: /{name} is done in the terminal or on the page", None, None, False, None
@@ -461,7 +467,7 @@ def _planning_may_start(ctx: dict) -> tuple:
     return ok, why
 
 
-def _say_route(project: str, ctx: dict, said: str, line_id: int, answer_to=None) -> tuple:
+def _say_route(project: str, ctx: dict, said: str, line_id: int, channel: str, answer_to=None) -> tuple:
     """A plain line: the answer to the router's question (then the router runs again), or a new request with the
     memory in front of it (the messages before the line). Either way the router runs only when the planning agent may
     start. A reply of the router that is a direct turn cancels the request by code and is answered from the store's
@@ -479,7 +485,7 @@ def _say_route(project: str, ctx: dict, said: str, line_id: int, answer_to=None)
         remembered = chat_memory(messages, settled)
         text = f"{remembered}\n\n{MEMORY_TAIL}\n{said}" if remembered else said
         request_id = _ops().request(project, text, title=plan.title_of(said))["request"]
-    routed = _ops().route(project, request_id)
+    routed = _ops().route(project, request_id, channel=channel)
     if routed.get("queued"):  # a run began after the check: the request waits for the end of it
         return QUEUED_REQUEST.format(request=request_id), request_id, None, False, None
     if routed.get("kind") == "direct":

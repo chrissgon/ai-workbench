@@ -64,7 +64,7 @@ The rules of a request, in this order, each a refusal unless the request satisfi
      with `queues` (say, route): it starts anyway, and the operation itself queues its call while a run holds the
      project. Jobs live in memory; the records are in the store.
   9. Every response: Cache-Control no-store and X-Content-Type-Options nosniff; a page also a Content-Security-Policy of
-     "default-src 'self'; frame-ancestors 'none'" and Referrer-Policy no-referrer.
+     "default-src 'self'; img-src 'self' blob:; frame-ancestors 'none'" and Referrer-Policy no-referrer.
  10. A static path is served only when its real path is inside the interface folder, with a known extension, no
      dotfile and no listing. /favicon.ico (which browsers ask for by default) is answered with /favicon.svg.
  11. The log line is the method, the path (never the query), the status and the duration. Never a header, a body or the
@@ -79,7 +79,7 @@ and Content-Disposition inline; its row lists the page channel only) and /versio
 number that grows on every write). Each takes the query keys it names and no other. The service's own GET /versions answers
 the /version of every project in one request, so that a page that shows several asks once a second whatever their number.
 
-A line of the conversation, or a request to route, that is sent while a run holds the project is queued by the operation
+A line of the conversation, or a request to route, that the page sends while a run holds the project is queued by the operation
 (runtime/ops_say.py), not refused; a third loop, `route_queued`, runs every QUEUE_EVERY seconds (not task dispatch, so
 --no-dispatch leaves it on) and answers or routes the oldest entry when no run is in progress.
 
@@ -137,7 +137,11 @@ PATH_LIMIT = 2048
 QUERY_VALUE_LIMIT = 512                   # bytes of one query value on a route that names a project file (artifact?path=)
 STATIC_LIMIT = 16 * 1024 * 1024
 ONCE = ("host", "origin", "authorization", "content-type", "content-length", "transfer-encoding")
-CSP = "default-src 'self'; frame-ancestors 'none'"
+# Three directives. `default-src 'self'` and `frame-ancestors 'none'` are the rule since the first page. `img-src 'self'
+# blob:` is there for one reason: the raw bytes of an image sit behind the bearer header, so the page fetches them itself
+# and shows them from a `blob:` URL it built; `blob:` can only name bytes the page made, nothing from another origin.
+# Never `data:`, and no other directive is widened.
+CSP = "default-src 'self'; img-src 'self' blob:; frame-ancestors 'none'"
 # What a static file is served as. An extension not here is not served (the rule fails closed).
 TYPES = {
     ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",

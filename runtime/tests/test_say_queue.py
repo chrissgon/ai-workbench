@@ -25,6 +25,11 @@ DIRECT = ("Route: none (direct)\nWhy: a question about the state, no skill is ne
 PROSE = "This sounds like a market question; the demo flow would fit once you confirm the project.\n"
 
 
+def page_say(tree, line: str) -> dict:
+    """A turn as the local service carries it: the channel `page`, the one shell that drains the queue."""
+    return ops.say(str(tree["project"]), line, channel="page")
+
+
 def locked(tree):
     return ops_core._run_lock(ops.project_config.load(str(tree["project"])))
 
@@ -43,7 +48,7 @@ def conversation(tree) -> list:
 
 def test_a_plain_line_during_a_run_is_stored_queued_and_runs_nothing(tree):
     with locked(tree):
-        out = say(tree, "Which market should the invented studio go after first?")
+        out = page_say(tree, "Which market should the invented studio go after first?")
         assert out == {"reply": None, "request_id": None, "pending_id": None, "ran": False, "queued": True,
                        "message_id": out["message_id"]}
         assert [(m["role"], m["queued"]) for m in conversation(tree)] == [("user", True)]
@@ -51,26 +56,26 @@ def test_a_plain_line_during_a_run_is_stored_queued_and_runs_nothing(tree):
         assert ops.status(str(tree["project"]))["requests"] == [] and ops.pending(str(tree["project"]))["pending"] == []
         assert st.calls(tree["adapter"]) == []
         # the conversation's commands that route nothing are not held back, and are not queued
-        assert say(tree, "/status")["queued"] is False
+        assert page_say(tree, "/status")["queued"] is False
         # /new routes, so it queues
-        assert say(tree, "/new Another invented request.")["queued"] is True and len(queue(tree)) == 2
+        assert page_say(tree, "/new Another invented request.")["queued"] is True and len(queue(tree)) == 2
 
 
 def test_the_queue_is_bounded_and_a_full_queue_refuses_before_it_stores(tree, monkeypatch):
     monkeypatch.setattr(ops_say, "QUEUE_MAX", 2)
     with locked(tree):
-        say(tree, "one request")
-        say(tree, "two request")
+        page_say(tree, "one request")
+        page_say(tree, "two request")
         with pytest.raises(ops.OpsError, match="already wait for the end of the run"):
-            say(tree, "three request")
+            page_say(tree, "three request")
         assert len(conversation(tree)) == 2
 
 
 def test_the_oldest_queued_line_is_answered_when_the_lock_is_free_one_per_call_with_the_memory_before_it(tree):
     path = str(tree["project"])
     with locked(tree):
-        first = say(tree, "Which market first?")
-        second = say(tree, "Who buys first?")
+        first = page_say(tree, "Which market first?")
+        second = page_say(tree, "Who buys first?")
         assert ops.route_queued(path) == {"routed": None, "queued": 2, "reason": "a run is in progress"}
     done = ops.route_queued(path)
     assert (done["routed"], done["message_id"], done["queued"]) == ("line", first["message_id"], 1)
@@ -91,7 +96,7 @@ def test_the_oldest_queued_line_is_answered_when_the_lock_is_free_one_per_call_w
 def test_an_entry_taken_by_another_process_is_not_taken_twice_and_a_dead_one_is_dropped_with_a_word_to_the_person(tree):
     path = str(tree["project"])
     with locked(tree):
-        line = say(tree, "Which market first?")
+        line = page_say(tree, "Which market first?")
     ctx = ops_core.context(path)
     ops_say._queue_write(ctx, [dict(queue(tree)[0], started=time.time())])
     assert ops.route_queued(path)["reason"] == "another process is routing the first"
@@ -105,7 +110,7 @@ def test_an_entry_taken_by_another_process_is_not_taken_twice_and_a_dead_one_is_
 def test_a_queued_line_that_finds_the_planning_agent_stopped_gets_the_usual_reply(tree):
     path = str(tree["project"])
     with locked(tree):
-        say(tree, "Which market first?")
+        page_say(tree, "Which market first?")
     from test_chat import AGENTS, configure
     configure(tree, {**AGENTS, "planning": {"pack": "planning", "mode": "stopped", "max_runs_per_day": 10}})
     done = ops.route_queued(path)
@@ -121,12 +126,12 @@ def test_route_during_a_run_queues_the_request_and_route_queued_routes_it_later(
     path = str(tree["project"])
     request = ops.request(path, "Which market first?")["request"]
     with locked(tree):
-        queued = ops.route(path, request)
+        queued = ops.route(path, request, channel="page")
         assert queued == {"routed": False, "queued": True, "request": request, "pending_id": None, "source": "queue"}
-        assert ops.route(path, request)["queued"] is True and len(queue(tree)) == 1       # recorded once
+        assert ops.route(path, request, channel="page")["queued"] is True and len(queue(tree)) == 1       # recorded once
         assert ops.status(path)["requests"][0]["state"] == "requested"
         with pytest.raises(ops.OpsError, match="is not a request"):                          # still checked before it queues
-            ops.route(path, ops.request(path, "x", flow="demo")["tasks"][0]["id"])
+            ops.route(path, ops.request(path, "x", flow="demo")["tasks"][0]["id"], channel="page")
         assert st.calls(tree["adapter"]) == []
     done = ops.route_queued(path)
     assert (done["routed"], done["request_id"], done["queued"]) == ("route", request, 0) and done["pending_id"]
@@ -138,7 +143,7 @@ def test_a_queued_request_that_was_cancelled_meanwhile_is_dropped(tree):
     path = str(tree["project"])
     request = ops.request(path, "Which market first?")["request"]
     with locked(tree):
-        ops.route(path, request)
+        ops.route(path, request, channel="page")
     ops.cancel(path, request)
     out = ops.route_queued(path)
     assert out["routed"] is None and out["dropped"] == {"kind": "route", "id": request} and out["queued"] == 0
@@ -271,13 +276,60 @@ def test_a_reply_that_names_no_route_opens_one_sentence_with_the_reply_whole_and
     assert ops.status(path)["requests"][0]["state"] == "requested"                           # still waiting: the person decides
 
 
-def test_the_terminal_conversation_says_a_queued_line_is_queued(tree, monkeypatch, capsys):
+BUSY = "another run of this project is in progress: one task at a time per project"
+
+
+def test_the_conversations_own_shell_drains_no_queue_so_it_refuses_a_line_during_a_run(tree, monkeypatch, capsys):
     import io
     chat = st.load("chat")
-    monkeypatch.setattr("sys.stdin", io.StringIO("Which market first?\n"))
+    monkeypatch.setattr("sys.stdin", io.StringIO("Which market first?\n/new Another request.\n/status\n"))
     with locked(tree):
-        assert chat.main(["--project", str(tree["project"])]) == 0
-    assert capsys.readouterr().out == ops.QUEUED_LINE + "\n\n"
+        assert chat.main(["--project", str(tree["project"]), "--json"]) == 0      # the shell goes on after a refusal
+        kept = messages(tree)
+    captured = capsys.readouterr()
+    assert captured.err.count(f"error: {BUSY}") == 2                                # the two lines that route are refused
+    assert [(m["role"], m["text"]) for m in kept[:1]] == [("user", "/status")] and len(kept) == 2   # only the command was kept
+    assert queue(tree) == [] and st.calls(tree["adapter"]) == []
+
+
+def test_the_terminals_say_and_route_refuse_during_a_run_and_store_nothing(tree):
+    cli = st.load("cli")
+    path = str(tree["project"])
+    request = ops.request(path, "Which market first?")["request"]
+    with locked(tree):
+        with pytest.raises(ops.OpsError) as refused:
+            cli.run(["say", "--project", path, "--text", "Which market first?"])
+        assert refused.value.code == 1 and str(refused.value) == BUSY
+        with pytest.raises(ops.OpsError) as refused:
+            cli.run(["route", "--project", path, "--request", str(request)])
+        assert refused.value.code == 1 and str(refused.value) == BUSY
+        assert queue(tree) == [] and messages(tree) == []
+    assert ops.status(path)["requests"][0]["state"] == "requested"
+
+
+def test_the_mcp_mode_drains_no_queue_so_its_say_and_route_are_refused_during_a_run(tree):
+    import io
+    import test_mcp as tm
+    mcp = st.load("mcp")
+    path = str(tree["project"])
+    request = ops.request(path, "Which market first?")["request"]
+    server = mcp.Server(ops, [{"id": mcp.project_id(path), "name": "p", "path": path}], log=lambda line: None, grace=2)
+    described = {t["name"]: t["description"] for t in server.tools()}
+    assert "refused, not queued" in described["say"] and "refused, not queued" in described["route"]
+    with locked(tree):
+        assert tm.refusal_of(tm.tool(server, "say", {"text": "Which market first?"})) == BUSY
+        assert tm.refusal_of(tm.tool(server, "route", {"request_id": request})) == BUSY
+        assert queue(tree) == [] and messages(tree) == []
+    assert ops.status(path)["requests"][0]["state"] == "requested" and st.calls(tree["adapter"]) == []
+
+
+def test_only_the_page_is_a_channel_that_queues(tree):
+    assert ops_say.QUEUING_CHANNELS == ("page",)
+    with locked(tree):
+        for channel in (None, "chat", "terminal", "mcp"):
+            with pytest.raises(ops.OpsError, match="in progress"):
+                ops.say(str(tree["project"]), "Which market first?", channel=channel)
+        assert ops.say(str(tree["project"]), "Which market first?", channel="page")["queued"] is True
 
 
 def test_a_line_that_finds_the_lock_taken_after_the_check_is_recorded_as_a_request_and_queued(tree, monkeypatch):
@@ -286,7 +338,7 @@ def test_a_line_that_finds_the_lock_taken_after_the_check_is_recorded_as_a_reque
     real = ops_say.run_busy
     monkeypatch.setattr(ops_say, "run_busy", lambda ctx: False)       # the check saw no run; one began since
     with locked(tree):
-        out = say(tree, "Which market first?")
+        out = page_say(tree, "Which market first?")
     assert out["queued"] is False and out["ran"] is False and out["pending_id"] is None and out["request_id"]
     assert out["reply"] == ops_say.QUEUED_REQUEST.format(request=out["request_id"])
     assert [(e["kind"], e["id"]) for e in queue(tree)] == [("route", out["request_id"])]
@@ -298,7 +350,7 @@ def test_a_line_that_finds_the_lock_taken_after_the_check_is_recorded_as_a_reque
 def test_a_queued_line_that_can_no_longer_be_answered_is_dropped_with_a_word_to_the_person(tree, monkeypatch):
     path = str(tree["project"])
     with locked(tree):
-        say(tree, "Which market first?")
+        page_say(tree, "Which market first?")
     monkeypatch.setattr(ops_say, "_turn", lambda *args: (_ for _ in ()).throw(ops.OpsError("the decision it answers is closed", 1)))
     out = ops.route_queued(path)
     assert out["routed"] is None and out["dropped"]["kind"] == "line" and queue(tree) == []
@@ -316,7 +368,7 @@ def test_the_terminal_verb_routes_one_queued_entry(tree, capsys):
     cli = st.load("cli")
     path = str(tree["project"])
     with locked(tree):
-        say(tree, "Which market first?")
+        page_say(tree, "Which market first?")
         assert cli.run(["route-queued", "--project", path])["reason"] == "a run is in progress"
     assert cli.run(["route-queued", "--project", path])["routed"] == "line"
     assert cli.main(["route-queued", "--project", path]) == 0

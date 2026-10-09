@@ -36,8 +36,10 @@ do, so that the generated tables and the shells cannot differ). A row:
                request open. It is the one source of "returns a job"; every row whose `model` is not False has it
   queues       (optional) true when the operation, while a run of the project is in progress, records its call and
                answers `{"queued": true}` instead of refusing, and the local service routes it when the run ends
-               (`say`, `route`); the service lets such a job start while another job holds the model slot, so the
-               operation itself finds the run lock held and queues
+               (`say`, `route`); only for a channel that drains the queue (ops_say.QUEUING_CHANNELS: the page), every
+               other channel is refused as before, so such a row also takes the channel (`channel_arg`). The service
+               lets such a job start while another job holds the model slot, so the operation itself finds the run
+               lock held and queues
   exit_unless  (optional) [key, value]: the terminal prints the result and exits 1 unless result[key] == value (a
                result that says the model did not answer is not a failure of the operation, and is still printed)
 
@@ -65,8 +67,8 @@ OPERATIONS = (
      "help": "record what you want; with a flow, plan it from the flow file, else it waits for its route"},
     {"name": "route", "call": "route",
      "args": ({"name": "request_id", "kind": "int", "required": True, "flag": "request"}, {"name": "flow", "kind": "str"}),
-     "channels": ("terminal", "page", "mcp"), "model": "without --flow", "job": True, "queues": True,
-     "help": "plan a request that waits for its route: one run of the router skill, or the plan of a flow file; while a run is in progress the request is queued"},
+     "channels": ("terminal", "page", "mcp"), "model": "without --flow", "job": True, "channel_arg": True, "queues": True,
+     "help": "plan a request that waits for its route: one run of the router skill, or the plan of a flow file; on the page, while a run is in progress, the request is queued"},
     {"name": "route-queued", "call": "route_queued", "args": (), "channels": ("terminal",), "model": True, "job": True,
      "help": "route the oldest queued line or request, when no run is in progress (the local service calls it every few seconds)"},
     {"name": "status", "call": "status", "args": (), "channels": ("terminal", "chat", "page", "mcp"), "model": False,
@@ -182,7 +184,7 @@ OPERATIONS = (
      "help": "write the pin of the dispatcher's two jobs"},
     {"name": "say", "call": "say", "args": ({"name": "text", "kind": "text", "required": True},),
      "channels": ("terminal", "page", "mcp"), "model": "for a new request", "job": True, "channel_arg": True, "queues": True,
-     "help": "one turn of the conversation with the planning agent; while a run is in progress a line that needs the planner is queued, a question about the state is answered at once"},
+     "help": "one turn of the conversation with the planning agent; on the page, while a run is in progress, a line that needs the planner is queued (elsewhere refused); a question about the state is answered at once"},
     {"name": "agents", "call": "agents", "args": (), "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "each area agent: its mode, its caps, what it used today and how many tasks wait for it"},
     {"name": "conversation", "call": "conversation",

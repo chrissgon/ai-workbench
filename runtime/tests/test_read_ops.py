@@ -162,15 +162,20 @@ def test_the_conversation_operation_returns_only_the_messages_after_an_id_in_ord
     assert [m["id"] for m in page] == sorted(m["id"] for m in page)
 
 
-def test_a_second_turn_during_a_run_is_queued_not_refused_and_stores_no_request(tree):
-    """A-23: a turn that would route while another run holds the lock is stored and queued, with its reply pending;
+def test_a_second_turn_during_a_run_is_queued_on_the_page_and_stores_no_request(tree):
+    """A-23: a turn from the page that would route while another run holds the lock is stored and queued, with its reply pending;
     it makes no request, no decision and no router run until the lock is free (runtime/tests/test_say_queue.py)."""
     path = str(tree["project"])
     store, conn = stored(tree)
     cfg = ops.project_config.load(path)
     with ops_core._run_lock(cfg):  # another run of the project holds the lock
         for line in ("Which market should the invented studio go after first?", "/new Another invented request."):
-            out = ops.say(path, line)
+            kept = len(store.messages_list(conn, ops.CONVERSATION, limit=500))
+            with pytest.raises(ops.OpsError) as raised:        # a shell that drains no queue is refused, as it always was
+                ops.say(path, line)
+            assert raised.value.code == 1 and "in progress" in str(raised.value)
+            assert len(store.messages_list(conn, ops.CONVERSATION, limit=500)) == kept   # before anything is stored
+            out = ops.say(path, line, channel="page")
             assert out["queued"] is True and out["reply"] is None and out["ran"] is False and out["request_id"] is None
         messages = store.messages_list(conn, ops.CONVERSATION, limit=500)
         assert [m["role"] for m in messages] == ["user", "user"]                       # both lines are kept
