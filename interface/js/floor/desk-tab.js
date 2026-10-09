@@ -1,4 +1,5 @@
-// The Floor's Desk tab (handoff floor.md): the agent's documents from `artifacts` as a table (path, owner skill, size, modified),
+// The Floor's Desk tab (handoff floor.md): the agent's documents from `artifacts` as a table (path, owner skill, size with the kind beside it:
+// text, Markdown, image or other, A-33, and modified),
 // a filter that works in the page over the rows already read (no request), a "bound" chip, and the states loading, empty,
 // truncated and no match. A row opens the viewer by its hash. A path is text: it wraps after "/", "-" and "." and never
 // inside a name. The desk draws what the operation returned; opening a file is a read.
@@ -52,7 +53,7 @@ export function createDeskTab(env) {
       const row = h("tr", { class: "wb-desk-row" },
         h("td", { "data-label": "Path", class: "wb-desk-path" }, open, r.bound ? h("span", { class: "pui-chip pui-muted pui-soft wb-chip-11", title: "bound to a decision" }, "bound", h("span", { class: "wb-sr", text: " to a decision" })) : null),
         h("td", { "data-label": "Owner skill", class: "mono wb-desk-owner", text: r.owner }),
-        h("td", { "data-label": "Size", class: "wb-nowrap", text: r.size }),
+        h("td", { "data-label": "Size", class: "wb-nowrap" }, r.size, r.kind ? h("span", { class: "wb-desk-kind wb-muted", text: `${r.size ? " · " : ""}${r.kind}` }) : null),
         h("td", { "data-label": "Modified", class: "wb-desk-when" }, ...whenParts(r.modified)));
       row.addEventListener("click", () => env.open(r.path));
       return row;

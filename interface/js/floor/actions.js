@@ -12,6 +12,9 @@ export const actions = {
   cancel: api.cancel,
   setMode: api.setMode,
   retry: api.retry,
+  goAhead: api.goAhead,
+  route: api.route,
   handOver: api.handOver,
   pollJob: api.pollJob,
+  flows: api.flows,
 };

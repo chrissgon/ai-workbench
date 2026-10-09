@@ -11,6 +11,7 @@
 import * as format from "./format.js";
 import * as router from "./router.js";
 import { windowState } from "./scene/look.js";
+import { waitLines, waitingLabel } from "./waits.js";
 
 export const MAX_LOTS = 4;       // at most four lots are drawn (EDGE-9); the rest are reached from the lists
 export const MAX_FLOORS = 8;
@@ -238,9 +239,10 @@ export function tracking(snapshot, projectId, now) {
     const word = agent ? format.agentWord(agent) : "";
     return {
       id: t.id, state: t.state, title, agent,
-      sub: word ? `${word} · ${t.state}` : t.state,
+      sub: `${word ? `${word} · ${t.state}` : t.state}${waitingLabel(t) ? ` · ${waitingLabel(t)}` : ""}`,
+      ...(waitLines(t).length ? { waits: waitLines(t) } : {}),
       link: !agent || agent === "planning" ? router.lobbyHash(project.id) : router.floorHash(project.id, agent),
-      name: `${title}, ${word ? `${word}, ` : ""}${t.state}`,
+      name: `${title}, ${word ? `${word}, ` : ""}${t.state}${waitingLabel(t) ? `, ${waitingLabel(t)}` : ""}`,
     };
   });
   const current = steps.find((s) => s.state === "running") || steps.find((s) => s.state === "waiting") || null;

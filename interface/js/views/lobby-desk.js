@@ -1,7 +1,7 @@
 // The Lobby's Desk tab (handoff lobby.md, "Desk tab"): the Floor's desk table and viewer showing the documents of `artifacts` that
 // belong to the planning agent: those with `agent` "planning" and those with no agent (no owner, or no single agent owns the skill:
 // WP-9.4b, E-22). The page reads `artifacts` (on every reload of the page, and when it is older than 5 seconds while the Desk is open or 30 otherwise) and puts a path in the
-// viewer only when the person clicks one; the viewer reads the file with `artifact` and shows it as text.
+// viewer only when the person clicks one; the viewer reads the file with `artifact` and shows it as text, or, for an image, with `artifactRaw` (A-33).
 
 import * as api from "../api.js";
 import { createDeskTab } from "../floor/desk-tab.js";
@@ -63,6 +63,10 @@ export function createLobbyDesk(env) {
     rows() {
       return documents ? lobbyDocuments(documents.rows) : null;
     },
+    /** The Desk's row of a file ({path, kind, size, ...}), or undefined while the list is unread or lacks the path. */
+    listed(path) {
+      return documents ? documents.rows.find((d) => d.path === path) : undefined;
+    },
     focusRow(path) {
       desk.focusRow(path);
     },
@@ -78,10 +82,10 @@ export function createLobbyDesk(env) {
 
 /**
  * The viewer of a document of the Desk. It takes the whole panel's place (`host` inside the panel), or on a phone a dialog. env: {frame,
- * panel (the element the host goes in), project, onClose()}. Returns {show(path) -> "inline" | "dialog" | null, reload(), dispose()}.
+ * panel (the element the host goes in), project, onClose(), listed(path) (the Desk's row of a file)}. Returns {show(path) -> "inline" | "dialog" | null, reload(), dispose()}.
  */
 export function createLobbyViewer(env) {
-  const viewer = createViewer({ onClose: () => env.onClose() });
+  const viewer = createViewer({ onClose: () => env.onClose(), listed: env.listed });
   const host = h("div", { class: "wb-viewer-host", hidden: true }, viewer.el);
   env.panel.append(host);
   const dialog = h("dialog", { class: "pui-modal wb-viewer-dialog", "aria-label": "Document" });

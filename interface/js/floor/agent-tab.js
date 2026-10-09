@@ -1,38 +1,28 @@
 // The Floor's Agent tab (handoff floor.md): the agent's state row, the mode plate with "Stop agent" and "Supervise" (A-17: a narrowing
 // the runtime accepts at once; a wider mode is the terminal's), the result notice with the exact command the service gave (A-18, the
 // terminal-command component), three meters that say what they count (A-20), the current task with its runs and, when the dispatcher
-// held it, why (A-10), the other tasks with "Retry", and "Hand a file over". Each control sends exactly one request: `setMode` with the
-// word of the button, `retry` with no body, `handOver` with the file as the person chose it. The page decides nothing: the mode's words
+// held it, why (A-10), the other tasks, and "Hand a file over". The current task and the other tasks carry the actions of a Tasks-tab row
+// (task-actions.js, A-32: Retry on a failed or blocked task with the sentence the runtime stored beside it, "Open in the Inbox" on a waiting
+// one, "Go ahead" and "Drop the after" on a task that waits for another). Each control sends exactly one request: `setMode` with the
+// word of the button, `retry` with no body, `goAhead`, `handOver` with the file as the person chose it. The page decides nothing: the mode's words
 // and its line are constants of one table, every other value is what an operation returned. The tab is built once and its
 // parts are drawn again only when their data changed, so a poll never takes the keyboard focus or the typed choice away.
 
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
 import { MODES, MODE_LINES, PIPS, meters, stateRow, stateTone, taskWord } from "../floor-model.js";
-import { commandBlock, commandsIn, isCommand } from "../frame/command.js";
+import { commandBlock, isCommand } from "../frame/command.js";
 import { pips, trackNode } from "../scene/plates.js";
 import { runBlock } from "./run-block.js";
+import { fileRefusal, toBase64 } from "./hand-file.js";
+import { createTaskActions } from "./task-actions.js";
 import { busyLine, chip, errorText, notice, ring } from "./widgets.js";
+import { waitLines } from "../waits.js";
 
-export const MAX_FILE_BYTES = 25 * 1024 * 1024;
-const NAME = /^[A-Za-z0-9._-]{1,100}$/;
+export { MAX_FILE_BYTES, fileRefusal, toBase64 } from "./hand-file.js";
 export const STANDING = "Stop agent and Supervise take effect at once and need no acceptance.";
 export const WIDER = "A wider mode is set in the terminal, not on this page.";
 export const WIDER_BELOW = "A wider mode is set in the terminal, not on this page:";
-
-/** The base64 of some bytes (the body of a file handed over): chunked so a large file does not overflow the call stack. */
-export function toBase64(bytes) {
-  let text = "";
-  for (let i = 0; i < bytes.length; i += 0x8000) text += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
-  return btoa(text);
-}
-
-/** The refusal before sending, or "" when the file may be sent: over 25 MiB, or a name the service would refuse. */
-export function fileRefusal(name, size) {
-  if (size > MAX_FILE_BYTES) return "A file handed to a task is at most 25 MiB.";
-  if (!NAME.test(name)) return "The file name may hold letters, digits, ., _ and -, at most 100 characters.";
-  return "";
-}
 
 /** Keep the keyboard focus on the control with the same `data-key` after a part is drawn again. */
 function redraw(container, render) {
@@ -45,7 +35,7 @@ function redraw(container, render) {
 }
 
 /**
- * Create the Agent tab. env: {project, agent, api: {setMode, retry, handOver}, refresh(), now()}. Returns {el, update(view),
+ * Create the Agent tab. env: {project, agent, api: {setMode, retry, goAhead, handOver}, refresh(), now(), links: {inbox(pendingId)} (optional)}. Returns {el, update(view),
  * focusSelect()}; view is floor-model.floor(...) (found, notAccepted or loading).
  */
 export function createAgentTab(env) {
@@ -166,12 +156,17 @@ export function createAgentTab(env) {
     runsTotalLine.textContent = m.runsTotal || "";
   }
 
-  /** The held reason: its sentence and what the service gave to get past it: one command (run-next, the service start), or a sentence with commands in it (the credential's). */
+  /**
+   * The held reason: its sentence and what the service gave to get past it. The credential's commands are the fields `commands` ([{name, command}],
+   * `command` null when no username is registered), each with its Copy; `next` is the sentence (text) or, for the reasons that give one, a command.
+   */
   function heldBlock(held) {
-    const parts = held.next && !isCommand(held.next) ? commandsIn(held.next) : null;
-    return h("div", { class: "wb-held" }, h("p", { class: "wb-held-line", text: `Held: ${held.sentence}` }),
-      parts ? h("p", { class: "wb-held-detail wb-muted", text: parts.sentence }) : null,
-      parts ? parts.commands.map((command) => commandBlock({ command })) : commandBlock({ command: held.next }));
+    const commands = Array.isArray(held.commands) ? held.commands : [];
+    const sentence = held.next && !isCommand(held.next) ? h("p", { class: "wb-held-detail wb-muted", text: held.next }) : null;
+    const single = !commands.length && held.next && isCommand(held.next) ? commandBlock({ command: held.next }) : null;
+    return h("div", { class: "wb-held" }, h("p", { class: "wb-held-line", text: `Held: ${held.sentence}` }), sentence,
+      commands.map((c) => (c.command ? commandBlock({ command: c.command, sentence: c.name }) : h("p", { class: "wb-held-detail wb-muted", text: `${c.name}: no username registered` }))),
+      single);
   }
 
   function drawWider(wider) {
@@ -193,12 +188,25 @@ export function createAgentTab(env) {
       h("div", { class: "pui-card wb-current" },
         h("div", { class: "wb-current-head" }, h("strong", { text: `#${task.id} ${task.title || task.key || ""}`.trim() }), chip(taskWord(task.state), stateTone(task.state))),
         h("div", { class: "wb-muted wb-current-sub" }, "skill ", h("code", { text: task.skill || "" }), since ? ` · since ${since}` : ""),
+        waitLines(task).map((line) => h("p", { class: "wb-task-waits wb-muted", text: line })),
+        taskActions(task, view),
         view.heldCurrent ? heldBlock(view.heldCurrent) : null,
         view.runs.map(runBlock)));
   }
 
-  const retrying = new Set();
-  const retryError = new Map();
+  // The actions of a task (task-actions.js): the same nodes as a Tasks-tab row, for the current task and for each of the others.
+  const taskActionsUse = createTaskActions({
+    project: env.project, api: env.api, refresh: () => env.refresh(),
+    redraw: () => { shown.current = null; shown.others = null; if (lastView) { drawCurrent(lastView); drawOthers(lastView); } },
+  });
+  const links = env.links || { inbox: () => "#/" };
+
+  function taskActions(task, view) {
+    const nodes = taskActionsUse.nodes(task, { pending: view.decisions, links, locked });
+    return nodes.length || taskActionsUse.failure(task.id)
+      ? h("div", { class: "wb-current-actions" }, nodes.length ? h("div", { class: "wb-task-actions" }, nodes) : null, taskActionsUse.failure(task.id)) : null;
+  }
+
   function drawOthers(view) {
     if (!view.others.length) {
       fill(othersBox);
@@ -206,37 +214,12 @@ export function createAgentTab(env) {
     }
     redraw(othersBox, () => fill(othersBox, h("div", { class: "wb-section-label", text: "Other tasks of this agent" }),
       view.others.map((t) => {
-        const can = t.state === "failed" || t.state === "blocked";
-        const busy = retrying.has(t.id);
-        let button = null;
-        if (can) {
-          button = h("button", { class: "pui-btn pui-surface pui-outline wb-small-button", type: "button", "data-key": `retry-${t.id}`, "aria-label": `Retry task ${t.id}`, "aria-busy": busy ? "true" : null },
-            busy ? ring(true) : null, busy ? "Retrying..." : "Retry");
-          button.disabled = busy || locked;
-          button.addEventListener("click", () => retryTask(t.id));
-        }
+        const nodes = taskActionsUse.nodes(t, { pending: view.decisions, links, locked });
         return h("div", { class: "wb-other" },
-          h("div", { class: "pui-list-item wb-other-row" }, h("span", { class: "wb-other-title", text: `#${t.id} ${t.title || t.key || ""}`.trim() }), chip(taskWord(t.state), stateTone(t.state)), button),
-          retryError.has(t.id) ? notice(retryError.get(t.id), "error") : null);
+          h("div", { class: "pui-list-item wb-other-row" }, h("span", { class: "wb-other-title", text: `#${t.id} ${t.title || t.key || ""}`.trim() }), chip(taskWord(t.state), stateTone(t.state)), nodes),
+          waitLines(t).map((line) => h("p", { class: "wb-task-waits wb-muted", text: line })),
+          taskActionsUse.failure(t.id));
       })));
-  }
-
-  async function retryTask(id) {
-    if (retrying.has(id)) return;
-    retrying.add(id);
-    retryError.delete(id);
-    shown.others = null;
-    drawOthers(lastView);
-    try {
-      await env.api.retry(env.project, id);
-      env.refresh();
-    } catch (e) {
-      retryError.set(id, errorText(e));
-    }
-    retrying.delete(id);
-    shown.others = null;
-    drawOthers(lastView);
-    env.refresh();
   }
 
   // --- hand a file over ------------------------------------------------------------------------------------------------------------
@@ -315,8 +298,9 @@ export function createAgentTab(env) {
       swap("meters", meters(view.agent), () => drawMeters(meters(view.agent)));
       runsTotalLine.hidden = !meters(view.agent).runsTotal;     // every update: a draw skipped as identical must not leave it hidden after a not-accepted spell
       swap("wider", view.agent.wider || null, () => drawWider(view.agent.wider));
-      swap("current", [view.current, view.runs, view.tasks.length, view.heldCurrent], () => drawCurrent(view));
-      swap("others", [view.others.map((t) => [t.id, t.title, t.state]), [...retrying], [...retryError], locked], () => drawOthers(view));
+      const pendingIds = view.decisions.map((d) => [d.id, d.task_id]);
+      swap("current", [view.current, view.runs, view.tasks.length, view.heldCurrent, pendingIds, taskActionsUse.signature(), locked], () => drawCurrent(view));
+      swap("others", [view.others.map((t) => [t.id, t.title, t.state, t.note, t.waiting_for]), pendingIds, taskActionsUse.signature(), locked], () => drawOthers(view));
       swap("hand", [view.target ? view.target.id : null, locked], () => drawHand(view));
     },
   };

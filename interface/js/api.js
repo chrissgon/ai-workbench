@@ -1,9 +1,10 @@
 // The client of the local service (runtime/service.py): one function per route of its ROUTES table, named after the
 // operation. Each sends the token as "Authorization: Bearer", a POST sends "Content-Type: application/json", and
-// only a route that takes a query (progress, conversation, costs, artifact) is sent one. An error body {error, message} becomes an ApiError with
+// only a route that takes a query (progress, conversation, costs, artifact, artifact/raw) is sent one. An error body {error, message} becomes an ApiError with
 // the status and the word. A route whose operation calls a model or a platform answers 202 with a job: the function
 // returns that job and pollJob(job.job, every) asks for it again until it is done or failed. The token is read from
-// token.js for each request and appears nowhere else here.
+// token.js for each request and appears nowhere else here. One route answers bytes (the raw artifact): `artifactRaw` returns a Blob,
+// through the same `send`, so the token still travels only as the bearer header.
 
 import { getToken } from "./token.js";
 
@@ -76,7 +77,7 @@ async function send(method, path, options = {}) {
     const text = query.toString();
     if (text) url += "?" + text;
   }
-  const headers = { Authorization: `Bearer ${token}`, Accept: "application/json" };
+  const headers = { Authorization: `Bearer ${token}`, Accept: options.raw ? "image/*" : "application/json" };
   const init = {
     method, headers, credentials: "omit", cache: "no-store", redirect: "error", mode: "same-origin",
     referrerPolicy: "no-referrer", signal: options.signal,
@@ -91,6 +92,14 @@ async function send(method, path, options = {}) {
   } catch (e) {
     if (e && e.name === "AbortError") throw e;
     throw new ApiError(0, "network", "The service could not be reached. Is it still running?");
+  }
+  // A route marked `raw` answers bytes: read them as a Blob on success; a refusal is JSON as everywhere else.
+  if (options.raw && response.ok) {
+    try {
+      return await response.blob();
+    } catch (e) {
+      throw new ApiError(response.status, "internal", "The service answered with bytes this page could not read.");
+    }
   }
   let data = null;
   try {
@@ -161,9 +170,13 @@ export function release(p, id, options) {
   return send("POST", `/projects/${enc(p)}/pending/${enc(id)}/release`, options);
 }
 
-/** POST /projects/{p}/pending/{id}/approve (job): {sha256}, the hash of the content the page showed. */
+/**
+ * POST /projects/{p}/pending/{id}/approve (job): {sha256, go_ahead?}, the hash of the content the page showed and, for a plan,
+ * the keys of the tasks the person told to go ahead (a JSON list: their derived waits are dropped). `goAhead` left out or empty sends no list.
+ */
 export function approve(p, id, sha256, options = {}) {
-  return send("POST", `/projects/${enc(p)}/pending/${enc(id)}/approve`, { body: { sha256 }, signal: options.signal });
+  const goAhead = Array.isArray(options.goAhead) && options.goAhead.length ? options.goAhead : undefined;
+  return send("POST", `/projects/${enc(p)}/pending/${enc(id)}/approve`, { body: { sha256, go_ahead: goAhead }, signal: options.signal });
 }
 
 /** POST /projects/{p}/pending/{id}/reject: {note?}. */
@@ -176,9 +189,9 @@ export function flows(p, options) {
   return send("GET", `/projects/${enc(p)}/flows`, options);
 }
 
-/** POST /projects/{p}/requests: {text, flow?, title?}. */
-export function request(p, text, { flow, title, signal } = {}) {
-  return send("POST", `/projects/${enc(p)}/requests`, { body: { text, flow, title }, signal });
+/** POST /projects/{p}/requests: {text, flow?, title?, after?}; `after` is the number of the request this one runs after. */
+export function request(p, text, { flow, title, after, signal } = {}) {
+  return send("POST", `/projects/${enc(p)}/requests`, { body: { text, flow, title, after }, signal });
 }
 
 /** POST /projects/{p}/requests/{id}/route (job): {flow?}. */
@@ -199,6 +212,11 @@ export function task(p, id, options) {
 /** POST /projects/{p}/tasks/{id}/retry. */
 export function retry(p, id, options) {
   return send("POST", `/projects/${enc(p)}/tasks/${enc(id)}/retry`, options);
+}
+
+/** POST /projects/{p}/tasks/{id}/go-ahead: {drop_after?}; ends the derived waits of a task already created (with `dropAfter`, its `after` wait instead). */
+export function goAhead(p, id, { dropAfter, signal } = {}) {
+  return send("POST", `/projects/${enc(p)}/tasks/${enc(id)}/go-ahead`, { body: { drop_after: dropAfter ? true : undefined }, signal });
 }
 
 /** POST /projects/{p}/tasks/{id}/files: hand a file to a task, {name, content_base64}. */
@@ -254,6 +272,11 @@ export function artifacts(p, options) {
 /** GET /projects/{p}/artifact?path=: {path, text, size, modified_at} of one file under docs/ (at most 512 bytes of path). */
 export function artifact(p, path, { signal } = {}) {
   return send("GET", `/projects/${enc(p)}/artifact`, { query: { path }, signal });
+}
+
+/** GET /projects/{p}/artifact/raw?path=: the bytes of one image under docs/, as a Blob (the media type is the blob's). A refusal is an ApiError whose message is the sentence to show. */
+export function artifactRaw(p, path, { signal } = {}) {
+  return send("GET", `/projects/${enc(p)}/artifact/raw`, { query: { path }, signal, raw: true });
 }
 
 /** POST /projects/{p}/conversation (job): one turn with the planning agent, {text}. */

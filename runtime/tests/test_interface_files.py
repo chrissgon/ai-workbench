@@ -329,9 +329,12 @@ def test_the_building_and_the_floor_are_files_of_the_page_and_the_page_routes_to
 
 
 def test_only_the_floor_folder_sends_a_write_and_it_takes_every_write_from_one_object():
-    writes = {"answer", "release", "approve", "reject", "verdict", "cancel", "setMode", "retry", "handOver"}
+    # ADJ-I2: `goAhead` (a task that waits) and `route` (the unrecognised-route card routes a request with a flow) are writes; `flows` is the one read the
+    # same object carries, for the flow list of that card.
+    writes = {"answer", "release", "approve", "reject", "verdict", "cancel", "setMode", "retry", "handOver", "goAhead", "route"}
+    reads = {"pollJob", "flows"}
     actions = (INTERFACE / "js" / "floor" / "actions.js").read_text(encoding="utf-8")
-    assert set(re.findall(r"^\s+(\w+): api\.(\w+),$", actions, re.M)) == {(w, w) for w in writes | {"pollJob"}}, "actions.js names each write once"
+    assert set(re.findall(r"^\s+(\w+): api\.(\w+),$", actions, re.M)) == {(w, w) for w in writes | reads}, "actions.js names each write once"
     for name in FLOOR_FILES:
         text = (INTERFACE / "js" / name).read_text(encoding="utf-8")
         if name.startswith(("views/", "scene/")) or name == "floor-model.js":
@@ -341,7 +344,7 @@ def test_only_the_floor_folder_sends_a_write_and_it_takes_every_write_from_one_o
             assert not (set(sends) & writes), f"{name} sends no write: only cards.js and agent-tab.js do, through their environment ({sorted(set(sends) & writes)})"
         if name in ("floor/cards.js", "floor/agent-tab.js"):
             assert 'from "../api.js"' not in text, f"{name} sends through its environment (a client it is given), not through a client of its own"
-            assert set(re.findall(r"\bapi\(?\)?\.(\w+)\(", text)) <= writes | {"pollJob"}, f"{name} calls only the operations of its panel"
+            assert set(re.findall(r"\bapi\(?\)?\.(\w+)\(", text)) <= writes | reads, f"{name} calls only the operations of its panel"
 
 
 def test_a_card_sends_the_hash_it_shows_read_back_from_its_own_text_and_nothing_decides_for_the_person():

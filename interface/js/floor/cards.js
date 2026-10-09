@@ -10,14 +10,18 @@
 // word, every button is disabled, "Working..." shows for a job), failed (the message above the buttons, the typed text
 // stays, the card is read again) and done (a resolved line, with the result of an approved effect as text). It is built with
 // an environment so a test can run it with a fake document and a fake client:
-//   env = {project, now(), api: {answer, release, approve, reject, verdict, cancel, pollJob}, requestIds: Set of request ids,
-//          links: {floor(agent), lobby(), open(item, path)}, reread(id) -> item, changed(id, outcome), gone(id)}
+//   env = {project, now(), api: {answer, release, approve, reject, verdict, cancel, route, flows, handOver, pollJob}, requestIds: Set of request ids,
+//          links: {floor(agent), lobby(), open(item, path)}, reread(id) -> item, task(id) -> the task's body (optional: the review card reads
+//          the file-drop line from it), changed(id, outcome), gone(id)}
 
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
 import { ENDING, openable } from "../floor-model.js";
 import { renderMarkdown } from "../markdown.js";
 import { markdownView } from "../markdown-view.js";
+import { createWaitsBlock } from "../cards/plan-waits.js";
+import { commandBlock } from "../frame/command.js";
+import { fileRefusal, toBase64 } from "./hand-file.js";
 import { agoText, chip, errorText, field, isGone, jobText, notice, ring } from "./widgets.js";
 
 // The buttons of each kind, in the drawn order, by the word of `actions` they send, with their "-ing" word.
@@ -30,6 +34,14 @@ export const BUTTONS = Object.freeze({
 });
 
 const RESOLVED = { approved: "approved", accepted: "accepted", rejected: "rejected", answered: "answered", released: "released" };
+// The unrecognised route (A-25): the question whose payload names these two actions. The page draws one button for each.
+const DONE_TEXT = { route: "Request routed", "cancel-request": "Request cancelled" };
+
+/** Whether a decision is the question of a reply that named no route: a question whose payload `actions` are the two words of the runtime. */
+export function isUnrecognised(item) {
+  const words = item && item.kind === "question" && item.payload && Array.isArray(item.payload.actions) ? item.payload.actions : [];
+  return words.includes("choose-flow") && words.includes("cancel");
+}
 const NOTE_LABEL = "Note (optional, used when you reject)";
 
 /** The buttons a card draws: for each word of the kind's list that is in `actions`, in order. An unknown word is not drawn. */
@@ -81,7 +93,13 @@ export function createCard(item, env) {
   const uid = `wb-card-${counter}`;
   const titleId = `${uid}-title`;
   const root = h("article", { class: "pui-card wb-card", "aria-labelledby": titleId });
-  const state = { item, busy: null, error: null, done: null, verdict: null, empty: null, typed: { answer: "", comment: "", note: "" } };
+  const state = {
+    item, busy: null, error: null, done: null, verdict: null, empty: null, typed: { answer: "", comment: "", note: "" },
+    route: { open: false, flows: null, flow: "" },     // "Choose a flow": the list read once, and the flow chosen
+    drop: null,                                         // {web, takes, line} of the review's task (the file drop), read once
+    handed: null,                                       // the last file handed over from the review card: {text, error}
+    goAhead: new Set(),                                 // the plan's task keys ticked "Go ahead"
+  };
   let inputs = {};
 
   const api = () => env.api;
@@ -136,7 +154,7 @@ export function createCard(item, env) {
 
   function isJob(word) {
     const kind = state.item.kind;
-    return (kind === "effect" && word === "approved") || (kind === "plan" && word === "approved") || (kind === "acceptance" && word === "accepted") || (kind === "review" && word === "released");
+    return (kind === "question" && word === "route") || (kind === "effect" && word === "approved") || (kind === "plan" && word === "approved") || (kind === "acceptance" && word === "accepted") || (kind === "review" && word === "released");
   }
 
   function message() {
@@ -196,9 +214,46 @@ export function createCard(item, env) {
 
   function questionBody() {
     const it = state.item;
+    const lost = isUnrecognised(it);
     return [h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }), text(it.body),
+      lost ? replyDisclosure(it.payload.raw) : null, lost ? routeControls() : null,
       textarea("answer", "Your answer", 2, h("small", { class: state.empty === "answer" ? "wb-hint is-error" : "wb-hint", text: state.empty === "answer" ? "Type an answer." : "Ctrl or Cmd plus Enter sends." }), state.empty === "answer"),
       message(), buttons()];
+  }
+
+  /** "Show the agent's reply": the planning agent's reply whole, as plain text (A-25). */
+  function replyDisclosure(raw) {
+    if (typeof raw !== "string" || !raw) return null;
+    return h("details", { class: "pui-accordion-item wb-verdict wb-raw-reply" }, h("summary", { class: "wb-summary", text: "Show the agent's reply" }),
+      h("pre", { class: "wb-pre", tabindex: "0", "aria-label": "The planning agent's reply" }, raw));
+  }
+
+  /** A button of the unrecognised-route card, outside `actions`: it sends the request of its word. */
+  function routeButton(word, label, busyLabel, theme) {
+    const mine = state.busy === word;
+    const button = h("button", { class: `pui-btn ${theme} pui-outline wb-card-button`, type: "button", "data-word": word, "aria-busy": mine ? "true" : null }, mine ? ring(true) : null, mine ? busyLabel : label);
+    button.disabled = Boolean(state.busy) || Boolean(state.done);
+    button.addEventListener("click", () => press(word));
+    return button;
+  }
+
+  /** The two actions of a reply that named no route: "Choose a flow" (the list, then `route` with the flow) and "Cancel the request". */
+  function routeControls() {
+    const r = state.route;
+    const parts = [h("div", { class: "wb-card-actions wb-route-actions" }, routeButton("choose-flow", "Choose a flow", "Reading the flows...", "pui-theme"), routeButton("cancel-request", "Cancel the request", "Cancelling...", "pui-surface"))];
+    if (r.open && r.flows === null) parts.push(h("div", { class: "wb-busy", role: "status", "aria-busy": "true" }, ring(true), h("span", { text: "Reading the flows..." })));
+    if (r.open && r.flows !== null) {
+      const select = h("select", { class: "pui-input wb-field-input", "data-key": "flow", "aria-invalid": state.empty === "flow" ? "true" : null },
+        h("option", { value: "", text: r.flows.length ? "Choose a flow..." : "The project has no flow" }),
+        r.flows.map((f) => h("option", { value: f.flow, text: typeof f.title === "string" && f.title ? f.title : f.flow })));
+      select.value = r.flow;
+      select.disabled = Boolean(state.busy) || Boolean(state.done);
+      select.addEventListener("change", () => { r.flow = select.value; });
+      inputs.flow = select;
+      parts.push(field("Flow", select, h("small", { class: state.empty === "flow" ? "wb-hint is-error" : "wb-hint", text: state.empty === "flow" ? "Choose a flow." : "The request is planned from this flow." })),
+        h("div", { class: "wb-card-actions" }, routeButton("route", "Route with this flow", "Routing...", "pui-theme")));
+    }
+    return h("div", { class: "wb-route-controls" }, parts);
   }
 
   function pathRow(file, withOpen) {
@@ -225,11 +280,68 @@ export function createCard(item, env) {
         (change.refused || []).map((r) => h("div", { class: "wb-path-row" }, h("code", { class: "wb-path", text: r.path || "the whole set" }), h("span", { class: "wb-card-hint", text: String(r.reason || "") }))),
         h("span", { class: "wb-card-line", text: "Answer the review with a comment, or cancel the request." })));
     }
-    parts.push(textarea("comment", "Comment", 2, state.empty === "comment" ? h("small", { class: "wb-hint is-error", text: "Type a comment." }) : null, state.empty === "comment"), message());
+    parts.push(textarea("comment", "Comment", 2, state.empty === "comment" ? h("small", { class: "wb-hint is-error", text: "Type a comment." }) : null, state.empty === "comment"), handOver(), message());
     let disclosure = null;
     if (it.run_id !== null && it.run_id !== undefined) disclosure = verdictDisclosure(it.run_id);
     parts.push(buttons(), disclosure);
     return parts;
+  }
+
+  /**
+   * "Hand a file over" on the review card (A-30): the file goes to the task the review is about and travels with the answer into its next run.
+   * It appears once the task is read and says it takes a file; for a task with the web, the runtime's line (what the open network can see) stands
+   * above the control, before the file is chosen. Sends `handOver` and nothing else.
+   */
+  function handOver() {
+    const drop = state.drop;
+    if (!drop || drop.takes === false || typeof api().handOver !== "function") return null;
+    const input = h("input", { class: "pui-input wb-file", type: "file", "data-key": "hand-file" });
+    input.disabled = Boolean(state.busy) || Boolean(state.done) || Boolean(state.handing);
+    input.addEventListener("change", () => handFile(input));
+    const line = drop.web && typeof drop.line === "string" && drop.line ? h("p", { class: "wb-drop-line", role: "note", text: drop.line }) : null;
+    return h("div", { class: "wb-hand wb-card-hand" },
+      h("label", { class: "pui-field-group wb-field" }, h("span", { class: "wb-field-label", text: "Hand a file over" }), line, input,
+        h("small", { class: "wb-hint", text: `To task #${state.item.task_id}. At most 25 MiB.` })),
+      state.handing ? h("div", { class: "wb-busy", role: "status", "aria-busy": "true" }, ring(true), h("span", { text: "Sending..." })) : null,
+      state.handed ? (state.handed.error ? notice(state.handed.text, "error") : h("p", { class: "wb-card-line", role: "status", text: state.handed.text })) : null);
+  }
+
+  async function handFile(input) {
+    const file = input.files && input.files[0];
+    if (!file || state.handing || state.busy || state.done) return;
+    const it = state.item;
+    const refusal = fileRefusal(file.name, file.size);
+    if (refusal) {
+      state.handed = { text: refusal, error: true };
+      render();
+      return;
+    }
+    state.handing = true;
+    state.handed = null;
+    render();
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const result = await api().handOver(env.project, it.task_id, file.name, toBase64(bytes));
+      state.handed = { text: `Handed over: ${result.path} (${result.bytes} bytes)` };
+    } catch (e) {
+      state.handed = { text: errorText(e), error: true };
+    }
+    state.handing = false;
+    render();
+  }
+
+  /** The review's task is read once for the file-drop line (`drop`: {web, takes, line}); a read that fails leaves the control out. */
+  let dropAsked = false;
+  async function loadDrop() {
+    if (dropAsked || !env.task || state.item.kind !== "review" || state.item.task_id === null || state.item.task_id === undefined) return;
+    dropAsked = true;
+    try {
+      const body = await env.task(state.item.task_id);
+      state.drop = body && body.drop && typeof body.drop === "object" ? body.drop : null;
+      if (state.drop && !state.done) render();
+    } catch (e) {
+      state.drop = null;
+    }
   }
 
   function verdictDisclosure(runId) {
@@ -249,6 +361,8 @@ export function createCard(item, env) {
     const it = state.item;
     const payload = it.payload || {};
     const rows = planRows(payload);
+    const waits = createWaitsBlock(payload, { disabled: Boolean(state.busy) || Boolean(state.done), checked: state.goAhead });
+    state.waits = waits;
     const hash = h("code", { class: "wb-hash", "data-hash": "plan" }, payload.plan_sha256 || "");
     state.hashNode = hash;
     const table = h("table", { class: "pui-table wb-plan-table" },
@@ -257,6 +371,7 @@ export function createCard(item, env) {
     return [
       h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }),
       h("div", { class: "table-wrap", tabindex: "0", role: "region", "aria-label": "Plan tasks" }, table),
+      waits ? waits.el : null,
       h("div", { class: "wb-card-hint", text: limitsLine(payload) }),
       h("div", { class: "wb-card-hint", text: "Plan hash" }), hash,
       h("details", { class: "pui-accordion-item wb-verdict" }, h("summary", { class: "wb-summary", text: "Plan as text" }), h("div", { class: "wb-card-body wb-scroll" }, markdownView(it.body || "", { name: "the plan", renderedLabel: "Plan as text", plainClass: "wb-pre" }))),
@@ -273,15 +388,22 @@ export function createCard(item, env) {
   function doneBody() {
     const done = state.done;
     const result = done.result && typeof done.result === "object" ? done.result : null;
-    const lines = [];
+    const payload = state.item.payload && typeof state.item.payload === "object" ? state.item.payload : {};
+    const ids = [];        // a commit and a pull request are ids: mono
+    const prose = [];      // a sentence is prose
     if (result) {
-      if (result.commit) lines.push(`commit: ${result.commit}`);
-      if (result.pull_request) lines.push(`pull request: ${typeof result.pull_request === "object" ? JSON.stringify(result.pull_request) : result.pull_request}`);
-      if (state.item.kind === "question" && result.state && result.state.written === false && result.state.reason) lines.push(String(result.state.reason));
+      if (result.commit) ids.push(`commit: ${result.commit}`);
+      if (result.pull_request) ids.push(`pull request: ${typeof result.pull_request === "object" ? JSON.stringify(result.pull_request) : result.pull_request}`);
+      if (state.item.kind === "question" && result.state && result.state.written === false && result.state.reason) prose.push(String(result.state.reason));
     }
+    const kept = Array.isArray(payload.kept) ? payload.kept : [];
+    if (kept.length) prose.push(`kept: ${kept.length} file${kept.length === 1 ? "" : "s"} in the run folder`);
+    const folder = kept.length && typeof payload.run_dir === "string" ? commandBlock({ command: payload.run_dir, sentence: "Run folder", label: "Copy the path" }) : null;
+    // The result is a block on its own line under the chip and the title (the done card wraps): a sentence never shares a row with the title (A-26).
     return h("div", { class: "wb-resolved wb-card-done", role: "status", tabindex: "-1" },
       chip(done.text, "pui-success pui-soft"), h("span", { class: "wb-muted", text: state.item.title }),
-      lines.length ? h("div", { class: "wb-card-result" }, lines.map((l) => h("div", { class: "mono", text: l }))) : null);
+      ids.length || prose.length || folder
+        ? h("div", { class: "wb-card-result" }, prose.map((l) => h("p", { class: "wb-card-line", text: l })), ids.map((l) => h("div", { class: "mono", text: l })), folder) : null);
   }
 
   function render() {
@@ -313,7 +435,13 @@ export function createCard(item, env) {
     const it = state.item;
     state.empty = null;
     let run;
-    if (it.kind === "question" && word === "answered") {
+    if (it.kind === "question" && word === "choose-flow") return openFlows();
+    if (it.kind === "question" && word === "route") {
+      if (!state.route.flow) return refuse("flow");
+      run = () => api().route(env.project, it.task_id, { flow: state.route.flow });
+    } else if (it.kind === "question" && word === "cancel-request") {
+      run = () => api().cancel(env.project, it.task_id);
+    } else if (it.kind === "question" && word === "answered") {
       if (!state.typed.answer.trim()) return refuse("answer");
       run = () => api().answer(env.project, it.id, state.typed.answer);
     } else if (it.kind === "review" && word === "answered") {
@@ -337,7 +465,8 @@ export function createCard(item, env) {
         render();
         return reread();
       }
-      run = () => api().approve(env.project, it.id, shown);
+      const ahead = state.waits ? state.waits.keys() : [];      // the boxes ticked "Go ahead", read at the moment of the click
+      run = () => (ahead.length ? api().approve(env.project, it.id, shown, { goAhead: ahead }) : api().approve(env.project, it.id, shown));
     } else if (it.kind === "acceptance" && word === "accepted") {
       run = () => api().approve(env.project, it.id);
     } else if (word === "rejected") {
@@ -356,8 +485,9 @@ export function createCard(item, env) {
         if (finished.state === "failed") throw Object.assign(new Error(jobText(finished)), { job: true });
         result = finished.result;
       }
+      if (word === "route" && result && result.routed === false) throw new Error((result.failure && result.failure.reason) ? `The router could not run: ${result.failure.reason}.` : "The request could not be planned.");
       state.busy = null;
-      state.done = { text: `${format.kindWord(it.kind)} ${RESOLVED[word]}`, result, word };
+      state.done = { text: DONE_TEXT[word] || `${format.kindWord(it.kind)} ${RESOLVED[word]}`, result, word };
       render();
       if (env.changed) env.changed(it.id, state.done);
     } catch (e) {
@@ -370,6 +500,23 @@ export function createCard(item, env) {
         await reread();
       }
     }
+  }
+
+  /** "Choose a flow": show the list (read once with `flows`, only the flows that load). A read that fails is said on the card. */
+  async function openFlows() {
+    const r = state.route;
+    r.open = true;
+    state.error = null;
+    render();
+    if (r.flows !== null) return;
+    try {
+      const got = await api().flows(env.project);
+      r.flows = (Array.isArray(got && got.flows) ? got.flows : []).filter((f) => f && typeof f.flow === "string" && !f.error);
+    } catch (e) {
+      r.open = false;
+      state.error = { text: errorText(e) };
+    }
+    render();
   }
 
   function refuse(key) {
@@ -411,6 +558,7 @@ export function createCard(item, env) {
   }
 
   render();
+  loadDrop();
   return {
     el: root, id: item.id,
     /** Draw a fresher body of the same decision (typed text stays); a card in flight is not touched. */

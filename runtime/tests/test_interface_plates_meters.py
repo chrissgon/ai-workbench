@@ -47,14 +47,6 @@ import * as c from "@JS@/frame/command.js";
 
 const out = {};
 out.is = [c.isCommand(@COMMAND@), c.isCommand("uv run --with keyring==25.7.0 python3 /ck/runtime/service.py --project /p"), c.isCommand("/usr/bin/python3 x"), c.isCommand("The credential is in neither"), c.isCommand(""), c.isCommand(null)];
-const credential = "The credential is in neither the environment nor the secret store. Store it once, the value typed at a hidden prompt. KEY_A: uv run --with keyring==25.7.0 keyring set ai-workbench user-a; KEY_B: uv run --with keyring==25.7.0 keyring set ai-workbench <username> (the username is in the table).";
-out.found = c.commandsIn(credential);
-out.foundLast = c.commandsIn("Store it: KEY: uv run --with keyring==25.7.0 keyring set ai-workbench user-z.");
-out.foundNone = c.commandsIn("nothing to run here");
-// OH-3: the service stores a credential under "openhora"; a service that still says "ai-workbench" is read as before (the compatibility stage).
-out.foundNew = c.commandsIn("Store it: KEY: uv run --with keyring==25.7.0 keyring set openhora user-n.");
-out.foundBoth = c.commandsIn("Store it once. KEY_A: uv run --with keyring==25.7.0 keyring set openhora user-a; KEY_B: uv run --with keyring==25.7.0 keyring set ai-workbench user-b (the username is in the table).");
-out.foundOther = c.commandsIn("Store it: KEY: uv run --with keyring==25.7.0 keyring set another-name user-c.");
 
 const log = [];
 const clip = { writeText: async (t) => { log.push(["write", t]); } };
@@ -91,25 +83,10 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_the_command_component_splits_the_services_sentence_copies_whole_and_falls_back_to_selecting(tmp_path):
+def test_the_command_component_copies_whole_and_falls_back_to_selecting(tmp_path):
     body = COMMAND.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@COMMAND@", json.dumps(ACCEPT))
     got = run_node(tmp_path, body)
     assert got["is"] == [True, True, True, False, False, False], "a command starts with a runner; a sentence does not"
-    found = got["found"]
-    assert found["commands"] == ["uv run --with keyring==25.7.0 keyring set ai-workbench user-a", "uv run --with keyring==25.7.0 keyring set ai-workbench <username>"], \
-        "the commands inside the service's sentence, verbatim, each for its own Copy"
-    assert found["sentence"].count("(command below)") == 2 and "keyring set" not in found["sentence"] and found["sentence"].startswith("The credential is in neither"), \
-        "the sentence stays, with each command named as below"
-    assert got["foundLast"]["commands"] == ["uv run --with keyring==25.7.0 keyring set ai-workbench user-z"], "a full stop that ends the sentence is not part of the command"
-    assert got["foundNone"] == {"sentence": "nothing to run here", "commands": []}
-    assert got["foundNew"]["commands"] == ["uv run --with keyring==25.7.0 keyring set openhora user-n"], "the service name of the product is taken out of the sentence"
-    assert got["foundNew"]["sentence"] == "Store it: KEY: (command below).", "and the sentence names it as below"
-    assert got["foundBoth"]["commands"] == ["uv run --with keyring==25.7.0 keyring set openhora user-a", "uv run --with keyring==25.7.0 keyring set ai-workbench user-b"], \
-        "each name has its own command, verbatim, in the order the service wrote them"
-    assert got["foundBoth"]["sentence"].count("(command below)") == 2 and "keyring set" not in got["foundBoth"]["sentence"]
-    assert got["foundOther"]["commands"] == [] and "keyring set another-name" in got["foundOther"]["sentence"], "only the two names of the compatibility stage are commands"
-    command_js = (JS / "frame" / "command.js").read_text(encoding="utf-8")
-    assert "keyring set (openhora|ai-workbench) " in command_js and "T23" in command_js, "the old name is accepted until the compatibility stage ends (T23), and the file says so"
     assert (got["copied"], got["denied"], got["noClipboard"], got["legacyCopy"]) == ("copied", "selected", "selected", "copied"), \
         "the clipboard when the browser allows it; else the text is selected (and copied where the old command works)"
     assert got["log"] == [["write", "cmd one"], ["select-denied"], ["select-none"], ["select-legacy"]], "the text is selected only when the clipboard is not available"
@@ -641,10 +618,8 @@ def test_every_notice_that_needs_the_terminal_uses_the_one_component_and_the_pag
         assert "command.js" in (JS / name).read_text(encoding="utf-8"), f"{name} draws a command with the component"
     for path in JS.rglob("*.js"):
         text = path.read_text(encoding="utf-8")
-        # `keyring==` (the library's version pin, which every command of the service carries) and not `keyring`: command.js holds the pattern of the
-        # command that stores a credential (`keyring set ai-workbench <user>`) so that `commandsIn` can take it out of the service's sentence. That
-        # pattern builds nothing: test_the_agent_tab_shows_a_command_for_each_wider_mode_and_for_the_credential... asserts that `commandsIn` alone
-        # produces what the service wrote. A structured field for it is a follow-up of the runtime.
+        # `keyring==` is the library's version pin, which every command of the service carries. A-22: the credential's commands are the fields
+        # `held[].commands` the service gives (command.js no longer reads them out of a sentence), so no module holds a pattern of one.
         assert "cli.py" not in text and "keyring==" not in text and "accept-config --" not in text and "run-next --" not in text, f"{path.name}: a command is the service's, never built on the page"
     assert '"select"' not in (JS / "floor/agent-tab.js").read_text(encoding="utf-8"), "the mode select is gone"
 
@@ -779,11 +754,20 @@ out.top = { wider: all(find(tab.el, ".wb-mode-form"), ".wb-wider").filter((n) =>
 tab.update(view(agent({})));
 out.none = { codes: all(find(tab.el, ".wb-mode-form"), ".wb-command-code").length, line: all(find(tab.el, ".wb-mode-form"), ".wb-wider").filter((n) => !n.hidden).length };
 
-// the held reason credential: the service's sentence, with each command it names in the component
-const credential = "The credential is in neither the environment nor the secret store. Store it once, the value typed at a hidden prompt. KEY_A: uv run --with keyring==25.7.0 keyring set ai-workbench user-a.";
-tab.update(view(agent({ wider: [] }), [{ task_id: 4, agent: "engineering", reason: "credential", at: "x", next: credential }]));
+// the held reason credential (A-22): the sentence is text; each command is a field of the service's `commands` ([{name, command}]), drawn with Copy, and a name with no
+// username registered (command null) is its name and "no username registered": nothing is read out of the sentence
+const credential = "The credential is in neither the environment nor the secret store. Store it once, the value typed at a hidden prompt.";
+const commands = [{ name: "KEY_A", command: "uv run --with keyring==25.7.0 keyring set openhora user-a" }, { name: "KEY_B", command: null }];
+tab.update(view(agent({ wider: [] }), [{ task_id: 4, agent: "engineering", reason: "credential", at: "x", next: credential, commands }]));
 const held = find(tab.el, ".wb-held");
-out.credential = { text: held.textContent.slice(0, 120), codes: all(held, ".wb-command-code").map((c) => c.textContent), copies: all(held, "button.wb-copy").length, line: find(held, ".wb-held-line").textContent };
+out.credential = { text: held.textContent.slice(0, 120), codes: all(held, ".wb-command-code").map((c) => c.textContent), sentences: all(held, ".wb-command-sentence").map((c) => c.textContent), copies: all(held, "button.wb-copy").length,
+  line: find(held, ".wb-held-line").textContent, details: all(held, ".wb-held-detail").map((c) => c.textContent) };
+// a sentence that still holds a command inside it is text: the page does not take it out
+tab.update(view(agent({ wider: [] }), [{ task_id: 4, agent: "engineering", reason: "credential", at: "y", next: "Store it: KEY_A: uv run --with keyring==25.7.0 keyring set openhora user-a.", commands: [] }]));
+out.inline = { codes: all(find(tab.el, ".wb-held"), ".wb-command-code").length };
+// the other reasons: a command in `next` is drawn as one command
+tab.update(view(agent({ wider: [] }), [{ task_id: 4, agent: "engineering", reason: "job running", at: "z", next: "python3 /ck/runtime/cli.py run-next --project /work/shop", commands: [] }]));
+out.single = { codes: all(find(tab.el, ".wb-held"), ".wb-command-code").map((c) => c.textContent) };
 console.log(JSON.stringify(out));
 """
 
@@ -798,6 +782,10 @@ def test_the_agent_tab_shows_a_command_for_each_wider_mode_and_for_the_credentia
     assert got["top"] == {"wider": 0, "codes": 0}, "an agent at the widest mode has nothing wider: no line"
     assert got["none"]["codes"] == 0 and got["none"]["line"] == 1, "a service that gave no `wider` shows the sentence and builds no command"
     c = got["credential"]
-    assert c["codes"] == ["uv run --with keyring==25.7.0 keyring set ai-workbench user-a"] and c["copies"] == 1
+    assert c["codes"] == ["uv run --with keyring==25.7.0 keyring set openhora user-a"] and c["copies"] == 1, "the command is the service's field, verbatim, with its own Copy"
+    assert c["sentences"] == ["KEY_A"], "the Copy block is named by the credential"
+    assert c["details"][-1] == "KEY_B: no username registered", "a credential with no username gets its name and the sentence, never a command with <username>"
     assert c["line"].startswith("Held: The reference model's credential is not set.")
-    assert "The credential is in neither the environment nor the secret store" in c["text"]
+    assert "The credential is in neither the environment nor the secret store" in c["text"], "the sentence stays as text"
+    assert got["inline"] == {"codes": 0}, "nothing is taken out of a sentence"
+    assert got["single"]["codes"] == ["python3 /ck/runtime/cli.py run-next --project /work/shop"], "a reason whose `next` is a command shows it as one"

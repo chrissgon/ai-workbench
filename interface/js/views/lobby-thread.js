@@ -1,6 +1,6 @@
 // The conversation's log: the messages, oldest first (the person's on the right, the planning agent's on the left, each with
 // its age), and under the message that produced a request that request's block. It is drawn by keys, not wholesale: a message
-// is built once, a block again only when what it shows changed, so a poll that changed nothing touches no element and the focus
+// is built once (its age and its word "queued", A-23, are kept current), a block again only when what it shows changed, so a poll that changed nothing touches no element and the focus
 // and a typed note stay where they are. The person's message is text, never markup; the agent's reply is drawn by the Markdown
 // renderer, which builds nodes and leaves raw HTML as text.
 
@@ -21,7 +21,7 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
     const meta = h("time", { class: "wb-msg-meta", datetime: message.created_at || false, title: message.created_at || false, text: metaOf(message, now) });
     const mine = message.role === "user";     // what the person typed is shown as typed; the agent's reply is drawn as Markdown
     const bubble = mine ? h("div", { class: "wb-bubble pui-soft pui-theme", text: message.text }) : h("div", { class: "wb-bubble wb-bubble-agent" }, renderMarkdown(message.text));
-    const node = h("div", { class: `wb-msg ${message.role === "user" ? "is-user" : "is-agent"}`, role: "article", "aria-label": nameOf(message, now) }, meta, bubble);
+    const node = h("div", { class: `wb-msg ${message.role === "user" ? "is-user" : "is-agent"}${message.queued ? " is-queued" : ""}`, role: "article", "aria-label": nameOf(message, now) }, meta, bubble);
     return { el: node, meta, message };
   }
 
@@ -61,6 +61,7 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
         } else {
           held.meta.textContent = metaOf(message, now);
           held.el.setAttribute("aria-label", nameOf(message, now));
+          held.el.classList.toggle("is-queued", Boolean(message.queued));      // the word "queued" goes when the reply arrives
         }
         desired.push(held.el);
         const request = placed.byMessage.get(message.id);

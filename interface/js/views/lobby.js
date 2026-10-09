@@ -17,15 +17,15 @@ import { actions } from "../floor/actions.js";
 import { createTasksTab } from "../floor/tasks-tab.js";
 import { createPanel } from "../frame/panel.js";
 import * as router from "../router.js";
-import { createRequest, routeRequest, sendTurn, waitFor, worthSending } from "./lobby-actions.js";
+import { afterNumber, createRequest, routeRequest, sendTurn, waitFor, worthSending } from "./lobby-actions.js";
 import { createLobbyAgent } from "./lobby-agent.js";
 import { createComposer } from "./lobby-composer.js";
 import { createLobbyDesk, createLobbyViewer } from "./lobby-desk.js";
 import { createForm } from "./lobby-form.js";
 import { createLobbyInbox } from "./lobby-inbox.js";
 import {
-  NOT_ACCEPTED_TEXT, cancelCount, canvasLabel, inboxParts, isNamed, lastId, lobbyDecisions, mergeMessages, noticeFor, notRoutedNotice, placeBlocks,
-  pollInterval, roomModel, signatureOf, tabOf, wantedBodies,
+  NOT_ACCEPTED_TEXT, QUEUED_NOTICE, cancelCount, canvasLabel, hasQueued, inboxParts, isNamed, lobbyDecisions, mergeMessages, noticeFor, notRoutedNotice, placeBlocks,
+  pollInterval, readAfter, roomModel, runningTask, signatureOf, tabOf, wantedBodies,
 } from "./lobby-model.js";
 import { createCancelDialog } from "./lobby-request.js";
 import { mountLobbyScene } from "./lobby-scene.js";
@@ -109,7 +109,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   panel.el.append(footer);
   frame.main.append(panel.el, cancelDialog.el);
   // "Close" and a phone's dialog go to the one hash the frame's key handler also uses: the tab the document was opened from (frame/origin.js)
-  const viewer = createLobbyViewer({ frame, panel: panel.el, project, onClose: () => { origin.close(last.route || router.parse(window.location.hash)); } });
+  const viewer = createLobbyViewer({ frame, panel: panel.el, project, listed: (path) => desk.listed(path), onClose: () => { origin.close(last.route || router.parse(window.location.hash)); } });
   const panelHead = panel.el.querySelector(".wb-panel-head");
   const scene = mountLobbyScene(frame, panel.el, { onDoor: () => { window.location.hash = router.controlHash(project); }, onSelect: (id) => openFromScene(id) });
 
@@ -150,7 +150,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   async function readOnce() {
     readingConversation = true;
     try {
-      const got = await api.conversation(project, { after: lastId(messages), signal });
+      const got = await api.conversation(project, { after: readAfter(messages), signal });       // a queued line is read again until its reply exists
       const next = mergeMessages(messages, got.messages);
       const changed = next.length !== messages.length;
       messages = next;
@@ -176,7 +176,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     clearTimeout(timer);
     timer = null;
     if (disposed) return;
-    const ms = pollInterval({ jobRunning: turn !== null || routing.size > 0, hidden: document.hidden });
+    const ms = pollInterval({ jobRunning: turn !== null || routing.size > 0 || hasQueued(messages), hidden: document.hidden });
     if (ms !== null) timer = setTimeout(tick, ms);
   }
 
@@ -236,8 +236,16 @@ export function createLobbyView(frame, { project, onChanged }) {
     scene.update(worldModel(last.snapshot, last.now, { selectedId: project, focus: project, floor: "planning", room: words, ready: Boolean(status) }), canvasLabel(last.projectName, room));
   }
 
+  /** A run is in progress (the status says a task runs): the composer says so in place, with the task it names (A-23). Send stays on. */
+  function runningNote() {
+    const status = last.snapshot && last.snapshot.details[project] && last.snapshot.details[project].status;
+    const task = accepted ? runningTask(status) : null;
+    if (!task) return null;
+    return { text: `Task #${task.id}${task.title ? ` ${task.title}` : ""}`, href: router.agentHash(project, task.agent) };
+  }
+
   function drawComposer() {
-    composer.set({ sending: turn !== null, notice, disabled: !accepted });
+    composer.set({ sending: turn !== null, notice, disabled: !accepted, running: runningNote() });
   }
 
   /** A click in the room: the tray opens the Inbox, the desk the Desk tab, a sheet its document, the figure the Agent tab. */
@@ -339,6 +347,14 @@ export function createLobbyView(frame, { project, onChanged }) {
     routing.delete(id);
     if (done && done.state === "failed") problem = (done.error && done.error.message) || "The job failed.";
     const result = done && done.result ? done.result : null;
+    if (!problem && result && result.queued === true) {        // A-23: a run holds the project; the service routes the request when it ends
+      routeNotices.set(id, QUEUED_NOTICE);
+      redraw();
+      drawRoom();
+      schedule();
+      await refresh();
+      return result;
+    }
     if (!problem && result && result.routed === false) {
       problem = (result.failure && result.failure.reason) ? `The router could not run: ${result.failure.reason}.` : "The request could not be planned.";
     }
@@ -361,6 +377,10 @@ export function createLobbyView(frame, { project, onChanged }) {
   async function create(values) {
     if (!worthSending(values.text)) {
       form.markEmpty();
+      return;
+    }
+    if (afterNumber(values.after).invalid) {
+      form.set({ creating: false, error: "After request: type the number of a request, such as 3.", disabled: false });
       return;
     }
     notice = null;

@@ -8,6 +8,7 @@ import { JOB_EVERY_MS } from "./lobby-model.js";
  * Create a request from the form: `request` with the text and the title when one was typed and NEVER a flow (a request that
  * names a flow readies its tasks with no approval of the plan: DIFF-57), then `route` with the chosen flow, or with none when
  * the first option was chosen (the planning agent then routes it). `route` is a job.
+ * `form.after` is the number of the request this one runs after (A-29), sent as `after`; see afterNumber.
  * Returns {request, started} when the route started (started is the job), or {request, error} when `route` was refused (a 409
  * busy answer: the request exists and waits for its route). `request` itself failing throws.
  */
@@ -15,8 +16,16 @@ export async function createRequest(api, project, form, { signal } = {}) {
   const text = typeof form.text === "string" ? form.text : "";
   if (!text.trim()) return { request: null, empty: true };
   const title = typeof form.title === "string" && form.title.trim() ? form.title.trim() : undefined;
-  const made = await api.request(project, text, { title, signal });
+  const after = afterNumber(form.after).value;
+  const made = await api.request(project, text, { title, after, signal });
   return routeRequest(api, project, made.request, form.flow, { signal });
+}
+
+/** The "After request #" field: {value} (a request number, or undefined when the field is empty) or {invalid: true}. */
+export function afterNumber(raw) {
+  const text = typeof raw === "string" ? raw.trim().replace(/^#/, "") : typeof raw === "number" ? String(raw) : "";
+  if (!text) return { value: undefined };
+  return /^[0-9]{1,9}$/.test(text) && Number(text) > 0 ? { value: Number(text) } : { invalid: true };
 }
 
 /** Route a request that waits for its route, with the chosen flow when there is one. */

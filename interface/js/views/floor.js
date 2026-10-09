@@ -63,7 +63,10 @@ export function createFloorView(frame, env) {
   const backLink = h("a", { class: "pui-link pui-theme", href: "#/", text: "Back to the building" });
   const unknown = h("div", { class: "wb-floor-unknown", hidden: true }, h("p", { text: "This agent is not in the project's configuration." }), backLink);
   const waitingEl = h("p", { class: "wb-empty-line", text: "Waiting for the configuration to be accepted." });
-  const viewer = createViewer({ onClose: () => closeViewer() });
+  const viewer = createViewer({
+    onClose: () => closeViewer(),
+    listed: (path) => (documents ? documents.rows.find((d) => d.path === path) : undefined),      // the Desk's list says what a file is (A-33)
+  });
   // "Close" and a phone's dialog go to the one hash the frame's key handler also uses: the tab the document was opened from (frame/origin.js)
   function closeViewer() {
     if (last) origin.close(last.route);
@@ -88,7 +91,10 @@ export function createFloorView(frame, env) {
 
   function makeTabs() {
     if (inbox) return;
-    agentTabLive = createAgentTab({ project, agent, api: actions, refresh: () => env.refresh(), now: () => new Date() });
+    agentTabLive = createAgentTab({
+      project, agent, api: actions, refresh: () => env.refresh(), now: () => new Date(),
+      links: { inbox: (id) => router.floorHash(project, agent, "inbox", id) },
+    });
     inbox = createInbox({
       project, now: () => new Date(), api: actions, refresh: () => { env.refresh(); readBodies(true); },
       links: {

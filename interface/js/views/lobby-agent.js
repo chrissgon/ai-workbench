@@ -9,6 +9,7 @@ import { h } from "../dom.js";
 import * as fm from "../floor-model.js";
 import { actions } from "../floor/actions.js";
 import { createAgentTab } from "../floor/agent-tab.js";
+import * as router from "../router.js";
 
 const TASK_FRESH_MS = 5000;
 const TASK_STALE_MS = 15000;
@@ -21,7 +22,10 @@ export const NO_AGENT_TEXT = "This project has no agents in its configuration.";
  */
 export function createLobbyAgent(env) {
   const { project } = env;
-  const tab = createAgentTab({ project, agent: fm.PLANNING, api: actions, refresh: env.refresh, now: env.now });
+  const tab = createAgentTab({
+    project, agent: fm.PLANNING, api: actions, refresh: env.refresh, now: env.now,
+    links: { inbox: (id) => router.lobbyHash(project, "inbox", id) },
+  });
   const none = h("p", { class: "wb-empty-line wb-lobby-none", hidden: true, text: NO_AGENT_TEXT });
   const el = h("div", { class: "wb-lobby-agent" }, none, tab.el);
   const bodies = new Map();      // task id -> {body, state, at}
