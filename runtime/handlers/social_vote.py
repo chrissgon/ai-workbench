@@ -2,7 +2,8 @@
 # requires-python = ">=3.9"
 # dependencies = []
 # ///
-"""The runtime's weekly vote step (docs/architecture/weekly-vote.md), imported by scripts/runtime.py.
+"""The runtime's weekly vote step (docs/architecture/weekly-vote.md), imported by runtime/handlers/social.py (ported from
+scripts/runtime_vote.py, which scripts/runtime.py still imports).
 
 Configuration: a "vote" section in runtime.json (no secrets):
   "vote": {"repo": "<owner>/<name>", "branch": "<branch>", "pillars": ["<p1>", "<p2>", "<p3>"],
