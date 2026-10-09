@@ -13,6 +13,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 project_config = st.load("project_config")
 
 ENTRY = {"input_usd_per_mtok": 3, "output_usd_per_mtok": 15.5, "cache_read_usd_per_mtok": 0, "cache_write_usd_per_mtok": 3.75,
@@ -22,7 +23,7 @@ ENTRY = {"input_usd_per_mtok": 3, "output_usd_per_mtok": 15.5, "cache_read_usd_p
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     return built
 
 

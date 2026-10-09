@@ -18,6 +18,7 @@ from test_read_ops import planned, stored, tree  # noqa: F401  (the stand-in pro
 from test_service import PORT, TOKEN, Standin, STATUS, call, world  # noqa: F401  (the stand-in service of test_service.py)
 
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 operations = st.load("operations")
 service = st.load("service")
 
@@ -105,7 +106,7 @@ def test_it_refuses_a_configuration_nobody_accepted_yet_as_every_operation_does(
 def test_it_takes_no_write_lock_and_runs_four_statements_from_connecting_to_the_answer(tree, monkeypatch):
     path = str(tree["project"])
     planned(tree, "single")
-    store = ops.store_module()
+    store = ops_core.store_module()
     statements = []
     real = store.sqlite3.connect
 
@@ -126,7 +127,7 @@ def test_it_works_on_a_store_that_is_read_only_because_it_never_writes(tree):
     path = str(tree["project"])
     planned(tree, "single")
     db = ops.project_config.load(path)["store_db"]
-    held = ops.store_module().connect(db)
+    held = ops_core.store_module().connect(db)
     held.execute("BEGIN IMMEDIATE")        # a writer that holds the write lock: a read of the signal does not queue behind it
     try:
         import time

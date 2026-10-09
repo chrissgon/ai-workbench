@@ -23,6 +23,7 @@ autonomy = st.load("autonomy")
 effects = st.load("effects")
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 cli = st.load("cli")
 
 POLICY = "docs/workbench/policies/published-posts.json"
@@ -39,7 +40,7 @@ def ahead(days: int) -> str:
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     (built["tree"] / "scripts").mkdir(exist_ok=True)  # the one source of the vocabulary of side effects
     shutil.copyfile(st.REPO / "scripts" / "validate.py", built["tree"] / "scripts" / "validate.py")
     project = built["project"]
@@ -143,7 +144,7 @@ def test_no_active_approval_covers_nothing(tree):
 
 def test_an_expired_approval_covers_nothing(tree):
     approved = approve(tree)
-    store = ops.store_module()
+    store = ops_core.store_module()
     later = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=31)).isoformat()
     assert store.approvals_expire(store.open_db(str(tree["db"])), later) == 1
     out = execute(tree)
@@ -351,7 +352,7 @@ def test_a_kind_on_a_publisher_is_resolved_with_the_platform_its_module_names(tr
 
 def test_the_provider_path_takes_the_platform_in_the_class_and_refuses_a_class_and_a_platform_that_do_not_fit(tree):
     publisher_tree(tree)
-    cfg = ops.context(project_of(tree))["cfg"]
+    cfg = ops_core.context(project_of(tree))["cfg"]
     found = ops._provider_path(cfg, "publisher:<platform>", platform="standin")
     assert found == str(tree["tree"] / "providers" / "publisher" / "standin.py")
     for cls, platform in (("publisher:<platform>", "elsewhere"),   # no provider serves it

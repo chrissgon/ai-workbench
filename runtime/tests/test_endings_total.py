@@ -16,6 +16,7 @@ import standin_tree as st
 endings = st.load("endings")
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 
 NONE = {"created": [], "modified": [], "deleted": [], "unchanged": []}
 MARKET = "docs/business/market.md"
@@ -201,7 +202,7 @@ def test_without_facts_the_classifier_is_the_first_one():
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     project = str(built["project"])
     ops.accept_config(project, ops.project_config.load(project)["sha256"])
     return built

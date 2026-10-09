@@ -19,6 +19,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 router = st.load("router")
 CORPUS = st.REPO / "runtime" / "tests" / "corpus" / "endings.jsonl"
 ROUTE_LINE = re.compile(r"^Route: ", re.M)
@@ -125,7 +126,7 @@ def tree(tmp_path, monkeypatch):
     script = built["adapter"] / "run-prompt.sh"
     text = st.ADAPTER.replace("for name in demo-asks demo-writes;", "for name in demo-asks demo-writes core-orchestrator;")
     script.write_text(text.replace('case "$skill" in', ROUTER_BRANCH + 'case "$skill" in', 1), encoding="utf-8")
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     monkeypatch.setattr(ops.plan, "pack_skills", lambda cfg, root: ["core-orchestrator", "demo-asks", "demo-writes"])
     project = str(built["project"])
     ops.accept_config(project, ops.project_config.load(project)["sha256"])
@@ -155,7 +156,7 @@ def test_the_router_step_is_a_run_of_the_unmodified_skill_and_returns_no_file(tr
     assert state.read_text(encoding="utf-8") == before  # the line the router added did not come back
     assert out["kept"] == [{"path": "docs/workbench/state.md", "class": "state", "reason": ops.ROUTE_KEPT}]
     assert out["routing"]["model"] == "m" and out["entered"]["kind"] == "general"
-    run = ops.context(path)["store"].task_run_get(ops.context(path)["conn"], out["run_id"])
+    run = ops_core.context(path)["store"].task_run_get(ops_core.context(path)["conn"], out["run_id"])
     assert (run["task_id"], run["skill"], run["web"], run["status"]) == (request["request"], router.ROUTER_SKILL, 0, "ok")
     assert ops.status(path)["requests"][0]["state"] == "requested" and ops.status(path)["requests"][0]["tasks"] == []
 

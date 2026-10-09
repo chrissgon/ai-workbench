@@ -22,6 +22,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 plan = st.load("plan")
 cli = st.load("cli")
 proof_rules = st.load("proof")
@@ -40,7 +41,7 @@ PLANTED_TWO = "invented-model-key-0002-never-shown"
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     monkeypatch.setattr(plan, "resolve_pack", lambda pack, root: list(PACKS[pack]))
     # The stand-in tree gives both tiers the model "m"; the daily caps tell the tiers apart by model, so the floor tier
     # has a model of its own here.
@@ -83,7 +84,7 @@ def utc(monkeypatch):
 
 
 def stored(tree):
-    ctx = ops.context(str(tree["project"]))
+    ctx = ops_core.context(str(tree["project"]))
     return ctx["store"], ctx["conn"]
 
 
@@ -164,7 +165,7 @@ def test_a_second_turn_during_a_run_is_refused_before_anything_is_stored(tree):
     path = str(tree["project"])
     store, conn = stored(tree)
     cfg = ops.project_config.load(path)
-    with ops._run_lock(cfg):  # another run of the project holds the lock
+    with ops_core._run_lock(cfg):  # another run of the project holds the lock
         for line in ("Which market should the invented studio go after first?", "/new Another invented request."):
             with pytest.raises(ops.OpsError) as raised:
                 ops.say(path, line)
@@ -287,7 +288,7 @@ def test_the_connections_operation_never_returns_a_secrets_value(tree, monkeypat
         (tree["tree"] / rel).parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(st.REPO / rel, tree["tree"] / rel)
     with_needs(tree, "integration:vcs, search:web, generator:image")
-    resolver = ops._load("workbench_secret_resolver_runtime", str(tree["tree"] / "providers" / "secrets" / "resolver.py"))
+    resolver = ops_core._load("workbench_secret_resolver_runtime", str(tree["tree"] / "providers" / "secrets" / "resolver.py"))
     monkeypatch.setattr(resolver, "_keyring", lambda: None)  # the OS secret store is not asked in a test
     monkeypatch.setattr(lab, "reference", lambda tier="strong": {
         "tier": tier, "model": "m", "adapter": "h", "pass_env": ["INVENTED_MODEL_KEY"], "timeout_seconds": 60, "retries": 2,

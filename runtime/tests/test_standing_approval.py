@@ -20,6 +20,7 @@ import standin_tree as st
 autonomy = st.load("autonomy")
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 cli = st.load("cli")
 
 POLICY = "docs/workbench/policies/published-posts.json"
@@ -36,7 +37,7 @@ def ahead(days: int) -> str:
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     (built["tree"] / "scripts").mkdir(exist_ok=True)  # the one source of the vocabulary of side effects
     shutil.copyfile(st.REPO / "scripts" / "validate.py", built["tree"] / "scripts" / "validate.py")
     project = built["project"]
@@ -77,7 +78,7 @@ def test_a_preview_shows_the_hash_and_writes_nothing(tree):
     assert out["sha256"] == file_hash(tree) and out["policy"] == "published-posts" and out["agent"] == "marketing"
     assert out["bounds"] == dict(BOUNDS, file=POLICY) and out["sha256"] in out["next"]
     assert state_of(tree) == before
-    assert ops.store_module().approvals_list(ops.store_module().open_db(str(tree["db"]))) == []
+    assert ops_core.store_module().approvals_list(ops_core.store_module().open_db(str(tree["db"]))) == []
     for file, agent in (("../outside.json", "marketing"), ("AGENTS.md", "marketing"), (POLICY, "nobody"),
                         ("docs/workbench/policies/missing.json", "marketing")):
         with pytest.raises(ops.OpsError) as refused:
@@ -122,8 +123,8 @@ def test_a_new_approval_of_a_policy_revokes_the_earlier_one(tree):
     (tree["project"] / POLICY).write_text(json.dumps(dict(BOUNDS, max_items_per_run=5)))
     second = approved(tree)
     assert second["revoked"] == [first["id"]]
-    conn = ops.store_module().open_db(str(tree["db"]))
-    rows = ops.store_module().approvals_list(conn, scope="standing")
+    conn = ops_core.store_module().open_db(str(tree["db"]))
+    rows = ops_core.store_module().approvals_list(conn, scope="standing")
     assert [(r["id"], r["status"]) for r in rows] == [(first["id"], "revoked"), (second["id"], "active")]
     state = state_of(tree)
     assert f"(runtime #{second['id']})" in state and f"(runtime #{first['id']})" not in state
@@ -174,11 +175,11 @@ def test_an_edited_bounds_file_is_not_covered(tree):
 
 def test_an_expired_approval_is_shown_expired_and_covers_nothing(tree):
     out = approved(tree)
-    store = ops.store_module()
+    store = ops_core.store_module()
     conn = store.open_db(str(tree["db"]))
     later = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=31)).isoformat()
     assert store.approvals_expire(conn, later) == 1
-    written = ops._standing_rows(ops.context(project_of(tree)))
+    written = ops._standing_rows(ops_core.context(project_of(tree)))
     assert written["state_rows"] == 1
     assert re.search(rf"\(runtime #{out['id']}\) \| policy:\w+ \| [\d-]+ \| [\d-]+ \| expired \|", state_of(tree))
     row = gate().standing_row(tree["project"] / "docs" / "workbench" / "state.md", file_hash(tree))

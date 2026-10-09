@@ -16,6 +16,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 drop = st.load("drop")
 workcopy = st.load("workcopy")
 
@@ -23,7 +24,7 @@ workcopy = st.load("workcopy")
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     project = str(built["project"])
     ops.accept_config(project, ops.project_config.load(project)["sha256"])
     hand = tmp_path / "hand"
@@ -116,7 +117,7 @@ def test_a_link_a_folder_a_large_file_and_a_bad_name_are_refused(tree, monkeypat
         ops.hand_over(project, ids["market"], handed_file(tree, "large.txt", "x" * 11))
     assert "larger than 10" in str(refused.value)
     monkeypatch.setattr(drop, "MAX_BYTES", 25 * 1024 * 1024)
-    s = ops.context(project)
+    s = ops_core.context(project)
     s["store"].request_cancel(s["conn"], next(iter(s["store"].tasks_list(s["conn"])))["id"], by="user")
     with pytest.raises(ops.OpsError) as refused:
         ops.hand_over(project, ids["market"], target)
