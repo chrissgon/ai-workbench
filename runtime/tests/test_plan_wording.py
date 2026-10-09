@@ -16,6 +16,7 @@ from test_dispatcher import AGENTS, configure, tree  # noqa: F401  (the stand-in
 plan = st.load("plan")
 flow_files = st.load("flow_files")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 ROOT = str(st.REPO)
 
 
@@ -105,7 +106,7 @@ def test_a_request_row_is_titled_by_the_same_function_whatever_rule_made_its_tit
     path = str(tree["project"])
     made = ops.request(path, LONG)["request"]
     given = ops.request(path, LONG, title="Catalogue")["request"]
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     old = ctx["store"].request_add(ctx["conn"], title=LONG[:120].strip(), text=LONG)["request"]  # a row an earlier version stored
     rows = {r["id"]: r["title"] for r in ops.status(path)["requests"]}
     assert rows[made] == plan.title_of(LONG) and rows[old] == plan.title_of(LONG) and rows[given] == "Catalogue"

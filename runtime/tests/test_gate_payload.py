@@ -19,6 +19,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 effects = st.load("effects")
 effect_pull_request = st.load("effect_pull_request")
 manifest = st.load("manifest")
@@ -32,7 +33,7 @@ PAYLOAD = ("```text\nRepository: example-org/web\nBase ← head: main ← wb/req
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     return built
 
 

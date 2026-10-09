@@ -18,6 +18,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 manifest = st.load("manifest")
 skill_meta = st.load("skill_meta")
 
@@ -27,7 +28,7 @@ REPO = st.REPO
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     project = str(built["project"])
     ops.accept_config(project, ops.project_config.load(project)["sha256"])  # the person accepted the configuration
     return built

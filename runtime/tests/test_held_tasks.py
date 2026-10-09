@@ -16,6 +16,7 @@ autonomy = st.load("autonomy")
 dispatcher = st.load("dispatcher")
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 operations = st.load("operations")
 
 WORDS = ("stopped", "cap: runs per day", "cap: usd per day", "credential", "secret store", "image", "dispatch off",
@@ -122,7 +123,7 @@ def test_a_missing_image_holds_the_task_and_fails_nothing(tree, monkeypatch):
 def test_a_task_that_runs_holds_the_next_one_with_job_running(tree):
     path = str(tree["project"])
     first, second = planned(tree, "single"), planned(tree, "single")
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     [one, two] = [t for t in ctx["store"].tasks_list(ctx["conn"]) if t["parent_id"] is not None and t["state"] == "ready"]
     ctx["store"].task_claim(ctx["conn"], one["id"])
     ops.dispatch(path)
@@ -219,7 +220,7 @@ def test_an_unchanged_set_of_held_tasks_writes_nothing_and_keeps_its_time(tree):
     planned(tree, "chain")
     configure(tree, {"business": dict(AGENTS["business"], mode="stopped")})
     ops.dispatch(path)
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     first = ctx["store"].cursor_get(ctx["conn"], ops.HELD_CURSOR)
     before = ctx["store"].change_counter(ctx["conn"])
     for _ in range(3):

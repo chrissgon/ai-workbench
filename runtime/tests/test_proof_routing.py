@@ -17,6 +17,7 @@ import standin_tree as st
 lab = st.load("lab")
 proof = st.load("proof")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 cli = st.load("cli")
 
 IMAGE = "sha256:" + "a" * 64
@@ -125,13 +126,13 @@ def test_the_proof_file_is_rebuilt_when_the_evidence_or_the_gate_file_changed(fa
 
 def test_the_run_row_and_the_pending_decision_carry_the_routing(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     path = str(built["project"])
     ops.accept_config(path, ops.project_config.load(path)["sha256"])
     ops.request(path, "Tell me which market to go after first.", "demo")
     out = ops.run_next(path)
     assert (out["routing"]["tier"], out["routing"]["model"], out["routing"]["adapter"]) == ("strong", "m", "h")
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     row = ctx["store"].task_runs_list(ctx["conn"], out["ran"])[0]
     assert (row["model"], row["adapter"], row["web"]) == ("m", "h", 0)
     assert ops.pending(path, out["pending_id"])["payload"]["routing"] == out["routing"]

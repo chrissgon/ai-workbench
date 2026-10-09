@@ -14,6 +14,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 cli = st.load("cli")
 project_config = st.load("project_config")
 
@@ -22,7 +23,7 @@ project_config = st.load("project_config")
 def tree(tmp_path, monkeypatch):
     """The stand-in tree and project, with a configuration nobody accepted yet."""
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     return built
 
 

@@ -97,9 +97,11 @@ def test_no_sentence_of_the_operations_layer_builds_a_command_but_through_the_on
     """ops.py spells a command in one function, _command, which adds the checkout the process runs from: a relative
     command in a returned sentence would fail from any other folder. (The text of an effect, stored before it is
     approved and naming no checkout, is built in effect_pull_request.py.)"""
-    tree_ = ast.parse((st.RUNTIME / "ops.py").read_text(encoding="utf-8"))
-    inside = {id(n) for f in ast.walk(tree_) if isinstance(f, ast.FunctionDef) and f.name == "_command" for n in ast.walk(f)}
-    calls = [n for n in ast.walk(tree_) if isinstance(n, ast.Call) and ast.unparse(n.func) == "operations.command_line"]
+    # the layer is ops.py and its siblings ops_*.py (CONS-1B): `_command` lives in ops_core.py with the other shared names
+    trees = [ast.parse(p.read_text(encoding="utf-8")) for p in [st.RUNTIME / "ops.py", *sorted(st.RUNTIME.glob("ops_*.py"))]]
+    inside = {id(n) for tree_ in trees for f in ast.walk(tree_) if isinstance(f, ast.FunctionDef) and f.name == "_command"
+              for n in ast.walk(f)}
+    calls = [n for tree_ in trees for n in ast.walk(tree_) if isinstance(n, ast.Call) and ast.unparse(n.func) == "operations.command_line"]
     assert calls and all(id(c) in inside for c in calls), [c.lineno for c in calls if id(c) not in inside]
     assert any(isinstance(n, ast.keyword) and n.arg == "checkout" for c in calls for n in c.keywords)
 

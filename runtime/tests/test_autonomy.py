@@ -19,6 +19,7 @@ autonomy = st.load("autonomy")
 state_merge = st.load("state_merge")
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 cli = st.load("cli")
 
 UTC = datetime.timezone.utc
@@ -194,7 +195,7 @@ def test_an_edited_bounds_file_covers_nothing_until_it_is_approved_again():
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     config = built["project"] / "docs" / "workbench" / "runtime.json"
     data = json.loads(config.read_text())
     data["area_agents"] = {"planning": {"pack": "planning", "mode": "supervised"},

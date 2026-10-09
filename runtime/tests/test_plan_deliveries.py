@@ -18,6 +18,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 plan = st.load("plan")
 router = st.load("router")
 
@@ -74,7 +75,7 @@ def tree(tmp_path, monkeypatch):
     text = st.ADAPTER.replace("for name in demo-asks demo-writes;",
                               "for name in demo-asks demo-writes core-orchestrator core-clarify product-backlog;")
     script.write_text(text.replace('case "$skill" in', BRANCHES + 'case "$skill" in', 1), encoding="utf-8")
-    monkeypatch.setattr(ops, "ROOT", str(bench))
+    monkeypatch.setattr(ops_core, "ROOT", str(bench))
     monkeypatch.setattr(plan, "resolve_pack", lambda pack, root: list(PACKS[pack]))
     configure(built, AGENTS)
     return built
@@ -177,7 +178,7 @@ def test_deliveries_are_chained_in_the_order_listed(tree):
     approved = approve(tree, out["pending_id"])
     assert [(t["key"], t["state"]) for t in approved["tasks"]] == [
         ("d1-market", "ready"), ("d1-profile", "planned"), ("d2-demo-writes", "planned")]
-    agents = [t["agent"] for t in ops.context(path)["store"].tasks_list(ops.context(path)["conn"]) if t["parent_id"]]
+    agents = [t["agent"] for t in ops_core.context(path)["store"].tasks_list(ops_core.context(path)["conn"]) if t["parent_id"]]
     assert agents == ["business", "business", "business"]
 
 
@@ -313,7 +314,7 @@ def test_sub_tasks_inside_the_plan_s_limits_are_created_without_a_new_approval(t
     request = backlog_request(tree)
     after = run_and_release(tree)["after"]["subtasks"]
     assert after["pending_id"] is None and len(after["created"]) == 3
-    rows = [t for t in ops.context(path)["store"].tasks_list(ops.context(path)["conn"], request) if t["parent_id"]]
+    rows = [t for t in ops_core.context(path)["store"].tasks_list(ops_core.context(path)["conn"], request) if t["parent_id"]]
     assert [(t["key"], t["state"], t["agent"]) for t in rows][1:] == [
         ("t-ex-2", "ready", "code"), ("t-ex-3", "planned", "code"), ("t-ex-4", "planned", "code")]
     assert [p for p in ops.pending(path)["pending"] if p["kind"] == "acceptance"] == []

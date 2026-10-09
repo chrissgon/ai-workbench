@@ -20,6 +20,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 effects = st.load("effects")
 effect_pull_request = st.load("effect_pull_request")
 state_merge = st.load("state_merge")
@@ -31,7 +32,7 @@ CODE = {"provider": "github", "repo": "example-org/web", "base": "main"}
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     return built
 
 
@@ -154,7 +155,7 @@ def test_limit_17_the_approval_lives_in_the_table_and_the_state_file_row_is_a_ge
     item = case["item"]
     done = ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
     assert done["state"] == {"written": True}
-    ctx = ops.context(case["path"])
+    ctx = ops_core.context(case["path"])
     rows = ctx["store"].approvals_list(ctx["conn"])
     assert [(r["scope"], r["status"], r["payload_sha256"], r["pending_id"]) for r in rows] == [
         ("action", "executed", item["payload_sha256"], item["id"])]
@@ -206,7 +207,7 @@ def test_a_provider_failure_leaves_the_pending_decision_open_and_approving_again
     with pytest.raises(ops.OpsError, match="a server error"):
         ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")
     assert ops.pending(case["path"], item["id"])["status"] == "open"
-    ctx = ops.context(case["path"])
+    ctx = ops_core.context(case["path"])
     assert [r["status"] for r in ctx["store"].approvals_list(ctx["conn"])] == ["pending-execution"]
     answers(tree, base_commit="moved-but-committed", branch_exists=True)
     done = ops.approve(case["path"], item["id"], item["payload_sha256"], channel="terminal")  # the key already committed: no check
@@ -261,12 +262,13 @@ def test_rejecting_an_effect_cancels_the_task_and_sends_nothing(tree):
 
 
 def test_the_provider_is_found_by_its_class_never_by_a_path_built_here(tree):
-    text = "".join((st.REPO / "runtime" / name).read_text(encoding="utf-8")
-                    for name in ("effects.py", "effect_pull_request.py", "ops.py"))
+    # the operations layer is ops.py and its siblings ops_*.py (CONS-1B)
+    names = ["effects.py", "effect_pull_request.py", "ops.py", *sorted(p.name for p in (st.REPO / "runtime").glob("ops_*.py"))]
+    text = "".join((st.REPO / "runtime" / name).read_text(encoding="utf-8") for name in names)
     assert "vcs/github.py" not in text and '"vcs"' not in text
-    assert effect_pull_request.PROVIDER_CLASS == "integration:vcs" and "resolve.resolve(cls, root=ROOT" in text
+    assert effect_pull_request.PROVIDER_CLASS == "integration:vcs" and "resolve.resolve(cls, root=core.ROOT" in text
     case = gate_project(tree)
-    found = ops._provider_path(ops.context(case["path"])["cfg"], effect_pull_request.PROVIDER_CLASS)
+    found = ops._provider_path(ops_core.context(case["path"])["cfg"], effect_pull_request.PROVIDER_CLASS)
     assert found == str(provider(tree) / "github.py")
 
 
@@ -311,13 +313,15 @@ def test_a_gate_word_with_no_kind_opens_a_review_never_an_effect(tree, monkeypat
 def test_ops_py_names_no_effect_kind():
     code = []
     import ast
-    tree_ = ast.parse((st.REPO / "runtime" / "ops.py").read_text(encoding="utf-8"))
-    docstrings = {id(n.body[0].value) for n in ast.walk(tree_)
-                  if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body
-                  and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
-    for node in ast.walk(tree_):
-        if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
-            code.append(node.value)
+    # the operations layer is ops.py and the siblings it re-exports from, ops_*.py (CONS-1B)
+    for name in ["ops.py", *sorted(p.name for p in (st.REPO / "runtime").glob("ops_*.py"))]:
+        tree_ = ast.parse((st.REPO / "runtime" / name).read_text(encoding="utf-8"))
+        docstrings = {id(n.body[0].value) for n in ast.walk(tree_)
+                      if isinstance(n, (ast.Module, ast.ClassDef, ast.FunctionDef, ast.AsyncFunctionDef)) and n.body
+                      and isinstance(n.body[0], ast.Expr) and isinstance(n.body[0].value, ast.Constant)}
+        for node in ast.walk(tree_):
+            if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
+                code.append(node.value)
     assert not [t for t in code if "open-pr" in t or re.search(r"pull request|pull-request", t)], "ops.py spells an effect kind"
 
 
@@ -357,7 +361,8 @@ def test_a_word_with_no_kind_is_a_usage_error_naming_the_kinds(word):
 def test_the_shape_of_a_handed_over_document_and_the_operations_own_flags_live_in_the_registry_module():
     assert effects.EFFECT_KEYS == ("policy", "kind", "target", "files", "items", "idempotency_key", "payload_sha256", "args")
     assert effects.RESERVED_FLAGS == ("--confirmed", "--dry-run", "--allow", "--idempotency-key")
-    text = (st.REPO / "runtime" / "ops.py").read_text(encoding="utf-8")
+    text = "".join((st.REPO / "runtime" / name).read_text(encoding="utf-8")
+                   for name in ["ops.py", *sorted(p.name for p in (st.REPO / "runtime").glob("ops_*.py"))])
     assert not re.search(r"^(EFFECT_KEYS|RESERVED_FLAGS|[A-Z_]*_CALLS) =", text, re.M)  # no table of kinds beside the registry
     assert not [name for name in dir(ops) if name.endswith("_CALLS")]
 

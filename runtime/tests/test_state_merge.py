@@ -13,6 +13,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 state_merge = st.load("state_merge")
 project_config = st.load("project_config")
 
@@ -215,7 +216,7 @@ def test_the_persons_answer_is_written_by_code_as_a_decision_of_the_user(tmp_pat
         state_merge.with_answer("# Workbench state\n", date="2026-10-05", skill=SKILL, pending_id=7, answer="yes")
     # Through ops.answer: the project's file has the line.
     tree = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(tree["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(tree["tree"]))
     path = str(tree["project"])
     ops.accept_config(path, project_config.load(path)["sha256"])
     ops.request(path, "Tell me which market to go after first.", "demo")

@@ -13,6 +13,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 plan = st.load("plan")
 flow_files = st.load("flow_files")
 
@@ -22,7 +23,7 @@ PACK = ["demo-asks", "demo-writes"]
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     monkeypatch.setattr(ops.plan, "pack_skills", lambda cfg, root: list(PACK))
     project = str(built["project"])
     ops.accept_config(project, ops.project_config.load(project)["sha256"])
@@ -50,7 +51,7 @@ def test_a_manifest_makes_a_task_a_milestone_whatever_the_flow_file_says(tree):
     assert "| 1 | Market | demo-asks | - | yes, mandatory | no |" in body
     assert "| 2 | Profile | demo-writes | 1 | yes | no |" in body
     created = ops.approve(project, opened["pending_id"])["tasks"]
-    ctx = ops.context(project)
+    ctx = ops_core.context(project)
     assert [ctx["store"].task_get(ctx["conn"], t["id"])["milestone"] for t in created] == [1, 1]
     named = ops.request(project, "Find the first market again.", flow="demo")["tasks"]
     assert [ctx["store"].task_get(ctx["conn"], t["id"])["milestone"] for t in named] == [1, 1]
