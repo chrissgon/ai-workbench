@@ -409,3 +409,52 @@ def test_the_words_of_an_override_in_an_items_text():
     assert board.after_of("Do it After Request #7, please") == 7
     assert board.after_of("thereafter #3") is None and board.after_of("after 12") is None and board.after_of(None, "") is None
     assert board.after_of("first", "after #4 and after #5") == 4
+
+
+# --- go ahead on a task already created ---------------------------------------------------------------------------------
+
+
+def test_go_ahead_on_a_waiting_task_ends_its_derived_wait_and_writes_the_decision(tree):
+    brand = requested(tree, "wk-brand")
+    identity = by_key(brand)["identity"]["id"]
+    system = requested(tree, "wk-design")["tasks"][0]["id"]
+    out = ops.go_ahead(path_of(tree), system)
+    assert out["state"] == "ready" and out["waiting_for"] == [] and out["decision"] == {"written": True}
+    assert out["dropped"] == [f"docs/brand/identity.md, written by task #{identity}"]
+    text = (tree["project"] / "docs" / "workbench" / "state.md").read_text(encoding="utf-8")
+    assert (f"Go ahead on wk-design (task {system}) without waiting for: docs/brand/identity.md, written by task "
+            f"#{identity} (user)") in text
+    requested(tree, "wk-brand")  # a later derivation does not bring the wait back
+    ops.poll(path_of(tree))
+    assert row(tree, system)["waiting_for"] == [] and row(tree, system)["state"] == "ready"
+
+
+def test_go_ahead_never_drops_an_after_override_and_refuses_a_task_that_is_not_waiting(tree):
+    first = requested(tree, "wk-brand")
+    posts = by_key(requested(tree, "wk-brand", after=first["request"]))["identity"]["id"]  # no input another request writes
+    with pytest.raises(ops.OpsError, match="after"):
+        ops.go_ahead(path_of(tree), posts)  # it waits only for the request it was told to follow
+    identity = by_key(first)["identity"]["id"]
+    with pytest.raises(ops.OpsError):
+        ops.go_ahead(path_of(tree), identity)  # ready, waits for nothing
+    with pytest.raises(ops.OpsError):
+        ops.go_ahead(path_of(tree), first["request"])
+    assert any(w["reason"] == f"after request #{first['request']}" for w in row(tree, posts)["waiting_for"])
+
+
+def test_go_ahead_keeps_the_override_of_a_task_that_both_waits_for_a_writer_and_follows_a_request(tree):
+    first = requested(tree, "wk-brand")
+    design = requested(tree, "wk-design")
+    third = requested(tree, "wk-design", after=design["request"])["tasks"][0]["id"]
+    waits = row(tree, third)["waiting_for"]
+    assert {w["reason"].split(",")[0].split(" #")[0] for w in waits} >= {"after request"}
+    out = ops.go_ahead(path_of(tree), third)
+    assert [w["reason"] for w in out["waiting_for"]] == [f"after request #{design['request']}"] and out["state"] == "planned"
+    assert first["request"] != design["request"]
+
+
+def test_go_ahead_is_a_verb_of_the_terminal_with_the_task_flag(tree):
+    cli = st.load("cli")
+    requested(tree, "wk-brand")
+    system = requested(tree, "wk-design")["tasks"][0]["id"]
+    assert cli.run(["go-ahead", "--project", path_of(tree), "--task", str(system)])["state"] == "ready"

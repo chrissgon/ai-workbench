@@ -1099,6 +1099,14 @@ def retry(project: str, task_id: int) -> dict:
     return out
 
 
+def go_ahead(project: str, task_id: int) -> dict:
+    """The person's go-ahead on a task that waits for another request's task (a derived wait): the wait ends and is not
+    derived again for the task, an `after` override stays, and the decision is written to the state file. Refused for a
+    task that has no derived wait. Returns {"task_id", "state", "dropped", "waiting_for", "decision"} (ops_waits.py)."""
+    ctx = core.context(project)
+    return ops_waits.go_ahead(ctx, task_id)
+
+
 def cancel(project: str, request_id: int) -> dict:
     """Cancel a request, its tasks that are not done, and their open pending decisions."""
     ctx = core.context(project)

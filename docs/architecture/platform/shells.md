@@ -245,6 +245,7 @@ The words a held ready task carries, from `REASONS` of `runtime/dispatcher.py`:
 | `approve` | `--id` `[--sha256]` `[--go-ahead]` | `approve` |
 | `reject` | `--id` `[--note]` | `reject` |
 | `retry` | `--task` | `retry` |
+| `go-ahead` | `--task` | `go_ahead` |
 | `cancel` | `--request` | `cancel` |
 | `deps` | - | `deps` |
 | `run-next` | `[--tier]` | `run_next` |
@@ -339,6 +340,7 @@ The routes of the local service, from `ROUTES` of `runtime/service.py`:
 | POST | `/projects/{p}/requests/{id}/cancel` | `cancel` | `request_id` from `{id}` | every other argument | - | - |
 | GET | `/projects/{p}/tasks/{id}` | `task` | `task_id` from `{id}` | none | - | - |
 | POST | `/projects/{p}/tasks/{id}/retry` | `retry` | `task_id` from `{id}` | every other argument | - | - |
+| POST | `/projects/{p}/tasks/{id}/go-ahead` | `go-ahead` | `task_id` from `{id}` | every other argument | - | - |
 | POST | `/projects/{p}/tasks/{id}/files` | `hand-over` | `task_id` from `{id}` | every other argument | `file` | file upload |
 | POST | `/projects/{p}/runs/{id}/verdict` | `verdict` | `run_id` from `{id}` | every other argument | - | - |
 | POST | `/projects/{p}/agents/{name}/mode` | `set-mode` | `agent` from `{name}` | every other argument | - | - |

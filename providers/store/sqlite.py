@@ -1817,6 +1817,38 @@ def request_after_set(conn: sqlite3.Connection, request_id: int, after: int | No
         return _task(conn, request_id)
 
 
+def waits_go_ahead(conn: sqlite3.Connection, task_id: int, *, by: str) -> dict:
+    """The person's go-ahead on a task that is waiting: its open `input` waits end as `dropped` and the task carries the
+    go_ahead marker, so that no later derivation brings them back (the plan's go-ahead, on a task already created). An
+    `after` wait is the person's own override and stays. Refused for a task that is not planned or ready, and for one
+    with no open input wait (not waiting, or waiting only for a request it was told to follow). The store then
+    refreshes: a task with no open wait left becomes ready. Returns {"task_id", "dropped": [wait ids], "paths": [the
+    waits' paths], "reasons": [their reasons], "state", "ready": [ids]}."""
+    by = text_arg(by, "by", LABEL_MAX)
+    now = iso(utcnow())
+    with write(conn):
+        task = _task(conn, task_id)
+        if task["parent_id"] is None or task["state"] not in ("planned", "ready"):
+            raise StoreError(f"task {task_id} is {task['state'] if task['parent_id'] is not None else 'a request'}: "
+                             "go ahead is said on a planned or ready task that waits")
+        held = conn.execute("SELECT id, path, reason FROM task_waits WHERE task_id = ? AND status = 'open' "
+                            "AND kind = 'input' ORDER BY id", (task_id,)).fetchall()
+        if not held:
+            raise StoreError(f"task {task_id} waits for no task to derive: go ahead drops a derived wait, and an "
+                             "`after` request is the person's own")
+        for w in held:
+            conn.execute("UPDATE task_waits SET status = 'dropped', ended_at = ?, ended_by = ? WHERE id = ?",
+                         (now, by, w["id"]))
+        if not conn.execute("SELECT 1 FROM task_waits WHERE task_id = ? AND kind = 'go_ahead'", (task_id,)).fetchone():
+            conn.execute("INSERT INTO task_waits (task_id, awaited_id, kind, reason, status, created_at, ended_at, "
+                         "ended_by) VALUES (?, ?, 'go_ahead', 'the person went ahead', 'dropped', ?, ?, ?)",
+                         (task_id, task_id, now, now, by))
+        ready, _completed = _refresh(conn, now)
+        state = _task(conn, task_id)["state"]
+    return {"task_id": task_id, "dropped": [w["id"] for w in held], "paths": [w["path"] for w in held],
+            "reasons": [w["reason"] for w in held], "state": state, "ready": ready}
+
+
 def waits_list(conn: sqlite3.Connection, *, task_id: int | None = None, status: str = "open") -> list:
     """The waits of one status (or "all"), oldest first; with task_id, those of one task. Each row is
     task_waits' columns and "request_id", the request of the awaited row (the awaited row itself for an `after`)."""

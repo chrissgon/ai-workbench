@@ -272,3 +272,39 @@ def test_the_export_lists_the_waits(tmp_path):
     one(c, "design-system", waits=[input_wait("design-system", brand)])
     rows = c.execute("SELECT COUNT(*) FROM task_waits").fetchone()[0]
     assert rows == 1 and any(q[0] == "task_waits" for q in store.EXPORT_QUERIES)
+
+
+def test_go_ahead_on_a_created_task_drops_its_input_waits_and_remembers_the_decision(conn):
+    _, brand = one(conn, "brand-identity")
+    _, design = one(conn, "design-system", waits=[input_wait("design-system", brand)])
+    out = store.waits_go_ahead(conn, design, by="user")
+    assert out["state"] == "ready" and out["paths"] == ["docs/brand/identity.md"] and design in out["ready"]
+    assert out["reasons"] == [f"docs/brand/identity.md, written by task #{brand}"] and len(out["dropped"]) == 1
+    assert store.waits_list(conn) == []
+    kinds = {(w["kind"], w["status"], w["ended_by"]) for w in store.waits_list(conn, status="all")}
+    assert kinds == {("input", "dropped", "user"), ("go_ahead", "dropped", "user")}
+    # The runtime deriving the same wait again does not bring it back.
+    want = [{"task_id": design, "awaited_id": brand, "kind": "input", "path": "docs/brand/identity.md", "reason": "r"}]
+    assert store.waits_sync(conn, want, [design])["opened"] == [] and state(conn, design) == "ready"
+
+
+def test_go_ahead_leaves_an_after_override_and_refuses_a_task_that_waits_only_for_a_request(conn):
+    first, brand = one(conn, "brand-identity")
+    after = {"key": "design-system", "kind": "after", "awaited_id": first, "reason": f"after request #{first}"}
+    _, design = one(conn, "design-system", after=first, waits=[after])
+    with pytest.raises(store.StoreError, match="after"):
+        store.waits_go_ahead(conn, design, by="user")
+    assert state(conn, design) == "planned" and len(store.waits_list(conn)) == 1
+    # A task held by both keeps the override when the derived wait is dropped.
+    _, third = one(conn, "mkt-calendar", after=first, waits=[
+        {"key": "mkt-calendar", "kind": "after", "awaited_id": first, "reason": "after"}, input_wait("mkt-calendar", brand)])
+    store.waits_go_ahead(conn, third, by="user")
+    assert [w["kind"] for w in store.waits_list(conn, task_id=third)] == ["after"] and state(conn, third) == "planned"
+
+
+def test_go_ahead_is_refused_for_a_task_that_does_not_wait_and_for_a_request(conn):
+    request, brand = one(conn, "brand-identity")
+    for target in (brand, request, 9999):
+        with pytest.raises(store.StoreError):
+            store.waits_go_ahead(conn, target, by="user")
+    assert store.waits_list(conn, status="all") == []

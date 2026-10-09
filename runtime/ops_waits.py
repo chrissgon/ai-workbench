@@ -24,6 +24,8 @@ Functions (each takes the project's context, ops_core.context):
                                           lines in its body, before the person approves it
   approve_plan(ctx, item, go_ahead)       plan_approve with the waits and the go-ahead in the same transaction, the
                                           decision written to the state file, and the other tasks derived again
+  go_ahead(ctx, task_id)                  the person's go-ahead on a task already created: its derived waits end, the
+                                          decision is written to the state file; its new waiting_for
   waiting_for(ctx)                        {task id: [{"task_id", "request_id", "reason"}]}, the open waits, for `status`,
                                           `task` and the dispatcher's snapshot
 
@@ -177,8 +179,15 @@ def _keys(go_ahead, known: list) -> list:
 
 
 def _record_go_ahead(ctx: dict, created: list, keys: list, shown: list, tasks: list) -> dict:
-    """One line of the state file's ## Decisions for each task the person went ahead on, written by code
-    (state_merge.with_go_ahead): what it did not wait for. {"written": True}, or {"written": False, "reason"}."""
+    """The decision of a plan's go-ahead: one line for each task the person went ahead on, with what it did not wait for."""
+    ids = {t["key"]: t["id"] for t in created}
+    skills = {t["key"]: t["skill"] for t in tasks}
+    return _record_decision(ctx, [(skills[k], ids[k], [w["reason"] for w in shown if w["task_key"] == k]) for k in keys])
+
+
+def _record_decision(ctx: dict, decisions: list) -> dict:
+    """One line of the state file's ## Decisions for each (skill, task id, reasons), written by code
+    (state_merge.with_go_ahead): what the task did not wait for. {"written": True}, or {"written": False, "reason"}."""
     target = os.path.join(ctx["cfg"]["project"], *path_rule.STATE.split("/"))
     try:
         with open(target, encoding="utf-8") as f:
@@ -187,13 +196,10 @@ def _record_go_ahead(ctx: dict, created: list, keys: list, shown: list, tasks: l
         return {"written": False, "reason": "the project has no state file"}
     if os.path.islink(target):
         return {"written": False, "reason": "the state file is a link"}
-    ids = {t["key"]: t["id"] for t in created}
-    skills = {t["key"]: t["skill"] for t in tasks}
     today = datetime.date.today().isoformat()
     try:
-        for key in keys:
-            reasons = [w["reason"] for w in shown if w["task_key"] == key]
-            text = state_merge.with_go_ahead(text, date=today, skill=skills[key], task_id=ids[key], waited=reasons)
+        for skill, task_id, reasons in decisions:
+            text = state_merge.with_go_ahead(text, date=today, skill=skill, task_id=task_id, waited=reasons)
     except state_merge.Conflict as e:
         return {"written": False, "reason": str(e)}
     temporary = f"{target}.{os.getpid()}.tmp"
@@ -201,6 +207,19 @@ def _record_go_ahead(ctx: dict, created: list, keys: list, shown: list, tasks: l
         f.write(text)
     os.replace(temporary, target)
     return {"written": True}
+
+
+def go_ahead(ctx: dict, task_id: int) -> dict:
+    """The person's go-ahead on a task that is already created and waits (the store's waits_go_ahead): its derived waits
+    end and stay ended, an `after` override stays, and the decision is one line of the state file's ## Decisions
+    (state_merge.with_go_ahead, as the plan's go-ahead writes it). Nothing is derived again for the task. Returns
+    {"task_id", "state", "dropped": [the reasons], "waiting_for": [what still holds it], "decision": {"written", ...}}."""
+    store = ctx["store"]
+    done = core._stored(ctx, store.waits_go_ahead, task_id, by="user")
+    task = core._stored(ctx, store.task_get, task_id)
+    return {"task_id": task_id, "state": done["state"], "dropped": done["reasons"],
+            "waiting_for": waiting_for(ctx).get(task_id, []),
+            "decision": _record_decision(ctx, [(task["skill"], task_id, done["reasons"])])}
 
 
 def waiting_for(ctx: dict) -> dict:
