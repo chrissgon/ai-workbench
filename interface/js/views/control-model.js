@@ -236,9 +236,32 @@ export function capsLine(caps, agents) {
   const money = (value) => (typeof value === "number" && Number.isFinite(value) ? format.dollars(value) : "-");
   const parts = list.map((cap) => {
     const now = used.get(cap.agent);
-    return `${agentLabel(cap.agent)}: runs ${now ? amount(now.runs_today) : "-"} / ${amount(cap.max_runs_per_day)}, ${now ? money(now.usd_today) : "-"} / ${money(cap.max_usd_per_day)}`;
+    const note = now && typeof now.usd_reserved === "number" ? format.spendNote(now.usd_recorded, now.usd_reserved) : "";
+    const total = now && typeof now.runs_total_today === "number" ? `, Runs today: ${now.runs_total_today}` : "";
+    return `${agentLabel(cap.agent)}: reference-model runs ${now ? amount(now.runs_today) : "-"} / ${amount(cap.max_runs_per_day)}, floor-model spend ${now ? money(now.usd_today) : "-"} / ${money(cap.max_usd_per_day)}${note ? ` (${note})` : ""}${total}`;
   });
-  return { text: `Caps · ${parts.join("; ")}`, title: "Runs are the reference model's runs today; dollars are the floor model's spend today." };
+  return { text: `Caps · ${parts.join("; ")}`, title: `${format.METER_TIPS.runs} ${format.METER_TIPS.spend}` };
+}
+
+// --- the service card ----------------------------------------------------------------------------------------------------
+
+/**
+ * The verdicts the local service made at its start (`connections.service`) that are not "ok": [{what, sentence, command}], in the order
+ * secret store, credential, docker, image, dispatch, then each problem. The sentences and the command (`start`) are the service's; a verdict
+ * that has no command in the terminal has none here. A null service (any process but the local service) has no rows.
+ */
+export function serviceRows(service) {
+  if (!service || typeof service !== "object") return [];
+  const rows = [];
+  const bad = (value) => typeof value === "string" && value !== "ok";
+  const start = typeof service.start === "string" && service.start ? service.start : null;
+  if (bad(service.secret_store)) rows.push({ what: "Secret store", sentence: service.secret_store, command: start });
+  if (bad(service.credential)) rows.push({ what: "Credential", sentence: service.credential, command: null });
+  if (bad(service.docker)) rows.push({ what: "Docker", sentence: service.docker, command: null });
+  if (bad(service.image)) rows.push({ what: "Image", sentence: service.image, command: null });
+  if (service.dispatch === "off") rows.push({ what: "Dispatch", sentence: "Dispatch is off: the service starts no task by itself. Start it again without --no-dispatch:", command: start });
+  for (const problem of Array.isArray(service.problems) ? service.problems : []) rows.push({ what: "Problem", sentence: String(problem), command: null });
+  return rows;
 }
 
 // --- the chart ---------------------------------------------------------------------------------------------------------

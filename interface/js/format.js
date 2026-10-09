@@ -64,3 +64,31 @@ export function clock(stamp) {
 export function decisions(n) {
   return `${n} decision${n === 1 ? "" : "s"}`;
 }
+
+/**
+ * The day's floor-model spend in words, both numbers labelled: "$0.14 recorded · up to $1.50 reserved" (the reserved part only when
+ * something is reserved for a run whose cost is not recorded yet), "$0.14 recorded", or "" when both are zero.
+ */
+export function spendNote(recorded, reserved) {
+  const r = count(recorded);
+  const q = count(reserved);
+  if (q > 0) return `${dollars(r)} recorded · up to ${dollars(q)} reserved`;
+  return r > 0 ? `${dollars(r)} recorded` : "";
+}
+
+/**
+ * The note under a spend meter: the labelled numbers, and "(+n of unknown cost)" when runs of unknown cost exist that nothing is reserved
+ * for (when something is reserved the reservation already says so).
+ */
+export function costNote(spendWords, reserved, unknown) {
+  const missing = count(unknown) > 0 && !(count(reserved) > 0) ? `(+${count(unknown)} of unknown cost)` : "";
+  return [spendWords, missing].filter(Boolean).join(" ");
+}
+
+// The words of the two caps (A-20), and the sentence that says what each one counts: the runs cap counts the reference model's runs, the
+// dollar cap the floor model's spend, so the two never read as one.
+export const METER_WORDS = Object.freeze({ runs: "Reference-model runs today", spend: "Floor-model spend today" });
+export const METER_TIPS = Object.freeze({
+  runs: "Counted against the cap of runs per day: only runs on the reference model. Runs on the floor model are not counted here.",
+  spend: "Counted against the cap of dollars per day: only the floor model's spend. A run whose cost is not recorded yet counts at the per-run limit.",
+});

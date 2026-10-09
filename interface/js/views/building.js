@@ -11,6 +11,7 @@ import { createViewer } from "../floor/viewer.js";
 import { chip } from "../floor/widgets.js";
 import { arrowNav, keepFocus } from "../frame/arrows.js";
 import { icon } from "../frame/icons.js";
+import { acceptance } from "../model.js";
 import * as router from "../router.js";
 import { NoWebGL } from "../scene/engine.js";
 import { floorCardNode, plateNode } from "../scene/plates.js";
@@ -204,9 +205,9 @@ export function createBuildingView(frame, env) {
     const running = f.running ? h("a", { class: "pui-link pui-theme", href: f.running.link, text: `task #${f.running.id}${f.running.title ? ` · ${f.running.title}` : ""}` }) : "Nothing is running";
     fill(factsBox,
       factRow("Configuration", chip(f.configuration, f.accepted ? "pui-success pui-soft" : "pui-warn pui-soft")),
-      f.accepted ? factRow("Running now", running) : null,
-      f.accepted ? factRow("Request", f.request ? `#${f.request.id} ${f.request.title}` : "No request is open") : null,
-      f.accepted ? factRow("Waiting for you", format_decisions(f.waiting)) : null);
+      f.accepted || f.kept ? factRow("Running now", running) : null,
+      f.accepted || f.kept ? factRow("Request", f.request ? `#${f.request.id} ${f.request.title}` : "No request is open") : null,
+      f.accepted || f.kept ? factRow("Waiting for you", format_decisions(f.waiting)) : null);
   }
 
   function format_decisions(n) {
@@ -315,7 +316,9 @@ export function createBuildingView(frame, env) {
       projectId = data.route.project;
       if (reloaded !== null && data.reload !== reloaded) documentsAt = 0;
       reloaded = data.reload;
-      if (documents === null || Date.now() - documentsAt > ARTIFACTS_EVERY_MS) readDocuments();
+      const listed = (data.snapshot.projects || []).find((p) => p.id === projectId);
+      const kept = Boolean(listed) && acceptance(listed, data.snapshot.details[projectId]).kept;
+      if (!kept && (documents === null || Date.now() - documentsAt > ARTIFACTS_EVERY_MS)) readDocuments();     // a refusing project is not asked again
       redraw();
     },
     dispose() {

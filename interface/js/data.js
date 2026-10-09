@@ -2,7 +2,8 @@
 // the requests with their tasks, each with its title and agent, and the open decisions, each with its agent) and its
 // agents, then the `task` body of the one running task of the followed project's open request, for the time its run
 // started. Everything is read; nothing is written. A project that answers 412 (its configuration is not accepted) is
-// kept with the service's own message; a lost connection throws.
+// kept with the service's own message and with the last status and agents read (the page keeps showing them, dimmed); a lost
+// connection throws.
 
 import * as api from "./api.js";
 import { neededTasks, taskKey } from "./model.js";
@@ -13,18 +14,25 @@ export function emptySnapshot() {
 }
 
 /**
- * One project's status and agents. A 412 (not accepted) is kept as the project's error with the service's text. Any other
- * refusal of one project (a 409, a 500) keeps what the last read held, when there is one, so one bad read does not
- * blank a building; the next poll reads again.
+ * One project's status and agents. A 412 (not accepted) is kept as the project's error with the service's text, together with the last
+ * status and agents read (A-16: the screen keeps its data until the configuration is accepted). Any other refusal of one project (a
+ * 409, a 500) keeps what the last read held, when there is one, so one bad read does not blank a building; the next poll reads again.
  */
-async function readProject(project, before) {
+async function readProject(project, before, listedAccepted = true) {
   try {
-    const [status, agents] = await Promise.all([api.status(project.id), api.agents(project.id)]);
+    // A project listed as not accepted is asked one thing, its status: the 412 answer carries the command that accepts it (`next`).
+    let status;
+    let agents;
+    if (listedAccepted) [status, agents] = await Promise.all([api.status(project.id), api.agents(project.id)]);
+    else {
+      status = await api.status(project.id);
+      agents = await api.agents(project.id);     // accepted since the list was read
+    }
     return { status, agents: Array.isArray(agents.agents) ? agents.agents : [] };
   } catch (e) {
     if (e && e.name === "ApiError" && e.status !== 0 && e.status !== 401) {
-      const error = { status: e.status, word: e.word, message: e.message };
-      if (e.status !== 412 && before && before.status) return { ...before, error };   // the data stays, the page says it is stale
+      const error = { status: e.status, word: e.word, message: e.message, next: e.next || null };
+      if (before && before.status) return { status: before.status, agents: before.agents, error };   // the data stays, the page says why it is old
       return { error };
     }
     throw e;
@@ -39,15 +47,19 @@ async function readProject(project, before) {
 export async function refresh(previous, followed, options = {}) {
   const listed = await api.projects();
   const projects = Array.isArray(listed.projects) ? listed.projects : [];
-  const accepted = projects.filter((p) => p.config && p.config.accepted);
-  const read = await Promise.all(accepted.map((p) => readProject(p, previous.details[p.id])));
+  const read = await Promise.all(projects.map((p) => readProject(p, previous.details[p.id], Boolean(p.config && p.config.accepted))));
   const details = {};
-  accepted.forEach((p, i) => { details[p.id] = read[i]; });
+  projects.forEach((p, i) => { details[p.id] = read[i]; });
   const wanted = neededTasks(projects, details, followed);
   const tasks = {};
   await Promise.all(wanted.map(async (w) => {
     const key = taskKey(w.project, w.id);
     const cached = previous.tasks[key];
+    const refusing = details[w.project] && details[w.project].error && details[w.project].error.status === 412;
+    if (refusing) {     // not accepted: the body read before stays, and the project is not asked again on every reload
+      if (cached) tasks[key] = cached;
+      return;
+    }
     if (!options.force && cached && cached.task && (w.state === undefined || cached.task.state === w.state)) {
       tasks[key] = cached;
       return;
@@ -57,6 +69,7 @@ export async function refresh(previous, followed, options = {}) {
     } catch (e) {
       if (e && e.name === "ApiError" && e.status === 0) throw e;
       if (e && e.unauthorized) throw e;
+      if (cached) tasks[key] = cached;       // not accepted (412): the body read before stays
       // a task that cannot be read leaves its agent and title unknown: the page falls back to the key and the project
     }
   }));

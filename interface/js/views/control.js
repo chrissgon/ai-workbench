@@ -221,14 +221,14 @@ export function createControlView(frame) {
       let next = null;
       if (!state.loaded) next = state.unread ? { kind: "none", text: "" } : { kind: "loading" };   // a failed first read: the frame's notice says why
       else if (!state.known) next = { kind: "none", text: "The service has no such project." };
-      else if (!state.accepted) next = { kind: "text", text: model.NOT_ACCEPTED };
+      else if (!state.accepted && !(state.kept && started)) next = { kind: "text", text: model.NOT_ACCEPTED };     // not accepted after a read: the tabs stay, dimmed, and read nothing more (A-16)
       const same = (next === null && message === null) || (next && message && next.kind === message.kind && next.text === message.text);
       message = next;
       if (!same || changed) {
         tab = wanted;
         render();
       }
-      const moved = reloaded !== null && state.reload !== reloaded;
+      const moved = reloaded !== null && state.reload !== reloaded && state.accepted !== false;
       reloaded = state.reload;
       if (!message && !started) {
         started = true;
@@ -240,10 +240,10 @@ export function createControlView(frame) {
         if (wanted === "skills" && aged("skills")) readSkills();
         else if (wanted === "connections" && aged("connections")) readConnections();
         readCosts(lastSince, true);
-      } else if (!message && changed && (wanted === "skills" || wanted === "connections") && aged(wanted)) {
+      } else if (!message && state.accepted !== false && changed && (wanted === "skills" || wanted === "connections") && aged(wanted)) {
         if (wanted === "skills") readSkills();
         else readConnections();
-      } else if (!message && changed && loads[wanted].status === "failed") {
+      } else if (!message && state.accepted !== false && changed && loads[wanted].status === "failed") {
         if (wanted === "skills") readSkills();
         else if (wanted === "connections") readConnections();
         else readCosts(lastSince, true);

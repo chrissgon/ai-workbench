@@ -177,15 +177,19 @@ function noticeFor(route) {
   for (const p of snapshot.projects) {
     if (route.project && p.id !== route.project) continue;
     const detail = snapshot.details[p.id];
-    if (!(p.config && p.config.accepted)) found.push({ name: p.name, text: p.message || "its configuration is not accepted yet" });
-    else if (detail && detail.error && detail.error.status === 412) found.push({ name: p.name, text: detail.error.message });
-    else if (detail && detail.error) unread.push(`${p.name}: ${detail.error.message}`);
+    const refused = detail && detail.error && detail.error.status === 412 ? detail.error : null;
+    if (refused || !(p.config && p.config.accepted)) {
+      const text = (refused && refused.message) || p.message || "its configuration is not accepted yet";
+      const next = (refused && refused.next) || null;      // the command that accepts it, as the service gave it with the refusal
+      // the service's sentence ends with the command; it is drawn once, in the component
+      found.push({ name: p.name, text: next && text.trim().endsWith(next) ? text.trim().slice(0, -next.length).trim() : text, command: next });
+    } else if (detail && detail.error) unread.push(`${p.name}: ${detail.error.message}`);
   }
   if (!found.length && unread.length) return { kind: "error", text: `A project could not be read: ${unread.join("; ")}`, retry: true };
   if (!found.length) return null;
   // The service's own text, in a wrapped monospace block: it names the exact command to type in the terminal.
   return { kind: "error", lead: `${found.map((f) => f.name).join(", ")} ${found.length === 1 ? "is" : "are"} not accepted yet: the terminal accepts a configuration.`,
-    text: found[0].text, mono: true, more: found.slice(1).map((f) => f.text) };
+    text: found[0].text, command: found[0].command, mono: true, more: found.slice(1).map((f) => ({ text: f.text, command: f.command })) };
 }
 
 function ensureView(route) {
@@ -234,6 +238,10 @@ function render() {
   });
   drawnKey = key;
   frame.el.classList.toggle("is-stale", Boolean(failure) && snapshot.loaded);
+  // A-16: a project whose configuration is not accepted keeps the last data read on every screen of it, dimmed (one class); the band says why.
+  // The City dims for the project the tracking bar follows.
+  const dimmed = route.project ? routeProject : project;
+  frame.el.classList.toggle("is-unaccepted", state === "ready" && Boolean(dimmed) && model.acceptance(dimmed, snapshot.details[dimmed.id]).kept);
 
   frame.switcher.update({
     projects: projects.map((p) => ({
@@ -257,8 +265,8 @@ function render() {
   } else if (view.screen === "control") {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     const detail = routeProject ? snapshot.details[routeProject.id] : null;
-    const accepted = Boolean(routeProject && routeProject.config && routeProject.config.accepted) && !(detail && detail.error && detail.error.status === 412);
-    view.control.update({ reload: reloads, loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted, projectId: route.project, tab: route.tab });
+    const found = model.acceptance(routeProject, detail);
+    view.control.update({ reload: reloads, loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted: found.accepted, kept: found.kept, projectId: route.project, tab: route.tab });
   } else if (view.screen === "lobby") {
     frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     view.lobby.update({ reload: reloads, snapshot, route, now, projectName: routeProject ? routeProject.name : "" });

@@ -1,20 +1,24 @@
-// The Floor's Agent tab (handoff floor.md): the agent's state row, the mode plate and "Set mode", the standing notice about
-// the configuration, the result notice with the exact command the service gave, three meters, the current task with its runs,
-// the other tasks with "Retry", and "Hand a file over". Each control sends exactly one request: `setMode` with the selected
-// word, `retry` with no body, `handOver` with the file as the person chose it. The page decides nothing: the mode's words
+// The Floor's Agent tab (handoff floor.md): the agent's state row, the mode plate with "Stop agent" and "Supervise" (A-17: a narrowing
+// the runtime accepts at once; a wider mode is the terminal's), the result notice with the exact command the service gave (A-18, the
+// terminal-command component), three meters that say what they count (A-20), the current task with its runs and, when the dispatcher
+// held it, why (A-10), the other tasks with "Retry", and "Hand a file over". Each control sends exactly one request: `setMode` with the
+// word of the button, `retry` with no body, `handOver` with the file as the person chose it. The page decides nothing: the mode's words
 // and its line are constants of one table, every other value is what an operation returned. The tab is built once and its
 // parts are drawn again only when their data changed, so a poll never takes the keyboard focus or the typed choice away.
 
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
-import { MODES, MODE_LINES, PIPS, meters, modeOption, stateRow, stateTone, taskWord } from "../floor-model.js";
-import { pips } from "../scene/plates.js";
+import { MODES, MODE_LINES, PIPS, meters, stateRow, stateTone, taskWord } from "../floor-model.js";
+import { commandBlock, commandsIn, isCommand } from "../frame/command.js";
+import { pips, trackNode } from "../scene/plates.js";
 import { runBlock } from "./run-block.js";
 import { busyLine, chip, errorText, notice, ring } from "./widgets.js";
 
 export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const NAME = /^[A-Za-z0-9._-]{1,100}$/;
-export const STANDING = "Setting a mode changes the project's configuration. Every action of this page then refuses until you accept the new configuration in the terminal.";
+export const STANDING = "Stop agent and Supervise take effect at once and need no acceptance.";
+export const WIDER = "A wider mode is set in the terminal, not on this page.";
+export const WIDER_BELOW = "A wider mode is set in the terminal, not on this page:";
 
 /** The base64 of some bytes (the body of a file handed over): chunked so a large file does not overflow the call stack. */
 export function toBase64(bytes) {
@@ -51,12 +55,13 @@ export function createAgentTab(env) {
   const formBox = h("div", { class: "wb-mode-form" });
   const standing = h("div", { class: "wb-notice-card", text: STANDING });
   const resultBox = h("div", { class: "wb-result-box" });
+  const runsTotalLine = h("p", { class: "wb-runs-total wb-muted", hidden: true, text: "" });
   const waitingLine = h("p", { class: "wb-empty-line", text: "Waiting for the configuration to be accepted." });
   const metersBox = h("div", { class: "wb-meters" });
   const currentBox = h("div", { class: "wb-section" });
   const othersBox = h("div", { class: "wb-section" });
   const handBox = h("div", { class: "wb-hand" });
-  const body = h("div", { class: "wb-agent-body" }, waitingLine, metersBox, currentBox, othersBox, handBox);
+  const body = h("div", { class: "wb-agent-body" }, waitingLine, metersBox, runsTotalLine, currentBox, othersBox, handBox);
   fill(el, stateBox, plateBox, formBox, standing, resultBox, body);
 
   const shown = {};
@@ -67,47 +72,63 @@ export function createAgentTab(env) {
     draw();
   };
 
-  // --- Set mode ----------------------------------------------------------------------------------------------------------------
-  const select = h("select", { class: "pui-input wb-select", "data-key": "mode" });
-  for (const mode of MODES) select.append(h("option", { value: mode, text: modeOption(mode) }));
-  const setButton = h("button", { class: "pui-btn pui-theme pui-outline wb-set-mode", type: "button", "data-key": "set-mode", text: "Set mode" });
+  // --- Stop agent and Supervise -------------------------------------------------------------------------------------------------
+  const stopButton = h("button", { class: "pui-btn pui-theme pui-outline wb-set-mode", type: "button", "data-key": "stop-agent", text: "Stop agent" });
+  const superviseButton = h("button", { class: "pui-btn pui-theme pui-outline wb-set-mode", type: "button", "data-key": "supervise", text: "Supervise" });
   const formError = h("div", { class: "wb-form-error" });
-  let userChoice = false;
-  let lastMode = null;
-  let setting = false;
-  let modeResult = null;       // {mode, next}
+  let setting = null;          // the word being sent, or null
+  let modeResult = null;       // {mode, accepted, next}
   let sawUnaccepted = false;
-  const selectLabel = h("label", { class: "pui-field-group wb-field" }, h("span", { class: "wb-field-label", text: "Set mode" }), select);
-  fill(formBox, h("div", { class: "wb-mode-controls" }, selectLabel, setButton), formError);
-  const syncTitle = () => select.setAttribute("title", modeOption(select.value));
-  select.addEventListener("change", () => { userChoice = true; syncTitle(); });
-  setButton.addEventListener("click", async () => {
-    if (setting) return;
-    setting = true;
-    setButton.disabled = true;
-    select.disabled = true;
-    fill(setButton, ring(true), "Setting...");
-    setButton.setAttribute("aria-busy", "true");
+  let locked = false;          // the configuration is not accepted: the buttons do nothing
+  let currentMode = null;
+  const widerLine = h("p", { class: "wb-muted wb-wider", text: WIDER });
+  const widerBox = h("div", { class: "wb-wider-modes" });
+  fill(formBox, h("div", { class: "wb-mode-controls" }, stopButton, superviseButton), widerLine, widerBox, formError);
+  const LABELS = new Map([[stopButton, "Stop agent"], [superviseButton, "Supervise"]]);
+
+  /** A button is off when the agent is already in that mode or a narrower one (the runtime accepts only a narrowing), while one is being sent, and while the configuration is not accepted. */
+  function drawButtons() {
+    const at = MODES.indexOf(currentMode);
+    const off = (word) => setting !== null || locked || at < 0 || at <= MODES.indexOf(word);
+    stopButton.disabled = off("stopped");
+    superviseButton.disabled = off("supervised");
+  }
+
+  async function send(word, button) {
+    if (setting !== null) return;
+    setting = word;
+    drawButtons();
+    fill(button, ring(true), "Setting...");
+    button.setAttribute("aria-busy", "true");
     fill(formError);
     try {
-      const result = await env.api.setMode(env.project, env.agent, select.value);
-      modeResult = { mode: result.mode, next: result.next };
+      const result = await env.api.setMode(env.project, env.agent, word);
+      modeResult = { mode: result.mode, accepted: result.accepted !== false, next: result.next || null };
       drawResult();
       env.refresh();
     } catch (e) {
       fill(formError, notice(errorText(e), "error"));
     }
-    setting = false;
-    setButton.disabled = false;
-    select.disabled = false;
-    setButton.removeAttribute("aria-busy");
-    fill(setButton, "Set mode");
-  });
+    setting = null;
+    button.removeAttribute("aria-busy");
+    fill(button, LABELS.get(button));
+    drawButtons();
+  }
+  stopButton.addEventListener("click", () => send("stopped", stopButton));
+  superviseButton.addEventListener("click", () => send("supervised", superviseButton));
 
   function drawResult() {
-    fill(resultBox, modeResult ? h("div", { class: "wb-notice-card is-warn", role: "status" },
-      h("strong", { text: `Mode set to ${modeResult.mode}. Nothing works on this page until you accept the new configuration.` }),
-      h("code", { class: "wb-command", text: modeResult.next || "" })) : null);
+    if (!modeResult) {
+      fill(resultBox);
+      return;
+    }
+    if (modeResult.accepted) {
+      fill(resultBox, h("div", { class: "wb-notice-card", role: "status" }, h("strong", { text: `Mode set to ${modeResult.mode}.` })));
+      return;
+    }
+    fill(resultBox, h("div", { class: "wb-notice-card is-warn", role: "status" },
+      h("strong", { text: `Mode set to ${modeResult.mode}. Nothing works on this page until you accept the new configuration in the terminal.` }),
+      commandBlock({ command: modeResult.next })));
   }
 
   function drawPlate(agent) {
@@ -128,26 +149,36 @@ export function createAgentTab(env) {
       return;
     }
     const content = [chip(row.chip, row.tone), h("span", { class: "wb-muted wb-state-line", text: row.line })];
-    if (row.off) {
-      const button = h("button", { class: "pui-btn pui-theme pui-outline wb-small-button", type: "button", text: "Set mode" });
-      button.addEventListener("click", () => select.focus());
-      content.push(button);
-    }
     fill(stateBox, h("div", { class: "wb-state-row" }, content));
   }
 
-  function meterCell(label, text, share, full, note) {
-    const fillNode = h("span", { class: `wb-meter-fill${full ? " is-full" : ""}` });
-    fillNode.style.setProperty("--wb-share", `${Math.round(share * 100)}%`);
-    return h("div", { class: "wb-meter-cell", role: "group", "aria-label": `${label} ${text}` },
+  function meterCell(label, text, share, full, note, tip, reserved = 0) {
+    return h("div", { class: "wb-meter-cell", role: "group", "aria-label": `${label} ${text}`, title: tip || null },
       h("span", { class: "wb-muted wb-meter-label", text: label }), h("strong", { class: "wb-meter-value", text }),
-      share !== null ? h("span", { class: "wb-meter wb-meter-track", "aria-hidden": "true" }, fillNode) : null,
+      share !== null ? trackNode(share, full, reserved, "wb-meter-track") : null,
       note ? h("span", { class: "wb-note wb-muted", text: note }) : null);
   }
 
   function drawMeters(m) {
-    fill(metersBox, meterCell("Runs today", m.runs.text, m.runs.share, m.runs.full), meterCell("Spend today", m.spend.text, m.spend.share, m.spend.full, m.spend.unknown),
+    fill(metersBox, meterCell(m.runs.label, m.runs.text, m.runs.share, m.runs.full, "", m.runs.tip), meterCell(m.spend.label, m.spend.text, m.spend.recordedShare, m.spend.full, m.spend.notes, m.spend.tip, m.spend.reservedShare),
       meterCell("Queued", m.queued.text, null, false));
+    runsTotalLine.hidden = !m.runsTotal;      // the plain total of runs today, on any model (the runs meter counts the reference model's only)
+    runsTotalLine.textContent = m.runsTotal || "";
+  }
+
+  /** The held reason: its sentence and what the service gave to get past it: one command (run-next, the service start), or a sentence with commands in it (the credential's). */
+  function heldBlock(held) {
+    const parts = held.next && !isCommand(held.next) ? commandsIn(held.next) : null;
+    return h("div", { class: "wb-held" }, h("p", { class: "wb-held-line", text: `Held: ${held.sentence}` }),
+      parts ? h("p", { class: "wb-held-detail wb-muted", text: parts.sentence }) : null,
+      parts ? parts.commands.map((command) => commandBlock({ command })) : commandBlock({ command: held.next }));
+  }
+
+  function drawWider(wider) {
+    const list = Array.isArray(wider) ? wider : null;
+    widerLine.hidden = Boolean(list) && list.length === 0;     // nothing is wider than the widest mode
+    widerLine.textContent = list && list.length ? WIDER_BELOW : WIDER;
+    fill(widerBox, list ? list.map((w) => commandBlock({ command: w.command, sentence: w.mode })) : null);
   }
 
   function drawCurrent(view) {
@@ -162,6 +193,7 @@ export function createAgentTab(env) {
       h("div", { class: "pui-card wb-current" },
         h("div", { class: "wb-current-head" }, h("strong", { text: `#${task.id} ${task.title || task.key || ""}`.trim() }), chip(taskWord(task.state), stateTone(task.state))),
         h("div", { class: "wb-muted wb-current-sub" }, "skill ", h("code", { text: task.skill || "" }), since ? ` · since ${since}` : ""),
+        view.heldCurrent ? heldBlock(view.heldCurrent) : null,
         view.runs.map(runBlock)));
   }
 
@@ -180,7 +212,7 @@ export function createAgentTab(env) {
         if (can) {
           button = h("button", { class: "pui-btn pui-surface pui-outline wb-small-button", type: "button", "data-key": `retry-${t.id}`, "aria-label": `Retry task ${t.id}`, "aria-busy": busy ? "true" : null },
             busy ? ring(true) : null, busy ? "Retrying..." : "Retry");
-          button.disabled = busy;
+          button.disabled = busy || locked;
           button.addEventListener("click", () => retryTask(t.id));
         }
         return h("div", { class: "wb-other" },
@@ -240,7 +272,7 @@ export function createAgentTab(env) {
 
   function drawHand(view) {
     target = view.target;
-    fileInput.disabled = !target;
+    fileInput.disabled = !target || locked;
     hint.textContent = target ? `To task #${target.id}. At most 25 MiB.` : "This agent has no task to hand a file to.";
   }
 
@@ -248,12 +280,12 @@ export function createAgentTab(env) {
   return {
     el,
     focusSelect() {
-      select.focus();
+      stopButton.focus();
     },
     /** view: floor-model.floor(...) with found true; {notAccepted: true, ...} draws the waiting line only; null while loading. */
     update(view) {
       lastView = view;
-      if (view && view.notAccepted) sawUnaccepted = true;
+      if (view && (view.notAccepted || view.unaccepted)) sawUnaccepted = true;
       else if (view && sawUnaccepted && modeResult) {
         modeResult = null;
         sawUnaccepted = false;
@@ -262,6 +294,7 @@ export function createAgentTab(env) {
       const unaccepted = !view || view.notAccepted;
       waitingLine.hidden = !(view && view.notAccepted);
       for (const node of [metersBox, currentBox, othersBox, handBox]) node.hidden = unaccepted;
+      if (unaccepted) runsTotalLine.hidden = true;
       stateBox.hidden = false;
       plateBox.hidden = unaccepted;
       formBox.hidden = unaccepted;
@@ -276,16 +309,15 @@ export function createAgentTab(env) {
       const row = stateRow(view.row.state, view.decisions.length, view.runningBody);
       swap("state", row, () => drawState(row, view));
       swap("plate", [view.agent.mode, view.agent.acting_mode], () => drawPlate(view.agent));
-      if (!userChoice || lastMode !== view.agent.mode) {
-        if (view.agent.mode && MODES.includes(view.agent.mode)) select.value = view.agent.mode;
-        lastMode = view.agent.mode;
-        userChoice = false;
-        syncTitle();
-      }
+      locked = Boolean(view.unaccepted);
+      currentMode = view.agent.mode || null;
+      drawButtons();
       swap("meters", meters(view.agent), () => drawMeters(meters(view.agent)));
-      swap("current", [view.current, view.runs, view.tasks.length], () => drawCurrent(view));
-      swap("others", [view.others.map((t) => [t.id, t.title, t.state]), [...retrying], [...retryError]], () => drawOthers(view));
-      swap("hand", view.target ? view.target.id : null, () => drawHand(view));
+      runsTotalLine.hidden = !meters(view.agent).runsTotal;     // every update: a draw skipped as identical must not leave it hidden after a not-accepted spell
+      swap("wider", view.agent.wider || null, () => drawWider(view.agent.wider));
+      swap("current", [view.current, view.runs, view.tasks.length, view.heldCurrent], () => drawCurrent(view));
+      swap("others", [view.others.map((t) => [t.id, t.title, t.state]), [...retrying], [...retryError], locked], () => drawOthers(view));
+      swap("hand", [view.target ? view.target.id : null, locked], () => drawHand(view));
     },
   };
 }

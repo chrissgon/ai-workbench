@@ -10,28 +10,34 @@ function card(label, iconName, tone, withMeter, short) {
   const figure = h("strong", { class: "wb-kpi-figure", text: "..." });
   const unit = h("span", { class: "wb-kpi-unit", text: "" });
   const meterFill = h("span", { class: "wb-meter-fill" });
+  const reservedFill = h("span", { class: "wb-meter-reserved" });
+  const note = h("span", { class: "wb-kpi-note wb-muted", text: "" });
+  const track = h("span", { class: "wb-meter", "aria-hidden": "true" }, meterFill, reservedFill);
   const body = [h("span", { class: "wb-kpi-label" }, h("span", { class: "wb-kpi-long", text: label }), h("span", { class: "wb-kpi-short", text: short })), h("div", { class: "wb-kpi-row" }, figure, unit)];
-  if (withMeter) body.push(h("span", { class: "wb-meter", "aria-hidden": "true" }, meterFill));
+  if (withMeter) body.push(track);
+  if (withMeter && short === "Spend") body.push(note);       // both numbers of the day's spend, labelled, when something is reserved
   const el = h("div", { class: "pui-card wb-kpi", role: "group", "aria-label": `${label}, loading` },
     h("span", { class: `wb-kpi-tile pui-soft pui-${tone}` }, icon(iconName, 16)),
     h("div", { class: "wb-kpi-body" }, body));
-  return { el, figure, unit, meterFill, label };
+  return { el, figure, unit, meterFill, reservedFill, track, note, label };
 }
 
 export function createKpis() {
   const decisions = card("Open decisions", "inbox", "warn", false, "Decisions");
-  const runs = card("Runs today", "activity", "theme", true, "Runs");
-  const spend = card("Spend today", "credit-card", "theme", true, "Spend");
+  const runs = card(format.METER_WORDS.runs, "activity", "theme", true, "Runs");
+  const spend = card(format.METER_WORDS.spend, "credit-card", "theme", true, "Spend");
   const el = h("div", { class: "wb-kpis" }, decisions.el, runs.el, spend.el);
 
-  function meter(c, fraction) {
+  function meter(c, fraction, reserved = 0) {
     c.meterFill.style.setProperty("--wb-share", `${Math.round(fraction * 100)}%`);
-    c.meterFill.classList.toggle("is-full", fraction >= 1);
+    c.meterFill.classList.toggle("is-full", fraction + reserved >= 1);
+    c.reservedFill.style.setProperty("--wb-share", `${Math.round(reserved * 100)}%`);
+    c.track.classList.toggle("has-reserved", reserved > 0);
   }
 
   return {
     el,
-    /** sums: {decisions, runs, runsCap, usd, usdCap} or null (loading or failed); state: "loading", "error" or "ready". */
+    /** sums: {decisions, runs, runsCap, usd, usdCap, usdRecorded, usdReserved, runsTotal} or null (loading or failed); state: "loading", "error" or "ready". */
     update(sums, state = "ready") {
       if (!sums) {
         const text = state === "error" ? "-" : "...";
@@ -41,6 +47,7 @@ export function createKpis() {
           c.el.removeAttribute("title");
           c.el.setAttribute("aria-label", `${c.label}, ${state === "error" ? "not available" : "loading"}`);
           meter(c, 0);
+          c.note.textContent = "";
         }
         return;
       }
@@ -50,14 +57,19 @@ export function createKpis() {
       decisions.el.setAttribute("aria-label", `Open decisions ${sums.decisions} waiting for you`);
       runs.figure.textContent = String(sums.runs);
       runs.unit.textContent = `of ${sums.runsCap}`;
-      runs.el.title = `of ${sums.runsCap} · reference model`;
-      runs.el.setAttribute("aria-label", `Runs today ${sums.runs} of ${sums.runsCap}, reference model`);
+      runs.el.title = `of ${sums.runsCap} · ${format.METER_TIPS.runs}${sums.runsTotal ? ` Runs today: ${sums.runsTotal}` : ""}`;
+      runs.el.setAttribute("aria-label", `${format.METER_WORDS.runs} ${sums.runs} of ${sums.runsCap}`);
       meter(runs, format.share(sums.runs, sums.runsCap));
       spend.figure.textContent = format.dollars(sums.usd);
       spend.unit.textContent = `of ${format.dollars(sums.usdCap)}`;
-      spend.el.title = `of ${format.dollars(sums.usdCap)} cap · floor model dollars`;
-      spend.el.setAttribute("aria-label", `Spend today ${format.dollars(sums.usd)} of ${format.dollars(sums.usdCap)} cap, floor model dollars`);
-      meter(spend, format.share(sums.usd, sums.usdCap));
+      const reserved = format.count(sums.usdReserved);
+      const recorded = sums.usdRecorded === undefined ? sums.usd - reserved : sums.usdRecorded;
+      const note = reserved > 0 ? format.spendNote(recorded, reserved) : "";
+      spend.note.textContent = note;
+      spend.el.title = `of ${format.dollars(sums.usdCap)} cap · ${format.METER_TIPS.spend}`;
+      spend.el.setAttribute("aria-label", `${format.METER_WORDS.spend} ${format.dollars(sums.usd)} of ${format.dollars(sums.usdCap)} cap${note ? `, ${note}` : ""}`);
+      const recordedShare = format.share(recorded, sums.usdCap);
+      meter(spend, recordedShare, Math.min(format.share(reserved, sums.usdCap), 1 - recordedShare));
     },
   };
 }

@@ -198,7 +198,7 @@ export function createTasksTab(env) {
 
   return {
     el,
-    /** data: {tasks, requests, pending, loading, reload}; reload is the page's stamp, which moves when the store changed. */
+    /** data: {tasks, requests, pending, loading, reload, unaccepted}; reload is the page's stamp, which moves when the store changed; unaccepted: nothing is read (the bodies held stay). */
     update(data) {
       if (data.reload !== undefined) {
         if (reloaded !== null && data.reload !== reloaded) {     // the store changed: every body held is stale, whatever its age
@@ -208,7 +208,7 @@ export function createTasksTab(env) {
         reloaded = data.reload;
       }
       last = { tasks: data.tasks || [], requests: data.requests || [], pending: data.pending || [], loading: Boolean(data.loading) };
-      read();
+      if (!data.unaccepted) read();
       draw();
     },
   };
