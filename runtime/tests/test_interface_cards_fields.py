@@ -440,7 +440,7 @@ out.agentClose = { hash: s.hash(), errors: s.errs.slice() };
 s.view.dispose();
 
 // 4. on a phone the document is a dialog: its own close (Escape, or the dialog's cancel) goes where Close goes
-window.matchMedia = () => ({ matches: true, addEventListener() {} });
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
 s = await session(`${base}/inbox`);
 await s.go((s.openLink() || { attrs: { href: docHash } }).attrs.href);
 const dialog = walk(s.frame.el).find((n) => n.tagName === "DIALOG");
@@ -591,7 +591,7 @@ out.sheetClose = s.hash();
 s.view.dispose();
 
 // 5. on a phone: the dialog's own close goes back to the Inbox
-window.matchMedia = () => ({ matches: true, addEventListener() {} });
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
 s = await session(`${base}/inbox`);
 await s.go(s.openLink().attrs.href);
 const dialog = walk(s.frame.el).find((n) => n.tagName === "DIALOG" && (n.attrs.class || "").includes("wb-viewer-dialog"));

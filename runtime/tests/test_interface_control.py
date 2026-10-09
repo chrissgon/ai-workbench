@@ -230,6 +230,7 @@ class FakeNode {
   getAttribute(n) { return n in this.attrs ? this.attrs[n] : null; }
   removeAttribute(n) { delete this.attrs[n]; }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
+  dispatchEvent() { return true; }
   removeEventListener() {}
   fire(type, event = {}) { for (const fn of this.listeners[type] || []) fn({ preventDefault() {}, defaultPrevented: false, ...event }); }
   append(...items) { for (const it of items) { const n = it instanceof FakeNode || it instanceof FakeText ? it : new FakeText(it); if (n.parent) n.parent.children = n.parent.children.filter((c) => c !== n); n.parent = this; this.children.push(n); } }
