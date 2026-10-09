@@ -346,6 +346,7 @@ class FakeNode {
   querySelectorAll() { return []; }
   closest() { return null; }
   showModal() {} close() {}
+  dispatchEvent() { return true; }
   *walk() { yield this; for (const c of this.children) if (c instanceof FakeNode) yield* c.walk(); }
 }
 globalThis.Node = FakeNode;
@@ -354,7 +355,7 @@ document.createElement = (tag) => new FakeNode(tag);
 document.createTextNode = (t) => new FakeText(t);
 document.activeElement = null;
 globalThis.document = document;
-globalThis.window = { matchMedia: () => ({ matches: false, addEventListener() {} }), location: { hash: "#/" } };
+globalThis.window = { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { hash: "#/" } };
 
 export function accessibleName(node) {
   const label = node.attrs["aria-label"];
@@ -598,7 +599,7 @@ def test_the_one_animation_frame_request_is_inside_the_scheduler_and_the_schedul
 def test_the_engine_keeps_the_performance_rules_of_the_scene():
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert "Math.min(window.devicePixelRatio || 1, 2)" in engine, "pixel ratio at most 2"
-    assert 'addEventListener("visibilitychange"' in engine and "loop.setHidden(document.hidden)" in engine, "no rendering while the tab is hidden"
+    assert 'addEventListener("visibilitychange"' in engine and "loop.setHidden(document.hidden || paused)" in engine, "no rendering while the tab is hidden (or while a sheet covers the scene)"
     assert "(prefers-reduced-motion: reduce)" in engine and "reducedQuery.matches" in engine, "reduced motion is read at start and on change"
     assert "shadowMap.autoUpdate = false" in engine, "the shadow map is drawn again only when the geometry changes"
     assert "preserveDrawingBuffer" not in engine and "getContext(\"2d\")" not in engine, "one renderer, no drawing buffer kept, no 2D copy"
@@ -637,7 +638,7 @@ def test_a_script_writes_only_custom_properties_to_an_elements_style():
     for path in sorted(JS.rglob("*.js")):
         text = path.read_text(encoding="utf-8")
         for call in re.findall(r"\.style\.(\w+)\(([^)]*)", text):
-            ok = call[0] == "setProperty" and (re.match(r'\s*"--wb-(x|y|share)"', call[1]) or (path.name == "palette.js" and "color" in call[1]))
+            ok = call[0] == "setProperty" and (re.match(r'\s*"--wb-(x|y|share|drawer-drag)"', call[1]) or (path.name == "palette.js" and "color" in call[1]))
             assert ok, \
                 f"{path.name}: {call}: a script writes the page's own position and share properties only"
         assert not re.search(r"\.style\.\w+\s*=[^=]", text), f"{path.name} assigns a style property"

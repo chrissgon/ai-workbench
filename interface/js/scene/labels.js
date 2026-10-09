@@ -95,10 +95,13 @@ export function placeLabels(entries, project, { hidden = false, insets = null, s
 
 /**
  * The corner slot's position: the top right of the scene area, in pixels. Its right edge is the scene's own (`insets.cornerRight`, or
- * the panels' right inset when the page gives none) and its top is the free rectangle's: below the KPI row.
+ * the panels' right inset when the page gives none) and its top is the free rectangle's: below the KPI row. On a phone the page gives
+ * `cornerBottom` (the distance from the scene's bottom edge to the card's bottom edge) and `cornerLeft`: the card is then anchored at the
+ * bottom, its bottom left corner at that point (`bottom: true` tells the engine to hang it from there).
  */
 export function cornerPosition(size, insets) {
   const ins = { right: 0, top: 0, ...(insets || {}) };
+  if (ins.cornerBottom !== undefined) return { x: ins.cornerLeft !== undefined ? ins.cornerLeft : 10, y: Math.max(0, size.h - ins.cornerBottom), bottom: true };
   const right = ins.cornerRight !== undefined ? ins.cornerRight : ins.right;
   return { x: Math.max(0, size.w - right), y: Math.max(0, ins.top) };
 }
@@ -106,10 +109,12 @@ export function cornerPosition(size, insets) {
 /**
  * The insets the camera fits the scene into: when the page pins a card in the corner (`cornerRight` is given: the phone's floor
  * card), the diorama is fitted below it, so the card sits over empty space and not over the back wall. `cornerHeight` is the card's
- * measured height in pixels (0 when there is none).
+ * measured height in pixels (0 when there is none). A card anchored at the bottom (`cornerBottom`) takes its room from the bottom instead.
  */
 export function fitInsets(insets, cornerHeight, gap = 8) {
   const ins = insets || {};
-  if (!cornerHeight || ins.cornerRight === undefined) return ins;
+  if (!cornerHeight) return ins;
+  if (ins.cornerBottom !== undefined) return { ...ins, bottom: ins.cornerBottom + cornerHeight + gap };
+  if (ins.cornerRight === undefined) return ins;
   return { ...ins, top: (ins.top || 0) + cornerHeight + gap };
 }

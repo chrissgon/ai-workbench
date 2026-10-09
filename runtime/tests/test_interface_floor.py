@@ -79,6 +79,7 @@ export class FakeNode {
   contains(n) { for (let x = n; x; x = x.parent) if (x === this) return true; return false; }
   focus() { this.focused = true; globalThis.document.activeElement = this; }
   scrollIntoView() {}
+  dispatchEvent() { return true; }
   showModal() { this.open = true; }
   close() { this.open = false; }
   set textContent(v) { this.replaceChildren(String(v)); }
@@ -108,7 +109,7 @@ document.createElement = (tag) => new FakeNode(tag);
 document.createTextNode = (t) => new FakeText(t);
 document.activeElement = null;
 globalThis.document = document;
-globalThis.window = { matchMedia: () => ({ matches: false, addEventListener() {} }), location: { hash: "#/" } };
+globalThis.window = { matchMedia: () => ({ matches: false, addEventListener() {}, removeEventListener() {} }), location: { hash: "#/" } };
 export async function settle() { for (let i = 0; i < 8; i++) await new Promise((r) => setTimeout(r, 0)); }
 export function find(root, selector) { return root.querySelector(selector); }
 export function all(root, selector) { return root.querySelectorAll(selector); }
