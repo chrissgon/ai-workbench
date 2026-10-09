@@ -178,9 +178,10 @@ def test_the_commit_is_one_made_by_the_code_provider_and_no_module_of_the_runtim
         for name in allowed.get(path.name, ()):
             text = re.sub(name + r' = """.*?"""', "", text, flags=re.S)  # the literal scripts of the copy
         code = "\n".join(line for line in text.split('"""')[0::2])
-        # the one closed table that maps the effect word `push` to the code provider's verb (WP-R.1): a word of the
-        # side-effect vocabulary as a dictionary key, no git command
-        code = re.sub(r"^POLICY_CALLS = \{.*$", "", code, flags=re.M)
+        # the one closed table that maps the effect words to their kinds (CONS-3): a word of the side-effect
+        # vocabulary as a dictionary key, no git command
+        if path.name == "effects.py":  # only the registry's own module may spell the word, never another one
+            code = re.sub(r"^KINDS = \{.*$", "", code, flags=re.M)
         assert not re.search(r"""["']push["']|git[^\n]{0,40}\bpush\b""", code), path.name
         assert not re.search(r"""["']git["'][^\n]*["']commit["']""", code), path.name
     case = gate_project(tree)
@@ -276,6 +277,7 @@ def test_a_kind_is_a_module_and_a_row_of_the_registry_and_ops_py_names_none(tree
     kind = types.ModuleType("standin_effect_kind")
     real = effect_pull_request
     kind.PROVIDER_CLASS = real.PROVIDER_CLASS
+    kind.GATE = True  # a kind the gate path may open (the contract at the head of runtime/effects.py)
     for name in ("refusal", "head", "prepare", "parse", "mismatch", "document", "body", "title", "describe", "verify",
                  "unconfigured", "summary"):
         setattr(kind, name, getattr(real, name))
@@ -317,3 +319,59 @@ def test_ops_py_names_no_effect_kind():
         if isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docstrings:
             code.append(node.value)
     assert not [t for t in code if "open-pr" in t or re.search(r"pull request|pull-request", t)], "ops.py spells an effect kind"
+
+
+# --- the one registry, keyed by the side-effect vocabulary (CONS-3) ------------------------------------------------
+
+
+def vocabulary() -> tuple:
+    """The side-effect words, read from their one source the way ops._effect_words reads them."""
+    found = ops.SIDE_EFFECTS_LINE.search((st.REPO / "scripts" / "validate.py").read_text(encoding="utf-8"))
+    return tuple(word.strip().strip('"') for word in found.group(1).split(",") if word.strip())
+
+
+def test_the_registry_holds_every_kind_keyed_by_a_word_of_the_side_effect_vocabulary():
+    assert set(effects.KINDS) <= set(vocabulary())
+    assert effects.KINDS == {"create": "effect_pull_request", "push": "effect_commit"}
+
+
+def test_every_kind_exposes_describe_and_the_policy_names_when_it_may_run_under_a_policy():
+    for word in effects.KINDS:
+        kind = effects.module_for(word)
+        assert callable(kind.describe), word
+        assert isinstance(kind.POLICY, bool) and isinstance(kind.PROVIDER_CLASS, str), word
+        if kind.POLICY:
+            for name in ("policy_platform", "policy_effect", "policy_argv"):
+                assert callable(getattr(kind, name)), f"{word} runs under a policy and lacks {name}"
+    assert effects.module_for("create").POLICY is False and effects.module_for("push").POLICY is True
+    assert effects.policy_kinds() == ["push"]
+
+
+@pytest.mark.parametrize("word", ["nothing", "publish", "", None, 7])
+def test_a_word_with_no_kind_is_a_usage_error_naming_the_kinds(word):
+    with pytest.raises(effects.EffectError) as unknown:
+        effects.module_for(word)
+    assert unknown.value.kind == "usage" and "create, push" in unknown.value.reason
+
+
+def test_the_shape_of_a_handed_over_document_and_the_operations_own_flags_live_in_the_registry_module():
+    assert effects.EFFECT_KEYS == ("policy", "kind", "target", "files", "items", "idempotency_key", "payload_sha256", "args")
+    assert effects.RESERVED_FLAGS == ("--confirmed", "--dry-run", "--allow", "--idempotency-key")
+    text = (st.REPO / "runtime" / "ops.py").read_text(encoding="utf-8")
+    assert not re.search(r"^(EFFECT_KEYS|RESERVED_FLAGS|[A-Z_]*_CALLS) =", text, re.M)  # no table of kinds beside the registry
+    assert not [name for name in dir(ops) if name.endswith("_CALLS")]
+
+
+def test_a_gate_naming_a_kind_that_only_the_policy_path_uses_opens_a_review_never_an_effect(tree):
+    manifest = tree["tree"] / "skills" / "demo-gate" / "evals" / "runtime-manifest.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest.write_text(json.dumps({**data, "gate": {**data["gate"], "effect": "push"}}), encoding="utf-8")
+    skill_file = manifest.parent.parent / "SKILL.md"
+    skill_file.write_text(skill_file.read_text(encoding="utf-8").replace("side_effects: [create]", "side_effects: [push]"),
+                          encoding="utf-8")
+    assert effects.module_for("push").GATE is False and effects.module_for("create").GATE is True
+    case = gate_project(tree)
+    item = case["item"]
+    assert case["out"]["ending"] == "gate" and item["kind"] == "review"
+    assert item["body"].startswith("No effect was opened: the gate's effect 'push' names no kind of effect")
+    assert item["payload_sha256"] is None and provider_calls(tree) == []

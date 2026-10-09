@@ -225,7 +225,7 @@ The names fixed for this work. Use each exactly.
 | Approve | Only the person approves; an approval is a row of the store's `approvals` table, and "approved" in the state file is written only by code |
 | Milestone | A delivery the person reviews even in the `milestones` mode; a mandatory milestone is held in every mode |
 | Effect | An action outside the project (today a commit and a pull request), shown at a skill's confirmation gate and executed by code once approved by its hash |
-| Effect kind | What differs between two effects, written as one module of `runtime/` and a row of `effects.KINDS`; today the pull request (`runtime/effect_pull_request.py`) |
+| Effect kind | What differs between two effects, written as one module of `runtime/` and a row of `effects.KINDS`, keyed by the side-effect words; today the pull request (`create`, `runtime/effect_pull_request.py`) and the commit of files (`push`, `runtime/effect_commit.py`) |
 | Standing approval | The approval of a policy file by its hash, with bounds and an expiry of at most 365 days (a row of the `approvals` table with scope `standing`); `autonomy.covers` checks every bound before an effect runs under it |
 | Contained run | One run of one skill in the eval container for a caller that is not a task (the social agent's run): `ops.contained_run`, one attempt, never on the open network, only the reply comes back |
 | Effect hash | The sha256 of `<run folder>/effect.json`, which binds the repository, the base, the head, the title, the body and every file of the change set |
