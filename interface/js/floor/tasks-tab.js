@@ -1,19 +1,21 @@
 // The Tasks tab of a floor (adjustment A-8; handoff floor.md and lobby.md, "Tasks tab"): every task of the project whose agent is
 // this floor's, in groups by state (running, waiting for you, ready, planned or blocked, done, failed, cancelled), each group with
 // its count. A row shows the number, the title, the skill, the state, the request, the age and the actions its state allows: Retry
-// on a failed or blocked task, "Open in the Inbox" when a decision waits. A done task shows the paths it returned (each with
+// on a failed or blocked task (a blocked one with the sentence the runtime stored beside it, A-31), "Open in the Inbox" when a decision waits,
+// "Go ahead" and "Drop the after" on a planned task that waits for another (A-29, and its reasons on the row). A done task shows the paths it returned (each with
 // "Open" under docs/); a failed one its failure word and the ending of its last run. A row expands into the task's runs, the block
 // the Agent tab draws for its current task. The rows come from `status`; `task` is read for the first twelve rows while the tab is
 // open (the failed ones first, then the done ones, then the rest, since their failure and their paths are only in the body) and for a row
-// when it is expanded. A body is kept until the page's reload stamp moves (the store changed) or the task's state changes. Every value is text. The one write is Retry, sent through
-// the client the view hands in (floor/actions.js), never through a client of this file.
+// when it is expanded. A body is kept until the page's reload stamp moves (the store changed) or the task's state changes. Every value is text. The writes are Retry and the two
+// go-aheads, sent by task-actions.js through the client the view hands in (floor/actions.js), never through a client of this file.
 
 import * as client from "../api.js";
 import { fill, h } from "../dom.js";
 import { arrowNav } from "../frame/arrows.js";
 import { runBlock } from "./run-block.js";
+import { createTaskActions } from "./task-actions.js";
 import { groupTasks, rowOf } from "./tasks-model.js";
-import { busyLine, chip, errorText, notice, ring } from "./widgets.js";
+import { busyLine, chip } from "./widgets.js";
 
 const MAX_READS = 12;       // the first rows read without being expanded (the Inbox reads twelve too)
 export const NONE_TEXT = "This agent has no task yet.";
@@ -29,7 +31,7 @@ function keepFocus(container, render) {
 }
 
 /**
- * Create the tab. env: {project, now() (a Date), refresh() (read the page's data again), api: {retry} (floor/actions.js),
+ * Create the tab. env: {project, now() (a Date), refresh() (read the page's data again), api: {retry, goAhead} (floor/actions.js),
  * links: {request(requestId), inbox(pendingId or null), open(path)} (hashes built with the router)}.
  * Returns {el, update({tasks, requests, pending, loading})}: tasks are floor-model.agentTasks(...) rows, requests and pending
  * the status's, loading true before the first read.
@@ -43,8 +45,7 @@ export function createTasksTab(env) {
   const reading = new Set();
   const expanded = new Set();
   const opened = new Map();        // group id -> the person's choice, over "open when it holds a task"
-  const retrying = new Set();
-  const retryError = new Map();
+  const actions = createTaskActions({ project: env.project, api: env.api, refresh: () => env.refresh(), redraw: () => draw(), done: (id) => bodies.delete(id) });
   let shown = "";
   let reloaded = null;             // the page's reload stamp last seen; null until one is given
   let changes = 0;                 // how many times it moved: a read that began before the last move is not fresh when it ends
@@ -86,23 +87,6 @@ export function createTasksTab(env) {
     }
   }
 
-  // --- Retry -----------------------------------------------------------------------------------------------------------------
-  async function retryTask(id) {
-    if (retrying.has(id)) return;
-    retrying.add(id);
-    retryError.delete(id);
-    draw();
-    try {
-      await env.api.retry(env.project, id);
-      bodies.delete(id);
-    } catch (e) {
-      retryError.set(id, errorText(e));
-    }
-    retrying.delete(id);
-    draw();
-    env.refresh();
-  }
-
   // --- drawing ---------------------------------------------------------------------------------------------------------------
   function toggleRow(task) {
     if (expanded.has(task.id)) expanded.delete(task.id);
@@ -136,25 +120,18 @@ export function createTasksTab(env) {
       row.skill ? h("code", { class: "wb-task-skill", text: row.skill }) : null,
       row.request ? h("span", { class: "wb-task-request" }, h("a", { class: "pui-link pui-theme", href: env.links.request(row.request.id), text: row.request.label })) : null,
       h("span", { class: "wb-task-age", text: row.age }));
-    const actions = row.actions.map((action) => {
-      if (action.kind === "inbox") return h("a", { class: "pui-link pui-theme wb-task-inbox", href: env.links.inbox(action.pending), "data-key": `inbox-${task.id}`, text: "Open in the Inbox" });
-      const busy = retrying.has(task.id);
-      const button = h("button", { class: "pui-btn pui-surface pui-outline wb-small-button wb-task-retry", type: "button", "data-key": `retry-${task.id}`, "aria-label": `Retry task ${task.id}`, "aria-busy": busy ? "true" : null },
-        busy ? ring(true) : null, busy ? "Retrying..." : "Retry");
-      button.disabled = busy;
-      button.addEventListener("click", () => retryTask(task.id));
-      return button;
-    });
-    const showNote = row.note && (task.state === "failed" || task.state === "blocked" || task.state === "cancelled");
+    const buttons = actions.nodes(task, { pending: last.pending, links: env.links });
+    const showNote = row.note && (task.state === "failed" || task.state === "cancelled");     // a blocked task's sentence stands beside Retry
     const failure = row.failure ? `${row.failure.failure}${row.failure.ending ? ` · ${row.failure.ending}` : ""}` : "";
     return h("li", { class: "wb-task", "data-task": String(task.id) },
       h("div", { class: "wb-task-head" }, toggle, chip(row.word, row.tone)),
       meta,
       failure ? h("p", { class: "wb-task-failure", text: failure }) : null,
+      row.waits.map((line) => h("p", { class: "wb-task-waits wb-muted", text: line })),
       showNote ? h("p", { class: "wb-task-note wb-muted", text: row.note }) : null,
       row.returned.length ? h("ul", { class: "wb-paths wb-task-paths" }, row.returned.map(pathRow)) : null,
-      actions.length ? h("div", { class: "wb-task-actions" }, actions) : null,
-      retryError.has(task.id) ? notice(retryError.get(task.id), "error") : null,
+      buttons.length ? h("div", { class: "wb-task-actions" }, buttons) : null,
+      actions.failure(task.id),
       h("div", { class: "wb-task-detail", id: detailId, hidden: !isOpen }, isOpen ? detailOf(task, row) : null));
   }
 
@@ -183,8 +160,8 @@ export function createTasksTab(env) {
     const groups = groupTasks(last.tasks);
     const now = env.now();
     // the signature is everything a row draws: a poll that changed nothing draws nothing, so it never takes the focus away
-    const key = JSON.stringify([groups.map((g) => [g.id, g.count, g.tasks.map((t) => [t.id, t.title, t.skill, t.state, t.note, t.requestId])]), last.requests.map((r) => [r.id, r.title]),
-      last.pending.map((p) => [p.id, p.task_id]), [...bodies].map(([id, v]) => [id, Boolean(v.body), v.body ? [v.body.runs, v.body.pending, v.body.task] : null]), [...expanded].sort(), [...opened], [...retrying], [...retryError],
+    const key = JSON.stringify([groups.map((g) => [g.id, g.count, g.tasks.map((t) => [t.id, t.title, t.skill, t.state, t.note, t.requestId, t.waiting_for])]), last.requests.map((r) => [r.id, r.title]),
+      last.pending.map((p) => [p.id, p.task_id]), [...bodies].map(([id, v]) => [id, Boolean(v.body), v.body ? [v.body.runs, v.body.pending, v.body.task] : null]), [...expanded].sort(), [...opened], actions.signature(),
       [...reading], last.tasks.map((t) => (bodies.get(t.id) && bodies.get(t.id).body ? rowOf(t, { requests: last.requests, pending: last.pending, body: bodies.get(t.id).body, now }).age : ""))]);
     if (key === shown) return;
     shown = key;

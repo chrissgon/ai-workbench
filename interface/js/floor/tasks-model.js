@@ -5,6 +5,7 @@
 // action is a word the state allows, and a value that is not known is shown as "unknown" or as a dash.
 
 import { ENDING, FAILURE, openable, stateTone, taskWord } from "../floor-model.js";
+import { waitKinds, waitLines, waitingLabel } from "../waits.js";
 import { agoText } from "./widgets.js";
 
 /** The groups, in the order the tab draws them. A task belongs to the group that lists its state. */
@@ -40,8 +41,9 @@ export function groupTasks(tasks) {
 }
 
 /**
- * The actions a task's state allows: Retry on failed or blocked; "Open in the Inbox" when a decision waits (the task's oldest
- * decision of `pending`, or `null` when none is found, which points at the tab); nothing else (cancel is the request's).
+ * The actions a task's state allows, the one source of both the Tasks tab and the Agent tab: Retry on failed or blocked; "Open in the Inbox"
+ * when a decision waits (the task's oldest decision of `pending`, or `null` when none is found, which points at the tab); "Go ahead" on a
+ * planned or ready task with a derived wait open and "Drop the after" on one with an `after` wait (A-29); nothing else (cancel is the request's).
  */
 export function actionsFor(task, pending) {
   if (task.state === "failed" || task.state === "blocked") return [{ kind: "retry" }];
@@ -49,7 +51,16 @@ export function actionsFor(task, pending) {
     const found = (Array.isArray(pending) ? pending : []).find((item) => item.task_id === task.id);
     return [{ kind: "inbox", pending: found ? found.id : null }];
   }
+  if (task.state === "planned" || task.state === "ready") {
+    const kinds = waitKinds(task);
+    return [kinds.goAhead ? { kind: "go-ahead" } : null, kinds.dropAfter ? { kind: "drop-after" } : null].filter(Boolean);
+  }
   return [];
+}
+
+/** The sentence a blocked task shows beside Retry (A-31): its note, the missing-input line the runtime stored; "" for any other state. */
+export function blockedNote(task) {
+  return task.state === "blocked" && typeof task.note === "string" ? task.note.trim() : "";
 }
 
 /**
@@ -103,7 +114,7 @@ export function rowOf(task, ctx) {
   return {
     id: task.id, number: `#${task.id}`, title: task.title || task.key || `Task ${task.id}`, skill: task.skill || "", state: task.state, word: taskWord(task.state), tone: stateTone(task.state),
     request: request ? { id: request.id, title: request.title || "", label: `Request #${request.id}${request.title ? ` ${request.title}` : ""}` } : null,
-    age: age || NO_AGE, note: task.note || "", actions: actionsFor(task, ctx.pending),
+    age: age || NO_AGE, note: task.note || "", actions: actionsFor(task, ctx.pending), waiting: waitingLabel(task), waits: waitLines(task),
     returned: task.state === "done" ? returnedPaths(body) : [], failure: task.state === "failed" ? failureLine(body) : null,
     runs: body && Array.isArray(body.runs) ? [...body.runs].reverse() : [], hasBody: Boolean(body),
   };

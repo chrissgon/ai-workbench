@@ -34,6 +34,7 @@ export function createInbox(env) {
       items.set(id, fresh);
       return fresh;
     },
+    task: (id) => api.task(env.project, id),      // a review card reads its task for the file-drop line (A-30)
     changed: () => {
       env.refresh();
       draw();

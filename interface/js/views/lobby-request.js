@@ -64,7 +64,8 @@ export function createBlock({ api, project, request, body, open, now, signal, on
     if (onExpand) onExpand(!fullText.hidden);
   });
   const notice = routeNotice
-    ? h("div", { class: "wb-lobby-notice-card", role: "alert" }, h("strong", { class: "wb-lobby-notice-title", text: routeNotice.title }), h("span", { text: routeNotice.text })) : null;
+    ? h("div", { class: `wb-lobby-notice-card${routeNotice.tone === "info" ? " is-info" : ""}`, role: routeNotice.tone === "info" ? "status" : "alert" },
+      h("strong", { class: "wb-lobby-notice-title", text: routeNotice.title }), h("span", { text: routeNotice.text })) : null;
   const cancel = line.cancellable
     ? h("button", { class: "pui-btn pui-link pui-error wb-lobby-cancel-link", type: "button", text: "Cancel request", "aria-label": `Cancel request ${request.id}` }) : null;
   const route = line.routable

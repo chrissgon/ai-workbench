@@ -72,6 +72,11 @@ export function floorHash(project, agent, tab, pending) {
   return `#/p/${project}/floor/${agent}` + (tab ? `/${tab}` : "") + (tab && pending !== undefined && pending !== null ? `/${pending}` : "");
 }
 
+/** Where an agent's floor is: the Lobby for the planning agent (or none), the agent's floor for any other. */
+export function agentHash(project, agent) {
+  return !agent || agent === "planning" ? lobbyHash(project) : floorHash(project, agent);
+}
+
 /** The hash of a document in an agent's desk: the path is one percent-encoded segment. */
 export function deskHash(project, agent, path) {
   return `#/p/${project}/floor/${agent}/desk` + (path ? `/${encodeURIComponent(path)}` : "");

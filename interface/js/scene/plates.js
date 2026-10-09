@@ -48,10 +48,15 @@ function meter(label, text, share, full, note, tip, reservedShare = 0) {
     note ? h("span", { class: "wb-plate-note", text: note }) : null);
 }
 
-/** The chips of a plate (A-12), in this order and each only when its count is not zero: done, running, queued, left (planned or blocked). */
+/**
+ * The chips of a plate (A-12), in this order and each only when its count is not zero: done, running, queued, left (planned or blocked); then, when a
+ * planned task waits for another (A-29), one more chip, "waiting for #10" (or "2 waiting"), whose tooltip holds each reason. The waiting tasks are counted in "left".
+ */
 export function chipNodes(p) {
   const chips = [["done", p.done, "pui-success"], ["running", p.running, "pui-theme"], ["queued", p.queued, "pui-surface"], ["left", p.left, "pui-muted"]];
-  return chips.filter(([, count]) => count > 0).map(([word, count, tone]) => h("span", { class: `pui-badge ${tone} pui-soft pui-rounded-full`, text: `${count} ${word}` }));
+  const nodes = chips.filter(([, count]) => count > 0).map(([word, count, tone]) => h("span", { class: `pui-badge ${tone} pui-soft pui-rounded-full`, text: `${count} ${word}` }));
+  if (p.waits && p.waits.text) nodes.push(h("span", { class: "pui-badge pui-muted pui-outline pui-rounded-full wb-chip-waiting", title: p.waits.title || null, text: p.waits.text }));
+  return nodes;
 }
 
 /**

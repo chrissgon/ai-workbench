@@ -109,7 +109,7 @@ export function createTrack({ onOpenSteps, onSelectRequest = () => {} }) {
     return h("ol", { class: `pui-timeline${vertical ? "" : " pui-group-row"} wb-steps`, "aria-label": `Request ${model.request.id}, ${model.request.title}, ${model.doneCount} of ${model.total} steps done` },
       model.steps.map((s) => h("li", { class: "pui-checkpoint wb-step" },
         nodeIcon(s.state, size),
-        h("a", { class: "wb-step-text", href: s.link, "aria-label": s.name },
+        h("a", { class: "wb-step-text", href: s.link, "aria-label": s.name, title: s.waits ? s.waits.join("; ") : null },
           h("strong", { class: "wb-step-title", text: s.title }), h("span", { class: "wb-step-sub", text: s.sub })))));
   }
 

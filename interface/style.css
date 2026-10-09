@@ -459,8 +459,10 @@ a.wb-crumb:hover { text-decoration: underline; }
 .wb-buildings:focus-within, .wb-frame.no-scene .wb-buildings { width: 240px; height: auto; margin: 0; overflow: visible; clip-path: none; }
 .wb-buildings-head { font-size: 12px; }
 .wb-building-list { padding: 6px; display: grid; gap: 2px; list-style: none; }
-.wb-building-item { padding: 0; }
+.wb-building-item { display: flex; align-items: center; gap: 4px; padding: 0; }
 .wb-building-link {
+  flex: 1 1 auto;
+  min-width: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto 14px;
   grid-template-areas: "dot name badge chev" "dot sub badge chev";
@@ -693,6 +695,8 @@ a.wb-now-title:hover { text-decoration: underline; }
   }
   .wb-drawer-scroll > .wb-waiting { border-top: var(--pui-border-width) solid var(--pui-border); }
   .wb-buildings:focus-within { width: auto; }
+  /* the project controls are the first part of the sheet, hidden while it is collapsed */
+  .wb-city-drawer > .wb-city-projects { position: static; width: auto; max-height: none; border-width: 0 0 var(--pui-border-width); border-radius: 0; box-shadow: none; overflow: visible; flex: none; }
   .wb-wait-head { padding: 11px 14px; }
   .wb-wait-list { max-height: none; }
   .wb-wait-row {
@@ -1173,16 +1177,21 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-plan-table { font-size: 12px; }
 .wb-plan-table th, .wb-plan-table td { padding: 4px; }
 .wb-skill { font-family: var(--wb-font-mono); font-size: 11px; overflow-wrap: normal; word-break: normal; }
-.wb-resolved { display: flex; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; }
+.wb-resolved { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; font-size: 12px; }
 .wb-resolved-list { display: grid; gap: 6px; }
 /* the library's accordion item, one surface for the header and the body (A-5): the item holds the ground and the panel's radius, the header and the body paint nothing */
 .pui-accordion-item.wb-resolved-item, .pui-accordion-item.wb-resolved-item[open] { border-color: transparent; border-radius: var(--pui-radius); background-color: var(--wb-sunken); }
 .wb-resolved-item > summary { cursor: pointer; }
 .wb-resolved-body { padding: 0 12px 10px; }
-.wb-resolved-title { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+.wb-resolved-title { flex: 1 1 8em; min-width: 0; overflow-wrap: anywhere; }
 .wb-resolved > .wb-muted { flex: none; white-space: nowrap; }
-.wb-card-done { margin: 0; }
-.wb-card-result { display: grid; gap: 2px; flex: 1 1 100%; font-size: 12px; }
+/* the done card's title is a sentence, not an age: it takes the room that is left and wraps (it is a `.wb-muted` child too, so it must be named after the rule above) */
+.wb-resolved > .wb-card-done-title { flex: 1 1 8em; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+/* A-26: the card wraps, and the result stands on its own line under the chip and the title, full width: a sentence is prose, only an id is mono */
+.wb-card-done { margin: 0; flex-wrap: wrap; }
+.wb-card-result { display: grid; gap: 4px; flex: 1 1 100%; flex-basis: 100%; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.wb-card-result > .wb-card-line { margin: 0; }
+.wb-card-result > .mono { overflow-wrap: anywhere; }
 .wb-busy-card { padding: 12px; font-size: 13px; }
 .wb-request-line { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
 .wb-cancel-link { margin-left: auto; padding: 0; color: var(--wb-ink-error); text-decoration: none; }
@@ -1206,6 +1215,8 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-state-block.is-error { display: grid; gap: 6px; border-color: var(--pui-error); }
 .wb-refusal { display: grid; gap: 6px; padding: 10px 12px; border: 1px solid var(--pui-error); border-radius: var(--pui-radius); background-color: var(--wb-sunken); font-size: 12px; }
 .wb-refusal-title { color: var(--wb-ink-error); font-size: 13px; }
+.wb-refusal.is-info { border-color: var(--pui-border); }
+.wb-refusal.is-info .wb-refusal-title { color: inherit; }
 
 /* the viewer */
 .wb-viewer { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; min-height: 0; box-shadow: var(--wb-elev); }
@@ -1509,3 +1520,47 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-task-inbox, .wb-task-request a, .wb-task-paths a { display: inline-flex; align-items: center; min-height: 44px; }
   .wb-task-toggle { align-items: center; }
 }
+
+
+/* ADJ-I2: waits, queued lines, the card extras, the image viewer, add a project (A-22 to A-33) */
+.wb-task-waits { margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.wb-task-actions > .wb-task-effect { flex: 1 1 12em; min-width: 0; font-size: 12px; overflow-wrap: anywhere; }
+.wb-task-actions > .wb-task-note { flex: 1 1 12em; min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.wb-current-actions { display: grid; gap: 6px; }
+.wb-other-row { flex-wrap: wrap; }
+.wb-other-row > .wb-task-effect { flex: 1 1 100%; margin: 0; font-size: 12px; }
+.wb-other-row > .wb-task-note { flex: 1 1 100%; margin: 0; font-size: 12px; overflow-wrap: anywhere; }
+.wb-chip-waiting { font-weight: 400; }
+.wb-waits { display: grid; gap: 6px; padding: 10px 12px; border: var(--pui-border-width) solid var(--pui-warn); border-radius: var(--pui-radius); background-color: var(--wb-sunken); font-size: 12px; }
+.wb-waits-title { font-size: 13px; }
+.wb-waits-list { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.wb-waits-item { display: grid; gap: 2px; min-width: 0; overflow-wrap: anywhere; }
+.wb-waits-label { display: flex; align-items: center; gap: 8px; min-width: 0; cursor: pointer; }
+.wb-waits-task { min-width: 0; font-weight: 600; overflow-wrap: anywhere; }
+.wb-waits-reasons { min-width: 0; overflow-wrap: anywhere; }
+.wb-waits-list.is-missing .wb-waits-item, .wb-waits-list.is-cycles .wb-waits-item { color: var(--wb-ink-warn); }
+/* a checked box is drawn here, with tokens and no image: the library's draws its mark with a data: image, which the page's policy refuses */
+.wb-checkbox { appearance: none; box-sizing: border-box; flex: none; width: 16px; height: 16px; min-width: 16px; margin: 0; border: var(--pui-border-width) solid var(--pui-border); border-radius: 3px; cursor: pointer; }
+.wb-checkbox:checked { border-color: var(--pui-theme); box-shadow: inset 0 0 0 3px var(--pui-bg), inset 0 0 0 12px var(--pui-theme); }
+.wb-checkbox:focus-visible { outline: 2px solid var(--pui-theme); outline-offset: 2px; }
+.wb-checkbox:disabled { cursor: not-allowed; opacity: 0.5; }
+.wb-lobby-run { margin: 0; padding: 8px 10px; border: var(--pui-border-width) solid var(--pui-border); border-radius: var(--pui-radius); background-color: var(--wb-sunken); font-size: 12px; overflow-wrap: anywhere; }
+.wb-lobby-run[hidden] { display: none; }
+.wb-lobby-notice-card.is-info { border-color: var(--pui-border); }
+.wb-msg.is-queued .wb-msg-meta { color: var(--wb-ink-warn); }
+.wb-desk-kind { font-size: 12px; }
+.wb-viewer-figure { display: grid; justify-items: center; padding: 8px; border-radius: var(--pui-radius); background-color: var(--wb-sunken); }
+.wb-viewer-image { display: block; max-width: 100%; height: auto; }
+.wb-viewer-caption { margin: 8px 0; font-size: 12px; overflow-wrap: anywhere; }
+.wb-route-controls { display: grid; gap: 8px; }
+.wb-route-actions { flex-wrap: wrap; }
+.wb-card-hand { display: grid; gap: 6px; }
+.wb-raw-reply .wb-pre { margin: 0 0 8px; }
+.wb-drop-line { margin: 0 0 6px; padding: 6px 8px; border-radius: var(--pui-radius); background-color: var(--wb-sunken); color: var(--wb-ink-warn); font-size: 12px; overflow-wrap: anywhere; }
+.wb-city-projects { position: absolute; top: var(--wb-kpi-top); right: var(--wb-edge); z-index: 4; width: min(24rem, calc(100vw - 2 * var(--wb-edge))); max-height: calc(100% - var(--wb-kpi-top) - var(--wb-wait-bottom) - var(--wb-wait-h, 0px) - 2 * var(--wb-edge)); overflow-y: auto; box-shadow: var(--wb-elev); }
+.wb-city-projects-bar { display: flex; flex-wrap: wrap; gap: 6px; padding: 6px; }
+.wb-add-project { display: grid; gap: 8px; padding: 8px; border-top: var(--pui-border-width) solid var(--pui-border); min-width: 0; }
+.wb-add-project[hidden] { display: none; }
+.wb-add-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.wb-add-form { display: grid; gap: 8px; min-width: 0; }
+.wb-leave-project { padding: 0 8px; font-size: 12px; }

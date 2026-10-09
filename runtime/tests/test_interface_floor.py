@@ -708,7 +708,8 @@ def test_the_agent_tab_sends_set_mode_retry_and_the_hand_over_as_one_request_eac
     assert got["standing"] is True
     assert got["meters"] == [["Reference-model runs today 5 / 12", 1], ["Floor-model spend today $1.87 / $4.00", 1], ["Queued 0", 0]], "Queued has no cap, so no track; A-20: the meters say which model they count"
     assert got["current"].startswith("#4 Task 4Running") and "skill s" in got["current"] and "Run#1 s 1.0.0" in got["current"]
-    assert [o.split("Retry")[0] for o in got["others"]] == ["#7 Task 7Waiting for you", "#6 Task 6Blocked", "#5 Task 5Failed"], "other tasks, newest first"
+    # A-32: the other tasks carry the actions of a Tasks-tab row, so a waiting one has "Open in the Inbox" after its chip
+    assert [o.split("Retry")[0] for o in got["others"]] == ["#7 Task 7Waiting for youOpen in the Inbox", "#6 Task 6Blocked", "#5 Task 5Failed"], "other tasks, newest first"
     assert got["retry"] == [["Retry task 6", "Retry"], ["Retry task 5", "Retry"]], "Retry only on a failed or blocked task, named by its task"
     assert got["hint"] == "To task #6. At most 25 MiB.", "the hand-over target is the newest failed or blocked task, named in the hint"
     assert [c[1:] for c in got["setMode"]["calls"]] == [["p", "engineering", "stopped"]], "Stop agent sends its word, once"

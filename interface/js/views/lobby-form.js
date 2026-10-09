@@ -1,5 +1,5 @@
 // The "New request" disclosure: a text area, the Flow select (the first option lets the planning agent route it, then one option per
-// flow of `flows`, labelled by the flow's own title), an optional title and "Create request". It reports what was typed and chosen;
+// flow of `flows`, labelled by the flow's own title), an optional title, an optional "After request #" (A-29: the request waits for that one) and "Create request". It reports what was typed and chosen;
 // that the request is sent without a flow and routed in a second call is the caller's (lobby-actions.js). Closed by default.
 
 import { h } from "../dom.js";
@@ -10,9 +10,11 @@ export function createForm({ onCreate }) {
   const textId = "wb-new-text";
   const flowId = "wb-new-flow";
   const titleId = "wb-new-title";
+  const afterId = "wb-new-after";
   const text = h("textarea", { class: "pui-input wb-lobby-field", id: textId, rows: "3", autocomplete: "off" });
   const flow = h("select", { class: "pui-input wb-lobby-field", id: flowId }, h("option", { value: "", text: AUTO_FLOW }));
   const title = h("input", { class: "pui-input wb-lobby-field", id: titleId, type: "text", autocomplete: "off" });
+  const after = h("input", { class: "pui-input wb-lobby-field", id: afterId, type: "text", inputmode: "numeric", autocomplete: "off", placeholder: "Request number" });
   const create = h("button", { class: "pui-btn pui-theme pui-outline", type: "submit", text: "Create request" });
   const error = h("div", { class: "notice error wb-card-error", role: "alert", hidden: true });
   const busy = h("div", { class: "wb-lobby-busy", role: "status", hidden: true }, h("span", { class: "wb-lobby-ring", "aria-hidden": "true" }), h("span", { text: "Creating the request..." }));
@@ -20,6 +22,8 @@ export function createForm({ onCreate }) {
     h("label", { class: "pui-field-group", for: textId }, h("span", { text: "What do you want done?" }), text),
     h("label", { class: "pui-field-group", for: flowId }, h("span", { text: "Flow" }), flow),
     h("label", { class: "pui-field-group", for: titleId }, h("span", { text: "Title (optional)" }), title),
+    h("label", { class: "pui-field-group", for: afterId }, h("span", { text: "After request # (optional)" }), after,
+      h("small", { class: "wb-hint", text: "The request waits until that request is done or cancelled." })),
     error, busy,
     h("div", { class: "wb-form-row" }, create),
     h("p", { class: "wb-form-hint", text: FORM_HINT }));
@@ -31,7 +35,7 @@ export function createForm({ onCreate }) {
   body.addEventListener("submit", (event) => {
     event.preventDefault();
     if (creating) return;
-    onCreate({ text: text.value, flow: flow.value, title: title.value });
+    onCreate({ text: text.value, flow: flow.value, title: title.value, ...(after.value.trim() ? { after: after.value } : {}) });
   });
 
   return {
@@ -46,7 +50,7 @@ export function createForm({ onCreate }) {
     set(partial) {
       state = { ...state, ...partial };
       creating = Boolean(state.creating);
-      for (const control of [text, flow, title, create]) control.disabled = creating || Boolean(state.disabled);
+      for (const control of [text, flow, title, after, create]) control.disabled = creating || Boolean(state.disabled);
       create.textContent = creating ? "Creating..." : "Create request";
       if (creating) create.setAttribute("aria-busy", "true");
       else create.removeAttribute("aria-busy");
@@ -63,6 +67,7 @@ export function createForm({ onCreate }) {
     reset() {
       text.value = "";
       title.value = "";
+      after.value = "";
       flow.value = "";
     },
     open(on) {

@@ -486,10 +486,12 @@ def test_the_tab_files_exist_and_the_agent_tab_and_the_tasks_tab_import_the_same
     assert "function runBlock" not in agent, "the Agent tab keeps no run block of its own"
 
 
-def test_the_tasks_tab_sends_only_retry_through_its_environment_and_reads_only_task():
+def test_the_tasks_tab_sends_only_retry_and_go_ahead_through_its_environment_and_reads_only_task():
     text = TAB.read_text(encoding="utf-8")
-    assert not re.search(r'import\s*\{[^}]*\}\s*from\s*"\.\./api\.js"', text), "no operation of the client is imported by name"
-    assert set(re.findall(r"\benv\.api\.(\w+)\(", text)) == {"retry"}, "the only write is Retry, through the client the view hands in"
+    actions = (TAB.parent / "task-actions.js").read_text(encoding="utf-8")        # A-32: the one source of the actions of the Tasks tab and the Agent tab
+    assert not re.search(r'import\s*\{[^}]*\}\s*from\s*"\.\./api\.js"', text + actions), "no operation of the client is imported by name"
+    assert "createTaskActions" in text and not set(re.findall(r"\benv\.api\.(\w+)\(", text)), "the tab sends nothing itself: its actions do"
+    assert set(re.findall(r"\benv\.api\.(\w+)\(", actions)) == {"retry", "goAhead"}, "the only writes are Retry and Go ahead (A-29), through the client the view hands in"
     assert set(re.findall(r"\bclient\.(\w+)\(", text)) == {"task"}, "the only read is a task's body"
     for forbidden in ("innerHTML", "insertAdjacentHTML", "document.write", "eval(", "fetch("):  # security-scan: allow dynamic-eval -- a pattern that forbids a call; nothing runs it
         assert forbidden not in text and forbidden not in MODEL_FILE.read_text(encoding="utf-8"), forbidden

@@ -10,6 +10,7 @@ import * as format from "./format.js";
 import * as router from "./router.js";
 import { MAX_FLOORS, acceptance, floorNumber, pickRequest, requestChoice } from "./model.js";
 import { windowState } from "./scene/look.js";
+import { waitLines, waitingLabel, waitsOf } from "./waits.js";
 
 export const PLANNING = "planning";
 
@@ -55,6 +56,7 @@ export const HELD_SENTENCES = Object.freeze({
   image: "The eval image is not on this machine.",
   "dispatch off": "The service is not dispatching tasks.",
   "job running": "Another task of this project is running; one runs at a time.",
+  waiting: "The task waits for another task; its reason is on its row.",
   "no enabled agent owns the task": "No enabled agent owns this task.",
   other: "The dispatcher held this task for a reason the page does not know.",
 });
@@ -179,9 +181,19 @@ function orderTasks(status, project = null) {
   return request ? request.tasks || [] : [];
 }
 
-/** The held ready tasks of an agent, from the status body's `held` ([{task_id, agent, reason, at, next}]); a task with no agent is the planning agent's. */
+/** The held ready tasks of an agent, from the status body's `held` ([{task_id, agent, reason, at, next, commands: [{name, command}]}]); a task with no agent is the planning agent's. */
 export function heldOf(status, name) {
   return (status && Array.isArray(status.held) ? status.held : []).filter((h) => (h.agent || PLANNING) === name);
+}
+
+/**
+ * The commands a held task's reason needs, as the service gave them (`held[].commands`: [{name, command}], `command` null when no username is
+ * registered): [{name, command}] with a command that is a text or null. Nothing is read out of the sentence `next`.
+ */
+export function heldCommands(held) {
+  const list = held && Array.isArray(held.commands) ? held.commands : [];
+  return list.filter((c) => c && typeof c === "object" && typeof c.name === "string" && c.name)
+    .map((c) => ({ name: c.name, command: typeof c.command === "string" && c.command.trim() ? c.command : null }));
 }
 
 /**
@@ -212,6 +224,9 @@ export function floorRow(agent, status, context) {
   const running = work.filter((t) => t.state === "running").length;
   const left = work.filter((t) => t.state === "planned" || t.state === "blocked").length;       // A-12: not started and not ready
   const queued = format.count(agent.queued);
+  const waiters = work.filter((t) => waitsOf(t).length > 0);       // A-29: planned tasks that wait for another task or request (counted under "left")
+  const waits = waiters.length
+    ? { text: waiters.length === 1 ? waitingLabel(waiters[0]) : `${waiters.length} waiting`, title: waiters.flatMap((t) => waitLines(t).map((line) => `task #${t.id} ${line}`)).join("; ") } : null;
   const heldTasks = accepted ? heldOf(status, name) : [];
   const heldReason = heldTasks.length ? heldTasks[0].reason : null;
   const runs = format.count(agent.runs_today);
@@ -228,11 +243,11 @@ export function floorRow(agent, status, context) {
     : state === "working" ? "working" : state === "off" ? "Off, mode is stopped" : heldReason ? `held: ${heldReason}` : "resting";
   const lower = state === "working" ? "working" : state === "waiting" ? "waiting for you" : state === "idle" ? "idle" : "off";
   const meters = `runs ${runs} / ${runsCap} · ${format.dollars(usd)} of ${format.dollars(usdCap)}`;
-  const counts = [`${done} done`, running > 0 ? `${running} running` : "", queued > 0 ? `${queued} queued` : "", `${left} left`].filter(Boolean).join(", ");
+  const counts = [`${done} done`, running > 0 ? `${running} running` : "", queued > 0 ? `${queued} queued` : "", `${left} left`, waits ? waits.text : ""].filter(Boolean).join(", ");
   return {
     name, label, lobby, number: context.number, state, stateWord, accepted,
     unaccepted, held: heldTasks.length, heldReason,
-    window: windowState(configured && state === "working"), dot: DOT[state], decisions, queued, done, running, left,
+    window: windowState(configured && state === "working"), dot: DOT[state], decisions, queued, done, running, left, waits,
     runs, runsCap, usd, usdCap, unknown, ...split, runsTotal: agent.runs_total_today === undefined ? null : format.count(agent.runs_total_today), mode, acting, pips: mode ? PIPS[mode] || 0 : 0, actingPips: acting ? PIPS[acting] || 0 : 0,
     actingDiffers: Boolean(mode && acting && mode !== acting),
     link: lobby ? router.lobbyHash(context.project) : router.floorHash(context.project, name),
@@ -312,7 +327,7 @@ export function drawersOf(count) {
 export function plateOf(row, selected = false) {
   return {
     name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.plateWord,
-    done: row.done, running: row.running, left: row.left, queued: row.queued,
+    done: row.done, running: row.running, left: row.left, queued: row.queued, waits: row.waits,
     runsText: `${row.runs} / ${row.runsCap}`, runsShare: format.share(row.runs, row.runsCap),
     usdText: `${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}`, usdShare: format.share(row.usd, row.usdCap),
     unknown: row.unknown, usdReserved: row.usdReserved, usdNote: row.usdNote, usdRecordedShare: row.usdRecordedShare, usdReservedShare: row.usdReservedShare, runsTotal: row.runsTotal, mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
@@ -445,7 +460,7 @@ export function floor(snapshot, projectId, name, bodies = {}, options = {}) {
   return {
     found: true, view, row, agent, tasks, current, others: tasks.filter((t) => !current || t.id !== current.id), decisions, runs, currentBody,
     unaccepted: Boolean(row.unaccepted),
-    heldCurrent: holding ? { task_id: holding.task_id, reason: holding.reason, sentence: heldSentence(holding.reason), next: typeof holding.next === "string" && holding.next ? holding.next : null } : null,
+    heldCurrent: holding ? { task_id: holding.task_id, reason: holding.reason, sentence: heldSentence(holding.reason), next: typeof holding.next === "string" && holding.next ? holding.next : null, ...(heldCommands(holding).length ? { commands: heldCommands(holding) } : {}) } : null,
     target: handOverTarget(tasks, current), runningBody: runningTask ? bodies[runningTask.id] || null : null,
     header: {
       title: `${row.label} · ${row.label} agent`, sub: subParts.filter((p) => p !== null).join(" · "),
@@ -494,13 +509,21 @@ export function roomScene(view, documents, ready = true) {
 
 // --- the Desk --------------------------------------------------------------------------------------------------------------
 
+// What the Desk says a file is (A-33), from `artifacts[].kind`; a kind the page does not know (an older service gives none) is not shown.
+const DESK_KINDS = Object.freeze({ text: "text", markdown: "Markdown", image: "image", other: "other" });
+
+/** The Desk's word for a file's kind, or "". */
+export function deskKind(kind) {
+  return typeof kind === "string" && Object.prototype.hasOwnProperty.call(DESK_KINDS, kind) ? DESK_KINDS[kind] : "";
+}
+
 /** The rows of the Desk table: newest `modified_at` first, filtered by a case-insensitive substring of path or owner skill. */
 export function deskRows(documents, filter = "") {
   const text = String(filter || "").trim().toLowerCase();
   return [...documents]
     .sort((a, b) => (a.modified_at < b.modified_at ? 1 : a.modified_at > b.modified_at ? -1 : a.path < b.path ? -1 : 1))
     .filter((d) => !text || String(d.path).toLowerCase().includes(text) || String(d.owner || "").toLowerCase().includes(text))
-    .map((d) => ({ path: d.path, owner: d.owner || "", size: formatSize(d.size), modified: formatWhen(d.modified_at), bound: Boolean(d.bound) }));
+    .map((d) => ({ path: d.path, owner: d.owner || "", size: formatSize(d.size), kind: deskKind(d.kind), modified: formatWhen(d.modified_at), bound: Boolean(d.bound) }));
 }
 
 /** A path as the segments a break may follow ("/", "-" and "."), so a name is never broken inside a word. */

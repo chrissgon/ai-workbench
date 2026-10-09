@@ -1,6 +1,7 @@
 // The plan card (handoff cards.md, "Plan card"): the approval point of a plan. It shows the exact thing approved ahead of its
-// button: the table of the tasks, the limits, the whole plan hash and the plan as text. "Approve this plan" sends exactly
-// {sha256: <the hash displayed>} (a job); "Reject" sends the note when one was typed. The card never changes by itself: after an
+// button: the table of the tasks, what the plan will wait for (A-29: derived waits with a "Go ahead" box each, a required input nothing writes,
+// a circle), the limits, the whole plan hash and the plan as text. "Approve this plan" sends exactly {sha256: <the hash displayed>} and, for
+// the boxes ticked, {go_ahead: [task keys]} (a job); "Reject" sends the note when one was typed. The card never changes by itself: after an
 // action it asks its host to read again (`onChanged`) and the host draws what it got, a resolved line in place of the card. Text
 // from the service goes in as text. A plan with no whole hash offers no approval.
 
@@ -9,6 +10,7 @@ import * as format from "../format.js";
 import { markdownView } from "../markdown-view.js";
 import * as router from "../router.js";
 import { COLUMNS, failureText, limitsLine, planHash, planText, stackedRow, taskRows } from "./plan-rows.js";
+import { createWaitsBlock } from "./plan-waits.js";
 
 let counter = 0;
 
@@ -52,6 +54,7 @@ export function createPlanCard({ api, project, item, now, onChanged, signal, ann
       h("span", { class: "wb-plan-stacked-skill" }, h("code", { text: s.skill }), s.agent ? ` · ${s.agent}` : ""), h("span", { class: "wb-card-note", text: s.tail }));
   }));
 
+  const waits = createWaitsBlock(item.payload);
   const limits = limitsLine(item);
   const hashBlock = shown
     ? h("div", { class: "wb-plan-hash-block" }, h("span", { class: "wb-card-label", text: "Plan hash" }), h("code", { class: "wb-plan-hash", text: shown }))
@@ -76,7 +79,7 @@ export function createPlanCard({ api, project, item, now, onChanged, signal, ann
   const el = h("article", { class: "pui-card wb-card wb-plan-card", "aria-labelledby": titleId },
     h("div", { class: "wb-card-head" }, kind, meta),
     h("div", { class: "pui-card-content wb-card-content" },
-      title, tableWrap, stack, limits ? h("p", { class: "wb-card-note", text: limits }) : null, hashBlock, asText,
+      title, tableWrap, stack, waits ? waits.el : null, limits ? h("p", { class: "wb-card-note", text: limits }) : null, hashBlock, asText,
       reject ? noteGroup : null, error, row));
 
   let sending = false;
@@ -93,6 +96,7 @@ export function createPlanCard({ api, project, item, now, onChanged, signal, ann
       button.removeAttribute("aria-busy");
     }
     note.disabled = on;
+    if (waits) waits.setDisabled(on);
     working.hidden = !(on && active === approve);
     if (on) {
       active.setAttribute("aria-busy", "true");
@@ -128,7 +132,12 @@ export function createPlanCard({ api, project, item, now, onChanged, signal, ann
     if (el.isConnected) lock(false, active);
   }
 
-  if (approve) approve.addEventListener("click", () => run(approve, "Approving...", () => api.approve(project, item.id, shown), true));
+  // the boxes ticked when the button is pressed travel with the hash shown; with none ticked the call is the plain one
+  const approveCall = () => {
+    const ahead = waits ? waits.keys() : [];
+    return ahead.length ? api.approve(project, item.id, shown, { goAhead: ahead }) : api.approve(project, item.id, shown);
+  };
+  if (approve) approve.addEventListener("click", () => run(approve, "Approving...", approveCall, true));
   if (reject) {
     reject.addEventListener("click", () => run(reject, "Rejecting...", () => api.reject(project, item.id, note.value.trim() ? note.value : undefined), false));
   }

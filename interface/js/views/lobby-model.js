@@ -12,6 +12,11 @@ export const MAX_BODIES = 8;          // the requests whose decisions are read w
 export const TABS = Object.freeze([["conversation", "Conversation"], ["inbox", "Inbox"], ["desk", "Desk"], ["tasks", "Tasks"], ["agent", "Agent"]]);
 
 export const HINT = "A line that starts with / is a command; /help lists them.";
+export const AFTER_HINT = "/new --after 3 followed by the text makes a request that waits for request 3.";
+// A-23: while a run is in progress a plain line is stored and routed by the service when the run ends; the commands answer at once.
+export const RUN_LINE = "A run is in progress: your line will be routed when it ends; a question about the state is answered now.";
+export const QUEUED_WORD = "queued";
+export const QUEUED_NOTICE = Object.freeze({ tone: "info", title: "Recorded", text: "A run is in progress. The request is recorded and will be routed when the run ends." });
 export const SENDING_TEXT = "The planning agent is working on this turn. It can take minutes.";
 export const BUSY_NOTICE = Object.freeze({ title: "Not sent", text: "A run is in progress for this project. Your message was not stored." });
 export const NOT_ACCEPTED_TEXT = "Waiting for the configuration to be accepted.";
@@ -58,16 +63,45 @@ export function authorOf(role) {
   return role === "user" ? "You" : "Planning agent";
 }
 
-/** The meta line over a message: "You · 4 h ago". */
+/** The meta line over a message: "You · 4 h ago"; a line stored while a run was in progress adds "· queued" until its reply arrives. */
 export function metaOf(message, now) {
   const when = ago(message.created_at, now);
-  return when ? `${authorOf(message.role)} · ${when}` : authorOf(message.role);
+  const line = when ? `${authorOf(message.role)} · ${when}` : authorOf(message.role);
+  return message.queued ? `${line} · ${QUEUED_WORD}` : line;
 }
 
-/** The name a message carries for a screen reader: "You, 4 hours ago". */
+/** The name a message carries for a screen reader: "You, 4 hours ago"; "queued" when its reply is waiting for the run to end. */
 export function nameOf(message, now) {
   const when = format.ageWords(message.created_at, now);
-  return when ? `${authorOf(message.role)}, ${when === "just now" ? when : `${when} ago`}` : authorOf(message.role);
+  const line = when ? `${authorOf(message.role)}, ${when === "just now" ? when : `${when} ago`}` : authorOf(message.role);
+  return message.queued ? `${line}, ${QUEUED_WORD}` : line;
+}
+
+/** Whether any message of the log waits for the end of a run (its `queued` flag is on). */
+export function hasQueued(messages) {
+  return (messages || []).some((m) => m && m.queued === true);
+}
+
+/**
+ * The id the next read of the conversation asks above: the newest message's, or, while a message is queued, the one before the oldest queued
+ * message, so that the read brings it again without `queued` once its reply exists (a message already held is replaced by the newer copy).
+ */
+export function readAfter(messages) {
+  const queued = (messages || []).filter((m) => m && m.queued === true && Number.isInteger(m.id)).map((m) => m.id);
+  return queued.length ? Math.min(lastId(messages), Math.min(...queued) - 1) : lastId(messages);
+}
+
+/**
+ * The task a run is in progress for, from a status body: {id, title, agent} of the oldest running task, or null. The composer says so before Send
+ * (A-23). A router run, which the status does not show, is not named; the service queues the line all the same.
+ */
+export function runningTask(status) {
+  for (const request of (Array.isArray(status && status.requests) ? status.requests : [])) {
+    for (const task of (Array.isArray(request.tasks) ? request.tasks : [])) {
+      if (task.state === "running") return { id: task.id, title: task.title || task.key || "", agent: task.agent || null };
+    }
+  }
+  return null;
 }
 
 /**
