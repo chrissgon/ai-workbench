@@ -444,6 +444,11 @@ def _claim_and_run(ctx: dict, tier=None, task_id=None) -> dict:
         if task is None:
             reason = "no task is ready" if task_id is None or claimed.get("reason") in (None, "not-ready") else \
                 f"task {task_id} is {claimed['reason']}"
+            held = ops_waits.waiting_for(ctx)
+            if task_id is not None and held.get(task_id):
+                reason = f"task {task_id} is waiting: " + "; ".join(w["reason"] for w in held[task_id])
+            elif held and task_id is None:
+                reason += "; waiting: " + "; ".join(f"task {t} for {', '.join(w['reason'] for w in ws)}" for t, ws in sorted(held.items()))[:600]
             out = {"ran": None, "reason": reason, "recovered": recovered["tasks"],
                    "pending": len(core._stored(ctx, store.pending_list))}
             return {**out, "documents": pulled} if pulled is not None else out
@@ -1094,17 +1099,20 @@ def _release(ctx: dict, pending_id: int, by: str) -> dict:
 def retry(project: str, task_id: int) -> dict:
     """Make a failed or blocked task ready again."""
     ctx = core.context(project)
-    out = core._stored(ctx, ctx["store"].task_retry, task_id)
+    task = core._stored(ctx, ctx["store"].task_get, task_id)
+    waits = ops_waits.for_task(ctx, task_id) if task["state"] in ("failed", "blocked") else []
+    out = core._stored(ctx, ctx["store"].task_retry, task_id, waits=waits)
     ops_waits.rederive(ctx)
     return out
 
 
-def go_ahead(project: str, task_id: int) -> dict:
-    """The person's go-ahead on a task that waits for another request's task (a derived wait): the wait ends and is not
-    derived again for the task, an `after` override stays, and the decision is written to the state file. Refused for a
-    task that has no derived wait. Returns {"task_id", "state", "dropped", "waiting_for", "decision"} (ops_waits.py)."""
+def go_ahead(project: str, task_id: int, drop_after: bool = False) -> dict:
+    """The person's go-ahead on a task that waits for another request's task (a derived wait): that wait ends and is not
+    derived again (a new writer is another wait), an `after` override stays, and the decision is written to the state
+    file. With drop_after the task's `after` wait ends instead, the override being the person's own. Refused for a task
+    that has no wait of that kind. Returns {"task_id", "state", "dropped", "waiting_for", "decision"} (ops_waits.py)."""
     ctx = core.context(project)
-    return ops_waits.go_ahead(ctx, task_id)
+    return ops_waits.go_ahead(ctx, task_id, drop_after)
 
 
 def cancel(project: str, request_id: int) -> dict:
@@ -2004,7 +2012,9 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
         except ValueError:
             p["agent"] = None  # no agent owns it: it waits, and the person can run it by hand
     chosen = plan.subtasks(limits, len([t for t in rows if t.get("key") not in planned]), proposed, known)
-    created = core._stored(ctx, store.tasks_add, request_id, chosen["create"])["tasks"] if chosen["create"] else []
+    created = core._stored(ctx, store.tasks_add, request_id, chosen["create"],
+                           waits=ops_waits.for_plan(ctx, chosen["create"], None, request=request_id)["store"])["tasks"] \
+        if chosen["create"] else []
     pending_id = None
     if chosen["ask"]:
         lines = [f"The product backlog proposes {len(chosen['ask'])} task(s) outside the approved plan's limits "
@@ -2048,7 +2058,10 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
             raise core.OpsError(f"the plan's hash is {stated} and you typed {sha256}: nothing was approved", 1)
         return {**ops_waits.approve_plan(ctx, item, go_ahead), "plan_sha256": stated}
     if item["kind"] == "acceptance":
-        accepted = core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="accepted", by="user")
+        payload = item.get("payload") or {}
+        waits = (ops_waits.for_plan(ctx, payload.get("tasks") or [], None, request=item["task_id"])["store"]
+                 if payload.get("what") == "subtasks" else None)
+        accepted = core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="accepted", by="user", waits=waits)
         ops_waits.rederive(ctx)
         return accepted
     if item["kind"] == "effect":
@@ -2082,6 +2095,8 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
             try:
                 pulled = ({"pulled": [], "created": [], "edited": [], "refused": [], "gone": [], "comments": 0,
                            "left_out_final": len(board.left_out(ctx))} if dry_run else board.pull(ctx))
+                if not dry_run:
+                    ops_waits.rederive(ctx)  # what the board brought (a retry, an after) is ordered before it is pushed
                 out["board"] = {**pulled, **board.push(ctx, dry_run=dry_run)}
             except board.BoardError as e:
                 raise core.OpsError(f"the task board: {e}", 3 if e.kind == "not configured" else 1) from None

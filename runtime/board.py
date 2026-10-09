@@ -60,7 +60,12 @@ CLASS = "integration:issue-tracker"
 TIMEOUT = 120
 SHOWN_CHARS = 300
 FINAL = ("done", "cancelled")
-AFTER = re.compile(r"(?<![\w#])after\s+(?:request\s+|task\s+)?#(\d+)", re.I)  # "after #12": the override of a request
+# "after #12": the override of a request, only where a person wrote it as an instruction: at the start of a text, or on a
+# line of its own (a trailing full stop allowed). Inside a sentence ("thereafter #3", "do it after #12 please") it is prose.
+WORDS = r"after[ \t]+(?:(?:request|task)[ \t]+)?#(\d+)"
+AFTER_FIRST = re.compile(r"\A\s*" + WORDS, re.I)                                   # the start of a text
+AFTER_LINE = re.compile(r"^[ \t]*" + WORDS + r"[ \t]*[.;]?[ \t]*$", re.I | re.M)  # a line of its own
+WAITS_SHOWN = 2  # the awaited tasks a note names; the rest is counted
 CONFIGURED = "board:configured"  # the store's cursor: when the first sync wrote to the board (UTC, the store's form)
 
 
@@ -101,8 +106,19 @@ def _line(value) -> str:
 def after_of(*texts):
     """The number n of the first "after #n" in these texts (an item's title and text), or None: the person's override
     "run this after request #n", written in the item's own words."""
-    found = AFTER.search("\n".join(t for t in texts if t))
-    return int(found.group(1)) if found else None
+    for text in texts:
+        found = AFTER_FIRST.search(text or "") or AFTER_LINE.search(text or "")
+        if found:
+            return int(found.group(1))
+    return None
+
+
+def _waiting_note(waits) -> str:
+    """"waiting for #10, #12 (+1)": the awaited tasks (a request as "request #n"), at most WAITS_SHOWN named, the rest
+    counted, so that the task's own note after it is never pushed out of the line."""
+    named = [f"request #{w['awaited_id']}" if w.get("kind") == "after" else f"#{w['awaited_id']}" for w in waits]
+    more = f" (+{len(named) - WAITS_SHOWN})" if len(named) > WAITS_SHOWN else ""
+    return "waiting for " + ", ".join(named[:WAITS_SHOWN]) + more
 
 
 def item_payload(task: dict, pending, create: bool = False, waits=()) -> dict:
@@ -110,7 +126,7 @@ def item_payload(task: dict, pending, create: bool = False, waits=()) -> dict:
     with create (the item does not exist yet), also its title and text, which are never written again. waits are the
     task's open waits (the store's waits_list rows): the item's note says what it waits for, before the task's own note."""
     waiting = f"{pending['kind']} {pending['id']}" if pending else ""
-    note = "; ".join(filter(None, ["waits: " + ", ".join(w["reason"] for w in waits) if waits else "", task.get("note")]))
+    note = "; ".join(filter(None, [_waiting_note(waits) if waits else "", task.get("note")]))
     payload = {"state": task["state"], "shown": {
         "task": _line(task["id"]), "request": _line(task.get("parent_id")), "flow": _line(task.get("flow")),
         "key": _line(task.get("key")), "skill": _line(task.get("skill")),
@@ -188,11 +204,13 @@ def pull(ctx: dict) -> dict:
             try:
                 store.task_edit(conn, task["id"], by="board", **edit)
                 out["edited"].append(task["id"])
-                if task.get("parent_id") is None and task["state"] not in FINAL:  # "after #n" may be added later
-                    wanted = _after_request(tasks, after_of(edit.get("title", task["title"]), edit.get("text", task["text"])),
-                                            out, remote_id)
+                if task.get("parent_id") is None and task["state"] not in FINAL:  # "after #n" added or taken out later
+                    wrote = after_of(edit.get("title", task["title"]), edit.get("text", task["text"]))
+                    wanted = _after_request(tasks, wrote, out, remote_id)
                     if wanted is not None and wanted != task["id"] and wanted != task.get("after_request"):
                         store.request_after_set(conn, task["id"], wanted)
+                    elif wrote is None and after_of(task["title"], task["text"]) is not None:
+                        store.request_after_set(conn, task["id"], None)  # the words that said it are gone
             except store.StoreError as e:
                 out["refused"].append({"task": task["id"], "reason": str(e)})
         state = got.get("state")

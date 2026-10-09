@@ -165,11 +165,19 @@ def test_after_is_a_wait_the_contract_cannot_see_and_a_circle_of_afters_is_repor
     assert [(c["ref"], c["kind"], c["awaited"]) for c in got["cycles"]] == [(design, "after", 1)]
 
 
-def test_go_ahead_drops_the_input_waits_of_that_task_and_leaves_its_after_alone():
-    nodes = world(("brand", "design"))
-    design = next(n["ref"] for n in nodes if n["skill"] == "design-system")
-    got = plan.derive(nodes, FACTS, NOTHING, skip={design}, after_of={2: 1}, open_requests={1, 2})
-    assert [(w["ref"], w["kind"]) for w in got["waits"]] == [(design, "after")]
+def test_a_skill_that_reads_its_own_output_waits_for_no_one_and_reports_no_circle():
+    # eng-plan reads the plan it keeps: two requests of it are not one waiting for the other, and the older does not wait
+    # for the younger, which would then be a circle of one skill with itself.
+    nodes = [{"ref": 3, "request": 1, "skill": "eng-plan", "candidate": True, "depends_on": []},
+             {"ref": 4, "request": 2, "skill": "eng-plan", "candidate": True, "depends_on": []}]
+    got = plan.derive(nodes, FACTS, NOTHING, open_requests={1, 2})
+    assert got == {"waits": [], "missing": [], "cycles": []}
+    required = dict(FACTS, **{"eng-plan": dict(FACTS["eng-plan"], required={"docs/engineering/plans/<task>.md"})})
+    assert plan.derive(nodes, required, NOTHING, open_requests={1, 2})["missing"] == []  # it starts what it needs
+    # Another skill that needs that plan still waits for the oldest task that writes it.
+    reader = dict(FACTS, **{"eng-implement": {"inputs": ["docs/engineering/plans/<task>.md"], "outputs": [], "required": set()}})
+    nodes.append({"ref": 5, "request": 3, "skill": "eng-implement", "candidate": True, "depends_on": []})
+    assert [(w["ref"], w["awaited"]) for w in plan.derive(nodes, reader, NOTHING, open_requests={1, 2, 3})["waits"]] == [(5, 3)]
 
 
 def test_only_limits_the_derivation_to_the_tasks_named_and_fixed_edges_count_for_the_circle_check():
@@ -222,14 +230,32 @@ def test_the_repository_s_own_chain_brand_identity_is_the_owner_of_what_design_s
     assert plan.owners_of(facts, "docs/brand/profile.md") == ["brand-profile"]
 
 
-def test_required_inputs_of_a_skill_without_a_table_or_a_folder_is_empty(tmp_path):
-    assert plan.required_inputs(str(tmp_path), ["a.md"]) == set()
-    (tmp_path / "SKILL.md").write_text("---\nname: x\n---\n# x\n\n## Purpose\n\nText.\n", encoding="utf-8")
-    assert plan.required_inputs(str(tmp_path), ["a.md"]) == set()
-    (tmp_path / "SKILL.md").write_text("# x\n\n## Inputs\n\n| Artifact | Required | If missing |\n|---|---|---|\n"
-                                       "| `a.md`, with samples | **yes** | Stop. |\n| b.md | Yes. | Stop. |\n| c.md | no | - |\n"
-                                       "\n## Stop rules\n\n| d.md | yes | no |\n", encoding="utf-8")
-    assert plan.required_inputs(str(tmp_path), ["a.md", "b.md", "c.md", "d.md"]) == {"a.md", "b.md"}
+def tree_of(tmp_path, body: str, inputs="a.md, b.md, c.md, d.md"):
+    folder = tmp_path / "skills" / "x"
+    folder.mkdir(parents=True)
+    (folder / "SKILL.md").write_text("---\nname: x\ndescription: invented\nlicense: MIT\nmetadata:\n  area: business\n"
+                                    f"  kind: capability\n  inputs: [{inputs}]\n  outputs: []\n  updates: []\n  requires: []\n"
+                                    "  side_effects: []\n  version: \"0.1.0\"\n---\n# x\n" + body, encoding="utf-8")
+    return str(tmp_path)
+
+
+def test_required_is_what_the_validator_reads_exactly_yes_and_nothing_decorated(tmp_path):
+    table = ("\n## Inputs\n\n| Artifact | Required | If missing |\n|---|---|---|\n| `a.md`, with samples | **yes** | Stop. |\n"
+             "| b.md | Yes. | Stop. |\n| c.md | no | - |\n| d.md | Yes | Stop. |\n\n## Stop rules\n\n| e.md | yes | no |\n")
+    # flow_files.required_inputs is the one reader (scripts/validate.py's [flow-dependencies]): `**yes**` and `Yes.` are
+    # not the word yes, `Yes` is (the cell is lowercased), and a table outside `## Inputs` is not read.
+    assert plan.skill_facts(tree_of(tmp_path, table, "a.md, b.md, c.md, d.md, e.md"))["x"]["required"] == {"d.md"}
+    assert plan.skill_facts(tree_of(tmp_path / "none", "\n## Purpose\n\nText.\n"))["x"]["required"] == set()
+
+
+def test_the_required_column_of_every_skill_is_what_flow_files_reads_which_is_what_the_validator_reads():
+    flow_files = st.load("flow_files")
+    facts = plan.skill_facts(REPO)
+    assert len(facts) >= 40
+    for name, f in facts.items():
+        text = (st.REPO / "skills" / name / "SKILL.md").read_text(encoding="utf-8")
+        assert f["required"] == set(flow_files.required_inputs(text, f["inputs"])), name
+        assert f["required"] <= set(f["inputs"]), name
 
 
 # --- the dispatcher: a task with an open wait is a dependency that has not ended ----------------------------------------

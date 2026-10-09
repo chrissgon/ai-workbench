@@ -365,7 +365,7 @@ The limit's text and the stage that built it come from the contract's table; the
 | `approve` | `--id` `[--sha256]` `[--go-ahead]` | `approve` |
 | `reject` | `--id` `[--note]` | `reject` |
 | `retry` | `--task` | `retry` |
-| `go-ahead` | `--task` | `go_ahead` |
+| `go-ahead` | `--task` `[--drop-after]` | `go_ahead` |
 | `cancel` | `--request` | `cancel` |
 | `deps` | - | `deps` |
 | `run-next` | `[--tier]` | `run_next` |
@@ -436,7 +436,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 | `approve` | `approve` | terminal, chat, page | no | approve a plan or an acceptance (a plan: --go-ahead <task key>, repeated, drops that task's derived waits); an effect is approved in the terminal or on the page, with its hash |
 | `reject` | `reject` | terminal, chat, page | no | reject a plan, an acceptance or an effect |
 | `retry` | `retry` | terminal, chat, page | no | make a failed or blocked task ready again |
-| `go_ahead` | `go-ahead` | terminal, page | no | go ahead on a task that waits for another request's task: its derived waits end |
+| `go_ahead` | `go-ahead` | terminal, page | no | go ahead on a task that waits for another request's task: its derived waits end (with drop-after, its after wait) |
 | `cancel` | `cancel` | terminal, chat, page | no | cancel a request |
 | `deps` | `deps` | terminal | no | install the dependency sets of runtime.json, by code |
 | `run_next` | `run-next` | terminal | yes | run the next ready task: one skill, once, on the model its proof gives |
@@ -523,3 +523,5 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 - 2026-10-09: the operations layer is four files (CONS-1B): the shared names are `runtime/ops_core.py`, read as attributes; the conversation is `runtime/ops_say.py` and the reads of the interface `runtime/ops_reads.py`; `ops.py` is the facade, under a size budget. The lock, key and conversation rows and the known-limit row on the size of `ops.py` follow.
 - 2026-10-09: the derived waits between requests (ADJ-R1, A-29): migration 8 (`tasks.after_request`, `task_waits`), `plan.derive`, the fifth part of the operations layer `ops_waits.py`, the held reason `waiting`, `request --after` and `approve --go-ahead`, the wait in a mirrored item's note; the brand flow's voice task says the profile is written by hand for a product brand. The `store-migrations`, `task-runtime-tables`, `runtime-modules`, `operations`, `cli-verbs`, `say-commands` and `held-reasons` blocks are regenerated.
 - 2026-10-09: `go-ahead --task <id>` (ADJ-R1): the go-ahead on a task already created, from the terminal and the page; the `operations` and `cli-verbs` blocks are regenerated.
+- 2026-10-09: the review of ADJ-R1: a skill that reads its own output waits for no task of its own skill; the Required column is `flow_files.required_inputs`, the validator's reader; a go-ahead is about the waits shown (the dropped wait, not a marker for ever), and a key with no wait is refused; `go-ahead --task <id> --drop-after`; `task_retry`, `tasks_add` and the accepted sub-tasks take their waits in the same transaction; the board reads `after #n` only as an instruction and names the awaited tasks in the note; the brand flow's title is short.
+

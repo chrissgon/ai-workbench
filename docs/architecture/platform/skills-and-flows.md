@@ -38,7 +38,7 @@ The flow files, one row each, with their tasks in order. A flow file is not a fl
 <!-- generated: flow-files -->
 | Flow | Title | Tasks, in order (key and skill) |
 |---|---|---|
-| `brand` | Brand of a product or company: the voice reads a profile you write by hand (brand-profile is for a person's brand) | `strategy` (`brand-strategy`), `name` (`brand-name`), `identity` (`brand-identity`), `voice` (`brand-voice`), `guidelines` (`brand-guidelines`) |
+| `brand` | Brand of a product or company | `strategy` (`brand-strategy`), `name` (`brand-name`), `identity` (`brand-identity`), `voice` (`brand-voice`), `guidelines` (`brand-guidelines`) |
 | `code-change` | A code change, to its pull request | `implement` (`eng-implement`), `pull-request` (`ops-pull-request`) |
 | `design` | Design | `spec` (`product-feature-spec`), `flows` (`design-ux-flows`), `system` (`design-system`), `brief-city` (`design-brief`), `brief-building` (`design-brief`), `brief-floor` (`design-brief`), `brief-lobby` (`design-brief`), `brief-control-room` (`design-brief`) |
 | `market-positioning` | Market and positioning | `market` (`biz-market-analysis`), `positioning` (`biz-icp-positioning`) |

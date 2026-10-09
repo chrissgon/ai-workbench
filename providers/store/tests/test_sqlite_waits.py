@@ -228,10 +228,16 @@ def test_the_go_ahead_at_approval_drops_the_derived_wait_and_remembers_the_decis
     design = out["tasks"][0]["id"]
     assert out["ready"] == [design] and state(conn, design) == "ready"
     rows = {(w["kind"], w["status"]): w for w in store.waits_list(conn, status="all")}
-    assert set(rows) == {("go_ahead", "dropped"), ("input", "dropped")} and rows[("input", "dropped")]["ended_by"] == "user"
-    # The decision stands when the runtime derives the same wait again.
+    assert set(rows) == {("input", "dropped")} and rows[("input", "dropped")]["ended_by"] == "user"
+    # The decision stands when the runtime derives the same wait again: the same path, the same awaited task.
     want = [{"task_id": design, "awaited_id": brand, "kind": "input", "path": "docs/brand/identity.md", "reason": "r"}]
     assert store.waits_sync(conn, want, [design])["opened"] == [] and state(conn, design) == "ready"
+    # A new writer of the same path, or another path, is another wait: the person agreed to the waits they were shown.
+    _, other = one(conn, "brand-identity")
+    again = store.waits_sync(conn, [dict(want[0], awaited_id=other)], [design])
+    assert len(again["opened"]) == 1 and again["demoted"] == [design] and state(conn, design) == "planned"
+    third = [dict(want[0], awaited_id=brand, path="docs/brand/voice.md")]
+    assert len(store.waits_sync(conn, third, [design])["opened"]) == 1
 
 
 def test_a_go_ahead_names_a_task_of_the_plan(conn):
@@ -282,10 +288,13 @@ def test_go_ahead_on_a_created_task_drops_its_input_waits_and_remembers_the_deci
     assert out["reasons"] == [f"docs/brand/identity.md, written by task #{brand}"] and len(out["dropped"]) == 1
     assert store.waits_list(conn) == []
     kinds = {(w["kind"], w["status"], w["ended_by"]) for w in store.waits_list(conn, status="all")}
-    assert kinds == {("input", "dropped", "user"), ("go_ahead", "dropped", "user")}
-    # The runtime deriving the same wait again does not bring it back.
+    assert kinds == {("input", "dropped", "user")}
+    # The runtime deriving the same wait again does not bring it back; a new writer of the path is another wait.
     want = [{"task_id": design, "awaited_id": brand, "kind": "input", "path": "docs/brand/identity.md", "reason": "r"}]
     assert store.waits_sync(conn, want, [design])["opened"] == [] and state(conn, design) == "ready"
+    replaced_request, replacement = one(conn, "brand-identity")
+    assert len(store.waits_sync(conn, [dict(want[0], awaited_id=replacement)], [design])["opened"]) == 1
+    assert state(conn, design) == "planned" and replaced_request
 
 
 def test_go_ahead_leaves_an_after_override_and_refuses_a_task_that_waits_only_for_a_request(conn):
@@ -308,3 +317,45 @@ def test_go_ahead_is_refused_for_a_task_that_does_not_wait_and_for_a_request(con
         with pytest.raises(store.StoreError):
             store.waits_go_ahead(conn, target, by="user")
     assert store.waits_list(conn, status="all") == []
+
+
+def test_a_go_ahead_on_a_key_with_no_input_wait_is_refused_and_the_plan_stays_open(conn):
+    first, brand = one(conn, "brand-identity")
+    request = store.request_add(conn, title="Design", text="x")["request"]
+    opened = store.plan_open(conn, request, title="Plan", body="b", payload={
+        "flow": "demo", "tasks": [{"key": "design-system", "skill": "design-system", "title": "D", "text": "x",
+                                   "depends_on": [], "milestone": False}], "plan_sha256": "0" * 64})
+    with pytest.raises(store.StoreError, match="waits for no task to derive"):
+        store.plan_approve(conn, opened["pending_id"], by="user", go_ahead=["design-system"])
+    after = {"key": "design-system", "kind": "after", "awaited_id": first, "reason": "after"}
+    with pytest.raises(store.StoreError, match="waits for no task to derive"):  # an after is not a derived wait
+        store.plan_approve(conn, opened["pending_id"], by="user", waits=[after], go_ahead=["design-system"])
+    assert store.pending_get(conn, opened["pending_id"])["status"] == "open" and len(store.tasks_list(conn)) == 3 and brand
+
+
+def test_go_ahead_with_after_drops_the_after_wait_of_that_task_only_and_it_stays_dropped(conn):
+    first, brand = one(conn, "brand-identity")
+    wait = {"key": "design-system", "kind": "after", "awaited_id": first, "reason": f"after request #{first}"}
+    second, design = one(conn, "design-system", after=first, waits=[wait])
+    with pytest.raises(store.StoreError, match="no request"):
+        store.waits_go_ahead(conn, brand, by="user", after=True)
+    out = store.waits_go_ahead(conn, design, by="user", after=True)
+    assert out["state"] == "ready" and store.waits_list(conn) == []
+    want = [{"task_id": design, "awaited_id": first, "kind": "after", "path": None, "reason": "r"}]
+    assert store.waits_sync(conn, want, [design])["opened"] == [] and store.task_get(conn, second)["after_request"] == first
+
+
+def test_a_retried_task_and_added_sub_tasks_begin_with_their_waits_in_the_same_transaction(conn):
+    _, brand = one(conn, "brand-identity")
+    request, design = one(conn, "design-system")
+    claimed = store.task_claim(conn, design)["task"]
+    run = store.task_run_start(conn, claimed["id"], skill=claimed["skill"], model="m", adapter="h")
+    store.task_run_finish(conn, run["run_id"], status="failed", failure="timeout", task_state="failed")
+    wait = {"kind": "input", "awaited_id": brand, "path": "docs/brand/identity.md", "reason": "r"}
+    out = store.task_retry(conn, design, waits=[wait])
+    assert out["state"] == "planned" and state(conn, design) == "planned" and len(store.waits_list(conn)) == 1
+    added = store.tasks_add(conn, request, [{"key": "more", "skill": "s", "title": "t", "text": "x"}],
+                            waits=[dict(wait, key="more")])
+    assert [t["state"] for t in added["tasks"]] == ["planned"] and len(store.waits_list(conn)) == 2
+    with pytest.raises(store.StoreError):  # a wait on a task of the task's own request is refused
+        store.task_retry(conn, store.tasks_list(conn, request)[1]["id"], waits=[wait])

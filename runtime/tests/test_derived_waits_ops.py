@@ -230,21 +230,37 @@ def test_go_ahead_on_a_plan_task_drops_its_wait_and_the_state_file_records_the_p
     text = (tree["project"] / "docs" / "workbench" / "state.md").read_text(encoding="utf-8")
     assert (f"Go ahead on wk-design (task {system}) without waiting for: docs/brand/identity.md, written by task "
             f"#{identity} (user)") in text
-    # The decision stands: the next derivation does not bring the wait back.
-    requested(tree, "wk-brand")
+    # The decision is about the waits that were shown: the same wait is not derived again ...
     ops.poll(path_of(tree))
     assert row(tree, system)["waiting_for"] == [] and row(tree, system)["state"] == "ready"
+    # ... but a writer that replaces the one the person went ahead of is a new wait (a cancelled brand request, a new one).
+    ops.cancel(path_of(tree), brand["request"])
+    replacement = requested(tree, "wk-brand")
+    again = row(tree, system)
+    assert again["state"] == "planned"
+    assert [w["task_id"] for w in again["waiting_for"]] == [by_key(replacement)["identity"]["id"]]
 
 
 def test_go_ahead_takes_the_keys_as_a_list_or_joined_by_commas_and_only_on_a_plan(tree):
-    request = ops.request(path_of(tree), "Brand it.", title="Brand")["request"]
-    opened = ops.route(path_of(tree), request, flow="wk-brand")
-    approved = ops.approve(path_of(tree), opened["pending_id"], go_ahead="identity, voice")
-    assert approved["state"]["written"] is True and [t["state"] for t in approved["tasks"]] == ["ready", "ready"]
+    requested(tree, "wk-brand")
+    request = ops.request(path_of(tree), "Design it.", title="Design")["request"]
+    opened = ops.route(path_of(tree), request, flow="wk-design")
+    approved = ops.approve(path_of(tree), opened["pending_id"], go_ahead="system, system")
+    assert approved["state"]["written"] is True and [t["state"] for t in approved["tasks"]] == ["ready"]
     ctx = ops_core.context(path_of(tree))
     other = ctx["store"].request_from_board(ctx["conn"], title="t", text="x", remote_id="r", remote_version="v", by="board")
     with pytest.raises(ops.OpsError, match="go ahead is said on the tasks of a plan"):
         ops.approve(path_of(tree), other["pending_id"], go_ahead=["x"])
+
+
+def test_go_ahead_on_a_key_that_waits_for_nothing_is_refused_naming_the_key_and_the_plan_stays_open(tree):
+    request = ops.request(path_of(tree), "Brand it.", title="Brand")["request"]
+    opened = ops.route(path_of(tree), request, flow="wk-brand")
+    with pytest.raises(ops.OpsError, match="voice.*waits for no task to derive"):
+        ops.approve(path_of(tree), opened["pending_id"], go_ahead=["voice"])
+    assert ops.pending(path_of(tree), opened["pending_id"])["status"] == "open"
+    assert "Go ahead" not in (tree["project"] / "docs" / "workbench" / "state.md").read_text(encoding="utf-8")
+    assert [t for t in ops.status(path_of(tree))["requests"] if t["id"] == request][0]["tasks"] == []
 
 
 def test_the_override_after_holds_every_task_of_the_request_with_the_reason_and_ends_with_the_request(tree):
@@ -361,16 +377,16 @@ def test_the_mirrored_item_of_a_waiting_task_says_what_it_waits_for_in_its_note(
     ctx = ops_core.context(path_of(mirrored))
     remote = ctx["store"].task_get(ctx["conn"], system)["remote_id"]
     text = (mirrored["board"] / f"{remote}.md").read_text(encoding="utf-8")
-    assert f"- note: waits: docs/brand/identity.md, written by task #{identity}" in text and "State: planned" in text
+    assert f"- note: waiting for #{identity}" in text and "State: planned" in text
     finish(mirrored, identity)
     ops.sync(path_of(mirrored))
     freed = (mirrored["board"] / f"{remote}.md").read_text(encoding="utf-8")
-    assert "waits:" not in freed and "State: ready" in freed
+    assert "waiting for" not in freed and "State: ready" in freed
 
 
 def test_an_item_a_person_wrote_with_after_n_becomes_a_request_that_runs_after_request_n(mirrored):
     first = requested(mirrored, "wk-brand")
-    (mirrored["board"] / "design-it.md").write_text(f"# Design it\n\nDo the design, after #{first['request']}.\n", encoding="utf-8")
+    (mirrored["board"] / "design-it.md").write_text(f"# Design it\n\nDo the design.\nafter #{first['request']}\n", encoding="utf-8")
     out = ops.sync(path_of(mirrored))["board"]
     [made] = out["created"]
     assert ops.task(path_of(mirrored), made["request"])["task"]["after"] == first["request"]
@@ -399,16 +415,32 @@ def test_after_is_added_later_to_the_text_of_a_request_that_is_not_planned_yet(m
     ctx = ops_core.context(path_of(mirrored))
     remote = ctx["store"].task_get(ctx["conn"], made["request"])["remote_id"]
     item = mirrored["board"] / f"{remote}.md"
-    item.write_text(item.read_text(encoding="utf-8").replace("Do it.", f"Do it after #{first['request']}."), encoding="utf-8")
+    text = item.read_text(encoding="utf-8")
+    item.write_text(text.replace("Do it.", f"Do it.\nAfter request #{first['request']}."), encoding="utf-8")
     ops.sync(path_of(mirrored))
     assert ops.task(path_of(mirrored), made["request"])["task"]["after"] == first["request"]
+    item.write_text(item.read_text(encoding="utf-8").replace(f"After request #{first['request']}.", ""), encoding="utf-8")
+    ops.sync(path_of(mirrored))  # the words that said it are gone: so is the override
+    assert ops.task(path_of(mirrored), made["request"])["task"]["after"] is None
 
 
 def test_the_words_of_an_override_in_an_items_text():
     assert board.after_of("Design", "after #12") == 12
-    assert board.after_of("Do it After Request #7, please") == 7
-    assert board.after_of("thereafter #3") is None and board.after_of("after 12") is None and board.after_of(None, "") is None
-    assert board.after_of("first", "after #4 and after #5") == 4
+    assert board.after_of("Do it\nAfter Request #7.\nplease") == 7 and board.after_of("After #9 the rest") == 9
+    # Inside prose it is prose: only the start of a text, or a line of its own, is an instruction.
+    for prose in ("Do it after #12 please", "thereafter #3", "x\nafter #4 please", "after 12", "see after #3, then"):
+        assert board.after_of(prose) is None, prose
+    assert board.after_of(None, "") is None and board.after_of("first", "after #4 and after #5") == 4
+
+
+def test_the_note_names_at_most_two_awaited_tasks_and_counts_the_rest():
+    waits = [{"awaited_id": n, "kind": "input"} for n in (10, 12, 13, 14)] + [{"awaited_id": 3, "kind": "after"}]
+    assert board._waiting_note(waits[:1]) == "waiting for #10" and board._waiting_note(waits[:2]) == "waiting for #10, #12"
+    assert board._waiting_note(waits) == "waiting for #10, #12 (+3)"
+    assert board._waiting_note([waits[4]]) == "waiting for request #3"
+    shown = board.item_payload({"id": 1, "state": "planned", "note": "the task's own note", "depends_on": []}, None,
+                               waits=waits)["shown"]["note"]
+    assert shown == "waiting for #10, #12 (+3); the task's own note"
 
 
 # --- go ahead on a task already created ---------------------------------------------------------------------------------
@@ -458,3 +490,40 @@ def test_go_ahead_is_a_verb_of_the_terminal_with_the_task_flag(tree):
     requested(tree, "wk-brand")
     system = requested(tree, "wk-design")["tasks"][0]["id"]
     assert cli.run(["go-ahead", "--project", path_of(tree), "--task", str(system)])["state"] == "ready"
+
+
+def test_go_ahead_with_drop_after_ends_the_override_for_that_task_and_the_decision_is_recorded(tree):
+    first = requested(tree, "wk-brand")
+    second = requested(tree, "wk-brand", after=first["request"])
+    one, other = by_key(second)["identity"]["id"], by_key(second)["voice"]["id"]
+    out = ops.go_ahead(path_of(tree), one, drop_after=True)
+    assert out["state"] == "ready" and out["waiting_for"] == [] and out["dropped"] == [f"after request #{first['request']}"]
+    assert [w["reason"] for w in row(tree, other)["waiting_for"]] == [f"after request #{first['request']}"]  # the other stays
+    text = (tree["project"] / "docs" / "workbench" / "state.md").read_text(encoding="utf-8")
+    assert f"Go ahead on wk-brand (task {one}) without waiting for: after request #{first['request']} (user)" in text
+    ops.poll(path_of(tree))
+    assert row(tree, one)["state"] == "ready"
+    with pytest.raises(ops.OpsError, match="no request"):
+        ops.go_ahead(path_of(tree), one, drop_after=True)
+
+
+def test_a_retried_task_begins_with_its_waits_and_run_next_says_who_waits_for_what(tree):
+    design = requested(tree, "wk-design")
+    system = design["tasks"][0]["id"]
+    posts = requested(tree, "wk-market")["tasks"][0]["id"]
+    ctx = ops_core.context(path_of(tree))
+    s = ctx["store"]
+    s.task_claim(ctx["conn"], system)
+    run = s.task_run_start(ctx["conn"], system, skill="wk-design", model="m", adapter="h")
+    s.task_run_finish(ctx["conn"], run["run_id"], status="failed", failure="timeout", task_state="failed")
+    # Nothing is ready, and the tasks that wait are named with why.
+    said = ops.run_next(path_of(tree))
+    assert said["ran"] is None and said["reason"].startswith("no task is ready; waiting: ")
+    assert f"task {posts} for docs/design/system.md, written by task #{system}" in said["reason"]
+    # A task that fails and is retried while another request's writer is open begins planned, with the wait.
+    brand = requested(tree, "wk-brand")
+    assert row(tree, system)["state"] == "failed"
+    out = ops.retry(path_of(tree), system)
+    assert out["state"] == "planned" and [w["task_id"] for w in row(tree, system)["waiting_for"]] == [by_key(brand)["identity"]["id"]]
+    claimed = ops._claim_and_run(ops_core.context(path_of(tree)), None, system)
+    assert claimed["ran"] is None and claimed["reason"].startswith(f"task {system} is waiting: docs/brand/identity.md")

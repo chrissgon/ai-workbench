@@ -17,9 +17,11 @@ Functions (each takes the project's context, ops_core.context):
   rederive(ctx)                           recompute the waits of every task not yet started and bring the store to
                                           them; a request that is the only open one, with no override, has none to
                                           compute and costs no read of the skills
-  for_plan(ctx, tasks, after, go_ahead)   the waits the tasks of a plan not created yet begin with: {"store": [the
-                                          waits as request_add and plan_approve take them], "shown": [...], "missing",
-                                          "cycles"}
+  for_plan(ctx, tasks, after, go_ahead, request)   the waits the tasks of a plan not created yet begin with (request:
+                                          the request they join, when it exists): {"store": [the waits as request_add,
+                                          plan_approve and tasks_add take them], "shown": [...], "missing", "cycles"}
+  for_task(ctx, task_id)                  the waits a failed or blocked task begins with when it is retried, as
+                                          task_retry takes them
   annotate(ctx, request, decision)        a plan decision with `waits`, `missing` and `cycles` in its payload and their
                                           lines in its body, before the person approves it
   approve_plan(ctx, item, go_ahead)       plan_approve with the waits and the go-ahead in the same transaction, the
@@ -91,15 +93,14 @@ def rederive(ctx: dict) -> dict:
     nodes, open_requests, after_of = _graph(rows)
     if len({n["request"] for n in nodes}) < 2 and not after_of and not any(w["status"] == "open" for w in waits):
         return {}  # one request alone: nothing it reads is written by another request's task
-    skip = {w["task_id"] for w in waits if w["kind"] == "go_ahead"}
     got = plan.derive(nodes, plan.skill_facts(core.ROOT), _exists(ctx["cfg"]["project"]), after_of=after_of,
-                      open_requests=open_requests, skip=skip)
+                      open_requests=open_requests)
     desired = [{"task_id": w["ref"], "awaited_id": w["awaited"], "kind": w["kind"], "path": w["path"],
                 "reason": w["reason"]} for w in got["waits"]]
     return core._stored(ctx, store.waits_sync, desired, live)
 
 
-def for_plan(ctx: dict, tasks: list, after, go_ahead=()) -> dict:
+def for_plan(ctx: dict, tasks: list, after, go_ahead=(), request=None) -> dict:
     """The waits the tasks of a plan begin with, derived against the open tasks of the project before the plan's tasks
     exist. tasks are the plan's tasks ({"key", "title", "skill", "depends_on"}); after is the request the plan's
     request is to run after, or None; go_ahead the keys the person told to go ahead (their waits are still derived:
@@ -115,9 +116,10 @@ def for_plan(ctx: dict, tasks: list, after, go_ahead=()) -> dict:
         theirs = [n["ref"] for n in nodes if n["request"] == w["awaited_id"]] if w["kind"] == "after" else [w["awaited_id"]]
         fixed.setdefault(w["task_id"], set()).update(theirs)
     ref = lambda key: (NEW, key)
-    nodes += [{"ref": ref(t["key"]), "request": NEW, "skill": t["skill"], "candidate": True,
+    joins = NEW if request is None else request  # a new request, or the one whose tasks these join
+    nodes += [{"ref": ref(t["key"]), "request": joins, "skill": t["skill"], "candidate": True,
                "depends_on": [ref(d) for d in t.get("depends_on") or []]} for t in tasks]
-    if after:
+    if after and request is None:
         after_of[NEW] = after
     got = plan.derive(nodes, plan.skill_facts(core.ROOT), _exists(ctx["cfg"]["project"]), after_of=after_of,
                       open_requests=open_requests, only={ref(t["key"]) for t in tasks}, fixed=fixed)
@@ -157,12 +159,34 @@ def approve_plan(ctx: dict, item: dict, go_ahead) -> dict:
     request = core._stored(ctx, store.task_get, item["task_id"])
     keys = _keys(go_ahead, [t["key"] for t in payload.get("tasks") or []])
     got = for_plan(ctx, payload.get("tasks") or [], request.get("after_request"), keys)
+    idle = [k for k in keys if not any(w["key"] == k and w["kind"] == plan.WAIT_INPUT for w in got["store"])]
+    if idle:
+        raise core.OpsError(f"go ahead names {', '.join(idle)}, which waits for no task to derive: nothing was approved", 2)
     done = core._stored(ctx, store.plan_approve, item["id"], by="user", waits=got["store"], go_ahead=keys)
     out = {**done, "waits": got["shown"]}
     if keys:
         out["state"] = _record_go_ahead(ctx, done["tasks"], keys, got["shown"], payload.get("tasks") or [])
     rederive(ctx)
     return out
+
+
+def for_task(ctx: dict, task_id: int) -> list:
+    """The waits a failed or blocked task begins with when it is retried (task_retry): derived as for a planned task, and
+    without the waits the person already dropped for the same awaited task and path. [] when it waits for nothing."""
+    store = ctx["store"]
+    rows = core._stored(ctx, store.tasks_list)
+    nodes, open_requests, after_of = _graph(rows)
+    task = next(t for t in rows if t["id"] == task_id)
+    nodes = [dict(n, candidate=True) if n["ref"] == task_id else n for n in nodes]
+    if not any(n["ref"] == task_id for n in nodes):
+        nodes.append({"ref": task_id, "request": task["parent_id"], "skill": task.get("skill"), "candidate": True,
+                      "depends_on": list(task.get("depends_on") or [])})
+    got = plan.derive(nodes, plan.skill_facts(core.ROOT), _exists(ctx["cfg"]["project"]), after_of=after_of,
+                      open_requests=open_requests, only={task_id})
+    dropped = {(w["awaited_id"], w["kind"], w["path"]) for w in core._stored(ctx, store.waits_list, task_id=task_id,
+                                                                            status="dropped")}
+    return [{"kind": w["kind"], "awaited_id": w["awaited"], "path": w["path"], "reason": w["reason"]}
+            for w in got["waits"] if (w["awaited"], w["kind"], w["path"]) not in dropped]
 
 
 def _keys(go_ahead, known: list) -> list:
@@ -209,13 +233,14 @@ def _record_decision(ctx: dict, decisions: list) -> dict:
     return {"written": True}
 
 
-def go_ahead(ctx: dict, task_id: int) -> dict:
+def go_ahead(ctx: dict, task_id: int, drop_after: bool = False) -> dict:
     """The person's go-ahead on a task that is already created and waits (the store's waits_go_ahead): its derived waits
-    end and stay ended, an `after` override stays, and the decision is one line of the state file's ## Decisions
-    (state_merge.with_go_ahead, as the plan's go-ahead writes it). Nothing is derived again for the task. Returns
-    {"task_id", "state", "dropped": [the reasons], "waiting_for": [what still holds it], "decision": {"written", ...}}."""
+    end, and the runtime derives those very waits no more (a new writer or another path is another wait); with
+    drop_after the task's `after` wait ends instead, the override being the person's own. The decision is one line of
+    the state file's ## Decisions (state_merge.with_go_ahead, as the plan's go-ahead writes it). Returns {"task_id",
+    "state", "dropped": [the reasons], "waiting_for": [what still holds it], "decision": {"written", ...}}."""
     store = ctx["store"]
-    done = core._stored(ctx, store.waits_go_ahead, task_id, by="user")
+    done = core._stored(ctx, store.waits_go_ahead, task_id, by="user", after=bool(drop_after))
     task = core._stored(ctx, store.task_get, task_id)
     return {"task_id": task_id, "state": done["state"], "dropped": done["reasons"],
             "waiting_for": waiting_for(ctx).get(task_id, []),

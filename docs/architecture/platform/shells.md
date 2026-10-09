@@ -245,7 +245,7 @@ The words a held ready task carries, from `REASONS` of `runtime/dispatcher.py`:
 | `approve` | `--id` `[--sha256]` `[--go-ahead]` | `approve` |
 | `reject` | `--id` `[--note]` | `reject` |
 | `retry` | `--task` | `retry` |
-| `go-ahead` | `--task` | `go_ahead` |
+| `go-ahead` | `--task` `[--drop-after]` | `go_ahead` |
 | `cancel` | `--request` | `cancel` |
 | `deps` | - | `deps` |
 | `run-next` | `[--tier]` | `run_next` |
