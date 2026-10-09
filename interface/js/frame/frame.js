@@ -6,6 +6,7 @@
 import { h } from "../dom.js";
 import * as router from "../router.js";
 import { commandBlock } from "./command.js";
+import { EVENT as DRAWER_EVENT } from "./drawer.js";
 import { createKpis } from "./kpis.js";
 import { createNav } from "./header.js";
 import { icon } from "./icons.js";
@@ -78,7 +79,10 @@ export function createFrame(root, handlers) {
   const sceneArea = h("div", { class: "wb-scene-area" }, sceneHost, fallback, kpis.el);
 
   const noticeBox = h("div", { class: "wb-notice-box", hidden: true });
-  const main = h("main", { class: "wb-main" }, heading, noticeBox);
+  // On a phone the KPI row and the tracking bar float over the scene just above the bottom sheet (A-28): they are moved into this stack there, and
+  // back to where they stand otherwise. Elsewhere the stack is empty and takes no box.
+  const float = h("div", { class: "wb-float" });
+  const main = h("main", { class: "wb-main" }, heading, noticeBox, float);
   const frame = h("div", { class: "wb-frame", "data-screen": "city" }, skipPanel, skipList, live, header, sceneArea, main, track.el, actions, sheet.el);
   root.replaceChildren(frame);
 
@@ -133,6 +137,24 @@ export function createFrame(root, handlers) {
 
   const phone = window.matchMedia("(max-width: 639px)");
 
+  function placeFloat() {
+    if (phone.matches) float.append(kpis.el, track.el);
+    else if (kpis.el.parentNode === float) {
+      sceneArea.append(kpis.el);
+      frame.insertBefore(track.el, actions);
+    }
+  }
+  placeFloat();
+  phone.addEventListener("change", placeFloat);
+
+  // The bottom sheet (frame/drawer.js) says where it stands. At full on a phone it covers the scene: the cards over the scene go and the scene is paused.
+  let covering = false;
+  main.addEventListener(DRAWER_EVENT, (event) => {
+    covering = Boolean(event.detail && event.detail.covering);
+    frame.classList.toggle("is-sheet-full", covering);
+    if (world) world.setPaused(covering);
+  });
+
   // The one scene of the City, the Building, the Floor and the Lobby (WP-9.11): it is made when the first of the screens asks for it, handed from one
   // to the next with its state (the building that is open, the floor, the camera) and taken down when the route leaves them all.
   let world = null;
@@ -161,6 +183,7 @@ export function createFrame(root, handlers) {
     acquireWorld(options) {
       if (world) world.setOptions(options);
       else world = createEngine(sceneHost, options);
+      if (covering) world.setPaused(true);
       return world;
     },
     /** Set the screen: route (router.parse), the project's name (or null), the agent's display name for a floor. */
@@ -238,8 +261,13 @@ export function createFrame(root, handlers) {
     insets(rightEl) {
       const scene = sceneArea.getBoundingClientRect();
       if (phone.matches) {
-        const kpiRect = kpis.el.getBoundingClientRect();
-        return { left: 8, right: 8, top: Math.max(8, kpiRect.bottom - scene.top + 12), bottom: 6, pad: 1.02 };
+        // The scene fills the whole upper part of the page; what lies over it is the notice at the top, and at the bottom the cards (the KPI row, the
+        // tracking bar) and the sheet: the camera frames the city in what is left between them.
+        const out = { left: 8, right: 8, top: 8, bottom: 8, pad: 1.02 };
+        if (!noticeBox.hidden) out.top = Math.max(8, noticeBox.getBoundingClientRect().bottom - scene.top + 8);
+        const covers = [float, ...main.querySelectorAll(".wb-drawer")].map((part) => part.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+        if (covers.length) out.bottom = Math.max(8, scene.bottom - Math.min(...covers.map((rect) => rect.top)) + 8);
+        return out;
       }
       const out = { left: 16, right: 16, top: 16, bottom: 16, pad: 1.04 };
       const parts = [kpis.el, header, actions, noticeBox.hidden ? null : noticeBox, track.el, rightEl && !rightEl.hidden ? rightEl : null];

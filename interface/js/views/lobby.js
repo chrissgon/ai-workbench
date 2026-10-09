@@ -66,7 +66,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   let changes = 0;                    // how many times it moved: a read that began before the last move is not fresh when it ends
 
   // --- the pieces ---------------------------------------------------------------------------------------------------------
-  const panel = createPanel({ title: "Lobby · Planning agent", subtitle: "", icon: "message-square", tone: "theme", width: "lobby" });
+  const panel = createPanel({ screen: "lobby", title: "Lobby · Planning agent", subtitle: "", icon: "message-square", tone: "theme", width: "lobby" });
   panel.el.classList.add("wb-panel-lobby");
   const tabs = createTabs();
   const refresh = async () => {
@@ -493,6 +493,7 @@ export function createLobbyView(frame, { project, onChanged }) {
       desk.dispose();
       agent.dispose();
       scene.dispose();
+      panel.drawer.destroy();   // before the panel leaves the page: the frame hears that nothing covers the scene
       panel.el.remove();
       cancelDialog.el.remove();
     },

@@ -1092,7 +1092,7 @@ view.dispose();
 out.disposed = (document.listeners.keydown || []).length;
 
 // 6. on a phone the document is a dialog and the panel keeps its tabs
-window.matchMedia = () => ({ matches: true, addEventListener() {} });
+window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
 frame = makeFrame();
 view = createLobbyView(frame, { project: P, onChanged: async () => {} });
 view.update({ snapshot, route: route("/desk/" + encodeURIComponent("docs/notes/a.md")), now: NOW, projectName: "northwind-shop" });
