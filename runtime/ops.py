@@ -165,13 +165,13 @@ releases it as it stands, its open questions left in it, or answers it, and the 
 stopped on a missing input that another skill writes (ending `blocked`) opens nothing: the task is `blocked`, with
 the start of the reply as its note, until the person retries it.
 
-The layer is four files (CONS-1B). The names every part shares (the checkout, the refusal, the project's context, the
+The layer is five files (CONS-1B; ADJ-R1 added ops_waits.py). The names every part shares (the checkout, the refusal, the project's context, the
 locks, the runtime's own key, the data-folder names) live once in runtime/ops_core.py and are read as `core.<name>`
 at call time, never bound at import, so that a test patching `ops_core.ROOT` reaches every reader. The conversation
 (`say`, `chat_memory`) is runtime/ops_say.py and the reads of the local interface (`version`, `agents`, `skills`,
 `costs`, `connections`, `artifacts`, ...) are runtime/ops_reads.py; both reach an operation that stays here at call
-time, and this file exposes them under their names at its end, so a shell still imports `ops` only. A test of size
-(runtime/tests/test_runtime_rules.py) caps this file and each sibling.
+time, and this file exposes them under their names at its end, so a shell still imports `ops` only. The derived waits
+(runtime/ops_waits.py) reach no operation of this file. A test of size (runtime/tests/test_runtime_rules.py) caps it.
 
 Usage (a library; the shell is runtime/cli.py): python3 runtime/ops.py --help
 
@@ -197,6 +197,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ops_core as core  # noqa: E402  (the shared names: read as core.<name>, never bound at import)
 import ops_reads  # noqa: E402  (the reads of the interface; this file re-exports them at its end)
 import ops_say  # noqa: E402  (the conversation and its queue; this file re-exports `say` at its end)
+import ops_waits  # noqa: E402  (the derived waits between requests: rederive, for_plan, annotate, approve_plan)
 import autonomy  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
 import board  # noqa: E402
 import changeset  # noqa: E402
@@ -371,17 +372,16 @@ def _key_in_environment(routing: dict, key: dict):
 # --- the operations ----------------------------------------------------------------------------------------
 
 
-def request(project: str, text: str, flow: str | None = None, title: str | None = None) -> dict:
+def request(project: str, text: str, flow: str | None = None, title: str | None = None, after: int | None = None) -> dict:
     """Record a request. With a flow, plan it from the flow file the person names (flows/<flow>.json): the tasks
-    without a dependency are ready at once, and it returns {"request", "flow", "state", "tasks": [{"id", "key",
-    "skill", "state"}]}. Without one, the request waits for its route (route()): {"request", "state": "requested",
-    "next": "route"}; its title, when none is given, is plan.title_of(text): the first sentence, else the first line cut at
-    a word."""
+    without a dependency or wait (ops_waits.py) are ready at once, and it returns {"request", "flow", "state", "tasks":
+    [{"id", "key", "skill", "state"}], "waits", "missing"}. Without one, the request waits for its route (route()):
+    {"request", "state": "requested", "next": "route"}; its title is plan.title_of(text). after: run it after that request."""
     ctx = core.context(project)
     if flow is None:
         said = core._text(text, "the request's text")
         out = core._stored(ctx, ctx["store"].request_add, title=core._text(plan.title_of(said, title),
-                                                                 "the title").replace("\n", " "), text=said)
+                                                                 "the title").replace("\n", " "), text=said, after=after)
         return {"request": out["request"], "state": out["state"], "next": "route"}
     try:
         loaded = flow_files.load(flow, core.ROOT)
@@ -391,8 +391,8 @@ def request(project: str, text: str, flow: str | None = None, title: str | None 
         raise core.OpsError(str(e), 2) from None
     except manifest.ManifestError as e:
         raise core.OpsError(str(e), 1) from None
-    out = core._stored(ctx, ctx["store"].request_add, title=core._text(title or loaded["title"], "the title").replace("\n", " "),
-                  text=core._text(text, "the request's text"), flow=loaded["flow"], tasks=tasks)
+    out = ops_waits.request_flow(ctx, tasks, after, title=core._text(title or loaded["title"], "the title").replace("\n", " "),
+                                 text=core._text(text, "the request's text"), flow=loaded["flow"])
     return {**out, "flow": loaded["flow"]}
 
 
@@ -418,7 +418,7 @@ def _claim_and_run(ctx: dict, tier=None, task_id=None) -> dict:
     store = ctx["store"]
     with core._run_lock(ctx["cfg"]):
         # This process holds the project's run lock, so a task still `running` is what an interrupted run left.
-        recovered = core._stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task")
+        recovered = ops_waits.settled(ctx, core._stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task"))
         pulled = None
         if documents.enabled(ctx["cfg"]):
             # Before the task is claimed, so that a refusal leaves no task running (decision D11).
@@ -443,6 +443,7 @@ def _claim_and_run(ctx: dict, tier=None, task_id=None) -> dict:
         if task is None:
             reason = "no task is ready" if task_id is None or claimed.get("reason") in (None, "not-ready") else \
                 f"task {task_id} is {claimed['reason']}"
+            reason = ops_waits.explain(ctx, task_id, reason)
             out = {"ran": None, "reason": reason, "recovered": recovered["tasks"],
                    "pending": len(core._stored(ctx, store.pending_list))}
             return {**out, "documents": pulled} if pulled is not None else out
@@ -1086,21 +1087,25 @@ def _release(ctx: dict, pending_id: int, by: str) -> dict:
     task = core._stored(ctx, ctx["store"].task_get, item["task_id"])
     lock = core._run_lock(ctx["cfg"]) if item["kind"] == "review" and _brief_delivery(ctx, task) else contextlib.nullcontext()
     with lock:
-        out = core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="released", by=by)
+        out = ops_waits.settled(ctx, core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="released", by=by))
         after = _after_release(ctx, item)
     return {**out, "after": after} if after else out
 
 
 def retry(project: str, task_id: int) -> dict:
     """Make a failed or blocked task ready again."""
-    ctx = core.context(project)
-    return core._stored(ctx, ctx["store"].task_retry, task_id)
+    return ops_waits.retry(core.context(project), task_id)
+
+
+def go_ahead(project: str, task_id: int, drop_after: bool = False) -> dict:
+    """Go ahead on a task that waits for another request's task, or with drop_after on its `after` wait."""
+    return ops_waits.go_ahead(core.context(project), task_id, drop_after)
 
 
 def cancel(project: str, request_id: int) -> dict:
     """Cancel a request, its tasks that are not done, and their open pending decisions."""
     ctx = core.context(project)
-    return core._stored(ctx, ctx["store"].request_cancel, request_id, by="user")
+    return ops_waits.settled(ctx, core._stored(ctx, ctx["store"].request_cancel, request_id, by="user"))
 
 
 def proof(project: str, skill: str | None = None) -> dict:
@@ -1549,7 +1554,7 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
 
 def status(project: str) -> dict:
     """{"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key", "title",
-    "agent", "skill", "state", "note"}]}], "pending": [... each with "agent" and "actions"], "documents": [{"path", "status", "note", "on_platform"}],
+    "agent", "skill", "state", "note", "waiting_for"}], "after"}], "pending": [... each with "agent" and "actions"], "documents": [{"path", "status", "note", "on_platform"}],
     "board": {"left_out_final"} or None, "held": [{"task_id", "agent", "reason", "at", "next"}]}: everything from the
     store's records. "left_out_final" is the number of tasks the board never mirrors because they were final when it
     was configured (runtime/board.py). A task's "title" and "agent" are the store's: the agent is None when the project
@@ -1569,7 +1574,7 @@ def status(project: str) -> dict:
                  "tasks": [{**{key: t[key] for key in ("id", "key", "title", "agent", "skill", "state", "note")}, **board_of(t)}
                            for t in rows if t["parent_id"] == r["id"]]}
                 for r in rows if r["parent_id"] is None]
-    return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": requests,
+    return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": ops_waits.in_status(ctx, requests, rows),
             "pending": [_listed(item, ctx["store"], agents) for item in core._stored(ctx, ctx["store"].pending_list)],
             "documents": [{"path": d["path"], "status": d["status"], "note": d["note"], "on_platform": bool(d["remote_id"])}
                           for d in core._stored(ctx, ctx["store"].documents_list)],
@@ -1596,11 +1601,11 @@ def task(project: str, task_id: int) -> dict:
     "runs": its runs oldest first,
     "pending": its pending decisions of every status, oldest first, each with "agent" (the task's own) and
     "actions"}. For a request the runs are the router's and the decisions its plan's or its question's; for a task of
-    a plan, its own."""
+    a plan, its own. The row also carries "waiting_for" and "after" (ops_waits.task_row)."""
     ctx = core.context(project)
     store = ctx["store"]
     found = core._stored(ctx, store.task_get, task_id)
-    return {"task": found, "drop": ops_reads.drop_note(found), "runs": core._stored(ctx, store.task_runs_list, task_id),
+    return {"task": ops_waits.task_row(ctx, found), "drop": ops_reads.drop_note(found), "runs": core._stored(ctx, store.task_runs_list, task_id),
             "pending": [{**item, "agent": found["agent"] if found["parent_id"] is not None else None,
                          "actions": _actions(store, item)}
                         for item in core._stored(ctx, store.pending_list, "all", task_id)]}
@@ -1661,7 +1666,7 @@ def _plan_pending(ctx: dict, request: dict, tasks: list, route_read, source: str
     for skill in dict.fromkeys(t["skill"] for t in tasks):
         past += core._stored(ctx, ctx["store"].task_runs_of_skill, skill)
     built = plan.build(request, tasks, route_read, source, limits, past, flow=flow)
-    return {"kind": "plan", **built}
+    return ops_waits.annotate(ctx, request, {"kind": "plan", **built})
 
 
 def route(project: str, request_id: int, flow: str | None = None, channel: str | None = None) -> dict:
@@ -1843,7 +1848,7 @@ def _route_run(ctx: dict, request: dict) -> dict:
             route_read = _checked(ctx, read)
             if route_read["checked"]["ok"]:
                 built = _combined(ctx, request, [{"item": request["text"], "route": route_read, "reply": body}])["plan"]
-                decision = {"kind": "plan", **built}
+                decision = ops_waits.annotate(ctx, request, {"kind": "plan", **built})
             else:
                 why = route_read["checked"]["why"]
         except (flow_files.FlowError, plan.PlanError, ValueError) as e:
@@ -1916,7 +1921,7 @@ def _route_deliveries(ctx: dict, request: dict, parts: dict) -> dict:
     except (flow_files.FlowError, plan.PlanError, ValueError) as e:
         combined, why = None, f"no plan can be built from the routes: {e}"
     if combined is not None and combined["plan"] is not None:
-        decision = {"kind": "plan", **combined["plan"]}
+        decision = ops_waits.annotate(ctx, request, {"kind": "plan", **combined["plan"]})
         decision["payload"] = {**decision["payload"], **call["common"], "router_runs": runs}
         kind = "plan"
     else:
@@ -2072,7 +2077,7 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
         except ValueError:
             p["agent"] = None  # no agent owns it: it waits, and the person can run it by hand
     chosen = plan.subtasks(limits, len([t for t in rows if t.get("key") not in planned]), proposed, known)
-    created = core._stored(ctx, store.tasks_add, request_id, chosen["create"])["tasks"] if chosen["create"] else []
+    created = ops_waits.add_subtasks(ctx, request_id, chosen["create"])["tasks"] if chosen["create"] else []
     pending_id = None
     if chosen["ask"]:
         lines = [f"The product backlog proposes {len(chosen['ask'])} task(s) outside the approved plan's limits "
@@ -2088,7 +2093,7 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
 EFFECT_CHANNELS = ("terminal", "page")  # the channels an effect may be approved from (decision D8, extended)
 
 
-def approve(project: str, pending_id: int, sha256: str | None = None, channel: str | None = None) -> dict:
+def approve(project: str, pending_id: int, sha256: str | None = None, channel: str | None = None, go_ahead=None) -> dict:
     """Approve a pending decision of kind `plan` (its tasks are created as the plan lists them, and those with no
     dependency are ready) or `acceptance` (the request written on the task board is kept, and waits for its route).
     With sha256, a plan is approved only when it is the plan's hash. An `effect` (stage 4) is approved only with
@@ -2097,9 +2102,10 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
     effect is approved only from the terminal or from the local page (decision D8, extended: both show the person
     the content's hash and take it back typed or clicked); the table of operations tells this function which channel
     called, and any other channel (the conversation, a messaging app), or none, is refused before anything is executed or
-    sent (the pending row is read first, to know its kind; the rule fails closed)."""
+    sent (the pending row is read first, to know its kind; the rule fails closed). go_ahead: a plan's task keys to go ahead on."""
     ctx = core.context(project)
     item = core._stored(ctx, ctx["store"].pending_get, pending_id)
+    ops_waits.only_on_plans(item, go_ahead)
     if item["kind"] == "effect" and channel not in EFFECT_CHANNELS:
         raise core.OpsError("an effect is approved in the terminal, with its hash: "
                        + core._command("approve", ctx["cfg"]["project"], pending_id=pending_id, sha256="<hash>"), 1)
@@ -2110,9 +2116,9 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
             raise core.OpsError(f"pending decision {pending_id}: its tasks do not have the hash it states; nothing was approved", 1)
         if sha256 is not None and sha256 != stated:
             raise core.OpsError(f"the plan's hash is {stated} and you typed {sha256}: nothing was approved", 1)
-        return {**core._stored(ctx, ctx["store"].plan_approve, pending_id, by="user"), "plan_sha256": stated}
+        return {**ops_waits.approve_plan(ctx, item, go_ahead), "plan_sha256": stated}
     if item["kind"] == "acceptance":
-        return core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="accepted", by="user")
+        return ops_waits.accept(ctx, item)
     if item["kind"] == "effect":
         return _approve_effect(ctx, item, sha256)
     raise core.OpsError(f"pending decision {pending_id} is a {item['kind']}: approve takes a plan, an acceptance or an effect; "
@@ -2143,7 +2149,7 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
         if board.enabled(ctx["cfg"]):
             try:
                 pulled = ({"pulled": [], "created": [], "edited": [], "refused": [], "gone": [], "comments": 0,
-                           "left_out_final": len(board.left_out(ctx))} if dry_run else board.pull(ctx))
+                           "left_out_final": len(board.left_out(ctx))} if dry_run else ops_waits.settled(ctx, board.pull(ctx)))
                 out["board"] = {**pulled, **board.push(ctx, dry_run=dry_run)}
             except board.BoardError as e:
                 raise core.OpsError(f"the task board: {e}", 3 if e.kind == "not configured" else 1) from None
@@ -2198,7 +2204,8 @@ def reject(project: str, pending_id: int, note: str | None = None) -> dict:
         return core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="rejected", by="user")
     if item["kind"] == "effect":
         said = core._text(note, "the note") if note is not None else None
-        return core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="rejected", by="user", answer=said)
+        return ops_waits.settled(ctx, core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="rejected",
+                                                   by="user", answer=said))
     raise core.OpsError(f"pending decision {pending_id} is a {item['kind']}: reject takes a plan, an acceptance or an effect", 2)
 
 
@@ -2246,7 +2253,7 @@ def _snapshot(ctx: dict, key: dict) -> dict:
     planning agent."""
     store, cfg = ctx["store"], ctx["cfg"]
     agents = cfg["area_agents"]
-    tasks = core._stored(ctx, store.tasks_list)
+    tasks = ops_waits.current_tasks(ctx)  # the waits derived again first: a round decides from what is now
     by_id = {t["id"]: t for t in tasks}
     proofs = {}
 
@@ -2268,6 +2275,7 @@ def _snapshot(ctx: dict, key: dict) -> dict:
     for task in out["ready"]:
         if task.get("agent") in agents and task.get("skill"):
             out["tier"][task["id"]] = routed(task["skill"])["tier"]
+    out["waits"] = ops_waits.waiting_for(ctx)  # a ready task with an open wait starts nowhere (dispatcher.decide)
     return out
 
 
@@ -2551,7 +2559,7 @@ def poll(project: str) -> dict:
             synced = sync(project)
         except core.OpsError as e:
             synced = {"error": str(e), "code": e.code}
-    expired = core._stored(ctx, store.approvals_expire, datetime.datetime.now(datetime.timezone.utc).isoformat())
+    expired = ops_waits.settled(ctx, core._stored(ctx, store.approvals_expire, datetime.datetime.now(datetime.timezone.utc).isoformat()))
     state = "unchanged"
     if expired:
         rows = _standing_rows(ctx)

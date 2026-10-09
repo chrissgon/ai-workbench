@@ -20,7 +20,7 @@ ops_core = st.load("ops_core")
 operations = st.load("operations")
 
 WORDS = ("stopped", "cap: runs per day", "cap: usd per day", "credential", "secret store", "image", "dispatch off",
-         "job running", "no enabled agent owns the task", "other")
+         "job running", "no enabled agent owns the task", "waiting", "other")
 
 
 @pytest.fixture(autouse=True)

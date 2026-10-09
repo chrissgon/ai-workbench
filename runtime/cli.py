@@ -91,6 +91,9 @@ release   releases a delivery (a pending decision of kind review): the task is d
           and still asks (ending draft_with_questions) opens a review too: release it as it stands, its open
           questions left in it, or answer it. A run that wrote nothing and asks opens a question: answer it.
 retry     makes a failed or blocked task ready again.
+go-ahead  (--task <id>) ends the derived waits of a task that waits for another request's task, and records your decision in
+          the state file; an `after` request is yours and stays unless you add --drop-after, which ends it for that task.
+          approve takes --go-ahead <task key> for a plan's tasks.
 cancel    cancels a request, its tasks that are not done and their open pending decisions.
 status    requests, tasks (each with its title and area agent) and pending decisions (each with its task's "agent" and
           "actions", the words it may be resolved with), from the store's records; for each request and task, whether it is

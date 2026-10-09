@@ -12,15 +12,18 @@ held_of(snapshot, decided, blocked=None) -> [{"task_id", "agent", "reason"}]: ev
 
   snapshot      {"running": <task or None>, "ready": [tasks, oldest first], "reviews": [{"pending", "task", "agent",
                 "proven", "mandatory"}], "agents": {"<name>": {"facts", "spent", "entry"}}, "tier": {"<task id>":
-                "strong" or "floor"}}, built by runtime/ops.py (dispatch, poll) from the store, the proof and the
-                runtime manifests
+                "strong" or "floor"}, "waits": {"<task id>": [open waits]}}, built by runtime/ops.py (dispatch, poll)
+                from the store, the proof and the runtime manifests
   review_action runtime/autonomy.py's review_action(task, pending, facts, proven, mandatory): "release" or "hold"
   may_start     runtime/autonomy.py's may_start(name, agents, facts, spent, tier): (True, "") or (False, why)
 
 Rules: (1) release holds every review the agent's mode releases; (2) while a task of the project runs, nothing
-starts (one task at a time per project); (3) otherwise the ready tasks are walked oldest first: a task no enabled
+starts (one task at a time per project); (3) otherwise the ready tasks are walked oldest first: a task with an open
+wait (a derived dependency on another request's task, runtime/plan.py) is held and never starts, a task no enabled
 area agent owns is held, a task whose agent may not start is held with the reason, and the first that may start is
-started; (4) nothing else, and no state is changed here: runtime/ops.py applies the decision.
+started; (4) nothing else, and no state is changed here: runtime/ops.py applies the decision. The store keeps a
+waiting task `planned` and gives it to no one, so a waiting task is not in `ready` in practice; rule (3) is the
+second lock, and the word a person reads ("waiting for task #n") is the wait's own reason.
 
 The two rule functions are passed in, so this file imports no sibling: the scheduler runs a copy of it alone (its
 entry, stage 6). It reaches neither the store nor the lab facade.
@@ -59,13 +62,14 @@ import sys
 
 ONE_AT_A_TIME = "one task at a time per project"
 NO_AGENT = "no enabled agent owns the task"
+WAITING = "waiting"                  # the task has an open wait: it is a dependency like depends_on (the reason is the wait's)
 JOB_RUNNING = "job running"          # a task of the project runs: the one-at-a-time rule holds every ready task
 DISPATCH_OFF = "dispatch off"        # the service dispatches nothing (runtime/ops.py, service_check)
 # The words a held ready task carries (contracts/runtime.md, "The local service"): the three of runtime/autonomy.py
 # (may_start), those of this file, those of a round's checks before a start (runtime/ops.py) and the service's.
 OTHER = "other"                      # any reason a rule function gives that is not in the list: free text never reaches a page
 REASONS = ("stopped", "cap: runs per day", "cap: usd per day", "credential", "secret store", "image", DISPATCH_OFF,
-           JOB_RUNNING, NO_AGENT, OTHER)
+           JOB_RUNNING, NO_AGENT, WAITING, OTHER)
 
 
 def decide(snapshot: dict, review_action, may_start) -> dict:
@@ -85,7 +89,11 @@ def decide(snapshot: dict, review_action, may_start) -> dict:
         return {"release": release, "start": None, "held": [{"task_id": running["id"], "why": ONE_AT_A_TIME}]}
     held, start = [], None
     tiers = snapshot.get("tier") or {}
+    waits = snapshot.get("waits") or {}
     for task in snapshot.get("ready") or []:
+        if waits.get(task["id"], waits.get(str(task["id"]))):
+            held.append({"task_id": task["id"], "why": WAITING})
+            continue
         name = task.get("agent")
         if name is None or name not in agents:
             held.append({"task_id": task["id"], "why": NO_AGENT})

@@ -30,7 +30,7 @@ import traceback
 
 JOBS_KEPT = 200                                           # finished jobs kept in memory
 STOP_WAIT = 120.0                                         # seconds the shutdown waits for the threads of the jobs
-EXPOSED_KINDS = ("int", "str", "text", "flag", "choice")  # the argument kinds a route or a tool can carry in JSON
+EXPOSED_KINDS = ("int", "str", "text", "flag", "choice", "list")  # the argument kinds a route or a tool can carry in JSON
 INTERNAL = "internal error"                               # what a job's failure shows when it is not the operation's own
 STATUS_OF_CODE = {1: (409, "refused"), 2: (400, "usage"), 3: (412, "not_configured")}
 JOB_FIELDS = ("job", "op", "project", "state", "result", "error", "started_at", "ended_at")

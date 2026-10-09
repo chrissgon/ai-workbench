@@ -222,6 +222,7 @@ The words a held ready task carries, from `REASONS` of `runtime/dispatcher.py`:
 | `dispatch off` | `DISPATCH_OFF` |
 | `job running` | `JOB_RUNNING` |
 | `no enabled agent owns the task` | `NO_AGENT` |
+| `waiting` | `WAITING` |
 | `other` | `OTHER` |
 <!-- /generated -->
 
@@ -232,7 +233,7 @@ The words a held ready task carries, from `REASONS` of `runtime/dispatcher.py`:
 <!-- generated: cli-verbs -->
 | Verb | Flags it reads | Operation |
 |---|---|---|
-| `request` | `--text \| --text-file` `[--flow]` `[--title]` | `request` |
+| `request` | `--text \| --text-file` `[--flow]` `[--title]` `[--after]` | `request` |
 | `route` | `--request` `[--flow]` | `route` |
 | `route-queued` | - | `route_queued` |
 | `status` | - | `status` |
@@ -243,9 +244,10 @@ The words a held ready task carries, from `REASONS` of `runtime/dispatcher.py`:
 | `pending` | `[--id]` | `pending` |
 | `answer` | `--id` `--text \| --text-file` `[--with-comments]` | `answer` |
 | `release` | `--id` | `release` |
-| `approve` | `--id` `[--sha256]` | `approve` |
+| `approve` | `--id` `[--sha256]` `[--go-ahead]` | `approve` |
 | `reject` | `--id` `[--note]` | `reject` |
 | `retry` | `--task` | `retry` |
+| `go-ahead` | `--task` `[--drop-after]` | `go_ahead` |
 | `cancel` | `--request` | `cancel` |
 | `deps` | - | `deps` |
 | `run-next` | `[--tier]` | `run_next` |
@@ -289,11 +291,11 @@ Every verb also takes `--project <dir>`. The parser is built from `terminal_verb
 | `/pending [id]` | what waits for you; with an id, that decision whole |
 | `/answer <id> <text>` | answer a pending decision |
 | `/release <id>` | release a delivery (it stays a draft) |
-| `/approve <id> [sha256]` | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
+| `/approve <id> [sha256]` | approve a plan or an acceptance (a plan: --go-ahead <task key>, repeated, drops that task's derived waits); an effect is approved in the terminal or on the page, with its hash |
 | `/reject <id> [note]` | reject a plan, an acceptance or an effect |
 | `/retry <task id>` | make a failed or blocked task ready again |
 | `/cancel <request id>` | cancel a request |
-| `/new <text>` | start a new request, whatever is open |
+| `/new <text>` | start a new request, whatever is open (--after <id> before the text: run it after that request) |
 <!-- /generated -->
 
 Each command calls its operation of the same name once (`/progress` shows its `text`, `/help` calls none, `/new` routes a new request, a model call); any other line is the answer to the router's open question, or a new request, routed.
@@ -340,6 +342,7 @@ The routes of the local service, from `ROUTES` of `runtime/service.py`:
 | POST | `/projects/{p}/requests/{id}/cancel` | `cancel` | `request_id` from `{id}` | every other argument | - | - |
 | GET | `/projects/{p}/tasks/{id}` | `task` | `task_id` from `{id}` | none | - | - |
 | POST | `/projects/{p}/tasks/{id}/retry` | `retry` | `task_id` from `{id}` | every other argument | - | - |
+| POST | `/projects/{p}/tasks/{id}/go-ahead` | `go-ahead` | `task_id` from `{id}` | every other argument | - | - |
 | POST | `/projects/{p}/tasks/{id}/files` | `hand-over` | `task_id` from `{id}` | every other argument | `file` | file upload |
 | POST | `/projects/{p}/runs/{id}/verdict` | `verdict` | `run_id` from `{id}` | every other argument | - | - |
 | POST | `/projects/{p}/agents/{name}/mode` | `set-mode` | `agent` from `{name}` | every other argument | - | - |

@@ -306,6 +306,19 @@ def with_answer(text: str, *, date: str, skill: str, pending_id: int, answer: st
     return _render(parsed)
 
 
+def with_go_ahead(text: str, *, date: str, skill: str, task_id: int, waited: list) -> str:
+    """The state file's text with the person's decision to go ahead on a task, as the last line of ## Decisions: what the
+    task did not wait for (the reasons of the derived waits, runtime/plan.py). Code calls it; no run can produce its
+    effect (merge_report() refuses a decision that names the user)."""
+    parsed = parse(text)
+    target = _section(parsed, DECISIONS)
+    if target is None:
+        raise Conflict("the state file has no ## Decisions section: the go-ahead was not written into it")
+    said = "; ".join(WHITESPACE.sub(" ", w).strip() for w in waited) or "no wait held it when it was approved"
+    _append(target, f"- {date}: Go ahead on {skill} (task {task_id}) without waiting for: {said} (user)")
+    return _render(parsed)
+
+
 APPROVALS = "Approvals"
 AUTONOMY = "Autonomy"
 RUNTIME_MARK = re.compile(r"\(runtime #\d+\)$")

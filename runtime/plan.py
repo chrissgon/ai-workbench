@@ -42,6 +42,17 @@ Stage 6 (several deliveries, the brief, sub-tasks):
                                             isolated subprocess, never loaded into this process)
   subtasks(limits, existing_count, proposed, known=())   {"create", "ask"}: what the approved plan's limits cover
 
+Derived waits (A-29: the runtime knows by itself which task waits for which, from the artifact contract):
+  skill_facts(root)                         {skill: {"inputs", "outputs", "required"}} of every skill folder: the
+                                            frontmatter lists, and the inputs whose row of the skill's inputs table says
+                                            Required: yes (flow_files.required_inputs)
+  owners_of(index, path)                    the skills whose declared outputs are path (placeholders read as wildcards)
+  derive(nodes, facts, exists, ...)         {"waits", "missing", "cycles"}: for each task not yet started, the open task of
+                                            another request that writes an input the project does not have yet; the
+                                            required inputs nothing writes; the waits left out because they would wait
+                                            in a circle. Pure: the project is read through the exists function it is given
+  wait_lines(waits, missing, cycles, titles)   the lines a plan's body adds for them
+
 A plan task is {"key", "skill", "title", "text", "depends_on": [keys], "milestone", "mandatory_milestone", "web"}:
 milestone is true when the flow file says so or the skill's runtime manifest makes it a mandatory milestone; web is
 whether the skill requires the web. No cost in money is written: the estimate counts runs.
@@ -63,6 +74,7 @@ import sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import autonomy  # noqa: E402  (the same folder)
+import flow_files  # noqa: E402  (the one reader of a skill's Required column: what scripts/validate.py reads)
 import isolated  # noqa: E402
 import manifest  # noqa: E402
 import roles  # noqa: E402
@@ -89,6 +101,9 @@ BACKLOG_TASK_LINE = re.compile(r"^- (" + BACKLOG_ID.pattern + r"):", re.M)  # wh
 BACKLOG_TIMEOUT = 30   # seconds for one read of one task
 BACKLOG_JOBS = 8       # the reads are independent: they run at the same time
 CHECKOUT = os.path.dirname(HERE)
+WAIT_INPUT = "input"             # a derived wait: a path another request's task writes
+WAIT_AFTER = "after"             # the person's override: after request #n
+PLACEHOLDER = re.compile(r"<[^<>/]*>")
 
 
 class PlanError(Exception):
@@ -356,6 +371,149 @@ def build(request: dict, tasks: list, route, source: str, limits: dict, past: li
     count = f"{len(tasks)} task{'s' if len(tasks) != 1 else ''}"
     title = f"Plan: {len(deliveries)} deliveries ({count})" if several else f"Plan: {flow or tasks[0]['skill']} ({count})"
     return {"title": title, "body": "\n".join(lines), "payload": payload}
+
+
+# --- derived waits between requests (A-29) -------------------------------------------------------------------------
+
+
+def skill_facts(root: str) -> dict:
+    """{skill: {"inputs", "outputs", "required"}} for every skill folder of the checkout: the declared lists
+    (runtime/skill_meta.py) and, as `required`, flow_files.required_inputs: the rows of the `## Inputs` table whose Required
+    cell is exactly `yes`, the same reading scripts/validate.py makes. A folder that does not parse is left out."""
+    folder = os.path.join(root, "skills")
+    out = {}
+    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
+        path = os.path.join(folder, name)
+        if not os.path.isfile(os.path.join(path, "SKILL.md")):
+            continue
+        try:
+            meta = skill_meta.declared(path)
+        except skill_meta.SkillError:
+            continue
+        try:
+            with open(os.path.join(path, "SKILL.md"), encoding="utf-8") as f:
+                text = f.read()
+        except OSError:
+            continue
+        out[name] = {"inputs": meta["inputs"], "outputs": meta["outputs"],
+                     "required": set(flow_files.required_inputs(text, meta["inputs"]))}
+    return out
+
+
+def normal(path: str) -> str:
+    """A declared path with each placeholder read as a wildcard: two paths are the same artifact when these are equal."""
+    return PLACEHOLDER.sub("*", path)
+
+
+def owners_of(facts: dict, path: str) -> list:
+    """The skills whose declared outputs are path, sorted: the artifact contract has one owner, so one name in
+    practice. A path that ends in "/" is a folder: the skills with an output under it."""
+    wanted = normal(path)
+    if wanted.endswith("/"):
+        return sorted(name for name, f in facts.items() if any(normal(o).startswith(wanted) for o in f["outputs"]))
+    return sorted(name for name, f in facts.items() if any(normal(o) == wanted for o in f["outputs"]))
+
+
+def _order(ref):
+    return (0, ref, "") if isinstance(ref, int) else (1, 0, str(ref))
+
+
+def derive(nodes: list, facts: dict, exists, *, after_of=None, open_requests=(), only=None, fixed=None) -> dict:
+    """The waits of the tasks not yet started. Pure: the project is read only through exists(path).
+
+    nodes     every task that is not final, as {"ref", "request", "skill", "candidate", "depends_on": [refs]}: ref is
+              the task's id (or any other hashable name for a task of a plan not created yet), request the id of its
+              request (or a name for a plan's), candidate whether it can still wait (it is planned or ready)
+    facts     skill_facts()
+    exists    exists(path) -> whether the project has the file
+    after_of  {request: the request it is to run after} (the person's override)
+    open_requests   the requests that are not done or cancelled
+    only      refs to derive for (default: every candidate)
+    fixed     {ref: {refs}}: edges that already hold (waits the store has), for the circle check
+
+    A candidate waits, for each declared input the project does not have, for the oldest task of another request whose
+    skill owns that input (the artifact contract); an input a task of its own request writes is that flow's business;
+    an input nothing writes makes no wait, and when its skill requires it, a `missing` entry; a skill that reads its
+    own output (a plan it keeps up, a log it appends to) waits for no one and misses nothing for that path: it starts it. A wait that would close a
+    circle with the dependencies and the waits already made (candidates are taken oldest first) is not made and is
+    listed in `cycles`.
+    Returns {"waits": [{"ref", "kind", "awaited", "path", "reason"}], "missing": [{"ref", "skill", "path", "owner",
+    "sentence"}], "cycles": [{"ref", "kind", "awaited", "path", "sentence"}]}; for an `after` wait awaited is the request."""
+    edges = {n["ref"]: set(n.get("depends_on") or []) for n in nodes}
+    for ref, awaited in (fixed or {}).items():
+        edges.setdefault(ref, set()).update(awaited)
+
+    def reaches(start, goal) -> bool:
+        seen, todo = set(), [start]
+        while todo:
+            at = todo.pop()
+            if at == goal:
+                return True
+            if at not in seen:
+                seen.add(at)
+                todo.extend(edges.get(at, ()))
+        return False
+
+    waits, missing, cycles = [], [], []
+    chosen = sorted((n for n in nodes if n.get("candidate") and (only is None or n["ref"] in only)),
+                    key=lambda n: _order(n["ref"]))
+    for n in chosen:
+        ref, skill = n["ref"], n.get("skill")
+        target = (after_of or {}).get(n["request"])
+        if target is not None and target in open_requests and target != n["request"]:
+            theirs = [m["ref"] for m in nodes if m["request"] == target]
+            if any(reaches(t, ref) for t in theirs):
+                cycles.append({"ref": ref, "kind": WAIT_AFTER, "awaited": target, "path": None,
+                               "sentence": f"{skill} would wait for request #{target}, which waits for it: no wait was made"})
+            else:
+                edges.setdefault(ref, set()).update(theirs)
+                waits.append({"ref": ref, "kind": WAIT_AFTER, "awaited": target, "path": None,
+                              "reason": f"after request #{target}"})
+        meta = facts.get(skill)
+        if not meta:
+            continue
+        for path in meta["inputs"]:
+            if exists(path):
+                continue
+            owners = owners_of(facts, path)
+            if skill in owners:
+                continue  # the skill reads what it writes itself: no task waits for another of its own skill
+            if any(m["skill"] in owners and m["request"] == n["request"] and m["ref"] != ref for m in nodes):
+                continue
+            writers = sorted((m for m in nodes if m["skill"] in owners and m["request"] != n["request"]),
+                             key=lambda m: _order(m["ref"]))
+            if writers:
+                free = [m for m in writers if not reaches(m["ref"], ref)]
+                if not free:
+                    cycles.append({"ref": ref, "kind": WAIT_INPUT, "awaited": writers[0]["ref"], "path": path,
+                                   "sentence": f"{skill} would wait for task #{writers[0]['ref']} ({path}), which waits "
+                                               "for it: no wait was made"})
+                    continue
+                edges.setdefault(ref, set()).add(free[0]["ref"])
+                waits.append({"ref": ref, "kind": WAIT_INPUT, "awaited": free[0]["ref"], "path": path,
+                              "reason": f"{path}, written by task #{free[0]['ref']}"})
+            elif path in meta["required"]:
+                owner = owners[0] if owners else None
+                how = f"run {owner} first" if owner else "add the file"
+                missing.append({"ref": ref, "skill": skill, "path": path, "owner": owner,
+                                "sentence": f"{skill} needs {path}; nothing writes it: {how} or go ahead and it will stop"})
+    return {"waits": waits, "missing": missing, "cycles": cycles}
+
+
+def wait_lines(waits: list, missing: list, cycles: list, titles: dict) -> list:
+    """The lines a plan's body adds for its waits, its required inputs nothing writes and its waits left out as a
+    circle (empty when there are none). titles maps a ref to the task's title."""
+    lines = []
+    if waits:
+        lines += ["", "Waits (derived from what each skill reads; approve with go ahead on a task to drop its wait):"]
+        lines += [f"- {titles.get(w['ref'], w['ref'])} waits: {w['reason']}" for w in waits]
+    if missing:
+        lines += ["", "Inputs nothing writes:"]
+        lines += [f"- {titles.get(m['ref'], m['ref'])}: {m['sentence']}" for m in missing]
+    if cycles:
+        lines += ["", "Waits left out, because they would wait in a circle:"]
+        lines += [f"- {titles.get(c['ref'], c['ref'])}: {c['sentence']}" for c in cycles]
+    return lines
 
 
 # --- stage 6: several deliveries, the brief, sub-tasks -------------------------------------------------------------

@@ -70,6 +70,7 @@ The modules of the runtime, one row each, from the first sentence of their docst
 | `runtime/ops_core.py` | The names every module of the operations layer shares, once: the checkout (ROOT), the refusal (OpsError), the project's context and the store call, the two locks, the runtime's own key and the data-folder names. |
 | `runtime/ops_reads.py` | The reads of the local interface and the signals of the local service: the change signal of the store (`version`), the stop of the runs a process started, the agents with their day, the conversation's messages, the skills with their proof, the costs, the connections, the service's start check and the project's artifacts. |
 | `runtime/ops_say.py` | The conversation with the planning agent: one turn of it (`say`) and the memory a plain line carries to the router. |
+| `runtime/ops_waits.py` | The derived waits in the operations layer: which task waits for which, worked out from the artifact contract. |
 | `runtime/path_rule.py` | The path rule: how one path of what a run left goes back to the project. |
 | `runtime/plan.py` | The plan of a request: the tasks code builds from a route, which the person approves before any task exists. |
 | `runtime/progress.py` | Progress and the summary of a period, computed from the store's records: no model writes them. |
@@ -91,7 +92,7 @@ The modules of the runtime, one row each, from the first sentence of their docst
 **The store, as built.** Migration 1 holds the first runtime's tables (`cursors`, `events`, `runs`, `inbox`, `actions`); the task runtime uses `cursors` and `actions` too. The migrations, generated from `MIGRATIONS` of `providers/store/sqlite.py`:
 
 <!-- generated: store-migrations -->
-Schema version 7: the highest migration of `MIGRATIONS`.
+Schema version 8: the highest migration of `MIGRATIONS`.
 
 | Migration | Description | Tables created | Columns added | Triggers |
 |---|---|---|---|---|
@@ -102,6 +103,7 @@ Schema version 7: the highest migration of `MIGRATIONS`.
 | 5 | the approvals table: what the person approved, a record that only grows | `approvals` | - | `approvals_never_deleted`, `approvals_only_status_moves` |
 | 6 | the messages of the conversation with the planning agent | `conversation_messages` | - | - |
 | 7 | tasks, task runs and pending decisions are never deleted | - | - | `tasks_never_deleted`, `task_runs_never_deleted`, `pending_decisions_never_deleted` |
+| 8 | derived waits between requests: a request's after_request and the task_waits table | `task_waits` | `tasks.after_request` | `task_waits_never_deleted` |
 <!-- /generated -->
 
 The task runtime's tables, those that migration 2 and later create, with their columns (generated from the same source):
@@ -109,13 +111,14 @@ The task runtime's tables, those that migration 2 and later create, with their c
 <!-- generated: task-runtime-tables -->
 | Table | Created by migration | Columns |
 |---|---|---|
-| `tasks` | 2 | id, parent_id, flow, key, skill, agent, title, text, state, depends_on, milestone, note, created_at, updated_at, remote_id (migration 4), remote_version (migration 4), remote_written_sha256 (migration 4) |
+| `tasks` | 2 | id, parent_id, flow, key, skill, agent, title, text, state, depends_on, milestone, note, created_at, updated_at, remote_id (migration 4), remote_version (migration 4), remote_written_sha256 (migration 4), after_request (migration 8) |
 | `task_runs` | 2 | id, task_id, skill, skill_version, skill_sha256, model, adapter, web, status, failure, ending, attempts, started_at, ended_at, cost_usd, tokens, duration_ms, skill_loaded, image_digest, run_dir, error, redactions (migration 3) |
 | `pending_decisions` | 2 | id, task_id, run_id, kind, title, body, payload, payload_sha256, status, resolution, answer, created_at, resolved_at, resolved_by |
 | `document_records` | 4 | id, path, provider, remote_id, written_sha256, remote_version, read_sha256, status, note, updated_at |
 | `platform_comments` | 4 | id, provider, remote_id, subject, task_id, document_path, author, text, created_at, saved_at, status, used_by_pending |
 | `approvals` | 5 | id, scope, what, payload_sha256, policy_sha256, bounds, task_id, pending_id, approved_at, approved_by, expires_at, status, executed_at |
 | `conversation_messages` | 6 | id, conversation, role, text, task_id, run_id, created_at |
+| `task_waits` | 8 | id, task_id, awaited_id, kind, path, reason, status, created_at, ended_at, ended_by |
 <!-- /generated -->
 
 The cursors the runtime writes: `config:accepted-sha256` (the accepted configuration, written only by `ops._record_acceptance`, which `accept_config` calls for the person and `set_mode` calls for a move down the order of the modes), `config:accepted-by` (`person` or `code:narrowing`), `dispatch:held` (the ready tasks the last dispatcher round did not start, JSON: `at`, `held` with each task's reason, at most `HELD_KEPT` (20) of them, `more` for the rest and `missing`, the names of the credential's variables that were not found; a round that holds the same tasks for the same reasons writes nothing, since a write moves the change counter), `board:configured` (when the board was first written), `use:<run id>` (the recorded use of a run), `verdict:<run id>` (the person's one verdict on it), and each handler's own (`routine:published-posts`; `mailbox:<agent>` and `vote:<round>` of the social handlers).
@@ -181,6 +184,8 @@ A pending decision is `open`, `resolved` or `cancelled`. A release by an autonom
 **The proof and the tiers.** Two tiers, `strong` (the reference model) and `floor` (the floor model), named only in `evals/eval-gate.json`. A run goes to the floor tier only when the skill is `reliable` there, the measurement files of the checkout are the recorded ones, the eval image is the evidence's, and a key for the floor model is found; otherwise to the strong tier. The person may ask for the strong tier (`run-next --tier strong`); nobody can ask for the floor tier.
 
 **The autonomy modes, from three facts.** Each area agent (an entry of `area_agents`) has one of five modes: `stopped`, `supervised`, `milestones` (default), `autonomous`, `autonomous-with-policy`. They rest on three facts: whether the agent is enabled, the checkpoints of its mode (`every-phase`, `milestones`, `end`) and whether a standing approval is in force; `mode_of` maps the facts back, so a policy mode whose approval expired acts as `autonomous`. **Daily caps**: runs per day on the reference model and dollars per day on the floor model; an absent cap is 0, and a floor run of unknown cost counts at `max_cost_usd_per_run` (default 0.5). `MODES` of `runtime/autonomy.py` is also the order of autonomy, the least first, and `narrows(old, new)` says whether a move is down it. `set_mode` accepts a move down by code at once (recorded `code:narrowing`), since it widens nothing, and never a move up: the hash stays unaccepted and `next` is the `accept-config` command. It runs under `<data_dir>/config.lock` and reads the file and the accepted hash again under it, so a stale copy of the file can never bring a widening that code then accepts; a dispatcher round likewise ends when the file or the accepted hash moved (`_configuration_moved`). The day's floor spend is split by `autonomy.spend_split` into `usd_recorded` (recorded costs) and `usd_reserved` (`max_cost_usd_per_run` for each run without a cost); their sum is `usd_floor`, which the cap compares, and `runs_total` counts every run of the agent. A run of the router belongs to a request, which has no agent, so the day's count gives it the agent `planning` (`plan.PLANNING`): the planning agent's caps count the router's runs, and a line that would route when it may not start is answered with the reason and runs nothing (`ops._planning_may_start`).
+
+**Derived waits.** The order between requests is derived, not typed: `runtime/plan.py` (`derive`, pure) makes a task that is not started wait for the oldest open task of another request whose skill owns an input the project does not have yet, and `runtime/ops_waits.py` reads the store and the files and applies it (`rederive`, at planning, when a task ends, at every poll and round of dispatch, and before a claim). The wait is a row of `task_waits` (migration 8) with its reason, the task stays `planned`, and the store's `task_claim_next` and `task_claim` refuse a task with an open wait, so the order does not rest on the dispatcher; `decide` holds one as `waiting` as the second lock. `request --after` and an `after #n` on the board are the person's override, `approve --go-ahead <key>` drops the derived waits of a plan's tasks, and `go-ahead --task <id>` those of a task already created, each recorded as the person's decision in the state file, and the plan says before approval which required input nothing writes (`contracts/runtime.md`, "Derived waits"). A circle between requests is never waited on, it is reported.
 
 **Held reasons.** A ready task a round did not start is held with one word of `REASONS` in `runtime/dispatcher.py`, listed in the `held-reasons` block of [shells.md](shells.md): the agent's mode or caps (`autonomy.may_start`), a check the round makes before it starts a run (`credential`, `secret store`, `image`: the task is held, not failed), the one-at-a-time rule (`job running`), a task no enabled agent owns, a service that dispatches nothing (`dispatch off`), and `other` for any text a rule function gives that is not on the list, since free text never reaches a page. `held_of` builds the list; `ops.py` keeps the last round's in the cursor `dispatch:held`, and `status` and `agents` read it.
 
@@ -348,7 +353,7 @@ The limit's text and the stage that built it come from the contract's table; the
 <!-- generated: cli-verbs -->
 | Verb | Flags it reads | Operation |
 |---|---|---|
-| `request` | `--text \| --text-file` `[--flow]` `[--title]` | `request` |
+| `request` | `--text \| --text-file` `[--flow]` `[--title]` `[--after]` | `request` |
 | `route` | `--request` `[--flow]` | `route` |
 | `route-queued` | - | `route_queued` |
 | `status` | - | `status` |
@@ -359,9 +364,10 @@ The limit's text and the stage that built it come from the contract's table; the
 | `pending` | `[--id]` | `pending` |
 | `answer` | `--id` `--text \| --text-file` `[--with-comments]` | `answer` |
 | `release` | `--id` | `release` |
-| `approve` | `--id` `[--sha256]` | `approve` |
+| `approve` | `--id` `[--sha256]` `[--go-ahead]` | `approve` |
 | `reject` | `--id` `[--note]` | `reject` |
 | `retry` | `--task` | `retry` |
+| `go-ahead` | `--task` `[--drop-after]` | `go_ahead` |
 | `cancel` | `--request` | `cancel` |
 | `deps` | - | `deps` |
 | `run-next` | `[--tier]` | `run_next` |
@@ -405,21 +411,21 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 | `/pending [id]` | what waits for you; with an id, that decision whole |
 | `/answer <id> <text>` | answer a pending decision |
 | `/release <id>` | release a delivery (it stays a draft) |
-| `/approve <id> [sha256]` | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
+| `/approve <id> [sha256]` | approve a plan or an acceptance (a plan: --go-ahead <task key>, repeated, drops that task's derived waits); an effect is approved in the terminal or on the page, with its hash |
 | `/reject <id> [note]` | reject a plan, an acceptance or an effect |
 | `/retry <task id>` | make a failed or blocked task ready again |
 | `/cancel <request id>` | cancel a request |
-| `/new <text>` | start a new request, whatever is open |
+| `/new <text>` | start a new request, whatever is open (--after <id> before the text: run it after that request) |
 <!-- /generated -->
 
-**The operations layer is four files** (CONS-1B). `runtime/ops.py` holds the operations and is the facade every shell imports; `runtime/ops_say.py` holds the conversation (`say`, `chat_memory`), `runtime/ops_reads.py` the reads of the local interface (`version`, `agents`, `skills`, `costs`, `connections`, `artifacts`, ...), and `runtime/ops_core.py` the names they all share (`ROOT`, `OpsError`, `context`, `_stored`, the two locks, the runtime's own key, the data-folder names). The rule is one home for the shared names and attribute access: every module reads a shared name as `core.<name>` at call time and never from a `from`-import of `ops_core`, so a test that patches `ops_core.ROOT` reaches every reader (a name bound at import would keep the real checkout, and the test would pass for the wrong reason); `ops_core.py` imports no other file of the layer, and a sibling reaches an operation that stays in `ops.py` at call time, so no two files import each other. `ops.py` exposes the siblings' operations under their names at its end, so the table of operations and the shells did not change. `test_runtime_rules.py` checks the three rules and keeps a size budget for `ops.py` and each sibling; the next change of the layer lowers the budget as it moves the domain out of `ops.py`.
+**The operations layer is five files** (CONS-1B, and ADJ-R1 for `ops_waits.py`). `runtime/ops.py` holds the operations and is the facade every shell imports; `runtime/ops_say.py` holds the conversation (`say`, `chat_memory`), `runtime/ops_reads.py` the reads of the local interface (`version`, `agents`, `skills`, `costs`, `connections`, `artifacts`, ...), and `runtime/ops_core.py` the names they all share (`ROOT`, `OpsError`, `context`, `_stored`, the two locks, the runtime's own key, the data-folder names). The rule is one home for the shared names and attribute access: every module reads a shared name as `core.<name>` at call time and never from a `from`-import of `ops_core`, so a test that patches `ops_core.ROOT` reaches every reader (a name bound at import would keep the real checkout, and the test would pass for the wrong reason); `ops_core.py` imports no other file of the layer, and a sibling reaches an operation that stays in `ops.py` at call time, so no two files import each other. `ops.py` exposes the siblings' operations under their names at its end, so the table of operations and the shells did not change. `test_runtime_rules.py` checks the three rules and keeps a size budget for `ops.py` and each sibling; the next change of the layer lowers the budget as it moves the domain out of `ops.py`.
 
 **The operations**, the table `runtime/operations.py` (`OPERATIONS`, a pure literal): one row per operation of `runtime/ops.py`, with its function, its verb, the channels that may call it, whether it calls a model and what it does. It is the port of the shells: the terminal's parser, the conversation's commands and help, and the texts that name a command derive from it, so adding an operation adds a row and a function, and adding a shell adds a file. A public function of the layer's files that is not a row (`store_module`, `context`, `task_prompt`, `code_task`, `chat_memory`) is used by other modules and tests: `test_operations_table.py` keeps the two lists equal, counting a function in the file that defines it. Each operation takes the project folder first and returns a JSON-serialisable object or raises `OpsError` with code 1, 2 or 3. A row has `name`, `call`, `args`, `channels`, `model` and `help`, and where it applies `channel_arg` (the function is told which channel called), `chat_reply` (the key of the result the conversation shows), `job` (the service and the MCP mode start it as a job) and `exit_unless` (the terminal prints the result and exits 1 unless that key has that value, as `contained-run` does for `status`); the docstring of `runtime/operations.py` defines each. Every sentence that names a terminal command (a refusal's `next`, the `wider` commands, the held reasons' commands) is built by `operations.command_line`, and the service's start command by `operations.service_line`: both are absolute from the running checkout, and both carry the `uv run --with` prefix when `started_with_uv()` says the process started through uv, which the variable `WORKBENCH_STARTED_WITH_UV` (`1` or `0`) overrides ([contracts/runtime.md](../../../contracts/runtime.md), "The commands the runtime names"): `test_a_process_started_through_uv_gets_the_prefix_and_one_started_without_it_does_not`; `test_no_sentence_of_the_operations_layer_builds_a_command_but_through_the_one_helper`. An `OpsError` carries its `code` and, for a refusal that has a command to get past it, `next`.
 
 <!-- generated: operations -->
 | Operation | Verb of `cli.py` | Channels | Calls a model | What it does |
 |---|---|---|---|---|
-| `request` | `request` | terminal, page, mcp | no | record what you want; with a flow, plan it from the flow file, else it waits for its route |
+| `request` | `request` | terminal, page, mcp | no | record what you want; with a flow, plan it from the flow file, else it waits for its route; with after, run it after that request |
 | `route` | `route` | terminal, page, mcp | yes, without --flow | plan a request that waits for its route: one run of the router skill, or the plan of a flow file; on the page, while a run is in progress, the request is queued |
 | `route_queued` | `route-queued` | terminal | yes | route the oldest queued line or request, when no run is in progress (the local service calls it every few seconds) |
 | `status` | `status` | terminal, chat, page, mcp | no | requests, tasks and what waits for you |
@@ -430,9 +436,10 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 | `pending` | `pending` | terminal, chat, page, mcp | no | what waits for you; with an id, that decision whole |
 | `answer` | `answer` | terminal, chat, page, mcp | no | answer a pending decision |
 | `release` | `release` | terminal, chat, page, mcp | no | release a delivery (it stays a draft) |
-| `approve` | `approve` | terminal, chat, page | no | approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash |
+| `approve` | `approve` | terminal, chat, page | no | approve a plan or an acceptance (a plan: --go-ahead <task key>, repeated, drops that task's derived waits); an effect is approved in the terminal or on the page, with its hash |
 | `reject` | `reject` | terminal, chat, page | no | reject a plan, an acceptance or an effect |
 | `retry` | `retry` | terminal, chat, page | no | make a failed or blocked task ready again |
+| `go_ahead` | `go-ahead` | terminal, page | no | go ahead on a task that waits for another request's task: its derived waits end (with drop-after, its after wait) |
 | `cancel` | `cancel` | terminal, chat, page | no | cancel a request |
 | `deps` | `deps` | terminal | no | install the dependency sets of runtime.json, by code |
 | `run_next` | `run-next` | terminal | yes | run the next ready task: one skill, once, on the model its proof gives |
@@ -520,3 +527,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 - 2026-10-09: the operations layer is four files (CONS-1B): the shared names are `runtime/ops_core.py`, read as attributes; the conversation is `runtime/ops_say.py` and the reads of the interface `runtime/ops_reads.py`; `ops.py` is the facade, under a size budget. The lock, key and conversation rows and the known-limit row on the size of `ops.py` follow.
 - 2026-10-09: the conversation queues a line or a request typed during a run and the service routes it when the run ends; a question about the state and a direct turn are answered by code; an unrecognised route is one sentence with two actions; the held rows carry their commands as fields; a web task takes a handed-over file; the Desk list carries each file's kind and the raw route answers an image's bytes (ADJ-R2).
 - 2026-10-09: the known limit "a file cannot be handed to a task with the web" is removed (the maintainer decided it; `WEB_TASK_TAKES_DROP` is true); the page's policy gains `img-src 'self' blob:`; only the page queues a line or a request during a run, the terminal and the MCP mode are refused as before (ADJ-R2).
+- 2026-10-09: the derived waits between requests (ADJ-R1, A-29): migration 8 (`tasks.after_request`, `task_waits`), `plan.derive`, the fifth part of the operations layer `ops_waits.py`, the held reason `waiting`, `request --after` and `approve --go-ahead`, the wait in a mirrored item's note; the brand flow's voice task says the profile is written by hand for a product brand. The `store-migrations`, `task-runtime-tables`, `runtime-modules`, `operations`, `cli-verbs`, `say-commands` and `held-reasons` blocks are regenerated.
+- 2026-10-09: `go-ahead --task <id>` (ADJ-R1): the go-ahead on a task already created, from the terminal and the page; the `operations` and `cli-verbs` blocks are regenerated.
+- 2026-10-09: the review of ADJ-R1: a skill that reads its own output waits for no task of its own skill; the Required column is `flow_files.required_inputs`, the validator's reader; a go-ahead is about the waits shown (the dropped wait, not a marker for ever), and a key with no wait is refused; `go-ahead --task <id> --drop-after`; `task_retry`, `tasks_add` and the accepted sub-tasks take their waits in the same transaction; the board reads `after #n` only as an instruction and names the awaited tasks in the note; the brand flow's title is short.
+

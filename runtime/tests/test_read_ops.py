@@ -434,9 +434,11 @@ def test_the_status_task_rows_carry_their_title_and_agent(tree):
     request = planned(tree, "single")
     row = next(r for r in ops.status(path)["requests"] if r["id"] == request)
     assert [(t["key"], t["title"], t["agent"]) for t in row["tasks"]] == [("profile", "Profile", "business")]
-    # The additions are the store's own columns: a task row carries nothing else new, and a request row nothing at all.
-    assert set(row["tasks"][0]) == {"id", "key", "title", "agent", "skill", "state", "note", "on_board", "open_comments"}
-    assert set(row) == {"id", "title", "flow", "state", "on_board", "open_comments", "tasks"}
+    # The additions are the store's own columns and the derived waits (ops_waits.py): a task row carries nothing else
+    # new, and a request row the request it runs after.
+    assert set(row["tasks"][0]) == {"id", "key", "title", "agent", "skill", "state", "note", "on_board", "open_comments",
+                                    "waiting_for"}
+    assert set(row) == {"id", "title", "flow", "state", "on_board", "open_comments", "after", "tasks"}
     # Without area agents the agent of a task planned now is None; the title is still there.
     without_area_agents(tree)
     later = planned(tree, "single")

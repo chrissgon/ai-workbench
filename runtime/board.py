@@ -16,11 +16,14 @@ fields, written by the runtime and never read back). Only code talks to the boar
                               themselves. The version covers the content and a comment may not move it, so an item
                               whose version did not change has its own comments listed (the provider's `comments`,
                               one call) and the new ones saved. An item no task knows becomes a request waiting for
-                              the person's acceptance (store.request_from_board).
+                              the person's acceptance (store.request_from_board). An "after #n" in its title or text
+                              is the override "run this after request #n" (n naming a task: that task's request),
+                              kept on the request; one added to the text of a request later is taken the same way.
   push(ctx, dry_run=False)    the store to the board, oldest first: an item is written only when what would be
                               written changed since the last write; a title and a text are written only when the item
-                              is created, never after (they are the person's). With dry_run, every write is printed
-                              by the provider (upsert --dry-run) and nothing changes.
+                              is created, never after (they are the person's). The item's note says what the task
+                              waits for (the store's waits), before the task's own note. With dry_run, every write is
+                              printed by the provider (upsert --dry-run) and nothing changes.
 
 Only what is still open when the board is configured is mirrored: a task that was already final (done or cancelled)
 at the first sync that writes to the board never gets an item (left_out()). That sync records its time in the
@@ -45,6 +48,7 @@ import datetime
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -56,6 +60,12 @@ CLASS = "integration:issue-tracker"
 TIMEOUT = 120
 SHOWN_CHARS = 300
 FINAL = ("done", "cancelled")
+# "after #12": the override of a request, only where a person wrote it as an instruction: at the start of a text, or on a
+# line of its own (a trailing full stop allowed). Inside a sentence ("thereafter #3", "do it after #12 please") it is prose.
+WORDS = r"after[ \t]+(?:(?:request|task)[ \t]+)?#(\d+)"
+AFTER_FIRST = re.compile(r"\A\s*" + WORDS, re.I)                                   # the start of a text
+AFTER_LINE = re.compile(r"^[ \t]*" + WORDS + r"[ \t]*[.;]?[ \t]*$", re.I | re.M)  # a line of its own
+WAITS_SHOWN = 2  # the awaited tasks a note names; the rest is counted
 CONFIGURED = "board:configured"  # the store's cursor: when the first sync wrote to the board (UTC, the store's form)
 
 
@@ -93,15 +103,35 @@ def _line(value) -> str:
     return " ".join(text.split())[:SHOWN_CHARS]
 
 
-def item_payload(task: dict, pending, create: bool = False) -> dict:
+def after_of(*texts):
+    """The number n of the first "after #n" in these texts (an item's title and text), or None: the person's override
+    "run this after request #n", written in the item's own words."""
+    for text in texts:
+        found = AFTER_FIRST.search(text or "") or AFTER_LINE.search(text or "")
+        if found:
+            return int(found.group(1))
+    return None
+
+
+def _waiting_note(waits) -> str:
+    """"waiting for #10, #12 (+1)": the awaited tasks (a request as "request #n"), at most WAITS_SHOWN named, the rest
+    counted, so that the task's own note after it is never pushed out of the line."""
+    named = [f"request #{w['awaited_id']}" if w.get("kind") == "after" else f"#{w['awaited_id']}" for w in waits]
+    more = f" (+{len(named) - WAITS_SHOWN})" if len(named) > WAITS_SHOWN else ""
+    return "waiting for " + ", ".join(named[:WAITS_SHOWN]) + more
+
+
+def item_payload(task: dict, pending, create: bool = False, waits=()) -> dict:
     """What the runtime writes to a task's item: {"state", "shown": {...}}, every shown value one line of text;
-    with create (the item does not exist yet), also its title and text, which are never written again."""
+    with create (the item does not exist yet), also its title and text, which are never written again. waits are the
+    task's open waits (the store's waits_list rows): the item's note says what it waits for, before the task's own note."""
     waiting = f"{pending['kind']} {pending['id']}" if pending else ""
+    note = "; ".join(filter(None, [_waiting_note(waits) if waits else "", task.get("note")]))
     payload = {"state": task["state"], "shown": {
         "task": _line(task["id"]), "request": _line(task.get("parent_id")), "flow": _line(task.get("flow")),
         "key": _line(task.get("key")), "skill": _line(task.get("skill")),
         "depends_on": _line(", ".join(str(d) for d in task.get("depends_on") or [])),
-        "milestone": "yes" if task.get("milestone") else "no", "waiting_for": waiting, "note": _line(task.get("note"))}}
+        "milestone": "yes" if task.get("milestone") else "no", "waiting_for": waiting, "note": _line(note)}}
     if create:
         payload["title"] = task["title"]
         payload["text"] = task["text"]
@@ -174,6 +204,13 @@ def pull(ctx: dict) -> dict:
             try:
                 store.task_edit(conn, task["id"], by="board", **edit)
                 out["edited"].append(task["id"])
+                if task.get("parent_id") is None and task["state"] not in FINAL:  # "after #n" added or taken out later
+                    wrote = after_of(edit.get("title", task["title"]), edit.get("text", task["text"]))
+                    wanted = _after_request(tasks, wrote, out, remote_id)
+                    if wanted is not None and wanted != task["id"] and wanted != task.get("after_request"):
+                        store.request_after_set(conn, task["id"], wanted)
+                    elif wrote is None and after_of(task["title"], task["text"]) is not None:
+                        store.request_after_set(conn, task["id"], None)  # the words that said it are gone
             except store.StoreError as e:
                 out["refused"].append({"task": task["id"], "reason": str(e)})
         state = got.get("state")
@@ -191,13 +228,26 @@ def pull(ctx: dict) -> dict:
         try:
             got = call(cfg, root, "get", ["--id", remote_id])
             title = got.get("title") or remote_id
+            after = _after_request(tasks, after_of(title, got.get("text")), out, remote_id)
             made = store.request_from_board(conn, title=title, text=got.get("text") or title, remote_id=remote_id,
-                                            remote_version=got.get("version"), by="board")
+                                            remote_version=got.get("version"), by="board", after=after)
         except (BoardError, store.StoreError) as e:
             out["refused"].append({"item": remote_id, "reason": str(e)})
             continue
         out["created"].append({"request": made["request"], "pending_id": made["pending_id"], "item": remote_id})
     return out
+
+
+def _after_request(tasks: list, number, out: dict, item):
+    """The request an item's "after #n" names: n itself when it is a request, the request of task n when it is a task;
+    None (and a refusal listed under `refused`) when n is neither."""
+    if number is None:
+        return None
+    row = next((t for t in tasks if t["id"] == number), None)
+    if row is None:
+        out["refused"].append({"item": item, "reason": f"after #{number} names no request or task of this project"})
+        return None
+    return row["parent_id"] or row["id"]
 
 
 def _save_comments(ctx: dict, task_id: int, comments) -> int:
@@ -245,11 +295,14 @@ def push(ctx: dict, dry_run: bool = False) -> dict:
     if not dry_run and store.cursor_get(conn, CONFIGURED) is None:
         store.cursor_set(conn, CONFIGURED, _now())  # the board is configured: what is final now is never mirrored
     never = set(left_out(ctx, tasks))
+    waiting = {}
+    for w in store.waits_list(conn):
+        waiting.setdefault(w["task_id"], []).append(w)
     for task in tasks:
         if task["id"] in never:
             continue
         exists = bool(task.get("remote_id"))
-        payload = item_payload(task, _open_pending(ctx, task["id"]), create=not exists)
+        payload = item_payload(task, _open_pending(ctx, task["id"]), create=not exists, waits=waiting.get(task["id"], ()))
         digest = payload_hash(payload)
         if exists and digest == task.get("remote_written_sha256"):
             continue

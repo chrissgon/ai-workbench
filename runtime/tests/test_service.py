@@ -164,7 +164,7 @@ def sample(row, route):
     given = {}
     for name in names:
         kind = args[name]["kind"]
-        given[name] = {"int": 3, "str": "7d", "text": "some words", "flag": True}.get(kind) or args[name]["choices"][0]
+        given[name] = {"int": 3, "str": "7d", "text": "some words", "flag": True, "list": ["voice"]}.get(kind) or args[name]["choices"][0]
     return given, {**bound, **given}
 
 
