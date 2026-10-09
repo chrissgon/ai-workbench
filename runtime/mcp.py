@@ -170,8 +170,11 @@ def tool_of(row: dict, ids: list) -> dict:
     if row.get("job"):
         text += ". Starts a job and returns it: poll it with the tool job"
     if row.get("channel_arg"):
-        text += ". Called as the channel mcp: a command typed in the line (approve, reject, retry, cancel) is refused, " \
-                "it is done in the terminal or on the page"
+        text += ". Called as the channel mcp"
+        if row["name"] == "say":
+            text += ": a command typed in the line (approve, reject, retry, cancel) is refused, it is done in the terminal or on the page"
+        if row.get("queues"):
+            text += "; while a run of the project is in progress the call is refused, not queued (only the local service drains the queue)"
     return {"name": row["name"], "description": text, "inputSchema": {"type": "object", "properties": properties,
                                                                       "required": required, "additionalProperties": False}}
 

@@ -30,6 +30,15 @@ Functions (each takes the project's context, ops_core.context):
                                           decision is written to the state file; its new waiting_for
   waiting_for(ctx)                        {task id: [{"task_id", "request_id", "reason"}]}, the open waits, for `status`,
                                           `task` and the dispatcher's snapshot
+  in_status(ctx, requests, rows)          the requests of `status` with `after` and each task's waiting_for
+  task_row(ctx, row)                      a task row of `task`: `after` for after_request, and its waiting_for
+  current_tasks(ctx)                      derive again, then the store's tasks: what a dispatcher round reads
+  settled(ctx, out)                       derive again, return out: the hook of the operations that end a task
+  retry(ctx, task_id)                     task_retry with the waits the task begins with, then derived again
+  request_flow(ctx, tasks, after, **f)    request_add of a flow's plan with its waits: the result with `waits`, `missing`
+  accept(ctx, item)                       acceptance_resolve `accepted`, the sub-tasks with their waits
+  add_subtasks(ctx, request_id, tasks)    tasks_add with the waits the sub-tasks begin with
+  explain(ctx, task_id, reason)           the reason a claim ran nothing, with who waits and why
 
 It reaches no operation of ops.py. Standard library only. Runs on Python 3.9.
 """
@@ -245,6 +254,80 @@ def go_ahead(ctx: dict, task_id: int, drop_after: bool = False) -> dict:
     return {"task_id": task_id, "state": done["state"], "dropped": done["reasons"],
             "waiting_for": waiting_for(ctx).get(task_id, []),
             "decision": _record_decision(ctx, [(task["skill"], task_id, done["reasons"])])}
+
+
+def task_row(ctx: dict, row: dict) -> dict:
+    """The store's task row as `task` shows it: `after` for the raw column, and waiting_for."""
+    return {**{k: v for k, v in row.items() if k != "after_request"}, "after": row["after_request"],
+            "waiting_for": waiting_for(ctx).get(row["id"], [])}
+
+
+def in_status(ctx: dict, requests: list, rows: list) -> list:
+    """The requests of `status` with `after` (the request each runs after, or None) and, on each task, `waiting_for`."""
+    waiting, after = waiting_for(ctx), {r["id"]: r.get("after_request") for r in rows}
+    return [{**r, "after": after.get(r["id"]),
+             "tasks": [{**t, "waiting_for": waiting.get(t["id"], [])} for t in r["tasks"]]} for r in requests]
+
+
+def current_tasks(ctx: dict) -> list:
+    """Every task of the store, after the waits were derived again: what a round of the dispatcher decides from."""
+    rederive(ctx)
+    return core._stored(ctx, ctx["store"].tasks_list)
+
+
+def only_on_plans(item: dict, go_ahead) -> None:
+    """A go-ahead is said on the tasks of a plan: any other pending decision is refused."""
+    if go_ahead and item["kind"] != "plan":
+        raise core.OpsError(f"pending decision {item['id']} is a {item['kind']}: go ahead is said on the tasks of a plan", 2)
+
+
+def settled(ctx: dict, out):
+    """Derive the waits again after an operation that ended a task or a request, and return what it returned."""
+    rederive(ctx)
+    return out
+
+
+def retry(ctx: dict, task_id: int) -> dict:
+    """task_retry for a failed or blocked task with the waits it begins with (for_task), in the same transaction."""
+    task = core._stored(ctx, ctx["store"].task_get, task_id)
+    waits = for_task(ctx, task_id) if task["state"] in ("failed", "blocked") else []
+    return settled(ctx, core._stored(ctx, ctx["store"].task_retry, task_id, waits=waits))
+
+
+def request_flow(ctx: dict, tasks: list, after, **fields) -> dict:
+    """request_add of a flow's plan, with the waits its tasks begin with (for_plan): the store's result with `waits` and
+    `missing` (the shown ones), derived again afterwards."""
+    derived = for_plan(ctx, tasks, after)
+    out = core._stored(ctx, ctx["store"].request_add, tasks=tasks, after=after, waits=derived["store"], **fields)
+    rederive(ctx)
+    return {**out, "waits": derived["shown"], "missing": derived["missing"]}
+
+
+def accept(ctx: dict, item: dict) -> dict:
+    """acceptance_resolve `accepted` for the person: the accepted sub-tasks begin with their waits, then derived again."""
+    payload = item.get("payload") or {}
+    waits = for_plan(ctx, payload.get("tasks") or [], None, request=item["task_id"])["store"] \
+        if payload.get("what") == "subtasks" else None
+    return settled(ctx, core._stored(ctx, ctx["store"].acceptance_resolve, item["id"], resolution="accepted", by="user",
+                                     waits=waits))
+
+
+def add_subtasks(ctx: dict, request_id: int, tasks: list) -> dict:
+    """tasks_add of the sub-tasks of a request with the waits they begin with."""
+    return core._stored(ctx, ctx["store"].tasks_add, request_id, tasks,
+                        waits=for_plan(ctx, tasks, None, request=request_id)["store"])
+
+
+def explain(ctx: dict, task_id, reason: str) -> str:
+    """Why a claim ran nothing, said with the waits: for a named task that waits, its reasons; for a claim of the next
+    task with nothing ready, the tasks that wait and for what."""
+    held = waiting_for(ctx)
+    if task_id is not None and held.get(task_id):
+        return f"task {task_id} is waiting: " + "; ".join(w["reason"] for w in held[task_id])
+    if task_id is None and held:
+        return reason + "; waiting: " + "; ".join(f"task {t} for {', '.join(w['reason'] for w in ws)}"
+                                                  for t, ws in sorted(held.items()))[:600]
+    return reason
 
 
 def waiting_for(ctx: dict) -> dict:

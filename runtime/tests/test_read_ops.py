@@ -142,7 +142,7 @@ def test_the_conversation_operation_returns_only_the_messages_after_an_id_in_ord
     everything = ops.conversation(path)["messages"]
     assert [m["role"] for m in everything] == ["user", "assistant"] * 3
     assert [m["text"] for m in everything][::2] == ["/status", "/progress 7d", "/pending"]
-    assert set(everything[0]) == {"id", "role", "text", "task_id", "run_id", "created_at"}
+    assert set(everything[0]) == {"id", "role", "text", "task_id", "run_id", "created_at", "queued"}
     ids = [m["id"] for m in everything]
     assert ids == sorted(ids) and len(set(ids)) == 6
     assert ops.conversation(path, after=ids[1])["messages"] == everything[2:]
@@ -162,20 +162,28 @@ def test_the_conversation_operation_returns_only_the_messages_after_an_id_in_ord
     assert [m["id"] for m in page] == sorted(m["id"] for m in page)
 
 
-def test_a_second_turn_during_a_run_is_refused_before_anything_is_stored(tree):
+def test_a_second_turn_during_a_run_is_queued_on_the_page_and_stores_no_request(tree):
+    """A-23: a turn from the page that would route while another run holds the lock is stored and queued, with its reply pending;
+    it makes no request, no decision and no router run until the lock is free (runtime/tests/test_say_queue.py)."""
     path = str(tree["project"])
     store, conn = stored(tree)
     cfg = ops.project_config.load(path)
     with ops_core._run_lock(cfg):  # another run of the project holds the lock
         for line in ("Which market should the invented studio go after first?", "/new Another invented request."):
-            with pytest.raises(ops.OpsError) as raised:
+            kept = len(store.messages_list(conn, ops.CONVERSATION, limit=500))
+            with pytest.raises(ops.OpsError) as raised:        # a shell that drains no queue is refused, as it always was
                 ops.say(path, line)
             assert raised.value.code == 1 and "in progress" in str(raised.value)
-        assert store.messages_list(conn, ops.CONVERSATION, limit=500) == []   # no message
+            assert len(store.messages_list(conn, ops.CONVERSATION, limit=500)) == kept   # before anything is stored
+            out = ops.say(path, line, channel="page")
+            assert out["queued"] is True and out["reply"] is None and out["ran"] is False and out["request_id"] is None
+        messages = store.messages_list(conn, ops.CONVERSATION, limit=500)
+        assert [m["role"] for m in messages] == ["user", "user"]                       # both lines are kept
+        assert [m["queued"] for m in ops.conversation(path)["messages"]] == [True, True]
         assert store.tasks_list(conn) == [] and store.pending_list(conn, "all") == []  # no request, no decision
         # A command that does not route is not held back by the lock.
         assert ops.say(path, "/status")["ran"] is False
-    assert len(store.messages_list(conn, ops.CONVERSATION, limit=500)) == 2
+    assert len(store.messages_list(conn, ops.CONVERSATION, limit=500)) == 4
     assert st.calls(tree["adapter"]) == []
 
 
@@ -475,7 +483,7 @@ def test_an_artifact_row_carries_the_agent_whose_pack_holds_its_owner(tree):
     assert (by_path["docs/business/icp.md"]["owner"], by_path["docs/business/icp.md"]["agent"]) == ("demo-writes", "business")
     # No owner, no agent. The key is always there.
     assert (by_path["docs/notes/readme.md"]["owner"], by_path["docs/notes/readme.md"]["agent"]) == (None, None)
-    assert set(by_path["docs/notes/readme.md"]) == {"path", "owner", "agent", "size", "modified_at", "bound"}
+    assert set(by_path["docs/notes/readme.md"]) == {"path", "owner", "agent", "size", "modified_at", "kind", "bound"}
     # A skill in the pack of two enabled agents has no one agent: None, not a guess.
     configure(tree, {**AGENTS, "assistant": {"pack": "biz", "mode": "supervised"}})
     assert {a["path"]: a["agent"] for a in ops.artifacts(path)["artifacts"] if a["owner"]} == {

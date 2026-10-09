@@ -512,7 +512,8 @@ def test_every_limit_built_so_far_has_a_test_named_after_it():
         assert len([n for n in names if n.startswith(f"test_limit_{number:02d}_")]) == 1, number
     assert len(names) == len(BUILT)
     # Every limit of the contract's table: the tests its row names exist where it says, and each limit that has a
-    # test named after it has exactly one in the runtime's and the store's tests, the one its row names.
+    # test named after it is defined once in the runtime's and the store's tests, and every such test is one its row names
+    # (L15 has two: the exact content, and a class of targets resolved from a recorded fact).
     rows = limits_table()
     assert sorted(rows) == list(range(1, 21))
     defined = {}
@@ -529,9 +530,9 @@ def test_every_limit_built_so_far_has_a_test_named_after_it():
             assert test_file in defined.get(name, []), f"L{number}: {test_file} has no {name}"
             if name.startswith("test_limit_"):
                 assert name.startswith(f"test_limit_{number:02d}_"), f"L{number} names {name}"
-                named[number] = name
+                named.setdefault(number, []).append(name)  # a limit may have several: L15 has one for the exact content and one for a class of targets
     numbered = {n for n in defined if n.startswith("test_limit_")}
-    assert numbered == set(named.values()) and all(len(defined[n]) == 1 for n in numbered)
+    assert numbered == {name for names in named.values() for name in names} and all(len(defined[n]) == 1 for n in numbered)
     # Every limit is built; L20 alone has no test named after it: the project's protected paths guard it.
     assert sorted(named) == list(range(1, 20))
 

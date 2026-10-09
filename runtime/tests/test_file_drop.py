@@ -145,21 +145,39 @@ def test_a_second_file_of_the_same_name_is_refused(tree):
     assert ops.hand_over(project, ids["profile"], handed_file(tree, "logo.svg"))["task"] == ids["profile"]
 
 
-def test_a_web_task_refuses_a_hand_over_while_the_constant_is_false(tree, monkeypatch):
-    assert drop.WEB_TASK_TAKES_DROP is False
+def web_task(tree) -> int:
     st.skill(tree["tree"], "demo-web", "docs/workbench/state.md", "docs/business/web.md")
     skill_md = tree["tree"] / "skills" / "demo-web" / "SKILL.md"
     skill_md.write_text(skill_md.read_text().replace("requires: []", "requires: [search:web]"), encoding="utf-8")
     (tree["tree"] / "flows" / "web.json").write_text(json.dumps({"flow": "web", "title": "Web", "tasks": [
         {"key": "look", "skill": "demo-web", "title": "Look", "text": "look it up."}]}), encoding="utf-8")
+    return ops.request(str(tree["project"]), "Look it up.", flow="web")["tasks"][0]["id"]
+
+
+def test_a_web_task_takes_a_hand_over_and_the_answer_carries_the_web_line(tree):
+    """A-30 (the maintainer's decision of 2026-10-09): the file is the person's own choice, so a web task takes it; the
+    answer says so, and `task` tells the page before the send."""
+    assert drop.WEB_TASK_TAKES_DROP is True
     project = str(tree["project"])
-    task_id = ops.request(project, "Look it up.", flow="web")["tasks"][0]["id"]
+    task_id = web_task(tree)
+    assert ops.task(project, task_id)["drop"] == {"web": True, "takes": True, "line": drop.WEB_LINE}
+    allowed = ops.hand_over(project, task_id, handed_file(tree, "logo.svg"))
+    assert allowed["web"] is True and allowed["note"] == "this file will be visible to a run with the open network"
+    assert [rel for _source, rel in drop.files(project, task_id)] == [allowed["path"]]
+    plain = planned(tree)["market"]
+    assert ops.task(project, plain)["drop"] == {"web": False, "takes": True, "line": None}
+    assert "web" not in ops.hand_over(project, plain, handed_file(tree, "other.svg"))
+    assert ops.task(project, ops.task(project, plain)["task"]["parent_id"])["drop"] is None  # a request takes no file
+
+
+def test_a_web_task_refuses_a_hand_over_when_the_constant_is_set_false(tree, monkeypatch):
+    monkeypatch.setattr(drop, "WEB_TASK_TAKES_DROP", False)
+    project = str(tree["project"])
+    task_id = web_task(tree)
+    assert ops.task(project, task_id)["drop"] == {"web": True, "takes": False, "line": None}
     with pytest.raises(ops.OpsError) as refused:
         ops.hand_over(project, task_id, handed_file(tree, "logo.svg"))
     assert str(refused.value) == drop.WEB_REFUSAL and drop.files(project, task_id) == []
-    monkeypatch.setattr(drop, "WEB_TASK_TAKES_DROP", True)
-    allowed = ops.hand_over(project, task_id, handed_file(tree, "logo.svg"))
-    assert allowed["web"] is True and allowed["note"] == "this file will be visible to a run with the open network"
 
 
 def test_a_hand_over_is_refused_in_a_git_repository_that_does_not_ignore_the_drop_and_allowed_in_a_folder_that_is_no_repository(tree):

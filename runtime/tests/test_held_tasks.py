@@ -81,7 +81,8 @@ def test_a_stopped_agent_s_ready_task_is_held_and_status_and_agents_say_so(tree)
     out = ops.dispatch(path)
     [ready_task] = [t for t in store_rows(tree, request) if t["state"] == "ready"]
     [entry] = held(tree)
-    assert out["ran"] == [] and set(entry) == {"task_id", "agent", "reason", "at", "next"}
+    assert out["ran"] == [] and set(entry) == {"task_id", "agent", "reason", "at", "next", "commands"}
+    assert entry["commands"] == []  # a stopped agent is past by a configuration change, not by a command
     assert (entry["task_id"], entry["agent"], entry["reason"]) == (ready_task["id"], "business", "stopped")
     assert entry["at"].endswith("+00:00") or entry["at"].endswith("Z")
     assert [a["held"] for a in ops.agents(path)["agents"]] == [1]
@@ -262,3 +263,46 @@ def test_a_narrowing_accepted_in_the_middle_of_a_round_stops_the_next_start(tree
     assert len(out["ran"]) == 1 and len(done) == 1
     assert "configuration" in out["stopped"] and "changed" in out["stopped"]
     assert [t["state"] for t in store_rows(tree) if t["parent_id"]].count("done") + [t["state"] for t in store_rows(tree) if t["parent_id"]].count("waiting") >= 1
+
+
+# --- the commands as fields (A-22) ----------------------------------------------------------------------------------
+
+
+def test_a_held_credential_carries_each_command_as_a_field_with_the_username_quoted_and_null_without_one(tree, monkeypatch):
+    path = str(tree["project"])
+    planned(tree, "chain")
+    monkeypatch.setattr(lab, "credential_missing", lambda tier: ["EXAMPLE_KEY_A", "EXAMPLE_KEY_B", "EXAMPLE_KEY_C"])
+    monkeypatch.setattr(lab, "credential_usernames", lambda names: {"EXAMPLE_KEY_A": "example-a", "EXAMPLE_KEY_B": "name with space"})
+    monkeypatch.setattr(dispatcher, "store_readable", lambda: "ok")
+    ops.dispatch(path)
+    [entry] = [h for h in ops.status(path)["held"] if h["reason"] == "credential"]
+    store = "uv run --with keyring==25.7.0 keyring set openhora "
+    assert entry["commands"] == [{"name": "EXAMPLE_KEY_A", "command": store + "example-a"},
+                                 {"name": "EXAMPLE_KEY_B", "command": store + "'name with space'"},
+                                 {"name": "EXAMPLE_KEY_C", "command": None}]       # no username registered: no command to build
+    assert entry["commands"][0]["command"] == operations.keyring_line("example-a")
+    assert store + "example-a" in entry["next"] and "EXAMPLE_KEY_C: " + store + "<username>" in entry["next"]  # the sentence stays
+    [wide] = [a for a in ops.agents(path)["agents"]]
+    assert wide["held"] == 1                                                            # agents carry the count, not the commands
+
+
+def test_a_held_secret_store_carries_the_service_command_and_every_other_reason_none(tree, monkeypatch):
+    path = str(tree["project"])
+    planned(tree, "chain")
+    monkeypatch.setattr(lab, "credential_missing", lambda tier: ["EXAMPLE_KEY_A"])
+    monkeypatch.setattr(dispatcher, "store_readable", lambda: "cannot read the secret store: ModuleNotFoundError")
+    ops.dispatch(path)
+    [entry] = ops.status(path)["held"]
+    assert entry["reason"] == "secret store"
+    assert entry["commands"] == [{"name": "service", "command": entry["next"]}]
+    assert entry["commands"][0]["command"] == operations.service_line(str(tree["tree"]), [path], uv=True)
+    configure(tree, {"business": dict(AGENTS["business"], mode="stopped")})
+    monkeypatch.setattr(lab, "credential_missing", lambda tier: [])
+    ops.dispatch(path)
+    assert [(h["reason"], h["commands"]) for h in ops.status(path)["held"]] == [("stopped", [])]
+
+
+def test_the_keyring_command_is_spelled_in_one_place_with_the_username_quoted():
+    assert operations.keyring_line("example-a") == "uv run --with keyring==25.7.0 keyring set openhora example-a"
+    assert operations.keyring_line("two words; rm -rf") == "uv run --with keyring==25.7.0 keyring set openhora 'two words; rm -rf'"
+    assert operations.keyring_line("<username>") == "uv run --with keyring==25.7.0 keyring set openhora <username>"

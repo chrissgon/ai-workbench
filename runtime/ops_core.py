@@ -62,6 +62,11 @@ class OpsError(Exception):
         self.next = next   # the terminal command that gets past the refusal (the 412: accept-config), or None
 
 
+class RunBusy(OpsError):
+    """The project's run lock is held: a run of a task or of the router is in progress. An OpsError (code 1) like any
+    refusal; the operations that queue their call while a run is in progress (`say`, `route`) catch it by its class."""
+
+
 def _load(name: str, path: str):
     if name not in sys.modules:
         spec = importlib.util.spec_from_file_location(name, path)
@@ -232,7 +237,7 @@ def _run_lock(cfg: dict):
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
-            raise OpsError("another run of this project is in progress: one task at a time per project", 1) from None
+            raise RunBusy("another run of this project is in progress: one task at a time per project", 1) from None
         yield
     finally:
         os.close(lock)

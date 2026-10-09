@@ -223,7 +223,7 @@ def test_request_route_answer_release_and_say_go_through_the_operations_layer(wo
     assert world.fake.calls[0] == ("request", path, {"text": "make a plan", "flow": "demo", "title": "T"})
     assert world.fake.calls[1] == ("answer", path, {"pending_id": 2, "text": "yes", "with_comments": True})
     assert sorted(c[0] for c in world.fake.calls[2:]) == ["release", "route", "say"]
-    assert {c[0]: c[2] for c in world.fake.calls[2:]} == {"route": {"request_id": 5, "flow": "demo"}, "release": {"pending_id": 2},
+    assert {c[0]: c[2] for c in world.fake.calls[2:]} == {"route": {"request_id": 5, "flow": "demo", "channel": "mcp"}, "release": {"pending_id": 2},
                                                           "say": {"text": "hello", "channel": "mcp"}}
     for name in ("request", "route", "answer", "release", "say"):
         assert "mcp" in operations.by_name(name)["channels"], name
@@ -326,8 +326,10 @@ def test_say_is_called_as_the_channel_mcp_and_the_client_cannot_change_it(world)
     [(_, _, kwargs)] = world.fake.named("say")
     assert kwargs == {"text": "hello", "channel": "mcp"}
     assert "mcp" not in ops.EFFECT_CHANNELS  # the rule of the operations layer, which this shell does not restate
-    assert [r["name"] for r in operations.OPERATIONS if r.get("channel_arg")] == ["approve", "say"]
+    assert [r["name"] for r in operations.OPERATIONS if r.get("channel_arg")] == ["route", "approve", "say"]
     assert "mcp" not in operations.by_name("approve")["channels"]
+    # `route` takes the channel only to know whether the shell drains the queue (A-23): the MCP mode does not
+    assert operations.by_name("route")["queues"] is True and "queues" not in operations.by_name("approve")
 
 
 # --- the jobs ---------------------------------------------------------------------------------------------------------
