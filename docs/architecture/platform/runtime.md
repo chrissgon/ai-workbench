@@ -480,8 +480,6 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 |---|---|
 | Closing an open question when the person's answer settles it | [stage 3 findings](../stage-3-findings-2026-10-06.md), finding 10 |
 | A bulleted request becomes one router run per bullet; the count could be shown first, or deliveries that route to one skill offered as one | [stage 3 findings](../stage-3-findings-2026-10-06.md), finding 12 |
-| A `done` whose document waits for answers, or whose reply ends on numbered questions, should be `draft_with_questions` | [stage 3 findings](../stage-3-findings-2026-10-06.md), finding 13 |
-| Fidelity per document type and per provider: a fenced block in a language the platform does not know | [stage 3 findings](../stage-3-findings-2026-10-06.md), finding 14 |
 | The imported-edit line is built and tested, not yet seen in a live run | [stage 3 findings](../stage-3-findings-2026-10-06.md), findings 8 and 15 |
 | A sync lists comments for every mirrored item and page at every pull, so its cost grows with the store | [stage 3 findings](../stage-3-findings-2026-10-06.md), finding 7 |
 | A file cannot be handed to a task with the web until the maintainer answers question 3 of part 3 | `runtime/drop.py`, `WEB_TASK_TAKES_DROP` |
@@ -507,4 +505,4 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 - 2026-10-09: new Abstractions paragraphs for the channel rule, held reasons, the contained run, the conversation and what the reads carry; the policy path's vocabulary, the narrowing under the config lock and the spend split are stated, and the planning agent's runs are counted against `planning`.
 - 2026-10-09: the handler paragraph is narrowed to `published_posts.py`, with the differences of the social handlers.
 - 2026-10-09: the dependencies, business rules and entry points gain what the code has since.
-- 2026-10-09: the unknown-effect-kind limit is corrected to a refusal at approval, the "contract lags" row is deleted because the lines of `contracts/runtime.md` it named were fixed in the same change, and rows are added for the social handlers' exemptions and review findings 10 and 11.
+- 2026-10-09: the unknown-effect-kind limit is corrected to a refusal at approval, the "contract lags" row is deleted because the lines of `contracts/runtime.md` it named were fixed in the same change, and rows are added for the social handlers' exemptions and review findings 10 and 11. The two known-limits rows for stage 3 findings 13 and 14 went because the findings are closed (#204, #205).

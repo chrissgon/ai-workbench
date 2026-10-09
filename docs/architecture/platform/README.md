@@ -77,7 +77,7 @@ flowchart TB
     L1["1 Skills and flows<br/>skills/, agents/, packs/, flows/"]
     L8["8 Target project<br/>docs/, state file, runtime.json"]
 
-    L7 -->|"ops.py; the service and the MCP mode also shell_kit.py"| L6
+    L7 -->|"ops.py only"| L6
     L6 -.->|"handlers call cli.py as a process"| L7
     L6 -->|"lab.py only, the execution kit"| L4
     L6 -->|"lab.py names adapter files"| L5
@@ -93,7 +93,7 @@ flowchart TB
     L1 -->|"by class, resolve.py"| L3
 ```
 
-An arrow is "may read or call". Nothing in layers 1 to 3 points to adapters, the lab or the runtime, and the one arrow into a shell is the dotted one: a handler (`runtime/handlers/*.py`) calls `runtime/cli.py` as a process (`execute-under-policy` for an effect, `contained-run` for the social agent's run). `scripts/tests/test_layer_map.py` scans code only (an import, or a string or path that names a `.py` or `.sh` file): every arrow that is code is a row of its `ALLOWED`, and an arrow the code violates is a row of its `TOLERATED`, named after the finding that removes it (`ops.py` reading the side-effect line of `scripts/validate.py`, finding 11; `mkt-engage`'s fallback to another skill's copy of a script, finding 17; the social handlers' calls of skill scripts, finding 9). The test fails on a tolerated row the scan no longer finds, so the list only shrinks. The arrows that are data (the layers reading contracts and references, the manifests and flow files, the project's files) are by convention: the test does not see them. `runtime/` also reaches three scripts of `scripts/`, which is tooling and not a layer (`select_skills.py`, `evidence.py`, `redact.py`).
+An arrow is "may read or call". The service and the MCP mode also import the shell kit, inside layer 7. Nothing in layers 1 to 3 points to adapters, the lab or the runtime, and the one arrow into a shell is the dotted one: a handler (`runtime/handlers/*.py`) calls `runtime/cli.py` as a process (`execute-under-policy` for an effect, `contained-run` for the social agent's run). `scripts/tests/test_layer_map.py` scans code only (an import, or a string or path that names a `.py` or `.sh` file): every arrow that is code is a row of its `ALLOWED`, and an arrow the code violates is a row of its `TOLERATED`, named after the finding that removes it (`ops.py` reading the side-effect line of `scripts/validate.py`, finding 11; `mkt-engage`'s fallback to another skill's copy of a script, finding 17; the social handlers' calls of skill scripts, finding 9). The test fails on a tolerated row the scan no longer finds, so the list only shrinks. The arrows that are data (the layers reading contracts and references, the manifests and flow files, the project's files) are by convention: the test does not see them. `runtime/` also reaches scripts of `scripts/`, which is tooling and not a layer (`select_skills.py`, `evidence.py`, `redact.py`).
 
 | # | Layer | What it is | Page |
 |---|---|---|---|
@@ -247,7 +247,7 @@ The names fixed for this work. Use each exactly.
 | Isolated runner | `runtime/isolated.py`: runs a skill's script as a subprocess with a scrubbed environment, so that no module of the runtime loads a skill's file |
 | Execution kit | `evals/execution.py`: the part of the lab the runtime reads, named by its `__all__`; it and `evals/run_attempts.py` are outside the measurement fingerprint |
 | Narrowing | A move of an area agent's mode down the order of `MODES`; `set-mode` makes it and code accepts the changed configuration at once (`code:narrowing`); a move up is never accepted by code |
-| Configuration lock | `<data_dir>/config.lock`: the lock that `accept-config` and `set-mode` take, so that a change finds the file and the accepted hash as it began |
+| Config lock | `<data_dir>/config.lock`: the lock that `accept-config` and `set-mode` take, so that a change finds the file and the accepted hash as it began |
 | Change signal | `version`: a number the store keeps in its file's header (`change_counter`), raised by one with every write transaction that changed a row; a page compares two numbers to know it must reload |
 | Service check | `service-check` (the operation `service_check`): what the local service finds at its start for each project (the secret store, the credential, docker, the eval image, whether it dispatches); it starts nothing |
 
