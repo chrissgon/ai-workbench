@@ -113,7 +113,9 @@ def _accepted(cfg: dict, accepted) -> None:
 def context(project: str, *, check_config: bool = True) -> dict:
     """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
     (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
-    operation but accept_config), the configuration's hash must be the one the person accepted last."""
+    operation but accept_config, config and service_check; version passes False only to make a store that does not
+    exist yet, and checks the hash itself on every call), the configuration's hash must be the one the person
+    accepted last."""
     cfg = _config_of(project)
     store = store_module()
     try:

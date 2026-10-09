@@ -2001,8 +2001,8 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
     sent when anything moved since the gate, and a failure leaves it open, approved again with the same hash. An
     effect is approved only from the terminal or from the local page (decision D8, extended: both show the person
     the content's hash and take it back typed or clicked); the table of operations tells this function which channel
-    called, and any other channel (the conversation, a messaging app), or none, is refused before anything is read or
-    sent (the rule fails closed)."""
+    called, and any other channel (the conversation, a messaging app), or none, is refused before anything is executed or
+    sent (the pending row is read first, to know its kind; the rule fails closed)."""
     ctx = core.context(project)
     item = core._stored(ctx, ctx["store"].pending_get, pending_id)
     if item["kind"] == "effect" and channel not in EFFECT_CHANNELS:
