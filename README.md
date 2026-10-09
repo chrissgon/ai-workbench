@@ -1,4 +1,13 @@
-# ai-workbench
+<h1 align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/brand/readme-banner-dark.png">
+    <img src=".github/brand/readme-banner-light.png" alt="openhora" width="100%">
+  </picture>
+</h1>
+
+**The end-to-end, security-focused AI workbench you can leave working unattended, because proof decides what runs.**
+
+MIT licence · self-hosted · no telemetry
 
 Harness-agnostic skills, agents and workflows that let an AI build a digital solution end to end: business, product, brand, design, engineering, delivery, marketing, and AI inside the product. A skill reads and writes artifacts in the target project's `docs/` folder, so later phases, other skills and other people find what earlier ones produced.
 
