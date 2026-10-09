@@ -72,10 +72,8 @@ QUEUE = "conversation:queue"
 QUEUE_LOCK_NAME = "queue.lock"
 QUEUE_LOCK_WAIT = 5.0       # seconds a change of the queue waits for another to finish
 QUEUE_MAX = 20              # entries: the cursor holds at most 4 KiB
-# Seconds after which an entry a process took is taken to be what a dead process left, and is dropped. Only one entry
-# is in flight, so a dead one blocks every other until then: 15 minutes, since an entry is one model call bounded by the
-# run's timeout, and an hour of a blocked queue after a crash is too long.
-QUEUE_STALE = 15 * 60.0
+QUEUE_STALE_MARGIN = 60.0   # seconds added to the run timeout before an entry that was taken is taken to be dead
+QUEUE_STALE_FALLBACK = 1800.0  # the run timeout, only when the gate file cannot be read
 STARTED = "started"         # the key of an entry a drain has taken, with the time it took it
 
 # The forms of a question about the state that are answered by code, with no model and no request: lower case, no
@@ -355,13 +353,24 @@ def _unqueue(ctx: dict, kind: str, ident: int) -> None:
         _queue_write(ctx, [e for e in _queue_read(ctx) if not (e["kind"] == kind and e["id"] == ident)])
 
 
+def queue_stale() -> float:
+    """Seconds after which an entry a process took is taken to be what a dead process left, and is dropped: the run
+    timeout the gate file gives (the value the runtime uses for a run, lab.reference) plus QUEUE_STALE_MARGIN. It is the
+    one bound a router run cannot exceed, so a live run is never called dead while it holds the lock; only one entry is
+    in flight, so a dead one blocks the others for no longer."""
+    try:
+        return float(lab.reference("strong")["timeout_seconds"]) + QUEUE_STALE_MARGIN
+    except (lab.LabError, KeyError, TypeError, ValueError):
+        return QUEUE_STALE_FALLBACK + QUEUE_STALE_MARGIN
+
+
 def _take(ctx: dict):
     """The oldest entry no process has taken, marked as taken now; None when there is none. A taken entry older than
-    QUEUE_STALE is what a process that died left: it is dropped, and the person is told when it was a line."""
-    now = time.time()
+    queue_stale() seconds is what a process that died left: it is dropped, and the person is told when it was a line."""
+    now, stale = time.time(), queue_stale()
     with _queue_lock(ctx["cfg"]):
         entries = _queue_read(ctx)
-        dead = [e for e in entries if now - e.get(STARTED, now) > QUEUE_STALE]
+        dead = [e for e in entries if now - e.get(STARTED, now) > stale]
         entries = [e for e in entries if e not in dead]
         # one entry at a time, oldest first: while one is taken (by the service loop or by `route-queued`), none is
         head = None if any(STARTED in e for e in entries) else next(iter(entries), None)

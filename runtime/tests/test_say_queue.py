@@ -100,7 +100,7 @@ def test_an_entry_taken_by_another_process_is_not_taken_twice_and_a_dead_one_is_
     ctx = ops_core.context(path)
     ops_say._queue_write(ctx, [dict(queue(tree)[0], started=time.time())])
     assert ops.route_queued(path)["reason"] == "another process is routing the first"
-    ops_say._queue_write(ctx, [dict(queue(tree)[0], started=time.time() - ops_say.QUEUE_STALE - 5)])
+    ops_say._queue_write(ctx, [dict(queue(tree)[0], started=time.time() - ops_say.queue_stale() - 5)])
     assert ops.route_queued(path) == {"routed": None, "queued": 0}
     last = messages(tree)[-1]
     assert last["role"] == "assistant" and "was not answered" in last["text"] and line["message_id"] == messages(tree)[0]["id"]
@@ -460,7 +460,7 @@ def test_a_queued_request_that_cannot_be_routed_leaves_a_note_the_person_reads(t
     with locked(tree):
         ops.route(path, other, channel="page")
     ctx = ops_core.context(path)
-    ops_say._queue_write(ctx, [dict(queue(tree)[0], started=time.time() - ops_say.QUEUE_STALE - 5)])
+    ops_say._queue_write(ctx, [dict(queue(tree)[0], started=time.time() - ops_say.queue_stale() - 5)])
     assert ops.route_queued(path) == {"routed": None, "queued": 0}
     assert messages(tree)[-1]["text"] == f"Request {other} was not routed: the service stopped while it was routed. Route it again when you want it planned."
 
@@ -477,16 +477,23 @@ def test_an_entry_that_is_dropped_leaves_the_queue_even_when_the_note_cannot_be_
     assert queue(tree) == []                                    # not left behind, to be reported as "not answered" later
 
 
-def test_a_dead_entry_blocks_the_queue_for_fifteen_minutes_not_longer(tree):
-    assert ops_say.QUEUE_STALE == 15 * 60
+def test_a_taken_entry_is_dead_only_after_the_run_timeout_of_the_gate_file_plus_a_minute(tree, monkeypatch):
     path = str(tree["project"])
+    timeout = ops.lab.reference("strong")["timeout_seconds"]
+    assert ops_say.queue_stale() == timeout + 60
     with locked(tree):
         page_say(tree, "Which market first?")
         page_say(tree, "Who buys first?")
     ctx = ops_core.context(path)
     first, second = queue(tree)
-    ops_say._queue_write(ctx, [dict(first, started=time.time() - 14 * 60), second])
-    assert ops.route_queued(path)["reason"] == "another process is routing the first"      # 14 minutes: still in flight
-    ops_say._queue_write(ctx, [dict(first, started=time.time() - 16 * 60), second])
-    assert ops.route_queued(path)["routed"] == "line"                                      # 16 minutes: dropped, the next is routed
+    ops_say._queue_write(ctx, [dict(first, started=time.time() - timeout - 30), second])
+    assert ops.route_queued(path)["reason"] == "another process is routing the first"      # younger than timeout + 60: kept
+    ops_say._queue_write(ctx, [dict(first, started=time.time() - timeout - 90), second])
+    assert ops.route_queued(path)["routed"] == "line"                                      # older: dropped, the next is routed
     assert "was not answered" in [m for m in messages(tree) if m["role"] == "assistant"][0]["text"]
+    # the bound follows the gate file, not a number of this module
+    real = ops.lab.reference
+    monkeypatch.setattr(ops.lab, "reference", lambda tier="strong": dict(real(tier), timeout_seconds=1800))
+    assert ops_say.queue_stale() == 1860
+    monkeypatch.setattr(ops.lab, "reference", lambda tier="strong": (_ for _ in ()).throw(ops.lab.LabError("gate", "unreadable")))
+    assert ops_say.queue_stale() == ops_say.QUEUE_STALE_FALLBACK + ops_say.QUEUE_STALE_MARGIN
