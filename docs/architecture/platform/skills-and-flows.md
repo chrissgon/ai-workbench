@@ -352,7 +352,7 @@ Each invariant with its guard. A rule of `scripts/validate.py` is named in brack
 | The social handlers run named scripts of other skills (`mkt-engage`, `mkt-vote-round`, `mkt-social-copy`, `mkt-publish`, `brand-identity`) as plain subprocesses with the runtime's environment, not through the isolated runner, until WP-7.6 (finding 9 of the review); the tolerated edges are rows of `TOLERATED` | `scripts/tests/test_layer_map.py`, `test_a_fixed_row_is_removed_from_the_tolerated_list`; [review-2026-10-06.md](review-2026-10-06.md), finding 9 |
 | A skill script (`mkt-engage`'s `policy_gate.py`) falls back to another skill's copy of a shared script; removed at the next Y change of that skill | `scripts/tests/test_layer_map.py` (`TOLERATED`); [review-2026-10-06.md](review-2026-10-06.md), finding 17 |
 | A skill's reply can describe what the runtime's code does differently: `ops-pull-request` says the approval record is committed on the branch, and the runtime's commit holds only the change set | [stage 4 findings](../stage-4-findings-2026-10-06.md), finding 3 |
-| Eight workarounds wait for the next change of reference model, among them the manifest outside the frontmatter and a skill run up to its gate | [backlog](../../backlog.md), T23 |
+| Workarounds wait for the next change of reference model, among them the manifest outside the frontmatter and a skill run up to its gate | [backlog](../../backlog.md), T23 |
 
 ## Changes
 
