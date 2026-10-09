@@ -72,7 +72,10 @@ QUEUE = "conversation:queue"
 QUEUE_LOCK_NAME = "queue.lock"
 QUEUE_LOCK_WAIT = 5.0       # seconds a change of the queue waits for another to finish
 QUEUE_MAX = 20              # entries: the cursor holds at most 4 KiB
-QUEUE_STALE = 3600.0        # seconds after which an entry taken by a process that died is dropped
+# Seconds after which an entry a process took is taken to be what a dead process left, and is dropped. Only one entry
+# is in flight, so a dead one blocks every other until then: 15 minutes, since an entry is one model call bounded by the
+# run's timeout, and an hour of a blocked queue after a crash is too long.
+QUEUE_STALE = 15 * 60.0
 STARTED = "started"         # the key of an entry a drain has taken, with the time it took it
 
 # The forms of a question about the state that are answered by code, with no model and no request: lower case, no

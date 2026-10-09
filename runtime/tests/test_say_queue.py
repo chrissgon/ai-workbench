@@ -474,4 +474,19 @@ def test_an_entry_that_is_dropped_leaves_the_queue_even_when_the_note_cannot_be_
     monkeypatch.setattr(ops_say, "_note_request", lambda *args: (_ for _ in ()).throw(RuntimeError("the store went away")))
     with pytest.raises(RuntimeError):
         ops.route_queued(path)
-    assert queue(tree) == []                                    # not left behind, to be reported as "not answered" an hour later
+    assert queue(tree) == []                                    # not left behind, to be reported as "not answered" later
+
+
+def test_a_dead_entry_blocks_the_queue_for_fifteen_minutes_not_longer(tree):
+    assert ops_say.QUEUE_STALE == 15 * 60
+    path = str(tree["project"])
+    with locked(tree):
+        page_say(tree, "Which market first?")
+        page_say(tree, "Who buys first?")
+    ctx = ops_core.context(path)
+    first, second = queue(tree)
+    ops_say._queue_write(ctx, [dict(first, started=time.time() - 14 * 60), second])
+    assert ops.route_queued(path)["reason"] == "another process is routing the first"      # 14 minutes: still in flight
+    ops_say._queue_write(ctx, [dict(first, started=time.time() - 16 * 60), second])
+    assert ops.route_queued(path)["routed"] == "line"                                      # 16 minutes: dropped, the next is routed
+    assert "was not answered" in [m for m in messages(tree) if m["role"] == "assistant"][0]["text"]
