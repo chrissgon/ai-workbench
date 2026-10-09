@@ -1,6 +1,7 @@
 // F-1 the back button and the breadcrumbs.
 
 import { h } from "../dom.js";
+import { markImage } from "../brand.js";
 import { icon } from "./icons.js";
 
 /** The back button and the breadcrumb trail. */
@@ -8,7 +9,7 @@ export function createNav() {
   const back = h("button", { class: "pui-btn pui-surface pui-outline wb-back", type: "button", "aria-label": "Back" }, icon("chevron-left", 16));
   const list = h("ol", { class: "wb-crumbs" });
   const nav = h("nav", { class: "wb-crumb-nav", "aria-label": "Breadcrumbs" }, list);
-  const el = h("div", { class: "wb-nav" }, back, nav);
+  const el = h("div", { class: "wb-nav" }, back, markImage(20), nav);   // the mark is left of the breadcrumbs, whose first crumb keeps its place
   let target = null;
   back.addEventListener("click", () => {
     if (target) window.location.hash = target;
