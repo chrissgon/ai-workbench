@@ -4,6 +4,7 @@
 
 import { h } from "../dom.js";
 import { arrowNav } from "../frame/arrows.js";
+import { bindDrawer, createGrip } from "../frame/drawer.js";
 import { icon } from "../frame/icons.js";
 import * as model from "../model.js";
 import * as router from "../router.js";
@@ -21,7 +22,12 @@ export function createCityView(frame) {
   const buildings = h("section", { class: "pui-card wb-buildings", id: "wb-scene-list", tabindex: "-1" }, listHeading, list);
   const empty = h("div", { class: "pui-card wb-empty-card", hidden: true },
     h("div", { class: "pui-card-content" }, h("p", { text: "The service has no project. Start it with --project <folder>." })));
-  frame.main.append(buildings, frame.waitingCard.el, empty);
+  // On a phone the two lists are one bottom sheet, collapsed to a header line each (A-27, A-28); elsewhere the wrapper takes no box and the
+  // lists stand where they always did.
+  const grip = createGrip();
+  const sheet = h("div", { class: "pui-card wb-drawer wb-city-drawer" }, grip, h("div", { class: "wb-drawer-scroll" }, buildings, frame.waitingCard.el));
+  const drawer = bindDrawer(sheet, { screen: "city", grip, handles: ".wb-buildings-head, .wb-wait-head" });
+  frame.main.append(sheet, empty);
   arrowNav(list, "a.wb-building-link");   // SCREEN-2: arrows move between the buildings, Enter opens
 
   // A click: the building opens where it stands and the camera starts at once (the world's own targets), and the route changes in the same
@@ -51,6 +57,7 @@ export function createCityView(frame) {
   observer.observe(frame.kpis.el);
   observer.observe(frame.waitingCard.el);
   observer.observe(frame.noticeBox);
+  observer.observe(sheet);
 
   function renderList(buildingsOf) {
     const rows = buildingsOf.map((b) => {
@@ -97,9 +104,11 @@ export function createCityView(frame) {
     dispose() {
       disposed = true;
       observer.disconnect();   // the scene is the frame's: the Building takes it over, or the frame takes it down
+      drawer.destroy();   // before the sheet leaves the page: the frame hears that nothing covers the scene
       buildings.remove();
       empty.remove();
       frame.waitingCard.el.remove();
+      sheet.remove();
       frame.sceneUnavailable(false);
     },
     /** For the page's checks: the engine's counters, or null without WebGL. */

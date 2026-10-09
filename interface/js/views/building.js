@@ -10,6 +10,7 @@ import * as fm from "../floor-model.js";
 import { createViewer } from "../floor/viewer.js";
 import { chip } from "../floor/widgets.js";
 import { arrowNav, keepFocus } from "../frame/arrows.js";
+import { bindDrawer, createGrip } from "../frame/drawer.js";
 import { icon } from "../frame/icons.js";
 import { acceptance } from "../model.js";
 import * as router from "../router.js";
@@ -18,6 +19,8 @@ import { floorCardNode, plateNode } from "../scene/plates.js";
 import { worldModel } from "../world-model.js";
 
 export const PLATE_GAP_X = 14;
+const PHONE_LEVEL = 16;       // the camera buttons stand at least this far from the scene's bottom edge (scene/engine.js)
+const PHONE_TOOLS_H = 44;     // their height and the gap above them: the floor card hangs from there
 const STATE_PATH = "docs/workbench/state.md";
 const ARTIFACTS_EVERY_MS = 20000;
 
@@ -47,7 +50,9 @@ export function createBuildingView(frame, env) {
   const list = h("ul", { class: "pui-list pui-hoverable wb-floor-list", "aria-label": "Floors, top to bottom" });
   const moreLine = h("p", { class: "wb-muted wb-more-line", hidden: true });
   const body = h("div", { class: "wb-panel-body wb-building-body" }, factsBox, h("div", {}, stateLink), h("section", { id: "wb-scene-list", tabindex: "-1", class: "wb-floor-section" }, listHeading, moreLine, list));
-  const panel = h("section", { class: "pui-card wb-panel wb-panel-building", role: "region", "aria-labelledby": "wb-building-title", id: "wb-panel", tabindex: "-1" }, head, body);
+  const grip = createGrip();
+  const panel = h("section", { class: "pui-card wb-panel wb-drawer wb-panel-building", role: "region", "aria-labelledby": "wb-building-title", id: "wb-panel", tabindex: "-1" }, grip, head, body);
+  const drawer = bindDrawer(panel, { screen: "building", grip });
   frame.main.append(panel);
   arrowNav(list, "a.wb-floor-row");
 
@@ -129,7 +134,12 @@ export function createBuildingView(frame, env) {
       label: "Building, loading",
       getInsets: () => {
         const base = frame.insets(panel);
-        if (frame.isPhone()) return { left: 4, right: 70, top: base.top, bottom: 40, pad: 0.98, cornerRight: 10 };
+        if (frame.isPhone()) {
+          // The floor card hangs bottom left above the camera buttons (A-28); the floor steps stand at the right, level with those buttons.
+          const level = Math.max(PHONE_LEVEL, base.bottom);
+          steps.style.setProperty("--wb-y", `${level}px`);
+          return { left: 4, right: 70, top: base.top, bottom: base.bottom, pad: 0.98, cornerRight: 10, cornerLeft: 10, cornerBottom: level + PHONE_TOOLS_H };
+        }
         return { ...base, right: base.right + frame.plateWidth() + PLATE_GAP_X, plateRight: base.right };
       },
       onOpen: open,
@@ -324,6 +334,7 @@ export function createBuildingView(frame, env) {
     dispose() {
       disposed = true;
       observer.disconnect();
+      drawer.destroy();   // before the panel leaves the page: the frame hears that nothing covers the scene
       phone.removeEventListener("change", onPhone);
       frame.sceneHost.removeEventListener("pointerover", onOver);
       frame.sceneHost.removeEventListener("pointerout", onOut);
