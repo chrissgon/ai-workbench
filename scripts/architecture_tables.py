@@ -43,9 +43,9 @@ nothing outside them is touched, and a block is never edited by hand. Each table
   held-reasons          REASONS of runtime/dispatcher.py: its text literals and the module's own text constants
 
 Every source is read as text or parsed with ast (the table of operations is read with ast.literal_eval of its
-two literals; runtime/*.py are never imported, since they import their siblings); nothing is executed but scripts/owner_table.py,
-scripts/validate.py (the frontmatter parser) and providers/resolve.py (the class-to-folder rule), which read files
-only. scripts/validate.py reports a stale block as a warning (rule architecture-tables).
+two literals; runtime/*.py are never imported, since they import their siblings); nothing is executed but
+scripts/owner_table.py, scripts/validate.py (the frontmatter parser) and providers/resolve.py (the class-to-folder
+rule), which read files only. scripts/validate.py reports a stale block as a warning (rule architecture-tables).
 
 output: --print writes the table on stdout; --check names each stale block on stderr.
 exit codes: 0 ok (written, or every block current), 1 --check found a stale block, 2 usage error, an unknown
@@ -546,7 +546,7 @@ CONFIG_LISTS = (
     ("CODE_KEYS", "runtime/project_config.py", "the `code` object"),
     ("PRICE_KEYS", "runtime/project_config.py", "an entry of `model_prices`, which is keyed by model id"),
     ("AGENT_KEYS", "runtime/autonomy.py", "an entry of `area_agents`"),
-    ("BOUNDS_KEYS", "runtime/autonomy.py", "a policy file under `docs/workbench/policies/`"),
+    ("BOUNDS_KEYS", "runtime/autonomy.py", "a standing-approval policy: a `.json` file under `docs/`, checked whole"),
     ("ENTRY_KEYS", "runtime/deps.py", "an entry of `dependencies`"),
     ("RECIPES", "runtime/deps.py", "the closed table of recipes: the names an entry's `recipe` may take"),
 )
