@@ -583,6 +583,14 @@ def callback(uri: str, **params) -> int:
         return exc.code
 
 
+def test_the_callback_page_is_titled_openhora(auth):
+    server = auth.CallbackServer("s")
+    with urllib.request.urlopen(f"{server.redirect_uri}/?{urllib.parse.urlencode({'state': 's', 'code': 'c'})}", timeout=10) as r:
+        page = r.read().decode()
+    assert "<title>openhora</title>" in page and "ai-workbench" not in page
+    assert server.wait(5) == "c"
+
+
 def test_callback_refuses_a_wrong_state(auth):
     server = auth.CallbackServer("expected-state")
     assert server.redirect_uri.startswith("http://127.0.0.1:")

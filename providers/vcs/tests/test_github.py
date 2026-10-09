@@ -264,6 +264,7 @@ def assert_api_headers(request, json_body=False):
     h = request["headers"]
     assert h["authorization"] == f"Bearer {FAKE_TOKEN}"
     assert h["accept"] == "application/vnd.github+json"
+    assert h["user-agent"] == "openhora-vcs-github"
     assert h["x-github-api-version"] == API_VERSION
     if json_body:
         assert h["content-type"] == "application/json"

@@ -766,6 +766,31 @@ def test_a_silent_connection_does_not_block_the_callback(monkeypatch):
         silent.close()
 
 
+def test_the_callback_page_is_titled_openhora(monkeypatch):
+    auth = load_auth()
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    monkeypatch.setattr(auth, "CALLBACK_HOST", "127.0.0.1")
+    monkeypatch.setattr(auth, "CALLBACK_PORT", port)
+    monkeypatch.setattr(auth, "CALLBACK_TIMEOUT_SECONDS", 10)
+    got: dict = {}
+    waiter = threading.Thread(target=lambda: got.update(code=auth.wait_for_code("st")), daemon=True)
+    waiter.start()
+    url = f"http://127.0.0.1:{port}/callback?" + urllib.parse.urlencode({"state": "st", "code": "c"})
+    page = None
+    for _ in range(100):  # until the listener is up
+        try:
+            with urllib.request.urlopen(url, timeout=5) as response:
+                page = response.read().decode()
+            break
+        except OSError:
+            time.sleep(0.05)
+    assert page is not None and "<title>openhora</title>" in page and "ai-workbench" not in page
+    waiter.join(5)
+    assert not waiter.is_alive() and got == {"code": "c"}
+
+
 def test_token_exchange_refuses_a_redirect(monkeypatch):
     # PUB4: the exchange used the default opener, which follows redirects: the answer of wherever the
     # redirect pointed was taken as the member's token, for a request that carried the client secret.

@@ -599,9 +599,9 @@ def build_units(job: dict) -> dict:
     environment = " ".join(unit_quote(f"{key}={value}") for key, value in (
         ("PATH", run_path()), ("SCHEDULER_HOME", str(home())), ("SCHEDULER_UNITS_DIR", str(units_dir()))))
     service = "\n".join([
-        f"# Written by the ai-workbench scheduler for job {job['id']}; cancel it with the provider, do not edit.",
+        f"# Written by the openhora scheduler for job {job['id']}; cancel it with the provider, do not edit.",
         "[Unit]",
-        f"Description=ai-workbench scheduler job {job['id']}",
+        f"Description=openhora scheduler job {job['id']}",
         "",
         "[Service]",
         "Type=oneshot",
@@ -622,9 +622,9 @@ def build_units(job: dict) -> dict:
         # when the timer starts again at boot, so the runner can record it as done or missed.
         schedule = [f"OnCalendar={calendar_utc(parse_iso(job['at']))}", "Persistent=true"]
     timer = "\n".join([
-        f"# Written by the ai-workbench scheduler for job {job['id']}; cancel it with the provider, do not edit.",
+        f"# Written by the openhora scheduler for job {job['id']}; cancel it with the provider, do not edit.",
         "[Unit]",
-        f"Description=ai-workbench scheduler timer for job {job['id']}",
+        f"Description=openhora scheduler timer for job {job['id']}",
         "",
         "[Timer]",
         f"Unit={service_name(job['id'])}",
