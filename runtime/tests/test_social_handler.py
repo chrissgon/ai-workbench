@@ -73,6 +73,9 @@ if sys.argv[1] == "posts":
                                                  "post_url": "https://www.linkedin.com/feed/update/%s/" % u}
                                                 for n, u in enumerate(urns)]}))
     sys.exit(0)
+if "--text-file" in sys.argv and "--confirmed" in sys.argv:  # what was read, the file being a private copy removed after
+    with open(os.environ["FAKE_CALLS"] + ".texts", "a") as f:
+        f.write(json.dumps(open(sys.argv[sys.argv.index("--text-file") + 1]).read()) + "\n")
 if os.environ.get("FAKE_PUBLISHER_FAIL") and "--confirmed" in sys.argv:
     print("403 not enough permissions", file=sys.stderr); sys.exit(1)
 print(json.dumps({"comment_urn": "urn:li:comment:(urn:li:activity:111,999)", "replayed": False}))
@@ -275,7 +278,7 @@ def test_praise_is_answered_on_its_own(env):
     assert c[c.index("--parent-comment-id") + 1] == "urn:li:comment:(urn:li:activity:111,1)"
     # FR-I9: a hash of the whole identifier (it was "reply-1", the digits after the identifier's last comma)
     assert c[c.index("--idempotency-key") + 1] == reply_key("urn:li:comment:(urn:li:activity:111,1)")
-    assert Path(c[c.index("--text-file") + 1]).read_text().strip() == "Thanks, Ana. Glad it helped."
+    assert [json.loads(l) for l in Path(str(env["calls"]) + ".texts").read_text().splitlines()] == ["Thanks, Ana. Glad it helped.\n"]
     assert [e["action"] for e in log_entries(env)] == ["auto_replied"]
 
 

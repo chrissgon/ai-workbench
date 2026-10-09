@@ -189,6 +189,7 @@ import re
 import sys
 import shutil
 import subprocess
+import tempfile
 import time
 import traceback
 
@@ -1419,8 +1420,9 @@ def execute_under_policy(project: str, policy: str, effect_file: str, replay_log
     document and hands it over; it confirms nothing itself. The document is checked, the approval is checked
     (_standing; a class of targets in its bounds resolved from the kind's recorded fact, before the lock; then
     autonomy.covers on the whole row, the policy file's hash now, and today's count read again under the run lock),
-    the kind's judgement is made on the exact content (policy_judgement), and only then the provider's verb runs: a
-    dry run, then the confirmed call, with --allow for exactly the approval's file globs and the document's idempotency
+    the kind's judgement is made on the exact content (policy_judgement; the bytes it judged are written to a private
+    folder the operation removes, and the provider is given that file, so what is sent is what was judged), and only
+    then the provider's verb runs: a dry run, then the confirmed call, with --allow for exactly the approval's file globs and the document's idempotency
     key; the action is recorded after it, with the target the kind resolved.
     Returns {"executed": false, "policy", "why"} when the approval does not cover the effect (nothing ran), else
     {"executed": true, "policy", "approval_id", "action": {"id", "created"}, "result": <what the provider printed>}.
@@ -1443,40 +1445,50 @@ def execute_under_policy(project: str, policy: str, effect_file: str, replay_log
             resolved = module.resolve_targets(cfg, doc, _resolve_call)
         except effects.EffectError as e:
             return refuse(f"the target class could not be resolved, so nothing is covered: {e.reason}")
-    with core._run_lock(cfg):
-        row = core._stored(ctx, store.approval_get, answer["approval"]["id"])
-        executed = core._stored(ctx, store.action_count, kind=policy, since=core._midnight())
-        effect = module.policy_effect(doc)
-        ok, why = autonomy.covers(row, _policy_hash(cfg, row), effect, executed, datetime.datetime.now(datetime.timezone.utc),
-                                  resolved=resolved)
-        if not ok:
-            return refuse(why)
-        if hasattr(module, "policy_judgement"):  # the checks the kind owns beyond the bounds, on the exact content
-            ok, why = module.policy_judgement(core.ROOT, cfg["project"], doc, isolated.run_script, row["bounds"]["file"],
-                                              log=replay_log)
+    private = tempfile.mkdtemp(prefix="wb-policy-")  # 0700: the bytes a kind judged, which the provider is then given
+    try:
+        with core._run_lock(cfg):
+            row = core._stored(ctx, store.approval_get, answer["approval"]["id"])
+            executed = core._stored(ctx, store.action_count, kind=policy, since=core._midnight())
+            effect = module.policy_effect(doc)
+            ok, why = autonomy.covers(row, _policy_hash(cfg, row), effect, executed,
+                                      datetime.datetime.now(datetime.timezone.utc), resolved=resolved)
             if not ok:
                 return refuse(why)
-        provider = _provider_path(cfg, module.PROVIDER_CLASS, platform=module.policy_platform(doc))
-        argv = list(module.policy_argv(doc))
-        added = [a for a in argv if a in effects.RESERVED_FLAGS]
-        if added:  # exact equality is the rule, as for the document's args; the kind's own arguments never carry what only the operation adds (the bounds' globs, the key, the flag)
-            raise core.OpsError(f"the arguments of the effect kind {doc['kind']!r} hold {added[0]}: the operation adds it", 1)
-        if replay_log is not None:
-            return {"executed": False, "policy": policy, "checked": True, "would_execute": True, "why": ""}
-        for glob in row["bounds"]["files"]:
-            argv += ["--allow", glob]
-        argv += ["--idempotency-key", doc["idempotency_key"]]
-        try:
-            effects.provider_call(provider, argv + ["--dry-run"])
-        except effects.EffectError as e:
-            raise core.OpsError(f"nothing was executed: {e.reason}", 1) from None
-        try:
-            printed = effects.provider_call(provider, argv + ["--confirmed"])
-        except effects.EffectError as e:
-            raise core.OpsError(f"the provider failed after the dry run: {e.reason}; the idempotency key lets the next "
-                           f"call replay it", 1) from None
-        action = core._stored(ctx, store.action_add, kind=policy, idempotency_key=doc["idempotency_key"],
-                         target=effect["target"], payload_sha256=doc["payload_sha256"], result=printed)
+            copies = {}
+            if hasattr(module, "policy_judgement"):  # the checks the kind owns beyond the bounds, on the exact content
+                ok, why, copies = module.policy_judgement(
+                    core.ROOT, cfg["project"], doc, isolated.run_script, row["bounds"]["file"], private, log=replay_log,
+                    data_dir=cfg["data_dir"], now=datetime.datetime.now().astimezone().isoformat())
+                if not ok:
+                    return refuse(why)
+            provider = _provider_path(cfg, module.PROVIDER_CLASS, platform=module.policy_platform(doc))
+            argv = list(module.policy_argv(doc))
+            added = [a for a in argv if a in effects.RESERVED_FLAGS]
+            if added:  # exact equality is the rule, as for the document's args; the kind's own arguments never carry what only the operation adds (the bounds' globs, the key, the flag)
+                raise core.OpsError(f"the arguments of the effect kind {doc['kind']!r} hold {added[0]}: the operation adds it", 1)
+            for flag, path in copies.items():  # the provider gets the bytes that were judged, not the file they came from
+                if argv.count(flag) != 1 or argv.index(flag) + 1 >= len(argv):
+                    raise core.OpsError(f"the arguments of the effect kind {doc['kind']!r} lack {flag} once with a value", 1)
+                argv[argv.index(flag) + 1] = path
+            if replay_log is not None:
+                return {"executed": False, "policy": policy, "checked": True, "would_execute": True, "why": ""}
+            for glob in row["bounds"]["files"]:
+                argv += ["--allow", glob]
+            argv += ["--idempotency-key", doc["idempotency_key"]]
+            try:
+                effects.provider_call(provider, argv + ["--dry-run"])
+            except effects.EffectError as e:
+                raise core.OpsError(f"nothing was executed: {e.reason}", 1) from None
+            try:
+                printed = effects.provider_call(provider, argv + ["--confirmed"])
+            except effects.EffectError as e:
+                raise core.OpsError(f"the provider failed after the dry run: {e.reason}; the idempotency key lets the next "
+                               f"call replay it", 1) from None
+            action = core._stored(ctx, store.action_add, kind=policy, idempotency_key=doc["idempotency_key"],
+                             target=effect["target"], payload_sha256=doc["payload_sha256"], result=printed)
+    finally:
+        shutil.rmtree(private, ignore_errors=True)
     return {"executed": True, "policy": policy, "approval_id": row["id"],
             "action": {"id": action["id"], "created": action["created"]}, "result": printed}
 

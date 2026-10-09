@@ -116,6 +116,13 @@ def test_the_social_agents_auto_reply_path_names_neither_the_flag_nor_the_record
     assert not ({"handle_event", "hand_over", "cmd_replay", "cmd_tick"} & in_reply_path)
 
 
+def test_main_of_the_social_handler_holds_one_occurrence_and_it_is_the_flag_declaration():
+    """`main` is exempt only for the argparse line that declares the flag cmd_approve reads: a second occurrence there
+    (a confirmed call, a recorded action) fails."""
+    found = [word for function, word, _ in effect_occurrences(RUNTIME / "handlers" / "social.py") if function == "main"]
+    assert found == ["--confirmed"]
+
+
 def test_the_attribution_sees_a_name_inside_a_function_and_leaves_a_docstring_alone(tmp_path):
     sample = tmp_path / "sample.py"
     sample.write_text('"""Run with --confirmed."""\n\ndef a():\n    """Mentions action-add."""\n    return ["--confirmed"]\n\n'

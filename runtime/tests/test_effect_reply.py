@@ -15,6 +15,8 @@ import hashlib
 import json
 import shutil
 import subprocess
+import tempfile
+from pathlib import Path
 
 import pytest
 
@@ -63,6 +65,10 @@ if argv[0] == "posts":
     print(json.dumps({"platform": "linkedin", "since": argv[argv.index("--since") + 1], "ledger": ledger,
                       "posts": posts, "undated": []}))
 elif argv[0] == "comment":
+    if "--text-file" in argv:
+        with open(os.path.join(here, "texts.jsonl"), "a") as f:
+            f.write(json.dumps({"path": argv[argv.index("--text-file") + 1], "dry": "--dry-run" in argv,
+                                "text": open(argv[argv.index("--text-file") + 1]).read()}) + "\n")
     print(json.dumps({"comment_urn": "urn:li:comment:(urn:li:share:1,2)", "replayed": False,
                       "dry_run": "--dry-run" in argv}))
 '''
@@ -120,15 +126,27 @@ def publisher_calls(tree) -> list:
     return [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
 
 
+def texts(tree) -> list:
+    """What the stand-in publisher read from the --text-file it was given, per comment call."""
+    path = tree["tree"] / "providers" / "publisher" / "texts.jsonl"
+    return [json.loads(line) for line in path.read_text().splitlines()] if path.is_file() else []
+
+
 def sent(tree) -> list:
     """The confirmed calls of the stand-in publisher: what went out."""
     return [c for c in publisher_calls(tree) if c[0] == "comment" and "--confirmed" in c]
 
 
-def document(tree, name="effect.json", text=TEXT, comment=None, decision=None, **changes) -> str:
+def run_folder(tree, name="1"):
+    """The run folder the handler writes in: runs/<n> of the project's data folder."""
+    folder = tree["data"] / "runs" / name
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def document(tree, name="effect.json", text=TEXT, comment=None, decision=None, folder_name="1", **changes) -> str:
     """An effect document as the social handler writes it, with its files beside it; returns the effect file."""
-    folder = tree["project"].parent / "handed"
-    folder.mkdir(exist_ok=True)
+    folder = run_folder(tree, folder_name)
     comment = comment or {"comment_urn": COMMENT, "post_urn": POST, "parent_comment_urn": COMMENT, "commenter": "Ana Lima",
                           "text": "Great post, thanks!", "received_at": "2026-10-09T10:00:00Z"}
     (folder / "comment.json").write_text(json.dumps(comment))
@@ -293,12 +311,22 @@ def on_disk(tmp_path, text=TEXT, name="run", **changes):
     return plain_document(**fields)
 
 
-def test_the_judgement_runs_the_gate_isolated_with_the_arguments_the_handler_used_to_pass(tmp_path):
+def judge(tmp_path, doc, run, root=None, **more):
+    """policy_judgement with a private folder of its own, kept as judge.last; (ok, why, copies). The root is a checkout
+    that holds the platform's data file (the parent comment is checked against it)."""
+    judge.last = Path(tempfile.mkdtemp(prefix="private-", dir=tmp_path))
+    return effect_reply.policy_judgement(root or str(st.REPO), "/project", doc, run, POLICY_FILE, str(judge.last), **more)
+
+
+def test_the_judgement_runs_the_gate_isolated_on_the_private_copy_of_the_text(tmp_path):
     doc = on_disk(tmp_path)
     run = fake_gate({"decision": "auto", "reasons": [], "idempotency_key": reply_key(COMMENT)})
-    assert effect_reply.policy_judgement("/checkout", "/project", doc, run, POLICY_FILE) == (True, "")
+    ok, why, copies = judge(tmp_path, doc, run, now="2026-10-09T10:00:00-03:00")
+    private = str(judge.last / "reply.txt")
+    assert (ok, why, copies) == (True, "", {"--text-file": private})
+    assert Path(private).read_bytes() == TEXT.encode() and oct(Path(private).stat().st_mode & 0o777) == "0o600"
     (call,) = run.calls
-    assert call["script"] == isolated.skill_script("/checkout", "mkt-engage", "policy_gate.py") and call["cwd"] == "/project"
+    assert call["script"] == isolated.skill_script(str(st.REPO), "mkt-engage", "policy_gate.py") and call["cwd"] == "/project"
     args = call["args"]
     assert args[0] == "decide"
     named = {args[i]: args[i + 1] for i in range(1, len(args), 2)}
@@ -306,47 +334,92 @@ def test_the_judgement_runs_the_gate_isolated_with_the_arguments_the_handler_use
     assert named == {"--policy": POLICY_FILE, "--state": "docs/workbench/state.md",
                      "--log": "docs/marketing/engagement-log.jsonl", "--comment-file": f"{folder}/comment.json",
                      "--category": "thanks_or_praise", "--language": "EN", "--profile": "docs/brand/profile.md",
-                     "--reply-file": f"{folder}/reply.txt", "--sources-file": f"{folder}/sources.json",
-                     "--skills-dir": "/checkout/skills"}
+                     "--reply-file": private, "--sources-file": f"{folder}/sources.json",
+                     "--skills-dir": f"{st.REPO}/skills", "--now": "2026-10-09T10:00:00-03:00"}  # the gate reads the copy
 
 
 def test_a_gate_that_says_inbox_gives_its_reasons_as_the_why_and_a_gate_that_did_not_run_is_not_an_auto(tmp_path):
     doc = on_disk(tmp_path)
-    ok, why = effect_reply.policy_judgement(
-        "/c", "/p", doc, fake_gate({"decision": "inbox", "reasons": ["comment touches sensitive topics ['salary']",
-                                                                      "daily limit reached (3/3)"],
-                                    "idempotency_key": reply_key(COMMENT)}), POLICY_FILE)
-    assert ok is False and "sensitive topics" in why and "daily limit reached (3/3)" in why
-    ok, why = effect_reply.policy_judgement("/c", "/p", doc, fake_gate({"decision": "auto", "reasons": [],
-                                                                         "idempotency_key": "reply-other"}), POLICY_FILE)
+    ok, why, copies = judge(tmp_path, doc, fake_gate({"decision": "inbox", "reasons": [
+        "comment touches sensitive topics ['salary']", "daily limit reached (3/3)"], "idempotency_key": reply_key(COMMENT)}))
+    assert ok is False and copies == {} and "sensitive topics" in why and "daily limit reached (3/3)" in why
+    ok, why, _ = judge(tmp_path, doc, fake_gate({"decision": "auto", "reasons": [], "idempotency_key": "reply-other"}))
     assert ok is False and "reply-other" in why and reply_key(COMMENT) in why  # the key is the document's, or nothing goes
     for run in (fake_gate(None, code=2, stderr="error: engagement-policy needs max_replies_per_day (int)"),
                 fake_gate(None, code=0), fake_gate({"decision": "maybe"}), fake_gate([1])):
-        ok, why = effect_reply.policy_judgement("/c", "/p", doc, run, POLICY_FILE)
-        assert ok is False and why
+        ok, why, copies = judge(tmp_path, doc, run)
+        assert ok is False and why and copies == {}
 
 
 def test_the_text_is_the_one_the_document_hashed_and_holds_no_credential_before_the_gate_is_asked(tmp_path):
     never = fake_gate({"decision": "auto", "reasons": [], "idempotency_key": reply_key(COMMENT)})
     changed = on_disk(tmp_path, payload_sha256="cd" * 32)
-    ok, why = effect_reply.policy_judgement("/c", "/p", changed, never, POLICY_FILE)
+    ok, why, _ = judge(tmp_path, changed, never)
     assert ok is False and "hash" in why and never.calls == []
     token = "ghp" + "_" + "Z9" * 18  # built at run time: no credential-shaped literal in the repository
     leaked = on_disk(tmp_path, text=f"Thanks, Ana. The token is {token}.\n", name="leaked")
-    ok, why = effect_reply.policy_judgement("/c", "/p", leaked, never, POLICY_FILE)
+    ok, why, _ = judge(tmp_path, leaked, never)
     assert ok is False and "looks like a credential (GitHub token)" in why and token not in why and never.calls == []
+    assert not list(judge.last.iterdir())  # nothing was copied of a text that was refused
 
 
 def test_an_input_that_is_missing_or_a_link_is_refused_before_anything_runs(tmp_path):
     doc = on_disk(tmp_path)
     never = fake_gate({"decision": "auto", "reasons": [], "idempotency_key": reply_key(COMMENT)})
     (tmp_path / "run" / "sources.json").unlink()
-    ok, why = effect_reply.policy_judgement("/c", "/p", doc, never, POLICY_FILE)
+    ok, why, _ = judge(tmp_path, doc, never)
     assert ok is False and "sources.json" in why and never.calls == []
     (tmp_path / "elsewhere.json").write_text("[]")
     (tmp_path / "run" / "sources.json").symlink_to(tmp_path / "elsewhere.json")
-    ok, why = effect_reply.policy_judgement("/c", "/p", doc, never, POLICY_FILE)
+    ok, why, _ = judge(tmp_path, doc, never)
     assert ok is False and "sources.json" in why and never.calls == []
+
+
+SHORT = "urn:li:comment:(share:7400000000000000001,7400000000000000002)"
+
+
+@pytest.mark.parametrize("parent, accepted", [
+    (COMMENT, True),                                                                # a comment on the post
+    ("urn:li:comment:(urn:li:share:7400000000000000009,7400000000000000002)", False),   # on another post
+    ("urn:li:comment:(urn:li:activity:7400000000000000001,7400000000000000002)", False),  # the same number, another type
+    ("urn:li:comment:(urn:li:share:7400000000000000001,abc)", False),               # not a comment id
+    ("urn:li:share:7400000000000000001", False),                                    # a post, not a comment
+    ("https://elsewhere.example/comment/1", False),                                 # an address
+    (SHORT, True),                                                                  # the short form names the same post
+])
+def test_the_parent_comment_must_be_a_comment_on_the_post_of_the_request(tmp_path, parent, accepted):
+    args = ["--platform", "linkedin", "--post-id", POST, "--parent-comment-id", parent, "--text-file", str(tmp_path / "run" / "reply.txt")]
+    doc = on_disk(tmp_path, args=args)
+    run = fake_gate({"decision": "auto", "reasons": [], "idempotency_key": reply_key(COMMENT)})
+    ok, why, _ = judge(tmp_path, doc, run)
+    assert ok is accepted and (bool(run.calls) is accepted) and (accepted or "parent comment" in why)
+
+
+def test_the_short_form_of_a_comment_id_is_a_comment_on_the_post_it_names(tmp_path):
+    post = "urn:li:activity:111"
+    args = ["--platform", "linkedin", "--post-id", post, "--parent-comment-id", "urn:li:comment:(activity:111,5)",
+            "--text-file", str(tmp_path / "run" / "reply.txt")]
+    run = fake_gate({"decision": "auto", "reasons": [], "idempotency_key": reply_key(COMMENT)})
+    assert judge(tmp_path, on_disk(tmp_path, args=args, target=post), run)[0] is True
+    args = ["--platform", "linkedin", "--post-id", post, "--parent-comment-id", "urn:li:comment:(activity:222,5)",
+            "--text-file", str(tmp_path / "other2" / "reply.txt")]
+    ok, why, _ = judge(tmp_path, on_disk(tmp_path, args=args, target=post, name="other2"), run)
+    assert ok is False and "not a comment on the post" in why
+
+
+def test_a_folder_that_is_not_a_run_folder_of_the_data_folder_is_refused_but_not_in_a_replay(tmp_path):
+    data = tmp_path / "data"
+    (data / "runs" / "7").mkdir(parents=True)
+    run = fake_gate({"decision": "auto", "reasons": [], "idempotency_key": reply_key(COMMENT)})
+    doc = on_disk(tmp_path)
+    ok, why, _ = judge(tmp_path, doc, run, data_dir=str(data))
+    assert ok is False and "runs/<n>" in why and run.calls == []
+    assert judge(tmp_path, doc, run, data_dir=str(data), log="/copy/of/the/log")[0] is True  # a replay executes nothing
+    inside = on_disk(data / "runs", name="7x")  # a folder of runs/ that is not a number
+    assert judge(tmp_path, inside, fake_gate({}), data_dir=str(data))[0] is False
+    (data / "runs" / "7").rmdir()
+    good = on_disk(data / "runs", name="7")
+    assert judge(tmp_path, good, run, data_dir=str(data))[0] is True
 
 
 # --- the operation: the bounds derived from the policy, the class resolved, the judgement, the call ---------------
@@ -452,6 +525,62 @@ def test_the_text_that_was_judged_is_the_text_that_is_sent(tree):
     assert sent(tree) == [] and [c for c in publisher_calls(tree) if c[0] == "comment"] == []  # before the dry run
 
 
+def test_the_text_that_was_sent_is_the_text_that_was_judged_whatever_happens_to_the_file_after_the_hash(tree, monkeypatch):
+    approve(tree)
+    seen = []
+    real = isolated.run_script
+    original = run_folder(tree) / "reply.txt"
+
+    def run(script, args, **kw):
+        seen.append(list(args))
+        done = real(script, args, **kw)
+        original.write_text("Send this instead: https://elsewhere.example/offer\n")  # after the hash and the gate
+        return done
+
+    monkeypatch.setattr(isolated, "run_script", run)
+    out = execute(tree)
+    assert out["executed"] is True and original.read_text().startswith("Send this instead")
+    given = texts(tree)
+    assert [(g["dry"], g["text"]) for g in given] == [(True, TEXT), (False, TEXT)]  # the provider got the judged bytes
+    assert {g["path"] for g in given} == {seen[0][seen[0].index("--reply-file") + 1]} and given[0]["path"] != str(original)
+    assert not Path(given[0]["path"]).parent.exists()          # the private folder is removed afterwards
+    assert actions(tree)[0][2] == hashlib.sha256(TEXT.encode()).hexdigest()
+
+
+def test_the_private_folder_is_removed_when_nothing_is_sent_too(tree, monkeypatch):
+    approve(tree)
+    made = []
+    real = tempfile.mkdtemp
+    monkeypatch.setattr(tempfile, "mkdtemp", lambda *a, **k: made.append(real(*a, **k)) or made[-1])
+    assert execute(tree, decision={"category": "criticism_or_disagreement", "language": "EN"})["executed"] is False
+    assert made and not any(Path(m).exists() for m in made)
+
+
+def test_the_gate_is_given_the_operations_clock(tree, monkeypatch):
+    approve(tree)
+    seen = []
+    real = isolated.run_script
+    monkeypatch.setattr(isolated, "run_script", lambda script, args, **kw: seen.append(list(args)) or real(script, args, **kw))
+    assert execute(tree)["executed"] is True
+    moment = datetime.datetime.fromisoformat(seen[0][seen[0].index("--now") + 1])
+    assert moment.tzinfo is not None and abs((datetime.datetime.now().astimezone() - moment).total_seconds()) < 120
+
+
+def test_a_parent_comment_that_is_not_on_the_post_covers_nothing_and_runs_nothing(tree):
+    approve(tree)
+    other = "urn:li:comment:(urn:li:share:7400000000000000009,7400000000000000002)"
+    out = execute(tree, args=["--platform", "linkedin", "--post-id", POST, "--parent-comment-id", other,
+                              "--text-file", str(run_folder(tree) / "reply.txt")])
+    assert out["executed"] is False and "parent comment" in out["why"] and sent(tree) == [] and actions(tree) == []
+
+
+@pytest.mark.parametrize("name", ["abc", "../elsewhere", "1/2"])
+def test_a_reply_outside_a_run_folder_of_the_data_folder_is_not_sent(tree, name):
+    approve(tree)
+    out = execute(tree, folder_name=name)
+    assert out["executed"] is False and "runs/<n>" in out["why"] and sent(tree) == [] and actions(tree) == []
+
+
 def test_the_daily_cap_of_the_block_binds_the_operation(tree):
     block = dict(BLOCK, max_replies_per_day=1)
     (tree["project"] / POLICY_FILE).write_text("```engagement-policy\n" + json.dumps(block) + "\n```\n")
@@ -462,7 +591,7 @@ def test_the_daily_cap_of_the_block_binds_the_operation(tree):
                "commenter": "Bruno", "text": "Thanks!", "received_at": "2026-10-09T10:05:00Z"}
     out = execute(tree, comment=comment, idempotency_key=reply_key(comment["comment_urn"]),
                   args=["--platform", "linkedin", "--post-id", POST, "--parent-comment-id", comment["comment_urn"],
-                        "--text-file", str(tree["project"].parent / "handed" / "reply.txt")])
+                        "--text-file", str(run_folder(tree) / "reply.txt")])
     assert out["executed"] is False and "per day" in out["why"] and len(sent(tree)) == 1
 
 

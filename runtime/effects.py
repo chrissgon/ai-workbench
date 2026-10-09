@@ -50,12 +50,18 @@ What a kind module exposes, in two groups:
                                                          provider; EffectError when the fact cannot be read. The
                                                          operation calls it before the run lock and hands the sets
                                                          to autonomy.covers; a kind without it resolves no class
-                       policy_judgement(root, project, doc, run_script, policy_file, log=None)
-                                                         optional. (True, "") or (False, why): the checks a kind owns
-                                                         that are not bounds, made after covers and before any
+                       policy_judgement(root, project, doc, run_script, policy_file, private, log=None, data_dir=None, now=None)
+                                                         optional. (True, "", copies) or (False, why, {}): the checks a
+                                                         kind owns that are not bounds, made after covers and before any
                                                          provider call, on the exact content (the engagement gate, run
-                                                         through run_script, the credential scan); `log` is None except
-                                                         in a replay, which names a copy of the log the gate reads
+                                                         through run_script, the credential scan). `private` is a folder
+                                                         the operation made (0700) and removes; the kind writes there
+                                                         the bytes it judged, and copies {flag: path} makes the
+                                                         operation give the provider that path in place of the value
+                                                         after the flag, so the content sent is the content judged.
+                                                         `log` is None except in a replay, which names a copy of the log
+                                                         the gate reads; `data_dir` is the project's data folder; `now`
+                                                         is the operation's clock, ISO-8601 with its offset
 
 A kind of one path alone has only that path's names. EFFECT_KEYS and RESERVED_FLAGS are the common shape of a
 document a handler hands over and the flags the operation adds and a handler never may.

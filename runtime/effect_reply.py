@@ -19,12 +19,18 @@ optional names that make the class a fact and add the judgement:
                     request), the post ids are read back from their addresses by the platform's own template
                     (shared/references/platforms/<platform>.json), and a post is covered only when it is in that set.
                     A ledger that cannot be read, or lists nothing, covers nothing.
-  policy_judgement  the checks a reply owns beyond the bounds, on the exact text: the file is the one the document hashed,
-                    it holds no credential (scripts/redact.py's formats, through runtime/workcopy.py), and the engagement
-                    gate of mkt-engage (category, language, the daily and per-person limits, sensitive topics, the
-                    reply rules, the sources) says `auto` with the idempotency key the document carries. The gate runs
-                    through runtime/isolated.py. Both conditions hold at once: the bound (a standing approval, a class
-                    resolved from the ledger) and the judgement; the gate's `auto` is never the approval.
+  policy_judgement  the checks a reply owns beyond the bounds, on the exact text: the file is read once, its bytes are
+                    the ones the document hashed, they hold no credential (scripts/redact.py's formats, through
+                    runtime/workcopy.py), and the engagement gate of mkt-engage (category, language, the daily and
+                    per-person limits, sensitive topics, the reply rules, the sources) says `auto` with the idempotency
+                    key the document carries. Those bytes are written to a private file (a folder the operation made,
+                    0700, the file created exclusively, 0600); the gate reads that file and the operation gives the
+                    publisher that path in place of --text-file, so the text sent is the text judged, whatever happens
+                    to the run folder's file after the hash. The parent comment must be a comment on the post
+                    (the platform's data file gives the form), and the run folder must be runs/<n> of the project's
+                    data folder. The gate runs through runtime/isolated.py. Both conditions hold at once: the bound
+                    (a standing approval, a class resolved from the ledger) and the judgement; the gate's `auto` is
+                    never the approval.
 
 The document. `args` are the publisher's own flags, each once: --platform, --post-id, --parent-comment-id, --text-file;
 `target` is the post id; `items` is 1; `files` lists, as absolute paths in the folder of the text file, the four files the
@@ -150,7 +156,11 @@ def resolve_targets(cfg: dict, doc: dict, resolve_call) -> dict:
     address is turned back into its id by the platform's template, and an entry whose address is not one of the
     platform's, or whose id is not a post id by the platform's pattern, is left out. EffectError when the ledger cannot
     be read or does not answer a list of posts; an empty ledger is an empty set, which covers nothing."""
-    platform = _parts(doc)["platform"]
+    parts = _parts(doc)
+    platform = parts["platform"]
+    bad = _parent_of_post(cfg["workbench"], parts)
+    if bad:
+        raise effects.EffectError("usage", bad)
     (head, tail), pattern = _platform_urls(cfg, platform)
     try:
         answer = resolve_call(PROVIDER_CLASS.replace("<platform>", platform), READ_VERB,
@@ -170,28 +180,67 @@ def resolve_targets(cfg: dict, doc: dict, resolve_call) -> dict:
     return {TARGET_CLASS: ids}
 
 
+def _parent_of_post(workbench: str, parts: dict) -> str:
+    """"" when --parent-comment-id is a comment on --post-id, else why not. The platform's data file gives the forms of a
+    comment id (identifiers.comment and identifiers.comment_short); the id embeds the post it is on (every group but the
+    last, the comment's own number), which must be the post of the request, because the publisher addresses the request
+    to the parent comment."""
+    path = os.path.join(workbench, "shared", "references", "platforms", f"{parts['platform']}.json")
+    try:
+        with open(path, encoding="utf-8") as f:
+            ids = json.load(f)["identifiers"]
+        forms = [re.compile(ids[key]["pattern"]) for key in ("comment", "comment_short")]
+    except (OSError, ValueError, KeyError, TypeError, re.error) as e:
+        return f"the data file of the platform {parts['platform']} cannot be read ({type(e).__name__}): the parent comment cannot be checked"
+    for form in forms:
+        found = form.fullmatch(parts["parent"])
+        if found:
+            embedded = found.groups()[:-1]
+            post = parts["post"]
+            if post == ":".join(embedded) or (len(embedded) > 1 and post.endswith(":" + ":".join(embedded))):
+                return ""
+            return "the parent comment is not a comment on the post of the request"
+    return "the parent comment is not an id of a comment of the platform"
+
+
 def _regular(path: str) -> bool:
     return os.path.isfile(path) and not os.path.islink(path)
 
 
-def policy_judgement(root: str, project: str, doc: dict, run_script, policy_file: str, log=None) -> tuple:
-    """(True, "") or (False, why): the checks of a reply beyond the bounds, on the exact text, made before any provider
-    call. In this order: every file of the document is a regular file (not a link); the text file is the one the
-    document hashed; it holds no credential; the engagement gate (mkt-engage's policy_gate.py decide, started through
-    run_script, the isolated runner, in the project's folder, on the approved policy file) answers `auto` with the
-    idempotency key of the document. why is what a person reads: the gate's reasons when it says inbox. `log` names
-    another copy of the engagement log for the gate to read (a replay only; the operation refuses it otherwise)."""
+def policy_judgement(root: str, project: str, doc: dict, run_script, policy_file: str, private: str, log=None,
+                     data_dir=None, now=None) -> tuple:
+    """(True, "", copies) or (False, why, {}): the checks of a reply beyond the bounds, on the exact text, made before any
+    provider call. In this order: the parent comment is a comment on the post; the run folder is runs/<n> of data_dir
+    (not in a replay, which names `log` and executes nothing); every file of the document is a regular file (not a
+    link); the text file is read once and its bytes are the ones the document hashed; they hold no credential; they are
+    written to a private file in `private` (a folder the caller made, 0700, and removes), which the gate reads; the
+    engagement gate (mkt-engage's policy_gate.py decide, started through run_script, the isolated runner, in the
+    project's folder, on the approved policy file, at `now`) answers `auto` with the idempotency key of the document.
+    copies is {"--text-file": the private path}: the caller gives the publisher that path in place of the document's, so
+    the text sent is the text judged. why is what a person reads: the gate's reasons when it says inbox. `log` names
+    another copy of the engagement log for the gate to read (a replay only)."""
     parts = _parts(doc)
+    bad = _parent_of_post(root, parts)
+    if bad:
+        return False, bad, {}
+    if data_dir is not None and log is None:
+        folder = os.path.realpath(os.path.dirname(parts["text"]))
+        if os.path.dirname(folder) != os.path.join(os.path.realpath(data_dir), "runs") or not os.path.basename(folder).isdigit():
+            return False, "the files of a reply are in a run folder, runs/<n> of the project's data folder: nothing was sent", {}
     for name, path in sorted(parts["files"].items()):
         if not _regular(path):
-            return False, f"{name} is not a regular file the judgement can read"
+            return False, f"{name} is not a regular file the judgement can read", {}
     with open(parts["text"], "rb") as f:
         data = f.read()
     if hashlib.sha256(data).hexdigest() != doc["payload_sha256"]:
-        return False, "the reply text is not the one the document hashed (its sha256 changed): nothing was sent"
+        return False, "the reply text is not the one the document hashed (its sha256 changed): nothing was sent", {}
     held = workcopy.credential_findings(data.decode("utf-8", errors="replace"))
     if held:
-        return False, HOLDS_CREDENTIAL.format(label=held[0])
+        return False, HOLDS_CREDENTIAL.format(label=held[0]), {}
+    copy = os.path.join(private, os.path.basename(parts["text"]))
+    fd = os.open(copy, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
     try:
         with open(parts["files"][DECISION], encoding="utf-8") as f:
             decision = json.load(f)
@@ -199,31 +248,31 @@ def policy_judgement(root: str, project: str, doc: dict, run_script, policy_file
         if set(decision) != {"category", "language"} or not all(isinstance(v, str) and v.strip() for v in (category, language)):
             raise ValueError("two texts")
     except (OSError, ValueError, KeyError, TypeError):
-        return False, f"{DECISION} does not hold exactly a category and a language"
+        return False, f"{DECISION} does not hold exactly a category and a language", {}
     args = ["decide", "--policy", policy_file, "--state", STATE, "--log", log or LOG,
             "--comment-file", parts["files"][COMMENT], "--category", category, "--language", language,
-            "--profile", PROFILE, "--reply-file", parts["text"], "--sources-file", parts["files"][SOURCES],
-            "--skills-dir", os.path.join(root, "skills")]
+            "--profile", PROFILE, "--reply-file", copy, "--sources-file", parts["files"][SOURCES],
+            "--skills-dir", os.path.join(root, "skills"), *(["--now", now] if now else [])]
     script = isolated.skill_script(root, GATE_SKILL, GATE_SCRIPT)
     try:
         done = run_script(script, args, cwd=project, timeout=GATE_TIMEOUT)
     except (OSError, subprocess.SubprocessError) as e:
-        return False, f"the engagement gate could not run ({type(e).__name__}): nothing was sent"
+        return False, f"the engagement gate could not run ({type(e).__name__}): nothing was sent", {}
     if done.returncode != 0:
-        return False, "the engagement gate failed: " + " ".join((done.stderr or "").split())[-300:]
+        return False, "the engagement gate failed: " + " ".join((done.stderr or "").split())[-300:], {}
     try:
         answer = json.loads(done.stdout)
     except ValueError:
         answer = None
     if not isinstance(answer, dict) or answer.get("decision") not in ("auto", "inbox"):
-        return False, "the engagement gate did not answer auto or inbox: nothing was sent"
+        return False, "the engagement gate did not answer auto or inbox: nothing was sent", {}
     if answer["decision"] != "auto":
         reasons = answer.get("reasons") if isinstance(answer.get("reasons"), list) else []
-        return False, "the engagement gate sends this reply to the inbox: " + "; ".join(str(r) for r in reasons)
+        return False, "the engagement gate sends this reply to the inbox: " + "; ".join(str(r) for r in reasons), {}
     if answer.get("idempotency_key") != doc["idempotency_key"]:
         return False, (f"the engagement gate's key for this comment is {answer.get('idempotency_key')}, not the document's "
-                       f"{doc['idempotency_key']}: nothing was sent")
-    return True, ""
+                       f"{doc['idempotency_key']}: nothing was sent"), {}
+    return True, "", {"--text-file": copy}
 
 
 if __name__ == "__main__":
