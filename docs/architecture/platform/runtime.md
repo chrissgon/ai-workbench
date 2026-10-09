@@ -67,6 +67,7 @@ The modules of the runtime, one row each, from the first sentence of their docst
 | `runtime/operations.py` | The table of operations: the one place that says what the operations layer (runtime/ops.py) offers to a shell. |
 | `runtime/ops.py` | The operations layer of the task runtime: every operation a person or a scheduler can perform, once. |
 | `runtime/ops_core.py` | The names every module of the operations layer shares, once: the checkout (ROOT), the refusal (OpsError), the project's context and the store call, the two locks, the runtime's own key and the data-folder names. |
+| `runtime/ops_say.py` | The conversation with the planning agent: one turn of it (`say`) and the memory a plain line carries to the router. |
 | `runtime/path_rule.py` | The path rule: how one path of what a run left goes back to the project. |
 | `runtime/plan.py` | The plan of a request: the tasks code builds from a route, which the person approves before any task exists. |
 | `runtime/progress.py` | Progress and the summary of a period, computed from the store's records: no model writes them. |

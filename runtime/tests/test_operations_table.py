@@ -20,6 +20,7 @@ from test_effects import gate_project, provider_calls, tree  # noqa: F401  (the 
 
 ops = st.load("ops")
 ops_core = st.load("ops_core")
+ops_say = st.load("ops_say")
 operations = st.load("operations")
 cli = st.load("cli")
 effects = st.load("effects")
@@ -83,7 +84,7 @@ def test_every_row_calls_a_function_of_the_operations_layer_that_accepts_its_arg
 
 def test_every_public_function_of_the_operations_layer_is_a_row_or_listed_as_not_one():
     # the layer is four files (CONS-1B): ops.py and the siblings it re-exports from; a function counts where it is defined
-    public = {n for module in (ops, ops_core) for n, f in inspect.getmembers(module, inspect.isfunction)
+    public = {n for module in (ops, ops_say, ops_core) for n, f in inspect.getmembers(module, inspect.isfunction)
               if not n.startswith("_") and f.__module__ == module.__name__}
     called = {r["call"] for r in operations.OPERATIONS}
     assert called <= public
