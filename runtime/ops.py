@@ -2431,11 +2431,11 @@ def dispatch(project: str, budget_seconds=None) -> dict:
     if not cfg["area_agents"]:
         rows = _stored(ctx, ctx["store"].tasks_list)
         _record_held(ctx, [{"task_id": t["id"], "agent": t.get("agent"), "reason": dispatcher.NO_AGENT}
-                           for t in rows if t["state"] == "ready" and t["parent_id"] is not None])
+                           for t in rows if t["state"] == "ready" and t["parent_id"] is not None], [])
         return {"stopped": "no area agent is configured"}
     out = {"handlers": _ticks(ctx, project), "released": [], "ran": [], "held": [], "stopped": None}
     key = _floor_key()
-    released, checked, held = [], {}, []
+    released, checked, held, missing = [], {}, [], []
     while out["stopped"] is None:
         if _configuration_moved(ctx):  # accepted again, or edited, since the round began: a mode may have been narrowed
             out["stopped"] = ("the configuration changed during the round (a mode, a cap or an agent): no new run "
@@ -2461,7 +2461,7 @@ def dispatch(project: str, budget_seconds=None) -> dict:
             checked["image"] = _image_stop()
         stopper = (checked["credential"] if snapshot["tier"].get(decided["start"]) == "strong" else None) or checked["image"]
         if stopper:
-            reason, out["stopped"] = stopper
+            reason, out["stopped"], missing = stopper
             held = dispatcher.held_of(snapshot, decided, {decided["start"]: reason})
             break
         try:
@@ -2475,7 +2475,7 @@ def dispatch(project: str, budget_seconds=None) -> dict:
         out["ran"].append({"task_id": ran["ran"], "run_id": ran["run_id"], "status": ran["status"],
                            "ending": ran["ending"], "model": (ran.get("routing") or {}).get("model")})
         out["stopped"] = _stops_the_round(ran)
-    _record_held(ctx, held)
+    _record_held(ctx, held, missing)
     return out
 
 
@@ -2516,7 +2516,7 @@ def _configuration_moved(ctx: dict) -> bool:
 
 
 def _credential_stop():
-    """(reason, why) no run on the reference model can start from this process, or None: its credential is neither set
+    """(reason, why, missing) no run on the reference model can start from this process, or None: its credential is neither set
     nor found in the secret store (lab.credential_missing). The reason is `secret store` when this interpreter cannot
     read the store at all (the library is missing), else `credential`. Named with the interpreter, since a scheduled
     job's interpreter may not read the store (open point O1)."""
@@ -2526,7 +2526,7 @@ def _credential_stop():
     reason = "credential" if dispatcher.store_readable() == "ok" else "secret store"
     return reason, (f"the reference model's credential ({', '.join(missing)}) is neither set nor found in the secret store "
                     f"from {sys.executable} (Python {sys.version.split()[0]}): no run starts. See contracts/runtime.md, "
-                    "\"The dispatcher's two jobs\"")
+                    "\"The dispatcher's two jobs\""), list(missing)
 
 
 def _image_stop():
@@ -2534,7 +2534,7 @@ def _image_stop():
     fail for it), else None. A machine the lab cannot look at (no container executor, no docker) says nothing."""
     seen = lab.image()
     if seen.get("name") and not seen.get("digest"):
-        return "image", f"the eval image {seen['name']} is not on this machine: no run starts, and no task fails for it. See connections"
+        return "image", f"the eval image {seen['name']} is not on this machine: no run starts, and no task fails for it. See connections", []
     return None
 
 
@@ -2550,18 +2550,20 @@ def _now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).isoformat()
 
 
-def _record_held(ctx: dict, held: list) -> None:
+def _record_held(ctx: dict, held: list, missing=()) -> None:
     """Keep the last round's held tasks, [{"task_id", "agent", "reason"}], as the cursor HELD_CURSOR with the time they
-    began to be held (at). At most HELD_KEPT tasks; "more" counts the rest. A round that holds the same tasks for the
-    same reasons writes nothing: a write moves the store's change counter, and every open page reloads for it."""
-    kept, more = held[:HELD_KEPT], max(0, len(held) - HELD_KEPT)
+    began to be held (at), and `missing`, the variables of the credential that were not found (names only). At most
+    HELD_KEPT tasks; "more" counts the rest. A round that holds the same tasks for the same reasons writes nothing: a
+    write moves the store's change counter, and every open page reloads for it."""
+    kept, more, names = held[:HELD_KEPT], max(0, len(held) - HELD_KEPT), list(missing)[:HELD_KEPT]
     try:
         before = json.loads(_stored(ctx, ctx["store"].cursor_get, HELD_CURSOR) or "null")
     except ValueError:
         before = None
-    if isinstance(before, dict) and before.get("held") == kept and before.get("more") == more:
+    if isinstance(before, dict) and before.get("held") == kept and before.get("more") == more \
+            and (before.get("missing") or []) == names:
         return
-    record = {"at": _now_iso(), "held": kept, "more": more}
+    record = {"at": _now_iso(), "held": kept, "more": more, "missing": names}
     _stored(ctx, ctx["store"].cursor_set, HELD_CURSOR, json.dumps(record, separators=(",", ":")))
 
 
@@ -2588,27 +2590,33 @@ def _held_listed(ctx: dict, rows: list) -> list:
     out = []
     for h in record.get("held") or []:
         if h.get("task_id") in ids:
-            out.append({**h, "at": record.get("at"), "next": _held_next(project, h["reason"])})
+            out.append({**h, "at": record.get("at"), "next": _held_next(project, h["reason"], record.get("missing"))})
     return out
 
 
-def _held_next(project: str, reason: str):
+def _held_next(project: str, reason: str, missing=None):
     """What gets past a reason, or None when nothing a command or a sentence can say does (a cap, an agent that is
     stopped: edits of the configuration). `secret store`: the command that starts the service with the secret store's
-    library. `credential` (the store is readable, the key is not in it): a sentence that says where it is kept, with the
-    variable names of the reference model's credential (contracts/secrets.md, "Where to put a secret"); it gives
-    no value and invents none."""
+    library. `credential` (the store is readable, the key is not in it): a sentence that names the variables the round
+    found missing (else those of the reference model's credential) and, for each, the username it is stored under
+    (lab.credential_usernames, from the adapters' manifests) in the command that stores it, or the table of
+    contracts/secrets.md when none is registered; it gives no value and invents none."""
     if reason == "secret store":
         return operations.service_line(ROOT, [project], uv=True)
     if reason == "credential":
-        try:
-            names = ", ".join(lab.reference("strong")["pass_env"]) or "the reference model's credential"
-        except lab.LabError:
-            names = "the reference model's credential"
-        return (f"{names} is in neither the environment nor the secret store. Store it once, the value typed at a hidden "
-                f"prompt: uv run --with {operations.KEYRING_PIN} keyring set ai-workbench <username>, or export it in the shell "
-                f"that starts the service. The username of a secret is in the table of contracts/secrets.md; a model "
-                "provider's key is registered, with its username, by the adapter that reads it (the `secrets` list of its manifest).")
+        names = list(missing or [])
+        if not names:
+            try:
+                names = list(lab.reference("strong")["pass_env"])
+            except lab.LabError:
+                names = []
+        users = lab.credential_usernames(names) if names else {}
+        store = f"uv run --with {operations.KEYRING_PIN} keyring set ai-workbench "
+        steps = "; ".join(f"{n}: {store}{users[n]}" if n in users else
+                          f"{n}: {store}<username> (the username is in the table of contracts/secrets.md)" for n in names) \
+            or "the reference model's credential: see the table of contracts/secrets.md"
+        return (f"The credential is in neither the environment nor the secret store. Store it once, the value typed at a "
+                f"hidden prompt, or export it in the shell that starts the service. {steps}.")
     return None
 
 
@@ -3112,6 +3120,16 @@ def _spend_words(split: dict) -> dict:
             "runs_total_today": split["runs_total"]}
 
 
+def _caps_use(used, name: str) -> dict:
+    """The day's use of one agent in the words of `agents`, for the caps of `costs`; {} when the day could not be
+    computed (the gate file is broken): costs then show the caps alone."""
+    if not used or name not in used:
+        return {}
+    found = used[name]
+    return {"runs_today": found["spent"]["runs_reference"], "usd_today": found["spent"]["usd_floor"],
+            "runs_without_cost": found["spent"]["runs_without_cost"], **_spend_words(found["split"])}
+
+
 def _wider(project: str, agent: str, mode: str) -> list:
     """[{"mode", "command"}] for every mode above this one in the order of autonomy.MODES, each the absolute `set-mode`
     command (a wider mode is accepted by the person in the terminal): the page shows it, it builds none."""
@@ -3201,7 +3219,10 @@ def costs(project: str, since: str | None = None) -> dict:
             day = datetime.date.fromisoformat(str(since)).isoformat()
         except ValueError:
             raise OpsError("since is a day: YYYY-MM-DD", 2) from None
-    used = _agents_of_the_day(ctx)
+    try:
+        used = _agents_of_the_day(ctx)
+    except (lab.LabError, OpsError, KeyError, ValueError, OSError):  # a broken gate file leaves the day's use out; costs read the store
+        used = None
     folder = os.path.realpath(os.path.join(cfg["data_dir"], RUNS_DIR)) + os.sep
     runs = []
     for task in _stored(ctx, store.tasks_list):
@@ -3214,9 +3235,7 @@ def costs(project: str, since: str | None = None) -> dict:
             runs.append(dict(run, agent=agent, run_dir=where if inside else None))
     return {"since": day, "rows": costs_calc.summary(runs, cfg["model_prices"], since=day),
             "caps": [{"agent": name, "max_runs_per_day": entry["max_runs_per_day"],
-                      "max_usd_per_day": entry["max_usd_per_day"],
-                      "runs_today": used[name]["spent"]["runs_reference"], "usd_today": used[name]["spent"]["usd_floor"],
-                      "runs_without_cost": used[name]["spent"]["runs_without_cost"], **_spend_words(used[name]["split"])}
+                      "max_usd_per_day": entry["max_usd_per_day"], **_caps_use(used, name)}
                      for name, entry in cfg["area_agents"].items()]}
 
 

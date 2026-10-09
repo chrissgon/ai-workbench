@@ -37,11 +37,12 @@ def plain(monkeypatch):
 
 def test_the_floor_spend_is_split_into_recorded_and_reserved_and_adds_up_to_what_the_cap_compares():
     split = autonomy.spend_split(RUNS, "brand", "floor", 0.5)
-    assert split == {"usd_recorded": 0.03, "usd_reserved": 0.5, "runs_total": 5}
+    assert split == {"usd_recorded": 0.03, "usd_reserved": 0.5, "runs_total": 5, "runs_reference": 3, "runs_without_cost": 1}
     spent = autonomy.spend(RUNS, "brand", "ref", "floor", 0.5)
-    assert round(split["usd_recorded"] + split["usd_reserved"], 6) == spent["usd_floor"]
-    assert autonomy.spend_split(RUNS, "business", "floor", 0.5) == {"usd_recorded": 0.0, "usd_reserved": 0.0, "runs_total": 1}
-    assert autonomy.spend_split(RUNS, "nobody", "floor", 0.5) == {"usd_recorded": 0.0, "usd_reserved": 0.0, "runs_total": 0}
+    assert split["usd_recorded"] + split["usd_reserved"] == spent["usd_floor"]  # exactly, not nearly
+    assert autonomy.spend_split(RUNS, "business", "floor", 0.5)["runs_total"] == 1
+    assert autonomy.spend_split(RUNS, "nobody", "floor", 0.5) == {"usd_recorded": 0.0, "usd_reserved": 0.0, "runs_total": 0,
+                                                                 "runs_reference": 0, "runs_without_cost": 0}
 
 
 def seed_runs(tree, rows):
@@ -67,7 +68,7 @@ def test_agents_carry_the_split_the_total_and_keep_usd_today(tree):
     got = ops.agents(path)["agents"][0]
     assert got["runs_today"] == 2 and got["runs_total_today"] == 4  # the reference model's runs; every run of any model
     assert got["usd_recorded"] == pytest.approx(0.4) and got["usd_reserved"] == pytest.approx(ops.PER_RUN_USD)
-    assert got["usd_today"] == pytest.approx(got["usd_recorded"] + got["usd_reserved"]) and got["runs_without_cost"] == 1
+    assert got["usd_today"] == got["usd_recorded"] + got["usd_reserved"] and got["runs_without_cost"] == 1
 
 
 def test_costs_caps_carry_the_same_words_as_agents(tree):
@@ -141,7 +142,7 @@ def test_a_missing_credential_with_a_readable_store_says_where_it_is_stored(tree
     ops.dispatch(path)
     [entry] = [h for h in ops.status(path)["held"] if h["reason"] == "credential"]
     text = entry["next"]
-    assert "EXAMPLE_REFERENCE_KEY" in text and "keyring set ai-workbench" in text and "the `secrets` list" in text
+    assert "EXAMPLE_REFERENCE_KEY" in text and "keyring set ai-workbench" in text and "<username>" in text
     assert "contracts/secrets.md" in text
     assert not any(ch in text for ch in "\n\r")
 
@@ -165,3 +166,74 @@ def test_a_job_that_fails_with_a_command_carries_it_in_its_error(tree):
     job.join(10)
     error = world.svc.job_shown(1)["error"]
     assert error["error"] == "not_configured" and error["next"].startswith("python3 /w/runtime/cli.py accept-config")
+
+
+# --- review of WP-9.14b ----------------------------------------------------------------------------------------------
+
+
+def test_the_two_parts_add_up_exactly_to_what_the_cap_compares_for_any_day():
+    import random
+    rng = random.Random(7)
+    for _ in range(2000):
+        runs = [{"agent": "a", "model": rng.choice(["ref", "floor", "other"]),
+                 "cost_usd": rng.choice([None, round(rng.random(), rng.choice([1, 2, 4]))])} for _ in range(rng.randint(0, 9))]
+        per_run = rng.choice([0.1, 0.25, 0.5, 1.5])
+        split, spent = autonomy.spend_split(runs, "a", "floor", per_run), autonomy.spend(runs, "a", "ref", "floor", per_run)
+        assert split["usd_recorded"] + split["usd_reserved"] == spent["usd_floor"], runs
+        assert (spent["runs_reference"], spent["runs_without_cost"]) == (split["runs_reference"], split["runs_without_cost"])
+        assert split["runs_total"] == len([r for r in runs if r["agent"] == "a"])
+
+
+def test_the_cap_rule_is_written_once_and_a_cap_is_still_reached_by_the_rounded_sum():
+    import inspect
+    assert "cost_usd" not in inspect.getsource(autonomy.spend)  # spend reads spend_split: one loop
+    agents = autonomy.agents({"a": {"pack": "p", "mode": "autonomous", "max_runs_per_day": 5, "max_usd_per_day": 0.8}})
+    f = autonomy.facts("a", agents, [], "2026-10-06T00:00:00Z")
+    assert 0.1 + 0.7 < 0.8  # a sum a float leaves a hair under the cap
+    at_cap = {"runs_reference": 0, "usd_floor": 0.1 + 0.7, "runs_without_cost": 0}
+    assert autonomy.may_start("a", agents, f, at_cap, "floor") == (False, "cap: usd per day")
+    assert autonomy.may_start("a", agents, f, dict(at_cap, usd_floor=0.7), "floor") == (True, "")
+
+
+def test_the_credential_sentence_names_only_what_is_missing_with_its_registered_username(tree, monkeypatch):
+    from test_read_ops import planned
+    path = str(tree["project"])
+    planned(tree, "single")
+    monkeypatch.setattr(lab, "credential_missing", lambda tier: ["EXAMPLE_KEY_B"])
+    monkeypatch.setattr(lab, "credential_usernames", lambda names: {"EXAMPLE_KEY_B": "example-b"})
+    monkeypatch.setattr(dispatcher, "store_readable", lambda: "ok")
+    monkeypatch.setattr(lab, "reference", lambda tier="strong": {
+        "tier": tier, "model": "m", "adapter": "h", "pass_env": ["EXAMPLE_KEY_A", "EXAMPLE_KEY_B"], "timeout_seconds": 60, "retries": 2,
+        "control": {"total_jobs": 2, "web_jobs": {"strong": 1, "floor": 1}}})
+    ops.dispatch(path)
+    [entry] = [h for h in ops.status(path)["held"] if h["reason"] == "credential"]
+    assert "EXAMPLE_KEY_B" in entry["next"] and "EXAMPLE_KEY_A" not in entry["next"]
+    assert "keyring set ai-workbench example-b" in entry["next"] and "<username>" not in entry["next"]
+    monkeypatch.setattr(lab, "credential_usernames", lambda names: {})  # a name nobody registers: the table is named
+    assert "contracts/secrets.md" in ops._held_next(path, "credential", ["EXAMPLE_KEY_B"])
+
+
+def test_the_lab_reads_the_username_of_a_secret_from_the_manifests_of_the_adapters(tmp_path, monkeypatch):
+    import shutil
+    kit = lab.load()
+    (tmp_path / "providers" / "secrets").mkdir(parents=True)
+    shutil.copyfile(st.REPO / "providers" / "secrets" / "resolver.py", tmp_path / "providers" / "secrets" / "resolver.py")
+    (tmp_path / "adapters" / "h").mkdir(parents=True)
+    (tmp_path / "adapters" / "h" / "adapter.json").write_text(json.dumps({"secrets": [
+        {"name": "EXAMPLE_KEY_B", "purpose": "p", "permission": "q", "readers": ["adapters/h/run.sh"], "store_username": "example-b"}]}),
+        encoding="utf-8")
+    monkeypatch.setattr(kit, "ROOT", str(tmp_path))
+    assert lab.credential_usernames(["EXAMPLE_KEY_B", "NO_SUCH_KEY"]) == {"EXAMPLE_KEY_B": "example-b"}
+    monkeypatch.setattr(kit, "ROOT", str(tmp_path / "missing"))
+    assert lab.credential_usernames(["EXAMPLE_KEY_B"]) == {}  # no resolver: nothing is known, nothing fails
+
+
+def test_a_broken_gate_file_cannot_fail_costs(tree, monkeypatch):
+    path = str(tree["project"])
+
+    def broken(tier="strong"):
+        raise lab.LabError("config", "evals/eval-gate.json is missing or invalid")
+
+    monkeypatch.setattr(lab, "reference", broken)
+    out = ops.costs(path)
+    assert [set(c) for c in out["caps"]] == [{"agent", "max_runs_per_day", "max_usd_per_day"}] * len(out["caps"]) and out["caps"]
