@@ -303,7 +303,9 @@ def _accepted(cfg: dict, accepted) -> None:
 def context(project: str, *, check_config: bool = True) -> dict:
     """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
     (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
-    operation but accept_config), the configuration's hash must be the one the person accepted last."""
+    operation but accept_config, config and service_check; version passes False only to make a store that does not
+    exist yet, and checks the hash itself on every call), the configuration's hash must be the one the person
+    accepted last."""
     cfg = _config_of(project)
     store = store_module()
     try:
@@ -2203,8 +2205,8 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
     sent when anything moved since the gate, and a failure leaves it open, approved again with the same hash. An
     effect is approved only from the terminal or from the local page (decision D8, extended: both show the person
     the content's hash and take it back typed or clicked); the table of operations tells this function which channel
-    called, and any other channel (the conversation, a messaging app), or none, is refused before anything is read or
-    sent (the rule fails closed)."""
+    called, and any other channel (the conversation, a messaging app), or none, is refused before anything is executed or
+    sent (the pending row is read first, to know its kind; the rule fails closed)."""
     ctx = context(project)
     item = _stored(ctx, ctx["store"].pending_get, pending_id)
     if item["kind"] == "effect" and channel not in EFFECT_CHANNELS:

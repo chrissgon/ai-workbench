@@ -434,6 +434,9 @@ def test_a_planted_violation_fails_the_map(tmp_path):
 
 
 def test_the_allowed_rules_say_what_the_diagram_says():
+    """The ALLOWED rules on representative pairs. This test reads no diagram: the layer diagram of
+    docs/architecture/platform/README.md is held to the rows by convention, and the scan of
+    test_every_edge_of_the_code_is_allowed_or_tolerated holds the code to them."""
     assert allowed("skills/a/scripts/x.py", "skills/a/scripts/y.py")
     assert not allowed("skills/a/scripts/x.py", "skills/b/scripts/y.py")
     assert allowed("skills/a/scripts/x.py", "providers/resolve.py")
