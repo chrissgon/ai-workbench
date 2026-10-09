@@ -387,6 +387,10 @@ def _coerce(arg: dict, value, from_query: bool):
         if type(value) is not bool:
             raise Usage(f"{name} must be true or false")
         return value
+    if kind == "list":
+        if type(value) is not list or not all(isinstance(v, str) for v in value):
+            raise Usage(f"{name} must be a list of text")
+        return value
     if not isinstance(value, str):
         raise Usage(f"{name} must be text")
     if kind == "choice" and value not in arg["choices"]:

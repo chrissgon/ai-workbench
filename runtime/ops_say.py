@@ -139,7 +139,8 @@ def _say_command(project: str, ctx: dict, said: str, channel: str = "chat") -> t
         return operations.chat_help(), None, None, False, None
     name, found = parsed
     if name == "new":
-        return _say_route(project, ctx, found)
+        after, found = operations.split_new(found)
+        return _say_route(project, ctx, found, after=after)
     row = operations.by_name(name)
     if channel not in row["channels"]:
         return f"error: /{name} is done in the terminal or on the page", None, None, False, None
@@ -174,7 +175,7 @@ def _planning_may_start(ctx: dict) -> tuple:
     return ok, why
 
 
-def _say_route(project: str, ctx: dict, said: str, answer_to=None) -> tuple:
+def _say_route(project: str, ctx: dict, said: str, answer_to=None, after=None) -> tuple:
     """A plain line: the answer to the router's question (then the router runs again), or a new request with the
     memory in front of it. Either way the router runs only when the planning agent may start."""
     ok, why = _planning_may_start(ctx)
@@ -189,7 +190,7 @@ def _say_route(project: str, ctx: dict, said: str, answer_to=None) -> tuple:
                    if t["parent_id"] is None and t["state"] in ("planned", "done", "cancelled")}
         remembered = chat_memory(messages, settled)
         text = f"{remembered}\n\n{MEMORY_TAIL}\n{said}" if remembered else said
-        request_id = _ops().request(project, text, title=plan.title_of(said))["request"]
+        request_id = _ops().request(project, text, title=plan.title_of(said), after=after)["request"]
     routed = _ops().route(project, request_id)
     item = core._stored(ctx, ctx["store"].pending_get, routed["pending_id"]) if routed.get("pending_id") else None
     if item is None:

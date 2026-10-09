@@ -163,13 +163,14 @@ releases it as it stands, its open questions left in it, or answers it, and the 
 stopped on a missing input that another skill writes (ending `blocked`) opens nothing: the task is `blocked`, with
 the start of the reply as its note, until the person retries it.
 
-The layer is four files (CONS-1B). The names every part shares (the checkout, the refusal, the project's context, the
+The layer is five files (CONS-1B, and ADJ-R1 for the fifth). The names every part shares (the checkout, the refusal, the project's context, the
 locks, the runtime's own key, the data-folder names) live once in runtime/ops_core.py and are read as `core.<name>`
 at call time, never bound at import, so that a test patching `ops_core.ROOT` reaches every reader. The conversation
 (`say`, `chat_memory`) is runtime/ops_say.py and the reads of the local interface (`version`, `agents`, `skills`,
 `costs`, `connections`, `artifacts`, ...) are runtime/ops_reads.py; both reach an operation that stays here at call
-time, and this file exposes them under their names at its end, so a shell still imports `ops` only. A test of size
-(runtime/tests/test_runtime_rules.py) caps this file and each sibling.
+time, and this file exposes them under their names at its end, so a shell still imports `ops` only. The derived waits
+between requests (contracts/runtime.md, "Derived waits") are runtime/ops_waits.py, which this file calls and which
+reaches no operation of it. A test of size (runtime/tests/test_runtime_rules.py) caps this file and each sibling.
 
 Usage (a library; the shell is runtime/cli.py): python3 runtime/ops.py --help
 
@@ -192,6 +193,7 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ops_core as core  # noqa: E402  (the shared names: read as core.<name>, never bound at import)
+import ops_waits  # noqa: E402  (the derived waits between requests: rederive, for_plan, annotate, approve_plan)
 import autonomy  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
 import board  # noqa: E402
 import changeset  # noqa: E402
@@ -365,17 +367,18 @@ def _key_in_environment(routing: dict, key: dict):
 # --- the operations ----------------------------------------------------------------------------------------
 
 
-def request(project: str, text: str, flow: str | None = None, title: str | None = None) -> dict:
+def request(project: str, text: str, flow: str | None = None, title: str | None = None, after: int | None = None) -> dict:
     """Record a request. With a flow, plan it from the flow file the person names (flows/<flow>.json): the tasks
-    without a dependency are ready at once, and it returns {"request", "flow", "state", "tasks": [{"id", "key",
-    "skill", "state"}]}. Without one, the request waits for its route (route()): {"request", "state": "requested",
-    "next": "route"}; its title, when none is given, is plan.title_of(text): the first sentence, else the first line cut at
-    a word."""
+    without a dependency are ready at once, unless one waits (below), and it returns {"request", "flow", "state",
+    "tasks": [{"id", "key", "skill", "state"}], "waits", "missing"}. Without one, the request waits for its route
+    (route()): {"request", "state": "requested", "next": "route"}; its title, when none is given, is
+    plan.title_of(text): the first sentence, else the first line cut at a word. after is the request this one runs
+    after (the person's override): every task of it waits until that request is done or cancelled (ops_waits.py)."""
     ctx = core.context(project)
     if flow is None:
         said = core._text(text, "the request's text")
         out = core._stored(ctx, ctx["store"].request_add, title=core._text(plan.title_of(said, title),
-                                                                 "the title").replace("\n", " "), text=said)
+                                                                 "the title").replace("\n", " "), text=said, after=after)
         return {"request": out["request"], "state": out["state"], "next": "route"}
     try:
         loaded = flow_files.load(flow, core.ROOT)
@@ -385,9 +388,12 @@ def request(project: str, text: str, flow: str | None = None, title: str | None 
         raise core.OpsError(str(e), 2) from None
     except manifest.ManifestError as e:
         raise core.OpsError(str(e), 1) from None
+    derived = ops_waits.for_plan(ctx, tasks, after)
     out = core._stored(ctx, ctx["store"].request_add, title=core._text(title or loaded["title"], "the title").replace("\n", " "),
-                  text=core._text(text, "the request's text"), flow=loaded["flow"], tasks=tasks)
-    return {**out, "flow": loaded["flow"]}
+                  text=core._text(text, "the request's text"), flow=loaded["flow"], tasks=tasks, after=after,
+                  waits=derived["store"])
+    ops_waits.rederive(ctx)
+    return {**out, "flow": loaded["flow"], "waits": derived["shown"], "missing": derived["missing"]}
 
 
 def run_next(project: str, tier: str | None = None) -> dict:
@@ -413,6 +419,7 @@ def _claim_and_run(ctx: dict, tier=None, task_id=None) -> dict:
     with core._run_lock(ctx["cfg"]):
         # This process holds the project's run lock, so a task still `running` is what an interrupted run left.
         recovered = core._stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task")
+        ops_waits.rederive(ctx)  # a file may have appeared, or a task ended, since the waits were derived
         pulled = None
         if documents.enabled(ctx["cfg"]):
             # Before the task is claimed, so that a refusal leaves no task running (decision D11).
@@ -1079,6 +1086,7 @@ def _release(ctx: dict, pending_id: int, by: str) -> dict:
     lock = core._run_lock(ctx["cfg"]) if item["kind"] == "review" and _brief_delivery(ctx, task) else contextlib.nullcontext()
     with lock:
         out = core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="released", by=by)
+        ops_waits.rederive(ctx)
         after = _after_release(ctx, item)
     return {**out, "after": after} if after else out
 
@@ -1086,13 +1094,17 @@ def _release(ctx: dict, pending_id: int, by: str) -> dict:
 def retry(project: str, task_id: int) -> dict:
     """Make a failed or blocked task ready again."""
     ctx = core.context(project)
-    return core._stored(ctx, ctx["store"].task_retry, task_id)
+    out = core._stored(ctx, ctx["store"].task_retry, task_id)
+    ops_waits.rederive(ctx)
+    return out
 
 
 def cancel(project: str, request_id: int) -> dict:
     """Cancel a request, its tasks that are not done, and their open pending decisions."""
     ctx = core.context(project)
-    return core._stored(ctx, ctx["store"].request_cancel, request_id, by="user")
+    out = core._stored(ctx, ctx["store"].request_cancel, request_id, by="user")
+    ops_waits.rederive(ctx)
+    return out
 
 
 def proof(project: str, skill: str | None = None) -> dict:
@@ -1486,7 +1498,8 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
 
 def status(project: str) -> dict:
     """{"config": {"path", "sha256"}, "requests": [{"id", "title", "flow", "state", "tasks": [{"id", "key", "title",
-    "agent", "skill", "state", "note"}]}], "pending": [... each with "agent" and "actions"], "documents": [{"path", "status", "note", "on_platform"}],
+    "agent", "skill", "state", "note", "waiting_for": [{"task_id", "request_id", "reason"}]}], "after": the request this one
+    runs after or None}], "pending": [... each with "agent" and "actions"], "documents": [{"path", "status", "note", "on_platform"}],
     "board": {"left_out_final"} or None, "held": [{"task_id", "agent", "reason", "at", "next"}]}: everything from the
     store's records. "left_out_final" is the number of tasks the board never mirrors because they were final when it
     was configured (runtime/board.py). A task's "title" and "agent" are the store's: the agent is None when the project
@@ -1502,8 +1515,11 @@ def status(project: str) -> dict:
         if c.get("task_id") is not None:
             comments[c["task_id"]] = comments.get(c["task_id"], 0) + 1
     board_of = lambda t: {"on_board": bool(t.get("remote_id")), "open_comments": comments.get(t["id"], 0)}
+    waiting = ops_waits.waiting_for(ctx)
     requests = [{**{key: r[key] for key in ("id", "flow", "state")}, "title": plan.request_title(r), **board_of(r),
-                 "tasks": [{**{key: t[key] for key in ("id", "key", "title", "agent", "skill", "state", "note")}, **board_of(t)}
+                 "after": r.get("after_request"),
+                 "tasks": [{**{key: t[key] for key in ("id", "key", "title", "agent", "skill", "state", "note")}, **board_of(t),
+                            "waiting_for": waiting.get(t["id"], [])}
                            for t in rows if t["parent_id"] == r["id"]]}
                 for r in rows if r["parent_id"] is None]
     return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": requests,
@@ -1531,10 +1547,13 @@ def task(project: str, task_id: int) -> dict:
     """One task or request with what is known of it: {"task": the store's row, "runs": its runs oldest first,
     "pending": its pending decisions of every status, oldest first, each with "agent" (the task's own) and
     "actions"}. For a request the runs are the router's and the decisions its plan's or its question's; for a task of
-    a plan, its own."""
+    a plan, its own. The row also carries "waiting_for" ([{"task_id", "request_id", "reason"}], the open waits of
+    ops_waits.py) and, for a request, "after"."""
     ctx = core.context(project)
     store = ctx["store"]
     found = core._stored(ctx, store.task_get, task_id)
+    found = {**{k: v for k, v in found.items() if k != "after_request"}, "after": found["after_request"],
+             "waiting_for": ops_waits.waiting_for(ctx).get(task_id, [])}
     return {"task": found, "runs": core._stored(ctx, store.task_runs_list, task_id),
             "pending": [{**item, "agent": found["agent"] if found["parent_id"] is not None else None,
                          "actions": _actions(store, item)}
@@ -1619,7 +1638,7 @@ def route(project: str, request_id: int, flow: str | None = None) -> dict:
             try:
                 loaded = flow_files.load(flow, core.ROOT)
                 tasks = _with_agents(ctx["cfg"], plan.from_flow(loaded, core.ROOT, plan.pack_skills(ctx["cfg"], core.ROOT)))
-                decision = _plan_pending(ctx, request, tasks, None, "named", loaded["flow"])
+                decision = ops_waits.annotate(ctx, request, _plan_pending(ctx, request, tasks, None, "named", loaded["flow"]))
             except flow_files.FlowError as e:
                 raise core.OpsError(str(e), 2) from None
             except (plan.PlanError, lab.LabError, ValueError) as e:
@@ -1753,7 +1772,7 @@ def _route_run(ctx: dict, request: dict) -> dict:
             route_read = _checked(ctx, read)
             if route_read["checked"]["ok"]:
                 built = _combined(ctx, request, [{"item": request["text"], "route": route_read, "reply": body}])["plan"]
-                decision = {"kind": "plan", **built}
+                decision = ops_waits.annotate(ctx, request, {"kind": "plan", **built})
             else:
                 why = route_read["checked"]["why"]
         except (flow_files.FlowError, plan.PlanError, ValueError) as e:
@@ -1821,7 +1840,7 @@ def _route_deliveries(ctx: dict, request: dict, parts: dict) -> dict:
     except (flow_files.FlowError, plan.PlanError, ValueError) as e:
         combined, why = None, f"no plan can be built from the routes: {e}"
     if combined is not None and combined["plan"] is not None:
-        decision = {"kind": "plan", **combined["plan"]}
+        decision = ops_waits.annotate(ctx, request, {"kind": "plan", **combined["plan"]})
         decision["payload"] = {**decision["payload"], **call["common"], "router_runs": runs}
         kind = "plan"
     else:
@@ -1993,7 +2012,7 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
 EFFECT_CHANNELS = ("terminal", "page")  # the channels an effect may be approved from (decision D8, extended)
 
 
-def approve(project: str, pending_id: int, sha256: str | None = None, channel: str | None = None) -> dict:
+def approve(project: str, pending_id: int, sha256: str | None = None, channel: str | None = None, go_ahead=None) -> dict:
     """Approve a pending decision of kind `plan` (its tasks are created as the plan lists them, and those with no
     dependency are ready) or `acceptance` (the request written on the task board is kept, and waits for its route).
     With sha256, a plan is approved only when it is the plan's hash. An `effect` (stage 4) is approved only with
@@ -2002,9 +2021,13 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
     effect is approved only from the terminal or from the local page (decision D8, extended: both show the person
     the content's hash and take it back typed or clicked); the table of operations tells this function which channel
     called, and any other channel (the conversation, a messaging app), or none, is refused before anything is executed or
-    sent (the pending row is read first, to know its kind; the rule fails closed)."""
+    sent (the pending row is read first, to know its kind; the rule fails closed). go_ahead (a plan only) names the
+    plan's task keys the person goes ahead on: their derived waits are dropped, and the state file records the decision
+    (ops_waits.py); a list, or the keys joined by commas."""
     ctx = core.context(project)
     item = core._stored(ctx, ctx["store"].pending_get, pending_id)
+    if go_ahead and item["kind"] != "plan":
+        raise core.OpsError(f"pending decision {pending_id} is a {item['kind']}: go ahead is said on the tasks of a plan", 2)
     if item["kind"] == "effect" and channel not in EFFECT_CHANNELS:
         raise core.OpsError("an effect is approved in the terminal, with its hash: "
                        + core._command("approve", ctx["cfg"]["project"], pending_id=pending_id, sha256="<hash>"), 1)
@@ -2015,9 +2038,11 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
             raise core.OpsError(f"pending decision {pending_id}: its tasks do not have the hash it states; nothing was approved", 1)
         if sha256 is not None and sha256 != stated:
             raise core.OpsError(f"the plan's hash is {stated} and you typed {sha256}: nothing was approved", 1)
-        return {**core._stored(ctx, ctx["store"].plan_approve, pending_id, by="user"), "plan_sha256": stated}
+        return {**ops_waits.approve_plan(ctx, item, go_ahead), "plan_sha256": stated}
     if item["kind"] == "acceptance":
-        return core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="accepted", by="user")
+        accepted = core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="accepted", by="user")
+        ops_waits.rederive(ctx)
+        return accepted
     if item["kind"] == "effect":
         return _approve_effect(ctx, item, sha256)
     raise core.OpsError(f"pending decision {pending_id} is a {item['kind']}: approve takes a plan, an acceptance or an effect; "
@@ -2103,7 +2128,9 @@ def reject(project: str, pending_id: int, note: str | None = None) -> dict:
         return core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="rejected", by="user")
     if item["kind"] == "effect":
         said = core._text(note, "the note") if note is not None else None
-        return core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="rejected", by="user", answer=said)
+        out = core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="rejected", by="user", answer=said)
+        ops_waits.rederive(ctx)
+        return out
     raise core.OpsError(f"pending decision {pending_id} is a {item['kind']}: reject takes a plan, an acceptance or an effect", 2)
 
 
@@ -2173,6 +2200,7 @@ def _snapshot(ctx: dict, key: dict) -> dict:
     for task in out["ready"]:
         if task.get("agent") in agents and task.get("skill"):
             out["tier"][task["id"]] = routed(task["skill"])["tier"]
+    out["waits"] = ops_waits.waiting_for(ctx)  # a ready task with an open wait starts nowhere (dispatcher.decide)
     return out
 
 
@@ -2253,6 +2281,7 @@ def dispatch(project: str, budget_seconds=None) -> dict:
             out["stopped"] = ("the configuration changed during the round (a mode, a cap or an agent): no new run "
                               "starts; the next round reads it")
             break
+        ops_waits.rederive(ctx)  # the files and the open tasks as they are now
         snapshot = _snapshot(ctx, key)
         decided = dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)
         out["held"] = decided["held"]
@@ -2462,6 +2491,7 @@ def poll(project: str) -> dict:
         except core.OpsError as e:
             synced = {"error": str(e), "code": e.code}
     expired = core._stored(ctx, store.approvals_expire, datetime.datetime.now(datetime.timezone.utc).isoformat())
+    ops_waits.rederive(ctx)  # the board may have brought requests, or a person a file
     state = "unchanged"
     if expired:
         rows = _standing_rows(ctx)

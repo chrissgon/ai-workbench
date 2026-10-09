@@ -60,6 +60,12 @@ def open_pending_of(conn, task_id: int) -> list:
     return [p for p in store.pending_list(conn, "open") if p["task_id"] == task_id]
 
 
+def kept(now, before):
+    """Migration 8 adds a column to tasks: every earlier column of every earlier row is what it was, the new one is empty."""
+    assert len(now) == len(before)
+    return all(row[:len(old)] == old and all(v is None for v in row[len(old):]) for row, old in zip(now, before))
+
+
 def test_migration_5_adds_the_approvals_table_and_keeps_every_earlier_row(tmp_path):
     path = tmp_path / "old.sqlite"
     old = sqlite3.connect(path)
@@ -78,10 +84,10 @@ def test_migration_5_adds_the_approvals_table_and_keeps_every_earlier_row(tmp_pa
               for table in ("tasks", "document_records")}
     old.close()
     out = store.init_db(path)
-    assert out["migrated_from"] == 4 and out["applied"] == [5, 6, 7] and out["schema_version"] == 7
+    assert out["migrated_from"] == 4 and out["applied"] == [5, 6, 7, 8] and out["schema_version"] == 8
     conn = store.open_db(path)
     for table, rows in before.items():
-        assert [tuple(r) for r in conn.execute(f"SELECT * FROM {table} ORDER BY id")] == rows
+        assert kept([tuple(r) for r in conn.execute(f"SELECT * FROM {table} ORDER BY id")], rows)
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "approvals" in names and store.approvals_list(conn) == []
 
@@ -231,5 +237,5 @@ def test_a_database_at_the_earlier_version_is_refused_until_init_migrates_it(tmp
     with pytest.raises(store.StoreError) as refused:
         store.open_db(path)
     assert refused.value.code == store.EXIT_NOT_CONFIGURED
-    assert store.init_db(path)["applied"] == [5, 6, 7]
+    assert store.init_db(path)["applied"] == [5, 6, 7, 8]
     assert store.approvals_list(store.open_db(path)) == []

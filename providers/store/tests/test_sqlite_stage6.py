@@ -49,6 +49,12 @@ def finish(conn, task: dict, resolution: str = "released") -> dict:
     return store.pending_resolve(conn, done["pending_id"], resolution=resolution, by="user")
 
 
+def kept(now, before):
+    """Migration 8 adds a column to tasks: every earlier column of every earlier row is what it was, the new one is empty."""
+    assert len(now) == len(before)
+    return all(row[:len(old)] == old and all(v is None for v in row[len(old):]) for row, old in zip(now, before))
+
+
 def test_migration_6_adds_the_conversation_table_and_leaves_every_earlier_row(tmp_path):
     db = tmp_path / "old.sqlite"
     old = sqlite3.connect(db)
@@ -67,10 +73,10 @@ def test_migration_6_adds_the_conversation_table_and_leaves_every_earlier_row(tm
               for table in ("tasks", "approvals")}
     old.close()
     out = store.init_db(db)
-    assert out["migrated_from"] == 5 and out["applied"] == [6, 7] and out["schema_version"] == 7
+    assert out["migrated_from"] == 5 and out["applied"] == [6, 7, 8] and out["schema_version"] == 8
     conn = store.open_db(db)
     for table, rows in before.items():
-        assert [tuple(r) for r in conn.execute(f"SELECT * FROM {table} ORDER BY id")] == rows
+        assert kept([tuple(r) for r in conn.execute(f"SELECT * FROM {table} ORDER BY id")], rows)
     names = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "conversation_messages" in names and store.messages_list(conn, "project") == []
 
@@ -88,7 +94,7 @@ def test_a_database_at_the_earlier_version_is_migrated_by_init_and_refused_by_ev
     verb = subprocess.run([sys.executable, str(SCRIPT), "action-count", "--db", str(db), "--kind", "k", "--since",
                            "2026-10-01T00:00:00Z"], capture_output=True, text=True, timeout=60)
     assert verb.returncode == 3 and "run init" in verb.stderr
-    assert store.init_db(db)["applied"] == [6, 7]
+    assert store.init_db(db)["applied"] == [6, 7, 8]
     assert store.messages_list(store.open_db(db), "project") == []
 
 

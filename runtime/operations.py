@@ -56,9 +56,9 @@ HELP_WIDTH = 27
 OPERATIONS = (
     {"name": "request", "call": "request",
      "args": ({"name": "text", "kind": "text", "required": True}, {"name": "flow", "kind": "str"},
-              {"name": "title", "kind": "str"}),
+              {"name": "title", "kind": "str"}, {"name": "after", "kind": "int"}),
      "channels": ("terminal", "page", "mcp"), "model": False,
-     "help": "record what you want; with a flow, plan it from the flow file, else it waits for its route"},
+     "help": "record what you want; with a flow, plan it from the flow file, else it waits for its route; with after, run it after that request"},
     {"name": "route", "call": "route",
      "args": ({"name": "request_id", "kind": "int", "required": True, "flag": "request"}, {"name": "flow", "kind": "str"}),
      "channels": ("terminal", "page", "mcp"), "model": "without --flow", "job": True,
@@ -91,9 +91,10 @@ OPERATIONS = (
      "channels": ("terminal", "chat", "page", "mcp"), "model": False, "job": True,
      "help": "release a delivery (it stays a draft)"},
     {"name": "approve", "call": "approve",
-     "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"}, {"name": "sha256", "kind": "str"}),
+     "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"}, {"name": "sha256", "kind": "str"},
+              {"name": "go_ahead", "kind": "list", "flag": "go-ahead"}),
      "channels": ("terminal", "chat", "page"), "model": False, "channel_arg": True, "job": True,
-     "help": "approve a plan or an acceptance; an effect is approved in the terminal or on the page, with its hash"},
+     "help": "approve a plan or an acceptance (a plan: --go-ahead <task key>, repeated, drops that task's derived waits); an effect is approved in the terminal or on the page, with its hash"},
     {"name": "reject", "call": "reject",
      "args": ({"name": "pending_id", "kind": "int", "required": True, "flag": "id"}, {"name": "note", "kind": "str"}),
      "channels": ("terminal", "chat", "page"), "model": False,
@@ -208,7 +209,7 @@ OPERATIONS = (
 # What the conversation answers itself, with no operation: the help, and a new request whatever is open.
 CHAT_OWN = (
     {"name": "help", "args": "", "help": "this text", "order": "first"},
-    {"name": "new", "args": "text", "help": "start a new request, whatever is open", "order": "last"},
+    {"name": "new", "args": "text", "help": "start a new request, whatever is open (--after <id> before the text: run it after that request)", "order": "last"},
 )
 
 POSITIONAL = ("int", "str", "text")  # the kinds the conversation reads from a line
@@ -262,6 +263,18 @@ def chat_help() -> str:
     return "\n".join(lines)
 
 
+AFTER_WORD = re.compile(r"--after\s+(\d+)(?:\s+|$)")
+
+
+def split_new(rest: str) -> tuple:
+    """(after, text) of what follows `/new`: `--after <id>` before the text is the request this one runs after (an
+    integer, digits only), else None; text is the rest."""
+    found = AFTER_WORD.match(rest)
+    if found is None:
+        return None, rest.strip()
+    return int(found.group(1)), rest[found.end():].strip()
+
+
 def parse_chat(line: str):
     """One line of the conversation. None when it is not one of its commands with its arguments: the shell then shows
     the help and runs nothing. ("help", rest) and ("new", text) are the conversation's own; (name, kwargs) is an
@@ -275,7 +288,7 @@ def parse_chat(line: str):
     if name == "help":
         return ("help", rest)
     if name == "new":
-        return ("new", rest) if rest else None
+        return ("new", rest) if split_new(rest)[1] else None
     try:
         row = by_name(name)
     except KeyError:
@@ -382,7 +395,7 @@ def chat_line(name: str, /, **args) -> str:
     if name == "help":
         return "/help"
     if name == "new":
-        return f"/new {args['text']}"
+        return "/new " + (f"--after {args['after']} " if args.get("after") is not None else "") + args["text"]
     row = by_name(name)
     parts = ["/" + name]
     for arg in row["args"]:
