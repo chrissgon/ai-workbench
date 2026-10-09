@@ -22,6 +22,9 @@ autonomous-with-policy whose approval expired acts as autonomous: its effects as
   spend(runs, agent, reference_model, floor_model, per_run_usd)   a day's spend of one agent: runs on the reference
                                                 model, dollars on the floor model (a floor run of unknown cost counts
                                                 at per_run_usd)
+  spend_split(runs, agent, floor_model, per_run_usd)   the one place the day's rule is written: {"usd_recorded",
+                                                "usd_reserved", "runs_total", "runs_reference", "runs_without_cost"};
+                                                spend reads it (usd_floor = usd_recorded + usd_reserved, exactly)
   may_start(name, agents, facts, spent, tier)   (True, "") or (False, why): stopped, or a cap reached
   review_action(task, pending, facts, proven, mandatory)   "release" or "hold": whether a mode releases a review
   covers(approval, policy_sha256, effect, executed_today, now)   (True, "") or (False, why): whether a standing
@@ -160,24 +163,36 @@ def state_checkpoints(agents_checked: dict) -> str:
     return CAREFUL_ORDER[0]
 
 
-def spend(runs, agent: str, reference_model: str, floor_model: str, per_run_usd: float) -> dict:
-    """A day's spend of one agent, from the rows of runs_since(<the day's start>): {"runs_reference",
-    "usd_floor", "runs_without_cost"}. A run on the floor model adds its cost, or per_run_usd when the cost is
-    unknown (and 1 to runs_without_cost); a run on any other model counts as a run on the reference model."""
-    out = {"runs_reference": 0, "usd_floor": 0.0, "runs_without_cost": 0}
+def spend_split(runs, agent: str, floor_model: str, per_run_usd: float) -> dict:
+    """A day's use of one agent, from the rows of runs_since(<the day's start>), the one place the rule is written:
+    {"usd_recorded", "usd_reserved", "runs_total", "runs_reference", "runs_without_cost"}. A run on the floor model
+    adds its recorded cost to usd_recorded, or per_run_usd to usd_reserved when the cost is unknown (and 1 to
+    runs_without_cost); a run on any other model counts as a run on the reference model; runs_total is every run of
+    the agent. Each of the two sums is rounded once, to 6 places; spend's usd_floor is their sum."""
+    recorded = reserved = 0.0
+    out = {"runs_total": 0, "runs_reference": 0, "runs_without_cost": 0}
     for run in runs:
         if run.get("agent") != agent:
             continue
+        out["runs_total"] += 1
         if run.get("model") == floor_model:
             if run.get("cost_usd") is None:
-                out["usd_floor"] += float(per_run_usd)
+                reserved += float(per_run_usd)
                 out["runs_without_cost"] += 1
             else:
-                out["usd_floor"] += float(run["cost_usd"])
+                recorded += float(run["cost_usd"])
         else:
             out["runs_reference"] += 1
-    out["usd_floor"] = round(out["usd_floor"], 6)
-    return out
+    return {"usd_recorded": round(recorded, 6), "usd_reserved": round(reserved, 6), **out}
+
+
+def spend(runs, agent: str, reference_model: str, floor_model: str, per_run_usd: float) -> dict:
+    """A day's spend of one agent, from the rows of runs_since(<the day's start>): {"runs_reference",
+    "usd_floor", "runs_without_cost"}, read from spend_split: usd_floor is usd_recorded + usd_reserved, so a meter
+    that shows the two adds up to it exactly. may_start compares it rounded to 6 places."""
+    split = spend_split(runs, agent, floor_model, per_run_usd)
+    return {"runs_reference": split["runs_reference"], "usd_floor": split["usd_recorded"] + split["usd_reserved"],
+            "runs_without_cost": split["runs_without_cost"]}
 
 
 def may_start(name: str, agents_checked: dict, f: dict, spent: dict, tier: str) -> tuple:
@@ -188,7 +203,7 @@ def may_start(name: str, agents_checked: dict, f: dict, spent: dict, tier: str) 
         return False, "stopped"
     if tier == "strong" and spent["runs_reference"] >= entry["max_runs_per_day"]:
         return False, "cap: runs per day"
-    if tier == "floor" and spent["usd_floor"] >= entry["max_usd_per_day"]:
+    if tier == "floor" and round(spent["usd_floor"], 6) >= entry["max_usd_per_day"]:
         return False, "cap: usd per day"
     if tier not in ("strong", "floor"):
         return False, f"unknown tier {tier!r}"

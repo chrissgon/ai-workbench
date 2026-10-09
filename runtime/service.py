@@ -56,7 +56,7 @@ The rules of a request, in this order, each a refusal unless the request satisfi
   6. An unknown path is 404 "not_found", a known path with another method 405 "method", an unknown project id 404.
   7. One route calls one operation and returns what it returned, unchanged, with 200. OpsError code 1 is 409
      "refused", 2 is 400 "usage", 3 is 412 "not_configured"; anything else is 500 "internal" (the traceback on stderr
-     only). An error body is {"error": "<word>", "message": "<text>"}.
+     only). An error body is {"error": "<word>", "message": "<text>"}, and the 412 adds "next", the accept-config command.
   8. A route whose operation's row has job true (it calls a model or a platform) returns 202 and a job,
      {"job": <n>, "op", "project", "state": "running", "result": null, "error": null, "started_at", "ended_at": null};
      GET /api/v1/jobs/<n> returns it again, "state" "done" or "failed" at the end. A job whose operation calls a model is
@@ -319,13 +319,17 @@ def _json(status: int, value) -> tuple:
     return status, _headers("application/json; charset=utf-8"), json.dumps(value, ensure_ascii=False, default=str).encode("utf-8")
 
 
-def _error(status: int, word: str, message: str | None = None) -> tuple:
-    return _json(status, {"error": word, "message": message or WORDS[word]})
+def _error(status: int, word: str, message: str | None = None, next: str | None = None) -> tuple:
+    body = {"error": word, "message": message or WORDS[word]}
+    if next:  # the command that gets past the refusal (the 412: the accept-config line), so a page reads a field
+        body["next"] = next
+    return _json(status, body)
 
 
 def _ops_error(error) -> tuple:
     status, word = status_of(error)
-    return _error(status, word, str(error) if word != "internal" else None)
+    return _error(status, word, str(error) if word != "internal" else None,
+                  getattr(error, "next", None) if word != "internal" else None)
 
 
 def _no_duplicates(pairs):

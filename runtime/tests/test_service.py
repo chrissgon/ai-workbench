@@ -892,7 +892,9 @@ def test_the_config_operation_never_refuses_an_unaccepted_configuration_and_the_
     assert entry["config"] == {"sha256": digest, "accepted": False}
     assert "open_pending" not in entry and "running_task" not in entry
     assert "accept-config" in entry["message"] and digest in entry["message"]
-    assert call(real, "GET", api(real, "/status"))[0:3:2] == (412, {"error": "not_configured", "message": entry["message"]})
+    refused = call(real, "GET", api(real, "/status"))
+    assert (refused[0], {k: refused[2][k] for k in ("error", "message")}) == (412, {"error": "not_configured", "message": entry["message"]})
+    assert refused[2]["next"] in entry["message"] and "accept-config" in refused[2]["next"]  # WP-9.14b: the command, as a field
     ops.accept_config(real.path, digest)
     assert ops.config(real.path)["accepted"] is True
     [entry] = call(real, "GET", "/api/v1/projects")[2]["projects"]

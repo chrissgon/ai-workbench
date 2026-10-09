@@ -36,6 +36,7 @@ Standard library only. Runs on Python 3.9.
 from __future__ import annotations
 
 import contextlib
+import glob
 import hashlib
 import importlib.util
 import json
@@ -166,6 +167,30 @@ def credential_missing(tier: str) -> list:
                 os.environ.pop(name, None)
             else:
                 os.environ[name] = value
+
+
+def credential_usernames(names) -> dict:
+    """{variable: the username it is stored under in the OS secret store} for the names the adapters register in the
+    "secrets" list of their manifests, read with the workbench's secret resolver (a name nobody registers, or no
+    resolver in this checkout, is left out). Names only, never a value: it tells the person what to type after
+    `keyring set ai-workbench`."""
+    path = os.path.join(LAB.ROOT, "providers", "secrets", "resolver.py")
+    if not os.path.isfile(path):
+        return {}
+    try:
+        spec = importlib.util.spec_from_file_location("workbench_secret_resolver_lab", path)
+        resolver = importlib.util.module_from_spec(spec)
+        sys.modules[spec.name] = resolver  # the resolver's dataclasses look their module up here
+        spec.loader.exec_module(resolver)
+        for manifest in sorted(glob.glob(os.path.join(LAB.ROOT, "adapters", "*", "adapter.json"))):
+            try:
+                resolver.register_file(manifest)
+            except ValueError:
+                continue
+        return {name: resolver.REGISTRY[name].store_username for name in names
+                if name in resolver.REGISTRY and resolver.REGISTRY[name].store_username}
+    except Exception:  # a resolver that does not run here: nothing is known, and no refusal comes of it
+        return {}
 
 
 def skill_identity(skill: str) -> dict:
