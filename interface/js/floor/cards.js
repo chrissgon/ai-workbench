@@ -126,11 +126,6 @@ export function createCard(item, env) {
 
   const text = (value, cls = "wb-card-body") => h("div", { class: cls }, renderMarkdown(value || ""));
 
-  function block(label, value, name) {
-    const pre = h("pre", { class: "wb-pre", tabindex: "0", "aria-label": name }, value || "");
-    return [label ? h("div", { class: "wb-card-hint", text: label }) : null, pre];
-  }
-
   // --- the controls ----------------------------------------------------------------------------------------------------------
 
   function buttons(extra) {
@@ -401,7 +396,7 @@ export function createCard(item, env) {
     const folder = kept.length && typeof payload.run_dir === "string" ? commandBlock({ command: payload.run_dir, sentence: "Run folder", label: "Copy the path" }) : null;
     // The result is a block on its own line under the chip and the title (the done card wraps): a sentence never shares a row with the title (A-26).
     return h("div", { class: "wb-resolved wb-card-done", role: "status", tabindex: "-1" },
-      chip(done.text, "pui-success pui-soft"), h("span", { class: "wb-muted", text: state.item.title }),
+      chip(done.text, "pui-success pui-soft"), h("span", { class: "wb-muted wb-card-done-title", text: state.item.title }),
       ids.length || prose.length || folder
         ? h("div", { class: "wb-card-result" }, prose.map((l) => h("p", { class: "wb-card-line", text: l })), ids.map((l) => h("div", { class: "mono", text: l })), folder) : null);
   }

@@ -1,5 +1,5 @@
 // The composer at the bottom of the Lobby's conversation: the message field, "Send", the hint, the busy line while a turn runs, the line
-// that says a run is in progress (A-23: Send stays on; a plain line is stored and routed when the run ends, /status answers now) and
+// that says a run is in progress (A-23: Send stays on; a plain line is stored and routed when the run ends, a question about the state is answered now) and
 // the notice when a turn was not sent or failed. It holds no rule: it reports the text the person typed (Enter sends, Shift+Enter
 // makes a new line) and draws the state it is given. A line that starts with "/" is sent unchanged; the page builds no prompt.
 

@@ -14,6 +14,8 @@ const WORDS = Object.freeze({
   "go-ahead": ["Go ahead", "Going ahead...", "Go ahead on task"],
   "drop-after": ["Drop the after", "Dropping...", "Drop the after of task"],
 });
+// What a go-ahead does, said beside the button (the runtime records the person's decision and asks nothing more).
+export const GO_AHEAD_EFFECT = "The task starts without waiting; it may stop for the missing file.";
 
 /**
  * Create the actions of a tab. env: {project, api: {retry, goAhead}, refresh() (read the page's data again), redraw() (the tab draws again),
@@ -61,6 +63,9 @@ export function createTaskActions(env) {
         button.disabled = sending || locked;
         button.addEventListener("click", () => press(action.kind, task.id));
         out.push(button);
+      }
+      if (out.some((n) => n.getAttribute && /go-ahead|drop-after/.test(n.getAttribute("data-key") || ""))) {
+        out.push(h("span", { class: "wb-task-effect wb-muted", text: GO_AHEAD_EFFECT }));
       }
       const note = blockedNote(task);
       if (note && out.length) out.push(h("span", { class: "wb-task-note wb-muted wb-task-blocked-note", text: note }));

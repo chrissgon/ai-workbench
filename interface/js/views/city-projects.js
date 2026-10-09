@@ -76,10 +76,11 @@ export function createProjectsPanel(env) {
     const out = [];
     if (ready) {
       if (noConfig) {
-        out.push(copy(initLine({ head, folder: clean, autonomy }), "1. Make the folder a project (this makes docs/workbench/state.md; its configuration, docs/workbench/runtime.json, is written by hand, see contracts/runtime.md):", "Copy the command"));
+        out.push(copy(initLine({ head, folder: clean, autonomy }), "1. Make the folder a project (this makes docs/workbench/state.md and nothing else):", "Copy the command"));
+        out.push(h("p", { class: "wb-card-note", text: "2. Write the project's configuration, docs/workbench/runtime.json, by hand (contracts/runtime.md describes it). The service does not start without that file; once it is running, the page shows the command that accepts it." }));
       }
       const line = restartLine({ head, projects, add: clean });
-      out.push(copy(line.command, `${noConfig ? "2. " : ""}Stop the service and start it again with this line (add --port if you started it with one):`, "Copy the command"));
+      out.push(copy(line.command, `${noConfig ? "3. " : ""}Stop the service and start it again with this line (add --port if you started it with one):`, "Copy the command"));
       if (line.unknown.length) out.push(h("p", { class: "wb-card-note wb-muted", text: `Replace ${line.unknown.map((n) => `<folder of ${n}>`).join(", ")} with the folder of that project: the page knows a folder only for a project it could read.` }));
       if (!head) out.push(h("p", { class: "wb-card-note wb-muted", text: "The page could not read the start line of the service: replace <the workbench folder> with the folder of this checkout, or use the line you started it with." }));
     }

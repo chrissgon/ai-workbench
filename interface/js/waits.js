@@ -25,9 +25,12 @@ export function waitingLabel(task) {
   return waits.length ? `waiting for ${[...new Set(waits.map(awaited))].join(", ")}` : "";
 }
 
-/** One line per wait, with the runtime's reason: "waiting for #10: docs/brand/identity.md, written by task #10". */
+/**
+ * One line per wait, with the runtime's reason: "waiting for #10: docs/brand/identity.md, written by task #10". The person's own `after` reads
+ * "waiting for request #7" once: its reason ("after request #7") says no more than that.
+ */
 export function waitLines(task) {
-  return waitsOf(task).map((w) => `waiting for ${awaited(w)}: ${w.reason}`);
+  return waitsOf(task).map((w) => (isAfter(w) ? `waiting for ${awaited(w)}` : `waiting for ${awaited(w)}: ${w.reason}`));
 }
 
 /** Whether the person can say "Go ahead" on the task (a derived wait is open) and whether they can drop its `after`. */

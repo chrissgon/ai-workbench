@@ -14,7 +14,7 @@ export const TABS = Object.freeze([["conversation", "Conversation"], ["inbox", "
 export const HINT = "A line that starts with / is a command; /help lists them.";
 export const AFTER_HINT = "/new --after 3 followed by the text makes a request that waits for request 3.";
 // A-23: while a run is in progress a plain line is stored and routed by the service when the run ends; the commands answer at once.
-export const RUN_LINE = "A run is in progress: your line will be routed when it ends; /status answers now.";
+export const RUN_LINE = "A run is in progress: your line will be routed when it ends; a question about the state is answered now.";
 export const QUEUED_WORD = "queued";
 export const QUEUED_NOTICE = Object.freeze({ tone: "info", title: "Recorded", text: "A run is in progress. The request is recorded and will be routed when the run ends." });
 export const SENDING_TEXT = "The planning agent is working on this turn. It can take minutes.";

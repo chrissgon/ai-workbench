@@ -93,7 +93,7 @@ export function createFloorView(frame, env) {
     if (inbox) return;
     agentTabLive = createAgentTab({
       project, agent, api: actions, refresh: () => env.refresh(), now: () => new Date(),
-      links: { inbox: (id) => router.floorHash(project, agent, "inbox", id) },
+      links: { inbox: (id) => router.floorHash(project, agent, "inbox", id) }, task: (id) => api.task(project, id),
     });
     inbox = createInbox({
       project, now: () => new Date(), api: actions, refresh: () => { env.refresh(); readBodies(true); },

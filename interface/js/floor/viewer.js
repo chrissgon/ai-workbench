@@ -25,6 +25,12 @@ function documentBody(doc, path) {
   return [h("pre", { class: "wb-viewer-text", tabindex: "0", "aria-label": `Text of ${name}` }, String(doc.text))];
 }
 
+// What the page shows as an image: the types the service serves (png, jpeg, webp, and an svg it checked). Any other type of bytes is "cannot show", whatever the list said.
+const SHOWN_TYPES = ["image/png", "image/jpeg", "image/webp", "image/svg+xml"];
+// "Open in a new tab" is offered for these only. A svg opened as a document of the service's origin is a sandbox question nobody verified (the in-page `<img>` shows it
+// inertly already), so the stricter rule stays: no new-tab link for a svg.
+const NEW_TAB_TYPES = ["image/png", "image/jpeg", "image/webp"];
+
 export const SHOWN_KINDS = "the Desk shows text, Markdown and images";
 
 /** The sentence for a file the page cannot show: the runtime's own when it gave one, else built from the Desk's kind word and the size. */
@@ -60,16 +66,19 @@ export function createViewer({ onClose, listed = () => undefined, object = null,
     img.addEventListener("load", () => {
       if (img.naturalWidth > 0 && img.naturalHeight > 0) dims.textContent = ` · ${img.naturalWidth} × ${img.naturalHeight} px`;
     });
-    const newTab = h("button", { class: "pui-btn pui-surface pui-outline wb-small-button", type: "button", "data-key": "open-tab", text: "Open in a new tab" });
     const url = blobUrl;
-    newTab.addEventListener("click", () => openTab(url));
+    let newTab = null;
+    if (NEW_TAB_TYPES.includes(blob.type)) {
+      newTab = h("button", { class: "pui-btn pui-surface pui-outline wb-small-button", type: "button", "data-key": "open-tab", text: "Open in a new tab" });
+      newTab.addEventListener("click", () => openTab(url));
+    }
     const size = formatSize(typeof blob.size === "number" ? blob.size : listedSize);
     return [h("div", { class: "wb-viewer-figure" }, img), h("p", { class: "wb-viewer-caption wb-muted" }, h("span", { text: size }), dims), newTab];
   }
 
   /** A file the page cannot show: the sentence, and the path to copy. */
   function unshownBody(path, sentence) {
-    return [h("div", { class: "wb-refusal", role: "status" }, h("strong", { class: "wb-refusal-title", text: "The Desk cannot show this file" }), h("span", { text: sentence })),
+    return [h("div", { class: "wb-refusal is-info", role: "status" }, h("strong", { class: "wb-refusal-title", text: "The Desk cannot show this file" }), h("span", { text: sentence })),
       commandBlock({ command: path, sentence: "Path", label: "Copy the path" })];
   }
 
@@ -98,6 +107,7 @@ export function createViewer({ onClose, listed = () => undefined, object = null,
         } catch (e) {
           if (mine.signal.aborted || (e && e.name === "AbortError")) return;
           if (!first && e && e.name === "ApiError" && e.status === 400) {      // the list says the file is of a type the Desk does not show
+            release();
             fill(el, head(path, row.size !== undefined ? formatSize(row.size) : ""),
               h("div", { class: "wb-viewer-body" }, unshownBody(path, unshownSentence(e.message, row.kind, formatSize(row.size)))));
             return;
@@ -105,6 +115,11 @@ export function createViewer({ onClose, listed = () => undefined, object = null,
           throw first || e;
         }
         if (mine.signal.aborted) return;
+        if (!SHOWN_TYPES.includes(blob.type)) {      // bytes of a type the page does not show are never given to an <img>
+          release();
+          fill(el, head(path, formatSize(blob.size)), h("div", { class: "wb-viewer-body" }, unshownBody(path, unshownSentence(null, row.kind, formatSize(blob.size)))));
+          return;
+        }
         fill(el, head(path, formatSize(blob.size)), h("div", { class: "wb-viewer-body" }, imageBody(blob, path, row.size)));
       }
       try {

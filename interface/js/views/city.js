@@ -84,7 +84,11 @@ export function createCityView(frame) {
     frame.sceneUnavailable(true);
   }
   // A panel that changes size changes the free rectangle: the scene is fitted again (one frame), never on a timer.
+  // The project box ends above the "Waiting for you" card, whatever its height (a desktop: the box floats at the right edge, the card stands under it).
+  const fitBox = () => projectsBox.style.setProperty("--wb-wait-h", `${frame.waitingCard.el.offsetHeight || 0}px`);
   const observer = new ResizeObserver(() => { if (engine) engine.refit(); });
+  const boxObserver = new ResizeObserver(fitBox);
+  boxObserver.observe(frame.waitingCard.el);
   observer.observe(frame.track.el);
   observer.observe(frame.kpis.el);
   observer.observe(frame.waitingCard.el);
@@ -123,6 +127,7 @@ export function createCityView(frame) {
      */
     update({ city, selectedId, state, snapshot, now }) {
       lastSnapshot = snapshot;
+      fitBox();
       projectsPanel.setProjects(projectsOf(snapshot));
       const key = JSON.stringify([city.buildings.map((b) => [b.id, b.name, b.accepted, b.decisions, b.runningTask]), state]);
       if (key !== shown) {
@@ -139,7 +144,8 @@ export function createCityView(frame) {
     },
     dispose() {
       disposed = true;
-      observer.disconnect();   // the scene is the frame's: the Building takes it over, or the frame takes it down
+      observer.disconnect();
+      boxObserver.disconnect();   // the scene is the frame's: the Building takes it over, or the frame takes it down
       drawer.destroy();   // before the sheet leaves the page: the frame hears that nothing covers the scene
       buildings.remove();
       projectsBox.remove();

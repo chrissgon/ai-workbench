@@ -35,7 +35,7 @@ function redraw(container, render) {
 }
 
 /**
- * Create the Agent tab. env: {project, agent, api: {setMode, retry, goAhead, handOver}, refresh(), now(), links: {inbox(pendingId)} (optional)}. Returns {el, update(view),
+ * Create the Agent tab. env: {project, agent, api: {setMode, retry, goAhead, handOver}, refresh(), now(), links: {inbox(pendingId)} (optional), task(id) (optional: the task's body, for the file-drop line)}. Returns {el, update(view),
  * focusSelect()}; view is floor-model.floor(...) (found, notAccepted or loading).
  */
 export function createAgentTab(env) {
@@ -226,8 +226,10 @@ export function createAgentTab(env) {
   const fileInput = h("input", { class: "pui-input wb-file", type: "file", "data-key": "file" });
   const hint = h("small", { class: "wb-hint", text: "At most 25 MiB." });
   const handResult = h("div", { class: "wb-hand-result" });
-  const handLabel = h("label", { class: "pui-field-group wb-field" }, h("span", { class: "wb-field-label", text: "Hand a file over" }), fileInput, hint);
+  const dropLine = h("p", { class: "wb-drop-line", role: "note", hidden: true, text: "" });     // the line of a web task, above the chooser: seen before a file is chosen
+  const handLabel = h("label", { class: "pui-field-group wb-field" }, h("span", { class: "wb-field-label", text: "Hand a file over" }), dropLine, fileInput, hint);
   fill(handBox, handLabel, handResult);
+  const drops = new Map();       // task id -> the `drop` of its body ({web, takes, line}), or null: read once, as the review card does
   let target = null;
   fileInput.addEventListener("change", async () => {
     const file = fileInput.files && fileInput.files[0];
@@ -253,10 +255,40 @@ export function createAgentTab(env) {
     fileInput.value = "";
   });
 
+  /**
+   * The file-drop line of the target task (`task.drop`). The current task's body is already read by the view: it is used as it is, no read of its own; any other
+   * target is read once through `env.task`. A read that fails leaves no line, and the runtime still refuses what it must.
+   */
+  async function loadDrop(view) {
+    const id = target.id;
+    if (view.current && view.current.id === id) {
+      if (view.currentBody) drops.set(id, view.currentBody.drop && typeof view.currentBody.drop === "object" ? view.currentBody.drop : null);
+      return;
+    }
+    if (!env.task || drops.has(id)) return;
+    drops.set(id, null);
+    try {
+      const body = await env.task(id);
+      drops.set(id, body && body.drop && typeof body.drop === "object" ? body.drop : null);
+    } catch (e) {
+      drops.set(id, null);
+    }
+    if (target && target.id === id) drawHandLine();
+  }
+
+  function drawHandLine() {
+    const drop = target ? drops.get(target.id) : null;
+    const line = drop && drop.web && drop.takes !== false && typeof drop.line === "string" ? drop.line : "";
+    dropLine.textContent = line;
+    dropLine.hidden = !line;
+    fileInput.disabled = !target || locked || Boolean(drop && drop.takes === false);      // a task that takes no file: nothing to choose
+  }
+
   function drawHand(view) {
     target = view.target;
-    fileInput.disabled = !target || locked;
     hint.textContent = target ? `To task #${target.id}. At most 25 MiB.` : "This agent has no task to hand a file to.";
+    if (target) loadDrop(view);
+    drawHandLine();
   }
 
   let lastView = null;
@@ -301,7 +333,7 @@ export function createAgentTab(env) {
       const pendingIds = view.decisions.map((d) => [d.id, d.task_id]);
       swap("current", [view.current, view.runs, view.tasks.length, view.heldCurrent, pendingIds, taskActionsUse.signature(), locked], () => drawCurrent(view));
       swap("others", [view.others.map((t) => [t.id, t.title, t.state, t.note, t.waiting_for]), pendingIds, taskActionsUse.signature(), locked], () => drawOthers(view));
-      swap("hand", [view.target ? view.target.id : null, locked], () => drawHand(view));
+      swap("hand", [view.target ? view.target.id : null, locked, Boolean(view.currentBody)], () => drawHand(view));
     },
   };
 }

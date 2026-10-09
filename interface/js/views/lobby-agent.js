@@ -24,7 +24,7 @@ export function createLobbyAgent(env) {
   const { project } = env;
   const tab = createAgentTab({
     project, agent: fm.PLANNING, api: actions, refresh: env.refresh, now: env.now,
-    links: { inbox: (id) => router.lobbyHash(project, "inbox", id) },
+    links: { inbox: (id) => router.lobbyHash(project, "inbox", id) }, task: (id) => api.task(project, id),
   });
   const none = h("p", { class: "wb-empty-line wb-lobby-none", hidden: true, text: NO_AGENT_TEXT });
   const el = h("div", { class: "wb-lobby-agent" }, none, tab.el);

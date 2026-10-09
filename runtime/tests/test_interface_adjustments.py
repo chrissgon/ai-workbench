@@ -92,7 +92,7 @@ console.log(JSON.stringify(out));
 def test_a_task_that_waits_says_for_what_on_the_chips_the_bar_and_the_rows_and_has_the_go_ahead_its_state_allows(tmp_path):
     got = run_node(tmp_path, WAITS)
     assert got["label"] == ["waiting for #10", "waiting for #10, #12, request #3", "", ""]
-    assert got["lines"] == ["waiting for #10: docs/brand/identity.md, written by task #10", "waiting for request #3: after request #3"]
+    assert got["lines"] == ["waiting for #10: docs/brand/identity.md, written by task #10", "waiting for request #3"], "the person's own after reads once"
     assert got["kinds"] == [{"goAhead": True, "dropAfter": False}, {"goAhead": False, "dropAfter": True}, {"goAhead": True, "dropAfter": True}, {"goAhead": False, "dropAfter": False}]
     assert got["junk"] == 1, "an entry with no text reason is not a wait"
     actions = got["actions"]
@@ -260,6 +260,8 @@ await settle();
 failing = "That task waits for nothing to go ahead of.";
 li(7).querySelector("button.wb-task-go-ahead").click();
 await settle();
+out.tasks.effect = all(li(5), ".wb-task-effect").map(text);
+out.tasks.noEffect = all(li(9), ".wb-task-effect").length;
 out.tasks.sent = sent.slice();
 out.tasks.refused = text(li(7).querySelector(".wb-notice-card"));
 out.tasks.refreshed = refreshed > 0;
@@ -298,6 +300,26 @@ out.running = { buttons: buttons(), actions: all(current(), ".wb-task-actions").
 agentTab.update(view([task(16, "running"), task(17, "blocked", { note: "needs a file" }), task(18, "planned", { waiting_for: [after] })]));
 const others = all(agentTab.el, ".wb-other");
 out.others = others.map((o) => [text(o.querySelector(".wb-other-title")), all(o, "button").map((b) => b.attrs["aria-label"]), all(o, ".wb-task-note").map(text), all(o, ".wb-task-waits").map(text)]);
+
+// the Agent tab's Hand a file over: the line of a web task above the chooser. The current task's body is used as it is (no read of its own); another target is read once
+const drops = { 11: { web: true, takes: true, line: "this file will be visible to a run with the open network" }, 12: { web: false, takes: true, line: null }, 13: { web: true, takes: false, line: "x" } };
+const reads = [];
+const withTask = createAgentTab({ project: P, agent: "design", api, refresh() {}, now: () => NOW, task: async (id) => { reads.push(id); return { task: { id }, drop: drops[id] }; } });
+const handOf = () => find(withTask.el, ".wb-hand");
+const viewWith = (tasks, bodies) => fm.floor({ projects: [{ id: P, name: "n", config: { accepted: true } }], details: { [P]: { status: { requests: [{ id: 2, title: "R", state: "planned", tasks }], pending: [], held: [] }, agents: [agent] } }, tasks: {}, loaded: true }, P, "design", bodies);
+withTask.update(viewWith([task(11, "blocked", { note: "n" })], { 11: { task: { id: 11 }, runs: [], pending: [], drop: drops[11] } }));
+await settle();
+out.drop = { line: text(find(handOf(), ".wb-drop-line")), hidden: find(handOf(), ".wb-drop-line").hidden, order: [...handOf().walk()].filter((n) => /wb-drop-line|wb-file/.test(n.attrs.class || "")).map((n) => n.attrs.class.split(" ").pop()), input: find(handOf(), "input.wb-file").disabled, reads: reads.length };
+withTask.update(viewWith([task(15, "running"), task(12, "failed")], {}));
+await settle();
+withTask.update(viewWith([task(15, "running"), task(12, "failed")], {}));
+await settle();
+out.dropNonWeb = { hidden: find(handOf(), ".wb-drop-line").hidden, input: find(handOf(), "input.wb-file").disabled, reads: reads.slice() };
+withTask.update(viewWith([task(15, "running"), task(13, "failed")], {}));
+await settle();
+out.dropRefuses = [find(handOf(), "input.wb-file").disabled, find(handOf(), ".wb-drop-line").hidden, reads.slice()];
+agentTab.update(view([task(11, "blocked", { note: "n" })]));
+out.noReader = find(agentTab.el, ".wb-drop-line").hidden;
 console.log(JSON.stringify(out));
 """
 
@@ -309,10 +331,11 @@ def test_the_tasks_tab_and_the_agent_tab_draw_the_same_actions_and_a_blocked_cur
     assert t["waits5"] == ["waiting for #10: docs/brand/identity.md, written by task #10"]
     assert t["actions5"] == [["Go ahead", "Go ahead on task 5"]] and t["actions6"] == [["Drop the after", "Drop the after of task 6"]]
     assert t["actions7"] == [["Go ahead", "Go ahead on task 7"], ["Drop the after", "Drop the after of task 7"]] and t["actions8"] == 0
-    assert t["waits6"] == ["waiting for request #3: after request #3"]
+    assert t["waits6"] == ["waiting for request #3"]
     assert t["blocked"]["buttons"] == [["Retry", "Retry task 9"]]
     assert t["blocked"]["beside"] == "design-system needs docs/brand/identity.md; nothing writes it" and t["blocked"]["under"], "A-31: the sentence stands beside Retry, not under the row"
     assert t["failedNote"] == "Timed out"
+    assert t["effect"] == ["The task starts without waiting; it may stop for the missing file."] and t["noEffect"] == 0, "what a go-ahead does is said beside it, and only beside it"
     assert t["sent"] == [["goAhead", "0123456789ab", 5, None], ["goAhead", "0123456789ab", 6, {"dropAfter": True}], ["goAhead", "0123456789ab", 7, None]], \
         "Go ahead sends the task; Drop the after sends dropAfter: true"
     assert t["refused"] == "That task waits for nothing to go ahead of." and t["refreshed"]
@@ -325,9 +348,15 @@ def test_the_tasks_tab_and_the_agent_tab_draw_the_same_actions_and_a_blocked_cur
     assert got["planned"]["buttons"] == ["Go ahead on task 14"] and got["planned"]["waits"] == ["waiting for #10: docs/brand/identity.md, written by task #10"]
     assert got["planned"]["sent"] == [["goAhead", "0123456789ab", 14, None]]
     assert got["running"] == {"buttons": [], "actions": 0}
+    d = got["drop"]
+    assert d["line"] == "this file will be visible to a run with the open network" and d["hidden"] is False and d["order"] == ["wb-drop-line", "wb-file"] and d["input"] is False, \
+        "A-30: the Agent tab's hand-over shows the web line above the chooser"
+    assert d["reads"] == 0, "the current task's body is used as it is"
+    assert got["dropNonWeb"] == {"hidden": True, "input": False, "reads": [12]}, "another target is read once, however often the tab is drawn"
+    assert got["dropRefuses"] == [True, True, [12, 13]] and got["noReader"] is True
     by_title = {o[0]: o for o in got["others"]}
     assert by_title["#17 Task 17"][1] == ["Retry task 17"] and by_title["#17 Task 17"][2] == ["needs a file"]
-    assert by_title["#18 Task 18"][1] == ["Drop the after of task 18"] and by_title["#18 Task 18"][3] == ["waiting for request #3: after request #3"]
+    assert by_title["#18 Task 18"][1] == ["Drop the after of task 18"] and by_title["#18 Task 18"][3] == ["waiting for request #3"]
 
 
 # --- A-23: the composer, the queued line, the request made during a run -------------------------------------------------------------
@@ -415,7 +444,7 @@ def test_the_composer_says_a_run_is_in_progress_a_queued_line_shows_the_word_and
     assert got["idle"] == {"hidden": True}
     r = got["running"]
     assert r["hidden"] is False and r["role"] == "status" and r["send"] is False, "A-23: the line shows in place and Send stays on"
-    assert r["text"].startswith("A run is in progress: your line will be routed when it ends; /status answers now.")
+    assert r["text"].startswith("A run is in progress: your line will be routed when it ends; a question about the state is answered now.")
     assert r["link"] == ["Task #12 Build the page", "#/p/x/floor/engineering", False]
     assert got["notAccepted"] == {"hidden": True, "send": True}, "a project that is not accepted says that, not a run"
     assert got["after"] == {"hidden": True}
@@ -522,6 +551,7 @@ find(asked.el, "textarea").listeners.input.forEach((fn) => fn());
 all(asked.el, "button.wb-card-button")[0].click();
 await settle();
 const done = find(asked.el, ".wb-card-done");
+out.doneTitleClass = done.children[1].attrs.class;
 out.doneSentence = { classes: done.attrs.class, children: done.children.map((c) => c.attrs.class || c.tagName), result: textOf(find(done, ".wb-card-result")), mono: all(done, ".mono").length, prose: all(done, ".wb-card-result .wb-card-line").map(textOf), title: textOf(done.children[1]) };
 script = { release: async () => ({ commit: "abc1234", pull_request: { number: 12 } }) };
 const review = { id: 42, kind: "review", title: "R", body: "b", payload: { returned: [], kept: [{ path: "docs/a.woff2", class: "font" }, { path: "docs/b.woff2", class: "font" }], run_dir: "/work/shop/.runs/4" }, payload_sha256: null, status: "open", actions: ["released", "answered"], agent: "brand", task_id: 5, run_id: 4, created_at: "2026-10-09T09:00:00Z" };
@@ -592,6 +622,7 @@ def test_the_unrecognised_route_has_its_two_actions_the_done_card_wraps_its_resu
     assert "wb-card-done" in d["classes"] and d["children"][-1] == "wb-card-result", "the result is its own block after the chip and the title"
     assert d["mono"] == 0 and d["prose"] == ["an answer to the router is given to its next run, not recorded as a decision"], "A-26: a sentence is prose, not mono"
     assert d["title"] == "Brand voice <b>question</b>"
+    assert "wb-card-done-title" in got["doneTitleClass"], "the title has its own class, so that it can wrap"
     ids = got["doneIds"]
     assert ids["mono"] == ["commit: abc1234", 'pull request: {"number":12}'], "an id is mono"
     assert ids["prose"] == ["kept: 2 files in the run folder"] and ids["folder"] == ["/work/shop/.runs/4"] and ids["copy"] == ["Copy the path"], "A-30: the files the run kept, and the run folder to copy"
@@ -679,6 +710,29 @@ answer = () => { step += 1; return step < -3 ? json(400, { error: "usage", messa
 await blind.load("p", "docs/outside");
 out.blindRefused = text(find(blind.el, ".wb-refusal .mono"));
 
+// bytes of a type the page does not show are no image, and a svg has no new-tab button
+const typed = (type) => () => ({ ok: true, status: 200, blob: async () => new Blob([bytes], { type }), json: async () => ({}) });
+rows["docs/mark.svg"] = { kind: "image", size: 8 };
+rows["docs/odd.bin"] = { kind: "image", size: 8 };
+rows["docs/p.webp"] = { kind: "image", size: 8 };
+answer = typed("image/svg+xml");
+await viewer.load("p", "docs/mark.svg");
+out.svg = { img: find(viewer.el, "img") !== null, button: find(viewer.el, "button[data-key=open-tab]") === null };
+answer = typed("image/webp");
+await viewer.load("p", "docs/p.webp");
+out.webp = find(viewer.el, "button[data-key=open-tab]") !== null;
+const madeBefore = made.length;
+answer = typed("application/pdf");
+await viewer.load("p", "docs/odd.bin");
+out.oddType = { img: find(viewer.el, "img") === null, made: made.length - madeBefore, title: text(find(viewer.el, ".wb-refusal-title")), cls: find(viewer.el, ".wb-refusal").attrs.class, code: text(find(viewer.el, ".wb-command-code")) };
+// the blob URL of an image is revoked when the next file is a refusal of the type
+answer = () => blobAnswer();
+await viewer.load("p", "docs/brand/pieces/banner.png");
+const revokedBefore = revoked.length;
+answer = () => json(400, { error: "usage", message: "docs/brand/font.woff2 is a woff2 font, 4096 bytes: the Desk shows text, Markdown and images" });
+await viewer.load("p", "docs/brand/font.woff2");
+out.revokedOnRefusal = revoked.length - revokedBefore;
+
 // the Desk says what each file is
 const docs = [{ path: "docs/a.md", owner: "s", size: 5, modified_at: "2026-10-09T09:00:00Z", kind: "markdown" }, { path: "docs/b.png", owner: "s", size: 2048, modified_at: "2026-10-08T09:00:00Z", kind: "image" },
   { path: "docs/c.woff2", owner: null, size: 12, modified_at: "2026-10-07T09:00:00Z", kind: "other" }, { path: "docs/d.txt", owner: null, size: 12, modified_at: "2026-10-06T09:00:00Z", kind: "text" }, { path: "docs/e", owner: null, size: 12, modified_at: "2026-10-05T09:00:00Z" }];
@@ -710,6 +764,9 @@ def test_the_viewer_shows_an_image_from_a_blob_url_a_type_it_cannot_show_gets_a_
     assert got["missing"] == {"title": "The file could not be opened", "message": "no such file"}
     assert got["blind"]["urls"] == ["/artifact?path=docs%2Fx.png", "/artifact/raw?path=docs%2Fx.png"] and got["blind"]["img"], "a list that does not say: the text first, then the bytes"
     assert got["blindRefused"] == "docs/outside is outside docs/", "the text read's refusal is shown when the bytes do not help"
+    assert got["svg"] == {"img": True, "button": True} and got["webp"] is True, "a svg is shown in the page and never opened as a document of its own"
+    assert got["oddType"] == {"img": True, "made": 0, "title": "The Desk cannot show this file", "cls": "wb-refusal is-info", "code": "docs/odd.bin"}, "a type outside the closed list gets no <img> and the info tone"
+    assert got["revokedOnRefusal"] == 1
     assert got["rows"] == [["docs/a.md", "Markdown"], ["docs/b.png", "image"], ["docs/c.woff2", "other"], ["docs/d.txt", "text"], ["docs/e", ""]]
     assert got["cells"][:4] == ["5 B · Markdown", "2.0 KB · image", "12 B · other", "12 B · text"] and got["cells"][4] == "12 B"
 
@@ -737,6 +794,9 @@ const head = m.startHead(START);
 out.add = m.restartLine({ head, projects: [projects[0]], add: "/work/new shop" });
 out.addUnknown = m.restartLine({ head, projects, add: "/work/new" });
 out.noHead = m.restartLine({ head: "", projects: [projects[0]], add: "/work/new" }).command;
+const evil = [{ id: "e".repeat(12), name: "x $(touch /tmp/pwn) `id` ;rm", folder: null }];
+out.evil = m.restartLine({ head, projects: evil, add: "/w" });
+out.safe = [m.safeName("shop-1_a.b c"), m.safeName("x$(y)"), m.safeName(null)];
 out.leave = m.restartLine({ head, projects, leave: "b".repeat(12) });
 out.leaveLast = m.restartLine({ head, projects: [projects[0]], leave: "a".repeat(12) });
 out.init = [m.initLine({ head, folder: "/work/new", autonomy: "milestones" }), m.initLine({ head: "", folder: "/work/my new", autonomy: "end" })];
@@ -759,7 +819,7 @@ const none = find(panel.el, "input[data-key=no-configuration]");
 none.checked = true;
 none.listeners.change.forEach((fn) => fn());
 await settle();
-out.noConfig = { codes: codes(), sentences: all(panel.el, ".wb-command-sentence").map(textOf), autonomy: all(find(panel.el, "select[data-key=autonomy]"), "option").map((o) => [o.attrs.value, textOf(o)]) };
+out.noConfig = { codes: codes(), sentences: all(panel.el, ".wb-command-sentence").map(textOf), notes: all(panel.el, ".wb-card-note").map(textOf), autonomy: all(find(panel.el, "select[data-key=autonomy]"), "option").map((o) => [o.attrs.value, textOf(o)]) };
 const pick = find(panel.el, "select[data-key=autonomy]");
 pick.value = "end";
 pick.listeners.change.forEach((fn) => fn());
@@ -807,11 +867,14 @@ def test_add_a_project_shows_the_restart_line_with_copy_and_the_init_line_when_t
     assert got["add"] == {"command": f"{head} --project /work/shop --project '/work/new shop'", "unknown": [], "empty": False}, "--project repeated: the current ones, then the new folder"
     assert got["addUnknown"]["command"] == f"{head} --project /work/shop --project <folder of blog> --project /work/new" and got["addUnknown"]["unknown"] == ["blog"]
     assert got["noHead"] == "python3 <the workbench folder>/runtime/service.py --project /work/shop --project /work/new"
+    assert got["evil"]["command"] == f"{head} --project <folder of x __touch _tmp_pwn_ _id_ _rm> --project /w" and got["evil"]["unknown"] == ["x __touch _tmp_pwn_ _id_ _rm"], "a project name never carries shell text into the line"
+    assert "$(" not in got["evil"]["command"] and "`" not in got["evil"]["command"] and ";" not in got["evil"]["command"]
+    assert got["safe"] == ["shop-1_a.b c", "x__y_", ""]
     assert got["leave"]["command"] == f"{head} --project /work/shop" and not got["leave"]["empty"]
     assert got["leaveLast"] == {"command": "", "unknown": [], "empty": True}, "the service needs at least one project"
     assert got["init"][0] == "python3 /opt/ck/skills/core-project-init/scripts/init_project.py --root /work/new --apply --autonomy milestones"
     assert got["init"][1] == "python3 <the workbench folder>/skills/core-project-init/scripts/init_project.py --root '/work/my new' --apply --autonomy end"
-    assert got["refusal"][:2] == ["", "Type the absolute path of the folder, such as /home/me/shop."] and got["refusal"][2] == "That folder is already one of the service's projects." and got["refusal"][3:5] == ["", ""]
+    assert got["refusal"][:2] == ["", "Type the absolute path of the folder, such as /home/me/shop."] and got["refusal"][2] == "That folder is already one of the service's projects." and got["refusal"][3:5] == ["", "Type the absolute path of the folder, such as /home/me/shop."], "a ~/ path is not absolute: quoted it would name a folder called ~"
     assert got["refusal"][5:] == ["/work/x", "/"]
     assert got["closed"] == [True, False]
     o = got["opened"]
@@ -821,7 +884,9 @@ def test_add_a_project_shows_the_restart_line_with_copy_and_the_init_line_when_t
     assert t["sentences"][0].startswith("Stop the service and start it again with this line") and "Replace <folder of blog>" in t["notes"][0]
     n = got["noConfig"]
     assert len(n["codes"]) == 2 and n["codes"][0].startswith("python3 /opt/ck/skills/core-project-init/scripts/init_project.py --root /work/new --apply --autonomy milestones")
-    assert n["sentences"][0].startswith("1. Make the folder a project") and n["sentences"][1].startswith("2. Stop the service")
+    assert n["sentences"][0].startswith("1. Make the folder a project") and n["sentences"][1].startswith("3. Stop the service")
+    assert any(note.startswith("2. Write the project's configuration, docs/workbench/runtime.json, by hand") and "does not start without that file" in note for note in n["notes"]), \
+        "the configuration is its own step before the restart line, and says the service does not start without it"
     assert n["autonomy"] == [["milestones", "milestones (recommended)"], ["every-phase", "every phase"], ["end", "at the end"]]
     assert got["chosen"].endswith("--autonomy end")
     assert got["refused"]["codes"] == [] and got["refused"]["hint"].startswith("Type the absolute path") and got["refused"]["invalid"] == "true"
@@ -879,6 +944,10 @@ def test_no_flex_row_of_the_cards_holds_free_text_without_wrap_and_the_done_card
     assert "flex-wrap: wrap" in by_selector[".wb-card-done"], "A-26: the done card wraps"
     result = by_selector[".wb-card-result"]
     assert "flex-basis: 100%" in result and "min-width: 0" in result, "A-26: the result takes its own line, full width, and can shrink"
+    title = by_selector[".wb-resolved > .wb-card-done-title"]
+    assert "flex: 1 1 8em" in title and "min-width: 0" in title and "white-space: normal" in title, "A-26: the done card's title takes the room left and wraps"
+    order = [sel for sel, _ in rules]
+    assert order.index(".wb-resolved > .wb-card-done-title") > order.index(".wb-resolved > .wb-muted"), "named after the rule it overrides"
     assert "flex-wrap: wrap" in by_selector[".wb-resolved"] and "min-width: 0" in by_selector[".wb-resolved-title"], "the Floor's resolved line wraps too"
     cards = (JS / "floor" / "cards.js").read_text(encoding="utf-8")
     assert 'h("div", { class: "mono", text: l })' in cards and 'class: "wb-card-line", text: l' in cards, "an id is mono, a sentence is prose"

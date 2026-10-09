@@ -15,7 +15,7 @@ const SERVICE_SCRIPT = "/runtime/service.py";
 
 export const AUTONOMY_MODES = Object.freeze([["milestones", "milestones (recommended)"], ["every-phase", "every phase"], ["end", "at the end"]]);
 export const FALLBACK_HEAD = "python3 <the workbench folder>/runtime/service.py";
-export const ABSOLUTE = /^(\/|~\/|[A-Za-z]:[\\/])/;
+export const ABSOLUTE = /^(\/|[A-Za-z]:[\\/])/;      // a `~/` path is not absolute: quoted it would name a folder called "~"
 
 /** A word of a shell command: as it is when it is safe, else in single quotes; a value written as <placeholder> is kept. */
 export function shellWord(text) {
@@ -109,9 +109,14 @@ export function folderRefusal(text, projects) {
   return "";
 }
 
+/** A project's name as it may stand in a placeholder: every character outside letters, digits, space, ".", "_" and "-" is replaced, so a name never carries shell text. */
+export function safeName(name) {
+  return String(name === undefined || name === null ? "" : name).replace(/[^A-Za-z0-9 ._-]/g, "_");
+}
+
 /** The word a restart line writes for one project: its folder, or `<folder of NAME>` when the page does not know it. */
 function folderWord(project) {
-  return shellWord(project.folder || `<folder of ${project.name}>`);
+  return project.folder ? shellWord(project.folder) : `<folder of ${safeName(project.name)}>`;
 }
 
 /**
@@ -126,7 +131,7 @@ export function restartLine({ head, projects, add = null, leave = null }) {
   if (!words.length) return { command: "", unknown: [], empty: true };
   return {
     command: [head || FALLBACK_HEAD, ...words.map((w) => `--project ${w}`)].join(" "),
-    unknown: kept.filter((p) => !p.folder).map((p) => p.name), empty: false,
+    unknown: kept.filter((p) => !p.folder).map((p) => safeName(p.name)), empty: false,
   };
 }
 
