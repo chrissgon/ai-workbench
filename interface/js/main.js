@@ -1,5 +1,5 @@
-// The page: the token prompt, then the shared frame with the screen the hash names (#/ is the City, the Building and the Floor
-// follow; the Lobby and the control room are placeholders until their packages). The page is kept current by a watcher (watch.js): while the
+// The page: the token prompt, then the shared frame with the screen the hash names (#/ is the City, then the Building, the Floor, the
+// Lobby and the Control room; a screen with no view falls back to the placeholder). The page is kept current by a watcher (watch.js): while the
 // document is visible it reads the service's change signal every second and, when a number moved (or after 30 quiet seconds, or after any
 // write the page sent), reloads everything it shows; it reads nothing while the document is hidden and reloads once when it becomes visible.
 
