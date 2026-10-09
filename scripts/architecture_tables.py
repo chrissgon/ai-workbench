@@ -30,9 +30,20 @@ nothing outside them is touched, and a block is never edited by hand. Each table
   task-runtime-tables   the tables migrations 2 and later create, with their columns
   gate-keys             the keys of evals/eval-gate.json and the measurement version; a value is shown only
                         when it is a number or a model or adapter id, never a text that could be a credential
+  runtime-modules       the first sentence of the docstring of each module of runtime/ and runtime/handlers/
+  service-routes        ROUTES of runtime/service.py: the constant arguments of each _route(...) call
+  handlers              VERBS of each file of runtime/handlers/, read as runtime/ops.py reads it; a file without
+                        one shows a dash
+  config-keys           the closed key lists of the configuration: REQUIRED, TASK_RUNTIME_KEYS, FIRST_RUNTIME_KEYS,
+                        CODE_KEYS and PRICE_KEYS (computed from PRICE_KINDS) of runtime/project_config.py,
+                        AGENT_KEYS and BOUNDS_KEYS of runtime/autonomy.py, ENTRY_KEYS and the names of RECIPES of
+                        runtime/deps.py; names only, no configuration is opened and no value is read
+  flow-files            each flows/*.json: the flow, its title, and its tasks' keys and skills in order
+  roles                 runtime/roles.json: each key and its value (names of skills, areas and packs)
+  held-reasons          REASONS of runtime/dispatcher.py: its text literals and the module's own text constants
 
 Every source is read as text or parsed with ast (the table of operations is read with ast.literal_eval of its
-two literals); nothing is executed but scripts/owner_table.py,
+two literals; runtime/*.py are never imported, since they import their siblings); nothing is executed but scripts/owner_table.py,
 scripts/validate.py (the frontmatter parser) and providers/resolve.py (the class-to-folder rule), which read files
 only. scripts/validate.py reports a stale block as a warning (rule architecture-tables).
 
@@ -403,6 +414,210 @@ def gate_keys(root):
     return head + _table(["Key", "Value, or its shape"], rows)
 
 
+def _files(root, folder, suffix):
+    """The files of one folder of the tree with the suffix, as sorted repository-relative paths with forward slashes
+    (never an __init__.py); a SourceError when there is none, so that a missing folder is named and not shown as an
+    empty table. The folder is listed, not matched with a pattern, so that the layer-map scan, which reads a string
+    that is a path to a script as a dependency, sees no arrow to each file of runtime/: a documentation table that
+    reads the docstring of every module depends on none of them."""
+    try:
+        names = sorted(n for n in os.listdir(os.path.join(root, folder)) if n.endswith(suffix) and n != "__init__" + suffix)
+    except OSError as e:
+        raise SourceError(f"{folder}: {e.strerror}") from None
+    if not names:
+        raise SourceError(f"{folder}: no {suffix} file")
+    return [f"{folder}/{n}" for n in names]
+
+
+def runtime_modules(root):
+    """One row per module of runtime/ and of runtime/handlers/: the first sentence of its docstring."""
+    rows = []
+    for rel in _files(root, "runtime", ".py") + _files(root, "runtime/handlers", ".py"):
+        sentence = _first_sentence(ast.get_docstring(_tree(root, rel))) or NONE
+        # a docstring names paths like flows/<name>.json: written as text, `<name>` would be read as a tag and vanish
+        rows.append([_code(rel), sentence.replace("<", "&lt;").replace(">", "&gt;")])
+    return _table(["Module", "What it is (first sentence of its docstring)"], rows)
+
+
+def _argument(node, where, limit=False):
+    """The value of one argument of a _route call, which must be a literal; only `query_max` may be the name of a
+    limit constant, and then the table shows that a limit applies, not its value."""
+    try:
+        return ast.literal_eval(node)
+    except ValueError:
+        if limit and isinstance(node, ast.Name):
+            return node.id
+        raise SourceError(f"{where}: an argument of a _route call is not a constant") from None
+
+
+def _routes(root):
+    tree = _tree(root, "runtime/service.py")
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "ROUTES" for t in node.targets):
+            if not isinstance(node.value, (ast.Tuple, ast.List)):
+                raise SourceError("runtime/service.py: ROUTES is not a tuple of _route calls")
+            routes = []
+            for call in node.value.elts:
+                if not (isinstance(call, ast.Call) and getattr(call.func, "id", None) == "_route"):
+                    raise SourceError("runtime/service.py: ROUTES holds something other than a _route call")
+                where = f"runtime/service.py:{call.lineno}"
+                args = [_argument(a, where) for a in call.args]
+                if len(args) < 2 or not all(isinstance(a, str) for a in args):
+                    raise SourceError(f"{where}: a _route call needs a method, a pattern and, if any, an operation as text")
+                route = {"method": args[0], "pattern": args[1], "op": args[2] if len(args) > 2 else None,
+                         "bind": {}, "take": None, "hidden": (), "own": None, "upload": False, "query_max": None}
+                for kw in call.keywords:
+                    if kw.arg not in route:
+                        raise SourceError(f"{where}: unknown argument {kw.arg!r} of a _route call")
+                    route[kw.arg] = _argument(kw.value, where, limit=kw.arg == "query_max")
+                routes.append(route)
+            if not routes:
+                raise SourceError("runtime/service.py: ROUTES is empty")
+            return routes
+    raise SourceError("runtime/service.py: no ROUTES")
+
+
+def _names(values):
+    return ", ".join(_code(v) for v in values) or NONE
+
+
+def service_routes(root):
+    rows = []
+    for r in _routes(root):
+        if r["own"]:
+            rows.append([r["method"], _code(r["pattern"]), f"the service's own {_code(r['own'])}", NONE, NONE, NONE, NONE])
+            continue
+        bound = ", ".join(f"{_code(arg)} from {_code('{' + part + '}')}" for arg, part in r["bind"].items())
+        take = "every other argument" if r["take"] is None else ("none" if not r["take"] else _names(r["take"]))
+        special = [text for on, text in ((r["upload"], "file upload"), (r["query_max"] is not None, "query value capped")) if on]
+        rows.append([r["method"], _code(r["pattern"]), _code(r["op"]), bound or NONE, take, _names(r["hidden"]),
+                     ", ".join(special) or NONE])
+    return _table(["Method", "Path", "Operation", "Bound from the path", "Body or query may carry",
+                   "Hidden (the service supplies)", "Special"], rows)
+
+
+def _handler_verbs(root, rel):
+    """The words of a handler's VERBS constant, as runtime/ops.py reads them; () when the file has none."""
+    for node in _tree(root, rel).body:
+        if isinstance(node, ast.Assign) and any(getattr(t, "id", None) == "VERBS" for t in node.targets):
+            try:
+                value = ast.literal_eval(node.value)
+            except ValueError:
+                return ()
+            if isinstance(value, (tuple, list)) and all(isinstance(v, str) for v in value):
+                return tuple(value)
+    return ()
+
+
+def handlers(root):
+    rows = []
+    for rel in _files(root, "runtime/handlers", ".py"):
+        stem = os.path.basename(rel)[:-3]
+        rows.append([_code(stem.replace("_", "-")), _code(rel), _names(_handler_verbs(root, rel))])
+    return _table(["Handler", "File", "Verbs"], rows)
+
+
+def _price_keys(tree, where):
+    """PRICE_KEYS, an expression `tuple(f"{kind}<suffix>" for kind in PRICE_KINDS) + (<names>)`: computed here from
+    PRICE_KINDS, and refused when the expression has another form."""
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "PRICE_KEYS" for t in node.targets):
+            value, kinds = node.value, _constant(tree, "PRICE_KINDS")
+            try:
+                gen = value.left.args[0]
+                part = gen.elt.values
+                var = gen.generators[0].target.id
+                if not (isinstance(value.op, ast.Add) and value.left.func.id == "tuple" and gen.generators[0].iter.id == "PRICE_KINDS"
+                        and isinstance(part[0], ast.FormattedValue) and part[0].value.id == var
+                        and all(isinstance(p, ast.Constant) for p in part[1:]) and isinstance(kinds, tuple)):
+                    raise AttributeError
+                suffix = "".join(p.value for p in part[1:])
+                return [f"{kind}{suffix}" for kind in kinds] + list(ast.literal_eval(value.right))
+            except (AttributeError, IndexError, ValueError):
+                raise SourceError(f"{where}: PRICE_KEYS is not tuple(f\"{{kind}}...\" for kind in PRICE_KINDS) + (...)") from None
+    raise SourceError(f"{where}: no PRICE_KEYS")
+
+
+# (constant, source, what the keys are keys of): the closed lists a configuration is checked against.
+CONFIG_LISTS = (
+    ("REQUIRED", "runtime/project_config.py", "the top level of `runtime.json`, required"),
+    ("TASK_RUNTIME_KEYS", "runtime/project_config.py", "the top level, read by the task runtime"),
+    ("FIRST_RUNTIME_KEYS", "runtime/project_config.py", "the top level, read by the first runtime"),
+    ("CODE_KEYS", "runtime/project_config.py", "the `code` object"),
+    ("PRICE_KEYS", "runtime/project_config.py", "an entry of `model_prices`, which is keyed by model id"),
+    ("AGENT_KEYS", "runtime/autonomy.py", "an entry of `area_agents`"),
+    ("BOUNDS_KEYS", "runtime/autonomy.py", "a policy file under `docs/workbench/policies/`"),
+    ("ENTRY_KEYS", "runtime/deps.py", "an entry of `dependencies`"),
+    ("RECIPES", "runtime/deps.py", "the closed table of recipes: the names an entry's `recipe` may take"),
+)
+
+
+def config_keys(root):
+    """The names of the closed key lists of the configuration. Only names of constants of the source are read: no
+    configuration is opened, so no value of one can reach the table."""
+    trees, rows = {}, []
+    for constant, source, meaning in CONFIG_LISTS:
+        tree = trees.setdefault(source, _tree(root, source))
+        if constant == "PRICE_KEYS":
+            names = _price_keys(tree, source)
+        else:
+            value = _constant(tree, constant)
+            names = list(value) if isinstance(value, (tuple, list, dict)) else None
+            if not names or not all(isinstance(n, str) for n in names):
+                raise SourceError(f"{source}: {constant} is not a literal tuple of names")
+        rows.append([meaning, f"{_code(constant)} of {_code(source)}", _names(names)])
+    return _table(["Keys of", "Constant", "Names"], rows)
+
+
+def flow_files(root):
+    rows = []
+    for rel in _files(root, "flows", ".json"):
+        try:
+            flow = json.loads(_read(root, rel))
+            tasks = ", ".join(f"{_code(t['key'])} ({_code(t['skill'])})" for t in flow["tasks"])
+            rows.append([_code(flow["flow"]), flow["title"], tasks or NONE])
+        except (ValueError, KeyError, TypeError) as e:
+            raise SourceError(f"{rel}: not a flow file ({type(e).__name__}: {e})") from None
+    return _table(["Flow", "Title", "Tasks, in order (key and skill)"], rows)
+
+
+def roles(root):
+    try:
+        data = json.loads(_read(root, "runtime/roles.json"))
+    except ValueError as e:
+        raise SourceError(f"runtime/roles.json: {e}") from None
+    rows = []
+    for key, value in data.items() if isinstance(data, dict) else ():
+        names = [value] if isinstance(value, str) else value
+        if not isinstance(names, list) or not names or not all(isinstance(n, str) for n in names):
+            raise SourceError(f"runtime/roles.json: {key} is neither a name nor a list of names")
+        rows.append([_code(key), _names(names)])
+    if not rows:
+        raise SourceError("runtime/roles.json: no keys")
+    return _table(["Key", "Value"], rows)
+
+
+def held_reasons(root):
+    """REASONS of runtime/dispatcher.py: a tuple of text literals and of names of the module's own text constants."""
+    tree = _tree(root, "runtime/dispatcher.py")
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == "REASONS" for t in node.targets):
+            if not isinstance(node.value, (ast.Tuple, ast.List)):
+                raise SourceError("runtime/dispatcher.py: REASONS is not a tuple")
+            rows = []
+            for item in node.value.elts:
+                if isinstance(item, ast.Constant) and isinstance(item.value, str):
+                    rows.append([_code(item.value), NONE])
+                    continue
+                word = _constant(tree, item.id) if isinstance(item, ast.Name) else None
+                if not isinstance(word, str):
+                    raise SourceError(f"runtime/dispatcher.py: a word of REASONS is not text or the name of a text constant "
+                                      f"({ast.unparse(item)})")
+                rows.append([_code(word), _code(item.id)])
+            return _table(["Word", "Constant that names it"], rows)
+    raise SourceError("runtime/dispatcher.py: no REASONS")
+
+
 TABLES = {
     "artifacts-by-owner": artifacts_by_owner,
     "provider-classes": provider_classes,
@@ -414,6 +629,13 @@ TABLES = {
     "store-migrations": store_migrations,
     "task-runtime-tables": task_runtime_tables,
     "gate-keys": gate_keys,
+    "runtime-modules": runtime_modules,
+    "service-routes": service_routes,
+    "handlers": handlers,
+    "config-keys": config_keys,
+    "flow-files": flow_files,
+    "roles": roles,
+    "held-reasons": held_reasons,
 }
 
 

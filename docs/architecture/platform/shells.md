@@ -153,6 +153,23 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 
 **The channel rule**: an effect is approved only from the terminal or the page, with its hash: `test_operations_table.py`, `test_an_effect_is_approved_in_the_terminal_and_never_from_the_conversation`; `test_task_ops.py`, `test_an_effect_is_approved_from_the_terminal_and_the_page_and_from_no_other_channel`; `test_service.py`, `test_an_effect_is_approved_from_the_page_with_its_hash_and_never_from_chat`. A page never accepts a configuration hash (that stays in the terminal): `test_service.py`, `test_accepting_a_configuration_is_not_a_route`.
 
+The words a held ready task carries, from `REASONS` of `runtime/dispatcher.py`:
+
+<!-- generated: held-reasons -->
+| Word | Constant that names it |
+|---|---|
+| `stopped` | - |
+| `cap: runs per day` | - |
+| `cap: usd per day` | - |
+| `credential` | - |
+| `secret store` | - |
+| `image` | - |
+| `dispatch off` | `DISPATCH_OFF` |
+| `job running` | `JOB_RUNNING` |
+| `no enabled agent owns the task` | `NO_AGENT` |
+| `other` | `OTHER` |
+<!-- /generated -->
+
 ## Entry points
 
 **The terminal shell**, `python3 runtime/cli.py <verb> --project <dir> ...`; `--help` prints every verb and flag. Exit 0 ok, 1 failed or refused, 2 usage, 3 not configured. Start the verbs that call a model with the secret store's library available: `uv run --with keyring==25.7.0 python3 runtime/cli.py <verb> ...`.
@@ -241,6 +258,44 @@ Each command calls its operation of the same name once (`/progress` shows its `t
 **The first runtime** (until stage 7), `python3 scripts/runtime.py <verb> --project <dir>`: `tick [--dry-run] [--pin]`, `pin`, `add-comment --link --commenter --text-file`, `status`, `inbox`, `approve --id [--confirmed --sha256]`, `reject --id [--note]`; exit 0 ok, 1 a step failed, 2 usage, 3 not configured. `scripts/vote_job.py` is started by the scheduler at a vote post's slot, never by hand (exit 0, 1, 2).
 
 **The local service (stage 9, built).** `uv run --with keyring==25.7.0 python3 runtime/service.py --project <dir> [--project <dir>]... [--port 8765] [--poll-every 60] [--dispatch-every 30 | --no-dispatch] [--token-file <path>]`: bound to `127.0.0.1` only (no option for another address), a token in a file for its owner, the `Host` and `Origin` checked, no cross-origin header, one route per operation that lists the `page` channel (`/api/v1/...`), a route whose operation's row has `job` returning a job to ask for again. It runs `poll` every 60 s and `dispatch` every 30 s unless `--no-dispatch` (or `--dispatch-every 0`) says otherwise, and at its start logs what `service_check` found (secret store, credential, docker, image, dispatch). `accept_config` and `run_next` are not routes, on purpose; `set_mode` is, and from the page it only narrows: a move down the order of the modes is accepted by code (`code:narrowing`), a move up waits for the person's `accept_config`. The rules of a request and the routes are in [contracts/runtime.md](../../../contracts/runtime.md), "The local service". Planned: the pages in `interface/` (the scene, then its views) and the MCP mode.
+
+The routes of the local service, from `ROUTES` of `runtime/service.py`:
+
+<!-- generated: service-routes -->
+| Method | Path | Operation | Bound from the path | Body or query may carry | Hidden (the service supplies) | Special |
+|---|---|---|---|---|---|---|
+| GET | `/projects` | the service's own `projects` | - | - | - | - |
+| GET | `/projects/{p}/status` | `status` | - | none | - | - |
+| GET | `/projects/{p}/pending` | `pending` | - | none | - | - |
+| GET | `/projects/{p}/pending/{id}` | `pending` | `pending_id` from `{id}` | none | - | - |
+| POST | `/projects/{p}/pending/{id}/answer` | `answer` | `pending_id` from `{id}` | every other argument | - | - |
+| POST | `/projects/{p}/pending/{id}/release` | `release` | `pending_id` from `{id}` | every other argument | - | - |
+| POST | `/projects/{p}/pending/{id}/approve` | `approve` | `pending_id` from `{id}` | every other argument | - | - |
+| POST | `/projects/{p}/pending/{id}/reject` | `reject` | `pending_id` from `{id}` | every other argument | - | - |
+| GET | `/projects/{p}/flows` | `flows` | - | none | - | - |
+| POST | `/projects/{p}/requests` | `request` | - | every other argument | - | - |
+| POST | `/projects/{p}/requests/{id}/route` | `route` | `request_id` from `{id}` | every other argument | - | - |
+| POST | `/projects/{p}/requests/{id}/cancel` | `cancel` | `request_id` from `{id}` | every other argument | - | - |
+| GET | `/projects/{p}/tasks/{id}` | `task` | `task_id` from `{id}` | none | - | - |
+| POST | `/projects/{p}/tasks/{id}/retry` | `retry` | `task_id` from `{id}` | every other argument | - | - |
+| POST | `/projects/{p}/tasks/{id}/files` | `hand-over` | `task_id` from `{id}` | every other argument | `file` | file upload |
+| POST | `/projects/{p}/runs/{id}/verdict` | `verdict` | `run_id` from `{id}` | every other argument | - | - |
+| POST | `/projects/{p}/agents/{name}/mode` | `set-mode` | `agent` from `{name}` | every other argument | - | - |
+| GET | `/projects/{p}/progress` | `progress` | - | every other argument | - | - |
+| GET | `/projects/{p}/agents` | `agents` | - | none | - | - |
+| GET | `/projects/{p}/conversation` | `conversation` | - | `conversation`, `after` | - | - |
+| GET | `/projects/{p}/skills` | `skills` | - | none | - | - |
+| GET | `/projects/{p}/costs` | `costs` | - | `since` | - | - |
+| GET | `/projects/{p}/connections` | `connections` | - | none | - | - |
+| GET | `/projects/{p}/artifacts` | `artifacts` | - | none | - | - |
+| GET | `/projects/{p}/artifact` | `artifact` | - | `path` | - | query value capped |
+| GET | `/projects/{p}/version` | `version` | - | none | - | - |
+| GET | `/versions` | the service's own `versions` | - | - | - | - |
+| POST | `/projects/{p}/conversation` | `say` | - | every other argument | - | - |
+| POST | `/projects/{p}/sync` | `sync` | - | every other argument | - | - |
+| POST | `/projects/{p}/dispatch` | `dispatch` | - | none | - | - |
+| GET | `/jobs/{id}` | the service's own `job` | - | - | - | - |
+<!-- /generated -->
 
 ## Known limits and improvements
 
