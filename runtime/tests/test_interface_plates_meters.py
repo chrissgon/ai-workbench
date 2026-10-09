@@ -629,6 +629,10 @@ def test_every_notice_that_needs_the_terminal_uses_the_one_component_and_the_pag
         assert "command.js" in (JS / name).read_text(encoding="utf-8"), f"{name} draws a command with the component"
     for path in JS.rglob("*.js"):
         text = path.read_text(encoding="utf-8")
+        # `keyring==` (the library's version pin, which every command of the service carries) and not `keyring`: command.js holds the pattern of the
+        # command that stores a credential (`keyring set ai-workbench <user>`) so that `commandsIn` can take it out of the service's sentence. That
+        # pattern builds nothing: test_the_agent_tab_shows_a_command_for_each_wider_mode_and_for_the_credential... asserts that `commandsIn` alone
+        # produces what the service wrote. A structured field for it is a follow-up of the runtime.
         assert "cli.py" not in text and "keyring==" not in text and "accept-config --" not in text and "run-next --" not in text, f"{path.name}: a command is the service's, never built on the page"
     assert '"select"' not in (JS / "floor/agent-tab.js").read_text(encoding="utf-8"), "the mode select is gone"
 
@@ -695,6 +699,17 @@ const snapshot = { projects: [{ id: P, name: "n", config: { accepted: true } }],
 tab.update(fm.floor(snapshot, P, "engineering", {}));
 const cell = all(tab.el, ".wb-meter-cell")[1];
 out.tab = { note: find(cell, ".wb-note").textContent, reserved: all(cell, ".wb-meter-reserved").length, total: find(tab.el, ".wb-runs-total").textContent, aria: cell.attrs["aria-label"] };
+// not accepted and back: the identical meters are not drawn again, and the total must still be shown
+tab.update(fm.floor({ projects: [{ id: P, name: "n", config: { accepted: false } }], details: {}, tasks: {}, loaded: true }, P, "engineering", {}));
+out.during = find(tab.el, ".wb-runs-total").hidden;
+tab.update(fm.floor(snapshot, P, "engineering", {}));
+out.after = [find(tab.el, ".wb-runs-total").hidden, find(tab.el, ".wb-runs-total").textContent];
+
+// the two notes together: runs of unknown cost that nothing is reserved for, beside the recorded spend
+const unknown = agent({ usd_today: 0.14, usd_recorded: 0.14, usd_reserved: 0, runs_without_cost: 2 });
+const urow = fm.floorRow(unknown, null, { accepted: true, project: "p", number: 1 });
+out.unknown = { card: fm.cardOf(urow).runsLine, plate: all(plateNode(fm.plateOf(urow), {}), ".wb-plate-note").map((n) => n.textContent), tab: fm.meters(unknown).spend.notes,
+  reserved: fm.meters(agent({ runs_without_cost: 2 })).spend.notes };
 console.log(JSON.stringify(out));
 """
 
@@ -716,6 +731,10 @@ def test_the_spend_meter_has_two_segments_with_both_numbers_labelled_and_the_run
     assert got["kpiNoReserve"] == [""], "nothing reserved: no second number, the line is empty"
     assert got["caps"]["text"] == "Caps · engineering: reference-model runs 5 / 8, floor-model spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved), Runs today: 3"
     assert got["tab"] == {"note": "$0.14 recorded · up to $1.50 reserved", "reserved": 1, "total": "Runs today: 3", "aria": "Floor-model spend today $1.64 / $2.00"}
+    assert got["during"] is True and got["after"] == [False, "Runs today: 3"], "the total is shown again after a not-accepted spell"
+    both = "$0.14 recorded (+2 of unknown cost)"
+    assert got["unknown"]["tab"] == both and got["unknown"]["plate"] == [both] and got["unknown"]["card"].endswith("floor-model spend $0.14 / $2.00 ($0.14 recorded) (+2 of unknown cost)"), "both notes when both apply"
+    assert got["unknown"]["reserved"] == "$0.14 recorded · up to $1.50 reserved", "when something is reserved the reservation already says so"
 
 
 def test_the_reserved_segment_has_its_own_token_in_one_place_and_the_track_holds_both_segments():

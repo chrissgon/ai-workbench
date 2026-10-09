@@ -6,7 +6,7 @@
 // change was for the phone only).
 
 import { h } from "../dom.js";
-import { METER_TIPS, METER_WORDS } from "../format.js";
+import { METER_TIPS, METER_WORDS, costNote } from "../format.js";
 
 /** The mode's pips: four 5 px squares, as many filled as the mode counts. */
 export function pips(count) {
@@ -69,7 +69,7 @@ export function plateNode(p, attrs = {}, tag = "div") {
   const meters = h("div", { class: "wb-plate-meters" },
     meter(METER_WORDS.runs, p.runsText, p.runsShare, p.runsShare >= 1, "", METER_TIPS.runs),
     meter(METER_WORDS.spend, p.usdText, p.usdRecordedShare !== undefined ? p.usdRecordedShare : p.usdShare, p.usdShare >= 1,
-      p.usdNote ? p.usdNote : p.unknown > 0 ? `(+${p.unknown} of unknown cost)` : "", METER_TIPS.spend, p.usdReservedShare || 0));
+      costNote(p.usdNote, p.usdReserved, p.unknown), METER_TIPS.spend, p.usdReservedShare || 0));
   const node = h(tag, { ...attrs, class: `wb-plate${p.selected ? " is-selected" : ""}${p.off ? " is-off" : ""}${attrs.class ? ` ${attrs.class}` : ""}`, "data-floor": p.name }, row1, chips, meters);
   return node;
 }

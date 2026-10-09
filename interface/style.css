@@ -624,8 +624,10 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-camera-tools { left: 10px; bottom: 10px; translate: none; }
   .wb-kpi { grid-template-columns: minmax(0, 1fr); padding: 8px; }
   .wb-kpi-tile { display: none; }
+  /* A-20: the labels say which model they count, so they wrap instead of being cut */
   .wb-kpi-label { overflow-wrap: anywhere; }
-  .wb-kpi-note { display: none; }   /* the phone's cards stay one height; the two numbers are in the card's tooltip and name, and in the Agent tab */   /* A-20: the labels say which model they count, so they wrap instead of being cut */
+  /* the phone's cards stay one height: the two numbers are in the card's tooltip and name, and in the Agent tab */
+  .wb-kpi-note { display: none; }
   .wb-kpi-figure { font-size: 16px; }
   .wb-meter { height: 3px; }
   .wb-main { position: static; z-index: auto; grid-area: content; display: grid; align-content: start; gap: 12px; padding: 12px; overflow-y: auto; border-bottom: var(--pui-border-width) solid var(--pui-border); pointer-events: auto; }

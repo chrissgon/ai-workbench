@@ -76,6 +76,15 @@ export function spendNote(recorded, reserved) {
   return r > 0 ? `${dollars(r)} recorded` : "";
 }
 
+/**
+ * The note under a spend meter: the labelled numbers, and "(+n of unknown cost)" when runs of unknown cost exist that nothing is reserved
+ * for (when something is reserved the reservation already says so).
+ */
+export function costNote(spendWords, reserved, unknown) {
+  const missing = count(unknown) > 0 && !(count(reserved) > 0) ? `(+${count(unknown)} of unknown cost)` : "";
+  return [spendWords, missing].filter(Boolean).join(" ");
+}
+
 // The words of the two caps (A-20), and the sentence that says what each one counts: the runs cap counts the reference model's runs, the
 // dollar cap the floor model's spend, so the two never read as one.
 export const METER_WORDS = Object.freeze({ runs: "Reference-model runs today", spend: "Floor-model spend today" });

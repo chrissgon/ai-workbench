@@ -315,7 +315,7 @@ export function plateOf(row, selected = false) {
     done: row.done, running: row.running, left: row.left, queued: row.queued,
     runsText: `${row.runs} / ${row.runsCap}`, runsShare: format.share(row.runs, row.runsCap),
     usdText: `${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}`, usdShare: format.share(row.usd, row.usdCap),
-    unknown: row.unknown, usdNote: row.usdNote, usdRecordedShare: row.usdRecordedShare, usdReservedShare: row.usdReservedShare, runsTotal: row.runsTotal, mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
+    unknown: row.unknown, usdReserved: row.usdReserved, usdNote: row.usdNote, usdRecordedShare: row.usdRecordedShare, usdReservedShare: row.usdReservedShare, runsTotal: row.runsTotal, mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
     selected, off: row.state === "off",
   };
 }
@@ -325,7 +325,8 @@ export function plateOf(row, selected = false) {
  * top right and for each row of the floors list: name (with its decisions badge), state word, mode plate, one line of runs and spend.
  */
 export function cardOf(row) {
-  const runsLine = `reference-model runs ${row.runs} / ${row.runsCap} · floor-model spend ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}${row.usdNote ? ` (${row.usdNote})` : row.unknown > 0 ? ` (+${row.unknown} of unknown cost)` : ""}`;
+  const note = format.costNote(row.usdNote ? `(${row.usdNote})` : "", row.usdReserved, row.unknown);
+  const runsLine = `reference-model runs ${row.runs} / ${row.runsCap} · floor-model spend ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}${note ? ` ${note}` : ""}`;
   return {
     name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.stateWord,
     mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
@@ -372,7 +373,7 @@ export function meters(agent) {
   return {
     runsTotal: agent.runs_total_today === undefined ? null : `Runs today: ${format.count(agent.runs_total_today)}`,
     runs: { label: format.METER_WORDS.runs, tip: format.METER_TIPS.runs, text: `${runs} / ${runsCap}`, share: format.share(runs, runsCap), full: runsCap > 0 && runs >= runsCap, name: `${format.METER_WORDS.runs} ${runs} / ${runsCap}` },
-    spend: { label: format.METER_WORDS.spend, tip: format.METER_TIPS.spend, text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "",
+    spend: { label: format.METER_WORDS.spend, tip: format.METER_TIPS.spend, text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "", notes: format.costNote(split.usdNote, split.usdReserved, unknown),
       recorded: split.usdRecorded, reserved: split.usdReserved, recordedShare: split.usdRecordedShare, reservedShare: split.usdReservedShare, note: split.usdNote, name: `${format.METER_WORDS.spend} ${format.dollars(usd)} / ${format.dollars(usdCap)}` },
     queued: { text: String(format.count(agent.queued)), name: `Queued ${format.count(agent.queued)}` },
   };

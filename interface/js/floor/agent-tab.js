@@ -160,7 +160,7 @@ export function createAgentTab(env) {
   }
 
   function drawMeters(m) {
-    fill(metersBox, meterCell(m.runs.label, m.runs.text, m.runs.share, m.runs.full, "", m.runs.tip), meterCell(m.spend.label, m.spend.text, m.spend.recordedShare, m.spend.full, m.spend.note || m.spend.unknown, m.spend.tip, m.spend.reservedShare),
+    fill(metersBox, meterCell(m.runs.label, m.runs.text, m.runs.share, m.runs.full, "", m.runs.tip), meterCell(m.spend.label, m.spend.text, m.spend.recordedShare, m.spend.full, m.spend.notes, m.spend.tip, m.spend.reservedShare),
       meterCell("Queued", m.queued.text, null, false));
     runsTotalLine.hidden = !m.runsTotal;      // the plain total of runs today, on any model (the runs meter counts the reference model's only)
     runsTotalLine.textContent = m.runsTotal || "";
@@ -313,6 +313,7 @@ export function createAgentTab(env) {
       currentMode = view.agent.mode || null;
       drawButtons();
       swap("meters", meters(view.agent), () => drawMeters(meters(view.agent)));
+      runsTotalLine.hidden = !meters(view.agent).runsTotal;     // every update: a draw skipped as identical must not leave it hidden after a not-accepted spell
       swap("wider", view.agent.wider || null, () => drawWider(view.agent.wider));
       swap("current", [view.current, view.runs, view.tasks.length, view.heldCurrent], () => drawCurrent(view));
       swap("others", [view.others.map((t) => [t.id, t.title, t.state]), [...retrying], [...retryError], locked], () => drawOthers(view));
