@@ -234,9 +234,13 @@ def test_the_costs_operation_recomputes_from_the_prices_and_counts_what_is_unkno
     empty = ops.costs(path)
     today = datetime.datetime.now(datetime.timezone.utc).date().isoformat()
     assert empty["since"] == (datetime.date.today() - datetime.timedelta(days=30)).isoformat()
-    assert empty["caps"] == [{"agent": n, "max_runs_per_day": a["max_runs_per_day"], "max_usd_per_day": a["max_usd_per_day"]}
-                             for n, a in {"business": AGENTS["business"], "engineering": AGENTS["engineering"],
-                                          "design": {"max_runs_per_day": 2, "max_usd_per_day": 0}}.items()]
+    # The caps carry the day's use in the words of `agents` (WP-9.14b); the first three keys are the cap itself.
+    assert [{k: c[k] for k in ("agent", "max_runs_per_day", "max_usd_per_day")} for c in empty["caps"]] == [
+        {"agent": n, "max_runs_per_day": a["max_runs_per_day"], "max_usd_per_day": a["max_usd_per_day"]}
+        for n, a in {"business": AGENTS["business"], "engineering": AGENTS["engineering"],
+                     "design": {"max_runs_per_day": 2, "max_usd_per_day": 0}}.items()]
+    assert all(set(c) == {"agent", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost",
+                          "usd_recorded", "usd_reserved", "runs_total_today"} for c in empty["caps"])
     (row,) = empty["rows"]
     # The stand-in adapter leaves timing.json only: the total and the recorded cost are there, the kinds are not.
     assert (row["day"], row["agent"], row["model"], row["adapter"], row["runs"], row["tokens"], row["recorded_usd"]) == (
