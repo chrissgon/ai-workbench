@@ -27,9 +27,10 @@ STARTS = {
     # the contained run (the agent's run is the operation `contained-run` of runtime/cli.py); the vote step's
     # checkers, the scheduler provider twice (dry run, then confirmed), the contained run of the vote agent;
     # the vote job's queue update.
+    # the engagement gate is no longer started here (CONS-2a): the operations layer runs it through runtime/isolated.py;
+    # the shell is started twice, for the contained run and for execute-under-policy
     "runtime/handlers/social.py": ["skills/mkt-engage/scripts/parse_notification.py", "providers/store/sqlite.py",
-                                   "skills/mkt-engage/scripts/policy_gate.py", "skills/mkt-engage/scripts/policy_gate.py",
-                                   "runtime/cli.py"],
+                                   "runtime/cli.py", "runtime/cli.py"],
     "runtime/handlers/social_vote.py": [
         "skills/mkt-vote-round/scripts/vote_state.py", "skills/mkt-vote-round/scripts/vote_update.py",
         "skills/mkt-social-copy/scripts/check_post.py", "skills/brand-identity/scripts/render.py",

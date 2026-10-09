@@ -53,4 +53,4 @@ def test_the_handler_lists_the_verbs_its_command_takes():
     source = read("runtime/handlers/social.py")
     choices = re.search(r'p\.add_argument\("verb", choices=(\[.*?\])\)', source).group(1)
     assert list(social.VERBS) == ast.literal_eval(choices)  # a literal list of words, read from our own file
-    assert list(social.VERBS) == ["tick", "pin", "add-comment", "status", "inbox", "approve", "reject"]
+    assert list(social.VERBS) == ["tick", "pin", "add-comment", "status", "inbox", "approve", "reject", "replay"]
