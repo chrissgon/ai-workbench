@@ -161,3 +161,33 @@ def test_ops_core_imports_no_other_file_of_the_operations_layer():
             names.append(ast.unparse(node.args[0]).strip("\"'"))
     assert [n for n in names if n == "ops" or n.startswith("ops_")] == []
 
+
+def test_the_siblings_of_ops_py_do_not_import_ops_py_at_module_level():
+    """ops.py imports its siblings; a sibling reaches an operation of ops.py at call time, so that no import cycle
+    exists. ops_say.py imports neither sibling above it; ops_reads.py imports ops_say.py (the conversation's name)."""
+    allowed = {"ops_say.py": {"ops_core"}, "ops_reads.py": {"ops_core", "ops_say"}}
+    for name, may in allowed.items():
+        tree = ast.parse((RUNTIME / name).read_text(encoding="utf-8"))
+        at_top = set()
+        for node in tree.body:
+            if isinstance(node, ast.Import):
+                at_top |= {a.name for a in node.names}
+            elif isinstance(node, ast.ImportFrom):
+                at_top.add(node.module or "")
+        assert {n for n in at_top if n == "ops" or n.startswith("ops_")} <= may, name
+
+
+# The size budget (CONS-1B). ops.py held 3,514 lines before the move; after it, 2,676. The budget is that count plus
+# 100, so that a change that adds an operation does not breach it by a few lines but a block that should live in a
+# sibling does. A sibling is capped at 1,200 lines. The next package of the layer (the domain out of ops.py, after the
+# launch) lowers OPS_PY_BUDGET as it moves code; nothing raises it without a reason written beside the number.
+OPS_PY_BUDGET = 2776
+SIBLING_BUDGET = 1200
+
+
+def test_the_operations_layer_keeps_its_size_budget():
+    assert len((RUNTIME / "ops.py").read_text(encoding="utf-8").splitlines()) <= OPS_PY_BUDGET, \
+        "runtime/ops.py is over its budget (package CONS-1B): move a block to a sibling of the layer, do not raise the number"
+    over = {p.name: n for p in sorted(RUNTIME.glob("ops_*.py"))
+            if (n := len(p.read_text(encoding="utf-8").splitlines())) > SIBLING_BUDGET}
+    assert over == {}, f"a sibling of ops.py is over {SIBLING_BUDGET} lines (package CONS-1B): split it by job"

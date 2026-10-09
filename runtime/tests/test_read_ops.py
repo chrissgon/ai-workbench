@@ -23,6 +23,7 @@ import standin_tree as st
 lab = st.load("lab")
 ops = st.load("ops")
 ops_core = st.load("ops_core")
+ops_reads = st.load("ops_reads")
 plan = st.load("plan")
 cli = st.load("cli")
 proof_rules = st.load("proof")
@@ -319,7 +320,7 @@ def test_the_connections_operation_never_returns_a_secrets_value(tree, monkeypat
     assert any(not s["found"] and s["where"] is None for s in found["secrets"])  # the providers' credentials, not set here
     assert os.environ["INVENTED_MODEL_KEY"] == PLANTED_TWO  # the environment is as it was
     assert found["image"] == {"name": "standin", "present": True, "evidence": True}
-    assert found["platform"] == ops._platform_row(platform_module.machine(), sys.platform, "linux/arm64")
+    assert found["platform"] == ops_reads._platform_row(platform_module.machine(), sys.platform, "linux/arm64")
     assert set(found["platform"]) == {"machine", "evidence", "here", "same"}
     assert found["platform"]["machine"] == platform_module.machine()
     # An image that is not the evidence's, and no image.
