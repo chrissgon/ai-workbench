@@ -5,6 +5,7 @@
 
 import * as api from "../api.js";
 import { h } from "../dom.js";
+import { EVENT as DRAWER_EVENT } from "../frame/drawer.js";
 import { createPanel } from "../frame/panel.js";
 import { createEngine, NoWebGL } from "../scene/engine.js";
 import * as router from "../router.js";
@@ -28,7 +29,7 @@ export function messageOf(error) {
  * loaded: the page has read the project list once; known: the project exists; accepted: its configuration is accepted.
  */
 export function createControlView(frame) {
-  const panel = createPanel({ title: "Control room", subtitle: SUBTITLE, icon: "server", width: "wide" });
+  const panel = createPanel({ screen: "control", title: "Control room", subtitle: SUBTITLE, icon: "server", width: "wide" });
   panel.el.classList.add("wb-control");
   const skills = createSkillsTab();
   const costs = createCostsTab({ onSince: (text) => readCosts(text) });
@@ -65,6 +66,8 @@ export function createControlView(frame) {
     if (!(e instanceof NoWebGL)) throw e;
     frame.sceneUnavailable(true);
   }
+  // The Control room draws its own scene, not the frame's: a sheet at full on a phone pauses it, as a hidden tab does.
+  panel.el.addEventListener(DRAWER_EVENT, (event) => { if (engine) engine.setPaused(Boolean(event.detail && event.detail.covering)); });
   // a panel or a band that changes size changes the free rectangle: one refit and one frame, never on a timer
   const observer = new ResizeObserver(() => { if (engine) engine.refit(); });
   observer.observe(panel.el);
@@ -256,6 +259,7 @@ export function createControlView(frame) {
       observer.disconnect();
       if (engine) engine.dispose();
       frame.sceneUnavailable(false);
+      panel.drawer.destroy();   // before the panel leaves the page
       panel.el.remove();
     },
   };

@@ -15,6 +15,7 @@ import { createInbox } from "../floor/inbox.js";
 import { createTasksTab } from "../floor/tasks-tab.js";
 import { createViewer } from "../floor/viewer.js";
 import { busyLine, createTabs, focusOpenLink } from "../floor/widgets.js";
+import { bindDrawer, createGrip } from "../frame/drawer.js";
 import { icon } from "../frame/icons.js";
 import * as origin from "../frame/origin.js";
 import { acceptance } from "../model.js";
@@ -68,7 +69,9 @@ export function createFloorView(frame, env) {
     if (last) origin.close(last.route);
   }
   const viewerHost = h("div", { class: "wb-viewer-host", hidden: true }, viewer.el);
-  const panel = h("section", { class: "pui-card wb-panel wb-panel-floor", role: "region", "aria-labelledby": "wb-floor-title", id: "wb-panel", tabindex: "-1" }, normal, unknown, viewerHost);
+  const grip = createGrip();
+  const panel = h("section", { class: "pui-card wb-panel wb-drawer wb-panel-floor", role: "region", "aria-labelledby": "wb-floor-title", id: "wb-panel", tabindex: "-1" }, grip, normal, unknown, viewerHost);
+  const drawer = bindDrawer(panel, { screen: "floor", grip });
   frame.main.append(panel);
   const phoneDialog = h("dialog", { class: "pui-modal wb-viewer-dialog", "aria-label": "Document" });
   phoneDialog.addEventListener("close", () => {
@@ -115,8 +118,7 @@ export function createFloorView(frame, env) {
       label: "Floor, loading",
       getInsets: () => {
         const base = frame.insets(panel);
-        if (frame.isPhone()) return { ...base, left: 8, right: 8, bottom: 6, pad: 1.02 };
-        return base;
+        return base;     // on a phone the frame's insets already leave what the sheet and the cards cover
       },
       onOpen: sceneOpen,
       onUnavailable: () => frame.sceneUnavailable(true),
@@ -357,6 +359,7 @@ export function createFloorView(frame, env) {
       observer.disconnect();
       viewer.close();
       // the scene is the frame's: the Building takes it over (the floors come back), or the frame takes it down
+      drawer.destroy();   // before the panel leaves the page: the frame hears that nothing covers the scene
       panel.remove();
       phoneDialog.remove();
       frame.sceneUnavailable(false);

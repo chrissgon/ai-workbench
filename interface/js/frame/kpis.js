@@ -53,7 +53,7 @@ export function createKpis() {
       }
       decisions.figure.textContent = String(sums.decisions);
       decisions.unit.textContent = "waiting";
-      decisions.el.title = "waiting for you";
+      decisions.el.title = `${sums.decisions} open decision${sums.decisions === 1 ? "" : "s"} waiting for you`;
       decisions.el.setAttribute("aria-label", `Open decisions ${sums.decisions} waiting for you`);
       runs.figure.textContent = String(sums.runs);
       runs.unit.textContent = `of ${sums.runsCap}`;
