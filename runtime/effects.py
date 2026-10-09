@@ -24,8 +24,29 @@ the side-effect word the skill's manifest names in its gate. This module holds w
 payload, the error, the effect file and its hash, the call of a provider, the row of the state file, and the registry.
 A new kind is a module and a row of KINDS; runtime/ops.py does not change.
 
-Public names: recover_payload(reply, tmp_dir, readable), EffectError, KINDS, module_for(kind), write(run_dir, doc),
-read_document(effect_file, sha256), provider_call(provider, args[, run]), approval_row(approval, doc).
+The registry has one key per kind, and the key is a word of the side-effect vocabulary (contracts/environment.md,
+SIDE_EFFECTS of scripts/validate.py): the gate path reads the word a skill's manifest names in its gate, the policy
+path reads the word of the effect document a handler hands to ops.execute_under_policy, and both find the same module.
+What a kind module exposes, in two groups:
+
+    for both paths     describe(doc)                     one line that says what is approved or done: the state file's
+                                                         row and the action's record
+                       PROVIDER_CLASS                    the class of provider that executes it (providers/resolve.py)
+    for the gate path  refusal, head, prepare, parse, mismatch, document, body, title, summary, unconfigured, verify,
+                       execute                           the names runtime/effect_pull_request.py lists and ops.py calls
+    for the policy     POLICY                            True when the kind may run under a standing approval
+    path               policy_platform(doc)              the platform the provider is resolved with, or None
+                       policy_effect(doc)                {"kind", "target", "files", "items"}: what autonomy.covers checks
+                       policy_argv(doc)                  the verb and the document's args, without the flags in
+                                                         RESERVED_FLAGS: the operation adds --allow per bound glob,
+                                                         --idempotency-key, then --dry-run or --confirmed
+
+A kind of one path alone has only that path's names. EFFECT_KEYS and RESERVED_FLAGS are the common shape of a
+document a handler hands over and the flags the operation adds and a handler never may.
+
+Public names: recover_payload(reply, tmp_dir, readable), EffectError, KINDS, EFFECT_KEYS, RESERVED_FLAGS,
+module_for(kind), policy_kinds(), write(run_dir, doc), read_document(effect_file, sha256), provider_call(provider,
+args[, run]), approval_row(approval, doc).
 
 Usage (a library): python3 runtime/effects.py --help
 
@@ -100,9 +121,15 @@ def recover_payload(reply: str, tmp_dir, readable) -> dict:
 
 # --- the effect: approved by its hash, executed by code (WP-4.8; limits L15, L16, L17) -----------------------------
 
-# The registry of the kinds of effect: the side-effect word a skill's manifest names in its gate (gate.effect) -> the
-# module of runtime/ that holds the kind. A word not here opens a review, never an effect.
-KINDS = {"create": "effect_pull_request"}
+# The registry of the kinds of effect: a word of the side-effect vocabulary -> the module of runtime/ that holds the
+# kind. For the gate path the word is the one a skill's manifest names in its gate (gate.effect); a word not here
+# opens a review, never an effect. For the policy path it is the kind of the document a handler hands over.
+KINDS = {"create": "effect_pull_request", "push": "effect_commit"}
+
+# The keys of the effect document a handler hands to ops.execute_under_policy, and no others; and the flags only the
+# operation adds to the provider's verb, never a handler.
+EFFECT_KEYS = ("policy", "kind", "target", "files", "items", "idempotency_key", "payload_sha256", "args")
+RESERVED_FLAGS = ("--confirmed", "--dry-run", "--allow", "--idempotency-key")
 
 EFFECT_FILE = "effect.json"
 PROVIDER_TIMEOUT = 600
@@ -123,6 +150,11 @@ def module_for(kind):
     if name is None:
         raise EffectError("usage", f"there is no effect kind {kind!r} (the kinds: {', '.join(sorted(KINDS))})")
     return importlib.import_module(name)
+
+
+def policy_kinds() -> list:
+    """The words of the registry whose module may run under a standing approval (its POLICY), sorted."""
+    return sorted(word for word in KINDS if getattr(module_for(word), "POLICY", False) is True)
 
 
 def _text(doc: dict) -> bytes:

@@ -866,10 +866,18 @@ def _effect_or_review(ctx: dict, task: dict, request: dict, dest: str, decision:
             "payload": payload, "payload_sha256": digest}
 
 
-def _provider_path(cfg: dict, cls: str) -> str:
+def _provider_path(cfg: dict, cls: str, platform: str | None = None) -> str:
     """The provider script of a class, found through providers/resolve.py, with the implementation the configuration
-    names for the code provider (code.provider) when the class is integration:vcs; never a path built here."""
+    names for the code provider (code.provider) when the class is integration:vcs; never a path built here. A class
+    with a parameter (publisher:<platform>) is written with its placeholder and resolved with the platform the kind
+    names: the platform is part of the class, never a second argument of the resolver. A placeholder without a
+    platform, and a platform for a class that takes none, are refused."""
     resolve = _load("workbench_provider_resolve", os.path.join(ROOT, "providers", "resolve.py"))
+    if (platform is not None and not isinstance(platform, str)) or bool(resolve.PLACEHOLDER.search(cls)) != (platform is not None):
+        raise OpsError(f"the class {cls} and the platform {platform!r} do not fit: a class written with a placeholder "
+                       f"needs a platform, and no other takes one", 3)
+    if platform is not None:
+        cls = resolve.PLACEHOLDER.sub(lambda _: platform, cls)
     implementation = cfg["code"]["provider"] if cls == "integration:vcs" and cfg.get("code") else None
     try:
         return resolve.resolve(cls, root=ROOT, implementation=implementation)["path"]
@@ -1535,14 +1543,10 @@ def standing(project: str, policy: str) -> dict:
     return _standing(context(project), policy)
 
 
-POLICY_CALLS = {"push": ("integration:vcs", "commit-files")}  # kind -> (class, verb); a kind not here cannot run under a policy
-EFFECT_KEYS = ("policy", "kind", "target", "files", "items", "idempotency_key", "payload_sha256", "args")
-RESERVED_FLAGS = ("--confirmed", "--dry-run", "--allow", "--idempotency-key")  # the operation adds these, never a handler
-
-
 def _effect_document(path: str, policy: str) -> dict:
     """The effect document a handler hands over, checked whole: exactly EFFECT_KEYS, the right types, the policy it
-    was called for, a kind of the side-effect vocabulary that POLICY_CALLS knows, no reserved flag among args."""
+    was called for, a kind of the side-effect vocabulary whose module (effects.KINDS) may run under a policy, no
+    reserved flag among args."""
     try:
         with open(path, "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
@@ -1550,12 +1554,12 @@ def _effect_document(path: str, policy: str) -> dict:
         raise OpsError(f"the effect file cannot be read: {type(e).__name__}", 2) from None
     if not isinstance(doc, dict):
         raise OpsError("an effect file holds one JSON object", 2)
-    for key in EFFECT_KEYS:
+    for key in effects.EFFECT_KEYS:
         if key not in doc:
             raise OpsError(f"the effect file lacks the key {key}", 2)
-    unknown = sorted(set(doc) - set(EFFECT_KEYS))
+    unknown = sorted(set(doc) - set(effects.EFFECT_KEYS))
     if unknown:
-        raise OpsError(f"the effect file has the unknown key {unknown[0]} (known: {', '.join(EFFECT_KEYS)})", 2)
+        raise OpsError(f"the effect file has the unknown key {unknown[0]} (known: {', '.join(effects.EFFECT_KEYS)})", 2)
     for key in ("policy", "kind", "target", "idempotency_key", "payload_sha256"):
         if not isinstance(doc[key], str) or not doc[key].strip():
             raise OpsError(f"{key} of the effect file is a non-empty text", 2)
@@ -1572,9 +1576,10 @@ def _effect_document(path: str, policy: str) -> dict:
         raise OpsError(f"the effect file is for the policy {doc['policy']!r}, not {policy!r}", 2)
     if doc["kind"] not in _effect_words():
         raise OpsError(f"kind of the effect file is one of {', '.join(_effect_words())}", 2)
-    if doc["kind"] not in POLICY_CALLS:
-        raise OpsError(f"the effect kind {doc['kind']!r} cannot run under a policy (it can: {', '.join(POLICY_CALLS)})", 2)
-    reserved = [a for a in doc["args"] if a in RESERVED_FLAGS]
+    if doc["kind"] not in effects.policy_kinds():
+        raise OpsError(f"the effect kind {doc['kind']!r} cannot run under a policy "
+                       f"(it can: {', '.join(effects.policy_kinds())})", 2)
+    reserved = [a for a in doc["args"] if a in effects.RESERVED_FLAGS]
     if reserved:
         raise OpsError(f"args of the effect file holds {reserved[0]}: the operation adds it, the handler never does", 2)
     return doc
@@ -1594,16 +1599,19 @@ def execute_under_policy(project: str, policy: str, effect_file: str) -> dict:
     answer = _standing(ctx, policy)
     if not answer["covered"]:
         return {"executed": False, "policy": policy, "why": answer["why"]}
-    cls, verb = POLICY_CALLS[doc["kind"]]
+    module = effects.module_for(doc["kind"])  # _effect_document accepted the kind: its module may run under a policy
     with _run_lock(cfg):
         row = _stored(ctx, store.approval_get, answer["approval"]["id"])
         executed = _stored(ctx, store.action_count, kind=policy, since=_midnight())
-        effect = {"kind": doc["kind"], "target": doc["target"], "files": doc["files"], "items": doc["items"]}
+        effect = module.policy_effect(doc)
         ok, why = autonomy.covers(row, _policy_hash(cfg, row), effect, executed, datetime.datetime.now(datetime.timezone.utc))
         if not ok:
             return {"executed": False, "policy": policy, "why": why}
-        provider = _provider_path(cfg, cls)
-        argv = [verb, *doc["args"]]
+        provider = _provider_path(cfg, module.PROVIDER_CLASS, platform=module.policy_platform(doc))
+        argv = list(module.policy_argv(doc))
+        added = [a for a in argv if a in effects.RESERVED_FLAGS]
+        if added:  # the kind's own arguments never carry what only the operation adds (the bounds' globs, the key, the flag)
+            raise OpsError(f"the arguments of the effect kind {doc['kind']!r} hold {added[0]}: the operation adds it", 1)
         for glob in row["bounds"]["files"]:
             argv += ["--allow", glob]
         argv += ["--idempotency-key", doc["idempotency_key"]]
