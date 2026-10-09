@@ -33,6 +33,17 @@ Where: **repo** is this repository. A skill writes nothing into this repository 
 | `shared/scripts/copies.json` | repo | the manifest of generated copies: ten entries, eight whole scripts and two blocks of contracts (the class table and the table of owning skills, copied into `skills/core-orchestrator/references/requirement-classes.md` and `owners.md`), each destination with `adopted` | maintainers | `scripts/sync_copies.py`, `scripts/validate.py` | changed by pull request | yes | no |
 | `templates/capability.SKILL.md`, `templates/flow.SKILL.md`, `templates/agent.md` | repo | the skeletons, with `__NAME__`, `__AREA__`, `__TITLE__` | maintainers | `scripts/new-skill.sh`; `scripts/tests/test_canonical_sentences.py` | changed by pull request | yes | no |
 
+The flow files, one row each, with their tasks in order:
+
+<!-- generated: flow-files -->
+| Flow | Title | Tasks, in order (key and skill) |
+|---|---|---|
+| `brand` | Brand | `strategy` (`brand-strategy`), `name` (`brand-name`), `identity` (`brand-identity`), `voice` (`brand-voice`), `guidelines` (`brand-guidelines`) |
+| `code-change` | A code change, to its pull request | `implement` (`eng-implement`), `pull-request` (`ops-pull-request`) |
+| `design` | Design | `spec` (`product-feature-spec`), `flows` (`design-ux-flows`), `system` (`design-system`), `brief-city` (`design-brief`), `brief-building` (`design-brief`), `brief-floor` (`design-brief`), `brief-lobby` (`design-brief`), `brief-control-room` (`design-brief`) |
+| `market-positioning` | Market and positioning | `market` (`biz-market-analysis`), `positioning` (`biz-icp-positioning`) |
+<!-- /generated -->
+
 ## Abstractions
 
 **Capability and flow.** `metadata.kind` is `capability` or `flow`, and only a `flow-` name is a flow. A capability does one job, never invokes another skill, and may cite another in "When not to use"; the one exception is the router, `core-orchestrator`, which names the skill and hands the request over and does none of its work. A flow names its phase skills in a `## Phases` table (`Skill`, `Optional`, `Milestone`, `Produces`, `Checkpoint question`), reads `docs/workbench/state.md` first, runs `core-project-init` when it is missing, stops at each checkpoint as the state file's `Autonomy.Checkpoints` says (`every-phase`, `milestones`, `end`), and lists the state file in `updates`, never in `outputs`. A flow skill is read by a model; a flow file (`flows/<name>.json`) is read by code, and the two are not the same thing: `flow-fix-bug` has no flow file, and the three flow files have no flow skill.
@@ -194,6 +205,18 @@ flowchart TD
 | A harness | never: no tool name, folder or tool of a harness | principle 1; adapters read the core, never the reverse |
 
 **Replaceability.** A skill the runtime uses keeps its declared paths and its manifest; the skills the runtime is wired to (the router, the brief, the sub-task skill), the code areas and the packs in use are data in `runtime/roles.json`, so replacing one edits that file and no step; a skill's script runs isolated (`runtime/isolated.py`) and is never loaded into the runtime.
+
+The roles the runtime is wired to, from `runtime/roles.json`:
+
+<!-- generated: roles -->
+| Key | Value |
+|---|---|
+| `router` | `core-orchestrator` |
+| `brief` | `core-clarify` |
+| `subtask` | `eng-implement` |
+| `code_areas` | `engineering`, `delivery` |
+| `packs_in_use` | `business`, `brand`, `design`, `planning`, `code` |
+<!-- /generated -->
 
 **Who reads it.** A harness, through an adapter's installer, which copies or links the skills of one pack (and `shared/references/` beside them); the lab, which stages one skill into a run folder without its `evals/` and `scripts/tests/` and grades the run; the runtime, through its lab facade for a run and directly for the frontmatter (`runtime/skill_meta.py`), the runtime manifests, the packs, the flow files and a few sentences of a skill's text that its classifier and merge read, each bound by a test (`runtime/tests/test_skill_text_binding.py`); the router, which reads the frontmatter of the skill it routes to and its own copies of the class and owner tables.
 

@@ -35,6 +35,49 @@ Where: **repo** is this repository, **project** is the target project, **data** 
 | `<data_dir>/documents/not-taken/`, `imported.json`, `notices.json` | data | page texts not taken; the last import of each document; the read-only pages that carry the notice | `runtime/documents.py` | `runtime/documents.py`, `ops.task_prompt` (the imported line) | grows | no | yes |
 | `<data_dir>/dispatch-pin.json` | data | the path and sha256 of the accepted `runtime.json`, mode 0600 | `cli.py pin` | `runtime/dispatcher.py` (the scheduler's entry) | written again after each accepted change | no | yes |
 
+The modules of the runtime, one row each, from the first sentence of their docstrings:
+
+<!-- generated: runtime-modules -->
+| Module | What it is (first sentence of its docstring) |
+|---|---|
+| `runtime/autonomy.py` | The five autonomy modes of an area agent, from the three facts under them, and the daily caps: the one module that compares a mode word (decision D14 of the platform plan). |
+| `runtime/board.py` | The mirror of tasks to and from the project's task board (class integration:issue-tracker). |
+| `runtime/changeset.py` | The change set: how code a run changed comes back (limit L9), and why a working document never enters a commit (limit L11). |
+| `runtime/chat.py` | The conversation with the planning agent, in the terminal: one more shell of the operations layer (runtime/ops.py, say). |
+| `runtime/cli.py` | The terminal shell of the task runtime: one command per operation of runtime/ops.py, nothing else. |
+| `runtime/costs.py` | The cost of the runs, recomputed from the token counts the adapter left in a run folder and the prices the person typed into the project's configuration (model_prices, runtime/project_config.py). |
+| `runtime/deps.py` | A project's dependencies, installed by code: in the eval image, in a step with no model that sees only the dependency files, and copied into each run that needs them. |
+| `runtime/dispatcher.py` | The dispatcher of the task runtime: what may start now, and what an autonomy mode releases, decided by one pure function from a snapshot of the store. |
+| `runtime/documents.py` | The mirror of documents to and from the project's documents platform (class integration:documents). |
+| `runtime/drop.py` | The file drop: how a person hands a file to one task (a logo made elsewhere, a spreadsheet), since the runtime has no image provider. |
+| `runtime/effect_pull_request.py` | The effect kind of the pull-request skill: one commit made by the code provider, then the pull request opened. |
+| `runtime/effects.py` | The external effects of the task runtime: what a skill with a confirmation gate showed at its gate, recovered from what the run left, and (stage 4, WP-4.8) its execution by code once the person approved its hash. |
+| `runtime/endings.py` | How a run ended, for a run that did not fail: the classifier of endings. |
+| `runtime/flow_files.py` | Flow files: flows/&lt;name&gt;.json, one data file per flow, with its tasks and their dependencies written out. |
+| `runtime/isolated.py` | Skill code the runtime runs on the host, as an isolated subprocess with a scrubbed environment. |
+| `runtime/lab.py` | The lab facade: the one file of runtime/ that talks to the lab (evals/execution.py, the execution kit). |
+| `runtime/manifest.py` | The runtime manifest of a skill: skills/&lt;name&gt;/evals/runtime-manifest.json, read and checked. |
+| `runtime/mcp.py` | The MCP mode: the operations layer of runtime/ops.py served as tools of a Model Context Protocol server over standard input and output. |
+| `runtime/operations.py` | The table of operations: the one place that says what the operations layer (runtime/ops.py) offers to a shell. |
+| `runtime/ops.py` | The operations layer of the task runtime: every operation a person or a scheduler can perform, once. |
+| `runtime/path_rule.py` | The path rule: how one path of what a run left goes back to the project. |
+| `runtime/plan.py` | The plan of a request: the tasks code builds from a route, which the person approves before any task exists. |
+| `runtime/progress.py` | Progress and the summary of a period, computed from the store's records: no model writes them. |
+| `runtime/project_config.py` | The project's configuration of the runtime: &lt;project&gt;/docs/workbench/runtime.json, and its hash. |
+| `runtime/proof.py` | The proof of a skill, and the choice of the model a run of it goes to. |
+| `runtime/roles.py` | The skills the runtime names, as data: runtime/roles.json, read and checked. |
+| `runtime/router.py` | The router step of the task runtime: what code reads of one run of the router skill asked only for the route. |
+| `runtime/service.py` | The local service: the operations layer of runtime/ops.py served on this machine through an API, with a token and an origin check, and the static files of the interface/ folder of the checkout. |
+| `runtime/shell_kit.py` | What the two network-free shells of the operations layer share: the local service (runtime/service.py) and the MCP mode (runtime/mcp.py). |
+| `runtime/skill_meta.py` | What a skill declares in its frontmatter, read for the runtime: the artifact lists, the requirement classes, the side effects and the version. |
+| `runtime/state_merge.py` | The one module that decides what a run may change in the project's state file (docs/workbench/state.md), limit L10 of the platform plan. |
+| `runtime/workcopy.py` | What enters a run copy, and what comes back from it: the limits of the task runtime that decide which files of a project a run sees (L1 to L6) and which files a run leaves come back (L7, L8, L12, L14). |
+| `runtime/handlers/published_posts.py` | The weekly routine that lists the published posts (backlog item PB16): the first handler of the task runtime. |
+| `runtime/handlers/social.py` | Agent runtime: find new work, run an agent on it read-only, gate its proposal, execute or queue it. |
+| `runtime/handlers/social_vote.py` | The runtime's weekly vote step (docs/architecture/weekly-vote.md), imported by scripts/runtime.py. |
+| `runtime/handlers/social_vote_job.py` | Publish the weekly vote post at its slot time, then record it in the profile repository's vote files. |
+<!-- /generated -->
+
 **The store, as built.** Migration 1 holds the first runtime's tables (`cursors`, `events`, `runs`, `inbox`, `actions`); the task runtime uses `cursors` and `actions` too. The migrations, generated from `MIGRATIONS` of `providers/store/sqlite.py`:
 
 <!-- generated: store-migrations -->
@@ -126,6 +169,17 @@ A pending decision is `open`, `resolved` or `cancelled`. A release by an autonom
 **The autonomy modes, from three facts.** Each area agent (an entry of `area_agents`) has one of five modes: `stopped`, `supervised`, `milestones` (default), `autonomous`, `autonomous-with-policy`. They rest on three facts: whether the agent is enabled, the checkpoints of its mode (`every-phase`, `milestones`, `end`) and whether a standing approval is in force; `mode_of` maps the facts back, so a policy mode whose approval expired acts as `autonomous`. **Daily caps**: runs per day on the reference model and dollars per day on the floor model; an absent cap is 0, and a floor run of unknown cost counts at `max_cost_usd_per_run` (default 0.5).
 
 **The handler.** A routine under `runtime/handlers/`, configured under `handlers` of the configuration, with its own verbs, started as a separate process with one JSON object out. One today: `published-posts` (verbs `tick`, `preview`). A handler prepares an effect (a JSON document: policy, kind, target, files, items, idempotency key, payload hash, and the provider verb's own flags) and hands it to `ops.execute_under_policy` through `cli.py execute-under-policy`. That one operation holds limit L15 for policy effects: it checks the standing approval and every bound with `autonomy.covers`, holding the run lock and counting the day's actions again; it adds `--allow` for exactly the approval's file globs and the idempotency key, makes the provider's dry run and then its confirmed call (`effects.provider_call`, which starts the verb through `resolve.invoke` of `providers/resolve.py`, the one function that calls a provider), and records the action. A handler never passes the confirming flag, never re-reads the bounds and never records an action; a test keeps those words out of `runtime/handlers/`.
+
+The handlers under `runtime/handlers/`, with the verbs each declares in `VERBS` (a dash: the file declares none):
+
+<!-- generated: handlers -->
+| Handler | File | Verbs |
+|---|---|---|
+| `published-posts` | `runtime/handlers/published_posts.py` | `tick`, `preview` |
+| `social` | `runtime/handlers/social.py` | `tick`, `pin`, `add-comment`, `status`, `inbox`, `approve`, `reject` |
+| `social-vote` | `runtime/handlers/social_vote.py` | - |
+| `social-vote-job` | `runtime/handlers/social_vote_job.py` | - |
+<!-- /generated -->
 
 **The mirror and its records.** The board mirror keeps a task's item (`remote_id`, `remote_version`, the hash last written); the person owns the title, the text, the state and the comments, the rest is shown. The documents mirror keeps one `document_records` row per document, with the status `mirrored`, `read_only` or `rejected` and a note. A saved comment is `open`, `used` (by one pending decision) or `dismissed`.
 

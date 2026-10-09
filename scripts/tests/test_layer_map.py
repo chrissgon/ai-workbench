@@ -278,6 +278,18 @@ NOT_A_DEPENDENCY = {
         "nothing is imported",
     ("scripts/architecture_tables.py", "runtime/dispatcher.py"):
         "the generator reads the source text of the file to write a documentation table; nothing is imported",
+    ("scripts/architecture_tables.py", "runtime/service.py"):
+        "the generator reads the routes in the source text of the file to write a documentation table; nothing is "
+        "imported",
+    ("scripts/architecture_tables.py", "runtime/project_config.py"):
+        "the generator reads the closed key lists in the source text of the file to write a documentation table; "
+        "nothing is imported and no configuration is opened",
+    ("scripts/architecture_tables.py", "runtime/autonomy.py"):
+        "the generator reads the closed key lists in the source text of the file to write a documentation table; "
+        "nothing is imported",
+    ("scripts/architecture_tables.py", "runtime/deps.py"):
+        "the generator reads the closed key list and the names of the recipes in the source text of the file to write "
+        "a documentation table; nothing is imported",
 }
 
 
