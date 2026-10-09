@@ -15,6 +15,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 plan = st.load("plan")
 autonomy = st.load("autonomy")
 dispatcher = st.load("dispatcher")
@@ -90,7 +91,7 @@ def test_the_function_changes_nothing_and_imports_no_sibling():
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     monkeypatch.setattr(plan, "resolve_pack", lambda pack, root: list(PACKS[pack]))
     flows = built["tree"] / "flows"
     (flows / "chain.json").write_text(json.dumps({"flow": "chain", "title": "Chain", "tasks": [
@@ -129,7 +130,7 @@ def planned(tree, flow: str) -> int:
 
 
 def store_rows(tree, request=None):
-    ctx = ops.context(str(tree["project"]))
+    ctx = ops_core.context(str(tree["project"]))
     return ctx["store"].tasks_list(ctx["conn"], request)
 
 

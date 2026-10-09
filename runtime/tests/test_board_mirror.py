@@ -14,6 +14,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 
 # A provider that stands for one on a platform: it records every call and keeps no board.
 STUB = '''#!/usr/bin/env python3
@@ -57,7 +58,7 @@ def tree(tmp_path, monkeypatch):
     board = tmp_path / "board"
     board.mkdir()
     configure(built, {"provider": "local", "dir": str(board)})
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     monkeypatch.setattr(ops.plan, "pack_skills", lambda cfg, root: ["demo-asks", "demo-writes"])
     accept(str(built["project"]))
     return {**built, "board": board, "stub_calls": folder / "stub-calls.txt"}
@@ -77,7 +78,7 @@ def planned(tree) -> dict:
 
 
 def store(tree):
-    ctx = ops.context(project_of(tree))
+    ctx = ops_core.context(project_of(tree))
     return ctx["store"], ctx["conn"]
 
 

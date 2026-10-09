@@ -17,6 +17,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 docs = st.load("documents")
 
 MARKET = "docs/business/market.md"
@@ -65,7 +66,7 @@ def tree(tmp_path, monkeypatch):
     pages = tmp_path / "pages"
     pages.mkdir()
     configure(built, {"provider": "local", "dir": str(pages)})
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     monkeypatch.setenv("WB_PLANTED_SECRET", "planted")  # in the runtime's environment, never in the checker's
     calls = []
     real = docs.call
@@ -93,7 +94,7 @@ def project_file(tree, rel=MARKET):
 
 
 def record(tree, rel=MARKET):
-    ctx = ops.context(project_of(tree))
+    ctx = ops_core.context(project_of(tree))
     return ctx["store"].document_get(ctx["conn"], rel)
 
 
@@ -158,7 +159,7 @@ def test_a_comment_added_on_an_unchanged_page_is_saved_by_the_next_pull(tree):
     out = ops.sync(project)["documents"]
     assert tree["calls"] == ["stat", "comments"] and out["comments"] == 1 and out["imported"] == []
     assert record(tree)["remote_version"] == version
-    ctx = ops.context(project)
+    ctx = ops_core.context(project)
     assert [c["text"] for c in ctx["store"].comments_list(ctx["conn"], document_path=MARKET)] == ["Name the city."]
     assert ops.sync(project)["documents"]["comments"] == 0  # saved once
     tree["calls"].clear()  # the pull run_next makes before a claim lists them too
@@ -204,9 +205,9 @@ def test_an_imported_edit_is_named_once_to_the_next_run_of_a_task_that_reads_it(
     assert again["skill"] == "demo-writes" and "the user's answer" in prompt(again) and line not in prompt(again)
     # Only code writes it: a run's own text never makes the line, and a document changed after the import is no
     # longer the person's text.
-    assert docs.imported_since(ops.context(project)["cfg"], None) == [MARKET]
+    assert docs.imported_since(ops_core.context(project)["cfg"], None) == [MARKET]
     project_file(tree).write_text("# Market analysis\n\nRewritten.\n", encoding="utf-8")
-    assert docs.imported_since(ops.context(project)["cfg"], None) == []
+    assert docs.imported_since(ops_core.context(project)["cfg"], None) == []
 
 
 def test_an_imported_edit_is_not_written_back(tree):
@@ -256,7 +257,7 @@ def test_open_comments_are_saved_before_the_page_is_replaced(tree):
     project = project_of(tree)
     (tree["pages"] / (MARKET + ".comments.md")).write_text("- Name the city.\n", encoding="utf-8")
     project_file(tree).write_text("# Market analysis\n\nA new draft.\n", encoding="utf-8")
-    ctx = ops.context(project)
+    ctx = ops_core.context(project)
     tree["calls"].clear()
     out = docs.push(ctx, [MARKET])
     assert out["pushed"] == [MARKET] and out["comments"] == 1
@@ -321,7 +322,7 @@ def test_a_read_only_page_edited_after_the_last_write_is_not_overwritten_and_is_
     project_file(tree, ICP).write_text("# ICP\n\nA new profile from the project.\n", encoding="utf-8")
     tree["calls"].clear()
     assert ops.sync(project)["documents"]["pushed"] == [] and "write" not in tree["calls"]
-    assert docs.push(ops.context(project), [ICP])["pushed"] == [] and page(tree, ICP).read_bytes() == on_page
+    assert docs.push(ops_core.context(project), [ICP])["pushed"] == [] and page(tree, ICP).read_bytes() == on_page
     # A push that meets the edit itself (no pull before it) refuses as well.
     other = profiled_again(tree, project)
     assert other["rejected"] == [{"path": ICP, "note": docs.READ_ONLY_CHANGED}] and other["pushed"] == []
@@ -333,7 +334,7 @@ def profiled_again(tree, project) -> dict:
     edit_page(tree, "A new profile from the project.", "Edited on the page again.", rel=ICP)
     project_file(tree, ICP).write_text("# ICP\n\nAnother profile.\n", encoding="utf-8")
     on_page = page(tree, ICP).read_bytes()
-    out = docs.push(ops.context(project), [ICP])
+    out = docs.push(ops_core.context(project), [ICP])
     assert page(tree, ICP).read_bytes() == on_page
     return out
 
@@ -368,7 +369,7 @@ def test_take_project_writes_the_file_over_a_read_only_page(tree):
     assert ops.sync(project)["documents"]["rejected"]
     taken = ops.sync(project, take="project", path=ICP)["documents"]
     assert taken["pushed"] == [ICP] and taken["not_taken"] == [ICP]
-    got = ops.context(project)
+    got = ops_core.context(project)
     read = docs.call(got["cfg"], got["root"], "read", ["--id", ICP])
     assert read["markdown"].encode("utf-8") == written and read["notice"] == docs.NOTICE
     assert (record(tree, ICP)["status"], record(tree, ICP)["note"]) == ("read_only", None)

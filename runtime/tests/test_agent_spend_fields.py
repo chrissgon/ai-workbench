@@ -18,6 +18,7 @@ autonomy = st.load("autonomy")
 dispatcher = st.load("dispatcher")
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 operations = st.load("operations")
 
 RUNS = [{"agent": "brand", "model": "ref", "cost_usd": None}, {"agent": "brand", "model": "ref", "cost_usd": 0.4},
@@ -51,7 +52,7 @@ def seed_runs(tree, rows):
     from test_read_ops import planned
     path = str(tree["project"])
     planned(tree, "single")
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     task = next(t for t in ctx["store"].tasks_list(ctx["conn"]) if t["parent_id"] is not None)
     now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     for model, cost in rows:

@@ -18,6 +18,7 @@ from test_autonomy import tree  # noqa: F401  (planning supervised, brand autono
 
 autonomy = st.load("autonomy")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 project_config = st.load("project_config")
 
 ORDER = ("stopped", "supervised", "milestones", "autonomous", "autonomous-with-policy")
@@ -38,7 +39,7 @@ def put(tree, agent, mode):
 
 
 def cursor(tree, name):
-    ctx = ops.context(str(tree["project"]), check_config=False)
+    ctx = ops_core.context(str(tree["project"]), check_config=False)
     return ctx["store"].cursor_get(ctx["conn"], name)
 
 
@@ -169,24 +170,24 @@ def test_two_set_modes_at_once_never_make_code_accept_a_widening(tree, monkeypat
     writes its own change. B must not write its stale copy over A's (that would put brand back to autonomous and have
     code accept the widening): it finds the file moved and refuses, writing nothing."""
     project = str(tree["project"])
-    real = ops.context
+    real = ops_core.context
     state = {"n": 0}
 
     def context(p, **kw):
         out = real(p, **kw)
         state["n"] += 1
         if state["n"] == 1:  # B has loaded the accepted configuration; A runs to the end now
-            monkeypatch.setattr(ops, "context", real)
+            monkeypatch.setattr(ops_core, "context", real)
             a = ops.set_mode(project, "brand", "stopped")
             assert a["accepted"] is True
-            monkeypatch.setattr(ops, "context", context)
+            monkeypatch.setattr(ops_core, "context", context)
         return out
 
-    monkeypatch.setattr(ops, "context", context)
+    monkeypatch.setattr(ops_core, "context", context)
     with pytest.raises(ops.OpsError) as refused:
         ops.set_mode(project, "planning", "stopped")
     assert refused.value.code == 1 and "changed" in str(refused.value)
-    monkeypatch.setattr(ops, "context", real)
+    monkeypatch.setattr(ops_core, "context", real)
     modes = {k: v["mode"] for k, v in json.loads(config_path(tree).read_text(encoding="utf-8"))["area_agents"].items()}
     assert modes == {"planning": "supervised", "brand": "stopped"}  # A's change stands, B wrote nothing
     assert cursor(tree, project_config.ACCEPTED) == project_config.load(project)["sha256"]
@@ -194,7 +195,7 @@ def test_two_set_modes_at_once_never_make_code_accept_a_widening(tree, monkeypat
 
 def test_a_file_changed_by_hand_between_the_read_and_the_lock_is_not_accepted_by_a_narrowing(tree, monkeypatch):
     project = str(tree["project"])
-    real = ops.context
+    real = ops_core.context
 
     def context(p, **kw):
         out = real(p, **kw)
@@ -203,7 +204,7 @@ def test_a_file_changed_by_hand_between_the_read_and_the_lock_is_not_accepted_by
         config_path(tree).write_text(json.dumps(raw), encoding="utf-8")
         return out
 
-    monkeypatch.setattr(ops, "context", context)
+    monkeypatch.setattr(ops_core, "context", context)
     accepted = cursor(tree, project_config.ACCEPTED)
     with pytest.raises(ops.OpsError):
         ops.set_mode(project, "planning", "stopped")
@@ -214,8 +215,8 @@ def test_changes_of_the_configuration_take_a_lock_and_give_up_when_another_holds
     import fcntl
     project = str(tree["project"])
     cfg = project_config.load(project)
-    monkeypatch.setattr(ops, "CONFIG_LOCK_WAIT", 0.2)
-    fd = __import__("os").open(__import__("os").path.join(cfg["data_dir"], ops.CONFIG_LOCK_NAME), __import__("os").O_WRONLY | __import__("os").O_CREAT, 0o600)
+    monkeypatch.setattr(ops_core, "CONFIG_LOCK_WAIT", 0.2)
+    fd = __import__("os").open(__import__("os").path.join(cfg["data_dir"], ops_core.CONFIG_LOCK_NAME), __import__("os").O_WRONLY | __import__("os").O_CREAT, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX)
     try:
         with pytest.raises(ops.OpsError, match="in progress"):

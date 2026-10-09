@@ -13,6 +13,7 @@ import standin_tree as st
 plan = st.load("plan")
 flow_files = st.load("flow_files")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 ROOT = str(st.REPO)
 BUSINESS = ["biz-icp-positioning", "biz-market-analysis"]
 REQUEST = {"id": 4, "title": "Which market first", "text": "Tell me which market to go after first."}
@@ -96,7 +97,7 @@ def test_the_brand_flow_plans_five_tasks_and_only_the_strategy_is_ready_at_first
     assert [t["depends_on"] for t in tasks][1:] == [["strategy"], ["strategy"], ["strategy"],
                                                     ["strategy", "name", "identity", "voice"]]
     assert [t["milestone"] for t in tasks] == [True, True, True, False, True]
-    store = ops.store_module()
+    store = ops_core.store_module()
     db = str(tmp_path / "tasks.sqlite")
     store.init_db(db)
     conn = store.open_db(db)

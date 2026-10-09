@@ -17,6 +17,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 changeset = st.load("changeset")
 project_config = st.load("project_config")
 workcopy = st.load("workcopy")
@@ -28,7 +29,7 @@ CHECKS = {"readable": lab.readable, "scan": workcopy.scan, "settings": lab.carri
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     return built
 
 

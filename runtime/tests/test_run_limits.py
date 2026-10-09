@@ -19,6 +19,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 workcopy = st.load("workcopy")
 skill_meta = st.load("skill_meta")
 project_config = st.load("project_config")
@@ -40,7 +41,7 @@ GIT_ENV = {"GIT_AUTHOR_NAME": "Demo Person", "GIT_AUTHOR_EMAIL": "demo@example.c
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     project = str(built["project"])
     ops.accept_config(project, project_config.load(project)["sha256"])
     built["prepared"] = tmp_path / "prepared"
@@ -453,7 +454,7 @@ def test_limit_19_the_planning_agent_creates_no_task_it_returns_the_route_and_co
     monkeypatch.setattr(ops.plan, "pack_skills", lambda cfg, root: ["core-orchestrator", "demo-asks", "demo-writes"])
     path = str(tree["project"])
     request = ops.request(path, "Tell me which market to go after first.")["request"]
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     count = lambda: ctx["conn"].execute("SELECT COUNT(*) FROM tasks").fetchone()[0]
     out = ops.route(path, request)
     # The planning agent's run returned a route and claimed tasks; no task exists, and nothing it wrote came back.
@@ -482,7 +483,7 @@ def test_a_run_row_keeps_the_number_of_values_the_lab_replaced(tree):
     path = str(tree["project"])
     ops.request(path, "Tell me which market to go after first.", "demo")
     out = ops.run_next(path)
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     runs = ctx["store"].task_runs_list(ctx["conn"], out["ran"])
     assert runs[0]["redactions"] == 0
 
@@ -540,7 +541,7 @@ def test_the_prepared_folder_of_a_run_is_removed_after_it(tree):
     ops.request(path, "Tell me which market to go after first.", "demo")
     out = ops.run_next(path)
     assert out["status"] == "ok"
-    assert not (tree["data"] / ops.PREPARED_DIR / str(out["run_id"])).exists()
+    assert not (tree["data"] / ops_core.PREPARED_DIR / str(out["run_id"])).exists()
 
 
 if __name__ == "__main__":

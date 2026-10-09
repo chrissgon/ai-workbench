@@ -22,6 +22,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 cli = st.load("cli")
 REPO = Path(__file__).resolve().parents[2]
 RECORDER = '''import sys
@@ -37,12 +38,12 @@ print("0a1b2c3d")
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     recorder = tmp_path / "recorder.py"
     recorder.write_text(RECORDER, encoding="utf-8")
     (tmp_path / "recorder.py.mode").write_text("ok", encoding="utf-8")
-    monkeypatch.setattr(ops, "EVIDENCE", str(recorder))
-    monkeypatch.setattr(ops, "_own_key", lambda: (None, None))  # never the real secret store
+    monkeypatch.setattr(ops_core, "EVIDENCE", str(recorder))
+    monkeypatch.setattr(ops_core, "_own_key", lambda: (None, None))  # never the real secret store
     path = str(built["project"])
     ops.accept_config(path, ops.project_config.load(path)["sha256"])
     ops.request(path, "Tell me which market to go after first.", "demo")
@@ -64,7 +65,7 @@ def test_every_run_records_a_use_with_the_model_and_adapter_of_the_routing_befor
     assert args[args.index("--project") + 1] == tree["path"]
     assert len(st.calls(tree["adapter"])) == 1  # the adapter ran once, after the use was recorded
     assert out["use"] == "0a1b2c3d" and ops.pending(tree["path"], out["pending_id"])["payload"]["use"] == "0a1b2c3d"
-    ctx = ops.context(tree["path"])
+    ctx = ops_core.context(tree["path"])
     assert ctx["store"].cursor_get(ctx["conn"], f"use:{out['run_id']}") == "0a1b2c3d"
     ops.answer(tree["path"], out["pending_id"], "Portugal.")
     ops.run_next(tree["path"])
@@ -136,7 +137,7 @@ def watch_the_key(monkeypatch) -> list:
 def test_a_floor_run_carries_the_runtimes_own_key_and_the_environment_is_restored(tree, monkeypatch):
     lab_value, own_value = "lab-" + "x" * 12, "own-" + "y" * 12
     floor_reliable(monkeypatch, missing=[])  # the lab's key is there too: the runtime's own wins
-    monkeypatch.setattr(ops, "_own_key", lambda: (own_value, None))
+    monkeypatch.setattr(ops_core, "_own_key", lambda: (own_value, None))
     seen = watch_the_key(monkeypatch)
     monkeypatch.setenv(FLOOR_VAR, lab_value)
     out = ops.run_next(tree["path"])
@@ -174,7 +175,7 @@ def test_without_any_key_no_run_goes_to_the_floor_model(tree, monkeypatch):
     why = [r for r in reasons if r.startswith("no key for the floor model: ")]
     assert len(why) == 1 and "WB_RUNTIME_FLOOR_KEY" in why[0] and "is not stored" in why[0]
     assert f"({FLOOR_VAR}) is neither set nor in the secret store" in why[0]
-    monkeypatch.setattr(ops, "_own_key", lambda: (None, "the secret resolver could not be used: ImportError"))
+    monkeypatch.setattr(ops_core, "_own_key", lambda: (None, "the secret resolver could not be used: ImportError"))
     shown = ops.proof(tree["path"], "demo-writes")["skills"]["demo-writes"]
     assert shown["tier"] == "strong" and shown["key"] is None
     assert any("the secret resolver could not be used: ImportError" in r for r in shown["reasons"])
@@ -201,7 +202,7 @@ def test_the_lab_lookup_of_a_tier_key_returns_names_and_puts_the_environment_bac
 def test_the_key_value_never_appears_in_what_the_operation_prints_or_logs(tree, monkeypatch, capsys):
     own_value = "own-" + "q" * 16
     floor_reliable(monkeypatch, missing=[])
-    monkeypatch.setattr(ops, "_own_key", lambda: (own_value, None))
+    monkeypatch.setattr(ops_core, "_own_key", lambda: (own_value, None))
     assert cli.main(["proof", "--project", tree["path"], "--skill", "demo-asks"]) == 0
     assert cli.main(["run-next", "--project", tree["path"]]) == 0
     assert cli.main(["status", "--project", tree["path"]]) == 0
@@ -226,7 +227,7 @@ def test_the_runtimes_secret_is_registered_in_the_form_the_resolver_accepts():
     registry = REPO / "runtime" / "secrets.json"
     assert resolver.register_file(registry) == ["WB_RUNTIME_FLOOR_KEY"]
     assert set(json.loads(registry.read_text(encoding="utf-8"))) == {"secrets"}
-    assert ops.FLOOR_KEY == "WB_RUNTIME_FLOOR_KEY"
+    assert ops_core.FLOOR_KEY == "WB_RUNTIME_FLOOR_KEY"
 
 
 def test_the_recorder_still_has_the_interface_the_runtime_calls():

@@ -185,7 +185,7 @@ sequenceDiagram
 | Principle 8: the repository holds no file of a project that uses it and names none of its people, accounts or hosts | [AGENTS.md](../../../AGENTS.md); the validator's `private-term` check where a maintainer keeps the local list |
 | A standing policy's bounds are enforced by the operations layer, a configuration refuses an unknown key, a skill enters the runtime by its manifest and `runtime/roles.json`, an effect kind is a module, and a provider verb is called by `resolve.call` (the effect path starts its verbs through `resolve.invoke`, in `effects.provider_call`); the first runtime and the social handler keep loaders of their own | `runtime/ops.py`, `runtime/project_config.py`, `runtime/roles.json`, `runtime/effects.py`, `providers/resolve.py`; the status table of [review-2026-10-06.md](review-2026-10-06.md) |
 | Autonomy modes: five per area agent, from three facts, with two daily caps (runs on the strong tier, dollars on the floor tier); a mode never releases a question, an unclassified reply, a draft with open questions, a `done` with no change, a blocked change set, an unproven skill or a mandatory milestone, and never executes an effect outside an approved policy | `runtime/autonomy.py`; `runtime/tests/test_autonomy.py` |
-| One task at a time per project | the run lock in `ops.py`; the store's one running task per database; `runtime/tests/test_dispatcher.py` |
+| One task at a time per project | the run lock in `ops_core.py` (`_run_lock`); the store's one running task per database; `runtime/tests/test_dispatcher.py` |
 | What enters a run (L1 to L6) and what comes back (L7, L8, L12, L14), each by one module | `runtime/workcopy.py`, `runtime/path_rule.py`; `runtime/tests/test_run_limits.py` |
 | The state file's merge: a run adds its own draft rows, its own decisions and new open questions; only code writes what is the person's | `runtime/state_merge.py`; `runtime/tests/test_state_merge.py` |
 | Document types are `editable` (a person's edit is taken back when the checker passes) or `read_only` (an edit is kept aside, never imported, and the page is never written over while it differs) | the runtime manifest of each skill; `runtime/documents.py`; `runtime/tests/test_documents_mirror.py` |
@@ -210,7 +210,7 @@ The names fixed for this work. Use each exactly.
 | Project configuration | `<project>/docs/workbench/runtime.json`, accepted by its hash |
 | Lab | The eval harness under `evals/`: the runner, the executor, the container |
 | Lab facade | `runtime/lab.py`, the one file of `runtime/` that imports the lab's execution kit (`evals/execution.py`) |
-| Operations layer | `runtime/ops.py`: every operation a shell can perform, once |
+| Operations layer | `runtime/ops.py` (with `ops_say.py`, `ops_reads.py` and `ops_core.py`): every operation a shell can perform, once |
 | Table of operations | `runtime/operations.py`: one row per operation (its verb, function, arguments, channels, whether it calls a model, whether it is a job); the terminal's parser is built from it, and the service's routes, the MCP tools and the conversation's commands exist only for the rows that list their channel |
 | Channel | The surface that called an operation: `terminal`, `chat`, `page` or `mcp`; each row of the table of operations lists the channels that may call it |
 | Channel rule | An effect is approved only from the terminal or the page (`EFFECT_CHANNELS`), with its hash; the conversation and the MCP mode never approve one |

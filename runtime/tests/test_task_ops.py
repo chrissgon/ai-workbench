@@ -19,13 +19,14 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 cli = st.load("cli")
 
 
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     project = str(built["project"])
     ops.accept_config(project, ops.project_config.load(project)["sha256"])  # the person accepted the configuration
     return built
@@ -224,7 +225,7 @@ def test_one_task_at_a_time_per_project_and_an_interrupted_run_is_ended_at_the_n
         ops.run_next(path)
     assert "one task at a time" in str(busy.value) and st.calls(tree["adapter"]) == []
     os.close(lock)
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     claimed = ctx["store"].task_claim_next(ctx["conn"])["task"]  # a run that died after it claimed its task
     out = ops.run_next(path)
     assert out["recovered"] == [claimed["id"]] and out["ran"] is None
@@ -389,7 +390,7 @@ def open_decision(tree, kind: str) -> int:
     functions (no stand-in): a plan by routing a request to a flow, an acceptance on a request, and the other kinds as
     the pending decision of a run that ended."""
     path = project_of(tree)
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     store, conn = ctx["store"], ctx["conn"]
     if kind == "plan":
         tasks = [{"key": "market", "skill": "demo-asks", "title": "Market", "text": "Do it.", "depends_on": [], "milestone": False}]
@@ -413,7 +414,7 @@ EXPECTED_ACTIONS = {"plan": ["approved", "rejected"], "question": ["answered"], 
 
 def test_each_kind_of_pending_decision_lists_the_resolutions_the_store_allows_and_no_other(tree):
     path = project_of(tree)
-    ctx = ops.context(path)
+    ctx = ops_core.context(path)
     store, conn = ctx["store"], ctx["conn"]
     assert set(EXPECTED_ACTIONS) == set(store.PENDING_KINDS)  # a kind the store gains is a kind this test must know
     ids = {kind: open_decision(tree, kind) for kind in store.PENDING_KINDS}
@@ -453,7 +454,7 @@ def test_each_kind_of_pending_decision_lists_the_resolutions_the_store_allows_an
 
 def test_the_config_operation_reports_the_hash_and_whether_it_was_accepted_and_never_refuses(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     path = str(built["project"])
     digest = ops.project_config.load(path)["sha256"]
     before = ops.config(path)
@@ -471,7 +472,7 @@ def test_the_config_operation_reports_the_hash_and_whether_it_was_accepted_and_n
     with pytest.raises(ops.OpsError) as missing:
         ops.config(str(tmp_path / "no-such-folder"))
     assert missing.value.code == 3
-    monkeypatch.setattr(ops, "ROOT", str(tmp_path))
+    monkeypatch.setattr(ops_core, "ROOT", str(tmp_path))
     with pytest.raises(ops.OpsError) as other:
         ops.config(path)
     assert other.value.code == 3 and "names the workbench checkout" in str(other.value)

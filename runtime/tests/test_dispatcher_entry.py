@@ -21,6 +21,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 
 # A stand-in checkout: its ops.py marks that it was imported, and answers poll and dispatch.
 STANDIN_OPS = '''import json, os
@@ -144,7 +145,7 @@ def test_the_check_names_every_module_it_could_not_import(setup):
 
 def test_the_pin_is_written_only_for_an_accepted_configuration(tmp_path, monkeypatch):
     tree = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(tree["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(tree["tree"]))
     project = str(tree["project"])
     with pytest.raises(ops.OpsError) as refused:
         ops.pin(project)

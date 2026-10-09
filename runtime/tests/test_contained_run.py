@@ -21,6 +21,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 cli = st.load("cli")
 plan = st.load("plan")
 project_config = st.load("project_config")
@@ -43,8 +44,8 @@ PUBLISHER_KEY = "DEMO_NET_PUBLISHER_TOKEN"
 @pytest.fixture
 def tree(tmp_path, monkeypatch):
     built = st.build(tmp_path, monkeypatch, lab)
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
-    monkeypatch.setattr(ops, "_own_key", lambda: (None, None))  # never the real secret store
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "_own_key", lambda: (None, None))  # never the real secret store
     # A skill like mkt-engage: it declares the runtime's configuration as an input, and a file under docs/ it writes.
     st.skill(built["tree"], SOCIAL, "docs/workbench/state.md, docs/brand/voice.md, docs/workbench/runtime.json",
              "docs/marketing/engagement-log.jsonl", area="marketing")
@@ -270,7 +271,7 @@ def test_the_cost_of_a_run_on_the_reference_model_is_written_as_unknown(tree, mo
         "tiers": {"strong": {"model": "m", "adapter": "h"}, "floor": {"model": "fm", "adapter": "h"}},
         "web_cases": [], "evidence_images": [st.STANDIN_IMAGE]})
     monkeypatch.setattr(lab, "proof_inputs", lambda skill: "standin-floor-" + skill)
-    monkeypatch.setattr(ops, "_floor_key", lambda: {"value": None, "source": "lab", "reason": None})
+    monkeypatch.setattr(ops_core, "_floor_key", lambda: {"value": None, "source": "lab", "reason": None})
     floor = contained(tree)
     assert floor["tier"] == "floor"  # (the stand-in names one model for both tiers; the tier is what the proof chose)
     assert json.loads((tree["out"] / "timing.json").read_text())["cost_usd"] == 0.01

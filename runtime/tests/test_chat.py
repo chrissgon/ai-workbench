@@ -15,6 +15,7 @@ import standin_tree as st
 
 lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 plan = st.load("plan")
 router = st.load("router")
 chat = st.load("chat")
@@ -41,7 +42,7 @@ def tree(tmp_path, monkeypatch):
     script = built["adapter"] / "run-prompt.sh"
     text = st.ADAPTER.replace("for name in demo-asks demo-writes;", "for name in demo-asks demo-writes core-orchestrator;")
     script.write_text(text.replace('case "$skill" in', BRANCH + 'case "$skill" in', 1), encoding="utf-8")
-    monkeypatch.setattr(ops, "ROOT", str(built["tree"]))
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
     monkeypatch.setattr(plan, "resolve_pack", lambda pack, root: list(PACKS[pack]))
     configure(built, AGENTS)
     reply(built, FLOW)
@@ -70,7 +71,7 @@ def say(tree, line: str) -> dict:
 
 
 def messages(tree) -> list:
-    ctx = ops.context(str(tree["project"]))
+    ctx = ops_core.context(str(tree["project"]))
     return ctx["store"].messages_list(ctx["conn"], ops.CONVERSATION, limit=500)
 
 

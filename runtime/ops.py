@@ -163,6 +163,14 @@ releases it as it stands, its open questions left in it, or answers it, and the 
 stopped on a missing input that another skill writes (ending `blocked`) opens nothing: the task is `blocked`, with
 the start of the reply as its note, until the person retries it.
 
+The layer is four files (CONS-1B). The names every part shares (the checkout, the refusal, the project's context, the
+locks, the runtime's own key, the data-folder names) live once in runtime/ops_core.py and are read as `core.<name>`
+at call time, never bound at import, so that a test patching `ops_core.ROOT` reaches every reader. The conversation
+(`say`, `chat_memory`) is runtime/ops_say.py and the reads of the local interface (`version`, `agents`, `skills`,
+`costs`, `connections`, `artifacts`, ...) are runtime/ops_reads.py; both reach an operation that stays here at call
+time, and this file exposes them under their names at its end, so a shell still imports `ops` only. A test of size
+(runtime/tests/test_runtime_rules.py) caps this file and each sibling.
+
 Usage (a library; the shell is runtime/cli.py): python3 runtime/ops.py --help
 
 Standard library only. Runs on Python 3.9.
@@ -172,27 +180,21 @@ from __future__ import annotations
 import ast
 import contextlib
 import datetime
-import fcntl
 import hashlib
-import importlib.util
 import json
 import os
-import platform as platform_module
 import re
-import stat as stat_module
 import sys
 import shutil
 import subprocess
 import time
 import traceback
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
-sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import ops_core as core  # noqa: E402  (the shared names: read as core.<name>, never bound at import)
 import autonomy  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
 import board  # noqa: E402
 import changeset  # noqa: E402
-import costs as costs_calc  # noqa: E402  (the operation `costs` would hide the module: part 0, F.1, rule 5)
 import deps as deps_sets  # noqa: E402  (the operation `deps` would hide the module: part 0, F.1, rule 5)
 import dispatcher  # noqa: E402
 import documents  # noqa: E402
@@ -214,25 +216,10 @@ import skill_meta  # noqa: E402
 import state_merge  # noqa: E402
 import workcopy  # noqa: E402
 
-STORE_CLASS = "store:runtime"
-EFFECTS_DIR = "effects"  # <data_dir>/effects/<pending id>/: the files code hands the code provider
-RUNS_DIR = "task-runs"
-CONTAINED_DIR = "contained-runs"  # <data_dir>/contained-runs/<n>/: the run folder of one contained run; no file of it ever comes back
-LOCK_NAME = "run.lock"
-CONFIG_LOCK_NAME = "config.lock"   # <data_dir>/config.lock: one change of the accepted configuration at a time
-CONFIG_LOCK_WAIT = 10.0            # seconds a change waits for another to finish
 NOTE_LIMIT = 1000        # characters of a failure's reason kept on a task and on a run row
-PREPARED_DIR = "prepared"  # <data_dir>/prepared/<run id>/: files written for one run before they enter its copy
 USE_ID = re.compile(r"[0-9a-f]{8}")
-CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
-# The recorder of uses and verdicts (scripts/evidence.py of the checkout, ROOT, when None; a test points it at a
-# stand-in). The runtime records a use of every run and the person's verdict with it, and builds nothing of its own.
-EVIDENCE = None
 VERDICTS = ("worked", "corrected", "failed")
 RECORDER_TIMEOUT = 60
-# The one secret the runtime owns: its own key for the floor model's provider, with a spend cap set there. When it
-# is not stored, a floor run uses the lab's key for the floor model (_floor_key).
-FLOOR_KEY = "WB_RUNTIME_FLOOR_KEY"
 ROUTE_KEPT = "a route-only run returns no file"
 HANDED_LINE = "The user handed over these files for this task. They are in the project at:"
 # One line per document the mirror imported from the platform since the task's last run (decision of 2026-10-06).
@@ -241,105 +228,9 @@ MANDATORY_LINE = ("This delivery is a mandatory milestone: the next task accepts
                   "the document. Write it there, then release.")
 
 
-class OpsError(Exception):
-    """An operation that was refused: a message for the person and an exit code (1 failed, 2 usage,
-    3 not configured)."""
-
-    def __init__(self, message: str, code: int = 1, next: str | None = None):
-        super().__init__(message)
-        self.code = code
-        self.next = next   # the terminal command that gets past the refusal (the 412: accept-config), or None
-
-
-def _load(name: str, path: str):
-    if name not in sys.modules:
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        spec.loader.exec_module(module)
-    return sys.modules[name]
-
-
-def store_module():
-    """The store provider as a module, found by its class through providers/resolve.py, never by a path built
-    here. Its functions are the contract (providers/store/sqlite.py, "the task runtime")."""
-    resolve = _load("workbench_provider_resolve", os.path.join(ROOT, "providers", "resolve.py"))
-    try:
-        found = resolve.resolve(STORE_CLASS, root=ROOT)
-    except (resolve.UnknownClass, resolve.Unresolved) as e:
-        raise OpsError(f"the store does not resolve: {e}", 3) from None
-    return _load("workbench_store_" + found["implementation"], found["path"])
-
-
-def _command(name: str, project: str, **args) -> str:
-    """The terminal's command for one operation, as a sentence of this layer names it: absolute, from the checkout
-    this process runs from (ROOT), with the uv prefix when it was started through uv (operations.command_line, the
-    one place that spells the syntax)."""
-    return operations.command_line(name, project, checkout=ROOT, **args)
-
-
-def _config_of(project: str) -> dict:
-    """The project's configuration, refused when it cannot be read or names another workbench checkout than the one
-    this process runs from: what every operation checks first."""
-    try:
-        cfg = project_config.load(project)
-    except project_config.ConfigError as e:
-        raise OpsError(str(e), 3) from None
-    if cfg["workbench"] != os.path.realpath(ROOT):
-        raise OpsError(f"{cfg['path']} names the workbench checkout {cfg['workbench']}, and this command runs from "
-                       f"{os.path.realpath(ROOT)}: run it from the checkout the project names, or correct the file", 3)
-    return cfg
-
-
-def _accepted(cfg: dict, accepted) -> None:
-    """Refuse (code 3) a configuration whose hash is not the accepted one."""
-    if accepted != cfg["sha256"]:
-        command = _command("accept-config", cfg["project"], sha256=cfg["sha256"])
-        raise OpsError(f"the configuration {cfg['path']} has the hash {cfg['sha256']} and the accepted one is "
-                       f"{accepted or 'none: no configuration was accepted yet'}. Read the file; when it is what you "
-                       f"want, run: {command}", 3, next=command)
-
-
-def context(project: str, *, check_config: bool = True) -> dict:
-    """What every operation starts from: {"cfg", "store", "conn"}. The store is created or migrated here
-    (idempotent), so the first operation on a project needs no separate setup step. With check_config (every
-    operation but accept_config, config and service_check; version passes False only to make a store that does not
-    exist yet, and checks the hash itself on every call), the configuration's hash must be the one the person
-    accepted last."""
-    cfg = _config_of(project)
-    store = store_module()
-    try:
-        store.init_db(cfg["store_db"])
-        conn = store.open_db(cfg["store_db"])
-    except store.StoreError as e:
-        raise OpsError(f"the store at {cfg['store_db']}: {e}", e.code) from None
-    if check_config:
-        try:
-            accepted = store.cursor_get(conn, project_config.ACCEPTED)
-        except store.StoreError as e:
-            raise OpsError(f"the store at {cfg['store_db']}: {e}", e.code) from None
-        _accepted(cfg, accepted)
-    return {"cfg": cfg, "store": store, "conn": conn, "root": ROOT}
-
-
-def _stored(ctx: dict, function, *args, **kwargs):
-    """Call one function of the store; its refusal becomes this layer's."""
-    try:
-        return function(ctx["conn"], *args, **kwargs)
-    except ctx["store"].StoreError as e:
-        raise OpsError(str(e), e.code) from None
-
-
-def _text(value, what: str) -> str:
-    """Text the person typed: line ends as \\n, no other control character, not empty."""
-    if not isinstance(value, str) or not value.strip():
-        raise OpsError(f"{what} is empty", 2)
-    return CONTROL.sub(" ", value.replace("\r\n", "\n").replace("\r", "\n")).strip()
-
-
 def _note(value) -> str:
     """A reason on one record: control characters out, cut to NOTE_LIMIT characters."""
-    return CONTROL.sub(" ", str(value or "")).strip()[:NOTE_LIMIT] or "no reason given"
+    return core.CONTROL.sub(" ", str(value or "")).strip()[:NOTE_LIMIT] or "no reason given"
 
 
 def _sha256(path: str):
@@ -406,7 +297,7 @@ def _ending(result: dict, meta: dict, skill: str, gate_files=()) -> tuple:
     fixed = [p for p in meta["outputs"] if "<" not in p and not p.endswith("/")]
     missing = [p for p in fixed if p not in after]
     texts = [(_read(os.path.join(cwd, *p.split("/"))) or "") if lab.readable(cwd, p) else "" for p in written]
-    facts = dict(manifest.ending_facts(ROOT, skill), outputs_present=[p for p in fixed if p in set(changes["unchanged"])],
+    facts = dict(manifest.ending_facts(core.ROOT, skill), outputs_present=[p for p in fixed if p in set(changes["unchanged"])],
                  gate_files=list(gate_files))
     return endings.classify(result["response"], changes, written, missing, texts, facts=facts)
 
@@ -415,7 +306,7 @@ def _ending(result: dict, meta: dict, skill: str, gate_files=()) -> tuple:
 
 
 def _recorder() -> str:
-    return EVIDENCE or os.path.join(ROOT, "scripts", "evidence.py")
+    return core.EVIDENCE or os.path.join(core.ROOT, "scripts", "evidence.py")
 
 
 def _record(args: list) -> "subprocess.CompletedProcess":
@@ -428,7 +319,7 @@ def _use_start(ctx: dict, run_id: int, skill: str, routing: dict):
     gate file's ids, never a model's own account), and keep its id in the cursor use:<run id>. Returns the id, or
     None when the use could not be recorded: that never stops a run."""
     try:
-        done = _record(["--start", "--skill-dir", os.path.join(ROOT, "skills", skill), "--project", ctx["cfg"]["project"],
+        done = _record(["--start", "--skill-dir", os.path.join(core.ROOT, "skills", skill), "--project", ctx["cfg"]["project"],
                         "--model", routing["model"], "--adapter", routing["adapter"]])
     except (OSError, subprocess.SubprocessError) as e:
         print(f"the use of run {run_id} could not be recorded: {type(e).__name__}", file=sys.stderr)
@@ -437,59 +328,8 @@ def _use_start(ctx: dict, run_id: int, skill: str, routing: dict):
     if done.returncode != 0 or not USE_ID.fullmatch(use):
         print(f"the use of run {run_id} could not be recorded: {done.stderr.strip()[-500:]}", file=sys.stderr)
         return None
-    _stored(ctx, ctx["store"].cursor_set, f"use:{run_id}", use)
+    core._stored(ctx, ctx["store"].cursor_set, f"use:{run_id}", use)
     return use
-
-
-def _own_key() -> tuple:
-    """(value or None, reason or None): the runtime's own key for the floor model, through the secret resolver
-    (providers/secrets/resolver.py) with the registry runtime/secrets.json. The value is never printed, logged,
-    stored or put in a message."""
-    try:
-        resolver = _load("workbench_secret_resolver_runtime", os.path.join(ROOT, "providers", "secrets", "resolver.py"))
-        resolver.register_file(os.path.join(ROOT, "runtime", "secrets.json"))
-        found = resolver.resolve(FLOOR_KEY)
-    except Exception as e:  # an interpreter the resolver does not run on, a missing store library, a bad registry
-        sys.modules.pop("workbench_secret_resolver_runtime", None)
-        return None, f"the secret resolver could not be used: {type(e).__name__}"
-    if not found:
-        return None, None
-    return found[0], None
-
-
-def _floor_key() -> dict:
-    """The key a floor run would use: {"value", "source", "reason"}, in this order.
-    source "runtime": the runtime's own key (_own_key), when it is stored and the floor tier passes exactly one
-      variable, under which it travels (_key_in_environment). It wins: a person who wants a capped key of the
-      runtime's own stores it.
-    source "lab": no key of its own, and every variable the gate file names for the floor tier is set or found in
-      the secret store, by the lab's own lookup (lab.credential_missing). value is None: the value stays the lab's,
-      which run_skill passes as it does for a lab run.
-    source None: neither, and reason says why; the run stays on the reference model.
-    Only the source is shown, by name; the value is never printed, logged, stored or put in a message."""
-    reasons = []
-    value, reason = _own_key()
-    if reason:
-        reasons.append(reason)
-    try:
-        names = lab.reference("floor")["pass_env"]
-        if value is not None:
-            if len(names) == 1:
-                return {"value": value, "source": "runtime", "reason": None}
-            reasons.append(f"the floor tier passes {len(names)} variables; the runtime's own key travels under one")
-        missing = lab.credential_missing("floor") if names else None
-    except Exception as e:  # a gate file the facade refuses, a resolver that does not run on this interpreter
-        reasons.append(f"the lab's key for the floor model could not be looked up: {type(e).__name__}")
-        missing = None
-    if missing == []:
-        return {"value": None, "source": "lab", "reason": None}
-    if value is None and not reason:
-        reasons.append(f"the runtime's own key ({FLOOR_KEY}) is not stored")
-    if not names:
-        reasons.append("the gate file names no variable for the floor model's key")
-    elif missing:
-        reasons.append(f"the lab's key for the floor model ({', '.join(missing)}) is neither set nor in the secret store")
-    return {"value": None, "source": None, "reason": "no key for the floor model: " + "; ".join(reasons)}
 
 
 def _route(ctx: dict, skill: str, meta: dict, tier, key: dict) -> dict:
@@ -531,22 +371,22 @@ def request(project: str, text: str, flow: str | None = None, title: str | None 
     "skill", "state"}]}. Without one, the request waits for its route (route()): {"request", "state": "requested",
     "next": "route"}; its title, when none is given, is plan.title_of(text): the first sentence, else the first line cut at
     a word."""
-    ctx = context(project)
+    ctx = core.context(project)
     if flow is None:
-        said = _text(text, "the request's text")
-        out = _stored(ctx, ctx["store"].request_add, title=_text(plan.title_of(said, title),
+        said = core._text(text, "the request's text")
+        out = core._stored(ctx, ctx["store"].request_add, title=core._text(plan.title_of(said, title),
                                                                  "the title").replace("\n", " "), text=said)
         return {"request": out["request"], "state": out["state"], "next": "route"}
     try:
-        loaded = flow_files.load(flow, ROOT)
+        loaded = flow_files.load(flow, core.ROOT)
         # A skill whose manifest makes it a mandatory milestone is one whatever the flow file says.
-        tasks = [{**t, "milestone": bool(t.get("milestone")) or plan.mandatory(t["skill"], ROOT)} for t in loaded["tasks"]]
+        tasks = [{**t, "milestone": bool(t.get("milestone")) or plan.mandatory(t["skill"], core.ROOT)} for t in loaded["tasks"]]
     except flow_files.FlowError as e:
-        raise OpsError(str(e), 2) from None
+        raise core.OpsError(str(e), 2) from None
     except manifest.ManifestError as e:
-        raise OpsError(str(e), 1) from None
-    out = _stored(ctx, ctx["store"].request_add, title=_text(title or loaded["title"], "the title").replace("\n", " "),
-                  text=_text(text, "the request's text"), flow=loaded["flow"], tasks=tasks)
+        raise core.OpsError(str(e), 1) from None
+    out = core._stored(ctx, ctx["store"].request_add, title=core._text(title or loaded["title"], "the title").replace("\n", " "),
+                  text=core._text(text, "the request's text"), flow=loaded["flow"], tasks=tasks)
     return {**out, "flow": loaded["flow"]}
 
 
@@ -560,8 +400,8 @@ def run_next(project: str, tier: str | None = None) -> dict:
     choice of proof.route, with "key" (the key of a floor run by name: "runtime" or "lab"; None otherwise), or
     None}; "recovered" names the tasks an interrupted run had left running."""
     if tier not in (None, "strong"):
-        raise OpsError("tier may only be \"strong\": the person can ask for the reference model, never for the floor model", 2)
-    ctx = context(project)
+        raise core.OpsError("tier may only be \"strong\": the person can ask for the reference model, never for the floor model", 2)
+    ctx = core.context(project)
     return _claim_and_run(ctx, tier)
 
 
@@ -570,9 +410,9 @@ def _claim_and_run(ctx: dict, tier=None, task_id=None) -> dict:
     documents platform, claim the next ready task (or, with task_id, that task: task_claim), run it, write back the
     documents it returned. What it returns is what run_next returns."""
     store = ctx["store"]
-    with _run_lock(ctx["cfg"]):
+    with core._run_lock(ctx["cfg"]):
         # This process holds the project's run lock, so a task still `running` is what an interrupted run left.
-        recovered = _stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task")
+        recovered = core._stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task")
         pulled = None
         if documents.enabled(ctx["cfg"]):
             # Before the task is claimed, so that a refusal leaves no task running (decision D11).
@@ -582,23 +422,23 @@ def _claim_and_run(ctx: dict, tier=None, task_id=None) -> dict:
                 return {"ran": None, "reason": "the documents platform could not be read", "detail": str(e),
                         "recovered": recovered["tasks"]}
             except store.StoreError as e:
-                raise OpsError(str(e), e.code) from None
-            nxt = _stored(ctx, store.task_peek_next)["task"] if task_id is None else _stored(ctx, store.task_get, task_id)
+                raise core.OpsError(str(e), e.code) from None
+            nxt = core._stored(ctx, store.task_peek_next)["task"] if task_id is None else core._stored(ctx, store.task_get, task_id)
             if nxt is not None and nxt.get("skill"):
                 try:
-                    stopped = documents.blocked(ctx, skill_meta.declared(os.path.join(ROOT, "skills", nxt["skill"])))
+                    stopped = documents.blocked(ctx, skill_meta.declared(os.path.join(core.ROOT, "skills", nxt["skill"])))
                 except skill_meta.SkillError:
                     stopped = []  # the run fails to start below, with its reason
                 if stopped:
                     return {"ran": None, "reason": "a document was edited on the platform and was not taken",
                             "task": nxt["id"], "documents": stopped, "pulled": pulled, "recovered": recovered["tasks"]}
-        claimed = _stored(ctx, store.task_claim_next) if task_id is None else _stored(ctx, store.task_claim, task_id)
+        claimed = core._stored(ctx, store.task_claim_next) if task_id is None else core._stored(ctx, store.task_claim, task_id)
         task = claimed["task"]
         if task is None:
             reason = "no task is ready" if task_id is None or claimed.get("reason") in (None, "not-ready") else \
                 f"task {task_id} is {claimed['reason']}"
             out = {"ran": None, "reason": reason, "recovered": recovered["tasks"],
-                   "pending": len(_stored(ctx, store.pending_list))}
+                   "pending": len(core._stored(ctx, store.pending_list))}
             return {**out, "documents": pulled} if pulled is not None else out
         out = {**_run(ctx, task, tier), "recovered": recovered["tasks"]}
         if pulled is not None:
@@ -617,66 +457,27 @@ def _push_after_run(ctx: dict, out: dict) -> dict:
         return {**documents.result(), "failed": [{"path": rel, "reason": f"{type(e).__name__}: {e}"} for rel in rels]}
 
 
-@contextlib.contextmanager
-def _config_lock(cfg: dict):
-    """The project's configuration lock (<data_dir>/config.lock), held while the configuration file is changed or
-    accepted: set_mode and accept_config of every process (the service's threads, the terminal) take it one after the
-    other, so that a change made from a copy of the file read before another one finished can be found out (set_mode
-    re-reads the file and the accepted hash under it). Waits up to CONFIG_LOCK_WAIT seconds, then refuses."""
-    os.makedirs(cfg["data_dir"], mode=0o700, exist_ok=True)
-    lock = os.open(os.path.join(cfg["data_dir"], CONFIG_LOCK_NAME), os.O_WRONLY | os.O_CREAT, 0o600)
-    try:
-        deadline = time.monotonic() + CONFIG_LOCK_WAIT
-        while True:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError:
-                if time.monotonic() >= deadline:
-                    raise OpsError("another change of the configuration is in progress: try again in a moment", 1) from None
-                time.sleep(0.05)
-        yield
-    finally:
-        os.close(lock)
-
-
-@contextlib.contextmanager
-def _run_lock(cfg: dict):
-    """The project's run lock (<data_dir>/run.lock), taken without waiting: a run of a task and a run of the router
-    never overlap in one project. Closing the file releases it."""
-    os.makedirs(cfg["data_dir"], mode=0o700, exist_ok=True)
-    lock = os.open(os.path.join(cfg["data_dir"], LOCK_NAME), os.O_WRONLY | os.O_CREAT, 0o600)
-    try:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            raise OpsError("another run of this project is in progress: one task at a time per project", 1) from None
-        yield
-    finally:
-        os.close(lock)
-
-
 def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     cfg, store, skill = ctx["cfg"], ctx["store"], task["skill"]
     try:
-        meta = skill_meta.declared(os.path.join(ROOT, "skills", skill))
-        known = manifest.load(ROOT, skill)  # a skill the runtime knows nothing of does not run
-        key = _floor_key()
+        meta = skill_meta.declared(os.path.join(core.ROOT, "skills", skill))
+        known = manifest.load(core.ROOT, skill)  # a skill the runtime knows nothing of does not run
+        key = core._floor_key()
         routing = _route(ctx, skill, meta, tier, key)
         identity = lab.skill_identity(skill)
-        run_id = _stored(ctx, store.task_run_start, task["id"], skill=skill, model=routing["model"],
+        run_id = core._stored(ctx, store.task_run_start, task["id"], skill=skill, model=routing["model"],
                          adapter=routing["adapter"], skill_version=identity["version"],
                          skill_sha256=identity["content_sha256"], web=routing["web"])["run_id"]
-    except (skill_meta.SkillError, manifest.ManifestError, lab.LabError, OpsError, OSError, KeyError) as e:
-        _stored(ctx, store.task_fail_running, _note(f"the run could not start: {e}"))
-        raise OpsError(f"task {task['id']} ({skill}) could not start: {e}", 1) from None
-    dest = os.path.join(cfg["data_dir"], RUNS_DIR, str(run_id))
+    except (skill_meta.SkillError, manifest.ManifestError, lab.LabError, core.OpsError, OSError, KeyError) as e:
+        core._stored(ctx, store.task_fail_running, _note(f"the run could not start: {e}"))
+        raise core.OpsError(f"task {task['id']} ({skill}) could not start: {e}", 1) from None
+    dest = os.path.join(cfg["data_dir"], core.RUNS_DIR, str(run_id))
     out = {"ran": task["id"], "skill": skill, "run_id": run_id, "run_dir": dest, "status": "failed", "ending": None,
            "failure": None, "task_state": "failed", "pending_id": None, "returned": [], "kept": [], "left_out": [],
            "entered": None, "state": None, "routing": routing, "use": None}
 
     def fail(kind: str, reason: str, attempts: int = 0, digest=None, redactions=None) -> dict:
-        _stored(ctx, store.task_run_finish, run_id, status="failed", failure=kind, task_state="failed",
+        core._stored(ctx, store.task_run_finish, run_id, status="failed", failure=kind, task_state="failed",
                 attempts=attempts, image_digest=digest, run_dir=dest, error=_note(reason), task_note=_note(reason),
                 redactions=redactions)
         out["failure"] = {"kind": kind, "reason": _note(reason)}
@@ -684,7 +485,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
 
     out["use"] = _use_start(ctx, run_id, skill, routing)  # one use per run, also for a run made after an answer
     # Outside the run folder: the facade sets aside whatever it finds there.
-    prepared_dir = os.path.join(cfg["data_dir"], PREPARED_DIR, str(run_id))
+    prepared_dir = os.path.join(cfg["data_dir"], core.PREPARED_DIR, str(run_id))
     try:
         handed = drop.files(cfg["project"], task["id"])
         refused = []
@@ -700,10 +501,10 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         entered_rels = {rel for _source, rel in files}
         out["entered"] = {"kind": entered["kind"], "agents_md": entered["agents_md"], "files": len(files)}
         base_state = _read(os.path.join(cfg["project"], *path_rule.STATE.split("/")))
-        request = _stored(ctx, store.task_get, task["parent_id"])
+        request = core._stored(ctx, store.task_get, task["parent_id"])
         request_text = request["text"]
-        answered = [p for p in _stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
-        earlier = [r for r in _stored(ctx, store.task_runs_list, task["id"]) if r["id"] != run_id]
+        answered = [p for p in core._stored(ctx, store.pending_list, "resolved", task["id"]) if p["resolution"] == "answered"]
+        earlier = [r for r in core._stored(ctx, store.task_runs_list, task["id"]) if r["id"] != run_id]
         edited = [rel for rel in documents.imported_since(cfg, earlier[-1]["started_at"] if earlier else None)
                   if rel in entered_rels and skill_meta.matches(meta["inputs"], rel)]
         prompt = task_prompt(request_text, task["text"], answered,
@@ -773,7 +574,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     if ending == "blocked":
         # The skill stopped on a missing input that another skill writes: the task is blocked, with no pending
         # decision; the note is the start of the masked reply, and `retry` makes the task ready again.
-        done = _stored(ctx, store.task_run_finish, run_id, task_state="blocked", task_note=_note(body), **finish)
+        done = core._stored(ctx, store.task_run_finish, run_id, task_state="blocked", task_note=_note(body), **finish)
         out.update(status="ok", ending=ending, task_state="blocked", pending_id=None, returned=returned, kept=kept)
         return out
     mandatory = ending == "done" and bool(known.get("mandatory_milestone"))
@@ -808,7 +609,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
             tail = "\n\n" + MANDATORY_LINE
             room = store.BODY_MAX - len(tail.encode("utf-8"))
             decision["body"] = body.encode("utf-8")[:room].decode("utf-8", errors="ignore") + tail
-    done = _stored(ctx, store.task_run_finish, run_id, task_state="waiting", pending=decision, **finish)
+    done = core._stored(ctx, store.task_run_finish, run_id, task_state="waiting", pending=decision, **finish)
     out.update(status="ok", ending=ending, task_state="waiting", pending_id=done["pending_id"], returned=returned, kept=kept)
     return out
 
@@ -876,19 +677,19 @@ def _provider_path(cfg: dict, cls: str, platform: str | None = None) -> str:
     with a parameter (publisher:<platform>) is written with its placeholder and resolved with the platform the kind
     names: the platform is part of the class, never a second argument of the resolver. A placeholder without a
     platform, and a platform for a class that takes none, are refused."""
-    resolve = _load("workbench_provider_resolve", os.path.join(ROOT, "providers", "resolve.py"))
+    resolve = core._load("workbench_provider_resolve", os.path.join(core.ROOT, "providers", "resolve.py"))
     if bool(resolve.PLACEHOLDER.search(cls)) != (platform is not None):
-        raise OpsError(f"the class {cls} and the platform {platform!r} do not fit: a class written with a placeholder "
+        raise core.OpsError(f"the class {cls} and the platform {platform!r} do not fit: a class written with a placeholder "
                        f"needs a platform, and no other takes one", 3)
     if platform is not None:
         if not isinstance(platform, str) or not resolve.NAME.fullmatch(platform):  # the resolver's own name rule, before it is part of a class
-            raise OpsError(f"the platform {platform!r} is not a name (lowercase letters, digits and hyphens)", 3)
+            raise core.OpsError(f"the platform {platform!r} is not a name (lowercase letters, digits and hyphens)", 3)
         cls = resolve.PLACEHOLDER.sub(lambda _: platform, cls)
     implementation = cfg["code"]["provider"] if cls == "integration:vcs" and cfg.get("code") else None
     try:
-        return resolve.resolve(cls, root=ROOT, implementation=implementation)["path"]
+        return resolve.resolve(cls, root=core.ROOT, implementation=implementation)["path"]
     except (resolve.UnknownClass, resolve.Unresolved) as e:
-        raise OpsError(f"the {'code ' if cls == 'integration:vcs' else ''}provider does not resolve: {e}", 3) from None
+        raise core.OpsError(f"the {'code ' if cls == 'integration:vcs' else ''}provider does not resolve: {e}", 3) from None
 
 
 def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
@@ -896,11 +697,11 @@ def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
     then the effect is done and the state file gets the generated row."""
     store, cfg, pending_id = ctx["store"], ctx["cfg"], item["id"]
     if sha256 is None:
-        raise OpsError(f"pending decision {pending_id} is an effect: approve it with --sha256 <the hash shown with it>", 2)
+        raise core.OpsError(f"pending decision {pending_id} is an effect: approve it with --sha256 <the hash shown with it>", 2)
     if sha256 != item["payload_sha256"]:
-        raise OpsError(f"the effect's hash is {item['payload_sha256']} and you typed {sha256}: nothing was approved", 1)
+        raise core.OpsError(f"the effect's hash is {item['payload_sha256']} and you typed {sha256}: nothing was approved", 1)
     if item["status"] != "open":
-        raise OpsError(f"pending decision {pending_id} is {item['status']}, not open", 1)
+        raise core.OpsError(f"pending decision {pending_id} is {item['status']}, not open", 1)
     payload = item.get("payload") or {}
     try:
         with open(payload["effect_file"], "rb") as f:
@@ -909,15 +710,15 @@ def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
         if getattr(kind, "GATE", False) is not True:
             raise effects.EffectError("usage", f"the effect kind {doc['effect']!r} is not one a confirmation gate opens")
     except (OSError, KeyError, ValueError) as e:
-        raise OpsError(f"the effect document of pending decision {pending_id} cannot be read: {e}", 1) from None
+        raise core.OpsError(f"the effect document of pending decision {pending_id} cannot be read: {e}", 1) from None
     except effects.EffectError as e:
-        raise OpsError(f"the effect of pending decision {pending_id} cannot be approved: {e.reason}", 1) from None
+        raise core.OpsError(f"the effect of pending decision {pending_id} cannot be approved: {e.reason}", 1) from None
     if kind.unconfigured(cfg):
-        raise OpsError(kind.unconfigured(cfg), 3)
+        raise core.OpsError(kind.unconfigured(cfg), 3)
     what = kind.describe(doc)
-    approval = _stored(ctx, store.approval_add, scope="action", what=" ".join(what.split())[:1000], by="user",
+    approval = core._stored(ctx, store.approval_add, scope="action", what=" ".join(what.split())[:1000], by="user",
                        payload_sha256=sha256, pending_id=pending_id)
-    with _run_lock(cfg):
+    with core._run_lock(cfg):
         try:
             made = changeset.load(os.path.dirname(payload["changeset_dir"]))
             if made is None:
@@ -926,13 +727,13 @@ def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
             facts = {"versioned": changeset.versioned_in(cfg["project"], paths)}
             doc = kind.verify(effects.read_document(payload["effect_file"], sha256), made, facts, cfg["protected_paths"])
             key_prefix = f"wb-{hashlib.sha256(cfg['store_db'].encode('utf-8')).hexdigest()[:12]}-p{pending_id}"
-            result = kind.execute(doc, made["dir"], os.path.join(cfg["data_dir"], EFFECTS_DIR, str(pending_id)),
+            result = kind.execute(doc, made["dir"], os.path.join(cfg["data_dir"], core.EFFECTS_DIR, str(pending_id)),
                                   _provider_path(cfg, kind.PROVIDER_CLASS), key_prefix)
         except (effects.EffectError, changeset.ChangesetError) as e:
-            raise OpsError(f"nothing was sent: {e.reason}; the effect stays open, and approving it again with the same "
+            raise core.OpsError(f"nothing was sent: {e.reason}; the effect stays open, and approving it again with the same "
                            f"hash tries again", 3 if getattr(e, "kind", "") == "not-configured" else 1) from None
-        done = _stored(ctx, store.effect_done, pending_id, approval["id"], by="user", result=result)
-    row = effects.approval_row(_stored(ctx, store.approval_get, approval["id"]), doc)
+        done = core._stored(ctx, store.effect_done, pending_id, approval["id"], by="user", result=result)
+    row = effects.approval_row(core._stored(ctx, store.approval_get, approval["id"]), doc)
     return {**done, "approval_id": approval["id"], "commit": result["commit"], "pull_request": result["pull_request"],
             "replayed": result["replayed"], "state": _write_approval_row(cfg, row)}
 
@@ -996,9 +797,9 @@ def _git(project: str, *args) -> "subprocess.CompletedProcess":
 def _request_run_dirs(ctx: dict, request_id: int) -> list:
     """The run folders of the completed runs of a request's tasks, newest first."""
     runs = []
-    for t in _stored(ctx, ctx["store"].tasks_list, request_id):
+    for t in core._stored(ctx, ctx["store"].tasks_list, request_id):
         if t["parent_id"] is not None:
-            runs += [r for r in _stored(ctx, ctx["store"].task_runs_list, t["id"]) if r["status"] == "ok" and r["run_dir"]]
+            runs += [r for r in core._stored(ctx, ctx["store"].task_runs_list, t["id"]) if r["status"] == "ok" and r["run_dir"]]
     return [r["run_dir"] for r in sorted(runs, key=lambda r: r["id"], reverse=True)]
 
 
@@ -1111,9 +912,9 @@ def deps(project: str) -> dict:
     """Install every dependency set the project's configuration declares, by code, with no model: {"dependencies":
     [{"recipe", "file", "applies", and when it applies "key", "cached", "duration_ms"}]}. A set whose files are not
     all in the project does not apply and installs nothing. Holds the run lock, so no run starts meanwhile."""
-    ctx = context(project)
+    ctx = core.context(project)
     cfg, out = ctx["cfg"], []
-    with _run_lock(cfg):
+    with core._run_lock(cfg):
         for entry in cfg.get("dependencies") or []:
             files = deps_sets.files_for(entry, lambda rel: _project_bytes(cfg["project"], rel))
             row = {"recipe": entry["recipe"], "file": entry["file"], "applies": files is not None}
@@ -1121,9 +922,9 @@ def deps(project: str) -> dict:
                 try:
                     done = deps_sets.ensure(cfg["data_dir"], entry, files, lab.image()["digest"])
                 except deps_sets.DepsError as e:
-                    raise OpsError(f"dependencies: {e.reason}", 1) from None
+                    raise core.OpsError(f"dependencies: {e.reason}", 1) from None
                 except lab.LabError as e:
-                    raise OpsError(f"dependencies: {e.kind}: {e.reason}", 1) from None
+                    raise core.OpsError(f"dependencies: {e.kind}: {e.reason}", 1) from None
                 row.update(key=done["key"], cached=done["cached"], duration_ms=done["duration_ms"])
             out.append(row)
     return {"dependencies": out}
@@ -1183,12 +984,12 @@ def pending(project: str, pending_id: int | None = None) -> dict:
     words the store allows for it now (_actions), and "agent", the area agent of its task as the store recorded it
     (None for a decision on a request, such as a plan or a router question, and when the project has no area
     agents)."""
-    ctx = context(project)
-    agents = _agent_by_task(_stored(ctx, ctx["store"].tasks_list))
+    ctx = core.context(project)
+    agents = _agent_by_task(core._stored(ctx, ctx["store"].tasks_list))
     if pending_id is not None:
-        item = _stored(ctx, ctx["store"].pending_get, pending_id)
+        item = core._stored(ctx, ctx["store"].pending_get, pending_id)
         return {**item, "agent": agents.get(item["task_id"]), "actions": _actions(ctx["store"], item)}
-    return {"pending": [_listed(item, ctx["store"], agents) for item in _stored(ctx, ctx["store"].pending_list)]}
+    return {"pending": [_listed(item, ctx["store"], agents) for item in core._stored(ctx, ctx["store"].pending_list)]}
 
 
 COMMENTS_LINE = "Comments left on the platform:"
@@ -1204,37 +1005,37 @@ def answer(project: str, pending_id: int, text: str, with_comments: bool = False
     person's command, never a default), the open comments saved from the platform for the task, and for the
     documents its skill owns (its declared outputs), are appended under COMMENTS_LINE, one per line, oldest first,
     and marked used by this pending decision ("comments": their ids)."""
-    ctx = context(project)
-    said = _text(text, "the answer")
-    if _stored(ctx, ctx["store"].pending_get, pending_id)["kind"] == "effect" and \
+    ctx = core.context(project)
+    said = core._text(text, "the answer")
+    if core._stored(ctx, ctx["store"].pending_get, pending_id)["kind"] == "effect" and \
             APPROVAL_WORDS.fullmatch(said.strip()):
-        raise OpsError(f"pending decision {pending_id} is an effect: an approval is given with approve --id {pending_id} "
+        raise core.OpsError(f"pending decision {pending_id} is an effect: an approval is given with approve --id {pending_id} "
                        "--sha256 <its hash>, never as an answer (the next run would read it as the skill's yes)", 2)
     used = []
     if with_comments:
-        item = _stored(ctx, ctx["store"].pending_get, pending_id)
-        saved = _stored(ctx, ctx["store"].comments_list, task_id=item["task_id"])
-        skill = _stored(ctx, ctx["store"].task_get, item["task_id"])["skill"]
+        item = core._stored(ctx, ctx["store"].pending_get, pending_id)
+        saved = core._stored(ctx, ctx["store"].comments_list, task_id=item["task_id"])
+        skill = core._stored(ctx, ctx["store"].task_get, item["task_id"])["skill"]
         if skill:
             try:
-                owned = skill_meta.declared(os.path.join(ROOT, "skills", skill))["outputs"]
+                owned = skill_meta.declared(os.path.join(core.ROOT, "skills", skill))["outputs"]
             except skill_meta.SkillError as e:
-                raise OpsError(f"the comments of {skill}'s documents cannot be found: {e}", 1) from None
-            saved += [c for c in _stored(ctx, ctx["store"].comments_list)
+                raise core.OpsError(f"the comments of {skill}'s documents cannot be found: {e}", 1) from None
+            saved += [c for c in core._stored(ctx, ctx["store"].comments_list)
                       if c.get("document_path") and skill_meta.matches(owned, c["document_path"])]
             saved.sort(key=lambda c: c["id"])
         if saved:
             lines = [f"- {c.get('author') or 'unknown'}: {' '.join(str(c['text']).split())}" for c in saved]
             said = "\n".join([said, "", COMMENTS_LINE, *lines])
             used = [c["id"] for c in saved]
-    out = _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="answered", by="user", answer=said)
+    out = core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="answered", by="user", answer=said)
     if used:
-        _stored(ctx, ctx["store"].comments_use, used, pending_id=pending_id)
+        core._stored(ctx, ctx["store"].comments_use, used, pending_id=pending_id)
         out = {**out, "comments": used}
-    item = _stored(ctx, ctx["store"].pending_get, pending_id)
+    item = core._stored(ctx, ctx["store"].pending_get, pending_id)
     if item["kind"] != "question":
         return out
-    if _stored(ctx, ctx["store"].task_get, item["task_id"])["parent_id"] is None:
+    if core._stored(ctx, ctx["store"].task_get, item["task_id"])["parent_id"] is None:
         # A question of the router, on a request: the answer is given to the router's next run (route()), and is not
         # recorded as a decision of a skill.
         return {**out, "state": {"written": False, "reason": "an answer to the router is given to its next run, "
@@ -1243,7 +1044,7 @@ def answer(project: str, pending_id: int, text: str, with_comments: bool = False
     current = _read(target) if os.path.isfile(target) and not os.path.islink(target) else None
     if current is None:
         return {**out, "state": {"written": False, "reason": "the project has no state file"}}
-    skill = _stored(ctx, ctx["store"].task_get, item["task_id"])["skill"]
+    skill = core._stored(ctx, ctx["store"].task_get, item["task_id"])["skill"]
     try:
         text_after = state_merge.with_answer(current, date=datetime.date.today().isoformat(), skill=skill,
                                              pending_id=pending_id, answer=said)
@@ -1262,51 +1063,51 @@ def release(project: str, pending_id: int) -> dict:
     _after_release) follows in the same call: the brief's delivery routed again (one run of the router, holding the
     run lock, so the release is refused while another run is in progress), the backlog's sub-tasks; its result is
     under "after"."""
-    ctx = context(project)
+    ctx = core.context(project)
     return _release(ctx, pending_id, by="user")
 
 
 def _release(ctx: dict, pending_id: int, by: str) -> dict:
     """pending_resolve(released) and then _after_release, for the person (by "user") and for a mode ("mode:<mode>")."""
-    item = _stored(ctx, ctx["store"].pending_get, pending_id)
+    item = core._stored(ctx, ctx["store"].pending_get, pending_id)
     made = (item.get("payload") or {}).get("changeset") or {}
     if item["kind"] == "review" and made.get("blocked"):
         refused = "; ".join(f"{r['path'] or 'the whole set'}: {r['reason']}" for r in made.get("refused") or [])
-        raise OpsError(f"pending decision {pending_id}: its change set is blocked ({refused}): answer with what to change, "
+        raise core.OpsError(f"pending decision {pending_id}: its change set is blocked ({refused}): answer with what to change, "
                        "or cancel the request", 1)
-    task = _stored(ctx, ctx["store"].task_get, item["task_id"])
-    lock = _run_lock(ctx["cfg"]) if item["kind"] == "review" and _brief_delivery(ctx, task) else contextlib.nullcontext()
+    task = core._stored(ctx, ctx["store"].task_get, item["task_id"])
+    lock = core._run_lock(ctx["cfg"]) if item["kind"] == "review" and _brief_delivery(ctx, task) else contextlib.nullcontext()
     with lock:
-        out = _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="released", by=by)
+        out = core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="released", by=by)
         after = _after_release(ctx, item)
     return {**out, "after": after} if after else out
 
 
 def retry(project: str, task_id: int) -> dict:
     """Make a failed or blocked task ready again."""
-    ctx = context(project)
-    return _stored(ctx, ctx["store"].task_retry, task_id)
+    ctx = core.context(project)
+    return core._stored(ctx, ctx["store"].task_retry, task_id)
 
 
 def cancel(project: str, request_id: int) -> dict:
     """Cancel a request, its tasks that are not done, and their open pending decisions."""
-    ctx = context(project)
-    return _stored(ctx, ctx["store"].request_cancel, request_id, by="user")
+    ctx = core.context(project)
+    return core._stored(ctx, ctx["store"].request_cancel, request_id, by="user")
 
 
 def proof(project: str, skill: str | None = None) -> dict:
     """The model each skill would run on now, by its proof, with the two checks and the bands: {"skills": {name:
     proof.route(...)}}, for the named skill or for every skill of the packs in use (manifest.skills_in_use). It
     calls no model; it refreshes the proof file <data_dir>/proof.json where its inputs changed."""
-    ctx = context(project)
-    names = [skill] if skill else manifest.skills_in_use(ROOT)
-    key, out = _floor_key(), {}
+    ctx = core.context(project)
+    names = [skill] if skill else manifest.skills_in_use(core.ROOT)
+    key, out = core._floor_key(), {}
     for name in names:
         try:
-            meta = skill_meta.declared(os.path.join(ROOT, "skills", name))
+            meta = skill_meta.declared(os.path.join(core.ROOT, "skills", name))
             out[name] = _route(ctx, name, meta, None, key)
         except (skill_meta.SkillError, lab.LabError, OSError, KeyError) as e:
-            raise OpsError(f"the proof of {name} cannot be read: {e}", 1) from None
+            raise core.OpsError(f"the proof of {name} cannot be read: {e}", 1) from None
     return {"skills": out}
 
 
@@ -1315,22 +1116,22 @@ def verdict(project: str, run_id: int, word: str) -> dict:
     {"run_id", "use", "verdict"}. word is worked, corrected or failed. One verdict per run. The verdict is the
     person's: no code path calls this by itself, and nothing reads a verdict out of a model's reply."""
     if word not in VERDICTS:
-        raise OpsError(f"a verdict is one of {', '.join(VERDICTS)}", 2)
-    ctx = context(project)
-    use = _stored(ctx, ctx["store"].cursor_get, f"use:{run_id}")
+        raise core.OpsError(f"a verdict is one of {', '.join(VERDICTS)}", 2)
+    ctx = core.context(project)
+    use = core._stored(ctx, ctx["store"].cursor_get, f"use:{run_id}")
     if not use:
-        raise OpsError(f"run {run_id} has no recorded use", 1)
-    given = _stored(ctx, ctx["store"].cursor_get, f"verdict:{run_id}")
+        raise core.OpsError(f"run {run_id} has no recorded use", 1)
+    given = core._stored(ctx, ctx["store"].cursor_get, f"verdict:{run_id}")
     if given:
-        raise OpsError(f"run {run_id} already has the verdict {given}", 1)
+        raise core.OpsError(f"run {run_id} already has the verdict {given}", 1)
     try:
         done = _record(["--verdict", word, "--use", use, "--project", ctx["cfg"]["project"]])
     except (OSError, subprocess.SubprocessError) as e:
-        raise OpsError(f"the recorder could not be run: {type(e).__name__}", 1) from None
+        raise core.OpsError(f"the recorder could not be run: {type(e).__name__}", 1) from None
     if done.returncode != 0:
         lines = done.stderr.strip().splitlines()
-        raise OpsError(lines[-1] if lines else f"the recorder exited {done.returncode}", 1)
-    _stored(ctx, ctx["store"].cursor_set, f"verdict:{run_id}", word)
+        raise core.OpsError(lines[-1] if lines else f"the recorder exited {done.returncode}", 1)
+    core._stored(ctx, ctx["store"].cursor_set, f"verdict:{run_id}", word)
     return {"run_id": run_id, "use": use, "verdict": word}
 
 
@@ -1342,9 +1143,9 @@ def _record_acceptance(ctx: dict, cfg: dict, sha256: str, by: str) -> dict:
     line. The one writer of the accepted hash: accept_config (the person, in the terminal) and set_mode (code, for a
     move down the order of the modes, which widens nothing) call it, and nothing else does. Returns {"previous",
     "checkpoints"}."""
-    previous = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
-    _stored(ctx, ctx["store"].cursor_set, ACCEPTED_BY, by)
-    _stored(ctx, ctx["store"].cursor_set, project_config.ACCEPTED, sha256)
+    previous = core._stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+    core._stored(ctx, ctx["store"].cursor_set, ACCEPTED_BY, by)
+    core._stored(ctx, ctx["store"].cursor_set, project_config.ACCEPTED, sha256)
     return {"previous": previous, "checkpoints": _write_checkpoints(cfg)}
 
 
@@ -1352,12 +1153,12 @@ def accept_config(project: str, sha256: str) -> dict:
     """Record the hash of the project's configuration that the person accepts, after reading the file. The only
     operation that accepts any change of it (set_mode accepts only a move down the order of the modes), and the only
     one that runs on a configuration that was not accepted. Returns {"accepted", "previous", "path", "checkpoints"}."""
-    ctx = context(project, check_config=False)
+    ctx = core.context(project, check_config=False)
     cfg = ctx["cfg"]
-    with _config_lock(cfg):
-        cfg = _config_of(project)  # the file as it is now, under the lock
+    with core._config_lock(cfg):
+        cfg = core._config_of(project)  # the file as it is now, under the lock
         if sha256 != cfg["sha256"]:
-            raise OpsError(f"the file's hash is {cfg['sha256']} and you typed {sha256}: nothing was accepted", 1)
+            raise core.OpsError(f"the file's hash is {cfg['sha256']} and you typed {sha256}: nothing was accepted", 1)
         done = _record_acceptance(ctx, cfg, sha256, "person")
     return {"accepted": sha256, "previous": done["previous"], "path": cfg["path"], "checkpoints": done["checkpoints"]}
 
@@ -1394,11 +1195,11 @@ def _policy_file(cfg: dict, file: str) -> tuple:
     rel = (file or "").replace("\\", "/")
     parts = rel.split("/")
     if not rel or rel.startswith(("/", "~")) or any(p in ("", ".", "..") for p in parts) or parts[0] != "docs":
-        raise OpsError(f"{file!r} is not a relative path under docs/ of the project", 2)
+        raise core.OpsError(f"{file!r} is not a relative path under docs/ of the project", 2)
     target = os.path.join(cfg["project"], *parts)
     real = os.path.realpath(target)
     if not (real.startswith(cfg["project"] + os.sep)) or os.path.islink(target) or not os.path.isfile(real):
-        raise OpsError(f"{rel} is not a regular file inside the project", 2)
+        raise core.OpsError(f"{rel} is not a regular file inside the project", 2)
     return rel, real
 
 
@@ -1408,9 +1209,9 @@ SIDE_EFFECTS_LINE = re.compile(r"^SIDE_EFFECTS = \(([^)]*)\)", re.M)
 def _effect_words() -> tuple:
     """The closed vocabulary of side effects (contracts/environment.md), read from its one source in code, SIDE_EFFECTS
     of the checkout's scripts/validate.py, so the runtime keeps no copy of it."""
-    found = SIDE_EFFECTS_LINE.search(_read(os.path.join(ROOT, "scripts", "validate.py")) or "")
+    found = SIDE_EFFECTS_LINE.search(_read(os.path.join(core.ROOT, "scripts", "validate.py")) or "")
     if not found:
-        raise OpsError("the vocabulary of side effects (SIDE_EFFECTS of scripts/validate.py) cannot be read", 1)
+        raise core.OpsError("the vocabulary of side effects (SIDE_EFFECTS of scripts/validate.py) cannot be read", 1)
     return tuple(word.strip().strip('"') for word in found.group(1).split(",") if word.strip())
 
 
@@ -1424,7 +1225,7 @@ def _policy_bounds(rel: str, real: str, agent: str) -> dict:
                 data = json.load(f)
             bounds = autonomy.bounds_of(data, agent, _effect_words())
         except (OSError, ValueError) as e:
-            raise OpsError(f"{rel} is not a bounds file: {e}", 2) from None
+            raise core.OpsError(f"{rel} is not a bounds file: {e}", 2) from None
     else:
         bounds = {"policy": os.path.splitext(os.path.basename(rel))[0], "agent": agent}
     return dict(bounds, file=rel)
@@ -1439,7 +1240,7 @@ def _standing_rows(ctx: dict) -> dict:
     target = os.path.join(cfg["project"], *path_rule.STATE.split("/"))
     if not os.path.isfile(target) or os.path.islink(target):
         return {"written": False, "reason": "the project has no state file"}
-    every = _stored(ctx, ctx["store"].approvals_list, scope="standing")
+    every = core._stored(ctx, ctx["store"].approvals_list, scope="standing")
     chosen = {}
     for row in every:
         if row["status"] not in ("active", "expired"):
@@ -1474,10 +1275,10 @@ def approve_policy(project: str, file: str, agent: str, sha256: str | None = Non
     refused unless it is the file's hash now and expires is a date YYYY-MM-DD after today and at most 365 days ahead;
     then, in one transaction, an active approval of the same policy and agent is revoked and the new row added, and
     the state file's generated standing rows are rewritten. Never granted by default, never without an expiry."""
-    ctx = context(project)
+    ctx = core.context(project)
     cfg = ctx["cfg"]
     if agent not in cfg["area_agents"]:
-        raise OpsError(f"{agent!r} is not an agent of area_agents in {cfg['path']}", 2)
+        raise core.OpsError(f"{agent!r} is not an agent of area_agents in {cfg['path']}", 2)
     rel, real = _policy_file(cfg, file)
     bounds = _policy_bounds(rel, real, agent)
     now_hash = _sha256(real)
@@ -1485,33 +1286,28 @@ def approve_policy(project: str, file: str, agent: str, sha256: str | None = Non
         return {"file": rel, "agent": agent, "policy": bounds["policy"], "bounds": bounds, "sha256": now_hash,
                 "next": f"approve-policy --file {rel} --agent {agent} --sha256 {now_hash} --expires <YYYY-MM-DD>"}
     if sha256 != now_hash:
-        raise OpsError(f"{rel} has the hash {now_hash} now, not {sha256}: nothing was approved", 1)
+        raise core.OpsError(f"{rel} has the hash {now_hash} now, not {sha256}: nothing was approved", 1)
     today = datetime.date.today()
     try:
         until = datetime.date.fromisoformat(str(expires)) if isinstance(expires, str) and len(expires) == 10 else None
     except ValueError:
         until = None
     if until is None or until <= today or until > today + datetime.timedelta(days=POLICY_EXPIRY_DAYS):
-        raise OpsError(f"a standing approval needs --expires, a date YYYY-MM-DD after today and at most "
+        raise core.OpsError(f"a standing approval needs --expires, a date YYYY-MM-DD after today and at most "
                        f"{POLICY_EXPIRY_DAYS} days ahead: nothing was approved", 1)
-    row = _stored(ctx, ctx["store"].approval_standing_add, what=_text(what or bounds["policy"], "what"), by="user",
+    row = core._stored(ctx, ctx["store"].approval_standing_add, what=core._text(what or bounds["policy"], "what"), by="user",
                   policy_sha256=now_hash, bounds=bounds, expires_at=f"{until.isoformat()}T23:59:59Z")
     return {**row, **_standing_rows(ctx)}
 
 
 def revoke_policy(project: str, approval_id: int) -> dict:
     """End a standing approval: the row becomes revoked and its generated row leaves the state file."""
-    ctx = context(project)
-    item = _stored(ctx, ctx["store"].approval_get, approval_id)
+    ctx = core.context(project)
+    item = core._stored(ctx, ctx["store"].approval_get, approval_id)
     if item["scope"] != "standing" or item["status"] != "active":
-        raise OpsError(f"approval {approval_id} is not an active standing approval", 2)
-    row = _stored(ctx, ctx["store"].approval_revoke, approval_id, by="user")
+        raise core.OpsError(f"approval {approval_id} is not an active standing approval", 2)
+    row = core._stored(ctx, ctx["store"].approval_revoke, approval_id, by="user")
     return {**row, **_standing_rows(ctx)}
-
-
-def _midnight() -> str:
-    """The start of today in local time, ISO-8601: the day a policy's count starts from."""
-    return datetime.datetime.now().astimezone().replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
 
 
 def _policy_hash(cfg: dict, approval: dict):
@@ -1524,10 +1320,10 @@ def _standing(ctx: dict, policy: str) -> dict:
     """The answer of standing(): whether an active standing approval covers a policy now. Reads, executes nothing."""
     cfg = ctx["cfg"]
     now = datetime.datetime.now(datetime.timezone.utc)
-    active = _stored(ctx, ctx["store"].approvals_list, status="active", scope="standing")
+    active = core._stored(ctx, ctx["store"].approvals_list, status="active", scope="standing")
     found = [row for row in active if (row.get("bounds") or {}).get("policy") == policy]
     approval = found[-1] if found else None
-    executed = _stored(ctx, ctx["store"].action_count, kind=policy, since=_midnight())
+    executed = core._stored(ctx, ctx["store"].action_count, kind=policy, since=core._midnight())
     out = {"policy": policy, "covered": False, "why": "", "approval": None, "executed_today": executed, "mode": None}
     if approval is None:
         return {**out, "why": "no active standing approval names this policy"}
@@ -1548,7 +1344,7 @@ def standing(project: str, policy: str) -> dict:
     """Whether an active standing approval covers a policy now: a read, it executes nothing. covered is true only
     when the row exists, its file hashes as approved, it has not expired and its agent acts in the mode
     autonomous-with-policy. executed_today counts today's actions of kind <policy> (the store's action_count)."""
-    return _standing(context(project), policy)
+    return _standing(core.context(project), policy)
 
 
 def _effect_document(path: str, policy: str) -> dict:
@@ -1559,37 +1355,37 @@ def _effect_document(path: str, policy: str) -> dict:
         with open(path, "rb") as f:
             doc = json.loads(f.read().decode("utf-8"))
     except (OSError, ValueError) as e:
-        raise OpsError(f"the effect file cannot be read: {type(e).__name__}", 2) from None
+        raise core.OpsError(f"the effect file cannot be read: {type(e).__name__}", 2) from None
     if not isinstance(doc, dict):
-        raise OpsError("an effect file holds one JSON object", 2)
+        raise core.OpsError("an effect file holds one JSON object", 2)
     for key in effects.EFFECT_KEYS:
         if key not in doc:
-            raise OpsError(f"the effect file lacks the key {key}", 2)
+            raise core.OpsError(f"the effect file lacks the key {key}", 2)
     unknown = sorted(set(doc) - set(effects.EFFECT_KEYS))
     if unknown:
-        raise OpsError(f"the effect file has the unknown key {unknown[0]} (known: {', '.join(effects.EFFECT_KEYS)})", 2)
+        raise core.OpsError(f"the effect file has the unknown key {unknown[0]} (known: {', '.join(effects.EFFECT_KEYS)})", 2)
     for key in ("policy", "kind", "target", "idempotency_key", "payload_sha256"):
         if not isinstance(doc[key], str) or not doc[key].strip():
-            raise OpsError(f"{key} of the effect file is a non-empty text", 2)
+            raise core.OpsError(f"{key} of the effect file is a non-empty text", 2)
     for key in ("files", "args"):
         if not isinstance(doc[key], list) or not all(isinstance(v, str) for v in doc[key]):
-            raise OpsError(f"{key} of the effect file is a list of texts", 2)
+            raise core.OpsError(f"{key} of the effect file is a list of texts", 2)
     if isinstance(doc["items"], bool) or not isinstance(doc["items"], int) or doc["items"] < 0:
-        raise OpsError("items of the effect file is a whole number", 2)
+        raise core.OpsError("items of the effect file is a whole number", 2)
     if len(doc["target"]) > 512 or len(doc["idempotency_key"]) > 512:  # what the store can record: refused before anything runs
-        raise OpsError("target and idempotency_key of the effect file are at most 512 characters", 2)
+        raise core.OpsError("target and idempotency_key of the effect file are at most 512 characters", 2)
     if not re.fullmatch(r"[0-9a-f]{64}", doc["payload_sha256"]):
-        raise OpsError("payload_sha256 of the effect file is 64 lowercase hexadecimal characters", 2)
+        raise core.OpsError("payload_sha256 of the effect file is 64 lowercase hexadecimal characters", 2)
     if doc["policy"] != policy:
-        raise OpsError(f"the effect file is for the policy {doc['policy']!r}, not {policy!r}", 2)
+        raise core.OpsError(f"the effect file is for the policy {doc['policy']!r}, not {policy!r}", 2)
     if doc["kind"] not in _effect_words():
-        raise OpsError(f"kind of the effect file is one of {', '.join(_effect_words())}", 2)
+        raise core.OpsError(f"kind of the effect file is one of {', '.join(_effect_words())}", 2)
     can = effects.policy_kinds()
     if doc["kind"] not in can:
-        raise OpsError(f"the effect kind {doc['kind']!r} cannot run under a policy (it can: {', '.join(can)})", 2)
+        raise core.OpsError(f"the effect kind {doc['kind']!r} cannot run under a policy (it can: {', '.join(can)})", 2)
     reserved = [a for a in doc["args"] if a in effects.RESERVED_FLAGS]
     if reserved:
-        raise OpsError(f"args of the effect file holds {reserved[0]}: the operation adds it, the handler never does", 2)
+        raise core.OpsError(f"args of the effect file holds {reserved[0]}: the operation adds it, the handler never does", 2)
     return doc
 
 
@@ -1601,16 +1397,16 @@ def execute_under_policy(project: str, policy: str, effect_file: str) -> dict:
     exactly the approval's file globs and the document's idempotency key; the action is recorded after it.
     Returns {"executed": false, "policy", "why"} when the approval does not cover the effect (nothing ran), else
     {"executed": true, "policy", "approval_id", "action": {"id", "created"}, "result": <what the provider printed>}."""
-    ctx = context(project)
+    ctx = core.context(project)
     cfg, store = ctx["cfg"], ctx["store"]
     doc = _effect_document(effect_file, policy)
     answer = _standing(ctx, policy)
     if not answer["covered"]:
         return {"executed": False, "policy": policy, "why": answer["why"]}
     module = effects.module_for(doc["kind"])  # _effect_document accepted the kind: its module may run under a policy
-    with _run_lock(cfg):
-        row = _stored(ctx, store.approval_get, answer["approval"]["id"])
-        executed = _stored(ctx, store.action_count, kind=policy, since=_midnight())
+    with core._run_lock(cfg):
+        row = core._stored(ctx, store.approval_get, answer["approval"]["id"])
+        executed = core._stored(ctx, store.action_count, kind=policy, since=core._midnight())
         effect = module.policy_effect(doc)
         ok, why = autonomy.covers(row, _policy_hash(cfg, row), effect, executed, datetime.datetime.now(datetime.timezone.utc))
         if not ok:
@@ -1619,20 +1415,20 @@ def execute_under_policy(project: str, policy: str, effect_file: str) -> dict:
         argv = list(module.policy_argv(doc))
         added = [a for a in argv if a in effects.RESERVED_FLAGS]
         if added:  # exact equality is the rule, as for the document's args; the kind's own arguments never carry what only the operation adds (the bounds' globs, the key, the flag)
-            raise OpsError(f"the arguments of the effect kind {doc['kind']!r} hold {added[0]}: the operation adds it", 1)
+            raise core.OpsError(f"the arguments of the effect kind {doc['kind']!r} hold {added[0]}: the operation adds it", 1)
         for glob in row["bounds"]["files"]:
             argv += ["--allow", glob]
         argv += ["--idempotency-key", doc["idempotency_key"]]
         try:
             effects.provider_call(provider, argv + ["--dry-run"])
         except effects.EffectError as e:
-            raise OpsError(f"nothing was executed: {e.reason}", 1) from None
+            raise core.OpsError(f"nothing was executed: {e.reason}", 1) from None
         try:
             printed = effects.provider_call(provider, argv + ["--confirmed"])
         except effects.EffectError as e:
-            raise OpsError(f"the provider failed after the dry run: {e.reason}; the idempotency key lets the next "
+            raise core.OpsError(f"the provider failed after the dry run: {e.reason}; the idempotency key lets the next "
                            f"call replay it", 1) from None
-        action = _stored(ctx, store.action_add, kind=policy, idempotency_key=doc["idempotency_key"],
+        action = core._stored(ctx, store.action_add, kind=policy, idempotency_key=doc["idempotency_key"],
                          target=effect["target"], payload_sha256=doc["payload_sha256"], result=printed)
     return {"executed": True, "policy": policy, "approval_id": row["id"],
             "action": {"id": action["id"], "created": action["created"]}, "result": printed}
@@ -1649,21 +1445,21 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
     after a narrowing and "unchanged" true when the mode was the one set. Two calls at once, or a call and the
     terminal, never overlap (_config_lock), and a call that finds the file or the accepted hash moved since it began
     writes nothing and is refused (code 1): code never accepts a widening that a stale copy of the file would bring."""
-    ctx = context(project)
+    ctx = core.context(project)
     cfg = ctx["cfg"]
     if mode not in autonomy.MODES:
-        raise OpsError(f"a mode is one of {', '.join(autonomy.MODES)}", 2)
+        raise core.OpsError(f"a mode is one of {', '.join(autonomy.MODES)}", 2)
     if agent not in cfg["area_agents"]:
-        raise OpsError(f"{agent!r} is not an agent of area_agents in {cfg['path']}", 2)
+        raise core.OpsError(f"{agent!r} is not an agent of area_agents in {cfg['path']}", 2)
     old = cfg["area_agents"][agent]["mode"]
-    with _config_lock(cfg):
+    with core._config_lock(cfg):
         # Under the lock, the file and the accepted hash are read again: another change (a request at the same time, the
         # terminal) may have finished since context() read them. This call writes the accepted copy plus its one word,
         # so it goes on only when the file is still that accepted copy; else it writes nothing, and the caller asks again.
-        fresh = _config_of(project)
-        accepted = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+        fresh = core._config_of(project)
+        accepted = core._stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
         if fresh["sha256"] != cfg["sha256"] or accepted != cfg["sha256"]:
-            raise OpsError("the configuration changed while this call was running: nothing was written; read it, "
+            raise core.OpsError("the configuration changed while this call was running: nothing was written; read it, "
                            "and ask again", 1)
         if old == mode:
             return {"agent": agent, "mode": mode, "config_sha256": cfg["sha256"], "accepted": True, "by": None,
@@ -1676,12 +1472,12 @@ def set_mode(project: str, agent: str, mode: str) -> dict:
         os.replace(temporary, cfg["path"])
         new = _sha256(cfg["path"])
         out = {"agent": agent, "mode": mode, "config_sha256": new, "accepted": False, "by": None,
-               "next": _command("accept-config", cfg["project"], sha256=new)}
+               "next": core._command("accept-config", cfg["project"], sha256=new)}
         if autonomy.narrows(old, mode):
             try:
                 written = project_config.load(project)
             except project_config.ConfigError as e:
-                raise OpsError(str(e), 3) from None
+                raise core.OpsError(str(e), 3) from None
             if written["sha256"] == new:  # nothing else changed the file between the write and this read
                 done = _record_acceptance(ctx, written, new, "code:narrowing")
                 out.update(accepted=True, by="code:narrowing", next=None, checkpoints=done["checkpoints"])
@@ -1698,11 +1494,11 @@ def status(project: str) -> dict:
     first line cut at a word. "held" lists the ready tasks the last dispatcher round did not start, each with its
     reason (runtime/dispatcher.py, REASONS) and "at", the time of the round; while the local service dispatches nothing
     every ready task is held with `dispatch off`; "next" is the command that gets past the reason, or None."""
-    ctx = context(project)
-    rows = _stored(ctx, ctx["store"].tasks_list)
+    ctx = core.context(project)
+    rows = core._stored(ctx, ctx["store"].tasks_list)
     agents = _agent_by_task(rows)
     comments = {}
-    for c in _stored(ctx, ctx["store"].comments_list):
+    for c in core._stored(ctx, ctx["store"].comments_list):
         if c.get("task_id") is not None:
             comments[c["task_id"]] = comments.get(c["task_id"], 0) + 1
     board_of = lambda t: {"on_board": bool(t.get("remote_id")), "open_comments": comments.get(t["id"], 0)}
@@ -1711,10 +1507,10 @@ def status(project: str) -> dict:
                            for t in rows if t["parent_id"] == r["id"]]}
                 for r in rows if r["parent_id"] is None]
     return {"config": {"path": ctx["cfg"]["path"], "sha256": ctx["cfg"]["sha256"]}, "requests": requests,
-            "pending": [_listed(item, ctx["store"], agents) for item in _stored(ctx, ctx["store"].pending_list)],
+            "pending": [_listed(item, ctx["store"], agents) for item in core._stored(ctx, ctx["store"].pending_list)],
             "documents": [{"path": d["path"], "status": d["status"], "note": d["note"], "on_platform": bool(d["remote_id"])}
-                          for d in _stored(ctx, ctx["store"].documents_list)],
-            "board": ({"left_out_final": len(_stored(ctx, lambda _conn: board.left_out(ctx, rows)))}
+                          for d in core._stored(ctx, ctx["store"].documents_list)],
+            "board": ({"left_out_final": len(core._stored(ctx, lambda _conn: board.left_out(ctx, rows)))}
                       if board.enabled(ctx["cfg"]) else None),
             "held": _held_listed(ctx, rows)}
 
@@ -1724,9 +1520,9 @@ def config(project: str) -> dict:
     {"path", "sha256", "accepted", "data_dir"}. "accepted" says whether the file's hash is the one the person
     accepted last. A configuration that cannot be read at all, or that names another checkout, is still refused
     (code 3): there is nothing to report."""
-    ctx = context(project, check_config=False)
+    ctx = core.context(project, check_config=False)
     cfg = ctx["cfg"]
-    accepted = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+    accepted = core._stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
     return {"path": cfg["path"], "sha256": cfg["sha256"], "accepted": accepted == cfg["sha256"],
             "data_dir": cfg["data_dir"]}
 
@@ -1736,24 +1532,24 @@ def task(project: str, task_id: int) -> dict:
     "pending": its pending decisions of every status, oldest first, each with "agent" (the task's own) and
     "actions"}. For a request the runs are the router's and the decisions its plan's or its question's; for a task of
     a plan, its own."""
-    ctx = context(project)
+    ctx = core.context(project)
     store = ctx["store"]
-    found = _stored(ctx, store.task_get, task_id)
-    return {"task": found, "runs": _stored(ctx, store.task_runs_list, task_id),
+    found = core._stored(ctx, store.task_get, task_id)
+    return {"task": found, "runs": core._stored(ctx, store.task_runs_list, task_id),
             "pending": [{**item, "agent": found["agent"] if found["parent_id"] is not None else None,
                          "actions": _actions(store, item)}
-                        for item in _stored(ctx, store.pending_list, "all", task_id)]}
+                        for item in core._stored(ctx, store.pending_list, "all", task_id)]}
 
 
 def flows(project: str) -> dict:
     """The flow files of this checkout: {"flows": [{"flow", "title", "tasks": <number of tasks>}]}, sorted by name.
     A flow file that does not pass its checks is listed with "title" None, "tasks" 0 and an "error" text, so one bad
     file hides no other. The project is only the configuration check every operation makes."""
-    context(project)
+    core.context(project)
     out = []
-    for name in flow_files.names(ROOT):
+    for name in flow_files.names(core.ROOT):
         try:
-            loaded = flow_files.load(name, ROOT)
+            loaded = flow_files.load(name, core.ROOT)
         except flow_files.FlowError as e:
             out.append({"flow": name, "title": None, "tasks": 0, "error": str(e)})
         else:
@@ -1765,16 +1561,16 @@ def progress(project: str, since: str | None = None) -> dict:
     """Where the work stands and what happened in a period, from the store's records only (runtime/progress.py): no
     model is called and no number is estimated. since is None (the last 7 days), "<n>d" or "YYYY-MM-DD". Returns
     {"progress", "summary", "text"}. The effects counted are the approvals code executed (status `executed`)."""
-    ctx = context(project)
+    ctx = core.context(project)
     now = datetime.datetime.now(datetime.timezone.utc)
     try:
         start, end = progress_calc.window(since, now)
     except ValueError as e:
-        raise OpsError(str(e), 2) from None
-    tasks = _stored(ctx, ctx["store"].tasks_list)
-    runs = [run for task in tasks for run in _stored(ctx, ctx["store"].task_runs_list, task["id"])]
-    pending_rows = _stored(ctx, ctx["store"].pending_list, "all")
-    executed = _stored(ctx, ctx["store"].approvals_list, status="executed")
+        raise core.OpsError(str(e), 2) from None
+    tasks = core._stored(ctx, ctx["store"].tasks_list)
+    runs = [run for task in tasks for run in core._stored(ctx, ctx["store"].task_runs_list, task["id"])]
+    pending_rows = core._stored(ctx, ctx["store"].pending_list, "all")
+    executed = core._stored(ctx, ctx["store"].approvals_list, status="executed")
     now_progress = progress_calc.progress([t for t in tasks if t["parent_id"] is None], tasks, pending_rows, now)
     period = progress_calc.summary(tasks, runs, pending_rows, executed, start, end)
     return {"progress": now_progress, "summary": period, "text": progress_calc.render(now_progress, period)}
@@ -1786,7 +1582,7 @@ def progress(project: str, since: str | None = None) -> dict:
 def _with_agents(cfg: dict, tasks: list) -> list:
     """The tasks of a plan the person named, each with its area agent (plan.agent_of) when area agents are
     configured; without them every agent is None (stages 1 to 4)."""
-    skills = plan.agent_skills(cfg, ROOT)
+    skills = plan.agent_skills(cfg, core.ROOT)
     return [dict(t, agent=plan.agent_of(t["skill"], skills) if skills else None) for t in tasks]
 
 
@@ -1798,7 +1594,7 @@ def _plan_pending(ctx: dict, request: dict, tasks: list, route_read, source: str
               "retries": reference["retries"]}
     past = []
     for skill in dict.fromkeys(t["skill"] for t in tasks):
-        past += _stored(ctx, ctx["store"].task_runs_of_skill, skill)
+        past += core._stored(ctx, ctx["store"].task_runs_of_skill, skill)
     built = plan.build(request, tasks, route_read, source, limits, past, flow=flow)
     return {"kind": "plan", **built}
 
@@ -1810,32 +1606,32 @@ def route(project: str, request_id: int, flow: str | None = None) -> dict:
     files and the pack in scope, and a valid route becomes a plan; a reply that asks becomes a question; anything
     else reaches the person whole. Nothing the router's run left comes back. No task is created before the person
     approves the plan (approve()). Returns {"routed": true or false, "pending_id", "source", ...}."""
-    ctx = context(project)
+    ctx = core.context(project)
     store = ctx["store"]
-    with _run_lock(ctx["cfg"]):
-        recovered = _stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task")
-        request = _stored(ctx, store.task_get, request_id)
+    with core._run_lock(ctx["cfg"]):
+        recovered = core._stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task")
+        request = core._stored(ctx, store.task_get, request_id)
         if request["parent_id"] is not None:
-            raise OpsError(f"task {request_id} is not a request: route the request it belongs to", 1)
+            raise core.OpsError(f"task {request_id} is not a request: route the request it belongs to", 1)
         if request["state"] != "requested":
-            raise OpsError(f"request {request_id} is {request['state']}: only a request that waits for its route is routed", 1)
+            raise core.OpsError(f"request {request_id} is {request['state']}: only a request that waits for its route is routed", 1)
         if flow is not None:
             try:
-                loaded = flow_files.load(flow, ROOT)
-                tasks = _with_agents(ctx["cfg"], plan.from_flow(loaded, ROOT, plan.pack_skills(ctx["cfg"], ROOT)))
+                loaded = flow_files.load(flow, core.ROOT)
+                tasks = _with_agents(ctx["cfg"], plan.from_flow(loaded, core.ROOT, plan.pack_skills(ctx["cfg"], core.ROOT)))
                 decision = _plan_pending(ctx, request, tasks, None, "named", loaded["flow"])
             except flow_files.FlowError as e:
-                raise OpsError(str(e), 2) from None
+                raise core.OpsError(str(e), 2) from None
             except (plan.PlanError, lab.LabError, ValueError) as e:
-                raise OpsError(f"no plan can be built: {e}", 1) from None
-            opened = _stored(ctx, store.plan_open, request_id, title=decision["title"], body=decision["body"],
+                raise core.OpsError(f"no plan can be built: {e}", 1) from None
+            opened = core._stored(ctx, store.plan_open, request_id, title=decision["title"], body=decision["body"],
                              payload=decision["payload"])
             return {"routed": True, "pending_id": opened["pending_id"], "source": "named", "flow": loaded["flow"],
                     "cancelled": opened["cancelled"], "recovered": recovered["tasks"]}
         try:
             parts = plan.split(request["text"])
         except ValueError as e:
-            raise OpsError(str(e), 2) from None
+            raise core.OpsError(str(e), 2) from None
         if len(parts["items"]) > 1:
             return {**_route_deliveries(ctx, request, parts), "recovered": recovered["tasks"]}
         return {**_route_run(ctx, request), "recovered": recovered["tasks"]}
@@ -1848,28 +1644,28 @@ def _router_call(ctx: dict, request: dict, text: str, *, reroute: bool = False) 
     A failed run is finished here; a run that did not fail is finished by the caller, with its decision."""
     cfg, store, skill = ctx["cfg"], ctx["store"], router.ROUTER_SKILL
     try:
-        meta = skill_meta.declared(os.path.join(ROOT, "skills", skill))
-        key = _floor_key()
+        meta = skill_meta.declared(os.path.join(core.ROOT, "skills", skill))
+        key = core._floor_key()
         routing = _route(ctx, skill, meta, None, key)
         identity = lab.skill_identity(skill)
     except (skill_meta.SkillError, lab.LabError, OSError, KeyError) as e:
-        raise OpsError(f"the router ({skill}) could not start: {e}", 1) from None
-    run_id = _stored(ctx, store.route_run_start, request["id"], skill=skill, model=routing["model"],
+        raise core.OpsError(f"the router ({skill}) could not start: {e}", 1) from None
+    run_id = core._stored(ctx, store.route_run_start, request["id"], skill=skill, model=routing["model"],
                      adapter=routing["adapter"], skill_version=identity["version"],
                      skill_sha256=identity["content_sha256"], web=False, reroute=reroute)["run_id"]
-    dest = os.path.join(cfg["data_dir"], RUNS_DIR, str(run_id))
+    dest = os.path.join(cfg["data_dir"], core.RUNS_DIR, str(run_id))
     out = {"routed": False, "request": request["id"], "source": "router", "run_id": run_id, "run_dir": dest,
            "status": "failed", "ending": None, "failure": None, "pending_id": None, "kind": None, "kept": [],
            "left_out": [], "entered": None, "routing": routing, "use": None}
 
     def fail(kind: str, reason: str, attempts: int = 0, digest=None, redactions=None) -> dict:
-        _stored(ctx, store.route_run_finish, run_id, status="failed", failure=kind, attempts=attempts,
+        core._stored(ctx, store.route_run_finish, run_id, status="failed", failure=kind, attempts=attempts,
                 image_digest=digest, run_dir=dest, error=_note(reason), redactions=redactions)
         out["failure"] = {"kind": kind, "reason": _note(reason)}
         return {"out": out, "failed": True}
 
     out["use"] = _use_start(ctx, run_id, skill, routing)
-    prepared_dir = os.path.join(cfg["data_dir"], PREPARED_DIR, str(run_id))
+    prepared_dir = os.path.join(cfg["data_dir"], core.PREPARED_DIR, str(run_id))
     try:
         try:
             entered = workcopy.entering(cfg["project"], meta, web=False, cfg=cfg, settings_names=lab.settings_names(),
@@ -1878,7 +1674,7 @@ def _router_call(ctx: dict, request: dict, text: str, *, reroute: bool = False) 
             return fail("internal", f"the copy could not be built: {e}")
         out["left_out"] = entered["left_out"]
         out["entered"] = {"kind": entered["kind"], "agents_md": entered["agents_md"], "files": len(entered["files"])}
-        answered = [] if reroute else [p for p in _stored(ctx, store.pending_list, "resolved", request["id"])
+        answered = [] if reroute else [p for p in core._stored(ctx, store.pending_list, "resolved", request["id"])
                                        if p["kind"] == "question" and p["resolution"] == "answered"]
         prompt = task_prompt(text, router.ROUTE_TASK_TEXT, answered)
         with lab.session(), _key_in_environment(routing, key):
@@ -1917,7 +1713,7 @@ def _router_call(ctx: dict, request: dict, text: str, *, reroute: bool = False) 
 
 def _checked(ctx: dict, read: dict) -> dict:
     """read_route() of a reply with "checked": router.check_route() against the flow files and the pack in scope."""
-    return dict(read, checked=router.check_route(read, flow_files.names(ROOT), plan.pack_skills(ctx["cfg"], ROOT)))
+    return dict(read, checked=router.check_route(read, flow_files.names(core.ROOT), plan.pack_skills(ctx["cfg"], core.ROOT)))
 
 
 def _combined(ctx: dict, request: dict, routed: list) -> dict:
@@ -1928,17 +1724,17 @@ def _combined(ctx: dict, request: dict, routed: list) -> dict:
     for entry in routed:
         flow = ((entry.get("route") or {}).get("checked") or {}).get("flow")
         if flow and flow not in flows:
-            flows[flow] = flow_files.load(flow, ROOT)
+            flows[flow] = flow_files.load(flow, core.ROOT)
     reference = lab.reference("strong")
     limits = {"one_task_at_a_time": True, "timeout_seconds": reference["timeout_seconds"],
               "retries": reference["retries"]}
-    skills = plan.agent_skills(cfg, ROOT)
-    pack = plan.pack_skills(cfg, ROOT)
-    out = plan.combine(request, routed, flows, skills, ROOT, pack=pack, limits=limits, past=[])
+    skills = plan.agent_skills(cfg, core.ROOT)
+    pack = plan.pack_skills(cfg, core.ROOT)
+    out = plan.combine(request, routed, flows, skills, core.ROOT, pack=pack, limits=limits, past=[])
     past = []
     for skill in dict.fromkeys(t["skill"] for t in out["tasks"]):
-        past += _stored(ctx, ctx["store"].task_runs_of_skill, skill)
-    return plan.combine(request, routed, flows, skills, ROOT, pack=pack, limits=limits, past=past) if past else out
+        past += core._stored(ctx, ctx["store"].task_runs_of_skill, skill)
+    return plan.combine(request, routed, flows, skills, core.ROOT, pack=pack, limits=limits, past=past) if past else out
 
 
 def _route_run(ctx: dict, request: dict) -> dict:
@@ -1964,7 +1760,7 @@ def _route_run(ctx: dict, request: dict) -> dict:
             decision, why = None, f"no plan can be built from the route: {e}"
         if decision is not None:
             decision["payload"] = {**decision["payload"], **common}
-            done = _stored(ctx, store.route_run_finish, out["run_id"], ending="done", pending=decision, **finish)
+            done = core._stored(ctx, store.route_run_finish, out["run_id"], ending="done", pending=decision, **finish)
             out.update(status="ok", ending="done", routed=True, kind="plan", pending_id=done["pending_id"])
             return out
     if read["kind"] == "question":
@@ -1974,7 +1770,7 @@ def _route_run(ctx: dict, request: dict) -> dict:
     else:
         decision = _not_recognised(store, request, body, why, common)
         ending = "unclassified"
-    done = _stored(ctx, store.route_run_finish, out["run_id"], ending=ending, pending=decision, **finish)
+    done = core._stored(ctx, store.route_run_finish, out["run_id"], ending=ending, pending=decision, **finish)
     out.update(status="ok", ending=ending, kind="question", pending_id=done["pending_id"])
     return out
 
@@ -2014,7 +1810,7 @@ def _route_deliveries(ctx: dict, request: dict, parts: dict) -> dict:
         routed.append(entry)
         runs.append(call["out"]["run_id"])
         if k < len(items):
-            _stored(ctx, store.route_run_finish, call["out"]["run_id"], ending=ending, **call["finish"])
+            core._stored(ctx, store.route_run_finish, call["out"]["run_id"], ending=ending, **call["finish"])
         else:
             last = (call, ending)
     call, ending = last
@@ -2034,7 +1830,7 @@ def _route_deliveries(ctx: dict, request: dict, parts: dict) -> dict:
                                    why or "no delivery was routed", {**call["common"], "router_runs": runs})
         decision["title"] = "No delivery was routed"
         kind = "question"
-    done = _stored(ctx, store.route_run_finish, out["run_id"], ending=ending, pending=decision, **call["finish"])
+    done = core._stored(ctx, store.route_run_finish, out["run_id"], ending=ending, pending=decision, **call["finish"])
     out.update(status="ok", ending=ending, routed=kind == "plan", kind=kind, pending_id=done["pending_id"],
                deliveries=len(items), runs=runs,
                unrouted=len(combined["unrouted"]) if combined is not None else len(items))
@@ -2047,7 +1843,7 @@ def _route_deliveries(ctx: dict, request: dict, parts: dict) -> dict:
 def _approved_plan(ctx: dict, request_id: int):
     """The payload of the request's approved `plan` pending decision (the newest), or None: the one source of the
     plan's deliveries and limits after its approval."""
-    found = [p for p in _stored(ctx, ctx["store"].pending_list, "resolved", request_id)
+    found = [p for p in core._stored(ctx, ctx["store"].pending_list, "resolved", request_id)
              if p["kind"] == "plan" and p["resolution"] == "approved"]
     return found[-1]["payload"] if found else None
 
@@ -2072,12 +1868,12 @@ def _after_release(ctx: dict, item: dict) -> dict:
     out = {}
     if item["kind"] != "review":
         return out
-    task = _stored(ctx, ctx["store"].task_get, item["task_id"])
+    task = core._stored(ctx, ctx["store"].task_get, item["task_id"])
     returned = [r.get("path") for r in (item.get("payload") or {}).get("returned") or [] if isinstance(r, dict)]
     found = _brief_delivery(ctx, task)
     if found is not None:
         out["reroute"] = _reroute(ctx, task, returned, *found)
-    if task.get("skill") and task["skill"] == plan.owner_of(plan.BACKLOG, ROOT) and plan.BACKLOG in returned:
+    if task.get("skill") and task["skill"] == plan.owner_of(plan.BACKLOG, core.ROOT) and plan.BACKLOG in returned:
         out["subtasks"] = _backlog_subtasks(ctx, task)
     return out
 
@@ -2089,7 +1885,7 @@ def _reroute(ctx: dict, task: dict, returned: list, k: int, delivery: dict, appr
     of kind deliveries that shows the reason and the router's whole reply: the delivery reaches the person, never a
     third run."""
     store = ctx["store"]
-    request = _stored(ctx, store.task_get, task["parent_id"])
+    request = core._stored(ctx, store.task_get, task["parent_id"])
     briefs = [rel for rel in returned if rel and rel.startswith(plan.BRIEFS_DIR)]
     if not briefs:
         return _not_rerouted(ctx, request, k, delivery, "the brief task returned no file under " + plan.BRIEFS_DIR, "")
@@ -2113,10 +1909,10 @@ def _reroute(ctx: dict, task: dict, returned: list, k: int, delivery: dict, appr
             why = "the router named the brief again: a delivery is routed again once"
         else:
             try:
-                flows = {checked["flow"]: flow_files.load(checked["flow"], ROOT)} if "flow" in checked else {}
-                tasks = plan.delivery_tasks(dict(route_read, title=plan.title_of(delivery["item"])), k, flows, ROOT,
-                                            plan.pack_skills(ctx["cfg"], ROOT), prefix=True)
-                skills = plan.agent_skills(ctx["cfg"], ROOT)
+                flows = {checked["flow"]: flow_files.load(checked["flow"], core.ROOT)} if "flow" in checked else {}
+                tasks = plan.delivery_tasks(dict(route_read, title=plan.title_of(delivery["item"])), k, flows, core.ROOT,
+                                            plan.pack_skills(ctx["cfg"], core.ROOT), prefix=True)
+                skills = plan.agent_skills(ctx["cfg"], core.ROOT)
                 inside = {t["key"] for t in tasks}
                 for t in tasks:
                     if not [d for d in t["depends_on"] if d in inside]:
@@ -2136,7 +1932,7 @@ def _reroute(ctx: dict, task: dict, returned: list, k: int, delivery: dict, appr
                     "body": "\n".join(lines), "payload": {"what": "subtasks", "delivery": k, "brief": briefs[0],
                                                           "route": read["line"], "tasks": tasks, **call["common"]}}
         ending = "done"
-    done = _stored(ctx, store.route_run_finish, call["out"]["run_id"], ending=ending, pending=decision, **finish)
+    done = core._stored(ctx, store.route_run_finish, call["out"]["run_id"], ending=ending, pending=decision, **finish)
     return {"delivery": k, "run_id": call["out"]["run_id"], "pending_id": done["pending_id"],
             "routed": tasks is not None, "why": why}
 
@@ -2152,7 +1948,7 @@ def _not_rerouted_decision(request: dict, k: int, delivery: dict, why: str, repl
 
 def _not_rerouted(ctx: dict, request: dict, k: int, delivery: dict, why: str, reply: str, run_id=None) -> dict:
     decision = _not_rerouted_decision(request, k, delivery, why, reply, {})
-    opened = _stored(ctx, ctx["store"].acceptance_open, task_id=request["id"], what="deliveries",
+    opened = core._stored(ctx, ctx["store"].acceptance_open, task_id=request["id"], what="deliveries",
                      title=decision["title"], body=decision["body"], payload=decision["payload"])
     return {"delivery": k, "run_id": run_id, "pending_id": opened["pending_id"], "routed": False, "why": why}
 
@@ -2165,30 +1961,30 @@ def _backlog_subtasks(ctx: dict, task: dict) -> dict:
     approved = _approved_plan(ctx, request_id) or {}
     limits = approved.get("limits") or {}
     try:
-        proposed = plan.backlog_tasks(os.path.join(ctx["cfg"]["project"], *plan.BACKLOG.split("/")), ROOT)
+        proposed = plan.backlog_tasks(os.path.join(ctx["cfg"]["project"], *plan.BACKLOG.split("/")), core.ROOT)
     except ValueError as e:
         return {"error": str(e)}
-    rows = [t for t in _stored(ctx, store.tasks_list, request_id) if t["parent_id"] is not None]
+    rows = [t for t in core._stored(ctx, store.tasks_list, request_id) if t["parent_id"] is not None]
     known = {t["key"] for t in rows if t.get("key")}
     planned = {t.get("key") for t in approved.get("tasks") or []}
     proposed = [p for p in proposed if p["key"] not in known]
     if not proposed:
         return {"created": [], "pending_id": None}
-    skills = plan.agent_skills(ctx["cfg"], ROOT)
+    skills = plan.agent_skills(ctx["cfg"], core.ROOT)
     for p in proposed:
         try:
             p["agent"] = plan.agent_of(p["skill"], skills) if skills else None
         except ValueError:
             p["agent"] = None  # no agent owns it: it waits, and the person can run it by hand
     chosen = plan.subtasks(limits, len([t for t in rows if t.get("key") not in planned]), proposed, known)
-    created = _stored(ctx, store.tasks_add, request_id, chosen["create"])["tasks"] if chosen["create"] else []
+    created = core._stored(ctx, store.tasks_add, request_id, chosen["create"])["tasks"] if chosen["create"] else []
     pending_id = None
     if chosen["ask"]:
         lines = [f"The product backlog proposes {len(chosen['ask'])} task(s) outside the approved plan's limits "
                  f"({limits.get('max_subtasks', 0)} sub-tasks of {', '.join(limits.get('subtask_skills') or []) or 'no skill'}):", ""]
         lines += [f"- {t['key']}: {t['title']}" + (f" (after {', '.join(t['depends_on'])})" if t["depends_on"] else "")
                   for t in chosen["ask"]]
-        pending_id = _stored(ctx, store.acceptance_open, task_id=request_id, what="subtasks",
+        pending_id = core._stored(ctx, store.acceptance_open, task_id=request_id, what="subtasks",
                              title=f"Accept {len(chosen['ask'])} sub-task(s) of request {request_id}",
                              body="\n".join(lines), payload={"tasks": chosen["ask"]})["pending_id"]
     return {"created": [t["id"] for t in created], "pending_id": pending_id}
@@ -2207,24 +2003,24 @@ def approve(project: str, pending_id: int, sha256: str | None = None, channel: s
     the content's hash and take it back typed or clicked); the table of operations tells this function which channel
     called, and any other channel (the conversation, a messaging app), or none, is refused before anything is executed or
     sent (the pending row is read first, to know its kind; the rule fails closed)."""
-    ctx = context(project)
-    item = _stored(ctx, ctx["store"].pending_get, pending_id)
+    ctx = core.context(project)
+    item = core._stored(ctx, ctx["store"].pending_get, pending_id)
     if item["kind"] == "effect" and channel not in EFFECT_CHANNELS:
-        raise OpsError("an effect is approved in the terminal, with its hash: "
-                       + _command("approve", ctx["cfg"]["project"], pending_id=pending_id, sha256="<hash>"), 1)
+        raise core.OpsError("an effect is approved in the terminal, with its hash: "
+                       + core._command("approve", ctx["cfg"]["project"], pending_id=pending_id, sha256="<hash>"), 1)
     if item["kind"] == "plan":
         payload = item.get("payload") or {}
         stated = payload.get("plan_sha256")
         if plan.plan_hash(payload.get("tasks") or []) != stated:
-            raise OpsError(f"pending decision {pending_id}: its tasks do not have the hash it states; nothing was approved", 1)
+            raise core.OpsError(f"pending decision {pending_id}: its tasks do not have the hash it states; nothing was approved", 1)
         if sha256 is not None and sha256 != stated:
-            raise OpsError(f"the plan's hash is {stated} and you typed {sha256}: nothing was approved", 1)
-        return {**_stored(ctx, ctx["store"].plan_approve, pending_id, by="user"), "plan_sha256": stated}
+            raise core.OpsError(f"the plan's hash is {stated} and you typed {sha256}: nothing was approved", 1)
+        return {**core._stored(ctx, ctx["store"].plan_approve, pending_id, by="user"), "plan_sha256": stated}
     if item["kind"] == "acceptance":
-        return _stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="accepted", by="user")
+        return core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="accepted", by="user")
     if item["kind"] == "effect":
         return _approve_effect(ctx, item, sha256)
-    raise OpsError(f"pending decision {pending_id} is a {item['kind']}: approve takes a plan, an acceptance or an effect; "
+    raise core.OpsError(f"pending decision {pending_id} is a {item['kind']}: approve takes a plan, an acceptance or an effect; "
                    "a question or a review is answered or released", 2)
 
 
@@ -2238,15 +2034,15 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
     "left_out_final", "pushed", "failed"[, "would"]} or None, "documents": {"imported", "not_taken", "conflicts", "rejected", "comments", "gone",
     "pushed", "failed"[, "would"]} or None}."""
     if take is not None and take not in ("page", "project"):
-        raise OpsError("take is page or project", 2)
+        raise core.OpsError("take is page or project", 2)
     if (take is None) != (path is None):
-        raise OpsError("take and path go together", 2)
-    ctx = context(project)
+        raise core.OpsError("take and path go together", 2)
+    ctx = core.context(project)
     out = {"board": None, "documents": None}
-    with _run_lock(ctx["cfg"]):
+    with core._run_lock(ctx["cfg"]):
         if take is not None:
             if not documents.enabled(ctx["cfg"]):
-                raise OpsError("take settles a document of the documents platform, and none is configured", 3)
+                raise core.OpsError("take settles a document of the documents platform, and none is configured", 3)
             out["documents"] = _documents(ctx, documents.take, ctx, path, take)
             return out
         if board.enabled(ctx["cfg"]):
@@ -2255,9 +2051,9 @@ def sync(project: str, dry_run: bool = False, take: str | None = None, path: str
                            "left_out_final": len(board.left_out(ctx))} if dry_run else board.pull(ctx))
                 out["board"] = {**pulled, **board.push(ctx, dry_run=dry_run)}
             except board.BoardError as e:
-                raise OpsError(f"the task board: {e}", 3 if e.kind == "not configured" else 1) from None
+                raise core.OpsError(f"the task board: {e}", 3 if e.kind == "not configured" else 1) from None
             except ctx["store"].StoreError as e:
-                raise OpsError(str(e), e.code) from None
+                raise core.OpsError(str(e), e.code) from None
         if documents.enabled(ctx["cfg"]):
             pulled = _documents(ctx, documents.pull, ctx, dry_run=dry_run)
             pushed = _documents(ctx, lambda: documents.push(ctx, documents.mirrored_paths(ctx), dry_run=dry_run))
@@ -2270,45 +2066,45 @@ def _documents(ctx: dict, function, *args, **kwargs):
     try:
         return function(*args, **kwargs)
     except documents.DocumentsError as e:
-        raise OpsError(f"the documents platform: {e}", 3 if e.kind == "not configured" else 1) from None
+        raise core.OpsError(f"the documents platform: {e}", 3 if e.kind == "not configured" else 1) from None
     except ctx["store"].StoreError as e:
-        raise OpsError(str(e), e.code) from None
+        raise core.OpsError(str(e), e.code) from None
 
 
 def hand_over(project: str, task_id: int, file: str) -> dict:
     """Put one file of the person's in a task's file drop, <project>/.workbench-local/drop/<task id>/ (runtime/drop.py):
     it enters the runs of that task only, and their prompt lists it. Holds the run lock, so no run of the task is in
     progress. Returns {"task", "path", "bytes", "sha256"}; refused (drop.DropError) with the reason."""
-    ctx = context(project)
-    with _run_lock(ctx["cfg"]):
-        task = _stored(ctx, ctx["store"].task_get, task_id)
+    ctx = core.context(project)
+    with core._run_lock(ctx["cfg"]):
+        task = core._stored(ctx, ctx["store"].task_get, task_id)
         if task["parent_id"] is None or not task.get("skill"):
-            raise OpsError(f"{task_id} is a request: a file is handed to one of its tasks", 1)
+            raise core.OpsError(f"{task_id} is a request: a file is handed to one of its tasks", 1)
         try:
-            meta = skill_meta.declared(os.path.join(ROOT, "skills", task["skill"]))
+            meta = skill_meta.declared(os.path.join(core.ROOT, "skills", task["skill"]))
         except skill_meta.SkillError as e:
-            raise OpsError(str(e), 1) from None
+            raise core.OpsError(str(e), 1) from None
         try:
             return drop.hand_over(ctx["cfg"]["project"], {**task, "web": meta["web"]}, os.path.abspath(file),
                                   drop.WEB_TASK_TAKES_DROP)
         except drop.DropError as e:
-            raise OpsError(str(e), 1) from None
+            raise core.OpsError(str(e), 1) from None
 
 
 def reject(project: str, pending_id: int, note: str | None = None) -> dict:
     """Reject a pending decision of kind `plan` or `acceptance`: the request is cancelled, with what is open under
     it. A note is kept on a rejected plan. An `effect` rejected cancels its task, and nothing is sent."""
-    ctx = context(project)
-    item = _stored(ctx, ctx["store"].pending_get, pending_id)
+    ctx = core.context(project)
+    item = core._stored(ctx, ctx["store"].pending_get, pending_id)
     if item["kind"] == "plan":
-        said = _text(note, "the note") if note is not None else None
-        return _stored(ctx, ctx["store"].plan_reject, pending_id, by="user", note=said)
+        said = core._text(note, "the note") if note is not None else None
+        return core._stored(ctx, ctx["store"].plan_reject, pending_id, by="user", note=said)
     if item["kind"] == "acceptance":
-        return _stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="rejected", by="user")
+        return core._stored(ctx, ctx["store"].acceptance_resolve, pending_id, resolution="rejected", by="user")
     if item["kind"] == "effect":
-        said = _text(note, "the note") if note is not None else None
-        return _stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="rejected", by="user", answer=said)
-    raise OpsError(f"pending decision {pending_id} is a {item['kind']}: reject takes a plan, an acceptance or an effect", 2)
+        said = core._text(note, "the note") if note is not None else None
+        return core._stored(ctx, ctx["store"].pending_resolve, pending_id, resolution="rejected", by="user", answer=said)
+    raise core.OpsError(f"pending decision {pending_id} is a {item['kind']}: reject takes a plan, an acceptance or an effect", 2)
 
 
 # --- stage 6: the dispatcher's operations ----------------------------------------------------------------------------
@@ -2336,9 +2132,9 @@ def _agents_of_the_day(ctx: dict) -> dict:
     if not agents_checked:
         return {}
     now = datetime.datetime.now(datetime.timezone.utc)
-    standing_rows = _stored(ctx, store.approvals_list, status="active", scope="standing")
+    standing_rows = core._stored(ctx, store.approvals_list, status="active", scope="standing")
     runs = [dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL else r
-            for r in _stored(ctx, store.runs_since, _midnight_utc())]
+            for r in core._stored(ctx, store.runs_since, _midnight_utc())]
     reference, floor = lab.reference("strong")["model"], lab.reference("floor")["model"]
     per_run = cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD)
     return {name: {"facts": autonomy.facts(name, agents_checked, standing_rows, now), "entry": entry,
@@ -2355,25 +2151,25 @@ def _snapshot(ctx: dict, key: dict) -> dict:
     planning agent."""
     store, cfg = ctx["store"], ctx["cfg"]
     agents = cfg["area_agents"]
-    tasks = _stored(ctx, store.tasks_list)
+    tasks = core._stored(ctx, store.tasks_list)
     by_id = {t["id"]: t for t in tasks}
     proofs = {}
 
     def routed(skill: str) -> dict:
         if skill not in proofs:
-            proofs[skill] = _route(ctx, skill, skill_meta.declared(os.path.join(ROOT, "skills", skill)), None, key)
+            proofs[skill] = _route(ctx, skill, skill_meta.declared(os.path.join(core.ROOT, "skills", skill)), None, key)
         return proofs[skill]
 
     out = {"running": next((t for t in tasks if t["state"] == "running"), None),
            "ready": [t for t in tasks if t["state"] == "ready" and t["parent_id"] is not None],
            "reviews": [], "agents": _agents_of_the_day(ctx), "tier": {}}
-    for item in _stored(ctx, store.pending_list):
+    for item in core._stored(ctx, store.pending_list):
         task = by_id.get(item["task_id"])
         if item["kind"] != "review" or task is None or not task.get("skill"):
             continue
         out["reviews"].append({"pending": item, "task": task, "agent": task.get("agent"),
                                "proven": bool(routed(task["skill"]).get("proven")),
-                               "mandatory": plan.mandatory(task["skill"], ROOT)})
+                               "mandatory": plan.mandatory(task["skill"], core.ROOT)})
     for task in out["ready"]:
         if task.get("agent") in agents and task.get("skill"):
             out["tier"][task["id"]] = routed(task["skill"])["tier"]
@@ -2406,8 +2202,8 @@ def _deliveries_acceptance(ctx: dict, request_id: int):
     """One acceptance of kind deliveries on a request a mode completed, listing every delivery a mode released in it;
     None when no delivery of it was released by a mode."""
     store = ctx["store"]
-    tasks = {t["id"]: t for t in _stored(ctx, store.tasks_list, request_id) if t["parent_id"] is not None}
-    by_mode = [p for p in _stored(ctx, store.pending_list, "resolved")
+    tasks = {t["id"]: t for t in core._stored(ctx, store.tasks_list, request_id) if t["parent_id"] is not None}
+    by_mode = [p for p in core._stored(ctx, store.pending_list, "resolved")
                if p["task_id"] in tasks and p["kind"] == "review" and p["resolution"] == "released"
                and str(p.get("resolved_by") or "").startswith("mode:")]
     if not by_mode:
@@ -2416,7 +2212,7 @@ def _deliveries_acceptance(ctx: dict, request_id: int):
              "draft: read it, then accept (a note records what you think), or reject.", ""]
     lines += [f"- task {p['task_id']} ({tasks[p['task_id']]['skill']}): {tasks[p['task_id']]['title']}, released by "
               f"{p['resolved_by']}, pending decision {p['id']}" for p in by_mode]
-    return _stored(ctx, store.acceptance_open, task_id=request_id, what="deliveries",
+    return core._stored(ctx, store.acceptance_open, task_id=request_id, what="deliveries",
                    title=f"Accept the deliveries of request {request_id}", body="\n".join(lines),
                    payload={"released": [p["id"] for p in by_mode]})["pending_id"]
 
@@ -2441,16 +2237,16 @@ def dispatch(project: str, budget_seconds=None) -> dict:
     start for either stops, and no task fails for it. The ready tasks the round held, each with its reason
     (dispatcher.held_of), are kept for `status` (HELD_CURSOR)."""
     started = time.monotonic()
-    ctx = context(project)
+    ctx = core.context(project)
     cfg = ctx["cfg"]
     budget = DISPATCH_BUDGET if budget_seconds is None else budget_seconds
     if not cfg["area_agents"]:
-        rows = _stored(ctx, ctx["store"].tasks_list)
+        rows = core._stored(ctx, ctx["store"].tasks_list)
         _record_held(ctx, [{"task_id": t["id"], "agent": t.get("agent"), "reason": dispatcher.NO_AGENT}
                            for t in rows if t["state"] == "ready" and t["parent_id"] is not None], [])
         return {"stopped": "no area agent is configured"}
     out = {"handlers": _ticks(ctx, project), "released": [], "ran": [], "held": [], "stopped": None}
-    key = _floor_key()
+    key = core._floor_key()
     released, checked, held, missing = [], {}, [], []
     while out["stopped"] is None:
         if _configuration_moved(ctx):  # accepted again, or edited, since the round began: a mode may have been narrowed
@@ -2482,7 +2278,7 @@ def dispatch(project: str, budget_seconds=None) -> dict:
             break
         try:
             ran = _claim_and_run(ctx, None, decided["start"])
-        except OpsError as e:
+        except core.OpsError as e:
             out["stopped"] = f"task {decided['start']} could not run: {e}"
             break
         if ran.get("ran") is None:
@@ -2502,7 +2298,7 @@ def pin(project: str) -> dict:
     """The pin of the dispatcher's two jobs, <data_dir>/dispatch-pin.json (mode 0600): the path and the hash of the
     project's runtime.json, which must be the accepted one. The scheduler's entry (runtime/dispatcher.py) refuses to
     load anything when the file differs from it. Returns {"pin", "runtime_json", "next"}."""
-    ctx = context(project)
+    ctx = core.context(project)
     cfg = ctx["cfg"]
     pinned = {"runtime_json": {"path": cfg["path"], "sha256": cfg["sha256"]},
               "pinned_at": datetime.datetime.now(datetime.timezone.utc).isoformat()}
@@ -2524,10 +2320,10 @@ def _configuration_moved(ctx: dict) -> bool:
     or the accepted hash differs from the one the round started with. The round then ends, so that a narrowing accepted
     in the middle of it (the page stopped an agent) stops the next start."""
     try:
-        now = _config_of(ctx["cfg"]["project"])
-    except OpsError:
+        now = core._config_of(ctx["cfg"]["project"])
+    except core.OpsError:
         return True
-    accepted = _stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
+    accepted = core._stored(ctx, ctx["store"].cursor_get, project_config.ACCEPTED)
     return now["sha256"] != ctx["cfg"]["sha256"] or accepted != ctx["cfg"]["sha256"]
 
 
@@ -2558,7 +2354,6 @@ def _image_stop():
 
 HELD_CURSOR = "dispatch:held"   # the store's cursor that holds the last round's held tasks (JSON), per project
 HELD_KEPT = 20                  # tasks kept in the record: a cursor value is at most 4 KiB
-SERVICE_TEXT = 300              # characters of one verdict of service_check: an exception's text is bounded
 SERVICE = {}                    # the local service's facts, by project folder: set by service_check in the service's process only
 
 
@@ -2573,14 +2368,14 @@ def _record_held(ctx: dict, held: list, missing=()) -> None:
     write moves the store's change counter, and every open page reloads for it."""
     kept, more, names = held[:HELD_KEPT], max(0, len(held) - HELD_KEPT), list(missing)[:HELD_KEPT]
     try:
-        before = json.loads(_stored(ctx, ctx["store"].cursor_get, HELD_CURSOR) or "null")
+        before = json.loads(core._stored(ctx, ctx["store"].cursor_get, HELD_CURSOR) or "null")
     except ValueError:
         before = None
     if isinstance(before, dict) and before.get("held") == kept and before.get("more") == more \
             and (before.get("missing") or []) == names:
         return
     record = {"at": _now_iso(), "held": kept, "more": more, "missing": names}
-    _stored(ctx, ctx["store"].cursor_set, HELD_CURSOR, json.dumps(record, separators=(",", ":")))
+    core._stored(ctx, ctx["store"].cursor_set, HELD_CURSOR, json.dumps(record, separators=(",", ":")))
 
 
 def _held_listed(ctx: dict, rows: list) -> list:
@@ -2595,9 +2390,9 @@ def _held_listed(ctx: dict, rows: list) -> list:
     service = SERVICE.get(os.path.realpath(project))
     if service is not None and service["dispatch"] == "off":
         return [{"task_id": t["id"], "agent": t.get("agent"), "reason": dispatcher.DISPATCH_OFF, "at": service["at"],
-                 "next": _command("run-next", project, uv=True)} for t in ready]
+                 "next": core._command("run-next", project, uv=True)} for t in ready]
     try:
-        record = json.loads(_stored(ctx, ctx["store"].cursor_get, HELD_CURSOR) or "null")
+        record = json.loads(core._stored(ctx, ctx["store"].cursor_get, HELD_CURSOR) or "null")
     except ValueError:
         record = None
     if not isinstance(record, dict):
@@ -2618,7 +2413,7 @@ def _held_next(project: str, reason: str, missing=None):
     (lab.credential_usernames, from the adapters' manifests) in the command that stores it, or the table of
     contracts/secrets.md when none is registered; it gives no value and invents none."""
     if reason == "secret store":
-        return operations.service_line(ROOT, [project], uv=True)
+        return operations.service_line(core.ROOT, [project], uv=True)
     if reason == "credential":
         names = list(missing or [])
         if not names:
@@ -2647,7 +2442,7 @@ def _ticks(ctx: dict, project: str) -> dict:
             continue
         try:
             out[name] = handler_call(project, name, "tick")
-        except OpsError as e:
+        except core.OpsError as e:
             out[name] = {"error": str(e), "code": e.code}
     return out
 
@@ -2658,15 +2453,15 @@ def poll(project: str) -> dict:
     (the Checkpoints line, the standing rows) when they changed, and release what each agent's mode releases. It calls
     no model and starts no task: the release of a brief, which runs the router, is left to dispatch. Returns {"synced",
     "expired", "released", "state"}."""
-    ctx = context(project)
+    ctx = core.context(project)
     cfg, store = ctx["cfg"], ctx["store"]
     synced = None
     if board.enabled(cfg) or documents.enabled(cfg):
         try:
             synced = sync(project)
-        except OpsError as e:
+        except core.OpsError as e:
             synced = {"error": str(e), "code": e.code}
-    expired = _stored(ctx, store.approvals_expire, datetime.datetime.now(datetime.timezone.utc).isoformat())
+    expired = core._stored(ctx, store.approvals_expire, datetime.datetime.now(datetime.timezone.utc).isoformat())
     state = "unchanged"
     if expired:
         rows = _standing_rows(ctx)
@@ -2680,7 +2475,7 @@ def poll(project: str) -> dict:
                 state = "written"
     released = []
     if cfg["area_agents"]:
-        snapshot = _snapshot(ctx, _floor_key())
+        snapshot = _snapshot(ctx, core._floor_key())
         decided = dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)
         released = _mode_releases(ctx, [], snapshot, decided, skip=lambda task: _brief_delivery(ctx, task) is not None)
     return {"synced": synced, "expired": expired, "released": released, "state": state}
@@ -2703,37 +2498,37 @@ def handler_call(project: str, name: str, verb: str, args=None) -> dict:
     and --project, and return the one JSON object it printed, with "exit_code". name is a key of the configuration's
     handlers; verb is a word of the file's VERBS; args is {flag: value}, passed as --flag value. Anything else: OpsError
     2. Output that is not one JSON object: OpsError 1, with the end of its stderr."""
-    ctx = context(project)
+    ctx = core.context(project)
     handlers = ctx["cfg"].get("handlers") or {}
     if name not in handlers:
-        raise OpsError(f"{name!r} is not a handler of {ctx['cfg']['path']}", 2)
-    path = os.path.join(ROOT, "runtime", "handlers", name.replace("-", "_") + ".py")
+        raise core.OpsError(f"{name!r} is not a handler of {ctx['cfg']['path']}", 2)
+    path = os.path.join(core.ROOT, "runtime", "handlers", name.replace("-", "_") + ".py")
     if not os.path.isfile(path) or os.path.islink(path):
-        raise OpsError(f"the handler {name} has no file runtime/handlers/{os.path.basename(path)} in this checkout", 2)
+        raise core.OpsError(f"the handler {name} has no file runtime/handlers/{os.path.basename(path)} in this checkout", 2)
     try:
         verbs = _handler_verbs(path)
     except (OSError, SyntaxError, ValueError) as e:
-        raise OpsError(f"the handler {name}'s verbs cannot be read: {type(e).__name__}", 2) from None
+        raise core.OpsError(f"the handler {name}'s verbs cannot be read: {type(e).__name__}", 2) from None
     if verb not in verbs:
-        raise OpsError(f"the handler {name} has no verb {verb!r} (its verbs: {', '.join(verbs) or 'none'})", 2)
+        raise core.OpsError(f"the handler {name} has no verb {verb!r} (its verbs: {', '.join(verbs) or 'none'})", 2)
     flags = []
     for flag, value in sorted((args or {}).items()):
         if not isinstance(flag, str) or not re.fullmatch(r"[a-z][a-z0-9-]*", flag) or flag == "project":
-            raise OpsError(f"{flag!r} is not a flag a handler takes", 2)
+            raise core.OpsError(f"{flag!r} is not a flag a handler takes", 2)
         flags += [f"--{flag}", str(value)]
     try:
         done = subprocess.run([sys.executable, path, verb, "--project", ctx["cfg"]["project"], *flags],
                               capture_output=True, text=True, timeout=HANDLER_TIMEOUT, check=False)
     except subprocess.TimeoutExpired:
-        raise OpsError(f"the handler {name} {verb} ran over {HANDLER_TIMEOUT} s", 1) from None
+        raise core.OpsError(f"the handler {name} {verb} ran over {HANDLER_TIMEOUT} s", 1) from None
     except OSError as e:
-        raise OpsError(f"the handler {name} could not be started: {type(e).__name__}", 1) from None
+        raise core.OpsError(f"the handler {name} could not be started: {type(e).__name__}", 1) from None
     try:
         printed = json.loads(done.stdout)
     except ValueError:
         printed = None
     if not isinstance(printed, dict):
-        raise OpsError(f"the handler {name} {verb} printed no JSON object (exit {done.returncode}): "
+        raise core.OpsError(f"the handler {name} {verb} printed no JSON object (exit {done.returncode}): "
                        f"{done.stderr.strip()[-300:]}", 1)
     return {**printed, "exit_code": done.returncode}
 
@@ -2748,24 +2543,24 @@ def _contained_scope(ctx: dict, skill: str) -> None:
     manifest), or that is in the pack of no enabled area agent of the configuration (a check of scope, not of mode). A
     configuration with no area agents puts no skill in scope: nothing is allowed unless a pack says so."""
     if not isinstance(skill, str) or not SKILL_NAME.fullmatch(skill) or \
-            not os.path.isfile(os.path.join(ROOT, "skills", skill, "SKILL.md")):
-        raise OpsError(f"{skill!r} is not a skill of this checkout", 2)
+            not os.path.isfile(os.path.join(core.ROOT, "skills", skill, "SKILL.md")):
+        raise core.OpsError(f"{skill!r} is not a skill of this checkout", 2)
     try:
-        packs = plan.agent_skills(ctx["cfg"], ROOT)
+        packs = plan.agent_skills(ctx["cfg"], core.ROOT)
     except plan.PlanError as e:
-        raise OpsError(str(e), 2) from None
+        raise core.OpsError(str(e), 2) from None
     if not any(skill in names for names in packs.values()):
-        raise OpsError(f"{skill} is in the pack of no enabled area agent of {ctx['cfg']['path']}: a contained run is "
+        raise core.OpsError(f"{skill} is in the pack of no enabled area agent of {ctx['cfg']['path']}: a contained run is "
                        "made only for a skill of an area agent's pack", 2)
     try:
-        manifest.load(ROOT, skill)  # a skill the runtime knows nothing of does not run, here as in a task
+        manifest.load(core.ROOT, skill)  # a skill the runtime knows nothing of does not run, here as in a task
     except manifest.ManifestError as e:
-        raise OpsError(str(e), 2) from None
+        raise core.OpsError(str(e), 2) from None
 
 
 def _contained_folder(cfg: dict) -> tuple:
     """(n, folder): a new folder <data_dir>/contained-runs/<n>, claimed by creating it, so that two runs never share one."""
-    base = os.path.join(cfg["data_dir"], CONTAINED_DIR)
+    base = os.path.join(cfg["data_dir"], core.CONTAINED_DIR)
     os.makedirs(base, mode=0o700, exist_ok=True)
     n = 1 + max([int(name) for name in os.listdir(base) if name.isdigit()] or [0])
     while True:
@@ -2803,30 +2598,30 @@ def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms
     A LabError (no image on this machine, a configuration the lab refuses, a platform with no reference) is OpsError 3
     with its reason: the eval image is never built here."""
     if not isinstance(prompt, str) or not prompt.strip():
-        raise OpsError("the prompt is empty", 2)
+        raise core.OpsError("the prompt is empty", 2)
     if isinstance(platforms, str) or not all(isinstance(n, str) for n in platforms or ()):
-        raise OpsError("platforms is a list of platform names", 2)
+        raise core.OpsError("platforms is a list of platform names", 2)
     if timeout is not None and (isinstance(timeout, bool) or not isinstance(timeout, int) or timeout <= 0):
-        raise OpsError("timeout is a number of seconds above 0", 2)
-    ctx = context(project)
+        raise core.OpsError("timeout is a number of seconds above 0", 2)
+    ctx = core.context(project)
     cfg = ctx["cfg"]
     _contained_scope(ctx, skill)
     out_dir = os.path.abspath(out_dir)
     try:
-        meta = skill_meta.declared(os.path.join(ROOT, "skills", skill))
-        key = _floor_key()
+        meta = skill_meta.declared(os.path.join(core.ROOT, "skills", skill))
+        key = core._floor_key()
         routing = _route(ctx, skill, meta, None, key)
     except (skill_meta.SkillError, lab.LabError, KeyError, ValueError, OSError) as e:
-        raise OpsError(f"{skill} could not be routed: {e}", 3 if isinstance(e, lab.LabError) else 1) from None
+        raise core.OpsError(f"{skill} could not be routed: {e}", 3 if isinstance(e, lab.LabError) else 1) from None
     number, dest = _contained_folder(cfg)
-    prepared_dir = os.path.join(cfg["data_dir"], PREPARED_DIR, f"contained-{number}")
+    prepared_dir = os.path.join(cfg["data_dir"], core.PREPARED_DIR, f"contained-{number}")
     try:
         try:
             # web=True here is the copy's form, "the artifacts the skill declares" (L3); the run itself is web=False below.
             entered = workcopy.entering(cfg["project"], meta, web=True, cfg=cfg, settings_names=lab.settings_names(),
                                         prepared_dir=prepared_dir)
         except workcopy.CopyError as e:
-            raise OpsError(f"the copy could not be built: {e}", 1) from None
+            raise core.OpsError(f"the copy could not be built: {e}", 1) from None
         try:
             with lab.session(), _key_in_environment(routing, key):
                 result = lab.run_skill(skill, prompt, entered["files"], dest, web=False, tier=routing["tier"],
@@ -2834,7 +2629,7 @@ def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms
         except lab.LabError as e:
             with contextlib.suppress(OSError):
                 os.rmdir(dest)  # no run was made: the folder claimed for it is empty, and goes
-            raise OpsError(f"{e.kind}: {e.reason}", 3) from None
+            raise core.OpsError(f"{e.kind}: {e.reason}", 3) from None
     finally:
         shutil.rmtree(prepared_dir, ignore_errors=True)
     changes = result["changes"] or {}
@@ -2855,7 +2650,7 @@ def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms
                        "exit_code": 0 if answered else 1, "cost_usd": cost}, f)
             f.write("\n")
     except OSError as e:
-        raise OpsError(f"the reply could not be written to {out_dir}: {e.strerror}", 1) from None
+        raise core.OpsError(f"the reply could not be written to {out_dir}: {e.strerror}", 1) from None
     failure = result["failure"]
     return {"status": result["status"], "failure": None if failure is None else
             {"kind": failure["kind"], "reason": _note(failure["reason"])},
@@ -2863,652 +2658,17 @@ def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms
             "ignored_changes": ignored, "run_dir": dest}
 
 
-# --- stage 6: the conversation with the planning agent ----------------------------------------------------------------
+# --- the facade: what the sibling modules hold, under the names a shell and a test read ---------------------------------
 
-CONVERSATION = "project"  # one conversation per project until the local interface (stage 9)
-MEMORY_TURNS = 6
-MEMORY_CHARS = 4000
-MEMORY_CUT = 600
-MEMORY_HEAD = "Earlier in this conversation, oldest first:"
-MEMORY_TAIL = "The request now:"
-PLAN_NEXT = "Approve with " + operations.chat_line("approve", pending_id="{pending}")
-ASK_NEXT = "Answer with a plain line, or start again with " + operations.chat_line("new", text="<text>")
+OpsError = core.OpsError  # a shell catches ops.OpsError; the class has one home, runtime/ops_core.py
 
-
-def chat_memory(messages: list, settled: set) -> str:
-    """The conversation's memory for the router (T23: workaround 2, the floor model's adapter takes the request as one
-    argument, so the memory travels inside it, bounded): the plain lines and the router's replies after the newest
-    reply whose request reached `planned`, `done` or `cancelled` (settled: those request ids); commands and their
-    replies are left out. The newest MEMORY_TURNS, oldest first, each `<role>: <text>` on one line cut to MEMORY_CUT
-    characters, the whole cut to MEMORY_CHARS by dropping the oldest. Empty when there is none: the first line of an
-    exchange reaches the router plain."""
-    # T23: workaround 2, the conversation's memory as a bounded text in the request
-    start = 0
-    for n, m in enumerate(messages):
-        if m["role"] == "assistant" and m.get("task_id") in settled:
-            start = n + 1
-    kept = [m for m in messages[start:] if (m["role"] == "user" and not m["text"].startswith("/")) or
-            (m["role"] == "assistant" and m.get("task_id") is not None)][-MEMORY_TURNS:]
-    lines = [f"{m['role']}: {' '.join(m['text'].split())[:MEMORY_CUT]}" for m in kept]
-    while lines and len("\n".join([MEMORY_HEAD, *lines])) > MEMORY_CHARS:
-        lines.pop(0)
-    return "\n".join([MEMORY_HEAD, *lines]) if lines else ""
-
-
-def say(project: str, text: str, channel: str | None = None) -> dict:
-    """One turn of the conversation with the planning agent (decision D12), one more shell of this layer. The person's
-    line is stored; a line that starts with "/" is one command of the table of operations (runtime/operations.py), which calls its operation once; a plain
-    line answers the router's open question on the conversation's last request, or else is a new request routed with
-    the conversation's memory in front of it (one or more runs of the router: a model call), refused when the planning
-    agent may not start. The reply is stored too. A model's reply is shown, never executed. A line that would route
-    while another run of the project holds the run lock is refused (code 1) before the line or a request is stored.
-    `channel` is the shell that carries the line (the terminal, the local page, the MCP mode; the conversation's own
-    shell passes none and is `chat`): a command in the line is done only when its row lists that channel, so a shell
-    that may not approve, reject, retry or cancel cannot do it by typing the command here either. Returns {"reply", "request_id", "pending_id", "ran"}."""
-    ctx = context(project)
-    said = _text(text, "the line")
-    store = ctx["store"]
-    if _turn_routes(said):
-        # Before anything is stored: a turn that would route during a run is refused here, so that it leaves no message
-        # and no request behind (the router takes the same lock, after the line and the request would have been stored).
-        with _run_lock(ctx["cfg"]):
-            pass
-    _stored(ctx, store.message_add, conversation=CONVERSATION, role="user", text=said)
-    request_id, pending_id, ran, run_id = None, None, False, None
-    if said.startswith("/"):
-        reply, request_id, pending_id, ran, run_id = _say_command(project, ctx, said, channel or "chat")
-    else:
-        last = _last_request(ctx)
-        asked = _router_question(ctx, last)
-        if asked is not None:
-            reply, request_id, pending_id, ran, run_id = _say_route(project, ctx, said, answer_to=asked)
-        else:
-            reply, request_id, pending_id, ran, run_id = _say_route(project, ctx, said)
-    _stored(ctx, store.message_add, conversation=CONVERSATION, role="assistant", text=reply or "(no reply)",
-            task_id=request_id, run_id=run_id)
-    return {"reply": reply, "request_id": request_id, "pending_id": pending_id, "ran": ran}
-
-
-def _turn_routes(said: str) -> bool:
-    """Whether a line makes a turn that runs the router: a plain line, or /new. A command of the table calls its own
-    operation, which takes the run lock itself when it needs it, and a line that is no command gets the help."""
-    if not said.startswith("/"):
-        return True
-    parsed = operations.parse_chat(said)
-    return parsed is not None and parsed[0] == "new"
-
-
-def _last_request(ctx: dict):
-    """The request of the conversation's newest message that names one, or None."""
-    for m in reversed(_stored(ctx, ctx["store"].messages_list, CONVERSATION, limit=500)):
-        if m.get("task_id") is not None:
-            return m["task_id"]
-    return None
-
-
-def _router_question(ctx: dict, request_id):
-    """The newest open pending decision of the request, when it is a question on the request itself (the router
-    asked); else None."""
-    if request_id is None:
-        return None
-    request = _stored(ctx, ctx["store"].task_get, request_id)
-    if request["parent_id"] is not None or request["state"] != "requested":
-        return None
-    open_items = _stored(ctx, ctx["store"].pending_list, "open", request_id)
-    return open_items[-1]["id"] if open_items and open_items[-1]["kind"] == "question" else None
-
-
-def _say_command(project: str, ctx: dict, said: str, channel: str = "chat") -> tuple:
-    """(reply, request_id, pending_id, ran, run_id) of a command line: the table of operations reads it
-    (operations.parse_chat); an operation it names is called once with the arguments it read and the channel `chat`
-    (so an effect is never approved from a line), when its row lists the channel that carries the line (`channel`):
-    a command that row does not list is refused with the place where it is done, and a line it does not read gets
-    the help."""
-    parsed = operations.parse_chat(said)
-    if parsed is None or parsed[0] == "help":
-        return operations.chat_help(), None, None, False, None
-    name, found = parsed
-    if name == "new":
-        return _say_route(project, ctx, found)
-    row = operations.by_name(name)
-    if channel not in row["channels"]:
-        return f"error: /{name} is done in the terminal or on the page", None, None, False, None
-    if row.get("channel_arg"):
-        found = dict(found, channel="chat")
-    try:
-        out = globals()[row["call"]](project, **found)
-    except OpsError as e:
-        return f"error: {e}", None, None, False, None
-    if row.get("chat_reply"):
-        return out[row["chat_reply"]], None, None, False, None
-    return json.dumps(out, ensure_ascii=False, indent=1, default=str), None, None, False, None
-
-
-def _planning_may_start(ctx: dict) -> tuple:
-    """Whether the planning agent may run the router now (autonomy.may_start, on the tier the router's proof gives,
-    with the day's runs of the router counted against it)."""
-    cfg, store = ctx["cfg"], ctx["store"]
-    agents = cfg["area_agents"]
-    meta = skill_meta.declared(os.path.join(ROOT, "skills", router.ROUTER_SKILL))
-    tier = _route(ctx, router.ROUTER_SKILL, meta, None, _floor_key())["tier"]
-    now = datetime.datetime.now(datetime.timezone.utc)
-    standing_rows = _stored(ctx, store.approvals_list, status="active", scope="standing")
-    runs = [dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL else r
-            for r in _stored(ctx, store.runs_since, _midnight_utc())]
-    facts = autonomy.facts(plan.PLANNING, agents, standing_rows, now)
-    spent = autonomy.spend(runs, plan.PLANNING, lab.reference("strong")["model"], lab.reference("floor")["model"],
-                           cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD))
-    ok, why = autonomy.may_start(plan.PLANNING, agents, facts, spent, tier)
-    if not ok and plan.PLANNING not in agents:
-        why = "no planning agent is configured (area_agents has no entry named planning)"
-    return ok, why
-
-
-def _say_route(project: str, ctx: dict, said: str, answer_to=None) -> tuple:
-    """A plain line: the answer to the router's question (then the router runs again), or a new request with the
-    memory in front of it. Either way the router runs only when the planning agent may start."""
-    ok, why = _planning_may_start(ctx)
-    if not ok:
-        return f"The planning agent may not start now: {why}. Nothing was run.", None, None, False, None
-    if answer_to is not None:
-        request_id = _stored(ctx, ctx["store"].pending_get, answer_to)["task_id"]
-        answer(project, answer_to, said)
-    else:
-        messages = _stored(ctx, ctx["store"].messages_list, CONVERSATION, limit=500)[:-1]  # not the line just stored
-        settled = {t["id"] for t in _stored(ctx, ctx["store"].tasks_list)
-                   if t["parent_id"] is None and t["state"] in ("planned", "done", "cancelled")}
-        remembered = chat_memory(messages, settled)
-        text = f"{remembered}\n\n{MEMORY_TAIL}\n{said}" if remembered else said
-        request_id = request(project, text, title=plan.title_of(said))["request"]
-    routed = route(project, request_id)
-    item = _stored(ctx, ctx["store"].pending_get, routed["pending_id"]) if routed.get("pending_id") else None
-    if item is None:
-        failure = (routed.get("failure") or {}).get("reason") or "the router's run failed"
-        return f"The router could not run: {failure}", request_id, None, True, routed.get("run_id")
-    if item["kind"] == "plan":
-        payload = item["payload"]
-        lines = [item["title"]]
-        lines += [f"- {t['key']}: {t['title']} ({t['skill']})" for t in payload.get("tasks") or []]
-        estimate = payload.get("estimate") or {}
-        lines += [f"Estimate: {estimate.get('runs', estimate.get('runs_at_least'))} runs"
-                  + (f" ({estimate['formula']})" if estimate.get("formula") else ""), ""]
-        for n, u in enumerate(payload.get("unrouted") or [], 1):
-            lines += [f"Not planned {n}: {u['item']}. The router's reply:", u["reply"].rstrip("\n"), ""]
-        lines.append(PLAN_NEXT.format(pending=item["id"]))
-        reply = "\n".join(lines)
-    else:
-        reply = item["body"].rstrip("\n") + "\n\n" + ASK_NEXT
-    return reply, request_id, item["id"], True, routed.get("run_id")
-
-
-# --- stage 9: the local service --------------------------------------------------------------------------------------
-
-
-def version(project: str) -> dict:
-    """The change signal of a project's store: {"version", "changed_at"}. "version" is a whole number that grows on every
-    write transaction that changed a row (providers/store/sqlite.py, `change_counter`: the database file's header),
-    whoever wrote it: this process, a loop's thread, the terminal. A page asks it every second and reads everything
-    again when it moved. It is the cheapest read there is: the configuration file and its hash, then on the store four
-    statements (two pragmas of the connection, one plain SELECT of the cursor that holds the accepted configuration's hash,
-    the header) with no transaction and so no write lock; no migration is run (every other operation runs one at its
-    start), and a configuration nobody accepted, or one that names another checkout, is refused as every operation refuses it. "changed_at" is the time the store's file
-    was last written (UTC, as the store writes times). A project whose store does not exist yet gets it made, as every
-    other operation does."""
-    cfg = _config_of(project)
-    store = store_module()
-    db = cfg["store_db"]
-    if not os.path.isfile(db):
-        context(project, check_config=False)
-    conn = store.connect(db)
-    try:
-        accepted = store.cursor_peek(conn, project_config.ACCEPTED)      # a plain read: no write lock, no queue behind a writer
-        number = store.change_counter(conn)
-    except store.StoreError as e:
-        raise OpsError(f"the store at {db}: {e}", e.code) from None
-    except Exception as e:  # sqlite3.Error: the file is not a database, or is locked past the timeout
-        raise OpsError(f"the store at {db}: {e}", 1) from None
-    finally:
-        conn.close()
-    _accepted(cfg, accepted)
-    stamps = [os.stat(path).st_mtime for path in (db, db + "-wal") if os.path.exists(path)]
-    changed = datetime.datetime.fromtimestamp(max(stamps), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
-    return {"version": number, "changed_at": changed}
-
-
-def stop_runs(project: str | None = None) -> dict:
-    """End every run this process started, through the lab's own stop (lab.stop_runs): the container and the process
-    group of each run are ended and the folders of a run in progress go back to its run folder. The local service
-    calls it before it exits, because a run it started in a thread has no signal handler of its own. Process-wide:
-    the project is accepted for the shape every operation has and read for nothing. Returns what lab.stop_runs
-    returns."""
-    return lab.stop_runs()
-
-
-# --- stage 9: the reads of the local interface ---------------------------------------------------------------------
-
-
-COST_DAYS = 30           # costs: the default window, in days
-MESSAGES_PAGE = 500      # conversation: the most messages one call returns (the store's own maximum)
-ARTIFACT_LIMIT = 2000    # artifacts: the most files one call lists
-ARTIFACT_MAX_BYTES = 1024 * 1024  # artifact: the largest file whose text is returned
-SECRET_RESOLVER = ("providers", "secrets", "resolver.py")
-CONFIGURED_PROVIDER = {"integration:vcs": "code", "integration:issue-tracker": "task_board", "integration:documents": "documents"}
-
-
-def agents(project: str) -> dict:
-    """The area agents of the configuration with their use of today: {"agents": [{"name", "pack", "enabled", "mode",
-    "acting_mode", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "usd_recorded", "usd_reserved",
-    "runs_total_today", "queued", "held", "wider"}]}
-    in the order of the configuration. mode is the configured one; acting_mode the one the agent acts in now
-    (autonomy.mode_of: an agent set to autonomous-with-policy whose approval expired acts as autonomous). The day is
-    counted as the caps count it (_agents_of_the_day): runs_today is the runs on the reference model, usd_today the
-    dollars of the floor model's runs (a run of unknown cost counts at max_cost_usd_per_run, and runs_without_cost
-    says how many), and a router run counts for the planning agent. queued is the number of ready tasks of the agent;
-    held how many of them the last round held (status lists them with their reasons). usd_today is split into
-    usd_recorded (the recorded costs of today's floor-model runs) and usd_reserved (max_cost_usd_per_run, else
-    PER_RUN_USD, for each such run with no cost yet: what the cap counts); runs_today stays the reference model's
-    runs and runs_total_today is every run of the agent today, whatever the model. wider lists, for every mode above
-    the agent's own, the absolute set-mode command (the page offers it with Copy and builds none).
-    A project without area_agents: {"agents": []}."""
-    ctx = context(project)
-    day = _agents_of_the_day(ctx)
-    rows = _stored(ctx, ctx["store"].tasks_list)
-    ready = [t for t in rows if t["state"] == "ready" and t["parent_id"] is not None]
-    held = _held_listed(ctx, rows)
-    out = []
-    for name, found in day.items():
-        entry, spent = found["entry"], found["spent"]
-        out.append({"name": name, "pack": entry["pack"], "enabled": entry["enabled"], "mode": entry["mode"],
-                    "acting_mode": autonomy.mode_of(found["facts"]), "max_runs_per_day": entry["max_runs_per_day"],
-                    "max_usd_per_day": entry["max_usd_per_day"], "runs_today": spent["runs_reference"],
-                    "usd_today": spent["usd_floor"], "runs_without_cost": spent["runs_without_cost"],
-                    **_spend_words(found["split"]),
-                    "queued": sum(1 for t in ready if t.get("agent") == name),
-                    "held": sum(1 for h in held if h["agent"] == name),
-                    "wider": _wider(ctx["cfg"]["project"], name, entry["mode"])})
-    return {"agents": out}
-
-
-def _spend_words(split: dict) -> dict:
-    """The day's spend in the words a meter shows, the same in `agents` and in the caps of `costs`: usd_recorded,
-    usd_reserved (their sum is usd_today) and runs_total_today."""
-    return {"usd_recorded": split["usd_recorded"], "usd_reserved": split["usd_reserved"],
-            "runs_total_today": split["runs_total"]}
-
-
-def _caps_use(used, name: str) -> dict:
-    """The day's use of one agent in the words of `agents`, for the caps of `costs`; {} when the day could not be
-    computed (the gate file is broken): costs then show the caps alone."""
-    if not used or name not in used:
-        return {}
-    found = used[name]
-    return {"runs_today": found["spent"]["runs_reference"], "usd_today": found["spent"]["usd_floor"],
-            "runs_without_cost": found["spent"]["runs_without_cost"], **_spend_words(found["split"])}
-
-
-def _wider(project: str, agent: str, mode: str) -> list:
-    """[{"mode", "command"}] for every mode above this one in the order of autonomy.MODES, each the absolute `set-mode`
-    command (a wider mode is accepted by the person in the terminal): the page shows it, it builds none."""
-    above = autonomy.MODES[autonomy.MODES.index(mode) + 1:]
-    return [{"mode": m, "command": _command("set-mode", project, agent=agent, mode=m)} for m in above]
-
-
-def conversation(project: str, conversation: str | None = CONVERSATION, after: int | None = 0) -> dict:
-    """The messages of a conversation whose id is above `after`, oldest first, at most MESSAGES_PAGE (the newest of
-    them when more are waiting): {"conversation", "messages": [{"id", "role", "text", "task_id", "run_id",
-    "created_at"}]}. There is one conversation per project and its name is CONVERSATION (an argument left out is the
-    default). For an assistant message
-    task_id is the request the turn made or answered. Reads nothing else."""
-    ctx = context(project)
-    conversation, after = CONVERSATION if conversation is None else conversation, 0 if after is None else after
-    if isinstance(after, bool) or not isinstance(after, int) or after < 0:
-        raise OpsError("after is a message id: a whole number, 0 or more", 2)
-    if not isinstance(conversation, str) or not conversation.strip():
-        raise OpsError("the conversation's name is empty", 2)
-    rows = _stored(ctx, ctx["store"].messages_list, conversation, limit=MESSAGES_PAGE, after_id=after)
-    keys = ("id", "role", "text", "task_id", "run_id", "created_at")
-    return {"conversation": conversation, "messages": [{key: row[key] for key in keys} for row in rows]}
-
-
-def _scope(ctx: dict) -> list:
-    """The skills in scope of the project: the packs of its enabled agents, or the default pack without area_agents."""
-    try:
-        return plan.pack_skills(ctx["cfg"], ROOT)
-    except plan.PlanError as e:
-        raise OpsError(f"the skills in scope cannot be listed: {e}", 1) from None
-
-
-def skills(project: str) -> dict:
-    """The skills in scope of the project (_scope) with what is known of each, and the two checks of the proof:
-    {"skills": [{"name", "version", "area", "manifest": true or false, "proof": [{"tier", "model", "adapter",
-    "band", "cause", "score", "mean", "runs"}], "runs_here": <runs of it in this project's store>}], "checks":
-    {"measurement": "ok" or why, "image": "ok" or why}}. The proof is the entry runtime/proof.py keeps (proof.row),
-    one pair for the reference model and one for the floor model, never recomputed here. The measurement check is the
-    status script's; the image check is made once for the machine: "ok" when the eval image is on it and is the image
-    the evidence of every skill that has evidence was measured in, else the reason (a skill with no evidence has
-    nothing to compare and is `needs a test` anyway). Calls no model and no provider, and starts no network call."""
-    ctx = context(project)
-    cfg = ctx["cfg"]
-    out, evidence = [], {}
-    for name in _scope(ctx):
-        try:
-            meta = skill_meta.declared(os.path.join(ROOT, "skills", name))
-            entry = proof_rules.row(cfg, name)
-        except (skill_meta.SkillError, lab.LabError, OSError, KeyError) as e:
-            raise OpsError(f"the proof of {name} cannot be read: {e}", 1) from None
-        evidence[name] = entry.get("evidence_images") or []
-        out.append({"name": name, "version": meta["version"], "area": meta["area"],
-                    "manifest": os.path.isfile(manifest.path(ROOT, name)),
-                    "proof": [{key: pair.get(key) for key in ("tier", "model", "adapter", "band", "cause", "score", "mean", "runs")}
-                              for pair in entry["pairs"]],
-                    "runs_here": len(_stored(ctx, ctx["store"].task_runs_of_skill, name))})
-    try:
-        problem, digest = lab.measurement_problem(), lab.image()["digest"]
-    except lab.LabError as e:
-        raise OpsError(f"the proof's checks cannot be made: {e}", 1) from None
-    others = sorted(name for name, images in evidence.items() if images and digest not in images)
-    if digest is None:
-        image = "the eval image is not on this machine"
-    elif others:
-        image = f"the image on this machine is not the one the evidence of {len(others)} skill(s) was measured in"
-    else:
-        image = None
-    return {"skills": out, "checks": {"measurement": problem or "ok", "image": image or "ok"}}
-
-
-def costs(project: str, since: str | None = None) -> dict:
-    """The runs of the project from the day `since` (YYYY-MM-DD; default the last COST_DAYS days) by day, agent, model
-    and adapter: {"since", "rows": [{"day", "agent", "model", "adapter", "runs", "tokens", "recorded_usd",
-    "recomputed_usd", "unknown_runs", "price"}], "caps": [{"agent", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "usd_recorded",
-    "usd_reserved", "runs_total_today"}]} (the caps carry the day's use in the words of `agents`). The runs
-    are read task by task (the store's runs_since has no token count and no run folder) and the token counts of a
-    run from its own folder (runtime/costs.py, usage_of): a folder outside <data_dir>/task-runs/ is not read, and the
-    run is unknown. recomputed_usd is computed from the prices of the configuration's model_prices (price says their
-    source and date) and is None, never a guess, for a model with no price or a group with a run of unknown usage
-    (unknown_runs counts them). A router run counts for the planning agent. The day is the local day."""
-    ctx = context(project)
-    cfg, store = ctx["cfg"], ctx["store"]
-    if since is None:
-        day = (datetime.date.today() - datetime.timedelta(days=COST_DAYS)).isoformat()
-    else:
-        try:
-            day = datetime.date.fromisoformat(str(since)).isoformat()
-        except ValueError:
-            raise OpsError("since is a day: YYYY-MM-DD", 2) from None
-    try:
-        used = _agents_of_the_day(ctx)
-    except (lab.LabError, OpsError, KeyError, ValueError, OSError):  # a broken gate file leaves the day's use out; costs read the store
-        used = None
-    folder = os.path.realpath(os.path.join(cfg["data_dir"], RUNS_DIR)) + os.sep
-    runs = []
-    for task in _stored(ctx, store.tasks_list):
-        for run in _stored(ctx, store.task_runs_list, task["id"]):
-            agent = task.get("agent")
-            if agent is None and task["parent_id"] is None and run.get("skill") == router.ROUTER_SKILL:
-                agent = plan.PLANNING
-            where = run.get("run_dir")
-            inside = isinstance(where, str) and os.path.realpath(where).startswith(folder)
-            runs.append(dict(run, agent=agent, run_dir=where if inside else None))
-    return {"since": day, "rows": costs_calc.summary(runs, cfg["model_prices"], since=day),
-            "caps": [{"agent": name, "max_runs_per_day": entry["max_runs_per_day"],
-                      "max_usd_per_day": entry["max_usd_per_day"], **_caps_use(used, name)}
-                     for name, entry in cfg["area_agents"].items()]}
-
-
-def _secret_rows() -> tuple:
-    """([{"name", "found", "where"}], note): the secrets the core and the runtime register, found or not and where
-    (resolver.report(): the environment or the secret store), then the variables the lab names for the two models'
-    keys (lab.credential_missing). Never a value: the resolver's report holds none, and only its name, found and
-    source are taken. note is None, or why a part could not be read."""
-    notes, rows = [], []
-    try:
-        resolver = _load("workbench_secret_resolver_runtime", os.path.join(ROOT, *SECRET_RESOLVER))
-        resolver.register_file(os.path.join(ROOT, "runtime", "secrets.json"))
-        rows = [{"name": r["name"], "found": bool(r["found"]), "where": r["source"] if r["found"] else None}
-                for r in resolver.report()]
-    except Exception as e:  # an interpreter the resolver does not run on, a bad registry
-        sys.modules.pop("workbench_secret_resolver_runtime", None)
-        notes.append(f"the secret resolver could not be used: {type(e).__name__}")
-    have = {row["name"] for row in rows}
-    try:
-        for tier in ("strong", "floor"):
-            names, missing = lab.reference(tier)["pass_env"], lab.credential_missing(tier)
-            for name in names:
-                if name not in have:
-                    have.add(name)
-                    rows.append({"name": name, "found": name not in missing,
-                                 "where": None if name in missing else "environment or secret store"})
-    except Exception as e:  # a gate file the facade refuses
-        notes.append(f"the models' keys could not be looked up: {type(e).__name__}")
-    return sorted(rows, key=lambda row: row["name"]), "; ".join(notes) or None
-
-
-ARCHITECTURES = {"x86_64": "amd64", "amd64": "amd64", "arm64": "arm64", "aarch64": "arm64"}
-
-
-def _image_platform_here(machine: str, system: str) -> str | None:
-    """The platform the eval image runs as on a machine without emulation, in the os/arch form of the evidence
-    (executor.IMAGE_PLATFORM, such as linux/arm64): the image is a Linux image, so the os is linux on a Linux host and
-    on a host that runs containers in a Linux virtual machine of its own architecture (macOS, Windows); the arch is the
-    machine's, normalised (x86_64 and amd64 are amd64, arm64 and aarch64 are arm64). None when the arch is not one of
-    those or the system is not linux, darwin or win32: nothing is guessed."""
-    arch = ARCHITECTURES.get((machine or "").strip().lower())
-    if arch is None or not (system or "").startswith(("linux", "darwin", "win32")):
-        return None
-    return "linux/" + arch
-
-
-def _platform_row(machine: str, system: str, evidence: str | None) -> dict:
-    """The "platform" row of connections: see its docstring. same never compares an unknown value."""
-    here = _image_platform_here(machine, system)
-    return {"machine": machine or None, "evidence": evidence, "here": here,
-            "same": (here == evidence) if here and evidence else None}
-
-
-def connections(project: str) -> dict:
-    """What the project's skills need from the machine and whether it is there, with no provider started and no
-    network call: {"classes": [{"class", "provider", "found", "note", "skills"}], "secrets": [{"name", "found",
-    "where"}], "secrets_note", "image": {"name", "present", "evidence": true, false or None}, "platform": {"machine",
-    "evidence", "here", "same"}, "service": {"secret_store", "credential", "docker", "image", "dispatch", "problems",
-    "start", "at"} or None}. classes: each requirement class the skills in scope declare, resolved by providers/resolve.py as the
-    runtime resolves it (the implementation the configuration names for the code provider, the task board and the
-    documents; else the environment, the platform default or the only implementation): provider is the
-    implementation or None, found whether its file exists, note how it was chosen or why it was not. secrets: see
-    _secret_rows; the names are the registry's, never a value. image: whether the eval image is on this machine and
-    whether its digest is the one the evidence of the skills in scope was measured in (None when it is not
-    present). platform: machine is the architecture of this machine as the system names it; evidence is the platform
-    the lab evidence was made on; here is the platform the eval image runs as on this machine without emulation, in
-    the evidence's os/arch form (see _image_platform_here); same is true when here equals evidence, false when both
-    are known and differ, None when either is unknown. service: what the local service found at its start
-    (service_check), null in any other process."""
-    ctx = context(project)
-    cfg = ctx["cfg"]
-    needs, evidence = {}, set()
-    for name in _scope(ctx):
-        try:
-            for cls in skill_meta.declared(os.path.join(ROOT, "skills", name))["requires"]:
-                needs.setdefault(cls, []).append(name)
-            evidence.update(proof_rules.row(cfg, name).get("evidence_images") or [])
-        except (skill_meta.SkillError, lab.LabError, OSError, KeyError) as e:
-            raise OpsError(f"the needs of {name} cannot be read: {e}", 1) from None
-    resolve = _load("workbench_provider_resolve", os.path.join(ROOT, "providers", "resolve.py"))
-    classes = []
-    for cls in sorted(needs):
-        key = CONFIGURED_PROVIDER.get(cls)
-        implementation = (cfg.get(key) or {}).get("provider") if key else None
-        row = {"class": cls, "provider": None, "found": False, "note": None, "skills": sorted(needs[cls])}
-        try:
-            got = resolve.resolve(cls, root=ROOT, implementation=implementation)
-        except (resolve.UnknownClass, resolve.Unresolved) as e:
-            row["note"] = str(e)
-        else:
-            row.update(provider=got["implementation"], found=os.path.isfile(got["path"]),
-                       note=f"chosen by {got['source']}" + (f" ({got['variable']})" if got.get("variable") else ""))
-            if not row["found"]:
-                row["note"] = "the provider's file is missing: " + row["note"]
-        classes.append(row)
-    secrets, note = _secret_rows()
-    try:
-        seen = lab.image()
-    except lab.LabError as e:
-        raise OpsError(f"the eval image cannot be looked up: {e}", 1) from None
-    present = seen["digest"] is not None
-    return {"classes": classes, "secrets": secrets, "secrets_note": note,
-            "image": {"name": seen.get("name"), "present": present,
-                      "evidence": (seen["digest"] in evidence) if present else None},
-            "platform": _platform_row(platform_module.machine(), sys.platform, seen.get("evidence_platform")),
-            "service": dict(SERVICE[os.path.realpath(cfg["project"])]) if os.path.realpath(cfg["project"]) in SERVICE else None}
-
-
-def service_check(project: str, dispatch_every=None) -> dict:
-    """What the local service checks for one project at its start, and remembers (SERVICE) for `connections`, `status`
-    and `agents` while the process lives: {"secret_store", "credential", "docker", "image", "dispatch", "problems",
-    "start", "at"}. Each verdict is "ok" or one sentence saying what is missing. secret_store and credential are the
-    scheduler entry's check (dispatcher.inspect: can this interpreter read the secret store, is the reference model's
-    credential set or in it), docker whether it is on PATH, image whether the eval image is on this machine,
-    dispatch "every <n> s" or "off" (dispatch_every in seconds; 0 is off; None says the process is no service), problems
-    the modules or the lab that did not load, start the command that starts the service with the secret store's
-    library (uv run --with keyring==..., operations.service_line). It starts nothing and makes no network call."""
-    ctx = context(project, check_config=False)
-    found = dispatcher.inspect(sys.modules[__name__])
-    seen = lab.image()
-    if not seen.get("name"):
-        image = "not looked at: the lab does not run in a container, or docker cannot be reached"
-    elif not seen.get("digest"):
-        image = f"the eval image {seen['name']} is not on this machine"
-    else:
-        image = "ok"
-    bounded = lambda text: CONTROL.sub(" ", str(text))[:SERVICE_TEXT]  # noqa: E731  (an exception's text, bounded)
-    problems = [bounded(f"{name}: {why}") for name, why in sorted(found["modules"].items()) if why != "ok"]
-    if found["lab"] != "ok":
-        problems.append(bounded(f"lab: {found['lab']}"))
-    report = {"secret_store": bounded(found["secret_store"]), "credential": bounded(found["credential"]),
-              "docker": "ok" if found["tools"].get("docker") else "docker is not on the PATH of this process",
-              "image": image,
-              "dispatch": ("not a service" if dispatch_every is None else
-                           f"every {dispatch_every:g} s" if dispatch_every else "off"),
-              "problems": problems, "start": operations.service_line(ROOT, [ctx["cfg"]["project"]], uv=True), "at": _now_iso()}
-    if dispatch_every is not None:
-        SERVICE[os.path.realpath(ctx["cfg"]["project"])] = dict(report)
-    return report
-
-
-def _owners() -> list:
-    """[(skill, its declared outputs)] for every skill folder of the checkout that has a readable frontmatter."""
-    folder, out = os.path.join(ROOT, "skills"), []
-    for name in sorted(os.listdir(folder)) if os.path.isdir(folder) else []:
-        try:
-            out.append((name, skill_meta.declared(os.path.join(folder, name))["outputs"]))
-        except (skill_meta.SkillError, OSError):
-            continue
-    return out
-
-
-def artifacts(project: str) -> dict:
-    """The files of the project under docs/ that the path rule calls a document or a machine file, sorted by path:
-    {"artifacts": [{"path", "owner", "agent", "size", "modified_at", "bound"}], "truncated"}. owner is the skill whose
-    declared outputs match the path (skill_meta.matches), or None. agent is the area agent whose pack holds the owner
-    skill, as plan.agent_of decides it; None when there is no owner, the project has no area agents, or no one agent
-    (or several) owns the skill. modified_at is ISO-8601 UTC. bound is true when a pending
-    decision still open lists the file among those a run returned or kept for it, or when its skill's runtime
-    manifest binds it to an approval by its hash. Never docs/workbench/runtime.json, a link, a folder the path rule
-    drops, or a file outside docs/. At most ARTIFACT_LIMIT files; truncated says whether more were left out."""
-    ctx = context(project)
-    root = ctx["cfg"]["project"]
-    base = os.path.join(root, "docs")
-    owners = _owners()
-    try:
-        packs = plan.agent_skills(ctx["cfg"], ROOT)
-    except plan.PlanError as e:
-        raise OpsError(f"the agents of the packs cannot be told: {e}", 1) from None
-    agent_by_owner = {}
-    waiting = set()
-    for item in _stored(ctx, ctx["store"].pending_list):
-        payload = item.get("payload") or {}
-        for key in ("returned", "kept"):
-            waiting.update(f["path"] for f in payload.get(key) or [] if isinstance(f, dict) and isinstance(f.get("path"), str))
-    bound_by_owner = {}
-    out, truncated = [], False
-    if os.path.isdir(base) and not os.path.islink(base):
-        for current, folders, files in os.walk(base, followlinks=False):
-            folders[:] = sorted(d for d in folders if not os.path.islink(os.path.join(current, d)))
-            for name in sorted(files):
-                full = os.path.join(current, name)
-                if os.path.islink(full) or not os.path.isfile(full):
-                    continue
-                rel = os.path.relpath(full, root).replace(os.sep, "/")
-                if path_rule.classify(rel) not in ("document", "machine"):
-                    continue
-                if len(out) >= ARTIFACT_LIMIT:
-                    truncated = True
-                    break
-                owner = next((skill for skill, outputs in owners if skill_meta.matches(outputs, rel)), None)
-                if owner not in bound_by_owner:
-                    try:
-                        bound_by_owner[owner] = manifest.load(ROOT, owner, whole=False) if owner else {}
-                    except manifest.ManifestError:
-                        bound_by_owner[owner] = {}
-                if owner not in agent_by_owner:
-                    try:
-                        agent_by_owner[owner] = plan.agent_of(owner, packs) if owner and packs else None
-                    except ValueError:
-                        agent_by_owner[owner] = None
-                found = os.lstat(full)
-                out.append({"path": rel, "owner": owner, "agent": agent_by_owner[owner], "size": found.st_size, "modified_at": _utc(found.st_mtime),
-                            "bound": rel in waiting or bool(manifest.bound_among(bound_by_owner[owner], [rel]))})
-            if truncated:
-                break
-    return {"artifacts": sorted(out, key=lambda a: a["path"]), "truncated": truncated}
-
-
-def _utc(timestamp: float) -> str:
-    return datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def artifact(project: str, path: str) -> dict:
-    """The text of one file of the project under docs/, read-only: {"path", "text", "size", "modified_at"}. The path is
-    relative to the project and normalised first (path_rule.normal: no "..", no absolute path). Refused (code 2)
-    before anything is read: a path outside docs/, docs/workbench/runtime.json, a path the path rule drops or does
-    not know, a path with a link on any part of it (the project's own folder excepted), a file that is not a regular
-    file, over ARTIFACT_MAX_BYTES, or whose bytes are not UTF-8 text (a NUL is not text). A path that is not there is
-    refused with code 1."""
-    ctx = context(project)
-    rel = path_rule.normal(path)
-    if rel is None or not rel.startswith(path_rule.DOCS_DIR) or rel == path_rule.CONFIG:
-        raise OpsError("an artifact is a file under docs/ of the project, other than the runtime's configuration", 2)
-    if path_rule.classify(rel) not in ("state", "document", "machine"):
-        raise OpsError(f"{rel} is not a file the interface reads", 2)
-    here = ctx["cfg"]["project"]
-    for part in rel.split("/"):
-        here = os.path.join(here, part)
-        if os.path.islink(here):
-            raise OpsError(f"{rel} is or passes through a link: it is not read", 2)
-    try:
-        looked = os.lstat(here)
-    except OSError:
-        raise OpsError(f"there is no file {rel} in the project", 1) from None
-    if not stat_module.S_ISREG(looked.st_mode):  # before any open: a pipe would block it
-        raise OpsError(f"{rel} is not a regular file", 2)
-    if looked.st_size > ARTIFACT_MAX_BYTES:
-        raise OpsError(f"{rel} is {looked.st_size} bytes: over the {ARTIFACT_MAX_BYTES} the interface reads", 2)
-    try:
-        fd = os.open(here, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-    except OSError:
-        raise OpsError(f"{rel} cannot be opened without following a link", 2) from None
-    with os.fdopen(fd, "rb") as f:
-        found = os.fstat(f.fileno())  # the file that was opened, not the one that was looked at
-        if not stat_module.S_ISREG(found.st_mode):
-            raise OpsError(f"{rel} is not a regular file", 2)
-        data = f.read(ARTIFACT_MAX_BYTES + 1)
-    if len(data) > ARTIFACT_MAX_BYTES:
-        raise OpsError(f"{rel} is over the {ARTIFACT_MAX_BYTES} bytes the interface reads", 2)
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        raise OpsError(f"{rel} is not UTF-8 text", 2) from None
-    if "\x00" in text:
-        raise OpsError(f"{rel} is not text", 2)
-    return {"path": rel, "text": text, "size": len(data), "modified_at": _utc(found.st_mtime)}
+# The conversation (runtime/ops_say.py): the two operations, and the constants the shells and the tests read.
+from ops_say import chat_memory, say  # noqa: E402,F401
+from ops_say import ASK_NEXT, CONVERSATION, MEMORY_CHARS, MEMORY_CUT, MEMORY_HEAD, MEMORY_TAIL, MEMORY_TURNS, PLAN_NEXT  # noqa: E402,F401
+# The reads of the local interface (runtime/ops_reads.py): the operations, and the one constant a test reads.
+from ops_reads import agents, artifact, artifacts, connections, conversation, costs, service_check, skills  # noqa: E402,F401
+from ops_reads import stop_runs, version  # noqa: E402,F401
+from ops_reads import ARTIFACT_MAX_BYTES  # noqa: E402,F401
 
 
 if __name__ == "__main__":
