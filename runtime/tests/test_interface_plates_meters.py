@@ -51,6 +51,10 @@ const credential = "The credential is in neither the environment nor the secret 
 out.found = c.commandsIn(credential);
 out.foundLast = c.commandsIn("Store it: KEY: uv run --with keyring==25.7.0 keyring set ai-workbench user-z.");
 out.foundNone = c.commandsIn("nothing to run here");
+// OH-3: the service stores a credential under "openhora"; a service that still says "ai-workbench" is read as before (the compatibility stage).
+out.foundNew = c.commandsIn("Store it: KEY: uv run --with keyring==25.7.0 keyring set openhora user-n.");
+out.foundBoth = c.commandsIn("Store it once. KEY_A: uv run --with keyring==25.7.0 keyring set openhora user-a; KEY_B: uv run --with keyring==25.7.0 keyring set ai-workbench user-b (the username is in the table).");
+out.foundOther = c.commandsIn("Store it: KEY: uv run --with keyring==25.7.0 keyring set another-name user-c.");
 
 const log = [];
 const clip = { writeText: async (t) => { log.push(["write", t]); } };
@@ -98,6 +102,14 @@ def test_the_command_component_splits_the_services_sentence_copies_whole_and_fal
         "the sentence stays, with each command named as below"
     assert got["foundLast"]["commands"] == ["uv run --with keyring==25.7.0 keyring set ai-workbench user-z"], "a full stop that ends the sentence is not part of the command"
     assert got["foundNone"] == {"sentence": "nothing to run here", "commands": []}
+    assert got["foundNew"]["commands"] == ["uv run --with keyring==25.7.0 keyring set openhora user-n"], "the service name of the product is taken out of the sentence"
+    assert got["foundNew"]["sentence"] == "Store it: KEY: (command below).", "and the sentence names it as below"
+    assert got["foundBoth"]["commands"] == ["uv run --with keyring==25.7.0 keyring set openhora user-a", "uv run --with keyring==25.7.0 keyring set ai-workbench user-b"], \
+        "each name has its own command, verbatim, in the order the service wrote them"
+    assert got["foundBoth"]["sentence"].count("(command below)") == 2 and "keyring set" not in got["foundBoth"]["sentence"]
+    assert got["foundOther"]["commands"] == [] and "keyring set another-name" in got["foundOther"]["sentence"], "only the two names of the compatibility stage are commands"
+    command_js = (JS / "frame" / "command.js").read_text(encoding="utf-8")
+    assert "keyring set (openhora|ai-workbench) " in command_js and "T23" in command_js, "the old name is accepted until the compatibility stage ends (T23), and the file says so"
     assert (got["copied"], got["denied"], got["noClipboard"], got["legacyCopy"]) == ("copied", "selected", "selected", "copied"), \
         "the clipboard when the browser allows it; else the text is selected (and copied where the old command works)"
     assert got["log"] == [["write", "cmd one"], ["select-denied"], ["select-none"], ["select-legacy"]], "the text is selected only when the clipboard is not available"
