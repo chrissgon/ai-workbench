@@ -25,12 +25,26 @@ export function modePlate(mode, pipCount, acting, actingPips) {
   return wrap;
 }
 
-function meter(label, text, share, full, note, tip) {
+/**
+ * A meter's track: the fill in the theme colour for `share` and, when something is reserved (`reservedShare` above zero), a second segment in the
+ * reserved tint right after it, on the same line (A-20). Every meter of the page is made by this.
+ */
+export function trackNode(share, full, reservedShare = 0, extraClass = "") {
   const fill = h("span", { class: `wb-meter-fill${full ? " is-full" : ""}` });
   fill.style.setProperty("--wb-share", `${Math.round(share * 100)}%`);
+  const track = h("span", { class: `wb-meter${reservedShare > 0 ? " has-reserved" : ""}${extraClass ? ` ${extraClass}` : ""}`, "aria-hidden": "true" }, fill);
+  if (reservedShare > 0) {
+    const reserved = h("span", { class: "wb-meter-reserved" });
+    reserved.style.setProperty("--wb-share", `${Math.round(reservedShare * 100)}%`);
+    track.append(reserved);
+  }
+  return track;
+}
+
+function meter(label, text, share, full, note, tip, reservedShare = 0) {
   return h("div", { class: "wb-plate-meter", title: tip || null },
     h("span", { class: "wb-plate-meter-text" }, label ? h("span", { class: "wb-muted", text: `${label} ` }) : null, h("span", { text })),
-    h("span", { class: "wb-meter", "aria-hidden": "true" }, fill),
+    trackNode(share, full, reservedShare),
     note ? h("span", { class: "wb-plate-note", text: note }) : null);
 }
 
@@ -54,7 +68,8 @@ export function plateNode(p, attrs = {}, tag = "div") {
   const chips = h("div", { class: "wb-plate-chips" }, chipNodes(p), p.mode ? modePlate(p.mode, p.pips, p.acting, p.actingPips) : null);
   const meters = h("div", { class: "wb-plate-meters" },
     meter(METER_WORDS.runs, p.runsText, p.runsShare, p.runsShare >= 1, "", METER_TIPS.runs),
-    meter(METER_WORDS.spend, p.usdText, p.usdShare, p.usdShare >= 1, p.unknown > 0 ? `(+${p.unknown} of unknown cost)` : "", METER_TIPS.spend));
+    meter(METER_WORDS.spend, p.usdText, p.usdRecordedShare !== undefined ? p.usdRecordedShare : p.usdShare, p.usdShare >= 1,
+      p.usdNote ? p.usdNote : p.unknown > 0 ? `(+${p.unknown} of unknown cost)` : "", METER_TIPS.spend, p.usdReservedShare || 0));
   const node = h(tag, { ...attrs, class: `wb-plate${p.selected ? " is-selected" : ""}${p.off ? " is-off" : ""}${attrs.class ? ` ${attrs.class}` : ""}`, "data-floor": p.name }, row1, chips, meters);
   return node;
 }

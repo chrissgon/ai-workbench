@@ -177,15 +177,19 @@ function noticeFor(route) {
   for (const p of snapshot.projects) {
     if (route.project && p.id !== route.project) continue;
     const detail = snapshot.details[p.id];
-    if (!(p.config && p.config.accepted)) found.push({ name: p.name, text: p.message || "its configuration is not accepted yet" });
-    else if (detail && detail.error && detail.error.status === 412) found.push({ name: p.name, text: detail.error.message });
-    else if (detail && detail.error) unread.push(`${p.name}: ${detail.error.message}`);
+    const refused = detail && detail.error && detail.error.status === 412 ? detail.error : null;
+    if (refused || !(p.config && p.config.accepted)) {
+      const text = (refused && refused.message) || p.message || "its configuration is not accepted yet";
+      const next = (refused && refused.next) || null;      // the command that accepts it, as the service gave it with the refusal
+      // the service's sentence ends with the command; it is drawn once, in the component
+      found.push({ name: p.name, text: next && text.trim().endsWith(next) ? text.trim().slice(0, -next.length).trim() : text, command: next });
+    } else if (detail && detail.error) unread.push(`${p.name}: ${detail.error.message}`);
   }
   if (!found.length && unread.length) return { kind: "error", text: `A project could not be read: ${unread.join("; ")}`, retry: true };
   if (!found.length) return null;
   // The service's own text, in a wrapped monospace block: it names the exact command to type in the terminal.
   return { kind: "error", lead: `${found.map((f) => f.name).join(", ")} ${found.length === 1 ? "is" : "are"} not accepted yet: the terminal accepts a configuration.`,
-    text: found[0].text, mono: true, more: found.slice(1).map((f) => f.text) };
+    text: found[0].text, command: found[0].command, mono: true, more: found.slice(1).map((f) => ({ text: f.text, command: f.command })) };
 }
 
 function ensureView(route) {

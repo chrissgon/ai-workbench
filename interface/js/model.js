@@ -185,7 +185,7 @@ export function city(snapshot, now) {
 /** The sums the three KPI cards show for one scope: `projectId` null is every project (the City). */
 export function kpiSums(snapshot, projectId) {
   const projects = (snapshot.projects || []).filter((p) => projectId === null || p.id === projectId);
-  const sums = { decisions: 0, runs: 0, runsCap: 0, usd: 0, usdCap: 0 };
+  const sums = { decisions: 0, runs: 0, runsCap: 0, usd: 0, usdCap: 0, usdRecorded: 0, usdReserved: 0, runsTotal: 0 };
   for (const p of projects) {
     const detail = snapshot.details[p.id];
     sums.decisions += detail && detail.status ? (detail.status.pending || []).length : 0;
@@ -193,6 +193,9 @@ export function kpiSums(snapshot, projectId) {
       sums.runs += format.count(a.runs_today);
       sums.runsCap += format.count(a.max_runs_per_day);
       sums.usd += format.count(a.usd_today);
+      sums.usdReserved += format.count(a.usd_reserved);
+      sums.usdRecorded += typeof a.usd_recorded === "number" ? a.usd_recorded : format.count(a.usd_today) - format.count(a.usd_reserved);
+      sums.runsTotal += format.count(a.runs_total_today);
       sums.usdCap += format.count(a.max_usd_per_day);
     }
   }

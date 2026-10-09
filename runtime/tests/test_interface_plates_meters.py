@@ -46,13 +46,11 @@ import { FakeNode, settle, find, all } from "@FAKE@";
 import * as c from "@JS@/frame/command.js";
 
 const out = {};
-out.split = [
-  c.splitCommand(@REFUSAL@),
-  c.splitCommand("the configuration /p names the workbench checkout /x, and this command runs from /y: run it from the checkout the project names, or correct the file"),
-  c.splitCommand("then run: not a command at all"),
-  c.splitCommand("Held. Start the service with: run: uv run --with keyring==25.7.0 python3 /ck/runtime/service.py --project /work/shop"),
-  c.splitCommand(""),
-];
+out.is = [c.isCommand(@COMMAND@), c.isCommand("uv run --with keyring==25.7.0 python3 /ck/runtime/service.py --project /p"), c.isCommand("/usr/bin/python3 x"), c.isCommand("The credential is in neither"), c.isCommand(""), c.isCommand(null)];
+const credential = "The credential is in neither the environment nor the secret store. Store it once, the value typed at a hidden prompt. KEY_A: uv run --with keyring==25.7.0 keyring set ai-workbench user-a; KEY_B: uv run --with keyring==25.7.0 keyring set ai-workbench <username> (the username is in the table).";
+out.found = c.commandsIn(credential);
+out.foundLast = c.commandsIn("Store it: KEY: uv run --with keyring==25.7.0 keyring set ai-workbench user-z.");
+out.foundNone = c.commandsIn("nothing to run here");
 
 const log = [];
 const clip = { writeText: async (t) => { log.push(["write", t]); } };
@@ -92,13 +90,14 @@ console.log(JSON.stringify(out));
 def test_the_command_component_splits_the_services_sentence_copies_whole_and_falls_back_to_selecting(tmp_path):
     body = COMMAND.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@COMMAND@", json.dumps(ACCEPT))
     got = run_node(tmp_path, body)
-    first, second, third, fourth, empty = got["split"]
-    assert first["command"] == ACCEPT and first["sentence"].endswith("when it is what you want, run:") and "accept-config" not in first["sentence"], \
-        "the sentence is the service's up to its 'run:'; the command is what follows, verbatim"
-    assert second["command"] is None and second["sentence"].startswith("the configuration /p names"), "a sentence with no command is text only"
-    assert third["command"] is None, "what follows 'run: ' is a command only when it starts with a runner"
-    assert fourth["command"].startswith("uv run --with keyring==25.7.0 python3 /ck/runtime/service.py") and fourth["sentence"].endswith("run:")
-    assert empty == {"sentence": "", "command": None}
+    assert got["is"] == [True, True, True, False, False, False], "a command starts with a runner; a sentence does not"
+    found = got["found"]
+    assert found["commands"] == ["uv run --with keyring==25.7.0 keyring set ai-workbench user-a", "uv run --with keyring==25.7.0 keyring set ai-workbench <username>"], \
+        "the commands inside the service's sentence, verbatim, each for its own Copy"
+    assert found["sentence"].count("(command below)") == 2 and "keyring set" not in found["sentence"] and found["sentence"].startswith("The credential is in neither"), \
+        "the sentence stays, with each command named as below"
+    assert got["foundLast"]["commands"] == ["uv run --with keyring==25.7.0 keyring set ai-workbench user-z"], "a full stop that ends the sentence is not part of the command"
+    assert got["foundNone"] == {"sentence": "nothing to run here", "commands": []}
     assert (got["copied"], got["denied"], got["noClipboard"], got["legacyCopy"]) == ("copied", "selected", "selected", "copied"), \
         "the clipboard when the browser allows it; else the text is selected (and copied where the old command works)"
     assert got["log"] == [["write", "cmd one"], ["select-denied"], ["select-none"], ["select-legacy"]], "the text is selected only when the clipboard is not available"
@@ -120,11 +119,12 @@ import { emptySnapshot, refresh } from "@JS@/data.js";
 setToken("t".repeat(40));
 const P = "0123456789ab";
 const REFUSAL = @REFUSAL@;
+const NEXT = @NEXT@;
 const mode = { value: "good" };
 globalThis.fetch = async (url, init) => {
   const path = url.replace("/api/v1", "");
-  const refused = (mode.value === "refused-on-read" || mode.value === "never") && (path.endsWith("/status") || path.endsWith("/agents"));
-  if (refused) return { ok: false, status: 412, json: async () => ({ error: "not_configured", message: REFUSAL }) };
+  const refused = (mode.value === "refused-on-read" || mode.value === "never" || mode.value === "listed-unaccepted") && (path.endsWith("/status") || path.endsWith("/agents"));
+  if (refused) return { ok: false, status: 412, json: async () => ({ error: "not_configured", message: REFUSAL, next: NEXT }) };
   let body = {};
   if (path === "/projects") body = { projects: [mode.value === "listed-unaccepted" || mode.value === "never"
     ? { id: P, name: "northwind-shop", config: { accepted: false }, message: REFUSAL } : { id: P, name: "northwind-shop", config: { accepted: true } }] };
@@ -134,7 +134,7 @@ globalThis.fetch = async (url, init) => {
 };
 const out = {};
 const brief = (s) => ({ accepted: s.projects[0].config.accepted, status: Boolean(s.details[P] && s.details[P].status), agents: s.details[P] && s.details[P].agents ? s.details[P].agents.length : null,
-  error: s.details[P] && s.details[P].error ? [s.details[P].error.status, s.details[P].error.message] : null, loaded: s.loaded });
+  error: s.details[P] && s.details[P].error ? [s.details[P].error.status, s.details[P].error.message, s.details[P].error.next || null] : null, loaded: s.loaded });
 
 const good = await refresh(emptySnapshot(), P);
 out.good = brief(good);
@@ -159,11 +159,11 @@ console.log(JSON.stringify(out));
 
 @needs_node
 def test_a_project_that_is_not_accepted_keeps_the_last_status_and_agents_read_with_the_services_message(tmp_path):
-    got = run_node(tmp_path, DATA.replace("@REFUSAL@", json.dumps(REFUSAL)))
+    got = run_node(tmp_path, DATA.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@NEXT@", json.dumps(ACCEPT)))
     assert got["good"] == {"accepted": True, "status": True, "agents": 1, "error": None, "loaded": True}
     for key in ("listed", "read", "again"):
-        assert got[key]["status"] is True and got[key]["agents"] == 1 and got[key]["error"] == [412, REFUSAL] and got[key]["loaded"] is True, \
-            f"{key}: the data stays, with the service's own sentence"
+        assert got[key]["status"] is True and got[key]["agents"] == 1 and got[key]["error"] == [412, REFUSAL, ACCEPT] and got[key]["loaded"] is True, \
+            f"{key}: the data stays, with the service's own sentence and its command"
     assert got["listed"]["accepted"] is False and got["read"]["accepted"] is True, "listed as not accepted, or listed as accepted and refused on the read: both keep the data"
     assert got["listedSame"] is True, "the same bodies, not a copy that could drift"
     assert got["back"] == {"accepted": True, "status": True, "agents": 1, "error": None, "loaded": True}, "accepted again: the error goes with the next reload"
@@ -514,6 +514,7 @@ globalThis.clearTimeout = (id) => clock.clearTimer(id);
 Date.now = () => clock.now();
 const P = "0123456789ab";
 const REFUSAL = @REFUSAL@;
+const NEXT = @NEXT@;
 const listeners = { window: {} };
 window.addEventListener = (type, fn) => { (listeners.window[type] ||= []).push(fn); };
 window.removeEventListener = () => {};
@@ -534,7 +535,7 @@ globalThis.fetch = async (url, init) => {
   if (path === "/projects") return { ok: true, status: 200, json: async () => ({ projects: [service.accepted
     ? { id: P, name: "northwind-shop", config: { sha256: "a".repeat(64), accepted: true } }
     : { id: P, name: "northwind-shop", config: { sha256: "a".repeat(64), accepted: false }, message: REFUSAL }] }) };
-  if (!service.accepted && path.startsWith(`/projects/${P}/`)) return { ok: false, status: 412, json: async () => ({ error: "not_configured", message: REFUSAL }) };
+  if (!service.accepted && path.startsWith(`/projects/${P}/`)) return { ok: false, status: 412, json: async () => ({ error: "not_configured", message: REFUSAL, next: NEXT }) };
   let body = {};
   if (path === `/projects/${P}/status`) body = { config: {}, held: [], requests: [{ id: 2, title: "Sale page", state: "planned", flow: null, tasks: [{ id: 4, key: "a", title: "Build", agent: "marketing", skill: "s", state: "waiting", note: null }] }], pending: [{ id: 5, kind: "question", title: "Which colour?", task_id: 4, agent: "marketing", created_at: "2026-10-08T08:00:00Z", actions: ["answered"] }], documents: [] };
   else if (path === `/projects/${P}/agents`) body = { agents: [{ name: "marketing", pack: "x", enabled: true, mode: "supervised", acting_mode: "supervised", max_runs_per_day: 6, max_usd_per_day: 3, runs_today: 4, usd_today: 1.5, runs_without_cost: 0, queued: 0, held: 0 }] };
@@ -549,7 +550,7 @@ const snap = () => ({
   dimmed: frameEl().classList.contains("is-unaccepted"),
   kpis: text("wb-kpi-figure"), title: text("wb-panel-title"), sub: text("wb-panel-sub"),
   decisions: text("wb-badge") , track: classed("wb-track").length,
-  band: text("wb-notice"), codes: classed("wb-command-code").map((n) => n.textContent), copies: classed("wb-copy").length,
+  band: text("wb-notice"), sentence: classed("wb-command-sentence").map((n) => n.textContent).join(" "), codes: classed("wb-command-code").map((n) => n.textContent), copies: classed("wb-copy").length,
   inert: classed("wb-inbox").concat(classed("wb-tasks-tab")).map((n) => "inert" in n.attrs), asked: seen.filter((p) => /\/(tasks|artifacts)/.test(p)).length, skeleton: classed("wb-busy").length, tabs: classed("wb-tab").length, state: text("wb-state-row"), meters: text("wb-meter-cell"),
 });
 const out = {};
@@ -581,7 +582,7 @@ process.exit(0);
 
 @needs_node
 def test_the_page_keeps_the_floor_dims_it_and_shows_the_command_in_the_band_while_the_configuration_is_not_accepted(tmp_path):
-    got = run_node(tmp_path, MAIN.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@TAB@", ""), SCENE_DOM)
+    got = run_node(tmp_path, MAIN.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@NEXT@", json.dumps(ACCEPT)).replace("@TAB@", ""), SCENE_DOM)
     before, during, after = got["before"], got["during"], got["after"]
     assert before["dimmed"] is False and before["codes"] == [] and before["title"] == "Marketing · Marketing agent"
     assert during["dimmed"] is True, "one class on the screen"
@@ -590,6 +591,8 @@ def test_the_page_keeps_the_floor_dims_it_and_shows_the_command_in_the_band_whil
     assert during["skeleton"] == 0, "nothing is swapped for a skeleton"
     assert during["codes"] == [ACCEPT] and during["copies"] == 1, "the band carries the service's command whole, with Copy"
     assert "not accepted" in during["band"] and "Read the file" in during["band"]
+    assert during["band"].count("accept-config") == 1, "the command is in the code block once: the sentence is the service's message without it"
+    assert during["sentence"].endswith("when it is what you want, run:")
     assert after["dimmed"] is False and after["codes"] == [] and after["title"] == before["title"], "accepted again: the dim lifts and the band goes"
 
 
@@ -626,16 +629,144 @@ def test_every_notice_that_needs_the_terminal_uses_the_one_component_and_the_pag
         assert "command.js" in (JS / name).read_text(encoding="utf-8"), f"{name} draws a command with the component"
     for path in JS.rglob("*.js"):
         text = path.read_text(encoding="utf-8")
-        assert "cli.py" not in text and "keyring" not in text and "accept-config --" not in text and "run-next --" not in text, f"{path.name}: a command is the service's, never built on the page"
+        assert "cli.py" not in text and "keyring==" not in text and "accept-config --" not in text and "run-next --" not in text, f"{path.name}: a command is the service's, never built on the page"
     assert '"select"' not in (JS / "floor/agent-tab.js").read_text(encoding="utf-8"), "the mode select is gone"
 
 
 @needs_node
 def test_the_inbox_and_the_tasks_are_inert_while_not_accepted_and_a_refusing_project_is_not_asked_for_bodies_or_documents_again(tmp_path):
     for tab in ("/inbox", "/tasks"):
-        got = run_node(tmp_path, MAIN.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@TAB@", tab), SCENE_DOM)
+        got = run_node(tmp_path, MAIN.replace("@REFUSAL@", json.dumps(REFUSAL)).replace("@NEXT@", json.dumps(ACCEPT)).replace("@TAB@", tab), SCENE_DOM)
         before, during, after = got["before"], got["during"], got["after"]
         assert before["inert"] and not any(before["inert"]), f"{tab}: live while accepted"
         assert during["inert"] and all(during["inert"]), f"{tab}: the cards and the buttons take no click while the configuration is not accepted"
         assert after["inert"] and not any(after["inert"]), f"{tab}: live again once accepted"
         assert got["askedAgain"] == 0, f"{tab}: no task body or document is asked of a project that answers 412"
+
+
+# --- A-20 completed (WP-9.14b): the two-segment spend meter, "Runs today: n" ----------------------------------------------------------
+
+SPEND = r"""
+import { FakeNode, settle, find, all } from "@FAKE@";
+import * as fm from "@JS@/floor-model.js";
+import * as model from "@JS@/model.js";
+import * as format from "@JS@/format.js";
+import * as control from "@JS@/views/control-model.js";
+import { createKpis } from "@JS@/frame/kpis.js";
+import { plateNode } from "@JS@/scene/plates.js";
+import { createAgentTab } from "@JS@/floor/agent-tab.js";
+
+const P = "0123456789ab";
+const agent = (extra = {}) => ({ name: "engineering", pack: "x", enabled: true, mode: "supervised", acting_mode: "supervised", max_runs_per_day: 8, max_usd_per_day: 2, runs_today: 0, usd_today: 1.64, usd_recorded: 0.14, usd_reserved: 1.5,
+  runs_total_today: 3, runs_without_cost: 1, queued: 0, held: 0, wider: [], ...extra });
+const out = {};
+out.words = [format.spendNote(0.14, 1.5), format.spendNote(0.14, 0), format.spendNote(0, 0), format.spendNote(0, 1.5)];
+const m = fm.meters(agent());
+out.meter = { recorded: m.spend.recorded, reserved: m.spend.reserved, note: m.spend.note, shares: [m.spend.recordedShare, m.spend.reservedShare], total: m.runsTotal, text: m.spend.text };
+const over = fm.meters(agent({ usd_today: 2.5, usd_recorded: 1, usd_reserved: 1.5, max_usd_per_day: 2 }));
+out.over = [over.spend.recordedShare, over.spend.reservedShare];
+const old = fm.meters({ name: "x", max_runs_per_day: 8, max_usd_per_day: 2, usd_today: 0.5, runs_today: 1, queued: 0 });
+out.old = [old.spend.note, old.spend.recordedShare, old.spend.reservedShare, old.runsTotal];
+
+// the plate
+const row = fm.floorRow(agent(), null, { accepted: true, project: "p", number: 1 });
+const plate = plateNode(fm.plateOf(row), {});
+const track = all(plate, ".wb-plate-meter .wb-meter")[1];
+out.plate = { note: all(plate, ".wb-plate-note").map((n) => n.textContent), fills: all(track, ".wb-meter-fill").length, reserved: all(track, ".wb-meter-reserved").length, has: track.classList.contains("has-reserved"),
+  first: all(plate, ".wb-plate-meter .wb-meter")[0].querySelectorAll(".wb-meter-reserved").length };
+out.cardLine = fm.cardOf(row).runsLine;
+
+// the KPI cards
+const sums = model.kpiSums({ projects: [{ id: P }], details: { [P]: { agents: [agent(), agent({ name: "marketing", usd_today: 0.2, usd_recorded: 0.2, usd_reserved: 0, runs_total_today: 1 })] } } }, null);
+out.sums = [sums.usd, sums.usdRecorded, sums.usdReserved, sums.runsTotal];
+const kpis = createKpis();
+kpis.update({ decisions: 0, runs: 3, runsCap: 16, usd: 1.84, usdCap: 4, usdRecorded: 0.34, usdReserved: 1.5, runsTotal: 4 });
+const cards = all(kpis.el, ".pui-card");
+out.kpi = { note: all(cards[2], ".wb-kpi-note").map((n) => n.textContent), reserved: all(cards[2], ".wb-meter-reserved").length, aria: cards[2].attrs["aria-label"], runsTitle: cards[1].title };
+kpis.update({ decisions: 0, runs: 3, runsCap: 16, usd: 0.34, usdCap: 4, usdRecorded: 0.34, usdReserved: 0, runsTotal: 4 });
+out.kpiNoReserve = all(all(kpis.el, ".pui-card")[2], ".wb-kpi-note").map((n) => n.textContent);
+
+// the caps line
+out.caps = control.capsLine([{ agent: "engineering", max_runs_per_day: 8, max_usd_per_day: 2 }], [agent({ runs_today: 5 })]);
+
+// the Agent tab
+const tab = createAgentTab({ project: "p", agent: "engineering", api: { setMode: async () => ({}), retry: async () => ({}), handOver: async () => ({}) }, refresh: () => {}, now: () => new Date() });
+const snapshot = { projects: [{ id: P, name: "n", config: { accepted: true } }], details: { [P]: { status: { requests: [], pending: [], held: [] }, agents: [agent()] } }, tasks: {}, loaded: true };
+tab.update(fm.floor(snapshot, P, "engineering", {}));
+const cell = all(tab.el, ".wb-meter-cell")[1];
+out.tab = { note: find(cell, ".wb-note").textContent, reserved: all(cell, ".wb-meter-reserved").length, total: find(tab.el, ".wb-runs-total").textContent, aria: cell.attrs["aria-label"] };
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_spend_meter_has_two_segments_with_both_numbers_labelled_and_the_runs_total_is_a_plain_line(tmp_path):
+    got = run_node(tmp_path, SPEND)
+    assert got["words"] == ["$0.14 recorded · up to $1.50 reserved", "$0.14 recorded", "", "$0.00 recorded · up to $1.50 reserved"], "the reserved part only when something is reserved"
+    assert got["meter"]["recorded"] == 0.14 and got["meter"]["reserved"] == 1.5 and got["meter"]["note"] == "$0.14 recorded · up to $1.50 reserved" and got["meter"]["text"] == "$1.64 / $2.00"
+    assert got["meter"]["shares"] == [0.07, 0.75] and got["meter"]["total"] == "Runs today: 3", "the shares are the page's division of the service's two numbers; the total is the service's"
+    assert got["over"][0] + got["over"][1] <= 1, "the two segments never pass the track"
+    assert got["old"] == ["", 0.25, 0, None], "an entry with no split (an older service) is all recorded"
+    p = got["plate"]
+    assert p["note"] == ["$0.14 recorded · up to $1.50 reserved"] and p["fills"] == 1 and p["reserved"] == 1 and p["has"] is True and p["first"] == 0, "the second meter of the plate has the second segment"
+    assert got["cardLine"].endswith("floor-model spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved)")
+    assert [round(x, 6) for x in got["sums"]] == [1.84, 0.34, 1.5, 4]
+    assert got["kpi"]["note"] == ["$0.34 recorded · up to $1.50 reserved"] and got["kpi"]["reserved"] == 1 and "up to $1.50 reserved" in got["kpi"]["aria"]
+    assert "Runs today: 4" in got["kpi"]["runsTitle"]
+    assert got["kpiNoReserve"] == [""], "nothing reserved: no second number, the line is empty"
+    assert got["caps"]["text"] == "Caps · engineering: reference-model runs 5 / 8, floor-model spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved), Runs today: 3"
+    assert got["tab"] == {"note": "$0.14 recorded · up to $1.50 reserved", "reserved": 1, "total": "Runs today: 3", "aria": "Floor-model spend today $1.64 / $2.00"}
+
+
+def test_the_reserved_segment_has_its_own_token_in_one_place_and_the_track_holds_both_segments():
+    css = _css()
+    assert len(re.findall(r"--wb-tint-reserved:", css)) == 1, "one definition, in :root"
+    assert "var(--wb-tint-reserved)" in _rule(css, ".wb-meter-reserved")
+    assert "display: flex" in _rule(css, ".wb-meter"), "the two segments sit on one line"
+    assert not re.search(r"\.wb-meter-reserved[^{]*\{[^}]*(#[0-9a-fA-F]{3,8}|rgb\()", css), "no literal colour"
+
+
+# --- the wider modes and the credential, from the service (WP-9.14b) -----------------------------------------------------------------------
+
+WIDER = r"""
+import { FakeNode, settle, find, all } from "@FAKE@";
+import { createAgentTab } from "@JS@/floor/agent-tab.js";
+import * as fm from "@JS@/floor-model.js";
+
+const P = "0123456789ab";
+const tab = createAgentTab({ project: "p", agent: "engineering", api: { setMode: async () => ({}), retry: async () => ({}), handOver: async () => ({}) }, refresh: () => {}, now: () => new Date() });
+const wider = (mode, names) => names.map((m) => ({ mode: m, command: `python3 /ck/runtime/cli.py set-mode --project /work/shop --agent engineering --mode ${m}` }));
+const agent = (extra = {}) => ({ name: "engineering", pack: "x", enabled: true, mode: "supervised", acting_mode: "supervised", max_runs_per_day: 8, max_usd_per_day: 2, runs_today: 0, usd_today: 0, runs_without_cost: 0, queued: 1, held: 1, ...extra });
+const task = { id: 4, key: "k", title: "T", skill: "s", state: "ready", note: null, agent: "engineering" };
+const view = (a, held = []) => fm.floor({ projects: [{ id: P, name: "n", config: { accepted: true } }], details: { [P]: { status: { requests: [{ id: 1, title: "R", state: "ready", tasks: [task] }], pending: [], held }, agents: [a] } }, tasks: {}, loaded: true }, P, "engineering", {});
+const out = {};
+tab.update(view(agent({ wider: wider("supervised", ["milestones", "autonomous", "autonomous-with-policy"]) })));
+const form = find(tab.el, ".wb-mode-form");
+out.three = { line: find(form, ".wb-wider").textContent, codes: all(form, ".wb-command-code").map((c) => c.textContent), sentences: all(form, ".wb-command-sentence").map((c) => c.textContent), copies: all(form, "button.wb-copy").length };
+tab.update(view(agent({ mode: "autonomous-with-policy", acting_mode: "autonomous-with-policy", wider: [] })));
+out.top = { wider: all(find(tab.el, ".wb-mode-form"), ".wb-wider").filter((n) => !n.hidden).length, codes: all(find(tab.el, ".wb-mode-form"), ".wb-command-code").length };
+tab.update(view(agent({})));
+out.none = { codes: all(find(tab.el, ".wb-mode-form"), ".wb-command-code").length, line: all(find(tab.el, ".wb-mode-form"), ".wb-wider").filter((n) => !n.hidden).length };
+
+// the held reason credential: the service's sentence, with each command it names in the component
+const credential = "The credential is in neither the environment nor the secret store. Store it once, the value typed at a hidden prompt. KEY_A: uv run --with keyring==25.7.0 keyring set ai-workbench user-a.";
+tab.update(view(agent({ wider: [] }), [{ task_id: 4, agent: "engineering", reason: "credential", at: "x", next: credential }]));
+const held = find(tab.el, ".wb-held");
+out.credential = { text: held.textContent.slice(0, 120), codes: all(held, ".wb-command-code").map((c) => c.textContent), copies: all(held, "button.wb-copy").length, line: find(held, ".wb-held-line").textContent };
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_agent_tab_shows_a_command_for_each_wider_mode_and_for_the_credential_as_the_service_gave_them(tmp_path):
+    got = run_node(tmp_path, WIDER)
+    modes = ["milestones", "autonomous", "autonomous-with-policy"]
+    assert got["three"]["line"] == "A wider mode is set in the terminal, not on this page:"
+    assert got["three"]["codes"] == [f"python3 /ck/runtime/cli.py set-mode --project /work/shop --agent engineering --mode {m}" for m in modes], "the service's three commands, in its order, verbatim"
+    assert got["three"]["sentences"] == modes and got["three"]["copies"] == 3
+    assert got["top"] == {"wider": 0, "codes": 0}, "an agent at the widest mode has nothing wider: no line"
+    assert got["none"]["codes"] == 0 and got["none"]["line"] == 1, "a service that gave no `wider` shows the sentence and builds no command"
+    c = got["credential"]
+    assert c["codes"] == ["uv run --with keyring==25.7.0 keyring set ai-workbench user-a"] and c["copies"] == 1
+    assert c["line"].startswith("Held: The reference model's credential is not set.")
+    assert "The credential is in neither the environment nor the secret store" in c["text"]

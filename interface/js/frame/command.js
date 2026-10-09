@@ -6,22 +6,28 @@
 import { h } from "../dom.js";
 
 const RUNNERS = /^(python3 |uv run |\/)/;
-const MARK = "run: ";
+const STORE = /uv run --with \S+ keyring set ai-workbench \S+/g;     // how the service writes the command that stores a credential
 const BACK_AFTER_MS = 2000;
 
+/** Whether a text of the service is a command (it starts with a runner) and not a sentence. */
+export function isCommand(text) {
+  return typeof text === "string" && RUNNERS.test(text.trim());
+}
+
 /**
- * Split a sentence of the service that ends with a command ("... when it is what you want, run: python3 /x/tool accept ...")
- * into {sentence, command}. The command is what follows the last "run: " and only when it starts with a runner; otherwise the whole text is
- * the sentence and the command is null.
+ * The commands inside a sentence of the service (the credential's: "... KEY: uv run --with ... keyring set ai-workbench <user>; ..."):
+ * {sentence, commands}. Each command is taken verbatim (without the full stop or the semicolon that ends it) and the sentence names it as
+ * "(command below)"; a sentence with none comes back as it was.
  */
-export function splitCommand(text) {
+export function commandsIn(text) {
   const whole = typeof text === "string" ? text : "";
-  const at = whole.lastIndexOf(MARK);
-  if (at >= 0) {
-    const command = whole.slice(at + MARK.length).trim();
-    if (RUNNERS.test(command)) return { sentence: whole.slice(0, at + MARK.length).trim(), command };
-  }
-  return { sentence: whole, command: null };
+  const commands = [];
+  const sentence = whole.replace(STORE, (found) => {
+    const command = found.replace(/[.;,)]+$/, "");
+    commands.push(command);
+    return `(command below)${found.slice(command.length)}`;
+  });
+  return { sentence, commands };
 }
 
 /**

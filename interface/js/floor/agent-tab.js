@@ -9,8 +9,8 @@
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
 import { MODES, MODE_LINES, PIPS, meters, stateRow, stateTone, taskWord } from "../floor-model.js";
-import { commandBlock } from "../frame/command.js";
-import { pips } from "../scene/plates.js";
+import { commandBlock, commandsIn, isCommand } from "../frame/command.js";
+import { pips, trackNode } from "../scene/plates.js";
 import { runBlock } from "./run-block.js";
 import { busyLine, chip, errorText, notice, ring } from "./widgets.js";
 
@@ -18,6 +18,7 @@ export const MAX_FILE_BYTES = 25 * 1024 * 1024;
 const NAME = /^[A-Za-z0-9._-]{1,100}$/;
 export const STANDING = "Stop agent and Supervise take effect at once and need no acceptance.";
 export const WIDER = "A wider mode is set in the terminal, not on this page.";
+export const WIDER_BELOW = "A wider mode is set in the terminal, not on this page:";
 
 /** The base64 of some bytes (the body of a file handed over): chunked so a large file does not overflow the call stack. */
 export function toBase64(bytes) {
@@ -54,12 +55,13 @@ export function createAgentTab(env) {
   const formBox = h("div", { class: "wb-mode-form" });
   const standing = h("div", { class: "wb-notice-card", text: STANDING });
   const resultBox = h("div", { class: "wb-result-box" });
+  const runsTotalLine = h("p", { class: "wb-runs-total wb-muted", hidden: true, text: "" });
   const waitingLine = h("p", { class: "wb-empty-line", text: "Waiting for the configuration to be accepted." });
   const metersBox = h("div", { class: "wb-meters" });
   const currentBox = h("div", { class: "wb-section" });
   const othersBox = h("div", { class: "wb-section" });
   const handBox = h("div", { class: "wb-hand" });
-  const body = h("div", { class: "wb-agent-body" }, waitingLine, metersBox, currentBox, othersBox, handBox);
+  const body = h("div", { class: "wb-agent-body" }, waitingLine, metersBox, runsTotalLine, currentBox, othersBox, handBox);
   fill(el, stateBox, plateBox, formBox, standing, resultBox, body);
 
   const shown = {};
@@ -79,7 +81,9 @@ export function createAgentTab(env) {
   let sawUnaccepted = false;
   let locked = false;          // the configuration is not accepted: the buttons do nothing
   let currentMode = null;
-  fill(formBox, h("div", { class: "wb-mode-controls" }, stopButton, superviseButton), h("p", { class: "wb-muted wb-wider", text: WIDER }), formError);
+  const widerLine = h("p", { class: "wb-muted wb-wider", text: WIDER });
+  const widerBox = h("div", { class: "wb-wider-modes" });
+  fill(formBox, h("div", { class: "wb-mode-controls" }, stopButton, superviseButton), widerLine, widerBox, formError);
   const LABELS = new Map([[stopButton, "Stop agent"], [superviseButton, "Supervise"]]);
 
   /** A button is off when the agent is already in that mode or a narrower one (the runtime accepts only a narrowing), while one is being sent, and while the configuration is not accepted. */
@@ -148,18 +152,33 @@ export function createAgentTab(env) {
     fill(stateBox, h("div", { class: "wb-state-row" }, content));
   }
 
-  function meterCell(label, text, share, full, note, tip) {
-    const fillNode = h("span", { class: `wb-meter-fill${full ? " is-full" : ""}` });
-    fillNode.style.setProperty("--wb-share", `${Math.round(share * 100)}%`);
+  function meterCell(label, text, share, full, note, tip, reserved = 0) {
     return h("div", { class: "wb-meter-cell", role: "group", "aria-label": `${label} ${text}`, title: tip || null },
       h("span", { class: "wb-muted wb-meter-label", text: label }), h("strong", { class: "wb-meter-value", text }),
-      share !== null ? h("span", { class: "wb-meter wb-meter-track", "aria-hidden": "true" }, fillNode) : null,
+      share !== null ? trackNode(share, full, reserved, "wb-meter-track") : null,
       note ? h("span", { class: "wb-note wb-muted", text: note }) : null);
   }
 
   function drawMeters(m) {
-    fill(metersBox, meterCell(m.runs.label, m.runs.text, m.runs.share, m.runs.full, "", m.runs.tip), meterCell(m.spend.label, m.spend.text, m.spend.share, m.spend.full, m.spend.unknown, m.spend.tip),
+    fill(metersBox, meterCell(m.runs.label, m.runs.text, m.runs.share, m.runs.full, "", m.runs.tip), meterCell(m.spend.label, m.spend.text, m.spend.recordedShare, m.spend.full, m.spend.note || m.spend.unknown, m.spend.tip, m.spend.reservedShare),
       meterCell("Queued", m.queued.text, null, false));
+    runsTotalLine.hidden = !m.runsTotal;      // the plain total of runs today, on any model (the runs meter counts the reference model's only)
+    runsTotalLine.textContent = m.runsTotal || "";
+  }
+
+  /** The held reason: its sentence and what the service gave to get past it: one command (run-next, the service start), or a sentence with commands in it (the credential's). */
+  function heldBlock(held) {
+    const parts = held.next && !isCommand(held.next) ? commandsIn(held.next) : null;
+    return h("div", { class: "wb-held" }, h("p", { class: "wb-held-line", text: `Held: ${held.sentence}` }),
+      parts ? h("p", { class: "wb-held-detail wb-muted", text: parts.sentence }) : null,
+      parts ? parts.commands.map((command) => commandBlock({ command })) : commandBlock({ command: held.next }));
+  }
+
+  function drawWider(wider) {
+    const list = Array.isArray(wider) ? wider : null;
+    widerLine.hidden = Boolean(list) && list.length === 0;     // nothing is wider than the widest mode
+    widerLine.textContent = list && list.length ? WIDER_BELOW : WIDER;
+    fill(widerBox, list ? list.map((w) => commandBlock({ command: w.command, sentence: w.mode })) : null);
   }
 
   function drawCurrent(view) {
@@ -174,7 +193,7 @@ export function createAgentTab(env) {
       h("div", { class: "pui-card wb-current" },
         h("div", { class: "wb-current-head" }, h("strong", { text: `#${task.id} ${task.title || task.key || ""}`.trim() }), chip(taskWord(task.state), stateTone(task.state))),
         h("div", { class: "wb-muted wb-current-sub" }, "skill ", h("code", { text: task.skill || "" }), since ? ` · since ${since}` : ""),
-        view.heldCurrent ? h("div", { class: "wb-held" }, h("p", { class: "wb-held-line", text: `Held: ${view.heldCurrent.sentence}` }), commandBlock({ command: view.heldCurrent.next })) : null,
+        view.heldCurrent ? heldBlock(view.heldCurrent) : null,
         view.runs.map(runBlock)));
   }
 
@@ -275,6 +294,7 @@ export function createAgentTab(env) {
       const unaccepted = !view || view.notAccepted;
       waitingLine.hidden = !(view && view.notAccepted);
       for (const node of [metersBox, currentBox, othersBox, handBox]) node.hidden = unaccepted;
+      if (unaccepted) runsTotalLine.hidden = true;
       stateBox.hidden = false;
       plateBox.hidden = unaccepted;
       formBox.hidden = unaccepted;
@@ -293,6 +313,7 @@ export function createAgentTab(env) {
       currentMode = view.agent.mode || null;
       drawButtons();
       swap("meters", meters(view.agent), () => drawMeters(meters(view.agent)));
+      swap("wider", view.agent.wider || null, () => drawWider(view.agent.wider));
       swap("current", [view.current, view.runs, view.tasks.length, view.heldCurrent], () => drawCurrent(view));
       swap("others", [view.others.map((t) => [t.id, t.title, t.state]), [...retrying], [...retryError], locked], () => drawOthers(view));
       swap("hand", [view.target ? view.target.id : null, locked], () => drawHand(view));

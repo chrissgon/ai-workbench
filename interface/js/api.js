@@ -17,11 +17,12 @@ const WORD_OF_STATUS = {
 
 /** An answer the service refused, or a request that did not get one (status 0, word "network"). */
 export class ApiError extends Error {
-  constructor(status, word, message) {
+  constructor(status, word, message, next = null) {
     super(message || word);
     this.name = "ApiError";
     this.status = status;
     this.word = word;
+    this.next = next;      // the terminal command that gets past the refusal, as the service gave it (the 412: accept-config), or null
   }
 
   /** 409 busy: a job that calls a model is already running for this project. */
@@ -107,7 +108,8 @@ async function send(method, path, options = {}) {
   if (!response.ok) {
     const word = (data && typeof data.error === "string" && data.error) || WORD_OF_STATUS[response.status] || "internal";
     const message = (data && typeof data.message === "string" && data.message) || word;
-    const failure = new ApiError(response.status, word, message);
+    const next = data && typeof data.next === "string" && data.next ? data.next : null;
+    const failure = new ApiError(response.status, word, message, next);
     if (failure.unauthorized && authFailure) authFailure();
     throw failure;
   }

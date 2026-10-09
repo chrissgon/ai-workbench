@@ -5,7 +5,7 @@
 
 import { h } from "../dom.js";
 import * as router from "../router.js";
-import { commandBlock, splitCommand } from "./command.js";
+import { commandBlock } from "./command.js";
 import { createKpis } from "./kpis.js";
 import { createNav } from "./header.js";
 import { icon } from "./icons.js";
@@ -203,19 +203,18 @@ export function createFrame(root, handlers) {
       noticeBox.hidden = !spec;
       if (!spec) return;
       const band = h("div", { class: `wb-notice${spec.kind === "error" ? " is-error" : ""}`, role: spec.kind === "error" ? "alert" : "status" });
-      // The service's own sentence; when it ends with a command (the terminal accepts the configuration), the command is drawn with the component.
-      const sentence = (text, mono) => {
-        const split = mono ? splitCommand(text) : { sentence: text, command: null };
-        return split.command ? commandBlock({ command: split.command, sentence: split.sentence }) : h("p", { class: mono ? "wb-notice-text mono" : "wb-notice-text", text });
-      };
+      // The service's own sentence; the command it gave (`command`, the `next` of the refusal) is drawn with the component.
+      const sentence = (text, command, mono) => (command
+        ? commandBlock({ command, sentence: text })
+        : h("p", { class: mono ? "wb-notice-text mono" : "wb-notice-text", text }));
       if (spec.lead) band.append(h("p", { class: "wb-notice-lead", text: spec.lead }));
-      band.append(sentence(spec.text, spec.mono));
+      band.append(sentence(spec.text, spec.command, spec.mono));
       if (spec.retry) {
         const button = h("button", { class: "pui-btn pui-surface pui-outline", type: "button", text: "Try again" });
         button.addEventListener("click", () => handlers.onRetry());
         band.append(button);
       }
-      for (const extra of spec.more || []) band.append(sentence(extra, true));
+      for (const extra of spec.more || []) band.append(sentence(extra.text, extra.command, true));
       noticeBox.append(band);
     },
     /** Tell a screen reader: at most one sentence per two seconds. */

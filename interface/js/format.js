@@ -65,6 +65,17 @@ export function decisions(n) {
   return `${n} decision${n === 1 ? "" : "s"}`;
 }
 
+/**
+ * The day's floor-model spend in words, both numbers labelled: "$0.14 recorded · up to $1.50 reserved" (the reserved part only when
+ * something is reserved for a run whose cost is not recorded yet), "$0.14 recorded", or "" when both are zero.
+ */
+export function spendNote(recorded, reserved) {
+  const r = count(recorded);
+  const q = count(reserved);
+  if (q > 0) return `${dollars(r)} recorded · up to ${dollars(q)} reserved`;
+  return r > 0 ? `${dollars(r)} recorded` : "";
+}
+
 // The words of the two caps (A-20), and the sentence that says what each one counts: the runs cap counts the reference model's runs, the
 // dollar cap the floor model's spend, so the two never read as one.
 export const METER_WORDS = Object.freeze({ runs: "Reference-model runs today", spend: "Floor-model spend today" });

@@ -289,8 +289,8 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
         "a decision with no agent (a project with no area agents, or a decision on a request) is the lobby's"
     assert by_id[12][5] == "Question, Which tone?, shop, Brand, waiting 5 hours"
     assert got["waitingScoped"] == [21]
-    assert got["kpi"][0] == {"decisions": 4, "runs": 5, "runsCap": 50, "usd": 2.5, "usdCap": 12.5}
-    assert got["kpi"][1] == {"decisions": 1, "runs": 0, "runsCap": 0, "usd": 0, "usdCap": 0}
+    assert got["kpi"][0] == {"decisions": 4, "runs": 5, "runsCap": 50, "usd": 2.5, "usdCap": 12.5, "usdRecorded": 2.5, "usdReserved": 0, "runsTotal": 0}
+    assert got["kpi"][1] == {"decisions": 1, "runs": 0, "runsCap": 0, "usd": 0, "usdCap": 0, "usdRecorded": 0, "usdReserved": 0, "runsTotal": 0}
     # the tracking bar: titles from the task, the agent from the task, the running run's start, floor numbers from the agents
     tracking = got["tracking"]
     assert tracking["request"] == {"id": 1, "title": "Spring", "state": "ready", "project": "shop", "projectId": "aaaaaaaaaaaa"}

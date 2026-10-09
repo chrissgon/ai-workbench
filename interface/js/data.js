@@ -18,13 +18,20 @@ export function emptySnapshot() {
  * status and agents read (A-16: the screen keeps its data until the configuration is accepted). Any other refusal of one project (a
  * 409, a 500) keeps what the last read held, when there is one, so one bad read does not blank a building; the next poll reads again.
  */
-async function readProject(project, before) {
+async function readProject(project, before, listedAccepted = true) {
   try {
-    const [status, agents] = await Promise.all([api.status(project.id), api.agents(project.id)]);
+    // A project listed as not accepted is asked one thing, its status: the 412 answer carries the command that accepts it (`next`).
+    let status;
+    let agents;
+    if (listedAccepted) [status, agents] = await Promise.all([api.status(project.id), api.agents(project.id)]);
+    else {
+      status = await api.status(project.id);
+      agents = await api.agents(project.id);     // accepted since the list was read
+    }
     return { status, agents: Array.isArray(agents.agents) ? agents.agents : [] };
   } catch (e) {
     if (e && e.name === "ApiError" && e.status !== 0 && e.status !== 401) {
-      const error = { status: e.status, word: e.word, message: e.message };
+      const error = { status: e.status, word: e.word, message: e.message, next: e.next || null };
       if (before && before.status) return { status: before.status, agents: before.agents, error };   // the data stays, the page says why it is old
       return { error };
     }
@@ -40,17 +47,9 @@ async function readProject(project, before) {
 export async function refresh(previous, followed, options = {}) {
   const listed = await api.projects();
   const projects = Array.isArray(listed.projects) ? listed.projects : [];
-  const accepted = projects.filter((p) => p.config && p.config.accepted);
-  const read = await Promise.all(accepted.map((p) => readProject(p, previous.details[p.id])));
+  const read = await Promise.all(projects.map((p) => readProject(p, previous.details[p.id], Boolean(p.config && p.config.accepted))));
   const details = {};
-  accepted.forEach((p, i) => { details[p.id] = read[i]; });
-  for (const p of projects) {
-    // listed as not accepted: nothing is read, and what the last read held stays with the service's own sentence
-    const before = previous.details[p.id];
-    if (!(p.config && p.config.accepted) && before && before.status) {
-      details[p.id] = { status: before.status, agents: before.agents, error: { status: 412, word: "not_configured", message: p.message || (before.error && before.error.message) || "" } };
-    }
-  }
+  projects.forEach((p, i) => { details[p.id] = read[i]; });
   const wanted = neededTasks(projects, details, followed);
   const tasks = {};
   await Promise.all(wanted.map(async (w) => {

@@ -184,6 +184,20 @@ export function heldOf(status, name) {
   return (status && Array.isArray(status.held) ? status.held : []).filter((h) => (h.agent || PLANNING) === name);
 }
 
+/**
+ * The day's floor-model spend split in two for the meter (A-20): what was recorded and what is reserved for runs whose cost is not recorded
+ * yet (the service gives both and their sum is usd_today), each as a share of the cap, the two never passing the track, and the words. An
+ * entry with no split (an older service) is all recorded and has no note.
+ */
+export function spendSplit(agent, usd, usdCap) {
+  const split = typeof agent.usd_reserved === "number";
+  const usdReserved = split ? agent.usd_reserved : 0;
+  const usdRecorded = typeof agent.usd_recorded === "number" ? agent.usd_recorded : usd - usdReserved;
+  const recordedShare = format.share(usdRecorded, usdCap);
+  const reservedShare = Math.min(format.share(usdReserved, usdCap), 1 - recordedShare);
+  return { usdRecorded, usdReserved, usdRecordedShare: recordedShare, usdReservedShare: reservedShare, usdNote: split ? format.spendNote(usdRecorded, usdReserved) : "" };
+}
+
 /** One floor's row: every fact the plate, the list row and the tooltip show. */
 export function floorRow(agent, status, context) {
   const name = agent.name || PLANNING;
@@ -205,6 +219,7 @@ export function floorRow(agent, status, context) {
   const usd = format.count(agent.usd_today);
   const usdCap = format.count(agent.max_usd_per_day);
   const unknown = format.count(agent.runs_without_cost);
+  const split = spendSplit(agent, usd, usdCap);
   const label = format.agentWord(name);
   const mode = agent.mode || null;
   const acting = agent.acting_mode || null;
@@ -218,7 +233,7 @@ export function floorRow(agent, status, context) {
     name, label, lobby, number: context.number, state, stateWord, accepted,
     unaccepted, held: heldTasks.length, heldReason,
     window: windowState(configured && state === "working"), dot: DOT[state], decisions, queued, done, running, left,
-    runs, runsCap, usd, usdCap, unknown, mode, acting, pips: mode ? PIPS[mode] || 0 : 0, actingPips: acting ? PIPS[acting] || 0 : 0,
+    runs, runsCap, usd, usdCap, unknown, ...split, runsTotal: agent.runs_total_today === undefined ? null : format.count(agent.runs_total_today), mode, acting, pips: mode ? PIPS[mode] || 0 : 0, actingPips: acting ? PIPS[acting] || 0 : 0,
     actingDiffers: Boolean(mode && acting && mode !== acting),
     link: lobby ? router.lobbyHash(context.project) : router.floorHash(context.project, name),
     meters, counts,
@@ -300,7 +315,7 @@ export function plateOf(row, selected = false) {
     done: row.done, running: row.running, left: row.left, queued: row.queued,
     runsText: `${row.runs} / ${row.runsCap}`, runsShare: format.share(row.runs, row.runsCap),
     usdText: `${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}`, usdShare: format.share(row.usd, row.usdCap),
-    unknown: row.unknown, mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
+    unknown: row.unknown, usdNote: row.usdNote, usdRecordedShare: row.usdRecordedShare, usdReservedShare: row.usdReservedShare, runsTotal: row.runsTotal, mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
     selected, off: row.state === "off",
   };
 }
@@ -310,7 +325,7 @@ export function plateOf(row, selected = false) {
  * top right and for each row of the floors list: name (with its decisions badge), state word, mode plate, one line of runs and spend.
  */
 export function cardOf(row) {
-  const runsLine = `reference-model runs ${row.runs} / ${row.runsCap} · floor-model spend ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}${row.unknown > 0 ? ` (+${row.unknown} of unknown cost)` : ""}`;
+  const runsLine = `reference-model runs ${row.runs} / ${row.runsCap} · floor-model spend ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}${row.usdNote ? ` (${row.usdNote})` : row.unknown > 0 ? ` (+${row.unknown} of unknown cost)` : ""}`;
   return {
     name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.stateWord,
     mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
@@ -353,9 +368,12 @@ export function meters(agent) {
   const usd = format.count(agent.usd_today);
   const usdCap = format.count(agent.max_usd_per_day);
   const unknown = format.count(agent.runs_without_cost);
+  const split = spendSplit(agent, usd, usdCap);
   return {
+    runsTotal: agent.runs_total_today === undefined ? null : `Runs today: ${format.count(agent.runs_total_today)}`,
     runs: { label: format.METER_WORDS.runs, tip: format.METER_TIPS.runs, text: `${runs} / ${runsCap}`, share: format.share(runs, runsCap), full: runsCap > 0 && runs >= runsCap, name: `${format.METER_WORDS.runs} ${runs} / ${runsCap}` },
-    spend: { label: format.METER_WORDS.spend, tip: format.METER_TIPS.spend, text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "", name: `${format.METER_WORDS.spend} ${format.dollars(usd)} / ${format.dollars(usdCap)}` },
+    spend: { label: format.METER_WORDS.spend, tip: format.METER_TIPS.spend, text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "",
+      recorded: split.usdRecorded, reserved: split.usdReserved, recordedShare: split.usdRecordedShare, reservedShare: split.usdReservedShare, note: split.usdNote, name: `${format.METER_WORDS.spend} ${format.dollars(usd)} / ${format.dollars(usdCap)}` },
     queued: { text: String(format.count(agent.queued)), name: `Queued ${format.count(agent.queued)}` },
   };
 }
