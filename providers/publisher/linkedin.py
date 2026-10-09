@@ -68,7 +68,7 @@ from pathlib import Path
 LINKEDIN_VERSION = "202609"
 RESTLI_PROTOCOL_VERSION = "2.0.0"
 DEFAULT_API_BASE = "https://api.linkedin.com"
-KEYRING_SERVICE = "ai-workbench"
+KEYRING_SERVICE = "openhora"
 KEYRING_USERNAME = "publisher-linkedin"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".gif"}
 EXPIRY_WARNING_DAYS = 7

@@ -20,6 +20,7 @@ Usage (from a test or a harness):
   fake.base, fake.token              what the provider's environment names
   fake.create_base(...), fake.create_page(...), fake.person_*(...)
   fake.requests                      every request served: (method, path, JSON body or None)
+  fake.user_agents                   the User-Agent header of every request served, in the same order
   fake.fail_next(name, status, carried_out=False), fake.redirect_next = True
 """
 from __future__ import annotations
@@ -113,6 +114,7 @@ class FakeNotion:
         self.clock = 0
         self.bases, self.pages, self.blocks, self.children, self.comments = {}, {}, {}, {}, {}
         self.requests, self.failures, self.redirect_next, self.redirected = [], {}, False, 0
+        self.user_agents = []
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), self.handler())
         self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
         threading.Thread(target=self.server.serve_forever, daemon=True).start()
@@ -375,6 +377,7 @@ class FakeNotion:
                 body = json.loads(raw) if raw else None
                 with fake.lock:
                     fake.requests.append((self.command, url.path, body))
+                    fake.user_agents.append(self.headers.get("User-Agent"))
                     if url.path == "/redirected":
                         fake.redirected += 1
                         return self.answer(200, {})

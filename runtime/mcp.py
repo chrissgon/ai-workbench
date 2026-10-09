@@ -89,7 +89,7 @@ LINE_LIMIT = 1024 * 1024                                # bytes of one message (
 GRACE = 1.0                                             # seconds a started job is waited for before the job is returned
 OWN_TOOLS = ("projects", "job")
 INSTRUCTIONS = (
-    "Tools of the ai-workbench task runtime. Read the project with status, pending, task, progress and the others; "
+    "Tools of the openhora task runtime. Read the project with status, pending, task, progress and the others; "
     "request, route, say, answer and release change the work. A tool that returns a job is polled with the tool job. "
     "Approvals, rejections, cancellations and retries are made in the terminal or on the local page, where the person is "
     "(an effect, a publication, a pull request or a message sent, only with the hash of its content): none is a tool "

@@ -3,6 +3,7 @@
 // must not offer to save it.
 
 import { h, fill } from "../dom.js";
+import { markImage } from "../brand.js";
 import { looksLikeToken } from "../token.js";
 
 /**
@@ -52,8 +53,9 @@ export function showTokenPrompt(root, { message, onSubmit }) {
 
   fill(root,
     h("section", { class: "pui-card" },
-      h("div", { class: "pui-card-header", text: "Paste the service token" }),
+      h("div", { class: "pui-card-header", text: "Paste the openhora service token" }),
       h("div", { class: "pui-card-content" },
+        h("div", { class: "wb-brand" }, markImage(48, ""), h("span", { class: "wb-wordmark", text: "openhora" })),
         message ? h("p", { class: "notice error", role: "alert", text: message }) : null,
         h("p", { text: "The token is in the file whose path the service printed when it started (the \"token_file\" value of its first line); open that file and paste its one line here." }),
         form)));

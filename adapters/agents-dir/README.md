@@ -11,7 +11,7 @@ bash adapters/agents-dir/install.sh --project .    # project-level: ./.agents/sk
 ## Limitations
 
 - Agents (`agents/`) are not installed by this adapter: agent formats differ per tool. Add a dedicated adapter when a tool's subagent format is needed.
-- The shared references are installed beside the skills, in `<skills folder>/../shared/references` (a link, or a copy with `--copy`), so a skill's `../../shared/references/<file>` resolves by the installed path. The `shared` folder holds the installer's marker file; a `shared` folder the installer did not make is left alone and reported, and the run exits 1.
+- The shared references are installed beside the skills, in `<skills folder>/../shared/references` (a link, or a copy with `--copy`), so a skill's `../../shared/references/<file>` resolves by the installed path. The `shared` folder holds the installer's marker file (`.installed-by-openhora`; a copy or a `shared` folder that holds the marker the installer wrote before the rename, `.installed-by-ai-workbench`, still counts as its own and is replaced with the new one; removed with the next change of reference model, T23); a `shared` folder the installer did not make is left alone and reported, and the run exits 1.
 - One pack is installed at a time: installing a pack removes what an earlier pack installed and this one does not select (a dangling link to a renamed skill included), and `--uninstall` removes everything the installer made, whatever pack installed it.
 
 ## Evals
@@ -26,7 +26,7 @@ The floor model of the eval gate is `openrouter/deepseek/deepseek-v4.1-flash` si
 
 ```bash
 # OPENROUTER_API_KEY from the environment settings, or stored once in the OS secret store:
-#   uv run --with keyring==25.7.0 keyring set ai-workbench openrouter
+#   uv run --with keyring==25.7.0 keyring set openhora openrouter
 # --pass-env reads it from there when it is not exported (contracts/secrets.md): this adapter registers
 # the key in the "secrets" list of its adapter.json; the name to pass stays in evals/eval-gate.json.
 python3 evals/eval_run.py --skill <name>
