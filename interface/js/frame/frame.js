@@ -152,6 +152,8 @@ export function createFrame(root, handlers) {
   main.addEventListener(DRAWER_EVENT, (event) => {
     covering = Boolean(event.detail && event.detail.covering);
     frame.classList.toggle("is-sheet-full", covering);
+    frame.classList.toggle("is-sheet-rising", Boolean(event.detail && event.detail.rising));   // a drag that has the sheet taller: the cards are put away while it lasts
+    sceneArea.inert = covering;     // the camera buttons and the canvas leave the tab order while the sheet covers them
     if (world) world.setPaused(covering);
   });
 

@@ -18,6 +18,7 @@ import pytest
 
 import standin_tree as st
 from test_interface_scene import FAKE_DOM
+from test_interface_scene_round3 import ENGINE_PAGE_JS, PRODUCT_JS, run_node_engine
 
 INTERFACE = st.REPO / "interface"
 JS = INTERFACE / "js"
@@ -124,7 +125,12 @@ def test_the_sheet_cycles_steps_and_settles_inside_its_three_positions(tmp_path)
 
 BIND = r"""
 import { FakeNode } from "@FAKE@";
-window.matchMedia = () => ({ matches: true, addEventListener() {}, removeEventListener() {} });
+const mqls = [];     // every media query list the sheets asked for: a test moves the viewport by changing one and calling its listeners
+window.matchMedia = () => {
+  const m = { matches: true, listeners: [], addEventListener(type, fn) { m.listeners.push(fn); }, removeEventListener(type, fn) { m.listeners = m.listeners.filter((x) => x !== fn); } };
+  mqls.push(m);
+  return m;
+};
 const d = await import("@JS@/frame/drawer.js");
 
 const events = [];
@@ -230,6 +236,44 @@ out.cancel = { pos: c.bound.position(), dragging: c.cls().includes("is-dragging"
 events.splice(0);
 c.bound.set("full"); c.bound.set("half"); c.bound.set("full"); c.bound.destroy();
 out.covering = events.map((e) => [e.position, e.covering]);
+
+// the viewport leaves the phone width while the sheet is full: the event says it covers nothing, and says so again when the phone width comes back
+const q = sheet("viewport");
+q.bound.set("full");
+const mq = mqls[mqls.length - 1];
+events.splice(0);
+mq.matches = false; mq.listeners.forEach((fn) => fn());
+const left = events.splice(0).map((e) => [e.position, e.covering]);
+mq.matches = true; mq.listeners.forEach((fn) => fn());
+const came = events.splice(0).map((e) => [e.position, e.covering]);
+q.bound.destroy();
+out.viewport = { left, came, listenersAfterDestroy: mq.listeners.length };
+
+// while a drag lasts the sheet covers nothing (the scene is drawn as the sheet comes down), and `rising` says when the sheet is taller than it was
+const r = sheet("rising");
+r.bound.set("half");
+events.splice(0);
+r.fire(r.grip, "pointerdown", { clientY: 100 }); r.fire(r.grip, "pointermove", { clientY: 300 });
+const down = events[events.length - 1];
+r.fire(r.grip, "pointermove", { clientY: 40 });
+const up = events[events.length - 1];
+r.fire(r.grip, "pointerup", { clientY: 40, timeStamp: 9000 });
+out.dragState = { down: [down.dragging, down.covering, down.rising], up: [up.dragging, up.covering, up.rising], end: events[events.length - 1] };
+
+// a gesture whose end is never heard does not hold the sheet; a cancel and a destroy in the middle of a drag let the window go
+const heard = () => (wl.pointermove || []).length + (wl.pointerup || []).length + (wl.pointercancel || []).length;
+const w = sheet("window");
+w.fire(w.grip, "pointerdown", { clientY: 500 }); w.fire(w.grip, "pointermove", { clientY: 400 });
+const mid = { heard: heard(), dragging: w.cls().includes("is-dragging") };
+w.fire(w.grip, "pointerdown", { clientY: 300, pointerId: 2 });     // the end of pointer 1 was lost
+const fresh = { heard: heard(), dragging: w.cls().includes("is-dragging"), prop: w.state.props["--wb-drawer-drag"] };
+w.fire(w.grip, "pointermove", { clientY: 200, pointerId: 2 });
+w.fire(w.grip, "pointercancel", { pointerId: 2 });
+const cancelled = { heard: heard(), dragging: w.cls().includes("is-dragging"), prop: w.state.props["--wb-drawer-drag"] };
+w.fire(w.grip, "pointerdown", { clientY: 500 }); w.fire(w.grip, "pointermove", { clientY: 380 });
+const heardMid = heard();
+w.bound.destroy();
+out.window = { mid, fresh, cancelled, during: heardMid, destroyed: { heard: heard(), dragging: w.cls().includes("is-dragging"), prop: w.state.props["--wb-drawer-drag"] } };
 console.log(JSON.stringify(out));
 """
 
@@ -238,16 +282,16 @@ console.log(JSON.stringify(out));
 def test_the_sheet_binds_the_handle_the_keyboard_the_drag_and_the_memory(tmp_path):
     got = run_node(tmp_path, BIND)
     assert got["open"]["cls"] == ["is-half"] and got["open"]["label"] == "Panel size, half" and got["open"]["expanded"] == "true"
-    assert got["open"]["events"] == [{"position": "half", "covering": False, "dragging": False}], "the frame hears once where a sheet opens"
+    assert got["open"]["events"] == [{"position": "half", "covering": False, "dragging": False, "rising": False}], "the frame hears once where a sheet opens"
     assert got["tap"]["full"]["pos"] == "full" and got["tap"]["full"]["cls"] == ["is-full"], "the position is a class on the sheet"
-    assert got["tap"]["full"]["event"] == [{"position": "full", "covering": True, "dragging": False}] and got["tap"]["back"] == "half"
+    assert got["tap"]["full"]["event"] == [{"position": "full", "covering": True, "dragging": False, "rising": False}] and got["tap"]["back"] == "half"
     assert got["keys"] == [True, "full", True, "full", True, True, "collapsed", True, "collapsed", False, "collapsed"], \
         "ArrowUp and ArrowDown move one position and stop at the ends; any other key is left alone"
     assert got["memory"] == {"again": "full", "other": "half"}, "the position is kept per screen for as long as the page lives"
     drag = got["dragGrip"]
     assert drag["during"] == {"cls": True, "prop": "450px", "onWindow": 1, "dragging": True}, "a drag follows the pointer through one custom property, heard on the window"
     assert drag["afterDrag"]["pos"] == "full" and drag["afterDrag"]["dragging"] is False and drag["afterDrag"]["prop"] == "", "the drag ends on a position and removes the property"
-    assert drag["afterDrag"]["last"] == {"position": "full", "covering": True, "dragging": False} and drag["afterDrag"]["onWindow"] == 0, "the window is let go"
+    assert drag["afterDrag"]["last"] == {"position": "full", "covering": True, "dragging": False, "rising": False} and drag["afterDrag"]["onWindow"] == 0, "the window is let go"
     assert drag["tapLater"] == "half", "a tap on the handle after the drag cycles it again"
     assert got["clickAfterDrag"] == ["full", "full"], "the click a browser sends right after a drag is not a tap"
     assert got["starts"] == {"header": "collapsed", "button": "half", "body": "half", "bodyDragging": False}, \
@@ -255,6 +299,16 @@ def test_the_sheet_binds_the_handle_the_keyboard_the_drag_and_the_memory(tmp_pat
     assert got["headerTap"] == ["half", "full"], "a tap on a header raises a collapsed sheet and leaves the others"
     assert got["cancel"] == {"pos": "half", "dragging": False}
     assert got["covering"] == [["full", True], ["half", False], ["full", True], ["full", False]], "only a sheet at full covers the scene; a destroyed one covers nothing"
+    assert got["viewport"] == {"left": [["full", False]], "came": [["full", True]], "listenersAfterDestroy": 0}, \
+        "the viewport leaving the phone width while the sheet is full releases the pause (the event says covering false), and the sheet lets the query go when it is destroyed"
+    assert got["dragState"]["down"] == [True, False, False] and got["dragState"]["up"] == [True, False, True], \
+        "a sheet being dragged covers nothing; rising says it is taller than it was"
+    assert got["dragState"]["end"]["covering"] is True and got["dragState"]["end"]["dragging"] is False and got["dragState"]["end"]["rising"] is False
+    w = got["window"]
+    assert w["mid"] == {"heard": 3, "dragging": True} and w["fresh"] == {"heard": 3, "dragging": False, "prop": ""}, \
+        "a press while a gesture's end was never heard starts afresh: the old one is let go, the window holds one gesture"
+    assert w["cancelled"] == {"heard": 0, "dragging": False, "prop": ""} and w["during"] == 3, "a cancel lets the window go and clears the drag"
+    assert w["destroyed"] == {"heard": 0, "dragging": False, "prop": ""}, "destroying the sheet in the middle of a drag lets the window go and clears the drag"
 
 
 # --- the handle is on the markup of every screen that has a panel; no inline style; the position is a class -------------------
@@ -364,7 +418,9 @@ def test_the_phone_puts_the_cards_over_the_scene_bottom_aligned_and_the_kpi_row_
     main = next(d for block in PHONE for sel, d in rules(block) if sel == ".wb-main")
     assert main["display"] == "flex" and main["flex-direction"] == "column" and main["justify-content"] == "flex-end" and main["grid-area"] == "scene", \
         "the main area is laid over the scene's cell, a stack from the bottom up"
-    assert re.search(r"\.wb-frame\.is-sheet-full \.wb-float \{ display: none; \}", phone), "the KPI cards and the tracking bar are hidden at full"
+    assert re.search(r"\.wb-frame\.is-sheet-full \.wb-float, \.wb-frame\.is-sheet-rising \.wb-float \{ display: none; \}", phone), \
+        "the KPI cards and the tracking bar are hidden at full, and while a drag has the sheet rising"
+    assert ".wb-kpi-note, .wb-kpi-unit { display: none; }" in phone, "the tile is one line: the unit that would be cut mid-word is not drawn (the title and the name carry the sentence)"
     kpi = next(d for block in PHONE for sel, d in rules(block) if sel == ".wb-kpi")
     assert kpi["font-size"] == "12px" and kpi["display"] == "block"
     assert ".wb-kpi-long { display: none; }" in phone and ".wb-kpi-short { display: inline; }" in phone and "white-space: nowrap" in phone
@@ -372,8 +428,9 @@ def test_the_phone_puts_the_cards_over_the_scene_bottom_aligned_and_the_kpi_row_
     # the bottom bar stays: the switcher, "Waiting for you" and the breadcrumbs keep their rows whatever the sheet's position
     assert 'grid-template-areas: "scene scene" "switch wait" "nav door";' in phone
     # the sheet's collapsed state keeps a header line (a panel's head, the City's two heads) and nothing else
-    assert ".wb-drawer.is-collapsed > :not(.wb-grip, .wb-panel-head, .wb-floor-normal, .wb-drawer-scroll) { display: none; }" in phone
-    assert ".wb-drawer.is-collapsed .wb-buildings > :not(.wb-buildings-head)" in phone and ".wb-wait-body > :not(.wb-wait-head)" in phone
+    assert ".wb-drawer.is-collapsed:not(.is-dragging) > :not(.wb-grip, .wb-panel-head, .wb-floor-normal, .wb-drawer-scroll) { display: none; }" in phone
+    assert ".wb-drawer.is-collapsed:not(.is-dragging) .wb-buildings > :not(.wb-buildings-head)" in phone and ".wb-wait-body > :not(.wb-wait-head)" in phone, \
+        "collapsed hides all but a header line, and not while a drag raises it: the content is there as the sheet comes up"
     # no panel on the phone is a free-flowing section of the page any more: the Floor and the Control room scroll inside the sheet
     assert ".wb-floor-normal { display: block; height: auto; }" not in "\n".join(media_blocks(CSS, "max-width: 639px"))
 
@@ -402,10 +459,14 @@ out.order = kids(phone.main).map((c) => cls(c)[0] || c.tagName);
 // the sheet's event: at full the frame says so (a class), and the scene it holds is paused; a sheet that goes un-covers it
 const listener = (phone.main.listeners["wb-drawer"] || [])[0];
 out.hasListener = typeof listener === "function";
+const sceneArea = kids(phone.el).find((c) => cls(c).includes("wb-scene-area"));
 listener({ detail: { position: "full", covering: true } });
-const full = cls(phone.el).includes("is-sheet-full");
+const full = [cls(phone.el).includes("is-sheet-full"), sceneArea.inert];
+listener({ detail: { position: "half", covering: false, dragging: true, rising: true } });
+const rising = [cls(phone.el).includes("is-sheet-full"), cls(phone.el).includes("is-sheet-rising"), sceneArea.inert];
 listener({ detail: { position: "half", covering: false } });
-out.sheetFull = [full, cls(phone.el).includes("is-sheet-full")];
+out.sheetFull = [full[0], cls(phone.el).includes("is-sheet-full")];
+out.inert = { full: full[1], rising: rising, after: [cls(phone.el).includes("is-sheet-rising"), sceneArea.inert] };
 console.log(JSON.stringify(out));
 """
 
@@ -418,6 +479,8 @@ def test_the_frame_stacks_the_cards_over_the_scene_on_a_phone_and_hears_the_shee
     assert got["phone"]["float"] == ["wb-kpis", "pui-card wb-track"], "on the phone they are the stack over the sheet"
     assert got["order"][:2] == ["wb-sr", "wb-notice-box"] and got["order"][-1] == "wb-float"
     assert got["hasListener"] is True and got["sheetFull"] == [True, False], "the frame marks 'full' while the sheet covers the scene"
+    assert got["inert"] == {"full": True, "rising": [False, True, False], "after": [False, False]}, \
+        "the scene area is inert while the sheet covers it (the camera buttons and the canvas leave the tab order); a rising drag puts the cards away and the scene is live"
 
 
 def test_the_frame_pauses_the_scene_while_the_sheet_covers_it_and_the_control_room_pauses_its_own():
@@ -467,3 +530,73 @@ def test_the_floor_card_of_the_building_hangs_from_a_point_at_the_bottom_and_the
     assert "cornerBottom: level + PHONE_TOOLS_H" in building and "cornerLeft: 10" in building and "cornerRight: 10" in building
     assert re.search(r"\.wb-corner-card\.is-bottom \{ transform: translate\(0, -100%\); \}", CSS)
     assert re.search(r"\.wb-floor-steps \{[^}]*translate: 0 calc\(0px - var\(--wb-y, 10px\)\)", "\n".join(PHONE) + CSS), "the floor steps stand level with the camera buttons"
+
+
+# --- the engine: a sheet that covers the scene pauses it as a hidden tab does, and the fit is left alone meanwhile ---------------------------------------
+
+PAUSE = ENGINE_PAGE_JS + PRODUCT_JS + r"""
+const { createEngine } = await import("@JS@/scene/engine.js");
+const host = document.createElement("div");
+let insets = { left: 0, right: 0, top: 0, bottom: 0, pad: 1.04 };
+let insetReads = 0;
+const engine = createEngine(host, { label: "City", getInsets: () => { insetReads += 1; return insets; }, onOpen() {}, onHover() {}, onUnavailable() {} });
+const stats = () => engine.canvas.wbStats();
+engine.show("world", models.city(), "City");
+frame(34); frame(34);
+const out = { start: stats().hidden };
+const view0 = engine.canvas.wbStats().view;
+engine.setPaused(true);
+out.paused = stats().hidden;
+engine.zoomBy(1.5);
+out.framesWhilePaused = frame(34) + frame(34);
+const reads = insetReads;
+insets = { ...insets, bottom: 300 };
+engine.refit();                                           // the sheet's size changed while it covers the scene
+out.readsWhilePaused = insetReads - reads;
+document.hidden = false;
+(document.listeners.visibilitychange || []).forEach((fn) => fn());   // the tab is shown again: a sheet that still covers keeps it paused
+out.afterVisible = stats().hidden;
+engine.setPaused(true);                                   // the same again is no change
+out.twice = stats().hidden;
+engine.setPaused(false);
+out.resumed = stats().hidden;
+out.readsOnResume = insetReads - reads;                    // the one fit that was left, in the room the page has now
+out.framesAfter = frame(34);
+document.hidden = true;
+engine.setPaused(false);
+(document.listeners.visibilitychange || []).forEach((fn) => fn());
+out.tabHidden = stats().hidden;
+console.log(JSON.stringify(out));
+"""
+
+
+@pytest.mark.skipif(NODE is None, reason="node is not installed")
+def test_a_scene_paused_by_the_sheet_draws_nothing_leaves_the_fit_and_resumes_with_one_fit(tmp_path):
+    got = run_node_engine(tmp_path, PAUSE)
+    assert got["start"] is False and got["paused"] is True, "setPaused(true) hides the loop as a hidden tab does"
+    assert got["framesWhilePaused"] == 0, "a render asked for while the sheet covers the scene is not drawn"
+    assert got["readsWhilePaused"] == 0, "the fit is left as it was while the sheet covers the scene (the person's zoom and pan are not re-clamped to a room they will not have)"
+    assert got["afterVisible"] is True and got["twice"] is True, "a tab shown again does not draw a scene the sheet still covers"
+    assert got["resumed"] is False and got["readsOnResume"] == 1 and got["framesAfter"] >= 1, "setPaused(false) draws again, with the one fit that was left, in the room it has now"
+    assert got["tabHidden"] is True, "a hidden tab stays hidden whatever the sheet says"
+
+
+KPI = r"""
+import { FakeNode } from "@FAKE@";
+import { createKpis } from "@JS@/frame/kpis.js";
+const k = createKpis();
+const cards = () => [...k.el.walk()].filter((n) => n instanceof FakeNode && (n.attrs.class || "").includes("pui-card"));
+k.update({ decisions: 1, runs: 3, runsCap: 20, usd: 1.2, usdCap: 5 }, "ready");
+const one = cards().map((c) => [c.title, c.attrs["aria-label"]]);
+k.update({ decisions: 7, runs: 3, runsCap: 20, usd: 1.2, usdCap: 5 }, "ready");
+console.log(JSON.stringify({ one, seven: cards()[0].title }));
+"""
+
+
+@needs_node
+def test_the_decisions_tile_has_a_whole_sentence_for_a_title_since_the_phone_does_not_draw_its_unit(tmp_path):
+    got = run_node(tmp_path, KPI)
+    assert got["one"][0] == ["1 open decision waiting for you", "Open decisions 1 waiting for you"]
+    assert got["seven"] == "7 open decisions waiting for you"
+    assert got["one"][1][1] == "Reference-model runs today 3 of 20" and got["one"][2][1].startswith("Floor-model spend today $1.20 of $5.00"), \
+        "the runs and the spend tiles keep the cap in their name when the phone does not draw it"

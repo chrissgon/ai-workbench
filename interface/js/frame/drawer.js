@@ -92,8 +92,9 @@ export function bindDrawer(el, { screen, grip, handles = ".wb-panel-head" }) {
   let draggedAt = null;     // the time stamp of the pointer-up that ended a drag: a click right after it is not a tap
   let destroyed = false;
 
-  function tell(dragging = false) {
-    el.dispatchEvent(new CustomEvent(EVENT, { bubbles: true, detail: { position, covering: phone.matches && position === "full" && !destroyed, dragging } }));
+  function tell(dragging = false, rising = false) {
+    // `rising`: a drag has the sheet taller than it was when the drag began (the frame then puts the cards away); `covering` is false while a drag lasts
+    el.dispatchEvent(new CustomEvent(EVENT, { bubbles: true, detail: { position, covering: phone.matches && position === "full" && !destroyed && !dragging, dragging, rising } }));
   }
   function paint() {
     for (const name of POSITIONS) el.classList.toggle(`is-${name}`, name === position);
@@ -120,7 +121,8 @@ export function bindDrawer(el, { screen, grip, handles = ".wb-panel-head" }) {
   });
 
   function onDown(event) {
-    if (!phone.matches || drag || (event.button !== undefined && event.button !== 0)) return;
+    if (!phone.matches || (event.button !== undefined && event.button !== 0)) return;
+    if (drag) abandon();     // a gesture whose end was never heard (a lost pointerup) does not hold the sheet: this press starts afresh
     const target = event.target;
     const handle = target && target.closest ? target.closest(selector) : null;
     if (!handle || !el.contains(handle)) return;
@@ -132,6 +134,12 @@ export function bindDrawer(el, { screen, grip, handles = ".wb-panel-head" }) {
     window.addEventListener("pointermove", onMove);
     window.addEventListener("pointerup", onUp);
     window.addEventListener("pointercancel", onCancel);
+  }
+  function abandon() {
+    drag = null;
+    endGesture();
+    el.classList.remove("is-dragging");
+    el.style.setProperty("--wb-drawer-drag", "");   // an empty value removes the property
   }
   function endGesture() {
     window.removeEventListener("pointermove", onMove);
@@ -149,7 +157,7 @@ export function bindDrawer(el, { screen, grip, handles = ".wb-panel-head" }) {
     const span = el.parentElement ? el.parentElement.clientHeight : drag.px0;
     const px = Math.min(Math.max(drag.px0 - dy, 0), span || drag.px0);
     el.style.setProperty("--wb-drawer-drag", `${Math.round(px)}px`);
-    tell(true);
+    tell(true, px > drag.px0);
   }
   function onUp(event) {
     if (!drag || event.pointerId !== drag.id) return;
@@ -169,10 +177,7 @@ export function bindDrawer(el, { screen, grip, handles = ".wb-panel-head" }) {
   }
   function onCancel(event) {
     if (!drag || event.pointerId !== drag.id) return;
-    drag = null;
-    endGesture();
-    el.classList.remove("is-dragging");
-    el.style.setProperty("--wb-drawer-drag", "");   // an empty value removes the property
+    abandon();
     paint();
     tell();
   }
@@ -189,10 +194,7 @@ export function bindDrawer(el, { screen, grip, handles = ".wb-panel-head" }) {
     destroy() {
       if (destroyed) return;
       destroyed = true;
-      if (drag) {
-        drag = null;
-        endGesture();
-      }
+      if (drag) abandon();
       phone.removeEventListener("change", onBreakpoint);
       tell();   // a sheet that is gone covers nothing
     },

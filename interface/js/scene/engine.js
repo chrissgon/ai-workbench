@@ -466,6 +466,11 @@ export function createEngine(host, options) {
     corner.style.setProperty("--wb-y", `${at.y.toFixed(1)}px`);
   }
 
+  // A bottom sheet that covers the whole scene pauses it (setPaused below). While it does, the fit is left as it was: the cards are away and the sheet
+  // is as tall as the page, so a fit made now would re-clamp the person's zoom and pan to a room they will not have when the sheet goes down again.
+  let paused = false;
+  let fitWaits = false;
+
   function measure() {
     const w = host.clientWidth;
     const hh = host.clientHeight;
@@ -478,7 +483,8 @@ export function createEngine(host, options) {
 
   const observer = new ResizeObserver(() => {
     if (disposed || !measure()) return;
-    fit();
+    if (paused) fitWaits = true;
+    else fit();
   });
   observer.observe(host);
 
@@ -679,7 +685,6 @@ export function createEngine(host, options) {
 
   // --- the page's own signals: visibility, reduced motion, colour scheme, context loss ---------------------------------------
   // A page's bottom sheet that covers the whole scene (a phone) pauses it exactly as a hidden tab does: nothing is scheduled, nothing is drawn.
-  let paused = false;
   const onVisibility = () => {
     loop.setHidden(document.hidden || paused);
     if (!document.hidden && options.onVisible) options.onVisible();
@@ -768,10 +773,16 @@ export function createEngine(host, options) {
       if (next === paused) return;
       paused = next;
       loop.setHidden(document.hidden || paused);
+      if (!paused && fitWaits) {      // the fit that was left while the sheet covered the scene: once, in the room it has now
+        fitWaits = false;
+        if (measure()) fit();
+      }
     },
     /** Measure the insets again and refit (a panel changed size). */
     refit() {
-      if (!disposed && measure()) fit();
+      if (disposed || !measure()) return;
+      if (paused) fitWaits = true;
+      else fit();
     },
     /** Outline a building from the HTML list (hover or focus there), with no tooltip. `source` is "pointer" or "keyboard" (the list's focus). */
     highlight(id, source = "pointer") {

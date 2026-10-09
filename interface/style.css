@@ -634,16 +634,16 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-scene-area { position: relative; inset: auto; grid-area: scene; overflow: hidden; }
   /* the main area is laid over the scene's cell: a stack from the bottom up (the sheet, the KPI row and the tracking bar, a notice at the top) */
   .wb-main { position: relative; inset: auto; grid-area: scene; z-index: 2; display: flex; flex-direction: column; justify-content: flex-end; min-height: 0; overflow: hidden; }
-  .wb-float { display: flex; flex: none; flex-direction: column; gap: 6px; padding: 0 8px 8px; pointer-events: none; }
+  .wb-float { display: flex; flex: none; flex-direction: column; gap: 4px; padding: 0 8px 6px; pointer-events: none; }
   .wb-float > * { pointer-events: auto; }
-  .wb-frame.is-sheet-full .wb-float { display: none; }
+  .wb-frame.is-sheet-full .wb-float, .wb-frame.is-sheet-rising .wb-float { display: none; }
   .wb-main > .wb-empty-card, .wb-notice-box {
     position: static; flex: none; width: auto; height: auto; max-width: none; translate: none; margin: 0 8px 8px; overflow: visible; clip-path: none;
   }
   .wb-notice-box { margin-top: 8px; margin-bottom: auto; }   /* the first free space goes under the notice: it stays at the top, the rest at the bottom */
   .wb-track { position: static; flex: none; }
   .wb-track-desktop { display: none; }
-  .wb-track-phone { display: grid; gap: 4px; padding: 8px 12px; }
+  .wb-track-phone { display: grid; gap: 2px; padding: 6px 12px; }
   .wb-track-open { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; justify-content: start; align-items: center; width: 100%; min-width: 0; padding: 0; text-align: left; white-space: normal; }
   .wb-dots { display: flex; align-items: center; gap: 8px; }
   .wb-dots .pui-checkpoint-icon { position: relative; }
@@ -661,7 +661,7 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-kpi-long { display: none; }
   .wb-kpi-short { display: inline; }
   .wb-kpi-row { gap: 4px; }
-  .wb-kpi-note { display: none; }
+  .wb-kpi-note, .wb-kpi-unit { display: none; }   /* the sentence with the cap is the tile's title and name; a tile that cut it mid-word said less */
   .wb-meter { position: absolute; right: 0; bottom: 0; left: 0; height: 3px; margin: 0; border-radius: 0; }
   /* the bottom sheet: the panel of a screen (or the City's two lists) with a handle at its top. Its position is a class: collapsed (the header line
      only), half (the default) or full (it covers the scene). A drag writes its height as one custom property while it lasts. */
@@ -682,9 +682,9 @@ a.wb-now-title:hover { text-decoration: underline; }
   .wb-drawer.is-dragging .wb-panel-head { cursor: grabbing; }
   .wb-panel-wide, .wb-panel { width: auto; }
   /* collapsed: the header line only (a panel's head; the City's two lists keep their heads) */
-  .wb-drawer.is-collapsed > :not(.wb-grip, .wb-panel-head, .wb-floor-normal, .wb-drawer-scroll) { display: none; }
-  .wb-drawer.is-collapsed .wb-floor-normal > :not(.wb-panel-head) { display: none; }
-  .wb-drawer.is-collapsed .wb-buildings > :not(.wb-buildings-head), .wb-drawer.is-collapsed .wb-wait-body > :not(.wb-wait-head) { display: none; }
+  .wb-drawer.is-collapsed:not(.is-dragging) > :not(.wb-grip, .wb-panel-head, .wb-floor-normal, .wb-drawer-scroll) { display: none; }
+  .wb-drawer.is-collapsed:not(.is-dragging) .wb-floor-normal > :not(.wb-panel-head) { display: none; }
+  .wb-drawer.is-collapsed:not(.is-dragging) .wb-buildings > :not(.wb-buildings-head), .wb-drawer.is-collapsed:not(.is-dragging) .wb-wait-body > :not(.wb-wait-head) { display: none; }
   /* the City: the Projects list and "Waiting for you" are one sheet, the pair scrolling together under the handle */
   .wb-city-drawer { display: flex; flex-direction: column; }
   .wb-drawer-scroll { display: block; flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
