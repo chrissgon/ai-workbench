@@ -178,7 +178,7 @@ def test_args_holding_a_reserved_flag_are_refused_and_nothing_runs(tree, flag):
 @pytest.mark.parametrize("changes", [
     {"idempotency_key": None},           # a missing key
     {"colour": "red"},                   # an extra key
-    {"kind": "publish"},                 # a word of the vocabulary that POLICY_CALLS does not know
+    {"kind": "publish"},                 # a word of the vocabulary with no kind of effect
     {"kind": "teleport"},                # not a word of the vocabulary
     {"policy": "another-policy"},        # not the policy the call is for
     {"items": "1"},                      # a wrong type
@@ -225,3 +225,153 @@ def test_the_shell_answers_with_one_json_object_and_exit_0_whether_or_not_the_ap
     second = json.loads(capsys.readouterr().out)
     assert second["executed"] is False and "per day" in second["why"]
     assert cli.main(argv[:-2]) != 0  # the flag is needed
+
+
+# --- the generic operation (CONS-3): the kind module answers what the operation needs ------------------------------
+
+
+def published_posts_document(folder, **changes) -> dict:
+    """The effect document as runtime/handlers/published_posts.py writes it for a week with two posts and one image,
+    with its files beside it: effect `push`, target <repo>@<branch>, the paths, the number of posts, the key of the
+    week, the hash of the new target text, and the flags of commit-files."""
+    folder.mkdir(exist_ok=True)
+    (folder / "target.json").write_text("[]\n")
+    (folder / "message.txt").write_text("Add the posts published in the week before 2026-W42\n")
+    (folder / "image.png").write_bytes(b"png")
+    doc = {"policy": "published-posts", "kind": "push", "target": TARGET,
+           "files": ["data/posts.json", "assets/posts/example-one.png"], "items": 2,
+           "idempotency_key": "published-posts-2026-W42", "payload_sha256": hashlib.sha256(b"[]\n").hexdigest(),
+           "args": ["--repo", "example-owner/example-profile", "--branch", "main", "--message-file",
+                    str(folder / "message.txt"), "--file", f"data/posts.json={folder / 'target.json'}",
+                    "--file", f"assets/posts/example-one.png={folder / 'image.png'}"]}
+    doc.update(changes)
+    (folder / "effect.json").write_text(json.dumps(doc))
+    return doc
+
+
+def test_the_document_of_the_published_posts_handler_runs_through_the_generic_operation_with_the_same_argv(tree):
+    approve(tree)
+    folder = tree["project"].parent / "handed-posts"
+    doc = published_posts_document(folder)
+    out = ops.execute_under_policy(project_of(tree), "published-posts", str(folder / "effect.json"))
+    assert out["executed"] is True and out["action"]["created"] is True
+    base = ["commit-files", *doc["args"], "--allow", "data/posts.json", "--allow", "assets/posts/*",
+            "--idempotency-key", "published-posts-2026-W42"]
+    assert [c["argv"] for c in calls(tree)] == [base + ["--dry-run"], base + ["--confirmed"]]
+    assert executed_today(tree) == 1
+
+
+def test_a_kind_of_the_gate_path_cannot_run_under_a_policy_and_the_refusal_names_the_kinds_that_can(tree):
+    write_bounds(tree, {**BOUNDS, "effects": ["push", "create"]})
+    approve(tree)
+    with pytest.raises(ops.OpsError) as refused:
+        execute(tree, kind="create")
+    assert refused.value.code == 2
+    assert str(refused.value) == "the effect kind 'create' cannot run under a policy (it can: push)"
+    assert calls(tree) == [] and executed_today(tree) == 0
+
+
+def test_a_word_outside_the_vocabulary_is_refused_with_the_vocabulary_named(tree):
+    approve(tree)
+    with pytest.raises(ops.OpsError) as refused:
+        execute(tree, kind="teleport")
+    assert refused.value.code == 2 and "kind of the effect file is one of publish, send, schedule" in str(refused.value)
+    assert calls(tree) == []
+
+
+def standin_kind(monkeypatch, word: str, **names):
+    """A kind module registered under a word of the vocabulary, as a later package adds one: a module and a row."""
+    import sys
+    import types
+    kind = types.ModuleType("standin_policy_kind")
+    kind.POLICY, kind.PROVIDER_CLASS = True, "integration:vcs"
+    kind.policy_platform = lambda doc: None
+    kind.policy_effect = lambda doc: {key: doc[key] for key in ("kind", "target", "files", "items")}
+    kind.policy_argv = lambda doc: ["commit-files", *doc["args"]]
+    kind.describe = lambda doc: "a stand-in"
+    for name, value in names.items():
+        setattr(kind, name, value)
+    monkeypatch.setitem(sys.modules, "standin_policy_kind", kind)
+    monkeypatch.setitem(effects.KINDS, word, "standin_policy_kind")
+    return kind
+
+
+def test_the_operation_asks_the_kind_module_for_the_effect_and_the_argv_it_checks_and_runs(tree, monkeypatch):
+    write_bounds(tree, {**BOUNDS, "effects": ["send"]})
+    approve(tree)
+    standin_kind(monkeypatch, "send",
+                 policy_effect=lambda doc: {"kind": "send", "target": TARGET, "files": ["data/posts.json"], "items": 1},
+                 policy_argv=lambda doc: ["commit-files", "--repo", "example-owner/example-profile", "--branch", "main"])
+    out = execute(tree, kind="send", target="an-alias-the-module-resolves")  # the bounds name the resolved target
+    assert out["executed"] is True
+    real = calls(tree)[1]["argv"]
+    assert real[:5] == ["commit-files", "--repo", "example-owner/example-profile", "--branch", "main"]
+    assert real[5:] == ["--allow", "data/posts.json", "--allow", "assets/posts/*", "--idempotency-key",
+                        "published-posts-2026-W42", "--confirmed"]  # the document's own args were not used
+    import sqlite3
+    with sqlite3.connect(str(tree["db"])) as db:  # the action records the target the module resolved, not the document's
+        assert db.execute("SELECT target FROM actions").fetchall() == [(TARGET,)]
+
+
+def test_a_kind_whose_module_says_it_may_not_run_under_a_policy_is_refused_before_anything_is_checked(tree, monkeypatch):
+    write_bounds(tree, {**BOUNDS, "effects": ["send"]})
+    approve(tree)
+    standin_kind(monkeypatch, "send", POLICY=False)
+    with pytest.raises(ops.OpsError) as refused:
+        execute(tree, kind="send")
+    assert refused.value.code == 2 and "the effect kind 'send' cannot run under a policy" in str(refused.value)
+    assert calls(tree) == []
+
+
+def publisher_tree(tree, platforms=("standin",)) -> None:
+    """A stand-in publisher provider that records its arguments, in the tree's providers/publisher/."""
+    folder = tree["tree"] / "providers" / "publisher"
+    folder.mkdir(parents=True, exist_ok=True)
+    (folder / "standin.py").write_text(
+        "# /// script\n# requires-python = \">=3.9\"\n# dependencies = []\n# ///\n"
+        f"PLATFORMS = {tuple(platforms)!r}\n"
+        "import json, os, sys\n"
+        "with open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'calls.jsonl'), 'a') as f:\n"
+        "    f.write(json.dumps(sys.argv[1:]) + '\\n')\n"
+        "print(json.dumps({'posted': '--confirmed' in sys.argv}))\n", encoding="utf-8")
+
+
+def test_a_kind_on_a_publisher_is_resolved_with_the_platform_its_module_names(tree, monkeypatch):
+    publisher_tree(tree)
+    write_bounds(tree, {**BOUNDS, "effects": ["send"]})
+    approve(tree)
+    standin_kind(monkeypatch, "send", PROVIDER_CLASS="publisher:<platform>", policy_platform=lambda doc: "standin",
+                 policy_argv=lambda doc: ["post", "--platform", "standin", *doc["args"]])
+    out = execute(tree, kind="send")
+    assert out["executed"] is True and out["result"] == {"posted": True}
+    made = [json.loads(line) for line in (tree["tree"] / "providers" / "publisher" / "calls.jsonl").read_text().splitlines()]
+    assert [m[0] for m in made] == ["post", "post"] and made[0][-1] == "--dry-run" and made[1][-1] == "--confirmed"
+    assert calls(tree) == []  # not the code provider
+
+
+def test_the_provider_path_takes_the_platform_in_the_class_and_refuses_a_class_and_a_platform_that_do_not_fit(tree):
+    publisher_tree(tree)
+    cfg = ops.context(project_of(tree))["cfg"]
+    found = ops._provider_path(cfg, "publisher:<platform>", platform="standin")
+    assert found == str(tree["tree"] / "providers" / "publisher" / "standin.py")
+    for cls, platform in (("publisher:<platform>", "elsewhere"),   # no provider serves it
+                          ("publisher:<platform>", "<x>"),         # would read back as the placeholder: any provider
+                          ("publisher:<platform>", "a:b"),         # not one name
+                          ("publisher:<platform>", ""),            # not a name
+                          ("publisher:<platform>", 7),             # not a text
+                          ("publisher:<platform>", None),          # the class names a platform and none was given
+                          ("integration:vcs", "standin")):         # a platform for a class that takes none
+        with pytest.raises(ops.OpsError) as refused:
+            ops._provider_path(cfg, cls, platform=platform)
+        assert refused.value.code == 3, (cls, platform)
+    assert ops._provider_path(cfg, "integration:vcs").endswith("providers/vcs/github.py")  # the code.provider rule stays
+
+
+def test_a_kind_module_whose_argv_holds_a_flag_only_the_operation_adds_runs_nothing(tree, monkeypatch):
+    write_bounds(tree, {**BOUNDS, "effects": ["send"]})
+    approve(tree)
+    standin_kind(monkeypatch, "send", policy_argv=lambda doc: ["commit-files", "--allow", "**"])
+    with pytest.raises(ops.OpsError) as refused:
+        execute(tree, kind="send")
+    assert refused.value.code == 1 and "--allow" in str(refused.value)
+    assert calls(tree) == [] and executed_today(tree) == 0
