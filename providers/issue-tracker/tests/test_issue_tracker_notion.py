@@ -69,6 +69,13 @@ def test_the_token_is_never_printed_and_a_redirect_is_refused(tmp_path):
     assert code == 0 and out["dry_run"] is True and board.fake.token not in said
 
 
+def test_the_provider_names_itself_openhora_in_the_user_agent(tmp_path):
+    board = Board(tmp_path)
+    before = len(board.fake.user_agents)
+    assert board.run("--check")[0] == 0
+    assert board.fake.user_agents[before:] and set(board.fake.user_agents[before:]) == {"openhora-issue-tracker-notion"}
+
+
 def test_a_base_address_that_is_not_loopback_is_refused(tmp_path):
     board = Board(tmp_path)
     before = len(board.fake.requests)

@@ -105,7 +105,7 @@ from pathlib import Path
 GITHUB_API_VERSION = "2026-03-10"
 ACCEPT = "application/vnd.github+json"
 DEFAULT_API_BASE = "https://api.github.com"
-KEYRING_SERVICE = "ai-workbench"
+KEYRING_SERVICE = "openhora"
 KEYRING_USERNAME = "github"
 # open-pr reads a token of its own (store username "github-pr"); the everyday token only when it is found nowhere.
 PR_TOKEN_NAME = "VCS_GITHUB_PR_TOKEN"
@@ -561,7 +561,7 @@ def pending_message(key: str, entry: dict) -> str:
 
 
 def headers(token: str | None, json_body: bool = False) -> dict:
-    out = {"Accept": ACCEPT, "X-GitHub-Api-Version": GITHUB_API_VERSION, "User-Agent": "ai-workbench-vcs-github"}
+    out = {"Accept": ACCEPT, "X-GitHub-Api-Version": GITHUB_API_VERSION, "User-Agent": "openhora-vcs-github"}
     if json_body:
         out["Content-Type"] = "application/json"
     if token is not None:

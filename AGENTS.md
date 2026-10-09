@@ -1,4 +1,4 @@
-# ai-workbench: maintainer instructions
+# openhora: maintainer instructions
 
 You are maintaining a repository of agents, skills and workflows that let an AI build a digital solution end to end. This file tells you how the repository is organized and what rules every file must follow. Read it before adding or editing anything.
 

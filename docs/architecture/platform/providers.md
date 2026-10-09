@@ -10,7 +10,7 @@ The contract is [providers/CONTRACT.md](../../../providers/CONTRACT.md); the cla
 
 ## Artifacts it owns
 
-Where: **repo** is this repository, **data** is the provider's data folder on the machine (`~/Library/Application Support/ai-workbench/` on macOS, `$XDG_DATA_HOME/ai-workbench/` or `~/.local/share/ai-workbench/` elsewhere), **store** is the OS secret store (service `ai-workbench`).
+Where: **repo** is this repository, **data** is the provider's data folder on the machine (`~/Library/Application Support/ai-workbench/` on macOS, `$XDG_DATA_HOME/ai-workbench/` or `~/.local/share/ai-workbench/` elsewhere), **store** is the OS secret store (service `openhora`; the service `ai-workbench` is read as a fallback for one stage, T23). The data folder, the cache folder and the scheduler's labels keep the name `ai-workbench`: they hold state that a rename would orphan.
 
 | Path | Where | Format | Written by | Read by | Lifecycle | Versioned | Generated |
 |---|---|---|---|---|---|---|---|
@@ -211,7 +211,7 @@ Every provider takes `--help` and `--check`. Side-effect verbs take `--dry-run` 
 | | `posts --platform --since <time with offset>` | none: reads the ledger only | none |
 | `reader:email` | `search --query`, `get --id`, `read-eml --file` | none (read only by scope) | the refresh token and client |
 
-**One-time authorizations**: `uv run providers/publisher/auth.py --provider <impl>`, `uv run providers/mailbox/auth.py --provider <impl>`; a token without OAuth is stored with `uv run --with keyring==25.7.0 keyring set ai-workbench <store username>` at a hidden prompt.
+**One-time authorizations**: `uv run providers/publisher/auth.py --provider <impl>`, `uv run providers/mailbox/auth.py --provider <impl>`; a token without OAuth is stored with `uv run --with keyring==25.7.0 keyring set openhora <store username>` at a hidden prompt.
 
 **Tests**: `uv run --with pytest==9.1.1 pytest -q providers/<folder>/tests`; the resolver's in `scripts/tests/test_provider_resolve.py`.
 
@@ -246,3 +246,4 @@ Every provider takes `--help` and `--check`. Side-effect verbs take `--dry-run` 
 - 2026-10-07: a fixture for the design-system document type joins the fidelity test (`providers/documents/tests/fixtures/types/design-system.json`, #232).
 - 2026-10-08: the store keeps a change counter in the database header and reads a cursor without a write lock (`change_counter`, `cursor_peek`, #255).
 - 2026-10-09: the page is brought to the code of the central branch: the callers of the resolver and of the secrets resolver are listed as they are, the layer map guards the provider boundary, the three statements that no guard was found now name the loopback guard and the two tests, the store's test files, delete triggers and change counter are described, the resolver's flags are corrected, and the row that the stand-in still moved the version on a comment is deleted.
+- 2026-10-09: the workbench is called openhora: the secret store's service and the command that stores a token name `openhora`, the old service is read as a fallback (the resolver's `--list` says `ai-workbench (legacy)`); the provider's data folder, its cache folder and the scheduler's labels keep the old name, and renaming them waits for a decision.

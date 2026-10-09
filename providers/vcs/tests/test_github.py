@@ -264,6 +264,7 @@ def assert_api_headers(request, json_body=False):
     h = request["headers"]
     assert h["authorization"] == f"Bearer {FAKE_TOKEN}"
     assert h["accept"] == "application/vnd.github+json"
+    assert h["user-agent"] == "openhora-vcs-github"
     assert h["x-github-api-version"] == API_VERSION
     if json_body:
         assert h["content-type"] == "application/json"
@@ -298,7 +299,7 @@ def test_help_documents_verbs_env_and_permissions(env):
     assert proc.returncode == 0
     for word in ("alerts", "dismiss-alert", "resolve", "--check", "--dry-run", "--confirmed", "GITHUB_TOKEN",
                  "VCS_GITHUB_API_BASE", "VCS_GITHUB_LEDGER", "Dependabot alerts: Read-only",
-                 "Dependabot alerts: Read and write", "separate token", API_VERSION, "keyring set ai-workbench github"):
+                 "Dependabot alerts: Read and write", "separate token", API_VERSION, "keyring set openhora github"):
         assert word in proc.stdout, word
 
 
