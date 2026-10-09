@@ -20,6 +20,7 @@ import datetime
 import importlib
 import os
 import platform as platform_module
+import re
 import stat as stat_module
 import sys
 import xml.parsers.expat
@@ -583,12 +584,29 @@ def artifact(project: str, path: str) -> dict:
     return {"path": rel, "text": text, "size": len(data), "modified_at": _utc(found.st_mtime)}
 
 
+SVG_REFUSED_ELEMENTS = frozenset(("script", "foreignobject", "iframe", "object", "embed", "animate", "set", "handler"))
+URL_CALL = re.compile(r"url\(\s*['\"]?\s*([^'\")]*)", re.I)
+
+
+def _svg_text_safe(text: str) -> bool:
+    """Style text or an attribute value that points nowhere outside the document: no `@import`, no `javascript:`
+    (spaces and control characters inside it do not hide it) and every `url(...)` a fragment (`#id`) of the file."""
+    squeezed = re.sub(r"[\s\x00-\x1f]+", "", text).lower()
+    if "javascript:" in squeezed or "@import" in squeezed:
+        return False
+    return all(m.group(1).strip().startswith("#") for m in URL_CALL.finditer(text))
+
+
 def _svg_safe(data: bytes) -> bool:
-    """Whether the bytes are an SVG document the page may serve as an image: XML text whose root element is `svg`
-    (the SVG namespace, or none), with no `script` element, no event-handler attribute (`on...`), no internal DTD
-    subset and no entity declaration. Parsed with expat, which fetches nothing."""
+    """Whether the bytes are an SVG document that is inert as an image and as a document opened on its own (a `blob:`
+    URL of the page, on the service's origin): XML text whose root element is `svg` (the SVG namespace, or none) and in
+    which nothing runs, loads or points outside the file. Refused: the elements script, foreignObject, iframe, object,
+    embed, any animate*, set; an event-handler attribute (`on...`); an `href` or `xlink:href` whose value does not start
+    with `#`; `javascript:` or an `@import` in any attribute value or style; a `url(...)` that is not a fragment of
+    the file; a document type with an external identifier or an internal subset; an entity declaration; a
+    processing instruction (`xml-stylesheet`). Parsed with expat, which fetches nothing."""
     parser = xml.parsers.expat.ParserCreate(namespace_separator=" ")
-    seen = []
+    seen, state = [], {"style": 0, "text": []}
 
     def refuse(*_args):
         raise ValueError("refused")
@@ -598,11 +616,32 @@ def _svg_safe(data: bytes) -> bool:
         if not seen and (local != "svg" or space not in ("", SVG_NAMESPACE)):
             refuse()
         seen.append(local)
-        if local.lower() == "script" or any(a.rpartition(" ")[2].lower().startswith("on") for a in attrs):
+        low = local.lower()
+        if low in SVG_REFUSED_ELEMENTS or low.startswith("animate"):
             refuse()
+        if low == "style":
+            state["style"] += 1
+        for key, value in attrs.items():
+            attr = key.rpartition(" ")[2].lower()
+            if attr.startswith("on") or (attr == "href" and not value.startswith("#")) or not _svg_text_safe(value):
+                refuse()
+
+    def end(name):
+        if name.rpartition(" ")[2].lower() == "style":
+            state["style"] -= 1
+            if not _svg_text_safe("".join(state["text"])):
+                refuse()
+            state["text"].clear()
+
+    def text(chunk):
+        if state["style"]:
+            state["text"].append(chunk)
 
     parser.StartElementHandler = start
-    parser.StartDoctypeDeclHandler = lambda _name, _system, _public, internal: refuse() if internal else None
+    parser.EndElementHandler = end
+    parser.CharacterDataHandler = text
+    parser.StartDoctypeDeclHandler = lambda _name, system, public, internal: refuse() if internal or system or public else None
+    parser.ProcessingInstructionHandler = refuse
     parser.EntityDeclHandler = refuse
     try:
         parser.Parse(data, True)

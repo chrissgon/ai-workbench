@@ -22,9 +22,33 @@ PNG = b"\x89PNG\r\n\x1a\n" + struct.pack(">I", 13) + b"IHDR" + b"\x00" * 40
 JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF" + b"\x00" * 40
 WEBP = b"RIFF" + struct.pack("<I", 20) + b"WEBPVP8 " + b"\x00" * 40
 SVG = '<?xml version="1.0"?>\n<svg xmlns="http://www.w3.org/2000/svg" width="4" height="4"><rect width="4" height="4"/></svg>\n'
-SVG_DOCTYPE = ('<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
-               '"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg xmlns="http://www.w3.org/2000/svg"/>\n')
+SVG_DOCTYPE = '<!DOCTYPE svg>\n<svg xmlns="http://www.w3.org/2000/svg"/>\n'          # a document type with no identifier
+SVG_FRAGMENTS = ('<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><defs>'
+                 '<linearGradient id="g"/><rect id="r" width="1" height="1"/></defs><style>.a { fill: url(#g); }</style>'
+                 '<use xlink:href="#r"/><use href="#r" style="fill:url( \'#g\' )"/><a href="#top"><rect fill="url(#g)"/></a></svg>')
+SVG_EXTERNAL_DOCTYPE = ('<?xml version="1.0"?>\n<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.1//EN" '
+                        '"http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd">\n<svg xmlns="http://www.w3.org/2000/svg"/>\n')
+XL = 'xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"'
 BAD_SVGS = {
+    "external-doctype.svg": SVG_EXTERNAL_DOCTYPE,
+    "stylesheet-pi.svg": '<?xml-stylesheet href="#s" type="text/css"?><svg xmlns="http://www.w3.org/2000/svg"/>',
+    "foreign-object.svg": f'<svg {XL}><foreignObject><div xmlns="http://www.w3.org/1999/xhtml">x</div></foreignObject></svg>',
+    "iframe.svg": f'<svg {XL}><iframe src="https://example.test/"/></svg>',
+    "object.svg": f'<svg {XL}><object data="#x"/></svg>',
+    "embed.svg": f'<svg {XL}><embed src="#x"/></svg>',
+    "animate.svg": f'<svg {XL}><a id="a" href="#x"><animate attributeName="href" values="javascript:alert(1)"/></a></svg>',
+    "animate-transform.svg": f'<svg {XL}><rect><animateTransform attributeName="transform" values="0"/></rect></svg>',
+    "set.svg": f'<svg {XL}><a href="#x"><set attributeName="href" to="javascript:alert(1)"/></a></svg>',
+    "external-href.svg": f'<svg {XL}><image href="https://example.test/p.png"/></svg>',
+    "external-xlink.svg": f'<svg {XL}><image xlink:href="//example.test/p.png"/></svg>',
+    "data-href.svg": f'<svg {XL}><image href="data:image/png;base64,AAAA"/></svg>',
+    "javascript-href.svg": f'<svg {XL}><a href="javascript:alert(1)"><rect/></a></svg>',
+    "javascript-spaced.svg": f'<svg {XL}><a href="#x" target="java&#9;script:alert(1)"/></svg>',
+    "javascript-value.svg": f'<svg {XL}><rect fill="JavaScript:alert(1)"/></svg>',
+    "style-import.svg": f'<svg {XL}><style>@import "https://example.test/a.css";</style></svg>',
+    "style-url.svg": f'<svg {XL}><style>.a {{ fill: url(https://example.test/a.svg#g); }}</style></svg>',
+    "style-attribute-url.svg": f'<svg {XL}><rect style="fill:url(\'https://example.test/a.svg#g\')"/></svg>',
+    "fill-url.svg": f'<svg {XL}><rect fill="url(//example.test/a.svg#g)"/></svg>',
     "script.svg": '<svg xmlns="http://www.w3.org/2000/svg"><script>alert(1)</script></svg>',
     "upper-script.svg": '<svg xmlns="http://www.w3.org/2000/svg"><SCRIPT>alert(1)</SCRIPT></svg>',
     "nested.svg": '<svg xmlns="http://www.w3.org/2000/svg"><g><g><script type="x"/></g></g></svg>',
@@ -53,6 +77,7 @@ def test_the_kind_of_a_file_is_decided_by_its_bytes_never_by_its_extension(tree)
     put(tree, "docs/brand/pieces/hero.webp", WEBP)
     put(tree, "docs/brand/pieces/mark.svg", SVG)
     put(tree, "docs/brand/pieces/old.svg", SVG_DOCTYPE)
+    put(tree, "docs/brand/pieces/refs.svg", SVG_FRAGMENTS)
     put(tree, "docs/brand/notes.md", "# Notes\n")
     put(tree, "docs/brand/readme.txt", "plain words\n")
     put(tree, "docs/brand/accents.md", "café " * 3000)             # a multi-byte character may sit at the edge of the head
@@ -69,7 +94,7 @@ def test_the_kind_of_a_file_is_decided_by_its_bytes_never_by_its_extension(tree)
     got = kinds(tree)
     assert {k: v for k, v in got.items() if "/pieces/" in k} == {
         "docs/brand/pieces/banner.png": "image", "docs/brand/pieces/photo.jpg": "image", "docs/brand/pieces/hero.webp": "image",
-        "docs/brand/pieces/mark.svg": "image", "docs/brand/pieces/old.svg": "image"}
+        "docs/brand/pieces/mark.svg": "image", "docs/brand/pieces/old.svg": "image", "docs/brand/pieces/refs.svg": "image"}
     assert got["docs/brand/notes.md"] == "markdown" and got["docs/brand/readme.txt"] == "text"
     assert got["docs/brand/accents.md"] == "markdown"
     assert got["docs/brand/fonts/inter.woff2"] == "other" and got["docs/brand/spec.pdf"] == "other"
@@ -98,6 +123,7 @@ def test_the_raw_read_returns_the_bytes_and_the_media_type_of_an_image(tree):
     for rel, data, media in (("docs/a/one.png", PNG, "image/png"), ("docs/a/two.jpeg", JPEG, "image/jpeg"),
                              ("docs/a/three.webp", WEBP, "image/webp"), ("docs/a/four.svg", SVG.encode(), "image/svg+xml"),
                              ("docs/a/five.svg", SVG_DOCTYPE.encode(), "image/svg+xml"),
+                             ("docs/a/six.svg", SVG_FRAGMENTS.encode(), "image/svg+xml"),
                              ("docs/a/no-extension", PNG, "image/png"), ("docs/a/png.md", PNG, "image/png")):
         put(tree, rel, data)
         got = ops.artifact_raw(path, rel)

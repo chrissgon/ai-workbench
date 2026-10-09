@@ -175,7 +175,13 @@ def test_the_closed_list_of_forms_is_a_question_about_the_state(line):
 
 
 @pytest.mark.parametrize("line", [
-    "how are we going to launch the site", "Write the profile of the studio.", "status of the invoice must be paid, please draft it",
+    "how are we going to launch the site", "Write the profile of the studio.",
+    # a form that goes on to ask for work is the work (review of ADJ-R2): a mark inside the line, a verb of work in the tail,
+    # a tail of more than six words
+    "Como estamos com o brand? Crie a identidade do zero em azul", "how are we on the roadmap, delete the old plan",
+    "how are we on the roadmap. Delete the old plan", "how are we on the roadmap delete the old plan",
+    "como estamos com o brand crie a identidade", "how are we doing with one two three four five six seven",
+    "status; then publish the post", "status of the invoice must be paid, please draft it",
     "/status", "what is running on port 80 in the container and why does it stop after ten minutes please explain",
     "como estamos indo para lan\u00e7ar o produto na semana que vem com tantas pessoas", "", "?!"])
 def test_a_line_that_asks_for_work_is_not_a_question_about_the_state(line):
@@ -373,3 +379,99 @@ def test_the_terminal_verb_routes_one_queued_entry(tree, capsys):
     assert cli.run(["route-queued", "--project", path])["routed"] == "line"
     assert cli.main(["route-queued", "--project", path]) == 0
     assert json.loads(capsys.readouterr().out) == {"routed": None, "queued": 0}
+
+
+def test_a_one_word_answer_that_looks_like_a_state_form_reaches_the_router_while_it_has_a_question_open(tree):
+    path = str(tree["project"])
+    reply(tree, ASKING)
+    asked = say(tree, "Which market first?")
+    reply(tree, FLOW, "router-reply-2.md")
+    answered = say(tree, "progress")
+    assert answered["request_id"] == asked["request_id"] and answered["ran"] is True and answered["pending_id"]
+    assert "--- the user's answer 1 ---\nprogress" in (tree["adapter"] / "last-router-prompt.md").read_text(encoding="utf-8")
+    assert ops.pending(path, answered["pending_id"])["kind"] == "plan"
+    # with nothing open it is a state question again
+    assert say(tree, "progress")["ran"] is False
+    # and on the page, during a run, it is the answer to be queued, not a status
+    reply(tree, ASKING)
+    again = say(tree, "/new Who buys first?")
+    assert again["pending_id"]
+    with locked(tree):
+        assert page_say(tree, "progress")["queued"] is True
+
+
+# --- first in, first out ---------------------------------------------------------------------------------------------
+
+
+def test_a_page_line_behind_older_entries_waits_behind_them_even_when_the_run_is_over(tree):
+    path = str(tree["project"])
+    with locked(tree):
+        first = page_say(tree, "Which market first?")
+    assert queue(tree)                                           # the run is over; the drain has not come yet
+    second = page_say(tree, "Who buys first?")
+    assert second["queued"] is True and second["reply"] is None and st.calls(tree["adapter"]) == []
+    request = ops.request(path, "A request from the form.")["request"]
+    assert ops.route(path, request, channel="page")["queued"] is True            # a request behind them waits too
+    assert [(e["kind"], e["id"]) for e in queue(tree)] == [("line", first["message_id"]), ("line", second["message_id"]),
+                                                          ("route", request)]
+    answered = [ops.route_queued(path) for _ in range(3)]
+    assert [(a["routed"], a.get("message_id") or a.get("request_id")) for a in answered] == [
+        ("line", first["message_id"]), ("line", second["message_id"]), ("route", request)]
+    assert queue(tree) == []
+    # a shell that drains nothing is not made to wait for an entry: it is refused only when a run holds the project
+    assert say(tree, "Another request.")["ran"] is True
+
+
+def test_a_state_question_and_a_command_are_never_queued_behind_anything(tree):
+    with locked(tree):
+        page_say(tree, "Which market first?")
+    assert page_say(tree, "Como estamos?")["queued"] is False and page_say(tree, "/status")["queued"] is False
+    assert len(queue(tree)) == 1
+
+
+def test_one_entry_is_taken_at_a_time_and_the_oldest_first(tree):
+    path = str(tree["project"])
+    with locked(tree):
+        page_say(tree, "Which market first?")
+        page_say(tree, "Who buys first?")
+    ctx = ops_core.context(path)
+    entries = queue(tree)
+    ops_say._queue_write(ctx, [dict(entries[0], started=time.time()), entries[1]])            # the first is being routed
+    assert ops.route_queued(path) == {"routed": None, "queued": 2, "reason": "another process is routing the first"}
+    assert st.calls(tree["adapter"]) == []                                                     # the second was not taken
+
+
+# --- the review's nits ------------------------------------------------------------------------------------------------
+
+
+def test_a_queued_request_that_cannot_be_routed_leaves_a_note_the_person_reads(tree):
+    path = str(tree["project"])
+    request = ops.request(path, "Which market first?")["request"]
+    with locked(tree):
+        ops.route(path, request, channel="page")
+    ops.cancel(path, request)
+    out = ops.route_queued(path)
+    assert out["dropped"] == {"kind": "route", "id": request}
+    note = messages(tree)[-1]
+    assert note["role"] == "assistant" and note["task_id"] == request
+    assert note["text"].startswith(f"Request {request} was not routed: ") and "only a request that waits for its route" in note["text"]
+    # one the service died on leaves the same kind of note
+    other = ops.request(path, "Who buys first?")["request"]
+    with locked(tree):
+        ops.route(path, other, channel="page")
+    ctx = ops_core.context(path)
+    ops_say._queue_write(ctx, [dict(queue(tree)[0], started=time.time() - ops_say.QUEUE_STALE - 5)])
+    assert ops.route_queued(path) == {"routed": None, "queued": 0}
+    assert messages(tree)[-1]["text"] == f"Request {other} was not routed: the service stopped while it was routed. Route it again when you want it planned."
+
+
+def test_an_entry_that_is_dropped_leaves_the_queue_even_when_the_note_cannot_be_written(tree, monkeypatch):
+    path = str(tree["project"])
+    request = ops.request(path, "Which market first?")["request"]
+    with locked(tree):
+        ops.route(path, request, channel="page")
+    ops.cancel(path, request)
+    monkeypatch.setattr(ops_say, "_note_request", lambda *args: (_ for _ in ()).throw(RuntimeError("the store went away")))
+    with pytest.raises(RuntimeError):
+        ops.route_queued(path)
+    assert queue(tree) == []                                    # not left behind, to be reported as "not answered" an hour later

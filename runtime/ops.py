@@ -1619,9 +1619,11 @@ def route(project: str, request_id: int, flow: str | None = None, channel: str |
     ctx = core.context(project)
     if flow is None:
         try:
+            if channel in ops_say.QUEUING_CHANNELS and ops_say.waiting(ctx):  # first in, first out
+                raise core.RunBusy("older lines or requests wait for the planning agent", 1)
             return _route_request(ctx, request_id)
         except core.RunBusy:
-            if channel not in ops_say.QUEUING_CHANNELS:
+            if channel not in ops_say.QUEUING_CHANNELS + (ops_say.DRAIN,):
                 raise
             _routable(ctx, request_id)
             return ops_say.queue_route(ctx, request_id)

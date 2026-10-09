@@ -60,6 +60,7 @@ NOT_NAMED_NEXT = ("Cancel it with " + operations.chat_line("cancel", request_id=
                   "terminal with: {route}, or start again with " + operations.chat_line("new", text="<text>"))
 RAW_MAX = 32 * 1024                              # bytes of the router's block kept in the payload's `raw`
 QUEUING_CHANNELS = ("page",)  # the shells that drain the queue: only the local service runs `route_queued` on a loop
+DRAIN = "queue"               # the channel the drain acts as: it may queue again (the lock can be taken meanwhile), never jump the queue
 QUEUED_REQUEST = "Recorded as request {request}. The planning agent routes it when the run ends."
 PROPOSES = "The planning agent proposes: "
 RUN_BUSY = "another run of this project is in progress: one task at a time per project"
@@ -77,12 +78,19 @@ STARTED = "started"         # the key of an entry a drain has taken, with the ti
 # The forms of a question about the state that are answered by code, with no model and no request: lower case, no
 # accents, no punctuation (_normal). The list is closed; a line that is none of them goes to the planning agent.
 STATE_WORDS = 12            # a longer line is a request
+TAIL = r"[a-z0-9]+(?: [a-z0-9]+){0,5}"   # what a question is about: at most six words
+# A line with a sentence mark inside it ("how are we on the roadmap, delete the old plan") is more than the form, and a
+# tail that holds a verb of work is a request that starts like a question: neither is answered as the state.
+INTERIOR_MARK = re.compile(r"[.,;:!?]")
+WORK_WORDS = frozenset((
+    "add build change create delete draft drop fix make move publish remove rename replace send set start stop update "
+    "write adicione apague atualize crie corrija escreva envie faca mude publique remova troque").split())
 STATE_QUESTIONS = (
     r"status", r"(project )?status( of the project| do projeto)?", r"qual (e )?o status( do projeto)?",
     r"(what is|what s|whats) (the )?(project )?status( of the project)?",
-    r"how (are we|is it|is the project) (doing|going)( (with|on|about|regarding|in) .{1,60})?",
-    r"how are we( (with|on|about|regarding) .{1,60})?",
-    r"como (estamos|esta|estao|esta o projeto)( (com|sobre|em relacao (a|ao|as|aos)) .{1,60})?",
+    r"how (are we|is it|is the project) (doing|going)( (with|on|about|regarding|in) " + TAIL + ")?",
+    r"how are we( (with|on|about|regarding) " + TAIL + ")?",
+    r"como (estamos|esta|estao|esta o projeto)( (com|sobre|em relacao (a|ao|as|aos)) " + TAIL + ")?",
     r"o que (falta|resta|ja foi feito|esta (rodando|em andamento|pendente|aguardando))",
     r"o que (esta )?(rodando|aguarda|espera)( agora)?",
     r"what (is|s) (running|left|next|pending|waiting|done|happening)( now)?",
@@ -123,7 +131,7 @@ def say(project: str, text: str, channel: str | None = None) -> dict:
     model call), refused when the planning agent may not start. A line that would route while another run of the
     project holds the run lock is queued, not refused, when the shell that carries it drains the queue (QUEUING_CHANNELS:
     the local service): it is stored, its reply is pending (`queued` true, `reply` None), and `route_queued` answers it
-    when the lock is free. A shell that drains nothing (the terminal, the conversation's own shell, the MCP mode) is
+    when the lock is free; it also waits when older entries still wait, so that the queue is first in, first out. A shell that drains nothing (the terminal, the conversation's own shell, the MCP mode) is
     refused (RunBusy, code 1) before anything is stored, as it always was. A reply of the router that is a direct turn is answered
     by code too, and the request the line recorded is cancelled by code. The reply is stored too. A model's reply is
     shown, never executed.
@@ -135,12 +143,15 @@ def say(project: str, text: str, channel: str | None = None) -> dict:
     said = core._text(text, "the line")
     store = ctx["store"]
     channel = channel or "chat"
-    if _turn_routes(said) and not state_question(said) and run_busy(ctx):
-        if channel not in QUEUING_CHANNELS:
+    if _turn_routes(said) and not asks_state(ctx, said):
+        # First in, first out: for a shell that queues, a line behind older entries waits behind them even when the run
+        # is over; a shell that drains nothing is refused while a run holds the project, as it always was.
+        if channel in QUEUING_CHANNELS and (run_busy(ctx) or _queue_read(ctx, peek=True)):
+            stored = _enqueue_line(ctx, said)
+            return {"reply": None, "request_id": None, "pending_id": None, "ran": False, "queued": True,
+                    "message_id": stored["id"]}
+        if channel not in QUEUING_CHANNELS and run_busy(ctx):
             raise core.RunBusy(RUN_BUSY, 1)
-        stored = _enqueue_line(ctx, said)
-        return {"reply": None, "request_id": None, "pending_id": None, "ran": False, "queued": True,
-                "message_id": stored["id"]}
     stored = core._stored(ctx, store.message_add, conversation=CONVERSATION, role="user", text=said)
     reply, request_id, pending_id, ran, run_id = _turn(project, ctx, said, channel, stored["id"])
     core._stored(ctx, store.message_add, conversation=CONVERSATION, role="assistant", text=reply or "(no reply)",
@@ -154,9 +165,9 @@ def _turn(project: str, ctx: dict, said: str, channel: str, line_id: int) -> tup
     the router is given is the messages before it."""
     if said.startswith("/"):
         return _say_command(project, ctx, said, channel, line_id)
-    if state_question(said):
-        return state_reply(project), None, None, False, None
     asked = _router_question(ctx, _last_request(ctx))
+    if asked is None and state_question(said):
+        return state_reply(project), None, None, False, None
     return _say_route(project, ctx, said, line_id, channel, answer_to=asked)
 
 
@@ -180,12 +191,22 @@ def _normal(text: str) -> str:
 
 def state_question(said: str) -> bool:
     """Whether a plain line is one of the forms of STATE_QUESTIONS, in English or Portuguese, and short: the whole
-    line is the form (with, for some, a short tail that names what the question is about). A line that starts like one
-    and goes on to ask for work ("how are we going to launch the site") is not."""
+    line is the form (with, for some, a tail of at most six words that names what the question is about). A line that
+    starts like one and goes on to ask for work is not: "how are we going to launch the site", a line with a sentence
+    mark inside it (only a final `?`, `.` or `!` is allowed), or a tail that holds a verb of work."""
     if said.startswith("/"):
         return False
+    if INTERIOR_MARK.search(said.strip().rstrip("?.! \t")):
+        return False
     normal = _normal(said)
-    return bool(normal) and len(normal.split()) <= STATE_WORDS and STATE_RE.fullmatch(normal) is not None
+    return bool(normal) and len(normal.split()) <= STATE_WORDS and STATE_RE.fullmatch(normal) is not None \
+        and not WORK_WORDS & set(normal.split())
+
+
+def asks_state(ctx: dict, said: str) -> bool:
+    """Whether a plain line is answered as a question about the state: it is one of the forms, and the router has no
+    open question on the conversation's last request (a one-word answer such as "progress" then reaches the router)."""
+    return state_question(said) and _router_question(ctx, _last_request(ctx)) is None
 
 
 def _short(text) -> str:
@@ -281,6 +302,11 @@ def _queue_write(ctx: dict, entries: list) -> None:
     core._stored(ctx, ctx["store"].cursor_set, QUEUE, json.dumps(entries, separators=(",", ":")))
 
 
+def waiting(ctx: dict) -> bool:
+    """Whether any line or request waits in the queue."""
+    return bool(_queue_read(ctx, peek=True))
+
+
 def queued_ids(ctx: dict) -> set:
     """The ids of the messages of the person that wait in the queue for their reply."""
     return {e["id"] for e in _queue_read(ctx, peek=True) if e["kind"] == "line"}
@@ -334,7 +360,8 @@ def _take(ctx: dict):
         entries = _queue_read(ctx)
         dead = [e for e in entries if now - e.get(STARTED, now) > QUEUE_STALE]
         entries = [e for e in entries if e not in dead]
-        head = next((e for e in entries if STARTED not in e), None)
+        # one entry at a time, oldest first: while one is taken (by the service loop or by `route-queued`), none is
+        head = None if any(STARTED in e for e in entries) else next(iter(entries), None)
         if head is not None:
             head[STARTED] = now
         if head is not None or dead:
@@ -343,7 +370,19 @@ def _take(ctx: dict):
         if e["kind"] == "line":
             core._stored(ctx, ctx["store"].message_add, conversation=CONVERSATION, role="assistant",
                          text="A queued line was not answered: the service stopped while it was routed. Send it again.")
+        else:
+            _note_request(ctx, e["id"], "the service stopped while it was routed")
     return head
+
+
+def _note_request(ctx: dict, request_id: int, why: str) -> None:
+    """Tell the person, in the conversation and on the request, why a queued request was not routed, so that the
+    request that stays on "Route it" does not look forgotten."""
+    try:
+        core._stored(ctx, ctx["store"].message_add, conversation=CONVERSATION, role="assistant", task_id=request_id,
+                     text=f"Request {request_id} was not routed: {why}. Route it again when you want it planned.")
+    except core.OpsError:
+        pass
 
 
 def _untake(ctx: dict, head: dict) -> None:
@@ -369,19 +408,27 @@ def route_queued(project: str) -> dict:
     if head is None:
         left = len(_queue_read(ctx))
         return {"routed": None, "queued": left, **({"reason": "another process is routing the first"} if left else {})}
+    answered, out = False, None
     try:
         out = _drain_line(project, ctx, head["id"]) if head["kind"] == "line" else _drain_route(project, ctx, head["id"])
+        answered = True
     except core.RunBusy:  # the lock was taken between the check and the run: the entry waits again
         _untake(ctx, head)
         return {"routed": None, "queued": len(_queue_read(ctx)), "reason": "a run is in progress"}
     except core.OpsError as e:  # the line or the request can no longer be routed (cancelled, answered elsewhere)
-        _unqueue(ctx, head["kind"], head["id"])
-        if head["kind"] == "line":
-            core._stored(ctx, ctx["store"].message_add, conversation=CONVERSATION, role="assistant",
-                         text=f"A queued line was not answered: {e}")
+        try:
+            if head["kind"] == "line":
+                core._stored(ctx, ctx["store"].message_add, conversation=CONVERSATION, role="assistant",
+                             text=f"A queued line was not answered: {e}")
+            else:
+                _note_request(ctx, head["id"], str(e))
+        finally:
+            _unqueue(ctx, head["kind"], head["id"])
         return {"routed": None, "queued": len(_queue_read(ctx)), "dropped": {"kind": head["kind"], "id": head["id"]},
                 "reason": str(e)}
-    _unqueue(ctx, head["kind"], head["id"])
+    finally:
+        if answered:  # an entry that was answered is never left behind to be reported as "not answered" later
+            _unqueue(ctx, head["kind"], head["id"])
     return {**out, "queued": len(_queue_read(ctx))}
 
 
@@ -390,7 +437,7 @@ def _drain_line(project: str, ctx: dict, message_id: int) -> dict:
              if m["id"] == message_id]
     if not found:
         raise core.OpsError(f"message {message_id} is not in the conversation", 1)
-    reply, request_id, pending_id, ran, run_id = _turn(project, ctx, found[0]["text"], QUEUING_CHANNELS[0], message_id)
+    reply, request_id, pending_id, ran, run_id = _turn(project, ctx, found[0]["text"], DRAIN, message_id)
     core._stored(ctx, ctx["store"].message_add, conversation=CONVERSATION, role="assistant", text=reply or "(no reply)",
                  task_id=request_id, run_id=run_id)
     return {"routed": "line", "message_id": message_id, "request_id": request_id, "pending_id": pending_id, "ran": ran}
