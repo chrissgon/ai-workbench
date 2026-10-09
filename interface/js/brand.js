@@ -5,7 +5,7 @@ import { h } from "./dom.js";
 
 const MARK_SRC = "./brand/openhora-mark.svg";
 
-/** The mark as an image `size` pixels square: 20 in the top bar, 48 on the token prompt. */
-export function markImage(size) {
-  return h("img", { class: "wb-mark", src: MARK_SRC, alt: "openhora", width: size, height: size });
+/** The mark as an image `size` pixels square: 20 in the top bar, 48 on the token prompt. `alt` is the product's name, and empty where the name stands beside it as text. */
+export function markImage(size, alt = "openhora") {
+  return h("img", { class: "wb-mark", src: MARK_SRC, alt, width: size, height: size });
 }

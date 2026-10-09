@@ -651,7 +651,7 @@ def test_the_stylesheet_derives_the_pages_tokens_from_the_librarys_and_every_ico
         assert re.search(rf"{name}:", root), f"{name} is defined on :root"
     assert "light-dark(var(--pui-bg), var(--pui-bg-muted))" in root and "light-dark(var(--pui-bg-muted), var(--pui-bg))" in root
     # OH-3: the one literal is the brand pair of the primary token (test_interface_files.py keeps that line whole and alone)
-    without_brand = re.sub(r"^[ \t]*--pui-theme: light-dark\(#6B4429, #C99A6E\);[^\n]*$", "", css, flags=re.M)
+    without_brand = re.sub(r"^[ \t]*--pui-theme: light-dark\(#6B4429, #C99A6E\);$", "", css, flags=re.M)
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", without_brand), "no colour literal anywhere in the stylesheet but the brand pair"
     named = sorted(set(re.findall(r'url\("\./icons/([a-z0-9-]+)\.svg"\)', css)))
     classes = sorted(set(re.findall(r"\.wb-icon-([a-z0-9-]+) \{", css)))

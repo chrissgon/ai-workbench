@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" xmlns:c2pa="http://c2pa.org/manifest"><defs><clipPath id="lmarrom"><circle cx="74" cy="98" r="22"></circle></clipPath><clipPath id="rmarrom"><circle cx="126" cy="98" r="22"></circle></clipPath></defs>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200"><defs><clipPath id="lmarrom"><circle cx="74" cy="98" r="22"></circle></clipPath><clipPath id="rmarrom"><circle cx="126" cy="98" r="22"></circle></clipPath></defs>
 <g stroke="#1E1B2E" stroke-width="7" stroke-linejoin="round" stroke-linecap="round">
 <path d="M44 70 Q30 40 36 22 Q60 34 74 50Z" fill="#6B4429"></path><path d="M156 70 Q170 40 164 22 Q140 34 126 50Z" fill="#6B4429"></path>
 <ellipse cx="80" cy="186" rx="13" ry="7" fill="#FCD34D"></ellipse><ellipse cx="120" cy="186" rx="13" ry="7" fill="#FCD34D"></ellipse>

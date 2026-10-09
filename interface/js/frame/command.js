@@ -18,7 +18,7 @@ export function isCommand(text) {
 }
 
 /**
- * The commands inside a sentence of the service (the credential's: "... KEY: uv run --with ... keyring set ai-workbench <user>; ..."):
+ * The commands inside a sentence of the service (the credential's: "... KEY: uv run --with ... keyring set openhora|ai-workbench <user>; ..."):
  * {sentence, commands}. Each command is taken verbatim (without the full stop or the semicolon that ends it) and the sentence names it as
  * "(command below)"; a sentence with none comes back as it was.
  */

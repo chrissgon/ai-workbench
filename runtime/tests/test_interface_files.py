@@ -739,9 +739,9 @@ MARK = INTERFACE / "brand" / "openhora-mark.svg"
 # The first path of each drawing, and the hash of the file as the page ships it (the maintainer's drawing with its provenance
 # metadata block removed and nothing else changed). A new drawing changes these two lines on purpose.
 FAVICON_FIRST_PATH = "M40 76 Q26 40 34 16 Q62 30 80 52Z"
-FAVICON_SHA256 = "5d4d26d32140e808362e08c202aa1b64f7bc39d2c3f5564da18884cbeac4c2a6"
+FAVICON_SHA256 = "75f49e4b62fcb62729826d25023066036536f97365cf644d387fbbcc521b2da4"
 MARK_FIRST_PATH = "M44 70 Q30 40 36 22 Q60 34 74 50Z"
-MARK_SHA256 = "1fd944ff6127cd43ca3df6d6d5a5bace298eb21b18f483fc6d50ff8c232b8cc3"
+MARK_SHA256 = "d00da3f5cbde96e252154f321d6c5b94d322518f014afc15b64874aca5bab242"
 
 
 def test_the_brand_pair_is_the_one_primary_token_and_is_set_once_at_root():
@@ -783,7 +783,7 @@ def test_the_favicon_is_the_simplified_mark_and_the_two_drawings_carry_nothing_b
     for path in (FAVICON, MARK):
         text = path.read_text(encoding="utf-8")
         assert ET.parse(path).getroot().tag.endswith("}svg"), f"{rel(path)} is one SVG document"
-        assert not re.search(r"<metadata|base64|c2pa:manifest", text, re.I), f"{rel(path)} carries no provenance block"
+        assert not re.search(r"<metadata|base64|c2pa", text, re.I), f"{rel(path)} carries no provenance block, not even its namespace"
         bare = svg_text_without_namespaces(path)
         assert not re.search(r"<script|<foreignObject|<style|<image|<use\b|\bhref\b|\bxlink:|data:|https?://|\son[a-z]+\s*=", bare, re.I), \
             f"{rel(path)} holds nothing but shapes: no script, no link, no external host, no embedded data"
@@ -798,7 +798,10 @@ def test_the_mark_file_is_named_in_one_module_that_builds_an_img_and_nowhere_els
     assert named == ["interface/js/brand.js"], f"only the brand module names the mark file: {named}"
     brand = (INTERFACE / "js" / "brand.js").read_text(encoding="utf-8")
     assert 'const MARK_SRC = "./brand/openhora-mark.svg";' in brand and (INTERFACE / "brand" / "openhora-mark.svg").is_file()
-    assert re.search(r'h\("img",\s*\{[^}]*\bsrc: MARK_SRC\b[^}]*\balt: "openhora"', brand, re.S), "the mark is an <img> with the alt text openhora"
+    assert re.search(r'h\("img",\s*\{[^}]*\bsrc: MARK_SRC\b[^}]*\balt\b[^}]*\}', brand, re.S) and 'alt = "openhora"' in brand, "the mark is an <img> whose alt text is the product's name by default"
+    assert 'markImage(48, "")' in (INTERFACE / "js" / "views" / "token-prompt.js").read_text(encoding="utf-8"), "on the prompt the name stands beside the mark as text, so the image has an empty alt"
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    assert re.search(r"@media \(max-width: 711px\) \{\s*\.wb-nav \.wb-mark \{ display: none; \}\s*\}", css), "the top bar's mark is hidden below 712 px, the prompt's is not"
     assert not re.search(r"innerHTML|data:|createElementNS|insertAdjacentHTML", brand), "never markup from a string, never a data: URI"
     header = (INTERFACE / "js" / "frame" / "header.js").read_text(encoding="utf-8")
     prompt = (INTERFACE / "js" / "views" / "token-prompt.js").read_text(encoding="utf-8")

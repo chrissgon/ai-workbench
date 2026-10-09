@@ -307,6 +307,11 @@ a.wb-crumb:hover { text-decoration: underline; }
 .wb-crumb-sep { color: var(--pui-text-muted); }
 /* OH-3: the mark (js/brand.js): 20 px in the top bar, 48 px with the wordmark on the token prompt. The size is the img's own attributes. */
 .wb-mark { display: block; flex: none; }
+/* The top bar has no room for the mark below 712 px (the trail would overlap the buttons, and on a phone it would cut the first crumb): there the favicon and
+   the token prompt carry the brand. The prompt's mark is not inside .wb-nav and stays. */
+@media (max-width: 711px) {
+  .wb-nav .wb-mark { display: none; }
+}
 .wb-brand { display: flex; align-items: center; gap: 12px; }
 .wb-wordmark { font-size: 1.5rem; font-weight: 600; line-height: 1.25; letter-spacing: -0.01em; }
 

@@ -33,7 +33,7 @@ The page's primary colour is the library's one token `--pui-theme`, set once at 
 
 The "working" light of a floor's windows is the library's amber (`--pui-warn`), not the brand brown. On a dark ground the two were looked at side by side in the served page (a working floor beside the selected floor's outline, and the amber dot of a waiting floor beside the brown dot of a running one): the brown `#C99A6E` and the amber `#F59E0B` are about 14 apart in CIEDE2000 and read as two colours at the size of a window, so the amber stays; the identity's alternative, a warm white `#FFE8C2` for the working light, is not used.
 
-The favicon (`favicon.svg`) and the mark (`brand/openhora-mark.svg`) are the identity's drawings with their provenance metadata block removed and nothing else changed; a test records the hash of each file and the first path of each drawing, so a new drawing changes those two lines on purpose.
+The favicon (`favicon.svg`) and the mark (`brand/openhora-mark.svg`) are the identity's drawings with their provenance metadata block and the namespace declaration that only that block used removed, and nothing else changed; a test records the hash of each file and the first path of each drawing, so a new drawing changes those two lines on purpose.
 
 ## How to open it
 
