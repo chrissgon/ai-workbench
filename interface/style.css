@@ -9,6 +9,10 @@
    --pui-bg-muted, the scene and the tracking bar's side card on --pui-bg). light-dark() reads the same scheme the
    library's tokens do, so these follow prefers-color-scheme with no media query and apply to every screen (OPEN-10). */
 :root {
+  /* OH-3: the brand pair, the one token of the library that the page sets: the primary, brown on a light ground and a lighter brown
+     on a dark one. Every tint below, the meters, the outlines, the running dot and the scene (which reads this token through
+     js/scene/palette.js) follow it; no other token of the library is touched. */
+  --pui-theme: light-dark(#6B4429, #C99A6E);
   --wb-raised: light-dark(var(--pui-bg), var(--pui-bg-muted));
   --wb-ground: light-dark(var(--pui-bg-muted), var(--pui-bg));
   --wb-sunken: light-dark(var(--pui-bg-muted), var(--pui-bg-emphasis));
@@ -301,6 +305,10 @@ code, .mono {
 a.wb-crumb:hover { text-decoration: underline; }
 .wb-crumb.is-current { color: var(--pui-text); font-weight: 600; }
 .wb-crumb-sep { color: var(--pui-text-muted); }
+/* OH-3: the mark (js/brand.js): 20 px in the top bar, 48 px with the wordmark on the token prompt. The size is the img's own attributes. */
+.wb-mark { display: block; flex: none; }
+.wb-brand { display: flex; align-items: center; gap: 12px; }
+.wb-wordmark { font-size: 1.5rem; font-weight: 600; line-height: 1.25; letter-spacing: -0.01em; }
 
 .wb-switcher { position: relative; }
 .wb-switch-group { border-radius: var(--pui-radius); box-shadow: var(--wb-elev); }

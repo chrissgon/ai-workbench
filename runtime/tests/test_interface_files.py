@@ -10,7 +10,13 @@ import hashlib
 import json
 import os
 import re
+import shutil
+import subprocess
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+
+import pytest
 
 import standin_tree as st
 
@@ -21,6 +27,10 @@ VENDOR = INTERFACE / "vendor"
 CLIENT = INTERFACE / "js" / "api.js"
 SUFFIXES = (".html", ".css", ".js")
 SCHEME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|//)")
+LITERAL_COLOUR = re.compile(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(")
+# OH-3: the one colour literal of style.css, the brand pair of the library's one primary token (light, then dark).
+BRAND_PAIR = "light-dark(#6B4429, #C99A6E)"
+BRAND_LINE = re.compile(r"^[ \t]*--pui-theme: " + re.escape(BRAND_PAIR) + r";[^\n]*$", re.M)
 
 
 def own_files():
@@ -234,7 +244,7 @@ def test_the_page_is_one_policy_safe_html_document_with_the_library_and_its_own_
     assert not (INTERFACE / "package.json").exists() and not (INTERFACE / "node_modules").exists(), "no build step, no package"
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")
     assert "prefers-reduced-motion" in css and "16px" in css
-    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", css), "style.css sets no colour of its own: the library's tokens decide"
+    assert not LITERAL_COLOUR.search(BRAND_LINE.sub("", css)), "style.css sets no colour of its own but the brand pair: the library's tokens decide"
 
 
 # --- what the screens call, and when they read ---------------------------------------------------------------------------------
@@ -720,3 +730,103 @@ def test_every_class_the_tasks_tab_builds_is_styled_and_the_block_uses_tokens_an
     block = css[start:]
     assert "wb-task" in block
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", block), "the Tasks tab's rules name colours by token"
+
+
+# --- OH-3: the brand colour, the favicon, the mark and the product's name --------------------------------------------------------
+
+FAVICON = INTERFACE / "favicon.svg"
+MARK = INTERFACE / "brand" / "openhora-mark.svg"
+# The first path of each drawing, and the hash of the file as the page ships it (the maintainer's drawing with its provenance
+# metadata block removed and nothing else changed). A new drawing changes these two lines on purpose.
+FAVICON_FIRST_PATH = "M40 76 Q26 40 34 16 Q62 30 80 52Z"
+FAVICON_SHA256 = "5d4d26d32140e808362e08c202aa1b64f7bc39d2c3f5564da18884cbeac4c2a6"
+MARK_FIRST_PATH = "M44 70 Q30 40 36 22 Q60 34 74 50Z"
+MARK_SHA256 = "1fd944ff6127cd43ca3df6d6d5a5bace298eb21b18f483fc6d50ff8c232b8cc3"
+
+
+def test_the_brand_pair_is_the_one_primary_token_and_is_set_once_at_root():
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    lines = BRAND_LINE.findall(css)
+    assert len(lines) == 1, "the brand pair is set on one line"
+    assert re.findall(r"--pui-theme\s*:[^;]*;", css) == [f"--pui-theme: {BRAND_PAIR};"], "the primary token is declared once, with the pair, light then dark"
+    root = re.search(r"^:root \{\n(.*?)^\}", css, re.S | re.M)
+    assert root and lines[0].strip() in root.group(1), "the pair is set in the :root block, beside the other tokens"
+    assert not re.search(r"--pui-(?!theme\b)[a-z-]+\s*:", root.group(1)), "no other token of the library is set at :root by the page"
+    comment = css[:css.index(lines[0].strip())].rsplit("/*", 1)[-1]
+    assert "brand" in comment.lower() and "*/" in comment, "a comment above the line names it the brand pair"
+    colours = LITERAL_COLOUR.findall(css)
+    assert sorted(colours) == ["#6B4429", "#C99A6E"], f"the pair is the only colour literal of the stylesheet: {colours}"
+    # the scene reads the one token (a probe element), so its selection outline and its running colour follow it, with no constant of their own
+    palette = (INTERFACE / "js" / "scene" / "palette.js").read_text(encoding="utf-8")
+    assert 'theme: "--pui-theme"' in palette
+    engine = (INTERFACE / "js" / "scene" / "engine.js").read_text(encoding="utf-8")
+    assert "outlineMaterial.color.copy(palette.T.theme)" in engine, "the selection outline takes the token's colour"
+    for path in sorted((INTERFACE / "js").rglob("*.js")):
+        assert not re.search(r"6B4429|C99A6E", path.read_text(encoding="utf-8"), re.I), f"{rel(path)} holds a copy of the brand colour: it reads the token"
+
+
+def svg_text_without_namespaces(path: Path) -> str:
+    return re.sub(r'\sxmlns(?::\w+)?="[^"]*"', "", path.read_text(encoding="utf-8"))
+
+
+def first_path(path: Path) -> str:
+    root = ET.parse(path).getroot()
+    found = next(e for e in root.iter() if e.tag.endswith("}path") or e.tag == "path")
+    return found.attrib["d"]
+
+
+def test_the_favicon_is_the_simplified_mark_and_the_two_drawings_carry_nothing_but_drawing():
+    assert first_path(FAVICON) == FAVICON_FIRST_PATH, "interface/favicon.svg is the simplified mark"
+    assert first_path(MARK) == MARK_FIRST_PATH, "interface/brand/openhora-mark.svg is the full mark"
+    assert hashlib.sha256(FAVICON.read_bytes()).hexdigest() == FAVICON_SHA256
+    assert hashlib.sha256(MARK.read_bytes()).hexdigest() == MARK_SHA256
+    for path in (FAVICON, MARK):
+        text = path.read_text(encoding="utf-8")
+        assert ET.parse(path).getroot().tag.endswith("}svg"), f"{rel(path)} is one SVG document"
+        assert not re.search(r"<metadata|base64|c2pa:manifest", text, re.I), f"{rel(path)} carries no provenance block"
+        bare = svg_text_without_namespaces(path)
+        assert not re.search(r"<script|<foreignObject|<style|<image|<use\b|\bhref\b|\bxlink:|data:|https?://|\son[a-z]+\s*=", bare, re.I), \
+            f"{rel(path)} holds nothing but shapes: no script, no link, no external host, no embedded data"
+        assert len(path.read_bytes()) < 4096, f"{rel(path)} is a small drawing"
+    html = (INTERFACE / "index.html").read_text(encoding="utf-8")
+    assert re.search(r'<link rel="icon" type="image/svg\+xml" href="\./favicon\.svg">', html)
+    assert service.TYPES[".svg"] == "image/svg+xml", "the service serves the drawings, and /favicon.ico answers with the favicon"
+
+
+def test_the_mark_file_is_named_in_one_module_that_builds_an_img_and_nowhere_else():
+    named = [rel(p) for p in own_files() if "openhora-mark.svg" in p.read_text(encoding="utf-8")]
+    assert named == ["interface/js/brand.js"], f"only the brand module names the mark file: {named}"
+    brand = (INTERFACE / "js" / "brand.js").read_text(encoding="utf-8")
+    assert 'const MARK_SRC = "./brand/openhora-mark.svg";' in brand and (INTERFACE / "brand" / "openhora-mark.svg").is_file()
+    assert re.search(r'h\("img",\s*\{[^}]*\bsrc: MARK_SRC\b[^}]*\balt: "openhora"', brand, re.S), "the mark is an <img> with the alt text openhora"
+    assert not re.search(r"innerHTML|data:|createElementNS|insertAdjacentHTML", brand), "never markup from a string, never a data: URI"
+    header = (INTERFACE / "js" / "frame" / "header.js").read_text(encoding="utf-8")
+    prompt = (INTERFACE / "js" / "views" / "token-prompt.js").read_text(encoding="utf-8")
+    assert 'from "../brand.js"' in header and "markImage(20" in header, "the top bar shows the mark at 20 px"
+    assert 'from "../brand.js"' in prompt and "markImage(48" in prompt, "the token prompt shows the mark at 48 px"
+    css = (INTERFACE / "style.css").read_text(encoding="utf-8")
+    for cls in ("wb-mark", "wb-brand", "wb-wordmark"):
+        assert re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css), f"{cls} is a rule of the stylesheet"
+
+
+def test_the_page_is_named_openhora_and_the_token_prompts_heading_names_the_product():
+    html = (INTERFACE / "index.html").read_text(encoding="utf-8")
+    assert "<title>openhora</title>" in html and "Workbench" not in html
+    prompt = (INTERFACE / "js" / "views" / "token-prompt.js").read_text(encoding="utf-8")
+    assert 'text: "Paste the openhora service token"' in prompt and 'text: "openhora"' in prompt, "the heading and the wordmark text name the product"
+    assert "Paste the service token" not in prompt
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node is not installed: the modules are checked only by their text")
+def test_every_module_of_the_page_parses_under_node_check():
+    node = shutil.which("node")
+    files = sorted((INTERFACE / "js").rglob("*.js"))
+    assert len(files) >= 80, "the page's modules were found"
+
+    def check(path: Path):
+        done = subprocess.run([node, "--check", str(path)], capture_output=True, text=True, timeout=60)
+        return rel(path), done.returncode, done.stderr.strip()
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        failed = [r for r in pool.map(check, files) if r[1] != 0]
+    assert failed == [], f"node --check fails on: {failed}"

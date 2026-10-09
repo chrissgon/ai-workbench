@@ -6,7 +6,10 @@
 import { h } from "../dom.js";
 
 const RUNNERS = /^(python3 |uv run |\/)/;
-const STORE = /uv run --with \S+ keyring set ai-workbench \S+/g;     // how the service writes the command that stores a credential
+// How the service writes the command that stores a credential. The service now names the secret store "openhora"; the old name "ai-workbench" is
+// still accepted so that a service that has not changed its sentence is read as before. The old name goes with the compatibility stage, which
+// ends with the next change of reference model (T23).
+const STORE = /uv run --with \S+ keyring set (openhora|ai-workbench) \S+/g;
 const BACK_AFTER_MS = 2000;
 
 /** Whether a text of the service is a command (it starts with a runner) and not a sentence. */
