@@ -813,13 +813,15 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
 
 def _effect_kind(gate):
     """The module of the effect kind a manifest's gate names (gate.effect, through the registry of runtime/effects.py),
-    or None when there is no gate or its word names no kind."""
+    or None when there is no gate, its word names no kind, or the kind is not one of the gate path (GATE): a kind of
+    the shared registry that only the policy path uses opens a review, never an effect."""
     if not gate:
         return None
     try:
-        return effects.module_for(gate["effect"])
+        module = effects.module_for(gate["effect"])
     except effects.EffectError:
         return None
+    return module if getattr(module, "GATE", False) is True else None
 
 
 def _effect_or_review(ctx: dict, task: dict, request: dict, dest: str, decision: dict, gate_found: dict, made, code,
@@ -873,10 +875,12 @@ def _provider_path(cfg: dict, cls: str, platform: str | None = None) -> str:
     names: the platform is part of the class, never a second argument of the resolver. A placeholder without a
     platform, and a platform for a class that takes none, are refused."""
     resolve = _load("workbench_provider_resolve", os.path.join(ROOT, "providers", "resolve.py"))
-    if (platform is not None and not isinstance(platform, str)) or bool(resolve.PLACEHOLDER.search(cls)) != (platform is not None):
+    if bool(resolve.PLACEHOLDER.search(cls)) != (platform is not None):
         raise OpsError(f"the class {cls} and the platform {platform!r} do not fit: a class written with a placeholder "
                        f"needs a platform, and no other takes one", 3)
     if platform is not None:
+        if not isinstance(platform, str) or not resolve.NAME.fullmatch(platform):  # the resolver's own name rule, before it is part of a class
+            raise OpsError(f"the platform {platform!r} is not a name (lowercase letters, digits and hyphens)", 3)
         cls = resolve.PLACEHOLDER.sub(lambda _: platform, cls)
     implementation = cfg["code"]["provider"] if cls == "integration:vcs" and cfg.get("code") else None
     try:
@@ -900,6 +904,8 @@ def _approve_effect(ctx: dict, item: dict, sha256) -> dict:
         with open(payload["effect_file"], "rb") as f:
             doc = json.loads(f.read().decode("ascii"))
         kind = effects.module_for(doc["effect"])
+        if getattr(kind, "GATE", False) is not True:
+            raise effects.EffectError("usage", f"the effect kind {doc['effect']!r} is not one a confirmation gate opens")
     except (OSError, KeyError, ValueError) as e:
         raise OpsError(f"the effect document of pending decision {pending_id} cannot be read: {e}", 1) from None
     except effects.EffectError as e:
@@ -1576,9 +1582,9 @@ def _effect_document(path: str, policy: str) -> dict:
         raise OpsError(f"the effect file is for the policy {doc['policy']!r}, not {policy!r}", 2)
     if doc["kind"] not in _effect_words():
         raise OpsError(f"kind of the effect file is one of {', '.join(_effect_words())}", 2)
-    if doc["kind"] not in effects.policy_kinds():
-        raise OpsError(f"the effect kind {doc['kind']!r} cannot run under a policy "
-                       f"(it can: {', '.join(effects.policy_kinds())})", 2)
+    can = effects.policy_kinds()
+    if doc["kind"] not in can:
+        raise OpsError(f"the effect kind {doc['kind']!r} cannot run under a policy (it can: {', '.join(can)})", 2)
     reserved = [a for a in doc["args"] if a in effects.RESERVED_FLAGS]
     if reserved:
         raise OpsError(f"args of the effect file holds {reserved[0]}: the operation adds it, the handler never does", 2)
@@ -1610,7 +1616,7 @@ def execute_under_policy(project: str, policy: str, effect_file: str) -> dict:
         provider = _provider_path(cfg, module.PROVIDER_CLASS, platform=module.policy_platform(doc))
         argv = list(module.policy_argv(doc))
         added = [a for a in argv if a in effects.RESERVED_FLAGS]
-        if added:  # the kind's own arguments never carry what only the operation adds (the bounds' globs, the key, the flag)
+        if added:  # exact equality is the rule, as for the document's args; the kind's own arguments never carry what only the operation adds (the bounds' globs, the key, the flag)
             raise OpsError(f"the arguments of the effect kind {doc['kind']!r} hold {added[0]}: the operation adds it", 1)
         for glob in row["bounds"]["files"]:
             argv += ["--allow", glob]
@@ -1625,7 +1631,7 @@ def execute_under_policy(project: str, policy: str, effect_file: str) -> dict:
             raise OpsError(f"the provider failed after the dry run: {e.reason}; the idempotency key lets the next "
                            f"call replay it", 1) from None
         action = _stored(ctx, store.action_add, kind=policy, idempotency_key=doc["idempotency_key"],
-                         target=doc["target"], payload_sha256=doc["payload_sha256"], result=printed)
+                         target=effect["target"], payload_sha256=doc["payload_sha256"], result=printed)
     return {"executed": True, "policy": policy, "approval_id": row["id"],
             "action": {"id": action["id"], "created": action["created"]}, "result": printed}
 

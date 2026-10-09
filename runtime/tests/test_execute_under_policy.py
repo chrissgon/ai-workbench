@@ -308,6 +308,9 @@ def test_the_operation_asks_the_kind_module_for_the_effect_and_the_argv_it_check
     assert real[:5] == ["commit-files", "--repo", "example-owner/example-profile", "--branch", "main"]
     assert real[5:] == ["--allow", "data/posts.json", "--allow", "assets/posts/*", "--idempotency-key",
                         "published-posts-2026-W42", "--confirmed"]  # the document's own args were not used
+    import sqlite3
+    with sqlite3.connect(str(tree["db"])) as db:  # the action records the target the module resolved, not the document's
+        assert db.execute("SELECT target FROM actions").fetchall() == [(TARGET,)]
 
 
 def test_a_kind_whose_module_says_it_may_not_run_under_a_policy_is_refused_before_anything_is_checked(tree, monkeypatch):
@@ -352,6 +355,10 @@ def test_the_provider_path_takes_the_platform_in_the_class_and_refuses_a_class_a
     found = ops._provider_path(cfg, "publisher:<platform>", platform="standin")
     assert found == str(tree["tree"] / "providers" / "publisher" / "standin.py")
     for cls, platform in (("publisher:<platform>", "elsewhere"),   # no provider serves it
+                          ("publisher:<platform>", "<x>"),         # would read back as the placeholder: any provider
+                          ("publisher:<platform>", "a:b"),         # not one name
+                          ("publisher:<platform>", ""),            # not a name
+                          ("publisher:<platform>", 7),             # not a text
                           ("publisher:<platform>", None),          # the class names a platform and none was given
                           ("integration:vcs", "standin")):         # a platform for a class that takes none
         with pytest.raises(ops.OpsError) as refused:

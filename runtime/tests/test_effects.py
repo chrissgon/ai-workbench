@@ -180,7 +180,8 @@ def test_the_commit_is_one_made_by_the_code_provider_and_no_module_of_the_runtim
         code = "\n".join(line for line in text.split('"""')[0::2])
         # the one closed table that maps the effect words to their kinds (CONS-3): a word of the side-effect
         # vocabulary as a dictionary key, no git command
-        code = re.sub(r"^KINDS = \{.*$", "", code, flags=re.M)
+        if path.name == "effects.py":  # only the registry's own module may spell the word, never another one
+            code = re.sub(r"^KINDS = \{.*$", "", code, flags=re.M)
         assert not re.search(r"""["']push["']|git[^\n]{0,40}\bpush\b""", code), path.name
         assert not re.search(r"""["']git["'][^\n]*["']commit["']""", code), path.name
     case = gate_project(tree)
@@ -276,6 +277,7 @@ def test_a_kind_is_a_module_and_a_row_of_the_registry_and_ops_py_names_none(tree
     kind = types.ModuleType("standin_effect_kind")
     real = effect_pull_request
     kind.PROVIDER_CLASS = real.PROVIDER_CLASS
+    kind.GATE = True  # a kind the gate path may open (the contract at the head of runtime/effects.py)
     for name in ("refusal", "head", "prepare", "parse", "mismatch", "document", "body", "title", "describe", "verify",
                  "unconfigured", "summary"):
         setattr(kind, name, getattr(real, name))
@@ -358,3 +360,18 @@ def test_the_shape_of_a_handed_over_document_and_the_operations_own_flags_live_i
     text = (st.REPO / "runtime" / "ops.py").read_text(encoding="utf-8")
     assert not re.search(r"^(EFFECT_KEYS|RESERVED_FLAGS|[A-Z_]*_CALLS) =", text, re.M)  # no table of kinds beside the registry
     assert not [name for name in dir(ops) if name.endswith("_CALLS")]
+
+
+def test_a_gate_naming_a_kind_that_only_the_policy_path_uses_opens_a_review_never_an_effect(tree):
+    manifest = tree["tree"] / "skills" / "demo-gate" / "evals" / "runtime-manifest.json"
+    data = json.loads(manifest.read_text(encoding="utf-8"))
+    manifest.write_text(json.dumps({**data, "gate": {**data["gate"], "effect": "push"}}), encoding="utf-8")
+    skill_file = manifest.parent.parent / "SKILL.md"
+    skill_file.write_text(skill_file.read_text(encoding="utf-8").replace("side_effects: [create]", "side_effects: [push]"),
+                          encoding="utf-8")
+    assert effects.module_for("push").GATE is False and effects.module_for("create").GATE is True
+    case = gate_project(tree)
+    item = case["item"]
+    assert case["out"]["ending"] == "gate" and item["kind"] == "review"
+    assert item["body"].startswith("No effect was opened: the gate's effect 'push' names no kind of effect")
+    assert item["payload_sha256"] is None and provider_calls(tree) == []

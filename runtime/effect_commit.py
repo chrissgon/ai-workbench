@@ -25,6 +25,7 @@ from __future__ import annotations
 import sys
 
 PROVIDER_CLASS = "integration:vcs"
+GATE = False  # no skill's confirmation gate names this word: the gate path never opens an effect of this kind
 POLICY = True
 VERB = "commit-files"  # the code provider's verb that commits files to a branch
 

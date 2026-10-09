@@ -32,11 +32,14 @@ What a kind module exposes, in two groups:
     for both paths     describe(doc)                     one line that says what is approved or done: the state file's
                                                          row and the action's record
                        PROVIDER_CLASS                    the class of provider that executes it (providers/resolve.py)
+                       GATE                              True when a skill's gate may name the kind's word; a
+                                                         registered kind that is not GATE is no kind there (a review)
     for the gate path  refusal, head, prepare, parse, mismatch, document, body, title, summary, unconfigured, verify,
                        execute                           the names runtime/effect_pull_request.py lists and ops.py calls
     for the policy     POLICY                            True when the kind may run under a standing approval
     path               policy_platform(doc)              the platform the provider is resolved with, or None
-                       policy_effect(doc)                {"kind", "target", "files", "items"}: what autonomy.covers checks
+                       policy_effect(doc)                {"kind", "target", "files", "items"}: what autonomy.covers
+                                                         checks; its target, the resolved one, is the one recorded
                        policy_argv(doc)                  the verb and the document's args, without the flags in
                                                          RESERVED_FLAGS: the operation adds --allow per bound glob,
                                                          --idempotency-key, then --dry-run or --confirmed

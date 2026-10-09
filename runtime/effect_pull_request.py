@@ -40,6 +40,7 @@ import effects  # noqa: E402
 import operations  # noqa: E402  (the table of operations: the one place that spells the terminal's command)
 
 PROVIDER_CLASS = "integration:vcs"
+GATE = True  # a skill's confirmation gate can name its word (runtime/effects.py)
 POLICY = False  # a gate kind: the person approves its exact content, never a standing approval (runtime/effects.py)
 FENCE = re.compile(r"^\s*(```|~~~)")
 BASE_HEAD = re.compile(r"^Base ← head:\s*(?P<base>\S+)\s*←\s*(?P<head>\S+)\s*$")
