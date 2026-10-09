@@ -218,7 +218,7 @@ def load_token(test_mode: bool) -> str:
     token = found[0] if found else ""
     if not token:
         raise ProviderError(f"no Notion token: export {SECRET}, or store one with "
-                            f"uv run --with keyring==25.7.0 keyring set ai-workbench {KEYRING_USERNAME}",
+                            f"uv run --with keyring==25.7.0 keyring set openhora {KEYRING_USERNAME}",
                             EXIT_NOT_CONFIGURED)
     if any(ch.isspace() or not ch.isprintable() for ch in token):
         raise ProviderError("the Notion token contains whitespace or control characters", EXIT_NOT_CONFIGURED)
@@ -251,7 +251,7 @@ class Service:
         path = template.replace("{id}", ident or "")
         url = self.base + path + ("?" + urllib.parse.urlencode(query) if query else "")
         hdrs = {"Authorization": f"Bearer {self.token}", "Notion-Version": API_VERSION,
-                "Accept": "application/json", "User-Agent": "ai-workbench-issue-tracker-notion"}
+                "Accept": "application/json", "User-Agent": "openhora-issue-tracker-notion"}
         data = None
         if body is not None:
             hdrs["Content-Type"] = "application/json"

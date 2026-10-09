@@ -2612,7 +2612,7 @@ def _held_next(project: str, reason: str, missing=None):
             except lab.LabError:
                 names = []
         users = lab.credential_usernames(names) if names else {}
-        store = f"uv run --with {operations.KEYRING_PIN} keyring set ai-workbench "
+        store = f"uv run --with {operations.KEYRING_PIN} keyring set openhora "
         steps = "; ".join(f"{n}: {store}{users[n]}" if n in users else
                           f"{n}: {store}<username> (the username is in the table of contracts/secrets.md)" for n in names) \
             or "the reference model's credential: see the table of contracts/secrets.md"

@@ -33,7 +33,7 @@ State: <state>
 
 ## Notion (`notion.py`)
 
-Python 3.10 or newer, with `keyring` (its header): run with `uv run`, never with the system interpreter. The token is `NOTION_TOKEN`, read only through `providers/secrets/resolver.py` (stored with `uv run --with keyring==25.7.0 keyring set ai-workbench notion`): an internal integration with read content, update content, insert content and read comments, given only the base. Neither the base's identifier nor the token is ever written in this repository: they live in the project's `docs/workbench/runtime.json` and in the secret store.
+Python 3.10 or newer, with `keyring` (its header): run with `uv run`, never with the system interpreter. The token is `NOTION_TOKEN`, read only through `providers/secrets/resolver.py` (stored with `uv run --with keyring==25.7.0 keyring set openhora notion`): an internal integration with read content, update content, insert content and read comments, given only the base. Neither the base's identifier nor the token is ever written in this repository: they live in the project's `docs/workbench/runtime.json` and in the secret store.
 
 - `base` is the identifier of the base's data source (in the app: the base's settings, "Manage data sources", "Copy data source ID"). API version 2026-03-11 queries rows and creates them on a data source, not on a database.
 - `fields` maps `title`, `state` and `shown` to the names of the base's properties (defaults `Name`, `Status`, `Runtime`): a title, a status or select, and a text property. `--check` refuses (exit 3) a base that lacks one.

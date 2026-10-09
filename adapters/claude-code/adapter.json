@@ -10,7 +10,7 @@
     "agents": "generate: build.py merges ../../agents/*.md with overrides/*.yaml into build/<pack>/agents/",
     "shared": "generate: build.py links build/<pack>/shared/references to ../../shared/references, beside the skills, so that a skill's ../../shared/references/<file> resolves by the installed path"
   },
-  "install": "install.sh [--pack <name>] builds and symlinks build/<pack>/ to ~/.claude/skills/ai-workbench",
+  "install": "install.sh [--pack <name>] builds and symlinks build/<pack>/ to ~/.claude/skills/openhora",
   "generated": [
     "build/"
   ],

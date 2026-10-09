@@ -96,7 +96,7 @@ def test_every_secret_resolves_as_before(merged):
             assert merged.resolve(name, environ={alias: SENTINEL}, store=store) == (SENTINEL, f"environment ({alias})")
         assert store.asked == []
         assert merged.resolve(name, environ={}, store=store) == ("from-store", "secret store")
-        assert store.asked == [("ai-workbench", username)]
+        assert store.asked == [("openhora", username)]
         assert merged.resolve(name, allow_store=False, environ={}, store=store) is None
 
 

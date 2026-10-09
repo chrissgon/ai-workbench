@@ -173,7 +173,7 @@ def credential_usernames(names) -> dict:
     """{variable: the username it is stored under in the OS secret store} for the names the adapters register in the
     "secrets" list of their manifests, read with the workbench's secret resolver (a name nobody registers, or no
     resolver in this checkout, is left out). Names only, never a value: it tells the person what to type after
-    `keyring set ai-workbench`."""
+    `keyring set openhora`."""
     path = os.path.join(LAB.ROOT, "providers", "secrets", "resolver.py")
     if not os.path.isfile(path):
         return {}

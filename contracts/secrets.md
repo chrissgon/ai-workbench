@@ -5,7 +5,8 @@ The workbench is automation that runs anywhere: a laptop, a cloud session, CI an
 ## Rules
 
 - A secret is read only through the resolver. A provider, script or eval never reads a credential from its own environment variable or the OS secret store directly. The one direct use of the store is a write: an `auth.py` stores the record of an authorization it has just run; its `--check` reads that record back through the resolver, like the provider does.
-- Lookup order, the same everywhere: the environment variable named like the secret, then its aliases, then the OS secret store (keyring, service `ai-workbench`, the username in the registry). The first non-empty value wins.
+- Lookup order, the same everywhere: the environment variable named like the secret, then its aliases, then the OS secret store (keyring, service `openhora`, the username in the registry). The first non-empty value wins.
+- Compatibility stage: a name not found under the service `openhora` is looked up under the service the workbench used before it was renamed, `ai-workbench` (`LEGACY_SERVICE` in the resolver), so a credential stored earlier keeps working. The resolver's `--check` and `--list` say which service answered (`service: "ai-workbench (legacy)"`), so the person knows what to store again; every write (the command the runtime shows, the records an `auth.py` stores) names `openhora` only. The fallback is removed with the next change of reference model (backlog T23). A job scheduled before the rename runs a snapshot of the provider with the resolver of that day, which reads `ai-workbench` only, so the old entries are kept until those jobs have run or are scheduled again; delete them only then.
 - Never in the repository, a project file, a flag, a prompt or the conversation. The resolver, `scripts/doctor.py` and every provider print where a secret was found (`environment (NAME)` or `secret store`), never its value, not even partially.
 - One secret per purpose, with the minimum permission listed below. A permission that writes (dismissing alerts, publishing) lives in a separate secret from the one that reads, when the service allows it.
 - A secret a provider reads is added to `REGISTRY` in the resolver and to the table below in the same change; the resolver's tests compare the two cell by cell and fail when they disagree.
@@ -18,7 +19,7 @@ The workbench is automation that runs anywhere: a laptop, a cloud session, CI an
 |-------------|-------|-----|
 | Cloud session | the environment's settings, as an environment variable | name it exactly like the secret (`VCS_GITHUB_TOKEN`) |
 | CI | a repository secret, mapped to an environment variable of the same name in the workflow | `env: VCS_GITHUB_TOKEN: ${{ secrets.VCS_GITHUB_TOKEN }}` |
-| Local machine | the OS secret store (preferred), or an export in the shell | `uv run --with keyring==25.7.0 keyring set ai-workbench <username>`: the value is typed at a hidden prompt, never on the command line |
+| Local machine | the OS secret store (preferred), or an export in the shell | `uv run --with keyring==25.7.0 keyring set openhora <username>`: the value is typed at a hidden prompt, never on the command line |
 | Agent runtime | wherever the machine it runs on keeps secrets (one of the rows above), through the same resolver | the runtime's configuration holds paths and limits only (`contracts/runtime.md`) |
 
 Check what is set, without printing any value: `python3 providers/secrets/resolver.py --list` for the table below, or `python3 scripts/doctor.py`, which adds the secrets every adapter registers and names the requirement classes that read each one.

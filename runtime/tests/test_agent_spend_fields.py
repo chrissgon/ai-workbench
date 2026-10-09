@@ -142,7 +142,7 @@ def test_a_missing_credential_with_a_readable_store_says_where_it_is_stored(tree
     ops.dispatch(path)
     [entry] = [h for h in ops.status(path)["held"] if h["reason"] == "credential"]
     text = entry["next"]
-    assert "EXAMPLE_REFERENCE_KEY" in text and "keyring set ai-workbench" in text and "<username>" in text
+    assert "EXAMPLE_REFERENCE_KEY" in text and "keyring set openhora" in text and "<username>" in text
     assert "contracts/secrets.md" in text
     assert not any(ch in text for ch in "\n\r")
 
@@ -208,7 +208,7 @@ def test_the_credential_sentence_names_only_what_is_missing_with_its_registered_
     ops.dispatch(path)
     [entry] = [h for h in ops.status(path)["held"] if h["reason"] == "credential"]
     assert "EXAMPLE_KEY_B" in entry["next"] and "EXAMPLE_KEY_A" not in entry["next"]
-    assert "keyring set ai-workbench example-b" in entry["next"] and "<username>" not in entry["next"]
+    assert "keyring set openhora example-b" in entry["next"] and "<username>" not in entry["next"]
     monkeypatch.setattr(lab, "credential_usernames", lambda names: {})  # a name nobody registers: the table is named
     assert "contracts/secrets.md" in ops._held_next(path, "credential", ["EXAMPLE_KEY_B"])
 
