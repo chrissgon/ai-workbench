@@ -34,6 +34,10 @@ do, so that the generated tables and the shells cannot differ). A row:
   job          (optional) true when the operation calls a model or a platform, so that it may take minutes: the local
                service starts it in a thread and answers at once with a job to ask for again, instead of holding the
                request open. It is the one source of "returns a job"; every row whose `model` is not False has it
+  queues       (optional) true when the operation, while a run of the project is in progress, records its call and
+               answers `{"queued": true}` instead of refusing, and the local service routes it when the run ends
+               (`say`, `route`); the service lets such a job start while another job holds the model slot, so the
+               operation itself finds the run lock held and queues
   exit_unless  (optional) [key, value]: the terminal prints the result and exits 1 unless result[key] == value (a
                result that says the model did not answer is not a failure of the operation, and is still printed)
 
@@ -61,8 +65,10 @@ OPERATIONS = (
      "help": "record what you want; with a flow, plan it from the flow file, else it waits for its route"},
     {"name": "route", "call": "route",
      "args": ({"name": "request_id", "kind": "int", "required": True, "flag": "request"}, {"name": "flow", "kind": "str"}),
-     "channels": ("terminal", "page", "mcp"), "model": "without --flow", "job": True,
-     "help": "plan a request that waits for its route: one run of the router skill, or the plan of a flow file"},
+     "channels": ("terminal", "page", "mcp"), "model": "without --flow", "job": True, "queues": True,
+     "help": "plan a request that waits for its route: one run of the router skill, or the plan of a flow file; while a run is in progress the request is queued"},
+    {"name": "route-queued", "call": "route_queued", "args": (), "channels": ("terminal",), "model": True, "job": True,
+     "help": "route the oldest queued line or request, when no run is in progress (the local service calls it every few seconds)"},
     {"name": "status", "call": "status", "args": (), "channels": ("terminal", "chat", "page", "mcp"), "model": False,
      "help": "requests, tasks and what waits for you"},
     {"name": "task", "call": "task",
@@ -175,8 +181,8 @@ OPERATIONS = (
     {"name": "pin", "call": "pin", "args": (), "channels": ("terminal",), "model": False,
      "help": "write the pin of the dispatcher's two jobs"},
     {"name": "say", "call": "say", "args": ({"name": "text", "kind": "text", "required": True},),
-     "channels": ("terminal", "page", "mcp"), "model": "for a new request", "job": True, "channel_arg": True,
-     "help": "one turn of the conversation with the planning agent"},
+     "channels": ("terminal", "page", "mcp"), "model": "for a new request", "job": True, "channel_arg": True, "queues": True,
+     "help": "one turn of the conversation with the planning agent; while a run is in progress a line that needs the planner is queued, a question about the state is answered at once"},
     {"name": "agents", "call": "agents", "args": (), "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "each area agent: its mode, its caps, what it used today and how many tasks wait for it"},
     {"name": "conversation", "call": "conversation",
@@ -196,6 +202,10 @@ OPERATIONS = (
      "args": ({"name": "path", "kind": "str", "required": True},),
      "channels": ("terminal", "page", "mcp"), "model": False,
      "help": "the text of one file under docs/ of the project, read-only"},
+    {"name": "artifact-raw", "call": "artifact_raw",
+     "args": ({"name": "path", "kind": "str", "required": True},),
+     "channels": ("page",), "model": False,
+     "help": "the bytes of one image under docs/ of the project (png, jpeg, webp or svg, by its magic number), read-only; the service answers them with their media type"},
     {"name": "version", "call": "version", "args": (), "channels": ("page", "mcp"), "model": False,
      "help": "the change signal of the project's store: a number that grows on every write, and when the file was last written"},
     {"name": "stop-runs", "call": "stop_runs", "args": (), "channels": ("terminal",), "model": False,
@@ -363,6 +373,13 @@ def command_line(name: str, project: str, /, *, checkout=None, uv=None, **args) 
         else:
             parts += [flag, _word(value)]
     return " ".join(parts)
+
+
+def keyring_line(username: str) -> str:
+    """The command that stores a credential in the secret store, the value typed at a hidden prompt:
+    `uv run --with keyring==... keyring set openhora <username>`, the username shell-quoted (a value written as
+    <placeholder> is kept as it is). It needs the library, so it always goes through uv. The one place that spells it."""
+    return f"{UV_PREFIX} keyring set openhora {_word(username)}"
 
 
 def service_line(checkout: str, projects, *, uv=None, port=None) -> str:

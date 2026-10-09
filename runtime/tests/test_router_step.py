@@ -210,8 +210,10 @@ def test_an_unrecognised_reply_reaches_the_person_whole_and_naming_the_flow_bypa
     out = ops.route(path, request["request"])
     assert (out["routed"], out["ending"], out["kind"]) == (False, "unclassified", "question")
     item = ops.pending(path, out["pending_id"])
-    assert item["title"] == "The route was not recognised" and item["body"].startswith(PROSE_REPLY)
-    assert f"route --request {request['request']} --flow <name>" in item["body"]
+    # A-25: the body is one sentence; the reply whole is in the payload, with the two actions the page draws.
+    assert item["title"] == "The route was not recognised"
+    assert item["body"] == f"The planning agent did not name a flow or a skill for request {request['request']}"
+    assert item["payload"]["raw"] == PROSE_REPLY and item["payload"]["actions"] == ["choose-flow", "cancel"]
     assert item["payload"]["why"] == "no route line"
     reply(tree, "Route: flow-missing (flow, pending)\n")
     other = ops.request(path, "Something else.")

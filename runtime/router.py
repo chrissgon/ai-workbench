@@ -15,8 +15,12 @@ A reply that asks (a line `Q<n>: ...`, also on the template's `Next:` line) is a
 its route line says. A reply with exactly one route line is a route; anything else (no route line, `Route: none`,
 a name in prose, two route lines) is unclassified and reaches the person whole. Nothing here guesses.
 
+A reply whose route line carries the shape word `direct` (`Route: none (direct)`, or a name with `(direct, ready)`) is
+the skill's answer for a one-step request that no skill is needed for: a direct turn. Code reads it as such, with the
+text of the template's `Next:` line, and the person is answered from the project's records (runtime/ops_say.py).
+
 Functions:
-  read_route(reply)                             {"kind": "question"} | {"kind": "route", ...} | {"kind": "unclassified", "why"}
+  read_route(reply)                             {"kind": "question"} | {"kind": "direct", "next"} | {"kind": "route", ...} | {"kind": "unclassified", "why"}
   check_route(route, flow_names, pack_skills)   {"ok": true, "flow" | "skill"} | {"ok": false, "why"}
 
 Pure: text in, a route out. It imports nothing of the lab or the store and calls no model.
@@ -43,6 +47,11 @@ ROUTE_RE = re.compile(r"^Route: ([a-z0-9]+(?:-[a-z0-9]+)*) \((capability|flow), 
 # The template writes each question as `Q<n>: <question> Recommended: ...` on its own line; replies of the corpus
 # also write the first one on the `Next:` line (`Next: Q1: ...`).
 QUESTION_RE = re.compile(r"^(?:Next: )?Q[0-9]+: ")
+# The direct shape (skills/core-orchestrator/SKILL.md, step 2): `Route: none (direct)`, or a name with the shape word
+# and a status. The template's `Next:` line is what the planner proposes to do.
+DIRECT_RE = re.compile(r"^Route: (?:none|[a-z0-9]+(?:-[a-z0-9]+)*) \(direct(?:, (?:ready|pending))?\)$")
+NEXT_RE = re.compile(r"^Next: (.*\S)\s*$")
+DIRECT_SHAPE = "direct"
 FLOW_PREFIX = "flow-"
 NO_ROUTE = "none"  # `Route: none`: the skill's stop rule for a request nothing installed can handle
 
@@ -52,6 +61,9 @@ def read_route(reply: str) -> dict:
     lines = [line.rstrip() for line in (reply or "").splitlines()]
     if any(QUESTION_RE.match(line) for line in lines):
         return {"kind": "question"}
+    if sum(1 for line in lines if DIRECT_RE.match(line)) == 1 and not any(ROUTE_RE.match(line) for line in lines):
+        proposed = next((m.group(1) for m in map(NEXT_RE.match, lines) if m), "")
+        return {"kind": "direct", "next": proposed}
     found = [(line, ROUTE_RE.match(line)) for line in lines]
     found = [(line, m) for line, m in found if m]
     if len(found) != 1:

@@ -179,6 +179,28 @@ def test_a_second_model_job_is_busy_a_stopping_registry_starts_none_and_a_job_wi
     gate.set()
 
 
+def test_a_job_that_queues_starts_while_the_slot_is_held_and_leaves_the_slot_to_its_holder():
+    """A-23: the row's `queues` key means the operation itself finds the run lock held and queues the call, so the
+    registry does not refuse it for a held slot; it takes no slot of its own and gives none back."""
+    jobs = registry()
+    gate = threading.Event()
+    holder = jobs.start_job("aaaaaaaaaaaa", "route", lambda: gate.wait(5))
+    held = dict(jobs.exclusive)
+    queued = jobs.start_job("aaaaaaaaaaaa", "say", lambda: {"queued": True}, queues=True)
+    queued[1].join(5)
+    assert jobs.job_shown(queued[0]["job"])["result"] == {"queued": True} and jobs.exclusive == held
+    with pytest.raises(kit.Busy):
+        jobs.start_job("aaaaaaaaaaaa", "say", lambda: None)                              # without the key it is still refused
+    gate.set()
+    holder[1].join(5)
+    # with the slot free, a job that queues takes it like any other, so that a dispatch round waits for it
+    wait = threading.Event()
+    first = jobs.start_job("aaaaaaaaaaaa", "say", lambda: wait.wait(5), queues=True)
+    assert jobs.exclusive == {"aaaaaaaaaaaa": f"job {first[0]['job']}"}
+    wait.set()
+    first[1].join(5)
+
+
 def test_a_failure_of_a_job_is_the_jobs_own_a_refusal_with_its_word_and_anything_else_internal_with_the_trace_in_the_log():
     lines = []
     jobs = registry(lines.append)

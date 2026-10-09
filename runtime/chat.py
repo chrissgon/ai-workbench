@@ -60,7 +60,7 @@ def main(argv=None) -> int:
         if as_json:
             print(json.dumps(out, ensure_ascii=False, default=str))
         else:
-            print(out["reply"])
+            print(ops.QUEUED_LINE if out.get("queued") else out["reply"])
             print()
         sys.stdout.flush()
 

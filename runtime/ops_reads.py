@@ -22,12 +22,14 @@ import os
 import platform as platform_module
 import stat as stat_module
 import sys
+import xml.parsers.expat
 
 import ops_core as core
 import ops_say
 import autonomy
 import costs as costs_calc  # the operation `costs` would hide the module
 import dispatcher
+import drop
 import lab
 import manifest
 import operations
@@ -96,6 +98,12 @@ COST_DAYS = 30           # costs: the default window, in days
 MESSAGES_PAGE = 500      # conversation: the most messages one call returns (the store's own maximum)
 ARTIFACT_LIMIT = 2000    # artifacts: the most files one call lists
 ARTIFACT_MAX_BYTES = 1024 * 1024  # artifact: the largest file whose text is returned
+IMAGE_MAX_BYTES = 25 * 1024 * 1024  # artifact-raw: the largest image returned (the size the file drop takes)
+HEAD_BYTES = 8192        # artifacts: the bytes of a file read to tell its kind
+KINDS = ("text", "markdown", "image", "other")
+SVG_NAMESPACE = "http://www.w3.org/2000/svg"
+OTHER_TYPES = ((b"%PDF-", "a PDF document"), (b"PK\x03\x04", "a zip archive"), (b"wOF2", "a woff2 font"),
+               (b"wOFF", "a woff font"), (b"GIF8", "a GIF image"), (b"\x00\x01\x00\x00", "a font"))
 SECRET_RESOLVER = ("providers", "secrets", "resolver.py")
 CONFIGURED_PROVIDER = {"integration:vcs": "code", "integration:issue-tracker": "task_board", "integration:documents": "documents"}
 
@@ -158,12 +166,49 @@ def _wider(project: str, agent: str, mode: str) -> list:
     return [{"mode": m, "command": core._command("set-mode", project, agent=agent, mode=m)} for m in above]
 
 
+def held_commands(project: str, reason: str, missing=None) -> list:
+    """[{"name", "command"}] the person types to get past a held reason, for the two reasons a command gets past: `secret
+    store` (one entry, the service started with the secret store's library) and `credential` (one entry for each
+    variable the round found missing, else those of the reference model's credential; `command` is the line that
+    stores it under the username the adapters' manifests register, the username shell-quoted, and None when none is
+    registered); [] for any other reason. Built by operations.service_line and operations.keyring_line, the one place
+    that spells each: the page draws them and builds none. Names only, never a value."""
+    if reason == "secret store":
+        return [{"name": "service", "command": operations.service_line(core.ROOT, [project], uv=True)}]
+    if reason != "credential":
+        return []
+    names = list(missing or [])
+    if not names:
+        try:
+            names = list(lab.reference("strong")["pass_env"])
+        except lab.LabError:
+            names = []
+    users = lab.credential_usernames(names) if names else {}
+    return [{"name": n, "command": operations.keyring_line(users[n]) if n in users else None} for n in names]
+
+
+def drop_note(task: dict):
+    """What the page needs to know before it sends a file to a task: {"web": whether the task's skill uses the web,
+    "takes": whether a file can be handed over (drop.WEB_TASK_TAKES_DROP, true for a task that does not use the web),
+    "line": drop.WEB_LINE when the task uses the web and takes the file, else None}; None for a request, which takes
+    no file."""
+    if task.get("parent_id") is None or not task.get("skill"):
+        return None
+    try:
+        web = bool(skill_meta.declared(os.path.join(core.ROOT, "skills", task["skill"]))["web"])
+    except skill_meta.SkillError:
+        return None
+    takes = drop.WEB_TASK_TAKES_DROP or not web
+    return {"web": web, "takes": takes, "line": drop.WEB_LINE if web and takes else None}
+
+
 def conversation(project: str, conversation: str | None = ops_say.CONVERSATION, after: int | None = 0) -> dict:
     """The messages of a conversation whose id is above `after`, oldest first, at most MESSAGES_PAGE (the newest of
     them when more are waiting): {"conversation", "messages": [{"id", "role", "text", "task_id", "run_id",
-    "created_at"}]}. There is one conversation per project and its name is CONVERSATION (an argument left out is the
-    default). For an assistant message
-    task_id is the request the turn made or answered. Reads nothing else."""
+    "created_at", "queued"}]}. There is one conversation per project and its name is CONVERSATION (an argument left out
+    is the default). For an assistant message task_id is the request the turn made or answered. "queued" is true on
+    a line of the person that was stored while a run was in progress and has no reply yet (runtime/ops_say.py, the
+    queue). Reads nothing else."""
     ctx = core.context(project)
     conversation, after = ops_say.CONVERSATION if conversation is None else conversation, 0 if after is None else after
     if isinstance(after, bool) or not isinstance(after, int) or after < 0:
@@ -172,7 +217,9 @@ def conversation(project: str, conversation: str | None = ops_say.CONVERSATION, 
         raise core.OpsError("the conversation's name is empty", 2)
     rows = core._stored(ctx, ctx["store"].messages_list, conversation, limit=MESSAGES_PAGE, after_id=after)
     keys = ("id", "role", "text", "task_id", "run_id", "created_at")
-    return {"conversation": conversation, "messages": [{key: row[key] for key in keys} for row in rows]}
+    queued = ops_say.queued_ids(ctx) if conversation == ops_say.CONVERSATION else set()
+    return {"conversation": conversation,
+            "messages": [{**{key: row[key] for key in keys}, "queued": row["id"] in queued} for row in rows]}
 
 
 def _scope(ctx: dict) -> list:
@@ -411,13 +458,15 @@ def _owners() -> list:
 
 def artifacts(project: str) -> dict:
     """The files of the project under docs/ that the path rule calls a document or a machine file, sorted by path:
-    {"artifacts": [{"path", "owner", "agent", "size", "modified_at", "bound"}], "truncated"}. owner is the skill whose
+    {"artifacts": [{"path", "owner", "agent", "size", "modified_at", "kind", "bound"}], "truncated"}. kind is `text`,
+    `markdown`, `image` or `other`, decided by the file's bytes (an image by its magic number, never its extension;
+    text is UTF-8 with no NUL, at most ARTIFACT_MAX_BYTES), so the Desk knows before it opens a file. owner is the skill whose
     declared outputs match the path (skill_meta.matches), or None. agent is the area agent whose pack holds the owner
     skill, as plan.agent_of decides it; None when there is no owner, the project has no area agents, or no one agent
     (or several) owns the skill. modified_at is ISO-8601 UTC. bound is true when a pending
     decision still open lists the file among those a run returned or kept for it, or when its skill's runtime
-    manifest binds it to an approval by its hash. Never docs/workbench/runtime.json, a link, a folder the path rule
-    drops, or a file outside docs/. At most ARTIFACT_LIMIT files; truncated says whether more were left out."""
+    manifest binds it to an approval by its hash. Never docs/workbench/runtime.json, a link, a hidden file or folder,
+    a folder the path rule drops, or a file outside docs/. At most ARTIFACT_LIMIT files; truncated says whether more were left out."""
     ctx = core.context(project)
     root = ctx["cfg"]["project"]
     base = os.path.join(root, "docs")
@@ -436,10 +485,10 @@ def artifacts(project: str) -> dict:
     out, truncated = [], False
     if os.path.isdir(base) and not os.path.islink(base):
         for current, folders, files in os.walk(base, followlinks=False):
-            folders[:] = sorted(d for d in folders if not os.path.islink(os.path.join(current, d)))
+            folders[:] = sorted(d for d in folders if not d.startswith(".") and not os.path.islink(os.path.join(current, d)))
             for name in sorted(files):
                 full = os.path.join(current, name)
-                if os.path.islink(full) or not os.path.isfile(full):
+                if name.startswith(".") or os.path.islink(full) or not os.path.isfile(full):
                     continue
                 rel = os.path.relpath(full, root).replace(os.sep, "/")
                 if path_rule.classify(rel) not in ("document", "machine"):
@@ -460,6 +509,7 @@ def artifacts(project: str) -> dict:
                         agent_by_owner[owner] = None
                 found = os.lstat(full)
                 out.append({"path": rel, "owner": owner, "agent": agent_by_owner[owner], "size": found.st_size, "modified_at": _utc(found.st_mtime),
+                            "kind": _kind(full, rel, found.st_size),
                             "bound": rel in waiting or bool(manifest.bound_among(bound_by_owner[owner], [rel]))})
             if truncated:
                 break
@@ -470,19 +520,33 @@ def _utc(timestamp: float) -> str:
     return datetime.datetime.fromtimestamp(timestamp, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
-def artifact(project: str, path: str) -> dict:
-    """The text of one file of the project under docs/, read-only: {"path", "text", "size", "modified_at"}. The path is
-    relative to the project and normalised first (path_rule.normal: no "..", no absolute path). Refused (code 2)
-    before anything is read: a path outside docs/, docs/workbench/runtime.json, a path the path rule drops or does
-    not know, a path with a link on any part of it (the project's own folder excepted), a file that is not a regular
-    file, over ARTIFACT_MAX_BYTES, or whose bytes are not UTF-8 text (a NUL is not text). A path that is not there is
-    refused with code 1."""
-    ctx = core.context(project)
+def _open_regular(here: str, rel: str):
+    """The file at `here`, opened without following a link, as a binary file object; refused (code 2) when it is not a
+    regular file (the descriptor is checked, not the name looked at before)."""
+    try:
+        fd = os.open(here, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
+    except OSError:
+        raise core.OpsError(f"{rel} cannot be opened without following a link", 2) from None
+    f = os.fdopen(fd, "rb")
+    if not stat_module.S_ISREG(os.fstat(f.fileno()).st_mode):
+        f.close()
+        raise core.OpsError(f"{rel} is not a regular file", 2)
+    return f
+
+
+def _artifact_file(ctx: dict, path: str) -> tuple:
+    """(rel, the file's absolute path, its lstat) of a file the interface may read under docs/: the path is relative to
+    the project and normalised first (path_rule.normal: no "..", no absolute path). Refused (code 2) before anything
+    is read: a path outside docs/, docs/workbench/runtime.json, a path the path rule drops or does not know, a hidden
+    file or a file in a hidden folder (a part that starts with "."), a path with a link on any part of it (the
+    project's own folder excepted), a file that is not a regular file. A path that is not there is refused with code 1."""
     rel = path_rule.normal(path)
     if rel is None or not rel.startswith(path_rule.DOCS_DIR) or rel == path_rule.CONFIG:
         raise core.OpsError("an artifact is a file under docs/ of the project, other than the runtime's configuration", 2)
     if path_rule.classify(rel) not in ("state", "document", "machine"):
         raise core.OpsError(f"{rel} is not a file the interface reads", 2)
+    if any(part.startswith(".") for part in rel.split("/")):
+        raise core.OpsError(f"{rel} is a hidden file or inside a hidden folder: it is not read", 2)
     here = ctx["cfg"]["project"]
     for part in rel.split("/"):
         here = os.path.join(here, part)
@@ -494,16 +558,19 @@ def artifact(project: str, path: str) -> dict:
         raise core.OpsError(f"there is no file {rel} in the project", 1) from None
     if not stat_module.S_ISREG(looked.st_mode):  # before any open: a pipe would block it
         raise core.OpsError(f"{rel} is not a regular file", 2)
+    return rel, here, looked
+
+
+def artifact(project: str, path: str) -> dict:
+    """The text of one file of the project under docs/, read-only: {"path", "text", "size", "modified_at"}. The path
+    rules are _artifact_file's. Refused (code 2) also: a file over ARTIFACT_MAX_BYTES, or whose bytes are not UTF-8 text
+    (a NUL is not text); an image is read with `artifact-raw`."""
+    ctx = core.context(project)
+    rel, here, looked = _artifact_file(ctx, path)
     if looked.st_size > ARTIFACT_MAX_BYTES:
         raise core.OpsError(f"{rel} is {looked.st_size} bytes: over the {ARTIFACT_MAX_BYTES} the interface reads", 2)
-    try:
-        fd = os.open(here, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
-    except OSError:
-        raise core.OpsError(f"{rel} cannot be opened without following a link", 2) from None
-    with os.fdopen(fd, "rb") as f:
+    with _open_regular(here, rel) as f:
         found = os.fstat(f.fileno())  # the file that was opened, not the one that was looked at
-        if not stat_module.S_ISREG(found.st_mode):
-            raise core.OpsError(f"{rel} is not a regular file", 2)
         data = f.read(ARTIFACT_MAX_BYTES + 1)
     if len(data) > ARTIFACT_MAX_BYTES:
         raise core.OpsError(f"{rel} is over the {ARTIFACT_MAX_BYTES} bytes the interface reads", 2)
@@ -514,3 +581,111 @@ def artifact(project: str, path: str) -> dict:
     if "\x00" in text:
         raise core.OpsError(f"{rel} is not text", 2)
     return {"path": rel, "text": text, "size": len(data), "modified_at": _utc(found.st_mtime)}
+
+
+def _svg_safe(data: bytes) -> bool:
+    """Whether the bytes are an SVG document the page may serve as an image: XML text whose root element is `svg`
+    (the SVG namespace, or none), with no `script` element, no event-handler attribute (`on...`), no internal DTD
+    subset and no entity declaration. Parsed with expat, which fetches nothing."""
+    parser = xml.parsers.expat.ParserCreate(namespace_separator=" ")
+    seen = []
+
+    def refuse(*_args):
+        raise ValueError("refused")
+
+    def start(name, attrs):
+        space, _, local = name.rpartition(" ")
+        if not seen and (local != "svg" or space not in ("", SVG_NAMESPACE)):
+            refuse()
+        seen.append(local)
+        if local.lower() == "script" or any(a.rpartition(" ")[2].lower().startswith("on") for a in attrs):
+            refuse()
+
+    parser.StartElementHandler = start
+    parser.StartDoctypeDeclHandler = lambda _name, _system, _public, internal: refuse() if internal else None
+    parser.EntityDeclHandler = refuse
+    try:
+        parser.Parse(data, True)
+    except (ValueError, xml.parsers.expat.ExpatError):
+        return False
+    return bool(seen)
+
+
+def _looks_svg(head: bytes) -> bool:
+    start = head.lstrip(b"\xef\xbb\xbf \t\r\n")
+    return start.startswith(b"<") and b"<svg" in head.lower()
+
+
+def _image_type(head: bytes, whole=None):
+    """The media type of an image by its bytes (the magic number, never the extension): image/png, image/jpeg,
+    image/webp, or image/svg+xml for an SVG that passes _svg_safe; None otherwise. `head` is the first HEAD_BYTES at
+    least; `whole` is a function that returns all the bytes, called only for an SVG."""
+    if head.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if head.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image/webp"
+    if _looks_svg(head) and whole is not None and _svg_safe(whole()):
+        return "image/svg+xml"
+    return None
+
+
+def _is_text(head: bytes, complete: bool) -> bool:
+    """UTF-8 without a NUL; a head cut inside a multi-byte character is still text."""
+    if b"\x00" in head:
+        return False
+    try:
+        head.decode("utf-8")
+    except UnicodeDecodeError as e:
+        return not complete and e.start >= len(head) - 3
+    return True
+
+
+def _kind(full: str, rel: str, size: int) -> str:
+    """text | markdown | image | other for a file, decided by its bytes (_image_type, then UTF-8 text no larger than
+    ARTIFACT_MAX_BYTES), never by its name alone: the name only tells Markdown from other text."""
+    try:
+        with _open_regular(full, rel) as f:
+            head = f.read(HEAD_BYTES)
+            if _image_type(head, lambda: head + f.read(IMAGE_MAX_BYTES - len(head) + 1)[:IMAGE_MAX_BYTES]):
+                return "image" if size <= IMAGE_MAX_BYTES else "other"
+    except (core.OpsError, OSError):
+        return "other"
+    if size > ARTIFACT_MAX_BYTES or not _is_text(head, size <= HEAD_BYTES):
+        return "other"
+    return "markdown" if rel.lower().endswith(".md") else "text"
+
+
+def _what(head: bytes) -> str:
+    """A few words for a file's type, for the sentence that says the Desk cannot show it."""
+    for magic, words in OTHER_TYPES:
+        if head.startswith(magic):
+            return words
+    return "text" if _is_text(head, False) else "a binary file"
+
+
+def artifact_raw(project: str, path: str) -> dict:
+    """The bytes of one image of the project under docs/, read-only: {"path", "media_type", "size", "modified_at",
+    "data"}. The path rules are _artifact_file's. The type comes from the file's bytes, never its name: png, jpeg, webp
+    (the magic number) or svg (XML text whose root is `svg`, with no script element and no event-handler attribute),
+    at most IMAGE_MAX_BYTES. Refused (code 2) for a file of another type, with the sentence the page shows ("<path> is
+    <what>, <size> bytes: the Desk shows text, Markdown and images"), for a file over the size, and for an SVG that
+    does not pass. The local service answers them with the media type, `Cache-Control: no-store`, `nosniff`, the page's
+    policy and `Content-Disposition: inline`; they are never put in a page as markup."""
+    ctx = core.context(project)
+    rel, here, looked = _artifact_file(ctx, path)
+    if looked.st_size > IMAGE_MAX_BYTES:
+        raise core.OpsError(f"{rel} is {looked.st_size} bytes: over the {IMAGE_MAX_BYTES} the Desk shows as an image", 2)
+    with _open_regular(here, rel) as f:
+        found = os.fstat(f.fileno())
+        data = f.read(IMAGE_MAX_BYTES + 1)
+    if len(data) > IMAGE_MAX_BYTES:
+        raise core.OpsError(f"{rel} is over the {IMAGE_MAX_BYTES} bytes the Desk shows as an image", 2)
+    media = _image_type(data[:HEAD_BYTES], lambda: data)
+    if media is None:
+        what = _what(data[:HEAD_BYTES])
+        if what == "text":
+            raise core.OpsError(f"{rel} is text, {len(data)} bytes, not an image: it opens as text", 2)
+        raise core.OpsError(f"{rel} is {what}, {len(data)} bytes: the Desk shows text, Markdown and images", 2)
+    return {"path": rel, "media_type": media, "size": len(data), "modified_at": _utc(found.st_mtime), "data": data}

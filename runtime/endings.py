@@ -178,6 +178,30 @@ def _names_missing_input(lines: list, skill: str, skills, phrases=()) -> bool:
     return False
 
 
+SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
+MISSING_LINE_MAX = 400
+
+
+def missing_input_line(response: str, facts) -> str:
+    """The first line of the reply that names the missing input and the skill that writes it (the line
+    _names_missing_input reads for the ending `blocked`), without its heading and emphasis marks, on one line and cut
+    at a sentence end to at most MISSING_LINE_MAX characters; "" when no line does. It is the note of a blocked task,
+    so that the person sees what unblocks it beside Retry."""
+    skill, others = (facts or {}).get("skill") or "", (facts or {}).get("skills")
+    for line in _lines(response):
+        if _names_missing_input([line], skill, others, _phrases(facts, "missing_input")):
+            text = " ".join(line.lstrip(LEADING).replace("**", "").split())
+            if len(text) <= MISSING_LINE_MAX:
+                return text
+            kept = ""
+            for sentence in SENTENCE_END.split(text):
+                if len(kept) + len(sentence) + 1 > MISSING_LINE_MAX:
+                    break
+                kept = f"{kept} {sentence}".strip()
+            return kept or text[:MISSING_LINE_MAX]
+    return ""
+
+
 def classify(response: str, changes: dict, outputs_written, outputs_missing, output_texts, *, facts=None) -> tuple:
     """(ending, why) of a completed run.
 

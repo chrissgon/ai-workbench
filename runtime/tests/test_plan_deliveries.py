@@ -196,7 +196,8 @@ def test_an_item_the_router_did_not_route_reaches_the_person_with_the_whole_repl
     none = routed(tree, TWO)
     asked = ops.pending(path, none["pending_id"])
     assert (none["kind"], asked["kind"], asked["title"]) == ("question", "question", "No delivery was routed")
-    assert asked["body"].count(PROSE.rstrip("\n")) == 2
+    assert asked["body"] == f"The planning agent did not name a flow or a skill for request {none['request']}"
+    assert asked["payload"]["raw"].count(PROSE.rstrip("\n")) == 2 and asked["payload"]["actions"] == ["choose-flow", "cancel"]
 
 
 def test_a_skill_outside_every_enabled_agent_s_pack_is_never_planned(tree):

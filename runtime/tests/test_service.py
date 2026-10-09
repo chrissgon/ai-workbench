@@ -173,7 +173,7 @@ def path_of(world, route):
 
 
 OP_ROUTES = [r for r in service.ROUTES if r["op"] and not r["upload"]]
-VIEW_READS = ("agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact", "version")  # the reads of the views
+VIEW_READS = ("agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact", "artifact-raw", "version")  # the reads of the views
 READ_OPS = ("status", "pending", "flows", "task", "progress") + VIEW_READS
 
 
@@ -462,6 +462,12 @@ def test_every_route_calls_exactly_one_operation_and_returns_what_it_returned(wo
     if row.get("channel_arg"):
         expected = {**expected, "channel": "page"}
     path = path_of(world, route)
+    if route["raw"]:  # the bytes of a file, with the media type the operation names
+        world.fake.answers[row["call"]] = {"media_type": "image/png", "data": b"\x89PNG\r\n\x1a\nbytes"}
+        status, headers, body = call(world, "GET", path + "?path=docs/x.png")
+        assert (status, body, headers["Content-Type"]) == (200, b"\x89PNG\r\n\x1a\nbytes", "image/png")
+        assert world.fake.calls == [(row["call"], world.projects[0]["path"], {"path": "docs/x.png"})]
+        return
     if route["method"] == "GET":
         path += "?" + "&".join(f"{k}={v}" for k, v in given.items()) if given else ""
         status, _, body = call(world, "GET", path)
@@ -518,7 +524,7 @@ def test_a_route_is_a_job_exactly_when_its_table_row_says_so(world):
         if row["model"] is not False:
             assert row.get("job") is True, row["name"]
     assert {r["name"] for r in operations.OPERATIONS if r.get("job")} == \
-        {"route", "release", "approve", "run-next", "sync", "contained-run", "dispatch", "handler", "say"}
+        {"route", "route-queued", "release", "approve", "run-next", "sync", "contained-run", "dispatch", "handler", "say"}
 
 
 def test_a_refused_operation_becomes_its_documented_status(world):
@@ -570,16 +576,22 @@ def test_a_route_that_calls_a_model_returns_a_job_and_the_job_ends_with_the_oper
     wait_job(world, second["job"])
 
 
-def test_a_second_turn_while_a_job_that_calls_a_model_runs_is_refused_by_the_service(world):
+def test_a_second_turn_while_a_job_that_calls_a_model_runs_is_not_refused_the_operation_queues_it(world):
+    """A-23: `say` and `route` queue their call while a run is in progress (their rows say `queues`), so the service
+    starts the second one without the model slot and the operation itself finds the run lock held; every other job that
+    calls a model is still refused (busy) while the slot is held."""
     gate = threading.Event()
     world.fake.answers["say"] = lambda project, text, channel=None: gate.wait(WAIT) and {"reply": "ok"}
     first = call(world, "POST", api(world, "/conversation"), {"text": "one"})
     assert first[0] == 202
-    status, _, body = call(world, "POST", api(world, "/conversation"), {"text": "two"})
-    assert (status, body["error"]) == (409, "busy") and f"job {first[2]['job']}" in body["message"]
-    assert call(world, "POST", api(world, "/requests/7/route"), {})[0] == 409     # another job that calls a model
-    assert call(world, "POST", api(world, "/dispatch"), {})[0] == 409
-    assert len(world.fake.named("say")) == 1 and world.fake.named("route") == []   # the second turn stored nothing
+    status, _, second = call(world, "POST", api(world, "/conversation"), {"text": "two"})
+    assert status == 202 and second["job"] != first[2]["job"]                     # not 409 busy
+    assert call(world, "POST", api(world, "/requests/7/route"), {})[0] == 202    # a request to route is queued the same way
+    assert call(world, "POST", api(world, "/dispatch"), {})[0] == 409            # a job that does not queue is refused
+    deadline = time.monotonic() + WAIT
+    while (len(world.fake.named("say")) < 2 or not world.fake.named("route")) and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert len(world.fake.named("say")) == 2 and len(world.fake.named("route")) == 1
     assert call(world, "POST", api(world, "/pending/7/approve"), {"sha256": "a" * 64})[0] == 202  # not a model: it runs
     assert call(world, "POST", api(world, "/conversation", 1), {"text": "other project"})[0] == 202  # another project
     gate.set()
@@ -618,6 +630,35 @@ def test_the_dispatch_loop_calls_the_dispatcher_for_each_project_and_survives_an
     assert set(paths) == {p["path"] for p in world.projects} and paths.count(paths[0]) >= 2
     assert [x for x in world.lines if "failed" in x] == [f"dispatch of {world.projects[0]['id']}: RuntimeError: the round failed"]
     assert not world.svc.exclusive                                                  # the model slot is given back
+
+
+def test_the_queue_loop_calls_route_queued_for_each_project_holding_the_model_slot_and_skips_a_busy_one(world):
+    """A-23: the lines and requests that waited for the end of a run are routed by the loop, one call per project and
+    round, with the model slot held during the call; a project with a job running is skipped."""
+    held, slots = threading.Event(), []
+
+    def route_queued(project):
+        slots.append(dict(world.svc.exclusive))
+        if len(slots) >= 4:
+            held.set()
+        return {"routed": None, "queued": 0}
+
+    world.fake.answers["route_queued"] = route_queued
+    gate = threading.Event()
+    world.fake.answers["say"] = lambda project, text, channel=None: gate.wait(WAIT) and {"reply": "ok"}
+    job = call(world, "POST", api(world, "/conversation", 1), {"text": "busy"})[2]          # the second project has a job
+    stop = threading.Event()
+    runner = threading.Thread(target=service.dispatch_loop, args=(world.svc, 0.01, stop, "route_queued"))
+    runner.start()
+    assert held.wait(WAIT)
+    stop.set()
+    runner.join(WAIT)
+    assert {c[1] for c in world.fake.named("route_queued")} == {world.projects[0]["path"]}  # not the project with a job
+    first = world.projects[0]["id"]
+    assert all(s.get(first) == "the route_queued loop" for s in slots) and not world.svc.exclusive.get(first)
+    gate.set()
+    wait_job(world, job["job"])
+    assert service.QUEUE_EVERY == 5.0 and service.MODEL_LOOPS == ("dispatch", "route_queued")
 
 
 def test_the_dispatch_loop_skips_a_project_that_has_a_job_running_and_the_poll_loop_calls_poll(world):

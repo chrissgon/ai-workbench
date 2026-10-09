@@ -150,7 +150,7 @@ stateDiagram-v2
 
 **Request.** A task with no parent and no skill, in the person's words. With a flow named it is planned at once; without, it stays `requested` until its route becomes an approved plan. A request written on the task board waits in an `acceptance` first. The limits of a plan are constants of `runtime/plan.py`: a request lists at most `MAX_DELIVERIES` (8) deliveries, each costing one run of the router; a plan allows `SUBTASKS_PER_PLAN` (20) sub-tasks from the product backlog, whose task reads run `BACKLOG_JOBS` (8) at a time; and a request's title is at most `TITLE_CHARS` (120) characters.
 
-**The conversation.** One per project (`ops.CONVERSATION`, "project"), kept in `conversation_messages`. A plain line or `/new` is routed with a bounded memory in front of it: the newest `MEMORY_TURNS` (6) plain lines and router replies after the last request that reached `planned`, `done` or `cancelled`, each cut to `MEMORY_CUT` (600) characters and the whole cut to `MEMORY_CHARS` (4,000) by dropping the oldest (`ops.chat_memory`, a workaround marked `T23` that leaves with the next change of reference model).
+**The conversation.** One per project (`ops.CONVERSATION`, "project"), kept in `conversation_messages`. A plain line or `/new` is routed with a bounded memory in front of it: the newest `MEMORY_TURNS` (6) plain lines and router replies after the last request that reached `planned`, `done` or `cancelled`, each cut to `MEMORY_CUT` (600) characters and the whole cut to `MEMORY_CHARS` (4,000) by dropping the oldest (`ops.chat_memory`, a workaround marked `T23` that leaves with the next change of reference model). A line typed while another run holds the project's run lock is queued, not refused: it is stored with its reply pending, held in one cursor of the store (`conversation:queue`) and answered by `route_queued`, which the service calls every five seconds; a request to route made then is queued the same way, and `route` with a flow takes no lock. A short plain line that is one of a closed list of forms ("status", "como estamos", "o que falta") is answered by code from `status` and `progress`, never by the router; a router reply of the shape `direct` is answered the same way and cancels the request it came from; a reply that names no route opens a question with one sentence and the reply whole in its payload (`contracts/runtime.md`, "The conversation").
 
 **Run and attempt.** A run is one row of `task_runs`: one skill, once, in a new copy. Inside it, the lab's one function (`evals/run_attempts.py`) makes attempts: it pauses on the account limit without counting a failure, retries a timeout, an adapter failure, a refusal or an early end, and never retries a refused credential. A failed run has a failure kind from a closed list: `timeout`, `refused`, `auth`, `adapter`, `early_end`, `settings`, `stopped`, `internal`.
 
@@ -239,7 +239,7 @@ Each invariant with its guard. A test is in `runtime/tests/` unless its path is 
 |---|---|---|---|
 | L1 | Every run starts from a new copy, with the skills installed again from the fixed checkout | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_01_every_run_starts_from_a_new_copy_with_the_skill_staged_again` |
 | L2 | What enters: versioned files, the project's documents, the machine files the skills use, and what the person handed over through the file drop. No other file outside git. The store and the runtime's configuration never | stage 2 (the file drop: stage 3) | `runtime/tests/test_run_limits.py`, `test_limit_02_only_versioned_files_documents_and_declared_machine_files_enter_and_never_the_store_or_the_configuration` |
-| L3 | A task with the web receives only the artifacts its skill declares | stage 2 (strict form: no allowance for web and code together) | `runtime/tests/test_run_limits.py`, `test_limit_03_a_run_with_the_web_receives_only_the_artifacts_its_skill_declares` |
+| L3 | A task with the web receives only the artifacts its skill declares, and the files the person handed it (the file drop: the file is the person's own choice, and the answer to the hand-over says it will be visible to a run with the open network) | stage 2 (strict form: no allowance for web and code together) | `runtime/tests/test_run_limits.py`, `test_limit_03_a_run_with_the_web_receives_only_the_artifacts_its_skill_declares` |
 | L4 | A tool's configuration files are removed at any depth | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_04_a_tools_configuration_files_are_removed_at_any_depth` |
 | L5 | The project's `AGENTS.md` enters when the skill declares it | stage 2 | `runtime/tests/test_run_limits.py`, `test_limit_05_agents_md_enters_only_when_the_skill_declares_it_and_without_the_two_lines_the_container_cannot_serve` |
 | L6 | No credential enters the container | stage 2 (first form in stage 1) | `runtime/tests/test_run_limits.py`, `test_limit_06_no_credential_enters_the_container` |
@@ -349,6 +349,7 @@ The limit's text and the stage that built it come from the contract's table; the
 |---|---|---|
 | `request` | `--text \| --text-file` `[--flow]` `[--title]` | `request` |
 | `route` | `--request` `[--flow]` | `route` |
+| `route-queued` | - | `route_queued` |
 | `status` | - | `status` |
 | `task` | `--task` | `task` |
 | `flows` | - | `flows` |
@@ -418,7 +419,8 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 | Operation | Verb of `cli.py` | Channels | Calls a model | What it does |
 |---|---|---|---|---|
 | `request` | `request` | terminal, page, mcp | no | record what you want; with a flow, plan it from the flow file, else it waits for its route |
-| `route` | `route` | terminal, page, mcp | yes, without --flow | plan a request that waits for its route: one run of the router skill, or the plan of a flow file |
+| `route` | `route` | terminal, page, mcp | yes, without --flow | plan a request that waits for its route: one run of the router skill, or the plan of a flow file; while a run is in progress the request is queued |
+| `route_queued` | `route-queued` | terminal | yes | route the oldest queued line or request, when no run is in progress (the local service calls it every few seconds) |
 | `status` | `status` | terminal, chat, page, mcp | no | requests, tasks and what waits for you |
 | `task` | `task` | terminal, page, mcp | no | one task or request with its runs and its pending decisions |
 | `flows` | `flows` | terminal, page, mcp | no | the flow files of this checkout, with their titles and how many tasks each holds |
@@ -448,7 +450,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 | `poll` | `poll` | terminal | no | the short job: mirrors, expired approvals, the state file's generated lines, the releases |
 | `handler_call` | `handler` | terminal | no | start one verb of a handler that runtime.json names |
 | `pin` | `pin` | terminal | no | write the pin of the dispatcher's two jobs |
-| `say` | `say` | terminal, page, mcp | yes, for a new request | one turn of the conversation with the planning agent |
+| `say` | `say` | terminal, page, mcp | yes, for a new request | one turn of the conversation with the planning agent; while a run is in progress a line that needs the planner is queued, a question about the state is answered at once |
 | `agents` | `agents` | terminal, page, mcp | no | each area agent: its mode, its caps, what it used today and how many tasks wait for it |
 | `conversation` | `conversation` | terminal, page, mcp | no | the messages of the project's conversation above a message id, oldest first |
 | `skills` | `skills` | terminal, page, mcp | no | the skills in scope with their proof on each model, their runs here and the two checks of the proof |
@@ -456,6 +458,7 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 | `connections` | `connections` | terminal, page, mcp | no | which provider each requirement class resolves to, which secrets are found (never a value), the image |
 | `artifacts` | `artifacts` | terminal, page, mcp | no | the project's files under docs/ with their owner skill, size and time |
 | `artifact` | `artifact` | terminal, page, mcp | no | the text of one file under docs/ of the project, read-only |
+| `artifact_raw` | `artifact-raw` | page | no | the bytes of one image under docs/ of the project (png, jpeg, webp or svg, by its magic number), read-only; the service answers them with their media type |
 | `version` | `version` | page, mcp | no | the change signal of the project's store: a number that grows on every write, and when the file was last written |
 | `stop_runs` | `stop-runs` | terminal | no | end the runs this process started (the local service calls it before it exits) |
 | `service_check` | `service-check` | terminal | no | what the local service checks at its start: the secret store, the credential, docker, the eval image and whether it dispatches (the service calls it for each project) |
@@ -514,3 +517,4 @@ The verbs that call a model: `route` (without `--flow`), `run-next`, `contained-
 - 2026-10-09: the unknown-effect-kind limit is corrected to a refusal at approval, the "contract lags" row is deleted because the lines of `contracts/runtime.md` it named were fixed in the same change, and rows are added for the social handlers' exemptions and review findings 10 and 11. The two known-limits rows for stage 3 findings 13 and 14 went because the findings are closed (#204, #205).
 - 2026-10-09: the effect kind paragraph follows the one registry (CONS-3): `effects.KINDS` holds `create` and `push`, keyed by the side-effect words, the policy path is generic over the kind module (`POLICY`, `policy_platform`, `policy_effect`, `policy_argv`) and `POLICY_CALLS` is gone; `EFFECT_KEYS` and `RESERVED_FLAGS` moved to `effects.py`.
 - 2026-10-09: the operations layer is four files (CONS-1B): the shared names are `runtime/ops_core.py`, read as attributes; the conversation is `runtime/ops_say.py` and the reads of the interface `runtime/ops_reads.py`; `ops.py` is the facade, under a size budget. The lock, key and conversation rows and the known-limit row on the size of `ops.py` follow.
+- 2026-10-09: the conversation queues a line or a request typed during a run and the service routes it when the run ends; a question about the state and a direct turn are answered by code; an unrecognised route is one sentence with two actions; the held rows carry their commands as fields; a web task takes a handed-over file; the Desk list carries each file's kind and the raw route answers an image's bytes (ADJ-R2).
