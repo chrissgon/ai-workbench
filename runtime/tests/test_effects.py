@@ -262,8 +262,9 @@ def test_rejecting_an_effect_cancels_the_task_and_sends_nothing(tree):
 
 
 def test_the_provider_is_found_by_its_class_never_by_a_path_built_here(tree):
-    text = "".join((st.REPO / "runtime" / name).read_text(encoding="utf-8")
-                    for name in ("effects.py", "effect_pull_request.py", "ops.py"))
+    # the operations layer is ops.py and its siblings ops_*.py (CONS-1B)
+    names = ["effects.py", "effect_pull_request.py", "ops.py", *sorted(p.name for p in (st.REPO / "runtime").glob("ops_*.py"))]
+    text = "".join((st.REPO / "runtime" / name).read_text(encoding="utf-8") for name in names)
     assert "vcs/github.py" not in text and '"vcs"' not in text
     assert effect_pull_request.PROVIDER_CLASS == "integration:vcs" and "resolve.resolve(cls, root=core.ROOT" in text
     case = gate_project(tree)
@@ -360,7 +361,8 @@ def test_a_word_with_no_kind_is_a_usage_error_naming_the_kinds(word):
 def test_the_shape_of_a_handed_over_document_and_the_operations_own_flags_live_in_the_registry_module():
     assert effects.EFFECT_KEYS == ("policy", "kind", "target", "files", "items", "idempotency_key", "payload_sha256", "args")
     assert effects.RESERVED_FLAGS == ("--confirmed", "--dry-run", "--allow", "--idempotency-key")
-    text = (st.REPO / "runtime" / "ops.py").read_text(encoding="utf-8")
+    text = "".join((st.REPO / "runtime" / name).read_text(encoding="utf-8")
+                   for name in ["ops.py", *sorted(p.name for p in (st.REPO / "runtime").glob("ops_*.py"))])
     assert not re.search(r"^(EFFECT_KEYS|RESERVED_FLAGS|[A-Z_]*_CALLS) =", text, re.M)  # no table of kinds beside the registry
     assert not [name for name in dir(ops) if name.endswith("_CALLS")]
 
