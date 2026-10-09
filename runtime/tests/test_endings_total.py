@@ -225,6 +225,19 @@ def replying(monkeypatch, response: str, *, nothing_changed: bool = False):
     return real
 
 
+def test_the_note_of_a_blocked_task_is_the_line_that_names_the_missing_input(tree, monkeypatch):
+    """A-31 item 4: the person sees what unblocks the task beside Retry, not the start of a long reply."""
+    path = str(tree["project"])
+    ops.request(path, "Tell me which market to go after first.", "demo")
+    replying(monkeypatch, "I looked at the project first and found the state file.\n\n**docs/business/brief.md** is missing and "
+                          "`demo-writes` writes it. Run it first.\n\nNothing else was read.")
+    out = ops.run_next(path)
+    assert out["ending"] == "blocked"
+    task = ops.status(path)["requests"][0]["tasks"][0]
+    assert task["note"] == "docs/business/brief.md is missing and `demo-writes` writes it. Run it first."
+    assert ops.task(path, task["id"])["task"]["note"] == task["note"]
+
+
 def test_a_run_that_stops_on_a_missing_input_blocks_the_task_and_retry_makes_it_ready(tree, monkeypatch):
     path = str(tree["project"])
     ops.request(path, "Tell me which market to go after first.", "demo")

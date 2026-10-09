@@ -126,8 +126,8 @@ Operations of stage 9 (the local service, runtime/service.py, is one more shell 
                                    service found at its start, null in any other process
   artifacts(project), artifact(project, path)   the project's files under docs/ with their owner skill, and the text
                                    of one of them, read-only
-  say                              refuses a turn that would route while another run of the project holds the run lock
-                                   before it stores anything
+  say, route                       while another run of the project holds the run lock a line, or a request to route, is
+                                   queued (runtime/ops_say.py) instead of refused; route_queued answers the oldest
 
 Code comes back as a change set (runtime/changeset.py, limits L9 and L11): a run of a code task (its skill is of a
 code area, code_task) whose copy holds versioned files starts only when the project's tracked files have no
@@ -192,6 +192,8 @@ import traceback
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import ops_core as core  # noqa: E402  (the shared names: read as core.<name>, never bound at import)
+import ops_reads  # noqa: E402  (the reads of the interface; this file re-exports them at its end)
+import ops_say  # noqa: E402  (the conversation and its queue; this file re-exports `say` at its end)
 import autonomy  # noqa: E402  (the same folder, as scripts/runtime.py imports runtime_vote)
 import board  # noqa: E402
 import changeset  # noqa: E402
@@ -573,8 +575,10 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
                   image_digest=result["image_digest"], run_dir=dest, redactions=_count(counts.get("redactions")))
     if ending == "blocked":
         # The skill stopped on a missing input that another skill writes: the task is blocked, with no pending
-        # decision; the note is the start of the masked reply, and `retry` makes the task ready again.
-        done = core._stored(ctx, store.task_run_finish, run_id, task_state="blocked", task_note=_note(body), **finish)
+        # decision; the note is the first sentence of the masked reply that names the missing input (else its start),
+        # and `retry` makes the task ready again.
+        sentence = endings.missing_input_line(body, manifest.ending_facts(core.ROOT, skill))
+        done = core._stored(ctx, store.task_run_finish, run_id, task_state="blocked", task_note=_note(sentence or body), **finish)
         out.update(status="ok", ending=ending, task_state="blocked", pending_id=None, returned=returned, kept=kept)
         return out
     mandatory = ending == "done" and bool(known.get("mandatory_milestone"))
@@ -1528,14 +1532,16 @@ def config(project: str) -> dict:
 
 
 def task(project: str, task_id: int) -> dict:
-    """One task or request with what is known of it: {"task": the store's row, "runs": its runs oldest first,
+    """One task or request with what is known of it: {"task": the store's row, "drop": what a file handed to it
+    needs to know (ops_reads.drop_note: whether its skill uses the web, the line to show), None for a request,
+    "runs": its runs oldest first,
     "pending": its pending decisions of every status, oldest first, each with "agent" (the task's own) and
     "actions"}. For a request the runs are the router's and the decisions its plan's or its question's; for a task of
     a plan, its own."""
     ctx = core.context(project)
     store = ctx["store"]
     found = core._stored(ctx, store.task_get, task_id)
-    return {"task": found, "runs": core._stored(ctx, store.task_runs_list, task_id),
+    return {"task": found, "drop": ops_reads.drop_note(found), "runs": core._stored(ctx, store.task_runs_list, task_id),
             "pending": [{**item, "agent": found["agent"] if found["parent_id"] is not None else None,
                          "actions": _actions(store, item)}
                         for item in core._stored(ctx, store.pending_list, "all", task_id)]}
@@ -1599,35 +1605,60 @@ def _plan_pending(ctx: dict, request: dict, tasks: list, route_read, source: str
     return {"kind": "plan", **built}
 
 
-def route(project: str, request_id: int, flow: str | None = None) -> dict:
+def route(project: str, request_id: int, flow: str | None = None, channel: str | None = None) -> dict:
     """Plan a request that waits for its route. With flow, the flow the person names: its plan is opened at once,
-    with no run (an open question of the router is cancelled). Without, one run of the router skill
-    (router.ROUTER_SKILL), as it is, asked only for the route: the reply's route line is checked against the flow
-    files and the pack in scope, and a valid route becomes a plan; a reply that asks becomes a question; anything
-    else reaches the person whole. Nothing the router's run left comes back. No task is created before the person
-    approves the plan (approve()). Returns {"routed": true or false, "pending_id", "source", ...}."""
+    with no run and no run lock (it only opens a plan; an open question of the router is cancelled). Without, one run
+    of the router skill (router.ROUTER_SKILL), as it is, asked only for the route: the reply's route line is checked
+    against the flow files and the pack in scope, and a valid route becomes a plan; a reply that asks becomes a
+    question; a direct turn (route none, shape direct) opens nothing and returns kind "direct" with the router's
+    "next"; anything else opens a question with a sentence and the reply whole in its payload. While another run of
+    the project holds the run lock the request is queued, not refused, when `channel` is one that drains the queue
+    (ops_say.QUEUING_CHANNELS, the local service): {"routed": false, "queued": true}, routed by route_queued when the
+    lock is free; any other channel is refused (RunBusy) as it always was. Nothing the router's run left comes back. No task is created before the
+    person approves the plan (approve()). Returns {"routed": true or false, "pending_id", "source", ...}."""
     ctx = core.context(project)
+    if flow is None:
+        try:
+            if channel in ops_say.QUEUING_CHANNELS and ops_say.waiting(ctx):  # first in, first out
+                raise core.RunBusy("older lines or requests wait for the planning agent", 1)
+            return _route_request(ctx, request_id)
+        except core.RunBusy:
+            if channel not in ops_say.QUEUING_CHANNELS + (ops_say.DRAIN,):
+                raise
+            _routable(ctx, request_id)
+            return ops_say.queue_route(ctx, request_id)
+    _routable(ctx, request_id)
+    try:
+        loaded = flow_files.load(flow, core.ROOT)
+        tasks = _with_agents(ctx["cfg"], plan.from_flow(loaded, core.ROOT, plan.pack_skills(ctx["cfg"], core.ROOT)))
+        decision = _plan_pending(ctx, core._stored(ctx, ctx["store"].task_get, request_id), tasks, None, "named", loaded["flow"])
+    except flow_files.FlowError as e:
+        raise core.OpsError(str(e), 2) from None
+    except (plan.PlanError, lab.LabError, ValueError) as e:
+        raise core.OpsError(f"no plan can be built: {e}", 1) from None
+    opened = core._stored(ctx, ctx["store"].plan_open, request_id, title=decision["title"], body=decision["body"],
+                          payload=decision["payload"])
+    return {"routed": True, "pending_id": opened["pending_id"], "source": "named", "flow": loaded["flow"],
+            "cancelled": opened["cancelled"], "recovered": []}
+
+
+def _routable(ctx: dict, request_id: int) -> dict:
+    """The request's row, refused when it is a task or does not wait for its route."""
+    request = core._stored(ctx, ctx["store"].task_get, request_id)
+    if request["parent_id"] is not None:
+        raise core.OpsError(f"task {request_id} is not a request: route the request it belongs to", 1)
+    if request["state"] != "requested":
+        raise core.OpsError(f"request {request_id} is {request['state']}: only a request that waits for its route is routed", 1)
+    return request
+
+
+def _route_request(ctx: dict, request_id: int) -> dict:
+    """The router's run on a request, holding the run lock (RunBusy when another run holds it): the body of route()
+    without a flow, and what route_queued calls."""
     store = ctx["store"]
     with core._run_lock(ctx["cfg"]):
         recovered = core._stored(ctx, store.task_fail_running, "the run was interrupted before it ended; retry the task")
-        request = core._stored(ctx, store.task_get, request_id)
-        if request["parent_id"] is not None:
-            raise core.OpsError(f"task {request_id} is not a request: route the request it belongs to", 1)
-        if request["state"] != "requested":
-            raise core.OpsError(f"request {request_id} is {request['state']}: only a request that waits for its route is routed", 1)
-        if flow is not None:
-            try:
-                loaded = flow_files.load(flow, core.ROOT)
-                tasks = _with_agents(ctx["cfg"], plan.from_flow(loaded, core.ROOT, plan.pack_skills(ctx["cfg"], core.ROOT)))
-                decision = _plan_pending(ctx, request, tasks, None, "named", loaded["flow"])
-            except flow_files.FlowError as e:
-                raise core.OpsError(str(e), 2) from None
-            except (plan.PlanError, lab.LabError, ValueError) as e:
-                raise core.OpsError(f"no plan can be built: {e}", 1) from None
-            opened = core._stored(ctx, store.plan_open, request_id, title=decision["title"], body=decision["body"],
-                             payload=decision["payload"])
-            return {"routed": True, "pending_id": opened["pending_id"], "source": "named", "flow": loaded["flow"],
-                    "cancelled": opened["cancelled"], "recovered": recovered["tasks"]}
+        request = _routable(ctx, request_id)
         try:
             parts = plan.split(request["text"])
         except ValueError as e:
@@ -1763,6 +1794,10 @@ def _route_run(ctx: dict, request: dict) -> dict:
             done = core._stored(ctx, store.route_run_finish, out["run_id"], ending="done", pending=decision, **finish)
             out.update(status="ok", ending="done", routed=True, kind="plan", pending_id=done["pending_id"])
             return out
+    if read["kind"] == "direct":  # a direct turn: nothing to plan and nothing to ask; the conversation answers it
+        core._stored(ctx, store.route_run_finish, out["run_id"], ending="done", **finish)
+        out.update(status="ok", ending="done", routed=False, kind="direct", next=read["next"])
+        return out
     if read["kind"] == "question":
         decision = {"kind": "question", "title": "The router asks", "body": body,
                     "payload": {"ending": "question", **common}}
@@ -1776,11 +1811,12 @@ def _route_run(ctx: dict, request: dict) -> dict:
 
 
 def _not_recognised(store, request: dict, body: str, why, common: dict) -> dict:
-    note = (f"\n\nName the flow with: route --request {request['id']} --flow <name>; or answer, and the router "
-            f"runs again.")
+    """The question of a reply that names no route: its body is one sentence, and the reply whole is in the payload
+    (`raw`) with the two actions the page offers (`actions`: choose a flow, cancel the request)."""
+    raw = body.encode("utf-8")[:ops_say.RAW_MAX].decode("utf-8", errors="ignore")
     return {"kind": "question", "title": "The route was not recognised",
-            "body": body.encode("utf-8")[:store.BODY_MAX - len(note.encode("utf-8"))].decode("utf-8", errors="ignore") + note,
-            "payload": {"ending": "unclassified", "why": why, **common}}
+            "body": ops_say.NOT_NAMED.format(request=request["id"]),
+            "payload": {"ending": "unclassified", "why": why, "raw": raw, "actions": list(ops_say.NOT_NAMED_ACTIONS), **common}}
 
 
 def _item_text(preamble: str, item: str) -> str:
@@ -2379,10 +2415,11 @@ def _record_held(ctx: dict, held: list, missing=()) -> None:
 
 
 def _held_listed(ctx: dict, rows: list) -> list:
-    """The held tasks `status` and `agents` show: [{"task_id", "agent", "reason", "at", "next"}] for the ready tasks
+    """The held tasks `status` and `agents` show: [{"task_id", "agent", "reason", "at", "next", "commands"}] for the ready tasks
     among rows (the store's tasks). While the local service dispatches nothing, every ready task is held with `dispatch
-    off`; otherwise the last round's record, kept only for tasks still ready. `next` is the command that gets past the
-    reason, or None."""
+    off`; otherwise the last round's record, kept only for tasks still ready. `next` is the sentence that gets past the
+    reason, or None; `commands` is the same as fields, [{"name", "command"}], for the two reasons a command gets past
+    (ops_reads.held_commands), else []."""
     ready = [t for t in rows if t["state"] == "ready" and t["parent_id"] is not None]
     if not ready:
         return []
@@ -2390,7 +2427,7 @@ def _held_listed(ctx: dict, rows: list) -> list:
     service = SERVICE.get(os.path.realpath(project))
     if service is not None and service["dispatch"] == "off":
         return [{"task_id": t["id"], "agent": t.get("agent"), "reason": dispatcher.DISPATCH_OFF, "at": service["at"],
-                 "next": core._command("run-next", project, uv=True)} for t in ready]
+                 "next": core._command("run-next", project, uv=True), "commands": []} for t in ready]
     try:
         record = json.loads(core._stored(ctx, ctx["store"].cursor_get, HELD_CURSOR) or "null")
     except ValueError:
@@ -2401,7 +2438,8 @@ def _held_listed(ctx: dict, rows: list) -> list:
     out = []
     for h in record.get("held") or []:
         if h.get("task_id") in ids:
-            out.append({**h, "at": record.get("at"), "next": _held_next(project, h["reason"], record.get("missing"))})
+            out.append({**h, "at": record.get("at"), "next": _held_next(project, h["reason"], record.get("missing")),
+                        "commands": ops_reads.held_commands(project, h["reason"], record.get("missing"))})
     return out
 
 
@@ -2415,16 +2453,9 @@ def _held_next(project: str, reason: str, missing=None):
     if reason == "secret store":
         return operations.service_line(core.ROOT, [project], uv=True)
     if reason == "credential":
-        names = list(missing or [])
-        if not names:
-            try:
-                names = list(lab.reference("strong")["pass_env"])
-            except lab.LabError:
-                names = []
-        users = lab.credential_usernames(names) if names else {}
-        store = f"uv run --with {operations.KEYRING_PIN} keyring set openhora "
-        steps = "; ".join(f"{n}: {store}{users[n]}" if n in users else
-                          f"{n}: {store}<username> (the username is in the table of contracts/secrets.md)" for n in names) \
+        steps = "; ".join(f"{c['name']}: {c['command']}" if c["command"] else
+                          f"{c['name']}: {operations.keyring_line('<username>')} (the username is in the table of contracts/secrets.md)"
+                          for c in ops_reads.held_commands(project, reason, missing)) \
             or "the reference model's credential: see the table of contracts/secrets.md"
         return (f"The credential is in neither the environment nor the secret store. Store it once, the value typed at a "
                 f"hidden prompt, or export it in the shell that starts the service. {steps}.")
@@ -2663,10 +2694,10 @@ def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms
 OpsError = core.OpsError  # a shell catches ops.OpsError; the class has one home, runtime/ops_core.py
 
 # The conversation (runtime/ops_say.py): the two operations, and the constants the shells and the tests read.
-from ops_say import chat_memory, say  # noqa: E402,F401
+from ops_say import chat_memory, route_queued, say  # noqa: E402,F401
 from ops_say import ASK_NEXT, CONVERSATION, MEMORY_CHARS, MEMORY_CUT, MEMORY_HEAD, MEMORY_TAIL, MEMORY_TURNS, PLAN_NEXT  # noqa: E402,F401
 # The reads of the local interface (runtime/ops_reads.py): the operations, and the one constant a test reads.
-from ops_reads import agents, artifact, artifacts, connections, conversation, costs, service_check, skills  # noqa: E402,F401
+from ops_reads import agents, artifact, artifact_raw, artifacts, connections, conversation, costs, service_check, skills  # noqa: E402,F401
 from ops_reads import stop_runs, version  # noqa: E402,F401
 from ops_reads import ARTIFACT_MAX_BYTES  # noqa: E402,F401
 

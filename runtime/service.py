@@ -60,10 +60,11 @@ The rules of a request, in this order, each a refusal unless the request satisfi
   8. A route whose operation's row has job true (it calls a model or a platform) returns 202 and a job,
      {"job": <n>, "op", "project", "state": "running", "result": null, "error": null, "started_at", "ended_at": null};
      GET /api/v1/jobs/<n> returns it again, "state" "done" or "failed" at the end. A job whose operation calls a model is
-     refused with 409 "busy" while another such job of the project (or the dispatch loop) runs: a second conversation
-     turn waits for the first. Jobs live in memory; the records are in the store.
+     refused with 409 "busy" while another such job of the project (or the dispatch or queue loop) runs, except a row
+     with `queues` (say, route): it starts anyway, and the operation itself queues its call while a run holds the
+     project. Jobs live in memory; the records are in the store.
   9. Every response: Cache-Control no-store and X-Content-Type-Options nosniff; a page also a Content-Security-Policy of
-     "default-src 'self'; frame-ancestors 'none'" and Referrer-Policy no-referrer.
+     "default-src 'self'; img-src 'self' blob:; frame-ancestors 'none'" and Referrer-Policy no-referrer.
  10. A static path is served only when its real path is inside the interface folder, with a known extension, no
      dotfile and no listing. /favicon.ico (which browsers ask for by default) is answered with /favicon.svg.
  11. The log line is the method, the path (never the query), the status and the duration. Never a header, a body or the
@@ -72,13 +73,19 @@ The rules of a request, in this order, each a refusal unless the request satisfi
 
 The reads of the interface are GET routes that carry no job: /projects/<id>/agents, /conversation?after=&conversation=,
 /skills, /costs?since=, /connections, /artifacts, /artifact?path= (the path is at most 512 bytes; the operation
-refuses anything outside docs/, a link and the configuration) and /version (the change signal of the project's store: a
+refuses anything outside docs/, a hidden file, a link and the configuration), /artifact/raw?path= (the one route that
+answers bytes: an image of the project, by its magic number, at most 25 MiB, with its media type, the page's policy
+and Content-Disposition inline; its row lists the page channel only) and /version (the change signal of the project's store: a
 number that grows on every write). Each takes the query keys it names and no other. The service's own GET /versions answers
 the /version of every project in one request, so that a page that shows several asks once a second whatever their number.
 
+A line of the conversation, or a request to route, that the page sends while a run holds the project is queued by the operation
+(runtime/ops_say.py), not refused; a third loop, `route_queued`, runs every QUEUE_EVERY seconds (not task dispatch, so
+--no-dispatch leaves it on) and answers or routes the oldest entry when no run is in progress.
+
 Not exposed, on purpose: accept-config (a configuration hash is accepted in the terminal only, so a page can never accept
 the change that widens what an agent may do), run-next (the dispatcher decides what runs), deps, proof, the standing
-approvals, contained-run, poll, handler, pin and service-check (the service calls it itself, at its start). An effect is
+approvals, contained-run, poll, route-queued, handler, pin and service-check (the service calls it itself, at its start). An effect is
 approved from here with the hash the page showed, as the channel "page" (the service passes it itself; a request cannot
 name a channel). The route of set-mode may narrow autonomy and never widen it: a move down the order of the modes
 (stopped < supervised < milestones < autonomous < autonomous-with-policy) is accepted by code at once, a move up leaves
@@ -117,6 +124,8 @@ from shell_kit import EXPOSED_KINDS, Busy, Stopping, project_id, status_of  # no
 
 HOST = "127.0.0.1"
 DISPATCH_EVERY = 30.0                     # seconds between two rounds of `dispatch` unless --dispatch-every or --no-dispatch says otherwise
+QUEUE_EVERY = 5.0                         # seconds between two looks of `route_queued` at the lines and requests that wait for the end of a run
+MODEL_LOOPS = ("dispatch", "route_queued")  # the loops that call a model: they hold the project's model slot while they run
 PREFIX = "/api/v1"
 JSON_LIMIT = 1024 * 1024                  # bytes of a request body
 FILE_LIMIT = 34 * 1024 * 1024             # the file route: the base64 of 25 MiB is about 33.4 MiB
@@ -128,7 +137,11 @@ PATH_LIMIT = 2048
 QUERY_VALUE_LIMIT = 512                   # bytes of one query value on a route that names a project file (artifact?path=)
 STATIC_LIMIT = 16 * 1024 * 1024
 ONCE = ("host", "origin", "authorization", "content-type", "content-length", "transfer-encoding")
-CSP = "default-src 'self'; frame-ancestors 'none'"
+# Three directives. `default-src 'self'` and `frame-ancestors 'none'` are the rule since the first page. `img-src 'self'
+# blob:` is there for one reason: the raw bytes of an image sit behind the bearer header, so the page fetches them itself
+# and shows them from a `blob:` URL it built; `blob:` can only name bytes the page made, nothing from another origin.
+# Never `data:`, and no other directive is widened.
+CSP = "default-src 'self'; img-src 'self' blob:; frame-ancestors 'none'"
 # What a static file is served as. An extension not here is not served (the rule fails closed).
 TYPES = {
     ".html": "text/html; charset=utf-8", ".css": "text/css; charset=utf-8", ".js": "text/javascript; charset=utf-8",
@@ -168,10 +181,11 @@ class Usage(Exception):
 # is not written here: it is the row's `job` key. A route with "own" is the service's own.
 
 
-def _route(method, pattern, op=None, *, bind=None, take=None, hidden=(), own=None, upload=False, query_max=None):
+def _route(method, pattern, op=None, *, bind=None, take=None, hidden=(), own=None, upload=False, query_max=None,
+           raw=False):
     return {"method": method, "pattern": pattern, "op": op, "bind": dict(bind or {}), "take": take,
             "hidden": tuple(hidden), "own": own, "upload": upload, "limit": FILE_LIMIT if upload else JSON_LIMIT,
-            "query_max": query_max}
+            "query_max": query_max, "raw": raw}
 
 
 ROUTES = (
@@ -200,6 +214,7 @@ ROUTES = (
     _route("GET", "/projects/{p}/connections", "connections", take=()),
     _route("GET", "/projects/{p}/artifacts", "artifacts", take=()),
     _route("GET", "/projects/{p}/artifact", "artifact", take=("path",), query_max=QUERY_VALUE_LIMIT),
+    _route("GET", "/projects/{p}/artifact/raw", "artifact-raw", take=("path",), query_max=QUERY_VALUE_LIMIT, raw=True),
     _route("GET", "/projects/{p}/version", "version", take=()),
     _route("GET", "/versions", own="versions"),
     _route("POST", "/projects/{p}/conversation", "say"),
@@ -434,9 +449,10 @@ class Service(shell_kit.Jobs):
 
 
 def dispatch_loop(service: Service, every: float, stop, op: str = "dispatch") -> None:
-    """Call the operation `op` (`dispatch`, or `poll` for the short job) for each project, every `every` seconds until
-    `stop` is set. A project that has a job running is skipped; for `dispatch` the project's model slot is held during
-    the call, so a job that calls a model waits. An error is logged (once, while it repeats) and the loop goes on."""
+    """Call the operation `op` (`dispatch`, `route_queued`, or `poll` for the short job) for each project, every `every`
+    seconds until `stop` is set. A project that has a job running is skipped; for `dispatch` and `route_queued` the
+    project's model slot is held during the call, so a job that calls a model waits (a job that queues does not).
+    An error is logged (once, while it repeats) and the loop goes on."""
     last = {}
     while not stop.wait(every):
         for project in service.projects:
@@ -444,7 +460,7 @@ def dispatch_loop(service: Service, every: float, stop, op: str = "dispatch") ->
                 return
             if service.running(project["id"]):
                 continue
-            if op == "dispatch":
+            if op in MODEL_LOOPS:
                 with service.lock:
                     if project["id"] in service.exclusive:
                         continue
@@ -458,7 +474,7 @@ def dispatch_loop(service: Service, every: float, stop, op: str = "dispatch") ->
                     service.log(text)
                 last[(op, project["id"])] = text
             finally:
-                if op == "dispatch":
+                if op in MODEL_LOOPS:
                     with service.lock:
                         service.exclusive.pop(project["id"], None)
 
@@ -535,9 +551,13 @@ def _operation(service: Service, route: dict, params: dict, query: str, body: by
     if row.get("channel_arg"):
         args["channel"] = "page"
     call = lambda: getattr(service.ops, row["call"])(project["path"], **args)  # noqa: E731
+    if route["raw"]:  # the bytes of a file, answered with the media type the operation names, never as a page
+        found = call()
+        return 200, {**_headers(found["media_type"]), "Content-Security-Policy": CSP, "Referrer-Policy": "no-referrer",
+                     "Content-Disposition": "inline"}, found["data"]
     if row.get("job"):
         try:
-            return _json(202, service.start_job(project["id"], row["name"], call)[2])
+            return _json(202, service.start_job(project["id"], row["name"], call, queues=bool(row.get("queues")))[2])
         except Busy as e:
             return _error(409, "busy", str(e))
         except Stopping:
@@ -768,7 +788,8 @@ def serve(projects, port=8765, poll_every=60.0, dispatch_every=DISPATCH_EVERY, t
             previous[sig] = signal.signal(sig, on_signal)
     serving = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.2}, daemon=True)
     threads = [serving]
-    for every, op in ((poll_every, "poll"), (dispatch_every, "dispatch")):
+    for every, op in ((poll_every, "poll"), (dispatch_every, "dispatch"),
+                      (QUEUE_EVERY if hasattr(ops_module, "route_queued") else 0, "route_queued")):
         if every:
             threads.append(threading.Thread(target=dispatch_loop, args=(service, float(every), stop, op), daemon=True))
     try:

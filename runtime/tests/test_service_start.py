@@ -70,10 +70,11 @@ def test_serve_starts_the_dispatch_loop_by_default_and_not_with_none(tmp_path, m
     project.mkdir()
     run = run_serve(fake, [str(project)], FakeServer)
     assert run.finish() == 0
-    assert loops == [("dispatch", 30.0)]
+    # the dispatch loop, and the loop that routes the lines and requests queued while a run held the project
+    assert loops == [("dispatch", 30.0), ("route_queued", service.QUEUE_EVERY)]
     loops.clear()
     run = run_serve(fake, [str(project)], FakeServer, dispatch_every=None)
-    assert run.finish() == 0 and loops == []
+    assert run.finish() == 0 and loops == [("route_queued", service.QUEUE_EVERY)]  # queued lines are routed without dispatch
 
 
 # --- A-9: the check at the start -------------------------------------------------------------------------------------

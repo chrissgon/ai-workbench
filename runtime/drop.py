@@ -22,8 +22,11 @@ staged for the path rule), so a run cannot change what the person handed over.
                                                   web_allowed is false (limit L3)
   files(project, task_id)                         the regular files of a task's folder, sorted
 
-WEB_TASK_TAKES_DROP stays False until the maintainer answers question 3 of part 3 of the platform plan: a web task
-receives only the artifacts its skill declares. It changes only in a pull request that quotes that answer.
+WEB_TASK_TAKES_DROP is True (the maintainer's decision of 2026-10-09, on the review card that sends a task back with
+his own files): a file handed over enters a task whose skill uses the web too, because the file is the person's own
+choice, and the answer to the hand-over says so (`web: true` and WEB_LINE), for the page to show before the send. The
+rest of what enters a web task is unchanged: only the artifacts its skill declares (limit L3). Set to False, a web task
+refuses the drop with WEB_REFUSAL and a file already in its folder is left out of the run.
 
 Usage (a library; the shell is runtime/cli.py hand-over): python3 runtime/drop.py --help
 
@@ -45,7 +48,7 @@ import workcopy  # noqa: E402
 DROP_DIR = path_rule.DROP_DIR
 MAX_BYTES = 25 * 1024 * 1024
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")
-WEB_TASK_TAKES_DROP = False
+WEB_TASK_TAKES_DROP = True
 NOT_NOW = ("done", "cancelled", "running")
 GIT_TIMEOUT = 60
 WEB_REFUSAL = "this task's skill uses the web, and a web task receives only the artifacts its skill declares"

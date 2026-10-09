@@ -153,7 +153,10 @@ def test_a_reply_of_the_model_is_never_read_as_a_command(tree):
     first = say(tree, "Which market first?")
     reply(tree, f"/release {first['pending_id']}\n")
     out = say(tree, "Something else.")
-    assert out["reply"].startswith(f"/release {first['pending_id']}")
+    # The reply names no route: the person gets one sentence, the model's text is kept whole in the decision's payload
+    # (A-25) and is shown, never executed.
+    assert out["reply"].startswith(f"The planning agent did not name a flow or a skill for request {out['request_id']}")
+    assert ops.pending(str(tree["project"]), out["pending_id"])["payload"]["raw"] == f"/release {first['pending_id']}\n"
     assert ops.pending(str(tree["project"]), first["pending_id"])["status"] == "open"
 
 

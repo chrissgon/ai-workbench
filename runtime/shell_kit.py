@@ -105,18 +105,22 @@ class Jobs:
         """A job as a shell shows it. The caller holds the lock when the job may still change."""
         return {key: job[key] for key in JOB_FIELDS}
 
-    def start_job(self, project: str, op: str, call) -> tuple:
+    def start_job(self, project: str, op: str, call, queues: bool = False) -> tuple:
         """Start an operation that calls a model or a platform in a thread and return (the job, its thread, its public
         form as it was before the thread started). `project` is the project's id, `op` the verb of its row, `call` a
         function with no argument that makes the one call. An operation whose row says it calls a model (`model` not
-        false) takes the project's model slot: Busy when another job or the dispatch loop holds it. Stopping when the
-        shell is shutting down."""
+        false) takes the project's model slot: Busy when another job or the dispatch loop holds it. With `queues` (the
+        row's key: the operation queues its call while a run is in progress) a held slot is not a refusal: the job
+        starts without the slot, and the operation itself finds the run lock held and queues the call. Stopping when
+        the shell is shutting down."""
         exclusive = bool(self.ops.operations.by_name(op)["model"])
         with self.lock:
             if self.stopping.is_set():
                 raise Stopping()
             if exclusive and project in self.exclusive:
-                raise Busy(f"{self.exclusive[project]} is running for this project: a second one starts when it ends")
+                if not queues:
+                    raise Busy(f"{self.exclusive[project]} is running for this project: a second one starts when it ends")
+                exclusive = False
             self.counter += 1
             job = {"job": self.counter, "op": op, "project": project, "state": "running", "result": None,
                    "error": None, "started_at": now(), "ended_at": None}
