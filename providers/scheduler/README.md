@@ -47,11 +47,11 @@ A command file for the agent runtime's tick:
 
 ```json
 {
-  "argv": ["/usr/bin/python3", "/abs/ai-workbench/scripts/runtime.py", "tick",
+  "argv": ["/usr/bin/python3", "/abs/openhora/scripts/runtime.py", "tick",
            "--project", "/abs/project", "--pin", "/abs/data/tick-pin.json"],
   "cwd": "/abs/project",
-  "snapshot": ["/abs/ai-workbench/scripts/runtime.py", "/abs/ai-workbench/scripts/runtime_vote.py",
-               "/abs/ai-workbench/scripts/redact.py", "/abs/ai-workbench/providers/resolve.py",
+  "snapshot": ["/abs/openhora/scripts/runtime.py", "/abs/openhora/scripts/runtime_vote.py",
+               "/abs/openhora/scripts/redact.py", "/abs/openhora/providers/resolve.py",
                "/abs/data/tick-pin.json"],
   "timeout_minutes": 30
 }
@@ -63,10 +63,10 @@ A command file for the task runtime's worker, as `/usr/bin/python3 runtime/dispa
 
 ```json
 {
-  "argv": ["/usr/bin/python3", "/abs/ai-workbench/runtime/dispatcher.py", "work",
+  "argv": ["/usr/bin/python3", "/abs/openhora/runtime/dispatcher.py", "work",
            "--project", "/abs/project", "--pin", "/abs/data/dispatch-pin.json"],
   "cwd": "/abs/project",
-  "snapshot": ["/abs/ai-workbench/runtime/dispatcher.py", "/abs/data/dispatch-pin.json"],
+  "snapshot": ["/abs/openhora/runtime/dispatcher.py", "/abs/data/dispatch-pin.json"],
   "timeout_minutes": 240
 }
 ```
@@ -93,7 +93,7 @@ Command file:
   "argv": ["uv", "run", "/abs/providers/publisher/linkedin.py", "publish", "--platform", "linkedin",
            "--text-file", "/abs/post.txt", "--media", "/abs/image.png",
            "--idempotency-key", "launch-post", "--confirmed"],
-  "cwd": "/abs/ai-workbench",
+  "cwd": "/abs/openhora",
   "snapshot": ["/abs/providers/publisher/linkedin.py", "/abs/providers/secrets/resolver.py",
                "/abs/post.txt", "/abs/image.png"],
   "grace_minutes": 120

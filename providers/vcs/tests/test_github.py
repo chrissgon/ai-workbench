@@ -298,7 +298,7 @@ def test_help_documents_verbs_env_and_permissions(env):
     assert proc.returncode == 0
     for word in ("alerts", "dismiss-alert", "resolve", "--check", "--dry-run", "--confirmed", "GITHUB_TOKEN",
                  "VCS_GITHUB_API_BASE", "VCS_GITHUB_LEDGER", "Dependabot alerts: Read-only",
-                 "Dependabot alerts: Read and write", "separate token", API_VERSION, "keyring set ai-workbench github"):
+                 "Dependabot alerts: Read and write", "separate token", API_VERSION, "keyring set openhora github"):
         assert word in proc.stdout, word
 
 

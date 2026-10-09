@@ -898,7 +898,7 @@ def finish(job: dict, status: str, **fields) -> int:
     job["finished_at"] = iso(now())
     write_job(job)
     summary = fields.get(ADDRESS_KEY) or fields.get("reason") or f"exit {fields.get('exit_code')}"
-    notify(f"ai-workbench: {job['id']} {status}", summary)
+    notify(f"openhora: {job['id']} {status}", summary)
     log(f"job {job['id']}: {status} ({summary})")
     unload(job)
     return EXIT_OK if status == "done" else EXIT_SERVICE
@@ -1153,7 +1153,7 @@ def run_recurring(job: dict) -> int:
     status = record["status"]
     summary = record.get("reason") or f"exit {record.get('exit_code')}"
     if status == "refused" or (status == "failed" and (previous or {}).get("status") != "failed"):
-        notify(f"ai-workbench: {job['id']} {status}", summary)
+        notify(f"openhora: {job['id']} {status}", summary)
     if status != "done":
         log(f"job {job['id']} firing: {status} ({summary})")
     if status == "refused":

@@ -351,7 +351,7 @@ def test_notifications_are_recorded_privately(env, tmp_path):
     assert run(env, "run", "--id", "job-1").returncode == 0
     log = Path(env["SCHEDULER_HOME"]) / "notifications.jsonl"
     (line,) = [json.loads(x) for x in log.read_text().splitlines()]
-    assert line["title"] == "ai-workbench: job-1 done" and line["message"] == "https://example.test/post"
+    assert line["title"] == "openhora: job-1 done" and line["message"] == "https://example.test/post"
     assert mode(log) == 0o600
 
 

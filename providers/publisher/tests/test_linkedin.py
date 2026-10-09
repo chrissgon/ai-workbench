@@ -689,7 +689,7 @@ def auth_with(monkeypatch, environ, stored=None):
     auth = load_auth()
     resolver = auth.secret_resolver()
     real_resolve = resolver.resolve
-    store = FakeStore({("ai-workbench", "publisher-linkedin"): stored} if stored else {})
+    store = FakeStore({("openhora", "publisher-linkedin"): stored} if stored else {})
     monkeypatch.setattr(resolver, "resolve", lambda name, **kw: real_resolve(name, environ=environ, store=store))
     monkeypatch.setattr(auth, "secret_resolver", lambda: resolver)
     monkeypatch.delenv("LINKEDIN_TOKEN_EXPIRES_AT", raising=False)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Validate ai-workbench conventions.
+"""Validate openhora conventions.
 
 Usage: python3 scripts/validate.py [--strict] [--json] [--spec] [--flags]
 

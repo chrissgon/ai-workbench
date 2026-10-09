@@ -20,7 +20,7 @@ A `read_only` page carries one notice, written by the runtime (`runtime/document
 
 ## Notion (`notion.py`)
 
-The token is `NOTION_TOKEN`, read only through `providers/secrets/resolver.py` (stored with `uv run --with keyring==25.7.0 keyring set ai-workbench notion`): an internal integration with read content, update content, insert content and read comments, given only the parent page. Neither the parent's identifier nor the token is ever written in this repository: they live in the project's `docs/workbench/runtime.json` and in the secret store.
+The token is `NOTION_TOKEN`, read only through `providers/secrets/resolver.py` (stored with `uv run --with keyring==25.7.0 keyring set openhora notion`): an internal integration with read content, update content, insert content and read comments, given only the parent page. Neither the parent's identifier nor the token is ever written in this repository: they live in the project's `docs/workbench/runtime.json` and in the secret store.
 
 - A document is a page under `parent`, created by the first `write` without `--id` and titled by its project-relative path; its id is the page's identifier. An id that is not a page identifier names no document (exit 1).
 - `write` converts with `notion_blocks.to_blocks` and replaces every child block of the page: the new blocks are appended first, at most 100 per call, each sent without its own children (a table keeps its rows), whose children are appended under it in later calls, so no request nests more than one level; then the old blocks are deleted. A failure never leaves the page empty.

@@ -18,7 +18,7 @@ Publishes one post as the authenticated member through the versioned Posts API (
    export LINKEDIN_CLIENT_SECRET=...
    ```
 
-5. Run `uv run providers/publisher/auth.py --provider linkedin` and approve in the browser. The access token and its expiry go to the OS secret store (service `ai-workbench`, username `publisher-linkedin`), never to disk in plain text.
+5. Run `uv run providers/publisher/auth.py --provider linkedin` and approve in the browser. The access token and its expiry go to the OS secret store (service `openhora`, username `publisher-linkedin`), never to disk in plain text.
 6. Verify: `uv run providers/publisher/linkedin.py --check`.
 
 Access tokens last 60 days and self-serve apps get no refresh token. `--check` warns under 7 days; rerun step 5 before expiry.
