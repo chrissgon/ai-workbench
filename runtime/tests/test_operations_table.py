@@ -27,7 +27,8 @@ cli = st.load("cli")
 effects = st.load("effects")
 
 # Public functions of ops.py that are not an operation of a shell: what the other modules and the tests use.
-NOT_OPERATIONS = {"store_module", "context", "task_prompt", "code_task", "chat_memory"}
+NOT_OPERATIONS = {"store_module", "context", "task_prompt", "code_task", "chat_memory", "state_question", "state_reply", "queued_ids",
+                  "run_busy", "queue_route", "held_commands", "drop_note", "asks_state", "waiting", "queue_stale"}
 KINDS = ("int", "str", "text", "file", "list", "flag", "choice", "pairs")
 CHANNELS = ("terminal", "chat", "page", "mcp")
 # Modules that still hold the terminal's command as a string, outside the operations layer's own texts.
@@ -60,7 +61,7 @@ def test_the_table_is_a_pure_literal_and_its_rows_are_well_formed():
     names = [r["name"] for r in operations.OPERATIONS]
     assert len(names) == len(set(names))
     for row in operations.OPERATIONS:
-        assert set(row) <= {"name", "call", "args", "channels", "model", "help", "channel_arg", "chat_reply", "exit_unless", "job"}, row["name"]
+        assert set(row) <= {"name", "call", "args", "channels", "model", "help", "channel_arg", "chat_reply", "exit_unless", "job", "queues"}, row["name"]
         assert row["help"].strip() and set(row["channels"]) <= set(CHANNELS) and row["channels"], row["name"]
         assert row["model"] in (True, False) or isinstance(row["model"], str), row["name"]
         for arg in row["args"]:

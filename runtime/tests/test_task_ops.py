@@ -50,6 +50,23 @@ def test_a_request_becomes_the_tasks_of_its_flow_file_and_only_the_first_is_read
     assert len(seen["config"]["sha256"]) == 64
 
 
+def test_a_done_tasks_payload_lists_the_files_its_run_kept_with_their_reasons_and_the_run_folder(tree):
+    """A-30 item 4: the done card shows "kept: n files" and where they are, from the decision's payload, still there
+    after the delivery is released."""
+    path = project_of(tree)
+    task_id = requested(tree)["tasks"][0]["id"]
+    first = ops.run_next(path)
+    ops.answer(path, first["pending_id"], "Portugal, remote.")
+    second = ops.run_next(path)
+    ops.release(path, second["pending_id"])
+    done = ops.task(path, task_id)
+    assert done["task"]["state"] == "done"
+    [review] = [p for p in done["pending"] if p["kind"] == "review"]
+    assert review["status"] == "resolved" and review["payload"]["run_dir"] == second["run_dir"]
+    assert review["payload"]["kept"] == [{"path": "notes.txt", "class": "other", "reason": "this class of path is not brought back yet"}]
+    assert [r["path"] for r in review["payload"]["returned"]] == [r["path"] for r in second["returned"]]
+
+
 def test_the_whole_path_of_a_request_ask_answer_write_release_and_the_next_task(tree):
     project, path = tree["project"], project_of(tree)
     requested(tree)
@@ -484,7 +501,7 @@ def test_the_task_operation_returns_a_task_with_its_runs_and_pending_decisions(t
     first = ops.run_next(path)
     request, task = made["request"], made["tasks"][0]["id"]
     found = ops.task(path, task)
-    assert set(found) == {"task", "runs", "pending"} and found["task"]["id"] == task and found["task"]["state"] == "waiting"
+    assert set(found) == {"task", "drop", "runs", "pending"} and found["task"]["id"] == task and found["task"]["state"] == "waiting"
     assert [(r["id"], r["status"], r["ending"], r["model"]) for r in found["runs"]] == [(first["run_id"], "ok", "question", "m")]
     assert set(found["runs"][0]) >= {"status", "failure", "ending", "attempts", "duration_ms", "tokens", "cost_usd", "model", "skill_version"}
     assert [(p["id"], p["kind"], p["status"], p["actions"]) for p in found["pending"]] == [(first["pending_id"], "question", "open", ["answered"])]

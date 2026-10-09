@@ -8,6 +8,7 @@
 Usage:
   python3 runtime/cli.py request  --project <dir> [--flow <name>] (--text <text> | --text-file <file>) [--title <title>]
   python3 runtime/cli.py route    --project <dir> --request <request id> [--flow <name>]
+  python3 runtime/cli.py route-queued --project <dir>
   python3 runtime/cli.py approve  --project <dir> --id <pending id> [--sha256 <plan hash> | --sha256 <effect hash>]
   python3 runtime/cli.py reject   --project <dir> --id <pending id> [--note <text>]
   python3 runtime/cli.py deps     --project <dir>
@@ -54,7 +55,14 @@ request   records what you want. With --flow, plans it from the flow file flows/
 route     plans a request that waits for its route. Without --flow: one run of the router skill, as it is, asked
           only for the route (it calls a model, like run-next; nothing it writes comes back); a route it gives
           becomes a plan for you to approve, a question it asks is answered with answer (then route again), and
-          a reply with no recognised route reaches you whole. With --flow: the plan of that flow file, no run.
+          a reply with no recognised route opens a question with one sentence and the reply whole in its payload, a
+          direct turn (route none, shape direct) opens nothing and prints kind "direct" with the router's next line.
+          With --flow: the plan of that flow file, no run and no run lock. While another run of the project is in
+          progress the request is refused here (as before); only the local page queues it ({"queued": true}), and the
+          service's loop, or route-queued, routes it when the run ends.
+route-queued  answers the oldest line of the conversation, or routes the oldest request, that waited for the end of a
+          run (the local page queues them while a run holds the project): one per call, only when no run is in
+          progress. The local service calls it every few seconds; it calls a model, like route.
 approve   approves a plan (its tasks are created; pass the plan's hash, shown with it, as --sha256 to approve
           exactly what you read) or a request written on the task board.
           An effect (a pull request a skill prepared up to its confirmation gate) is approved only here, in the
@@ -114,10 +122,10 @@ connections  which provider each requirement class of the skills in scope resolv
           (here) and whether the two are the same (same: true, false, or null when unknown). It starts no provider and
           makes no network call.
 artifacts the project's files under docs/ that are documents or machine files, each with its owner skill (the skill whose
-          outputs name it), the area agent whose pack holds that skill, size, modification time and whether a pending decision binds it. Never the runtime's
-          configuration.
+          outputs name it), the area agent whose pack holds that skill, size, modification time, its kind (text, markdown, image or other, decided by the file's bytes, never its name alone) and
+          whether a pending decision binds it. Never the runtime's configuration.
 artifact  the text of one file under docs/ of the project (--path, relative to the project), read-only. Refused for a path
-          outside docs/, a link, the runtime's configuration, a file over 1 MiB or one that is not UTF-8 text.
+          outside docs/, a hidden file or folder, a link, the runtime's configuration, a file over 1 MiB or one that is not UTF-8 text.
 config    the project's configuration: its path, its hash, whether you accepted that hash, and the data folder. The one
           command that does not refuse a configuration you did not accept yet.
 proof     the model each skill in use would run on, with the bands and the two checks (the measurement files,
@@ -141,8 +149,9 @@ hand-over copies one file of yours into the task's file drop, <project>/.workben
           enters that task's runs and no other, and the run's prompt lists it; what a run leaves there never comes
           back. Refused for a link, a folder, a file over 25 MB, a name with other characters than letters,
           digits, '.', '_' and '-', a name already handed over, a task that is done, cancelled or running, a
-          file holding what looks like a credential, a git project that does not ignore .workbench-local/, and a
-          task whose skill uses the web (a web task receives only the artifacts its skill declares).
+          file holding what looks like a credential, and a git project that does not ignore .workbench-local/. A task
+          whose skill uses the web takes the file too (the maintainer's decision: the file is the person's own choice)
+          and the answer carries "web": true and the line "this file will be visible to a run with the open network".
 deps      installs the dependency sets of runtime.json ("dependencies") by code, with no model: in the eval
           image, in a step that sees only the dependency files, on the open network; the result is cached under
           the data folder by the files and the image, and a run whose copy holds versioned files gets a copy of it.
@@ -191,7 +200,10 @@ pin       writes the pin of the dispatcher's two jobs (<data_dir>/dispatch-pin.j
           after any change: accept-config, pin, then schedule both jobs again with the new command files.
 say       one turn of the conversation with the planning agent (the same as one line of runtime/chat.py): a command
           (/help lists them), the answer to its question, or a new request, which runs the router (a model call) and
-          shows the plan; refused when the planning agent is stopped or at its cap.
+          shows the plan; refused when the planning agent is stopped or at its cap. A line that asks about the state
+          ("status", "how are we", "como estamos", "o que falta", "what is running") is answered at once from the
+          store's records, with no model and no request; a line that needs the planner, typed while another
+          run of the project is in progress, is refused before it is stored (only the local page queues one).
 handler   starts one verb of a handler (runtime/handlers/) that handlers in runtime.json names, and prints its result.
 stop-runs ends the runs this process started (the container and the process group of each run). The local service
           calls it before it exits; started on its own it has no run to end.

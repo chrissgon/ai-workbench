@@ -163,9 +163,10 @@ all of these hold, and is a 404 otherwise:
 - it is a regular file of at most 16 MiB. There is no directory listing.
 
 Every response carries `Cache-Control: no-store` and `X-Content-Type-Options: nosniff`; an HTML or SVG document also
-carries `Content-Security-Policy: default-src 'self'; frame-ancestors 'none'` and `Referrer-Policy: no-referrer`. So a page
+carries `Content-Security-Policy: default-src 'self'; img-src 'self' blob:; frame-ancestors 'none'` and `Referrer-Policy: no-referrer`. So a page
 here loads nothing from another host (no CDN, no font service, no analytics), runs no inline script or style that the
-policy does not allow, and cannot be put in a frame.
+policy does not allow, and cannot be put in a frame; its images are its own files or `blob:` URLs it built from bytes it
+fetched itself (never `data:`).
 
 The static files need no token and hold no data. Everything a page shows comes from `/api/v1/...`, which needs the
 token: the person pastes it once per browser session from the token file the service prints the path of (never the token
