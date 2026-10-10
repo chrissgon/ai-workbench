@@ -33,7 +33,7 @@ export function buildWorld(kit, model) {
   const structures = new Map();
 
   const content = {
-    kind: "world", live: true, group, towers, hits: [], labels: [], beacons: [], markers: [], motions: [], outlines: [], tag: null,
+    kind: "world", live: true, group, towers, hits: [], labels: [], beacons: [], markers: [], motions: [], outlines: [], brackets: [], tag: null,
     selected: model.outlined || null, marked: model.marked || null, intro: null,
   };
 
@@ -46,12 +46,12 @@ export function buildWorld(kit, model) {
       tower.target = old.target;
       tower.vis = lot.floors.map((f) => (old.vis[old.lot.floors.findIndex((o) => o.name === f.name)] !== undefined ? old.vis[old.lot.floors.findIndex((o) => o.name === f.name)] : 1));
       tower.visTarget = lot.floors.map((f) => (old.visTarget[old.lot.floors.findIndex((o) => o.name === f.name)] !== undefined ? old.visTarget[old.lot.floors.findIndex((o) => o.name === f.name)] : 1));
-      group.remove(old.group);
+      group.remove(old.root, old.brackets.group);
       old.dispose();
       if (old.interior) tower.ensureInterior();
     }
     towers.set(lot.id, tower);
-    group.add(tower.group);
+    group.add(tower.root, tower.brackets.group);   // the root is what the pointer picks (the tower and its marks); the brackets stand apart, so they are never picked
     structures.set(lot.id, JSON.stringify(towerStructure(lot)));
     tower.apply();
     return tower;
@@ -78,11 +78,13 @@ export function buildWorld(kit, model) {
     const motions = [];
     const outlines = [];
     const beacons = [];
+    const brackets = [];
     lots.forEach((lot, i) => {
       const tower = towers.get(lot.id);
       markers.push(...tower.markers);
       motions.push(...tower.motions);
-      outlines.push({ id: lot.id, lines: [ground.edges[i]] }, ...tower.outlines);
+      outlines.push(...tower.outlines);
+      brackets.push({ id: lot.id, group: tower.brackets.group, tower });
       if (tower.beacon) beacons.push(tower.beacon);
       if (focus === lot.id && tower.interior) {
         const only = floorSel ? tower.lot.floors.findIndex((f) => f.name === floorSel) : -1;
@@ -104,10 +106,10 @@ export function buildWorld(kit, model) {
           }
         });
       } else if (!focus && lot.floors.some((f) => f.interactive)) {
-        hits.push({ object: tower.group, id: lot.id, tip: lot.tip, pad: 0.06 });
+        hits.push({ object: tower.root, id: lot.id, tip: lot.tip, pad: 0.06, brackets: true });   // R-17: a building is marked by its brackets, not by an outline
       }
     });
-    for (const [key, list] of [["hits", hits], ["markers", markers], ["motions", motions], ["outlines", outlines], ["beacons", beacons]]) {
+    for (const [key, list] of [["hits", hits], ["markers", markers], ["motions", motions], ["outlines", outlines], ["beacons", beacons], ["brackets", brackets]]) {
       content[key].length = 0;
       content[key].push(...list);
     }
@@ -128,6 +130,7 @@ export function buildWorld(kit, model) {
         labels.push({
           id: lot.id, kind: "card", name: lot.name, decisions: lot.decisions, running: lot.runningTask !== null, sub: lot.sub,
           selected: lot.id === m.selectedId, accepted: lot.accepted, anchor: tower.cardAnchor,
+          quiet: m.lots.length >= 3 && lot.accepted && lot.decisions === 0 && lot.runningTask === null,
         });
       } else if (m.focus === lot.id) {
         const index = m.floor ? lot.floors.findIndex((f) => f.name === m.floor) : -1;
@@ -256,12 +259,14 @@ export function buildWorld(kit, model) {
   content.subject = () => {
     const tower = focus ? towers.get(focus) : null;
     if (!tower) {
-      const box = new THREE.Box3().setFromObject(ground.group);
+      // the City is framed on its buildings with the corners of their blocks (the brackets stand there); the city round them runs on past every
+      // edge the camera can show (city.js)
+      const box = new THREE.Box3();
       lots.forEach((lot, i) => {
         const { x, z } = lotAt(i, lots.length);
         box.union(towerBox(THREE, x, z, lot.floors.length, 0));
       });
-      return box;
+      return box.expandByVector(new THREE.Vector3(1.8, 0, 1.8));
     }
     const i = lots.findIndex((lot) => lot.id === focus);
     const { x, z } = lotAt(i, lots.length);
@@ -276,10 +281,10 @@ export function buildWorld(kit, model) {
    */
   content.hideSurroundings = (on) => {
     ground.group.visible = !on;
-    for (const tower of towers.values()) if (tower.id !== focus) tower.group.visible = !on;
+    for (const tower of towers.values()) if (tower.id !== focus) tower.root.visible = !on;
   };
 
-  content.bounds = new THREE.Box3().setFromObject(group);
+  content.bounds = content.subject();
   content.focusId = () => focus;
   collect();
   content.labels = content.text(model).labels;

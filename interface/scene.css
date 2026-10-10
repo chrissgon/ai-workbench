@@ -1,0 +1,42 @@
+/* The scene's own HTML (round 4): what sits over the canvas and belongs to the scene, not to the frame. The frame's rules are in style.css. Colours are
+   tokens (--pui-*, --wb-*) only; no colour literal stands in this file. Loaded after style.css. */
+
+/* a building's label in the City: a pill, one line (R-16 on; city.html). Its place is two custom properties the scene writes (--wb-x, --wb-y), so the
+   rules that place a label are repeated here: this file does not depend on the frame's class for them. */
+.wb-pill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  translate: var(--wb-x, 0px) var(--wb-y, 0px);
+  transform: translate(-50%, -100%);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--pui-border);
+  border-radius: 9999px;
+  background-color: var(--wb-raised);
+  box-shadow: var(--wb-elev);
+  font-size: 12px;
+  line-height: 1.25;
+  white-space: nowrap;
+}
+.wb-pill.is-culled { visibility: hidden; }
+/* the building the person follows, or points at (R-17: the same moment as its brackets) */
+.wb-pill.is-selected { border-color: var(--pui-theme); }
+.wb-pill-name { font-size: 13px; font-weight: 600; }
+.wb-pill-sub { color: var(--pui-text-muted); }
+
+/* C-7: among three or more projects, one with no decision and no running task is a 10 px muted dot until it is pointed at or followed */
+.wb-pill.is-quiet:not(.is-selected) {
+  width: 10px;
+  height: 10px;
+  padding: 0;
+  gap: 0;
+  border-color: transparent;
+  background-color: var(--pui-muted);
+  box-shadow: none;
+  overflow: hidden;
+  transform: translate(-50%, -50%);
+}
+.wb-pill.is-quiet:not(.is-selected) > * { display: none; }

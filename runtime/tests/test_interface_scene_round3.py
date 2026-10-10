@@ -69,12 +69,13 @@ WORLD_JS = r"""
 import * as THREE from "@JS@/three.js";
 import { createKit } from "@JS@/scene/kit.js";
 import { buildWorld } from "@JS@/scene/world.js";
+import { cityTones } from "@JS@/scene/palette.js";
 
 const c = (hex) => new THREE.Color(hex);
 const T = { border: c(0x101010), theme: c(0x2020f0), success: c(0x10f010), error: c(0xf01010), emphasis: c(0x303030), text: c(0x404040), warn: c(0xf0a010), textMuted: c(0x505050), mutedRole: c(0x707070) };
 export const palette = { dark: false, T, mix: (a, b, t) => a.clone().lerp(b, t), bg: c(0xfafafa), shell: c(0xf8f8f8), ink: c(0x202020), metal: c(0x606060), deskTop: c(0xd0d0d0), screenOff: c(0x181818), leafA: c(0x80c080), leafB: c(0x70b070), trunk: c(0x806040),
   lot: c(0xffffff), warm: c(0xf0c040), pale: c(0xd0d8f0), glass: c(0xd0e0f0), wood: c(0xc0a080), drawer: c(0x9090d0), skin: c(0xe0c0b0), windows: { lit: c(0xf0c040), grey: T.border } };
-export { THREE, createKit, buildWorld };
+export { THREE, createKit, buildWorld, cityTones };
 
 const floor = (name, extra = {}) => ({ name, label: name, state: "idle", window: "grey", decisions: 0, lobby: name === "planning", sheets: [{ path: "docs/a.md", tip: "docs/a.md" }, { path: "docs/b.md", tip: "docs/b.md" }], drawers: 1, tip: `tip ${name}`, interactive: true,
   plate: { name, label: name, dot: "muted", decisions: 0, word: "resting", done: 0, left: 0, queued: 0, runsText: "0 / 4", runsShare: 0, usdText: "$0 / $1", usdShare: 0, unknown: 0, mode: "supervised", pips: 2, acting: null, actingPips: 0, selected: false, off: false }, ...extra });
@@ -161,7 +162,7 @@ def test_the_product_sequence_city_building_floor_back_replaces_no_mesh_and_ever
     got = run_node(tmp_path, WORLD_JS + PRODUCT_JS + SNAP_JS + r"""
 import { approach, EXPLODE_RATE, smooth } from "@JS@/scene/prototype-motion.js";
 import { floorY, P, GAP } from "@JS@/scene/building.js";
-import { roofY } from "@JS@/scene/tower.js";
+import { roofY, squash } from "@JS@/scene/tower.js";
 
 const kit = createKit(palette);
 const world = buildWorld(kit, models.city());
@@ -214,7 +215,9 @@ function run(label, at, cap = 120) {
       rec.maxXZ = maxXZ; rec.maxDy = maxDy; rec.minDy = minDy;
       rec.chosenSame = [...meshesOf(a.floorGroups[chosen])].every((m) => { const e = mat.get(m), f = before.mat.get(m); return !f || e.every((v, k) => v === f[k]); });
       rec.dOpen = a.open - before.open;
-      rec.bound = n * GAP * Math.abs(smooth(a.open) - smooth(before.open));   // the highest mesh (the roof, the top floor) moves by this much at most
+      // the highest mesh (the roof, the top floor) moves by this much at most: the floors' rise, and (R-16) the closed City's height growing from its drawing's
+      // height to the rooms' as the walls fade (`squash`), over the whole stack
+      rec.bound = n * GAP * Math.abs(smooth(a.open) - smooth(before.open)) + (n * (P + GAP) + P) * Math.abs(squash(smooth(a.open)) - squash(smooth(before.open)));
     }
     last = { pos, mat, open: a.open, scales: a.floorGroups.map((g) => g.scale.x) };
     out.frames.push(rec);
@@ -712,14 +715,16 @@ out.unread = edit((l) => { l.floors[3].sheets = null; l.floors[3].drawers = null
 out.unreadSheets = a.parts[3].sheets.length;
 // the window of a floor: the material of the same meshes
 out.window = edit((l) => { l.floors[0].window = "lit"; });
-const shellGlass = [];
-a.floorGroups[0].children[0].traverse((n) => { if (n.isMesh && n.scale.y > 1.5 && n.material.color && n.material.color.getHex() === palette.warm.getHex()) shellGlass.push(n); });
-out.litGlass = shellGlass.length > 0;
+// R-16: the glass of a floor is one batched mesh, and a window's state is a repaint of its vertices (R-18: the lit tone is the warm white)
+const glass = a.floorGroups[0].children[0].children[1];
+const paint = glass.geometry.getAttribute("color");
+out.litGlass = [paint.getX(0), paint.getY(0), paint.getZ(0)].every((v, i) => Math.abs(v - [cityTones(palette).glassLit.r, cityTones(palette).glassLit.g, cityTones(palette).glassLit.b][i]) < 1e-6);
 // the floor the work order is on
 out.selected = edit((l) => { l.selected = "design"; });
-// the outside exclamation: a decision arrives on a floor that had none
-out.markers = a.markers.length;
-out.marker = edit((l) => { l.floors[3].decisions = 1; }); out.markersAfter = a.markers.length;
+// R-20, R-21: the decision mark stands beside a floor that waits: a decision arrives on a floor that had none and the floor waits
+const marks = (i) => a.overlay.children.filter((c) => c.userData.mark && c.userData.floor === i).length;
+out.markers = marks(3);
+out.marker = edit((l) => { l.floors[3].decisions = 1; l.floors[3].state = "waiting"; l.floors[3].window = "lit"; }); out.markersAfter = marks(3);
 // a state change makes that one room again, and only that
 const roomMeshes = meshesOf(a.inner[3]);
 const other = meshesOf(a.inner[2]);
@@ -734,9 +739,9 @@ console.log(JSON.stringify(out));
     assert got["decisionsUp"]["lost"] <= 2 and got["decisionsDown"]["lost"] <= 6, "only the stack's sheets (and the exclamation outside, when the last decision goes) change: the tray's base, rims and the desk stay"
     assert got["sheetsUp"]["lost"] == 0 and got["sheetsKept"] is True, "a sheet that arrives is added; the ones on the table are the same groups"
     assert got["unread"]["lost"] == 0 and got["unread"]["added"] == 0 and got["unreadSheets"] == 3, "documents not read yet (null) change nothing: the table keeps its sheets"
-    assert got["window"]["lost"] == 0 and got["litGlass"] is True, "a window changes its material, not its meshes"
+    assert got["window"]["lost"] == 0 and got["litGlass"] is True, "a window changes its colour, not its meshes (R-16, R-18)"
     assert got["selected"]["lost"] == 0, "the slab of the work-order floor changes its tone, in place"
-    assert got["markersAfter"] == got["markers"] + 1, "a decision that arrives on a floor makes the exclamation outside it"
+    assert got["markers"] == 0 and got["markersAfter"] == 1, "a decision that arrives on a floor that waits makes the mark beside it (R-20, R-21)"
     assert got["stateRoom"]["replaced"] is True and got["stateRoom"]["othersKept"] is True, "a state change makes that floor's room again (a figure sits, stands) and no other floor's"
 
 

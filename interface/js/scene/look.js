@@ -1,12 +1,12 @@
 // What the scene shows for a state, as plain choices with no three.js and no document, so a test can run them:
-//   - a window is warm and unlit when the agent of its floor works, grey otherwise (the maintainer's rule of 2026-10-08;
-//     there is no in-between state any more);
+//   - a window is lit (a warm white, drawn unlit) when the agent of its floor is active, working or waiting for an answer, and dark otherwise,
+//     resting or off (R-21; the maintainer's rule of 2026-10-08 lit it only while it worked; there is no in-between state);
 //   - a line of the theme colour (the lot's, a floor's, the room's floor) is drawn only for the object the route selected: a hovered
 //     object has the outline of its box or its shape (the engine's), never a standing line.
 
-/** The window state of a floor: "lit" when its agent works, "grey" in every other case (waiting, idle, off, not accepted). */
-export function windowState(working) {
-  return working ? "lit" : "grey";
+/** The window state of a floor: "lit" when its agent is active (working or waiting for an answer: the caller says), "grey" in every other case (idle, off, not accepted). */
+export function windowState(active) {
+  return active ? "lit" : "grey";
 }
 
 /** The colour of a window state: the warm recipe when lit, the border tone otherwise (the same rule in light and dark). */
