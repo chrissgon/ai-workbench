@@ -49,6 +49,8 @@ ON_SYSTEM_PYTHON = [
     "runtime/shell_kit.py",
     # The cost of a run recomputed from its token counts (stage 9): the operations layer imports it.
     "runtime/costs.py",
+    # How the credential of a run is billed, read from the adapters' manifests (ADJ-R3): the operations layer imports it.
+    "runtime/billing.py",
     # The roles of the runtime as data, and the isolated runner of skill code (WP-R.5).
     "runtime/roles.py", "runtime/isolated.py",
     # The handlers the dispatcher's worker ticks (stage 6): the weekly routine of the published posts (WP-6.9).

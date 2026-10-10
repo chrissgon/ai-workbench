@@ -184,9 +184,9 @@ def test_the_control_models_chips_filters_notice_platform_chart_and_words_follow
     assert got["footnote"] == "Recomputed from token counts and the prices in the project's configuration (source: provider price page, 2026-09-30). A run whose usage is unknown shows unknown and is counted."
     assert "(source: provider price page, 2026-09-30; other page, 2026-10-01)" in got["footnoteTwo"]
     assert "source:" not in got["footnoteNone"] and "A model with no price shows no price." in got["footnoteNone"]
-    assert got["caps"]["text"] == "Caps · engineering: reference-model runs 5 / 12, floor-model spend $1.87 / $4.00; marketing: reference-model runs - / 6, floor-model spend - / $3.50"
-    assert "reference model" in got["caps"]["title"] and "floor model" in got["caps"]["title"]
-    assert got["capsNoAgents"] == "Caps · engineering: reference-model runs - / 12, floor-model spend - / $4.00" and got["capsNone"] is None
+    assert got["caps"]["text"] == "Caps · engineering: runs 5 / 12, spend $1.87 / $4.00; marketing: runs - / 6, spend - / $3.50"
+    assert "subscription or free credential" in got["caps"]["title"] and "metered credential" in got["caps"]["title"]
+    assert got["capsNoAgents"] == "Caps · engineering: runs - / 12, spend - / $4.00" and got["capsNone"] is None
     chart = got["chart"]
     assert [d[0] for d in chart["days"]] == [f"2026-10-0{n}" for n in range(1, 8)], "seven days up to the newest day with rows, an empty column for a day with none"
     assert [d[1] for d in chart["days"]][0] == "Oct 1" and [d[2] for d in chart["days"]] == [4, 5, 0, 8, 0, 0, 12]
@@ -478,7 +478,7 @@ def test_the_three_tabs_show_what_the_operations_returned_in_the_columns_and_wor
     # Costs
     assert got["costsLoadingNoField"] == 0
     assert got["since"] == ["2026-09-07", "text", "Since"], "the field's value is the operation's own since; it is a text field"
-    assert got["caps"][0] == "Caps · engineering: reference-model runs 5 / 12, floor-model spend $1.87 / $4.00" and "reference model" in got["caps"][1]
+    assert got["caps"][0] == "Caps · engineering: runs 5 / 12, spend $1.87 / $4.00" and "subscription or free credential" in got["caps"][1]
     assert got["chartHead"] == "Runs per day by agent engineering marketing"
     plot = got["plot"]
     assert plot["role"] == "img" and plot["label"] == "Runs per day by agent, table below" and plot["cols"] == ["wb-cols-7"]
@@ -561,7 +561,7 @@ out.readsAfterPoll = calls.length;
 // a hash that names the costs tab: the tab changes, nothing is read again
 view.update({ loaded: true, known: true, accepted: true, projectId: "aaaaaaaaaaaa", tab: "costs" });
 out.costsTab = [panel("skills").hidden, panel("costs").hidden, tab("costs").attrs["aria-selected"], tab("skills").attrs["aria-selected"], tab("costs").attrs.tabindex, tab("skills").attrs.tabindex];
-out.costsText = [text(panel("costs")).includes("Caps · engineering: reference-model runs 5 / 12, floor-model spend $1.87 / $4.00"), text(panel("costs")).includes("Recomputed")];
+out.costsText = [text(panel("costs")).includes("Caps · engineering: runs 5 / 12, spend $1.87 / $4.00"), text(panel("costs")).includes("Recomputed")];
 // the Connections read failed: its own notice; the other tabs keep their data
 view.update({ loaded: true, known: true, accepted: true, projectId: "aaaaaaaaaaaa", tab: "connections" });
 out.connFailed = [text(panel("connections")).includes("The read failed"), text(panel("connections")).includes("connections: the secret store did not answer within 5 s"), text(panel("skills")).includes("brand-voice")];

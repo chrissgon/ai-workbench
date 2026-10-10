@@ -69,6 +69,7 @@ class Secret:
     aliases: tuple[str, ...] = field(default_factory=tuple)
     note: str = ""
     set_local: str = ""  # how to store it locally when not with `keyring set`
+    billing: str = ""  # how a credential of an adapter is billed: subscription, metered or free (BILLING_WORDS); "" for the core's own
 
 
 REGISTRY: dict[str, Secret] = {s.name: s for s in (
@@ -138,7 +139,8 @@ class NotRegistered(KeyError):
 
 
 ENTRY_REQUIRED = ("name", "purpose", "permission", "readers")
-ENTRY_OPTIONAL = ("store_username", "aliases", "note", "set_local")
+ENTRY_OPTIONAL = ("store_username", "aliases", "note", "set_local", "billing")
+BILLING_WORDS = ("subscription", "metered", "free")
 _NAME_OK = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_"
 
 
@@ -166,16 +168,21 @@ def register(entries, origin: str = "a registry") -> list[str]:
             raise ValueError(f"{origin}: {name!r} has a value of the wrong type")
         if not name or name[0].isdigit() or any(c not in _NAME_OK for c in name):
             raise ValueError(f"{origin}: {name!r} is not a variable name in capitals")
+        if entry.get("billing") not in (None, *BILLING_WORDS):
+            raise ValueError(f"{origin}: {name} has billing {entry.get('billing')!r}: one of {', '.join(BILLING_WORDS)}")
         new = Secret(name, entry["purpose"], entry["permission"], tuple(readers),
                      store_username=entry.get("store_username") or None, aliases=tuple(aliases),
-                     note=entry.get("note") or "", set_local=entry.get("set_local") or "")
+                     note=entry.get("note") or "", set_local=entry.get("set_local") or "", billing=entry.get("billing") or "")
         old = merged.get(name) or REGISTRY.get(name)
         if old is not None:
             if (old.store_username, old.aliases) != (new.store_username, new.aliases):
                 raise ValueError(f"{origin}: {name} is already registered with another store username or other aliases")
+            if old.billing and new.billing and old.billing != new.billing:
+                raise ValueError(f"{origin}: {name} is already registered with billing {old.billing}, not {new.billing}")
             new = Secret(old.name, old.purpose, old.permission,
                          old.readers + tuple(r for r in new.readers if r not in old.readers),
-                         store_username=old.store_username, aliases=old.aliases, note=old.note, set_local=old.set_local)
+                         store_username=old.store_username, aliases=old.aliases, note=old.note, set_local=old.set_local,
+                         billing=old.billing or new.billing)
         merged[name] = new
     REGISTRY.update(merged)
     return list(merged)

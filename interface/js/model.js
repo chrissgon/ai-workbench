@@ -183,14 +183,21 @@ export function city(snapshot, now) {
   return { buildings, waiting, canvasLabel };
 }
 
-/** The sums the three KPI cards show for one scope: `projectId` null is every project (the City). */
+/**
+ * The sums the three KPI cards show for one scope: `projectId` null is every project (the City). `inUse` says which of the two meter cards mean
+ * something (A-38): a cap is in use when any agent of the scope has it in use (`caps_in_use`); a scope with no agent shows both.
+ */
 export function kpiSums(snapshot, projectId) {
   const projects = (snapshot.projects || []).filter((p) => projectId === null || p.id === projectId);
-  const sums = { decisions: 0, runs: 0, runsCap: 0, usd: 0, usdCap: 0, usdRecorded: 0, usdReserved: 0, runsTotal: 0 };
+  const sums = { decisions: 0, runs: 0, runsCap: 0, usd: 0, usdCap: 0, usdRecorded: 0, usdReserved: 0, runsTotal: 0, inUse: { runs: false, spend: false } };
+  let agents = 0;
   for (const p of projects) {
     const detail = snapshot.details[p.id];
     sums.decisions += detail && detail.status ? (detail.status.pending || []).length : 0;
     for (const a of (detail && Array.isArray(detail.agents)) ? detail.agents : []) {
+      const use = format.metersInUse(a);
+      sums.inUse = { runs: sums.inUse.runs || use.runs, spend: sums.inUse.spend || use.spend };
+      agents += 1;
       sums.runs += format.count(a.runs_today);
       sums.runsCap += format.count(a.max_runs_per_day);
       sums.usd += format.count(a.usd_today);
@@ -200,6 +207,7 @@ export function kpiSums(snapshot, projectId) {
       sums.usdCap += format.count(a.max_usd_per_day);
     }
   }
+  if (!agents) sums.inUse = { runs: true, spend: true };
   return sums;
 }
 

@@ -60,7 +60,7 @@ export function chipNodes(p) {
 }
 
 /**
- * A floor plate. p: {name, label, dot, decisions, word, done, running, left, queued, runsText, runsShare, usdText, usdShare,
+ * A floor plate. p: {name, label, dot, decisions, word, done, running, left, queued, inUse: {runs, spend}, runsText, runsShare, usdText, usdShare,
  * unknown, mode, pips, acting, actingPips, selected, off}. Returns the element; the caller toggles `is-compact`. The same component is the plate
  * beside a floor (a `div`) and each row of the floors list (`tag` "a", `attrs` {class: "wb-floor-row is-row", href, aria-label}): one design, two places.
  */
@@ -71,10 +71,11 @@ export function plateNode(p, attrs = {}, tag = "div") {
     p.decisions > 0 ? h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(p.decisions) }) : null,
     h("span", { class: "wb-plate-state", text: p.word }));
   const chips = h("div", { class: "wb-plate-chips" }, chipNodes(p), p.mode ? modePlate(p.mode, p.pips, p.acting, p.actingPips) : null);
+  const use = p.inUse || { runs: true, spend: true };      // A-38: a meter only for a cap in use
   const meters = h("div", { class: "wb-plate-meters" },
-    meter(METER_WORDS.runs, p.runsText, p.runsShare, p.runsShare >= 1, "", METER_TIPS.runs),
-    meter(METER_WORDS.spend, p.usdText, p.usdRecordedShare !== undefined ? p.usdRecordedShare : p.usdShare, p.usdShare >= 1,
-      costNote(p.usdNote, p.usdReserved, p.unknown), METER_TIPS.spend, p.usdReservedShare || 0));
+    use.runs ? meter(METER_WORDS.runs, p.runsText, p.runsShare, p.runsShare >= 1, "", METER_TIPS.runs) : null,
+    use.spend ? meter(METER_WORDS.spend, p.usdText, p.usdRecordedShare !== undefined ? p.usdRecordedShare : p.usdShare, p.usdShare >= 1,
+      costNote(p.usdNote, p.usdReserved, p.unknown), METER_TIPS.spend, p.usdReservedShare || 0) : null);
   const node = h(tag, { ...attrs, class: `wb-plate${p.selected ? " is-selected" : ""}${p.off ? " is-off" : ""}${attrs.class ? ` ${attrs.class}` : ""}`, "data-floor": p.name }, row1, chips, meters);
   return node;
 }

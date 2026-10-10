@@ -31,6 +31,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import autonomy  # noqa: E402
+import billing  # noqa: E402
 import lab  # noqa: E402
 import operations  # noqa: E402
 import project_config  # noqa: E402
@@ -202,6 +204,33 @@ def _floor_key() -> dict:
     elif missing:
         reasons.append(f"the lab's key for the floor model ({', '.join(missing)}) is neither set nor in the secret store")
     return {"value": None, "source": None, "reason": "no key for the floor model: " + "; ".join(reasons)}
+
+
+def _tier_billing(tier: str, adapter=None, manifests=None):
+    """How the credential a run on this tier uses is billed: "subscription", "metered" or "free", or None when no manifest
+    says (runtime/billing.py). The variables are those the gate file names for the tier (what lab.run_skill passes, the
+    runtime's own key for the floor model travelling under the first of them); adapter is the route's, else the tier's;
+    manifests are read once by a caller that asks for several tiers (billing.load)."""
+    found = lab.reference(tier)
+    return billing.of_route(manifests or billing.load(ROOT), adapter or found["adapter"], found["pass_env"])
+
+
+def _caps_in_use(runs, key: dict) -> dict:
+    """{"runs": bool, "spend": bool}: whether each daily cap has something to count in this project, so that a page draws
+    only the meters that mean something. A cap is in use when a run of the day (runs, with their billing filled in) used a
+    credential billed that way, or when a tier the runtime can run on has such a credential: the reference model's always,
+    the floor model's when a key for it was found (key, the caller's _floor_key). When nothing says either (the reference tier's
+    billing unknown and no floor key) both are in use, so that a page shows both meters as it does for a service that sends none.
+    Names no tier and no model."""
+    words, manifests = {run.get("billing") for run in runs}, billing.load(ROOT)
+    words.add(_tier_billing("strong", manifests=manifests))
+    try:
+        if key["source"] is not None:
+            words.add(_tier_billing("floor", manifests=manifests))
+    except Exception:  # a floor tier the facade refuses has no key to count: the reference tier's meter stays
+        pass
+    use = {"runs": bool(words & set(autonomy.RUNS_BILLINGS)), "spend": bool(words & set(autonomy.SPEND_BILLINGS))}
+    return use if any(use.values()) else {"runs": True, "spend": True}
 
 
 @contextlib.contextmanager

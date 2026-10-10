@@ -37,7 +37,7 @@ print(json.dumps({"status": "not-due", "verb": verb, "args": sys.argv[2:]}))
 def agent(mode="autonomous", runs=0, cap=5, usd=0.0, usd_cap=1.0, enabled=True):
     entry = {"pack": "p", "enabled": enabled, "mode": mode, "max_runs_per_day": cap, "max_usd_per_day": usd_cap}
     return {"entry": entry, "facts": autonomy.facts("x", {"x": entry}, [], "2026-10-06T00:00:00Z"),
-            "spent": {"runs_reference": runs, "usd_floor": usd, "runs_without_cost": 0}}
+            "spent": {"runs_counted": runs, "usd_metered": usd, "runs_without_cost": 0}}
 
 
 def ready(task_id, name, milestone=0):
@@ -50,25 +50,28 @@ def decide(snapshot):
 
 def test_nothing_starts_while_a_task_of_the_project_runs():
     got = decide({"running": {"id": 3}, "ready": [ready(4, "a")], "reviews": [], "agents": {"a": agent()},
-                  "tier": {4: "strong"}})
+                  "tier": {4: "strong"}, "billing": {4: "subscription"}})
     assert got == {"release": [], "start": None, "held": [{"task_id": 3, "why": dispatcher.ONE_AT_A_TIME}]}
 
 
 def test_the_oldest_ready_task_whose_agent_may_start_is_the_one_started():
     got = decide({"running": None, "ready": [ready(4, "a"), ready(5, "a")], "reviews": [],
-                  "agents": {"a": agent()}, "tier": {4: "strong", 5: "strong"}})
+                  "agents": {"a": agent()}, "tier": {4: "strong", 5: "strong"},
+                  "billing": {4: "subscription", 5: "subscription"}})
     assert got["start"] == 4 and got["held"] == []
 
 
 def test_a_task_of_a_stopped_agent_is_held_and_a_later_task_of_another_agent_starts():
     got = decide({"running": None, "ready": [ready(4, "a"), ready(5, "b")], "reviews": [],
-                  "agents": {"a": agent(mode="stopped"), "b": agent()}, "tier": {4: "strong", 5: "floor"}})
+                  "agents": {"a": agent(mode="stopped"), "b": agent()}, "tier": {4: "strong", 5: "floor"},
+                  "billing": {4: "subscription", 5: "metered"}})
     assert got["start"] == 5 and got["held"] == [{"task_id": 4, "why": "stopped"}]
 
 
 def test_a_task_at_its_agent_s_cap_is_held_with_the_cap_s_name():
     got = decide({"running": None, "ready": [ready(4, "a"), ready(5, "b")], "reviews": [],
-                  "agents": {"a": agent(runs=5, cap=5), "b": agent(usd=1.0, usd_cap=1.0)}, "tier": {4: "strong", 5: "floor"}})
+                  "agents": {"a": agent(runs=5, cap=5), "b": agent(usd=1.0, usd_cap=1.0)}, "tier": {4: "strong", 5: "floor"},
+                  "billing": {4: "subscription", 5: "metered"}})
     assert got["start"] is None
     assert got["held"] == [{"task_id": 4, "why": "cap: runs per day"}, {"task_id": 5, "why": "cap: usd per day"}]
 
@@ -77,7 +80,7 @@ def test_the_function_changes_nothing_and_imports_no_sibling():
     source = (st.RUNTIME / "dispatcher.py").read_text(encoding="utf-8")
     assert not re.search(r"^\s*(import|from)\s+(ops|lab|autonomy|plan|proof)\b", source, re.M)
     assert "sqlite" not in source and "open_db" not in source and "store_module" not in source
-    snapshot = {"running": None, "ready": [ready(4, "a", milestone=1)], "agents": {"a": agent()}, "tier": {4: "strong"},
+    snapshot = {"running": None, "ready": [ready(4, "a", milestone=1)], "agents": {"a": agent()}, "tier": {4: "strong"}, "billing": {4: "subscription"},
                 "reviews": [{"pending": {"id": 9, "kind": "review", "payload": {"ending": "done", "why": "wrote"}},
                              "task": ready(2, "a"), "agent": "a", "proven": True, "mandatory": False}]}
     before = copy.deepcopy(snapshot)
@@ -174,7 +177,7 @@ def test_a_set_released_by_a_mode_ends_with_one_acceptance_for_the_person(tree):
 def test_a_task_no_agent_owns_is_held_and_can_still_be_run_by_hand(tree):
     path = str(tree["project"])
     got = decide({"running": None, "ready": [ready(4, None), ready(5, "ghost")], "reviews": [],
-                  "agents": {"a": agent()}, "tier": {}})
+                  "agents": {"a": agent()}, "tier": {}, "billing": {}})
     assert got["start"] is None and [h["why"] for h in got["held"]] == [dispatcher.NO_AGENT] * 2
     ops.request(path, "Invented request.", flow="single")  # stage 1's request: its tasks name no agent
     out = ops.dispatch(path)

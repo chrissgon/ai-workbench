@@ -37,11 +37,12 @@ export function createKpis() {
 
   return {
     el,
-    /** sums: {decisions, runs, runsCap, usd, usdCap, usdRecorded, usdReserved, runsTotal} or null (loading or failed); state: "loading", "error" or "ready". */
+    /** sums: {decisions, runs, runsCap, usd, usdCap, usdRecorded, usdReserved, runsTotal, inUse: {runs, spend}} or null (loading or failed); state: "loading", "error" or "ready". A card whose cap is not in use (A-38) is hidden. */
     update(sums, state = "ready") {
       if (!sums) {
         const text = state === "error" ? "-" : "...";
         for (const c of [decisions, runs, spend]) {
+          c.el.hidden = false;                 // while the data is not there nothing is hidden: the cards read as loading
           c.figure.textContent = text;
           c.unit.textContent = "";
           c.el.removeAttribute("title");
@@ -51,13 +52,16 @@ export function createKpis() {
         }
         return;
       }
+      const use = sums.inUse || { runs: true, spend: true };
+      runs.el.hidden = use.runs === false;
+      spend.el.hidden = use.spend === false;
       decisions.figure.textContent = String(sums.decisions);
       decisions.unit.textContent = "waiting";
       decisions.el.title = `${sums.decisions} open decision${sums.decisions === 1 ? "" : "s"} waiting for you`;
       decisions.el.setAttribute("aria-label", `Open decisions ${sums.decisions} waiting for you`);
       runs.figure.textContent = String(sums.runs);
       runs.unit.textContent = `of ${sums.runsCap}`;
-      runs.el.title = `of ${sums.runsCap} · ${format.METER_TIPS.runs}${sums.runsTotal ? ` Runs today: ${sums.runsTotal}` : ""}`;
+      runs.el.title = `of ${sums.runsCap} · ${format.METER_TIPS.runs}${sums.runsTotal ? ` All runs today: ${sums.runsTotal}` : ""}`;
       runs.el.setAttribute("aria-label", `${format.METER_WORDS.runs} ${sums.runs} of ${sums.runsCap}`);
       meter(runs, format.share(sums.runs, sums.runsCap));
       spend.figure.textContent = format.dollars(sums.usd);

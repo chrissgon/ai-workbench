@@ -476,7 +476,7 @@ def _platform_names(platforms) -> list:
 def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, tier: str = "strong",
               model: str | None = None, adapter: str | None = None, pass_env=None,
               timeout: int | None = None, retries: int | None = None, prepare=None, finish=None,
-              tmp_in_run: bool = False, platforms=None) -> dict:
+              tmp_in_run: bool = False, platforms=None, max_cost=None) -> dict:
     """Run one skill once on one task text, in the eval container, on a fresh copy.
 
     skill    a folder name under skills/ of this checkout: it is staged where the adapter's tool finds skills,
@@ -503,6 +503,9 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
              back as <dest>/outputs/tmp: what a skill writes under a folder from mktemp -d (the payload of its
              confirmation gate) is kept. TMPDIR is passed to the container by name, as the passed variables are; it
              is not a secret, so its value is never replaced in what the run left
+    max_cost  the run's own spend limit in dollars (a number above 0), given to the adapter as --max-cost-usd, to the cent; None, the
+             default, gives none. The runtime passes one for a run on a metered credential (autonomy.run_budget); the
+             adapter of the reference model stops the run once it has spent that much, the floor model's adapter does not enforce it
     platforms  the platforms whose reference the caller names, a list of names ("a case's platforms"): each is
              staged beside the skill, with its data file when it has one, as the lab stages a case's platforms. The
              list is added to what platforms_cited() gives, never in its place; a name with no reference under
@@ -521,6 +524,8 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
     ref = reference(tier)
     model, adapter = model or ref["model"], adapter or ref["adapter"]
     pass_env = list(ref["pass_env"] if pass_env is None else pass_env)
+    if max_cost is not None and (isinstance(max_cost, bool) or not isinstance(max_cost, (int, float)) or not max_cost > 0):
+        raise LabError("config", "max_cost is a number of dollars above 0")
     timeout = ref["timeout_seconds"] if timeout is None else timeout
     retries = ref["retries"] if retries is None else retries
     control = ref["control"]
@@ -594,7 +599,7 @@ def run_skill(skill: str, prompt: str, files, dest: str, *, web: bool = False, t
             "model": model, "account": {"key": adapter, "markers": eval_cfg["account_limit"], "probe": probe},
             "refusal_markers": eval_cfg["refusal_markers"], "pass_env": pass_env, "values": values,
             "settings": settings, "control": control, "tier": tier, "web": bool(web), "timeout": timeout,
-            "max_cost": None, "retries": retries, "prompt": prompt, "response_limit": RESPONSE_LIMIT,
+            "max_cost": None if max_cost is None else f"{max_cost:.2f}", "retries": retries, "prompt": prompt, "response_limit": RESPONSE_LIMIT,
             "counts": counts, "env_extra": (lambda root: _run_tmp(root, runner)) if tmp_in_run else None}
     hooks = types.SimpleNamespace(build=build, after_base=after_base, stage=stage, after_run=after_run)
     attempts = _lab_call(LAB.load_attempts)

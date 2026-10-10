@@ -226,7 +226,7 @@ def test_the_model_derives_each_floors_state_and_facts_from_what_the_service_ret
     assert got["plate"]["runsText"] == "2 / 8" and got["plate"]["usdText"] == "$0.50 / $4.00" and got["plate"]["acting"] == "autonomous" \
         and got["plate"]["selected"] is True and got["plate"]["mode"] == "autonomous-with-policy" and got["plate"]["pips"] == 4, "the plate of the desktop and the tablet"
     assert got["card"] == {"name": "engineering", "label": "Engineering", "dot": "theme", "decisions": 0, "word": "Running", "mode": "autonomous-with-policy", "pips": 4,
-                           "acting": "autonomous", "actingPips": 3, "runsLine": "reference-model runs 2 / 8 · floor-model spend $0.50 / $4.00", "off": False}, \
+                           "acting": "autonomous", "actingPips": 3, "runsLine": "runs 2 / 8 · spend $0.50 / $4.00", "off": False}, \
         "the compact card: name, state word, mode plate, one line of runs and spend"
     assert got["cardOff"]["off"] is True and got["cardOff"]["word"] == "Off, mode is stopped"
     assert got["scene"] == {"selected": "engineering", "label": "Building of northwind-shop, 6 floors, 2 decisions waiting",
@@ -705,7 +705,7 @@ def test_the_agent_tab_sends_set_mode_retry_and_the_hand_over_as_one_request_eac
     assert got["plate"].startswith("supervised") and got["plate"].endswith("Every review reaches you."), "the plate says the mode and its one line"
     assert got["options"] == 0, "A-17: no select; the mode is changed by Stop agent and Supervise"
     assert got["standing"] is True
-    assert got["meters"] == [["Reference-model runs today 5 / 12", 1], ["Floor-model spend today $1.87 / $4.00", 1], ["Queued 0", 0]], "Queued has no cap, so no track; A-20: the meters say which model they count"
+    assert got["meters"] == [["Runs today 5 / 12", 1], ["Spend today $1.87 / $4.00", 1], ["Queued 0", 0]], "Queued has no cap, so no track; A-20: the meters say which model they count"
     assert got["current"].startswith("#4 Task 4Running") and "skill s" in got["current"] and "Run#1 s 1.0.0" in got["current"]
     # A-32: the other tasks carry the actions of a Tasks-tab row, so a waiting one has "Open in the Inbox" after its chip
     assert [o.split("Retry")[0] for o in got["others"]] == ["#7 Task 7Waiting for youOpen in the Inbox", "#6 Task 6Blocked", "#5 Task 5Failed"], "other tasks, newest first"

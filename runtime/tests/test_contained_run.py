@@ -258,12 +258,15 @@ def test_a_missing_image_is_a_refusal_and_never_a_build(tree, monkeypatch):
     assert not tree["out"].exists()  # nothing was written out
 
 
-def test_the_cost_of_a_run_on_the_reference_model_is_written_as_unknown(tree, monkeypatch):
+def test_the_cost_of_a_subscription_run_is_written_as_unknown_and_a_metered_run_keeps_it(tree, monkeypatch):
     strong = contained(tree)
     assert strong["tier"] == "strong"
     timing = json.loads((tree["out"] / "timing.json").read_text())
     assert timing == {"total_tokens": 100, "duration_ms": 5, "exit_code": 0, "cost_usd": None}  # the adapter reported 0.01
-    # On the floor model the adapter's figure is kept: the runtime's own capped key makes it a known cost.
+    # A run on a metered credential keeps the adapter's figure (ADJ-R3): the runtime's own capped key for the floor model is one.
+    real = lab.reference
+    monkeypatch.setattr(lab, "reference", lambda tier="strong": {**real(tier), "pass_env": ["STANDIN_FLOOR_PASS"] if tier == "floor" else []})
+    monkeypatch.setenv("STANDIN_FLOOR_PASS", "invented-value-never-shown")
     monkeypatch.setattr(lab, "standing", lambda skill: {
         "skill": skill, "version": "0.1.0",
         "models": {"m": {"band": "reliable", "cause": None, "score": 0.9, "mean": 0.95, "runs": 6},
