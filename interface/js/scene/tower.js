@@ -13,7 +13,7 @@
 // The static pieces of a floor's shell are baked into two batches (kit.batch): the walls and the glass. The glass is one mesh a floor so a window's
 // state is one repaint of its vertices; the shadows and the marks are separate meshes because they move.
 
-import { BASE, D, GAP, H, P, SLAB, W, fillFloor, floorY } from "./building.js";
+import { BASE, D, FRAME, GAP, H, P, SLAB, W, anchors, fillFloor, floorY } from "./building.js";
 import { agentPose, agentRest, alertPose } from "./city-motion.js";
 import { cityTones } from "./palette.js";
 import { bracketSet, decisionMark } from "./marks.js";
@@ -52,7 +52,7 @@ const VIEW_AXIS = [-Math.cos(ELEVATION) * Math.sin(AZIMUTH), -Math.sin(ELEVATION
 
 /**
  * What a tower is made of, for a lot: which floors it has and whether it is accepted and running. Everything else a poll or the arrival of the
- * documents can change (the words, the state, the windows, the decisions, the sheets, the drawers, the floor the work order is on) changes the tower
+ * documents can change (the words, the state, the windows, the decisions, the notes of the board, the documents on the shelves, the floor the work order is on) changes the tower
  * in place (`tower.sync`): the tower is built again only when the projects or the agents change (specification, section 2 of the round-3 authority).
  */
 export function towerStructure(lot) {
@@ -64,9 +64,23 @@ export function roofY(n, s) {
   return floorY(n - 1, P + GAP * s) + P;
 }
 
-/** The bounds, in the world, of a tower at (cx, cz) with `n` floors at open progress `s`: the footprint with its porch, the roof with its beacon. */
+/**
+ * The bounds, in the world, of a tower at (cx, cz) with `n` floors at open progress `s`: closed, the footprint with its porch and the roof with its beacon; open, the rooms
+ * (the roof is gone, the porch with it) with room for the decision mark beside them and over the top room's wall. The two are mixed as the walls fade.
+ */
 export function towerBox(THREE, cx, cz, n, s) {
-  return new THREE.Box3(new THREE.Vector3(cx - W / 2 - 1.2, 0, cz - D / 2 - 0.3), new THREE.Vector3(cx + W / 2 + 1.2, worldY(roofY(n, s), s) + 1.4, cz + D / 2 + 1.7));
+  const k = clamp01(s / 0.7);
+  const mix = (closed, open) => closed + (open - closed) * k;
+  const top = mix(worldY(roofY(n, s), s) + 1.4, floorY(n - 1, P + GAP * s) + FRAME.Y(FRAME.wallTop) + 0.6);
+  return new THREE.Box3(new THREE.Vector3(cx - W / 2 - mix(1.2, 0.9), 0, cz - D / 2 - mix(0.3, 0.3)), new THREE.Vector3(cx + W / 2 + mix(1.2, 0.9), top, cz + D / 2 + mix(1.7, 0.4)));
+}
+
+/**
+ * The bounds, in the world, of the building a lot has as the City draws it, with no margin: its footprint with the ledges and the canopy, and its roof. The City's camera
+ * is fitted on these (the page draws a building as large as the free rectangle lets it, not smaller for the room round it).
+ */
+export function lotBox(THREE, cx, cz, n) {
+  return new THREE.Box3(new THREE.Vector3(cx - W / 2 - OVER, 0, cz - D / 2 - OVER), new THREE.Vector3(cx + W / 2 + OVER, worldY(roofY(n, 0), 0) + 0.2, cz + D / 2 + CANOPY.d));
 }
 
 /** The bounds of one floor (i) of a tower, open. */
@@ -125,8 +139,8 @@ export function createTower(kit, lot, cx, cz) {
     id: lot.id, lot, root, group, overlay, n, floorGroups, open: 0, target: 0, interior: false,
     vis: lot.floors.map(() => 1), visTarget: lot.floors.map(() => 1),
     motions: [], markers: [], outlines: [], inner: [], parts: [], beacon: null, tag: null, brackets: bracketing,
-    shown: lot.floors.map((f) => ({ state: f.state, window: f.window, decisions: f.decisions, sheets: null, drawers: null, selected: lot.selected === f.name })),
-    cardAnchor: new THREE.Vector3(cx, 0, cz), plateAnchors: [], boardAnchors: [], doorAnchors: [], tagAnchor: new THREE.Vector3(),
+    shown: lot.floors.map((f) => ({ state: f.state, window: f.window, decisions: f.decisions, notes: null, documents: null })),
+    cardAnchor: new THREE.Vector3(cx, 0, cz), plateAnchors: [], boardAnchors: [], doorAnchors: [], tagAnchor: new THREE.Vector3(), marksHidden: false,
   };
   const fadeMats = [];
   const roofMats = [];
@@ -215,9 +229,9 @@ export function createTower(kit, lot, cx, cz) {
       const parts = [new THREE.ShapeGeometry(outline.body, 14), ...outline.ears.map((ear) => new THREE.ShapeGeometry(ear, 6).translate(0, 0, -0.004))];
       const position = [];
       for (const part of parts) {
-        const flat = part.toNonIndexed();
+        const flat = part.index ? part.toNonIndexed() : part;   // a shape's geometry may come indexed or not, according to the library
         position.push(...flat.getAttribute("position").array);
-        flat.dispose();
+        if (flat !== part) flat.dispose();
       }
       const geometry = kit.track(new THREE.BufferGeometry());
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(position, 3));
@@ -388,13 +402,9 @@ export function createTower(kit, lot, cx, cz) {
       return;
     }
     if (!tower.tag) {
+      // R-29: the work-order tag is an HTML badge (plates.js `tagNode`) at the floor's left corner; the group is what the engine moves between floors and holds no mesh
       const mark = new THREE.Group();
       group.add(mark);
-      kit.box(0.5, 0.03, 0.34, 0, 0, 0, palette.bg, { parent: mark });
-      const outline = new THREE.LineSegments(kit.unitEdges, adopt(new THREE.LineBasicMaterial({ color: T.text })));
-      outline.scale.set(0.5, 0.03, 0.34);
-      outline.position.y = 0.015;
-      mark.add(outline);
       tower.tag = { group: mark, floor: tag.floor, index };
     }
     tower.tag.floor = tag.floor;
@@ -402,17 +412,18 @@ export function createTower(kit, lot, cx, cz) {
     tower.apply();
   };
 
-  /** The room of floor i, from the lot as it is now (made once, or again when the agent's state changed: a figure sits or stands, a screen lights). */
+  /** The room of floor i, from the lot as it is now (made once, or again when the agent's state changed: the owl takes its pose, the floor its tone). The old room is freed. */
   function buildRoom(i) {
     const L = tower.lot;
     const f = L.floors[i];
     const inner = tower.inner[i];
+    if (tower.parts[i]) tower.parts[i].dispose();
     inner.clear();
     const lists = { motions: [], markers: [], outlines: [] };
     roomLists[i] = lists;
-    const drawn = { ...f, sheets: f.sheets || [], drawers: typeof f.drawers === "number" ? f.drawers : 1 };   // unread: one drawer, as the cabinet draws at least one
-    tower.parts[i] = fillFloor(kit, inner, drawn, { lot: L.id, selected: L.selected === f.name, ...lists });
-    Object.assign(tower.shown[i], { state: f.state, window: f.window, decisions: f.decisions, sheets: drawn.sheets.map((x) => x.path), drawers: drawn.drawers, selected: L.selected === f.name });
+    const drawn = { ...f, notes: Array.isArray(f.notes) ? f.notes : [], documents: typeof f.documents === "number" ? f.documents : 0 };   // unread: no binder yet
+    tower.parts[i] = fillFloor(kit, inner, drawn, { lot: L.id, accepted: L.accepted, ...lists });
+    Object.assign(tower.shown[i], { state: f.state, window: f.window, decisions: f.decisions, notes: JSON.stringify(drawn.notes), documents: drawn.documents });
     refreshLists();
   }
 
@@ -448,9 +459,9 @@ export function createTower(kit, lot, cx, cz) {
 
   /**
    * The tower takes the words and the state of `next` (the same floors): everything a poll or the arrival of the documents changes is changed where
-   * it stands, never by building the tower again. A window is repainted, the shadows come or go with the light, the tray its sheets, the cabinet its
-   * drawers, the table its sheets, a slab its tone, the decision mark comes or goes. Only a change of an agent's state makes that one room again (a
-   * figure sits or stands). A floor whose documents are not known yet (`sheets` or `drawers` null) keeps what it shows. Returns true when anything changed.
+   * it stands, never by building the tower again. A window is repainted, the shadows come or go with the light, the board its notes, the bookcases their
+   * binders, the decision mark comes or goes. Only a change of an agent's state makes that one room again (the owl takes another pose, the floor another tone).
+   * A floor whose notes or documents are not known yet (`notes` or `documents` null) keeps what it shows. Returns true when anything changed.
    */
   tower.sync = (next) => {
     tower.lot = next;
@@ -477,7 +488,6 @@ export function createTower(kit, lot, cx, cz) {
       if (!parts) {
         shown.state = f.state;
         shown.decisions = f.decisions;
-        shown.selected = next.selected === f.name;
         return;
       }
       if (f.state !== shown.state) {
@@ -485,28 +495,18 @@ export function createTower(kit, lot, cx, cz) {
         changed = true;
         return;
       }
-      if (f.decisions !== shown.decisions) {
-        parts.setDecisions(f.decisions, f.state === "waiting");
+      if (f.decisions !== shown.decisions) {   // the hit of the owl (the Inbox when it asks) and the mark follow; nothing is drawn again
         shown.decisions = f.decisions;
         changed = true;
       }
-      if (Array.isArray(f.sheets)) {
-        const paths = f.sheets.slice(0, 6).map((x) => x.path);
-        if (JSON.stringify(paths) !== JSON.stringify(shown.sheets)) {
-          parts.setSheets(f.sheets);
-          shown.sheets = paths;
-          changed = true;
-        }
-      }
-      if (typeof f.drawers === "number" && f.drawers !== shown.drawers) {
-        parts.setDrawers(f.drawers);
-        shown.drawers = f.drawers;
+      if (Array.isArray(f.notes) && JSON.stringify(f.notes) !== shown.notes) {
+        parts.setNotes(f.notes);
+        shown.notes = JSON.stringify(f.notes);
         changed = true;
       }
-      const selected = next.selected === f.name;
-      if (selected !== shown.selected) {
-        parts.setSelected(selected);
-        shown.selected = selected;
+      if (typeof f.documents === "number" && f.documents !== shown.documents) {
+        parts.setDocuments(f.documents);
+        shown.documents = f.documents;
         changed = true;
       }
     });
@@ -520,6 +520,7 @@ export function createTower(kit, lot, cx, cz) {
    * shares (its lit and unlit colours, the vertex-colour material) stays with the kit.
    */
   tower.dispose = () => {
+    for (const parts of tower.parts) if (parts) parts.dispose();
     const seen = new Set();
     for (const top of [root, bracketing.group]) {
       top.traverse((node) => {
@@ -566,10 +567,8 @@ export function createTower(kit, lot, cx, cz) {
     }
     marks.forEach((mark, i) => {
       if (!mark) return;
-      const k = clamp01(1 - s * 3);
-      mark.userData.baseY = worldY(floorY(i, pitch) + SLAB, s) + markAt[1];   // beside its floor, at its own size
-      mark.scale.setScalar(Math.max(k, 0.0001));
-      mark.visible = k > 0.01 && tower.vis[i] > 0.01;
+      mark.userData.baseY = worldY(floorY(i, pitch) + SLAB, s) + markAt[1];   // beside its floor, at its own size, in the open building as in the City
+      mark.visible = tower.vis[i] > 0.01 && !tower.marksHidden;               // the Floor and the Lobby show the room alone
       mark.position.y = mark.userData.baseY;   // the motion adds its rise on its next frame
     });
     tower.brackets.roof.position.y = worldY(roofY(n, s), s) + ROOF_H * sy;
@@ -582,8 +581,9 @@ export function createTower(kit, lot, cx, cz) {
     tower.lot.floors.forEach((f, i) => {
       const y = worldY(floorY(i, pitch), s);
       (tower.plateAnchors[i] = tower.plateAnchors[i] || new THREE.Vector3()).set(cx + W / 2 + 0.2, y + 1.2, cz - D / 2);
-      (tower.boardAnchors[i] = tower.boardAnchors[i] || new THREE.Vector3()).set(cx - 1.0, y + 2.6, cz - D / 2 + 0.2);
-      (tower.doorAnchors[i] = tower.doorAnchors[i] || new THREE.Vector3()).set(cx - W / 2 + 0.2, y + 3.0, cz + 1.2);
+      const a = anchors(tower.parts[i] ? tower.parts[i].cases : 1);
+      (tower.boardAnchors[i] = tower.boardAnchors[i] || new THREE.Vector3()).set(cx + a.board.x, y + a.board.y, cz + a.board.z);
+      (tower.doorAnchors[i] = tower.doorAnchors[i] || new THREE.Vector3()).set(cx + a.door.x, y + a.door.y, cz + a.door.z);
     });
     tower.cardAnchor.set(cx, worldY(roofY(n, s), s) + 1.6, cz);
   };

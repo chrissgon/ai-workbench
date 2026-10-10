@@ -237,6 +237,7 @@ applyOutlineVisibility(world.outlines, world.selected);
 out.floorsNothing = visible(world).filter((x) => String(x[0]).startsWith("floor:")).every((x) => x[1] === false);
 applyOutlineVisibility(world.outlines, "floor:business");
 out.floorRoute = visible(world).filter((x) => x[1] === true);
+out.floorLines = world.outlines.map((o) => o.id);
 const server = buildServer(kit, serverModel({ accepted: true, connections: null, costs: null }));
 applyOutlineVisibility(server.outlines, server.selected);
 out.server = [visible(server), server.selected];
@@ -253,7 +254,8 @@ def test_no_outline_line_is_drawn_without_a_hover_or_a_selection_and_the_route_s
     assert got["cityRoute"] == [], "no lot line is made for a route to select"
     assert got["brackets"] == [["a", False], ["b", False], ["c", False]], "built hidden: no standing brackets"
     assert got["floorsNothing"] is True, "no floor line stands, not even for the work order's floor"
-    assert got["floorRoute"] == [["b", True], ["floor:business", True]] or ["floor:business", True] in got["floorRoute"], "the floor the route selects keeps its line"
+    # R-28 and R-31: a floor is marked by corner brackets (hit.marks, shown by the engine), and the room as a whole is not picked on the Floor: no floor line at all
+    assert got["floorRoute"] == [] and got["floorLines"] == [], "a floor has no outline line, whatever the route selects: its corners are marked by brackets"
     assert got["server"] == [[["room", True]], "room"], "the Control room the route selects keeps its floor line"
 
 
@@ -280,13 +282,13 @@ def test_the_hover_outline_is_the_prototypes_thin_depth_tested_line_that_follows
 HITS = WORLD_JS + r"""
 const tips = { agent: "a", desk: "d", tray: "t" };
 const out = {};
-for (const [state, name] of [["working", "business"], ["waiting", "business"], ["idle", "planning"], ["off", "business"]]) {
+for (const [state, name, decisions] of [["working", "business", 0], ["waiting", "business", 0], ["waiting", "business", 2], ["idle", "planning", 0], ["off", "business", 0]]) {
   const { world, kit } = make();
-  const m = model({ lots: [lot("a", { floors: [floor2("planning"), floor2("business", { state })] }), lot("b"), lot("c")], focus: "a", floor: name, room: { tips, board: { title: "t", lines: ["x"], dot: "theme" }, door: name === "planning" } });
+  const m = model({ lots: [lot("a", { floors: [floor2("planning"), floor2("business", { state, decisions })] }), lot("b"), lot("c")], focus: "a", floor: name, room: { tips, board: { title: "t", lines: ["x"], dot: "theme" }, door: name === "planning" } });
   world.setFocus("a", true);
   world.update(m);
   world.setFloors(name, null, true);
-  out[`${state}@${name}`] = world.hits.map((h) => h.id);
+  out[`${state}${decisions ? "+asks" : ""}@${name}`] = world.hits.map((h) => h.id);
   kit.dispose();
 }
 console.log(JSON.stringify(out));
@@ -295,20 +297,22 @@ function floor2(n, extra = {}) { return lot("a").floors.find((f) => f.name === "
 
 
 @needs_node
-def test_a_room_has_one_object_for_each_destination_and_the_cabinet_and_the_board_are_only_scenery(tmp_path):
+def test_a_room_has_three_ways_in_the_owl_the_board_and_the_bookcase_and_the_lobby_a_door(tmp_path):
+    # R-31 and R-23b supersede "one object for each destination": the figure, the tray, the desk and a sheet each are gone; the owl, the board of notes and the bookcase are
+    # what the pointer picks on the Floor, and the Lobby's door beside them
     got = run_node(tmp_path, HITS)
-    sheets = ["sheet:docs/a.md", "sheet:docs/b.md"]
-    assert got["working@business"] == ["agent", "desk", "tray", *sheets], "figure -> Agent, desk -> Desk, tray -> Inbox, a sheet -> its document"
-    assert got["waiting@business"] == got["working@business"]
-    assert got["off@business"] == ["desk", "tray", *sheets], "no figure, no agent hit"
-    assert got["idle@planning"][-1] == "lobby-door" and "cabinet" not in got["idle@planning"] and "board" not in got["idle@planning"]
+    assert got["working@business"] == ["agent", "tasks", "desk"], "owl -> Agent, board -> Tasks, bookcase -> Desk"
+    assert got["waiting@business"] == got["working@business"], "an owl that waits and has nothing open still opens the Agent tab"
+    assert got["waiting+asks@business"] == ["tray", "tasks", "desk"], "the owl opens the Inbox when it asks something (R-31)"
+    assert got["off@business"] == ["tasks", "desk"], "no owl, no agent hit: an agent that is off has the board and the bookcase"
+    assert got["idle@planning"] == ["agent", "tasks", "desk", "lobby-door"], "the Lobby adds its door (R-42)"
     for ids in got.values():
-        assert "cabinet" not in ids and "board" not in ids, "nothing opens from the cabinet or the board, and they get no outline"
+        assert not any(i.startswith("sheet:") or i in ("cabinet", "board") for i in ids), "no sheet, no cabinet: a document is a binder of the bookcase, which opens the Desk"
     for name, tab_by_id in (("floor.js", {"tray": "inbox", "desk": "desk", "agent": "agent"}), ("lobby.js", {"tray": "inbox", "desk": "desk", "agent": "agent"})):
         text = (JS / "views" / name).read_text(encoding="utf-8")
         for hit, tab in tab_by_id.items():
             assert re.search(rf'id === "{hit}"\) window\.location\.hash = router\.\w+\((?:project, agent|project), "{tab}"\)', text), f"{name}: {hit} opens {tab}"
-        assert '"cabinet"' not in text and '"board"' not in text, f"{name} maps no click from the cabinet or the board"
+        assert '"cabinet"' not in text, f"{name} maps no click from the cabinet"
 
 
 # --- no rebuild on a poll that changed only words -----------------------------------------------------------------------------------
@@ -359,25 +363,10 @@ def test_the_engine_never_restarts_a_motion_when_it_rebuilds_and_every_builder_t
 # --- the motions of the prototype ----------------------------------------------------------------------------------------------------
 
 MOTION = r"""
-import { workingMotion, scanY, SCAN_PERIOD, TYPING_RATE, TYPING_AMPLITUDE, TYPING_PHASE } from "@JS@/scene/figure.js";
 import { pulseBeacon, restBeacon } from "@JS@/scene/city.js";
 import { createTween } from "@JS@/scene/tween.js";
 
 const out = {};
-out.constants = [TYPING_RATE, TYPING_AMPLITUDE, TYPING_PHASE, SCAN_PERIOD];
-const elbows = [{ rotation: { x: -1 } }, { rotation: { x: -1 } }];
-let calls = 0;
-const who = { typing(s) { calls += 1; elbows[0].rotation.x = -1 + TYPING_AMPLITUDE * Math.sin(s * TYPING_RATE); elbows[1].rotation.x = -1 + TYPING_AMPLITUDE * Math.sin(s * TYPING_RATE + TYPING_PHASE); }, rest() { elbows.forEach((e) => { e.rotation.x = -1; }); } };
-const scan = { position: { y: 0 } };
-const motion = workingMotion(who, { scan });
-motion.tick(0.1);
-out.ticked = [calls, scan.position.y > 0.95, scan.position.y < 1.35];
-motion.rest();
-out.rest = [elbows[0].rotation.x, elbows[1].rotation.x, scan.position.y];
-// the scan line is a slow sine: no jump, back where it started after one period, always on the screen (y .95 to 1.35)
-let maxStep = 0; let lo = 9; let hi = -9;
-for (let t = 0; t < 2 * SCAN_PERIOD; t += 0.01) { maxStep = Math.max(maxStep, Math.abs(scanY(t + 0.01) - scanY(t))); lo = Math.min(lo, scanY(t)); hi = Math.max(hi, scanY(t)); }
-out.scan = [maxStep < 0.01, lo >= 0.95, hi <= 1.35, Math.abs(scanY(SCAN_PERIOD) - scanY(0)) < 1e-9];
 // the beacon: sin(3 t), scale 1 +- .12 in its plane only, opacity .35 to .65
 const beacon = { ring: { scale: { x: 1, y: 1, z: 1, set(a, b, c) { this.x = a; this.y = b; this.z = c; } } }, material: { opacity: 1 } };
 const samples = [];
@@ -402,11 +391,9 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_the_motions_are_the_prototypes_numbers_the_scan_line_never_jumps_and_a_move_may_hand_over_early(tmp_path):
+def test_the_motions_are_the_prototypes_numbers_the_beacon_is_a_sine_and_a_move_may_hand_over_early(tmp_path):
+    # R-24 and R-41: the typing figure and the screen's scan line are gone with the figure (the owl's motions are owl-motion.js, tested in test_interface_scene_r4.py)
     got = run_node(tmp_path, MOTION)
-    assert got["constants"] == [11, 0.22, 2, 3.2], "the forearms swing 0.22 rad at 11 rad/s with the second 2 rad behind; the scan line's round trip is 3.2 s"
-    assert got["ticked"] == [1, True, True] and got["rest"] == [-1, -1, 1.15], "tick moves the forearms and the scan, rest puts them back"
-    assert got["scan"] == [True, True, True, True], "a smooth sine on the screen that is back where it began after a period"
     lo, hi, flat, olo, ohi = got["beacon"]
     assert abs(lo - 0.88) < 1e-3 and abs(hi - 1.12) < 1e-3 and flat is True, "scale 1 +- .12 in the ring's plane, the thickness stays"
     assert abs(olo - 0.35) < 1e-3 and abs(ohi - 0.65) < 1e-3 and got["period"] is True, "opacity .35 to .65, a cycle of 2 pi / 3 s"
@@ -416,11 +403,13 @@ def test_the_motions_are_the_prototypes_numbers_the_scan_line_never_jumps_and_a_
     assert got["cut"] == [False] and got["lateCancel"] == [True], "a cut before the hand-over settles false, after it stays true"
 
 
-def test_the_state_animations_keep_the_rules_of_the_scene_and_the_figure_does_not_fidget():
-    figure = (SCENE / "figure.js").read_text(encoding="utf-8")
-    for fidget in ("Math.random", "spark", "wave", "nod"):
-        assert fidget not in figure.replace("does not wave and the idle one does not nod", ""), f"the figure has no {fidget}: it types, bobs and turns only while its agent works"
-    assert "workingPose(seconds)" in figure and "group.position.y = pose.bob" in figure and "body.rotation.y = pose.turn" in figure, "the prototype's working pose: arms, bob and turn"
+def test_the_state_animations_keep_the_rules_of_the_scene_and_the_owl_does_not_fidget():
+    # R-41: the owl moves only with its state: the raised wing waves while it waits, the wings tap while it works, it breathes and the z rise while it is idle
+    motion = (SCENE / "owl-motion.js").read_text(encoding="utf-8")
+    build = (SCENE / "owl-build.js").read_text(encoding="utf-8")
+    for fidget in ("Math.random", "spark", "blink", "nod"):
+        assert fidget not in motion + build, f"the owl has no {fidget}: it moves only for the state it is in"
+    assert 'if (pose === "waiting") turnOf("wave"' in build and 'if (pose === "working")' in build and 'if (pose === "idle")' in build, "each motion belongs to one pose"
     engine = (SCENE / "engine.js").read_text(encoding="utf-8")
     assert re.search(r"export const CAMERA_MS = 1023;", engine) and "OPEN_MS = 1439" in engine and "FLY_SETTLE_AT = 0.9" in engine
     assert "content.step(frameSeconds(now, worldLast))" in engine and "positionLabels();   // the labels ride along with the camera" in engine and "positionLabels();   // the plates, the cards and the tag ride along with the floors" in engine, "the labels follow the camera and the opening instead of vanishing"
@@ -710,7 +699,8 @@ def test_the_citys_card_shows_its_theme_border_only_for_a_project_the_person_has
     city_view = (JS / "views" / "city.js").read_text(encoding="utf-8")
     assert "worldModel(snapshot, now, { selectedId: null, marked: selectedId, focus: null" in city_view, "the tracking bar's default project is not marked on the scene; the chosen project keeps its outline"
     # R-17: the pill is outlined in the moment the building wears its brackets, pointed at (the scene or the list) or followed (the project the person chose)
-    assert 'classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId || (Boolean(content) && entry.spec.id === content.marked))' in engine, "hovered, followed or chosen by the route"
+    # (C-7: the card is measured again when it opens, since a quiet project's dot is another size; the condition itself is the same)
+    assert 'const open = Boolean(entry.spec.selected) || entry.spec.id === hoverId || (Boolean(content) && entry.spec.id === content.marked);' in engine and 'classList.toggle("is-selected", open)' in engine, "hovered, followed or chosen by the route"
     assert engine.count("markLabels();") >= 3, "marked on every hover change, build and relabel"
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")
     assert ".wb-pill.is-selected" in (INTERFACE / "scene.css").read_text(encoding="utf-8") and "wb-camera-bottom" not in css and "156px" not in css.split(".wb-camera-tools")[1].split("}")[0]

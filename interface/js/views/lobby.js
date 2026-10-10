@@ -246,7 +246,7 @@ export function createLobbyView(frame, { project, onChanged }) {
     });
     const words = {
       tips: room.tips, board: room.board, door: true, doorTip: room.tips.door, state: room.state, window: room.window, decisions: room.decisions,
-      sheets: room.sheets, drawers: room.drawers,
+      sheets: room.sheets, drawers: room.drawers, documents: room.documents,
     };
     scene.update(worldModel(last.snapshot, last.now, { selectedId: project, focus: project, floor: "planning", room: words, ready: Boolean(status) }), canvasLabel(last.projectName, room));
   }

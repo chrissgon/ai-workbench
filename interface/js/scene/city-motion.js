@@ -25,14 +25,14 @@ export function cubicBezier(x1, y1, x2, y2) {
 
 export const easeInOut = cubicBezier(0.42, 0, 0.58, 1);
 
-/** The value at progress `p` (0 to 1) of a track [[position, ...values]], eased between neighbouring keyframes; a value is a number or an array of numbers. */
-export function sample(track, p) {
+/** The value at progress `p` (0 to 1) of a track [[position, ...values]], eased between neighbouring keyframes (`ease-in-out` unless another timing function is given); a value is a number or an array of numbers. */
+export function sample(track, p, ease = easeInOut) {
   const t = ((p % 1) + 1) % 1;
   let k = 0;
   while (k < track.length - 2 && t >= track[k + 1][0]) k += 1;
   const [p0, v0] = track[k];
   const [p1, v1] = track[k + 1];
-  const e = easeInOut(p1 === p0 ? 1 : Math.min(1, Math.max(0, (t - p0) / (p1 - p0))));
+  const e = ease(p1 === p0 ? 1 : Math.min(1, Math.max(0, (t - p0) / (p1 - p0))));
   return Array.isArray(v0) ? v0.map((a, i) => a + (v1[i] - a) * e) : v0 + (v1 - v0) * e;
 }
 

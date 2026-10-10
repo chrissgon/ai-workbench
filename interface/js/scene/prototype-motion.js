@@ -4,7 +4,8 @@
 // motion while the tab is hidden) is the loop's (loop.js) and the engine's, never a change to the numbers here.
 //
 // Not ported, on purpose: the prototype's decoration (the glitter over the screen, the life of its street), the waving figure and the
-// spinning marker of a waiting agent and the idle head nod: the specification lets only a state or a feature move.
+// spinning marker of a waiting agent and the idle head nod: the specification lets only a state or a feature move. The typing figure of the
+// prototype is gone with the figure (R-24, R-41): the agent is the owl, whose motions are `owl-motion.js`.
 
 export const CAMERA_RATE = 4.5;      // tick(): `k = 1 - Math.exp(-dt * 4.5)`
 export const EXPLODE_RATE = 3.2;     // tick(): `b.explode += (goal - b.explode) * (1 - Math.exp(-dt * 3.2))`
@@ -43,32 +44,6 @@ export function createApproach(rate) {
     progress: () => p,
     done: () => p >= 1,
   };
-}
-
-// --- the figure working: `animateFloor`, state "working" ---------------------------------------------------------------------------
-
-export const TYPING_RATE = 11;        // arms: Math.sin(t * 11) * 0.22, the second arm `+ 2` behind
-export const TYPING_AMPLITUDE = 0.22;
-export const TYPING_PHASE = 2;
-export const BOB_RATE = 6;            // body: fig.g.position.y = Math.sin(t * 6) * 0.01
-export const BOB_AMPLITUDE = 0.01;
-export const TURN_RATE = 1.3;         // head: fig.head.rotation.y = Math.sin(t * 1.3) * 0.12
-export const TURN_AMPLITUDE = 0.12;
-export const SCREEN_RATE = 9;         // screen: emissive flips at Math.sin(t * 9) > 0
-
-/** The working figure at `t` seconds: the swing of each forearm (added to its resting angle), the body's bob, the upper body's turn. */
-export function workingPose(t) {
-  return {
-    left: Math.sin(t * TYPING_RATE) * TYPING_AMPLITUDE,
-    right: Math.sin(t * TYPING_RATE + TYPING_PHASE) * TYPING_AMPLITUDE,
-    bob: Math.sin(t * BOB_RATE) * BOB_AMPLITUDE,
-    turn: Math.sin(t * TURN_RATE) * TURN_AMPLITUDE,
-  };
-}
-
-/** True when the working screen is on its brighter tone at `t` (the prototype's `Math.sin(t * 9) > 0`, 1.43 flips a second). */
-export function screenBright(t) {
-  return Math.sin(t * SCREEN_RATE) > 0;
 }
 
 // --- the beacon: `tick()`, `b.beacon` -----------------------------------------------------------------------------------------------

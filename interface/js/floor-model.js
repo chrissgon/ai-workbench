@@ -224,6 +224,8 @@ export function floorRow(agent, status, context) {
   const running = work.filter((t) => t.state === "running").length;
   const left = work.filter((t) => t.state === "planned" || t.state === "blocked").length;       // A-12: not started and not ready
   const queued = format.count(agent.queued);
+  // R-23b: the board of the room has one note for each task of the agent in the followed request, coloured by state (a cancelled task has none; a task not done and not running is still to do)
+  const notes = work.filter((t) => t.state !== "cancelled").map((t) => (t.state === "done" ? "done" : t.state === "running" ? "run" : "left"));
   const waiters = work.filter((t) => waitsOf(t).length > 0);       // A-29: planned tasks that wait for another task or request (counted under "left")
   const waits = waiters.length
     ? { text: waiters.length === 1 ? waitingLabel(waiters[0]) : `${waiters.length} waiting`, title: waiters.flatMap((t) => waitLines(t).map((line) => `task #${t.id} ${line}`)).join("; ") } : null;
@@ -250,7 +252,7 @@ export function floorRow(agent, status, context) {
   return {
     name, label, lobby, number: context.number, state, stateWord, accepted,
     unaccepted, held: heldTasks.length, heldReason, inUse,
-    window: windowState(configured && (state === "working" || state === "waiting")), dot: DOT[state], decisions, queued, done, running, left, waits,
+    window: windowState(configured && (state === "working" || state === "waiting")), dot: DOT[state], decisions, queued, done, running, left, waits, notes,
     runs, runsCap, usd, usdCap, unknown, ...split, runsTotal: agent.runs_total_today === undefined ? null : format.count(agent.runs_total_today), mode, acting, pips: mode ? PIPS[mode] || 0 : 0, actingPips: acting ? PIPS[acting] || 0 : 0,
     actingDiffers: Boolean(mode && acting && mode !== acting),
     link: lobby ? router.lobbyHash(context.project) : router.floorHash(context.project, name),
@@ -364,9 +366,10 @@ export function buildingScene(view, documents, { ready = true } = {}) {
     floors: view.rows.slice(0, MAX_FLOORS).map((row) => {
       const docs = agentDocuments(documents, row.name, view.none);
       return {
-        name: row.name, label: row.label, state: row.state, window: row.window, decisions: row.decisions, lobby: row.lobby,
+        name: row.name, label: row.label, state: row.state, window: row.window, decisions: row.decisions, lobby: row.lobby, notes: row.notes,
         // `null` while the documents are unread: the world keeps what the floor shows (an empty table on a first build) and changes it when they arrive
         sheets: documents === null ? null : docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })), drawers: documents === null ? null : drawersOf(docs.length),
+        documents: documents === null ? null : docs.length,   // R-23: one binder for each, sixteen to a bookcase
         tip: row.tip, interactive: true, plate: plateOf(row, row.name === selected),
       };
     }),
@@ -505,7 +508,7 @@ export function roomScene(view, documents, ready = true) {
   const sheets = documents.slice(0, 6).map((d) => ({ path: d.path, tip: d.path }));
   const tasks = view.current ? `Current task · ${view.current.title || view.current.key}` : "Current task · none yet";
   return {
-    ready, state: row.state, window: row.window, decisions: row.decisions, drawers: drawersOf(documents.length), sheets,
+    ready, state: row.state, window: row.window, decisions: row.decisions, drawers: drawersOf(documents.length), sheets, documents: documents.length,
     tips: {
       agent: `${row.label} · ${row.state === "working" ? "working" : row.state === "waiting" ? "waiting for you" : row.state === "off" ? "off" : "idle"}`,
       desk: tasks, tray: `Inbox · ${row.decisions} waiting`, cabinet: `${documents.length} document${documents.length === 1 ? "" : "s"} · open the Desk tab`,
