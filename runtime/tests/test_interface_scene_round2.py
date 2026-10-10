@@ -306,7 +306,8 @@ def test_the_building_has_a_plate_for_each_floor_and_no_control_room_label_and_t
     scene = (SCENE / "world.js").read_text(encoding="utf-8")
     assert scene.count('id: "door-label"') == 1 and "if (room.door)" in scene, "the Control room label is drawn in the Lobby's room only"
     css = (INTERFACE / "style.css").read_text(encoding="utf-8")
-    assert ".wb-plate {" in css and ".wb-plate.is-compact" in css and "--wb-plate-w: 290px" in css, "the desktop plates' styles"
+    assert ".wb-plate {" in css and ".wb-plate.is-tiny" in css and ".wb-plate.is-compact" not in css and "--wb-plate-w: 276px" in css, \
+        "the desktop plates' styles (R-25: one size, 276 px as the page draws it; the name row alone is the only short form, no compact one)"
     assert re.search(r"@media \(max-width: 639px\)[^@]*?\.wb-floor-steps", css, re.S) and ".wb-plate { top: auto" not in css, "the phone has no docked plate"
     view = (JS / "views" / "building.js").read_text(encoding="utf-8")
     assert "cornerRight: 10" in view and "plateRight: base.right" in view and "frame.plateWidth()" in view

@@ -226,9 +226,10 @@ def test_the_model_derives_each_floors_state_and_facts_from_what_the_service_ret
                             "running": {"id": 4, "title": "Task 4", "link": "#/p/0123456789ab/floor/engineering"}}
     assert got["plate"]["runsText"] == "2 / 8" and got["plate"]["usdText"] == "$0.50 / $4.00" and got["plate"]["acting"] == "autonomous" \
         and got["plate"]["selected"] is True and got["plate"]["mode"] == "autonomous-with-policy" and got["plate"]["pips"] == 4, "the plate of the desktop and the tablet"
-    assert got["card"] == {"name": "engineering", "label": "Engineering", "dot": "theme", "decisions": 0, "word": "Running", "mode": "autonomous-with-policy", "pips": 4,
-                           "acting": "autonomous", "actingPips": 3, "runsLine": "runs 2 / 8 · spend $0.50 / $4.00", "off": False}, \
-        "the compact card: name, state word, mode plate, one line of runs and spend"
+    assert got["card"] == {"name": "engineering", "label": "Engineering", "dot": "theme", "decisions": 0, "word": "Running", "tone": "pui-theme", "mode": "autonomous-with-policy",
+                           "modeLine": "Like autonomous, and an effect inside an approved policy runs without asking", "pips": 4,
+                           "acting": "autonomous", "actingPips": 3, "runsLine": "runs 2 / 8 · spend $0.50 / $4.00", "runsNote": "", "off": False}, \
+        "the phone's card (R-26): name, the state as a soft badge (its tone), the mode word with its meaning, one line of runs and spend"
     assert got["cardOff"]["off"] is True and got["cardOff"]["word"] == "Off, mode is stopped"
     assert got["scene"] == {"selected": "engineering", "label": "Building of northwind-shop, 6 floors, 2 decisions waiting",
                             "floors": [["planning", 0, 1], ["business", 0, 1], ["brand", 0, 1], ["design", 0, 1], ["engineering", 0, 1], ["marketing", 5, 2]]}
@@ -306,39 +307,37 @@ def test_the_plates_stack_beside_the_building_with_no_overlap_and_go_compact_whe
     assert got["keepsOrder"] is True, "the floor higher on the screen keeps the higher plate"
 
 
-# --- the compact floor card ---------------------------------------------------------------------------------------------------
+# --- the phone's floor card (R-26: the state is a soft badge; the rows of the floors list are `rowNode`, tested in test_interface_r4_building.py) ---------------------------
 
 FLOOR_CARD = r"""
 import { FakeNode, find, all } from "@FAKE@";
 import * as fm from "@JS@/floor-model.js";
 import { floorCardNode } from "@JS@/scene/plates.js";
-const card = { name: "engineering", label: "Engineering", dot: "theme", decisions: 2, word: "Running", mode: "autonomous", pips: 3, acting: null, actingPips: 0, runsLine: "runs 2 / 8 · $0.50 / $4.00", off: false };
+const card = { name: "engineering", label: "Engineering", dot: "theme", decisions: 2, word: "Running", tone: "pui-theme", mode: "autonomous", modeLine: "Reviews are released when the skill is proven, effects still ask you", pips: 3, acting: null, actingPips: 0, runsLine: "runs 2 / 8 · $0.50 / $4.00", off: false };
 const corner = floorCardNode(card, { class: "is-corner" });
-const row = floorCardNode(card, { class: "wb-floor-row", href: "#/p/x/floor/engineering", "aria-label": "Engineering, working" }, "a");
 const shape = (n) => ({ tag: n.tagName, classes: n.cls(), parts: n.children.map((c) => c.cls().filter((k) => k.startsWith("wb-fc-") || k.startsWith("wb-floor-")).join(" ")),
-  name: find(n, ".wb-fc-name").textContent, badge: find(n, ".pui-badge") && find(n, ".pui-badge").textContent, state: find(n, ".wb-fc-state").textContent,
-  mode: find(n, ".wb-mode-plate").textContent, runs: find(n, ".wb-fc-runs").textContent, text: n.textContent });
-const out = { corner: shape(corner), row: shape(row), rowHref: row.attrs.href };
+  name: find(n, ".wb-fc-name").textContent, badge: find(n, ".pui-badge").textContent, state: find(n, ".wb-fc-state").textContent, stateClasses: find(n, ".wb-fc-state .pui-badge").cls(),
+  mode: find(n, ".wb-fc-mode").textContent, modeTitle: find(n, ".wb-fc-mode").attrs.title, runs: find(n, ".wb-fc-runs").textContent, text: n.textContent });
+const out = { corner: shape(corner) };
 const bare = floorCardNode({ ...card, runsLine: "", mode: null, decisions: 0 });
-out.bare = { runs: find(bare, ".wb-fc-runs"), mode: find(bare, ".wb-mode-plate"), badge: find(bare, ".pui-badge") };
+out.bare = { runs: find(bare, ".wb-fc-runs"), mode: find(bare, ".wb-fc-mode"), badge: all(bare, ".pui-badge").length };
 console.log(JSON.stringify(out));
 """
 
 
 @needs_node
-def test_the_corner_card_and_every_row_of_the_floors_list_are_one_component_with_the_same_fields_in_the_same_order(tmp_path):
+def test_the_phones_floor_card_is_the_name_row_with_the_state_as_a_badge_and_one_line_of_mode_runs_and_spend(tmp_path):
     got = run_node(tmp_path, FLOOR_CARD)
-    c, r = got["corner"], got["row"]
-    assert c["tag"] == "DIV" and r["tag"] == "A" and got["rowHref"] == "#/p/x/floor/engineering"
-    assert c["parts"] == r["parts"] == ["wb-fc-head", "wb-fc-status", "wb-fc-runs"], "name row, state and mode plate, one runs line: in this order in both"
-    assert c["text"] == r["text"], "the same words"
-    assert (c["name"], c["badge"], c["state"], c["runs"]) == ("Engineering", "2", "Running", "runs 2 / 8 · $0.50 / $4.00")
-    assert "autonomous" in c["mode"]
-    assert got["bare"] == {"runs": None, "mode": None, "badge": None}, "no mode, no decisions and no runs line leave out their parts"
+    c = got["corner"]
+    assert c["tag"] == "DIV" and c["parts"] == ["wb-fc-head", "wb-fc-runs"], "R-26: the name row (dot, name, decisions badge, state badge) and one line (the mode word, the runs, the spend)"
+    assert (c["name"], c["badge"], c["state"], c["runs"]) == ("Engineering", "2", "Running", "autonomous · runs 2 / 8 · $0.50 / $4.00")
+    assert {"pui-badge", "pui-soft", "pui-theme", "wb-st"} <= set(c["stateClasses"]), "the state is a soft badge in the state's tone"
+    assert c["mode"] == "autonomous" and c["modeTitle"].startswith("Reviews are released"), "the mode word keeps its one-line meaning as its tooltip (C-5), no pips"
+    assert got["bare"] == {"runs": None, "mode": None, "badge": 1}, "no mode and no runs line leave out their parts; the state badge stays"
     building = (JS / "views" / "building.js").read_text(encoding="utf-8")
-    assert 'plateNode(fm.plateOf(row' in building and 'class: "wb-floor-row is-row"' in building and "floorCardNode(card, { class: \"is-corner\"" in building, \
-        "the list rows are the plate beside the floor (WP-9.11); the compact card is the phone's corner"
-    for gone in ("wb-floor-text", "wb-floor-meters"):
+    assert "rowNode(fm.plateOf(row" in building and "floorCardNode(card, { class: \"is-corner\"" in building, \
+        "the list rows are drawn by rowNode (R-27); the floor card is the phone's corner"
+    for gone in ("wb-floor-text", "wb-floor-meters", "wb-floor-row"):
         assert gone not in building, f"the Building no longer draws {gone}"
     # the corner card is the phone's only (WP-9.10): desktop and tablet keep the plates beside the floors
     assert "if (phone.matches && view && last.snapshot.loaded)" in building, "the corner card is drawn on the phone alone"

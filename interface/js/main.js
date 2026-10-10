@@ -167,11 +167,7 @@ function start() {
   frame = createFrame(root, {
     projectsPanel,
     onSelectProject: selectProject,
-    onSelectRequest: (project, id) => {
-      model.chooseRequest(project, id);   // kept in memory for the session
-      render();
-      reload();   // the running task's start time of the request now shown
-    },
+    onSelectRequest: selectRequest,
     onForgetToken: () => {
       clearToken();
       askForToken();
@@ -186,6 +182,13 @@ function start() {
     setTimer: (fn, ms) => setTimeout(fn, ms), clearTimer: (id) => clearTimeout(id), now: () => Date.now(),
   });
   watcher.start().then(() => reload());
+}
+
+// A request chosen on the tracking bar or on a row of the Building's "Requests (n)" (R-27): the page follows it, kept in memory for the session
+function selectRequest(project, id) {
+  model.chooseRequest(project, id);
+  render();
+  reload();   // the running task's start time of the request now shown
 }
 
 function selectProject(id) {
@@ -234,7 +237,7 @@ function ensureView(route) {
     const city = createCityView(frame);
     view = { key, screen: "city", city, dispose: () => city.dispose() };
   } else if (route.screen === "building") {
-    const building = createBuildingView(frame, { refresh: () => reloaded() });
+    const building = createBuildingView(frame, { refresh: () => reloaded(), selectRequest });
     view = { key, screen: "building", building, dispose: () => building.dispose() };
   } else if (route.screen === "floor") {
     const floor = createFloorView(frame, { refresh: () => reloaded() });

@@ -138,9 +138,11 @@ def test_the_agent_tab_draws_a_meter_only_for_a_cap_in_use(floor):
 
 def test_the_plate_the_row_and_the_card_follow_caps_in_use(floor):
     assert [len(floor["plate"][k]) for k in ("both", "runs", "spend", "older")] == [2, 1, 1, 2]
-    assert floor["plate"]["runs"][0].startswith("Runs today") and floor["plate"]["spend"][0].startswith("Spend today")
-    assert floor["card"]["both"] == "runs 3 / 8 · spend $0.14 / $2.00 ($0.14 recorded)"
-    assert floor["card"]["runs"] == "runs 3 / 8" and floor["card"]["spend"] == "spend $0.14 / $2.00 ($0.14 recorded)"
+    # R-25, R-5/R-6: the plate's meters are named as the round names them: "3 / 8 runs" and "$0.14 / $2.00" (the sentence of what each counts is the tooltip)
+    assert floor["plate"]["runs"][0] == "3 / 8 runs" and floor["plate"]["spend"][0] == "$0.14 / $2.00"
+    # building.html at 375 px: the card's line is the runs and the spend alone (the recorded note is the line's tooltip)
+    assert floor["card"]["both"] == "runs 3 / 8 · spend $0.14 / $2.00"
+    assert floor["card"]["runs"] == "runs 3 / 8" and floor["card"]["spend"] == "spend $0.14 / $2.00"
     row = floor["row"]
     assert row["both"][0].endswith("3 of 8 runs") and "of 8 runs, $0.14 of $2.00" in row["both"][1] and row["both"][2] == "runs 3 / 8 · $0.14 of $2.00"
     assert row["runs"][0].endswith("3 of 8 runs") and row["runs"][1].endswith("3 of 8 runs") and "$" not in row["runs"][1] and row["runs"][2] == "runs 3 / 8"

@@ -8,11 +8,12 @@
 
 import * as format from "./format.js";
 import * as router from "./router.js";
-import { MAX_FLOORS, acceptance, floorNumber, pickRequest, requestChoice } from "./model.js";
+import { MAX_FLOORS, acceptance, floorNumber, openRequests, pickRequest, requestChoice } from "./model.js";
 import { windowState } from "./scene/look.js";
 import { waitLines, waitingLabel, waitsOf } from "./waits.js";
 
 export const PLANNING = "planning";
+const FINAL_REQUEST = new Set(["done", "cancelled"]);
 
 // The closed list of an agent's modes (runtime/autonomy.py MODES), with the mode's one line (a page constant: the drawing's words).
 export const MODES = Object.freeze(["stopped", "supervised", "milestones", "autonomous", "autonomous-with-policy"]);
@@ -242,8 +243,10 @@ export function floorRow(agent, status, context) {
   const mode = agent.mode || null;
   const acting = agent.acting_mode || null;
   const stateWord = accepted ? STATE_WORDS[state] : "Waiting for the configuration to be accepted.";
+  // R-26: the state as a soft badge: working (brand), resting and off (muted), waiting for you, held: ... and not accepted (warn)
   const plateWord = !configured ? "not accepted"
-    : state === "working" ? "working" : state === "off" ? "Off, mode is stopped" : heldReason ? `held: ${heldReason}` : "resting";
+    : state === "working" ? "working" : state === "off" ? "Off, mode is stopped" : state === "waiting" ? "waiting for you" : heldReason ? `held: ${heldReason}` : "resting";
+  const plateTone = !configured ? "pui-warn" : state === "working" ? "pui-theme" : state === "off" ? "pui-muted" : (state === "waiting" || heldReason) ? "pui-warn" : "pui-muted";
   const lower = state === "working" ? "working" : state === "waiting" ? "waiting for you" : state === "idle" ? "idle" : "off";
   const inUse = format.metersInUse(agent);        // A-38: a meter only for a cap in use
   const money = `${format.dollars(usd)} of ${format.dollars(usdCap)}`;
@@ -260,7 +263,10 @@ export function floorRow(agent, status, context) {
     meters, counts,
     tip: `${label}: ${mode ? `${mode}, ` : ""}${lower}${inUse.runs ? `, ${runs} of ${runsCap} runs` : inUse.spend ? `, ${money}` : ""}`,
     linkName: `${label}, ${unaccepted ? `not accepted, ${lower}` : accepted ? lower : "waiting for the configuration to be accepted"}${heldReason ? `, held: ${heldReason}` : ""}${mode ? `, ${mode} mode` : ""}${usage.length ? `, ${usage.join(", ")}` : ""}${decisions ? `, ${format.decisions(decisions)} waiting` : ""}`,
-    plateWord,
+    plateWord, plateTone, configured, modeLine: mode ? MODE_LINES[mode] || "" : "",
+    // R-21: a floor whose agent waits is lit like one that works: its dot is the brand colour (the Floor's board keeps `dot`)
+    plateDot: state === "waiting" ? "theme" : DOT[state],
+    cardWord: configured ? STATE_WORDS[state] : "not accepted",
   };
 }
 
@@ -290,6 +296,29 @@ export function workOrder(status, rows, projectId = null) {
   const agent = agentOf(current);
   if (!rows.some((r) => r.name === agent)) return null;
   return { floor: agent, text: `#${request.id}`, request: request.id };
+}
+
+/**
+ * The rows of the panel's "Requests (n)" (R-27, C-2): the open requests of the project, newest first, each {id, title, state, tone, steps, name, selected, link,
+ * cancellable, request}. `steps` is "2 of 6 steps done" and, when a task runs, " · now on Engineering" (the Lobby for the planning agent), else, when one waits for the
+ * person, " · waiting for you". `selected` is the request the tracking bar shows. `request` is the row of the status body (the cancel dialog counts its tasks).
+ */
+export function requestRows(status, projectId) {
+  const shown = status ? pickRequest(status, requestChoice(projectId)) : null;
+  return openRequests(status).map((request) => {
+    const tasks = Array.isArray(request.tasks) ? request.tasks : [];
+    const done = tasks.filter((t) => t.state === "done").length;
+    const current = tasks.find((t) => t.state === "running") || tasks.find((t) => t.state === "waiting") || null;
+    const now = current ? (current.state === "running" ? `now on ${format.agentWord(agentOf(current))}` : "waiting for you") : "";
+    const title = request.title || `Request ${request.id}`;
+    const state = typeof request.state === "string" ? request.state : "";
+    const word = state ? state.charAt(0).toUpperCase() + state.slice(1) : "";
+    const steps = `${done} of ${tasks.length} steps done${now ? ` · ${now}` : ""}`;
+    return {
+      id: request.id, title, state: word, tone: stateTone(state), steps, selected: Boolean(shown) && shown.id === request.id, link: router.requestHash(projectId, request.id),
+      name: `Request ${request.id}, ${title}, ${word || state}, ${steps}`, cancellable: !FINAL_REQUEST.has(request.state), request,
+    };
+  });
 }
 
 /** The panel's facts: Configuration, Running now, Request, Waiting for you. */
@@ -332,7 +361,8 @@ export function drawersOf(count) {
 /** The plain data the plate of a row needs. */
 export function plateOf(row, selected = false) {
   return {
-    name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.plateWord,
+    name: row.name, label: row.label, dot: row.plateDot, decisions: row.decisions, word: row.plateWord, tone: row.plateTone, modeLine: row.modeLine,
+    actingLine: row.actingDiffers ? `acting as ${row.acting}` : "",
     done: row.done, running: row.running, left: row.left, queued: row.queued, waits: row.waits,
     inUse: row.inUse, runsText: `${row.runs} / ${row.runsCap}`, runsShare: format.share(row.runs, row.runsCap),
     usdText: `${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}`, usdShare: format.share(row.usd, row.usdCap),
@@ -346,13 +376,13 @@ export function plateOf(row, selected = false) {
  * top right and for each row of the floors list: name (with its decisions badge), state word, mode plate, one line of runs and spend.
  */
 export function cardOf(row) {
-  const note = format.costNote(row.usdNote ? `(${row.usdNote})` : "", row.usdReserved, row.unknown);
+  // building.html at 375 px: the line is the runs and the spend alone; the note of what is recorded and reserved is its tooltip
   const runsLine = [row.inUse.runs ? `runs ${row.runs} / ${row.runsCap}` : "",
-    row.inUse.spend ? `spend ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}${note ? ` ${note}` : ""}` : ""].filter(Boolean).join(" · ");
+    row.inUse.spend ? `spend ${format.dollars(row.usd)} / ${format.dollars(row.usdCap)}` : ""].filter(Boolean).join(" · ");
   return {
-    name: row.name, label: row.label, dot: row.dot, decisions: row.decisions, word: row.stateWord,
-    mode: row.mode, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
-    runsLine: row.accepted ? runsLine : "", off: row.state === "off",
+    name: row.name, label: row.label, dot: row.plateDot, decisions: row.decisions, word: row.cardWord, tone: row.configured ? ({ working: "pui-theme", waiting: "pui-warn", idle: "pui-muted", off: "pui-muted" }[row.state]) : "pui-warn",
+    mode: row.mode, modeLine: row.modeLine, pips: row.pips, acting: row.actingDiffers ? row.acting : null, actingPips: row.actingPips,
+    runsLine: row.accepted ? runsLine : "", runsNote: row.accepted && row.inUse.spend ? format.costNote(row.usdNote, row.usdReserved, row.unknown) : "", off: row.state === "off",
   };
 }
 
@@ -371,7 +401,7 @@ export function buildingScene(view, documents, { ready = true } = {}) {
         // `null` while the documents are unread: the world keeps what the floor shows (an empty table on a first build) and changes it when they arrive
         sheets: documents === null ? null : docs.slice(0, 6).map((d) => ({ path: d.path, tip: d.path })), drawers: documents === null ? null : drawersOf(docs.length),
         documents: documents === null ? null : docs.length,   // R-23: one binder for each, sixteen to a bookcase
-        tip: row.tip, interactive: true, plate: plateOf(row, row.name === selected),
+        tip: row.tip, interactive: true, plate: { ...plateOf(row, row.name === selected), tiny: view.more > 0 },   // R-25: with more than eight floors a plate is its name row alone
       };
     }),
   };
