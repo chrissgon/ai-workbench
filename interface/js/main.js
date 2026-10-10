@@ -39,7 +39,6 @@ let drawnKey = null;
 let knownDecisions = null; // ids of the decisions seen, to announce a new one
 let pendingMessage = null;
 let lastFollowed = null;   // the project the last poll read tasks for
-let entered = false;       // the entry rule (C-1) ran: once per page load, on the first read of the projects
 
 function currentRoute() {
   return router.parse(window.location.hash);
@@ -66,7 +65,6 @@ async function poll() {
     failure = null;
     reloads += 1;
     chooseDefault();
-    enter();
     render();
   } catch (e) {
     if (mine !== generation || !frame) return;
@@ -92,18 +90,6 @@ function chooseDefault() {
   if (selected && projects.some((p) => p.id === selected)) return;
   const withRequest = projects.find((p) => snapshot.details[p.id] && snapshot.details[p.id].status && model.openRequest(snapshot.details[p.id].status));
   selected = (withRequest || projects[0] || { id: null }).id;
-}
-
-/**
- * C-1, on entry only: a page opened on `#/` (or on nothing) whose service holds exactly one project shows that project's Building, by replacing
- * the hash (no history entry, so Back does not return to the empty entry). A reload on `#/city`, a deep link and a service with several projects
- * are left as they are. The router has no project list, so the rule lives here, on the first read of the projects.
- */
-function enter() {
-  if (entered) return;
-  entered = true;
-  const to = router.entryHash(window.location.hash, snapshot.projects.map((p) => p.id));
-  if (to) window.location.replace(to);
 }
 
 function askForToken(message) {
@@ -272,7 +258,6 @@ function render() {
   frame.setScreen(route, {
     projectName: routeProject ? routeProject.name : (project ? project.name : null), projectId: project ? project.id : null,
     leaf: route.agent ? route.agent.charAt(0).toUpperCase() + route.agent.slice(1) : null,
-    home: router.isHomeBuilding(route, projects.map((p) => p.id)),
   });
   drawnKey = key;
   frame.el.classList.toggle("is-stale", Boolean(failure) && snapshot.loaded);

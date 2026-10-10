@@ -891,6 +891,56 @@ process.exit(0);
 """
 
 
+# M-1 (R4-DECISIONS, reverses D-4 / C-1): a service with ONE project opens on the City after the token, and Escape goes up from the Floor
+# to the Building and from the Building to the City; the page replaces no hash by itself.
+MAIN_CITY_FIRST = MAIN.split("//SCENARIO")[0] + r"""
+const screen = () => [...root.walk()].find((n) => (n.attrs.class || "").includes("wb-frame")).dataset.screen;
+const back = () => [...root.walk()].find((n) => (n.attrs.class || "").includes("wb-back"));
+const press = (key) => (document.listeners.keydown || []).forEach((fn) => fn({ key, defaultPrevented: false, preventDefault() {} }));
+const go = async (hash) => { window.location.hash = hash; (listeners.window.hashchange || []).forEach((fn) => fn({})); await clock.advance(0); };
+document.querySelector = () => null;
+document.querySelectorAll = () => [];
+const replaced = [];
+window.location.replace = (to) => { replaced.push(to); window.location.hash = to; };
+const journey = [];
+await clock.advance(0);
+out.entry = { hash: window.location.hash, screen: screen(), replaced: replaced.slice(), shows: text().includes("northwind-shop") };
+await clock.advance(5000);
+out.later = { hash: window.location.hash, screen: screen() };     // the rule that ran once, on the first read, is gone: nothing moves it later
+await go(`#/p/${P}`);
+out.building = { screen: screen(), back: back().disabled };
+await go(`#/p/${P}/floor/marketing`);
+out.floor = { screen: screen(), back: back().disabled };
+press("Escape"); await go(window.location.hash);
+journey.push([screen(), window.location.hash]);
+press("Escape"); await go(window.location.hash);
+journey.push([screen(), window.location.hash]);
+press("Escape"); await go(window.location.hash);
+journey.push([screen(), window.location.hash]);
+out.fromFloor = journey.slice();
+journey.length = 0;
+await go(`#/p/${P}`);
+press("Escape"); await go(window.location.hash);
+out.fromBuilding = [screen(), window.location.hash];
+out.replaced = replaced.slice();
+console.log(JSON.stringify(out));
+process.exit(0);
+"""
+
+
+@needs_node
+def test_a_one_project_service_opens_on_the_city_and_escape_reaches_it_in_two_steps_from_the_floor_and_one_from_the_building(tmp_path):
+    from test_interface_scene import FAKE_DOM as SCENE_DOM
+    got = run_node(tmp_path, MAIN_CITY_FIRST, SCENE_DOM)
+    assert got["entry"] == {"hash": "#/", "screen": "city", "replaced": [], "shows": True}, "M-1: the page opens on the City whatever the number of projects, and replaces no hash"
+    assert got["later"] == {"hash": "#/", "screen": "city"}
+    assert got["building"] == {"screen": "building", "back": False}, "M-1: Back is not disabled on the Building"
+    assert got["floor"]["screen"] == "floor"
+    assert got["fromFloor"] == [["building", "#/p/0123456789ab"], ["city", "#/city"], ["city", "#/city"]], "M-1: Escape from the Floor reaches the City in two steps; a third does nothing"
+    assert got["fromBuilding"] == ["city", "#/city"], "M-1: Escape from the Building reaches the City in one step"
+    assert got["replaced"] == []
+
+
 @needs_node
 def test_one_button_press_on_a_screen_is_one_reload_whether_the_client_or_the_screen_asks(tmp_path):
     from test_interface_scene import FAKE_DOM as SCENE_DOM
