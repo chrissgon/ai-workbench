@@ -51,6 +51,7 @@ import os
 import re
 import shlex
 import sys
+import unicodedata
 
 TERMINAL = "python3 runtime/cli.py"             # the relative form, in a text stored before it is shown (no checkout to name)
 KEYRING_PIN = "keyring==25.7.0"                 # the secret-store library the providers pin (providers/secrets/resolver.py)
@@ -413,6 +414,31 @@ def service_line(checkout: str, projects, *, uv=None, port=None) -> str:
     if port is not None:
         parts += ["--port", str(int(port))]
     return " ".join(parts)
+
+
+POWERSHELL_QUOTES = "'\u2018\u2019\u201a\u201b"  # PowerShell reads each of these as a single quote, inside a single-quoted string too
+
+
+def _plain_path(path) -> bool:
+    """True for an absolute path made of text a shell and a person can read: no control, format, line or paragraph
+    separator character (a newline would end the command, an escape sequence would rewrite the screen)."""
+    return (isinstance(path, str) and bool(path) and os.path.isabs(path)
+            and not any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in path))
+
+
+def token_commands(path):
+    """The commands that read the service's token file, one per system, or None when the path cannot be written safely
+    as a command (not text, not absolute, or holding a control, format, line or paragraph separator character). They
+    are the service's text for the page: the page chooses one by the browser's system and joins nothing into it.
+    macos: `pbcopy < <path>` (the token goes to the clipboard); linux: `cat <path>` (it is printed in the terminal);
+    powershell: `Get-Content -LiteralPath '<path>' | Set-Clipboard`. The POSIX forms quote the path with shlex.quote;
+    the PowerShell form is a single-quoted literal in which every single-quote character, typographic ones included,
+    is doubled. The one place that spells them."""
+    if not _plain_path(path):
+        return None
+    literal = "".join(c * 2 if c in POWERSHELL_QUOTES else c for c in path)
+    return {"macos": "pbcopy < " + shlex.quote(path), "linux": "cat " + shlex.quote(path),
+            "powershell": f"Get-Content -LiteralPath '{literal}' | Set-Clipboard"}
 
 
 def chat_line(name: str, /, **args) -> str:

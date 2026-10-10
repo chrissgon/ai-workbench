@@ -7,6 +7,8 @@ Run: uv run --with pytest==9.1.1 pytest runtime/tests/test_command_lines.py
 from __future__ import annotations
 
 import ast
+import shlex
+import subprocess
 import sys
 
 import pytest
@@ -121,3 +123,74 @@ def test_uv_is_told_from_the_variable_uv_sets_for_a_project_environment_and_a_cu
     assert operations.started_with_uv() is True
     monkeypatch.setattr(sys, "prefix", str(tmp_path / "elsewhere" / "builds-v0"))
     assert operations.started_with_uv() is False
+
+
+# --- ADJ-B3 (A-39): the commands that read the token file, built where the terminal's commands are spelled ----------------------------
+
+AWKWARD = [
+    "/home/demo/my shop/.openhora/service.token",
+    '/home/demo/a "quoted" dir/service.token',
+    "/home/demo/$HOME and $(whoami)/service.token",
+    "/home/demo/back`tick`/service.token",
+    "/home/demo/it's here/service.token",
+    "/home/demo/all ' \" $ ` \\ ; & | < > ( ) * ? # ~ !/service.token",
+    "/home/demo/caf\u00e9 \u2019 \u4e2d/service.token",
+]
+
+
+def powershell_literal(text):
+    """Read back the one single-quoted PowerShell string after `-LiteralPath`: a quote character doubled is one quote
+    character, and PowerShell counts the typographic single quotes as quotes too."""
+    quotes = "'\u2018\u2019\u201a\u201b"
+    assert text[0] in quotes, text
+    out, i = "", 1
+    while True:
+        assert i < len(text), "the literal is never closed"
+        if text[i] in quotes:
+            if i + 1 < len(text) and text[i + 1] in quotes:
+                out += text[i + 1]
+                i += 2
+                continue
+            return out, text[i + 1:]
+        out += text[i]
+        i += 1
+
+
+@pytest.mark.parametrize("path", AWKWARD)
+def test_the_token_commands_quote_any_path_so_that_the_shell_reads_it_back_whole(path):
+    got = operations.token_commands(path)
+    assert set(got) == {"macos", "linux", "powershell"}
+    assert shlex.split(got["macos"]) == ["pbcopy", "<", path], "one word for the path, whatever it holds"
+    assert shlex.split(got["linux"]) == ["cat", path]
+    head = "Get-Content -LiteralPath "
+    assert got["powershell"].startswith(head) and got["powershell"].endswith(" | Set-Clipboard")
+    literal, rest = powershell_literal(got["powershell"][len(head):])
+    assert literal == path and rest == " | Set-Clipboard", "single quotes doubled, so the literal ends where the path ends"
+
+
+def test_the_token_commands_of_a_plain_path_are_the_ones_the_page_shows(tmp_path):
+    got = operations.token_commands("/home/demo/shop/.openhora/service.token")
+    assert got == {"macos": "pbcopy < /home/demo/shop/.openhora/service.token", "linux": "cat /home/demo/shop/.openhora/service.token",
+                   "powershell": "Get-Content -LiteralPath '/home/demo/shop/.openhora/service.token' | Set-Clipboard"}
+    assert operations.token_commands("/home/demo/it's/service.token")["powershell"] == \
+        "Get-Content -LiteralPath '/home/demo/it''s/service.token' | Set-Clipboard"
+    assert operations.token_commands("/home/demo/it\u2019s/service.token")["powershell"] == \
+        "Get-Content -LiteralPath '/home/demo/it\u2019\u2019s/service.token' | Set-Clipboard", "PowerShell reads a typographic quote as a quote"
+
+
+@pytest.mark.parametrize("path", [pytest.param(p, id=f"awkward-{i}") for i, p in enumerate(AWKWARD[:5])])
+def test_the_linux_command_run_by_a_shell_prints_the_file_of_an_awkward_path(path, tmp_path):
+    """The proof the quoting is not only a string: a file with that very name is read by the command, in a real shell."""
+    target = tmp_path / path.lstrip("/")
+    target.parent.mkdir(parents=True)
+    target.write_text("the file content\n", encoding="utf-8")
+    command = operations.token_commands(str(target))["linux"]
+    done = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=20)  # security-scan: allow shell-invocation -- the test is that a shell reads the quoted command back whole
+    assert (done.returncode, done.stdout, done.stderr) == (0, "the file content\n", ""), command
+
+
+@pytest.mark.parametrize("path", ["/home/demo/a\nb/service.token", "/home/demo/a\rb", "/home/demo/a\x00b", "/home/demo/a\x1b[31mb",
+                                  "/home/demo/a\x7fb", "/home/demo/a\x85b", "/home/demo/a\u2028b", "/home/demo/a\u202eb",
+                                  "relative/service.token", "", None, 7, b"/home/demo/x"])
+def test_a_path_with_a_control_character_or_no_absolute_path_gives_no_command(path):
+    assert operations.token_commands(path) is None

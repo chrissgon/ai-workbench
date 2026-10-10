@@ -15,6 +15,7 @@ import io
 import json
 import os
 import re
+import shlex
 import socket
 import stat
 import subprocess
@@ -1138,3 +1139,128 @@ def test_the_policy_of_a_page_is_exactly_three_directives_and_never_allows_data(
     contract = (st.REPO / "contracts" / "runtime.md").read_text(encoding="utf-8")
     assert f"`Content-Security-Policy: {service.CSP}`" in contract
     assert all(d in contract for d in ("`default-src 'self'`", "`frame-ancestors 'none'`", "`img-src 'self' blob:`"))
+
+
+# --- ADJ-B3 (A-39): the token file's path and the commands that read it, before the page holds a token -------------------------------
+
+TOKEN_ROUTE = "/token-file"
+HARD_PATH = "/home/demo/my shop/it's \"here\"/$HOME `x`/service.token"
+
+
+def test_the_token_file_route_answers_the_path_and_the_commands_without_the_token_and_without_a_token(world):
+    path = "/home/demo/shop/.openhora/service.token"
+    world.svc.token_file = path
+    status, headers, body = call(world, "GET", TOKEN_ROUTE, auth=False)
+    assert status == 200 and headers["Content-Type"].startswith("application/json")
+    assert body == {"token_file": path, "commands": {
+        "macos": f"pbcopy < {path}", "linux": f"cat {path}", "powershell": f"Get-Content -LiteralPath '{path}' | Set-Clipboard"}}
+    assert headers["Cache-Control"] == "no-store" and headers["X-Content-Type-Options"] == "nosniff"
+    assert not [k for k in headers if k.lower().startswith("access-control")], "no CORS header, ever"
+    assert world.fake.calls == [], "the route calls no operation: it answers from the service's own fact"
+    # the same route with the bearer header is the same answer (a page that already holds a token may read it too)
+    assert call(world, "GET", TOKEN_ROUTE)[2] == body
+
+
+def test_the_commands_the_route_gives_for_a_hard_path_are_read_back_whole_by_the_shell(world):
+    world.svc.token_file = HARD_PATH
+    status, _, body = call(world, "GET", TOKEN_ROUTE, auth=False)
+    assert status == 200 and body["token_file"] == HARD_PATH
+    assert shlex.split(body["commands"]["macos"]) == ["pbcopy", "<", HARD_PATH]
+    assert shlex.split(body["commands"]["linux"]) == ["cat", HARD_PATH]
+    assert body["commands"]["powershell"] == "Get-Content -LiteralPath '/home/demo/my shop/it''s \"here\"/$HOME `x`/service.token' | Set-Clipboard"
+
+
+@pytest.mark.parametrize("path", ["/home/demo/a\nb/service.token", "/home/demo/a\x00b", "/home/demo/a\x1b[2Jb", "/home/demo/a\rb"])
+def test_a_path_with_a_control_character_gives_no_path_and_no_command(world, path):
+    world.svc.token_file = path
+    status, _, body = call(world, "GET", TOKEN_ROUTE, auth=False)
+    assert (status, body) == (200, {"token_file": None, "commands": None}), "the page then keeps its sentence about the first line"
+
+
+def test_a_service_that_has_no_token_file_does_not_know_the_route(world):
+    assert world.svc.token_file is None
+    status, _, body = call(world, "GET", TOKEN_ROUTE, auth=False)
+    assert (status, body["error"]) == (404, "not_found")
+
+
+def test_the_token_file_route_is_under_the_same_host_and_origin_check_as_every_route(world):
+    world.svc.token_file = "/home/demo/shop/service.token"
+    for host in ("evil.example:8765", "localhost:9999", "127.0.0.1", "127.0.0.1:8765.evil.example", "[::1]:8765"):
+        status, _, body = call(world, "GET", TOKEN_ROUTE, auth=False, extra={"Host": host})
+        assert (status, body["error"]) == (403, "host"), host
+    for origin in ("http://evil.example", "https://127.0.0.1:8765", "http://127.0.0.1:9999", "null", "http://localhost:8765.evil.example"):
+        status, _, body = call(world, "GET", TOKEN_ROUTE, auth=False, extra={"Origin": origin})
+        assert (status, body["error"]) == (403, "origin"), origin
+    for origin in (f"http://127.0.0.1:{PORT}", f"http://localhost:{PORT}"):
+        assert call(world, "GET", TOKEN_ROUTE, auth=False, extra={"Origin": origin})[0] == 200
+    assert call(world, "GET", TOKEN_ROUTE, auth=False, extra={"Host": f"localhost:{PORT}"})[0] == 200
+    assert world.fake.calls == []
+
+
+def test_the_token_file_route_takes_get_only_and_no_query(world):
+    world.svc.token_file = "/home/demo/shop/service.token"
+    for method in ("OPTIONS", "HEAD", "PUT", "DELETE", "PATCH"):
+        status, headers, body = call(world, method, TOKEN_ROUTE, auth=False)
+        assert (status, body["error"]) == (405, "method"), method
+        assert not [k for k in headers if k.lower().startswith("access-control")]
+    status, _, body = call(world, "POST", TOKEN_ROUTE, {}, auth=False)
+    assert (status, body["error"]) == (405, "method")
+    for tail in ("?x=1", f"?token={TOKEN}", "?"):
+        assert call(world, "GET", TOKEN_ROUTE + tail, auth=False)[0] == (400 if tail != "?" else 200), tail
+    for other in ("/token-file/", "/token-file.json", "/api/v1/token-file", "/TOKEN-FILE"):
+        assert call(world, "GET", other, auth=False)[0] in (401, 404), other
+
+
+def test_no_answer_to_a_request_without_the_token_carries_the_token(world):
+    world.svc.token_file = HARD_PATH
+    seen = []
+    for method, path, extra in (("GET", TOKEN_ROUTE, None), ("GET", TOKEN_ROUTE + f"?token={TOKEN}", None), ("GET", TOKEN_ROUTE, {"Host": "evil.example"}),
+                                ("GET", TOKEN_ROUTE, {"Origin": "http://evil.example"}), ("POST", TOKEN_ROUTE, None),
+                                ("GET", "/", None), ("GET", "/api/v1/projects", None), ("GET", "/nothing", None)):
+        status, headers, payload = call(world, method, path, {} if method == "POST" else None, auth=False, extra=extra)
+        seen += [json.dumps(payload) if isinstance(payload, (dict, list)) else payload.decode("utf-8"), json.dumps(headers)]
+    world.svc.token_file = None
+    seen.append(json.dumps(call(world, "GET", TOKEN_ROUTE, auth=False)[2]))
+    assert not [s for s in seen if TOKEN in s]
+    assert TOKEN not in repr(world.svc) and TOKEN not in service.__doc__
+
+
+def test_a_served_service_gives_its_token_files_path_over_a_real_socket_and_never_its_content(tmp_path, monkeypatch):
+    fake = Standin(tmp_path / "data")
+    project = tmp_path / "alpha"
+    project.mkdir()
+    monkeypatch.chdir(tmp_path)
+    run = run_serve(fake, [str(project)], service.Server, token_file="some folder/t.token", interface_dir=str(tmp_path))
+    try:
+        svc = run.service
+        expected = str(tmp_path / "some folder" / "t.token")
+        connection = http.client.HTTPConnection("127.0.0.1", svc.port, timeout=WAIT)
+        connection.request("GET", TOKEN_ROUTE)
+        answer = connection.getresponse()
+        raw = answer.read().decode("utf-8")
+        body = json.loads(raw)
+        assert answer.status == 200 and answer.getheader("Cache-Control") == "no-store"
+        assert not [h for h, _ in answer.getheaders() if h.lower().startswith("access-control")]
+        assert svc.token not in raw and svc.token not in json.dumps(answer.getheaders())
+        assert os.path.realpath(body["token_file"]) == os.path.realpath(expected) and os.path.isabs(body["token_file"]), "an absolute path, whatever --token-file was"
+        assert shlex.split(body["commands"]["linux"]) == ["cat", body["token_file"]]
+        assert open(body["token_file"], encoding="utf-8").read() == svc.token + "\n", "and the path is the file that holds the token"
+        connection.close()
+        connection = http.client.HTTPConnection("127.0.0.1", svc.port, timeout=WAIT)
+        connection.putrequest("GET", TOKEN_ROUTE, skip_host=True)
+        connection.putheader("Host", "evil.example")
+        connection.endheaders()
+        assert connection.getresponse().status == 403
+        connection.close()
+        assert svc.token not in run.out.getvalue()
+    finally:
+        assert run.finish() == 0
+
+
+def test_the_service_opens_no_file_for_the_route_and_documents_it():
+    assert "/token-file" in service.__doc__, "the rules list names the route"
+    source = (st.RUNTIME / "service.py").read_text(encoding="utf-8")
+    assert "operations.token_commands" in source, "the commands come from the one place that spells commands"
+    assert not re.search(r"shlex|pbcopy|Set-Clipboard", source), "the service spells no command of its own"
+    contract = (st.REPO / "contracts" / "runtime.md").read_text(encoding="utf-8")
+    assert "`GET /token-file`" in contract and "any local process" in contract, "the contract records who can read the path, and why that is accepted"
