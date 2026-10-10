@@ -60,7 +60,7 @@ export function createFloorView(frame, env) {
   const tabs = createTabs("Floor", TABS, (id) => { window.location.hash = router.floorHash(project, agent, id); });
   const tabpanel = h("div", { class: "wb-panel-body wb-tabpanel", id: "wb-tabpanel", role: "tabpanel" });
   const normal = h("div", { class: "wb-floor-normal" }, head, tabs.el, tabpanel);
-  const backLink = h("a", { class: "pui-link pui-theme", href: "#/", text: "Back to the building" });
+  const backLink = h("a", { class: "pui-link pui-theme", href: router.cityHash(), text: "Back to the building" });   // the project is not known until the first update, which sets the Building's hash
   const unknown = h("div", { class: "wb-floor-unknown", hidden: true }, h("p", { text: "This agent is not in the project's configuration." }), backLink);
   const waitingEl = h("p", { class: "wb-empty-line", text: "Waiting for the configuration to be accepted." });
   const viewer = createViewer({

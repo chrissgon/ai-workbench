@@ -16,6 +16,7 @@
 
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
+import * as router from "../router.js";
 import { ENDING, openable } from "../floor-model.js";
 import { renderMarkdown } from "../markdown.js";
 import { markdownView } from "../markdown-view.js";
@@ -155,7 +156,7 @@ export function createCard(item, env) {
 
   function message() {
     if (!state.error) return null;
-    const extra = state.error.gone ? h("a", { class: "pui-link pui-theme", href: env.links.parent ? env.links.parent() : "#/", text: "Back" }) : null;
+    const extra = state.error.gone ? h("a", { class: "pui-link pui-theme", href: env.links.parent ? env.links.parent() : router.cityHash(), text: "Back" }) : null;
     return notice(state.error.text, "error", extra);
   }
 

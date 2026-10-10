@@ -230,7 +230,7 @@ def test_the_page_sets_no_inline_script_and_no_token_in_a_url_or_storage_other_t
             continue
         text = path.read_text(encoding="utf-8")
         for pattern, name in FORBIDDEN_IN_MODULES:
-            if name == "localStorage" and path.name == "mode.js":
+            if name == "localStorage" and path == INTERFACE / "js" / "mode.js":
                 continue      # D-2: the light/dark preference, one key; test_interface_adj_b1.py checks it is the only module and the only key
             assert not re.search(pattern, text), f"{rel(path)} uses {name}"
         if path.name != "token.js":

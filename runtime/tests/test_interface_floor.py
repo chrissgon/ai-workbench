@@ -672,7 +672,7 @@ const off = find(tab.el, ".wb-state-row");
 out.off = { text: off.textContent, button: all(off, "button").length };
 
 // hand a file over, in two steps (C-17): nothing is sent when no file was chosen, nor when one is chosen; the button names the task it sends to
-// (the target now: a poll that draws another target renames the button) and sends one call with the file's own name
+// (the task the hint named when the file was chosen: a poll that moves the target does not change it) and sends one call with the file's own name
 calls.length = 0;
 script = { handOver: async () => ({ path: ".workbench-local/drop/5/notes.txt", bytes: 3 }) };
 const fileInput = find(tab.el, "input.wb-file");
@@ -724,9 +724,9 @@ def test_the_agent_tab_sends_set_mode_retry_and_the_hand_over_as_one_request_eac
     assert got["handNoFile"] == 0, "nothing is sent when no file was chosen"
     assert got["handHint"] == "To task #5. At most 25 MiB." and got["handHintAfterPoll"] == "To task #9. At most 25 MiB."
     assert got["handChosen"] == {"calls": 0, "name": "notes.txt", "button": "Hand over to task #5"}, "C-17: choosing the file sends nothing; its name and the button show"
-    assert got["handButtonAfterPoll"] == "Hand over to task #9", "the button names the task the file will go to now"
-    assert got["hand"] == {"calls": [["p", 9, "notes.txt", "YWJj"]], "result": "Handed over: .workbench-local/drop/5/notes.txt (3 bytes)"}, \
-        "one call, the file's own name, to the task the button names"
+    assert got["handButtonAfterPoll"] == "Hand over to task #5", "the button still names the task the hint named when the file was chosen"
+    assert got["hand"] == {"calls": [["p", 5, "notes.txt", "YWJj"]], "result": "Handed over: .workbench-local/drop/5/notes.txt (3 bytes)"}, \
+        "one call, the file's own name, to the task the hint named when the file was chosen (a poll before the click does not change it)"
     assert got["base64"] == ["aGk=", 93336]
 
 

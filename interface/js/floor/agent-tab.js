@@ -10,6 +10,7 @@
 
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
+import * as router from "../router.js";
 import { MODES, MODE_LINES, PIPS, meters, stateRow, stateTone, taskWord } from "../floor-model.js";
 import { commandBlock, isCommand } from "../frame/command.js";
 import { pips, trackNode } from "../scene/plates.js";
@@ -199,7 +200,7 @@ export function createAgentTab(env) {
     project: env.project, api: env.api, refresh: () => env.refresh(),
     redraw: () => { shown.current = null; shown.others = null; if (lastView) { drawCurrent(lastView); drawOthers(lastView); } },
   });
-  const links = env.links || { inbox: () => "#/" };
+  const links = env.links || { inbox: () => router.cityHash() };
 
   function taskActions(task, view) {
     const nodes = taskActionsUse.nodes(task, { pending: view.decisions, links, locked });
@@ -233,10 +234,11 @@ export function createAgentTab(env) {
   const drops = new Map();       // task id -> the `drop` of its body ({web, takes, line}), or null: read once, as the review card does
   let target = null;
   let picked = null;       // the file chosen, held until the button sends it (C-17); choosing sends nothing
+  let pickedFor = null;    // the id of the task the hint named when the file was chosen: the button names it and sends to it, whatever a poll draws since
   let sending = false;
 
   function drawStep() {
-    fill(handStep, target ? handOverStep(picked, target.id, sendFile, { disabled: sending || locked }) : null);
+    fill(handStep, picked ? handOverStep(picked, pickedFor, sendFile, { disabled: sending || locked }) : null);
   }
 
   fileInput.addEventListener("change", () => {
@@ -245,29 +247,32 @@ export function createAgentTab(env) {
     const refusal = fileRefusal(file.name, file.size);
     if (refusal) {
       picked = null;
+      pickedFor = null;
       fill(handResult, notice(refusal, "error"));
       fileInput.value = "";
     } else {
       picked = file;
+      pickedFor = target.id;
       fill(handResult);
     }
     drawStep();
   });
 
-  /** The button: send the file held to the task the button names (the target now; a poll may have drawn another since the file was chosen). */
+  /** The button: send the file held to the task it names, the one the hint named when the file was chosen (a poll that moves the target does not change it). */
   async function sendFile() {
     const file = picked;
-    const to = target;
-    if (!file || !to || sending) return;
+    const to = pickedFor;
+    if (!file || to === null || sending) return;
     sending = true;
     fileInput.disabled = true;
     drawStep();
     fill(handResult, busyLine("Sending..."));
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const result = await env.api.handOver(env.project, to.id, file.name, toBase64(bytes));
+      const result = await env.api.handOver(env.project, to, file.name, toBase64(bytes));
       fill(handResult, h("p", { class: "wb-card-line", role: "status", text: `Handed over: ${result.path} (${result.bytes} bytes)` }));
       picked = null;
+      pickedFor = null;
       fileInput.value = "";
       env.refresh();
     } catch (e) {

@@ -5,6 +5,7 @@
 
 import { h } from "../dom.js";
 import { icon } from "../frame/icons.js";
+import * as router from "../router.js";
 import { AFTER_HINT, HINT, RUN_LINE, SENDING_TEXT } from "./lobby-model.js";
 
 /** Create the composer. options: {onSend(text)}. Returns {el, set(state), focus(), text(), clear()}. */
@@ -13,7 +14,7 @@ export function createComposer({ onSend }) {
   const noticeTitle = h("strong", { class: "wb-lobby-notice-title", text: "" });
   const noticeText = h("span", { text: "" });
   const notice = h("div", { class: "wb-lobby-notice-card", role: "alert", hidden: true }, noticeTitle, noticeText);
-  const runLink = h("a", { class: "pui-link pui-theme wb-lobby-run-link", href: "#/", hidden: true, text: "" });
+  const runLink = h("a", { class: "pui-link pui-theme wb-lobby-run-link", href: router.cityHash(), hidden: true, text: "" });
   const runLine = h("p", { class: "wb-lobby-run", id: "wb-say-run", role: "status", hidden: true }, h("span", { text: RUN_LINE }), " ", runLink);
   const field = h("textarea", { class: "pui-input wb-lobby-field", id: "wb-say", rows: "1", placeholder: "Describe what you want done", autocomplete: "off" });
   const group = h("label", { class: "pui-field-group wb-composer-field", for: "wb-say" }, h("span", { text: "Message to the planning agent" }), field);

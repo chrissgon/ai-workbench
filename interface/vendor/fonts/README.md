@@ -5,7 +5,7 @@ The three typefaces of the interface, as woff2 files of their latin subsets, cop
 `@font-face` (`font-display: swap`, so the text shows at once in the fallback stack) and loads them by relative paths; nothing is loaded
 from another host and `index.html` preloads nothing.
 
-- Package: three open typefaces as woff2 latin subsets, the form the `@fontsource` packages of npm publish them in (the version of each font is in the table below, read from the file's own name table)
+- Package: three open typefaces as woff2 latin subsets, copied unchanged from the project's brand pack (the version of each font is in the table below, read from the file's own name table)
 - Licence: SIL OFL 1.1 (https://openfontlicense.org); each family has its text in `LICENSE-<family>.txt`. The copyright line of each file is the one the font file itself carries (name table, id 0), followed by the licence text; the upstream projects' own `OFL.txt` files are the reference.
 - Used: Inter 400 and 600 for text, JetBrains Mono 400 and 700 for code, hashes and commands, Space Grotesk 500 for the wordmark on the token prompt only.
 

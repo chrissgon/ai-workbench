@@ -110,7 +110,7 @@ def test_the_request_segment_names_a_request_and_a_bare_number_stays_a_decision(
     assert r["route"] == ["lobby", a, "conversation", None, 9], "the Conversation at request 9, no decision"
     assert r["decision"] == ["lobby", a, "conversation", 9, None], "a number after the tab is a decision, as before"
     assert r["onInbox"][3:] == [None, None] and r["word"][3:] == [None, None] and r["bare"][3:] == [None, None], "only the Conversation takes `request/<n>`, and n is a number"
-    assert r["building"][4] == None or r["building"][4] is None
+    assert r["building"][4] is None
     assert r["hash"] == f"#/p/{a}/lobby/conversation/request/9" and r["roundTrip"] == 9
 
 
@@ -341,7 +341,7 @@ def test_the_mode_module_is_the_only_one_that_touches_local_storage_and_for_one_
     assert keys == {"KEY"}, f"mode.js reads and writes through one constant: {keys}"
     assert re.search(r'export const KEY = "openhora-mode";', mode)
     for path in sorted(JS.rglob("*.js")):
-        if path.name == "mode.js":
+        if path == JS / "mode.js":
             continue
         assert "localStorage" not in path.read_text(encoding="utf-8"), f"{path.name}: the preference module is the only one that touches localStorage"
     main = (JS / "main.js").read_text(encoding="utf-8")
@@ -815,13 +815,14 @@ input().files = [file];
 input().listeners.change.forEach((fn) => fn());
 await settle();
 out.afterChange = { calls: calls.length, chosen: tx(find(hand(), ".wb-hand-chosen")), button: tx(find(hand(), "button.wb-hand-button")), line: tx(find(hand(), ".wb-drop-line")) };
-// a poll that draws the same target again leaves the choice; one that draws another target renames the button
+// a poll that draws the same target again leaves the choice; one that moves the target does not change the task the file was chosen for
 tab.update(view([task(11, "blocked", { note: "n" })]));
 await settle();
 out.afterPoll = { chosen: tx(find(hand(), ".wb-hand-chosen")), button: tx(find(hand(), "button.wb-hand-button")) };
 tab.update(view([task(12, "failed", { note: "x" }), task(11, "blocked", { note: "n" })]));
 await settle();
 out.otherTarget = tx(find(hand(), "button.wb-hand-button"));
+out.hintAfterMove = tx(find(hand(), ".wb-hint"));
 if (find(hand(), "button.wb-hand-button")) find(hand(), "button.wb-hand-button").click();
 await settle();
 out.afterButton = { calls: calls.slice(), result: tx(find(hand(), ".wb-card-line")), button: all(hand(), "button.wb-hand-button").length };
@@ -842,9 +843,57 @@ def test_the_agent_tab_hands_a_file_over_in_two_steps_and_names_the_task_the_but
     assert got["afterChange"] == {"calls": 0, "chosen": "logo.png", "button": "Hand over to task #11", "line": "this file will be visible to a run with the open network"}, \
         "C-17: the chooser, then the name and the button; a change sends nothing; the web line stays above"
     assert got["afterPoll"] == {"chosen": "logo.png", "button": "Hand over to task #11"}, "a reload keeps the choice"
-    assert got["otherTarget"] == "Hand over to task #12", "the button names the task the file will go to now"
-    assert got["afterButton"]["calls"] == [["0123456789ab", 12, "logo.png"]] and got["afterButton"]["result"] == "Handed over: docs/inputs/logo.png (3 bytes)" and got["afterButton"]["button"] == 0
+    assert got["otherTarget"] == "Hand over to task #11" and got["hintAfterMove"] == "To task #12. At most 25 MiB.", "the hint follows the target, the button keeps the task the file was chosen for"
+    assert got["afterButton"]["calls"] == [["0123456789ab", 11, "logo.png"]] and got["afterButton"]["result"] == "Handed over: docs/inputs/logo.png (3 bytes)" and got["afterButton"]["button"] == 0
     assert got["bad"]["text"] == "The file name may hold letters, digits, ., _ and -, at most 100 characters." and got["bad"]["button"] == 0 and got["bad"]["calls"] == 1
+
+
+# --- the links that were "#/" when "#/" was the City: they name the Building or the City now --------------------------------------
+
+BACKLINK = r"""
+import { FakeNode, settle, find, all } from "@FAKE@";
+import { setToken } from "@JS@/token.js";
+import * as router from "@JS@/router.js";
+import { createFloorView } from "@JS@/views/floor.js";
+import { createComposer } from "@JS@/views/lobby-composer.js";
+import { createAgentTab } from "@JS@/floor/agent-tab.js";
+
+setToken("t".repeat(40));
+globalThis.ResizeObserver = class { observe() {} disconnect() {} };
+document.removeEventListener = () => {};
+const P = "0123456789ab";
+globalThis.fetch = async () => ({ ok: true, status: 200, json: async () => ({}) });
+const agent = (name) => ({ name, pack: "x", enabled: true, mode: "supervised", acting_mode: "supervised", max_runs_per_day: 8, max_usd_per_day: 4, runs_today: 1, usd_today: 0.1, runs_without_cost: 0, queued: 0 });
+const snapshot = { loaded: true, projects: [{ id: P, name: "northwind-shop", config: { accepted: true } }], tasks: {},
+  details: { [P]: { agents: [agent("engineering"), agent("planning")], status: { requests: [], pending: [], documents: [] } } } };
+const frame = { el: new FakeNode("div"), main: new FakeNode("main"), track: { el: new FakeNode("div") }, noticeBox: new FakeNode("div"),
+  insets: () => ({ left: 0, right: 0, top: 0, bottom: 0, pad: 1 }), isPhone: () => false, sceneUnavailable() {}, announce() {},
+  acquireWorld: () => ({ show() {}, setOptions() {}, refit() {}, stats() { return {}; } }) };
+const out = {};
+const view = createFloorView(frame, { refresh() {} });
+const link = () => find(frame.main, ".wb-floor-unknown a");
+out.before = link().attrs.href;
+view.update({ snapshot, route: router.parse(`#/p/${P}/floor/ghost`), now: new Date("2026-10-09T12:00:00Z") });
+await settle();
+out.unknownAgent = link().attrs.href;
+view.dispose();
+// the fallbacks of a module built with no links
+const composer = createComposer({ onSend() {} });
+out.composerRun = find(composer.el, "a.wb-lobby-run-link").attrs.href;
+console.log(JSON.stringify(out));
+process.exit(0);
+"""
+
+
+@needs_node
+def test_back_to_the_building_names_the_building_and_the_fallback_links_no_longer_stand_for_the_old_city_hash(tmp_path):
+    got = run_view(tmp_path, BACKLINK)
+    assert got["before"] == "#/city" and got["unknownAgent"] == "#/p/0123456789ab", "the link of an agent that is not in the configuration goes to the Building"
+    assert got["composerRun"] == "#/city"
+    for name, needle in (("floor/agent-tab.js", 'inbox: () => router.cityHash()'), ("floor/cards.js", "router.cityHash()")):
+        assert needle in (JS / name).read_text(encoding="utf-8"), f"{name}: the fallback names the City by its own route"
+    for path in sorted(JS.rglob("*.js")):
+        assert 'href: "#/"' not in path.read_text(encoding="utf-8"), f'{path.name}: no link is "#/", which is the entry and not the City'
 
 
 # --- row 4 (C-18), row 5 (C-19), row 8 (K-5) ---------------------------------------------------------------------------------------
