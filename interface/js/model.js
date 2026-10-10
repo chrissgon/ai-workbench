@@ -125,6 +125,14 @@ export function acceptance(project, detail) {
   return { accepted, kept: !accepted && Boolean(detail && detail.status) };
 }
 
+/**
+ * Whether the City dims its two KPI cards and the tracking bar (round 4, city.html "A project not accepted"): when any project the service lists is not
+ * accepted, whichever one is followed, because the cards' sums span every project and the band names the one that is not accepted.
+ */
+export function cityDims(projects, details) {
+  return (Array.isArray(projects) ? projects : []).some((p) => !acceptance(p, details && details[p.id]).accepted);
+}
+
 /** The number of ready tasks the last dispatcher round held, from the status body (`held`: [{task_id, agent, reason, ...}]). */
 export function heldCount(status) {
   return status && Array.isArray(status.held) ? status.held.length : 0;

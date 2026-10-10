@@ -294,7 +294,7 @@ export function createFrame(root, handlers) {
     setProjects(list) {
       if (panelOf) panelOf.setProjects(list);
     },
-    /** A band under the header: spec {kind: "error"|"info", text, mono?, retry?} or null. */
+    /** A band under the header: spec {kind: "error"|"info", lead?, text?, mono?, retry?} or null. */
     notice(spec) {
       // Redrawn only when the notice changes: a poll that finds the same notice must not make a screen reader read an
       // alert again, nor take the focus from its "Try again" button.
@@ -310,9 +310,9 @@ export function createFrame(root, handlers) {
         ? commandBlock({ command, sentence: text })
         : h("p", { class: mono ? "wb-notice-text mono" : "wb-notice-text", text }));
       if (spec.lead) band.append(h("p", { class: "wb-notice-lead", text: spec.lead }));
-      band.append(sentence(spec.text, spec.command, spec.mono));
+      if (spec.text || spec.command) band.append(sentence(spec.text, spec.command, spec.mono));     // a band may be its lead alone
       if (spec.retry) {
-        const button = h("button", { class: "pui-btn pui-surface pui-outline", type: "button", text: "Try again" });
+        const button = h("button", { class: "pui-btn pui-surface pui-outline wb-small-button", type: "button", text: "Try again" });
         button.addEventListener("click", () => handlers.onRetry());
         band.append(button);
       }

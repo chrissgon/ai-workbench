@@ -203,8 +203,8 @@ function selectProject(id) {
 
 function noticeFor(route) {
   if (failure) {
-    const text = failure.name === "ApiError" && failure.status !== 0 ? failure.message : NETWORK_TEXT;
-    return { kind: "error", text, retry: true };
+    const lead = failure.name === "ApiError" && failure.status !== 0 ? failure.message : NETWORK_TEXT;
+    return { kind: "error", lead, retry: true };     // city.html "First read failed": the sentence is the band's lead and "Try again" stands under it
   }
   const found = [];
   const unread = [];
@@ -274,9 +274,11 @@ function render() {
   drawnKey = key;
   frame.el.classList.toggle("is-stale", Boolean(failure) && snapshot.loaded);
   // A-16: a project whose configuration is not accepted keeps the last data read on every screen of it, dimmed (one class); the band says why.
-  // The City dims for the project the tracking bar follows.
+  // A project's screens dim for that project; the City for any project that is not accepted.
   const dimmed = route.project ? routeProject : project;
-  frame.el.classList.toggle("is-unaccepted", state === "ready" && Boolean(dimmed) && model.acceptance(dimmed, snapshot.details[dimmed.id]).kept);
+  // On the City (round 4) the two cards and the tracking bar dim while any project is not accepted: their sums span every project (city.html).
+  const dims = route.screen === "city" ? model.cityDims(projects, snapshot.details) : Boolean(dimmed) && model.acceptance(dimmed, snapshot.details[dimmed.id]).kept;
+  frame.el.classList.toggle("is-unaccepted", state === "ready" && dims);
 
   frame.switcher.update({
     projects: projects.map((p) => ({
