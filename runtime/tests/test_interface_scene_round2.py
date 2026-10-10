@@ -160,9 +160,10 @@ def test_the_pick_the_tooltip_and_the_outline_name_the_object_at_its_drawn_centr
         assert r["wrongPick"] == [], f"{name}: the pointer on an object's drawn centre picked another one: {r['wrongPick']}"
         assert r["outlineOff"] == [], f"{name}: the outline is not on the object it names: {r['outlineOff']}"
         assert r["tipsMissing"] == [], f"{name}: an object without its tooltip: {r['tipsMissing']}"
-    # the page's old pick (every child of the group, the edge lines at a threshold of one unit) is wrong in the Control room (it still draws its edge lines):
-    # this is the cause the test exists for; if three.js ever changed that default the sampling above would still hold. The rooms of round 4 draw no edge line (R-23: batches).
-    assert got["control@1280"]["wrongLegacy"] > 0, "the legacy pick must fail where the maintainer saw it fail"
+    # the page's old pick (every child of the group, the edge lines at a threshold of one unit) was wrong in the Control room while it drew edge lines. The rooms of round 4 draw
+    # none (R-23: batches; R-51: the server room too), so the old pick agrees there now; the rule that a line is never pickable is tested on a group that has lines in
+    # `test_interface_scene_r4_server.py` (the cause this assertion was written for)
+    assert got["control@1280"]["wrongLegacy"] == 0, "R-51: the Control room has no edge line left, so the old pick no longer fails there"
 
 
 def test_the_engine_picks_meshes_only_through_pick_js_and_the_outline_comes_from_outline_js():

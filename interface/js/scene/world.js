@@ -36,7 +36,7 @@ function roomTips(floor, room) {
 }
 
 /** The point over an object, for its tooltip: the middle of the top of its box in the world. */
-function topOf(THREE, object) {
+export function topOf(THREE, object) {
   object.updateWorldMatrix(true, true);   // a room made a moment ago has not been rendered: its matrices are as stale as its parents' (as `pick.js` brings them up to date)
   const box = new THREE.Box3().setFromObject(object);
   return new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2);

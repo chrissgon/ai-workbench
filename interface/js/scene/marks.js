@@ -79,9 +79,10 @@ const LIFT = 0.03;
 
 /**
  * Eight brackets round the box x0..x1, z0..z1, y0..y1 (page units): an L at each base corner, and at each top corner an L with a line `drop` down. `arm` is how far an
- * arm runs along an edge. `makeBatch` wraps a batch in page units (`pageBatch`). Returns one mesh (unlit, in `tone`) for the caller to put in a hidden group; the engine shows it.
+ * arm runs along an edge. `rise` (R-51, the server room's racks and console) adds a short line up from each base corner, as the page draws them; the rooms of the Building and
+ * the Floor leave it off. `makeBatch` wraps a batch in page units (`pageBatch`). Returns one mesh (unlit, in `tone`) for the caller to put in a hidden group; the engine shows it.
  */
-export function boxBrackets(kit, makeBatch, { x0, x1, z0, z1, y0, y1, arm, drop, tone }) {
+export function boxBrackets(kit, makeBatch, { x0, x1, z0, z1, y0, y1, arm, drop, rise = 0, tone }) {
   const batch = kit.batch();
   const pb = makeBatch(batch);
   const w = BRACKET_WIDTH;
@@ -89,11 +90,12 @@ export function boxBrackets(kit, makeBatch, { x0, x1, z0, z1, y0, y1, arm, drop,
     for (const sz of [-1, 1]) {
       const cx = sx < 0 ? x0 : x1;
       const cz = sz < 0 ? z0 : z1;
-      for (const [y, down] of [[y0 + LIFT, 0], [y1, drop]]) {
+      for (const [y, down, up] of [[y0 + LIFT, 0, rise], [y1, drop, 0]]) {
         // an L: one arm along x and one along z, from the corner toward the middle
         pb.flat(tone, sx < 0 ? cx - w / 2 : cx - arm, cz - w / 2, sx < 0 ? cx + arm : cx + w / 2, cz + w / 2, y);
         pb.flat(tone, cx - w / 2, sz < 0 ? cz - w / 2 : cz - arm, cx + w / 2, sz < 0 ? cz + arm : cz + w / 2, y);
         if (down) pb.box(tone, cx - w / 2, y - down, cz - w / 2, w, down, w);
+        if (up) pb.box(tone, cx - w / 2, y, cz - w / 2, w, up, w);
       }
     }
   }

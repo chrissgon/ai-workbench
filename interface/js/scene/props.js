@@ -13,18 +13,6 @@ export function tree(kit, parent, x, z, s = 1) {
   return group;
 }
 
-export function plant(kit, parent, x, z, s = 1) {
-  const { THREE, palette } = kit;
-  const group = new THREE.Group();
-  group.position.set(x, 0, z);
-  parent.add(group);
-  kit.cyl(0.2 * s, 0.15 * s, 0.34 * s, 10, palette.bg, 0, 0, 0, { parent: group });
-  kit.cyl(0.18 * s, 0.18 * s, 0.03, 10, palette.trunk, 0, 0.32 * s, 0, { parent: group, cast: false });
-  const crown = kit.mesh(new THREE.IcosahedronGeometry(0.34 * s, 0), palette.leafA, 0, 0.72 * s, 0, { parent: group, flat: true });
-  crown.rotation.set(0.4, 0.6, 0);
-  return group;
-}
-
 /** The waiting marker: a warn exclamation (cube and bar), as one group so it can drop in. */
 export function exclamation(kit, parent, x, y, z, cube = 0.3, bar = [0.3, 0.95, 0.3]) {
   const group = new kit.THREE.Group();
