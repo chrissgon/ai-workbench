@@ -108,7 +108,8 @@ def test_a_task_that_waits_says_for_what_on_the_chips_the_bar_and_the_rows_and_h
     assert got["chips"] == [["1 done", None], ["2 left", None], ["waiting for #10", "task #5 waiting for #10: docs/brand/identity.md, written by task #10"]]
     assert got["twoWaits"]["text"] == "2 waiting"
     assert got["none"][0] is None and not any("waiting" in chip for chip in got["none"][1]), "a floor whose tasks wait for nothing shows no waiting chip"
-    assert got["steps"][0][0] == "Design · planned · waiting for #10, request #3" and got["steps"][0][1].endswith("waiting for #10, request #3")
+    assert got["steps"][0][0] == "Design · waiting for #10, request #3" and got["steps"][0][1].endswith("waiting for #10, request #3"), \
+        "R-8: a step's line is its agent, and what it waits for when it waits: no state word (the icon carries the state)"
     assert got["steps"][1][2] is None
 
 

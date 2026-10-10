@@ -392,9 +392,9 @@ def test_no_phone_rule_gives_the_scene_a_fixed_height():
                 if not tracks or tracks[0] != "minmax(0, 1fr)":
                     found.append((selector, "grid-template-rows", rows))
     assert found == [], f"a phone rule fixes the scene's height: {found}"
-    # the scene's row is the one flexible row of the frame: the cards and the sheet are laid over it
+    # the scene's row is the one flexible row of the frame: the cards and the sheet are laid over it; the bottom bar is the second row (R-10)
     frame_rule = next(d for block in PHONE for sel, d in rules(block) if sel == ".wb-frame")
-    assert frame_rule["grid-template-rows"].split()[0:2] == ["minmax(0,", "1fr)"] and "scene scene" in frame_rule["grid-template-areas"]
+    assert frame_rule["grid-template-rows"] == "minmax(0, 1fr) auto" and frame_rule["grid-template-columns"] == "minmax(0, 1fr)"
 
 
 def test_the_handle_is_the_phones_and_the_desktop_rules_are_as_they_were():
@@ -406,27 +406,31 @@ def test_the_handle_is_the_phones_and_the_desktop_rules_are_as_they_were():
     # the desktop panel is placed as before: absolute at the right of the scene, at its fixed width
     panel = next(d for sel, d in rules(top) if sel == ".wb-panel")
     assert panel["position"] == "absolute" and panel["right"] == "var(--wb-edge)" and panel["width"] == "var(--wb-panel-narrow)"
-    assert next(d for sel, d in rules(top) if sel == ".wb-track")["position"] == "absolute"
+    assert next(d for sel, d in rules(top) if sel == ".wb-dock")["position"] == "absolute", "R-8: the tracking bar stands at the bottom left in the dock, under Back and the crumbs"
+    assert "position" not in next(d for sel, d in rules(top) if sel == ".wb-track")
     assert next(d for sel, d in rules(top) if sel == ".wb-kpis")["position"] == "absolute"
     # the sheet's rules sit in the phone block alone
     for selector in (".wb-drawer.is-half", ".wb-drawer.is-full", ".wb-drawer.is-collapsed", ".wb-drawer.is-dragging"):
         assert selector in phone and selector not in "".join(b for b in media_blocks(CSS, "min-width: 640px") + media_blocks(CSS, "min-width: 1024px"))
 
 
-def test_the_phone_puts_the_cards_over_the_scene_bottom_aligned_and_the_kpi_row_in_one_line_each():
+def test_the_phone_puts_the_cards_over_the_scene_from_the_top_and_the_two_kpi_tiles_in_one_line_each():
     phone = "\n".join(PHONE)
     main = next(d for block in PHONE for sel, d in rules(block) if sel == ".wb-main")
-    assert main["display"] == "flex" and main["flex-direction"] == "column" and main["justify-content"] == "flex-end" and main["grid-area"] == "scene", \
-        "the main area is laid over the scene's cell, a stack from the bottom up"
+    assert main["display"] == "flex" and main["flex-direction"] == "column" and "justify-content" not in main and main["grid-area"] == "1 / 1", \
+        "R-10: the main area is laid over the scene's cell, a stack from the top down (the notice, the tracking bar, the KPI tiles), the sheet at the bottom"
     assert re.search(r"\.wb-frame\.is-sheet-full \.wb-float, \.wb-frame\.is-sheet-rising \.wb-float \{ display: none; \}", phone), \
         "the KPI cards and the tracking bar are hidden at full, and while a drag has the sheet rising"
     assert ".wb-kpi-note, .wb-kpi-unit { display: none; }" in phone, "the tile is one line: the unit that would be cut mid-word is not drawn (the title and the name carry the sentence)"
     kpi = next(d for block in PHONE for sel, d in rules(block) if sel == ".wb-kpi")
     assert kpi["font-size"] == "12px" and kpi["display"] == "block"
     assert ".wb-kpi-long { display: none; }" in phone and ".wb-kpi-short { display: inline; }" in phone and "white-space: nowrap" in phone
-    assert next(d for block in PHONE for sel, d in rules(block) if sel == ".wb-kpis")["grid-template-columns"] == "repeat(3, minmax(0, 1fr))", "three tiles in one row"
-    # the bottom bar stays: the switcher, "Waiting for you" and the breadcrumbs keep their rows whatever the sheet's position
-    assert 'grid-template-areas: "scene scene" "switch wait" "nav door";' in phone
+    assert next(d for block in PHONE for sel, d in rules(block) if sel == ".wb-kpis")["grid-template-columns"] == "repeat(2, minmax(0, 1fr))", "R-5, R-10: two tiles in one row"
+    # the bottom bar stays (R-10): two rows, whatever the sheet's position: the switcher, the inbox button and the colour mode; then Back, the crumbs and the door
+    bar = next(d for block in PHONE for sel, d in rules(block) if sel == ".wb-bottom-bar")
+    assert bar["display"] == "grid" and "border-top" in bar and ".wb-bottom-row" in phone
+    assert next(d for sel, d in rules(without_media(CSS)) if sel == ".wb-wait-btn")["display"] == "none", "the inbox button is the phone's: elsewhere the card is the list"
+    assert re.search(r"\.wb-topbar, \.wb-dock \{ display: none; \}", phone), "a phone has no top row and no dock: their controls are in the bottom bar"
     # the sheet's collapsed state keeps a header line (a panel's head, the City's two heads) and nothing else
     assert ".wb-drawer.is-collapsed:not(.is-dragging) > :not(.wb-grip, .wb-panel-head, .wb-floor-normal, .wb-drawer-scroll) { display: none; }" in phone
     assert ".wb-drawer.is-collapsed:not(.is-dragging) .wb-buildings > :not(.wb-buildings-head)" in phone and ".wb-wait-body > :not(.wb-wait-head)" in phone, \
@@ -452,8 +456,8 @@ const cls = (n) => n.cls();
 const desk = await build(false);
 const phone = await build(true);
 const floatOf = (frame) => kids(frame.main).find((c) => cls(c).includes("wb-float"));
-out.desk = { float: kids(floatOf(desk)).length, kpisInScene: kids(desk.el).some((c) => cls(c).includes("wb-scene-area") && c.children.includes(desk.kpis.el)), trackInFrame: desk.el.children.includes(desk.track.el) };
-out.phone = { float: kids(floatOf(phone)).map((c) => cls(c).join(" ")), kpisInScene: kids(phone.el).some((c) => cls(c).includes("wb-scene-area") && c.children.includes(phone.kpis.el)), trackInFrame: phone.el.children.includes(phone.track.el) };
+out.desk = { float: kids(floatOf(desk)).length, kpisInScene: kids(desk.el).some((c) => cls(c).includes("wb-scene-area") && c.children.includes(desk.kpis.el)), trackInDock: kids(desk.el).some((c) => cls(c).includes("wb-dock") && c.children.includes(desk.track.el)) };
+out.phone = { float: kids(floatOf(phone)).map((c) => cls(c).join(" ")), kpisInScene: kids(phone.el).some((c) => cls(c).includes("wb-scene-area") && c.children.includes(phone.kpis.el)), trackInDock: kids(phone.el).some((c) => cls(c).includes("wb-dock") && c.children.includes(phone.track.el)) };
 out.order = kids(phone.main).map((c) => cls(c)[0] || c.tagName);
 
 // the sheet's event: at full the frame says so (a class), and the scene it holds is paused; a sheet that goes un-covers it
@@ -474,9 +478,9 @@ console.log(JSON.stringify(out));
 @needs_node
 def test_the_frame_stacks_the_cards_over_the_scene_on_a_phone_and_hears_the_sheet(tmp_path):
     got = run_node(tmp_path, FRAME_SCRIPT)
-    assert got["desk"] == {"float": 0, "kpisInScene": True, "trackInFrame": True}, "off the phone the KPI cards and the tracking bar stand where they always did"
-    assert got["phone"]["kpisInScene"] is False and got["phone"]["trackInFrame"] is False
-    assert got["phone"]["float"] == ["wb-kpis", "pui-card wb-track"], "on the phone they are the stack over the sheet"
+    assert got["desk"] == {"float": 0, "kpisInScene": True, "trackInDock": True}, "off the phone the KPI cards stand in the scene area and the tracking bar in the dock (R-8)"
+    assert got["phone"]["kpisInScene"] is False and got["phone"]["trackInDock"] is False
+    assert got["phone"]["float"] == ["pui-card wb-track", "wb-kpis"], "R-10: on the phone they float at the top of the scene, the tracking bar first, then the two KPI tiles"
     assert got["order"][:2] == ["wb-sr", "wb-notice-box"] and got["order"][-1] == "wb-float"
     assert got["hasListener"] is True and got["sheetFull"] == [True, False], "the frame marks 'full' while the sheet covers the scene"
     assert got["inert"] == {"full": True, "rising": [False, True, False], "after": [False, False]}, \
@@ -492,7 +496,8 @@ def test_the_frame_pauses_the_scene_while_the_sheet_covers_it_and_the_control_ro
     control = (VIEWS / "control.js").read_text(encoding="utf-8")
     assert "panel.el.addEventListener(DRAWER_EVENT" in control and "engine.setPaused(" in control, "the Control room draws its own scene and pauses it itself"
     # the camera is fitted in what the cards and the sheet leave: the phone's insets come from their rectangles, not from a constant
-    assert re.search(r"\[float, \.\.\.main\.querySelectorAll\(\"\.wb-drawer\"\)\]", frame) and "Math.min(...covers.map" in frame
+    assert "const stack = float.getBoundingClientRect()" in frame and 'main.querySelectorAll(".wb-drawer")' in frame and "Math.min(...sheets.map" in frame, \
+        "R-10: the cards float at the top (the top inset) and the sheet is at the bottom (the bottom inset)"
     for name in ("city", "building", "floor", "lobby-scene", "control"):
         text = (VIEWS / f"{name}.js").read_text(encoding="utf-8")
         assert "new ResizeObserver(() => { if (engine) engine.refit(); })" in text, f"{name}: a resize recomputes the fit"
@@ -588,15 +593,13 @@ const k = createKpis();
 const cards = () => [...k.el.walk()].filter((n) => n instanceof FakeNode && (n.attrs.class || "").includes("pui-card"));
 k.update({ decisions: 1, runs: 3, runsCap: 20, usd: 1.2, usdCap: 5 }, "ready");
 const one = cards().map((c) => [c.title, c.attrs["aria-label"]]);
-k.update({ decisions: 7, runs: 3, runsCap: 20, usd: 1.2, usdCap: 5 }, "ready");
-console.log(JSON.stringify({ one, seven: cards()[0].title }));
+console.log(JSON.stringify({ one, count: cards().length }));
 """
 
 
 @needs_node
-def test_the_decisions_tile_has_a_whole_sentence_for_a_title_since_the_phone_does_not_draw_its_unit(tmp_path):
+def test_the_two_kpi_tiles_keep_the_cap_in_their_name_since_the_phone_does_not_draw_it(tmp_path):
     got = run_node(tmp_path, KPI)
-    assert got["one"][0] == ["1 open decision waiting for you", "Open decisions 1 waiting for you"]
-    assert got["seven"] == "7 open decisions waiting for you"
-    assert got["one"][1][1] == "Runs today 3 of 20" and got["one"][2][1].startswith("Spend today $1.20 of $5.00"), \
+    assert got["count"] == 2, "R-5: two cards, runs and spend; the card of open decisions is gone"
+    assert got["one"][0][1] == "Runs today 3 of 20" and got["one"][1][1].startswith("Spend today $1.20 of $5.00"), \
         "the runs and the spend tiles keep the cap in their name when the phone does not draw it"

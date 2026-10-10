@@ -1,11 +1,12 @@
-// F-3 the three KPI cards: open decisions, runs today and spend today, each labelled by what it counts. The meter is
-// a display division (used over cap), hidden from the accessibility tree: the number is in the text.
+// F-3 the two KPI cards (R-5): runs today and spend today, each labelled by what it counts, a card only while its cap is in use (R4D-5, A-38).
+// The count of open decisions is on "Waiting for you", not here. The meter is a display division (used over cap), hidden from the accessibility
+// tree: the number is in the text.
 
 import { h } from "../dom.js";
 import * as format from "../format.js";
 import { icon } from "./icons.js";
 
-// A card's label has a long and a short form: the tablet layout shows the short one ("Decisions", "Runs", "Spend"), the others the long one.
+// A card's label has a long and a short form: the phone and the in-between layout show the short one ("Runs", "Spend"), the others the long one.
 function card(label, iconName, tone, withMeter, short) {
   const figure = h("strong", { class: "wb-kpi-figure", text: "..." });
   const unit = h("span", { class: "wb-kpi-unit", text: "" });
@@ -23,10 +24,9 @@ function card(label, iconName, tone, withMeter, short) {
 }
 
 export function createKpis() {
-  const decisions = card("Open decisions", "inbox", "warn", false, "Decisions");
   const runs = card(format.METER_WORDS.runs, "activity", "theme", true, "Runs");
   const spend = card(format.METER_WORDS.spend, "credit-card", "theme", true, "Spend");
-  const el = h("div", { class: "wb-kpis" }, decisions.el, runs.el, spend.el);
+  const el = h("div", { class: "wb-kpis" }, runs.el, spend.el);
 
   function meter(c, fraction, reserved = 0) {
     c.meterFill.style.setProperty("--wb-share", `${Math.round(fraction * 100)}%`);
@@ -37,11 +37,11 @@ export function createKpis() {
 
   return {
     el,
-    /** sums: {decisions, runs, runsCap, usd, usdCap, usdRecorded, usdReserved, runsTotal, inUse: {runs, spend}} or null (loading or failed); state: "loading", "error" or "ready". A card whose cap is not in use (A-38) is hidden. */
+    /** sums: {runs, runsCap, usd, usdCap, usdRecorded, usdReserved, runsTotal, inUse: {runs, spend}} or null (loading or failed); state: "loading", "error" or "ready". A card whose cap is not in use (A-38) is hidden. */
     update(sums, state = "ready") {
       if (!sums) {
         const text = state === "error" ? "-" : "...";
-        for (const c of [decisions, runs, spend]) {
+        for (const c of [runs, spend]) {
           c.el.hidden = false;                 // while the data is not there nothing is hidden: the cards read as loading
           c.figure.textContent = text;
           c.unit.textContent = "";
@@ -55,10 +55,6 @@ export function createKpis() {
       const use = sums.inUse || { runs: true, spend: true };
       runs.el.hidden = use.runs === false;
       spend.el.hidden = use.spend === false;
-      decisions.figure.textContent = String(sums.decisions);
-      decisions.unit.textContent = "waiting";
-      decisions.el.title = `${sums.decisions} open decision${sums.decisions === 1 ? "" : "s"} waiting for you`;
-      decisions.el.setAttribute("aria-label", `Open decisions ${sums.decisions} waiting for you`);
       runs.figure.textContent = String(sums.runs);
       runs.unit.textContent = `of ${sums.runsCap}`;
       runs.el.title = `of ${sums.runsCap} · ${format.METER_TIPS.runs}${sums.runsTotal ? ` All runs today: ${sums.runsTotal}` : ""}`;

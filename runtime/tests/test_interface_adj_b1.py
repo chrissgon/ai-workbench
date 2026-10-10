@@ -164,11 +164,9 @@ import { FakeNode, find, all, text } from "@FAKE@";
 import { createSwitcher } from "@JS@/frame/switcher.js";
 
 const calls = [];
-let current = "system";
-const modeCalls = [];
 const sw = createSwitcher({
   onSelect: (id) => calls.push(["select", id]), onForgetToken: () => calls.push(["forget"]), onOpen() {},
-  mode: { current: () => current, set: (m) => { modeCalls.push(m); current = m; return m; } },
+  onAdd: () => calls.push(["add"]), onLeave: (id) => calls.push(["leave", id]),
 });
 const root = new FakeNode("div");
 root.append(sw.el);
@@ -207,17 +205,24 @@ out.none.closedAgain = card.hidden;
 sw.update({ projects: [project("a", "northwind-shop")], selectedId: "a", heading: "Projects" });
 out.back = { lineHidden: find(sw.el, ".wb-listbox-empty") ? find(sw.el, ".wb-listbox-empty").hidden : null, options: all(sw.el, "[role=option]").length };
 
-// D-2: the provisional light/dark control at the foot of the listbox
-const radios = () => all(sw.el, "[role=radio]");
-const state = () => radios().map((r) => [tx(r), r.getAttribute("aria-checked")]);
+// R-3, A-35: the foot has three rows with icons; the two that remove are in the error colour; Add and Leave open the frame's command panel
+calls.length = 0;
 chevron.click();
-out.mode = { group: find(sw.el, "[role=radiogroup]") ? find(sw.el, "[role=radiogroup]").getAttribute("aria-label") : null, initial: state(), inFoot: find(find(sw.el, ".wb-listbox-foot"), "[role=radiogroup]") !== null };
-if (radios()[1]) radios()[1].click();
-out.mode.afterDark = state();
-out.mode.calls = modeCalls.slice();
-current = "light";
-chevron.click(); chevron.click();    // closed and opened again: the control reads the preference again
-out.mode.reopened = state();
+const foot = find(sw.el, ".wb-listbox-foot");
+const rows = all(foot, "button.wb-foot-row");
+const iconOf = (r) => find(r, ".wb-icon").cls().find((c) => c.startsWith("wb-icon-"));
+out.foot = { rows: rows.map((r) => [tx(r), r.cls().includes("pui-error"), iconOf(r)]), separator: !!find(foot, "[role=separator]"), modeControl: !!find(sw.el, "[role=radiogroup]") };
+rows[0].click();
+out.foot.afterAdd = [calls.slice(), card.hidden];
+chevron.click();
+rows[1].click();
+out.foot.afterLeave = [calls.slice(), card.hidden];
+sw.update({ projects: [], selectedId: null, heading: "Projects" });
+out.foot.leaveWithNone = find(sw.el, ".wb-leave-row").disabled;
+sw.update({ projects: [project("a", "northwind-shop"), project("b", "tinykv-docs")], selectedId: "b", heading: "Projects" });
+const options = all(sw.el, "[role=option]");
+out.options = options.map((o) => [o.cls().includes("is-selected"), find(o, ".wb-check").cls().includes("is-on"), find(o, ".wb-check").cls().includes("pui-success"), o.children.map((c) => c.cls().find((x) => x.startsWith("wb-option-text") || x.startsWith("pui-badge") || x.startsWith("wb-check")))]);
+out.swap = [!!find(main(), ".wb-switch-swap .wb-icon-arrow-left-right")];
 console.log(JSON.stringify(out));
 """
 
@@ -241,58 +246,87 @@ def test_the_switcher_main_button_is_a_label_with_one_project_and_the_foot_opens
 
 
 @needs_node
-def test_the_provisional_mode_control_at_the_listbox_foot_has_three_choices_and_sets_the_preference(tmp_path):
-    mode = run_view(tmp_path, SWITCHER)["mode"]
-    assert mode["group"] == "Colour mode" and mode["inFoot"] is True
-    assert mode["initial"] == [["Light", "false"], ["Dark", "false"], ["System", "true"]], "System is the default"
-    assert mode["calls"] == ["dark"] and mode["afterDark"] == [["Light", "false"], ["Dark", "true"], ["System", "false"]]
-    assert mode["reopened"] == [["Light", "true"], ["Dark", "false"], ["System", "false"]], "the control shows the preference when the card opens"
+def test_the_switchers_foot_has_three_rows_with_icons_that_open_the_command_panel_and_the_selected_row_has_a_check(tmp_path):
+    got = run_view(tmp_path, SWITCHER)
+    foot = got["foot"]
+    assert foot["rows"] == [["Add a project\u2026", False, "wb-icon-folder-plus"], ["Leave this project\u2026", True, "wb-icon-folder-minus"], ["Forget the token", True, "wb-icon-key-round"]], \
+        "R-3, A-35: the foot's rows have their icons; the two that remove (Leave, Forget) are in the error colour"
+    assert foot["separator"] is True and foot["modeControl"] is False, "R-4: the colour mode is not in the foot any more"
+    assert foot["afterAdd"] == [[["add"]], True] and foot["afterLeave"] == [[["add"], ["leave", "a"]], True], "Add and Leave close the card and open the command panel; Leave acts on the project the switcher shows"
+    assert foot["leaveWithNone"] is True, "with no project there is nothing to leave"
+    assert got["options"][0][:3] == [False, False, True] and got["options"][1][:3] == [True, True, True], "R-3: the selected row has the check in a soft success box at its end"
+    assert got["options"][1][3] == ["wb-option-text", "pui-badge", "wb-check"], "the row is the name, the badge, then the check"
+    assert got["swap"] == [True], "R-3: the main button ends in a swap icon"
 
 
 # --- row 11, D-2: the preference, the module that keeps it and the scene that follows ---------------------------------------------
 
 MODE = r"""
 import * as mode from "@JS@/mode.js";
+import { FakeNode, find, all } from "@FAKE@";
+import { createModeButton } from "@JS@/frame/mode-button.js";
 
-const store = new Map();
-const storage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => { store.set(k, String(v)); }, removeItem: (k) => { store.delete(k); } };
+// nothing is stored: any touch of a store of the browser fails this run
+const touched = [];
+for (const name of ["localStorage", "sessionStorage"]) Object.defineProperty(globalThis, name, { get() { touched.push(name); throw new Error("storage touched"); } });
 const makeRoot = () => ({ attrs: {}, setAttribute(n, v) { this.attrs[n] = v; }, removeAttribute(n) { delete this.attrs[n]; }, getAttribute(n) { return n in this.attrs ? this.attrs[n] : null; } });
 const root = makeRoot();
-const out = { key: mode.KEY, modes: mode.MODES, attr: mode.ATTRIBUTE };
-out.initEmpty = [mode.initMode({ storage, root }), { ...root.attrs }, mode.currentMode(root)];
-out.dark = [mode.setMode("dark", { storage, root }), { ...root.attrs }, store.get(mode.KEY), mode.currentMode(root)];
-out.light = [mode.setMode("light", { storage, root }), { ...root.attrs }, store.get(mode.KEY), mode.currentMode(root)];
-out.system = [mode.setMode("system", { storage, root }), { ...root.attrs }, store.get(mode.KEY), mode.currentMode(root)];
-store.set(mode.KEY, "dark");
-const second = makeRoot();
-out.restored = [mode.initMode({ storage, root: second }), { ...second.attrs }];
-store.set(mode.KEY, "purple");
-const third = makeRoot();
-third.attrs["data-pui-mode"] = "dark";
-out.junk = [mode.initMode({ storage, root: third }), { ...third.attrs }, mode.readMode(storage)];
-out.invalidSet = [mode.setMode("purple", { storage, root }), { ...root.attrs }];
-out.keys = [...store.keys()];
-// a storage that refuses (private window, blocked site data): the attribute is still set and nothing throws
-const blocked = { getItem() { throw new Error("blocked"); }, setItem() { throw new Error("blocked"); }, removeItem() { throw new Error("blocked"); } };
-const fourth = makeRoot();
-out.blocked = [mode.readMode(blocked), mode.setMode("dark", { storage: blocked, root: fourth }), { ...fourth.attrs }, mode.initMode({ storage: blocked, root: makeRoot() })];
+const out = { order: mode.ORDER, attr: mode.ATTRIBUTE, words: mode.WORDS, icons: mode.ICON_OF };
+out.init = [mode.initMode({ root }), { ...root.attrs }, mode.currentMode(root)];
+out.cycle = [1, 2, 3, 4].map(() => [mode.cycleMode({ root }), { ...root.attrs }, mode.currentMode(root)]);
+out.next = [mode.nextMode("system"), mode.nextMode("light"), mode.nextMode("dark"), mode.nextMode("purple"), mode.nextMode(undefined)];
+out.set = [mode.setMode("dark", { root }), { ...root.attrs }, mode.setMode("purple", { root }), { ...root.attrs }];
+const stale = makeRoot();
+stale.attrs["data-pui-mode"] = "dark";
+out.stale = [mode.initMode({ root: stale }), { ...stale.attrs }];
+const heard = [];
+const stop = mode.onMode((m) => heard.push(m));
+mode.setMode("light", { root });
+stop();
+mode.setMode("dark", { root });
+out.heard = heard;
+
+// the button: one control, the icon of the chosen mode, the name of the mode, a click cycles; two buttons follow each other
+document.documentElement = new FakeNode("html");
+mode.initMode();
+const one = createModeButton();
+const two = createModeButton();
+const shown = (b) => [b.el.getAttribute("data-choice"), b.el.getAttribute("aria-label"), b.el.getAttribute("title")];
+out.button = { tag: one.el.tagName, type: one.el.attrs.type, initial: shown(one), icons: all(one.el, ".wb-mode-icon").map((n) => [n.attrs["data-icon"], find(n, ".wb-icon").cls().find((c) => c.startsWith("wb-icon-"))]) };
+one.el.click();
+out.button.afterOne = [shown(one), shown(two), document.documentElement.getAttribute("data-pui-mode")];
+one.el.click();
+out.button.afterTwo = [shown(one), document.documentElement.getAttribute("data-pui-mode")];
+one.el.click();
+out.button.afterThree = [shown(one), document.documentElement.getAttribute("data-pui-mode")];
+one.destroy();
+two.el.click();
+out.button.afterDestroy = [shown(one)[0], shown(two)[0]];
+out.touched = touched;
 console.log(JSON.stringify(out));
 """
 
 
 @needs_node
-def test_the_mode_module_sets_and_removes_the_library_attribute_and_keeps_one_key(tmp_path):
-    got = run_pure(tmp_path, MODE)
-    assert got["key"] == "openhora-mode" and got["modes"] == ["light", "dark", "system"] and got["attr"] == "data-pui-mode"
-    assert got["initEmpty"] == ["system", {}, "system"], "nothing stored: the system decides, no attribute"
-    assert got["dark"] == ["dark", {"data-pui-mode": "dark"}, "dark", "dark"]
-    assert got["light"] == ["light", {"data-pui-mode": "light"}, "light", "light"]
-    assert got["system"] == ["system", {}, "system", "system"], "System removes the attribute and keeps the choice"
-    assert got["restored"] == ["dark", {"data-pui-mode": "dark"}], "the key is read at start and the attribute applied"
-    assert got["junk"] == ["system", {}, "system"], "a stored word that is not a mode is System, and a stale attribute goes"
-    assert got["invalidSet"] == ["system", {}]
-    assert got["keys"] == ["openhora-mode"], "one key only"
-    assert got["blocked"] == ["system", "dark", {"data-pui-mode": "dark"}, "system"], "blocked storage: the choice still shows for the session"
+def test_the_mode_module_cycles_system_light_dark_on_the_library_attribute_and_stores_nothing(tmp_path):
+    got = run_node(tmp_path, MODE)
+    assert got["order"] == ["system", "light", "dark"] and got["attr"] == "data-pui-mode" and got["words"] == {"system": "System", "light": "Light", "dark": "Dark"}
+    assert got["icons"] == {"system": "monitor", "light": "sun", "dark": "moon"}, "R-4: the icon says which"
+    assert got["init"] == ["system", {}, "system"], "System is the default: no attribute, the system decides"
+    assert got["cycle"] == [["light", {"data-pui-mode": "light"}, "light"], ["dark", {"data-pui-mode": "dark"}, "dark"], ["system", {}, "system"], ["light", {"data-pui-mode": "light"}, "light"]], \
+        "R-4: a click goes System, Light, Dark, System; System removes the attribute"
+    assert got["next"] == ["light", "dark", "system", "light", "light"], "a word that is not a mode is read as System"
+    assert got["set"] == ["dark", {"data-pui-mode": "dark"}, "system", {}]
+    assert got["stale"] == ["system", {}], "the page starts on System, whatever the root held"
+    assert got["heard"] == ["light"], "a listener hears the mode applied until it stops"
+    assert got["touched"] == [], "R4D-3, R-4: nothing is stored: no read or write of a browser store"
+    button = got["button"]
+    assert button["tag"] == "BUTTON" and button["type"] == "button" and button["initial"] == ["system", "Colour mode: System", "Colour mode: System"]
+    assert button["icons"] == [["system", "wb-icon-monitor"], ["light", "wb-icon-sun"], ["dark", "wb-icon-moon"]]
+    assert button["afterOne"] == [["light", "Colour mode: Light", "Colour mode: Light"], ["light", "Colour mode: Light", "Colour mode: Light"], "light"], "the second button follows the first"
+    assert button["afterTwo"] == [["dark", "Colour mode: Dark", "Colour mode: Dark"], "dark"]
+    assert button["afterThree"] == [["system", "Colour mode: System", "Colour mode: System"], None]
+    assert button["afterDestroy"] == ["system", "light"], "a destroyed button stops following"
 
 
 PALETTE = r"""
@@ -334,18 +368,13 @@ def test_the_scene_reads_its_palette_again_when_the_mode_attribute_or_the_system
     assert "watchScheme" in engine and "darkQuery" not in engine, "the engine follows the scheme through the palette's watcher"
 
 
-def test_the_mode_module_is_the_only_one_that_touches_local_storage_and_for_one_key():
+def test_no_module_of_the_page_touches_local_storage_and_the_mode_module_keeps_nothing():
     mode = (JS / "mode.js").read_text(encoding="utf-8")
-    assert "openhora-mode" in mode and "sessionStorage" not in mode and "document.cookie" not in mode
-    keys = set(re.findall(r'\b(?:getItem|setItem|removeItem)\(\s*([^,)]+)', mode))
-    assert keys == {"KEY"}, f"mode.js reads and writes through one constant: {keys}"
-    assert re.search(r'export const KEY = "openhora-mode";', mode)
+    assert not re.search(r"Storage|document\.cookie|openhora-mode", mode), "R4D-3, R-4: the colour mode is not stored: no storage, no cookie, no key"
     for path in sorted(JS.rglob("*.js")):
-        if path == JS / "mode.js":
-            continue
-        assert "localStorage" not in path.read_text(encoding="utf-8"), f"{path.name}: the preference module is the only one that touches localStorage"
+        assert "localStorage" not in path.read_text(encoding="utf-8"), f"{path.name}: no module of the page touches localStorage (the colour mode's exception of ADJ-B1 is gone)"
     main = (JS / "main.js").read_text(encoding="utf-8")
-    assert re.search(r'import \{[^}]*\binitMode\b[^}]*\} from "\./mode\.js";', main) and "initMode()" in main, "the preference is applied when the page starts"
+    assert re.search(r'import \{[^}]*\binitMode\b[^}]*\} from "\./mode\.js";', main) and "initMode()" in main, "the page starts on System when it starts"
     assert not re.search(r"perfectui/js/mode", "".join(p.read_text(encoding="utf-8") for p in INTERFACE.glob("*.html") if p.name != "")), "the library's cookie helper is not loaded"
     html = (INTERFACE / "index.html").read_text(encoding="utf-8")
     assert "mode.js" not in html
@@ -1062,8 +1091,8 @@ def test_the_readme_says_what_the_page_does_now():
     assert "is that same card (`floorCardNode`)" not in text and "a plate (`plateNode`, `views/building.js`)" in text, "the floors list rows are drawn by plateNode (building.js)"
     assert "shows the placeholder" not in text, "the unread project's placeholder is unreachable: the sentence is gone"
     assert "desktop from 1024" not in text
-    assert "1100" in text and "639" in text and "899" in text and "1099" in text and "712" in text, "the four bands and the mark's breakpoint"
-    assert "`#/city`" in text and "openhora-mode" in text and "js/mode.js" in text, "the City route and the preference are described"
-    assert "vendor/fonts" in text and "provisional" in text, "the typefaces, and the toggle's provisional place"
+    assert "1100" in text and "639" in text and "899" in text and "1099" in text, "the four bands (R-1, R-10: the mark's breakpoint of 712 px is gone with the top bar's strip)"
+    assert "`#/city`" in text and "js/mode.js" in text, "the City route and the colour mode are described"
+    assert "vendor/fonts" in text and "provisional" not in text.split("`js/mode.js`")[1].split("|")[0], "the typefaces; R-4 gives the colour-mode button its place, so it is no longer provisional"
     rule = re.search(r"- \*\*The token lives in memory and in `sessionStorage`[^\n]*\n(?:  [^\n]*\n)*", text)
-    assert rule and "openhora-mode" in rule.group(0) and "mode.js" in rule.group(0), "the storage rule names its one exception"
+    assert rule and "openhora-mode" not in rule.group(0) and "localStorage" in rule.group(0) and "nothing is stored" in text, "R4D-3: the storage rule has no exception: the colour mode is not stored"

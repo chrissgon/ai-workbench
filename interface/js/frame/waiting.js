@@ -1,5 +1,5 @@
-// F-4 "Waiting for you": the City's card, the header button and its menu on the other screens, and the list a phone sheet shows.
-// A row is a link to the card where the decision is answered.
+// F-4 "Waiting for you" (R-7): one card at the bottom right of every screen (open on the City, closed on its header line elsewhere), the inbox
+// button of a phone's bottom bar and the list a phone's dialog shows. A row is a link to the card where the decision is answered.
 
 import { h } from "../dom.js";
 import { arrowNav, keepFocus } from "./arrows.js";
@@ -21,76 +21,116 @@ export function rowList(rows, state, { chevron = true } = {}) {
   return list;
 }
 
-/** The card's header: a warn tile, the title, the count and "oldest first". */
-function head(count) {
-  return h("div", { class: "wb-wait-head" },
+/**
+ * The card's header (R-7): a warn tile, the title and the count. On a project's screens the header is a button with a chevron (up while the
+ * card is closed, down while it is open): the card is closed on its header line and opens upward. On the City the card is open and the header
+ * is plain.
+ */
+function head(count, { collapsible, open, onToggle }) {
+  const parts = [
     h("span", { class: "wb-kpi-tile pui-soft pui-warn" }, icon("inbox", 16)),
     h("strong", { class: "wb-wait-heading", text: "Waiting for you" }),
     h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(count) }),
-    h("span", { class: "wb-wait-order", text: "oldest first" }));
+  ];
+  if (!collapsible) return h("div", { class: "wb-wait-head" }, parts);
+  parts.push(h("span", { class: "wb-wait-up", "aria-hidden": "true" }, icon(open ? "chevron-down" : "chevron-up", 16)));
+  const button = h("button", { class: "wb-wait-head wb-wait-toggle", type: "button", "aria-expanded": String(open) }, parts);
+  button.addEventListener("click", onToggle);
+  return button;
 }
 
-/** The City's card. Returns {el, set(rows, state)}. */
-export function createWaitingCard() {
+/**
+ * The card at the bottom right of every screen (R-7). Returns {el, set(rows, state), setCollapsible(on), isOpen(), close(), destroy()}. On the City it is open
+ * and has no toggle; on a project's screens (`setCollapsible(true)`) it starts closed on its header line and a click opens it upward; Escape, a click
+ * outside it and a change of screen close it.
+ */
+export function createWaitingCard({ onOpen = () => {} } = {}) {
   const body = h("div", { class: "wb-wait-body" });
   const el = h("section", { class: "pui-card wb-waiting", role: "region", "aria-label": "Waiting for you, loading", id: "wb-panel", tabindex: "-1" }, body);
+  let last = { rows: [], state: "loading" };
+  let collapsible = false;
+  let open = true;
   let shown = "";
+  let toggleButton = null;       // the header, while the card has a toggle
+  const isOpen = () => collapsible && open;
+  function draw() {
+    const key = JSON.stringify([last, collapsible, open]);
+    if (key === shown) return;
+    shown = key;
+    const { rows, state } = last;
+    el.setAttribute("aria-label", state === "loading" ? "Waiting for you, loading" : `Waiting for you, ${rows.length} decision${rows.length === 1 ? "" : "s"}`);
+    el.classList.toggle("is-collapsible", collapsible);
+    el.classList.toggle("is-collapsed", collapsible && !open);
+    el.classList.toggle("is-open", !collapsible || open);
+    if (collapsible) el.removeAttribute("id"); else el.setAttribute("id", "wb-panel");     // the City's card is the panel the skip link names; elsewhere the panel is
+    const count = state === "loading" ? "..." : rows.length;
+    const toggle = () => {
+      open = !open;
+      if (open) onOpen();
+      draw();
+      if (toggleButton) toggleButton.focus();
+    };
+    const header = head(count, { collapsible, open, onToggle: toggle });
+    toggleButton = collapsible ? header : null;
+    keepFocus(body, () => body.replaceChildren(header, ...(collapsible && !open ? [] : [rowList(rows, state)])));
+  }
+  const onPointerDown = (event) => {
+    if (isOpen() && !el.contains(event.target)) {
+      open = false;
+      draw();
+    }
+  };
+  document.addEventListener("pointerdown", onPointerDown);
+  el.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape" || !isOpen()) return;
+    event.stopPropagation();     // the page's one Escape handler must not go up as well
+    open = false;
+    draw();
+    if (toggleButton) toggleButton.focus();
+  });
   return {
     el,
+    destroy() { document.removeEventListener("pointerdown", onPointerDown); },
+    isOpen,
+    close() {
+      if (!isOpen()) return;
+      open = false;
+      draw();
+    },
+    /** A project's screen: closed on its header line. The City: open, no toggle. A change of this word closes the card. */
+    setCollapsible(on) {
+      if (collapsible === Boolean(on)) return;
+      collapsible = Boolean(on);
+      open = !collapsible;
+      draw();
+    },
     set(rows, state) {
-      const key = JSON.stringify([rows, state]);
-      if (key === shown) return;
-      shown = key;
-      el.setAttribute("aria-label", state === "loading" ? "Waiting for you, loading" : `Waiting for you, ${rows.length} decision${rows.length === 1 ? "" : "s"}`);
-      keepFocus(body, () => body.replaceChildren(head(state === "loading" ? "..." : rows.length), rowList(rows, state)));
+      last = { rows, state };
+      draw();
     },
   };
 }
 
 /**
- * The header button of the other screens, with the menu it opens. Returns {el, set(rows, state), close(), button}. `onSheet(title, body, opener)`
- * opens the phone's list dialog; `onRefill(body)` draws that dialog's list again while it is open (C-22).
+ * The inbox button of a phone's bottom bar (R-7, R-10): the icon and the count, on every screen. It opens the rows in the list dialog; it is not
+ * drawn above a phone's width. Returns {el, set(rows, state), close(), button, isOpen(), destroy()}. `onSheet(title, body, opener)` opens the phone's
+ * list dialog; `onRefill(body)` draws that dialog's list again while it is open (C-22).
  */
 export function createWaitingMenu({ onOpen, onSheet, onRefill = () => {} }) {
   const count = h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full wb-wait-count", text: "..." });
-  const button = h("button", { class: "pui-btn pui-surface pui-outline wb-wait-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false" },
-    icon("inbox", 16), h("span", { class: "wb-wait-btn-label", text: "Waiting for you" }), count);
-  const menu = h("div", { class: "pui-card wb-wait-menu", hidden: true, role: "region", "aria-label": "Waiting for you" });
-  const el = h("div", { class: "wb-wait-menu-wrap" }, button, menu);
+  const button = h("button", { class: "pui-btn pui-surface pui-outline wb-wait-btn", type: "button", "aria-haspopup": "dialog" }, icon("inbox", 16), count);
+  const el = h("div", { class: "wb-wait-menu-wrap" }, button);
   let last = { rows: [], state: "loading" };
   let shownMenu = "";
-  let open = false;
-  const phone = window.matchMedia("(max-width: 639px)");
-
-  function setOpen(next) {
-    open = next;
-    menu.hidden = !next;
-    button.setAttribute("aria-expanded", String(next));
-    if (next) onOpen();
-  }
   button.addEventListener("click", () => {
-    if (phone.matches) {
-      onSheet("Waiting for you", rowList(last.rows, last.state), button);
-      return;
-    }
-    setOpen(!open);
+    onOpen();
+    onSheet("Waiting for you", rowList(last.rows, last.state), button);
   });
-  el.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && open) {
-      event.stopPropagation();   // the page's one Escape handler must not go up as well
-      setOpen(false);
-      button.focus();
-    }
-  });
-  const onPointerDown = (event) => {
-    if (open && !el.contains(event.target)) setOpen(false);
-  };
-  document.addEventListener("pointerdown", onPointerDown);
   return {
     el, button,
-    destroy() { document.removeEventListener("pointerdown", onPointerDown); },
-    close() { if (open) setOpen(false); },
-    isOpen: () => open,
+    destroy() {},
+    close() {},
+    isOpen: () => false,
     set(rows, state) {
       const key = JSON.stringify([rows, state]);
       if (key === shownMenu) return;
@@ -98,7 +138,6 @@ export function createWaitingMenu({ onOpen, onSheet, onRefill = () => {} }) {
       last = { rows, state };
       count.textContent = state === "loading" ? "..." : String(rows.length);
       button.setAttribute("aria-label", state === "loading" ? "Waiting for you, loading" : `Waiting for you, ${rows.length} decision${rows.length === 1 ? "" : "s"}`);
-      keepFocus(menu, () => menu.replaceChildren(rowList(rows, state, { chevron: false })));
       onRefill(rowList(rows, state));      // a phone's open dialog follows the reload: a resolved row leaves it
     },
   };

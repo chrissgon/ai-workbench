@@ -252,7 +252,7 @@ export function tracking(snapshot, projectId, now) {
     const word = agent ? format.agentWord(agent) : "";
     return {
       id: t.id, state: t.state, title, agent,
-      sub: `${word ? `${word} · ${t.state}` : t.state}${waitingLabel(t) ? ` · ${waitingLabel(t)}` : ""}`,
+      sub: [word, waitingLabel(t)].filter(Boolean).join(" · "),      // the agent, and what the task waits for; no state word, the icon carries the state (R-8)
       ...(waitLines(t).length ? { waits: waitLines(t) } : {}),
       link: !agent || agent === "planning" ? router.lobbyHash(project.id) : router.floorHash(project.id, agent),
       name: `${title}, ${word ? `${word}, ` : ""}${t.state}${waitingLabel(t) ? `, ${waitingLabel(t)}` : ""}`,
@@ -265,12 +265,12 @@ export function tracking(snapshot, projectId, now) {
     const floor = current.agent ? floorNumber(ordered, current.agent) : null;
     const running = current.state === "running";
     const runs = (body && Array.isArray(body.runs)) ? body.runs : [];
-    const started = runs.length ? format.clock(runs[runs.length - 1].started_at) : "";
+    const lasted = runs.length ? format.runningFor(runs[runs.length - 1].started_at, now) : "";
     const open = (detail.status.pending || []).filter((p) => p.task_id === current.id).length;
     nowCard = {
       where: `${running ? "Now on" : "Waiting on"}${floor === null ? "" : ` floor ${floor}`}${current.agent ? ` · ${current.agent === "planning" ? "lobby" : current.agent}` : ""}`,
       title: current.title, state: running ? "Running" : "Waiting for you", running,
-      sub: `task #${current.id}${running ? (started ? ` · since ${started}` : "") : ` · ${format.decisions(open)}`}`,
+      sub: `task #${current.id}${running ? (lasted ? ` · ${lasted}` : "") : ` · ${format.decisions(open)}`}`,
       link: current.link,
     };
   }

@@ -151,10 +151,11 @@ def test_the_plate_the_row_and_the_card_follow_caps_in_use(floor):
 def test_the_kpi_cards_hide_the_card_of_a_cap_not_in_use(floor):
     k = floor["kpis"]
     hidden = lambda state: [h for _, h in state]
-    assert hidden(k["both"]) == [False, False, False] and hidden(k["older"]) == [False, False, False]
-    assert hidden(k["runs"]) == [False, False, True] and hidden(k["spend"]) == [False, True, False]
-    assert k["runs"][1][0] == "Runs today 3 of 8" and k["spend"][2][0] == "Spend today $0.14 of $2.00 cap"
-    assert floor["kpiLoading"] == [False, False, False], "while loading nothing is hidden: the cards read as loading"
+    # R-5: two cards (Runs today, Spend today); "Open decisions" is gone, its count is on "Waiting for you"
+    assert hidden(k["both"]) == [False, False] and hidden(k["older"]) == [False, False]
+    assert hidden(k["runs"]) == [False, True] and hidden(k["spend"]) == [True, False]
+    assert k["runs"][0][0] == "Runs today 3 of 8" and k["spend"][1][0] == "Spend today $0.14 of $2.00 cap"
+    assert floor["kpiLoading"] == [False, False], "while loading nothing is hidden: the cards read as loading"
 
 
 def test_the_sums_are_in_use_when_any_agent_has_the_cap_in_use(floor):

@@ -4,8 +4,9 @@
 import { h } from "../dom.js";
 
 export const ICONS = Object.freeze([
-  "activity", "building-2", "check", "chevron-down", "chevron-left", "chevron-right", "circle-alert", "clock", "credit-card",
-  "file-text", "inbox", "maximize", "message-square", "minus", "plus", "send", "server", "x",
+  "activity", "arrow-left-right", "building-2", "check", "chevron-down", "chevron-left", "chevron-right", "chevron-up", "circle-alert", "clock", "copy",
+  "credit-card", "file-text", "folder-minus", "folder-plus", "inbox", "key-round", "maximize", "message-square", "minus", "monitor",
+  "moon", "plus", "send", "server", "sun", "x",
 ]);
 
 /** An icon of `name` at `size` pixels (12, 14, 16 or 18). */
