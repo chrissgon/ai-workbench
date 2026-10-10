@@ -286,7 +286,7 @@ Every verb also takes `--project <dir>`. The parser is built from `terminal_verb
 <!-- generated: say-commands -->
 | Command | What it does (its `help` in the table) |
 |---|---|
-| `/help` | this text |
+| `/help` | list the commands |
 | `/status` | requests, tasks and what waits for you |
 | `/progress [since]` | where the work stands and what happened (since: 7d, <n>d or YYYY-MM-DD) |
 | `/pending [id]` | what waits for you; with an id, that decision whole |
@@ -357,6 +357,7 @@ The routes of the local service, from `ROUTES` of `runtime/service.py`:
 | GET | `/projects/{p}/artifact` | `artifact` | - | `path` | - | query value capped |
 | GET | `/projects/{p}/artifact/raw` | `artifact-raw` | - | `path` | - | query value capped, answers bytes |
 | GET | `/projects/{p}/version` | `version` | - | none | - | - |
+| GET | `/projects/{p}/commands` | `commands` | - | none | - | - |
 | GET | `/versions` | the service's own `versions` | - | - | - | - |
 | POST | `/projects/{p}/conversation` | `say` | - | every other argument | - | - |
 | POST | `/projects/{p}/sync` | `sync` | - | every other argument | - | - |
@@ -389,3 +390,4 @@ The routes of the local service, from `ROUTES` of `runtime/service.py`:
 - 2026-10-09: the service starts a job of `say` or `route` without waiting for the model slot (the row's `queues`) and runs a third loop, `route_queued`, every five seconds; `GET /projects/{p}/artifact/raw` answers the bytes of an image with the page's headers (ADJ-R2).
 - 2026-10-09: the page reads the fields the runtime added (ADJ-I2): the credential's commands from `held[].commands` (the pattern that took them out of a sentence is gone), `waiting_for`, `after` and `go_ahead`, `queued`, `kept`, the drop line and the raw image through a `blob:` URL; the City shows the restart line for adding or leaving a project. The known limit of the Agent tab reading a command out of a sentence is closed.
 - 2026-10-09: `GET /projects` carries each project's `folder` (A-34), so the City's Add a project and Leave a project write the restart line with no `<folder of NAME>` placeholder; the held reason `credential` no longer writes the keyring command in `next` when `commands` carries it (the sentence stays whole for a variable with no registered username), and the function moved to `runtime/ops_reads.py` as `held_next`.
+- 2026-10-10: the conversation's commands are data (R4-C1, R-45): the operation `commands` (a row of the table with the channel `page`, in `runtime/ops_reads.py`) and the route `GET /projects/{p}/commands` answer `{"commands": [{"command", "arguments", "help"}]}`, the rows `/help` prints in its order (`operations.chat_command_rows`, built from `chat_commands`, the one source of the help); `/help`'s own help line reads `list the commands`; the `say-commands`, `operations` and `service-routes` blocks are regenerated.

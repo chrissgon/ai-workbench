@@ -218,6 +218,8 @@ OPERATIONS = (
      "help": "the bytes of one image under docs/ of the project (png, jpeg, webp or svg, by its magic number), read-only; the service answers them with their media type"},
     {"name": "version", "call": "version", "args": (), "channels": ("page", "mcp"), "model": False,
      "help": "the change signal of the project's store: a number that grows on every write, and when the file was last written"},
+    {"name": "commands", "call": "commands", "args": (), "channels": ("page",), "model": False,
+     "help": "the commands of the conversation as rows, command, arguments and help line, in the order /help prints them (the page lists them when the person types /)"},
     {"name": "stop-runs", "call": "stop_runs", "args": (), "channels": ("terminal",), "model": False,
      "help": "end the runs this process started (the local service calls it before it exits)"},
     {"name": "service-check", "call": "service_check", "args": ({"name": "dispatch_every", "kind": "int", "flag": "dispatch-every"},),
@@ -227,7 +229,7 @@ OPERATIONS = (
 
 # What the conversation answers itself, with no operation: the help, and a new request whatever is open.
 CHAT_OWN = (
-    {"name": "help", "args": "", "help": "this text", "order": "first"},
+    {"name": "help", "args": "", "help": "list the commands", "order": "first"},
     {"name": "new", "args": "text", "help": "start a new request, whatever is open (--after <id> before the text: run it after that request)", "order": "last"},
 )
 
@@ -273,6 +275,13 @@ def chat_commands() -> tuple:
     first = [{k: v for k, v in c.items() if k != "order"} for c in own if c["order"] == "first"]
     last = [{k: v for k, v in c.items() if k != "order"} for c in own if c["order"] == "last"]
     return tuple(first + rows + last)
+
+
+def chat_command_rows() -> list:
+    """The conversation's commands as data, the rows `chat_help` prints, in its order: {"command": "/status", "arguments":
+    "[since]" or "", "help"}. Built from `chat_commands`, the one source the help uses, so the two cannot differ."""
+    return [{"command": c["usage"].split(" ", 1)[0], "arguments": c["usage"].partition(" ")[2], "help": c["help"]}
+            for c in chat_commands()]
 
 
 def chat_help() -> str:

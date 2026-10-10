@@ -174,7 +174,7 @@ def path_of(world, route):
 
 
 OP_ROUTES = [r for r in service.ROUTES if r["op"] and not r["upload"]]
-VIEW_READS = ("agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact", "artifact-raw", "version")  # the reads of the views
+VIEW_READS = ("agents", "conversation", "skills", "costs", "connections", "artifacts", "artifact", "artifact-raw", "version", "commands")  # the reads of the views
 READ_OPS = ("status", "pending", "flows", "task", "progress") + VIEW_READS
 
 
@@ -830,7 +830,8 @@ def test_the_read_routes_call_their_operations_with_the_query_they_take_and_refu
         return world.fake.calls[-1]
 
     # the routes that take no query: called with none, refused with any
-    for name, tail in (("agents", "/agents"), ("skills", "/skills"), ("connections", "/connections"), ("artifacts", "/artifacts")):
+    for name, tail in (("agents", "/agents"), ("skills", "/skills"), ("connections", "/connections"), ("artifacts", "/artifacts"),
+                       ("commands", "/commands")):
         world.fake.calls.clear()
         status, _, body = call(world, "GET", api(world, tail))
         assert status == 200 and body == {"op": name, "args": {}}, name
