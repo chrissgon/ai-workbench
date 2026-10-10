@@ -282,6 +282,7 @@ export function createEngine(host, options) {
     content.labels = words.labels;
     if (words.open) {   // the object of the open tab changed (the Control room): its brackets move, nothing is built again
       content.open = words.open;
+      content.noMarks = Boolean(words.noMarks);
       applyBrackets();
     }
     const popped = poppedOf(words.labels);
@@ -324,9 +325,11 @@ export function createEngine(host, options) {
     for (const b of content.brackets || []) b.group.visible = b.tower.brackets.closed && (b.id === hoverId || b.id === content.marked);
     // R-28, R-31: an object of a room under the pointer or the focus (a floor of the Building, the owl, the board, the bookcase, the door) wears its corner brackets; R-51: so does the
     // object of the open tab in the Control room (`content.open`, the ids of its hits), and hits that share one set of brackets (the three racks) show it together
-    const open = content.open || [];
+    // The page draws none on a phone, while the room has nothing to say (loading, not accepted): `content.noMarks`, and `content.marksMinWidth`, the canvas's width under which there are none
+    const quiet = Boolean(content.noMarks) || Boolean(content.marksMinWidth && size.w && size.w < content.marksMinWidth);
+    const open = quiet ? [] : content.open || [];
     const shown = new Map();
-    for (const hit of content.hits) if (hit.marks) shown.set(hit.marks, shown.get(hit.marks) === true || hit.id === hoverId || open.includes(hit.id));
+    for (const hit of content.hits) if (hit.marks) shown.set(hit.marks, shown.get(hit.marks) === true || (!quiet && hit.id === hoverId) || open.includes(hit.id));
     for (const [marks, on] of shown) marks.visible = on;
   }
 
@@ -429,6 +432,7 @@ export function createEngine(host, options) {
     if (tween.active()) tween.retarget(goal);   // a move in flight goes on from where the camera is, to where the panels now leave room
     else applyView();
     positionLabels();
+    applyBrackets();   // the Control room's marks depend on the canvas's width (none on a phone)
     loop.requestRender();
   }
 

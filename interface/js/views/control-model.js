@@ -366,7 +366,7 @@ export const OPEN_OF = Object.freeze({ skills: Object.freeze(["console"]), costs
  * missing, tip}], bars: [7 numbers from 0 to 1], tips: {wall, console}, label}. `ready` is false while the proof is loading,
  * for a project that is not accepted or before the connections have been read: every LED is then off and there are no bars.
  * An LED has one fact: the first 21 facts fill the racks from the top unit down; `missing` counts every fact the operation gave. `open` is the ids of the objects of the open `tab`
- * (a name this screen does not have is Skills), which the scene marks with corner brackets (R-51).
+ * (a name this screen does not have is Skills), which the scene marks with corner brackets (R-51); none while the room is loading or not accepted (`ready` false), as the page draws it.
  */
 export function sceneModel({ accepted = true, connections = null, costs = null, tab = "skills" } = {}) {
   const facts = [];
@@ -397,5 +397,5 @@ export function sceneModel({ accepted = true, connections = null, costs = null, 
   const label = ready
     ? `Server room: ${RACKS.length} racks, ${missing} ${missing === 1 ? "connection" : "connections"} missing, runs of the last 7 days`
     : accepted ? "Server room, loading" : "Server room, waiting for the configuration to be accepted";
-  return { ready, leds, facts: facts.length, missing, racks, bars, tips: { wall: "Runs by day · Costs tab", console: "Console · Skills tab" }, label, open: [...OPEN_OF[tabOf(tab)]] };
+  return { ready, leds, facts: facts.length, missing, racks, bars, tips: { wall: "Runs by day · Costs tab", console: "Console · Skills tab" }, label, open: ready ? [...OPEN_OF[tabOf(tab)]] : [] };
 }

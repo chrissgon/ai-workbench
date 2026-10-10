@@ -506,3 +506,69 @@ def test_the_pick_takes_the_meshes_of_the_five_objects_only_never_a_line_and_nev
     got = run_node(tmp_path, PICK_SCRIPT)
     assert got["all"].count("line") >= 1 and got["meshes"] == 1 and got["list"] == 1, "a line (the edges of a box) is never pickable, nor are the brackets of a hit: the cause the old Control room's wrong tooltip had (the third rack named the first)"
     assert got["room"] == [[1, 1, 1, 1, 1], [1, 1, 1, 1, 1], 5], "R-51: one mesh for each of the room's five objects, with every set of brackets shown or not"
+
+
+QUIET_SCRIPT = ENGINE_PAGE_JS + SERVER_JS + r"""
+const { createEngine } = await import("@JS@/scene/engine.js");
+const out = {};
+// the model: no object is named while the room is loading (connections not read) or the project is not accepted
+const ready = sceneModel({ accepted: true, connections: conn([true, false], [], true), costs: null, tab: "costs" });
+out.model = [ready.open, sceneModel({ accepted: true, connections: null, costs: null, tab: "costs" }).open, sceneModel({ accepted: false, connections: conn([true], [], true), costs: null, tab: "connections" }).open];
+const engineAt = (width) => {
+  const host = document.createElement("div");
+  host.clientWidth = width;
+  const engine = createEngine(host, { label: "scene", getInsets: () => ({ left: 0, right: 0, top: 0, bottom: 0 }), onOpen() {}, onHover() {} });
+  return { engine, host, canvas: engine.canvas };
+};
+const shown = (canvas) => canvas.wbMarks().filter(([, on]) => on).map(([id]) => id);
+// a desktop: the open tab's object and the pointer's
+{
+  const { engine, canvas } = engineAt(1280);
+  engine.show("server", ready, "Server room");
+  out.desktop = shown(canvas);
+  engine.highlight("console");
+  out.desktopHover = shown(canvas);
+  // loading: the same room with nothing read, and then not accepted: no brackets, the pointer's included
+  engine.clearHover();
+  const loading = sceneModel({ accepted: true, connections: null, costs: null, tab: "costs" });
+  engine.show("server", loading, "Server room, loading");
+  out.loading = shown(canvas);
+  engine.highlight("wall");
+  out.loadingHover = shown(canvas);
+  engine.clearHover();
+  engine.show("server", sceneModel({ accepted: false, connections: null, costs: null, tab: "skills" }), "waiting");
+  engine.highlight("rack-1");
+  out.notAccepted = shown(canvas);
+  engine.clearHover();
+  engine.show("server", ready, "Server room");
+  out.back = shown(canvas);
+}
+// a phone (under 640 px): none, the pointer's included, and they come back when the canvas grows
+{
+  const { engine, host, canvas } = engineAt(375);
+  engine.show("server", ready, "Server room");
+  out.phone = shown(canvas);
+  engine.highlight("console");
+  out.phoneHover = shown(canvas);
+  engine.clearHover();
+  host.clientWidth = 640;
+  engine.refit();
+  out.at640 = shown(canvas);
+  host.clientWidth = 639;
+  engine.refit();
+  out.at639 = shown(canvas);
+}
+console.log(JSON.stringify(out));
+"""
+
+
+@needs_node
+def test_the_page_draws_no_brackets_on_a_phone_while_loading_or_not_accepted_so_the_room_wears_none_there_the_pointers_included(tmp_path):
+    got = run_node_engine(tmp_path, QUIET_SCRIPT)
+    assert got["model"] == [["wall"], [], []], "the model names no object while the room is loading or the project is not accepted (the page's loading and not-accepted frames draw no brackets)"
+    assert got["desktop"] == ["wall"] and got["desktopHover"] == ["wall", "console"], "on a desktop the open tab's object and the pointer's wear them"
+    assert got["loading"] == [] and got["loadingHover"] == [], "loading: none, and the pointer's stand down with them"
+    assert got["notAccepted"] == [], "not accepted: none"
+    assert got["back"] == ["wall"], "and they return when the room is read"
+    assert got["phone"] == [] and got["phoneHover"] == [], "under 640 px (a phone: the page's phone frames draw none): none, the pointer's included"
+    assert got["at640"] == ["wall"] and got["at639"] == [], "the limit is 640 px, and a resize across it moves them"

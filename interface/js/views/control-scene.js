@@ -17,6 +17,9 @@ import { BRACKETS, FRAME, LEDGE, ROOM, consoleDesk, rack, shell, tray, wallScree
 import { topOf } from "../scene/world.js";
 import { RACKS, UNITS } from "./control-model.js";
 
+/** The canvas width under which the room wears no brackets: the phone (the page's phone frames draw none). */
+export const MARKS_MIN_WIDTH = 640;
+
 /** Build the server room. model: sceneModel(). Returns what the engine needs, like buildCity: the group, the hits (each with its tooltip, the place of it and its brackets), `open`, `subject`. */
 export function buildServer(kit, model) {
   const { THREE, palette } = kit;
@@ -73,8 +76,10 @@ export function buildServer(kit, model) {
   );
 
   // the words (the tooltips; there is no label) and the object of the open tab: a model with the same structure changes them without building the room again
-  const text = (m) => ({ labels: [], tips: new Map([...m.racks.map((r) => [r.id, r.tip]), ["wall", m.tips.wall], ["console", m.tips.console]]), open: m.open || [] });
-  return { group, hits, labels: [], beacons: [], markers: [], outlines: [], selected: null, open: model.open || [], subject, text };
+  const text = (m) => ({ labels: [], tips: new Map([...m.racks.map((r) => [r.id, r.tip]), ["wall", m.tips.wall], ["console", m.tips.console]]), open: m.open || [], noMarks: !m.ready });
+  // the page draws no brackets on its phone frames (under 640 px: `marksMinWidth`) nor while the room is loading or waiting for the configuration (`noMarks`: nothing is read), and the pointer's
+  // brackets stand down with them
+  return { group, hits, labels: [], beacons: [], markers: [], outlines: [], selected: null, open: model.open || [], noMarks: !model.ready, marksMinWidth: MARKS_MIN_WIDTH, subject, text };
 }
 
 /** What the room is made of, for a model: the LEDs and the bars; the tooltips, the label and the open tab are words. */
