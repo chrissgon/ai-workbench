@@ -9,12 +9,13 @@ import { renderMarkdown } from "../markdown.js";
 import { createBlock } from "./lobby-request.js";
 import { EMPTY_TEXT, metaOf, nameOf, placeBlocks, signatureOf } from "./lobby-model.js";
 
-/** The log. options: {api, project, signal, onChanged, onCancel, onRoute, announce}. Returns {el, update(state)}. */
+/** The log. options: {api, project, signal, onChanged, onCancel, onRoute(request, flow), announce}. Returns {el, update(state), focusDecision(request, decision), focusRequest(request)}. */
 export function createThread({ api, project, signal, onChanged, onCancel, onRoute, announce }) {
   const el = h("div", { class: "wb-thread", role: "log", "aria-live": "polite", "aria-label": "Conversation with the planning agent", tabindex: "0" });
   const messages = new Map();     // id -> {el, meta, message}
   const blocks = new Map();       // request id -> {el, sig, block}
   const expanded = new Set();     // request ids whose whole text is open: a block rebuilt by a poll is given it back
+  const chosen = new Map();       // request id -> the flow chosen beside "Route it" (E-20): a block rebuilt by a poll is given it back
   const empty = h("p", { class: "wb-empty", text: "" });
 
   function messageNode(message, now) {
@@ -29,9 +30,16 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
     el,
     /**
      * state: {messages, requests (status.requests), pending (status.pending), bodies ({[requestId]: task answer}), now,
-     * loading, routing (a Set of request ids being routed), notices (a Map of request id -> {title, text}, a route that failed)}.
+     * loading, routing (a Set of request ids being routed), notices (a Map of request id -> {title, text}, a route that failed), flows (the
+     * project's flows, or null while unread), remembered (a Map of request id -> the flow chosen in the form this session)}.
      */
-    update({ messages: list, requests, pending, bodies, now, loading, routing, notices }) {
+    update({ messages: list, requests, pending, bodies, now, loading, routing, notices, flows = null, remembered = null }) {
+      // a request's title that has the focus (the route of a request line puts it there) keeps it when a draw builds that block again
+      const active = document.activeElement;
+      const titled = [];
+      for (const [id, held] of blocks) {
+        if (active && active.classList && active.classList.contains("wb-lobby-request-title") && held.el.contains(active)) titled.push(id);
+      }
       const nearEnd = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
       const placed = placeBlocks(list, requests);
       const desired = [];
@@ -44,11 +52,13 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
         const bodySig = body ? (body.pending || []).map((p) => `${p.id}:${p.status}:${p.resolution || ""}`).join(",") : "-";
         const open = (pending || []).filter((p) => p.task_id === requestId).length;
         const routeNotice = (notices && notices.get(requestId)) || null;
-        const sig = `${signatureOf(request, pending)}|${bodySig}|${routing && routing.has(requestId) ? "r" : ""}|${viaMessage ? "m" : "t"}|${request.title}|${routeNotice ? `${routeNotice.title}:${routeNotice.text}` : ""}`;
+        const kept = (remembered && remembered.get(requestId)) || "";
+        const sig = `${signatureOf(request, pending)}|${bodySig}|${routing && routing.has(requestId) ? "r" : ""}|${viaMessage ? "m" : "t"}|${request.title}|${routeNotice ? `${routeNotice.title}:${routeNotice.text}` : ""}|${flows ? flows.length : "-"}|${kept}`;
         const held = blocks.get(requestId);
         if (held && held.sig === sig) return held.el;
         const block = createBlock({ api, project, request, body, open, now, signal, onChanged, onCancel, onRoute, announce, routing: routing && routing.has(requestId), viaMessage, routeNotice,
-          expanded: expanded.has(requestId), onExpand: (open) => { if (open) expanded.add(requestId); else expanded.delete(requestId); } });
+          expanded: expanded.has(requestId), onExpand: (open) => { if (open) expanded.add(requestId); else expanded.delete(requestId); },
+          flows, flow: chosen.get(requestId) || "", onFlow: (value) => chosen.set(requestId, value), remembered: kept });
         blocks.set(requestId, { el: block.el, sig, block });
         return block.el;
       }
@@ -83,10 +93,25 @@ export function createThread({ api, project, signal, onChanged, onCancel, onRout
         if (el.children[i] !== node) el.insertBefore(node, el.children[i] || null);
       });
       while (el.children.length > desired.length) el.lastElementChild.remove();
+      for (const id of titled) {
+        const held = blocks.get(id);
+        if (held && held.el.isConnected && !held.el.contains(document.activeElement)) held.block.focusTitle();
+      }
       if (nearEnd || (list.length && !el.dataset.scrolled)) {
         el.scrollTop = el.scrollHeight;       // the first draw with messages, and any draw while the person is at the end
         if (list.length) el.dataset.scrolled = "1";
       }
+    },
+    /**
+     * Scroll to the block of a request and focus its title (the route `.../conversation/request/<n>`). Returns false when the block is not drawn
+     * (the request is not there, or not read yet): the caller asks again after the next draw.
+     */
+    focusRequest(requestId) {
+      const held = blocks.get(requestId);
+      if (!held || !held.el.isConnected) return false;
+      held.el.scrollIntoView({ block: "start" });
+      held.block.focusTitle();
+      return true;
     },
     /** Move the focus to the title of a decision's card, when it is drawn. */
     focusDecision(requestId, decisionId) {

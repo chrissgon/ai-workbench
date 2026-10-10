@@ -47,8 +47,11 @@ export function createWaitingCard() {
   };
 }
 
-/** The header button of the other screens, with the menu it opens. Returns {el, set(rows, state), close(), button}. */
-export function createWaitingMenu({ onOpen, onSheet }) {
+/**
+ * The header button of the other screens, with the menu it opens. Returns {el, set(rows, state), close(), button}. `onSheet(title, body, opener)`
+ * opens the phone's list dialog; `onRefill(body)` draws that dialog's list again while it is open (C-22).
+ */
+export function createWaitingMenu({ onOpen, onSheet, onRefill = () => {} }) {
   const count = h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full wb-wait-count", text: "..." });
   const button = h("button", { class: "pui-btn pui-surface pui-outline wb-wait-btn", type: "button", "aria-haspopup": "true", "aria-expanded": "false" },
     icon("inbox", 16), h("span", { class: "wb-wait-btn-label", text: "Waiting for you" }), count);
@@ -96,6 +99,7 @@ export function createWaitingMenu({ onOpen, onSheet }) {
       count.textContent = state === "loading" ? "..." : String(rows.length);
       button.setAttribute("aria-label", state === "loading" ? "Waiting for you, loading" : `Waiting for you, ${rows.length} decision${rows.length === 1 ? "" : "s"}`);
       keepFocus(menu, () => menu.replaceChildren(rowList(rows, state, { chevron: false })));
+      onRefill(rowList(rows, state));      // a phone's open dialog follows the reload: a resolved row leaves it
     },
   };
 }

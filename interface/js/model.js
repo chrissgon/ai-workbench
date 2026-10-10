@@ -203,7 +203,10 @@ export function kpiSums(snapshot, projectId) {
   return sums;
 }
 
-/** The rows of "Waiting for you": every open decision of the given projects (all when `only` is null), oldest first. */
+/**
+ * The rows of "Waiting for you": every open decision of the given projects (all when `only` is null), oldest first. A row opens the card that
+ * answers the decision; the row of a plan opens the Conversation at its request's line (C-2, J-6), where the plan card stands.
+ */
 export function waitingRows(snapshot, now, only = null) {
   const rows = [];
   for (const p of snapshot.projects || []) {
@@ -211,7 +214,9 @@ export function waitingRows(snapshot, now, only = null) {
     const status = snapshot.details[p.id] && snapshot.details[p.id].status;
     for (const { item, agent } of decisionsOf(status)) {
       const lobby = agent === "planning";
-      const link = lobby ? router.lobbyHash(p.id, "inbox", item.id) : router.floorHash(p.id, agent, "inbox", item.id);
+      const request = lobby && item.kind === "plan" && Number.isInteger(item.task_id) ? item.task_id : null;
+      const link = request !== null ? router.requestHash(p.id, request)
+        : lobby ? router.lobbyHash(p.id, "inbox", item.id) : router.floorHash(p.id, agent, "inbox", item.id);
       const kind = format.kindWord(item.kind);
       const where = `${p.name} · ${format.agentWord(agent)}`;
       rows.push({

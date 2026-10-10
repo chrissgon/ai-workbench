@@ -5,6 +5,7 @@
 
 import * as api from "../api.js";
 import { fill, h } from "../dom.js";
+import * as format from "../format.js";
 import { createCard } from "./cards.js";
 import { chip } from "./widgets.js";
 
@@ -77,7 +78,7 @@ export function createInbox(env) {
     if (!lines.length) return null;
     return h("div", { class: "wb-resolved-list" }, h("div", { class: "wb-section-label", text: "Resolved" }),
       lines.map((line) => h("details", { class: "pui-accordion-item wb-resolved-item" },
-        h("summary", { class: "wb-resolved" }, chip(line.text, line.tone), h("span", { class: "wb-resolved-title", text: line.title }), h("span", { class: "wb-muted", text: line.age ? ` · ${line.age} ago` : "" })),
+        h("summary", { class: "wb-resolved" }, chip(line.text, line.tone), h("span", { class: "wb-resolved-title", text: line.title }), h("span", { class: "wb-muted", text: line.age ? ` · ${format.agoPhrase(line.age)}` : "" })),
         h("div", { class: "wb-card-hint wb-resolved-body", text: line.when ? `Resolved ${line.when}` : "Resolved" }))));
   }
 

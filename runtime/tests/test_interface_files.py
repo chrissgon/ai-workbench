@@ -187,8 +187,11 @@ def test_the_vendored_files_match_the_hashes_their_readmes_record():
         readme = folder / "README.md"
         assert readme.is_file(), f"{rel(folder)} has no README.md"
         text = readme.read_text(encoding="utf-8")
-        assert re.search(r"^- Package: ", text, re.M) and re.search(r"^- Version: \*\*[0-9][^*]*\*\*", text, re.M) \
-            and re.search(r"^- Licence: MIT", text, re.M), f"{rel(readme)} says its package, exact version and licence"
+        if folder.name == "fonts":      # C-13: the brand typefaces; each family has its own version in the table, and the licence is the SIL OFL 1.1
+            assert re.search(r"^- Package: ", text, re.M) and re.search(r"^- Licence: SIL OFL 1\.1", text, re.M), f"{rel(readme)} says its source and licence"
+        else:
+            assert re.search(r"^- Package: ", text, re.M) and re.search(r"^- Version: \*\*[0-9][^*]*\*\*", text, re.M) \
+                and re.search(r"^- Licence: MIT", text, re.M), f"{rel(readme)} says its package, exact version and licence"
         rows = ROW.findall(text)
         assert rows, f"{rel(readme)} records no hash"
         recorded = {name: (int(size), digest) for name, size, digest in rows}
@@ -227,6 +230,8 @@ def test_the_page_sets_no_inline_script_and_no_token_in_a_url_or_storage_other_t
             continue
         text = path.read_text(encoding="utf-8")
         for pattern, name in FORBIDDEN_IN_MODULES:
+            if name == "localStorage" and path == INTERFACE / "js" / "mode.js":
+                continue      # D-2: the light/dark preference, one key; test_interface_adj_b1.py checks it is the only module and the only key
             assert not re.search(pattern, text), f"{rel(path)} uses {name}"
         if path.name != "token.js":
             assert "sessionStorage" not in text, f"{rel(path)}: the token module is the only one that touches sessionStorage"

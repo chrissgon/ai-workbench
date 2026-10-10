@@ -579,6 +579,9 @@ const file = { name: "logo.png", size: 3, arrayBuffer: async () => new Uint8Arra
 input.files = [file];
 input.listeners.change.forEach((fn) => fn());
 await settle();
+out.handChosen = { calls: calls.filter((c) => c[0] === "handOver").length, name: textOf(find(web.el, ".wb-hand-chosen")) };     // C-17: choosing a file sends nothing
+find(web.el, "button.wb-hand-button").click();
+await settle();
 script = {};
 out.handSent = { calls: calls.filter((c) => c[0] === "handOver").map((c) => c.slice(1)), result: textOf(find(web.el, ".wb-card-hand .wb-card-line")) };
 // a refusal before sending: a name the service would refuse
@@ -630,6 +633,7 @@ def test_the_unrecognised_route_has_its_two_actions_the_done_card_wraps_its_resu
     hand = got["hand"]
     assert hand["label"] == "Hand a file over" and hand["line"] == "this file will be visible to a run with the open network" and hand["hint"] == "To task #5. At most 25 MiB."
     assert hand["order"] == ["wb-drop-line", "wb-file"], "the line of the web task is shown before the file is chosen"
+    assert got["handChosen"] == {"calls": 0, "name": "logo.png"}, "C-17: the file is chosen first and sent by the button"
     assert got["handSent"] == {"calls": [["p", 5, "logo.png", "AQID"]], "result": "Handed over: undefined (undefined bytes)"}, "the file goes to the review's task as base64; the stand-in client answers no path"
     assert got["handBad"] == "The file name may hold letters, digits, ., _ and -, at most 100 characters."
     assert got["nonWeb"] == {"control": True, "line": True} and got["refuses"] and got["unread"] and got["failedRead"]

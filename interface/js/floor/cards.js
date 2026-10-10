@@ -16,12 +16,13 @@
 
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
+import * as router from "../router.js";
 import { ENDING, openable } from "../floor-model.js";
 import { renderMarkdown } from "../markdown.js";
 import { markdownView } from "../markdown-view.js";
 import { createWaitsBlock } from "../cards/plan-waits.js";
 import { commandBlock } from "../frame/command.js";
-import { fileRefusal, toBase64 } from "./hand-file.js";
+import { fileRefusal, handOverStep, toBase64 } from "./hand-file.js";
 import { agoText, chip, errorText, field, isGone, jobText, notice, ring } from "./widgets.js";
 
 // The buttons of each kind, in the drawn order, by the word of `actions` they send, with their "-ing" word.
@@ -97,6 +98,7 @@ export function createCard(item, env) {
     item, busy: null, error: null, done: null, verdict: null, empty: null, typed: { answer: "", comment: "", note: "" },
     route: { open: false, flows: null, flow: "" },     // "Choose a flow": the list read once, and the flow chosen
     drop: null,                                         // {web, takes, line} of the review's task (the file drop), read once
+    picked: null,                                       // the file chosen for the hand-over, held until its button sends it (C-17)
     handed: null,                                       // the last file handed over from the review card: {text, error}
     goAhead: new Set(),                                 // the plan's task keys ticked "Go ahead"
   };
@@ -154,7 +156,7 @@ export function createCard(item, env) {
 
   function message() {
     if (!state.error) return null;
-    const extra = state.error.gone ? h("a", { class: "pui-link pui-theme", href: env.links.parent ? env.links.parent() : "#/", text: "Back" }) : null;
+    const extra = state.error.gone ? h("a", { class: "pui-link pui-theme", href: env.links.parent ? env.links.parent() : router.cityHash(), text: "Back" }) : null;
     return notice(state.error.text, "error", extra);
   }
 
@@ -191,7 +193,8 @@ export function createCard(item, env) {
 
   function effectBody() {
     const it = state.item;
-    const hash = h("code", { class: "wb-hash", "data-hash": "effect" }, it.payload_sha256 || "");
+    // a tab stop with a name (K-5): the keyboard reaches the whole hash the approval sends
+    const hash = h("code", { class: "wb-hash", "data-hash": "effect", tabindex: "0", role: "group", "aria-label": "Hash of this content" }, it.payload_sha256 || "");
     state.hashNode = hash;
     return [
       h("h3", { class: "wb-card-title", id: titleId, tabindex: "-1", text: it.title }),
@@ -285,32 +288,41 @@ export function createCard(item, env) {
   /**
    * "Hand a file over" on the review card (A-30): the file goes to the task the review is about and travels with the answer into its next run.
    * It appears once the task is read and says it takes a file; for a task with the web, the runtime's line (what the open network can see) stands
-   * above the control, before the file is chosen. Sends `handOver` and nothing else.
+   * above the control, before the file is chosen. In two steps (C-17): choosing a file sends nothing and shows its name with the button "Hand over to
+   * task #n"; the button sends `handOver` and nothing else.
    */
   function handOver() {
     const drop = state.drop;
     if (!drop || drop.takes === false || typeof api().handOver !== "function") return null;
     const input = h("input", { class: "pui-input wb-file", type: "file", "data-key": "hand-file" });
     input.disabled = Boolean(state.busy) || Boolean(state.done) || Boolean(state.handing);
-    input.addEventListener("change", () => handFile(input));
+    input.addEventListener("change", () => pickFile(input));
     const line = drop.web && typeof drop.line === "string" && drop.line ? h("p", { class: "wb-drop-line", role: "note", text: drop.line }) : null;
     return h("div", { class: "wb-hand wb-card-hand" },
       h("label", { class: "pui-field-group wb-field" }, h("span", { class: "wb-field-label", text: "Hand a file over" }), line, input,
         h("small", { class: "wb-hint", text: `To task #${state.item.task_id}. At most 25 MiB.` })),
+      handOverStep(state.picked, state.item.task_id, () => handFile(), { disabled: Boolean(state.busy) || Boolean(state.done) || Boolean(state.handing) }),
       state.handing ? h("div", { class: "wb-busy", role: "status", "aria-busy": "true" }, ring(true), h("span", { text: "Sending..." })) : null,
       state.handed ? (state.handed.error ? notice(state.handed.text, "error") : h("p", { class: "wb-card-line", role: "status", text: state.handed.text })) : null);
   }
 
-  async function handFile(input) {
+  /** Step one: a file was chosen. The page refuses what the service would refuse, else holds the file and shows its name and the button. Nothing is sent. */
+  function pickFile(input) {
     const file = input.files && input.files[0];
+    if (state.handing || state.busy || state.done) return;
+    const refusal = file ? fileRefusal(file.name, file.size) : "";
+    state.picked = file && !refusal ? file : null;
+    state.handed = refusal ? { text: refusal, error: true } : null;
+    render();
+    const next = root.querySelector ? root.querySelector(".wb-hand-button") || root.querySelector("input.wb-file") : null;
+    if (next) next.focus();      // the chooser was drawn again: the focus goes to the next step
+  }
+
+  /** Step two: the button. Sends the file held, to the review's task; a failure leaves the file held so that the button can be pressed again. */
+  async function handFile() {
+    const file = state.picked;
     if (!file || state.handing || state.busy || state.done) return;
     const it = state.item;
-    const refusal = fileRefusal(file.name, file.size);
-    if (refusal) {
-      state.handed = { text: refusal, error: true };
-      render();
-      return;
-    }
     state.handing = true;
     state.handed = null;
     render();
@@ -318,11 +330,14 @@ export function createCard(item, env) {
       const bytes = new Uint8Array(await file.arrayBuffer());
       const result = await api().handOver(env.project, it.task_id, file.name, toBase64(bytes));
       state.handed = { text: `Handed over: ${result.path} (${result.bytes} bytes)` };
+      state.picked = null;
     } catch (e) {
       state.handed = { text: errorText(e), error: true };
     }
     state.handing = false;
     render();
+    const next = root.querySelector ? root.querySelector(".wb-hand-button") || root.querySelector("input.wb-file") : null;
+    if (next) next.focus();
   }
 
   /** The review's task is read once for the file-drop line (`drop`: {web, takes, line}); a read that fails leaves the control out. */
@@ -358,7 +373,7 @@ export function createCard(item, env) {
     const rows = planRows(payload);
     const waits = createWaitsBlock(payload, { disabled: Boolean(state.busy) || Boolean(state.done), checked: state.goAhead });
     state.waits = waits;
-    const hash = h("code", { class: "wb-hash", "data-hash": "plan" }, payload.plan_sha256 || "");
+    const hash = h("code", { class: "wb-hash", "data-hash": "plan", tabindex: "0", role: "group", "aria-label": "Plan hash" }, payload.plan_sha256 || "");   // a tab stop with a name (K-5)
     state.hashNode = hash;
     const table = h("table", { class: "pui-table wb-plan-table" },
       h("thead", {}, h("tr", {}, PLAN_COLUMNS.map(([, label]) => h("th", { scope: "col", text: label })))),

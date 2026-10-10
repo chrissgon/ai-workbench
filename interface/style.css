@@ -4,6 +4,14 @@
    inline style anywhere: every rule is in this file, and a script writes only two custom properties (--wb-x, --wb-y,
    --wb-share) through the CSS Object Model. */
 
+/* --- the brand typefaces (C-13, D-1): woff2 latin subsets copied into vendor/fonts/, loaded from this origin only. font-display: swap shows the text
+   at once in the fallback stack and draws the face when it arrives; index.html preloads nothing (the five files are about 105 KB). -------------- */
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 400; font-display: swap; src: url("./vendor/fonts/inter-400.woff2") format("woff2"); }
+@font-face { font-family: "Inter"; font-style: normal; font-weight: 600; font-display: swap; src: url("./vendor/fonts/inter-600.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 400; font-display: swap; src: url("./vendor/fonts/jetbrains-mono-400.woff2") format("woff2"); }
+@font-face { font-family: "JetBrains Mono"; font-style: normal; font-weight: 700; font-display: swap; src: url("./vendor/fonts/jetbrains-mono-700.woff2") format("woff2"); }
+@font-face { font-family: "Space Grotesk"; font-style: normal; font-weight: 500; font-display: swap; src: url("./vendor/fonts/space-grotesk-500.woff2") format("woff2"); }
+
 /* --- the page's tokens, derived from the library's (handoff README 3.2) ---------------------------------------------------
    DEVIATION-1: in dark mode the design swaps the ground and the raised surface (cards, panels, buttons sit on
    --pui-bg-muted, the scene and the tracking bar's side card on --pui-bg). light-dark() reads the same scheme the
@@ -49,8 +57,9 @@
   --wb-card-w: 290px;
   --wb-plate-w: 290px;
   --wb-ring: 14px;
-  --wb-font-system: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --wb-font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --wb-font-system: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --wb-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --wb-font-brand: "Space Grotesk", "Inter", system-ui, sans-serif;      /* the wordmark on the token prompt, and nothing else */
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -314,12 +323,13 @@ a.wb-crumb:hover { text-decoration: underline; }
   .wb-nav .wb-mark { display: none; }
 }
 .wb-brand { display: flex; align-items: center; gap: 12px; }
-.wb-wordmark { font-size: 1.5rem; font-weight: 600; line-height: 1.25; letter-spacing: -0.01em; }
+.wb-wordmark { font-family: var(--wb-font-brand); font-size: 1.5rem; font-weight: 500; line-height: 1.25; letter-spacing: -0.01em; }   /* 500 is the one weight of the face: a heavier request would be drawn faux bold */
 
 .wb-switcher { position: relative; }
 .wb-switch-group { border-radius: var(--pui-radius); box-shadow: var(--wb-elev); }
 .wb-switch-group > .pui-btn { min-height: var(--wb-control-h); background-color: var(--wb-raised); }
 .wb-switch-main { gap: 8px; }
+.wb-switch-main.is-label { cursor: default; pointer-events: none; }   /* with one project (or none) the main button is a label: nothing to cycle to */
 .wb-switch-main .wb-icon { color: var(--wb-ink-theme); }
 .wb-switch-name { font-weight: 600; }
 .wb-switch-pos { color: var(--pui-text-muted); font-size: 12px; }
@@ -347,6 +357,12 @@ a.wb-crumb:hover { text-decoration: underline; }
 .wb-option-sub { color: var(--pui-text-muted); font-size: 12px; }
 .wb-listbox-foot { padding: 4px; border-top: var(--pui-border-width) solid var(--pui-border); }
 .wb-forget { color: var(--pui-text-muted); font-size: 12px; }
+.wb-listbox-empty { padding: 8px 12px; }
+/* the provisional light/dark control at the listbox foot (D-2); its place is for the design round to decide */
+.wb-mode { display: grid; gap: 4px; padding: 4px 4px 8px; }
+.wb-mode-label { color: var(--pui-text-muted); font-size: 12px; }
+.wb-mode-chip { flex: 1; min-height: var(--wb-control-h); font-size: 12px; }
+.wb-mode-chip.is-selected { background-color: var(--wb-tint-selected); border-color: var(--pui-theme); }
 
 /* door and waiting button, top right */
 .wb-actions {
@@ -1206,6 +1222,7 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-path-button { display: inline; min-height: 0; padding: 0; font-family: var(--wb-font-mono); font-size: 12px; text-align: left; white-space: normal; overflow-wrap: break-word; }
 .wb-desk-path .pui-chip { margin-left: 6px; }
 .wb-desk-owner { font-size: 11px; overflow-wrap: normal; }
+.wb-desk-agent { font-size: 11px; overflow-wrap: normal; }   /* the Lobby's desk lists every document: the agent of each */
 .wb-nowrap { white-space: nowrap; }
 .wb-desk-states { display: grid; gap: 8px; }
 .wb-desk-states:empty { display: none; }
@@ -1310,6 +1327,9 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-lobby-cancel-link { padding: 0; white-space: nowrap; color: var(--wb-ink-error); font-size: 12px; text-decoration: none; }
 .wb-lobby-cancel-link:hover { text-decoration: underline; }
 .wb-route-button { padding: 2px 10px; font-size: 12px; }
+.wb-route-flow { flex: 0 1 12rem; width: auto; min-width: 0; padding-block: 2px; font-size: 12px; }   /* the flow beside "Route it" (E-20) */
+.wb-lobby-request-line.has-flow { flex-wrap: wrap; row-gap: 4px; }   /* with the select the controls may wrap under the title, which keeps a readable width */
+.wb-lobby-request-line.has-flow > .wb-lobby-request-title.pui-btn { flex: 1 1 9rem; }
 .wb-lobby-resolved { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; border-radius: var(--pui-radius); background-color: var(--wb-sunken); color: var(--pui-text-muted); font-size: 12px; }
 .wb-lobby-resolved-text { min-width: 0; overflow-wrap: anywhere; }
 .wb-pointer .pui-link { margin-left: auto; }
@@ -1555,6 +1575,11 @@ a.wb-now-title:hover { text-decoration: underline; }
 .wb-route-controls { display: grid; gap: 8px; }
 .wb-route-actions { flex-wrap: wrap; }
 .wb-card-hand { display: grid; gap: 6px; }
+/* a file is handed over in two steps (C-17): the chosen name and the button that sends it */
+.wb-hand-step { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.wb-hand-steps:empty { display: none; }
+.wb-hand-chosen { font-family: var(--wb-font-mono); font-size: 12px; overflow-wrap: anywhere; }
+.wb-hand-button { font-size: 12px; }
 .wb-raw-reply .wb-pre { margin: 0 0 8px; }
 .wb-drop-line { margin: 0 0 6px; padding: 6px 8px; border-radius: var(--pui-radius); background-color: var(--wb-sunken); color: var(--wb-ink-warn); font-size: 12px; overflow-wrap: anywhere; }
 .wb-city-projects { position: absolute; top: var(--wb-kpi-top); right: var(--wb-edge); z-index: 4; width: min(24rem, calc(100vw - 2 * var(--wb-edge))); max-height: calc(100% - var(--wb-kpi-top) - var(--wb-wait-bottom) - var(--wb-wait-h, 0px) - 2 * var(--wb-edge)); overflow-y: auto; box-shadow: var(--wb-elev); }

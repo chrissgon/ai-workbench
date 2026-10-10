@@ -10,11 +10,12 @@
 
 import { fill, h } from "../dom.js";
 import * as format from "../format.js";
+import * as router from "../router.js";
 import { MODES, MODE_LINES, PIPS, meters, stateRow, stateTone, taskWord } from "../floor-model.js";
 import { commandBlock, isCommand } from "../frame/command.js";
 import { pips, trackNode } from "../scene/plates.js";
 import { runBlock } from "./run-block.js";
-import { fileRefusal, toBase64 } from "./hand-file.js";
+import { fileRefusal, handOverStep, toBase64 } from "./hand-file.js";
 import { createTaskActions } from "./task-actions.js";
 import { busyLine, chip, errorText, notice, ring } from "./widgets.js";
 import { waitLines } from "../waits.js";
@@ -199,7 +200,7 @@ export function createAgentTab(env) {
     project: env.project, api: env.api, refresh: () => env.refresh(),
     redraw: () => { shown.current = null; shown.others = null; if (lastView) { drawCurrent(lastView); drawOthers(lastView); } },
   });
-  const links = env.links || { inbox: () => "#/" };
+  const links = env.links || { inbox: () => router.cityHash() };
 
   function taskActions(task, view) {
     const nodes = taskActionsUse.nodes(task, { pending: view.decisions, links, locked });
@@ -228,32 +229,59 @@ export function createAgentTab(env) {
   const handResult = h("div", { class: "wb-hand-result" });
   const dropLine = h("p", { class: "wb-drop-line", role: "note", hidden: true, text: "" });     // the line of a web task, above the chooser: seen before a file is chosen
   const handLabel = h("label", { class: "pui-field-group wb-field" }, h("span", { class: "wb-field-label", text: "Hand a file over" }), dropLine, fileInput, hint);
-  fill(handBox, handLabel, handResult);
+  const handStep = h("div", { class: "wb-hand-steps" });     // the second step: the chosen file's name and the button (C-17)
+  fill(handBox, handLabel, handStep, handResult);
   const drops = new Map();       // task id -> the `drop` of its body ({web, takes, line}), or null: read once, as the review card does
   let target = null;
-  fileInput.addEventListener("change", async () => {
+  let picked = null;       // the file chosen, held until the button sends it (C-17); choosing sends nothing
+  let pickedFor = null;    // the id of the task the hint named when the file was chosen: the button names it and sends to it, whatever a poll draws since
+  let sending = false;
+
+  function drawStep() {
+    fill(handStep, picked ? handOverStep(picked, pickedFor, sendFile, { disabled: sending || locked }) : null);
+  }
+
+  fileInput.addEventListener("change", () => {
     const file = fileInput.files && fileInput.files[0];
-    const to = target;   // the task the hint named when the file was chosen: a poll may draw another target while the file is read
-    if (!file || !to) return;
+    if (!file || !target || sending) return;
     const refusal = fileRefusal(file.name, file.size);
     if (refusal) {
+      picked = null;
+      pickedFor = null;
       fill(handResult, notice(refusal, "error"));
       fileInput.value = "";
-      return;
+    } else {
+      picked = file;
+      pickedFor = target.id;
+      fill(handResult);
     }
+    drawStep();
+  });
+
+  /** The button: send the file held to the task it names, the one the hint named when the file was chosen (a poll that moves the target does not change it). */
+  async function sendFile() {
+    const file = picked;
+    const to = pickedFor;
+    if (!file || to === null || sending) return;
+    sending = true;
     fileInput.disabled = true;
+    drawStep();
     fill(handResult, busyLine("Sending..."));
     try {
       const bytes = new Uint8Array(await file.arrayBuffer());
-      const result = await env.api.handOver(env.project, to.id, file.name, toBase64(bytes));
+      const result = await env.api.handOver(env.project, to, file.name, toBase64(bytes));
       fill(handResult, h("p", { class: "wb-card-line", role: "status", text: `Handed over: ${result.path} (${result.bytes} bytes)` }));
+      picked = null;
+      pickedFor = null;
+      fileInput.value = "";
       env.refresh();
     } catch (e) {
-      fill(handResult, notice(errorText(e), "error"));
+      fill(handResult, notice(errorText(e), "error"));      // the file stays held: the button can be pressed again
     }
-    fileInput.disabled = false;
-    fileInput.value = "";
-  });
+    sending = false;
+    drawHandLine();
+    drawStep();
+  }
 
   /**
    * The file-drop line of the target task (`task.drop`). The current task's body is already read by the view: it is used as it is, no read of its own; any other
@@ -289,6 +317,7 @@ export function createAgentTab(env) {
     hint.textContent = target ? `To task #${target.id}. At most 25 MiB.` : "This agent has no task to hand a file to.";
     if (target) loadDrop(view);
     drawHandLine();
+    drawStep();
   }
 
   let lastView = null;

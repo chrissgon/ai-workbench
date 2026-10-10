@@ -19,7 +19,7 @@ import { createLoop } from "./loop.js";
 import { outlineGeometry } from "./outline.js";
 import { pickHit, pickList, visibleSamples } from "./pick.js";
 import { createPointer } from "./pointer.js";
-import { LIGHT_WHITE, readPalette } from "./palette.js";
+import { LIGHT_WHITE, readPalette, watchScheme } from "./palette.js";
 import { buildWorld } from "./world.js";
 import { boundsOfBox, contentBounds, createCamera } from "./rig.js";
 import { createTween } from "./tween.js";
@@ -80,7 +80,6 @@ export function createEngine(host, options) {
   const camera = createCamera(THREE);
 
   const reducedQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
-  const darkQuery = window.matchMedia("(prefers-color-scheme: dark)");
   const clock = () => performance.now();
   const loop = createLoop({
     raf: (fn) => requestAnimationFrame(fn), caf: (id) => cancelAnimationFrame(id),
@@ -732,7 +731,7 @@ export function createEngine(host, options) {
   };
   document.addEventListener("visibilitychange", onVisibility);
   reducedQuery.addEventListener("change", onReduced);
-  darkQuery.addEventListener("change", onScheme);
+  const stopScheme = watchScheme(onScheme);     // the system's scheme and the person's light/dark choice (mode.js)
   canvas.addEventListener("webglcontextlost", onLost);
   canvas.addEventListener("webglcontextrestored", onRestored);
 
@@ -877,7 +876,7 @@ export function createEngine(host, options) {
       observer.disconnect();
       document.removeEventListener("visibilitychange", onVisibility);
       reducedQuery.removeEventListener("change", onReduced);
-      darkQuery.removeEventListener("change", onScheme);
+      stopScheme();
       canvas.removeEventListener("pointerdown", onDown);
       canvas.removeEventListener("pointermove", onMove);
       canvas.removeEventListener("pointerup", onUp);

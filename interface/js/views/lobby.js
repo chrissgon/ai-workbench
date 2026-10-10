@@ -55,6 +55,8 @@ export function createLobbyView(frame, { project, onChanged }) {
   let timer = null;
   let readingConversation = false;
   let flowsAsked = false;
+  let flows = null;                   // the project's flows, read once: the form's select and the one beside "Route it" after a reload (E-20)
+  let requestFollowed = null;         // the request whose route was followed (scrolled to, title focused); forgotten when the route names none
   let accepted = true;
   let frozen = false;                 // not accepted, but the thread was read before: it stays on the screen, dimmed, and does nothing (A-16)
   let again = false;                  // a read of the conversation was asked for while one was running
@@ -78,7 +80,7 @@ export function createLobbyView(frame, { project, onChanged }) {
   const thread = createThread({
     api, project, signal, onChanged: refresh,
     onCancel: (request) => openCancel(request),
-    onRoute: (request) => routeAgain(request), announce: (text) => frame.announce(text),
+    onRoute: (request, flow) => routeAgain(request, flow), announce: (text) => frame.announce(text),
   });
   const waiting = h("p", { class: "wb-empty wb-lobby-waiting", hidden: true, text: NOT_ACCEPTED_TEXT });
   const conversationPanel = h("div", { class: "wb-lobby-tabpanel", role: "tabpanel", id: tabs.panelId("conversation"), "aria-labelledby": tabs.tabId("conversation") }, waiting, thread.el);
@@ -130,7 +132,20 @@ export function createLobbyView(frame, { project, onChanged }) {
       const row = requests.find((r) => r.id === id);
       if (row && row.state !== "requested") routeNotices.delete(id);
     }
-    thread.update({ messages, requests, pending, bodies: held, now: last.now, loading: !loaded, routing, notices: routeNotices });
+    thread.update({ messages, requests, pending, bodies: held, now: last.now, loading: !loaded, routing, notices: routeNotices, flows, remembered: chosenFlow });
+    if (wantsRequest()) setTimeout(followRequest, 0);      // after the frame's own focus of a new screen's heading
+  }
+
+  /** The route names a request line (`.../conversation/request/<n>`) that was not followed yet. */
+  function wantsRequest() {
+    const route = last.route;
+    return Boolean(route) && route.request !== null && route.request !== undefined && tabOf(route) === "conversation" && requestFollowed !== route.request;
+  }
+
+  /** Scroll to the request's block and focus its title, once per visit of the route; a block not drawn yet is asked for again at the next draw. */
+  function followRequest() {
+    if (disposed || !wantsRequest() || thread.el.hidden || conversationPanel.hidden) return;
+    if (thread.focusRequest(last.route.request)) requestFollowed = last.route.request;
   }
 
   /**
@@ -407,10 +422,10 @@ export function createLobbyView(frame, { project, onChanged }) {
     if (result.error) await refresh();
   }
 
-  async function routeAgain(request) {
+  async function routeAgain(request, flow) {
     if (routing.has(request.id)) return;
     routeNotices.delete(request.id);
-    const outcome = await routeRequest(api, project, request.id, chosenFlow.get(request.id), { signal });
+    const outcome = await routeRequest(api, project, request.id, flow || chosenFlow.get(request.id), { signal });
     if (outcome.error) {
       routeNotices.set(request.id, notRoutedNotice(request.id, failureText(outcome.error)));
       redraw();
@@ -440,6 +455,7 @@ export function createLobbyView(frame, { project, onChanged }) {
       if (disposed) return;
       last = { snapshot, route, now, projectName: projectName || "" };
       origin.track(route);
+      if (route.request === null || route.request === undefined) requestFollowed = null;
       if (reloaded !== null && reload !== reloaded) {     // the store changed: everything shown is stale, whatever its age
         changes += 1;
         invalidate();
@@ -494,7 +510,7 @@ export function createLobbyView(frame, { project, onChanged }) {
       drawComposer();
       if (accepted && !flowsAsked) {
         flowsAsked = true;
-        api.flows(project, { signal }).then((got) => form.setFlows(got.flows)).catch(() => { flowsAsked = false; });
+        api.flows(project, { signal }).then((got) => { flows = Array.isArray(got.flows) ? got.flows : []; form.setFlows(got.flows); redraw(); }).catch(() => { flowsAsked = false; });
       }
       if (status) readBodies(status.requests || [], status.pending || []);
       redraw();

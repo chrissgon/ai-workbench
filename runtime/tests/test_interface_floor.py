@@ -241,7 +241,7 @@ def test_the_floor_model_picks_the_current_task_the_other_tasks_the_hand_over_ta
     got = run_node(tmp_path, MODEL)
     assert got["floor"] == {"found": True, "current": 4, "others": [6, 5], "target": 6, "runs": 1, "label": "Engineering floor of northwind-shop, Engineering agent working, 0 decisions",
                             "header": {"title": "Engineering · Engineering agent", "sub": "northwind-shop · floor 4 · Running", "icon": "building-2"}}
-    assert got["board"]["title"] == "Task 4" and got["board"]["dot"] == "theme" and got["board"]["lines"][0].startswith("skill s · Running · Running since ")
+    assert got["board"]["title"] == "#4 Task 4 · current task" and got["board"]["dot"] == "theme" and got["board"]["lines"][0].startswith("skill s · Running · Running since ")
     assert got["state"] is True
     assert got["stateRows"][0]["chip"] == "Waiting for you" and got["stateRows"][0]["line"] == "1 decision in the Inbox" and got["stateRows"][1] == "2 decisions in the Inbox"
     assert got["stateRows"][2] == "Waiting for the next task" and got["stateRows"][3]["off"] is True and got["stateRows"][3]["line"] == "Off, mode is stopped"
@@ -671,8 +671,8 @@ tab.update(view(agent({ mode: "stopped", acting_mode: "stopped" }), [task(5, "fa
 const off = find(tab.el, ".wb-state-row");
 out.off = { text: off.textContent, button: all(off, "button").length };
 
-// hand a file over: nothing is sent when no file was chosen; one call with the file's own name, to the task the hint named when the
-// file was chosen, even when a poll draws another target while the file is being read
+// hand a file over, in two steps (C-17): nothing is sent when no file was chosen, nor when one is chosen; the button names the task it sends to
+// (the task the hint named when the file was chosen: a poll that moves the target does not change it) and sends one call with the file's own name
 calls.length = 0;
 script = { handOver: async () => ({ path: ".workbench-local/drop/5/notes.txt", bytes: 3 }) };
 const fileInput = find(tab.el, "input.wb-file");
@@ -680,14 +680,13 @@ out.handHint = find(tab.el, ".wb-hint").textContent;
 fileInput.files = [];
 await fileInput.listeners.change[0]();
 out.handNoFile = calls.length;
-let release;
-const gate = new Promise((r) => { release = r; });
-fileInput.files = [{ name: "notes.txt", size: 3, arrayBuffer: async () => { await gate; return new Uint8Array([97, 98, 99]).buffer; } }];
-const sending = fileInput.listeners.change[0]();
+fileInput.files = [{ name: "notes.txt", size: 3, arrayBuffer: async () => new Uint8Array([97, 98, 99]).buffer }];
+await fileInput.listeners.change[0]();
+out.handChosen = { calls: calls.filter((c) => c[0] === "handOver").length, name: find(tab.el, ".wb-hand-chosen").textContent, button: find(tab.el, "button.wb-hand-button").textContent };
 tab.update(view(agent({ mode: "stopped", acting_mode: "stopped" }), [task(5, "failed"), task(9, "blocked")]));
 out.handHintAfterPoll = find(tab.el, ".wb-hint").textContent;
-release();
-await sending;
+out.handButtonAfterPoll = find(tab.el, "button.wb-hand-button").textContent;
+find(tab.el, "button.wb-hand-button").click();
 await settle();
 out.hand = { calls: calls.filter((c) => c[0] === "handOver").map((c) => c.slice(1)), result: find(tab.el, ".wb-hand-result").textContent };
 
@@ -724,8 +723,10 @@ def test_the_agent_tab_sends_set_mode_retry_and_the_hand_over_as_one_request_eac
                             "A file handed to a task is at most 25 MiB.", "", "The file name may hold letters, digits, ., _ and -, at most 100 characters."]
     assert got["handNoFile"] == 0, "nothing is sent when no file was chosen"
     assert got["handHint"] == "To task #5. At most 25 MiB." and got["handHintAfterPoll"] == "To task #9. At most 25 MiB."
+    assert got["handChosen"] == {"calls": 0, "name": "notes.txt", "button": "Hand over to task #5"}, "C-17: choosing the file sends nothing; its name and the button show"
+    assert got["handButtonAfterPoll"] == "Hand over to task #5", "the button still names the task the hint named when the file was chosen"
     assert got["hand"] == {"calls": [["p", 5, "notes.txt", "YWJj"]], "result": "Handed over: .workbench-local/drop/5/notes.txt (3 bytes)"}, \
-        "one call, the file's own name, to the task the hint named when the file was chosen (a poll during the read does not change it)"
+        "one call, the file's own name, to the task the hint named when the file was chosen (a poll before the click does not change it)"
     assert got["base64"] == ["aGk=", 93336]
 
 
@@ -821,9 +822,9 @@ console.log(JSON.stringify(out));
 @needs_node
 def test_an_agent_with_no_documents_of_its_own_is_not_told_the_project_has_none(tmp_path):
     got = run_node(tmp_path, DESK_EMPTY)
-    assert got["constants"] == ["The project has no documents under docs/ yet.", "No documents of this agent. Documents with no owner are on the Lobby's desk."]
+    assert got["constants"] == ["The project has no documents under docs/ yet.", "No documents of this agent. Every document is on the Lobby's desk."]
     assert got["projectEmpty"] == [got["constants"][0]], "a project with no documents at all keeps the drawn sentence"
-    assert got["elsewhere"] == [got["constants"][1]], "documents that belong to no agent are on the Lobby's desk, and the Desk says so"
+    assert got["elsewhere"] == [got["constants"][1]], "every document is on the Lobby's desk, and the Desk says so"
     assert got["withDocuments"] == [], "an agent with documents shows its table, no empty block"
     floor = (JS / "views" / "floor.js").read_text(encoding="utf-8")
     assert "elsewhere: documents ? documents.rows.length - documentsRows.length : 0" in floor, "the Floor tells the Desk how many rows are not the agent's"

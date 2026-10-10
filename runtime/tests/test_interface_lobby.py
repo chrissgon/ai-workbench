@@ -683,7 +683,7 @@ import * as router from "@JS@/router.js";
 const P = "0123456789ab";
 const out = {};
 
-// the Desk's filter: no agent and the planning agent in, every other agent out
+// the Desk lists every document of the project (C-2); the agent of each is a column
 const rows = [{ path: "a", agent: null }, { path: "b", agent: "planning" }, { path: "c", agent: "marketing" }, { path: "d" }, { path: "e", agent: "brand" }];
 out.documents = m.lobbyDocuments(rows).map((d) => d.path);
 out.documentsOf = [m.lobbyDocuments(undefined), m.lobbyDocuments(null), m.lobbyDocuments([null, { path: "x", agent: null }]).length];
@@ -733,9 +733,9 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_the_desk_shows_the_documents_of_no_agent_and_of_the_planning_agent_and_no_other(tmp_path):
+def test_the_desk_shows_every_document_of_the_project(tmp_path):
     got = run_node(tmp_path, TABS_MODEL)
-    assert got["documents"] == ["a", "b", "d"], "an agent of null (no owner, or no single agent owns the skill) and the planning agent's own"
+    assert got["documents"] == ["a", "b", "c", "d", "e"], "C-2: every document, whoever's it is: the Lobby is the project's room"
     assert got["documentsOf"] == [[], [], 1], "an unread list is empty, and a row that is not an object is dropped"
 
 
@@ -822,7 +822,7 @@ const empty = createLobbyInbox({ project: P, now: () => NOW, refresh: () => {} }
 empty.update(data({ cards: [], pointers: [] }));
 out.empty = [find(empty.el, ".wb-empty-line").textContent, all(empty.el, ".wb-pointer").length];
 
-// --- the Desk: the Floor's table over what `artifacts` returned for the planning agent and for no agent ---
+// --- the Desk: the Floor's table over every row `artifacts` returned, with the agent of each as a column (C-2) ---
 const doc = (path, agent, owner = null) => ({ path, owner, agent, size: 12, modified_at: "2026-10-08T09:00:00Z", bound: false });
 answers.set(`GET /api/v1/projects/${P}/artifacts`, { status: 200, body: { artifacts: [doc("docs/notes/kickoff.md", null), doc("docs/workbench/briefs/a.md", "planning", "core-clarify"), doc("docs/brand/voice.md", "brand", "brand-voice"), doc("docs/marketing/x.md", "marketing", "mkt-x")], truncated: false } });
 let read = 0;
@@ -831,7 +831,7 @@ const desk = createLobbyDesk({ project: P, open: (p) => opened.push(p), changed:
 desk.update({ tab: "desk", ready: true });
 out.deskBefore = find(desk.el, ".wb-desk-states").textContent;
 await settle();
-out.desk = { read, rows: all(desk.el, "button.wb-path-button").map((b) => b.attrs["data-path"]), owners: all(desk.el, ".wb-desk-owner").map((n) => n.textContent), rowsOf: desk.rows().map((d) => d.path) };
+out.desk = { read, rows: all(desk.el, "button.wb-path-button").map((b) => b.attrs["data-path"]), owners: all(desk.el, ".wb-desk-owner").map((n) => n.textContent), agents: all(desk.el, ".wb-desk-agent").map((n) => n.textContent), rowsOf: desk.rows().map((d) => d.path) };
 find(desk.el, "button.wb-path-button").click();
 out.opened = opened;
 desk.update({ tab: "desk", ready: true });
@@ -901,13 +901,14 @@ def test_the_lobbys_inbox_draws_the_floors_cards_for_its_decisions_and_a_line_fo
 
 
 @needs_node
-def test_the_lobbys_desk_is_the_floors_table_over_the_documents_of_no_agent_and_of_the_planning_agent(tmp_path):
+def test_the_lobbys_desk_is_the_floors_table_over_every_document_with_the_agent_as_a_column(tmp_path):
     got = run_floor_node(tmp_path, TABS_MARKUP)
     assert got["deskBefore"] == "Loading the floor..."
-    assert got["desk"]["rows"] == ["docs/notes/kickoff.md", "docs/workbench/briefs/a.md"], "the brand's and the marketing agent's documents are not on this desk"
-    assert got["desk"]["rowsOf"] == ["docs/notes/kickoff.md", "docs/workbench/briefs/a.md"] and got["desk"]["read"] == 1
-    assert got["desk"]["owners"] == ["", "core-clarify"]
-    assert got["opened"] == ["docs/notes/kickoff.md"], "a row asks to open its path; the viewer reads the file"
+    assert got["desk"]["rows"] == ["docs/brand/voice.md", "docs/marketing/x.md", "docs/notes/kickoff.md", "docs/workbench/briefs/a.md"], "C-2: the brand's and the marketing agent's documents are on this desk too (same time: by path)"
+    assert got["desk"]["rowsOf"] == ["docs/notes/kickoff.md", "docs/workbench/briefs/a.md", "docs/brand/voice.md", "docs/marketing/x.md"] and got["desk"]["read"] == 1
+    assert got["desk"]["owners"] == ["brand-voice", "mkt-x", "", "core-clarify"]
+    assert got["desk"]["agents"] == ["brand", "marketing", "—", "planning"], "the Agent column: the agent of each row, a dash when null"
+    assert got["opened"] == ["docs/brand/voice.md"], "a row asks to open its path; the viewer reads the file"
     assert got["askedOnce"] == 1, "a second update inside the period reads nothing"
     assert got["deskError"] == "The documents could not be readthe documents could not be listed"
 
