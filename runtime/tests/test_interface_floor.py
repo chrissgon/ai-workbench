@@ -211,8 +211,8 @@ def test_the_model_derives_each_floors_state_and_facts_from_what_the_service_ret
     assert got["order"] == ["planning", "business", "brand", "design", "engineering", "marketing"], "the planning agent is the Lobby, at the bottom"
     assert got["states"] == {"planning": "waiting", "business": "idle", "brand": "waiting", "design": "off", "engineering": "working", "marketing": "idle"}, \
         "working: a task runs; off: acting mode stopped; waiting: an open decision; idle otherwise"
-    assert got["windows"] == {"planning": "grey", "business": "grey", "brand": "grey", "design": "grey", "engineering": "lit", "marketing": "grey"}, \
-        "a window is warm when the floor's agent works and grey in every other state: there is no pale"
+    assert got["windows"] == {"planning": "lit", "business": "grey", "brand": "lit", "design": "grey", "engineering": "lit", "marketing": "grey"}, \
+        "R-21: a window is lit when the floor's agent works or waits for an answer (planning and brand have a decision) and grey in every other state: there is no pale"
     assert got["decisions"] == {"planning": 1, "business": 0, "brand": 1, "design": 0, "engineering": 0, "marketing": 0}, \
         "a decision on a request (no agent) is the Lobby's"
     assert got["eng"] == {"done": 0, "left": 1, "queued": 1, "acting": True, "word": "working",

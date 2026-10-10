@@ -369,7 +369,7 @@ def test_the_owls_palette_is_the_marks_and_lives_in_its_module_alone():
     owl = (JS / "views" / "token-owl.js").read_text(encoding="utf-8")
     assert sorted(set(re.findall(r'"(#[0-9A-Fa-f]{6})"', owl))) == ["#1E1B2E", "#6B4429", "#A47551", "#E6D2BC", "#FCD34D", "#FFFFFF"]
     for path in sorted(JS.rglob("*.js")):
-        if path.name == "token-owl.js":
+        if path.name in ("token-owl.js", "owl.js"):   # R-41: the scene's owl (scene/owl.js, R4-B1) is the second module that names the mark's palette
             continue
         assert not re.search(r"#1E1B2E|#A47551|#FCD34D|#E6D2BC", path.read_text(encoding="utf-8"), re.I), f"{path.name} holds a colour of the owl: the palette lives in the owl's module"
     assert not re.search(r"#[0-9a-fA-F]{3,8}\b", CSS.replace("light-dark(#6B4429, #C99A6E)", "")), "no colour literal in the stylesheet but the brand pair"

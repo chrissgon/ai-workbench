@@ -36,6 +36,7 @@ export const FLY_SETTLE_AT = 0.9; // the promise of a move resolves when it is n
 export const DROP_MS = 300;       // A3: a waiting marker drops in once
 export const TAG_MS = 600;        // A6: the work-order tag moves to the next floor once
 export const OUTLINE_PAD = 0.04;  // the hover outline stands this far off the object (the prototype's, for a piece of furniture)
+export const SHADE_Y = 0.22;      // the shadows land on a plane just over the City's blocks (their paving is at 0.21), so they show on the walk and the paving
 
 
 export class NoWebGL extends Error {
@@ -145,10 +146,11 @@ export function createEngine(host, options) {
     sun.shadow.bias = -0.0006;
     const ground = new THREE.Mesh(worldKit.track(new THREE.PlaneGeometry(600, 600)), worldKit.unlit(palette.ground));
     ground.rotation.x = -Math.PI / 2;
+    ground.position.y = -0.06;   // under the City's streets (city.js), which lie at 0
     const shade = new THREE.Mesh(worldKit.track(new THREE.PlaneGeometry(600, 600)),
       worldKit.adopt(new THREE.ShadowMaterial({ color: palette.shadowColor, opacity: palette.shadowOpacity })));
     shade.rotation.x = -Math.PI / 2;
-    shade.position.y = 0.01;
+    shade.position.y = SHADE_Y;
     shade.receiveShadow = true;
     world.push(hemi, sun, ground, shade);
     for (const object of world) object.userData.world = true;
@@ -289,12 +291,20 @@ export function createEngine(host, options) {
   // chosen by the route. The tracking bar's default project does not count.
   function markLabels() {
     for (const entry of labelEntries) {
-      if (entry.spec.kind === "card") entry.node.classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId);
+      if (entry.spec.kind === "card") entry.node.classList.toggle("is-selected", Boolean(entry.spec.selected) || entry.spec.id === hoverId || (Boolean(content) && entry.spec.id === content.marked));
     }
   }
 
   function applyOutlines() {
     if (content) applyOutlineVisibility(content.outlines, content.selected);
+    applyBrackets();
+  }
+
+  // R-17: a building of the City, followed (the project the person has chosen) or pointed at (on the scene or in the list), wears its eight corner
+  // brackets in the brand colour, never an outline. They are drawn only while the building is closed: an opening building has its floors marked instead.
+  function applyBrackets() {
+    if (!content || !content.brackets) return;
+    for (const b of content.brackets) b.group.visible = b.tower.brackets.closed && (b.id === hoverId || b.id === content.marked);
   }
 
   // The world changes in place: a model of the same lots (another poll, another route: the focus) never builds the scene again. A tower
@@ -515,6 +525,7 @@ export function createEngine(host, options) {
       pickCache = null;
       renderer.shadowMap.needsUpdate = true;
       positionLabels();   // the plates, the cards and the tag ride along with the floors
+      applyBrackets();    // a building that begins to open has no brackets
       refreshOutline();
       if (!moving) {
         loop.stop("world");
@@ -572,7 +583,7 @@ export function createEngine(host, options) {
     const hit = id && content ? content.hits.find((x) => x.id === id) : null;
     applyOutlines();
     markLabels();
-    if (hit) {
+    if (hit && !hit.brackets) {
       outline = new THREE.LineSegments(outlineGeometry(THREE, hit.outline || hit.object, hit.pad !== undefined ? hit.pad : OUTLINE_PAD), outlineMaterial);
       scene.add(outline);
     }
@@ -582,7 +593,8 @@ export function createEngine(host, options) {
   // The building the person has chosen keeps a thin outline in the City, as the route-selected object; a hover outlines the hovered one in addition.
   function drawMarked() {
     const hit = content && content.marked ? content.hits.find((x) => x.id === content.marked) : null;
-    if (!hit) {
+    applyBrackets();
+    if (!hit || hit.brackets) {
       if (markedOutline) {
         scene.remove(markedOutline);
         markedOutline.geometry.dispose();

@@ -250,7 +250,7 @@ export function floorRow(agent, status, context) {
   return {
     name, label, lobby, number: context.number, state, stateWord, accepted,
     unaccepted, held: heldTasks.length, heldReason, inUse,
-    window: windowState(configured && state === "working"), dot: DOT[state], decisions, queued, done, running, left, waits,
+    window: windowState(configured && (state === "working" || state === "waiting")), dot: DOT[state], decisions, queued, done, running, left, waits,
     runs, runsCap, usd, usdCap, unknown, ...split, runsTotal: agent.runs_total_today === undefined ? null : format.count(agent.runs_total_today), mode, acting, pips: mode ? PIPS[mode] || 0 : 0, actingPips: acting ? PIPS[acting] || 0 : 0,
     actingDiffers: Boolean(mode && acting && mode !== acting),
     link: lobby ? router.lobbyHash(context.project) : router.floorHash(context.project, name),
