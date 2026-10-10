@@ -42,6 +42,8 @@ Every entry of the `secrets` list of an adapter's manifest states `billing`, one
 
 A harness that holds the credential itself (the login of its own command-line tool, no variable passed) declares it once in the manifest, outside the `secrets` list, as `"login_billing"`: one of the same three words, read when a run passes no variable. A manifest without it and a run without a variable have no billing the runtime can know, and the dispatcher does not start the run (it never guesses a cap).
 
+`login_billing` is reachable only in a configuration whose tier passes no variable; inside the eval container the CLI's login does not exist, so a runtime run there always passes a variable.
+
 A credential two adapters list has the same word in both (the validator checks it), and a run that passes several variables is billed by the strictest: `metered`, then `subscription`, then `free`. Today the long-lived token of the reference model's harness and that harness's own login are `subscription`, and every model provider's key an adapter registers (the reference model's alternative key, the floor model's provider keys, the key for the open-network eval cases) is `metered`; the manifest of each adapter is the list.
 
 ## Registry

@@ -23,7 +23,7 @@ messages of the conversation with the planning agent (conversation_messages), an
 adds triggers that refuse to delete a task, a task run or a pending decision (limit L13, as for the approvals). Schema
 version 8 adds the derived waits between requests: the `after_request` column of a request and the task_waits table (a
 planned task waits for another task, or for a whole request, with the reason shown to the person), under the same rule.
-Schema version 9 adds the `billing` column of task_runs: how the credential a run used is billed, which the daily caps count by.
+Schema version 9 adds the `billing` column of task_runs: how the credential a run used is billed (or `unknown`), which the daily caps count by.
 
 Concurrency: the database runs in WAL mode (readers never block the writer) with a 10-second busy
 timeout, and every write is one BEGIN IMMEDIATE transaction, so several agents and overlapping
@@ -327,9 +327,10 @@ MIGRATIONS = {
             BEGIN SELECT RAISE(ABORT, 'a task wait is never deleted'); END""",
     ]),
     # ADJ-R3 (row A-38): the billing of the credential a run used, written when the run starts. The daily caps count by it
-    # (subscription and free: runs; metered: dollars). A run older than the column has none (NULL): history only.
+    # (subscription and free: runs; metered and unknown: dollars). 'unknown' is a run whose route no manifest could bill; a run
+    # older than the column has none (NULL): history only, counted by the tier rule it had.
     9: ("the billing of the credential a task run used", [
-        "ALTER TABLE task_runs ADD COLUMN billing TEXT CHECK (billing IS NULL OR billing IN ('subscription', 'metered', 'free'))",
+        "ALTER TABLE task_runs ADD COLUMN billing TEXT CHECK (billing IS NULL OR billing IN ('subscription', 'metered', 'free', 'unknown'))",
     ]),
 }
 
@@ -1055,7 +1056,7 @@ PENDING_KINDS = ("plan", "question", "review", "effect", "acceptance", "your_doc
 PENDING_STATUSES = ("open", "resolved", "cancelled")
 RUN_FAILURES = ("timeout", "refused", "auth", "adapter", "early_end", "settings", "stopped", "internal")
 RUN_ENDINGS = ("done", "question", "draft_with_questions", "gate", "blocked", "unclassified")
-RUN_BILLINGS = ("subscription", "metered", "free")
+RUN_BILLINGS = ("subscription", "metered", "free", "unknown")
 
 
 def _billing_arg(value):

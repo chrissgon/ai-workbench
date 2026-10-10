@@ -105,8 +105,8 @@ task      one task or request: its row, its runs (status, failure, ending, attem
 flows     the flow files of this checkout (flows/*.json): each one's name, title and number of tasks; a file that
           fails its checks is listed with its error.
 agents    each area agent of runtime.json: its pack, whether it is enabled, the mode it is set to and the mode it acts in now,
-          its two daily caps, what it used today (runs on the reference model, dollars on the floor model, the runs
-          whose cost is unknown) and how many ready tasks wait for it. Computed from the configuration and the
+          its two daily caps, what it used today (runs on a subscription or free credential, dollars of runs on a metered
+          one, the metered runs whose cost is unknown) and how many ready tasks wait for it. Computed from the configuration and the
           store's records; {"agents": []} without area_agents.
 conversation  the messages of the project's conversation above a message id (--after, default 0), oldest first, at most
           500: id, role, text, the request it made or answered, the run, the time. The conversation is named project

@@ -238,7 +238,7 @@ export function capsLine(caps, agents) {
   const parts = list.map((cap) => {
     const now = used.get(cap.agent);
     const note = now && typeof now.usd_reserved === "number" ? format.spendNote(now.usd_recorded, now.usd_reserved) : "";
-    const total = now && typeof now.runs_total_today === "number" ? `, Runs today: ${now.runs_total_today}` : "";
+    const total = now && typeof now.runs_total_today === "number" ? `, All runs today: ${now.runs_total_today}` : "";
     const use = format.metersInUse(now);
     const shown = [use.runs ? `runs ${now ? amount(now.runs_today) : "-"} / ${amount(cap.max_runs_per_day)}` : "",
       use.spend ? `spend ${now ? money(now.usd_today) : "-"} / ${money(cap.max_usd_per_day)}${note ? ` (${note})` : ""}` : ""].filter(Boolean);

@@ -61,7 +61,7 @@ export function createKpis() {
       decisions.el.setAttribute("aria-label", `Open decisions ${sums.decisions} waiting for you`);
       runs.figure.textContent = String(sums.runs);
       runs.unit.textContent = `of ${sums.runsCap}`;
-      runs.el.title = `of ${sums.runsCap} · ${format.METER_TIPS.runs}${sums.runsTotal ? ` Runs today: ${sums.runsTotal}` : ""}`;
+      runs.el.title = `of ${sums.runsCap} · ${format.METER_TIPS.runs}${sums.runsTotal ? ` All runs today: ${sums.runsTotal}` : ""}`;
       runs.el.setAttribute("aria-label", `${format.METER_WORDS.runs} ${sums.runs} of ${sums.runsCap}`);
       meter(runs, format.share(sums.runs, sums.runsCap));
       spend.figure.textContent = format.dollars(sums.usd);

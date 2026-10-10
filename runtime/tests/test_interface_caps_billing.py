@@ -111,6 +111,8 @@ const bare = { usd_recorded: undefined, usd_reserved: undefined, runs_total_toda
 const used = (use) => [agent({ runs_today: 5, usd_today: 1.87, ...bare, caps_in_use: use }), agent({ name: "marketing", runs_today: 2, usd_today: 0.5, ...bare, caps_in_use: use })];
 out.caps = { both: control.capsLine(caps, used(USE.both)), runs: control.capsLine(caps, used(USE.runs)), spend: control.capsLine(caps, used(USE.spend)),
   noAgents: control.capsLine(caps, null), none: control.capsLine([], used(USE.both)) };
+out.total = fm.meters(agent()).runsTotal;
+out.capsTotal = control.capsLine(caps.slice(0, 1), [agent({ runs_today: 5, usd_today: 1.87, usd_recorded: undefined, usd_reserved: undefined, caps_in_use: USE.both })]).text;
 console.log(JSON.stringify(out));
 """
 
@@ -180,3 +182,8 @@ def test_the_page_names_no_tier_for_a_cap_and_the_state_words_say_runs_and_spend
     model = (JS / "floor-model.js").read_text(encoding="utf-8")
     assert '"cap: runs per day": "The agent used all its runs for today."' in model
     assert '"cap: usd per day": "The agent used all its spend for today."' in model
+
+
+def test_the_plain_total_is_named_all_runs_today_so_it_does_not_share_the_meters_name(floor):
+    assert floor["total"] == "All runs today: 3"
+    assert floor["capsTotal"] == "Caps · engineering: runs 5 / 12, spend $1.87 / $4.00, All runs today: 3"

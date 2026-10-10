@@ -19,12 +19,15 @@ autonomous-with-policy whose approval expired acts as autonomous: its effects as
   mode_of(facts)                                the mode the agent acts in now
   state_checkpoints(agents)                     the value of the state file's "- Checkpoints:" line: the most careful
                                                 among the enabled agents (every-phase when none is enabled)
-  BILLINGS, RUNS_BILLINGS, SPEND_BILLINGS       the three billing words of a credential, and which cap counts each:
+  BILLINGS, RUNS_BILLINGS, SPEND_BILLINGS       the billing words of a credential, and which cap counts each:
                                                 subscription and free count runs (max_runs_per_day), metered counts
-                                                dollars (max_usd_per_day); the word a run used is recorded on its row
+                                                dollars (max_usd_per_day); the word a run used is recorded on its row,
+                                                and "unknown" when the route had none (counted as metered)
   history_billing(run, floor_model)             the billing of a run row that has none (older than the column): the old
                                                 tier rule, the floor model's runs are metered and any other's subscription
-  with_billing(runs, floor_model)               the rows with that fallback filled in where the billing is null
+  with_billing(runs, floor_model)               the rows with that fallback filled in where the billing is null (only there)
+  run_budget(entry, spent, per_run_usd)         the spend limit of a metered run: the per-run limit, or what is left of the
+                                                day's dollar cap when that is less; None when under MIN_RUN_BUDGET_USD
   spend(runs, agent, per_run_usd)               a day's spend of one agent by billing: {"runs_counted", "usd_metered",
                                                 "runs_without_cost"} (a metered run of unknown cost counts at per_run_usd)
   spend_split(runs, agent, per_run_usd)         the one place the day's rule is written: {"usd_recorded",
@@ -72,9 +75,15 @@ POLICY_MODE = "autonomous-with-policy"
 # How the credential a run uses is billed (adapters/<harness>/adapter.json, contracts/secrets.md), and so which daily cap the run
 # counts against: a subscription covers its runs and a local model costs nothing, so those count runs; a key paid by use
 # counts dollars. The words are those of runtime/billing.py and of the store's CHECK; a test holds them equal.
-BILLINGS = ("subscription", "metered", "free")
+# A fourth word is written by the runtime, never declared by a manifest: "unknown" is the billing of a run that started on a
+# route no manifest could bill. It is not a row older than the column (that one is NULL, history_billing): its dollars are
+# never left uncounted, so spend_split counts it as metered.
+BILLINGS = ("subscription", "metered", "free", "unknown")
 RUNS_BILLINGS = ("subscription", "free")
 SPEND_BILLINGS = ("metered",)
+# The least a metered run may be given as its own spend limit when the day's dollar cap is nearly reached: a run is not started
+# with a budget of a few cents, it is held with "cap: usd per day" instead.
+MIN_RUN_BUDGET_USD = 0.05
 NO_CHANGE = "no file changed"  # the start of the classifier's reason for a `done` that wrote nothing (runtime/endings.py)
 BOUNDS_KEYS = ("policy", "agent", "effects", "targets", "files", "max_per_day", "max_items_per_run")
 POLICY_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -196,8 +205,9 @@ def history_billing(run: dict, floor_model: str) -> str:
 
 
 def with_billing(runs, floor_model: str) -> list:
-    """The rows of runs_since with the billing of every row filled in (history_billing); no row is changed in place."""
-    return [run if run.get("billing") in BILLINGS else dict(run, billing=history_billing(run, floor_model)) for run in runs]
+    """The rows of runs_since with the billing of every row that has none (NULL: older than the column) filled in by
+    history_billing; a row that records a word, "unknown" included, keeps it. No row is changed in place."""
+    return [run if run.get("billing") is not None else dict(run, billing=history_billing(run, floor_model)) for run in runs]
 
 
 def spend_split(runs, agent: str, per_run_usd: float) -> dict:
@@ -245,11 +255,23 @@ def may_start(name: str, agents_checked: dict, f: dict, spent: dict, billing) ->
         if spent["runs_counted"] >= entry["max_runs_per_day"]:
             return False, "cap: runs per day"
     elif billing in SPEND_BILLINGS:
-        if round(spent["usd_metered"], 6) >= entry["max_usd_per_day"]:
+        if run_budget(entry, spent, math.inf) is None:
             return False, "cap: usd per day"
     else:
         return False, f"unknown billing {billing!r}"
     return True, ""
+
+
+def run_budget(entry: dict, spent: dict, per_run_usd: float):
+    """The spend limit, in dollars to the cent and never above what is left, of a metered run about to start: the per-run limit,
+    or what remains of max_usd_per_day (rounded down to the cent) when that is less. None when what remains is under
+    MIN_RUN_BUDGET_USD, or nothing: the run does not start (may_start holds it with "cap: usd per day"). The cap is checked
+    here, at the start; the limit travels with the run to the adapter. A run that fails or times out keeps its reservation
+    counted: spend_split reads its recorded cost, else per_run_usd."""
+    left = round(entry["max_usd_per_day"] - round(spent["usd_metered"], 6), 6)
+    if left < MIN_RUN_BUDGET_USD:
+        return None
+    return math.floor(round(min(float(per_run_usd), left) * 100, 6)) / 100
 
 
 def review_action(task: dict, pending: dict, f: dict, proven: bool, mandatory: bool) -> str:

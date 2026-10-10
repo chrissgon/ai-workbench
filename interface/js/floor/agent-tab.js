@@ -154,7 +154,7 @@ export function createAgentTab(env) {
     fill(metersBox, m.runs ? meterCell(m.runs.label, m.runs.text, m.runs.share, m.runs.full, "", m.runs.tip) : null,
       m.spend ? meterCell(m.spend.label, m.spend.text, m.spend.recordedShare, m.spend.full, m.spend.notes, m.spend.tip, m.spend.reservedShare) : null,
       meterCell("Queued", m.queued.text, null, false));
-    runsTotalLine.hidden = !m.runsTotal;      // the plain total of runs today, on any model (the runs meter counts the reference model's only)
+    runsTotalLine.hidden = !m.runsTotal;      // the plain total of runs today, whatever their billing (the runs meter counts only subscription and free runs)
     runsTotalLine.textContent = m.runsTotal || "";
   }
 

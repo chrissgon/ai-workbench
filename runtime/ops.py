@@ -473,10 +473,11 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         known = manifest.load(core.ROOT, skill)  # a skill the runtime knows nothing of does not run
         key = core._floor_key()
         routing = _route(ctx, skill, meta, tier, key)
+        budget = _budget(ctx, task.get("agent"), routing)  # before the run's own row: its reservation is not in the day's spend yet
         identity = lab.skill_identity(skill)
         run_id = core._stored(ctx, store.task_run_start, task["id"], skill=skill, model=routing["model"],
                          adapter=routing["adapter"], skill_version=identity["version"],
-                         skill_sha256=identity["content_sha256"], web=routing["web"], billing=routing["billing"])["run_id"]
+                         skill_sha256=identity["content_sha256"], web=routing["web"], billing=routing["billing"] or "unknown")["run_id"]
     except (skill_meta.SkillError, manifest.ManifestError, lab.LabError, core.OpsError, OSError, KeyError) as e:
         core._stored(ctx, store.task_fail_running, _note(f"the run could not start: {e}"))
         raise core.OpsError(f"task {task['id']} ({skill}) could not start: {e}", 1) from None
@@ -549,7 +550,8 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
             prepare = None
         with lab.session(), _key_in_environment(routing, key):
             result = lab.run_skill(skill, prompt, files, dest, web=routing["web"], tier=routing["tier"],
-                                   prepare=prepare, finish=finish, tmp_in_run=bool(gate))
+                                   prepare=prepare, finish=finish, tmp_in_run=bool(gate),
+                                   max_cost=budget)
     except lab.LabError as e:
         return fail("internal", f"{e.kind}: {e.reason}")
     except Exception as e:  # the task never stays `running`: the error is recorded, then shown
@@ -1746,12 +1748,13 @@ def _router_call(ctx: dict, request: dict, text: str, *, reroute: bool = False) 
         meta = skill_meta.declared(os.path.join(core.ROOT, "skills", skill))
         key = core._floor_key()
         routing = _route(ctx, skill, meta, None, key)
+        budget = _budget(ctx, plan.PLANNING, routing)
         identity = lab.skill_identity(skill)
     except (skill_meta.SkillError, lab.LabError, OSError, KeyError) as e:
         raise core.OpsError(f"the router ({skill}) could not start: {e}", 1) from None
     run_id = core._stored(ctx, store.route_run_start, request["id"], skill=skill, model=routing["model"],
                      adapter=routing["adapter"], skill_version=identity["version"],
-                     skill_sha256=identity["content_sha256"], web=False, reroute=reroute, billing=routing["billing"])["run_id"]
+                     skill_sha256=identity["content_sha256"], web=False, reroute=reroute, billing=routing["billing"] or "unknown")["run_id"]
     dest = os.path.join(cfg["data_dir"], core.RUNS_DIR, str(run_id))
     out = {"routed": False, "request": request["id"], "source": "router", "run_id": run_id, "run_dir": dest,
            "status": "failed", "ending": None, "failure": None, "pending_id": None, "kind": None, "kept": [],
@@ -1777,7 +1780,8 @@ def _router_call(ctx: dict, request: dict, text: str, *, reroute: bool = False) 
                                        if p["kind"] == "question" and p["resolution"] == "answered"]
         prompt = task_prompt(text, router.ROUTE_TASK_TEXT, answered)
         with lab.session(), _key_in_environment(routing, key):
-            result = lab.run_skill(skill, prompt, entered["files"], dest, web=False, tier=routing["tier"])
+            result = lab.run_skill(skill, prompt, entered["files"], dest, web=False, tier=routing["tier"],
+                                   max_cost=budget)
     except lab.LabError as e:
         return fail("internal", f"{e.kind}: {e.reason}")
     except Exception as e:  # the run row never stays `running`: the error is recorded, then shown
@@ -2230,7 +2234,15 @@ def _midnight_utc() -> str:
     return local.astimezone(datetime.timezone.utc).isoformat()
 
 
-def _agents_of_the_day(ctx: dict) -> dict:
+def _budget(ctx: dict, agent, routing: dict):
+    """lab.run_skill's max_cost: the spend limit of a run on a metered credential, or one no manifest could bill (autonomy.run_budget
+    of the agent's day; the per-run limit when the agent has no caps or less is left, a start by hand not being capped); None else."""
+    per_run = ctx["cfg"]["raw"].get("max_cost_usd_per_run", PER_RUN_USD)
+    found = _agents_of_the_day(ctx).get(agent)
+    return None if routing["billing"] not in (None, "metered") else (found and autonomy.run_budget(found["entry"], found["spent"], per_run)) or per_run
+
+
+def _agents_of_the_day(ctx: dict, key=None) -> dict:
     """Each area agent's facts, a day's spend and entry, from the store and the configuration: {name: {"facts",
     "entry", "spent", "split", "in_use"}} (split: autonomy.spend_split, for the meters; in_use: core._caps_in_use). The
     spend is by the billing each run recorded (autonomy.with_billing gives a run older than the column the tier rule). The day starts at local midnight (_midnight_utc), as the caps count it, and a run of the router
@@ -2244,7 +2256,7 @@ def _agents_of_the_day(ctx: dict) -> dict:
     runs = autonomy.with_billing([dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL
                                   else r for r in core._stored(ctx, store.runs_since, _midnight_utc())],
                                  lab.reference("floor")["model"])
-    per_run, in_use = cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD), core._caps_in_use(runs)
+    per_run, in_use = cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD), core._caps_in_use(runs, key or core._floor_key())
     return {name: {"facts": autonomy.facts(name, agents_checked, standing_rows, now), "entry": entry,
                    "spent": autonomy.spend(runs, name, per_run), "split": autonomy.spend_split(runs, name, per_run),
                    "in_use": in_use}
@@ -2270,7 +2282,7 @@ def _snapshot(ctx: dict, key: dict) -> dict:
 
     out = {"running": next((t for t in tasks if t["state"] == "running"), None),
            "ready": [t for t in tasks if t["state"] == "ready" and t["parent_id"] is not None],
-           "reviews": [], "agents": _agents_of_the_day(ctx), "tier": {}, "billing": {}}
+           "reviews": [], "agents": _agents_of_the_day(ctx, key), "tier": {}, "billing": {}}
     for item in core._stored(ctx, store.pending_list):
         task = by_id.get(item["task_id"])
         if item["kind"] != "review" or task is None or not task.get("skill"):
@@ -2711,7 +2723,8 @@ def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms
         try:
             with lab.session(), _key_in_environment(routing, key):
                 result = lab.run_skill(skill, prompt, entered["files"], dest, web=False, tier=routing["tier"],
-                                       timeout=timeout, retries=0, platforms=list(platforms or ()))
+                                       timeout=timeout, retries=0, platforms=list(platforms or ()),
+                                       max_cost=_budget(ctx, None, routing))
         except lab.LabError as e:
             with contextlib.suppress(OSError):
                 os.rmdir(dest)  # no run was made: the folder claimed for it is empty, and goes

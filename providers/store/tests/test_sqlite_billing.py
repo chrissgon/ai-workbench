@@ -17,7 +17,7 @@ spec = importlib.util.spec_from_file_location("store_sqlite_billing", SCRIPT)
 store = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(store)
 
-WORDS = ("subscription", "metered", "free")
+WORDS = ("subscription", "metered", "free", "unknown")
 PLAN = [{"key": "market", "skill": "biz-market-analysis", "title": "Market", "text": "Do the market analysis."}]
 
 

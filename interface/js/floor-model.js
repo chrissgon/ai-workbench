@@ -392,7 +392,7 @@ export function meters(agent) {
   const split = spendSplit(agent, usd, usdCap);
   return {
     inUse,
-    runsTotal: agent.runs_total_today === undefined ? null : `Runs today: ${format.count(agent.runs_total_today)}`,
+    runsTotal: agent.runs_total_today === undefined ? null : `All runs today: ${format.count(agent.runs_total_today)}`,
     runs: !inUse.runs ? null : { label: format.METER_WORDS.runs, tip: format.METER_TIPS.runs, text: `${runs} / ${runsCap}`, share: format.share(runs, runsCap), full: runsCap > 0 && runs >= runsCap, name: `${format.METER_WORDS.runs} ${runs} / ${runsCap}` },
     spend: !inUse.spend ? null : { label: format.METER_WORDS.spend, tip: format.METER_TIPS.spend, text: `${format.dollars(usd)} / ${format.dollars(usdCap)}`, share: format.share(usd, usdCap), full: usdCap > 0 && usd >= usdCap, unknown: unknown > 0 ? `(+${unknown} of unknown cost)` : "", notes: format.costNote(split.usdNote, split.usdReserved, unknown),
       recorded: split.usdRecorded, reserved: split.usdReserved, recordedShare: split.usdRecordedShare, reservedShare: split.usdReservedShare, note: split.usdNote, name: `${format.METER_WORDS.spend} ${format.dollars(usd)} / ${format.dollars(usdCap)}` },

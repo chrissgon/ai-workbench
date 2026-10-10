@@ -635,7 +635,7 @@ def test_the_inbox_and_the_tasks_are_inert_while_not_accepted_and_a_refusing_pro
         assert got["askedAgain"] == 0, f"{tab}: no task body or document is asked of a project that answers 412"
 
 
-# --- A-20 completed (WP-9.14b): the two-segment spend meter, "Runs today: n" ----------------------------------------------------------
+# --- A-20 completed (WP-9.14b): the two-segment spend meter, "All runs today: n" ----------------------------------------------------------
 
 SPEND = r"""
 import { FakeNode, settle, find, all } from "@FAKE@";
@@ -706,7 +706,7 @@ def test_the_spend_meter_has_two_segments_with_both_numbers_labelled_and_the_run
     got = run_node(tmp_path, SPEND)
     assert got["words"] == ["$0.14 recorded · up to $1.50 reserved", "$0.14 recorded", "", "$0.00 recorded · up to $1.50 reserved"], "the reserved part only when something is reserved"
     assert got["meter"]["recorded"] == 0.14 and got["meter"]["reserved"] == 1.5 and got["meter"]["note"] == "$0.14 recorded · up to $1.50 reserved" and got["meter"]["text"] == "$1.64 / $2.00"
-    assert got["meter"]["shares"] == [0.07, 0.75] and got["meter"]["total"] == "Runs today: 3", "the shares are the page's division of the service's two numbers; the total is the service's"
+    assert got["meter"]["shares"] == [0.07, 0.75] and got["meter"]["total"] == "All runs today: 3", "the shares are the page's division of the service's two numbers; the total is the service's"
     assert got["over"][0] + got["over"][1] <= 1, "the two segments never pass the track"
     assert got["old"] == ["", 0.25, 0, None], "an entry with no split (an older service) is all recorded"
     p = got["plate"]
@@ -714,11 +714,11 @@ def test_the_spend_meter_has_two_segments_with_both_numbers_labelled_and_the_run
     assert got["cardLine"].endswith("spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved)")
     assert [round(x, 6) for x in got["sums"]] == [1.84, 0.34, 1.5, 4]
     assert got["kpi"]["note"] == ["$0.34 recorded · up to $1.50 reserved"] and got["kpi"]["reserved"] == 1 and "up to $1.50 reserved" in got["kpi"]["aria"]
-    assert "Runs today: 4" in got["kpi"]["runsTitle"]
+    assert "All runs today: 4" in got["kpi"]["runsTitle"]
     assert got["kpiNoReserve"] == [""], "nothing reserved: no second number, the line is empty"
-    assert got["caps"]["text"] == "Caps · engineering: runs 5 / 8, spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved), Runs today: 3"
-    assert got["tab"] == {"note": "$0.14 recorded · up to $1.50 reserved", "reserved": 1, "total": "Runs today: 3", "aria": "Spend today $1.64 / $2.00"}
-    assert got["during"] is True and got["after"] == [False, "Runs today: 3"], "the total is shown again after a not-accepted spell"
+    assert got["caps"]["text"] == "Caps · engineering: runs 5 / 8, spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved), All runs today: 3"
+    assert got["tab"] == {"note": "$0.14 recorded · up to $1.50 reserved", "reserved": 1, "total": "All runs today: 3", "aria": "Spend today $1.64 / $2.00"}
+    assert got["during"] is True and got["after"] == [False, "All runs today: 3"], "the total is shown again after a not-accepted spell"
     both = "$0.14 recorded (+2 of unknown cost)"
     assert got["unknown"]["tab"] == both and got["unknown"]["plate"] == [both] and got["unknown"]["card"].endswith("spend $0.14 / $2.00 ($0.14 recorded) (+2 of unknown cost)"), "both notes when both apply"
     assert got["unknown"]["reserved"] == "$0.14 recorded · up to $1.50 reserved", "when something is reserved the reservation already says so"

@@ -39,8 +39,9 @@ RUNS = [
 
 
 def test_the_three_words_are_the_same_in_the_manifest_reader_the_caps_and_the_store():
-    assert tuple(billing.WORDS) == tuple(autonomy.BILLINGS) == ("subscription", "metered", "free")
-    assert set(autonomy.RUNS_BILLINGS) | set(autonomy.SPEND_BILLINGS) == set(autonomy.BILLINGS)
+    assert tuple(billing.WORDS) == ("subscription", "metered", "free"), "the words a manifest may declare"
+    assert tuple(autonomy.BILLINGS) == billing.WORDS + ("unknown",), "the runtime adds one, for a route no manifest could bill"
+    assert set(autonomy.RUNS_BILLINGS) | set(autonomy.SPEND_BILLINGS) == set(autonomy.BILLINGS) - {"unknown"}
     assert set(autonomy.RUNS_BILLINGS) == {"subscription", "free"} and set(autonomy.SPEND_BILLINGS) == {"metered"}
 
 
@@ -67,6 +68,13 @@ def test_spend_is_the_split_folded_and_the_two_parts_add_up_to_the_dollars_exact
     assert "cost_usd" not in inspect.getsource(autonomy.spend), "spend reads spend_split: the rule is written once"
 
 
+def test_a_run_recorded_as_unknown_counts_as_metered_and_is_not_a_row_older_than_the_column():
+    rows = [{"agent": "a", "model": "ref", "billing": "unknown", "cost_usd": None}, {"agent": "a", "model": "ref", "billing": "unknown", "cost_usd": 0.2}]
+    assert autonomy.spend_split(rows, "a", 0.5) == {"usd_recorded": 0.2, "usd_reserved": 0.5, "runs_total": 2, "runs_counted": 0, "runs_without_cost": 1}
+    kept = autonomy.with_billing(rows, "floor")
+    assert [r["billing"] for r in kept] == ["unknown", "unknown"], "unknown is a word, not the NULL of an older row: the tier rule does not apply"
+
+
 def test_a_run_whose_billing_is_unknown_counts_as_metered_never_as_free():
     odd = [{"agent": "a", "model": "m", "billing": "prepaid", "cost_usd": 0.1}, {"agent": "a", "model": "m", "billing": None, "cost_usd": None}]
     split = autonomy.spend_split(odd, "a", 0.5)
@@ -82,6 +90,26 @@ def test_history_billing_follows_the_old_tier_rule_for_a_run_with_no_billing():
     assert autonomy.history_billing({"model": "another", "billing": None}, "floor") == "subscription"
     for word in autonomy.BILLINGS:   # a recorded billing is never replaced
         assert autonomy.history_billing({"model": "floor", "billing": word}, "floor") == word
+
+
+def test_the_three_cases_of_a_row_null_unknown_and_a_known_word():
+    rows = [{"agent": "a", "model": "ref", "billing": None, "cost_usd": None}, {"agent": "a", "model": "ref", "billing": "unknown", "cost_usd": None},
+            {"agent": "a", "model": "ref", "billing": "subscription", "cost_usd": None}]
+    filled = autonomy.with_billing(rows, "floor")
+    assert [r["billing"] for r in filled] == ["subscription", "unknown", "subscription"], "NULL: the tier rule (a reference-model run is a subscription run)"
+    assert autonomy.spend_split(filled, "a", 0.5)["runs_counted"] == 2 and autonomy.spend_split(filled, "a", 0.5)["usd_reserved"] == 0.5, "unknown: metered"
+
+
+def test_the_spend_limit_of_a_metered_run_is_the_per_run_limit_or_what_is_left_of_the_day():
+    entries, _ = checked(runs=2, usd=4.0)
+    entry = entries["a"]
+    assert autonomy.run_budget(entry, spent(usd=3.8), 0.5) == 0.2, "$4.00 cap, $3.80 spent: 0.20"
+    assert autonomy.run_budget(entry, spent(usd=0.0), 0.5) == 0.5, "plenty left: the per-run limit"
+    assert autonomy.run_budget(entry, spent(usd=3.97), 0.5) is None, "under the least budget: no run is started"
+    assert autonomy.run_budget(entry, spent(usd=4.0), 0.5) is None and autonomy.run_budget(entry, spent(usd=9.0), 0.5) is None
+    assert autonomy.run_budget(entry, spent(usd=3.999 - 3.9), 0.5) == 0.5
+    assert autonomy.run_budget(entry, spent(usd=3.8749), 0.5) == 0.12, "rounded down to the cent, never above what is left"
+    assert autonomy.MIN_RUN_BUDGET_USD == 0.05
 
 
 def test_with_billing_fills_only_the_runs_that_have_none_and_changes_no_input():
@@ -116,7 +144,8 @@ def test_a_subscription_or_free_run_is_held_by_the_runs_cap_only():
 
 def test_a_metered_run_is_held_by_the_dollar_cap_only():
     entries, f = checked(runs=2, usd=1.0)
-    assert autonomy.may_start("a", entries, f, spent(runs=9, usd=0.99), "metered") == (True, ""), "runs never hold a metered run"
+    assert autonomy.may_start("a", entries, f, spent(runs=9, usd=0.9), "metered") == (True, ""), "runs never hold a metered run"
+    assert autonomy.may_start("a", entries, f, spent(usd=0.97), "metered") == (False, "cap: usd per day"), "under the least budget a run may be given"
     assert autonomy.may_start("a", entries, f, spent(usd=1.0), "metered") == (False, "cap: usd per day")
     assert autonomy.may_start("a", entries, f, spent(usd=2.5), "metered") == (False, "cap: usd per day")
 
@@ -343,13 +372,13 @@ def test_a_metered_run_keeps_the_cost_the_adapter_reported_on_any_tier(tree, mon
     assert run["billing"] == "metered" and run["cost_usd"] == 0.01
 
 
-def test_a_run_whose_billing_cannot_be_resolved_is_recorded_without_one(tree, monkeypatch):
+def test_a_run_whose_billing_cannot_be_resolved_is_recorded_as_unknown(tree, monkeypatch):
     path = str(tree["project"])
     credentials(monkeypatch, strong=["EXAMPLE_UNLISTED"])
     monkeypatch.setenv("EXAMPLE_UNLISTED", "invented-value-never-shown")
     plan_single(tree)
     assert ops.run_next(path)["routing"]["billing"] is None
-    assert runs_of(tree)[0]["billing"] is None
+    assert runs_of(tree)[0]["billing"] == "unknown", "written at the start; NULL is only a row older than the column"
 
 
 def test_the_snapshot_carries_the_billing_of_each_ready_task(tree, monkeypatch):
@@ -458,3 +487,116 @@ def test_the_planning_agent_s_router_run_is_held_by_the_billing_of_its_route(tre
     run = store.route_run_start(conn, request, skill="core-orchestrator", model="m", adapter="h", billing="metered")["run_id"]
     store.route_run_finish(conn, run, status="ok", cost_usd=0.5)
     assert ops_say._planning_may_start(ctx) == (False, "cap: usd per day")
+
+
+# --- the spend limit travels with a metered run --------------------------------------------------------------------------------
+
+
+def watch_budget(monkeypatch) -> list:
+    """The max_cost each call of lab.run_skill gets."""
+    seen, real = [], lab.run_skill
+
+    def run_skill(*args, **kwargs):
+        seen.append(kwargs.get("max_cost"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(lab, "run_skill", run_skill)
+    return seen
+
+
+def test_a_metered_run_is_given_what_is_left_of_the_day_as_its_spend_limit(tree, monkeypatch):
+    path = str(tree["project"])
+    credentials(monkeypatch, strong=[API_KEY], floor_key=False)
+    monkeypatch.setenv(API_KEY, "invented-value-never-shown")
+    configure(tree, {"business": dict(AGENTS["business"], max_usd_per_day=4.0)})
+    plan_single(tree)
+    seed(tree, [("m", "metered", 3.8)])
+    seen = watch_budget(monkeypatch)
+    assert ops.run_next(path)["status"] == "ok"
+    assert seen == [0.2], "$4.00 cap and $3.80 spent: the run is given 0.20, not the per-run limit"
+
+
+def test_a_metered_run_with_plenty_left_gets_the_per_run_limit_and_a_subscription_run_none(tree, monkeypatch):
+    path = str(tree["project"])
+    seen = watch_budget(monkeypatch)
+    credentials(monkeypatch, strong=[API_KEY], floor_key=False)
+    monkeypatch.setenv(API_KEY, "invented-value-never-shown")
+    configure(tree, {"business": dict(AGENTS["business"], max_usd_per_day=4.0)})
+    plan_single(tree)
+    ops.run_next(path)
+    credentials(monkeypatch, floor_key=False)       # the harness's own login: a subscription
+    plan_single(tree)
+    ops.run_next(path)
+    assert seen == [0.5, None]
+
+
+def test_a_task_the_dollar_cap_leaves_under_the_least_budget_is_held_not_started(tree, monkeypatch):
+    path = str(tree["project"])
+    credentials(monkeypatch, strong=[API_KEY], floor_key=False)
+    monkeypatch.setenv(API_KEY, "invented-value-never-shown")
+    configure(tree, {"business": dict(AGENTS["business"], max_usd_per_day=4.0)})
+    plan_single(tree)
+    seed(tree, [("m", "metered", 3.97)])
+    out = ops.dispatch(path)
+    assert out["ran"] == [] and [h["reason"] for h in ops.status(path)["held"]] == ["cap: usd per day"]
+
+
+def test_a_run_started_on_a_route_no_manifest_bills_records_unknown_counts_as_metered_and_is_bounded(tree, monkeypatch):
+    path = str(tree["project"])
+    credentials(monkeypatch, strong=["EXAMPLE_UNLISTED"], floor_key=False)
+    monkeypatch.setenv("EXAMPLE_UNLISTED", "invented-value-never-shown")
+    plan_single(tree)
+    seen = watch_budget(monkeypatch)
+    assert ops.run_next(path)["status"] == "ok"
+    [run] = runs_of(tree)
+    assert run["billing"] == "unknown" and run["cost_usd"] is None and seen == [0.5]
+    [got] = ops.agents(path)["agents"]
+    assert got["runs_today"] == 0 and got["usd_reserved"] == pytest.approx(ops.PER_RUN_USD) and got["runs_without_cost"] == 1
+    assert got["caps_in_use"] == {"runs": True, "spend": True}, "nothing says which cap: both meters, as for a service that sends none"
+
+
+# --- the tier's billing and the container's environment ----------------------------------------------------------------------------
+
+
+def test_the_billing_of_a_tier_is_the_manifest_reading_of_the_gate_files_variables_for_both_tiers():
+    for tier, expected in (("strong", "subscription"), ("floor", "metered")):
+        found = lab.reference(tier)
+        assert ops_core._tier_billing(tier) == billing.of_route(billing.load(str(st.REPO)), found["adapter"], found["pass_env"]) == expected
+
+
+def test_the_container_environment_drops_a_provider_key_unless_it_is_passed(tmp_path, monkeypatch):
+    for name in ("ANTHROPIC_API_KEY", "CLAUDE_CODE_WEB_API_KEY"):
+        monkeypatch.setenv(name, "invented-value-never-shown")
+    bare = lab.LAB.contained_env(str(tmp_path / "a"), ())
+    assert "ANTHROPIC_API_KEY" not in bare and "CLAUDE_CODE_WEB_API_KEY" not in bare
+    passed = lab.LAB.contained_env(str(tmp_path / "b"), ("ANTHROPIC_API_KEY",))
+    assert "ANTHROPIC_API_KEY" in passed and "CLAUDE_CODE_WEB_API_KEY" not in passed
+
+
+def test_caps_in_use_reads_the_manifests_once_and_takes_the_key_from_its_caller(monkeypatch):
+    calls = []
+    real = billing.load
+    monkeypatch.setattr(billing, "load", lambda root: calls.append(root) or real(root))
+    monkeypatch.setattr(ops_core, "_floor_key", lambda: (_ for _ in ()).throw(AssertionError("the caller gives the key")))
+    both = ops_core._caps_in_use([], {"value": None, "source": "lab", "reason": None})
+    assert len(calls) == 1 and both == {"runs": True, "spend": True}
+    ops_core._caps_in_use([], {"value": None, "source": None, "reason": "no key"})
+    assert len(calls) == 2
+
+
+def test_lab_run_skill_hands_the_spend_limit_to_the_adapter_to_the_cent_and_refuses_a_nonsense_one(tree, tmp_path, monkeypatch):
+    kit, got, real = lab.load(), [], lab.load().run_failure
+
+    def run_failure(*args, **kwargs):
+        got.append(args[7] if len(args) > 7 else kwargs.get("max_cost"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(kit, "run_failure", run_failure)
+    for index, limit in enumerate((0.2, None)):
+        with lab.session():
+            lab.run_skill("demo-writes", "write it.", [], str(tmp_path / f"run-{index}"), max_cost=limit)
+    assert got == ["0.20", None], "--max-cost-usd gets a decimal number of dollars; no limit, no flag"
+    for bad in (0, -1, True, "0.2"):
+        with pytest.raises(lab.LabError) as refused:
+            lab.run_skill("demo-writes", "write it.", [], str(tmp_path / "bad"), max_cost=bad)
+        assert refused.value.kind == "config" and "max_cost" in refused.value.reason
