@@ -127,14 +127,13 @@ export function createFrame(root, handlers) {
   let currentRoute = null;
   let currentHash = null;
   let controlFrom = null;
-  let home = false;        // this Building is the one project's: Back is disabled and Escape does nothing (C-1)
   const onKey = (event) => {
     if (event.key !== "Escape" || event.defaultPrevented || !currentRoute) return;
     const dialogs = [...document.querySelectorAll("dialog[open]")];
     const requestMenu = document.querySelector(".wb-req-menu:not([hidden])");
     const step = escapeStep({
       route: currentRoute, field: isField(document.activeElement), dialog: dialogs.length > 0,
-      menu: switcher.isOpen() || waitingCard.isOpen() || Boolean(panelOf && panelOf.isOpen()) || Boolean(requestMenu), selection: Boolean(world && world.hasSelection()), from: controlFrom, origin: documentOrigin(), home,
+      menu: switcher.isOpen() || waitingCard.isOpen() || Boolean(panelOf && panelOf.isOpen()) || Boolean(requestMenu), selection: Boolean(world && world.hasSelection()), from: controlFrom, origin: documentOrigin(),
     });
     if (step.step === "none") return;
     event.preventDefault();
@@ -265,10 +264,10 @@ export function createFrame(root, handlers) {
       return world;
     },
     /**
-     * Set the screen: route (router.parse), the project's name (or null), the agent's display name for a floor, and `home`: this Building is the
-     * only project's (the page tells it, the router has no project list): Back is disabled there and Escape does nothing.
+     * Set the screen: route (router.parse), the project's name (or null), and the agent's display name for a floor. Back goes up one level on every screen
+     * but the City (M-1: the Building's Back leads to the City with one project too).
      */
-    setScreen(route, { projectName, projectId, leaf, home: isHome = false }) {
+    setScreen(route, { projectName, projectId, leaf }) {
       frame.dataset.screen = route.screen;
       heading.textContent = SCREEN_NAMES[route.screen] || "City";
       const hash = window.location.hash;
@@ -279,7 +278,6 @@ export function createFrame(root, handlers) {
         currentHash = hash;
       }
       currentRoute = route;
-      home = Boolean(isHome) && route.screen === "building";
       if (!["city", "building", "floor", "lobby"].includes(route.screen)) releaseWorld();   // the Control room draws its own scene
       const items = [{ label: "City", href: router.cityHash() }];
       if (route.screen !== "city" && projectName) {
@@ -287,7 +285,7 @@ export function createFrame(root, handlers) {
         if (route.screen !== "building") items.push({ label: leaf || SCREEN_NAMES[route.screen] });
       }
       items[items.length - 1] = { label: items[items.length - 1].label };
-      nav.set(items, home ? null : router.parentHash(route));
+      nav.set(items, router.parentHash(route));
       doorTarget = projectId ? router.controlHash(projectId) : null;
       door.disabled = !doorTarget;
       door.classList.toggle("is-selected", route.screen === "control");

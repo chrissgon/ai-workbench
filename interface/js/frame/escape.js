@@ -6,8 +6,8 @@
 //      decision to the Inbox list);
 //   4. a menu or a list is open (the project switcher, the open "Waiting for you" card, the command panel of the switcher's foot, the request list): it closes;
 //   5. a scene object is selected or hovered by the keyboard: the selection is cleared;
-//   6. else go up: the Floor and the Lobby to the Building, the Building to the City (`#/city`; on the home Building of a service with one
-//      project, nothing: the City is its crumb), the Control room to the screen it was opened from (else the Building of the project).
+//   6. else go up one level, always (M-1): the Floor and the Lobby to the Building, the Building to the City (`#/city`, with one project too),
+//      the Control room to the screen it was opened from (else the Building of the project); on the City, nothing.
 // Pure: no document and no window, so a test can run every step.
 
 import * as router from "../router.js";
@@ -15,10 +15,10 @@ import { closeHash } from "./origin.js";
 
 /**
  * state: {route (router.parse), field, dialog, menu, selection: booleans, from: the hash the Control room was opened from, or null,
- * origin: "inbox" when the open document came from the Inbox (frame/origin.js), else null, home: this Building is the one project's (router.isHomeBuilding)}.
+ * origin: "inbox" when the open document came from the Inbox (frame/origin.js), else null}.
  * Returns {step, hash?}: step is "none", "dialog", "document", "menu", "selection" or "up"; `hash` is where the page goes for "document" and "up".
  */
-export function escapeStep({ route, field = false, dialog = false, menu = false, selection = false, from = null, origin = null, home = false }) {
+export function escapeStep({ route, field = false, dialog = false, menu = false, selection = false, from = null, origin = null }) {
   if (field) return { step: "none" };
   if (dialog) return { step: "dialog" };
   const room = route.screen === "floor" || route.screen === "lobby";
@@ -27,7 +27,7 @@ export function escapeStep({ route, field = false, dialog = false, menu = false,
   if (menu) return { step: "menu" };
   if (selection) return { step: "selection" };
   if (route.screen === "floor" || route.screen === "lobby") return { step: "up", hash: router.buildingHash(route.project) };
-  if (route.screen === "building") return home ? { step: "none" } : { step: "up", hash: router.cityHash() };
+  if (route.screen === "building") return { step: "up", hash: router.cityHash() };
   if (route.screen === "control") return { step: "up", hash: from || router.buildingHash(route.project) };
   return { step: "none" };
 }

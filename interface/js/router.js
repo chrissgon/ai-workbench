@@ -1,6 +1,6 @@
 // The hash router: a pure parser and the builders of every link the frame draws. The hash forms are the flows' IA-4:
-//   #/city                               the City (always)
-//   #/                                   the entry: the City, or the Building of the one project of a service that holds one (main.js replaces it, on entry only)
+//   #/                                   the City, the page's first screen whatever the number of projects (M-1); nothing replaces it
+//   #/city                               the City too: the alias the crumb, Back and Escape link to
 //   #/p/<id>                             a project's building
 //   #/p/<id>/floor/<agent>[/<tab>[/<pending id>]]   an agent's floor (tab: agent, inbox, desk, tasks; the desk takes a document: /desk/<percent-encoded path>)
 //   #/p/<id>/lobby[/<tab>[/<pending id>]]            the planning agent's floor (tab: conversation, inbox, desk, tasks, agent; the desk takes a document like a floor's)
@@ -63,21 +63,6 @@ function finish(route, tail) {
 /** The hash of the City. */
 export function cityHash() {
   return "#/city";
-}
-
-/**
- * Where the entry hash goes (C-1): the hash of the Building of the one project, when the page was opened on `#/` (or on nothing) and the
- * service holds exactly one project; else null. `#/city` and every other hash are left alone, so a reload on the City stays there.
- */
-export function entryHash(hash, projectIds) {
-  const text = typeof hash === "string" ? hash : "";
-  if (text.replace(/^#\/?/, "") !== "") return null;
-  return Array.isArray(projectIds) && projectIds.length === 1 ? buildingHash(projectIds[0]) : null;
-}
-
-/** True when `route` is the Building of the only project of the service: its home, where Back is disabled and Escape does nothing. */
-export function isHomeBuilding(route, projectIds) {
-  return Boolean(route) && route.screen === "building" && Array.isArray(projectIds) && projectIds.length === 1 && projectIds[0] === route.project;
 }
 
 /** The hash of a project's building. */

@@ -1,4 +1,4 @@
-"""Tests of the page's behaviour changes of ADJ-B1 (the journeys review, before the new design): the City route and the one-project entry, the
+"""Tests of the page's behaviour changes of ADJ-B1 (the journeys review, before the new design): the City route (the one-project entry rule was reversed by M-1 of R4-DECISIONS: the page always opens on the City), the
 request line's route and the Lobby's Desk, the two-step hand-over, the board's words, the age word, the switcher with no project, the phone's
 list dialog that follows the reloads, the effect card's tab stops, the flow beside "Route it", the vendored typefaces, the light/dark preference
 and the README's lines. No browser, no model and no service: the modules run under Node with a fake document, as the other interface tests do.
@@ -45,7 +45,7 @@ def run_view(tmp_path: Path, body: str) -> dict:
     return json.loads(done.stdout.strip().splitlines()[-1])
 
 
-# --- row 1, C-1: the City has its own route; one project opens its Building ---------------------------------------------------------
+# --- row 1, C-1: the City has its own route; M-1 reversed the one-project entry: the City opens first and Escape always goes up -----------
 
 ROUTER = r"""
 import * as router from "@JS@/router.js";
@@ -56,17 +56,18 @@ const out = {};
 const use = (name, ...args) => (typeof router[name] === "function" ? router[name](...args) : `missing:${name}`);
 const brief = (r) => [r.screen, r.project, r.tab, r.pending, r.request === undefined ? "missing" : r.request];
 out.city = { parsed: router.parse("#/city").screen, hash: router.cityHash(), up: router.parentHash(router.parse(`#/p/${id}`)), slash: router.parse("#/city/").screen };
-out.entry = [
-  use("entryHash", "#/", [id]), use("entryHash", "", [id]), use("entryHash", "#", [id]), use("entryHash", "#/", [id, other]),
-  use("entryHash", "#/city", [id]), use("entryHash", `#/p/${other}`, [id]), use("entryHash", "#/", []), use("entryHash", "#/city", [id, other]),
-  use("entryHash", "#/unknown", [id]),
-];
+// M-1 (reverses D-4 / C-1): no entry rule and no home Building are left in the router
+out.removed = [typeof router.entryHash, typeof router.isHomeBuilding];
 const building = router.parse(`#/p/${id}`);
-out.home = [use("isHomeBuilding", building, [id]), use("isHomeBuilding", building, [id, other]), use("isHomeBuilding", router.parse(`#/p/${id}/floor/engineering`), [id]),
-  use("isHomeBuilding", router.parse("#/city"), [id]), use("isHomeBuilding", router.parse(`#/p/${other}`), [id]), use("isHomeBuilding", building, [])];
-out.escape = [escapeStep({ route: building }), escapeStep({ route: building, home: false }), escapeStep({ route: building, home: true }),
-  escapeStep({ route: building, home: true, selection: true }), escapeStep({ route: building, home: true, menu: true }),
-  escapeStep({ route: router.parse(`#/p/${id}/floor/engineering`), home: true }), escapeStep({ route: router.parse(`#/p/${id}/control`), home: true })];
+const floor = router.parse(`#/p/${id}/floor/engineering`);
+out.escape = [escapeStep({ route: building }), escapeStep({ route: building, selection: true }), escapeStep({ route: building, menu: true }),
+  escapeStep({ route: floor }), escapeStep({ route: router.parse(`#/p/${id}/lobby`) }), escapeStep({ route: router.parse(`#/p/${id}/control`) }),
+  escapeStep({ route: router.parse("#/city") }),
+  escapeStep({ route: building, home: true })];     // a stale `home` flag changes nothing: the exception is gone
+// M-1: from a Floor the City is two Escapes away, from the Building one
+const walk = (route) => { const steps = []; let r = route; while (steps.length < 5) { const s = escapeStep({ route: r }); if (s.step !== "up") break; steps.push(s.hash); r = router.parse(s.hash); } return steps; };
+out.walk = { floor: walk(floor), lobby: walk(router.parse(`#/p/${id}/lobby`)), building: walk(building), city: walk(router.parse("#/")) };
+out.root = [router.parse("#/").screen, router.parse("").screen, router.parse("#").screen];
 // C-2: the segment `request` after the tab is a request, a bare number is still a decision
 out.request = {
   route: brief(router.parse(`#/p/${id}/lobby/conversation/request/9`)),
@@ -83,23 +84,26 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_the_city_has_its_own_route_and_one_project_opens_its_building_on_entry_only(tmp_path):
+def test_the_city_has_its_own_route_and_no_entry_rule_sends_a_one_project_service_to_its_building(tmp_path):
     got = run_pure(tmp_path, ROUTER)
-    a, b = "0123456789ab", "ba9876543210"
     assert got["city"] == {"parsed": "city", "hash": "#/city", "up": "#/city", "slash": "city"}, "C-1: the crumb, Back and Escape lead to #/city"
-    assert got["entry"] == [f"#/p/{a}", f"#/p/{a}", f"#/p/{a}", None, None, None, None, None, None], \
-        "an empty, '#' or '#/' hash with exactly one project opens its Building; several projects, #/city, another route and no project change nothing"
-    assert got["home"] == [True, False, False, False, False, False], "the home Building is the one project's Building and no other screen"
+    assert got["removed"] == ["undefined", "undefined"], "M-1: the router has no entryHash (the one-project entry) and no isHomeBuilding"
+    assert got["root"] == ["city", "city", "city"], "M-1: `#/`, an empty hash and `#` are the City; `#/city` stays as an alias of it"
+    main = (JS / "main.js").read_text(encoding="utf-8")
+    assert not re.search(r"entryHash|isHomeBuilding|location\.replace|\bentered\b|\benter\(", main), "M-1: main.js has no entry rule that replaces the hash"
 
 
 @needs_node
-def test_escape_on_the_home_building_does_nothing_and_everywhere_else_goes_up_as_before(tmp_path):
+def test_escape_goes_up_one_level_everywhere_the_building_included_even_with_one_project(tmp_path):
     got = run_pure(tmp_path, ROUTER)
     a = "0123456789ab"
     assert got["escape"] == [
-        {"step": "up", "hash": "#/city"}, {"step": "up", "hash": "#/city"}, {"step": "none"},
-        {"step": "selection"}, {"step": "menu"}, {"step": "up", "hash": f"#/p/{a}"}, {"step": "up", "hash": f"#/p/{a}"},
-    ], "the home Building: Escape does nothing, but a selection and a menu still close first"
+        {"step": "up", "hash": "#/city"}, {"step": "selection"}, {"step": "menu"},
+        {"step": "up", "hash": f"#/p/{a}"}, {"step": "up", "hash": f"#/p/{a}"}, {"step": "up", "hash": f"#/p/{a}"},
+        {"step": "none"}, {"step": "up", "hash": "#/city"},
+    ], "M-1: the Building goes up to the City with one project too (a stale home flag changes nothing); a selection and a menu still close first"
+    assert got["walk"] == {"floor": [f"#/p/{a}", "#/city"], "lobby": [f"#/p/{a}", "#/city"], "building": ["#/city"], "city": []}, \
+        "M-1: the City is two Escapes from a Floor or the Lobby, one from the Building, and Escape does nothing on the City"
 
 
 @needs_node
@@ -130,7 +134,7 @@ document.querySelectorAll = () => [];
 const press = (key) => (document.listeners.keydown || []).forEach((fn) => fn({ key, defaultPrevented: false, preventDefault() {} }));
 const out = {};
 window.location.hash = `#/p/${a}`;
-frame.setScreen(router.parse(`#/p/${a}`), { projectName: "northwind-shop", projectId: a, home: false });
+frame.setScreen(router.parse(`#/p/${a}`), { projectName: "northwind-shop", projectId: a });
 out.several = { back: back().disabled, crumbs: crumbs() };
 back().listeners.click.forEach((fn) => fn({}));
 out.severalBack = window.location.hash;
@@ -138,7 +142,7 @@ window.location.hash = `#/p/${a}`;
 press("Escape");
 out.severalEscape = window.location.hash;
 window.location.hash = `#/p/${a}`;
-frame.setScreen(router.parse(`#/p/${a}`), { projectName: "northwind-shop", projectId: a, home: true });
+frame.setScreen(router.parse(`#/p/${a}`), { projectName: "northwind-shop", projectId: a, home: true });   // a stale flag: it changes nothing (M-1)
 out.home = { back: back().disabled, crumbs: crumbs() };
 press("Escape");
 out.homeEscape = window.location.hash;
@@ -149,13 +153,13 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_the_city_crumb_and_back_lead_to_the_city_route_and_the_home_building_has_no_back(tmp_path):
+def test_the_city_crumb_and_back_lead_to_the_city_route_and_back_is_never_disabled_on_the_building(tmp_path):
     got = run_scene_dom(tmp_path, FRAME)
     a = "aaaaaaaaaaaa"
     assert got["several"] == {"back": False, "crumbs": ["#/city"]}, "the City crumb is #/city"
     assert got["severalBack"] == "#/city" and got["severalEscape"] == "#/city", "Back and Escape from the Building lead to #/city"
-    assert got["home"] == {"back": True, "crumbs": ["#/city"]}, "Back is disabled on the home Building; the City is its crumb"
-    assert got["homeEscape"] == f"#/p/{a}", "Escape does nothing on the home Building"
+    assert got["home"] == {"back": False, "crumbs": ["#/city"]}, "M-1: Back is not disabled on the Building of a one-project service; the City is its crumb"
+    assert got["homeEscape"] == "#/city", "M-1: Escape on the Building of a one-project service goes up to the City"
     assert got["floor"] == {"back": False, "crumbs": ["#/city", f"#/p/{a}"]}, "a floor of a one-project service still goes up to the Building"
 
 
