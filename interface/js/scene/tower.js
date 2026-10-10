@@ -138,7 +138,7 @@ export function createTower(kit, lot, cx, cz) {
   const tower = {
     id: lot.id, lot, root, group, overlay, n, floorGroups, open: 0, target: 0, interior: false,
     vis: lot.floors.map(() => 1), visTarget: lot.floors.map(() => 1),
-    motions: [], markers: [], outlines: [], inner: [], parts: [], beacon: null, tag: null, brackets: bracketing,
+    motions: [], roomMotions: [], markers: [], outlines: [], inner: [], parts: [], beacon: null, tag: null, brackets: bracketing,
     shown: lot.floors.map((f) => ({ state: f.state, window: f.window, decisions: f.decisions, notes: null, documents: null })),
     cardAnchor: new THREE.Vector3(cx, 0, cz), plateAnchors: [], boardAnchors: [], doorAnchors: [], tagAnchor: new THREE.Vector3(), marksHidden: false,
   };
@@ -427,17 +427,18 @@ export function createTower(kit, lot, cx, cz) {
     refreshLists();
   }
 
-  /** The lists the engine reads (markers, motions, outlines) are the City's own (the notifications, the shadows) and each room's. */
+  /** The lists the engine reads (markers, motions, outlines) are the City's own (the notifications, the shadows) and each room's; a room's motions are kept apart (`roomMotions`). */
   function refreshLists() {
     tower.markers.length = 0;
     tower.motions.length = 0;
+    tower.roomMotions.length = 0;
     tower.outlines.length = 0;
     for (const motion of markMotions) if (motion) tower.motions.push(motion);
     for (const agent of agents) if (agent && agent.on) tower.motions.push(agent.motion);
     for (const lists of roomLists) {
       if (!lists) continue;
       tower.markers.push(...lists.markers);
-      tower.motions.push(...lists.motions);
+      tower.roomMotions.push(...lists.motions);   // the owls: the world takes them only while the room is the open one
       tower.outlines.push(...lists.outlines);
     }
   }

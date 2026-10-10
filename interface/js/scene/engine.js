@@ -24,6 +24,7 @@ import { buildWorld } from "./world.js";
 import { boundsOfBox, contentBounds, createCamera } from "./rig.js";
 import { createTween } from "./tween.js";
 import { frameSeconds } from "./prototype-motion.js";
+import { tooltipPlace } from "./room-words.js";
 
 export const BUILDERS = { world: buildWorld };   // the Control room registers its own kind here (views/control-scene.js)
 // The motions of the prototype (WP-9.10: its own functions, prototype-motion.js, stepped frame by frame): the camera approaches its
@@ -55,7 +56,9 @@ export function createEngine(host, options) {
   canvas.setAttribute("aria-describedby", "wb-camera-help");
   let renderer;
   try {
-    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // the room's layers (the owl's drawing, a note, a binder) stand 0.0016 of a unit apart in depth, which asks for a 24-bit depth buffer over the camera's 1 to 500: the plain
+    // (linear) one the browser gives by default, asked for here by name; a 16-bit one would fight (README, "The rooms")
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true, depth: true, logarithmicDepthBuffer: false });
   } catch (e) {
     throw new NoWebGL();
   }
@@ -660,8 +663,10 @@ export function createEngine(host, options) {
       // an object of a room has its tooltip over it (R-31); a building follows the pointer
       const above = result.hit.anchor ? project(result.hit.anchor) : null;
       tooltip.classList.toggle("is-above", Boolean(above));
-      tooltip.style.setProperty("--wb-x", `${(above ? above.x : Math.min(size.w - 20, result.x + 14)).toFixed(1)}px`);
-      tooltip.style.setProperty("--wb-y", `${(above ? above.y : result.y + 16).toFixed(1)}px`);
+      // the tooltip stays inside the canvas: a word over an object at the edge is moved in by half its width, and one over an object at the top is let down under the top edge
+      const { x, y } = tooltipPlace({ above, at: result, size, wide: tooltip.offsetWidth || 0, tall: tooltip.offsetHeight || 0 });
+      tooltip.style.setProperty("--wb-x", `${x.toFixed(1)}px`);
+      tooltip.style.setProperty("--wb-y", `${y.toFixed(1)}px`);
     } else {
       tooltip.hidden = true;
     }

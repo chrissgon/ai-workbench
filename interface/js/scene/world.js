@@ -30,13 +30,14 @@ function roomTips(floor, room) {
   const agent = (room.tips && room.tips.agent) || "";
   const documents = typeof floor.documents === "number" ? floor.documents : null;
   return {
-    agent: agentTip(agent, false), tray: agentTip(agent, true), tasks: tasksTip(floor.notes), desk: documentsTip(documents),
+    agent: agentTip(agent, false), tray: agentTip(agent, true), tasks: tasksTip(floor.notes, floor.plate && typeof floor.plate.left === "number" ? floor.plate.left : null), desk: documentsTip(documents),
     door: room.doorTip || "Control room · skills, costs, connections",
   };
 }
 
 /** The point over an object, for its tooltip: the middle of the top of its box in the world. */
 function topOf(THREE, object) {
+  object.updateWorldMatrix(true, true);   // a room made a moment ago has not been rendered: its matrices are as stale as its parents' (as `pick.js` brings them up to date)
   const box = new THREE.Box3().setFromObject(object);
   return new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2);
 }
@@ -110,6 +111,7 @@ export function buildWorld(kit, model) {
       const tower = towers.get(lot.id);
       markers.push(...tower.markers);
       motions.push(...tower.motions);
+      if (tower.interior && (focus === lot.id || tower.open > 0)) motions.push(...tower.roomMotions);   // an owl moves while its room is open or closing: the City ticks none after a visit
       outlines.push(...tower.outlines);
       brackets.push({ id: lot.id, group: tower.brackets.group, tower });
       if (tower.beacon) beacons.push(tower.beacon);
@@ -137,6 +139,9 @@ export function buildWorld(kit, model) {
         hits.push({ object: tower.root, id: lot.id, tip: lot.tip, pad: 0.06, brackets: true });   // R-17: a building is marked by its brackets, not by an outline
       }
     });
+    // F1: the brackets of a hit that is no longer one (a floor that opened into the Floor, an owl that left with a Back) are put away with it, whatever the pointer did
+    const kept = new Set(hits.map((hit) => hit.marks).filter(Boolean));
+    for (const hit of content.hits) if (hit.marks && !kept.has(hit.marks)) hit.marks.visible = false;
     for (const [key, list] of [["hits", hits], ["markers", markers], ["motions", motions], ["outlines", outlines], ["beacons", beacons], ["brackets", brackets]]) {
       content[key].length = 0;
       content[key].push(...list);

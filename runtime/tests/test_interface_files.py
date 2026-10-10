@@ -368,10 +368,10 @@ def test_the_ids_the_scenes_register_are_the_ids_the_screens_open():
     floor_view = (INTERFACE / "js" / "views" / "floor.js").read_text(encoding="utf-8")
     building_view = (INTERFACE / "js" / "views" / "building.js").read_text(encoding="utf-8")
     for hit in re.findall(r'hits\.push\(\{[^}]*id: "([a-z-]+)"', room):
-        if hit in ("agent", "desk", "tray"):
+        if hit in ("agent", "desk", "tray", "tasks"):
             assert f'"{hit}"' in floor_view, f"the Floor opens something for the room's {hit}"
     # R-31: the room's ways in are the owl (`agent`, or `tray` when it asks something), the board (`tasks`) and the bookcase (`desk`); a document is no longer an object of its own
-    # (R-23: no table of sheets). The board's id `tasks` is opened by the Floor screen's and the Lobby's own packages (R4-A4, R4-A5), which map it to the Tasks tab.
+    # (R-23: no table of sheets). The board is a way in (R-23b, R-31): the Floor and the Lobby open the Tasks tab for its id `tasks` (the loop above).
     assert '"tasks"' in room and 'asks ? "tray" : "agent"' in room and "sheet:" not in room
     assert "floor:" in building and "floor:" in building_view and '"door"' in building and "door" in building_view
 

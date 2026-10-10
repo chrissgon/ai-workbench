@@ -224,8 +224,9 @@ export function floorRow(agent, status, context) {
   const running = work.filter((t) => t.state === "running").length;
   const left = work.filter((t) => t.state === "planned" || t.state === "blocked").length;       // A-12: not started and not ready
   const queued = format.count(agent.queued);
-  // R-23b: the board of the room has one note for each task of the agent in the followed request, coloured by state (a cancelled task has none; a task not done and not running is still to do)
-  const notes = work.filter((t) => t.state !== "cancelled").map((t) => (t.state === "done" ? "done" : t.state === "running" ? "run" : "left"));
+  // R-23b: the board of the room has one note for each task of the agent in the followed request, coloured by state: done, running, failed (the error tone) or still to do (a cancelled
+  // task has none; every other state is still to do; the plate's "left" counts the planned and the blocked ones only, and the board's tooltip says that number)
+  const notes = work.filter((t) => t.state !== "cancelled").map((t) => (t.state === "done" ? "done" : t.state === "running" ? "run" : t.state === "failed" ? "fail" : "left"));
   const waiters = work.filter((t) => waitsOf(t).length > 0);       // A-29: planned tasks that wait for another task or request (counted under "left")
   const waits = waiters.length
     ? { text: waiters.length === 1 ? waitingLabel(waiters[0]) : `${waiters.length} waiting`, title: waiters.flatMap((t) => waitLines(t).map((line) => `task #${t.id} ${line}`)).join("; ") } : null;

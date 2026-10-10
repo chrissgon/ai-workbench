@@ -114,6 +114,7 @@ export function fillFloor(kit, parent, f, ctx) {
   const holder = () => {   // what a hit shows for the pointer: it stays while the brackets in it are made again
     const group = new THREE.Group();
     group.visible = false;
+    group.userData.brackets = true;   // brackets are drawn, never picked: a hit's own meshes are what the pointer meets (`pick.js`)
     return group;
   };
   const accepted = ctx.accepted !== false;

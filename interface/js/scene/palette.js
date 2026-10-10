@@ -174,7 +174,7 @@ export function roomTones(palette) {
   const eh = (t) => mix(emph, tm, t);                         // a step between the emphasis ground and the muted text
   const cover = (n) => [th, pick(mix(bg, th, 0.45), mix(tx, th, 0.45)), pick(mix(bg, T.warn, 0.55), mix(emph, T.warn, 0.6)), pick(mix(tm, emph, 0.3), eh(0.7))][n - 1];
   const tb = pick(mix(bg, emph, 0.7), mix(bgt, emph, 0.7));
-  const note = { done: pick(mix(bg, T.success, 0.45), mix(emph, T.success, 0.62)), run: th, left: pick(bg, mix(emph, tx, 0.55)) };
+  const note = { done: pick(mix(bg, T.success, 0.45), mix(emph, T.success, 0.62)), run: th, left: pick(bg, mix(emph, tx, 0.55)), fail: pick(mix(bg, T.error, 0.45), mix(emph, T.error, 0.62)) };
   const noteEdge = pick(eh(0.6), bgt);
   const shelfIn = pick(eh(0.42), eh(0.05));
   return {
@@ -199,8 +199,8 @@ export function roomTones(palette) {
     note,
     noteEdge,
     noteShadow: mix(tb, ink, 0.18),
-    noteFold: { done: mix(note.done, ink, 0.22), run: mix(note.run, ink, 0.22), left: mix(note.left, ink, 0.22) },
-    noteLine: { done: mix(note.done, ink, 0.38), run: mix(note.run, ink, 0.38), left: mix(note.left, ink, 0.38) },
+    noteFold: { done: mix(note.done, ink, 0.22), run: mix(note.run, ink, 0.22), left: mix(note.left, ink, 0.22), fail: mix(note.fail, ink, 0.22) },
+    noteLine: { done: mix(note.done, ink, 0.38), run: mix(note.run, ink, 0.38), left: mix(note.left, ink, 0.38), fail: mix(note.fail, ink, 0.38) },
     notePin: pick(mix(tm, tx, 0.4), tx),
     marker: all(th),
     markerB: all(pick(mix(tm, tx, 0.4), mix(emph, tx, 0.5))),

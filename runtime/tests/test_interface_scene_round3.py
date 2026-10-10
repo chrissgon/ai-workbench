@@ -47,7 +47,7 @@ def run_node_engine(tmp_path: Path, body: str) -> dict:
         f'export * from "{real}";\n'
         "export class WebGLRenderer {\n"
         "  constructor({ canvas }) { this.domElement = canvas; this.shadowMap = {}; this.draws = 0; }\n"
-        "  getContext() { return {}; } setClearColor() {} setPixelRatio() {} getPixelRatio() { return 1; } setSize() {} render() { this.draws += 1; } dispose() {} forceContextLoss() {}\n"  
+        "  getContext() { return {}; } setClearColor() {} setPixelRatio() {} getPixelRatio() { return 1; } setSize() {} render(scene) { this.draws += 1; globalThis.__scene = scene; } dispose() {} forceContextLoss() {}\n"  
         "  get info() { return { render: { calls: 0 }, memory: { geometries: 0 } }; }\n"
         "}\n", encoding="utf-8")
     (tmp_path / "hooks.mjs").write_text(

@@ -308,7 +308,7 @@ def test_a_room_has_three_ways_in_the_owl_the_board_and_the_bookcase_and_the_lob
     assert got["idle@planning"] == ["agent", "tasks", "desk", "lobby-door"], "the Lobby adds its door (R-42)"
     for ids in got.values():
         assert not any(i.startswith("sheet:") or i in ("cabinet", "board") for i in ids), "no sheet, no cabinet: a document is a binder of the bookcase, which opens the Desk"
-    for name, tab_by_id in (("floor.js", {"tray": "inbox", "desk": "desk", "agent": "agent"}), ("lobby.js", {"tray": "inbox", "desk": "desk", "agent": "agent"})):
+    for name, tab_by_id in (("floor.js", {"tray": "inbox", "desk": "desk", "agent": "agent", "tasks": "tasks"}), ("lobby.js", {"tray": "inbox", "desk": "desk", "agent": "agent", "tasks": "tasks"})):
         text = (JS / "views" / name).read_text(encoding="utf-8")
         for hit, tab in tab_by_id.items():
             assert re.search(rf'id === "{hit}"\) window\.location\.hash = router\.\w+\((?:project, agent|project), "{tab}"\)', text), f"{name}: {hit} opens {tab}"

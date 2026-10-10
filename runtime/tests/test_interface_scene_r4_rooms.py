@@ -420,13 +420,16 @@ def test_the_tooltips_say_what_the_owl_the_board_and_the_bookcase_open(tmp_path)
 import { agentTip, asking, documentsTip, tasksTip } from "@JS@/scene/room-words.js";
 console.log(JSON.stringify({
   agent: [agentTip("Brand · waiting for you", true), agentTip("Brand · waiting for you", false), agentTip("", true), agentTip(undefined, false)],
-  tasks: [tasksTip(["run", "left"]), tasksTip(["done", "left"]), tasksTip(["done", "done", "run", "left", "left", "left"]), tasksTip([]), tasksTip(null), tasksTip(["done"])],
+  tasks: [tasksTip(["run", "left"]), tasksTip(["done", "left"]), tasksTip(["done", "done", "run", "left", "left", "left"]), tasksTip([]), tasksTip(null), tasksTip(["done"]),
+    tasksTip(["done", "fail", "left"]), tasksTip(["done", "left", "left"], 1), tasksTip(["fail"], 0), tasksTip(["left"], 0)],
   documents: [documentsTip(7), documentsTip(14), documentsTip(0), documentsTip(null), documentsTip(undefined)],
   asking: [asking({ state: "waiting", decisions: 2 }), asking({ state: "waiting", decisions: 0 }), asking({ state: "working", decisions: 2 }), asking({ state: "off", decisions: 1 })],
 }));
 """)
     assert got["agent"] == ["Brand · waiting for you · open the Inbox", "Brand · waiting for you", "open the Inbox", ""], "the owl names its agent and its state, and where a click goes when it asks something (the page's words)"
-    assert got["tasks"] == ["Tasks · 1 running, 1 left", "Tasks · 1 done, 1 left", "Tasks · 2 done, 1 running, 3 left", "Tasks · none yet", "Tasks · none yet", "Tasks · 1 done"], "the board counts its notes by state, as the page's tooltips do"
+    assert got["tasks"] == ["Tasks · 1 running, 1 left", "Tasks · 1 done, 1 left", "Tasks · 2 done, 1 running, 3 left", "Tasks · none yet", "Tasks · none yet", "Tasks · 1 done",
+                          "Tasks · 1 done, 1 left, 1 failed", "Tasks · 1 done, 1 left", "Tasks · 1 failed", "Tasks · none yet"], \
+        "the board counts its notes by state, as the page's tooltips do; `left` is the plate's own number when it is given, and a failed task is counted apart"
     assert got["documents"] == ["Documents · 7", "Documents · 14", "Documents · none yet", "Documents", "Documents"], "the bookcase counts its documents"
     assert got["asking"] == [True, False, False, False], "an owl asks when its agent waits and has a decision open"
     words = re.sub(r"//.*", "", (SCENE / "room-words.js").read_text(encoding="utf-8"))
@@ -635,12 +638,13 @@ out.lobby = [floorOf(withRoom, "planning").documents, floorOf(withRoom, "enginee
 console.log(JSON.stringify(out));
 """)
     assert got["notes"] == {"marketing": ["done", "done", "left"], "brand": ["left"], "engineering": ["run"], "planning": [], "design": []}, \
-        "R-23b: one note for each task of the agent in the followed request: running is run, done is done, anything else still to do"
+        "R-23b: one note for each task of the agent in the followed request: running is run, done is done, failed is fail, anything else still to do"
     assert got["documents"]["engineering"] == 3 and got["documents"]["marketing"] == 1 and got["documents"]["planning"] == 1 and got["documents"]["design"] == 0, "R-23: a binder for each document of the agent"
     assert got["unread"] == [None, 1], "documents not read yet are unknown, not none: the world keeps what the bookcase shows"
     assert got["floor"] == [3] and got["lobby"] == [21, 3], "the room's own count replaces the floor's"
     model_js = (JS / "floor-model.js").read_text(encoding="utf-8")
-    assert 'state === "done" ? "done" : t.state === "running" ? "run" : "left"' in model_js and 't.state !== "cancelled"' in model_js, "a cancelled task has no note"
+    assert 't.state === "done" ? "done" : t.state === "running" ? "run" : t.state === "failed" ? "fail" : "left"' in model_js and 't.state !== "cancelled"' in model_js, \
+        "a cancelled task has no note; a failed one has the error tone's (R-23b: the page's three states, and a failed note is the state rule)"
     lobby = (JS / "views" / "lobby-model.js").read_text(encoding="utf-8")
     assert "documents: docs ? docs.length : null" in lobby, "the Lobby's room says how many documents the Desk lists"
 
@@ -662,6 +666,121 @@ console.log(JSON.stringify(out));
 """)
     assert got["ground"] is True and got["others"] == [False, False] and got["own"] is True and got["back"] == [True, True], \
         "the round's pages draw the streets and the parks round the room (floor.html, lobby.html): only the other buildings are put away"
+
+
+# --- the review of the package: fixes with their probes ---------------------------------------------------------------------------------------------
+
+@needs_node
+def test_the_brackets_of_an_object_that_is_no_longer_one_are_put_away_through_the_whole_sequence(tmp_path):
+    # F1: hover a floor, open it, point at the owl, leave: the room's brackets never stay round the Floor's room, and the owl's never stay after Back
+    got = run_node_engine(tmp_path, ENGINE_PAGE_JS + PRODUCT_JS + r"""
+const { createEngine } = await import("@JS@/scene/engine.js");
+const host = document.createElement("div");
+const engine = createEngine(host, { label: "scene", getInsets: () => ({ left: 0, right: 0, top: 0, bottom: 0 }), onOpen() {}, onHover() {} });
+const shown = () => { let n = 0; globalThis.__scene.traverse((o) => { if (o.userData && o.userData.brackets) { let p = o, vis = true; while (p) { if (!p.visible) vis = false; p = p.parent; } if (vis) n += 1; } }); return n; };
+const settle = () => { for (let i = 0; i < 6; i++) frame(40); };
+const building = worldModel(snapshot, NOW, { selectedId: A, focus: A, documents: [] });
+const room = worldModel(snapshot, NOW, { selectedId: A, focus: A, floor: "engineering", room: { tips: { agent: "Engineering" }, board: { title: "t", lines: [], dot: "theme" }, door: false }, documents: [] });
+const out = {};
+engine.show("world", building, "Building"); settle();
+out.building = shown();
+engine.highlight("floor:engineering"); out.floorHover = shown();
+engine.show("world", room, "Floor"); settle(); out.afterOpen = shown();
+engine.highlight("agent"); out.agentHover = shown();
+engine.highlight(null); out.cleared = shown();
+engine.highlight("tasks");
+engine.show("world", building, "Building"); settle(); out.afterBack = shown();
+engine.highlight(null); out.end = shown();
+console.log(JSON.stringify(out));
+""")
+    assert got == {"building": 0, "floorHover": 1, "afterOpen": 0, "agentHover": 1, "cleared": 0, "afterBack": 0, "end": 0}, \
+        "the brackets of a hit that disappears (a floor that opened, the owl after Back) are put away when the hits are made again"
+
+
+@needs_node
+def test_the_brackets_of_a_floor_are_drawn_never_picked(tmp_path):
+    # F5: the Building's room brackets live inside the floor's hit object; once shown they must not be a part of what the pointer meets
+    got = run_node(tmp_path, ROOMS_JS + r"""
+import { pickList } from "@JS@/scene/pick.js";
+const kit = createKit(palette);
+const world = buildWorld(kit, model({ focus: "a" }));
+world.setFocus("a", true);
+const ownedByMarks = () => { const list = pickList(world.hits); return list.meshes.filter((m) => { for (let p = m; p; p = p.parent) if (p.userData && p.userData.brackets) return true; return false; }).length; };
+const total = () => pickList(world.hits).meshes.length;
+const out = { hidden: [ownedByMarks(), total()] };
+for (const hit of world.hits) if (hit.marks) hit.marks.visible = true;
+out.shown = [ownedByMarks(), total()];
+out.groups = world.hits.filter((h) => h.marks).map((h) => Boolean(h.marks.userData.brackets));
+console.log(JSON.stringify(out));
+""")
+    assert got["hidden"][0] == 0 and got["shown"] == [0, got["hidden"][1]], "a shown bracket mesh is no pickable mesh: the pick list is the same with every bracket shown"
+    assert got["groups"] and all(got["groups"]), "every group of brackets a hit holds is flagged (userData.brackets)"
+
+
+@needs_node
+def test_a_tooltips_anchor_is_where_the_object_stands_after_a_rebuild_and_the_box_stays_inside_the_canvas(tmp_path):
+    # F3: the anchor reads the world matrices, brought up to date first (a room made a moment ago has not been rendered); F9: the box is kept in the canvas
+    got = run_node(tmp_path, ROOMS_JS + r"""
+import { tooltipPlace } from "@JS@/scene/room-words.js";
+const kit = createKit(palette); const scene = new THREE.Scene();
+const R = { tips: { agent: "x" } };
+const floors = (state) => ["planning", "business", "design", "engineering"].map((name, i) => ({ ...lot("a").floors[i], name, state: name === "design" ? state : "idle" }));
+const world = buildWorld(kit, model({ focus: "a", floor: "design", room: R, lots: [lot("a", { floors: floors("waiting") }), lot("b")] }));
+scene.add(world.group);
+world.setFocus("a", true); world.setFloors("design", null, true);
+const worst = () => { scene.updateMatrixWorld(true); let d = 0; for (const hit of world.hits) { if (!hit.anchor) continue; const box = new THREE.Box3().setFromObject(hit.object); const real = new THREE.Vector3((box.min.x + box.max.x) / 2, box.max.y, (box.min.z + box.max.z) / 2); d = Math.max(d, hit.anchor.distanceTo(real)); } return Math.round(d * 1e6) / 1e6; };
+const out = { ids: world.hits.map((h) => h.id), built: worst() };
+world.update(JSON.parse(JSON.stringify(model({ focus: "a", floor: "design", room: R, lots: [lot("a", { floors: floors("working") }), lot("b")] }))));   // a state change makes the room again, nothing rendered between
+out.rebuilt = worst();
+out.ids2 = world.hits.map((h) => h.id);
+out.place = {
+  middle: tooltipPlace({ above: { x: 400, y: 300 }, size: { w: 800, h: 600 }, wide: 120, tall: 24 }),
+  left: tooltipPlace({ above: { x: 10, y: 300 }, size: { w: 800, h: 600 }, wide: 120, tall: 24 }),
+  right: tooltipPlace({ above: { x: 795, y: 300 }, size: { w: 800, h: 600 }, wide: 120, tall: 24 }),
+  top: tooltipPlace({ above: { x: 400, y: 5 }, size: { w: 800, h: 600 }, wide: 120, tall: 24 }),
+  narrow: tooltipPlace({ above: { x: 20, y: 300 }, size: { w: 100, h: 600 }, wide: 120, tall: 24 }),
+  pointer: tooltipPlace({ at: { x: 700, y: 100 }, size: { w: 800, h: 600 }, wide: 120, tall: 24 }),
+};
+console.log(JSON.stringify(out));
+""")
+    assert "tasks" in got["ids"] and got["built"] == 0 and got["rebuilt"] == 0 and got["ids2"] == ["agent", "tasks", "desk"], "F3: every anchor is the top of its object's box, also straight after a room was made again"
+    place = got["place"]
+    assert place["middle"] == {"x": 400, "y": 300}, "inside: as it is"
+    assert place["left"]["x"] == 64 and place["right"]["x"] == 736, "an object at a side moves its box in by half its width and the margin"
+    assert place["top"]["y"] == 38 and place["narrow"]["x"] == 64, "an object at the top lets the box down under the top edge; a canvas narrower than the box centres it as far as it can"
+    assert place["pointer"] == {"x": 714, "y": 116}, "at the pointer: to its right and low, as before"
+    engine_text = (SCENE / "engine.js").read_text(encoding="utf-8")
+    assert "tooltipPlace({ above, at: result, size" in engine_text, "the engine places the tooltip with it"
+    world_text = (SCENE / "world.js").read_text(encoding="utf-8")
+    assert "object.updateWorldMatrix(true, true)" in world_text.split("function topOf")[1][:400], "topOf brings the matrices up to date first, as pick.js does"
+
+
+@needs_node
+def test_the_city_ticks_no_owl_after_a_visit_and_a_failed_task_has_the_error_tones_note(tmp_path):
+    # F4: the owls' motions belong to the open room only; F7: the failed note
+    got = run_node(tmp_path, ROOMS_JS + r"""
+const kit = createKit(palette);
+const plain = (id) => lot(id, { floors: ["planning", "business", "design", "engineering"].map((n, i) => ({ ...lot(id).floors[i], name: n, state: n === "planning" ? "idle" : "working", window: "lit" })) });
+const world = buildWorld(kit, model({ lots: [plain("a"), plain("b")] }));
+const out = { city: world.motions.length };
+world.setFocus("a", true);
+out.open = world.motions.length;
+world.setFocus(null, true);
+out.again = world.motions.length;
+world.setFocus("b", true);
+out.other = world.motions.length;
+world.setFocus(null, false);
+out.closing = world.motions.length;
+for (let i = 0; i < 400; i++) world.step ? world.step(0.05) : world.tick && world.tick(0.05);
+const tones = roomTones(palette);
+out.tones = Object.keys(tones.note);
+out.distinct = new Set(Object.values(tones.note).map((c) => c.getHexString())).size;
+out.fold = Object.keys(tones.noteFold); out.line = Object.keys(tones.noteLine);
+console.log(JSON.stringify(out));
+""")
+    assert got["open"] > got["city"] and got["again"] == got["city"], "the City's motions return to its own (the shadows) after a visit: the owls tick only in the open room"
+    assert got["other"] > got["city"] and got["closing"] >= got["city"]
+    assert got["tones"] == ["done", "run", "left", "fail"] and got["distinct"] == 4 and got["fold"] == got["tones"] and got["line"] == got["tones"], "a failed note has its own tone, fold and lines"
 
 
 # --- the files ----------------------------------------------------------------------------------------------------------------------------------------
