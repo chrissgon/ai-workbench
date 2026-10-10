@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 """The reads of the local interface and the signals of the local service: the change signal of the store (`version`),
-the stop of the runs a process started, the agents with their day, the conversation's messages, the skills with their
+the stop of the runs a process started, the conversation's commands as rows (`commands`), the agents with their day, the conversation's messages, the skills with their
 proof, the costs, the connections, the service's start check and the project's artifacts.
 
 A sibling of runtime/ops.py, which exposes each of them under its name; no shell imports this file. The names every

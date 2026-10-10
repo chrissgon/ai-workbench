@@ -8,16 +8,19 @@ Run: uv run --with pytest==9.1.1 pytest runtime/tests/test_chat_commands.py
 from __future__ import annotations
 
 import re
+import types
 
 import pytest
 
 import standin_tree as st
 from test_interface_plates_meters import needs_node, run_node
-from test_service import api, call, world  # noqa: F401  (the service over a stand-in operations object)
+from test_service import PORT, TOKEN, api, call, world  # noqa: F401  (the service over a stand-in operations object)
 from test_service_conversation import Page, served  # noqa: F401  (the service started over the real operations layer)
 from test_chat import tree  # noqa: F401  (the conversation's stand-in project, its configuration accepted)
 
+lab = st.load("lab")
 ops = st.load("ops")
+ops_core = st.load("ops_core")
 operations = st.load("operations")
 service = st.load("service")
 
@@ -103,6 +106,25 @@ def test_the_route_is_a_read_that_takes_no_query_and_answers_the_rows_with_the_t
     assert call(world, "POST", api(world, "/commands"), {})[0] == 405
     assert call(world, "GET", "/api/v1/projects/000000000000/commands")[0] == 404
     assert world.fake.calls == []
+
+
+@pytest.fixture
+def unaccepted(tmp_path, monkeypatch):
+    """The service over the real operations and a project whose configuration nobody accepted (as test_service.py's `real`)."""
+    built = st.build(tmp_path, monkeypatch, lab)
+    monkeypatch.setattr(ops_core, "ROOT", str(built["tree"]))
+    path = str(built["project"])
+    projects = [{"id": service.project_id(path), "name": "project", "path": path}]
+    return types.SimpleNamespace(svc=service.Service(ops, projects, TOKEN, PORT, str(tmp_path / "no-interface"), log=lambda _l: None),
+                                 projects=projects, path=path)
+
+
+def test_the_read_is_refused_with_412_not_configured_until_the_configuration_is_accepted(unaccepted):
+    status, _, body = call(unaccepted, "GET", api(unaccepted, "/commands"))
+    assert status == 412 and body["error"] == "not_configured" and "accept-config" in body["next"], body
+    ops.accept_config(unaccepted.path, ops.project_config.load(unaccepted.path)["sha256"])
+    status, _, body = call(unaccepted, "GET", api(unaccepted, "/commands"))
+    assert status == 200 and body == {"commands": operations.chat_command_rows()}
 
 
 def test_the_service_answers_what_help_prints_over_http_with_the_real_operations(served):  # noqa: F811
