@@ -2505,28 +2505,9 @@ def _held_listed(ctx: dict, rows: list) -> list:
     out = []
     for h in record.get("held") or []:
         if h.get("task_id") in ids:
-            out.append({**h, "at": record.get("at"), "next": _held_next(project, h["reason"], record.get("missing")),
+            out.append({**h, "at": record.get("at"), "next": ops_reads.held_next(project, h["reason"], record.get("missing")),
                         "commands": ops_reads.held_commands(project, h["reason"], record.get("missing"))})
     return out
-
-
-def _held_next(project: str, reason: str, missing=None):
-    """What gets past a reason, or None when nothing a command or a sentence can say does (a cap, an agent that is
-    stopped: edits of the configuration). `secret store`: the command that starts the service with the secret store's
-    library. `credential` (the store is readable, the key is not in it): a sentence that names the variables the round
-    found missing (else those of the reference model's credential) and, for each, the username it is stored under
-    (lab.credential_usernames, from the adapters' manifests) in the command that stores it, or the table of
-    contracts/secrets.md when none is registered; it gives no value and invents none."""
-    if reason == "secret store":
-        return operations.service_line(core.ROOT, [project], uv=True)
-    if reason == "credential":
-        steps = "; ".join(f"{c['name']}: {c['command']}" if c["command"] else
-                          f"{c['name']}: {operations.keyring_line('<username>')} (the username is in the table of contracts/secrets.md)"
-                          for c in ops_reads.held_commands(project, reason, missing)) \
-            or "the reference model's credential: see the table of contracts/secrets.md"
-        return (f"The credential is in neither the environment nor the secret store. Store it once, the value typed at a "
-                f"hidden prompt, or export it in the shell that starts the service. {steps}.")
-    return None
 
 
 def _ticks(ctx: dict, project: str) -> dict:

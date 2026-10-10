@@ -4,8 +4,10 @@
 //
 // Where each piece comes from: the head of the restart line (everything before the first `--project`: the runner and the service's script) is the
 // service's own start line, read from `connections.service.start` of an accepted project, which carries the absolute path of this checkout; the
-// folders of the projects it holds are the folders of their configuration files (`status.config.path`, minus the configuration's own place); the
-// folder to add is what the person typed. A folder the page does not know (a project never accepted) is written `<folder of NAME>`, to be replaced.
+// folders of the projects it holds are the `folder` of each entry of `GET /projects` (A-34: the service knows it for every project, accepted or
+// not), else, for an answer without the key, the configuration file's place (`status.config.path`, minus the configuration's own place); the
+// folder to add is what the person typed. A folder the page cannot know at all is written `<folder of NAME>`, to be replaced; the service's
+// answer always carries it, so that form is a fallback and not a case the person meets.
 // When the service's start line cannot be read, the head is the known form with the checkout left for the person to fill in.
 
 const CONFIG_TAIL = "/docs/workbench/runtime.json";
@@ -77,13 +79,14 @@ export function folderOf(configPath) {
   return typeof configPath === "string" && configPath.endsWith(CONFIG_TAIL) && configPath.length > CONFIG_TAIL.length ? configPath.slice(0, -CONFIG_TAIL.length) : null;
 }
 
-/** The projects the service holds, from the page's snapshot: [{id, name, folder|null}], in the service's order. */
+/** The projects the service holds, from the page's snapshot: [{id, name, folder|null}], in the service's order. The folder is the service's own (`folder` of the entry). */
 export function projectsOf(snapshot) {
   const listed = snapshot && Array.isArray(snapshot.projects) ? snapshot.projects : [];
   return listed.map((p) => {
     const detail = snapshot.details && snapshot.details[p.id];
     const status = detail && detail.status;
-    return { id: p.id, name: p.name, folder: folderOf(status && status.config && status.config.path) };
+    const given = typeof p.folder === "string" && p.folder ? p.folder : null;
+    return { id: p.id, name: p.name, folder: given || folderOf(status && status.config && status.config.path) };
   });
 }
 
