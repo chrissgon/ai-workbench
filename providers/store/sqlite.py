@@ -23,6 +23,7 @@ messages of the conversation with the planning agent (conversation_messages), an
 adds triggers that refuse to delete a task, a task run or a pending decision (limit L13, as for the approvals). Schema
 version 8 adds the derived waits between requests: the `after_request` column of a request and the task_waits table (a
 planned task waits for another task, or for a whole request, with the reason shown to the person), under the same rule.
+Schema version 9 adds the `billing` column of task_runs: how the credential a run used is billed, which the daily caps count by.
 
 Concurrency: the database runs in WAL mode (readers never block the writer) with a 10-second busy
 timeout, and every write is one BEGIN IMMEDIATE transaction, so several agents and overlapping
@@ -49,7 +50,7 @@ from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 BUSY_TIMEOUT_SECONDS = 10
 PATH_ENV = "STORE_SQLITE_PATH"
 
@@ -324,6 +325,11 @@ MIGRATIONS = {
         # Limit L13, as for the other records of the task runtime: a wait is never deleted, it ends.
         """CREATE TRIGGER task_waits_never_deleted BEFORE DELETE ON task_waits
             BEGIN SELECT RAISE(ABORT, 'a task wait is never deleted'); END""",
+    ]),
+    # ADJ-R3 (row A-38): the billing of the credential a run used, written when the run starts. The daily caps count by it
+    # (subscription and free: runs; metered: dollars). A run older than the column has none (NULL): history only.
+    9: ("the billing of the credential a task run used", [
+        "ALTER TABLE task_runs ADD COLUMN billing TEXT CHECK (billing IS NULL OR billing IN ('subscription', 'metered', 'free'))",
     ]),
 }
 
@@ -1049,6 +1055,14 @@ PENDING_KINDS = ("plan", "question", "review", "effect", "acceptance", "your_doc
 PENDING_STATUSES = ("open", "resolved", "cancelled")
 RUN_FAILURES = ("timeout", "refused", "auth", "adapter", "early_end", "settings", "stopped", "internal")
 RUN_ENDINGS = ("done", "question", "draft_with_questions", "gate", "blocked", "unclassified")
+RUN_BILLINGS = ("subscription", "metered", "free")
+
+
+def _billing_arg(value):
+    """The billing a run is started with: None, or one of RUN_BILLINGS (migration 9 checks the column the same way)."""
+    if value is not None and value not in RUN_BILLINGS:
+        raise StoreError(f"billing must be one of {', '.join(RUN_BILLINGS)}", EXIT_USAGE)
+    return value
 # What a resolution does to the task that waited: the resolutions of later kinds are added with their stage.
 RESOLUTIONS = {"answered": "ready", "released": "done"}
 RELEASABLE_KINDS = ("review",)
@@ -1285,8 +1299,11 @@ def task_claim_next(conn: sqlite3.Connection) -> dict:
 
 
 def task_run_start(conn: sqlite3.Connection, task_id: int, *, skill: str, model: str, adapter: str,
-                   skill_version: str | None = None, skill_sha256: str | None = None, web: bool = False) -> dict:
-    """Record the start of a run of a task that is `running`. Returns {"run_id", "task_id", "started_at"}."""
+                   skill_version: str | None = None, skill_sha256: str | None = None, web: bool = False,
+                   billing: str | None = None) -> dict:
+    """Record the start of a run of a task that is `running`. billing is how the credential the run uses is billed
+    (RUN_BILLINGS; None when the runtime cannot tell): the daily caps count by it. Returns {"run_id", "task_id", "started_at"}."""
+    billing = _billing_arg(billing)
     skill = text_arg(skill, "skill", LABEL_MAX)
     model = text_arg(model, "model", REF_MAX)
     adapter = text_arg(adapter, "adapter", LABEL_MAX)
@@ -1298,9 +1315,9 @@ def task_run_start(conn: sqlite3.Connection, task_id: int, *, skill: str, model:
         if _task(conn, task_id)["state"] != "running":
             raise StoreError(f"task {task_id} is not running: a run starts on a task that task_claim_next gave out")
         run_id = conn.execute(
-            "INSERT INTO task_runs (task_id, skill, skill_version, skill_sha256, model, adapter, web, started_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (task_id, skill, skill_version, skill_sha256, model, adapter, 1 if web else 0, now)).lastrowid
+            "INSERT INTO task_runs (task_id, skill, skill_version, skill_sha256, model, adapter, web, started_at, billing) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (task_id, skill, skill_version, skill_sha256, model, adapter, 1 if web else 0, now, billing)).lastrowid
     return {"run_id": run_id, "task_id": task_id, "started_at": now}
 
 
@@ -1652,12 +1669,13 @@ def acceptance_resolve(conn: sqlite3.Connection, pending_id: int, *, resolution:
 
 def route_run_start(conn: sqlite3.Connection, request_id: int, *, skill: str, model: str, adapter: str,
                     skill_version: str | None = None, skill_sha256: str | None = None, web: bool = False,
-                    reroute: bool = False) -> dict:
+                    reroute: bool = False, billing: str | None = None) -> dict:
     """A run of the router on a request: a row of task_runs whose task is the request. Refused unless the request
     is `requested` with no open pending decision, no task of the database is running and no run row is running.
     With reroute (stage 6: one delivery of an approved plan routed again after its brief), the request is `planned`
     or `done` instead, and an open pending decision on it does not refuse the run.
-    Returns {"run_id", "request_id", "started_at"}."""
+    billing is recorded as task_run_start records it. Returns {"run_id", "request_id", "started_at"}."""
+    billing = _billing_arg(billing)
     skill = text_arg(skill, "skill", LABEL_MAX)
     model = text_arg(model, "model", REF_MAX)
     adapter = text_arg(adapter, "adapter", LABEL_MAX)
@@ -1680,9 +1698,9 @@ def route_run_start(conn: sqlite3.Connection, request_id: int, *, skill: str, mo
         if busy or conn.execute("SELECT 1 FROM task_runs WHERE status = 'running'").fetchone():
             raise StoreError("a run is in progress: one run at a time per project")
         run_id = conn.execute(
-            "INSERT INTO task_runs (task_id, skill, skill_version, skill_sha256, model, adapter, web, started_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            (request_id, skill, skill_version, skill_sha256, model, adapter, 1 if web else 0, now)).lastrowid
+            "INSERT INTO task_runs (task_id, skill, skill_version, skill_sha256, model, adapter, web, started_at, billing) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (request_id, skill, skill_version, skill_sha256, model, adapter, 1 if web else 0, now, billing)).lastrowid
     return {"run_id": run_id, "request_id": request_id, "started_at": now}
 
 
@@ -2333,14 +2351,14 @@ def tasks_add(conn: sqlite3.Connection, request_id: int, tasks, waits: list | No
 
 
 RUNS_SINCE = ("SELECT r.id, r.task_id, COALESCE(t.parent_id, t.id) AS request_id, t.agent, r.skill, r.model, "
-              "r.adapter, r.status, r.failure, r.cost_usd, r.started_at, r.ended_at FROM task_runs r "
+              "r.adapter, r.status, r.failure, r.cost_usd, r.billing, r.started_at, r.ended_at FROM task_runs r "
               "JOIN tasks t ON t.id = r.task_id WHERE r.started_at >= ? AND (? IS NULL OR t.agent = ?) ORDER BY r.id")
 
 
 def runs_since(conn: sqlite3.Connection, since: str, *, agent: str | None = None) -> list:
     """The runs started at or after since (ISO-8601), oldest first, each with the agent of its task and its request:
     {"id", "task_id", "request_id", "agent", "skill", "model", "adapter", "status", "failure", "cost_usd",
-    "started_at", "ended_at"}. A run of the router belongs to its request, whose agent is None. With agent, only the
+    "billing" (None for a run older than migration 9), "started_at", "ended_at"}. A run of the router belongs to its request, whose agent is None. With agent, only the
     runs of that agent's tasks."""
     since = since_arg(since, "since")
     agent = text_arg(agent, "agent", LABEL_MAX, required=False)
