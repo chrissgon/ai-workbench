@@ -116,6 +116,7 @@ function askForToken(message) {
   root.replaceChildren(holder);
   showTokenPrompt(holder, {
     message: message || pendingMessage,
+    tokenFile: () => api.tokenFile({ signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined }),
     onSubmit: async (pasted) => {
       setToken(pasted);
       pendingMessage = null;

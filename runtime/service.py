@@ -47,7 +47,7 @@ The rules of a request, in this order, each a refusal unless the request satisfi
   3. Origin, when present, is http://127.0.0.1:<port> or http://localhost:<port>, else 403 "origin"; a POST without an
      Origin is refused the same way.
   4. A path under /api/ needs "Authorization: Bearer <token>" (hmac.compare_digest), else 401 "token". The static files
-     need none and hold no data.
+     need none and hold no data. One more path needs none, GET /token-file, outside /api/: see "Before the token".
   5. Only GET and POST (OPTIONS and every other method: 405 "method", and no Access-Control-* header is ever sent). A
      POST needs Content-Type application/json and a Content-Length of at most 1 MiB (the file route: 34 MiB, the base64
      of a 25 MiB file), else 415 "content_type", 411 "length" or 413 "too_large". Its body is one JSON object whose keys
@@ -70,6 +70,14 @@ The rules of a request, in this order, each a refusal unless the request satisfi
  11. The log line is the method, the path (never the query), the status and the duration. Never a header, a body or the
      token.
  12. Text a model or a stranger wrote leaves as a JSON string; the page shows it as text, never as markup.
+
+Before the token. The page cannot tell the person where the token file is until it holds the token, so the service answers
+one unauthenticated read, GET /token-file (outside /api/, under rules 2, 3, 5 and 9: no CORS header, Cache-Control no-store,
+GET only, no query): {"token_file": <the absolute path>, "commands": {"macos", "linux", "powershell"}}, the commands
+being the operations layer's text (operations.token_commands) that put the file's content on the clipboard or print it in
+a terminal. It never holds the token. A path with a control character has no safe command: both values are then null. A
+service without a token file (a test's) answers 404. What the answer names, the account and the project's folder, is
+readable by any local process on this origin; contracts/runtime.md says why that is accepted.
 
 The reads of the interface are GET routes that carry no job: /projects/<id>/agents, /conversation?after=&conversation=,
 /skills, /costs?since=, /connections, /artifacts, /artifact?path= (the path is at most 512 bytes; the operation
@@ -133,6 +141,7 @@ UPLOAD_BYTES = 25 * 1024 * 1024           # what a hand-over takes (runtime/drop
 UPLOAD_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,99}")  # a plain file name (runtime/drop.py NAME, checked again there)
 UPLOADS = "uploads"                       # <data_dir>/uploads/<random>/<name>, removed after the hand-over
 TOKEN_NAME = "service.token"
+TOKEN_FILE_ROUTE = "/token-file"          # the one path outside /api/ that answers data; it needs no token and never holds one
 PATH_LIMIT = 2048
 QUERY_VALUE_LIMIT = 512                   # bytes of one query value on a route that names a project file (artifact?path=)
 STATIC_LIMIT = 16 * 1024 * 1024
@@ -440,13 +449,14 @@ class Service(shell_kit.Jobs):
     """What a request is served from: the operations object (the module ops, or a stand-in), the projects, the token,
     the port, the folder of the static files, the jobs (shell_kit.Jobs). Holds the token without ever showing it."""
 
-    def __init__(self, ops_module, projects, token: str, port: int, interface_dir=None, log=None):
+    def __init__(self, ops_module, projects, token: str, port: int, interface_dir=None, log=None, token_file=None):
         if not isinstance(token, str) or len(token) < 32:
             raise ValueError("the token is at least 32 characters")
         super().__init__(ops_module, projects, log)
         self.token = token
         self.port = int(port)
         self.interface_dir = interface_dir
+        self.token_file = token_file   # the absolute path of the token file, or None (then GET /token-file is not a route)
         self.address = None      # (host, port) the socket is bound to, set by serve()
 
     def __repr__(self) -> str:
@@ -570,6 +580,19 @@ def _operation(service: Service, route: dict, params: dict, query: str, body: by
     return _json(200, call())
 
 
+def _token_file(service: Service, method: str, query: str) -> tuple:
+    """GET /token-file: the token file's absolute path and the commands that read it, never the token. Both are null when
+    the path has a control character (no safe command exists). The commands are the operations layer's text."""
+    if method != "GET":
+        return _error(405, "method")
+    if service.token_file is None:
+        return _error(404, "not_found")
+    if query:
+        return _error(400, "usage", "this route takes no query")
+    commands = service.ops.operations.token_commands(service.token_file)
+    return _json(200, {"token_file": service.token_file if commands else None, "commands": commands})
+
+
 def _static(service: Service, method: str, bare: str) -> tuple:
     if method != "GET":
         return _error(405, "method")
@@ -605,6 +628,8 @@ def handle(service: Service, method: str, path: str, headers: dict, body: bytes)
     if refused:
         return _error(*refused)
     bare, _, query = path.partition("?")
+    if bare == TOKEN_FILE_ROUTE:
+        return _token_file(service, method, query)
     if not _is_api(bare):
         return _static(service, method, bare)
     found = match(method, bare)
@@ -772,7 +797,7 @@ def serve(projects, port=8765, poll_every=60.0, dispatch_every=DISPATCH_EVERY, t
         print(f"error: cannot listen on {HOST}:{port}: {e.strerror}", file=sys.stderr)
         return 1
     service = Service(ops_module, [{k: p[k] for k in ("id", "name", "path")} for p in found], token,
-                      server.server_address[1], interface_dir, log)
+                      server.server_address[1], interface_dir, log, token_file=os.path.abspath(target))
     service.address = tuple(server.server_address[:2])
     server.RequestHandlerClass = make_handler(service)
     try:
