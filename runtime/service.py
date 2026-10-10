@@ -80,7 +80,7 @@ service without a token file (a test's) answers 404. What the answer names, the 
 readable by any local process on this origin; contracts/runtime.md says why that is accepted.
 
 The reads of the interface are GET routes that carry no job: /projects/<id>/agents, /conversation?after=&conversation=,
-/skills, /costs?since=, /connections, /artifacts, /artifact?path= (the path is at most 512 bytes; the operation
+/skills, /costs?since=, /connections, /artifacts, /commands (the rows `/help` prints), /artifact?path= (the path is at most 512 bytes; the operation
 refuses anything outside docs/, a hidden file, a link and the configuration), /artifact/raw?path= (the one route that
 answers bytes: an image of the project, by its magic number, at most 25 MiB, with its media type, the page's policy
 and Content-Disposition inline; its row lists the page channel only) and /version (the change signal of the project's store: a
@@ -226,6 +226,7 @@ ROUTES = (
     _route("GET", "/projects/{p}/artifact", "artifact", take=("path",), query_max=QUERY_VALUE_LIMIT),
     _route("GET", "/projects/{p}/artifact/raw", "artifact-raw", take=("path",), query_max=QUERY_VALUE_LIMIT, raw=True),
     _route("GET", "/projects/{p}/version", "version", take=()),
+    _route("GET", "/projects/{p}/commands", "commands", take=()),
     _route("GET", "/versions", own="versions"),
     _route("POST", "/projects/{p}/conversation", "say"),
     _route("POST", "/projects/{p}/sync", "sync"),

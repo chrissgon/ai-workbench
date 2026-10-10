@@ -4,7 +4,7 @@
 # dependencies = []
 # ///
 """The reads of the local interface and the signals of the local service: the change signal of the store (`version`),
-the stop of the runs a process started, the agents with their day, the conversation's messages, the skills with their
+the stop of the runs a process started, the conversation's commands as rows (`commands`), the agents with their day, the conversation's messages, the skills with their
 proof, the costs, the connections, the service's start check and the project's artifacts.
 
 A sibling of runtime/ops.py, which exposes each of them under its name; no shell imports this file. The names every
@@ -81,6 +81,14 @@ def version(project: str) -> dict:
     stamps = [os.stat(path).st_mtime for path in (db, db + "-wal") if os.path.exists(path)]
     changed = datetime.datetime.fromtimestamp(max(stamps), datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
     return {"version": number, "changed_at": changed}
+
+
+def commands(project: str) -> dict:
+    """The commands of the conversation as rows: {"commands": [{"command", "arguments", "help"}]}, the lines `/help` prints
+    in the order it prints them (operations.chat_command_rows, built from the table `/help` is built from). The page lists
+    them when the person types `/`. The project is only the configuration check every operation makes."""
+    core.context(project)
+    return {"commands": operations.chat_command_rows()}
 
 
 def stop_runs(project: str | None = None) -> dict:

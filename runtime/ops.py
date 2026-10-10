@@ -2766,7 +2766,7 @@ from ops_say import chat_memory, route_queued, say  # noqa: E402,F401
 from ops_say import ASK_NEXT, CONVERSATION, MEMORY_CHARS, MEMORY_CUT, MEMORY_HEAD, MEMORY_TAIL, MEMORY_TURNS, PLAN_NEXT  # noqa: E402,F401
 # The reads of the local interface (runtime/ops_reads.py): the operations, and the one constant a test reads.
 from ops_reads import agents, artifact, artifact_raw, artifacts, connections, conversation, costs, service_check, skills  # noqa: E402,F401
-from ops_reads import stop_runs, version  # noqa: E402,F401
+from ops_reads import commands, stop_runs, version  # noqa: E402,F401
 from ops_reads import ARTIFACT_MAX_BYTES  # noqa: E402,F401
 
 
