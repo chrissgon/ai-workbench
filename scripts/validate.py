@@ -26,6 +26,10 @@ Checks every skill under skills/ and every agent under agents/:
   - copies: every adopted copy listed in shared/scripts/copies.json is byte-identical to its source, and the
     manifest itself is valid (scripts/sync_copies.py --check; fix: change the source, then run
     python3 scripts/sync_copies.py). A generated copy is never edited by hand
+  - adapter-billing: every entry of the "secrets" list of adapters/<harness>/adapter.json has "billing", one of
+    subscription, metered or free (how the credential is billed: the daily caps of the runtime count runs for the
+    first and the last and dollars for metered); the optional "login_billing" of a manifest is one of the three; one
+    credential listed by two manifests has the same word in both. An error, one line per entry
   - frontmatter is read by this file's own parser on every machine, whatever library is installed
   - english-only: no tracked text file contains Portuguese-specific diacritics or words, except
     on a line carrying `validate: allow english-only -- <reason>` or a path listed in
@@ -1090,6 +1094,48 @@ def check_architecture_tables(report, root=ROOT):
                     "architecture-tables")
 
 
+BILLING_WORDS = ("subscription", "metered", "free")
+
+
+def check_adapter_manifests(report, root=ROOT):
+    """[adapter-billing]: every entry of "secrets" in adapters/<harness>/adapter.json has "billing", one of BILLING_WORDS;
+    "login_billing", when a manifest has it, is one of them; a credential two manifests list has one word. Each finding is
+    an error. A manifest with no "secrets" list has nothing to declare; one that is not JSON is reported."""
+    folder = os.path.join(root, "adapters")
+    if not os.path.isdir(folder):
+        report.note("[adapter-billing] skipped: adapters/ is not in this tree")
+        return
+    seen = {}
+    for name in sorted(os.listdir(folder)):
+        path = os.path.join(folder, name, "adapter.json")
+        if not os.path.isfile(path):
+            continue
+        where = f"adapters/{name}/adapter.json"
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, ValueError) as e:
+            report.error(where, f"[adapter-billing] cannot be read as JSON ({type(e).__name__})")
+            continue
+        if not isinstance(data, dict):
+            report.error(where, "[adapter-billing] holds one JSON object")
+            continue
+        login = data.get("login_billing")
+        if "login_billing" in data and login not in BILLING_WORDS:
+            report.error(where, f"[adapter-billing] login_billing is {login!r}: one of {', '.join(BILLING_WORDS)}")
+        for entry in data.get("secrets") or []:
+            secret = entry.get("name") if isinstance(entry, dict) else None
+            word = entry.get("billing") if isinstance(entry, dict) else None
+            if word not in BILLING_WORDS:
+                report.error(where, f"[adapter-billing] the secret {secret!r} has billing {word!r}: it states how the credential "
+                                    f"is billed, subscription, metered or free")
+                continue
+            if secret in seen and seen[secret][0] != word:
+                report.error(where, f"[adapter-billing] the secret {secret} is billed {word} here and {seen[secret][0]} in "
+                                    f"adapters/{seen[secret][1]}/adapter.json: one credential has one billing")
+            seen.setdefault(secret, (word, name))
+
+
 FLOWS_HEADING = "Flows (`flow-`)"
 
 
@@ -1514,6 +1560,7 @@ def main(argv):
     check_contract(skills, report)
     check_flows(skills, report)
     check_architecture_tables(report)
+    check_adapter_manifests(report)
     if os.path.isdir(AGENTS):
         for fn in sorted(os.listdir(AGENTS)):
             if fn.endswith(".md"):
