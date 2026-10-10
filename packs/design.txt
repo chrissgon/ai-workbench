@@ -1,6 +1,9 @@
 # The design chain: the scope of the task runtime's design area agent (runtime/manifest.py, PACKS_IN_USE).
-# The four skills of flows/design.json. design-execute and design-handoff are left out: they run in a design tool and are not steps of that flow.
+# The four skills of flows/design.json, and the two steps that follow the brief when a request is planned skill by skill (A-36): design-execute and design-handoff. design-execute needs a design tool and an image generator: a task of it stops at the missing requirement.
+# product-prd joins this chain once its runtime manifest is whole (runtime/manifest.py --check refuses a skill of a pack in use with a partial one).
 product-feature-spec
 design-ux-flows
 design-system
 design-brief
+design-execute
+design-handoff

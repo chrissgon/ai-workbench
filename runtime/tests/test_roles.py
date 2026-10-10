@@ -83,3 +83,15 @@ def test_a_file_that_is_not_json_or_not_an_object_is_refused(tmp_path):
             roles.load(file=write(tmp_path, body))
     with pytest.raises(roles.RolesError):
         roles.load(file=str(tmp_path / "missing.json"))
+
+
+def test_the_design_chain_has_one_owner_each_and_every_skill_of_a_pack_in_use_has_a_whole_manifest():
+    """A-36 part 1: `design-execute` and `design-handoff` are in the design agent's pack, so the planner can chain the design
+    skills one by one; each is owned by exactly one enabled agent (`plan.agent_of`) and has the manifest a task needs."""
+    agents = {name: sorted(plan.resolve_pack(name, str(REPO)))
+              for name in ("business", "brand", "design", "planning", "code")}
+    for skill in ("design-ux-flows", "design-system", "design-brief", "design-execute", "design-handoff"):
+        assert plan.agent_of(skill, agents) == "design", skill
+    for skill in ("design-execute", "design-handoff"):
+        assert skill in manifest.skills_in_use(str(REPO))
+        assert manifest.load(str(REPO), skill)["skill"] == skill
