@@ -187,14 +187,14 @@ contained-run  one run of one skill of an area agent's pack, once, in the eval c
           model the skill's proof gives, with no credential but the model's own, no open network and no retry, within
           --timeout-seconds (the gate file's when absent). Nothing is brought back: no file the run created or changed
           reaches the project (their number is "ignored_changes"). The reply, past the credential scan, is written to
-          <out>/response.md, and <out>/timing.json holds total_tokens, duration_ms, exit_code and cost_usd (null on the
-          reference model). Each --platform names a platform whose reference the run is given besides the ones the skill
+          <out>/response.md, and <out>/timing.json holds total_tokens, duration_ms, exit_code and cost_usd (null unless
+          the run's credential is metered). Each --platform names a platform whose reference the run is given besides the ones the skill
           cites. Exits 0 when the model answered, 1 when it did not (the result is still printed), 2 for a skill outside
           every pack of the configuration, 3 when no run could be made (no eval image on this machine, a platform with no
           reference): the image is never built. It calls a model.
 dispatch  one round of the dispatcher: the ticks of the handlers whose dispatch is true, the deliveries each area
           agent's mode releases (released, never approved), and the next ready tasks, one at a time, while the agent's
-          mode and its daily caps allow (runs per day on the reference model, dollars per day on the floor model). It
+          mode and its daily caps allow (runs per day on a subscription or free credential, dollars per day on a metered one). It
           calls a model, like run-next. The scheduler's worker job calls it.
 poll      the short job: mirrors the task board and the documents, expires standing approvals, rewrites the state file's
           generated lines, and releases what a mode releases. It calls no model and starts no task.

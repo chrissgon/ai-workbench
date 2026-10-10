@@ -19,13 +19,19 @@ autonomous-with-policy whose approval expired acts as autonomous: its effects as
   mode_of(facts)                                the mode the agent acts in now
   state_checkpoints(agents)                     the value of the state file's "- Checkpoints:" line: the most careful
                                                 among the enabled agents (every-phase when none is enabled)
-  spend(runs, agent, reference_model, floor_model, per_run_usd)   a day's spend of one agent: runs on the reference
-                                                model, dollars on the floor model (a floor run of unknown cost counts
-                                                at per_run_usd)
-  spend_split(runs, agent, floor_model, per_run_usd)   the one place the day's rule is written: {"usd_recorded",
-                                                "usd_reserved", "runs_total", "runs_reference", "runs_without_cost"};
-                                                spend reads it (usd_floor = usd_recorded + usd_reserved, exactly)
-  may_start(name, agents, facts, spent, tier)   (True, "") or (False, why): stopped, or a cap reached
+  BILLINGS, RUNS_BILLINGS, SPEND_BILLINGS       the three billing words of a credential, and which cap counts each:
+                                                subscription and free count runs (max_runs_per_day), metered counts
+                                                dollars (max_usd_per_day); the word a run used is recorded on its row
+  history_billing(run, floor_model)             the billing of a run row that has none (older than the column): the old
+                                                tier rule, the floor model's runs are metered and any other's subscription
+  with_billing(runs, floor_model)               the rows with that fallback filled in where the billing is null
+  spend(runs, agent, per_run_usd)               a day's spend of one agent by billing: {"runs_counted", "usd_metered",
+                                                "runs_without_cost"} (a metered run of unknown cost counts at per_run_usd)
+  spend_split(runs, agent, per_run_usd)         the one place the day's rule is written: {"usd_recorded",
+                                                "usd_reserved", "runs_total", "runs_counted", "runs_without_cost"};
+                                                spend reads it (usd_metered = usd_recorded + usd_reserved, exactly)
+  may_start(name, agents, facts, spent, billing)   (True, "") or (False, why): stopped, a cap reached for the billing of
+                                                the run about to start, or a billing nobody knows
   review_action(task, pending, facts, proven, mandatory)   "release" or "hold": whether a mode releases a review
   covers(approval, policy_sha256, effect, executed_today, now, resolved=None)   (True, "") or (False, why): whether a
                                                 standing approval covers one effect, inside every bound; a target
@@ -63,6 +69,12 @@ CHECKPOINTS = {"stopped": "every-phase", "supervised": "every-phase", "milestone
 CAREFUL_ORDER = ("every-phase", "milestones", "end")  # the most careful first
 AGENT_KEYS = ("pack", "enabled", "mode", "max_runs_per_day", "max_usd_per_day")
 POLICY_MODE = "autonomous-with-policy"
+# How the credential a run uses is billed (adapters/<harness>/adapter.json, contracts/secrets.md), and so which daily cap the run
+# counts against: a subscription covers its runs and a local model costs nothing, so those count runs; a key paid by use
+# counts dollars. The words are those of runtime/billing.py and of the store's CHECK; a test holds them equal.
+BILLINGS = ("subscription", "metered", "free")
+RUNS_BILLINGS = ("subscription", "free")
+SPEND_BILLINGS = ("metered",)
 NO_CHANGE = "no file changed"  # the start of the classifier's reason for a `done` that wrote nothing (runtime/endings.py)
 BOUNDS_KEYS = ("policy", "agent", "effects", "targets", "files", "max_per_day", "max_items_per_run")
 POLICY_NAME = re.compile(r"^[a-z0-9]+(-[a-z0-9]+)*$")
@@ -174,50 +186,69 @@ def state_checkpoints(agents_checked: dict) -> str:
     return CAREFUL_ORDER[0]
 
 
-def spend_split(runs, agent: str, floor_model: str, per_run_usd: float) -> dict:
-    """A day's use of one agent, from the rows of runs_since(<the day's start>), the one place the rule is written:
-    {"usd_recorded", "usd_reserved", "runs_total", "runs_reference", "runs_without_cost"}. A run on the floor model
-    adds its recorded cost to usd_recorded, or per_run_usd to usd_reserved when the cost is unknown (and 1 to
-    runs_without_cost); a run on any other model counts as a run on the reference model; runs_total is every run of
-    the agent. Each of the two sums is rounded once, to 6 places; spend's usd_floor is their sum."""
+def history_billing(run: dict, floor_model: str) -> str:
+    """The billing of a run row: the one it recorded, else (a run older than the column, for history only) the tier rule the
+    caps had before billing was recorded: a run on the floor model is metered and a run on any other model is subscription."""
+    word = run.get("billing")
+    if word in BILLINGS:
+        return word
+    return "metered" if run.get("model") == floor_model else "subscription"
+
+
+def with_billing(runs, floor_model: str) -> list:
+    """The rows of runs_since with the billing of every row filled in (history_billing); no row is changed in place."""
+    return [run if run.get("billing") in BILLINGS else dict(run, billing=history_billing(run, floor_model)) for run in runs]
+
+
+def spend_split(runs, agent: str, per_run_usd: float) -> dict:
+    """A day's use of one agent, from the rows of runs_since(<the day's start>) with their billing (with_billing), the one
+    place the rule is written: {"usd_recorded", "usd_reserved", "runs_total", "runs_counted", "runs_without_cost"}. A run on
+    a credential billed subscription or free adds 1 to runs_counted (what max_runs_per_day compares) and no dollar: its cost
+    is not billed. Any other run is metered: it adds its recorded cost to usd_recorded, or per_run_usd to usd_reserved when
+    the cost is unknown (and 1 to runs_without_cost); a billing nobody knows is treated as metered, so that dollars are
+    never left uncounted. runs_total is every run of the agent. Each of the two sums is rounded once, to 6 places; spend's
+    usd_metered is their sum."""
     recorded = reserved = 0.0
-    out = {"runs_total": 0, "runs_reference": 0, "runs_without_cost": 0}
+    out = {"runs_total": 0, "runs_counted": 0, "runs_without_cost": 0}
     for run in runs:
         if run.get("agent") != agent:
             continue
         out["runs_total"] += 1
-        if run.get("model") == floor_model:
-            if run.get("cost_usd") is None:
-                reserved += float(per_run_usd)
-                out["runs_without_cost"] += 1
-            else:
-                recorded += float(run["cost_usd"])
+        if run.get("billing") in RUNS_BILLINGS:
+            out["runs_counted"] += 1
+        elif run.get("cost_usd") is None:
+            reserved += float(per_run_usd)
+            out["runs_without_cost"] += 1
         else:
-            out["runs_reference"] += 1
+            recorded += float(run["cost_usd"])
     return {"usd_recorded": round(recorded, 6), "usd_reserved": round(reserved, 6), **out}
 
 
-def spend(runs, agent: str, reference_model: str, floor_model: str, per_run_usd: float) -> dict:
-    """A day's spend of one agent, from the rows of runs_since(<the day's start>): {"runs_reference",
-    "usd_floor", "runs_without_cost"}, read from spend_split: usd_floor is usd_recorded + usd_reserved, so a meter
-    that shows the two adds up to it exactly. may_start compares it rounded to 6 places."""
-    split = spend_split(runs, agent, floor_model, per_run_usd)
-    return {"runs_reference": split["runs_reference"], "usd_floor": split["usd_recorded"] + split["usd_reserved"],
+def spend(runs, agent: str, per_run_usd: float) -> dict:
+    """A day's spend of one agent, from the rows of runs_since(<the day's start>) with their billing: {"runs_counted",
+    "usd_metered", "runs_without_cost"}, read from spend_split: usd_metered is usd_recorded + usd_reserved, so a meter that
+    shows the two adds up to it exactly. may_start compares it rounded to 6 places."""
+    split = spend_split(runs, agent, per_run_usd)
+    return {"runs_counted": split["runs_counted"], "usd_metered": split["usd_recorded"] + split["usd_reserved"],
             "runs_without_cost": split["runs_without_cost"]}
 
 
-def may_start(name: str, agents_checked: dict, f: dict, spent: dict, tier: str) -> tuple:
-    """(True, "") or (False, why): "stopped"; "cap: runs per day" (tier strong at its cap); "cap: usd per day"
-    (tier floor at its cap). An absent cap is 0, so nothing starts on that tier."""
+def may_start(name: str, agents_checked: dict, f: dict, spent: dict, billing) -> tuple:
+    """(True, "") or (False, why), by the billing of the credential the run about to start would use: "stopped";
+    "cap: runs per day" (billing subscription or free, runs_counted at max_runs_per_day); "cap: usd per day" (billing
+    metered, usd_metered at max_usd_per_day); "unknown billing <word>" for a billing outside BILLINGS, None included (a run
+    whose cap cannot be known does not start). An absent cap is 0, so nothing starts on that billing."""
     entry = agents_checked.get(name)
     if entry is None or not f["enabled"]:
         return False, "stopped"
-    if tier == "strong" and spent["runs_reference"] >= entry["max_runs_per_day"]:
-        return False, "cap: runs per day"
-    if tier == "floor" and round(spent["usd_floor"], 6) >= entry["max_usd_per_day"]:
-        return False, "cap: usd per day"
-    if tier not in ("strong", "floor"):
-        return False, f"unknown tier {tier!r}"
+    if billing in RUNS_BILLINGS:
+        if spent["runs_counted"] >= entry["max_runs_per_day"]:
+            return False, "cap: runs per day"
+    elif billing in SPEND_BILLINGS:
+        if round(spent["usd_metered"], 6) >= entry["max_usd_per_day"]:
+            return False, "cap: usd per day"
+    else:
+        return False, f"unknown billing {billing!r}"
     return True, ""
 
 

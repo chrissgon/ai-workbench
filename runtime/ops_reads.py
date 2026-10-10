@@ -112,16 +112,20 @@ CONFIGURED_PROVIDER = {"integration:vcs": "code", "integration:issue-tracker": "
 def agents(project: str) -> dict:
     """The area agents of the configuration with their use of today: {"agents": [{"name", "pack", "enabled", "mode",
     "acting_mode", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost", "usd_recorded", "usd_reserved",
-    "runs_total_today", "queued", "held", "wider"}]}
+    "runs_total_today", "billing", "caps_in_use", "queued", "held", "wider"}]}
     in the order of the configuration. mode is the configured one; acting_mode the one the agent acts in now
     (autonomy.mode_of: an agent set to autonomous-with-policy whose approval expired acts as autonomous). The day is
-    counted as the caps count it (_agents_of_the_day): runs_today is the runs on the reference model, usd_today the
-    dollars of the floor model's runs (a run of unknown cost counts at max_cost_usd_per_run, and runs_without_cost
-    says how many), and a router run counts for the planning agent. queued is the number of ready tasks of the agent;
+    counted as the caps count it (_agents_of_the_day), by the billing each run recorded: runs_today is the runs on a
+    subscription or free credential (what max_runs_per_day compares), usd_today the dollars of the runs on a metered
+    credential (a run of unknown cost counts at max_cost_usd_per_run, and runs_without_cost says how many), whatever the
+    model; a run older than the billing column counts by the tier rule it had. A router run counts for the planning agent.
+    queued is the number of ready tasks of the agent;
     held how many of them the last round held (status lists them with their reasons). usd_today is split into
-    usd_recorded (the recorded costs of today's floor-model runs) and usd_reserved (max_cost_usd_per_run, else
-    PER_RUN_USD, for each such run with no cost yet: what the cap counts); runs_today stays the reference model's
-    runs and runs_total_today is every run of the agent today, whatever the model. wider lists, for every mode above
+    usd_recorded (the recorded costs of today's metered runs) and usd_reserved (max_cost_usd_per_run, else
+    PER_RUN_USD, for each such run with no cost yet: what the cap counts); runs_total_today is every run of the agent
+    today, whatever its billing. billing is {"runs": [the billing words counted in runs_today], "spend": [the words
+    counted in usd_today]} and caps_in_use {"runs": bool, "spend": bool}: whether the project's credentials, or a run
+    of today, have that billing, so that a page draws a meter only for a cap in use. wider lists, for every mode above
     the agent's own, the absolute set-mode command (the page offers it with Copy and builds none).
     A project without area_agents: {"agents": []}."""
     ctx = core.context(project)
@@ -134,9 +138,11 @@ def agents(project: str) -> dict:
         entry, spent = found["entry"], found["spent"]
         out.append({"name": name, "pack": entry["pack"], "enabled": entry["enabled"], "mode": entry["mode"],
                     "acting_mode": autonomy.mode_of(found["facts"]), "max_runs_per_day": entry["max_runs_per_day"],
-                    "max_usd_per_day": entry["max_usd_per_day"], "runs_today": spent["runs_reference"],
-                    "usd_today": spent["usd_floor"], "runs_without_cost": spent["runs_without_cost"],
-                    **_spend_words(found["split"]),
+                    "max_usd_per_day": entry["max_usd_per_day"], "runs_today": spent["runs_counted"],
+                    "usd_today": spent["usd_metered"], "runs_without_cost": spent["runs_without_cost"],
+                    **_spend_words(found["split"]), "billing": {"runs": list(autonomy.RUNS_BILLINGS),
+                                                                "spend": list(autonomy.SPEND_BILLINGS)},
+                    "caps_in_use": found["in_use"],
                     "queued": sum(1 for t in ready if t.get("agent") == name),
                     "held": sum(1 for h in held if h["agent"] == name),
                     "wider": _wider(ctx["cfg"]["project"], name, entry["mode"])})
@@ -156,7 +162,7 @@ def _caps_use(used, name: str) -> dict:
     if not used or name not in used:
         return {}
     found = used[name]
-    return {"runs_today": found["spent"]["runs_reference"], "usd_today": found["spent"]["usd_floor"],
+    return {"runs_today": found["spent"]["runs_counted"], "usd_today": found["spent"]["usd_metered"],
             "runs_without_cost": found["spent"]["runs_without_cost"], **_spend_words(found["split"])}
 
 

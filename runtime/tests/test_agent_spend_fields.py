@@ -38,13 +38,14 @@ def plain(monkeypatch):
 
 
 def test_the_floor_spend_is_split_into_recorded_and_reserved_and_adds_up_to_what_the_cap_compares():
-    split = autonomy.spend_split(RUNS, "brand", "floor", 0.5)
-    assert split == {"usd_recorded": 0.03, "usd_reserved": 0.5, "runs_total": 5, "runs_reference": 3, "runs_without_cost": 1}
-    spent = autonomy.spend(RUNS, "brand", "ref", "floor", 0.5)
-    assert split["usd_recorded"] + split["usd_reserved"] == spent["usd_floor"]  # exactly, not nearly
-    assert autonomy.spend_split(RUNS, "business", "floor", 0.5)["runs_total"] == 1
-    assert autonomy.spend_split(RUNS, "nobody", "floor", 0.5) == {"usd_recorded": 0.0, "usd_reserved": 0.0, "runs_total": 0,
-                                                                 "runs_reference": 0, "runs_without_cost": 0}
+    old = autonomy.with_billing(RUNS, "floor")   # rows with no billing count by the tier rule they always had (ADJ-R3)
+    split = autonomy.spend_split(old, "brand", 0.5)
+    assert split == {"usd_recorded": 0.03, "usd_reserved": 0.5, "runs_total": 5, "runs_counted": 3, "runs_without_cost": 1}
+    spent = autonomy.spend(old, "brand", 0.5)
+    assert split["usd_recorded"] + split["usd_reserved"] == spent["usd_metered"]  # exactly, not nearly
+    assert autonomy.spend_split(old, "business", 0.5)["runs_total"] == 1
+    assert autonomy.spend_split(old, "nobody", 0.5) == {"usd_recorded": 0.0, "usd_reserved": 0.0, "runs_total": 0,
+                                                       "runs_counted": 0, "runs_without_cost": 0}
 
 
 def seed_runs(tree, rows):
@@ -177,12 +178,12 @@ def test_the_two_parts_add_up_exactly_to_what_the_cap_compares_for_any_day():
     import random
     rng = random.Random(7)
     for _ in range(2000):
-        runs = [{"agent": "a", "model": rng.choice(["ref", "floor", "other"]),
+        runs = [{"agent": "a", "billing": rng.choice(["subscription", "metered", "free"]),
                  "cost_usd": rng.choice([None, round(rng.random(), rng.choice([1, 2, 4]))])} for _ in range(rng.randint(0, 9))]
         per_run = rng.choice([0.1, 0.25, 0.5, 1.5])
-        split, spent = autonomy.spend_split(runs, "a", "floor", per_run), autonomy.spend(runs, "a", "ref", "floor", per_run)
-        assert split["usd_recorded"] + split["usd_reserved"] == spent["usd_floor"], runs
-        assert (spent["runs_reference"], spent["runs_without_cost"]) == (split["runs_reference"], split["runs_without_cost"])
+        split, spent = autonomy.spend_split(runs, "a", per_run), autonomy.spend(runs, "a", per_run)
+        assert split["usd_recorded"] + split["usd_reserved"] == spent["usd_metered"], runs
+        assert (spent["runs_counted"], spent["runs_without_cost"]) == (split["runs_counted"], split["runs_without_cost"])
         assert split["runs_total"] == len([r for r in runs if r["agent"] == "a"])
 
 
@@ -192,9 +193,9 @@ def test_the_cap_rule_is_written_once_and_a_cap_is_still_reached_by_the_rounded_
     agents = autonomy.agents({"a": {"pack": "p", "mode": "autonomous", "max_runs_per_day": 5, "max_usd_per_day": 0.8}})
     f = autonomy.facts("a", agents, [], "2026-10-06T00:00:00Z")
     assert 0.1 + 0.7 < 0.8  # a sum a float leaves a hair under the cap
-    at_cap = {"runs_reference": 0, "usd_floor": 0.1 + 0.7, "runs_without_cost": 0}
-    assert autonomy.may_start("a", agents, f, at_cap, "floor") == (False, "cap: usd per day")
-    assert autonomy.may_start("a", agents, f, dict(at_cap, usd_floor=0.7), "floor") == (True, "")
+    at_cap = {"runs_counted": 0, "usd_metered": 0.1 + 0.7, "runs_without_cost": 0}
+    assert autonomy.may_start("a", agents, f, at_cap, "metered") == (False, "cap: usd per day")
+    assert autonomy.may_start("a", agents, f, dict(at_cap, usd_metered=0.7), "metered") == (True, "")
 
 
 def test_the_credential_sentence_names_only_what_is_missing_with_its_registered_username(tree, monkeypatch):

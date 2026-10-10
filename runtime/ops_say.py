@@ -508,20 +508,20 @@ def _say_command(project: str, ctx: dict, said: str, channel: str, line_id: int)
 
 
 def _planning_may_start(ctx: dict) -> tuple:
-    """Whether the planning agent may run the router now (autonomy.may_start, on the tier the router's proof gives,
-    with the day's runs of the router counted against it)."""
+    """Whether the planning agent may run the router now (autonomy.may_start, by the billing of the credential the
+    router's route uses, with the day's runs of the router counted against it)."""
     cfg, store = ctx["cfg"], ctx["store"]
     agents = cfg["area_agents"]
     meta = skill_meta.declared(os.path.join(core.ROOT, "skills", router.ROUTER_SKILL))
-    tier = _ops()._route(ctx, router.ROUTER_SKILL, meta, None, core._floor_key())["tier"]
+    billing = _ops()._route(ctx, router.ROUTER_SKILL, meta, None, core._floor_key())["billing"]
     now = datetime.datetime.now(datetime.timezone.utc)
     standing_rows = core._stored(ctx, store.approvals_list, status="active", scope="standing")
-    runs = [dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL else r
-            for r in core._stored(ctx, store.runs_since, _ops()._midnight_utc())]
+    runs = autonomy.with_billing([dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL
+                                  else r for r in core._stored(ctx, store.runs_since, _ops()._midnight_utc())],
+                                 lab.reference("floor")["model"])
     facts = autonomy.facts(plan.PLANNING, agents, standing_rows, now)
-    spent = autonomy.spend(runs, plan.PLANNING, lab.reference("strong")["model"], lab.reference("floor")["model"],
-                           cfg["raw"].get("max_cost_usd_per_run", _ops().PER_RUN_USD))
-    ok, why = autonomy.may_start(plan.PLANNING, agents, facts, spent, tier)
+    spent = autonomy.spend(runs, plan.PLANNING, cfg["raw"].get("max_cost_usd_per_run", _ops().PER_RUN_USD))
+    ok, why = autonomy.may_start(plan.PLANNING, agents, facts, spent, billing)
     if not ok and plan.PLANNING not in agents:
         why = "no planning agent is configured (area_agents has no entry named planning)"
     return ok, why

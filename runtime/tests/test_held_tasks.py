@@ -42,7 +42,7 @@ def test_the_reasons_are_the_words_of_the_list():
 def test_every_ready_task_a_decision_held_gets_its_reason_and_its_agent():
     snapshot = {"running": None, "ready": [ready(4, "a"), ready(5, "b"), ready(6, None), ready(7, "c")], "reviews": [],
                 "agents": {"a": agent(mode="stopped"), "b": agent(runs=5, cap=5), "c": agent()},
-                "tier": {4: "strong", 5: "strong", 7: "strong"}}
+                "tier": {4: "strong", 5: "strong", 7: "strong"}, "billing": {4: "subscription", 5: "subscription", 7: "subscription"}}
     decided = decide(snapshot)
     assert decided["start"] == 7
     assert dispatcher.held_of(snapshot, decided) == [
@@ -52,7 +52,7 @@ def test_every_ready_task_a_decision_held_gets_its_reason_and_its_agent():
 
 def test_a_task_that_runs_holds_every_ready_task_of_the_project():
     snapshot = {"running": {"id": 3}, "ready": [ready(4, "a"), ready(5, "a")], "reviews": [], "agents": {"a": agent()},
-                "tier": {4: "strong", 5: "strong"}}
+                "tier": {4: "strong", 5: "strong"}, "billing": {4: "subscription", 5: "subscription"}}
     decided = decide(snapshot)
     assert decided["held"] == [{"task_id": 3, "why": dispatcher.ONE_AT_A_TIME}]  # the decision itself is unchanged
     assert dispatcher.held_of(snapshot, decided) == [{"task_id": 4, "agent": "a", "reason": "job running"},
@@ -61,7 +61,7 @@ def test_a_task_that_runs_holds_every_ready_task_of_the_project():
 
 def test_a_task_the_round_could_not_start_is_held_with_what_stopped_it():
     snapshot = {"running": None, "ready": [ready(4, "a"), ready(5, "a")], "reviews": [], "agents": {"a": agent()},
-                "tier": {4: "strong", 5: "strong"}}
+                "tier": {4: "strong", 5: "strong"}, "billing": {4: "subscription", 5: "subscription"}}
     decided = decide(snapshot)
     assert decided["start"] == 4
     assert dispatcher.held_of(snapshot, decided, {4: "credential"}) == [{"task_id": 4, "agent": "a", "reason": "credential"}]
@@ -235,8 +235,8 @@ def test_an_unchanged_set_of_held_tasks_writes_nothing_and_keeps_its_time(tree):
 
 
 def test_the_vocabulary_of_the_held_reasons_is_closed():
-    free_text = lambda name, entries, f, spent, tier: (False, f"unknown tier {tier!r}")  # noqa: E731
-    snapshot = {"running": None, "ready": [ready(4, "a")], "reviews": [], "agents": {"a": agent()}, "tier": {4: "weird"}}
+    free_text = lambda name, entries, f, spent, billing: (False, f"unknown billing {billing!r}")  # noqa: E731
+    snapshot = {"running": None, "ready": [ready(4, "a")], "reviews": [], "agents": {"a": agent()}, "tier": {4: "strong"}, "billing": {4: "weird"}}
     decided = dispatcher.decide(snapshot, autonomy.review_action, free_text)
     assert dispatcher.held_of(snapshot, decided) == [{"task_id": 4, "agent": "a", "reason": "other"}]
     assert "other" in dispatcher.REASONS

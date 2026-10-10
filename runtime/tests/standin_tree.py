@@ -117,6 +117,16 @@ STATE = ("# Workbench state\n\n- Project: demo\n- Docs in git: none\n\n## Autono
 
 STANDIN_IMAGE = "sha256:" + "5" * 64
 
+# The stand-in adapter's manifest (adapters/h/adapter.json): how its credentials are billed, which the daily caps count by
+# (runtime/billing.py). The harness holds a login of its own, declared subscription (a tier that passes no variable), and the
+# invented variables the tests pass are listed: EXAMPLE_API_KEY and STANDIN_FLOOR_PASS are metered, the others subscription.
+# A variable a test passes that is not here has no billing (the dispatcher holds such a task, as it does for a real one).
+SECRETS = {"EXAMPLE_API_KEY": "metered", "STANDIN_FLOOR_PASS": "metered", "EXAMPLE_REFERENCE_KEY": "subscription",
+           "EXAMPLE_KEY_A": "subscription", "EXAMPLE_KEY_B": "subscription", "INVENTED_MODEL_KEY": "subscription"}
+MANIFEST = {"harness": "h", "login_billing": "subscription", "secrets": [
+    {"name": name, "purpose": "invented", "permission": "invented", "billing": billing,
+     "readers": ["adapters/h/run-prompt.sh"]} for name, billing in SECRETS.items()]}
+
 # A stand-in code provider (class integration:vcs, implementation "github"): it records each call in calls.jsonl
 # beside it, with the sha256 of every --file it is handed, and answers as providers/vcs/github.py prints, from
 # answers.json beside it ({"base_commit", "branch_exists", "fail": {"<verb>": [exit code, last line]}}). A key it
@@ -220,6 +230,7 @@ def build(tmp_path: Path, monkeypatch, lab) -> dict:
     adapter.mkdir(parents=True)
     (adapter / "eval.json").write_text(json.dumps(EVAL_JSON), encoding="utf-8")
     (adapter / "run-prompt.sh").write_text(ADAPTER, encoding="utf-8")
+    (adapter / "adapter.json").write_text(json.dumps(MANIFEST), encoding="utf-8")
     skill(tree, "demo-asks", "docs/workbench/state.md, docs/workbench/research/<topic>.md, AGENTS.md", "docs/business/market.md")
     skill(tree, "demo-writes", "docs/workbench/state.md, docs/business/market.md", "docs/business/icp.md")
     skill(tree, "demo-code", "docs/workbench/state.md", "", area="engineering")  # a code task (ops.code_task)

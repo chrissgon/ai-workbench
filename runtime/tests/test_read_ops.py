@@ -252,9 +252,10 @@ def test_the_costs_operation_recomputes_from_the_prices_and_counts_what_is_unkno
     assert all(set(c) == {"agent", "max_runs_per_day", "max_usd_per_day", "runs_today", "usd_today", "runs_without_cost",
                           "usd_recorded", "usd_reserved", "runs_total_today"} for c in empty["caps"])
     (row,) = empty["rows"]
-    # The stand-in adapter leaves timing.json only: the total and the recorded cost are there, the kinds are not.
+    # The stand-in adapter leaves timing.json only: the total is there, the kinds are not. The run's credential is the harness's
+    # login, billed as a subscription, so no cost is recorded for it (ADJ-R3): the adapter's figure, 0.01, is not billed.
     assert (row["day"], row["agent"], row["model"], row["adapter"], row["runs"], row["tokens"], row["recorded_usd"]) == (
-        today, "business", "m", "h", 1, 100, 0.01)
+        today, "business", "m", "h", 1, 100, None)
     assert row["recomputed_usd"] is None and row["unknown_runs"] == 1 and row["price"] is None
     # With a result event in the run folder and a price in the configuration, the cost is recomputed.
     event = {"type": "result", "usage": {"input_tokens": 1000, "output_tokens": 2000, "cache_read_input_tokens": 100000,

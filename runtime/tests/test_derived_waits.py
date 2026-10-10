@@ -264,7 +264,7 @@ def test_the_required_column_of_every_skill_is_what_flow_files_reads_which_is_wh
 def agent():
     entry = {"pack": "p", "enabled": True, "mode": "autonomous", "max_runs_per_day": 5, "max_usd_per_day": 1.0}
     return {"entry": entry, "facts": autonomy.facts("x", {"x": entry}, [], "2026-10-06T00:00:00Z"),
-            "spent": {"runs_reference": 0, "usd_floor": 0.0, "runs_without_cost": 0}}
+            "spent": {"runs_counted": 0, "usd_metered": 0.0, "runs_without_cost": 0}}
 
 
 def ready(task_id):
@@ -273,7 +273,7 @@ def ready(task_id):
 
 def test_the_dispatcher_never_starts_a_task_with_an_open_wait_and_starts_the_next_one():
     snapshot = {"running": None, "ready": [ready(4), ready(5)], "reviews": [], "agents": {"a": agent()},
-                "tier": {4: "strong", 5: "strong"},
+                "tier": {4: "strong", 5: "strong"}, "billing": {4: "subscription", 5: "subscription"},
                 "waits": {4: [{"task_id": 2, "request_id": 1, "reason": "docs/brand/identity.md, written by task #2"}]}}
     decided = dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)
     assert decided["start"] == 5 and decided["held"] == [{"task_id": 4, "why": dispatcher.WAITING}]
@@ -285,6 +285,7 @@ def test_the_dispatcher_never_starts_a_task_with_an_open_wait_and_starts_the_nex
 
 
 def test_a_snapshot_without_waits_decides_as_it_did():
-    snapshot = {"running": None, "ready": [ready(4)], "reviews": [], "agents": {"a": agent()}, "tier": {4: "strong"}}
+    snapshot = {"running": None, "ready": [ready(4)], "reviews": [], "agents": {"a": agent()}, "tier": {4: "strong"},
+                "billing": {4: "subscription"}}
     assert dispatcher.decide(snapshot, autonomy.review_action, autonomy.may_start)["start"] == 4
     assert dispatcher.decide(dict(snapshot, waits={4: []}), autonomy.review_action, autonomy.may_start)["start"] == 4

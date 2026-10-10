@@ -12,10 +12,11 @@ held_of(snapshot, decided, blocked=None) -> [{"task_id", "agent", "reason"}]: ev
 
   snapshot      {"running": <task or None>, "ready": [tasks, oldest first], "reviews": [{"pending", "task", "agent",
                 "proven", "mandatory"}], "agents": {"<name>": {"facts", "spent", "entry"}}, "tier": {"<task id>":
-                "strong" or "floor"}, "waits": {"<task id>": [open waits]}}, built by runtime/ops.py (dispatch, poll)
-                from the store, the proof and the runtime manifests
+                "strong" or "floor"}, "billing": {"<task id>": the billing of the credential the task's route would
+                use, "subscription", "metered" or "free", or None when no manifest says}, "waits": {"<task id>": [open
+                waits]}}, built by runtime/ops.py (dispatch, poll) from the store, the proof and the runtime manifests
   review_action runtime/autonomy.py's review_action(task, pending, facts, proven, mandatory): "release" or "hold"
-  may_start     runtime/autonomy.py's may_start(name, agents, facts, spent, tier): (True, "") or (False, why)
+  may_start     runtime/autonomy.py's may_start(name, agents, facts, spent, billing): (True, "") or (False, why)
 
 Rules: (1) release holds every review the agent's mode releases; (2) while a task of the project runs, nothing
 starts (one task at a time per project); (3) otherwise the ready tasks are walked oldest first: a task with an open
@@ -88,7 +89,7 @@ def decide(snapshot: dict, review_action, may_start) -> dict:
     if running is not None:
         return {"release": release, "start": None, "held": [{"task_id": running["id"], "why": ONE_AT_A_TIME}]}
     held, start = [], None
-    tiers = snapshot.get("tier") or {}
+    billings = snapshot.get("billing") or {}
     waits = snapshot.get("waits") or {}
     for task in snapshot.get("ready") or []:
         if waits.get(task["id"], waits.get(str(task["id"]))):
@@ -99,8 +100,8 @@ def decide(snapshot: dict, review_action, may_start) -> dict:
             held.append({"task_id": task["id"], "why": NO_AGENT})
             continue
         agent = agents[name]
-        tier = tiers.get(task["id"], tiers.get(str(task["id"])))
-        ok, why = may_start(name, entries, agent["facts"], agent["spent"], tier)
+        billing = billings.get(task["id"], billings.get(str(task["id"])))   # the cap a run counts against is its credential's
+        ok, why = may_start(name, entries, agent["facts"], agent["spent"], billing)
         if not ok:
             held.append({"task_id": task["id"], "why": why})
             continue

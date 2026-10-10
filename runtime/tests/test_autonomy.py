@@ -72,9 +72,9 @@ def test_an_absent_cap_is_zero_and_never_unlimited():
     assert agents["planning"] == {"pack": "planning", "enabled": True, "mode": "milestones", "max_runs_per_day": 0,
                                   "max_usd_per_day": 0}
     f = autonomy.facts("planning", agents, [], NOW)
-    nothing = {"runs_reference": 0, "usd_floor": 0.0, "runs_without_cost": 0}
-    assert autonomy.may_start("planning", agents, f, nothing, "strong") == (False, "cap: runs per day")
-    assert autonomy.may_start("planning", agents, f, nothing, "floor") == (False, "cap: usd per day")
+    nothing = {"runs_counted": 0, "usd_metered": 0.0, "runs_without_cost": 0}
+    assert autonomy.may_start("planning", agents, f, nothing, "subscription") == (False, "cap: runs per day")
+    assert autonomy.may_start("planning", agents, f, nothing, "metered") == (False, "cap: usd per day")
     assert autonomy.agents(None) == {}
 
 
@@ -97,31 +97,31 @@ RUNS = [{"agent": "brand", "model": "ref", "cost_usd": None}, {"agent": "brand",
         {"agent": None, "model": "floor", "cost_usd": 0.5}]
 
 
-def test_the_day_s_runs_are_counted_per_agent_and_per_model():
-    assert autonomy.spend(RUNS, "brand", "ref", "floor", 0.5) == {"runs_reference": 3, "usd_floor": 0.53,
-                                                                    "runs_without_cost": 1}
-    assert autonomy.spend(RUNS, "business", "ref", "floor", 0.5) == {"runs_reference": 1, "usd_floor": 0.0,
-                                                                       "runs_without_cost": 0}
+def test_the_day_s_runs_are_counted_per_agent_and_per_billing():
+    # These rows carry no billing, as the rows older than the column: they count by the tier rule the caps had (ADJ-R3, row A-38).
+    old = autonomy.with_billing(RUNS, "floor")
+    assert autonomy.spend(old, "brand", 0.5) == {"runs_counted": 3, "usd_metered": 0.53, "runs_without_cost": 1}
+    assert autonomy.spend(old, "business", 0.5) == {"runs_counted": 1, "usd_metered": 0.0, "runs_without_cost": 0}
 
 
-def test_a_floor_run_without_a_cost_counts_at_the_per_run_limit():
-    spent = autonomy.spend([{"agent": "brand", "model": "floor", "cost_usd": None}] * 2, "brand", "ref", "floor", 0.25)
-    assert spent == {"runs_reference": 0, "usd_floor": 0.5, "runs_without_cost": 2}
+def test_a_metered_run_without_a_cost_counts_at_the_per_run_limit():
+    spent = autonomy.spend([{"agent": "brand", "billing": "metered", "cost_usd": None}] * 2, "brand", 0.25)
+    assert spent == {"runs_counted": 0, "usd_metered": 0.5, "runs_without_cost": 2}
 
 
 def test_a_stopped_agent_and_an_agent_at_its_cap_may_not_start():
     agents = autonomy.agents({"brand": {"pack": "brand", "max_runs_per_day": 2, "max_usd_per_day": 0.5},
                               "quiet": {"pack": "brand", "mode": "stopped", "max_runs_per_day": 9}})
     f = autonomy.facts("brand", agents, [], NOW)
-    spent = {"runs_reference": 1, "usd_floor": 0.4, "runs_without_cost": 0}
-    assert autonomy.may_start("brand", agents, f, spent, "strong") == (True, "")
-    assert autonomy.may_start("brand", agents, f, spent, "floor") == (True, "")
-    at_cap = {"runs_reference": 2, "usd_floor": 0.5, "runs_without_cost": 0}
-    assert autonomy.may_start("brand", agents, f, at_cap, "strong") == (False, "cap: runs per day")
-    assert autonomy.may_start("brand", agents, f, at_cap, "floor") == (False, "cap: usd per day")
+    spent = {"runs_counted": 1, "usd_metered": 0.4, "runs_without_cost": 0}
+    assert autonomy.may_start("brand", agents, f, spent, "subscription") == (True, "")
+    assert autonomy.may_start("brand", agents, f, spent, "metered") == (True, "")
+    at_cap = {"runs_counted": 2, "usd_metered": 0.5, "runs_without_cost": 0}
+    assert autonomy.may_start("brand", agents, f, at_cap, "subscription") == (False, "cap: runs per day")
+    assert autonomy.may_start("brand", agents, f, at_cap, "metered") == (False, "cap: usd per day")
     quiet = autonomy.facts("quiet", agents, [], NOW)
-    assert autonomy.may_start("quiet", agents, quiet, spent, "strong") == (False, "stopped")
-    assert autonomy.may_start("nobody", agents, autonomy.facts("nobody", agents, [], NOW), spent, "strong") == \
+    assert autonomy.may_start("quiet", agents, quiet, spent, "subscription") == (False, "stopped")
+    assert autonomy.may_start("nobody", agents, autonomy.facts("nobody", agents, [], NOW), spent, "subscription") == \
         (False, "stopped")
 
 

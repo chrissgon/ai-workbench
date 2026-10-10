@@ -6,8 +6,9 @@
 """The cost of the runs, recomputed from the token counts the adapter left in a run folder and the prices the person
 typed into the project's configuration (model_prices, runtime/project_config.py).
 
-The cost the store records for a run is the adapter's own number, and the reference model's adapter has no price for
-the model: its runs carry no cost. So the page and the report recompute it: the tokens of each kind times the price of
+The cost the store records for a run is the adapter's own number, kept only for a run on a metered credential (an API
+key: its cost is billed). A run on a subscription or a free credential carries no cost, and the pinned tool does not
+price the reference model either. So the page and the report recompute it: the tokens of each kind times the price of
 that kind per million, summed. Arithmetic only. Nothing here guesses: a run whose folder holds no usage, or whose model
 has no price, has no recomputed cost; it is `unknown`, and the summary counts it (`unknown_runs`).
 

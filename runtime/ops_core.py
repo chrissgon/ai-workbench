@@ -31,6 +31,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+import autonomy  # noqa: E402
+import billing  # noqa: E402
 import lab  # noqa: E402
 import operations  # noqa: E402
 import project_config  # noqa: E402
@@ -202,6 +204,29 @@ def _floor_key() -> dict:
     elif missing:
         reasons.append(f"the lab's key for the floor model ({', '.join(missing)}) is neither set nor in the secret store")
     return {"value": None, "source": None, "reason": "no key for the floor model: " + "; ".join(reasons)}
+
+
+def _tier_billing(tier: str, adapter=None):
+    """How the credential a run on this tier uses is billed: "subscription", "metered" or "free", or None when no manifest
+    says (runtime/billing.py). The variables are those the gate file names for the tier (what lab.run_skill passes, the
+    runtime's own key for the floor model travelling under the first of them); adapter is the route's, else the tier's."""
+    found = lab.reference(tier)
+    return billing.of_route(billing.load(ROOT), adapter or found["adapter"], found["pass_env"])
+
+
+def _caps_in_use(runs) -> dict:
+    """{"runs": bool, "spend": bool}: whether each daily cap has something to count in this project, so that a page draws
+    only the meters that mean something. A cap is in use when a run of the day (runs, with their billing filled in) used a
+    credential billed that way, or when a tier the runtime can run on has such a credential: the reference model's always,
+    the floor model's when a key for it was found (_floor_key). Names no tier and no model."""
+    words = {run.get("billing") for run in runs}
+    words.add(_tier_billing("strong"))
+    try:
+        if _floor_key()["source"] is not None:
+            words.add(_tier_billing("floor"))
+    except Exception:  # a floor tier the facade refuses has no key to count: the reference tier's meter stays
+        pass
+    return {"runs": bool(words & set(autonomy.RUNS_BILLINGS)), "spend": bool(words & set(autonomy.SPEND_BILLINGS))}
 
 
 @contextlib.contextmanager

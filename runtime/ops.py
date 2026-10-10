@@ -341,11 +341,13 @@ def _use_start(ctx: dict, run_id: int, skill: str, routing: dict):
 
 def _route(ctx: dict, skill: str, meta: dict, tier, key: dict) -> dict:
     """proof.route with the key _floor_key found; the routing names that key by its source ("runtime" or "lab")
-    on a floor run, and None otherwise."""
+    on a floor run, and None otherwise, and the billing of the credential the run would use (core._tier_billing:
+    "subscription", "metered", "free", or None when no manifest says), which the daily caps count by."""
     routing = proof_rules.route(ctx["cfg"], skill, meta, force=tier, floor_key=key["source"] is not None)
     if key["reason"] and routing["tier"] == "strong":
         routing["reasons"].append(key["reason"])
     routing["key"] = key["source"] if routing["tier"] == "floor" else None
+    routing["billing"] = core._tier_billing(routing["tier"], routing["adapter"])
     return routing
 
 
@@ -474,7 +476,7 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
         identity = lab.skill_identity(skill)
         run_id = core._stored(ctx, store.task_run_start, task["id"], skill=skill, model=routing["model"],
                          adapter=routing["adapter"], skill_version=identity["version"],
-                         skill_sha256=identity["content_sha256"], web=routing["web"])["run_id"]
+                         skill_sha256=identity["content_sha256"], web=routing["web"], billing=routing["billing"])["run_id"]
     except (skill_meta.SkillError, manifest.ManifestError, lab.LabError, core.OpsError, OSError, KeyError) as e:
         core._stored(ctx, store.task_fail_running, _note(f"the run could not start: {e}"))
         raise core.OpsError(f"task {task['id']} ({skill}) could not start: {e}", 1) from None
@@ -574,7 +576,9 @@ def _run(ctx: dict, task: dict, tier: str | None = None) -> dict:
     if state_report is not None:
         out["state"] = {"accepted": len(state_report["accepted"]), "rejected": state_report["rejected"]}
     number = lambda key, kind: timing.get(key) if isinstance(timing.get(key), kind) and not isinstance(timing.get(key), bool) else None
-    finish = dict(status="ok", ending=ending, attempts=counts["attempts"], cost_usd=number("cost_usd", (int, float)),
+    # Only a metered run has a cost that is billed, whatever the tier; a subscription or free run keeps none (costs.py recomputes it).
+    finish = dict(status="ok", ending=ending, attempts=counts["attempts"],
+                  cost_usd=number("cost_usd", (int, float)) if routing["billing"] == "metered" else None,
                   tokens=number("total_tokens", int), duration_ms=number("duration_ms", int),
                   skill_loaded=(skill in loaded) if isinstance(loaded, list) else None,
                   image_digest=result["image_digest"], run_dir=dest, redactions=_count(counts.get("redactions")))
@@ -1747,7 +1751,7 @@ def _router_call(ctx: dict, request: dict, text: str, *, reroute: bool = False) 
         raise core.OpsError(f"the router ({skill}) could not start: {e}", 1) from None
     run_id = core._stored(ctx, store.route_run_start, request["id"], skill=skill, model=routing["model"],
                      adapter=routing["adapter"], skill_version=identity["version"],
-                     skill_sha256=identity["content_sha256"], web=False, reroute=reroute)["run_id"]
+                     skill_sha256=identity["content_sha256"], web=False, reroute=reroute, billing=routing["billing"])["run_id"]
     dest = os.path.join(cfg["data_dir"], core.RUNS_DIR, str(run_id))
     out = {"routed": False, "request": request["id"], "source": "router", "run_id": run_id, "run_dir": dest,
            "status": "failed", "ending": None, "failure": None, "pending_id": None, "kind": None, "kept": [],
@@ -1796,7 +1800,8 @@ def _router_call(ctx: dict, request: dict, text: str, *, reroute: bool = False) 
     body = body.encode("utf-8")[:store.BODY_MAX].decode("utf-8", errors="ignore")
     loaded = timing.get("skills_loaded")
     number = lambda key, kind: timing.get(key) if isinstance(timing.get(key), kind) and not isinstance(timing.get(key), bool) else None
-    finish = dict(status="ok", attempts=counts["attempts"], cost_usd=number("cost_usd", (int, float)),
+    finish = dict(status="ok", attempts=counts["attempts"],
+                  cost_usd=number("cost_usd", (int, float)) if routing["billing"] == "metered" else None,
                   tokens=number("total_tokens", int), duration_ms=number("duration_ms", int),
                   skill_loaded=(skill in loaded) if isinstance(loaded, list) else None,
                   image_digest=result["image_digest"], run_dir=dest, redactions=_count(counts.get("redactions")))
@@ -2227,7 +2232,8 @@ def _midnight_utc() -> str:
 
 def _agents_of_the_day(ctx: dict) -> dict:
     """Each area agent's facts, a day's spend and entry, from the store and the configuration: {name: {"facts",
-    "entry", "spent", "split"}} (split: autonomy.spend_split, for the meters). The day starts at local midnight (_midnight_utc), as the caps count it, and a run of the router
+    "entry", "spent", "split", "in_use"}} (split: autonomy.spend_split, for the meters; in_use: core._caps_in_use). The
+    spend is by the billing each run recorded (autonomy.with_billing gives a run older than the column the tier rule). The day starts at local midnight (_midnight_utc), as the caps count it, and a run of the router
     (its task is a request, so its agent is None) counts against the planning agent. {} without area agents."""
     store, cfg = ctx["store"], ctx["cfg"]
     agents_checked = cfg["area_agents"]
@@ -2235,13 +2241,13 @@ def _agents_of_the_day(ctx: dict) -> dict:
         return {}
     now = datetime.datetime.now(datetime.timezone.utc)
     standing_rows = core._stored(ctx, store.approvals_list, status="active", scope="standing")
-    runs = [dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL else r
-            for r in core._stored(ctx, store.runs_since, _midnight_utc())]
-    reference, floor = lab.reference("strong")["model"], lab.reference("floor")["model"]
-    per_run = cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD)
+    runs = autonomy.with_billing([dict(r, agent=plan.PLANNING) if r.get("agent") is None and r.get("skill") == router.ROUTER_SKILL
+                                  else r for r in core._stored(ctx, store.runs_since, _midnight_utc())],
+                                 lab.reference("floor")["model"])
+    per_run, in_use = cfg["raw"].get("max_cost_usd_per_run", PER_RUN_USD), core._caps_in_use(runs)
     return {name: {"facts": autonomy.facts(name, agents_checked, standing_rows, now), "entry": entry,
-                   "spent": autonomy.spend(runs, name, reference, floor, per_run),
-                   "split": autonomy.spend_split(runs, name, floor, per_run)}
+                   "spent": autonomy.spend(runs, name, per_run), "split": autonomy.spend_split(runs, name, per_run),
+                   "in_use": in_use}
             for name, entry in agents_checked.items()}
 
 
@@ -2264,7 +2270,7 @@ def _snapshot(ctx: dict, key: dict) -> dict:
 
     out = {"running": next((t for t in tasks if t["state"] == "running"), None),
            "ready": [t for t in tasks if t["state"] == "ready" and t["parent_id"] is not None],
-           "reviews": [], "agents": _agents_of_the_day(ctx), "tier": {}}
+           "reviews": [], "agents": _agents_of_the_day(ctx), "tier": {}, "billing": {}}
     for item in core._stored(ctx, store.pending_list):
         task = by_id.get(item["task_id"])
         if item["kind"] != "review" or task is None or not task.get("skill"):
@@ -2274,7 +2280,8 @@ def _snapshot(ctx: dict, key: dict) -> dict:
                                "mandatory": plan.mandatory(task["skill"], core.ROOT)})
     for task in out["ready"]:
         if task.get("agent") in agents and task.get("skill"):
-            out["tier"][task["id"]] = routed(task["skill"])["tier"]
+            routing = routed(task["skill"])
+            out["tier"][task["id"]], out["billing"][task["id"]] = routing["tier"], routing["billing"]
     out["waits"] = ops_waits.waiting_for(ctx)  # a ready task with an open wait starts nowhere (dispatcher.decide)
     return out
 
@@ -2333,7 +2340,7 @@ def _stops_the_round(ran: dict):
 def dispatch(project: str, budget_seconds=None) -> dict:
     """The dispatcher (decision P5): one round. The handlers whose `dispatch` is true and whose agent is enabled get
     their tick; then, until nothing may start: the reviews each agent's mode releases are released (with what a release
-    starts), and the oldest ready task whose agent may start (its mode, its daily caps on the tier its proof gives) runs,
+    starts), and the oldest ready task whose agent may start (its mode, its daily caps by the billing of its route's credential) runs,
     as run_next runs a task. No new run starts once budget_seconds (default DISPATCH_BUDGET) have passed, and a failure
     the next run would repeat stops the round. Returns {"handlers", "released", "ran", "held", "stopped"}. Before a
     run starts, the reference model's credential (for a run on it) and the eval image are checked: a round that cannot
@@ -2669,8 +2676,8 @@ def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms
        `ignored_changes`.
     6. The reply leaves through the credential scan of limit L14 (workcopy.masked_reply) and is written to
        <out_dir>/response.md, as the scan leaves it; <out_dir>/timing.json holds total_tokens, duration_ms, exit_code (0
-       when the model answered, else 1) and cost_usd, which is null for a run on the reference model, whose cost the
-       runtime does not know. Those two files are all that is written outside the run folder.
+       when the model answered, else 1) and cost_usd, which is null unless the credential of the run is metered (a
+       run on a subscription or a free credential has no billed cost). Those two files are all that is written outside the run folder.
     7. Returns {"status": "ok" | "failed", "failure": None | {"kind", "reason"}, "tier", "model", "adapter",
        "ignored_changes", "run_dir"}.
 
@@ -2719,7 +2726,7 @@ def contained_run(project: str, skill: str, prompt: str, out_dir: str, platforms
     number_of = lambda name: timing.get(name) if isinstance(timing.get(name), int) and not isinstance(timing.get(name), bool) \
         and timing.get(name) >= 0 else None
     cost = timing.get("cost_usd")
-    cost = cost if result["tier"] == "floor" and isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0 else None
+    cost = cost if routing["billing"] == "metered" and isinstance(cost, (int, float)) and not isinstance(cost, bool) and cost >= 0 else None
     try:
         os.makedirs(out_dir, exist_ok=True)
         with open(os.path.join(out_dir, "response.md"), "w", encoding="utf-8", newline="") as f:
