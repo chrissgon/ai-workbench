@@ -297,9 +297,10 @@ def test_the_city_model_works_out_floors_windows_decisions_links_and_the_trackin
     tracking = got["tracking"]
     assert tracking["request"] == {"id": 1, "title": "Spring", "state": "ready", "project": "shop", "projectId": "aaaaaaaaaaaa"}
     assert (tracking["done"], tracking["total"]) == (2, 5)
-    assert tracking["steps"][3] == ["Order page", "running", "Engineering · running", "#/p/A/floor/engineering", "Order page, Engineering, running"]
+    assert tracking["steps"][3] == ["Order page", "running", "Engineering", "#/p/A/floor/engineering", "Order page, Engineering, running"], \
+        "R-8: a step shows its title and its agent, no state word (the name for a screen reader keeps it)"
     assert tracking["now"]["where"] == "Now on floor 1 · engineering" and tracking["now"]["title"] == "Order page"
-    assert tracking["now"]["state"] == "Running" and tracking["now"]["sub"].startswith("task #5 · since ") and tracking["now"]["link"] == "#/p/A/floor/engineering"
+    assert tracking["now"]["state"] == "Running" and tracking["now"]["sub"].startswith("task #5 · for ") and tracking["now"]["link"] == "#/p/A/floor/engineering"
     assert got["noRequest"] is None
     assert got["subLines"] == ["Request #1 · 2 of 5 steps done", "No request is open", "Not accepted", "..."]
     assert got["scene"]["ready"] is True and got["scene"]["selected"] == a and got["scene"]["marked"] == a, "the chosen project keeps its outline in the City"
@@ -433,12 +434,12 @@ out.names = {
   noticeRole: nodes.find((n) => (n.attrs.class || "").includes("wb-notice ")).attrs.role,
 };
 out.backDisabled = nodes.find((n) => (n.attrs.class || "").includes("wb-back")).disabled;
-out.waitMenuHiddenOnCity = frameHidden(nodes);
-function frameHidden(ns) { return ns.find((n) => (n.attrs.class || "").includes("wb-wait-menu-wrap")).hidden; }
+out.waitingOnCity = [frame.waitingCard.isOpen(), frame.waitingCard.el.cls().includes("is-collapsible"), frame.waitingCard.el.attrs.id];
+function frameHidden(ns) { return [frame.waitingCard.isOpen(), frame.waitingCard.el.cls().includes("is-collapsed"), frame.waitingCard.el.attrs.id || null]; }
 frame.setScreen(router.parse(`#/p/${a}/floor/marketing`), { projectName: "northwind-shop", projectId: a, leaf: "Marketing" });
 const n2 = [...root.walk()];
 out.floor = { crumbs: n2.filter((n) => ["wb-crumb", "wb-crumb is-current"].includes(n.attrs.class || "")).map((n) => n.attrs.class.includes("is-current") ? "current:" + n.textContent : n.textContent),
-  backDisabled: n2.find((n) => (n.attrs.class || "").includes("wb-back")).disabled, waitMenuHidden: frameHidden(n2), screen: n2.find((n) => (n.attrs.class || "").includes("wb-frame")).dataset.screen };
+  backDisabled: n2.find((n) => (n.attrs.class || "").includes("wb-back")).disabled, waitingElsewhere: frameHidden(n2), screen: n2.find((n) => (n.attrs.class || "").includes("wb-frame")).dataset.screen };
 frame.setScreen(router.parse(`#/p/${a}/control`), { projectName: "northwind-shop", projectId: a });
 out.control = { selected: [...root.walk()].find((n) => (n.attrs.class || "").includes("wb-door")).cls().includes("is-selected") };
 frame.kpis.update(null, "loading");
@@ -446,6 +447,7 @@ frame.waitingCard.set([], "loading");
 frame.track.set(null, "loading");
 const nodes3 = [...root.walk()];
 out.loading = { kpis: nodes3.filter((n) => n.attrs.role === "group").map((n) => n.attrs["aria-label"]), unnamed: nodes3.filter((n) => ["BUTTON", "A"].includes(n.tagName) && !accessibleName(n)).length };
+frame.setScreen(city, { projectName: "northwind-shop", projectId: a });     // the City: the card is open (on a project's screen it is closed on its header line, R-7)
 frame.waitingCard.set([], "ready");
 out.empty = [...root.walk()].filter((n) => (n.attrs.class || "") === "wb-empty").map((n) => n.textContent);
 console.log(JSON.stringify(out));
@@ -461,7 +463,7 @@ def test_every_control_of_the_frame_has_an_accessible_name_and_the_names_say_wha
     assert got["regionsUnnamed"] == [], "every region, group and navigation is named"
     assert got["styleOrEvent"] == [] and got["badLinks"] == [], "no style or event attribute; every link is a hash link of this page"
     names = got["names"]
-    assert names["kpis"] == ["Open decisions 7 waiting for you", "Runs today 17 of 70", "Spend today $4.90 of $21.50 cap"]
+    assert names["kpis"] == ["Runs today 17 of 70", "Spend today $4.90 of $21.50 cap"], "R-5: two cards; the count of open decisions is on \"Waiting for you\""
     assert names["back"] == "Back" and names["nav"] == "Breadcrumbs" and names["chevron"] == "Choose a project"
     assert names["crumbs"] == ["City"]
     assert names["main"] == "northwind-shop, project 1 of 2, go to the next project"
@@ -473,10 +475,12 @@ def test_every_control_of_the_frame_has_an_accessible_name_and_the_names_say_wha
     assert names["waitingRegion"] == "Waiting for you, 2 decisions"
     assert names["skips"] == [["Skip to the panel", "#wb-panel"], ["Skip to the scene list", "#wb-scene-list"]]
     assert names["live"] == "polite" and names["heading"] == "City" and names["screen"] == "city" and names["noticeRole"] == "alert"
-    assert got["backDisabled"] is True and got["waitMenuHiddenOnCity"] is True, "Back is disabled on the City and the waiting button is the City card's"
-    assert got["floor"] == {"crumbs": ["City", "northwind-shop", "current:Marketing"], "backDisabled": False, "waitMenuHidden": False, "screen": "floor"}
+    assert got["backDisabled"] is True and got["waitingOnCity"] == [False, False, "wb-panel"], \
+        "Back is disabled on the City; R-7: there the card is open for good (no toggle: not collapsible) and is the panel the skip link names"
+    assert got["floor"] == {"crumbs": ["City", "northwind-shop", "current:Marketing"], "backDisabled": False, "waitingElsewhere": [False, True, None], "screen": "floor"}, \
+        "R-7: on a project's screen the card is closed on its header line and gives up the panel's id"
     assert got["control"] == {"selected": True}
-    assert got["loading"]["kpis"] == ["Open decisions, loading", "Runs today, loading", "Spend today, loading"] and got["loading"]["unnamed"] == 0
+    assert got["loading"]["kpis"] == ["Runs today, loading", "Spend today, loading"] and got["loading"]["unnamed"] == 0
     assert "Nothing waits for you." in got["empty"] and "Loading the request..." in got["empty"]
 
 
@@ -640,7 +644,7 @@ def test_a_script_writes_only_custom_properties_to_an_elements_style():
     for path in sorted(JS.rglob("*.js")):
         text = path.read_text(encoding="utf-8")
         for call in re.findall(r"\.style\.(\w+)\(([^)]*)", text):
-            ok = call[0] == "setProperty" and (re.match(r'\s*"--wb-(x|y|share|drawer-drag|wait-h)"', call[1]) or (path.name == "palette.js" and "color" in call[1]))
+            ok = call[0] == "setProperty" and (re.match(r'\s*"--wb-(x|y|share|drawer-drag|wait-h|cam-top)"', call[1]) or (path.name == "palette.js" and "color" in call[1]))
             assert ok, \
                 f"{path.name}: {call}: a script writes the page's own position and share properties only"
         assert not re.search(r"\.style\.\w+\s*=[^=]", text), f"{path.name} assigns a style property"

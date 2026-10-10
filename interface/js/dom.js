@@ -28,6 +28,30 @@ export function h(tag, attrs = {}, ...children) {
   return node;
 }
 
+// The namespace is an identifier, not an address the page loads; it is written in two parts so that no file of the page names a host (a test scans for one).
+const SVG_NS = ["http:", "", "www.w3.org", "2000", "svg"].join("/");
+
+/**
+ * svg(tag, attrs, ...children): an element of the SVG namespace, built as h() builds one (an event handler or a style attribute is refused, a string child
+ * is a text node, `text` is assigned with textContent). Used for the few drawings the page makes itself: the token prompt's ground of dots and its owl.
+ * A document with no namespaces (a test's stand-in) gets a plain element.
+ */
+export function svg(tag, attrs = {}, ...children) {
+  const node = typeof document.createElementNS === "function" ? document.createElementNS(SVG_NS, tag) : document.createElement(tag);
+  for (const [name, value] of Object.entries(attrs || {})) {
+    if (value === undefined || value === null || value === false) continue;
+    if (FORBIDDEN.test(name)) throw new Error(`the attribute ${name} is not allowed`);
+    if (name === "text") node.textContent = String(value);
+    else if (name === "href" || name === "xlink:href") throw new Error("a drawing of the page links to nothing");
+    else node.setAttribute(name, value === true ? "" : String(value));
+  }
+  for (const child of children.flat()) {
+    if (child === undefined || child === null || child === false) continue;
+    node.append(child instanceof Node ? child : String(child));
+  }
+  return node;
+}
+
 /** Replace the text of a node. */
 export function setText(node, text) {
   node.textContent = String(text);

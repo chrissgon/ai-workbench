@@ -1,15 +1,17 @@
-// The shared frame of every scene screen (handoff README section 4): the header (back, breadcrumbs, project switcher), the
-// KPI cards, the door to the control room, the waiting list or its button, the tracking bar, the panel slot, the scene
-// container and, for a phone, the bottom bar. Built once; a screen fills it through the methods below. Every control has an
-// accessible name and a keyboard path; no element carries a style attribute.
+// The shared frame of every scene screen (round 4, R-1 to R-11): a top row of floating controls with no strip behind it (the brand, the
+// project switcher, the colour-mode button, the door to the control room), two KPI cards in a column at the left with the camera buttons under
+// them, Back and the breadcrumbs docked at the bottom left above the tracking bar, "Waiting for you" as a card at the bottom right, the panel
+// slot, the scene container and, for a phone, the bottom bar of two rows. Built once; a screen fills it through the methods below. Every control
+// has an accessible name and a keyboard path; no element carries a style attribute.
 
 import { h } from "../dom.js";
 import * as router from "../router.js";
 import { commandBlock } from "./command.js";
 import { EVENT as DRAWER_EVENT } from "./drawer.js";
 import { createKpis } from "./kpis.js";
-import { createNav } from "./header.js";
+import { createBrand, createNav } from "./header.js";
 import { icon } from "./icons.js";
+import { createModeButton } from "./mode-button.js";
 import { createEngine } from "../scene/engine.js";
 import { escapeStep, isField } from "./escape.js";
 import { current as documentOrigin } from "./origin.js";
@@ -41,18 +43,26 @@ export function obstacleInset(rect, scene) {
 const SCREEN_NAMES = { city: "City", building: "Building", floor: "Floor", lobby: "Lobby", control: "Control room" };
 const ANNOUNCE_EVERY_MS = 2000;
 
-/** Create the frame in `root` and return its parts and methods. handlers: {onSelectProject(id), onSelectRequest(project, request), onForgetToken(), onRetry()}. */
+/**
+ * Create the frame in `root` and return its parts and methods. handlers: {onSelectProject(id), onSelectRequest(project, request), onForgetToken(), onRetry(),
+ * projectsPanel (optional: the command panel of "Add a project..." and "Leave this project...", views/city-projects.js; without it the two rows do nothing)}.
+ */
 export function createFrame(root, handlers) {
   const sheet = createSheet();
+  const panelOf = handlers.projectsPanel || null;
   const closeLists = () => {
     switcher.close();
-    waitingMenu.close();
+    waitingCard.close();
   };
-  const switcher = createSwitcher({ onSelect: (id) => handlers.onSelectProject(id), onForgetToken: () => handlers.onForgetToken(), onOpen: () => waitingMenu.close() });
+  const switcher = createSwitcher({
+    onSelect: (id) => handlers.onSelectProject(id), onForgetToken: () => handlers.onForgetToken(), onOpen: () => waitingCard.close(),
+    onAdd: () => panelOf && panelOf.openAdd(), onLeave: (id) => panelOf && panelOf.openLeave(id),
+  });
   const waitingMenu = createWaitingMenu({
     onOpen: () => switcher.close(), onSheet: (title, body, opener) => sheet.open(title, body, opener, "waiting"), onRefill: (body) => sheet.refill("waiting", body),
   });
-  const waitingCard = createWaitingCard();
+  const waitingCard = createWaitingCard({ onOpen: () => switcher.close() });
+  const modeButton = createModeButton();
   const nav = createNav();
   const kpis = createKpis();
   const track = createTrack({ onOpenSteps: (title, body, opener) => sheet.open(title, body, opener), onSelectRequest: (project, id) => handlers.onSelectRequest(project, id) });
@@ -73,8 +83,15 @@ export function createFrame(root, handlers) {
 
   const door = h("button", { class: "pui-btn pui-surface pui-outline wb-door", type: "button", "aria-label": "Control room" },
     icon("server", 16), h("span", { class: "wb-door-label", text: "Control room" }));
-  const actions = h("div", { class: "wb-actions" }, waitingMenu.el, door);
-  const header = h("header", { class: "wb-header" }, nav.el, switcher.el);
+  // the top row (R-1): the brand at the left; at the right the switcher, the colour-mode button and the door, each a raised control on the scene
+  const topEnd = h("div", { class: "wb-topbar-end" }, switcher.el, modeButton.el, door);
+  const header = h("header", { class: "wb-topbar" }, createBrand(), topEnd);
+  // Back and the crumbs are docked at the bottom left above the tracking bar (R-2); on a phone they are the bottom bar's second row
+  const navDock = h("div", { class: "wb-navdock" }, nav.el);
+  const dock = h("div", { class: "wb-dock" }, navDock, track.el);
+  const barTop = h("div", { class: "wb-bottom-row" }, waitingMenu.el);
+  const barEnd = h("div", { class: "wb-bottom-row" });
+  const bottomBar = h("div", { class: "wb-bottom-bar" }, barTop, barEnd);
 
   const sceneHost = h("div", { class: "wb-scene" });
   const fallback = h("p", { class: "wb-scene-fallback", hidden: true, text: "Your browser cannot draw the 3D scene; the panels have everything." });
@@ -85,7 +102,19 @@ export function createFrame(root, handlers) {
   // back to where they stand otherwise. Elsewhere the stack is empty and takes no box.
   const float = h("div", { class: "wb-float" });
   const main = h("main", { class: "wb-main" }, heading, noticeBox, float);
-  const frame = h("div", { class: "wb-frame", "data-screen": "city" }, skipPanel, skipList, live, header, sceneArea, main, track.el, actions, sheet.el);
+  const frame = h("div", { class: "wb-frame", "data-screen": "city" }, skipPanel, skipList, live, header, sceneArea, main, dock, bottomBar, sheet.el);
+  if (panelOf) {
+    panelOf.el.classList.add("pui-card", "wb-cmd-panel");
+    panelOf.el.setAttribute("role", "region");
+    panelOf.el.setAttribute("aria-label", "Add or leave a project");
+    panelOf.el.addEventListener("keydown", (event) => {
+      if (event.key === "Escape" && panelOf.isOpen()) {
+        event.stopPropagation();
+        panelOf.close();
+      }
+    });
+    frame.append(panelOf.el);
+  }
   root.replaceChildren(frame);
 
   let doorTarget = null;
@@ -105,7 +134,7 @@ export function createFrame(root, handlers) {
     const requestMenu = document.querySelector(".wb-req-menu:not([hidden])");
     const step = escapeStep({
       route: currentRoute, field: isField(document.activeElement), dialog: dialogs.length > 0,
-      menu: switcher.isOpen() || waitingMenu.isOpen() || Boolean(requestMenu), selection: Boolean(world && world.hasSelection()), from: controlFrom, origin: documentOrigin(), home,
+      menu: switcher.isOpen() || waitingCard.isOpen() || Boolean(panelOf && panelOf.isOpen()) || Boolean(requestMenu), selection: Boolean(world && world.hasSelection()), from: controlFrom, origin: documentOrigin(), home,
     });
     if (step.step === "none") return;
     event.preventDefault();
@@ -116,6 +145,7 @@ export function createFrame(root, handlers) {
       if (!cancel.defaultPrevented) dialog.close();
     } else if (step.step === "menu") {
       closeLists();
+      if (panelOf) panelOf.close();
       const chip = document.querySelector('.wb-req-chip[aria-expanded="true"]');
       if (chip) chip.click();
     } else if (step.step === "selection") {
@@ -140,15 +170,38 @@ export function createFrame(root, handlers) {
 
   const phone = window.matchMedia("(max-width: 639px)");
 
-  function placeFloat() {
-    if (phone.matches) float.append(kpis.el, track.el);
-    else if (kpis.el.parentNode === float) {
-      sceneArea.append(kpis.el);
-      frame.insertBefore(track.el, actions);
+  // On a phone the tracking bar and the two KPI tiles float at the top of the scene (R-10) and the bottom bar holds, in two rows, the switcher, the inbox
+  // button and the colour-mode button, then Back, the crumbs and the door; above a phone's width they stand where a desktop has them. Moved, never copied.
+  function placeParts() {
+    if (phone.matches) {
+      float.append(track.el, kpis.el);
+      barTop.replaceChildren(switcher.el, waitingMenu.el, modeButton.el);
+      barEnd.replaceChildren(nav.el, door);
+    } else {
+      if (kpis.el.parentNode === float) sceneArea.append(kpis.el);
+      if (track.el.parentNode === float) dock.append(track.el);
+      topEnd.replaceChildren(switcher.el, modeButton.el, door);
+      navDock.replaceChildren(nav.el);
+      barTop.replaceChildren(waitingMenu.el);
+      barEnd.replaceChildren();
     }
   }
-  placeFloat();
-  phone.addEventListener("change", placeFloat);
+  placeParts();
+  phone.addEventListener("change", placeParts);
+
+  // The camera buttons stand in the KPI column, under its last card (R-9): the frame writes where that is, as the one number the stylesheet needs.
+  const placeCamera = () => {
+    const box = kpis.el.getBoundingClientRect();
+    const scene = sceneArea.getBoundingClientRect();
+    const bottom = box.height > 0 ? box.bottom - scene.top : 0;
+    frame.style.setProperty("--wb-cam-top", `${Math.round(bottom > 0 ? bottom + 10 : 0)}px`);
+  };
+  let cameraWatch = null;
+  if (typeof ResizeObserver === "function") {
+    cameraWatch = new ResizeObserver(placeCamera);
+    cameraWatch.observe(kpis.el);
+    cameraWatch.observe(sceneArea);
+  }
 
   // The bottom sheet (frame/drawer.js) says where it stands. At full on a phone it covers the scene: the cards over the scene go and the scene is paused.
   let covering = false;
@@ -177,10 +230,13 @@ export function createFrame(root, handlers) {
       document.removeEventListener("keydown", onKey);
       switcher.destroy();
       waitingMenu.destroy();
+      waitingCard.destroy();
+      modeButton.destroy();
+      if (cameraWatch) cameraWatch.disconnect();
       clearTimeout(announcing);
       queue.length = 0;
       frame.remove();
-    }, switcher, kpis, waitingCard, waitingMenu, track, sheet, heading, closeLists,
+    }, switcher, kpis, waitingCard, waitingMenu, modeButton, track, sheet, heading, closeLists,
     /**
      * The world's engine for the City, the Building, the Floor or the Lobby screen: the one that is already drawing (its handlers become the screen's), else a new
      * one. It throws NoWebGL when the browser cannot draw the scene.
@@ -219,10 +275,24 @@ export function createFrame(root, handlers) {
       door.disabled = !doorTarget;
       door.classList.toggle("is-selected", route.screen === "control");
       door.setAttribute("aria-current", route.screen === "control" ? "page" : "false");
-      waitingMenu.el.hidden = route.screen === "city";
+      waitingCard.setCollapsible(route.screen !== "city");     // open on the City, closed on its header line elsewhere (R-7)
       const key = `${route.screen}|${route.project}|${route.agent}`;
-      if (key !== shownRoute) closeLists();   // a poll redraws the same screen: an open list stays open
+      if (key !== shownRoute) {
+        closeLists();   // a poll redraws the same screen: an open list stays open
+        if (panelOf) panelOf.close();
+      }
       shownRoute = key;
+    },
+    /**
+     * Seat the "Waiting for you" card where a project's screens have it: at the bottom right of the main area. The City's view puts the same card in its own
+     * sheet and takes it out when it goes; the page calls this after the screen is made, so that the card is never left without a home.
+     */
+    dockWaiting() {
+      if (currentRoute && currentRoute.screen !== "city" && waitingCard.el.parentNode !== main) main.append(waitingCard.el);
+    },
+    /** The projects the command panel of the switcher's foot knows (views/city-projects-model.projectsOf). */
+    setProjects(list) {
+      if (panelOf) panelOf.setProjects(list);
     },
     /** A band under the header: spec {kind: "error"|"info", text, mono?, retry?} or null. */
     notice(spec) {
@@ -234,7 +304,7 @@ export function createFrame(root, handlers) {
       noticeBox.replaceChildren();
       noticeBox.hidden = !spec;
       if (!spec) return;
-      const band = h("div", { class: `wb-notice${spec.kind === "error" ? " is-error" : ""}`, role: spec.kind === "error" ? "alert" : "status" });
+      const band = h("div", { class: `wb-notice${spec.kind === "error" ? " is-error pui-soft pui-error" : ""}`, role: spec.kind === "error" ? "alert" : "status" });
       // The service's own sentence; the command it gave (`command`, the `next` of the refusal) is drawn with the component.
       const sentence = (text, command, mono) => (command
         ? commandBlock({ command, sentence: text })
@@ -270,16 +340,18 @@ export function createFrame(root, handlers) {
     insets(rightEl) {
       const scene = sceneArea.getBoundingClientRect();
       if (phone.matches) {
-        // The scene fills the whole upper part of the page; what lies over it is the notice at the top, and at the bottom the cards (the KPI row, the
-        // tracking bar) and the sheet: the camera frames the city in what is left between them.
+        // The scene fills the whole upper part of the page; what lies over it is, at the top, the notice, the tracking bar and the two KPI tiles (R-10) and,
+        // at the bottom, the sheet: the camera frames the city in what is left between them.
         const out = { left: 8, right: 8, top: 8, bottom: 8, pad: 1.02 };
         if (!noticeBox.hidden) out.top = Math.max(8, noticeBox.getBoundingClientRect().bottom - scene.top + 8);
-        const covers = [float, ...main.querySelectorAll(".wb-drawer")].map((part) => part.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
-        if (covers.length) out.bottom = Math.max(8, scene.bottom - Math.min(...covers.map((rect) => rect.top)) + 8);
+        const stack = float.getBoundingClientRect();
+        if (stack.width > 0 && stack.height > 0) out.top = Math.max(out.top, stack.bottom - scene.top + 8);
+        const sheets = [...main.querySelectorAll(".wb-drawer")].map((part) => part.getBoundingClientRect()).filter((rect) => rect.width > 0 && rect.height > 0);
+        if (sheets.length) out.bottom = Math.max(8, scene.bottom - Math.min(...sheets.map((rect) => rect.top)) + 8);
         return out;
       }
       const out = { left: 16, right: 16, top: 16, bottom: 16, pad: 1.04 };
-      const parts = [kpis.el, header, actions, noticeBox.hidden ? null : noticeBox, track.el, rightEl && !rightEl.hidden ? rightEl : null];
+      const parts = [kpis.el, header, noticeBox.hidden ? null : noticeBox, dock, rightEl && !rightEl.hidden ? rightEl : null];       // the panel at the right stands over the card under it: the card adds no inset
       for (const part of parts) {
         if (!part) continue;
         const take = obstacleInset(part.getBoundingClientRect(), scene);

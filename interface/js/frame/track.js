@@ -145,7 +145,7 @@ export function createTrack({ onOpenSteps, onSelectRequest = () => {} }) {
     desktop.replaceChildren(
       h("div", { class: "wb-track-left" },
         h("div", { class: "wb-track-head" }, selector(model, onSelectRequest), h("strong", { class: "wb-track-title", text: r.title || `Request ${r.id}` }),
-          h("span", { class: "wb-track-project", text: r.project }), h("span", { class: "wb-track-count", text: countText })),
+          h("span", { class: "pui-badge pui-muted pui-soft wb-track-project", text: r.project }), h("span", { class: "wb-track-count", text: countText })),
         model.steps.length ? stepsList(model, 13) : h("p", { class: "wb-empty", text: `Request ${r.id} has no steps yet (${r.state}).` })),
       nowCard(model));
     const current = model.now;
@@ -153,7 +153,7 @@ export function createTrack({ onOpenSteps, onSelectRequest = () => {} }) {
       h("span", { class: "wb-dots", "aria-hidden": "true" }, model.steps.map((s) => nodeIcon(s.state, 12))),
       h("span", { class: "wb-track-now-text" },
         h("strong", { text: current ? current.title : (r.title || `Request ${r.id}`) }),
-        h("span", { class: "wb-step-sub", text: current ? `${current.where.replace(/^Now on |^Waiting on /, "")} · ${current.state.toLowerCase()}` : r.state })));
+        h("span", { class: "wb-step-sub", text: current ? current.where.replace(/^Now on |^Waiting on /, "") : r.state })));      // no state word: the dots carry it (R-8)
     open.addEventListener("click", () => onOpenSteps(`Request ${r.id}, ${r.title || ""}`, model.steps.length ? stepsList(model, 13, true) : h("p", { class: "wb-empty", text: "No steps yet." }), open));
     phone.replaceChildren(
       h("div", { class: "wb-track-head" }, selector(model, onSelectRequest), h("strong", { class: "wb-track-title", text: r.title || `Request ${r.id}` }),

@@ -4,7 +4,7 @@
 //   2. a dialog is open: it closes;
 //   3. a document or a selected decision is open in the Floor or the Lobby: it closes (a document back to the tab it was opened from, a
 //      decision to the Inbox list);
-//   4. a menu or a list is open (the project switcher, the waiting menu, the request list): it closes;
+//   4. a menu or a list is open (the project switcher, the open "Waiting for you" card, the command panel of the switcher's foot, the request list): it closes;
 //   5. a scene object is selected or hovered by the keyboard: the selection is cleared;
 //   6. else go up: the Floor and the Lobby to the Building, the Building to the City (`#/city`; on the home Building of a service with one
 //      project, nothing: the City is its crumb), the Control room to the screen it was opened from (else the Building of the project).

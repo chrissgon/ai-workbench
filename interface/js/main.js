@@ -8,6 +8,8 @@ import * as api from "./api.js";
 import { emptySnapshot, refresh, versionKey } from "./data.js";
 import { h } from "./dom.js";
 import { createFrame } from "./frame/frame.js";
+import { createProjectsPanel } from "./views/city-projects.js";
+import { projectsOf, readableProject } from "./views/city-projects-model.js";
 import { initMode } from "./mode.js";
 import * as model from "./model.js";
 import * as router from "./router.js";
@@ -25,6 +27,7 @@ const root = document.getElementById("app");
 const NETWORK_TEXT = "The service could not be reached. Is it still running?";
 
 let frame = null;
+let tokenView = null;      // the token prompt on the page, or null
 let view = null;           // {key, screen, update(...), dispose()}
 let snapshot = emptySnapshot();
 let selected = null;       // the project the tracking bar follows on the City (memory only)
@@ -112,9 +115,10 @@ function askForToken(message) {
   if (frame) frame.destroy();
   frame = null;
   drawnKey = null;
-  const holder = h("div", { class: "app-main" });
+  if (tokenView) tokenView.destroy();
+  const holder = h("div", { class: "tk-root" });
   root.replaceChildren(holder);
-  showTokenPrompt(holder, {
+  tokenView = showTokenPrompt(holder, {
     message: message || pendingMessage,
     tokenFile: () => api.tokenFile({ signal: typeof AbortSignal !== "undefined" && AbortSignal.timeout ? AbortSignal.timeout(4000) : undefined }),
     onSubmit: async (pasted) => {
@@ -143,12 +147,25 @@ function start() {
     askForToken();
     return;
   }
+  if (tokenView) tokenView.destroy();
+  tokenView = null;
   snapshot = emptySnapshot();
   model.resetRequestChoices();
   selected = null;
   failure = null;
   knownDecisions = null;
+  // "Add a project..." and "Leave this project..." of the switcher's foot (A-35): the command panel the frame draws on every screen (it shows the lines,
+  // the person types them in the terminal; the page opens nothing)
+  const projectsPanel = createProjectsPanel({
+    readStart: async () => {
+      const id = readableProject(snapshot);
+      if (id === null) return "";
+      const got = await api.connections(id);
+      return got && got.service && typeof got.service.start === "string" ? got.service.start : "";
+    },
+  });
   frame = createFrame(root, {
+    projectsPanel,
     onSelectProject: selectProject,
     onSelectRequest: (project, id) => {
       model.chooseRequest(project, id);   // kept in memory for the session
@@ -272,25 +289,28 @@ function render() {
   });
   frame.kpis.update(state === "ready" ? model.kpiSums(snapshot, scope) : null, state);
   const rows = model.waitingRows(snapshot, now, scope);
+  frame.setProjects(projectsOf(snapshot));
   const track = state === "ready" ? model.tracking(snapshot, chosen, now) : null;
   frame.track.set(track, state === "loading" ? "loading" : state === "error" ? "empty" : (track ? "ready" : "empty"), Boolean(failure) && snapshot.loaded);
   frame.notice(noticeFor(route));
 
   ensureView(route);
+  frame.dockWaiting();
+  // the inbox button of a phone's bottom bar and, off the City, the card at the bottom right (the City's view draws its own rows into the same card)
+  const waiting = state === "ready" ? "ready" : state;
+  frame.waitingMenu.set(rows, waiting);
+  if (view.screen !== "city") frame.waitingCard.set(rows, waiting);
   if (view.screen === "city") {
     const city = model.city(snapshot, now);
     view.city.update({ city, selectedId: chosen, state, snapshot, now });
   } else if (view.screen === "control") {
-    frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     const detail = routeProject ? snapshot.details[routeProject.id] : null;
     const found = model.acceptance(routeProject, detail);
     view.control.update({ reload: reloads, loaded: snapshot.loaded, unread: Boolean(failure) && !snapshot.loaded, known: Boolean(routeProject), accepted: found.accepted, kept: found.kept, projectId: route.project, tab: route.tab });
   } else if (view.screen === "lobby") {
-    frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     view.lobby.update({ reload: reloads, snapshot, route, now, projectName: routeProject ? routeProject.name : "" });
     if (!known) frame.notice({ kind: "error", text: "The service has no such project." });
   } else {
-    frame.waitingMenu.set(rows, state === "ready" ? "ready" : state);
     if (view.screen === "building") view.building.update({ snapshot, route, now, reload: reloads });
     else if (view.screen === "floor") view.floor.update({ snapshot, route, now, reload: reloads });
     else view.placeholder.update(snapshot, route.project, route.agent ? `Floor of ${route.agent}` : "");
