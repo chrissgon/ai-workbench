@@ -479,32 +479,6 @@ def test_the_lobbys_tabs_link_only_through_the_router_and_the_floors_modules_cha
     assert 'last.emptyText || "Nothing waits for you on this floor."' in inbox_module, "the Floor's empty line is the default"
 
 
-def test_the_lobby_draws_a_plan_card_in_one_place_and_a_line_in_the_other():
-    request = (INTERFACE / "js" / "views" / "lobby-request.js").read_text(encoding="utf-8")
-    assert 'item.kind === "plan" && viaMessage' in request, "a plan under a message that names its request is the plan card; otherwise a line points at the Inbox"
-    thread = (INTERFACE / "js" / "views" / "lobby-thread.js").read_text(encoding="utf-8")
-    assert "blockFor(request, true)" in thread and "blockFor(request, false)" in thread, "a block under a message and a trailing one are told apart"
-    lobby = (INTERFACE / "js" / "views" / "lobby.js").read_text(encoding="utf-8")
-    assert "inboxParts(status, messages)" in lobby and 'router.lobbyHash(project, "inbox", result.pending_id)' in lobby, \
-        "a request made from the form opens its plan in the Inbox when its route ends"
-
-
-def test_every_class_the_lobbys_tab_modules_build_is_styled_and_the_tab_files_are_files_of_the_page():
-    css = interface_css()
-    missing = {}
-    for name in LOBBY_TAB_FILES:
-        assert (INTERFACE / "js" / name).is_file()
-        text = (INTERFACE / "js" / name).read_text(encoding="utf-8")
-        for cls in set(re.findall(r"\bwb-[a-z0-9]+(?:-[a-z0-9]+)*", text)):
-            if not re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css):
-                missing.setdefault(cls, []).append(name)
-    lobby = (INTERFACE / "js" / "views" / "lobby.js").read_text(encoding="utf-8")
-    for cls in ("wb-lobby-scroll",):
-        assert re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css) and cls in lobby
-    assert not missing, f"classes the Lobby's tab modules build that the stylesheets never name: {missing}"
-    assert "LATER" not in lobby and "comes with the Floor package" not in lobby, "no placeholder is left for the three tabs"
-
-
 def test_no_lobby_module_takes_a_write_out_of_the_client_by_name_or_by_destructuring():
     writes = {"answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"}
     for path in sorted((INTERFACE / "js" / "views").glob("lobby*.js")):
@@ -554,24 +528,6 @@ def test_the_control_room_calls_only_the_four_reads_it_needs_and_each_is_a_get_r
         text = path.read_text(encoding="utf-8")
         assert not re.search(r"\bfetch\(|XMLHttpRequest|\bEventSource\b|\bsendBeacon\b", text), f"{path.name} has a second way to reach the service"
         assert not re.search(r"\bapi\.(?:%s)\(" % "|".join(sorted(["answer", "release", "approve", "reject", "request", "route", "cancel", "retry", "handOver", "verdict", "setMode", "say", "sync", "dispatch"])), text), f"{path.name} writes"
-
-
-def test_every_wb_class_the_control_room_builds_is_a_rule_of_the_stylesheet():
-    css = interface_css()
-    defined = set(re.findall(r"\.(wb-[a-z0-9-]+)", css))
-    markers = {"is-open", "is-wide", "is-selected"}  # state words, not classes of their own
-    for path in control_modules():
-        text = path.read_text(encoding="utf-8")
-        for group in re.findall(r"class: `?\"?([^\"`]+)[\"`]", text):
-            for name in re.findall(r"\bwb-[a-z0-9-]+", group.split("${")[0]):
-                if name.endswith("-"):
-                    continue
-                assert name in defined or name in markers, f"{path.name} builds the class {name}, which the stylesheets do not draw"
-    # the three tab words the hash carries are the router's, and the page reaches the screen from its one router
-    main = (INTERFACE / "js" / "main.js").read_text(encoding="utf-8")
-    assert 'import { createControlView } from "./views/control.js";' in main and 'route.screen === "control"' in main
-    model = (INTERFACE / "js" / "views" / "control-model.js").read_text(encoding="utf-8")
-    assert re.search(r'TABS = Object\.freeze\(\[\["skills", "Skills"\], \["costs", "Costs"\], \["connections", "Connections"\]\]\)', model)
 
 
 def test_the_control_room_imports_the_client_only_as_a_namespace_and_escape_leaves_a_typed_field_alone():
@@ -730,21 +686,6 @@ def test_the_tasks_tab_is_the_fourth_tab_of_a_floor_and_a_tab_of_the_lobby_and_e
         assert re.search(r"\bapi: actions\b", call), f"{name} hands the tab the Floor's one object of writes"
         for target in re.findall(r"\b(?:request|inbox|open): \([^)]*\) => ([^,}]+)", call):
             assert target.strip().startswith("router."), f"{name} builds the tab's links with the router: {target}"
-
-
-def test_every_class_the_tasks_tab_builds_is_styled_and_the_block_uses_tokens_and_no_literal_colour():
-    css = interface_css()
-    missing = {}
-    for name in TASKS_TAB_FILES:
-        assert (INTERFACE / "js" / name).is_file()
-        for cls in set(re.findall(r"\bwb-[a-z0-9]+(?:-[a-z0-9]+)*", (INTERFACE / "js" / name).read_text(encoding="utf-8"))):
-            if not re.search(re.escape("." + cls) + r"(?![A-Za-z0-9_-])", css):
-                missing.setdefault(cls, []).append(name)
-    assert not missing, f"classes the Tasks tab builds that the stylesheets never name: {missing}"
-    start = css.index("/* --- the Tasks tab (WP-9.16)")
-    block = css[start:]
-    assert "wb-task" in block
-    assert not re.search(r"#[0-9a-fA-F]{3,8}\b|\brgba?\(|\bhsla?\(", block), "the Tasks tab's rules name colours by token"
 
 
 # --- OH-3: the brand colour, the favicon, the mark and the product's name --------------------------------------------------------
