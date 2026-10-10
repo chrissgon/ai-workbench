@@ -19,9 +19,10 @@ from test_interface_adjustments import run_node
 from test_interface_floor import FAKE_DOM as FLOOR_DOM, INTERFACE, needs_node, NODE
 from test_interface_lobby import VIEW_EXTRA
 from test_interface_scene import FAKE_DOM as SCENE_DOM, run_node as run_pure
+from interface_css import stylesheets
 
 JS = INTERFACE / "js"
-CSS = INTERFACE / "style.css"
+CSS = stylesheets()
 README = INTERFACE / "README.md"
 FONTS = INTERFACE / "vendor" / "fonts"
 service = st.load("service")
@@ -1071,8 +1072,8 @@ def test_every_font_face_loads_a_same_origin_file_of_the_vendored_folder_and_the
     for face in faces:
         assert "font-display: swap" in face, "the text shows at once in the fallback"
         urls = re.findall(r"url\(\s*['\"]?([^'\")]+)['\"]?\s*\)", face)
-        assert len(urls) == 1 and re.fullmatch(r"\./vendor/fonts/[a-z0-9-]+\.woff2", urls[0]), f"the source is a path under vendor/fonts/: {urls}"
-        assert (INTERFACE / urls[0]).is_file(), f"{urls[0]} exists"
+        assert len(urls) == 1 and re.fullmatch(r"\.\./vendor/fonts/[a-z0-9-]+\.woff2", urls[0]), f"the source is a path under vendor/fonts/ (the stylesheet stands in interface/css/): {urls}"
+        assert (INTERFACE / "css" / urls[0]).resolve().is_file(), f"{urls[0]} exists"
         assert not re.search(r"https?:|//|data:", face)
         sources.append(urls[0].rsplit("/", 1)[1])
     assert sorted(sources) == sorted(FONT_FILES)

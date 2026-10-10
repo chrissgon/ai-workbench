@@ -1,5 +1,5 @@
 """Tests of WP-9.15a, the Lobby's request line and its cards, the fields, the token field and the document viewer's Close
-(interface/js/views/lobby-request.js, lobby-thread.js, floor/inbox.js, floor/viewer.js, frame/origin.js, interface/style.css).
+(interface/js/views/lobby-request.js, lobby-thread.js, floor/inbox.js, floor/viewer.js, frame/origin.js, interface/css/*.css).
 
 Items of design/INTERFACE-ADJUSTMENTS.md: A-1 (the request line is one ellipsised line, the whole text on a tooltip and an expand),
 A-4 (a failed route stays on the request's line), A-5 (the resolved line is one surface with the panel's radius), A-11 (the token
@@ -23,10 +23,11 @@ import pytest
 import standin_tree as st
 from test_interface_floor import FAKE_DOM as FLOOR_DOM
 from test_interface_lobby import VIEW_EXTRA
+from interface_css import stylesheets
 
 INTERFACE = st.REPO / "interface"
 JS = INTERFACE / "js"
-CSS = INTERFACE / "style.css"
+CSS = stylesheets()
 NODE = shutil.which("node")
 needs_node = pytest.mark.skipif(NODE is None, reason="node is not installed: the views are tested only by their text")
 
@@ -45,7 +46,7 @@ def run_node(tmp_path: Path, body: str) -> dict:
 # --- the stylesheet, as text -----------------------------------------------------------------------------------------------
 
 def css_rules() -> list[tuple[str, dict[str, str]]]:
-    """Every rule of style.css as (selector text, {property: value}), at any depth of @media nesting."""
+    """Every rule of the stylesheets as (selector text, {property: value}), at any depth of @media nesting."""
     text = re.sub(r"/\*.*?\*/", "", CSS.read_text(encoding="utf-8"), flags=re.S)
     rules = []
     for match in re.finditer(r"([^{}]+)\{([^{}]*)\}", text):

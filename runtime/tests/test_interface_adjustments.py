@@ -15,6 +15,7 @@ from pathlib import Path
 import standin_tree as st
 from test_interface_floor import FAKE_DOM, INTERFACE, needs_node, NODE
 from test_interface_lobby import FAKE_EXTRA as LOBBY_EXTRA
+from interface_css import stylesheets
 
 # The Floor's fake document, with what the Lobby's modules use added (insertBefore and the like); its own predicate `find` is `where` here.
 FAKE_EXTRA = (LOBBY_EXTRA + """
@@ -22,7 +23,7 @@ Object.defineProperty(FakeNode.prototype, "dataset", { get() { return this._data
 """).replace("export const find =", "export const where =").replace("=> find(root, (n)", "=> where(root, (n)")
 
 JS = INTERFACE / "js"
-CSS = INTERFACE / "style.css"
+CSS = stylesheets()
 service = st.load("service")
 
 

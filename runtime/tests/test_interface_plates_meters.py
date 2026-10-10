@@ -19,6 +19,7 @@ import standin_tree as st
 from test_interface_floor import FAKE_DOM as FLOOR_DOM
 from test_interface_live import CLOCK
 from test_interface_scene import FAKE_DOM as SCENE_DOM
+from interface_css import interface_css
 
 INTERFACE = st.REPO / "interface"
 JS = INTERFACE / "js"
@@ -591,7 +592,7 @@ def test_the_page_keeps_the_floor_dims_it_and_shows_the_command_in_the_band_whil
 # --- the files ------------------------------------------------------------------------------------------------------------------------
 
 def _css() -> str:
-    return (INTERFACE / "style.css").read_text(encoding="utf-8")
+    return interface_css()
 
 
 def _rule(css: str, selector: str) -> str:
