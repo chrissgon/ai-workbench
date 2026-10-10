@@ -1,28 +1,18 @@
-// The HTML of the Building's floor plates and of the other labels the building and room scenes add (handoff building.md "Floor plate",
-// scene.md 6), and the pure arithmetic that stacks the plates in a column without overlap. A plate is a card at the right edge of its
-// floor; when six or more would not fit the free height they all become the compact form (name row and meters). Every fact on a plate is
-// also in the floors list: the plates are `aria-hidden`. The compact floor card (WP-9.8) is one component for the phone's card at the top
-// right of the scene and for each row of the floors list; the plates stay on the desktop and the tablet (WP-9.10: the maintainer's
-// change was for the phone only).
+// The HTML of the Building's floor plates and of the other labels the building and room scenes add (round 4: building.html), and the pure
+// arithmetic that stacks the plates in a column without overlap. A plate (R-25) is one size: a name row (the state dot, the name, the decisions
+// badge, the mode word, the state as a soft badge, R-26) and the two meters of the day side by side; with more than eight floors (`is-short`), or when the
+// column would not fit the free height (`is-tiny`, which `labels.js` adds and takes off), the name row alone. No count chips, no pips. Every fact on a plate is also in the floors list (a row, `rowNode`):
+// the plates are `aria-hidden`. The phone's floor card (`floorCardNode`) stands in the corner of the scene. The work-order tag (R-29) is a badge.
 
 import { h } from "../dom.js";
-import { METER_TIPS, METER_WORDS, costNote } from "../format.js";
+import { icon } from "../frame/icons.js";
+import { METER_TIPS, costNote } from "../format.js";
 
-/** The mode's pips: four 5 px squares, as many filled as the mode counts. */
+/** The mode's pips: four 5 px squares, as many filled as the mode counts (the Floor's header and Agent tab still draw them). */
 export function pips(count) {
   const node = h("span", { class: "wb-pips", "aria-hidden": "true" });
   for (let i = 0; i < 4; i++) node.append(h("span", { class: `wb-pip${i < count ? " is-on" : ""}` }));
   return node;
-}
-
-/** The mode plate: the mode word and its pips; a second small plate "acting as <mode>" when it differs. */
-export function modePlate(mode, pipCount, acting, actingPips) {
-  const wrap = h("span", { class: "wb-mode-wrap" });
-  wrap.append(h("span", { class: "pui-chip pui-muted pui-outline pui-rounded-full wb-mode-plate" }, h("span", { text: mode }), pips(pipCount)));
-  if (acting && acting !== mode) {
-    wrap.append(h("span", { class: "pui-chip pui-muted pui-outline pui-rounded-full wb-mode-plate wb-acting-plate" }, h("span", { text: `acting as ${acting}` }), pips(actingPips)));
-  }
-  return wrap;
 }
 
 /**
@@ -41,65 +31,93 @@ export function trackNode(share, full, reservedShare = 0, extraClass = "") {
   return track;
 }
 
-function meter(label, text, share, full, note, tip, reservedShare = 0) {
-  return h("div", { class: "wb-plate-meter", title: tip || null },
-    h("span", { class: "wb-plate-meter-text" }, label ? h("span", { class: "wb-muted", text: `${label} ` }) : null, h("span", { text })),
-    trackNode(share, full, reservedShare),
-    note ? h("span", { class: "wb-plate-note", text: note }) : null);
-}
-
 /**
  * The chips of a plate (A-12), in this order and each only when its count is not zero: done, running, queued, left (planned or blocked); then, when a
  * planned task waits for another (A-29), one more chip, "waiting for #10" (or "2 waiting"), whose tooltip holds each reason. The waiting tasks are counted in "left".
  */
 export function chipNodes(p) {
-  const chips = [["done", p.done, "pui-success"], ["running", p.running, "pui-theme"], ["queued", p.queued, "pui-surface"], ["left", p.left, "pui-muted"]];
+  const chips = [["done", p.done, "pui-success"], ["running", p.running, "pui-theme"], ["queued", p.queued, "pui-muted"], ["left", p.left, "pui-muted"]];
   const nodes = chips.filter(([, count]) => count > 0).map(([word, count, tone]) => h("span", { class: `pui-badge ${tone} pui-soft pui-rounded-full`, text: `${count} ${word}` }));
   if (p.waits && p.waits.text) nodes.push(h("span", { class: "pui-badge pui-muted pui-outline pui-rounded-full wb-chip-waiting", title: p.waits.title || null, text: p.waits.text }));
   return nodes;
 }
 
+/** The state badge of a plate, a row and the phone's card (R-26): a soft badge in the state's tone, ellipsised with its whole text as the tooltip. */
+function stateBadge(text, tone) {
+  return h("span", { class: `pui-badge pui-soft ${tone || "pui-muted"} wb-st`, title: text, text });
+}
+
+/** "3 / 6" as a bold figure over the cap: `<strong>3</strong> / 6`, then the word when there is one. */
+function figure(text, word) {
+  const [value, ...cap] = String(text).split(" / ");
+  return h("span", {}, h("strong", { text: value }), cap.length ? ` / ${cap.join(" / ")}` : "", word ? h("span", { class: "wb-muted", text: ` ${word}` }) : null);
+}
+
+function plateMeter(tip, text, word, share, full, reservedShare = 0) {
+  return h("div", { class: "wb-plate-meter", title: tip || null }, figure(text, word), trackNode(share, full, reservedShare));
+}
+
 /**
- * A floor plate. p: {name, label, dot, decisions, word, done, running, left, queued, inUse: {runs, spend}, runsText, runsShare, usdText, usdShare,
- * unknown, mode, pips, acting, actingPips, selected, off}. Returns the element; the caller toggles `is-compact`. The same component is the plate
- * beside a floor (a `div`) and each row of the floors list (`tag` "a", `attrs` {class: "wb-floor-row is-row", href, aria-label}): one design, two places.
+ * A floor plate (R-25, R-26). p: {name, label, dot, decisions, word, tone, modeLine, actingLine, runsText, runsShare, usdText, usdShare, inUse: {runs, spend}, mode,
+ * usdRecordedShare, usdReservedShare, usdNote, usdReserved, unknown, selected, off, tiny}. One size: the name row and the two meters (a meter only for a cap in use,
+ * A-38) side by side, with `title` the sentence of what each counts; `tiny` (more than eight floors) is the name row alone. The plate is the scene's label and a
+ * pointer target (hover marks the floor in three places, R-28, `is-hover`).
  */
 export function plateNode(p, attrs = {}, tag = "div") {
   const row1 = h("div", { class: "wb-plate-row" },
     h("span", { class: `wb-dot is-${p.dot}` }),
     h("strong", { class: "wb-plate-name", text: p.label }),
-    p.decisions > 0 ? h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(p.decisions) }) : null,
-    h("span", { class: "wb-plate-state", text: p.word }));
-  const chips = h("div", { class: "wb-plate-chips" }, chipNodes(p), p.mode ? modePlate(p.mode, p.pips, p.acting, p.actingPips) : null);
+    p.decisions > 0 ? h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", "aria-label": `${p.decisions} decision${p.decisions === 1 ? "" : "s"} waiting`, text: String(p.decisions) }) : null,
+    p.mode ? h("span", { class: "wb-plate-mode", title: [p.modeLine, p.actingLine].filter(Boolean).join("; ") || null, text: p.mode }) : null,
+    h("span", { class: "wb-plate-state" }, stateBadge(p.word, p.tone)));
   const use = p.inUse || { runs: true, spend: true };      // A-38: a meter only for a cap in use
-  const meters = h("div", { class: "wb-plate-meters" },
-    use.runs ? meter(METER_WORDS.runs, p.runsText, p.runsShare, p.runsShare >= 1, "", METER_TIPS.runs) : null,
-    use.spend ? meter(METER_WORDS.spend, p.usdText, p.usdRecordedShare !== undefined ? p.usdRecordedShare : p.usdShare, p.usdShare >= 1,
-      costNote(p.usdNote, p.usdReserved, p.unknown), METER_TIPS.spend, p.usdReservedShare || 0) : null);
-  const node = h(tag, { ...attrs, class: `wb-plate${p.selected ? " is-selected" : ""}${p.off ? " is-off" : ""}${attrs.class ? ` ${attrs.class}` : ""}`, "data-floor": p.name }, row1, chips, meters);
-  return node;
+  const spendTip = [METER_TIPS.spend, costNote(p.usdNote, p.usdReserved, p.unknown)].filter(Boolean).join(" ");
+  const meters = p.tiny ? null : h("div", { class: "wb-plate-meters" },
+    use.runs ? plateMeter(METER_TIPS.runs, p.runsText, "runs", p.runsShare, p.runsShare >= 1) : null,
+    use.spend ? plateMeter(spendTip, p.usdText, "", p.usdRecordedShare !== undefined ? p.usdRecordedShare : p.usdShare, p.usdShare >= 1, p.usdReservedShare || 0) : null);
+  const klass = `wb-plate${p.off ? " is-off" : ""}${p.tiny ? " is-short" : ""}${attrs.class ? ` ${attrs.class}` : ""}`;
+  return h(tag, { ...attrs, class: klass, "data-floor": p.name }, row1, meters);
 }
 
 /**
- * The compact floor card (WP-9.8): one component for the card at the scene's top right and for every row of the floors list, so
- * the two never differ. c: cardOf(row). Returns the element: the name row (state dot, name, decisions badge), the state word
- * with the mode plate, and one line of runs and spend. `tag` is "div" for the corner card and "a" for a list row (attrs: href, aria-label).
+ * A row of the floors list (R-27): the name, the decisions badge and the mode word on one line with the state badge at the right, the count chips under it when
+ * there are any (and "acting as <mode>" when it differs), the chevron. `attrs`: {href, aria-label, class}. The same facts as the plate, the chips and the meters' words
+ * in the row's accessible name (the plate is hidden from a screen reader).
+ */
+export function rowNode(p, attrs = {}) {
+  const chips = [...chipNodes(p), ...(p.actingLine ? [h("span", { class: "pui-badge pui-muted pui-outline pui-rounded-full wb-acting", text: p.actingLine })] : [])];
+  return h("a", { ...attrs, class: `wb-fl-row${p.off ? " is-off" : ""}${attrs.class ? ` ${attrs.class}` : ""}`, "data-floor": p.name },
+    h("span", { class: `wb-dot is-${p.dot}` }),
+    h("span", { class: "wb-fl-title" },
+      h("strong", { class: "wb-fl-name", text: p.label }),
+      p.decisions > 0 ? h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", "aria-label": `${p.decisions} decision${p.decisions === 1 ? "" : "s"} waiting`, text: String(p.decisions) }) : null,
+      p.mode ? h("span", { class: "wb-fl-mode", title: p.modeLine || null, text: p.mode }) : null),
+    h("span", { class: "wb-fl-state" }, stateBadge(p.word, p.tone)),
+    chips.length ? h("span", { class: "wb-fl-chips" }, chips) : null,
+    h("span", { class: "wb-fl-chev" }, icon("chevron-right", 14)));
+}
+
+/**
+ * The phone's floor card (R-26, building.html at 375 px): the name row (dot, name, decisions badge, the state as a soft badge) and one line: the mode word, the runs and
+ * the spend. c: cardOf(row). Hangs at the bottom left of the scene above the camera buttons; the page's rows are `rowNode`, not this.
  */
 export function floorCardNode(c, attrs = {}, tag = "div") {
   const head = h("span", { class: "wb-fc-head" },
     h("span", { class: `wb-dot is-${c.dot}` }),
     h("strong", { class: "wb-fc-name", text: c.label }),
-    c.decisions > 0 ? h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(c.decisions) }) : null);
-  const status = h("span", { class: "wb-fc-status" },
-    h("span", { class: "wb-fc-state", text: c.word }),
-    c.mode ? modePlate(c.mode, c.pips, c.acting, c.actingPips) : null);
+    c.decisions > 0 ? h("span", { class: "pui-badge pui-warn pui-soft pui-rounded-full", text: String(c.decisions) }) : null,
+    h("span", { class: "wb-fc-state" }, stateBadge(c.word, c.tone)));
+  const line = c.mode || c.runsLine
+    ? h("span", { class: "wb-fc-runs", title: c.runsNote || null }, c.mode ? h("span", { class: "wb-fc-mode", title: c.modeLine || null, text: c.mode }) : null, c.mode && c.runsLine ? " · " : "", c.runsLine || "")
+    : null;
   const klass = `wb-floor-card${c.off ? " is-off" : ""}${attrs.class ? ` ${attrs.class}` : ""}`;
-  return h(tag, { ...attrs, class: klass, "data-floor": c.name }, head, status, c.runsLine ? h("span", { class: "wb-fc-runs", text: c.runsLine }) : null);
+  return h(tag, { ...attrs, class: klass, "data-floor": c.name }, head, line);
 }
 
-/** The work-order tag's label: "#14". */
+/** The work-order tag's label (R-29): the request's number, `#7`, as a badge in the brand colour at the left corner of its floor. */
 export function tagNode(spec) {
-  return h("div", { class: "wb-label wb-label-tag", text: spec.text });
+  const number = String(spec.text || "").replace(/^#/, "");
+  return h("span", { class: "wb-label wb-tag pui-badge pui-theme pui-solid", title: number ? `Request ${number} is on this floor` : null, text: spec.text });
 }
 
 /** The board label above the room's wall board: the state dot, the title, and a mono line. */
@@ -118,7 +136,7 @@ export function doorNode(spec) {
  * Stack boxes in one column with no overlap. items: [{want, height}] (want is the wished centre, in pixels, from the
  * floor's own height on screen); the result is the centre of each, in the same order, kept inside [top, bottom] with
  * `gap` between neighbours. Order follows `want`. When the column cannot fit, `fits` is false and the result is still the
- * tightest packing from the top (the caller then asks for compact plates).
+ * tightest packing from the top (the caller then shortens the plates to the name row alone).
  */
 export function stackColumn(items, top, bottom, gap) {
   const order = items.map((item, index) => ({ ...item, index })).sort((a, b) => a.want - b.want || a.index - b.index);

@@ -41,7 +41,7 @@ export function mountLabels(overlay, specs, { popped = new Set() } = {}) {
 export const PLATE_GAP = 5;
 const PLATE_OFFSET = 14;
 
-/** Put the plates of a building in one column to the right of it, none over another; compact when they do not fit. */
+/** Put the plates of a building in one column to the right of it, none over another; the name row alone (`is-tiny`) when they do not fit. */
 function placeColumn(plates, project, hidden, insets, size) {
   for (const { entry } of plates) entry.node.classList.toggle("is-culled", hidden);
   if (hidden || !plates.length || !size) return;
@@ -53,13 +53,9 @@ function placeColumn(plates, project, hidden, insets, size) {
   const top = ins.top;
   const bottom = size.h - ins.bottom;
   const measure = () => plates.map(({ entry }, i) => ({ want: points[i].y, height: entry.node.offsetHeight || 90 }));
-  // a plate shortens as the free height shrinks: the whole plate, then the name row and the meters, then the name row alone
-  for (const { entry } of plates) entry.node.classList.remove("is-compact", "is-tiny");
+  // R-25: a plate is one size; when the stack would not fit the free height every plate shortens to its name row alone (`is-tiny`)
+  for (const { entry } of plates) entry.node.classList.remove("is-tiny");
   let result = stackColumn(measure(), top, bottom, PLATE_GAP);
-  if (!result.fits) {
-    for (const { entry } of plates) entry.node.classList.add("is-compact");
-    result = stackColumn(measure(), top, bottom, PLATE_GAP);
-  }
   if (!result.fits) {
     for (const { entry } of plates) entry.node.classList.add("is-tiny");
     result = stackColumn(measure(), top, bottom, PLATE_GAP);

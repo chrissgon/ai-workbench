@@ -1092,7 +1092,7 @@ def test_every_font_face_loads_a_same_origin_file_of_the_vendored_folder_and_the
 
 def test_the_readme_says_what_the_page_does_now():
     text = README.read_text(encoding="utf-8")
-    assert "is that same card (`floorCardNode`)" not in text and "a plate (`plateNode`, `views/building.js`)" in text, "the floors list rows are drawn by plateNode (building.js)"
+    assert "is that same card (`floorCardNode`)" not in text and "a row (`rowNode`, `views/building.js`), not a plate" in text, "R-27: the floors list rows are drawn by rowNode (building.js), no longer by plateNode"
     assert "shows the placeholder" not in text, "the unread project's placeholder is unreachable: the sentence is gone"
     assert "desktop from 1024" not in text
     assert "1100" in text and "639" in text and "899" in text and "1099" in text, "the four bands (R-1, R-10: the mark's breakpoint of 712 px is gone with the top bar's strip)"

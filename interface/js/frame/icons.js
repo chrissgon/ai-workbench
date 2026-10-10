@@ -5,7 +5,7 @@ import { h } from "../dom.js";
 
 export const ICONS = Object.freeze([
   "activity", "arrow-left-right", "building-2", "check", "chevron-down", "chevron-left", "chevron-right", "chevron-up", "circle-alert", "clock", "copy",
-  "credit-card", "file-text", "folder-minus", "folder-plus", "inbox", "key-round", "maximize", "message-square", "minus", "monitor",
+  "credit-card", "file-text", "folder-minus", "folder-plus", "inbox", "info", "key-round", "maximize", "message-square", "minus", "monitor",
   "moon", "plus", "send", "server", "sun", "x",
 ]);
 

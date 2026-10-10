@@ -484,9 +484,9 @@ def test_the_in_between_layout_has_the_tablet_rules_of_the_handoff_and_the_panel
     block = css[css.index("the in-between layout (WP-9.11"):]
     assert "@media (min-width: 640px) and (max-width: 1099px)" in block and "@media (min-width: 640px) and (max-width: 899px)" in block
     mid = block[:block.index("@media (min-width: 640px) and (max-width: 899px)")]
-    for rule in (".wb-door-label { display: none; }", "--wb-panel-narrow: 340px", "--wb-wait-w: 340px", "--wb-plate-w: 230px", ".wb-track-left .wb-steps { overflow-x: auto; }",
-                 ".wb-plate:not(.is-row) .wb-plate-chips > .pui-badge { display: none; }"):
+    for rule in (".wb-door-label { display: none; }", "--wb-panel-narrow: 340px", "--wb-wait-w: 340px", "--wb-plate-w: 230px", ".wb-track-left .wb-steps { overflow-x: auto; }"):
         assert rule in mid, f"the tablet rule: {rule}"
+    assert "wb-plate-chips" not in css, "R-25: a plate has no count chips, so the in-between band has no rule that hides them"
     assert ".wb-kpis { display: flex;" not in mid and ".wb-kpi-short { display: inline; }" not in mid, "R-5: the KPI cards stay a column of two in this band (R4D-6), the labels are the long ones"
     docked = block[block.index("@media (min-width: 640px) and (max-width: 899px)"):]
     for rule in ("grid-template-areas: \"scene\" \"content\" \"track\"", ".wb-main { position: static;", ".wb-dock { position: static;", ".wb-panel-floor, .wb-panel-building { height: auto; }"):
@@ -642,20 +642,22 @@ console.log(JSON.stringify(out));
 
 
 @needs_node
-def test_the_list_rows_are_the_plate_beside_the_floor_and_the_compact_card_is_the_phones(tmp_path):
+def test_a_plate_and_a_row_of_the_list_carry_the_same_name_row_and_the_plate_has_no_chips_and_the_row_has_them(tmp_path):
     got = run_node(tmp_path, r"""
-import { FakeNode, find } from "@FAKE@";
-import { plateNode } from "@JS@/scene/plates.js";
-const p = { name: "engineering", label: "Engineering", dot: "theme", decisions: 2, word: "working", done: 1, left: 2, queued: 0, runsText: "3 / 14", runsShare: 0.2, usdText: "$0 / $5", usdShare: 0, unknown: 0, mode: "autonomous", pips: 3, acting: null, actingPips: 0, selected: false, off: false };
+import { FakeNode, find, all } from "@FAKE@";
+import { plateNode, rowNode } from "@JS@/scene/plates.js";
+const p = { name: "engineering", label: "Engineering", dot: "theme", decisions: 2, word: "working", tone: "pui-theme", modeLine: "Reviews are released", done: 1, left: 2, queued: 0, runsText: "3 / 14", runsShare: 0.2, usdText: "$0 / $5", usdShare: 0, unknown: 0, mode: "autonomous", pips: 3, acting: null, actingPips: 0, selected: false, off: false };
 const plate = plateNode(p);
-const row = plateNode(p, { class: "wb-floor-row is-row", href: "#/p/x/floor/engineering", "aria-label": "Engineering, working" }, "a");
+const row = rowNode(p, { href: "#/p/x/floor/engineering", "aria-label": "Engineering, working" });
 const shape = (n) => ({ tag: n.tagName, parts: n.children.map((c) => c.cls().join(" ")), text: n.textContent });
-console.log(JSON.stringify({ plate: shape(plate), row: shape(row), href: row.attrs.href, classes: row.cls() }));
+console.log(JSON.stringify({ plate: shape(plate), row: shape(row), href: row.attrs.href, classes: row.cls(), chipsOnPlate: all(plate, ".pui-badge").map((n) => n.textContent), chipsOnRow: all(row, ".wb-fl-chips .pui-badge").map((n) => n.textContent) }));
 """)
     assert got["plate"]["tag"] == "DIV" and got["row"]["tag"] == "A" and got["href"] == "#/p/x/floor/engineering"
-    assert got["plate"]["parts"] == got["row"]["parts"] == ["wb-plate-row", "wb-plate-chips", "wb-plate-meters"], "name row, the done, left and queued chips with the mode plate, the two meters: the plate's design in both places"
-    assert got["plate"]["text"] == got["row"]["text"], "the same words"
-    assert "wb-plate" in got["classes"] and "is-row" in got["classes"] and "wb-floor-row" in got["classes"]
+    assert got["plate"]["parts"] == ["wb-plate-row", "wb-plate-meters"], "R-25: the name row and the two meters, nothing else"
+    assert got["row"]["parts"] == ["wb-dot is-theme", "wb-fl-title", "wb-fl-state", "wb-fl-chips", "wb-fl-chev"], "R-27: the dot, the name line (name, badge, mode word), the state badge, the chips under, the chevron"
+    assert got["chipsOnPlate"] == ["2", "working"], "R-25: no count chips on a plate: the decisions badge and the state badge only"
+    assert got["chipsOnRow"] == ["1 done", "2 left"], "the count chips are on the row"
+    assert "wb-fl-row" in got["classes"]
 
 
 def test_the_chosen_building_keeps_a_thin_outline_in_the_city_besides_the_hover():

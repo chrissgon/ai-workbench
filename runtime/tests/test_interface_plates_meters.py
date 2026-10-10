@@ -243,7 +243,7 @@ HELD = r"""
 import { FakeNode, settle, find, all } from "@FAKE@";
 import * as model from "@JS@/model.js";
 import * as fm from "@JS@/floor-model.js";
-import { plateNode } from "@JS@/scene/plates.js";
+import { plateNode, rowNode } from "@JS@/scene/plates.js";
 
 const P = "0123456789ab";
 const RUNNEXT = "uv run --with keyring==25.7.0 python3 /ck/runtime/cli.py run-next --project /work/shop";
@@ -282,12 +282,14 @@ out.heldStopped = fm.floor(snapshot, P, "business", {}).heldCurrent;
 out.sentences = ["stopped", "cap: runs per day", "cap: usd per day", "credential", "secret store", "image", "dispatch off", "job running", "no enabled agent owns the task", "other", "a new word"].map(fm.heldSentence);
 
 // the chips, in order, each only when non-zero
-const chipsOf = (row) => all(plateNode(fm.plateOf(row), {}), ".wb-plate-chips .pui-badge").map((c) => c.textContent);
+// R-25: a plate has no count chips; the row of the floors list has them under its name row
+const chipsOf = (row) => all(rowNode(fm.plateOf(row), {}), ".wb-fl-chips .pui-badge").map((c) => c.textContent);
 const brand = view.rows.find((r) => r.name === "brand");
 out.brand = { chips: chipsOf(brand), done: brand.done, running: brand.running, queued: brand.queued, left: brand.left };
 out.marketing = chipsOf(view.rows.find((r) => r.name === "marketing"));
 out.allZero = chipsOf(fm.building({ ...snapshot, details: { [P]: { status: { ...status, requests: [] }, agents: [agent("brand")] } } }, P).rows.find((r) => r.name === "brand"));
 out.plateWord = all(plateNode(fm.plateOf(view.rows.find((r) => r.name === "marketing")), {}), ".wb-plate-state").map((n) => n.textContent);
+out.plateTones = Object.fromEntries(view.rows.filter((r) => ["marketing", "business", "engineering", "design"].includes(r.name)).map((r) => [r.name, r.plateTone]));
 console.log(JSON.stringify(out));
 """
 
@@ -313,6 +315,7 @@ def test_the_plates_say_why_a_ready_task_is_held_the_tooltip_counts_them_and_the
     assert got["marketing"] == ["1 done", "1 queued"], "a chip with a zero is left out"
     assert got["allZero"] == []
     assert got["plateWord"] == ["held: dispatch off"]
+    assert got["plateTones"] == {"marketing": "pui-warn", "business": "pui-warn", "engineering": "pui-theme", "design": "pui-muted"}, "R-26: held is warn, working is the brand colour, off is muted"
 
 
 # --- A-20: the meters say what they count ----------------------------------------------------------------------------------------------
@@ -353,7 +356,7 @@ def test_the_meters_say_which_model_they_count_and_the_caps_line_uses_the_same_w
     assert "metered credential" in got["agent"]["spend"][2] and "dollars per day" in got["agent"]["spend"][2]
     assert got["agent"]["names"] == ["Runs today 0 / 8", "Spend today $0.14 / $2.00"]
     assert got["card"].startswith("runs 3 / 8 · spend $0.14 / $2.00")
-    assert [t[0] for t in got["plate"]] == ["Runs today 3 / 8", "Spend today $0.14 / $2.00"] and all(t[1] for t in got["plate"])
+    assert [t[0] for t in got["plate"]] == ["3 / 8 runs", "$0.14 / $2.00"] and all(t[1] for t in got["plate"]), "R-25, R-5/R-6: the plate names its meters `runs` and `$`; each keeps its sentence as the tooltip"
     assert [k[2] for k in got["kpis"]] == ["Runs today", "Spend today"], "R-5: two cards; the count of open decisions is on \"Waiting for you\""
     assert got["kpis"][0][0] == "Runs today 17 of 70" and got["kpis"][1][0] == "Spend today $4.90 of $21.50 cap"
     assert got["caps"]["text"] == "Caps · engineering: runs 5 / 12, spend $1.87 / $4.00"
@@ -663,9 +666,11 @@ out.old = [old.spend.note, old.spend.recordedShare, old.spend.reservedShare, old
 const row = fm.floorRow(agent(), null, { accepted: true, project: "p", number: 1 });
 const plate = plateNode(fm.plateOf(row), {});
 const track = all(plate, ".wb-plate-meter .wb-meter")[1];
-out.plate = { note: all(plate, ".wb-plate-note").map((n) => n.textContent), fills: all(track, ".wb-meter-fill").length, reserved: all(track, ".wb-meter-reserved").length, has: track.classList.contains("has-reserved"),
+// R-25: a plate has no caption sentence; the note of the spend meter is the end of its tooltip
+out.plate = { note: [all(plate, ".wb-plate-meter")[1].attrs.title], fills: all(track, ".wb-meter-fill").length, reserved: all(track, ".wb-meter-reserved").length, has: track.classList.contains("has-reserved"),
   first: all(plate, ".wb-plate-meter .wb-meter")[0].querySelectorAll(".wb-meter-reserved").length };
 out.cardLine = fm.cardOf(row).runsLine;
+out.cardNote = fm.cardOf(row).runsNote;
 
 // the KPI cards
 const sums = model.kpiSums({ projects: [{ id: P }], details: { [P]: { agents: [agent(), agent({ name: "marketing", usd_today: 0.2, usd_recorded: 0.2, usd_reserved: 0, runs_total_today: 1 })] } } }, null);
@@ -695,7 +700,7 @@ out.after = [find(tab.el, ".wb-runs-total").hidden, find(tab.el, ".wb-runs-total
 // the two notes together: runs of unknown cost that nothing is reserved for, beside the recorded spend
 const unknown = agent({ usd_today: 0.14, usd_recorded: 0.14, usd_reserved: 0, runs_without_cost: 2 });
 const urow = fm.floorRow(unknown, null, { accepted: true, project: "p", number: 1 });
-out.unknown = { card: fm.cardOf(urow).runsLine, plate: all(plateNode(fm.plateOf(urow), {}), ".wb-plate-note").map((n) => n.textContent), tab: fm.meters(unknown).spend.notes,
+out.unknown = { card: fm.cardOf(urow).runsNote, plate: [all(plateNode(fm.plateOf(urow), {}), ".wb-plate-meter")[1].attrs.title], tab: fm.meters(unknown).spend.notes,
   reserved: fm.meters(agent({ runs_without_cost: 2 })).spend.notes };
 console.log(JSON.stringify(out));
 """
@@ -710,8 +715,8 @@ def test_the_spend_meter_has_two_segments_with_both_numbers_labelled_and_the_run
     assert got["over"][0] + got["over"][1] <= 1, "the two segments never pass the track"
     assert got["old"] == ["", 0.25, 0, None], "an entry with no split (an older service) is all recorded"
     p = got["plate"]
-    assert p["note"] == ["$0.14 recorded · up to $1.50 reserved"] and p["fills"] == 1 and p["reserved"] == 1 and p["has"] is True and p["first"] == 0, "the second meter of the plate has the second segment"
-    assert got["cardLine"].endswith("spend $1.64 / $2.00 ($0.14 recorded · up to $1.50 reserved)")
+    assert p["note"][0].endswith("$0.14 recorded · up to $1.50 reserved") and p["fills"] == 1 and p["reserved"] == 1 and p["has"] is True and p["first"] == 0, "the second meter of the plate has the second segment"
+    assert got["cardLine"].endswith("spend $1.64 / $2.00") and got["cardNote"] == "$0.14 recorded · up to $1.50 reserved", "the phone's card line is plain; the note is its tooltip"
     assert [round(x, 6) for x in got["sums"]] == [1.84, 0.34, 1.5, 4]
     assert got["kpi"]["note"] == ["$0.34 recorded · up to $1.50 reserved"] and got["kpi"]["reserved"] == 1 and "up to $1.50 reserved" in got["kpi"]["aria"]
     assert "All runs today: 4" in got["kpi"]["runsTitle"]
@@ -720,7 +725,7 @@ def test_the_spend_meter_has_two_segments_with_both_numbers_labelled_and_the_run
     assert got["tab"] == {"note": "$0.14 recorded · up to $1.50 reserved", "reserved": 1, "total": "All runs today: 3", "aria": "Spend today $1.64 / $2.00"}
     assert got["during"] is True and got["after"] == [False, "All runs today: 3"], "the total is shown again after a not-accepted spell"
     both = "$0.14 recorded (+2 of unknown cost)"
-    assert got["unknown"]["tab"] == both and got["unknown"]["plate"] == [both] and got["unknown"]["card"].endswith("spend $0.14 / $2.00 ($0.14 recorded) (+2 of unknown cost)"), "both notes when both apply"
+    assert got["unknown"]["tab"] == both and got["unknown"]["plate"][0].endswith(both) and got["unknown"]["card"] == both, "both notes when both apply (the card keeps them as its line's tooltip)"
     assert got["unknown"]["reserved"] == "$0.14 recorded · up to $1.50 reserved", "when something is reserved the reservation already says so"
 
 
